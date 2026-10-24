@@ -7,6 +7,7 @@ export function elementPermissionPage(item: (typeof VISIBILITY_ELEMENTS)[number]
   if (item.route) return pageForRoute(item.route)?.id ?? "settings";
   if (item.key.startsWith("inventory.")) return "inventory";
   if (item.key.startsWith("dashboard.")) return "dashboard";
+  if (item.key.startsWith("shiftclose.")) return "shifts";
   return "register";
 }
 export function tablePermissionPage(id: string): string {

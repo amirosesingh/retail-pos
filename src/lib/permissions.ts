@@ -273,8 +273,8 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   can_manage_staff: "Manage staff & permissions",
   can_manage_promotions: "Edit promotions & coupon rules",
   can_manage_terminals: "Manage terminal activation tokens",
-  can_use_management_mobile: "Sign in on management phones and tablets",
-  can_use_management_pc: "Sign in on management computers",
+  can_use_management_mobile: "Sign in on management mobiles and tablet",
+  can_use_management_pc: "Sign in on management computer",
   can_manage_sync_backup: "Manage database connection",
 };
 

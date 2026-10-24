@@ -350,7 +350,7 @@ export const SETTINGS_CARDS: SettingsCard[] = [
   },
   {
     id: "rules",
-    label: "POS rules & enforcement",
+    label: "Operational policies",
     blurb: "Shift, discount, refund and terminal security limits.",
     icon: ShieldCheck,
     category: "pos-rules",

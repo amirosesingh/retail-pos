@@ -1428,7 +1428,6 @@ function Register() {
 
   /** House rules for bookings, set in Settings → Booking rules. */
   const bookingRules = bookingRulesOf(state.settings.integrations.bookingRules);
-  const isSupervisor = user?.role === "admin" || can("can_access_pos_settings");
   /** Payment timings the branch allows, in the order they are shown. */
   const allowedTimings = (["now", "deposit", "collection"] as BookingPaymentTiming[]).filter((t) =>
     t === "now"
@@ -1520,13 +1519,10 @@ function Register() {
   }
 
   /** Re-open the racket dialog on a booking already on the ticket. */
-  function editBookingSpecs(bookingId: string) {
+  async function editBookingSpecs(bookingId: string) {
     const b = state.bookings.find((x) => x.id === bookingId);
     if (!b) return;
-    if (bookingRules.managerOnlyEditPaidSpecs && b.paid > 0 && !isSupervisor) {
-      toast.error("A supervisor must change the specs once a deposit is held");
-      return;
-    }
+    if (!(await requirePermission("can_manage_bookings"))) return;
     setEditBookingId(b.id);
     setBookMode("racket");
     setRacketModel(b.job?.racketModel ?? "");
@@ -1546,6 +1542,7 @@ function Register() {
 
   /** Save spec edits made from the cart row back onto the stored booking. */
   async function saveSpecEdits() {
+    if (!(await requirePermission("can_manage_bookings"))) return;
     if (!editBookingId) return;
     const job = {
       racketModel: racketModel.trim() || undefined,
@@ -1700,10 +1697,7 @@ function Register() {
   /** Unlock the read-only labour fee — supervisor gate or a written reason. */
   async function unlockLabour() {
     if (labourUnlocked) return;
-    if (bookingRules.overrideNeedsSupervisor && !isSupervisor) {
-      const ok = await requirePermission("can_access_pos_settings");
-      if (!ok) return;
-    }
+    if (!(await requirePermission("can_override_price"))) return;
     setLabourUnlocked(true);
     toast.info("Labour fee unlocked — record the reason.");
   }

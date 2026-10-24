@@ -6,10 +6,10 @@ import { tableColumnHidden, tableColumnKey } from "@/lib/table-column-policy";
 import { displayElementsForPage, displayElementGroup, tablePermissionPage } from "@/lib/permission-display-groups";
 import { PERMISSION_LABELS, type StaffPermissions } from "@/lib/permissions";
 
-export function UserDisplayPermissions({ permissions, onChange, hidden, role, userId, admin, busy, search, pageId, devicesOnly = false }: {
+export function UserDisplayPermissions({ permissions, onChange, hidden, role, userId, admin, busy, search, pageId, devicesOnly = false, compactDevice = false }: {
   permissions: StaffPermissions; onChange: (next: StaffPermissions) => void;
   hidden: VisibilityMap; role: string; userId: string; admin: boolean; busy: boolean; search: string;
-  pageId?: string; devicesOnly?: boolean;
+  pageId?: string; devicesOnly?: boolean; compactDevice?: boolean;
 }) {
   const query = search.trim().toLowerCase();
   const set = (key: string, shown: boolean) => onChange({ ...permissions, [`display:${key}`]: shown });
@@ -17,9 +17,9 @@ export function UserDisplayPermissions({ permissions, onChange, hidden, role, us
   const elements = displayElementsForPage(pageId).filter(item =>
     `${item.label} ${item.group} ${item.blurb}`.toLowerCase().includes(query));
   return <div className="space-y-4">
-    {!pageId && <section className="rounded-xl border p-4" aria-label="Management device access">
-      <h3 className="font-semibold">Management device access</h3>
-      <p className="my-3 text-xs text-muted-foreground">Allow this person to sign in on registered management devices. Their page, action and branch permissions still apply. This does not allow device registration or settings changes.</p>
+    {!pageId && <section className={compactDevice ? "space-y-2" : "rounded-xl border p-4"} aria-label="Management device access">
+      {!compactDevice && <><h3 className="font-semibold">Management device access</h3>
+      <p className="my-3 text-xs text-muted-foreground">Allow this person to sign in on terminals registered for management. Web application access follows their page and action permissions. Operational tills keep their normal sign-in rules. Branch restrictions still apply; device registration and settings changes require their own permissions.</p></>}
       {(["can_use_management_pc", "can_use_management_mobile"] as const).map(key => <label key={key} className="flex items-center justify-between gap-3 py-2 text-sm"><span>{PERMISSION_LABELS[key]}</span><Switch aria-label={PERMISSION_LABELS[key]} checked={admin || permissions[key] === true} disabled={admin || busy} onCheckedChange={allowed => onChange({ ...permissions, [key]: allowed })} /></label>)}
     </section>}
     {!devicesOnly && elements.length > 0 && <details className="rounded-xl border p-4" open={query ? true : undefined}>

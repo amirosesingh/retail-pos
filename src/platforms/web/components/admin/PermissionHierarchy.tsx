@@ -8,7 +8,7 @@ import { PERMISSION_PAGES, pageEnabled, setPageVisibility } from "@/lib/permissi
 import { PERMISSION_LABELS, hasPermission, type PermissionKey, type StaffPermissions } from "@/lib/permissions";
 import { permissionPageEntryKeys, grantPageEntry } from "@/lib/permission-editor";
 import { userRouteVisible, withPageDisplayAccess, type VisibilityMap } from "@/lib/ui-visibility";
-import { PERMISSION_SECTIONS, permissionPageLabel, permissionSubpages, permissionPageMatches, permissionEditableKeys, permissionReferenceKeys, permissionControlOwner, setEditablePageFeatures, sectionVisibility, setSectionVisibility } from "@/lib/permission-editor";
+import { PERMISSION_SECTIONS, permissionPageLabel, permissionSubpages, permissionPageMatches, permissionEditableKeys, setEditablePageFeatures, sectionVisibility, setSectionVisibility } from "@/lib/permission-editor";
 
 type Props = {
   permissions: StaffPermissions;
@@ -29,7 +29,7 @@ export function PermissionHierarchy({ permissions, onChange, admin, busy, search
   const disabled = admin || busy;
   const sections = PERMISSION_SECTIONS.map(section => ({ ...section, pages: PERMISSION_PAGES.filter(page => section.pageIds.includes(page.id) && (!query || section.label.toLowerCase().includes(query) || permissionPageMatches(page.id, query) || permissionDisplayMatches(page.id, query))) })).filter(section => section.pages.length);
   return <div className="space-y-4">
-    <p className="text-xs text-muted-foreground">Main section → page → visible information and allowed actions. Page visibility does not grant actions. Each permission has one editable home; references open that control. Branch assignments are unchanged.</p>
+    <p className="text-xs text-muted-foreground">Main section → page → visible information and allowed actions. Page visibility does not grant actions. Branch assignments are unchanged.</p>
     {!sections.length && <p role="status" className="rounded-xl border border-dashed p-5 text-sm text-muted-foreground">No matching pages or permissions.</p>}
     {sections.map(section => {
       const sectionId = `section:${section.id}`;
@@ -46,7 +46,6 @@ export function PermissionHierarchy({ permissions, onChange, admin, busy, search
             const pageOpen = !!query || expanded.has(page.id);
             const enabled = admin || pageEnabled(permissions, page.id);
             const subpages = permissionSubpages(page.id);
-            const related = permissionReferenceKeys(page.id);
             const editable = permissionEditableKeys(page.id);
             const entryKeys = permissionPageEntryKeys(page.id);
             const missingEntry = entryKeys.filter(key => !hasPermission(permissions, key));
@@ -77,18 +76,8 @@ export function PermissionHierarchy({ permissions, onChange, admin, busy, search
                       return <label key={key} className="flex min-w-0 items-start gap-3 text-sm"><Checkbox className="mt-0.5 shrink-0" checked={admin || permissions[key]} disabled={disabled} onCheckedChange={checked => onChange({ ...permissions, [key]: checked === true })} /><span className="min-w-0 break-words">{PERMISSION_LABELS[key]}{shared.length > 0 && <span className="mt-1 block text-xs text-muted-foreground">Shared with {shared.map(permissionPageLabel).join(", ")}</span>}</span></label>;
                     })}</div></div> : null;
                   })}
-                  {related.length > 0 && <div className="space-y-3 rounded-lg border border-dashed p-3">
-                    <h4 className="text-sm font-semibold">Permissions managed elsewhere</h4>
-                    <div className="grid gap-2 sm:grid-cols-2">{related.map(key => {
-                      const owner = permissionControlOwner(key);
-                      const section = PERMISSION_SECTIONS.find(item => item.pageIds.includes(owner.id));
-                      return <button key={key} type="button" className="text-left text-xs text-muted-foreground hover:text-foreground" onClick={() => onExpandedChange(new Set([...expanded, `section:${section?.id}`, owner.id]))}>
-                        {PERMISSION_LABELS[key]} · Manage in {permissionPageLabel(owner)}
-                      </button>;
-                    })}</div>
-                  </div>}
                   {page.id === "approvals" && <p className="text-xs text-muted-foreground">Show page controls access to the approvals queue. Decisions follow the separate Approver rules and this person's branch scope.</p>}
-                  {!editable.length && !related.length && <p className="text-xs text-muted-foreground">This page has no separate configurable actions.</p>}
+                  {!editable.length && <p className="text-xs text-muted-foreground">This page has no separate configurable actions.</p>}
                 </>
               </div>}
             </section>;

@@ -421,16 +421,7 @@ function BookingRulesForm() {
             />
           </div>
         </div>
-        <Row
-          label="Overriding the labour fee needs a supervisor"
-          hint="Off means a written reason is enough."
-        >
-          <Switch
-            aria-label="Overriding the labour fee needs a supervisor"
-            checked={rules.overrideNeedsSupervisor}
-            onCheckedChange={(v) => patch({ overrideNeedsSupervisor: v })}
-          />
-        </Row>
+        <p className="text-xs text-muted-foreground">Labour-price overrides require the user's Price override permission, configured in Staff &amp; Permissions.</p>
       </Section>
 
       <Section
@@ -482,26 +473,7 @@ function BookingRulesForm() {
       </Section>
 
       <Section title="Control" blurb="Who may undo or re-spec a booking once it exists.">
-        <Row
-          label="Only supervisors may cancel a booking"
-          hint="Cashiers can raise and collect bookings, but not cancel them."
-        >
-          <Switch
-            aria-label="Only supervisors may cancel a booking"
-            checked={rules.managerOnlyCancel}
-            onCheckedChange={(v) => patch({ managerOnlyCancel: v })}
-          />
-        </Row>
-        <Row
-          label="Only supervisors may edit specs after a deposit"
-          hint="Once money is held, tension and string changes need a supervisor."
-        >
-          <Switch
-            aria-label="Only supervisors may edit specs after a deposit"
-            checked={rules.managerOnlyEditPaidSpecs}
-            onCheckedChange={(v) => patch({ managerOnlyEditPaidSpecs: v })}
-          />
-        </Row>
+        <p className="text-sm text-muted-foreground">Assign Cancel/delete booking, Collect bookings, and Booking management permissions to each user in Staff &amp; Permissions. Role titles do not grant these actions.</p>
       </Section>
     </div>
   );

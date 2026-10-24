@@ -6,6 +6,7 @@
  * authorisation log.
  */
 import { createServerFn } from "@tanstack/react-start";
+import { approverActionAllowed } from "./approval-action-permissions";
 import { z } from "zod";
 import { loadRequesterDirectLimit } from "./approval-baseline.server";
 import { ticketDiscounts, ticketDiscountApprovalPercent } from "./authorization";
@@ -163,6 +164,7 @@ type Caller = {
   canManageRules: boolean;
   canManageStaff: boolean;
   canDiscardHeldOrder: boolean;
+  permissions: Record<string, boolean>;
 };
 
 /** Any signed-in till user: a staff account or a cashier PIN session. */
@@ -187,9 +189,10 @@ async function assertCaller(data: z.infer<typeof caller>): Promise<Caller> {
     storeId: scope.storeId || "",
     canAccessAllBranches: role === "admin",
     canManageRules:
-      role === "admin" || role === "manager" || scope.permissions.can_access_pos_settings === true,
+      scope.role === "admin" || scope.roleSlug === "admin" || scope.permissions.can_access_pos_settings === true,
     canManageStaff: role === "admin" || scope.permissions.can_manage_staff === true,
-    canDiscardHeldOrder: scope.isSupervisor || scope.permissions.can_discard_held_order === true,
+    canDiscardHeldOrder: scope.role === "admin" || scope.roleSlug === "admin" || scope.permissions.can_discard_held_order === true,
+    permissions: scope.permissions,
   };
 }
 
@@ -490,6 +493,14 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
       };
     }
     const { canAuthorize } = await import("./authorization");
+    const currentAuthorizer = await approvalPerson(person.userId);
+    if (!currentAuthorizer?.is_active ||
+        (currentAuthorizer.store_id && currentAuthorizer.store_id.toLowerCase() !== storeId.toLowerCase()) ||
+        !approvalMethods(currentAuthorizer.permissions)[credentialMethod] ||
+        !approverActionAllowed(data.actionKey, { role: currentAuthorizer.role, roleSlug: currentAuthorizer.role_slug, permissions: currentAuthorizer.permissions })) {
+      return { ok: false as const, error: "This account does not have permission to approve this action in this branch" };
+    }
+    person.role = currentAuthorizer.role_slug || currentAuthorizer.role;
     if (!canAuthorize(rule, { userId: person.userId, role: person.role })) {
       return { ok: false as const, error: "This person is excluded from authorising this action" };
     }
@@ -998,6 +1009,9 @@ export const decideAuthorizationRequest = createServerFn({ method: "POST" })
       if (!routed) {
         return { ok: false as const, error: "This request was not routed to you" };
       }
+      if (!approverActionAllowed(existing.actionKey, { role: who.isAdmin ? "admin" : who.role, permissions: who.permissions })) {
+        return { ok: false as const, error: "Your account does not have permission for this action" };
+      }
       if (
         !canDecideRequestAmount(
           rules[existing.actionKey],
@@ -1227,7 +1241,7 @@ export const cancelAuthorizationRequest = createServerFn({ method: "POST" })
       }
       callerStore(who, request.storeId);
       const ownsRequest = request.requestedBy.toLowerCase() === who.id.toLowerCase();
-      if (!ownsRequest && !who.isSupervisor && !who.canDiscardHeldOrder) {
+      if (!ownsRequest && !who.canDiscardHeldOrder) {
         return { ok: false as const, error: "That request cannot be cancelled" };
       }
       if (request.status !== "pending" && request.status !== "approved") {

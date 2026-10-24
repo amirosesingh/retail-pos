@@ -109,6 +109,8 @@ type Form = {
   roleSlug: string;
   branchId: string;
   active: boolean;
+  managementPc?: boolean;
+  managementMobile?: boolean;
 };
 
 const EMPTY: Form = {
@@ -329,11 +331,18 @@ export function StaffManager() {
       roleSlug: row.role_slug,
       branchId: row.store_id ?? "all",
       active: row.is_active,
+      managementPc: row.permissions.can_use_management_pc,
+      managementMobile: row.permissions.can_use_management_mobile,
     });
     setFormOpen(true);
   };
 
   const selectedRole = roles.find((role) => role.slug === form.roleSlug);
+  const devicePermissions = {
+    can_use_management_pc: selectedRole?.baseLevel === "admin" || (form.managementPc ?? selectedRole?.permissions.can_use_management_pc ?? false),
+    can_use_management_mobile: selectedRole?.baseLevel === "admin" || (form.managementMobile ?? selectedRole?.permissions.can_use_management_mobile ?? false),
+  };
+  const deviceAccessChanged = !!editing && (devicePermissions.can_use_management_pc !== editing.permissions.can_use_management_pc || devicePermissions.can_use_management_mobile !== editing.permissions.can_use_management_mobile);
   const emailMode = editing ? !!form.email.trim() : looksLikeEmail(form.username);
   const nameValid = form.displayName.trim().length > 0;
   const identifierValid = editing
@@ -356,7 +365,7 @@ export function StaffManager() {
   const branchLabel = branchId ? branchDisplayName(stores, branchId) : "All branches";
 
   const credentialMatches = !credentialEnabled || form.credential === form.confirmCredential;
-  const statusOnly = Boolean(editing && form.active !== editing.is_active &&
+  const statusOnly = Boolean(editing && !deviceAccessChanged && form.active !== editing.is_active &&
     form.displayName === editing.full_name && form.username === (editing.login_username || editing.user_id) &&
     form.email === (isExternalEmail(editing.email) ? editing.email : "") &&
     form.roleSlug === editing.role_slug && form.branchId === (editing.store_id ?? "all") && !credentialEnabled);
@@ -381,8 +390,8 @@ export function StaffManager() {
           active: form.active,
           ...(credentialEnabled && form.credential ? { credential: form.credential } : {}),
         });
-        if (editing.role_slug !== selectedRole.slug) {
-          const permissions = selectedRole.permissions ?? rolePermissions(selectedRole.baseLevel);
+        if (editing.role_slug !== selectedRole.slug || deviceAccessChanged) {
+          const permissions = { ...(editing.role_slug !== selectedRole.slug ? selectedRole.permissions ?? rolePermissions(selectedRole.baseLevel) : editing.permissions), ...devicePermissions };
           const permissionResult = await setManagedStaffPermissions({
             data: {
               ...(await getPosCallerAuth()),
@@ -402,7 +411,7 @@ export function StaffManager() {
           branchId,
           roleSlug: selectedRole.slug,
           baseRole: selectedRole.baseLevel,
-          permissions: selectedRole.permissions,
+          permissions: { ...selectedRole.permissions, ...devicePermissions },
           active: form.active,
         });
         toast.success(`${form.displayName.trim()} created — ${branchLabel}`);
@@ -860,6 +869,9 @@ export function StaffManager() {
             </div>
           </div>
           {editing && <StaffIdleTimeout person={{key: editing.user_id, name: editing.full_name, kind: "account"}} />}
+          <UserDisplayPermissions devicesOnly compactDevice permissions={{ ...rolePermissions(selectedRole?.baseLevel ?? "cashier"), ...devicePermissions }}
+            onChange={permissions => setForm({ ...form, managementPc: permissions.can_use_management_pc, managementMobile: permissions.can_use_management_mobile })}
+            hidden={hidden} role={form.roleSlug} userId={editing?.user_id ?? ""} admin={selectedRole?.baseLevel === "admin"} busy={busy === "save"} search="" />
           <DialogFooter>
             <Button variant="outline" onClick={() => setFormOpen(false)} disabled={busy === "save"}>
               Cancel
@@ -966,10 +978,6 @@ export function StaffManager() {
             expanded={permissionGroupsOpen}
             onExpandedChange={setPermissionGroupsOpen}
           />}
-          {permissionsFor && <UserDisplayPermissions devicesOnly permissions={permissionsFor.permissions}
-            onChange={permissions => setPermissionsFor({ ...permissionsFor, permissions })}
-            hidden={hidden} role={permissionsFor.role_slug} userId={permissionsFor.user_id}
-            admin={permissionsFor.role === "admin"} busy={busy === "permissions"} search={permissionSearch} />}
           <DialogFooter>
             <Button variant="outline" onClick={() => setPermissionsFor(null)}>
               Cancel

@@ -64,9 +64,17 @@ describe("per-user display and device choices", () => {
   });
   it("renders both device switches and the display controls in the account editor", () => {
     const html = renderToStaticMarkup(createElement(UserDisplayPermissions, { permissions: NO_PERMISSIONS, onChange: () => {}, hidden: {}, role: "cashier", userId: "a", admin: false, busy: false, search: "tax" }));
-    expect(html).toContain("Sign in on management computers");
-    expect(html).toContain("Sign in on management phones and tablets");
+    expect(html).toContain("Sign in on management computer");
+    expect(html).toContain("Sign in on management mobiles and tablet");
     expect(html).toContain("Tax &amp; pricing");
     expect(html).toContain("Inherited");
+  });
+  it("renders compact account device choices without a separate heading or display controls", () => {
+    const html = renderToStaticMarkup(createElement(UserDisplayPermissions, { devicesOnly: true, compactDevice: true, permissions: NO_PERMISSIONS, onChange: () => {}, hidden: {}, role: "cashier", userId: "a", admin: false, busy: false, search: "" }));
+    expect(html).toContain("Sign in on management computer");
+    expect(html).toContain("Sign in on management mobiles and tablet");
+    expect(html).not.toContain("<h3");
+    expect(html).not.toContain("Screen elements");
+    expect(html).not.toContain("rounded-xl border p-4");
   });
 });

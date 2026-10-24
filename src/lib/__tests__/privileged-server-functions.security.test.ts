@@ -42,9 +42,8 @@ describe("privileged server functions", () => {
     }
     expect(migration.match(/FROM PUBLIC, anon, authenticated/g)).toHaveLength(3);
     expect(read("src/lib/pos-permissions.tsx")).not.toContain('.rpc("verify_terminal_pin"');
-    expect(read("src/lib/pos-permissions.tsx")).toContain(
-      'result.manager.role !== "admin" && result.manager.role !== "manager"',
-    );
+    expect(read("src/lib/pos-permissions.tsx")).toContain('permitted({ roleSlug: local.staff.roleSlug, permissions: local.staff.permissions }, pending)');
+    expect(read("src/lib/pos-rules.functions.ts")).toContain('hasPermission({ role: overridePerson.role, roleSlug: overridePerson.role_slug, permissions: overridePerson.permissions }, data.permission)');
     expect(read("src/routes/api/public/security-alerts.ts")).toContain(
       'serviceRest("rpc/security_report_findings"',
     );

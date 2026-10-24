@@ -49,6 +49,7 @@ export type VisibilityElement = {
 
 /** Every element an administrator can hide, grouped by the screen it lives on. */
 export const VISIBILITY_ELEMENTS: VisibilityElement[] = [
+  { key: "shiftclose.openingFloat", label: "Show opening float when closing a shift", blurb: "Requires expected-cash viewing permission as well.", group: "Shift management" },
   ...([
     ["dashboard.revenueSummary", "Revenue summary"],
     ["dashboard.inventorySummary", "Inventory summary"],
