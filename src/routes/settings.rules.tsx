@@ -260,8 +260,7 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
             <div className="min-w-0">
               <h1 className="text-2xl font-semibold">Operational policies</h1>
               <p className="text-sm text-muted-foreground page-description">
-                Configure the branch policy enforced across every register at {currentStore.name}.
-                Saved values stay in force while newer rules are checked quietly in the background.
+                Set trading and shift policies for {currentStore.name}. Individual access is managed in Edit permissions.
               </p>
             </div>
           </div>
@@ -277,13 +276,11 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
         )}
 
         <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
-          <p className="text-muted-foreground">Policies for {currentStore.name}. Assign individual user actions and visible information in Staff &amp; Permissions.</p>
-          <Button variant="outline" size="sm" disabled={checking} onClick={() => void checkRulesNow()}>{checking ? "Loading…" : "Reload saved settings"}</Button>
+          <p className="text-muted-foreground">Refresh reads the latest saved branch rules. It does not save your edits.</p>
+          <Button variant="outline" size="sm" disabled={checking || saving} onClick={() => void checkRulesNow()}><RefreshCw className={`size-4 ${checking ? "animate-spin" : ""}`} />{checking ? "Refreshing…" : "Refresh"}</Button>
         </div>
         {failureText && status !== "LIVE" && <p role="alert" className="text-sm text-destructive">Could not load current saved settings. Check the connection and reload.</p>}
 
-        <ShiftClosingPolicy />
-        <OperationalTablePolicies />
         <section className="rounded-lg border border-border bg-card px-5">
           <div className="flex items-center justify-between gap-3 border-b border-border/60 py-4">
             <div>
@@ -299,7 +296,11 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
               dirtyText="Unsaved rule changes"
             />
           </div>
-          <div className="pt-4"><OperationalRulesPanel canEdit={mayEdit} /></div>
+          <div className="space-y-3 pt-4">
+            <ShiftClosingPolicy />
+            <OperationalRulesPanel canEdit={mayEdit} />
+            <OperationalTablePolicies />
+          </div>
           <SettingsSections
             storageKey="rules"
             items={RULE_GROUPS.filter(group => group.id !== "pin-gates").map((group) => ({

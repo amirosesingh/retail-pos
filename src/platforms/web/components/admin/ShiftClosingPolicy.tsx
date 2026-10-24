@@ -11,8 +11,8 @@ export function ShiftClosingPolicy() {
   const { configuredGlobalSettings, updateGlobalSettings, saveConfiguredSettings, settingsScopeLoading } = usePos();
   const [saving, setSaving] = useState(false);
   if (!isAdmin) return null;
-  return <section className="flex items-center justify-between gap-4 rounded-xl border p-4">
-    <div><h2 className="font-semibold">Allow another authorized user to close the shift</h2><p className="text-sm text-muted-foreground">Company-wide. A user must still have Close shift permission and access to that branch. Both the opening and closing identities are recorded.</p></div>
+  return <section className="flex items-center justify-between gap-3 rounded-md border border-border p-3">
+    <div><h3 className="text-sm font-medium">Allow another authorized user to close the shift</h3><p className="text-xs text-muted-foreground">Company-wide. A user must still have Close shift permission and access to that branch. Both the opening and closing identities are recorded.</p></div>
     <Switch aria-label="Allow another authorized user to close the shift" checked={configuredGlobalSettings.integrations.allowAnyStaffCloseShift === true} disabled={saving || settingsScopeLoading} onCheckedChange={enabled => {
       void (async () => { setSaving(true); try {
         updateGlobalSettings({ integrations: { ...configuredGlobalSettings.integrations, allowAnyStaffCloseShift: enabled } });

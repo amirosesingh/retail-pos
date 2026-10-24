@@ -46,7 +46,7 @@ export function TableColumnRulesPanel({ roles }: { roles: RoleChoice[] }) {
 
   if (!isAdmin) return null;
   return <Dialog open={open} onOpenChange={setOpen}>
-    <DialogTrigger asChild><Button type="button" variant="outline" size="sm"><Columns3 className="mr-2 size-4" />Table columns</Button></DialogTrigger>
+    <DialogTrigger asChild><Button type="button" variant="outline" size="sm"><Columns3 className="mr-2 size-4" />Configure columns</Button></DialogTrigger>
     <DialogContent className="max-h-[85dvh] max-w-xl overflow-y-auto">
       <DialogHeader><DialogTitle>Table columns</DialogTitle><DialogDescription>Choose a table and set visible columns for everyone, a role, or one person. Existing data permissions still control access.</DialogDescription></DialogHeader>
       <div className="grid gap-3 sm:grid-cols-2">
