@@ -41,6 +41,7 @@ import { inventoryMetrics } from "@/lib/inventory-metrics";
 import { AnimatedMetric } from "@/platforms/web/components/pos/AnimatedMetric";
 import { useAuth } from "@/lib/pos-auth";
 import { useVisibility } from "@/lib/ui-visibility";
+import { DisplayElement } from "@/components/shared/DisplayElement";
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({
@@ -211,7 +212,7 @@ function Dashboard() {
 
 
         {reportError && <p role="alert" className="rounded-lg border border-destructive/40 p-3 text-sm text-destructive">Report incomplete: {reportError}</p>}
-        <div role="region" aria-label="Revenue summary" tabIndex={0} className="dashboard-swipe-row no-scrollbar grid min-w-0 grid-flow-col auto-cols-[minmax(10rem,72%)] snap-x snap-mandatory gap-3 overflow-x-auto overscroll-x-contain rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:grid-flow-row md:auto-cols-auto md:grid-cols-4 md:overflow-visible xl:grid-cols-7">
+        <DisplayElement name="dashboard.revenueSummary"><div role="region" aria-label="Revenue summary" tabIndex={0} className="dashboard-swipe-row no-scrollbar grid min-w-0 grid-flow-col auto-cols-[minmax(10rem,72%)] snap-x snap-mandatory gap-3 overflow-x-auto overscroll-x-contain rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:grid-flow-row md:auto-cols-auto md:grid-cols-4 md:overflow-visible xl:grid-cols-7">
           <Kpi label="Revenue today" value={money(revenue)} highlight />
           <Kpi label="Gross revenue" value={money(profit.revenue)} />
           <Kpi label="Total COGS" value={money(profit.cogs)} />
@@ -222,9 +223,9 @@ function Dashboard() {
             value={`${refunds.length} · ${money(refunds.reduce((a, s) => a + Math.abs(s.total), 0))}`}
           />
           <Kpi label="No-sale drawer opens" value={String(todayDrawer.length)} />
-        </div>
+        </div></DisplayElement>
 
-        <section className="rounded-lg border border-border bg-card p-4">
+        <DisplayElement name="dashboard.inventorySummary"><section className="rounded-lg border border-border bg-card p-4">
           <div className="mb-3">
             <h2 className="text-sm font-semibold">Inventory position · {currentStore.name}</h2>
             <p className="text-xs text-muted-foreground">
@@ -249,9 +250,9 @@ function Dashboard() {
               </>
             )}
           </div>
-        </section>
+        </section></DisplayElement>
 
-        <Carousel
+        <DisplayElement name="dashboard.tradingGraphs"><Carousel
           opts={{ align: "start", containScroll: "trimSnaps" }}
           aria-label="Live dashboard graphs"
           // Keep arrow keys inside charts available for Recharts data-point navigation.
@@ -358,9 +359,9 @@ function Dashboard() {
           </CarouselItem>
 
           </CarouselContent>
-        </Carousel>
+        </Carousel></DisplayElement>
 
-        <section className="rounded-lg border border-border bg-card">
+        <DisplayElement name="dashboard.cashierReview"><section className="rounded-lg border border-border bg-card">
           <div className="flex items-center gap-2 px-5 py-3">
             <AlertTriangle className="size-4 text-warning" />
             <h2 className="text-sm font-semibold">Cashier review · today</h2>
@@ -400,9 +401,9 @@ function Dashboard() {
             ))}
             {!cashiers.length && <p className="p-6 text-center text-sm text-muted-foreground">{reportLoading ? "Loading cashier review…" : "No trading recorded today."}</p>}
           </div>
-        </section>
+        </section></DisplayElement>
 
-        <section className="rounded-lg border border-border bg-card">
+        <DisplayElement name="dashboard.drawerHistory"><section className="rounded-lg border border-border bg-card">
           <h2 className="px-5 py-3 text-sm font-semibold">Cash drawer opens without a sale</h2>
           <Separator />
           <Table tableId="routes/dashboard#1" loading={reportLoading}>
@@ -437,9 +438,9 @@ function Dashboard() {
               )}
             </TableBody>
           </Table>
-        </section>
+        </section></DisplayElement>
 
-        <section className="rounded-lg border border-border bg-card">
+        <DisplayElement name="dashboard.splitPayments"><section className="rounded-lg border border-border bg-card">
           <h2 className="px-5 pt-3 text-sm font-semibold">Split payments today</h2>
           <p className="px-5 pb-3 pt-1 text-xs text-muted-foreground">Bills paid in two or more parts, such as cash and card.</p>
           <Separator />
@@ -470,7 +471,7 @@ function Dashboard() {
               )}
             </TableBody>
           </Table>
-        </section>
+        </section></DisplayElement>
       </div>
     </AppShell>
   );

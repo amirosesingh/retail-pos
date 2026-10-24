@@ -3,6 +3,7 @@ import { GlobalRestrictionPanel } from "./GlobalRestrictionPanel";
 import { TableColumnRulesPanel } from "./TableColumnRulesPanel";
 import { getRolesWithPermissions, type RoleDef } from "@/lib/role-admin";
 import { notifyError } from "@/lib/notify";
+import { ShiftClosingPolicy } from "./ShiftClosingPolicy";
 
 export function GlobalPermissionPolicies() {
   const [roles, setRoles] = useState<RoleDef[]>([]);
@@ -12,5 +13,5 @@ export function GlobalPermissionPolicies() {
       .catch(error => { if (active) notifyError(error, "Role defaults could not be loaded"); });
     return () => { active = false; };
   }, []);
-  return <div className="space-y-4"><p className="text-sm text-muted-foreground">Company-wide restrictions apply above each person's permissions. User display choices are managed inside Edit permissions.</p><GlobalRestrictionPanel /><TableColumnRulesPanel roles={roles} /></div>;
+  return <div className="space-y-4"><p className="text-sm text-muted-foreground">Company-wide restrictions apply above each person's permissions. User display choices are managed inside Edit permissions.</p><ShiftClosingPolicy /><GlobalRestrictionPanel /><TableColumnRulesPanel roles={roles} /></div>;
 }

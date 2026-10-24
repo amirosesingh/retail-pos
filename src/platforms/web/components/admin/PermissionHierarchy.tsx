@@ -1,4 +1,6 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
+import type { ReactNode } from "react";
+import { permissionDisplayMatches } from "@/lib/permission-display-groups";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
@@ -18,13 +20,14 @@ type Props = {
   onExpandedChange: (expanded: Set<string>) => void;
   displayRole?: string;
   hidden?: VisibilityMap;
+  renderPageDetails?: (id: string) => ReactNode;
 };
 
-export function PermissionHierarchy({ permissions, onChange, admin, busy, search, expanded, onExpandedChange, displayRole, hidden = {} }: Props) {
+export function PermissionHierarchy({ permissions, onChange, admin, busy, search, expanded, onExpandedChange, displayRole, hidden = {}, renderPageDetails }: Props) {
   const query = search.trim().toLowerCase();
   const toggle = (id: string) => { const next = new Set(expanded); if (next.has(id)) next.delete(id); else next.add(id); onExpandedChange(next); };
   const disabled = admin || busy;
-  const sections = PERMISSION_SECTIONS.map(section => ({ ...section, pages: PERMISSION_PAGES.filter(page => section.pageIds.includes(page.id) && (!query || section.label.toLowerCase().includes(query) || permissionPageMatches(page.id, query))) })).filter(section => section.pages.length);
+  const sections = PERMISSION_SECTIONS.map(section => ({ ...section, pages: PERMISSION_PAGES.filter(page => section.pageIds.includes(page.id) && (!query || section.label.toLowerCase().includes(query) || permissionPageMatches(page.id, query) || permissionDisplayMatches(page.id, query))) })).filter(section => section.pages.length);
   return <div className="space-y-4">
     <p className="text-xs text-muted-foreground">Main section → page → visible information and allowed actions. Page visibility does not grant actions. Each permission has one editable home; references open that control. Branch assignments are unchanged.</p>
     {!sections.length && <p role="status" className="rounded-xl border border-dashed p-5 text-sm text-muted-foreground">No matching pages or permissions.</p>}
@@ -61,7 +64,8 @@ export function PermissionHierarchy({ permissions, onChange, admin, busy, search
                   {!admin && missingEntry.length > 0 && <Button variant="outline" size="sm" className="mt-2" disabled={disabled} onClick={() => onChange(withPageDisplayAccess(grantPageEntry(permissions, page.id), page.routes, true))}>Grant page entry</Button>}
                   <p className="mt-1 text-muted-foreground">Actions below are separate. Role display restrictions also apply.</p>
                 </div>}
-                {subpages.length > 0 && <div className="space-y-2"><h4 className="text-xs font-semibold text-muted-foreground">Subpages sharing this page access</h4><ul className="grid gap-2 sm:grid-cols-2">{subpages.map(item => <li key={`${item.path}#${item.hash ?? ""}`} className="min-w-0 rounded-lg bg-muted/20 px-3 py-2 text-sm"><span className="break-words">{item.label}</span><span className="block break-all text-xs text-muted-foreground">{item.path}{item.hash ? `#${item.hash}` : ""}</span></li>)}</ul><p className="text-xs text-muted-foreground">These subpages share existing access and action checks; they do not have independent grants.</p></div>}
+                {!renderPageDetails && subpages.length > 0 && <div className="space-y-2"><h4 className="text-xs font-semibold text-muted-foreground">Subpages sharing this page access</h4><ul className="grid gap-2 sm:grid-cols-2">{subpages.map(item => <li key={`${item.path}#${item.hash ?? ""}`} className="min-w-0 rounded-lg bg-muted/20 px-3 py-2 text-sm"><span className="break-words">{item.label}</span><span className="block break-all text-xs text-muted-foreground">{item.path}{item.hash ? `#${item.hash}` : ""}</span></li>)}</ul><p className="text-xs text-muted-foreground">These subpages share existing access and action checks; they do not have independent grants.</p></div>}
+                {renderPageDetails?.(page.id)}
                 {!enabled && <p className="text-xs text-muted-foreground">Page access is off. Saved actions remain editable here and can apply on other enabled pages.</p>}
                 <>
                   {!!editable.length && <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs text-muted-foreground">Permissions for {label}</span><div className="flex gap-1"><Button size="sm" variant="ghost" disabled={disabled} onClick={() => onChange(setEditablePageFeatures(permissions, page.id, true))}>Select all</Button><Button size="sm" variant="ghost" disabled={disabled} onClick={() => onChange(setEditablePageFeatures(permissions, page.id, false))}>Deselect all</Button></div></div>}
@@ -83,7 +87,7 @@ export function PermissionHierarchy({ permissions, onChange, admin, busy, search
                       </button>;
                     })}</div>
                   </div>}
-                  {page.id === "approvals" && <div className="rounded-lg bg-muted/30 p-3 text-sm"><p>Show page lets this person open the approvals queue. It does not grant permission to approve requests. Review their role or account under Approval eligibility &amp; limits in this editor. Their branch assignment still applies. Transfer permissions do not grant approval authority.</p></div>}
+                  {page.id === "approvals" && <p className="text-xs text-muted-foreground">Show page controls access to the approvals queue. Decisions follow the separate Approver rules and this person's branch scope.</p>}
                   {!editable.length && !related.length && <p className="text-xs text-muted-foreground">This page has no separate configurable actions.</p>}
                 </>
               </div>}

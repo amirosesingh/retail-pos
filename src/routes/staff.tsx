@@ -68,7 +68,7 @@ export function StaffPermissionsPanel() {
           <TabsList className="h-auto min-h-9 max-w-full justify-start overflow-x-auto overflow-y-hidden scrollbar-none">
             <TabsTrigger value="accounts"><Users className="mr-1.5 size-4" aria-hidden />People &amp; permissions</TabsTrigger>
             <TabsTrigger value="roles"><ShieldCheck className="mr-1.5 size-4" aria-hidden />Role defaults</TabsTrigger>
-            {accessAllowed && <TabsTrigger value="approvals"><ShieldCheck className="mr-1.5 size-4" aria-hidden />Approval rules</TabsTrigger>}
+            {accessAllowed && <TabsTrigger value="approvals"><ShieldCheck className="mr-1.5 size-4" aria-hidden />Approver rules</TabsTrigger>}
             {isAdmin && <TabsTrigger value="access"><Eye className="mr-1.5 size-4" aria-hidden />Global policies</TabsTrigger>}
           </TabsList>
           <TabsContent value="accounts" className="pt-4">

@@ -49,6 +49,14 @@ export type VisibilityElement = {
 
 /** Every element an administrator can hide, grouped by the screen it lives on. */
 export const VISIBILITY_ELEMENTS: VisibilityElement[] = [
+  ...([
+    ["dashboard.revenueSummary", "Revenue summary"],
+    ["dashboard.inventorySummary", "Inventory summary"],
+    ["dashboard.tradingGraphs", "Trading graphs"],
+    ["dashboard.cashierReview", "Cashier review"],
+    ["dashboard.drawerHistory", "Cash drawer opening history"],
+    ["dashboard.splitPayments", "Split payments summary"],
+  ] as const).map(([key, label]) => ({ key, label, blurb: `Show ${label.toLowerCase()} on the live dashboard.`, group: "Business overview" })),
   {
     key: "workspace.shiftStatus",
     label: "Workspace shift status",

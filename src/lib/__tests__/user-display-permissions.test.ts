@@ -6,8 +6,28 @@ import { userElementVisible, userRouteVisible, withPageDisplayAccess } from "../
 import { tableColumnHidden } from "../table-column-policy";
 import { managementDeviceAllowed } from "../management-device-access";
 import { UserDisplayPermissions } from "@/platforms/web/components/admin/UserDisplayPermissions";
+import { elementPermissionPage, tablePermissionPage, displayElementsForPage } from "../permission-display-groups";
+import { PERMISSION_PAGES } from "../permission-pages";
+import { TABLE_CATALOG } from "../table-catalog";
 
 describe("per-user display and device choices", () => {
+  it("puts every registered table under one existing page and settings under Settings", () => {
+    for (const table of TABLE_CATALOG) expect(PERMISSION_PAGES.some(page => page.id === tablePermissionPage(table.id)), table.id).toBe(true);
+    expect(tablePermissionPage("routes/dashboard#1")).toBe("dashboard");
+    expect(tablePermissionPage("routes/approvals.native#1")).toBe("approvals");
+    expect(tablePermissionPage("platforms/web/components/pos/MemberHistoryDialog.native#1")).toBe("members");
+    expect(displayElementsForPage("settings").every(item => elementPermissionPage(item) === "settings")).toBe(true);
+    expect(displayElementsForPage("dashboard").map(item => item.key)).toContain("dashboard.tradingGraphs");
+  });
+  it("renders only the chosen page's nested controls", () => {
+    const render = (pageId: string) => renderToStaticMarkup(createElement(UserDisplayPermissions, { pageId, permissions: NO_PERMISSIONS, onChange: () => {}, hidden: {}, role: "cashier", userId: "a", admin: false, busy: false, search: "" }));
+    const settings = render("settings");
+    expect(settings).toContain("Settings subpages");
+    expect(settings).toContain("Tax &amp; pricing");
+    expect(settings).not.toContain("Revenue summary");
+    expect(render("dashboard")).toContain("Revenue summary");
+    expect(render("dashboard")).not.toContain("Tax &amp; pricing");
+  });
   it("replaces a legacy whole-page restriction only after an explicit page edit", () => {
     const hidden = { "sales.heldOrders": ["cashier"] };
     expect(userRouteVisible(hidden, "/holds", "cashier", NO_PERMISSIONS)).toBe(false);

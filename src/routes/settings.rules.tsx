@@ -20,7 +20,6 @@ import { notifyError } from "@/lib/notify";
 import { SettingsShell } from "@/platforms/web/components/pos/settings/SettingsShell";
 import { SaveIndicator } from "@/platforms/web/components/pos/settings/SaveIndicator";
 import { SettingsSections } from "@/platforms/web/components/pos/settings/SettingsSection";
-import { AuthorizationRulesPanel } from "@/platforms/web/components/pos/settings/AuthorizationRulesPanel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -78,8 +77,7 @@ function RulesSettings() {
     rowVersion,
   } = usePosRules();
 
-  const { currentStore, configuredGlobalSettings, updateGlobalSettings, saveConfiguredSettings, settingsScopeLoading } = usePos();
-  const [savingClosePolicy, setSavingClosePolicy] = useState(false);
+  const { currentStore } = usePos();
   const { isAdmin, can } = useAuth();
   const mayEdit = isAdmin || can("can_access_pos_settings");
 
@@ -315,17 +313,6 @@ function RulesSettings() {
           )}
         </header>
 
-        {isAdmin && <div className="flex items-center justify-between gap-4 rounded-lg border p-4">
-          <div><h2 className="font-semibold">Allow another authorized user to close the shift</h2>
-            <p className="text-sm text-muted-foreground">Company-wide. Any signed-in user with Close shift permission can close a shift in their branch, including one opened by someone else. Both identities are recorded.</p></div>
-          <Switch aria-label="Allow another authorized user to close the shift" checked={configuredGlobalSettings.integrations.allowAnyStaffCloseShift === true} disabled={savingClosePolicy || settingsScopeLoading} onCheckedChange={enabled => {
-            void (async () => {setSavingClosePolicy(true);try {
-              updateGlobalSettings({integrations:{...configuredGlobalSettings.integrations,allowAnyStaffCloseShift:enabled}});
-              await saveConfiguredSettings();toast.success("Shift closing policy saved");
-            } catch(error) {notifyError(error,"Saving shift closing policy");} finally {setSavingClosePolicy(false);}})();
-          }} />
-        </div>}
-
         {!mayEdit && (
           <p className="rounded-md border border-border bg-card p-4 text-sm text-muted-foreground">
             You can see what is enforced, but changing rules requires the POS settings permission.
@@ -451,13 +438,6 @@ function RulesSettings() {
             }))}
           />
         </section>
-
-        <AuthorizationRulesPanel
-          storeId={currentStore.id}
-          storeName={currentStore.name}
-          mayEdit={mayEdit}
-          canEditGlobal={isAdmin}
-        />
 
         <details className="rounded-lg border border-border bg-card p-4">
           <summary className="cursor-pointer text-sm font-medium">Fallback PIN requirements</summary>
