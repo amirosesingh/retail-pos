@@ -58,6 +58,7 @@ import { recordDiagnostic, reasonCode } from "@/lib/diagnostics";
 import {
   failureFromAuthError,
   failureFromReadiness,
+  localCashierLoginFailure,
   loginFailureMessage,
   type LoginFailure,
 } from "@/lib/login-failure";
@@ -829,6 +830,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (payload?.ok) verified = payload;
           else {
             failure = payload?.error ?? "";
+            if (payload?.code === "identity_mismatch")
+              return { ok: false, code: "session-open-failed", error: failure || "The verified cashier identity needs administrator repair." };
+            if (payload?.code === "locked")
+              return { ok: false, code: "unknown-error", error: failure || "Too many attempts. Please wait before trying again." };
             // A server that cannot reach the central database (missing key,
             // 5xx, gateway) has not rejected anyone — fall through to the local
             // database. A 401 is a real rejection and must stay one.
@@ -862,7 +867,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } else if (local.reason === "inactive") {
           return { ok: false, error: "Account deactivated" };
         } else if (window.pos) {
-          return { ok: false, error: local.reason === "locked" ? "Too many attempts. Please wait before trying again." : local.reason === "invalid" ? "Invalid username or PIN" : "Offline sign-in is unavailable. Connect and sync this account’s sign-in PIN to the local SQL database first." };
+          return localCashierLoginFailure(local.reason);
         } else {
           // Tier 2: the browser-storage verifier kept by earlier builds.
           const cached = await verifyCachedPin(code, pin);
@@ -950,6 +955,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Retire requests made by the previous person before storing this
       // verified login; their late rejection must not clear the new tokens.
       bumpSessionEpoch();
+      // A fresh PIN login must replace the previous person's raw credentials.
+      clearStoredCredentials();
       let desktopRelaySessionReady = false;
       try {
         let cashierToken = verified?.cashierToken ?? "";
@@ -1199,9 +1206,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         metaRole:
           terminalUser.role === "admin"
             ? "admin"
-            : terminalUser.role === "manager"
-              ? "supervisor"
-              : ((terminalUser.roleSlug as MetaRole | null | undefined) ?? "cashier"),
+            : ((terminalUser.roleSlug as MetaRole | null | undefined) ??
+              (terminalUser.role === "manager" ? "supervisor" : "cashier")),
         roles: [terminalUser.role],
         storeId: isLocalAdmin ? null : terminalUser.storeId,
         permissions: terminalUserPermissions(terminalUser),

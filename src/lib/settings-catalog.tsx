@@ -350,13 +350,14 @@ export const SETTINGS_CARDS: SettingsCard[] = [
   },
   {
     id: "rules",
-    label: "POS rules & enforcement",
+    label: "Operational policies",
     blurb: "Shift, discount, refund and terminal security limits.",
     icon: ShieldCheck,
-    category: "pos-rules",
+    category: "people",
     scope: "company",
-    to: "/settings/rules",
-    panel: page(() => import("@/routes/settings.rules")),
+    to: "/staff?tab=policies",
+    panel: lazy(() => import("@/routes/staff").then(module => ({ default: () => <module.StaffPermissionsPanel defaultTab="policies" /> }))),
+    raw: true,
   },
   {
     id: "sku",
@@ -496,19 +497,9 @@ export const SETTINGS_CARDS: SettingsCard[] = [
     panel: page(() => import("@/routes/settings.database")),
   },
   {
-    id: "shift-alerts",
-    label: "Shift alerts",
-    blurb: "How the day-end summary reaches this device.",
-    icon: Activity,
-    category: "notifications",
-    scope: "branch",
-    to: "/settings/shift-alerts",
-    panel: page(() => import("@/routes/settings.shift-alerts")),
-  },
-  {
     id: "notifications",
-    label: "Notification delivery",
-    blurb: "Which events raise an alert and how they are delivered.",
+    label: "Notification rules",
+    blurb: "Events, conditions, users, roles, branches and delivery history, including shift alerts.",
     icon: MessageCircle,
     category: "notifications",
     scope: "company",
@@ -604,6 +595,14 @@ export const SETTINGS_CARDS: SettingsCard[] = [
 export function settingsCard(id: string | undefined | null): SettingsCard | null {
   if (!id) return null;
   return SETTINGS_CARDS.find((c) => c.id === id) ?? null;
+}
+
+const legacyPoliciesPanel = page(() => import("@/routes/settings.rules"));
+/** Moving the workspace must not require policy operators to receive staff access. */
+export function settingsCardForStaffAccess(card: SettingsCard, managesStaff: boolean): SettingsCard {
+  return card.id === "rules" && !managesStaff
+    ? { ...card, to: "/settings/rules", panel: legacyPoliciesPanel, raw: false }
+    : card;
 }
 
 /** Same option in two categories would be a navigation bug — surfaced in Logic health. */

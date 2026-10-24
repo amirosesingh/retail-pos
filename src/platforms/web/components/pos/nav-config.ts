@@ -174,6 +174,7 @@ const originalGroups: NavGroup[] = [
     hubTo: "/inventory-hub",
     blurb: "Catalog, purchasing, transfers and approvals.",
     items: [
+      {to:"/sponsorship",label:"Sponsorship",icon:PackageSearch,flag:"can_view_sponsorship",keywords:"sponsor free issue recipient donation",blurb:"Request approval, hand over sponsored products and print the receipt."},
       {
         to: "/inventory",
         label: "Inventory Catalog",

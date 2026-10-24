@@ -20,15 +20,14 @@ describe("Supabase sync replay locking", () => {
     expect(migration).toContain("replace(pg_get_functiondef(signature), E'\\r\\n', E'\\n')");
     expect(migration).toContain("pos-sync-batch:");
     const lockPattern = new RegExp(lock.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");
-    expect(schema.match(lockPattern)).toHaveLength(2);
-
-    const lockOffsets = [...schema.matchAll(lockPattern)].map((match) => match.index);
-    const receiptOffsets = [...schema.matchAll(/SELECT payload_hash INTO v_prior/g)].map(
-      (match) => match.index,
-    );
-    expect(receiptOffsets).toHaveLength(2);
-    expect(lockOffsets[0]).toBeLessThan(receiptOffsets[0]);
-    expect(lockOffsets[1]).toBeLessThan(receiptOffsets[1]);
+    const definitions = [...schema.matchAll(/CREATE OR REPLACE FUNCTION public\.pos_sync_push_(?:batch|aggregate)\([\s\S]*?END \$fn\$;/g)];
+    expect(definitions.length).toBeGreaterThanOrEqual(2);
+    // The installer also includes additive upgrade definitions. Every version
+    // must acquire the replay lock before checking an idempotency receipt.
+    for (const [definition] of definitions) {
+      expect(definition.match(lockPattern)).toHaveLength(1);
+      expect(definition.indexOf(lock)).toBeLessThan(definition.indexOf("SELECT payload_hash INTO v_prior"));
+    }
   });
 
   it("keeps fresh installs on the byte-safe incremental pull limit", () => {

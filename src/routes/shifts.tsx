@@ -69,7 +69,7 @@ export const Route = createFileRoute("/shifts")({
 
 function Shifts() {
   const { state, activeShift, openShift, currentStore, stores } = usePos();
-  const { user, isAdmin, isSupervisor, can } = useAuth();
+  const { user, isAdmin, can } = useAuth();
   const { requirePermission } = useUserPermissions();
   const { rules } = usePosRules();
   const { authorize, rules: authorizationRules } = useManagerGate();
@@ -179,10 +179,10 @@ function Shifts() {
     (state.settings.integrations.allowAnyStaffCloseShift === true && can("can_close_shift"));
   const overdueNow = activeShift ? isShiftOverdue(activeShift, defaultTradingHours) : false;
 
-  /* Mid-shift snapshot: supervisors always, cashiers only when switched on. */
+  /* Viewing financial data and printing reports are independently assigned. */
   const mayPrintXReport =
     (isAdmin || can("can_shift_financial_summary_view")) &&
-    (isAdmin || isSupervisor || rules.enable_cashier_x_report);
+    (isAdmin || can("can_shift_report_reprint"));
   const storeIndex = stores.findIndex((s) => s.id === currentStore.id);
   const storeLabel = `Store ${storeIndex + 1}`;
 

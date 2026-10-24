@@ -356,7 +356,8 @@
     ],
     "keys": [
       "can_manage_terminals",
-      "can_use_management_mobile"
+      "can_use_management_mobile",
+      "can_use_management_pc"
     ]
   },
   {
@@ -388,6 +389,7 @@
     ],
     "keys": []
   },
+  {"id":"sponsorship","label":"Sponsorship","routes":["/sponsorship"],"keys":["can_view_sponsorship","can_create_sponsorship","can_approve_sponsorship","can_issue_sponsorship"]},
   {
     "id": "alerts",
     "label": "Alerts",

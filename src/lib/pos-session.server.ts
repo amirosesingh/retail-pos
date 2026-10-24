@@ -15,15 +15,15 @@ function secret(): Buffer {
 
 const b64 = (s: string) => Buffer.from(s, "utf8").toString("base64url");
 
-export function signCashierSession(payload: { id: string; username: string; storeId: string }): string {
+export function signCashierSession(payload: { id: string; username: string; storeId: string; sessionToken: string }): string {
   const body = b64(JSON.stringify({ ...payload, exp: Date.now() + TTL_MS }));
   const sig = createHmac("sha256", secret()).update(body).digest("base64url");
   return `${body}.${sig}`;
 }
 
-export function verifyCashierSession(
+export async function verifyCashierSession(
   token: string,
-): { id: string; username: string; storeId: string } | null {
+): Promise<{ id: string; username: string; storeId: string; sessionToken: string } | null> {
   const [body, sig] = (token || "").split(".");
   if (!body || !sig) return null;
   const expected = createHmac("sha256", secret()).update(body).digest("base64url");
@@ -36,9 +36,18 @@ export function verifyCashierSession(
       username: string;
       storeId: string;
       exp: number;
+      sessionToken?: string;
     };
     if (!parsed.exp || parsed.exp < Date.now() || !parsed.storeId) return null;
-    return { id: parsed.id, username: parsed.username, storeId: parsed.storeId };
+    // Unbound legacy proofs must be renewed with a PIN. Omitting a raw token
+    // must not bypass the login's remote revocation or idle expiry.
+    if (!parsed.sessionToken) return null;
+    const { touchSession } = await import("./session-guard.server");
+    const checked = await touchSession(parsed.sessionToken);
+    if (!checked.ok || checked.session.kind !== "cashier" ||
+        checked.session.staff_user_id !== parsed.username ||
+        checked.session.branch_id !== parsed.storeId) return null;
+    return { id: parsed.id, username: parsed.username, storeId: parsed.storeId, sessionToken: parsed.sessionToken };
   } catch {
     return null;
   }

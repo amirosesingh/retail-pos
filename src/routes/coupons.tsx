@@ -1,4 +1,5 @@
 import { copyText } from "@/platform-config/clipboard";
+import { subscribePageDataRefresh } from "@/lib/page-data-refresh";
 import { formatDate as posDisplayDate } from "@/lib/time-zone";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -140,7 +141,8 @@ function CouponsPage() {
   }, []);
 
   useEffect(() => {
-    if (mayManage) void refresh();
+    if (!mayManage) return;
+    return subscribePageDataRefresh(refresh, ["coupon_campaigns", "issued_vouchers", "coupon_events"], { initial: true, allowOffline: true });
   }, [refresh, mayManage]);
 
   /** Pull the next page of the event trail without re-reading the ones on screen. */

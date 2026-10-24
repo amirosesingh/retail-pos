@@ -60,6 +60,9 @@ function VoucherPage() {
 
   useEffect(() => {
     let alive = true;
+    setLoading(true);
+    setView(null);
+    setError("");
     loadVoucherByToken(tokenSlug)
       .then((v) => {
         if (!alive) return;

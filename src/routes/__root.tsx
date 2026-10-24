@@ -380,8 +380,8 @@ function RootComponent() {
         <NativeWindowFrame>
         {customerDisplay ? <Outlet /> : <>
         <NativeConnectionIndicator />
-        {/* Beta testers can update before provisioning a terminal or signing in. */}
-        {RELEASE_CHANNEL === "beta" && <AppUpdateNotices />}
+        {/* Native updates stay available before setup and sign-in on either channel. */}
+        <AppUpdateNotices />
         <NativeBoot>
           <ConnectionProfileBoot>
             <TerminalConnectionSetup>
@@ -446,7 +446,6 @@ function TillRuntime() {
               </PrivilegeGate>
             </FirstRunSetup>
 
-            {RELEASE_CHANNEL !== "beta" && <AppUpdateNotices />}
             <DesktopCloseSyncStatus />
             <ErrorNotifier />
           </RulesBridge>

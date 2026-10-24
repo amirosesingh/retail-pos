@@ -66,7 +66,7 @@ describe("online approval primary database", () => {
     const engine = source("src/lib/sync-engine.ts");
     const centre = source("src/lib/approval-centre.ts");
 
-    expect(route).toContain("subscribeApprovals(load, { allBranches, branchId: storeId })");
+    expect(route).toContain("subscribeApprovals(load, { allBranches, branchId: me?.branchId || storeId })");
     expect(route).toContain("void syncNow(`approval-decision:");
     expect(engine).toMatch(/LIVE_TABLES[\s\S]*"authorization_requests"/);
     expect(centre).toContain("subscribeOwnedPostgresChanges(");
@@ -164,9 +164,11 @@ describe("online approval primary database", () => {
     expect(panel).toContain("<SettingsSections");
     expect(panel).toContain("<RuleConfigurationDialog");
     expect(panel).not.toContain("Status / configuration summary");
-    expect(panel).toContain("Additional people (");
+    expect(panel).toContain('roles.length ? "Additional people" : "Selected people"');
+    expect(panel).toContain("Use specific people only");
+    expect(panel.match(/const WIRED_ACTIONS = new Set\(\[([\s\S]*?)\]\)/)?.[1]).toContain('"sponsorship"');
     expect(panel).toContain("Excluded people (");
-    expect(panel).toContain("options={AUTH_MODES.map");
+    expect(panel).toContain("options={AUTH_MODES.filter");
     expect(panel).toContain("mode: mode ?? existing.mode");
     expect(panel).not.toContain('mode.value !== "either"');
     expect(panel).toContain("Complete the highlighted settings before saving");

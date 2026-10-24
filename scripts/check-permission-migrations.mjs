@@ -77,5 +77,19 @@ try {
   await policy(flags); await as(manager); await db.exec("SET ROLE authenticated");
   assert.deepEqual((await db.query("SELECT id FROM public.products")).rows, [], "unauthorized records never leave database");
   await db.exec("RESET ROLE");
-  console.log("PASS: PostgreSQL global restrictions, administrator exception, supervisor limits, override rejection, restoration, branch preservation and inactive account checks");
+  await as(admin);
+  await db.exec(await readFile(new URL("../supabase/migrations/20261024073000_retire_global_permission_restrictions.sql", import.meta.url), "utf8"));
+  await as(manager);
+  assert.equal(await has("can_view_inventory"), false, "retirement preserves current effective account denials");
+  await db.query("UPDATE public.app_users SET permissions=permissions || $2::jsonb WHERE id=$1", [manager, JSON.stringify({ can_view_inventory: true, "page:inventory": true })]);
+  assert.equal(await has("can_view_inventory"), true, "account edits are no longer overwritten by hidden global policy");
+  assert.equal(await has("can_adjust_stock"), false, "retirement preserves unrelated individual denials");
+  assert.equal((await db.query("SELECT store_id FROM public.app_users WHERE id=$1", [manager])).rows[0].store_id, "branch-a");
+  assert.equal((await db.query("SELECT to_regprocedure('public.set_global_permission_restrictions(text[])') value")).rows[0].value, null);
+  assert.equal((await db.query("SELECT count(*)::int n FROM private.global_permission_audit")).rows[0].n > 0, true, "historical audits are retained");
+  await db.exec("SET ROLE authenticated");
+  assert.deepEqual((await db.query("SELECT id FROM public.products")).rows, [{ id: 1 }], "branch read isolation survives policy retirement");
+  await assert.rejects(db.query("SELECT pin_hash FROM public.app_users"), /permission denied/);
+  await db.exec("RESET ROLE");
+  console.log("PASS: PostgreSQL permission policy lifecycle, retirement, editable account permissions, audit retention, branch isolation and credential protection");
 } finally { await db.close(); }

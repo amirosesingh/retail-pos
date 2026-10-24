@@ -4,7 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { SettingsTabs } from "@/platforms/web/components/pos/settings/SettingsTabs";
-import { SettingsFrame } from "@/platforms/web/components/pos/settings/SettingsFrame";
+import { SettingsFrame, useSettingsCtx } from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -40,7 +40,12 @@ export const Route = createFileRoute("/settings/numbering")({
 });
 
 function NumberingPage() {
-  const { state, updateSettings } = usePos();
+  return <SettingsFrame title="Bill numbering" description="Receipt numbers contain branch, platform, till, date and sequence. Assign each device a different till number within its branch and platform."><NumberingForm /></SettingsFrame>;
+}
+
+function NumberingForm() {
+  const { state } = usePos();
+  const { updateSettings } = useSettingsCtx();
   const it = state.settings.integrations;
   const cfg = it.billNumbering ?? {};
   const [till, setTill] = useState(
@@ -63,10 +68,7 @@ function NumberingPage() {
   const tillError = !/^\d{1,2}$/.test(till) || Number(till) < 1 ? "Enter 01 to 99." : "";
 
   return (
-    <SettingsFrame
-      title="Bill numbering"
-      description="Receipt numbers contain branch, platform, till, date and sequence. Assign each device a different till number within its branch and platform."
-    >
+    <>
       <SettingsTabs current="/settings/numbering" />
 
       <div className="space-y-5">
@@ -149,6 +151,6 @@ function NumberingPage() {
           </div>
         </div>
       </div>
-    </SettingsFrame>
+    </>
   );
 }

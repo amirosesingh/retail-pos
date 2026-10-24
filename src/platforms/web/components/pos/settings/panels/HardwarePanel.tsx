@@ -4,7 +4,8 @@
  */
 import { useEffect, useState } from "react";
 import { MonitorCog } from "lucide-react";
-import { ReceiptPrinterSettings } from "@/platforms/web/components/pos/ReceiptPrinterSettings";
+import { Link } from "@tanstack/react-router";
+import { Button } from "@/components/ui/button";
 import { activeBranchName } from "@/lib/active-branch";
 import { ENGINE_LABEL, storageEngine } from "@/lib/telemetry";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
@@ -46,7 +47,7 @@ export function HardwarePanel() {
         </p>
       </section>
 
-      <ReceiptPrinterSettings />
+      <Button variant="outline" asChild><Link to="/settings/printer">Configure receipt printer and cash drawer</Link></Button>
     </>
   );
 }

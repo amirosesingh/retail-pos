@@ -1,14 +1,30 @@
 import { subscribeBackgroundRefresh } from "./background-refresh";
 import { subscribeSalesChange } from "./sync-engine";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { PAGE_DATA_CACHE, pageDataScope } from "./page-data-cache";
 import { loadSalesPage } from "@/core/api/pos-db";
 import type { Sale } from "@/core/types/pos-types";
 import { uniqueSales } from "./sale-identity";
 import { canonicalBranchId } from "./branch-id";
 import { useAuth } from "./pos-auth";
-import { sessionEpoch } from "./session-epoch";
 
 import { effectiveTimeZone, inPosDayRange, reportScanStart as dayStart, reportScanEnd as dayEnd } from "./time-zone";
+
+const reportReaders = new WeakMap<QueryClient, Map<string, number>>();
+function retainReportRead(client: QueryClient, key: string) {
+  let readers = reportReaders.get(client);
+  if (!readers) { readers = new Map(); reportReaders.set(client, readers); }
+  readers.set(key, (readers.get(key) ?? 0) + 1);
+  return () => {
+    const remaining = (readers!.get(key) ?? 1) - 1;
+    if (remaining > 0) readers!.set(key, remaining);
+    else {
+      readers!.delete(key);
+      void client.cancelQueries({ queryKey: ["report-sales", key], exact: true });
+    }
+  };
+}
 
 /**
  * Date-bounded, keyset-paged report history.
@@ -25,6 +41,7 @@ export function useReportSales(
   enabled = true,
 ): { sales: Sale[]; loading: boolean; refreshing: boolean; error: string } {
   const { ready, user } = useAuth();
+  const queryClient = useQueryClient();
   enabled = enabled && ready && Boolean(user);
   const reportZone = effectiveTimeZone();
   const storeKey = storeIds.filter(Boolean).map(canonicalBranchId).sort().join("|");
@@ -40,6 +57,7 @@ export function useReportSales(
     });
   }, [seed, storeIds, from, to, reportZone]);
   const [revision, setRevision] = useState(0);
+  const completedRevision = useRef(0);
   const refreshState = useRef({ running: false, queued: false });
   useEffect(() => {
     if (!enabled) return;
@@ -68,14 +86,16 @@ export function useReportSales(
       offCatchup();
     };
   }, [enabled, storeKey]);
-  const [loaded, setLoaded] = useState<{ key: string; rows: Sale[] } | null>(null);
+  const rangeKey = JSON.stringify([pageDataScope(user), storeKey, from, to, reportZone]);
+  const cachedRows = enabled ? queryClient.getQueryData<Sale[]>(["report-sales", rangeKey]) : undefined;
+  const [loaded, setLoaded] = useState<{ key: string; rows: Sale[] } | null>(cachedRows ? { key: rangeKey, rows: cachedRows } : null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const rangeKey = JSON.stringify([user?.staffId, sessionEpoch(), storeKey, from, to, reportZone]);
 
   useEffect(() => {
     let cancelled = false;
     if (!enabled) return;
+    const releaseRead = retainReportRead(queryClient, rangeKey);
     const ids = storeKey ? storeKey.split("|") : [""];
     const start = dayStart(from);
     const end = dayEnd(to);
@@ -86,29 +106,45 @@ export function useReportSales(
 
     void (async () => {
       try {
-        const found: Sale[] = [];
-        for (const storeId of ids) {
-          if (cancelled) return;
-          let cursor: { ts: string; id: string } | null = null;
-          for (;;) {
-            if (cancelled) return;
-            const page = await loadSalesPage(storeId, cursor, 500, {
-              from: new Date(start).toISOString(), to: new Date(end).toISOString(),
-            });
-            if (cancelled) return;
-            for (const sale of page.rows) {
-              const at = Date.parse(sale.createdAt);
-              if (at >= start && at <= end && inPosDayRange(sale.createdAt, from, to, reportZone) &&
-                (!storeKey || ids.some(id => canonicalBranchId(id) === canonicalBranchId(sale.storeId)))) found.push(sale);
+        const found = await queryClient.fetchQuery({
+          queryKey: ["report-sales", rangeKey],
+          meta: { tables: ["sales", "sale_items", "payment_transactions"] },
+          ...PAGE_DATA_CACHE,
+          retry: false,
+          // A change hint or reconciliation must recheck authority-backed rows;
+          // navigating back to a fresh unchanged range can reuse its snapshot.
+          staleTime: revision > completedRevision.current ? 0 : PAGE_DATA_CACHE.staleTime,
+          queryFn: async ({ signal }) => {
+            const found: Sale[] = [];
+            for (const storeId of ids) {
+              let cursor: { ts: string; id: string } | null = null;
+              for (;;) {
+                if (signal.aborted) throw new Error("Report read cancelled");
+                const page = await loadSalesPage(storeId, cursor, 500, {
+                  from: new Date(start).toISOString(), to: new Date(end).toISOString(),
+                });
+                if (signal.aborted) throw new Error("Report read cancelled");
+                for (const sale of page.rows) {
+                  const at = Date.parse(sale.createdAt);
+                  if (at >= start && at <= end && inPosDayRange(sale.createdAt, from, to, reportZone) &&
+                    (!storeKey || ids.some(id => canonicalBranchId(id) === canonicalBranchId(sale.storeId)))) found.push(sale);
+                }
+                const oldest = page.rows.at(-1);
+                if (!page.hasMore || !page.cursor || !oldest || Date.parse(oldest.createdAt) < start)
+                  break;
+                if (cursor?.ts === page.cursor.ts && cursor.id === page.cursor.id) break;
+                cursor = page.cursor;
+              }
             }
-            const oldest = page.rows.at(-1);
-            if (!page.hasMore || !page.cursor || !oldest || Date.parse(oldest.createdAt) < start)
-              break;
-            if (cursor?.ts === page.cursor.ts && cursor.id === page.cursor.id) break;
-            cursor = page.cursor;
-          }
+            return found;
+          },
+        });
+        if (!cancelled) {
+          // Consume this refresh only after success. Keeping revision > 0 as a
+          // permanent force flag made every later range revisit bypass cache.
+          completedRevision.current = revision;
+          setLoaded({ key: rangeKey, rows: found });
         }
-        if (!cancelled) setLoaded({ key: rangeKey, rows: found });
       } catch (reason) {
         if (!cancelled)
           setError((reason as Error).message || "Could not load the full report history");
@@ -122,8 +158,9 @@ export function useReportSales(
     })();
     return () => {
       cancelled = true;
+      releaseRead();
     };
-  }, [from, to, storeKey, rangeKey, revision, enabled, reportZone]);
+  }, [from, to, storeKey, rangeKey, revision, enabled, reportZone, queryClient]);
 
   const sales = useMemo(() => {
     // Live committed state wins over an older page snapshot (for example a refund).

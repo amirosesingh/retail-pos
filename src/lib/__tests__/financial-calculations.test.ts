@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CartLine, Product, Sale } from "@/core/types/pos-types";
-import { lineCost, lineRevenue, profitOf, saleLineRevenues, saleNetRevenue } from "@/core/pricing/profit";
+import { hourlyProfit, lineCost, lineRevenue, profitOf, saleLineRevenues, saleNetRevenue } from "@/core/pricing/profit";
 import { soldLines, sumLines } from "@/lib/sales-analytics";
 
 const product: Product = {
@@ -48,6 +48,37 @@ const sale = (patch: Partial<Sale> = {}): Sale => ({
 });
 
 describe("financial reporting authority", () => {
+  it("indexes the catalogue once for a large batch while preserving legacy cost and first-match metadata", () => {
+    let reads = 0;
+    const products = Array.from({ length: 2000 }, (_, index) => ({
+      ...product,
+      get id() { reads++; return `p${index}`; },
+    }));
+    products.push({ ...product, id: "p1999", cost: 999, sku: "duplicate" });
+    const lines = Array.from({ length: 1000 }, () => line({ productId: "p1999", cost: undefined }));
+    const bill = sale({ lines });
+    const rows = soldLines([bill], products);
+    expect(rows).toHaveLength(1000);
+    expect(rows.every(row => row.cost === 90 && row.sku === "SKU-1" && row.estimatedCost)).toBe(true);
+    expect(reads).toBeLessThanOrEqual(6000);
+    reads = 0;
+    expect(profitOf([bill], products).cogs).toBe(90000);
+    expect(reads).toBeLessThanOrEqual(6000);
+    reads = 0;
+    expect(hourlyProfit([bill], products, () => 10)[10].cogs).toBe(90000);
+    expect(reads).toBeLessThanOrEqual(6000);
+    // No index survives a calculation: new product costs are seen on the next read.
+    products[1999].cost = 80;
+    expect(profitOf([bill], products).cogs).toBe(80000);
+  });
+
+  it("retains captured zero costs, missing products and returns in indexed reports", () => {
+    const bill = sale({ lines: [line({ cost: 0 }), line({ cost: undefined, qty: -2 }),
+      line({ productId: "missing", cost: undefined })] });
+    expect(soldLines([bill], [product]).map(row => row.cost)).toEqual([0, -180, 0]);
+    expect(profitOf([bill], [product]).cogs).toBe(-180);
+  });
+
   it("uses the stored cost snapshot even when it is zero", () => {
     expect(lineCost(line({ cost: 0 }), [product])).toBe(0);
     expect(lineCost(line({ cost: undefined }), [product])).toBe(90);

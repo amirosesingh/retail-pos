@@ -1,4 +1,5 @@
 import { usePos } from "@/lib/pos-store";
+import { useSettingsCtx } from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { useEffect, useState } from "react";
 import { Printer, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -22,7 +23,8 @@ import { boundedInputNumber } from "@/lib/number-input";
 /** Terminal-local receipt printer choice used for silent printing and the
  *  raw cash-drawer pulse. Only meaningful inside the Windows desktop shell. */
 export function ReceiptPrinterSettings() {
-  const { state, updateSettings } = usePos();
+  const { state } = usePos();
+  const { updateSettings } = useSettingsCtx();
   return <PrinterControls shared={state.settings.integrations.receiptPrinter}
     onSave={(next) => updateSettings({ integrations: { ...state.settings.integrations, receiptPrinter: next } })}
     paper={state.settings.receipt.paper}

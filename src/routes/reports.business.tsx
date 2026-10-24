@@ -69,7 +69,8 @@ type CashierRow = {
 
 function BusinessReport() {
   const { state, stores } = usePos();
-  const { user } = useAuth();
+  const { user, can } = useAuth();
+  const showCostMargin = can('can_view_cost_margin');
   const init = defaultRange(30);
   const [from, setFrom] = useState(init.from);
   const [to, setTo] = useState(init.to);
@@ -216,9 +217,9 @@ function BusinessReport() {
           r.arrivalDate ? r.arrivalDate.slice(0, 10) : "",
           r.qty,
           r.revenue.toFixed(2),
-          r.cost.toFixed(2),
-          r.profit.toFixed(2),
-          r.margin.toFixed(1),
+          showCostMargin ? r.cost.toFixed(2) : "",
+          showCostMargin ? r.profit.toFixed(2) : "",
+          showCostMargin ? r.margin.toFixed(1) : "",
           r.perDay.toFixed(2),
           r.onHand,
           r.daysCover ? r.daysCover.toFixed(1) : "",
@@ -231,7 +232,7 @@ function BusinessReport() {
           r.name,
           r.bills,
           r.revenue.toFixed(2),
-          r.profit.toFixed(2),
+          showCostMargin ? r.profit.toFixed(2) : "",
           r.discount.toFixed(2),
           r.avgBill.toFixed(2),
         ]),
@@ -286,8 +287,8 @@ function BusinessReport() {
 
         <div className="summary-grid grid gap-4 sm:grid-cols-4">
           <StatCard label="Revenue" value={money(totals.revenue)} />
-          <StatCard label="Gross profit" value={money(totals.profit)} />
-          <StatCard label="Margin" value={`${totals.margin.toFixed(1)}%`} />
+          <StatCard label="Gross profit" value={showCostMargin ? money(totals.profit) : "Restricted"} />
+          <StatCard label="Margin" value={showCostMargin ? `${totals.margin.toFixed(1)}%` : "Restricted"} />
           <StatCard
             label="Slow movers"
             value={String(totals.slow)}
@@ -332,8 +333,8 @@ function BusinessReport() {
                       </TableCell>
                       <TableCell className="text-right">{r.qty}</TableCell>
                       <TableCell className="text-right">{money(r.revenue)}</TableCell>
-                      <TableCell className="text-right">{money(r.profit)}</TableCell>
-                      <TableCell className="text-right">{r.margin.toFixed(1)}%</TableCell>
+                      <TableCell className="text-right">{showCostMargin ? money(r.profit) : "Restricted"}</TableCell>
+                      <TableCell className="text-right">{showCostMargin ? `${r.margin.toFixed(1)}%` : "Restricted"}</TableCell>
                       <TableCell className="text-right">{r.perDay.toFixed(2)}</TableCell>
                       <TableCell className="text-right">{r.onHand}</TableCell>
                       <TableCell className="text-right">
@@ -372,7 +373,7 @@ function BusinessReport() {
                       <TableCell className="font-medium">{r.name}</TableCell>
                       <TableCell className="text-right">{r.bills}</TableCell>
                       <TableCell className="text-right">{money(r.revenue)}</TableCell>
-                      <TableCell className="text-right">{money(r.profit)}</TableCell>
+                      <TableCell className="text-right">{showCostMargin ? money(r.profit) : "Restricted"}</TableCell>
                       <TableCell className="text-right">{money(r.discount)}</TableCell>
                       <TableCell className="text-right">{money(r.avgBill)}</TableCell>
                     </TableRow>

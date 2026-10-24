@@ -1,5 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
+import { approvalPersonBranchAllowed } from "./approval-branch-scope";
 import { z } from "zod";
+import { PERMISSION_KEYS, hasPermission, type PermissionKey } from "./permissions";
+import { approvalMethods } from "./approval-credentials";
 
 const callerInput = z.object({
   accessToken: z.string().min(10).optional(),
@@ -19,11 +22,14 @@ const saveInput = z.object({
 });
 
 const pinInput = z.object({
+  sessionToken: z.string().max(400).optional(),
+  cashierToken: z.string().max(2000).optional(),
   accessToken: z.string().min(10).optional(),
   terminalToken: z.string().min(10).optional(),
   managerId: z.string().min(1).max(64),
   pin: z.string().regex(/^\d{4,6}$/),
   action: z.string().min(1).max(64),
+  permission: z.string().refine(value => PERMISSION_KEYS.includes(value as PermissionKey), "Unknown permission").optional(),
   ruleKey: z.string().max(64).optional(),
   requestedBy: z.string().max(120).optional(),
   storeId: z.string().max(64).optional(),
@@ -51,13 +57,12 @@ async function assertCaller(data: { accessToken?: string; terminalToken?: string
       isSupervisor: caller.isAdmin,
       canManageRules:
         caller.role === "admin" ||
-        caller.role === "manager" ||
         caller.permissions["can_access_pos_settings"] === true,
     };
   }
   if (data.terminalToken) {
     const { verifyCashierSession } = await import("./pos-session.server");
-    const session = verifyCashierSession(data.terminalToken);
+    const session = await verifyCashierSession(data.terminalToken);
     if (session)
       return {
         id: session.id,
@@ -195,9 +200,26 @@ export const verifyManagerPin = createServerFn({ method: "POST" })
       };
     }
     try {
-      // The audit entry is written by the database inside the same routine that
-      // checks the PIN, so an override record can never be forged separately.
-      const manager = await verifyManagerPinInDb(data.managerId, data.pin, {
+      // Legacy checks audit in the PIN routine. Assigned-permission checks
+      // must record their audit before issuing any grant as well.
+      let overridePerson: Awaited<ReturnType<typeof import("./approval-token-server")["approvalPerson"]>> = undefined;
+      let overrideCaller: Awaited<ReturnType<typeof import("./privileged-caller.server")["requireCallerScope"]>> | undefined;
+      let overrideBranch = data.storeId ?? "";
+      if (data.action === "permission_override") {
+        if (!data.permission) return { ok: false as const, error: "The requested permission is required" };
+        const { requireCallerScope } = await import("./privileged-caller.server");
+        const scope = await requireCallerScope(data);
+        overrideCaller = scope;
+        overrideBranch = scope.storeId ?? "";
+        const { approvalPerson } = await import("./approval-token-server");
+        overridePerson = await approvalPerson(data.managerId);
+        if (!overridePerson?.is_active || !approvalMethods(overridePerson.permissions).pin || !approvalPersonBranchAllowed(overridePerson,overrideBranch) || (overridePerson.store_id && overridePerson.store_id.toLowerCase() !== overrideBranch.toLowerCase()) ||
+            !hasPermission({ role: overridePerson.role, roleSlug: overridePerson.role_slug, permissions: overridePerson.permissions }, data.permission))
+          return { ok: false as const, error: "This user does not have the requested permission in this branch" };
+      }
+      const manager = overridePerson
+        ? await (await import("./authorization.server")).verifyAuthorizationPin(overridePerson.user_id, data.pin, [], [overridePerson.user_id])
+        : await verifyManagerPinInDb(data.managerId, data.pin, {
         action: data.action,
         ruleKey: data.ruleKey ?? null,
         requestedBy: data.requestedBy ?? null,
@@ -215,6 +237,19 @@ export const verifyManagerPin = createServerFn({ method: "POST" })
             : "Invalid manager ID or PIN",
         };
       }
+      if (overridePerson && data.permission) {
+        const { approvalPerson } = await import("./approval-token-server");
+        overridePerson = await approvalPerson(overridePerson.user_id);
+        if (!overridePerson?.is_active || !approvalMethods(overridePerson.permissions).pin || !approvalPersonBranchAllowed(overridePerson,overrideBranch) || (overridePerson.store_id && overridePerson.store_id.toLowerCase() !== overrideBranch.toLowerCase()) ||
+            !hasPermission({ role: overridePerson.role, roleSlug: overridePerson.role_slug, permissions: overridePerson.permissions }, data.permission))
+          return { ok: false as const, error: "This user no longer has the requested permission in this branch" };
+        const { writeLog } = await import("./authorization.server");
+        const audit = await writeLog({ actionKey: data.action, modeUsed: "pin", outcome: "approved",
+          requestedBy: overrideCaller?.staffUserId, requestedByName: overrideCaller?.actorName,
+          authorizedBy: manager.userId, authorizedByName: manager.name, authorizerRole: manager.role,
+          storeId: overrideBranch, terminalId: data.terminalId ?? "", detail: { permission: data.permission } });
+        if (!audit.ok) return { ok: false as const, error: "Approval audit could not be recorded" };
+      }
       await throttleReset(throttleKey);
       return {
         ok: true as const,
@@ -223,7 +258,7 @@ export const verifyManagerPin = createServerFn({ method: "POST" })
           action: data.action,
           approvedBy: manager.userId,
           role: manager.role,
-          storeId: data.storeId ?? "",
+          storeId: overrideBranch,
           binding: "legacy",
         }),
       };

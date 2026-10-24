@@ -61,7 +61,7 @@ describe("staff management boundaries", () => {
     const endpoint = read("src/lib/staff-admin.functions.ts");
     const server = read("src/lib/staff-admin.server.ts");
 
-    expect(screen).toContain("permissions: selectedRole.permissions");
+    expect(screen).toContain("permissions: { ...selectedRole.permissions, ...devicePermissions }");
     expect(client).toContain("permissions: input.permissions");
     expect(endpoint).toContain("permissions: z.record(z.string(), z.boolean())");
     expect(server).toContain("p_permissions: payload.permissions ?? null");

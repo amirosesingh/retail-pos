@@ -59,6 +59,15 @@ export const startDeviceSession = createServerFn({ method: "POST" })
       const { resolveRelayScope } = await import("@/core/api/relay-policy.server");
       const scope = await resolveRelayScope(verified);
       if (scope.stale) throw new Error("Your account or branch could not be verified");
+      // Keep the same revocable login instead of minting a second independent
+      // session for the cashier proof returned by the compatibility endpoint.
+      if (verified.kind === "cashier" && verified.sessionToken) {
+        const { touchSession } = await import("./session-guard.server");
+        const checked = await touchSession(verified.sessionToken);
+        if (!checked.ok) throw new Error("Your session has ended — please sign in again.");
+        return { ok: true as const, token: verified.sessionToken,
+          idleMinutes: checked.session.idle_timeout_minutes };
+      }
       const { token, idleMinutes } = await startSession({
         kind: verified.kind,
         label: scope.actorName ?? verified.label,

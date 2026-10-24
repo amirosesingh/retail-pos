@@ -21,6 +21,9 @@ export const publishCompleteShiftSummary = createServerFn({ method: "POST" })
     const { shiftAlertSettingsSchema } = await import("./shift-alert-settings-schema");
     const configResponse = await serviceRest("pos_settings?id=eq.1&select=notification_settings&limit=1");
     const configRows = configResponse.ok ? await configResponse.json() as Array<{ notification_settings?: { shiftAlerts?: unknown } }> : [];
+    // The summary insert's database trigger routes the event and queues all
+    // selected channels. Do not send a second legacy WhatsApp summary.
+    if (Array.isArray((configRows[0]?.notification_settings as {rules?: unknown} | undefined)?.rules)) return {ok: true};
     const alerts = shiftAlertSettingsSchema.safeParse(configRows[0]?.notification_settings?.shiftAlerts);
     if (alerts.success && alerts.data.whatsapp && alerts.data.recipients.length) {
       const cfg = alerts.data;

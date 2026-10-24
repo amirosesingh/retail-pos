@@ -85,12 +85,15 @@ function branchPredicate(table, alias = "x", seen = new Set()) {
 }
 
 function deleteBranchPredicate(table, alias = "x") {
+  if (table.cloudTable === "stores") return `${alias}.id::text=p_branch_id`;
   if (["settings_overrides", "settings_scoped"].includes(table.cloudTable))
     return `((lower(${alias}.scope)='branch' AND ${alias}.scope_id::text=p_branch_id) OR (lower(${alias}.scope)='terminal' AND ${alias}.scope_id::text=p_terminal_id))`;
   return branchPredicate(table, alias);
 }
 
 function incomingBranchGuard(table, rows = "p_rows") {
+  if (table.cloudTable === "stores")
+    return `IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(${rows},'[]'::jsonb)) r WHERE r->>'id' IS DISTINCT FROM p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;`;
   const names = columnNames(table);
   // SQL Server's supported collation treats case and trailing spaces as equal,
   // while PostgreSQL's JSON text comparison is exact. Canonicalize only a
@@ -332,6 +335,7 @@ BEGIN FOR v_row IN SELECT value FROM jsonb_array_elements(COALESCE(p_rows,'[]'::
     out.push(`CREATE OR REPLACE FUNCTION public.sync_apply_${table.cloudTable}(p_rows jsonb) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER AS $fn$
 DECLARE v_count integer; v_row jsonb;
 BEGIN
+  ${table.cloudTable === "stores" ? "IF NULLIF(current_setting('pos.sync_branch',true),'') IS NULL OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'id' IS DISTINCT FROM current_setting('pos.sync_branch',true)) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;" : ""}
   ${refundOn}
   ${shiftGuardOn}
   INSERT INTO public.${q(table.cloudTable)} (${columns.join(",")})
@@ -425,6 +429,7 @@ BEGIN
  PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id);
  PERFORM set_config('pos.source_application','electron',true);
  PERFORM set_config('pos.sync_terminal',p_terminal_id,true);
+ PERFORM set_config('pos.sync_branch',p_branch_id,true);
  PERFORM set_config('pos.device_id',p_terminal_id,true);
  IF auth.role()<>'service_role' THEN
   SELECT * INTO v_me FROM public.app_users WHERE auth_user_id=auth.uid() AND is_active=true LIMIT 1;
@@ -446,6 +451,7 @@ BEGIN
  PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id);
  PERFORM set_config('pos.source_application','electron',true);
  PERFORM set_config('pos.sync_terminal',p_terminal_id,true);
+ PERFORM set_config('pos.sync_branch',p_branch_id,true);
  PERFORM set_config('pos.device_id',p_terminal_id,true);
  IF jsonb_typeof(p_operations)<>'array' OR jsonb_array_length(p_operations)>200 THEN RAISE EXCEPTION 'SYNC_AGGREGATE_INVALID'; END IF;
  IF auth.role()<>'service_role' THEN SELECT * INTO v_me FROM public.app_users WHERE auth_user_id=auth.uid() AND is_active=true LIMIT 1;

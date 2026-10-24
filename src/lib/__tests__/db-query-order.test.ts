@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { orders, ranges, nullFilters, auth, counts, page } = vi.hoisted(() => ({
+const { orders, ranges, nullFilters, auth, counts, page, dateBounds } = vi.hoisted(() => ({
+  dateBounds: [] as [string, string, string][],
   orders: [] as string[],
   ranges: [] as [number, number][],
   nullFilters: [] as string[],
@@ -21,6 +22,8 @@ vi.mock("@/integrations/supabase/external-client", () => {
             return query;
           },
           in: () => query,
+          gte: (column: string, value: string) => { dateBounds.push(["gte", column, value]); return query; },
+          lte: (column: string, value: string) => { dateBounds.push(["lte", column, value]); return query; },
           order: (column: string) => {
             orders.push(column);
             return query;
@@ -59,6 +62,7 @@ import { __resetSessionEpoch, bumpSessionEpoch } from "../session-epoch";
 
 describe("routed query ordering", () => {
   beforeEach(() => {
+    dateBounds.splice(0);
     orders.splice(0);
     ranges.splice(0);
     nullFilters.splice(0);
@@ -67,6 +71,12 @@ describe("routed query ordering", () => {
     counts.splice(0);
     page.mockReset().mockResolvedValue({ data: [], error: null, count: 0 });
     __resetSessionEpoch();
+  });
+
+  it("applies inclusive date bounds without removing branch matching or pagination", async () => {
+    await routedQuery("sales", { match: { store_id: "branch-a" }, dateRange: { column: "created_at", from: "2026-01-01T00:00:00Z", to: "2026-01-31T23:59:59Z" }, limit: 500 });
+    expect(dateBounds).toEqual([["gte", "created_at", "2026-01-01T00:00:00Z"], ["lte", "created_at", "2026-01-31T23:59:59Z"]]);
+    expect(ranges).toEqual([[0, 499]]);
   });
 
   it("does not count bounded reads and counts an uncapped table only once", async () => {

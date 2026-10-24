@@ -1,4 +1,5 @@
 import { closedShiftEffects } from "@/lib/closed-shift-effects";
+import { DisplayElement } from "@/components/shared/DisplayElement";
 import { sameRecordId } from "@/lib/sale-identity";
 /**
  * The one closing screen used everywhere — register header and Shifts page.
@@ -364,7 +365,7 @@ export function ShiftCloseDialog({
                 <div className="space-y-1 rounded-md border p-3 text-sm">
                   {expected ? (
                     <>
-                      <Row label="Opening cash float" value={money(activeShift.openingFloat)} />
+                      <DisplayElement name="shiftclose.openingFloat"><Row label="Opening cash float" value={money(activeShift.openingFloat)} /></DisplayElement>
                       <Row
                         label="Net cash sales this shift"
                         value={money(expected.cash - activeShift.openingFloat)}

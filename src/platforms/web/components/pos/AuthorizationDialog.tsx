@@ -38,6 +38,7 @@ import { verifyLocalApprovalPin } from "@/core/local-db/local-staff";
 import { normalizeSnapshot, snapshotFingerprint, type TicketSnapshot } from "@/lib/ticket-snapshot";
 import { syncNow } from "@/lib/sync-engine";
 import { approvalIdentity } from "@/lib/approval-identity";
+import { approverActionAllowed } from "@/lib/approval-action-permissions";
 
 const newId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -141,7 +142,7 @@ export function AuthorizationDialog({
       updatedBy: null,
     };
     if (
-      !canAuthorizeAmount(
+      !approverActionAllowed(prompt.actionKey, { roleSlug: result.staff.roleSlug, permissions: result.staff.permissions }) || !canAuthorizeAmount(
         rule,
         { userId: result.staff.username, role: result.staff.roleSlug },
         prompt.requestedAmount,

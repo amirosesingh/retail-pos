@@ -21,7 +21,7 @@ export const sendWhatsAppBill = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     // Only signed-in POS staff may send from the business account.
     const { verifyCashierSession } = await import("./pos-session.server");
-    let caller = data.terminalToken ? verifyCashierSession(data.terminalToken)?.username : null;
+    let caller = data.terminalToken ? (await verifyCashierSession(data.terminalToken))?.username : null;
     if (!caller && data.accessToken) {
       const { verifyPosStaff } = await import("./secure-settings.server");
       try {

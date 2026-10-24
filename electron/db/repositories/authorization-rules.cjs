@@ -33,6 +33,8 @@ function cleanRule(value, { branchId, actor, isAdmin }) {
   const threshold = value?.threshold == null || value.threshold === "" ? null : Number(value.threshold);
   if (threshold != null && !Number.isFinite(threshold))
     throw Object.assign(new Error("The authorization threshold must be a finite number."), { code: "ERULE" });
+  if (actionKey === "sponsorship" && (mode !== "request" || value?.isEnabled === false || value?.requireReason !== true || threshold !== null))
+    throw Object.assign(new Error("Sponsorship always requires approval and a reason, without a bypass threshold."), { code: "ERULE" });
   return {
     action_key: actionKey,
     scope_type: scopeType,

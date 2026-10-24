@@ -15051,6 +15051,7 @@ REVOKE ALL ON FUNCTION public.sync_feed_stock_transfers() FROM PUBLIC, anon, aut
 CREATE OR REPLACE FUNCTION public.sync_apply_stores(p_rows jsonb) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer; v_row jsonb;
 BEGIN
+  IF NULLIF(current_setting('pos.sync_branch',true),'') IS NULL OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'id' IS DISTINCT FROM current_setting('pos.sync_branch',true)) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;
 
 
   INSERT INTO public."stores" ("id","code","name","address","phone","created_at","updated_at","group_id","row_version","location_type","parent_id","is_central","building_name","floor_label","is_active","archived_at","is_primary_sub","private_catalogue","receipt_prefix","deleted_at")
@@ -15066,7 +15067,7 @@ END $fn$;
 CREATE OR REPLACE FUNCTION public.sync_delete_stores(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
 DECLARE v_count integer;
 BEGIN DELETE FROM public."stores" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
- WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (true) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
+ WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
  GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_stores(jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.sync_delete_stores(jsonb,text,text) FROM PUBLIC;
@@ -15883,6 +15884,7 @@ BEGIN
  PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id);
  PERFORM set_config('pos.source_application','electron',true);
  PERFORM set_config('pos.sync_terminal',p_terminal_id,true);
+ PERFORM set_config('pos.sync_branch',p_branch_id,true);
  PERFORM set_config('pos.device_id',p_terminal_id,true);
  IF auth.role()<>'service_role' THEN
   SELECT * INTO v_me FROM public.app_users WHERE auth_user_id=auth.uid() AND is_active=true LIMIT 1;
@@ -15927,7 +15929,7 @@ BEGIN
     WHEN 'stock_delta_applied' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_delta_applied(p_rows)+public.sync_delete_stock_delta_applied(p_changes,p_branch_id,p_terminal_id);
     WHEN 'stock_transfer_items' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE NOT EXISTS(SELECT 1 FROM public."stock_transfers" p WHERE p."id"::text=r->>'transfer_id' AND p_branch_id IN (p.from_store_id::text,p.to_store_id::text))) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_transfer_items(p_rows)+public.sync_delete_stock_transfer_items(p_changes,p_branch_id,p_terminal_id);
     WHEN 'stock_transfers' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE p_branch_id<>COALESCE(r->>'from_store_id','') AND p_branch_id<>COALESCE(r->>'to_store_id','')) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_transfers(p_rows)+public.sync_delete_stock_transfers(p_changes,p_branch_id,p_terminal_id);
-    WHEN 'stores' THEN  v_count:=public.sync_apply_stores(p_rows)+public.sync_delete_stores(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'stores' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'id' IS DISTINCT FROM p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stores(p_rows)+public.sync_delete_stores(p_changes,p_branch_id,p_terminal_id);
     WHEN 'suppliers' THEN  v_count:=public.sync_apply_suppliers(p_rows)+public.sync_delete_suppliers(p_changes,p_branch_id,p_terminal_id);
     WHEN 'sync_metadata' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sync_metadata(p_rows)+public.sync_delete_sync_metadata(p_changes,p_branch_id,p_terminal_id);
     WHEN 'system_audit_logs' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_system_audit_logs(p_rows)+public.sync_delete_system_audit_logs(p_changes,p_branch_id,p_terminal_id);
@@ -15963,6 +15965,7 @@ BEGIN
  PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id);
  PERFORM set_config('pos.source_application','electron',true);
  PERFORM set_config('pos.sync_terminal',p_terminal_id,true);
+ PERFORM set_config('pos.sync_branch',p_branch_id,true);
  PERFORM set_config('pos.device_id',p_terminal_id,true);
  IF jsonb_typeof(p_operations)<>'array' OR jsonb_array_length(p_operations)>200 THEN RAISE EXCEPTION 'SYNC_AGGREGATE_INVALID'; END IF;
  IF auth.role()<>'service_role' THEN SELECT * INTO v_me FROM public.app_users WHERE auth_user_id=auth.uid() AND is_active=true LIMIT 1;
@@ -16010,7 +16013,7 @@ BEGIN
     WHEN 'stock_delta_applied' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_delta_applied(v_rows)+public.sync_delete_stock_delta_applied(v_op->'changes',p_branch_id,p_terminal_id);
     WHEN 'stock_transfer_items' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE NOT EXISTS(SELECT 1 FROM public."stock_transfers" p WHERE p."id"::text=r->>'transfer_id' AND p_branch_id IN (p.from_store_id::text,p.to_store_id::text))) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_transfer_items(v_rows)+public.sync_delete_stock_transfer_items(v_op->'changes',p_branch_id,p_terminal_id);
     WHEN 'stock_transfers' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE p_branch_id<>COALESCE(r->>'from_store_id','') AND p_branch_id<>COALESCE(r->>'to_store_id','')) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_transfers(v_rows)+public.sync_delete_stock_transfers(v_op->'changes',p_branch_id,p_terminal_id);
-    WHEN 'stores' THEN  v_count:=public.sync_apply_stores(v_rows)+public.sync_delete_stores(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'stores' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'id' IS DISTINCT FROM p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stores(v_rows)+public.sync_delete_stores(v_op->'changes',p_branch_id,p_terminal_id);
     WHEN 'suppliers' THEN  v_count:=public.sync_apply_suppliers(v_rows)+public.sync_delete_suppliers(v_op->'changes',p_branch_id,p_terminal_id);
     WHEN 'sync_metadata' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sync_metadata(v_rows)+public.sync_delete_sync_metadata(v_op->'changes',p_branch_id,p_terminal_id);
     WHEN 'system_audit_logs' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_system_audit_logs(v_rows)+public.sync_delete_system_audit_logs(v_op->'changes',p_branch_id,p_terminal_id);
@@ -17403,6 +17406,199 @@ CREATE TRIGGER pos_sync_wake AFTER INSERT ON public.sync_change_feed
 FOR EACH ROW EXECUTE FUNCTION private.pos_sync_wake_from_feed();
 COMMIT;
 
+-- Store synchronization ownership security upgrade
+-- Bind terminal store writes to the verified synchronization branch.
+BEGIN;
+
+CREATE OR REPLACE FUNCTION public.sync_apply_stores(p_rows jsonb) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+DECLARE v_count integer; v_row jsonb;
+BEGIN
+  IF NULLIF(current_setting('pos.sync_branch',true),'') IS NULL OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'id' IS DISTINCT FROM current_setting('pos.sync_branch',true)) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;
+
+
+  INSERT INTO public."stores" ("id","code","name","address","phone","created_at","updated_at","group_id","row_version","location_type","parent_id","is_central","building_name","floor_label","is_active","archived_at","is_primary_sub","private_catalogue","receipt_prefix","deleted_at")
+  SELECT "id","code","name","address","phone","created_at","updated_at","group_id","row_version","location_type","parent_id","is_central","building_name","floor_label","is_active","archived_at","is_primary_sub","private_catalogue","receipt_prefix","deleted_at" FROM jsonb_populate_recordset(NULL::public."stores", COALESCE(p_rows,'[]'::jsonb))
+  ON CONFLICT ("id") DO UPDATE SET "code"=EXCLUDED."code","name"=EXCLUDED."name","address"=EXCLUDED."address","phone"=EXCLUDED."phone","created_at"=EXCLUDED."created_at","updated_at"=EXCLUDED."updated_at","group_id"=EXCLUDED."group_id","row_version"=EXCLUDED."row_version","location_type"=EXCLUDED."location_type","parent_id"=EXCLUDED."parent_id","is_central"=EXCLUDED."is_central","building_name"=EXCLUDED."building_name","floor_label"=EXCLUDED."floor_label","is_active"=EXCLUDED."is_active","archived_at"=EXCLUDED."archived_at","is_primary_sub"=EXCLUDED."is_primary_sub","private_catalogue"=EXCLUDED."private_catalogue","receipt_prefix"=EXCLUDED."receipt_prefix","deleted_at"=EXCLUDED."deleted_at" WHERE EXCLUDED."row_version">public."stores"."row_version";
+  GET DIAGNOSTICS v_count=ROW_COUNT;
+
+
+
+  RETURN v_count;
+END $fn$;
+
+CREATE OR REPLACE FUNCTION public.sync_delete_stores(p_changes jsonb,p_branch_id text,p_terminal_id text) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+DECLARE v_count integer;
+BEGIN DELETE FROM public."stores" x USING jsonb_array_elements(COALESCE(p_changes,'[]'::jsonb)) c
+ WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') AND (x.id::text=p_branch_id) AND x."id"::text=COALESCE(c->'key'->>'id',(c->>'entityId')::jsonb->>'id',(c->>'entity_id')::jsonb->>'id');
+ GET DIAGNOSTICS v_count=ROW_COUNT; RETURN v_count; END $fn$;
+
+CREATE OR REPLACE FUNCTION public.pos_sync_push_batch(p_batch_id uuid,p_organization_id text,p_branch_id text,p_terminal_id text,p_table text,p_rows jsonb,p_changes jsonb DEFAULT '[]'::jsonb)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $fn$
+DECLARE v_me public.app_users%ROWTYPE; v_count integer:=0; v_hash text:=md5(p_table||COALESCE(p_rows,'[]'::jsonb)::text||COALESCE(p_changes,'[]'::jsonb)::text); v_prior text;
+BEGIN
+ PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('pos-sync-batch:' || p_batch_id::text, 0));
+ PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id);
+ PERFORM set_config('pos.source_application','electron',true);
+ PERFORM set_config('pos.sync_terminal',p_terminal_id,true);
+ PERFORM set_config('pos.sync_branch',p_branch_id,true);
+ PERFORM set_config('pos.device_id',p_terminal_id,true);
+ IF auth.role()<>'service_role' THEN
+  SELECT * INTO v_me FROM public.app_users WHERE auth_user_id=auth.uid() AND is_active=true LIMIT 1;
+  IF v_me.id IS NULL OR NOT (v_me.role='admin' OR COALESCE((v_me.permissions->>'can_manage_sync_backup')::boolean,false)) THEN RAISE EXCEPTION 'SYNC_FORBIDDEN'; END IF;
+  IF NOT (v_me.role='admin' OR v_me.store_id IS NULL OR v_me.store_id=p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;
+ END IF;
+ SELECT payload_hash INTO v_prior FROM public.sync_idempotency_receipts WHERE batch_id=p_batch_id;
+ IF FOUND THEN IF v_prior<>v_hash THEN RAISE EXCEPTION 'SYNC_IDEMPOTENCY_MISMATCH'; END IF; RETURN jsonb_build_object('ok',true,'replayed',true,'batch_id',p_batch_id); END IF;
+ CASE p_table WHEN 'coupon_campaigns' THEN  v_count:=public.sync_apply_coupon_campaigns(p_rows)+public.sync_delete_coupon_campaigns(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'shifts' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shifts(p_rows)+public.sync_delete_shifts(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'issued_vouchers' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS DISTINCT FROM p_branch_id OR COALESCE(r->>'status','')<>'REDEEMED') THEN RAISE EXCEPTION 'SYNC_VOUCHER_TRANSITION_FORBIDDEN'; END IF; v_count:=public.sync_apply_issued_vouchers(p_rows)+public.sync_delete_issued_vouchers(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'activity_events' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_activity_events(p_rows)+public.sync_delete_activity_events(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'audit_logs' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_audit_logs(p_rows)+public.sync_delete_audit_logs(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'booking_payments' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE NOT EXISTS(SELECT 1 FROM public."bookings" p WHERE p."id"::text=r->>'booking_id' AND p.store_id::text=p_branch_id)) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_booking_payments(p_rows)+public.sync_delete_booking_payments(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'bookings' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_bookings(p_rows)+public.sync_delete_bookings(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'branch_telemetry' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_branch_telemetry(p_rows)+public.sync_delete_branch_telemetry(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'coupon_events' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_coupon_events(p_rows)+public.sync_delete_coupon_events(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'drawer_events' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_drawer_events(p_rows)+public.sync_delete_drawer_events(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'held_orders' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_held_orders(p_rows)+public.sync_delete_held_orders(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'integration_settings' THEN  v_count:=public.sync_apply_integration_settings(p_rows)+public.sync_delete_integration_settings(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'item_activity_logs' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_item_activity_logs(p_rows)+public.sync_delete_item_activity_logs(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'member_verifications' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_member_verifications(p_rows)+public.sync_delete_member_verifications(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'members' THEN  v_count:=public.sync_apply_members(p_rows)+public.sync_delete_members(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'membership_tiers' THEN  v_count:=public.sync_apply_membership_tiers(p_rows)+public.sync_delete_membership_tiers(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'offline_sync_audit_log' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_offline_sync_audit_log(p_rows)+public.sync_delete_offline_sync_audit_log(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'payment_transactions' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_payment_transactions(p_rows)+public.sync_delete_payment_transactions(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'payment_types' THEN  v_count:=public.sync_apply_payment_types(p_rows)+public.sync_delete_payment_types(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'pin_attempts' THEN  v_count:=public.sync_apply_pin_attempts(p_rows)+public.sync_delete_pin_attempts(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'pos_settings' THEN  v_count:=public.sync_apply_pos_settings(p_rows)+public.sync_delete_pos_settings(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'product_barcodes' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE NOT EXISTS(SELECT 1 FROM public."products" p WHERE p."id"::text=r->>'product_id' AND (NULLIF(p.owner_store_id::text,'') IS NULL OR p.owner_store_id::text=p_branch_id))) THEN RAISE EXCEPTION 'SYNC_PRODUCT_SCOPE_FORBIDDEN'; END IF; v_count:=public.sync_apply_product_barcodes(p_rows)+public.sync_delete_product_barcodes(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'product_categories' THEN  v_count:=public.sync_apply_product_categories(p_rows)+public.sync_delete_product_categories(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'products' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE NULLIF(r->>'owner_store_id','') IS NOT NULL AND r->>'owner_store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_PRODUCT_SCOPE_FORBIDDEN'; END IF; v_count:=public.sync_apply_products(p_rows)+public.sync_delete_products(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'promotions' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE NULLIF(r->>'foc_product_id','') IS NOT NULL AND NOT EXISTS(SELECT 1 FROM public."products" p WHERE p."id"::text=r->>'foc_product_id' AND (NULLIF(p.owner_store_id::text,'') IS NULL OR p.owner_store_id::text=p_branch_id))) THEN RAISE EXCEPTION 'SYNC_PRODUCT_SCOPE_FORBIDDEN'; END IF; v_count:=public.sync_apply_promotions(p_rows)+public.sync_delete_promotions(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'purchase_order_items' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE NOT EXISTS(SELECT 1 FROM public."purchase_orders" p WHERE p."id"=(r->>'po_id')::uuid AND p.store_id::text=p_branch_id)) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_purchase_order_items(p_rows)+public.sync_delete_purchase_order_items(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'purchase_orders' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_purchase_orders(p_rows)+public.sync_delete_purchase_orders(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'sale_items' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'branch_id'),'') IS NULL OR lower(btrim(r->>'branch_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('branch_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'branch_id' IS NULL OR r->>'branch_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sale_items(p_rows)+public.sync_delete_sale_items(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'sales' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sales(p_rows)+public.sync_delete_sales(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'settings_overrides' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE lower(COALESCE(r->>'scope','')) NOT IN ('global','cluster','branch','terminal')) THEN RAISE EXCEPTION 'SYNC_SCOPE_FORBIDDEN'; END IF; SELECT COALESCE(jsonb_agg(r) FILTER (WHERE (lower(COALESCE(r->>'scope',''))='branch' AND r->>'scope_id'=p_branch_id) OR (lower(COALESCE(r->>'scope',''))='terminal' AND r->>'scope_id'=p_terminal_id)),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; v_count:=public.sync_apply_settings_overrides(p_rows)+public.sync_delete_settings_overrides(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'shift_sessions' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_sessions(p_rows)+public.sync_delete_shift_sessions(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'sku_audit' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sku_audit(p_rows)+public.sync_delete_sku_audit(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'stock_adjustments' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_adjustments(p_rows)+public.sync_delete_stock_adjustments(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'stock_delta_applied' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_delta_applied(p_rows)+public.sync_delete_stock_delta_applied(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'stock_transfer_items' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE NOT EXISTS(SELECT 1 FROM public."stock_transfers" p WHERE p."id"::text=r->>'transfer_id' AND p_branch_id IN (p.from_store_id::text,p.to_store_id::text))) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_transfer_items(p_rows)+public.sync_delete_stock_transfer_items(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'stock_transfers' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE p_branch_id<>COALESCE(r->>'from_store_id','') AND p_branch_id<>COALESCE(r->>'to_store_id','')) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_transfers(p_rows)+public.sync_delete_stock_transfers(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'stores' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'id' IS DISTINCT FROM p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stores(p_rows)+public.sync_delete_stores(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'suppliers' THEN  v_count:=public.sync_apply_suppliers(p_rows)+public.sync_delete_suppliers(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'sync_metadata' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sync_metadata(p_rows)+public.sync_delete_sync_metadata(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'system_audit_logs' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_system_audit_logs(p_rows)+public.sync_delete_system_audit_logs(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'terminal_commands' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_terminal_commands(p_rows)+public.sync_delete_terminal_commands(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'uom_units' THEN  v_count:=public.sync_apply_uom_units(p_rows)+public.sync_delete_uom_units(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'whatsapp_queue' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_whatsapp_queue(p_rows)+public.sync_delete_whatsapp_queue(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'pos_store_settings' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_pos_store_settings(p_rows)+public.sync_delete_pos_store_settings(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'settings_scoped' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE lower(COALESCE(r->>'scope','')) NOT IN ('global','cluster','branch','terminal')) THEN RAISE EXCEPTION 'SYNC_SCOPE_FORBIDDEN'; END IF; SELECT COALESCE(jsonb_agg(r) FILTER (WHERE (lower(COALESCE(r->>'scope',''))='global' AND r->>'scope_id'='' AND r->>'key' LIKE 'pos_field:%' AND auth.role()='service_role') OR (lower(COALESCE(r->>'scope',''))='branch' AND r->>'scope_id'=p_branch_id) OR (lower(COALESCE(r->>'scope',''))='terminal' AND r->>'scope_id'=p_terminal_id)),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; v_count:=public.sync_apply_settings_scoped(p_rows)+public.sync_delete_settings_scoped(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'stock_count_drafts' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_count_drafts(p_rows)+public.sync_delete_stock_count_drafts(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'authorization_actions' THEN  v_count:=public.sync_apply_authorization_actions(p_rows)+public.sync_delete_authorization_actions(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'authorization_action_history' THEN  v_count:=public.sync_apply_authorization_action_history(p_rows)+public.sync_delete_authorization_action_history(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'authorization_requests' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_authorization_requests(p_rows)+public.sync_delete_authorization_requests(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'authorization_log' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_authorization_log(p_rows)+public.sync_delete_authorization_log(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'record_edits' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_record_edits(p_rows)+public.sync_delete_record_edits(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'shift_cash_counts' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_cash_counts(p_rows)+public.sync_delete_shift_cash_counts(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'shift_close_events' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_close_events(p_rows)+public.sync_delete_shift_close_events(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'shift_reconciliations' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_reconciliations(p_rows)+public.sync_delete_shift_reconciliations(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'shift_variance_alerts' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_variance_alerts(p_rows)+public.sync_delete_shift_variance_alerts(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'shift_notifications' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_notifications(p_rows)+public.sync_delete_shift_notifications(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'entity_status_history' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_entity_status_history(p_rows)+public.sync_delete_entity_status_history(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'nav_pins' THEN  v_count:=public.sync_apply_nav_pins(p_rows)+public.sync_delete_nav_pins(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'store_groups' THEN  v_count:=public.sync_apply_store_groups(p_rows)+public.sync_delete_store_groups(p_changes,p_branch_id,p_terminal_id);
+    WHEN 'change_history' THEN  v_count:=public.sync_apply_change_history(p_rows)+public.sync_delete_change_history(p_changes,p_branch_id,p_terminal_id); ELSE RAISE EXCEPTION 'SYNC_TABLE_FORBIDDEN'; END CASE;
+ INSERT INTO public.sync_idempotency_receipts(batch_id,organization_id,branch_id,table_name,payload_hash,applied_count) VALUES(p_batch_id,p_organization_id,p_branch_id,p_table,v_hash,v_count);
+ RETURN jsonb_build_object('ok',true,'applied',v_count,'batch_id',p_batch_id);
+END $fn$;
+
+CREATE OR REPLACE FUNCTION public.pos_sync_push_aggregate(p_batch_id uuid,p_organization_id text,p_branch_id text,p_terminal_id text,p_operations jsonb)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $fn$
+DECLARE v_me public.app_users%ROWTYPE; v_op jsonb; v_table text; v_rows jsonb; v_count integer:=0; v_total integer:=0; v_hash text:=md5(COALESCE(p_operations,'[]'::jsonb)::text); v_prior text;
+BEGIN
+ PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('pos-sync-batch:' || p_batch_id::text, 0));
+ PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id);
+ PERFORM set_config('pos.source_application','electron',true);
+ PERFORM set_config('pos.sync_terminal',p_terminal_id,true);
+ PERFORM set_config('pos.sync_branch',p_branch_id,true);
+ PERFORM set_config('pos.device_id',p_terminal_id,true);
+ IF jsonb_typeof(p_operations)<>'array' OR jsonb_array_length(p_operations)>200 THEN RAISE EXCEPTION 'SYNC_AGGREGATE_INVALID'; END IF;
+ IF auth.role()<>'service_role' THEN SELECT * INTO v_me FROM public.app_users WHERE auth_user_id=auth.uid() AND is_active=true LIMIT 1;
+  IF v_me.id IS NULL OR NOT (v_me.role='admin' OR COALESCE((v_me.permissions->>'can_manage_sync_backup')::boolean,false)) THEN RAISE EXCEPTION 'SYNC_FORBIDDEN'; END IF;
+  IF NOT (v_me.role='admin' OR v_me.store_id IS NULL OR v_me.store_id=p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; END IF;
+ SELECT payload_hash INTO v_prior FROM public.sync_idempotency_receipts WHERE batch_id=p_batch_id;
+ IF FOUND THEN IF v_prior<>v_hash THEN RAISE EXCEPTION 'SYNC_IDEMPOTENCY_MISMATCH'; END IF; RETURN jsonb_build_object('ok',true,'replayed',true,'batch_id',p_batch_id); END IF;
+ FOR v_op IN SELECT value FROM jsonb_array_elements(p_operations) LOOP v_table:=v_op->>'table'; v_rows:=COALESCE(v_op->'rows','[]'::jsonb);
+  IF v_table='products' AND EXISTS(SELECT 1 FROM jsonb_array_elements(p_operations) related WHERE related->>'table' IN ('item_activity_logs','stock_delta_applied')) THEN
+   SELECT COALESCE(jsonb_agg((row_value-'stock_quantity'-'stock_by_store')||jsonb_build_object('stock_quantity',0,'stock_by_store','{}'::jsonb)),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(v_rows) AS product_rows(row_value);
+  END IF;
+  CASE v_table WHEN 'coupon_campaigns' THEN  v_count:=public.sync_apply_coupon_campaigns(v_rows)+public.sync_delete_coupon_campaigns(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'shifts' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shifts(v_rows)+public.sync_delete_shifts(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'issued_vouchers' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS DISTINCT FROM p_branch_id OR COALESCE(r->>'status','')<>'REDEEMED') THEN RAISE EXCEPTION 'SYNC_VOUCHER_TRANSITION_FORBIDDEN'; END IF; v_count:=public.sync_apply_issued_vouchers(v_rows)+public.sync_delete_issued_vouchers(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'activity_events' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_activity_events(v_rows)+public.sync_delete_activity_events(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'audit_logs' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_audit_logs(v_rows)+public.sync_delete_audit_logs(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'booking_payments' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE NOT EXISTS(SELECT 1 FROM public."bookings" p WHERE p."id"::text=r->>'booking_id' AND p.store_id::text=p_branch_id)) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_booking_payments(v_rows)+public.sync_delete_booking_payments(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'bookings' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_bookings(v_rows)+public.sync_delete_bookings(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'branch_telemetry' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_branch_telemetry(v_rows)+public.sync_delete_branch_telemetry(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'coupon_events' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_coupon_events(v_rows)+public.sync_delete_coupon_events(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'drawer_events' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_drawer_events(v_rows)+public.sync_delete_drawer_events(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'held_orders' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_held_orders(v_rows)+public.sync_delete_held_orders(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'integration_settings' THEN  v_count:=public.sync_apply_integration_settings(v_rows)+public.sync_delete_integration_settings(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'item_activity_logs' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_item_activity_logs(v_rows)+public.sync_delete_item_activity_logs(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'member_verifications' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_member_verifications(v_rows)+public.sync_delete_member_verifications(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'members' THEN  v_count:=public.sync_apply_members(v_rows)+public.sync_delete_members(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'membership_tiers' THEN  v_count:=public.sync_apply_membership_tiers(v_rows)+public.sync_delete_membership_tiers(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'offline_sync_audit_log' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_offline_sync_audit_log(v_rows)+public.sync_delete_offline_sync_audit_log(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'payment_transactions' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_payment_transactions(v_rows)+public.sync_delete_payment_transactions(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'payment_types' THEN  v_count:=public.sync_apply_payment_types(v_rows)+public.sync_delete_payment_types(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'pin_attempts' THEN  v_count:=public.sync_apply_pin_attempts(v_rows)+public.sync_delete_pin_attempts(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'pos_settings' THEN  v_count:=public.sync_apply_pos_settings(v_rows)+public.sync_delete_pos_settings(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'product_barcodes' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE NOT EXISTS(SELECT 1 FROM public."products" p WHERE p."id"::text=r->>'product_id' AND (NULLIF(p.owner_store_id::text,'') IS NULL OR p.owner_store_id::text=p_branch_id))) THEN RAISE EXCEPTION 'SYNC_PRODUCT_SCOPE_FORBIDDEN'; END IF; v_count:=public.sync_apply_product_barcodes(v_rows)+public.sync_delete_product_barcodes(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'product_categories' THEN  v_count:=public.sync_apply_product_categories(v_rows)+public.sync_delete_product_categories(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'products' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE NULLIF(r->>'owner_store_id','') IS NOT NULL AND r->>'owner_store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_PRODUCT_SCOPE_FORBIDDEN'; END IF; v_count:=public.sync_apply_products(v_rows)+public.sync_delete_products(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'promotions' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE NULLIF(r->>'foc_product_id','') IS NOT NULL AND NOT EXISTS(SELECT 1 FROM public."products" p WHERE p."id"::text=r->>'foc_product_id' AND (NULLIF(p.owner_store_id::text,'') IS NULL OR p.owner_store_id::text=p_branch_id))) THEN RAISE EXCEPTION 'SYNC_PRODUCT_SCOPE_FORBIDDEN'; END IF; v_count:=public.sync_apply_promotions(v_rows)+public.sync_delete_promotions(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'purchase_order_items' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE NOT EXISTS(SELECT 1 FROM public."purchase_orders" p WHERE p."id"=(r->>'po_id')::uuid AND p.store_id::text=p_branch_id)) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_purchase_order_items(v_rows)+public.sync_delete_purchase_order_items(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'purchase_orders' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_purchase_orders(v_rows)+public.sync_delete_purchase_orders(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'sale_items' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'branch_id'),'') IS NULL OR lower(btrim(r->>'branch_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('branch_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'branch_id' IS NULL OR r->>'branch_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sale_items(v_rows)+public.sync_delete_sale_items(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'sales' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sales(v_rows)+public.sync_delete_sales(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'settings_overrides' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE lower(COALESCE(r->>'scope','')) NOT IN ('global','cluster','branch','terminal')) THEN RAISE EXCEPTION 'SYNC_SCOPE_FORBIDDEN'; END IF; SELECT COALESCE(jsonb_agg(r) FILTER (WHERE (lower(COALESCE(r->>'scope',''))='branch' AND r->>'scope_id'=p_branch_id) OR (lower(COALESCE(r->>'scope',''))='terminal' AND r->>'scope_id'=p_terminal_id)),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; v_count:=public.sync_apply_settings_overrides(v_rows)+public.sync_delete_settings_overrides(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'shift_sessions' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_sessions(v_rows)+public.sync_delete_shift_sessions(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'sku_audit' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sku_audit(v_rows)+public.sync_delete_sku_audit(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'stock_adjustments' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_adjustments(v_rows)+public.sync_delete_stock_adjustments(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'stock_delta_applied' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_delta_applied(v_rows)+public.sync_delete_stock_delta_applied(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'stock_transfer_items' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE NOT EXISTS(SELECT 1 FROM public."stock_transfers" p WHERE p."id"::text=r->>'transfer_id' AND p_branch_id IN (p.from_store_id::text,p.to_store_id::text))) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_transfer_items(v_rows)+public.sync_delete_stock_transfer_items(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'stock_transfers' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE p_branch_id<>COALESCE(r->>'from_store_id','') AND p_branch_id<>COALESCE(r->>'to_store_id','')) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_transfers(v_rows)+public.sync_delete_stock_transfers(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'stores' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'id' IS DISTINCT FROM p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stores(v_rows)+public.sync_delete_stores(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'suppliers' THEN  v_count:=public.sync_apply_suppliers(v_rows)+public.sync_delete_suppliers(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'sync_metadata' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_sync_metadata(v_rows)+public.sync_delete_sync_metadata(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'system_audit_logs' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_system_audit_logs(v_rows)+public.sync_delete_system_audit_logs(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'terminal_commands' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_terminal_commands(v_rows)+public.sync_delete_terminal_commands(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'uom_units' THEN  v_count:=public.sync_apply_uom_units(v_rows)+public.sync_delete_uom_units(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'whatsapp_queue' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_whatsapp_queue(v_rows)+public.sync_delete_whatsapp_queue(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'pos_store_settings' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_pos_store_settings(v_rows)+public.sync_delete_pos_store_settings(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'settings_scoped' THEN IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE lower(COALESCE(r->>'scope','')) NOT IN ('global','cluster','branch','terminal')) THEN RAISE EXCEPTION 'SYNC_SCOPE_FORBIDDEN'; END IF; SELECT COALESCE(jsonb_agg(r) FILTER (WHERE (lower(COALESCE(r->>'scope',''))='global' AND r->>'scope_id'='' AND r->>'key' LIKE 'pos_field:%' AND auth.role()='service_role') OR (lower(COALESCE(r->>'scope',''))='branch' AND r->>'scope_id'=p_branch_id) OR (lower(COALESCE(r->>'scope',''))='terminal' AND r->>'scope_id'=p_terminal_id)),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; v_count:=public.sync_apply_settings_scoped(v_rows)+public.sync_delete_settings_scoped(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'stock_count_drafts' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_stock_count_drafts(v_rows)+public.sync_delete_stock_count_drafts(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'authorization_actions' THEN  v_count:=public.sync_apply_authorization_actions(v_rows)+public.sync_delete_authorization_actions(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'authorization_action_history' THEN  v_count:=public.sync_apply_authorization_action_history(v_rows)+public.sync_delete_authorization_action_history(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'authorization_requests' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_authorization_requests(v_rows)+public.sync_delete_authorization_requests(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'authorization_log' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_authorization_log(v_rows)+public.sync_delete_authorization_log(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'record_edits' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_record_edits(v_rows)+public.sync_delete_record_edits(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'shift_cash_counts' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_cash_counts(v_rows)+public.sync_delete_shift_cash_counts(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'shift_close_events' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_close_events(v_rows)+public.sync_delete_shift_close_events(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'shift_reconciliations' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_reconciliations(v_rows)+public.sync_delete_shift_reconciliations(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'shift_variance_alerts' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_variance_alerts(v_rows)+public.sync_delete_shift_variance_alerts(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'shift_notifications' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_shift_notifications(v_rows)+public.sync_delete_shift_notifications(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'entity_status_history' THEN SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(r->>'store_id'),'') IS NULL OR lower(btrim(r->>'store_id'))=lower(btrim(p_branch_id)) THEN r||jsonb_build_object('store_id',p_branch_id) ELSE r END),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r; IF EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(v_rows,'[]'::jsonb)) r WHERE r->>'store_id' IS NULL OR r->>'store_id'<>p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; v_count:=public.sync_apply_entity_status_history(v_rows)+public.sync_delete_entity_status_history(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'nav_pins' THEN  v_count:=public.sync_apply_nav_pins(v_rows)+public.sync_delete_nav_pins(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'store_groups' THEN  v_count:=public.sync_apply_store_groups(v_rows)+public.sync_delete_store_groups(v_op->'changes',p_branch_id,p_terminal_id);
+    WHEN 'change_history' THEN  v_count:=public.sync_apply_change_history(v_rows)+public.sync_delete_change_history(v_op->'changes',p_branch_id,p_terminal_id); ELSE RAISE EXCEPTION 'SYNC_TABLE_FORBIDDEN'; END CASE; v_total:=v_total+v_count;
+ END LOOP;
+ INSERT INTO public.sync_idempotency_receipts(batch_id,organization_id,branch_id,table_name,payload_hash,applied_count) VALUES(p_batch_id,p_organization_id,p_branch_id,'__aggregate__',v_hash,v_total);
+ RETURN jsonb_build_object('ok',true,'applied',v_total,'batch_id',p_batch_id);
+END $fn$;
+
+COMMIT;
 -- END EVENT-DRIVEN SYNC UPGRADE
 
 -- Web and Android reserve document numbers in the configured database, never in device counters.
@@ -20438,3 +20634,742 @@ BEGIN
   FOR routine IN SELECT p.oid::regprocedure AS signature FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.prosecdef
   LOOP EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC, anon',routine.signature); END LOOP;
 END $permission_hardening$;
+
+-- Account permissions are the editable authority. Preserve the current effective
+-- matrices rather than restoring masked grants and unexpectedly widening access.
+LOCK TABLE public.app_users IN SHARE ROW EXCLUSIVE MODE;
+DROP TRIGGER IF EXISTS zz_global_permission_denials ON public.app_users;
+DROP FUNCTION IF EXISTS public.set_global_permission_restrictions(text[]);
+DROP FUNCTION IF EXISTS public.global_permission_restrictions();
+DROP FUNCTION IF EXISTS private.enforce_global_permission_denials();
+DROP TABLE IF EXISTS private.requested_staff_permissions;
+DROP TABLE IF EXISTS private.global_permission_policy;
+-- private.global_permission_audit remains private historical evidence.
+NOTIFY pgrst, 'reload schema';
+
+-- Notification rules table: 20261024095724
+BEGIN;
+
+-- Cloud delivery state is separate from immutable activity/audit records and
+-- from operator-managed terminal configuration. No existing rule is activated.
+CREATE TABLE IF NOT EXISTS public.notification_deliveries (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), event_id uuid NOT NULL REFERENCES public.activity_events(id) ON DELETE CASCADE,
+  rule_id text NOT NULL, rule_name text NOT NULL, channel text NOT NULL CHECK(channel IN ('app','push','whatsapp')),
+  recipient text NOT NULL, recipient_user_id text, message text NOT NULL DEFAULT '',
+  status text NOT NULL CHECK(status IN ('available','queued','sending','sent','failed','unknown','skipped')),
+  reason text NOT NULL DEFAULT '', next_attempt timestamptz NOT NULL DEFAULT now(),
+  created_at timestamptz NOT NULL DEFAULT now(), delivered_at timestamptz,
+  UNIQUE(event_id,channel,recipient)
+);
+ALTER TABLE public.notification_deliveries ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.notification_deliveries FROM PUBLIC,anon,authenticated;
+GRANT ALL ON public.notification_deliveries TO service_role;
+CREATE INDEX IF NOT EXISTS notification_delivery_due ON public.notification_deliveries(channel,next_attempt) WHERE status='queued';
+CREATE INDEX IF NOT EXISTS notification_delivery_history ON public.notification_deliveries(created_at DESC,id);
+
+CREATE OR REPLACE FUNCTION public.notification_rules_status() RETURNS integer
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path=public,pg_temp AS $$ SELECT 1 $$;
+REVOKE ALL ON FUNCTION public.notification_rules_status() FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.notification_rules_status() TO service_role;
+
+CREATE OR REPLACE FUNCTION public.save_notification_rule_table(p_rules jsonb,p_expected jsonb)
+RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $$
+DECLARE current_settings jsonb;
+BEGIN
+  IF jsonb_typeof(p_rules)<>'array' OR jsonb_array_length(p_rules)>200 THEN RAISE EXCEPTION 'Invalid notification rules'; END IF;
+  IF EXISTS(SELECT 1 FROM jsonb_array_elements(p_rules) r WHERE NOT EXISTS(SELECT 1 FROM pg_timezone_names WHERE name=r->>'timeZone')) THEN
+    RAISE EXCEPTION 'Invalid notification time zone';
+  END IF;
+  SELECT notification_settings INTO current_settings FROM public.pos_settings WHERE id=1 FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Company settings are not initialized'; END IF;
+  IF COALESCE(current_settings->'rules','null'::jsonb) IS DISTINCT FROM COALESCE(p_expected,'null'::jsonb) THEN
+    RAISE EXCEPTION 'Notification rules changed on another device. Reload before saving.';
+  END IF;
+  -- Preserve legacy data for rollback; retire its switches only after the owner
+  -- explicitly saves the imported table. Audit events always remain recorded.
+  UPDATE public.pos_settings SET notification_settings=COALESCE(current_settings,'{}') || jsonb_build_object('rules',p_rules,'rulesVersion',1,'inApp','{}'::jsonb) WHERE id=1;
+  RETURN p_rules;
+END $$;
+REVOKE ALL ON FUNCTION public.save_notification_rule_table(jsonb,jsonb) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.save_notification_rule_table(jsonb,jsonb) TO service_role;
+
+CREATE OR REPLACE FUNCTION public.notification_rule_matches(r jsonb,e jsonb)
+RETURNS boolean LANGUAGE plpgsql IMMUTABLE SECURITY INVOKER SET search_path=public,pg_temp AS $$
+BEGIN
+  IF r->>'enabled'<>'true' OR r->>'event'<>e->>'event_type' THEN RETURN false; END IF;
+  IF jsonb_array_length(r->'branches')>0 AND NOT (r->'branches' ? COALESCE(e->>'store_id','')) THEN RETURN false; END IF;
+  IF jsonb_array_length(r->'actorUsers')>0 AND NOT (r->'actorUsers' ? COALESCE(e->>'actor_id','')) THEN RETURN false; END IF;
+  IF jsonb_array_length(r->'actorRoles')>0 AND NOT (r->'actorRoles' ? COALESCE(e->>'actor_role','')) THEN RETURN false; END IF;
+  IF jsonb_array_length(r->'severities')>0 AND NOT (r->'severities' ? COALESCE(e->>'severity','info')) THEN RETURN false; END IF;
+  IF r->>'minAmount' IS NOT NULL AND (e->>'amount' IS NULL OR (e->>'amount')::numeric < (r->>'minAmount')::numeric) THEN RETURN false; END IF;
+  IF r->>'maxAmount' IS NOT NULL AND (e->>'amount' IS NULL OR (e->>'amount')::numeric > (r->>'maxAmount')::numeric) THEN RETURN false; END IF;
+  RETURN true;
+END $$;
+REVOKE ALL ON FUNCTION public.notification_rule_matches(jsonb,jsonb) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.notification_rule_matches(jsonb,jsonb) TO service_role;
+
+CREATE OR REPLACE FUNCTION public.notification_rule_recipients(r jsonb,e jsonb)
+RETURNS SETOF text LANGUAGE sql STABLE SECURITY INVOKER SET search_path=public,pg_temp AS $$
+  SELECT DISTINCT a.user_id::text FROM public.app_users a
+  WHERE a.is_active AND a.user_id IS NOT NULL
+    AND (COALESCE(e->>'store_id','')='' OR a.store_id IS NULL OR a.store_id::text=e->>'store_id' OR a.role::text='admin')
+    AND (r->>'audience'='branch' OR (r->>'audience'='audit' AND (a.role::text='admin' OR a.permissions->>'can_view_audit_trail'='true'))
+      OR (r->>'audience'='selected' AND (r->'users' ? a.user_id::text OR r->'roles' ? COALESCE(NULLIF(a.role_slug,''),a.role::text)))
+      OR r->>'audience'='original')
+    AND (COALESCE(e->'meta'->>'audience','')='' AND COALESCE(jsonb_array_length(e->'meta'->'audience_user_ids'),0)=0
+          AND COALESCE(jsonb_array_length(e->'meta'->'audience_roles'),0)=0 AND COALESCE(e->'meta'->>'audience_terminal_id','')=''
+      OR (COALESCE(e->'meta'->'audience_user_ids','[]') ? a.user_id::text OR COALESCE(e->'meta'->'audience_user_ids','[]') ? a.id::text
+        OR COALESCE(e->'meta'->'audience_roles','[]') ? COALESCE(NULLIF(a.role_slug,''),a.role::text)
+        OR e->'meta'->>'audience'=a.user_id::text))
+    AND (r->>'audience'<>'original' OR COALESCE(e->'meta'->>'audience','')<>'' OR COALESCE(jsonb_array_length(e->'meta'->'audience_user_ids'),0)>0 OR COALESCE(jsonb_array_length(e->'meta'->'audience_roles'),0)>0)
+$$;
+REVOKE ALL ON FUNCTION public.notification_rule_recipients(jsonb,jsonb) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.notification_rule_recipients(jsonb,jsonb) TO service_role;
+
+CREATE OR REPLACE FUNCTION public.notification_rule_due(r jsonb,at_time timestamptz)
+RETURNS timestamptz LANGUAGE plpgsql STABLE SECURITY INVOKER SET search_path=public,pg_temp AS $$
+DECLARE local_time timestamp; from_time time; to_time time; zone text:=COALESCE(r->>'timeZone','UTC');
+BEGIN
+  IF COALESCE(r->>'quietFrom','')='' OR COALESCE(r->>'quietTo','')='' OR r->>'quietFrom'=r->>'quietTo' THEN RETURN at_time; END IF;
+  local_time:=at_time AT TIME ZONE zone; from_time:=(r->>'quietFrom')::time; to_time:=(r->>'quietTo')::time;
+  IF from_time<to_time AND local_time::time>=from_time AND local_time::time<to_time THEN RETURN (local_time::date+to_time) AT TIME ZONE zone; END IF;
+  IF from_time>to_time THEN
+    IF local_time::time>=from_time THEN RETURN ((local_time::date+1)+to_time) AT TIME ZONE zone; END IF;
+    IF local_time::time<to_time THEN RETURN (local_time::date+to_time) AT TIME ZONE zone; END IF;
+  END IF;
+  RETURN at_time;
+END $$;
+REVOKE ALL ON FUNCTION public.notification_rule_due(jsonb,timestamptz) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.notification_rule_due(jsonb,timestamptz) TO service_role;
+
+CREATE OR REPLACE FUNCTION public.notification_rule_message(r jsonb,e jsonb)
+RETURNS text LANGUAGE plpgsql STABLE SECURITY INVOKER SET search_path=public,pg_temp AS $$
+DECLARE body text:=COALESCE(NULLIF(r->>'template',''),'{{title}}'||E'\n'||'{{message}}'); branch text;
+BEGIN
+  SELECT name INTO branch FROM public.stores WHERE id::text=e->>'store_id';
+  RETURN replace(replace(replace(replace(replace(replace(replace(body,'{{title}}',COALESCE(e->>'title','')),'{{message}}',COALESCE(e->>'message','')),
+    '{{cashier}}',COALESCE(e->>'actor_name','')),'{{role}}',COALESCE(e->>'actor_role','')),'{{branch}}',COALESCE(branch,e->>'store_id','')),
+    '{{amount}}',COALESCE(e->>'amount','')),'{{time}}',COALESCE(e->>'created_at',''));
+END $$;
+REVOKE ALL ON FUNCTION public.notification_rule_message(jsonb,jsonb) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.notification_rule_message(jsonb,jsonb) TO service_role;
+
+-- Runs as the inserting service. No public security-definer API is introduced.
+CREATE OR REPLACE FUNCTION public.apply_in_app_notification_preference()
+RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $$
+DECLARE cfg jsonb; r jsonb; app_ids jsonb:='[]'; push_ids jsonb:='[]'; terminal_ids jsonb:='[]'; ids jsonb; original jsonb; messages jsonb:='{}'; uid text; body text;
+BEGIN
+  SELECT notification_settings INTO cfg FROM public.pos_settings WHERE id=1;
+  IF jsonb_typeof(cfg->'rules')<>'array' THEN
+    NEW.meta:=COALESCE(NEW.meta,'{}')||jsonb_build_object('in_app_disabled',COALESCE(cfg->'inApp'->NEW.event_type='false'::jsonb,false)); RETURN NEW;
+  END IF;
+  original:=COALESCE(NEW.meta,'{}') - 'notification_routes' - 'notification_original' - 'notification_messages';
+  -- Retire legacy stock-team role lists; configured rules own operational
+  -- recipients. Exact-user/terminal and approval audiences remain restricted.
+  IF NEW.event_type IN ('stock_request_received','transfer_sent','transfer_received','po_finalised')
+    AND original->>'audience' IN ('receiving_branch','sending_branch','branch_stock_team')
+    AND COALESCE(jsonb_array_length(original->'audience_user_ids'),0)=0 AND COALESCE(original->>'audience_terminal_id','')='' THEN
+    original:=original-'audience'-'audience_roles';
+  END IF;
+  NEW.meta:=original;
+  FOR r IN SELECT value FROM jsonb_array_elements(cfg->'rules') LOOP
+    IF public.notification_rule_matches(r,to_jsonb(NEW)) THEN
+      SELECT COALESCE(jsonb_agg(recipient.value),'[]') INTO ids FROM public.notification_rule_recipients(r,to_jsonb(NEW)) recipient(value);
+      IF r->'channels' ? 'app' THEN
+        app_ids:=app_ids||ids; body:=public.notification_rule_message(r,to_jsonb(NEW));
+        FOR uid IN SELECT jsonb_array_elements_text(ids) LOOP
+          IF NOT messages ? uid THEN messages:=messages||jsonb_build_object(uid,body); END IF;
+        END LOOP;
+        IF r->>'audience'='original' AND COALESCE(original->>'audience_terminal_id','')<>'' THEN
+          terminal_ids:=terminal_ids||jsonb_build_array(original->>'audience_terminal_id');
+        END IF;
+      END IF;
+      IF r->'channels' ? 'push' THEN push_ids:=push_ids||ids; END IF;
+    END IF;
+  END LOOP;
+  NEW.meta:=original||jsonb_build_object('notification_original',original,'notification_messages',messages,'notification_routes',jsonb_build_object('app',app_ids,'push',push_ids,'terminalApp',terminal_ids),
+    'audience','configured_notification_rules','audience_user_ids',app_ids||push_ids,'audience_roles','[]'::jsonb,
+    'audience_terminal_id',CASE WHEN jsonb_array_length(terminal_ids)>0 THEN original->>'audience_terminal_id' ELSE NULL END,
+    'in_app_disabled',jsonb_array_length(app_ids)=0 AND jsonb_array_length(terminal_ids)=0);
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  NEW.meta:=COALESCE(NEW.meta,'{}')||jsonb_build_object('audience','configured_notification_rules','audience_user_ids','[]'::jsonb,'audience_roles','[]'::jsonb,
+    'in_app_disabled',true,'notification_routes',jsonb_build_object('app','[]'::jsonb,'push','[]'::jsonb),'notification_rule_error','Invalid notification rule configuration');
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.apply_in_app_notification_preference() FROM PUBLIC,anon,authenticated;
+DROP TRIGGER IF EXISTS apply_in_app_notification_preference ON public.activity_events;
+CREATE TRIGGER apply_in_app_notification_preference BEFORE INSERT ON public.activity_events FOR EACH ROW EXECUTE FUNCTION public.apply_in_app_notification_preference();
+
+CREATE OR REPLACE FUNCTION public.queue_notification_rule_deliveries()
+RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $$
+DECLARE cfg jsonb; r jsonb; e jsonb; ch text; who text; body text; due timestamptz; private_event boolean; branch text; created_count int:=0;
+BEGIN
+  SELECT notification_settings INTO cfg FROM public.pos_settings WHERE id=1;
+  IF jsonb_typeof(cfg->'rules')<>'array' THEN RETURN NEW; END IF;
+  IF NEW.meta ? 'notification_rule_error' THEN
+    INSERT INTO public.notification_deliveries(event_id,rule_id,rule_name,channel,recipient,status,reason) VALUES(NEW.id,'invalid','Invalid rule configuration','app','','failed',NEW.meta->>'notification_rule_error'); RETURN NEW;
+  END IF;
+  e:=to_jsonb(NEW)||jsonb_build_object('meta',COALESCE(NEW.meta->'notification_original','{}'));
+  private_event:=COALESCE(e->'meta'->>'audience','')<>'' OR COALESCE(jsonb_array_length(e->'meta'->'audience_user_ids'),0)>0 OR COALESCE(jsonb_array_length(e->'meta'->'audience_roles'),0)>0 OR COALESCE(e->'meta'->>'audience_terminal_id','')<>'';
+  SELECT name INTO branch FROM public.stores WHERE id::text=NEW.store_id;
+  FOR r IN SELECT value FROM jsonb_array_elements(cfg->'rules') LOOP
+    IF NOT public.notification_rule_matches(r,e) THEN CONTINUE; END IF;
+    body:=public.notification_rule_message(r,to_jsonb(NEW));
+    due:=public.notification_rule_due(r,now());
+    IF r->>'audience'='original' AND r->'channels' ? 'app' AND COALESCE(e->'meta'->>'audience_terminal_id','')<>'' THEN
+      INSERT INTO public.notification_deliveries(event_id,rule_id,rule_name,channel,recipient,message,status)
+      VALUES(NEW.id,r->>'id',r->>'name','app','terminal:'||(e->'meta'->>'audience_terminal_id'),body,'available') ON CONFLICT DO NOTHING;
+      created_count:=created_count+1;
+    END IF;
+    FOR ch IN SELECT jsonb_array_elements_text(r->'channels') LOOP
+      IF ch='whatsapp' AND private_event THEN CONTINUE; END IF;
+      FOR who IN SELECT value FROM (SELECT jsonb_array_elements_text(r->'phones') value WHERE ch='whatsapp') phone
+        WHERE r->'phoneUsers'->>phone.value IN (SELECT * FROM public.notification_rule_recipients(r,e))
+        UNION ALL SELECT * FROM public.notification_rule_recipients(r,e) WHERE ch<>'whatsapp'
+      LOOP
+        INSERT INTO public.notification_deliveries(event_id,rule_id,rule_name,channel,recipient,recipient_user_id,message,status,next_attempt,reason)
+        VALUES(NEW.id,r->>'id',r->>'name',ch,who,CASE WHEN ch='whatsapp' THEN r->'phoneUsers'->>who ELSE who END,body,CASE WHEN ch='app' THEN 'available' ELSE 'queued' END,
+          CASE WHEN ch='app' THEN now() ELSE due END,CASE WHEN ch<>'app' AND due>now() THEN 'Quiet hours' ELSE '' END)
+        ON CONFLICT(event_id,channel,recipient) DO NOTHING;
+        created_count:=created_count+1;
+      END LOOP;
+    END LOOP;
+  END LOOP;
+  IF created_count=0 THEN INSERT INTO public.notification_deliveries(event_id,rule_id,rule_name,channel,recipient,status,reason)
+    VALUES(NEW.id,'none','No eligible delivery','app','','skipped','No enabled rule matched an eligible recipient'); END IF;
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  -- Delivery configuration must not abort a committed business/audit event.
+  INSERT INTO public.notification_deliveries(event_id,rule_id,rule_name,channel,recipient,status,reason)
+    VALUES(NEW.id,'invalid','Invalid rule configuration','app','','failed','Notification delivery could not be queued') ON CONFLICT DO NOTHING;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.queue_notification_rule_deliveries() FROM PUBLIC,anon,authenticated;
+DROP TRIGGER IF EXISTS queue_notification_rule_deliveries ON public.activity_events;
+CREATE TRIGGER queue_notification_rule_deliveries AFTER INSERT ON public.activity_events FOR EACH ROW EXECUTE FUNCTION public.queue_notification_rule_deliveries();
+
+CREATE OR REPLACE FUNCTION public.claim_notification_whatsapp(p_limit integer DEFAULT 5)
+RETURNS SETOF public.notification_deliveries LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $$
+BEGIN
+  PERFORM public.refresh_notification_delivery_eligibility();
+  UPDATE public.notification_deliveries SET status='unknown',reason='Worker stopped after claiming delivery; outcome needs review'
+    WHERE channel='whatsapp' AND status='sending' AND next_attempt<now()-interval '10 minutes';
+  UPDATE public.notification_deliveries d SET status='skipped',reason='Rule disabled, changed or recipient removed'
+    WHERE d.channel='whatsapp' AND d.status='queued' AND NOT EXISTS(
+      SELECT 1 FROM public.pos_settings s CROSS JOIN LATERAL jsonb_array_elements(s.notification_settings->'rules') r
+      JOIN public.activity_events e ON e.id=d.event_id WHERE s.id=1 AND r->>'id'=d.rule_id AND r->'phones' ? d.recipient
+      AND r->'channels' ? 'whatsapp' AND public.notification_rule_matches(r,to_jsonb(e))
+      AND d.recipient_user_id=r->'phoneUsers'->>d.recipient
+      AND d.recipient_user_id IN (SELECT * FROM public.notification_rule_recipients(r,to_jsonb(e)||jsonb_build_object('meta',COALESCE(e.meta->'notification_original','{}')))));
+  RETURN QUERY UPDATE public.notification_deliveries SET status='sending',reason='Delivery claimed',next_attempt=now()
+  WHERE id IN (SELECT id FROM public.notification_deliveries WHERE channel='whatsapp' AND status='queued' AND next_attempt<=now()
+    ORDER BY created_at,id LIMIT LEAST(GREATEST(p_limit,1),10) FOR UPDATE SKIP LOCKED) RETURNING *;
+END
+$$;
+REVOKE ALL ON FUNCTION public.claim_notification_whatsapp(integer) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.claim_notification_whatsapp(integer) TO service_role;
+
+-- The central worker also revisits due events held by quiet hours, independently
+-- of its chronological activity cursor.
+CREATE OR REPLACE FUNCTION public.pending_notification_push_events()
+RETURNS TABLE(id uuid,created_at timestamptz) LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $$
+BEGIN
+  PERFORM public.refresh_notification_delivery_eligibility();
+  RETURN QUERY SELECT DISTINCT e.id,e.created_at FROM public.notification_deliveries d JOIN public.activity_events e ON e.id=d.event_id
+  WHERE d.channel='push' AND d.status='queued' AND d.next_attempt<=now() ORDER BY e.created_at,e.id LIMIT 100;
+END
+$$;
+REVOKE ALL ON FUNCTION public.pending_notification_push_events() FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.pending_notification_push_events() TO service_role;
+
+CREATE OR REPLACE FUNCTION public.authorized_notification_push_users(p_event uuid)
+RETURNS SETOF text LANGUAGE sql STABLE SECURITY INVOKER SET search_path=public,pg_temp AS $$
+  SELECT DISTINCT d.recipient FROM public.notification_deliveries d JOIN public.activity_events e ON e.id=d.event_id
+    CROSS JOIN public.pos_settings s CROSS JOIN LATERAL jsonb_array_elements(s.notification_settings->'rules') r
+  WHERE s.id=1 AND d.event_id=p_event AND d.channel='push' AND d.status IN ('queued','sent') AND d.next_attempt<=now()
+    AND r->>'id'=d.rule_id AND r->'channels' ? 'push' AND public.notification_rule_matches(r,to_jsonb(e))
+    AND d.recipient IN (SELECT * FROM public.notification_rule_recipients(r,to_jsonb(e)||jsonb_build_object('meta',COALESCE(e.meta->'notification_original','{}'))))
+$$;
+REVOKE ALL ON FUNCTION public.authorized_notification_push_users(uuid) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.authorized_notification_push_users(uuid) TO service_role;
+
+CREATE OR REPLACE FUNCTION public.refresh_notification_delivery_eligibility()
+RETURNS void LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $$
+BEGIN
+  UPDATE public.notification_deliveries d SET status='skipped',reason='Rule or account is no longer eligible'
+  WHERE d.status='queued' AND NOT EXISTS (
+    SELECT 1 FROM public.pos_settings s CROSS JOIN LATERAL jsonb_array_elements(s.notification_settings->'rules') r
+    JOIN public.activity_events e ON e.id=d.event_id
+    WHERE s.id=1 AND r->>'id'=d.rule_id AND r->'channels' ? d.channel AND public.notification_rule_matches(r,to_jsonb(e))
+      AND COALESCE(d.recipient_user_id,d.recipient) IN (SELECT * FROM public.notification_rule_recipients(r,to_jsonb(e)||jsonb_build_object('meta',COALESCE(e.meta->'notification_original','{}'))))
+      AND (d.channel<>'whatsapp' OR (r->'phones' ? d.recipient AND r->'phoneUsers'->>d.recipient=d.recipient_user_id))
+  );
+END $$;
+REVOKE ALL ON FUNCTION public.refresh_notification_delivery_eligibility() FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.refresh_notification_delivery_eligibility() TO service_role;
+
+CREATE OR REPLACE FUNCTION public.queue_shift_summary_rule_event()
+RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $$
+BEGIN
+  IF EXISTS(SELECT 1 FROM public.pos_settings WHERE id=1 AND jsonb_typeof(notification_settings->'rules')='array') THEN
+    INSERT INTO public.activity_events(event_type,severity,title,message,actor_name,store_id,entity_type,entity_id,amount,meta,client_event_id)
+    VALUES('shift_summary','info','Day-end shift summary',NEW.summary,NEW.closed_by,NEW.store_id,'shift',NEW.shift_id::text,NEW.total_sales,
+      jsonb_build_object('route','/shifts'),'shift-summary-rules:'||NEW.shift_id::text) ON CONFLICT(client_event_id) DO NOTHING;
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.queue_shift_summary_rule_event() FROM PUBLIC,anon,authenticated;
+DROP TRIGGER IF EXISTS queue_shift_summary_rule_event ON public.shift_notifications;
+CREATE TRIGGER queue_shift_summary_rule_event AFTER INSERT OR UPDATE ON public.shift_notifications FOR EACH ROW EXECUTE FUNCTION public.queue_shift_summary_rule_event();
+NOTIFY pgrst,'reload schema';
+COMMIT;
+
+
+
+-- Notification legacy-mode compatibility: 20261024110442
+BEGIN;
+-- Missing rules must retain legacy delivery until the owner explicitly saves.
+CREATE OR REPLACE FUNCTION public.apply_in_app_notification_preference()
+RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $$
+DECLARE cfg jsonb; r jsonb; app_ids jsonb:='[]'; push_ids jsonb:='[]'; terminal_ids jsonb:='[]'; ids jsonb; original jsonb; messages jsonb:='{}'; uid text; body text;
+BEGIN
+  SELECT notification_settings INTO cfg FROM public.pos_settings WHERE id=1;
+  IF jsonb_typeof(cfg->'rules') IS DISTINCT FROM 'array' THEN
+    NEW.meta:=COALESCE(NEW.meta,'{}')||jsonb_build_object('in_app_disabled',COALESCE(cfg->'inApp'->NEW.event_type='false'::jsonb,false)); RETURN NEW;
+  END IF;
+  original:=COALESCE(NEW.meta,'{}') - 'notification_routes' - 'notification_original' - 'notification_messages';
+  -- Retire legacy stock-team role lists; configured rules own operational
+  -- recipients. Exact-user/terminal and approval audiences remain restricted.
+  IF NEW.event_type IN ('stock_request_received','transfer_sent','transfer_received','po_finalised')
+    AND original->>'audience' IN ('receiving_branch','sending_branch','branch_stock_team')
+    AND COALESCE(jsonb_array_length(original->'audience_user_ids'),0)=0 AND COALESCE(original->>'audience_terminal_id','')='' THEN
+    original:=original-'audience'-'audience_roles';
+  END IF;
+  NEW.meta:=original;
+  FOR r IN SELECT value FROM jsonb_array_elements(cfg->'rules') LOOP
+    IF public.notification_rule_matches(r,to_jsonb(NEW)) THEN
+      SELECT COALESCE(jsonb_agg(recipient.value),'[]') INTO ids FROM public.notification_rule_recipients(r,to_jsonb(NEW)) recipient(value);
+      IF r->'channels' ? 'app' THEN
+        app_ids:=app_ids||ids; body:=public.notification_rule_message(r,to_jsonb(NEW));
+        FOR uid IN SELECT jsonb_array_elements_text(ids) LOOP
+          IF NOT messages ? uid THEN messages:=messages||jsonb_build_object(uid,body); END IF;
+        END LOOP;
+        IF r->>'audience'='original' AND COALESCE(original->>'audience_terminal_id','')<>'' THEN
+          terminal_ids:=terminal_ids||jsonb_build_array(original->>'audience_terminal_id');
+        END IF;
+      END IF;
+      IF r->'channels' ? 'push' THEN push_ids:=push_ids||ids; END IF;
+    END IF;
+  END LOOP;
+  NEW.meta:=original||jsonb_build_object('notification_original',original,'notification_messages',messages,'notification_routes',jsonb_build_object('app',app_ids,'push',push_ids,'terminalApp',terminal_ids),
+    'audience','configured_notification_rules','audience_user_ids',app_ids||push_ids,'audience_roles','[]'::jsonb,
+    'audience_terminal_id',CASE WHEN jsonb_array_length(terminal_ids)>0 THEN original->>'audience_terminal_id' ELSE NULL END,
+    'in_app_disabled',jsonb_array_length(app_ids)=0 AND jsonb_array_length(terminal_ids)=0);
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  NEW.meta:=COALESCE(NEW.meta,'{}')||jsonb_build_object('audience','configured_notification_rules','audience_user_ids','[]'::jsonb,'audience_roles','[]'::jsonb,
+    'in_app_disabled',true,'notification_routes',jsonb_build_object('app','[]'::jsonb,'push','[]'::jsonb),'notification_rule_error','Invalid notification rule configuration');
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.apply_in_app_notification_preference() FROM PUBLIC,anon,authenticated;
+CREATE OR REPLACE FUNCTION public.queue_notification_rule_deliveries()
+RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $$
+DECLARE cfg jsonb; r jsonb; e jsonb; ch text; who text; body text; due timestamptz; private_event boolean; branch text; created_count int:=0;
+BEGIN
+  SELECT notification_settings INTO cfg FROM public.pos_settings WHERE id=1;
+  IF jsonb_typeof(cfg->'rules') IS DISTINCT FROM 'array' THEN RETURN NEW; END IF;
+  IF NEW.meta ? 'notification_rule_error' THEN
+    INSERT INTO public.notification_deliveries(event_id,rule_id,rule_name,channel,recipient,status,reason) VALUES(NEW.id,'invalid','Invalid rule configuration','app','','failed',NEW.meta->>'notification_rule_error'); RETURN NEW;
+  END IF;
+  e:=to_jsonb(NEW)||jsonb_build_object('meta',COALESCE(NEW.meta->'notification_original','{}'));
+  private_event:=COALESCE(e->'meta'->>'audience','')<>'' OR COALESCE(jsonb_array_length(e->'meta'->'audience_user_ids'),0)>0 OR COALESCE(jsonb_array_length(e->'meta'->'audience_roles'),0)>0 OR COALESCE(e->'meta'->>'audience_terminal_id','')<>'';
+  SELECT name INTO branch FROM public.stores WHERE id::text=NEW.store_id;
+  FOR r IN SELECT value FROM jsonb_array_elements(cfg->'rules') LOOP
+    IF NOT public.notification_rule_matches(r,e) THEN CONTINUE; END IF;
+    body:=public.notification_rule_message(r,to_jsonb(NEW));
+    due:=public.notification_rule_due(r,now());
+    IF r->>'audience'='original' AND r->'channels' ? 'app' AND COALESCE(e->'meta'->>'audience_terminal_id','')<>'' THEN
+      INSERT INTO public.notification_deliveries(event_id,rule_id,rule_name,channel,recipient,message,status)
+      VALUES(NEW.id,r->>'id',r->>'name','app','terminal:'||(e->'meta'->>'audience_terminal_id'),body,'available') ON CONFLICT DO NOTHING;
+      created_count:=created_count+1;
+    END IF;
+    FOR ch IN SELECT jsonb_array_elements_text(r->'channels') LOOP
+      IF ch='whatsapp' AND private_event THEN CONTINUE; END IF;
+      FOR who IN SELECT value FROM (SELECT jsonb_array_elements_text(r->'phones') value WHERE ch='whatsapp') phone
+        WHERE r->'phoneUsers'->>phone.value IN (SELECT * FROM public.notification_rule_recipients(r,e))
+        UNION ALL SELECT * FROM public.notification_rule_recipients(r,e) WHERE ch<>'whatsapp'
+      LOOP
+        INSERT INTO public.notification_deliveries(event_id,rule_id,rule_name,channel,recipient,recipient_user_id,message,status,next_attempt,reason)
+        VALUES(NEW.id,r->>'id',r->>'name',ch,who,CASE WHEN ch='whatsapp' THEN r->'phoneUsers'->>who ELSE who END,body,CASE WHEN ch='app' THEN 'available' ELSE 'queued' END,
+          CASE WHEN ch='app' THEN now() ELSE due END,CASE WHEN ch<>'app' AND due>now() THEN 'Quiet hours' ELSE '' END)
+        ON CONFLICT(event_id,channel,recipient) DO NOTHING;
+        created_count:=created_count+1;
+      END LOOP;
+    END LOOP;
+  END LOOP;
+  IF created_count=0 THEN INSERT INTO public.notification_deliveries(event_id,rule_id,rule_name,channel,recipient,status,reason)
+    VALUES(NEW.id,'none','No eligible delivery','app','','skipped','No enabled rule matched an eligible recipient'); END IF;
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  -- Delivery configuration must not abort a committed business/audit event.
+  INSERT INTO public.notification_deliveries(event_id,rule_id,rule_name,channel,recipient,status,reason)
+    VALUES(NEW.id,'invalid','Invalid rule configuration','app','','failed','Notification delivery could not be queued') ON CONFLICT DO NOTHING;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.queue_notification_rule_deliveries() FROM PUBLIC,anon,authenticated;
+NOTIFY pgrst, 'reload schema';
+COMMIT;
+
+
+-- Notification activation compatibility: 20261024113812
+BEGIN;
+-- New and old app versions may share this database during beta acceptance.
+-- Archive legacy values and retire their delivery paths only at activation.
+CREATE OR REPLACE FUNCTION public.guard_notification_rule_activation()
+RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $$
+DECLARE old_cfg jsonb:=COALESCE(OLD.notification_settings,'{}'); new_cfg jsonb:=COALESCE(NEW.notification_settings,'{}');
+BEGIN
+  IF jsonb_typeof(old_cfg->'rules')='array' AND jsonb_typeof(new_cfg->'rules') IS DISTINCT FROM 'array' THEN
+    RAISE EXCEPTION 'Notifications use the rules table. Reload the current notification editor before saving.';
+  END IF;
+  IF jsonb_typeof(new_cfg->'rules')='array' THEN
+    new_cfg:=new_cfg||jsonb_build_object(
+      'legacyBeforeRules',COALESCE(old_cfg->'legacyBeforeRules',old_cfg-'rules'-'rulesVersion'),
+      'enabled',false,'channels','{}'::jsonb,'inApp','{}'::jsonb,
+      'androidPush',(CASE WHEN jsonb_typeof(new_cfg->'androidPush')='object' THEN new_cfg->'androidPush' ELSE '{}'::jsonb END)||'{"enabled":false}'::jsonb,
+      'shiftAlerts',(CASE WHEN jsonb_typeof(new_cfg->'shiftAlerts')='object' THEN new_cfg->'shiftAlerts' ELSE '{}'::jsonb END)||'{"inApp":false,"whatsapp":false,"push":false}'::jsonb);
+    NEW.notification_settings:=new_cfg;
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.guard_notification_rule_activation() FROM PUBLIC,anon,authenticated;
+DROP TRIGGER IF EXISTS guard_notification_rule_activation ON public.pos_settings;
+CREATE TRIGGER guard_notification_rule_activation BEFORE UPDATE OF notification_settings ON public.pos_settings
+FOR EACH ROW EXECUTE FUNCTION public.guard_notification_rule_activation();
+NOTIFY pgrst, 'reload schema';
+COMMIT;
+
+-- Mandatory sponsorship approvals and stock handovers.
+BEGIN;
+CREATE TABLE IF NOT EXISTS public.sponsorship_issues (
+ id uuid PRIMARY KEY,reference text NOT NULL UNIQUE,store_id text NOT NULL REFERENCES public.stores(id),store_name text NOT NULL,
+ recipient_name text NOT NULL,recipient_contact text NOT NULL DEFAULT '',purpose text NOT NULL,
+ lines jsonb NOT NULL,total_value numeric NOT NULL CHECK(total_value>=0),document_hash text NOT NULL,input_hash text NOT NULL,
+ created_by text NOT NULL,created_by_name text NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),
+ status text NOT NULL DEFAULT 'requested' CHECK(status IN ('requested','issued')),
+ given_at timestamptz,given_by text,given_by_name text,received_by text,approved_by_name text,
+ CHECK((status='issued')=(given_at IS NOT NULL))
+);
+ALTER TABLE public.sponsorship_issues ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.sponsorship_issues FROM PUBLIC,anon,authenticated;
+GRANT ALL ON public.sponsorship_issues TO service_role;
+CREATE INDEX IF NOT EXISTS sponsorship_issues_branch_created ON public.sponsorship_issues(store_id,created_at DESC,id);
+
+CREATE OR REPLACE FUNCTION public.prepare_sponsorship(p_id uuid,p_store text,p_recipient text,p_contact text,p_purpose text,p_lines jsonb,p_actor text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $$
+DECLARE actor public.app_users%ROWTYPE; existing public.sponsorship_issues%ROWTYPE; product public.products%ROWTYPE;
+ item jsonb; snapshot jsonb:='[]'; total numeric:=0; quantity integer; source_name text; digest text;
+BEGIN
+ SELECT * INTO actor FROM public.app_users WHERE user_id=p_actor AND is_active LIMIT 1;
+ IF actor.id IS NULL OR (actor.role::text='admin' OR (actor.permissions->>'can_create_sponsorship'='true' AND COALESCE(actor.permissions->>'page:sponsorship','true')<>'false')) IS NOT TRUE THEN RAISE EXCEPTION 'Sponsorship creation permission is required'; END IF;
+ IF actor.store_id IS NOT NULL AND actor.store_id<>p_store THEN RAISE EXCEPTION 'Sponsorship source is outside your branch'; END IF;
+ SELECT name INTO source_name FROM public.stores WHERE id=p_store AND is_active AND archived_at IS NULL;
+ IF source_name IS NULL THEN RAISE EXCEPTION 'Choose an active shop or warehouse'; END IF;
+ IF p_recipient IS NULL OR p_contact IS NULL OR p_purpose IS NULL OR length(btrim(p_recipient)) NOT BETWEEN 2 AND 160 OR length(p_contact)>160 OR length(btrim(p_purpose)) NOT BETWEEN 3 AND 400
+ OR jsonb_typeof(p_lines) IS DISTINCT FROM 'array' OR jsonb_array_length(p_lines) NOT BETWEEN 1 AND 100 THEN RAISE EXCEPTION 'Invalid sponsorship details'; END IF;
+ IF (SELECT count(DISTINCT value->>'productId') FROM jsonb_array_elements(p_lines))<>jsonb_array_length(p_lines) THEN RAISE EXCEPTION 'Choose each product once'; END IF;
+ SELECT jsonb_agg(value ORDER BY value->>'productId') INTO p_lines FROM jsonb_array_elements(p_lines);
+ digest:=md5(jsonb_build_object('store',p_store,'recipient',btrim(p_recipient),'contact',p_contact,'purpose',btrim(p_purpose),'lines',p_lines)::text);
+ PERFORM pg_advisory_xact_lock(hashtextextended('sponsorship:'||p_id::text,0));
+ SELECT * INTO existing FROM public.sponsorship_issues WHERE id=p_id;
+ IF FOUND THEN
+   IF existing.created_by<>p_actor OR existing.input_hash<>digest THEN RAISE EXCEPTION 'This sponsorship reference already contains different details'; END IF;
+   RETURN to_jsonb(existing);
+ END IF;
+ FOR item IN SELECT value FROM jsonb_array_elements(p_lines) ORDER BY value->>'productId' LOOP
+   quantity:=(item->>'quantity')::integer;
+   IF quantity IS NULL OR quantity NOT BETWEEN 1 AND 100000 THEN RAISE EXCEPTION 'Invalid sponsorship quantity'; END IF;
+   SELECT * INTO product FROM public.products WHERE id=(item->>'productId')::uuid AND NOT is_archived;
+   IF product.id IS NULL THEN RAISE EXCEPTION 'A selected product is unavailable'; END IF;
+   IF product.owner_store_id IS NOT NULL AND product.owner_store_id<>p_store THEN RAISE EXCEPTION 'A selected product belongs to another private catalogue'; END IF;
+   IF COALESCE((product.stock_by_store->>p_store)::integer,0)<quantity THEN RAISE EXCEPTION 'Not enough stock to request %',product.name; END IF;
+   IF product.selling_price<0 OR product.cost_price<0 THEN RAISE EXCEPTION 'A selected product has invalid prices'; END IF;
+   snapshot:=snapshot||jsonb_build_array(jsonb_build_object('product_id',product.id,'name',product.name,'sku',COALESCE(product.sku,''),'barcode',product.barcode,'quantity',quantity,'unit_value',product.selling_price,'unit_cost',product.cost_price));
+   total:=total+round(product.selling_price*quantity,2);
+ END LOOP;
+ INSERT INTO public.sponsorship_issues(id,reference,store_id,store_name,recipient_name,recipient_contact,purpose,lines,total_value,document_hash,input_hash,created_by,created_by_name)
+ VALUES(p_id,'SP-'||p_id::text,p_store,source_name,btrim(p_recipient),p_contact,btrim(p_purpose),snapshot,total,
+ md5(jsonb_build_object('input',digest,'lines',snapshot,'value',total)::text),digest,p_actor,actor.full_name) RETURNING * INTO existing;
+ RETURN to_jsonb(existing);
+END $$;
+REVOKE ALL ON FUNCTION public.prepare_sponsorship(uuid,text,text,text,text,jsonb,text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.prepare_sponsorship(uuid,text,text,text,text,jsonb,text) TO service_role;
+
+CREATE OR REPLACE FUNCTION public.issue_sponsorship(p_id uuid,p_actor text,p_received_by text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $$
+DECLARE actor public.app_users%ROWTYPE; approver public.app_users%ROWTYPE; document public.sponsorship_issues%ROWTYPE;
+ approval public.authorization_requests%ROWTYPE; item jsonb; product public.products%ROWTYPE; quantity integer; before_stock integer; after_stock integer; movement uuid;
+BEGIN
+ SELECT * INTO actor FROM public.app_users WHERE user_id=p_actor AND is_active LIMIT 1;
+ IF actor.id IS NULL OR (actor.role::text='admin' OR (actor.permissions->>'can_issue_sponsorship'='true' AND COALESCE(actor.permissions->>'page:sponsorship','true')<>'false')) IS NOT TRUE THEN RAISE EXCEPTION 'Sponsorship handover permission is required'; END IF;
+ SELECT * INTO document FROM public.sponsorship_issues WHERE id=p_id FOR UPDATE;
+ IF document.id IS NULL THEN RAISE EXCEPTION 'Sponsorship was not found'; END IF;
+ IF actor.store_id IS NOT NULL AND actor.store_id<>document.store_id THEN RAISE EXCEPTION 'Sponsorship source is outside your branch'; END IF;
+ IF document.status='issued' THEN RETURN to_jsonb(document); END IF;
+ IF p_received_by IS NULL OR length(btrim(p_received_by)) NOT BETWEEN 2 AND 160 THEN RAISE EXCEPTION 'Record the person who received these products'; END IF;
+ SELECT * INTO approval FROM public.authorization_requests WHERE id=p_id FOR UPDATE;
+ IF approval.id IS NULL OR approval.action_key<>'sponsorship' OR approval.status<>'approved' OR approval.consumed_at IS NOT NULL
+ OR approval.expires_at<=now() OR approval.requested_by<>document.created_by OR approval.store_id<>document.store_id
+ OR approval.decided_by IS NULL OR approval.decided_by=approval.requested_by
+ OR approval.payload->>'sponsorship_id' IS DISTINCT FROM p_id::text OR approval.payload->>'document_hash' IS DISTINCT FROM document.document_hash
+ OR approval.requested_amount IS DISTINCT FROM document.total_value
+ OR COALESCE(approval.approved_amount,approval.requested_amount) IS DISTINCT FROM document.total_value
+ THEN RAISE EXCEPTION 'Every sponsorship requires a valid, separate full approval before handover'; END IF;
+ IF NOT EXISTS(SELECT 1 FROM public.authorization_log WHERE request_id=p_id AND outcome='requested')
+ OR NOT EXISTS(SELECT 1 FROM public.authorization_log WHERE request_id=p_id AND outcome='approved' AND authorized_by=approval.decided_by)
+ THEN RAISE EXCEPTION 'Verified sponsorship approval audit is required'; END IF;
+ SELECT * INTO approver FROM public.app_users WHERE user_id=approval.decided_by AND is_active LIMIT 1;
+ IF approver.id IS NULL OR (approver.role::text='admin' OR (approver.permissions->>'can_approve_sponsorship'='true' AND COALESCE(approver.permissions->>'page:sponsorship','true')<>'false')) IS NOT TRUE THEN RAISE EXCEPTION 'The approving account no longer has sponsorship approval permission'; END IF;
+ IF approver.permissions->>'approval_scope:configured'='true' AND
+   ((approver.store_id IS NOT NULL AND approver.store_id<>document.store_id) OR
+    (COALESCE(approver.permissions->>'approval_scope:all','false')<>'true' AND COALESCE(approver.permissions->>('approval_scope:branch:'||document.store_id),'false')<>'true'))
+ THEN RAISE EXCEPTION 'The approving account is outside its saved approval branch scope'; END IF;
+ FOR item IN SELECT value FROM jsonb_array_elements(document.lines) ORDER BY value->>'product_id' LOOP
+   SELECT * INTO product FROM public.products WHERE id=(item->>'product_id')::uuid FOR UPDATE;
+   quantity:=(item->>'quantity')::integer;
+   IF product.id IS NULL OR product.is_archived THEN RAISE EXCEPTION 'A sponsorship product is unavailable'; END IF;
+   before_stock:=COALESCE((product.stock_by_store->>document.store_id)::integer,0);
+   IF before_stock<quantity THEN RAISE EXCEPTION 'Not enough stock to hand over %',product.name; END IF;
+   movement:=md5('sponsorship:'||p_id::text||':'||product.id::text)::uuid;
+   after_stock:=public.stock_apply_delta(movement,product.id,document.store_id,-quantity);
+   INSERT INTO public.stock_adjustments(id,product_id,product_name,sku,barcode,store_id,reason,note,previous_stock,updated_stock,delta,cost_impact,staff_id,staff_name,role)
+   VALUES(movement,product.id,product.name,product.sku,product.barcode,document.store_id,'sponsorship',document.reference||' · Recipient: '||document.recipient_name,before_stock,after_stock,-quantity,-quantity*(item->>'unit_cost')::numeric,p_actor,actor.full_name,COALESCE(actor.role_slug,actor.role::text));
+   INSERT INTO public.item_activity_logs(id,product_id,product_name,sku,barcode,store_id,activity_type,reference,quantity_delta,stock_before,stock_after,unit_cost,staff_id,staff_name,role,note)
+   VALUES(movement,product.id,product.name,product.sku,product.barcode,document.store_id,'adjustment',document.reference,-quantity,before_stock,after_stock,(item->>'unit_cost')::numeric,p_actor,actor.full_name,COALESCE(actor.role_slug,actor.role::text),'Sponsorship to '||document.recipient_name||' · Received by '||btrim(p_received_by));
+ END LOOP;
+ UPDATE public.authorization_requests SET consumed_at=now(),updated_at=now() WHERE id=p_id;
+ UPDATE public.sponsorship_issues SET status='issued',given_at=now(),given_by=p_actor,given_by_name=actor.full_name,received_by=btrim(p_received_by),approved_by_name=approval.decided_by_name WHERE id=p_id RETURNING * INTO document;
+ INSERT INTO public.activity_events(event_type,severity,title,message,store_id,actor_id,actor_name,actor_role,entity_type,entity_id,amount,client_event_id)
+ VALUES('sponsorship_issued','info','Sponsorship handed over',document.reference||' · '||document.recipient_name||' · Received by '||document.received_by,document.store_id,p_actor,actor.full_name,COALESCE(actor.role_slug,actor.role::text),'sponsorship',p_id::text,document.total_value,'sponsorship-issued:'||p_id::text) ON CONFLICT(client_event_id) DO NOTHING;
+ RETURN to_jsonb(document);
+END $$;
+REVOKE ALL ON FUNCTION public.issue_sponsorship(uuid,text,text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.issue_sponsorship(uuid,text,text) TO service_role;
+CREATE OR REPLACE FUNCTION public.guard_mandatory_sponsorship_rule()
+RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $$
+BEGIN
+ IF NEW.action_key='sponsorship' AND (NEW.mode<>'request' OR NOT NEW.is_enabled OR NOT NEW.require_reason OR NEW.threshold IS NOT NULL) THEN RAISE EXCEPTION 'Sponsorship always requires approval and a reason, without a bypass threshold'; END IF;
+ RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.guard_mandatory_sponsorship_rule() FROM PUBLIC,anon,authenticated;
+DROP TRIGGER IF EXISTS guard_mandatory_sponsorship_rule ON public.authorization_actions;
+CREATE TRIGGER guard_mandatory_sponsorship_rule BEFORE INSERT OR UPDATE ON public.authorization_actions FOR EACH ROW EXECUTE FUNCTION public.guard_mandatory_sponsorship_rule();
+-- Aggregate-only reporting; names and contacts stay behind sponsorship permission.
+CREATE INDEX IF NOT EXISTS sponsorship_issues_branch_given ON public.sponsorship_issues(store_id,given_at) WHERE status='issued';
+CREATE OR REPLACE FUNCTION public.sponsorship_daily_values(p_store text,p_from date,p_to date,p_zone text)
+RETURNS TABLE(day text,value numeric) LANGUAGE sql STABLE SECURITY INVOKER SET search_path=public,pg_temp AS $$
+ SELECT to_char(given_at AT TIME ZONE p_zone,'YYYY-MM-DD'),sum(total_value)
+ FROM public.sponsorship_issues WHERE status='issued' AND store_id=p_store
+ AND given_at >= (p_from::timestamp AT TIME ZONE p_zone) AND given_at < ((p_to+1)::timestamp AT TIME ZONE p_zone)
+ GROUP BY 1 ORDER BY 1
+$$;
+REVOKE ALL ON FUNCTION public.sponsorship_daily_values(text,date,date,text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.sponsorship_daily_values(text,date,date,text) TO service_role;
+NOTIFY pgrst,'reload schema';
+COMMIT;
+
+-- Sponsorship per-line discount documents.
+BEGIN;
+-- Discounts are part of the immutable, fully approved sponsorship document.
+CREATE OR REPLACE FUNCTION public.prepare_sponsorship(p_id uuid,p_store text,p_recipient text,p_contact text,p_purpose text,p_lines jsonb,p_actor text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $$
+DECLARE actor public.app_users%ROWTYPE; existing public.sponsorship_issues%ROWTYPE; product public.products%ROWTYPE;
+ item jsonb; snapshot jsonb:='[]'; total numeric:=0; quantity integer; source_name text; digest text; discount_type text; discount_value numeric; gross numeric; reduction numeric; net numeric;
+BEGIN
+ SELECT * INTO actor FROM public.app_users WHERE user_id=p_actor AND is_active LIMIT 1;
+ IF actor.id IS NULL OR (actor.role::text='admin' OR (actor.permissions->>'can_create_sponsorship'='true' AND COALESCE(actor.permissions->>'page:sponsorship','true')<>'false')) IS NOT TRUE THEN RAISE EXCEPTION 'Sponsorship creation permission is required'; END IF;
+ IF actor.store_id IS NOT NULL AND actor.store_id<>p_store THEN RAISE EXCEPTION 'Sponsorship source is outside your branch'; END IF;
+ SELECT name INTO source_name FROM public.stores WHERE id=p_store AND is_active AND archived_at IS NULL;
+ IF source_name IS NULL THEN RAISE EXCEPTION 'Choose an active shop or warehouse'; END IF;
+ IF p_recipient IS NULL OR p_contact IS NULL OR p_purpose IS NULL OR length(btrim(p_recipient)) NOT BETWEEN 2 AND 160 OR length(p_contact)>160 OR length(btrim(p_purpose)) NOT BETWEEN 3 AND 400
+ OR jsonb_typeof(p_lines) IS DISTINCT FROM 'array' OR jsonb_array_length(p_lines) NOT BETWEEN 1 AND 100 THEN RAISE EXCEPTION 'Invalid sponsorship details'; END IF;
+ IF (SELECT count(DISTINCT value->>'productId') FROM jsonb_array_elements(p_lines))<>jsonb_array_length(p_lines) THEN RAISE EXCEPTION 'Choose each product once'; END IF;
+ -- Normalize zero discounts to the original wire format, retaining old retry hashes.
+ SELECT jsonb_agg(jsonb_build_object('productId',value->>'productId','quantity',(value->>'quantity')::integer) ||
+   CASE WHEN COALESCE((value->>'discount')::numeric,0)=0 THEN '{}'::jsonb ELSE jsonb_build_object('discountType',COALESCE(value->>'discountType','amount'),'discount',(value->>'discount')::numeric) END
+   ORDER BY value->>'productId') INTO p_lines FROM jsonb_array_elements(p_lines);
+ digest:=md5(jsonb_build_object('store',p_store,'recipient',btrim(p_recipient),'contact',p_contact,'purpose',btrim(p_purpose),'lines',p_lines)::text);
+ PERFORM pg_advisory_xact_lock(hashtextextended('sponsorship:'||p_id::text,0));
+ SELECT * INTO existing FROM public.sponsorship_issues WHERE id=p_id;
+ IF FOUND THEN
+   IF existing.created_by<>p_actor OR existing.input_hash<>digest THEN RAISE EXCEPTION 'This sponsorship reference already contains different details'; END IF;
+   RETURN to_jsonb(existing);
+ END IF;
+ FOR item IN SELECT value FROM jsonb_array_elements(p_lines) ORDER BY value->>'productId' LOOP
+   quantity:=(item->>'quantity')::integer;
+   IF quantity IS NULL OR quantity NOT BETWEEN 1 AND 100000 THEN RAISE EXCEPTION 'Invalid sponsorship quantity'; END IF;
+   SELECT * INTO product FROM public.products WHERE id=(item->>'productId')::uuid AND NOT is_archived;
+   IF product.id IS NULL THEN RAISE EXCEPTION 'A selected product is unavailable'; END IF;
+   IF product.owner_store_id IS NOT NULL AND product.owner_store_id<>p_store THEN RAISE EXCEPTION 'A selected product belongs to another private catalogue'; END IF;
+   IF COALESCE((product.stock_by_store->>p_store)::integer,0)<quantity THEN RAISE EXCEPTION 'Not enough stock to request %',product.name; END IF;
+   IF product.selling_price<0 OR product.cost_price<0 THEN RAISE EXCEPTION 'A selected product has invalid prices'; END IF;
+   discount_type:=COALESCE(item->>'discountType','amount');discount_value:=COALESCE((item->>'discount')::numeric,0);
+   IF discount_type NOT IN ('amount','percent') OR discount_value<0 OR discount_value::text IN ('NaN','Infinity','-Infinity') OR (discount_type='percent' AND discount_value>100) THEN RAISE EXCEPTION 'Invalid sponsorship discount'; END IF;
+   gross:=round(product.selling_price*quantity,2);
+   reduction:=round(CASE WHEN discount_type='percent' THEN gross*discount_value/100 ELSE discount_value END,2);
+   IF reduction>gross THEN RAISE EXCEPTION 'Sponsorship discount cannot exceed the product line value'; END IF;
+   net:=gross-reduction;
+   snapshot:=snapshot||jsonb_build_array(jsonb_build_object('product_id',product.id,'name',product.name,'sku',COALESCE(product.sku,''),'barcode',product.barcode,'quantity',quantity,'unit_value',product.selling_price,'unit_cost',product.cost_price,'discount_type',discount_type,'discount',discount_value,'discount_amount',reduction,'line_value',net));
+   total:=total+net;
+ END LOOP;
+ INSERT INTO public.sponsorship_issues(id,reference,store_id,store_name,recipient_name,recipient_contact,purpose,lines,total_value,document_hash,input_hash,created_by,created_by_name)
+ VALUES(p_id,'SP-'||p_id::text,p_store,source_name,btrim(p_recipient),p_contact,btrim(p_purpose),snapshot,total,
+ md5(jsonb_build_object('input',digest,'lines',snapshot,'value',total)::text),digest,p_actor,actor.full_name) RETURNING * INTO existing;
+ RETURN to_jsonb(existing);
+END $$;
+REVOKE ALL ON FUNCTION public.prepare_sponsorship(uuid,text,text,text,text,jsonb,text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.prepare_sponsorship(uuid,text,text,text,text,jsonb,text) TO service_role;
+
+NOTIFY pgrst,'reload schema';
+COMMIT;
+
+-- Sponsorship named direct issuers and shared document references.
+BEGIN;
+-- Direct issue is a named-user policy, separate from ordinary page/action rights.
+CREATE TABLE public.sponsorship_direct_issue_policy(id integer PRIMARY KEY CHECK(id=1),user_ids text[] NOT NULL DEFAULT '{}',row_version integer NOT NULL DEFAULT 0,updated_by text,updated_at timestamptz NOT NULL DEFAULT now());
+INSERT INTO public.sponsorship_direct_issue_policy(id) VALUES(1);
+ALTER TABLE public.sponsorship_direct_issue_policy ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.sponsorship_direct_issue_policy FROM PUBLIC,anon,authenticated;
+GRANT ALL ON public.sponsorship_direct_issue_policy TO service_role;
+ALTER TABLE public.sponsorship_issues ADD COLUMN authorization_mode text NOT NULL DEFAULT 'approval' CHECK(authorization_mode IN ('approval','direct'));
+CREATE OR REPLACE FUNCTION public.save_sponsorship_direct_issuers(p_users text[],p_version integer,p_actor text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $$
+DECLARE policy public.sponsorship_direct_issue_policy%ROWTYPE;
+BEGIN
+ IF NOT EXISTS(SELECT 1 FROM public.app_users WHERE user_id=p_actor AND is_active AND (role::text='admin' OR role_slug='admin')) THEN RAISE EXCEPTION 'Administrator access is required'; END IF;
+ IF p_users IS NULL OR cardinality(p_users)>100 OR EXISTS(SELECT 1 FROM unnest(p_users) u WHERE NOT EXISTS(SELECT 1 FROM public.app_users a WHERE a.user_id=u AND a.is_active)) THEN RAISE EXCEPTION 'Select active staff accounts only'; END IF;
+ SELECT * INTO policy FROM public.sponsorship_direct_issue_policy WHERE id=1 FOR UPDATE;
+ IF p_version IS DISTINCT FROM policy.row_version THEN RAISE EXCEPTION 'The sponsorship direct issue policy changed; reload before saving'; END IF;
+ UPDATE public.sponsorship_direct_issue_policy SET user_ids=ARRAY(SELECT DISTINCT u FROM unnest(p_users) u ORDER BY u),row_version=row_version+1,updated_by=p_actor,updated_at=now() WHERE id=1 RETURNING * INTO policy;
+ RETURN to_jsonb(policy);
+END $$;
+REVOKE ALL ON FUNCTION public.save_sponsorship_direct_issuers(text[],integer,text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.save_sponsorship_direct_issuers(text[],integer,text) TO service_role;
+CREATE OR REPLACE FUNCTION public.reserve_stock_document_number(p_prefix text,p_minimum bigint,p_store_id text)
+RETURNS bigint LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $function$
+DECLARE v_store text; v_owner text; v_saved bigint; v_last bigint; v_next bigint;
+BEGIN
+ IF coalesce((SELECT auth.role()),'') <> 'service_role' THEN RAISE EXCEPTION 'STOCK_NUMBER_SERVICE_REQUIRED'; END IF;
+ IF p_prefix IS NULL OR p_prefix !~ '^[A-Z0-9-]{1,200}$' OR p_minimum IS NULL OR
+    p_minimum < 1 OR p_minimum >= 9007199254740991
+ THEN RAISE EXCEPTION 'STOCK_NUMBER_REQUEST_INVALID'; END IF;
+ SELECT id INTO v_store FROM public.stores WHERE id=p_store_id OR
+   (p_store_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' AND lower(id)=lower(p_store_id))
+ ORDER BY (id=p_store_id) DESC LIMIT 1;
+ IF v_store IS NULL THEN RAISE EXCEPTION 'STOCK_NUMBER_REQUEST_INVALID'; END IF;
+ INSERT INTO private.stock_document_counters(prefix,store_id,next_value)
+ VALUES(p_prefix,v_store,p_minimum) ON CONFLICT(prefix) DO NOTHING;
+ SELECT store_id,next_value INTO v_owner,v_saved FROM private.stock_document_counters WHERE prefix=p_prefix FOR UPDATE;
+ IF v_owner IS DISTINCT FROM v_store THEN RAISE EXCEPTION 'STOCK_NUMBER_BRANCH_FORBIDDEN'; END IF;
+ SELECT max(CASE WHEN substring(reference FROM length(p_prefix)+2) ~ '^[0-9]{1,16}$'
+   THEN substring(reference FROM length(p_prefix)+2)::bigint ELSE 0 END) INTO v_last
+ FROM (SELECT reference FROM public.stock_count_drafts UNION ALL SELECT reference FROM public.purchase_orders
+       UNION ALL SELECT ref AS reference FROM public.stock_transfers UNION ALL SELECT reference FROM public.sponsorship_issues) documents
+ WHERE reference LIKE p_prefix||'-%';
+ v_next:=greatest(p_minimum,v_saved,coalesce(v_last,0)+1);
+ IF v_next>=9007199254740991 THEN RAISE EXCEPTION 'STOCK_NUMBER_LIMIT'; END IF;
+ UPDATE private.stock_document_counters SET next_value=v_next+1,updated_at=now() WHERE prefix=p_prefix;
+ RETURN v_next;
+END;
+$function$;
+REVOKE ALL ON FUNCTION public.reserve_stock_document_number(text,bigint,text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.reserve_stock_document_number(text,bigint,text) TO service_role;
+
+CREATE OR REPLACE FUNCTION public.prepare_numbered_sponsorship(p_id uuid,p_store text,p_recipient text,p_contact text,p_purpose text,p_lines jsonb,p_actor text,p_number_prefix text,p_start bigint,p_padding integer)
+RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $$
+DECLARE document public.sponsorship_issues%ROWTYPE; sequence bigint; prepared jsonb;
+BEGIN
+ prepared:=public.prepare_sponsorship(p_id,p_store,p_recipient,p_contact,p_purpose,p_lines,p_actor);
+ SELECT * INTO document FROM public.sponsorship_issues WHERE id=p_id FOR UPDATE;
+ IF document.reference='SP-'||p_id::text AND document.status='requested' THEN
+   IF p_padding IS NULL OR p_padding NOT BETWEEN 3 AND 6 THEN RAISE EXCEPTION 'Invalid sponsorship number length'; END IF;
+   sequence:=public.reserve_stock_document_number(p_number_prefix,p_start,p_store);
+   UPDATE public.sponsorship_issues SET reference=p_number_prefix||'-'||lpad(sequence::text,GREATEST(p_padding,length(sequence::text)),'0') WHERE id=p_id RETURNING * INTO document;
+ END IF;
+ RETURN to_jsonb(document);
+END $$;
+REVOKE ALL ON FUNCTION public.prepare_numbered_sponsorship(uuid,text,text,text,text,jsonb,text,text,bigint,integer) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.prepare_numbered_sponsorship(uuid,text,text,text,text,jsonb,text,text,bigint,integer) TO service_role;
+
+CREATE OR REPLACE FUNCTION public.issue_sponsorship(p_id uuid,p_actor text,p_received_by text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $$
+DECLARE actor public.app_users%ROWTYPE; approver public.app_users%ROWTYPE; document public.sponsorship_issues%ROWTYPE;
+ approval public.authorization_requests%ROWTYPE; item jsonb; product public.products%ROWTYPE; quantity integer; before_stock integer; after_stock integer; movement uuid; direct boolean; permitted_users text[];
+BEGIN
+ SELECT * INTO actor FROM public.app_users WHERE user_id=p_actor AND is_active LIMIT 1 FOR SHARE;
+ IF actor.id IS NULL OR (actor.role::text='admin' OR (actor.permissions->>'can_issue_sponsorship'='true' AND COALESCE(actor.permissions->>'page:sponsorship','true')<>'false')) IS NOT TRUE THEN RAISE EXCEPTION 'Sponsorship handover permission is required'; END IF;
+ SELECT * INTO document FROM public.sponsorship_issues WHERE id=p_id FOR UPDATE;
+ IF document.id IS NULL THEN RAISE EXCEPTION 'Sponsorship was not found'; END IF;
+ IF actor.store_id IS NOT NULL AND actor.store_id<>document.store_id THEN RAISE EXCEPTION 'Sponsorship source is outside your branch'; END IF;
+ IF document.status='issued' THEN RETURN to_jsonb(document); END IF;
+ IF p_received_by IS NULL OR length(btrim(p_received_by)) NOT BETWEEN 2 AND 160 THEN RAISE EXCEPTION 'Record the person who received these products'; END IF;
+ SELECT user_ids INTO permitted_users FROM public.sponsorship_direct_issue_policy WHERE id=1 FOR SHARE;
+ direct:=actor.role::text='admin' OR actor.role_slug='admin' OR p_actor=ANY(COALESCE(permitted_users,'{}'::text[]));
+ IF direct IS NOT TRUE THEN
+ SELECT * INTO approval FROM public.authorization_requests WHERE id=p_id FOR UPDATE;
+ IF approval.id IS NULL OR approval.action_key<>'sponsorship' OR approval.status<>'approved' OR approval.consumed_at IS NOT NULL
+ OR approval.expires_at<=now() OR approval.requested_by<>document.created_by OR approval.store_id<>document.store_id
+ OR approval.decided_by IS NULL OR approval.decided_by=approval.requested_by
+ OR approval.payload->>'sponsorship_id' IS DISTINCT FROM p_id::text OR approval.payload->>'document_hash' IS DISTINCT FROM document.document_hash
+ OR approval.requested_amount IS DISTINCT FROM document.total_value
+ OR COALESCE(approval.approved_amount,approval.requested_amount) IS DISTINCT FROM document.total_value
+ THEN RAISE EXCEPTION 'This sponsorship requires a valid, separate full approval before handover'; END IF;
+ IF NOT EXISTS(SELECT 1 FROM public.authorization_log WHERE request_id=p_id AND outcome='requested')
+ OR NOT EXISTS(SELECT 1 FROM public.authorization_log WHERE request_id=p_id AND outcome='approved' AND authorized_by=approval.decided_by)
+ THEN RAISE EXCEPTION 'Verified sponsorship approval audit is required'; END IF;
+ SELECT * INTO approver FROM public.app_users WHERE user_id=approval.decided_by AND is_active LIMIT 1;
+ IF approver.id IS NULL OR (approver.role::text='admin' OR (approver.permissions->>'can_approve_sponsorship'='true' AND COALESCE(approver.permissions->>'page:sponsorship','true')<>'false')) IS NOT TRUE THEN RAISE EXCEPTION 'The approving account no longer has sponsorship approval permission'; END IF;
+ IF approver.permissions->>'approval_scope:configured'='true' AND
+   ((approver.store_id IS NOT NULL AND approver.store_id<>document.store_id) OR
+    (COALESCE(approver.permissions->>'approval_scope:all','false')<>'true' AND COALESCE(approver.permissions->>('approval_scope:branch:'||document.store_id),'false')<>'true'))
+ THEN RAISE EXCEPTION 'The approving account is outside its saved approval branch scope'; END IF;
+ END IF;
+ FOR item IN SELECT value FROM jsonb_array_elements(document.lines) ORDER BY value->>'product_id' LOOP
+   SELECT * INTO product FROM public.products WHERE id=(item->>'product_id')::uuid FOR UPDATE;
+   quantity:=(item->>'quantity')::integer;
+   IF product.id IS NULL OR product.is_archived THEN RAISE EXCEPTION 'A sponsorship product is unavailable'; END IF;
+   before_stock:=COALESCE((product.stock_by_store->>document.store_id)::integer,0);
+   IF before_stock<quantity THEN RAISE EXCEPTION 'Not enough stock to hand over %',product.name; END IF;
+   movement:=md5('sponsorship:'||p_id::text||':'||product.id::text)::uuid;
+   after_stock:=public.stock_apply_delta(movement,product.id,document.store_id,-quantity);
+   INSERT INTO public.stock_adjustments(id,product_id,product_name,sku,barcode,store_id,reason,note,previous_stock,updated_stock,delta,cost_impact,staff_id,staff_name,role)
+   VALUES(movement,product.id,product.name,product.sku,product.barcode,document.store_id,'sponsorship',document.reference||' · Recipient: '||document.recipient_name,before_stock,after_stock,-quantity,-quantity*(item->>'unit_cost')::numeric,p_actor,actor.full_name,COALESCE(actor.role_slug,actor.role::text));
+   INSERT INTO public.item_activity_logs(id,product_id,product_name,sku,barcode,store_id,activity_type,reference,quantity_delta,stock_before,stock_after,unit_cost,staff_id,staff_name,role,note)
+   VALUES(movement,product.id,product.name,product.sku,product.barcode,document.store_id,'adjustment',document.reference,-quantity,before_stock,after_stock,(item->>'unit_cost')::numeric,p_actor,actor.full_name,COALESCE(actor.role_slug,actor.role::text),'Sponsorship to '||document.recipient_name||' · Received by '||btrim(p_received_by));
+ END LOOP;
+ IF direct THEN
+   UPDATE public.authorization_requests SET status='cancelled',decision_note='Completed directly by an authorized issuer',updated_at=now() WHERE id=p_id AND status='pending';
+   IF FOUND THEN
+     INSERT INTO public.authorization_log(action_key,mode_used,request_id,requested_by,authorized_by,authorizer_role,store_id,outcome,detail)
+     VALUES('sponsorship','admin_auto',p_id,document.created_by,p_actor,COALESCE(actor.role_slug,actor.role::text),document.store_id,'cancelled',jsonb_build_object('reason','Sponsorship completed by a direct issuer'));
+   END IF;
+ END IF;
+ UPDATE public.authorization_requests SET consumed_at=now(),updated_at=now() WHERE id=p_id;
+ UPDATE public.sponsorship_issues SET status='issued',given_at=now(),given_by=p_actor,given_by_name=actor.full_name,received_by=btrim(p_received_by),authorization_mode=CASE WHEN direct THEN 'direct' ELSE 'approval' END,approved_by_name=CASE WHEN direct THEN actor.full_name||' (direct issue)' ELSE approval.decided_by_name END WHERE id=p_id RETURNING * INTO document;
+ INSERT INTO public.activity_events(event_type,severity,title,message,store_id,actor_id,actor_name,actor_role,entity_type,entity_id,amount,client_event_id)
+ VALUES('sponsorship_issued','info','Sponsorship handed over',document.reference||' · '||document.recipient_name||' · Received by '||document.received_by,document.store_id,p_actor,actor.full_name,COALESCE(actor.role_slug,actor.role::text),'sponsorship',p_id::text,document.total_value,'sponsorship-issued:'||p_id::text) ON CONFLICT(client_event_id) DO NOTHING;
+ RETURN to_jsonb(document);
+END $$;
+REVOKE ALL ON FUNCTION public.issue_sponsorship(uuid,text,text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.issue_sponsorship(uuid,text,text) TO service_role;
+NOTIFY pgrst,'reload schema';
+COMMIT;
+
+-- Final public-schema privilege hardening after notification rule definitions.
+DO $notification_hardening$
+DECLARE routine record;
+BEGIN
+  FOR routine IN SELECT p.oid::regprocedure AS signature FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.prosecdef
+  LOOP EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC, anon',routine.signature); END LOOP;
+END $notification_hardening$;

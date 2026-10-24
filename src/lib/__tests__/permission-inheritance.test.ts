@@ -78,7 +78,9 @@ describe("database permission migration contract", () => {
     const encoded = sql.match(/'({"can_[^']+})'::jsonb/);
     expect(encoded).not.toBeNull();
     const expected: Record<string, string[]> = {};
-    for (const page of PERMISSION_PAGES) for (const key of page.keys) (expected[key] ??= []).push(page.id);
+    // This historical SQL migration predates the PC sign-in flag. Device
+    // admission is checked by the server; it grants no table/page ownership.
+    for (const page of PERMISSION_PAGES) for (const key of page.keys) if (key !== "can_use_management_pc" && !key.endsWith("sponsorship")) (expected[key] ??= []).push(page.id);
     expect(JSON.parse(encoded![1])).toEqual(expected);
   });
 });

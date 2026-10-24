@@ -51,7 +51,7 @@ export async function resolveCompareCaller(input: {
 
   if (input.cashierToken) {
     const { verifyCashierSession } = await import("./pos-session.server");
-    const session = verifyCashierSession(input.cashierToken);
+    const session = await verifyCashierSession(input.cashierToken);
     if (session) {
       const row = await branchOf("user_id", session.username);
       if (

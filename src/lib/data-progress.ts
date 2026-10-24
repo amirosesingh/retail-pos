@@ -36,10 +36,10 @@ export function beginDataTask(label: string) {
     },
   };
 }
-export async function withDataTask<T>(label: string, work: () => Promise<T>): Promise<T> {
+export async function withDataTask<T>(label: string, work: (task?: ReturnType<typeof beginDataTask>) => Promise<T>): Promise<T> {
   const task = beginDataTask(label);
   try {
-    return await work();
+    return await work(task);
   } finally {
     task.finish();
   }

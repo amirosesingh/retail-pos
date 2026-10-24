@@ -3,7 +3,7 @@
  * never disagree on revenue, cost or profit.
  */
 import { lineDiscountTotal, lineUnitDiscount, r2, type CartLine, type Product, type Sale } from "@/core/types/pos-types";
-import { lineCost, saleLineRevenues, saleLineTaxes } from "@/core/pricing/profit";
+import { indexProducts, lineCost, saleLineRevenues, saleLineTaxes, type ProductLookup } from "@/core/pricing/profit";
 
 export type SoldLine = {
   saleId: string;
@@ -39,11 +39,11 @@ export type SoldLine = {
 const lineOf = (
   s: Sale,
   l: CartLine,
-  products: Product[],
+  products: ProductLookup,
   revenue: number,
   tax: number,
 ): SoldLine => {
-  const p = products.find((x) => x.id === l.productId);
+  const p = products.get(l.productId);
   const unitDiscount = lineUnitDiscount(l);
   const estimatedCost = l.cost == null;
   const unitCost = l.cost ?? p?.cost ?? 0;
@@ -80,14 +80,16 @@ const lineOf = (
 };
 
 /** Flatten every bill in the window into one row per sold line. */
-export const soldLines = (sales: Sale[], products: Product[]): SoldLine[] =>
-  sales.flatMap((sale) => {
+export const soldLines = (sales: Sale[], products: Product[]): SoldLine[] => {
+  const byId = indexProducts(products);
+  return sales.flatMap((sale) => {
     const revenues = saleLineRevenues(sale);
     const taxes = saleLineTaxes(sale);
     return sale.lines.map((line, index) =>
-      lineOf(sale, line, products, revenues[index] ?? 0, taxes[index] ?? 0),
+      lineOf(sale, line, byId, revenues[index] ?? 0, taxes[index] ?? 0),
     );
   });
+};
 
 export const sumLines = (rows: SoldLine[]) => {
   const revenue = r2(rows.reduce((a, r) => a + r.revenue, 0));

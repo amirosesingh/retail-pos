@@ -50,6 +50,7 @@ export type AuthActionKey =
   | "discard_draft"
   | "delete_product"
   | "stock_transfer"
+  | "sponsorship"
   | "member_points_adjust";
 
 export type AuthActionDef = {
@@ -176,6 +177,7 @@ export const AUTH_ACTIONS: AuthActionDef[] = [
     blurb: "Recounting or writing off stock.",
     deferrable: true,
   },
+  {key:"sponsorship",group:"inventory",label:"Sponsorship stock issue",blurb:"Administrators and selected direct issuers may hand over directly. Other users require approval at every value, including zero.",deferrable:true},
   {
     key: "stock_transfer",
     group: "inventory",
@@ -287,10 +289,10 @@ export const defaultRule = (actionKey: AuthActionKey): AuthorizationRule => ({
   actionKey,
   scopeType: "global",
   scopeId: "",
-  mode: "none",
-  allowedRoles: ["admin", "manager"],
+  mode: actionKey === "sponsorship" ? "request" : "none",
+  allowedRoles: actionKey === "sponsorship" ? ["admin"] : ["admin", "manager"],
   allowedUserIds: [],
-  requesterRoles: ["cashier", "staff", "manager", "admin"],
+  requesterRoles: actionKey === "sponsorship" ? ["cashier", "staff", "manager", "admin", "warehouse"] : ["cashier", "staff", "manager", "admin"],
   requesterUserIds: [],
   authorityLimits: {},
   extraAuthority: {},
@@ -298,7 +300,7 @@ export const defaultRule = (actionKey: AuthActionKey): AuthorizationRule => ({
   approvalTimeoutMinutes: 15,
   escalationAfterMinutes: null,
   escalationRoles: [],
-  requireReason: false,
+  requireReason: actionKey === "sponsorship",
   threshold: null,
   isEnabled: true,
   rowVersion: 0,
@@ -348,13 +350,15 @@ export function normalizeRule(input: unknown): AuthorizationRule {
     scopeType: scope === "branch" || scope === "cluster" ? scope : "global",
     scopeId: String(field("scope_id", "scopeId") ?? ""),
     mode: asMode(row["mode"]),
-    allowedRoles: asStrings(field("allowed_roles", "allowedRoles")).length
-      ? asStrings(field("allowed_roles", "allowedRoles"))
-      : base.allowedRoles,
+    // An empty saved audience means named people only, not the default roles.
+    // Defaults apply only to legacy rows that do not contain this field.
+    allowedRoles: field("allowed_roles", "allowedRoles") == null
+      ? base.allowedRoles
+      : asStrings(field("allowed_roles", "allowedRoles")),
     allowedUserIds: asStrings(field("allowed_user_ids", "allowedUserIds")),
-    requesterRoles: asStrings(field("requester_roles", "requesterRoles")).length
-      ? asStrings(field("requester_roles", "requesterRoles"))
-      : base.requesterRoles,
+    requesterRoles: field("requester_roles", "requesterRoles") == null
+      ? base.requesterRoles
+      : asStrings(field("requester_roles", "requesterRoles")),
     requesterUserIds: asStrings(field("requester_user_ids", "requesterUserIds")),
     authorityLimits: asLimits(field("authority_limits", "authorityLimits")),
     extraAuthority: asLimits(field("extra_authority", "extraAuthority")),
@@ -405,6 +409,7 @@ export function resolveRules(rows: AuthorizationRule[], storeId: string): RuleMa
         out[r.actionKey] = r;
       });
   }
+  if (out.sponsorship) out.sponsorship = {...out.sponsorship,mode:"request",isEnabled:true,requireReason:true,threshold:null};
   return out;
 }
 
@@ -458,10 +463,17 @@ export function rulesFromLegacy(rules: PosRules): RuleMap {
   AUTH_ACTIONS.forEach((a) => {
     const legacyKey = (GATE_RULE_KEY as Record<string, keyof PosRules>)[a.key];
     const gated = legacyKey ? Boolean(rules[legacyKey]) : true;
-    out[a.key] = { ...defaultRule(a.key), mode: gated ? "pin" : "none" };
+    out[a.key] = a.key === "sponsorship" ? defaultRule(a.key) : { ...defaultRule(a.key), mode: gated ? "pin" : "none" };
   });
   return out;
 }
+
+/** The staff editor calls the built-in manager level Supervisor. Both stored
+ * names identify that same level; custom role slugs remain exact matches. */
+export const authorizationRole = (role: string | null | undefined) => {
+  const value = (role ?? "").trim().toLowerCase();
+  return value === "supervisor" ? "manager" : value;
+};
 
 /** Can this person decide requests for the action, or authorise it by PIN? */
 export function canAuthorize(
@@ -471,8 +483,8 @@ export function canAuthorize(
   if (!rule) return false;
   const id = (who.userId ?? "").toLowerCase();
   if (id && userIsExcluded(rule.allowedUserIds, id)) return false;
-  const role = (who.role ?? "").toLowerCase();
-  if (role && rule.allowedRoles.map((r) => r.toLowerCase()).includes(role)) return true;
+  const role = authorizationRole(who.role);
+  if (role && rule.allowedRoles.map(authorizationRole).includes(role)) return true;
   return (
     !!id && includedAuthorizationUserIds(rule.allowedUserIds).some((u) => u.toLowerCase() === id)
   );
@@ -484,11 +496,11 @@ export function canRequestApproval(
   who: { userId?: string | null; role?: string | null },
 ): boolean {
   if (!rule || !rule.isEnabled || (rule.mode !== "request" && rule.mode !== "either")) return false;
-  const role = (who.role ?? "").toLowerCase();
+  const role = authorizationRole(who.role);
   const id = (who.userId ?? "").toLowerCase();
   if (id && userIsExcluded(rule.requesterUserIds, id)) return false;
   return (
-    rule.requesterRoles.some((r) => r.toLowerCase() === role) ||
+    rule.requesterRoles.some((r) => authorizationRole(r) === role) ||
     (!!id &&
       includedAuthorizationUserIds(rule.requesterUserIds).some((u) => u.toLowerCase() === id))
   );
@@ -500,8 +512,14 @@ function authorityValue(
   who: { userId?: string | null; role?: string | null },
 ) {
   const userKey = `user:${(who.userId ?? "").toLowerCase()}`;
-  const roleKey = `role:${(who.role ?? "").toLowerCase()}`;
-  return map[userKey] ?? map[roleKey] ?? null;
+  if (map[userKey] != null) return map[userKey];
+  const exactKey = `role:${(who.role ?? "").trim().toLowerCase()}`;
+  if (map[exactKey] != null) return map[exactKey];
+  const role = authorizationRole(who.role);
+  const limits = Object.entries(map).filter(([key]) => key.startsWith("role:") &&
+    authorizationRole(key.slice(5)) === role).map(([, value]) => value);
+  // Preserve an explicit saved role limit; only fill a missing alias.
+  return limits.length ? Math.min(...limits) : null;
 }
 
 /** Legacy absolute authority. Kept unchanged for already-deployed rules. */
@@ -591,6 +609,7 @@ export function canBypassAuthorization(
   amount: number | null | undefined,
   directLimit?: number | null,
 ): boolean {
+  if (rule?.actionKey === "sponsorship") return false;
   return (
     (who.role ?? "").toLowerCase() === "admin" &&
     canAuthorizeAmount(rule, who, amount, directLimit)
@@ -607,10 +626,10 @@ export function canAuthorizeEscalated(
   if (!rule?.escalationAfterMinutes || !rule.escalationRoles.length) return false;
   const created = Date.parse(createdAt);
   if (!Number.isFinite(created)) return false;
-  const role = (who.role ?? "").toLowerCase();
+  const role = authorizationRole(who.role);
   return (
     now - created >= rule.escalationAfterMinutes * 60_000 &&
-    rule.escalationRoles.some((candidate) => candidate.toLowerCase() === role)
+    rule.escalationRoles.some((candidate) => authorizationRole(candidate) === role)
   );
 }
 

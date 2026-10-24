@@ -27,9 +27,13 @@ export function catalogColumnPositions(tableId: string, labels: readonly string[
 export function tableColumnHidden(
   rules: Record<string, string[]>, tableId: string, column: number,
   role: string | null, userId: string | null,
+  permissions: Record<string, unknown> = {},
 ): boolean {
   const scopes = rules[tableColumnKey(tableId, column)] ?? [];
-  return scopes.includes("all") || (!!role && scopes.includes(`role:${role}`)) ||
+  if (scopes.includes("all")) return true;
+  const own = permissions[`display:${tableColumnKey(tableId, column)}`];
+  if (typeof own === "boolean") return !own;
+  return (!!role && scopes.includes(`role:${role}`)) ||
     (!!userId && scopes.includes(`user:${userId}`));
 }
 

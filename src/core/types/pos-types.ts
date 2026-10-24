@@ -1033,11 +1033,13 @@ export type IntegrationSettings = {
   /** How branch stock-request references are built. */
   requestNumbering?: import("@/lib/stock-ref").StockNumberingSettings;
   /** How branch stock-transfer references are built. */
+  sponsorshipNumbering?: import("@/lib/stock-ref").StockNumberingSettings;
   transferNumbering?: import("@/lib/stock-ref").StockNumberingSettings;
   /** Retire products when company-wide stock reaches zero; restore on replenishment. */
   autoArchiveZeroStock?: boolean;
   /** Any user with Close shift permission may close a shift in their branch. */
   allowAnyStaffCloseShift?: boolean;
+  includeSponsorshipInDailySales?: boolean;
   /** Cash-rounding of the final bill total. */
   rounding?: RoundingSettings;
 };

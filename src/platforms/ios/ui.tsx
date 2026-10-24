@@ -205,7 +205,7 @@ export function IosUpdateBanner() {
     void action().catch(e => setError(e instanceof Error ? e.message : String(e)));
   };
   const detail = state.error || error || state.deferred || (state.phase === "ready" ? "Downloaded. Tap to install and reopen."
-    : state.phase === "downloading" ? `Downloading${state.progress === undefined ? "…" : ` ${state.progress}%`}`
+    : state.phase === "downloading" ? "Downloading update"
       : state.phase === "installing" ? "Saving and reopening…" : "Update available. Tap to download.");
   return <NativeUpdateOrb label={`${RELEASE_CHANNEL === "beta" ? "Beta update" : "Update"} ${displayReleaseVersion(state.latest.version)}`}
     detail={detail} progress={state.progress} busy={busy} error={state.phase === "error" || !!error}

@@ -99,6 +99,10 @@ async function verifySyncedPin(pool, username, pin, branchId, purpose, options =
   }
   const hash = String(row.pin_hash ?? "");
   const switches = permissions(row.permissions);
+  if (purpose === "approval" && switches["approval_scope:configured"] === true &&
+      switches["approval_scope:all"] !== true && !Object.entries(switches).some(([key,allowed]) =>
+        allowed === true && key.toLowerCase() === `approval_scope:branch:${branchId}`.toLowerCase()))
+    return { ok: false, reason: "scope", error: "This account is not permitted to approve in this branch" };
   const pinEnabled = purpose !== "approval" || switches.approval_pin_enabled !== false;
   const validPin = !tokenOnly && pinEnabled && hash && await bcrypt.compare(secret, hash);
   const validToken = !validPin && purpose === "approval" && switches.approval_totp_enabled === true &&

@@ -12,6 +12,7 @@ import { approvalMethods, APPROVAL_TOKEN_LEASE_MS, OFFLINE_APPROVAL_TOKEN_LEASE_
 import { matchingTotpStep } from "./approval-totp";
 import type { AuthorizationRule } from "./authorization";
 import { approvalPinEligible } from "./approval-pin-eligibility";
+import { approvalPersonBranchAllowed } from "./approval-branch-scope";
 import { loadRuleRows } from "./authorization.server";
 
 type Person = {
@@ -90,6 +91,7 @@ export async function approvalPerson(userId: string) {
 async function eligible(person: Person, branch: string, rules?: AuthorizationRule[]) {
   return (
     person.is_active &&
+    (!branch || approvalPersonBranchAllowed(person,branch)) &&
     (!person.store_id || person.store_id.toLowerCase() === branch.toLowerCase()) &&
     approvalPinEligible(rules ?? await loadRuleRows(branch), {
       userId: person.user_id,

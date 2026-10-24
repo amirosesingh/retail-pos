@@ -1,4 +1,7 @@
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
+import { DataProgress } from "@/components/shared/DataProgress";
+import { yieldToUi } from "@/lib/commit-progress";
+import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -163,6 +166,7 @@ function Purchasing() {
   const [masterView, setMasterView] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [finalizeStage, setFinalizeStage] = useState("");
   const [entryOpen, setEntryOpen] = useState(false);
   const [editing, setEditing] = useState<ReceivingInvoice | null>(null);
   const [removedLineIds, setRemovedLineIds] = useState<string[]>([]);
@@ -207,6 +211,7 @@ function Purchasing() {
     [allStores, receivingBranchId, hub.id],
   );
   const [pending, setPending] = useState<PutAwayLine[]>([]);
+  const putAwayPage = usePagination(pending,25);
   /** Levels default to the warehouse's primary pick location when there is one. */
   const defaultPutAwayId = useMemo(() => {
     const primary = primarySub(allStores, hub.id) ?? primarySub(allStores, currentStore.id);
@@ -690,7 +695,9 @@ function Purchasing() {
 
     finalizingRef.current = true;
     setSaving(true);
+    setFinalizeStage("Preparing the invoice and waiting for any pending draft save…");
     try {
+      await yieldToUi();
       // Finish any autosave that already started, then block later draft saves.
       // Otherwise a slow draft write can arrive after the posted write and
       // incorrectly put a finalized receiving order back into Draft.
@@ -698,6 +705,7 @@ function Purchasing() {
       const attemptId =
         savedDraft?.id ?? openDraftId ?? finalizeAttempt.current ?? crypto.randomUUID();
       finalizeAttempt.current = attemptId;
+      setFinalizeStage("Checking the invoice number…");
       if (await invoiceNumberTaken(ref, attemptId, receivingBranchId)) {
         toast.error(`Invoice ${ref} already exists`, {
           description: "Open it in the history below to correct it, or use a different number.",
@@ -735,6 +743,8 @@ function Purchasing() {
       // The hub is where the stock actually lands, so the movement rows are
       // stamped with it and committed alongside the invoice.
       const mayUpdateCataloguePrices = can("can_edit_product_price");
+      setFinalizeStage(`Saving ${invoice.lines.length.toLocaleString()} invoice lines and their stock movements…`);
+      await yieldToUi();
       if (wasDraft)
         await db.updateReceivingInvoice(
           invoice,
@@ -744,6 +754,9 @@ function Purchasing() {
           mayUpdateCataloguePrices,
         );
       else await db.commitReceivingInvoice(invoice, hubId, mayUpdateCataloguePrices);
+
+      setFinalizeStage("The invoice is stored. Preparing the receipt and put-away list…");
+      await yieldToUi();
 
       const productsById = new Map(state.products.map(product => [product.id, product]));
       const movements = [];
@@ -986,7 +999,7 @@ function Purchasing() {
           </Button>
         </header>
 
-        <Dialog open={entryOpen} onOpenChange={setEntryOpen}>
+        <Dialog open={entryOpen} onOpenChange={open => {if (!saving) setEntryOpen(open);}}>
           <DialogContent className="max-h-[92vh] w-[min(96vw,90rem)] max-w-none overflow-y-auto">
             <DialogHeader>
               <DialogTitle>{openDraftId ? "Resume receiving order" : "Add new stock"}</DialogTitle>
@@ -1296,7 +1309,7 @@ function Purchasing() {
               </p>
             </div>
             <div className="space-y-2">
-              {pending.map((row) => (
+              {putAwayPage.pageItems.map((row) => (
                 <div
                   key={row.id}
                   className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-card p-2"
@@ -1335,6 +1348,7 @@ function Purchasing() {
                 </div>
               ))}
             </div>
+            <TablePagination {...putAwayPage} onPage={putAwayPage.setPage} onPageSize={putAwayPage.setPageSize} label="put-away lines" />
           </section>
         )}
 
@@ -1805,6 +1819,16 @@ function Purchasing() {
               Discard draft
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={saving || savingEdit}>
+        <DialogContent showCloseButton={false} onEscapeKeyDown={event => event.preventDefault()} onPointerDownOutside={event => event.preventDefault()} className="max-w-md">
+          <DialogHeader><DialogTitle>{savingEdit ? "Saving invoice corrections" : "Finalizing receiving invoice"}</DialogTitle>
+            <DialogDescription>{savingEdit ? "Saving the corrected lines and stock movements. Keep this page open until the result is confirmed." : finalizeStage}</DialogDescription>
+          </DialogHeader>
+          <p role="status" className="text-sm">{(savingEdit ? editing?.lines.length ?? 0 : lines.length).toLocaleString()} invoice lines · Waiting for the database to confirm the write.</p>
+          <DataProgress variant="panel" labels={["Saving receiving invoice","Updating receiving invoice"]} />
+          <p className="text-xs text-muted-foreground">The form clears only after the invoice is stored. A failed write keeps your invoice available for retry.</p>
         </DialogContent>
       </Dialog>
     </AppShell>
