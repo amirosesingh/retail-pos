@@ -201,6 +201,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261024073000_retire_global_permission_restrictions.sql",
       "supabase/migrations/20261024095724_notification_rule_table.sql",
       "supabase/migrations/20261024110442_notification_legacy_mode_guard.sql",
+      "supabase/migrations/20261024113812_notification_rule_activation_compatibility.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

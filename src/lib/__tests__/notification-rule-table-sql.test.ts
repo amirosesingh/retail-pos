@@ -36,14 +36,22 @@ beforeAll(async () => {
   );
   await db.exec(migration);
   await db.exec(migration);
-  await db.exec(readFileSync("supabase/migrations/20261024110442_notification_legacy_mode_guard.sql", "utf8"));
+  await db.exec(
+    readFileSync("supabase/migrations/20261024110442_notification_legacy_mode_guard.sql", "utf8"),
+  );
+  await db.exec(
+    readFileSync(
+      "supabase/migrations/20261024113812_notification_rule_activation_compatibility.sql",
+      "utf8",
+    ),
+  );
 });
 afterAll(async () => {
   await db.close();
 });
 beforeEach(async () => {
   await db.exec(
-    `TRUNCATE notification_deliveries,activity_events; UPDATE pos_settings SET notification_settings='{"enabled":false,"shiftAlerts":{"whatsapp":false}}';`,
+    `TRUNCATE notification_deliveries,activity_events,pos_settings; INSERT INTO pos_settings VALUES(1,'{"enabled":false,"shiftAlerts":{"whatsapp":false}}');`,
   );
 });
 async function save(rules: unknown[], expected: unknown = null) {
@@ -60,12 +68,14 @@ async function event(meta: unknown = {}, amount: number | null = 150) {
 }
 describe("durable notification rule table", () => {
   it("keeps legacy in-app preferences and private audiences before activation", async () => {
-    const first = (await event({audience_user_ids:["cashier"]})).rows[0];
+    const first = (await event({ audience_user_ids: ["cashier"] })).rows[0];
     expect(first.meta.audience_user_ids).toEqual(["cashier"]);
     expect(first.meta.in_app_disabled).toBe(false);
     expect(first.meta.notification_routes).toBeUndefined();
     expect((await db.query("SELECT * FROM notification_deliveries")).rows).toEqual([]);
-    await db.exec("DELETE FROM activity_events; UPDATE pos_settings SET notification_settings='{\"inApp\":{\"sale_complete\":false}}'");
+    await db.exec(
+      'DELETE FROM activity_events; UPDATE pos_settings SET notification_settings=\'{"inApp":{"sale_complete":false}}\'',
+    );
     expect((await event()).rows[0].meta.in_app_disabled).toBe(true);
   });
   it("preserves legacy configuration and refuses concurrent overwrites", async () => {
@@ -76,9 +86,46 @@ describe("durable notification rule table", () => {
       )
     ).rows[0].notification_settings;
     expect(config.enabled).toBe(false);
-    expect(config.shiftAlerts).toEqual({ whatsapp: false });
+    expect(config.shiftAlerts).toEqual({ whatsapp: false, inApp: false, push: false });
+    expect(config.legacyBeforeRules).toEqual({ enabled: false, shiftAlerts: { whatsapp: false } });
     await expect(save([])).rejects.toThrow(/changed on another device/);
     await save([], [rule()]);
+  });
+  it("retires legacy delivery at activation and rejects an old editor overwriting the table", async () => {
+    const legacy = {
+      enabled: true,
+      recipients: ["6731234567"],
+      channels: { sale_complete: "whatsapp" },
+      androidPush: { enabled: true, events: ["sale_complete"] },
+      shiftAlerts: { inApp: true, whatsapp: true, push: true, recipients: ["6731234567"] },
+    };
+    await db.query("UPDATE pos_settings SET notification_settings=$1::jsonb", [
+      JSON.stringify(legacy),
+    ]);
+    await save([rule()]);
+    const config = (
+      await db.query<{ notification_settings: Record<string, unknown> }>(
+        "SELECT notification_settings FROM pos_settings",
+      )
+    ).rows[0].notification_settings;
+    expect(config.legacyBeforeRules).toEqual(legacy);
+    expect(config.enabled).toBe(false);
+    expect(config.channels).toEqual({});
+    expect(config.androidPush).toMatchObject({ enabled: false });
+    expect(config.shiftAlerts).toMatchObject({ inApp: false, whatsapp: false, push: false });
+    await expect(
+      db.query("UPDATE pos_settings SET notification_settings=$1::jsonb", [JSON.stringify(legacy)]),
+    ).rejects.toThrow(/rules table/);
+    await db.exec(
+      'UPDATE pos_settings SET notification_settings=notification_settings||\'{"enabled":true,"channels":{"sale_complete":"whatsapp"}}\'',
+    );
+    expect(
+      (
+        await db.query<{ notification_settings: Record<string, unknown> }>(
+          "SELECT notification_settings FROM pos_settings",
+        )
+      ).rows[0].notification_settings.enabled,
+    ).toBe(false);
   });
   it("routes only to selected active roles in the correct branch and deduplicates delivery", async () => {
     expect(
