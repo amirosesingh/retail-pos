@@ -173,7 +173,7 @@ async function publish(directory, version, releaseId) {
   if (digest(await remote(`${PUBLIC}/latest/latest.yml`)) !== digest(fs.readFileSync(path.join(directory, 'latest.yml')))) throw new Error('Published metadata verification failed; inspect CDN caching.');
   // Only known history entries are pruned. Keep all small historical blockmaps for old installed versions.
   for (const old of plan.remove) {
-    if (!/^v\d+\.\d+\.\d+-[a-f0-9]{7,40}$/.test(old.releaseId)) throw new Error('Unsafe retention target.');
+    if (!/^v\d+\.\d+\.\d+(?:\+revision\.[1-9]\d*)?-[a-f0-9]{7,40}$/.test(old.releaseId)) throw new Error('Unsafe retention target.');
     // Android shares this release directory. Remove only known Windows objects.
     for (const file of [`Retail Setup ${old.version}.exe`, `Retail Setup ${old.version}.exe.blockmap`, `${old.version}.yml`, 'release.json'])
       aws(['s3','rm',`s3://${BUCKET}/${PREFIX}/releases/${old.releaseId}/${file}`]);
