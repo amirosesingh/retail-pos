@@ -36,6 +36,8 @@ type LooseFilter = PromiseLike<{
   eq: (column: string, value: unknown) => LooseFilter;
   is: (column: string, value: null | boolean) => LooseFilter;
   in: (column: string, values: unknown[]) => LooseFilter;
+  gte: (column: string, value: string) => LooseFilter;
+  lte: (column: string, value: string) => LooseFilter;
   order: (column: string, opts: { ascending: boolean }) => LooseFilter;
   or: (expression: string) => LooseFilter;
   limit: (n: number) => LooseFilter;
@@ -69,6 +71,7 @@ const CLOUD_PRIMARY_ORDER: Readonly<Record<string, readonly string[]>> = Object.
 });
 
 export type QueryOptions = {
+  dateRange?: { column: string; from: string; to: string };
   columns?: string;
   match?: Record<string, unknown>;
   /** Rows whose column value is one of these. */
@@ -133,6 +136,7 @@ async function runQuery(
     for (const [k, v] of Object.entries(options.match ?? {}))
       q = v === null ? q.is(k, null) : q.eq(k, v);
     if (options.in) q = q.in(options.in.column, options.in.values);
+    if (options.dateRange) q = q.gte(options.dateRange.column, options.dateRange.from).lte(options.dateRange.column, options.dateRange.to);
     if (options.cursor) {
       const op = options.orderBy?.ascending === true ? "gt" : "lt";
       q = q.or(

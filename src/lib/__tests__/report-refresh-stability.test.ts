@@ -1,5 +1,8 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import type { Sale } from "@/core/types/pos-types";
+import { QueryClient } from "@tanstack/query-core";
+const cache = vi.hoisted(() => ({ client: null as unknown as import("@tanstack/query-core").QueryClient }));
+vi.mock("@tanstack/react-query", () => ({ useQueryClient: () => cache.client }));
 const harness = vi.hoisted(() => ({
   auth: { ready: true, user: { staffId: "operator" } as { staffId: string } | null },
   values: [] as unknown[],
@@ -55,7 +58,7 @@ const sale = {
   createdAt: "2026-10-12T12:00:00",
   total: 71,
 } as Sale;
-const page = { rows: [sale], hasMore: false, cursor: null };
+const page: { rows: Sale[]; hasMore: boolean; cursor: { ts: string; id: string } | null } = { rows: [sale], hasMore: false, cursor: null };
 function render(branch = "branch-a", from = "2026-10-12", to = from) {
   harness.cursor = 0;
   harness.effectCursor = 0;
@@ -66,6 +69,7 @@ function render(branch = "branch-a", from = "2026-10-12", to = from) {
   return result;
 }
 beforeEach(() => {
+  cache.client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   harness.auth = { ready: true, user: { staffId: "operator" } };
   harness.values = [];
   harness.effects = [];
@@ -80,17 +84,40 @@ beforeEach(() => {
   });
 });
 afterEach(() => {
+  cache.client.clear();
   harness.effects.forEach((effect) => effect.cleanup?.());
   vi.unstubAllGlobals(); vi.useRealTimers();
 });
 async function loaded() {
   load.mockResolvedValueOnce(page);
   render();
-  await Promise.resolve();
-  await Promise.resolve();
+  await vi.waitFor(() => expect(render().sales).toHaveLength(1));
   expect(render().sales).toHaveLength(1);
 }
 describe("report refresh stability", () => {
+  it("shares a pending read and lets the remaining page finish after one reader leaves", async () => {
+    let finish!: (value: typeof page) => void;
+    load.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    render();
+    const firstEffects = harness.effects;
+    harness.values = []; harness.effects = []; harness.pending = [];
+    render();
+    expect(load).toHaveBeenCalledTimes(1);
+    firstEffects.forEach(effect => effect.cleanup?.());
+    finish(page);
+    await vi.waitFor(() => expect(render().sales).toEqual([sale]));
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+  it("stops walking historical pages when the last reader leaves", async () => {
+    let finish!: (value: typeof page) => void;
+    load.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    render();
+    harness.effects.forEach(effect => effect.cleanup?.());
+    finish({ rows: [sale], hasMore: true, cursor: { ts: sale.createdAt, id: sale.id } });
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    expect(load).toHaveBeenCalledTimes(1);
+    harness.effects = [];
+  });
   it("refreshes again for later live changes after the first batch", async () => {
     vi.useFakeTimers();
     await loaded();
@@ -167,10 +194,9 @@ describe("report refresh stability", () => {
     render();
     expect(load).toHaveBeenCalledTimes(1);
     load.mockResolvedValue(page);
-    finish(page); await Promise.resolve(); await Promise.resolve();
-    render(); await Promise.resolve(); await Promise.resolve();
-    expect(load).toHaveBeenCalledTimes(2);
-    expect(render().sales).toEqual([sale]);
+    finish(page);
+    await vi.waitFor(() => { render(); expect(load).toHaveBeenCalledTimes(2); });
+    await vi.waitFor(() => expect(render().sales).toEqual([sale]));
   });
   it("ignores an old branch response that arrives after switching branches", async () => {
     let finish!: (value: typeof page) => void;
@@ -187,11 +213,25 @@ describe("report refresh stability", () => {
     load.mockRejectedValueOnce(new Error("Connection interrupted"));
     harness.focus?.();
     render();
-    await Promise.resolve();
-    await Promise.resolve();
+    await vi.waitFor(() => expect(render().error).toBe("Connection interrupted"));
     const result = render();
     expect(result.sales).toEqual([sale]);
     expect(result.error).toBe("Connection interrupted");
     expect(result.loading).toBe(false);
+  });
+  it("reuses a fresh range after leaving and returning, but rereads an invalidated range", async () => {
+    await loaded();
+    const remount = () => {
+      harness.effects.forEach(effect => effect.cleanup?.());
+      harness.values = []; harness.effects = []; harness.pending = [];
+      render();
+    };
+    remount();
+    await vi.waitFor(() => expect(render().sales).toEqual([sale]));
+    expect(load).toHaveBeenCalledTimes(1);
+    await cache.client.invalidateQueries({ queryKey: ["report-sales"], refetchType: "none" });
+    load.mockResolvedValue(page);
+    remount();
+    await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(2));
   });
 });

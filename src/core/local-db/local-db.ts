@@ -607,6 +607,7 @@ export type PosBridge = {
       orderBy?: { column: string; ascending?: boolean };
       limit?: number;
       offset?: number;
+      dateRange?: { column: string; from: string; to: string };
       cursor?: { column: string; value: string; id: string };
     },
   ) => Promise<{ ok: boolean; rows?: LocalSaleRow[]; error?: string; code?: string }>;

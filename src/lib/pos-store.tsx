@@ -2,6 +2,7 @@ import { subscribeSettingsRefresh } from "./settings-refresh";
 import { createRefreshQueue, requestBackgroundRefresh, subscribeBackgroundRefresh } from "./background-refresh";
 import { stockCountChanges } from "./stock-count-plan";
 import { retainUnchangedFields } from "./live-state";
+import { primarySnapshotReadsTable } from "./live-query-tables";
 import { isLegacyExchange } from "@/lib/legacy-exchange";
 import { redeemedPoints } from "./points-redemption";
 import { CUSTOMER_REFUNDS_ALLOWED, NO_REFUND_MESSAGE, exchangePolicyError } from "./returns-policy";
@@ -1182,8 +1183,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
     const offCatchup = subscribeBackgroundRefresh(() => void wake(), 300_000, effectiveDatabaseMode() !== "online", effectiveDatabaseMode() !== "online");
     let timer: ReturnType<typeof setTimeout> | undefined;
     const offData = subscribeDataChange(change => {
-      revision += 1;
       if (change.storeId && state.currentStoreId && !sameBranchId(change.storeId, state.currentStoreId)) return;
+      if (!primarySnapshotReadsTable(change.table)) return;
+      revision += 1;
       if (change.entityId && !["product_barcodes", "stores"].includes(change.table)) return;
       if (!["products", "product_barcodes", "members", "promotions", "shifts", "stores"].includes(change.table)) return;
       if (timer) clearTimeout(timer);

@@ -561,6 +561,16 @@ class OperationsRepository {
       });
       where.push(`source.[${column.sqlServerColumn}] IN (${names.join(",")})`);
     }
+    if (options.dateRange) {
+      const column = byCloud.get(options.dateRange.column);
+      const start = Date.parse(options.dateRange.from);
+      const end = Date.parse(options.dateRange.to);
+      if (!column || !Number.isFinite(start) || !Number.isFinite(end) || start > end)
+        throw Object.assign(new Error("Invalid local query date range."), { code: "EQUERY_RANGE" });
+      request.input("rangeFrom", new Date(start).toISOString());
+      request.input("rangeTo", new Date(end).toISOString());
+      where.push(`source.[${column.sqlServerColumn}]>=@rangeFrom AND source.[${column.sqlServerColumn}]<=@rangeTo`);
+    }
     const primary = table.columns.find((column) => column.primaryKey) ?? table.columns[0];
     const orderColumn = options.orderBy?.column ? byCloud.get(options.orderBy.column) : primary;
     if (!orderColumn) throw Object.assign(new Error("Unsupported local order column."), { code: "EQUERY_COLUMN" });

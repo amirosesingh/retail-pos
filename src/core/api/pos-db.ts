@@ -1743,6 +1743,7 @@ export async function loadSalesPage(
   if (localDb()?.query) {
     const heads = (await routedQuery("sales", {
       match: { store_id: storeId },
+      ...(range ? { dateRange: { column: "created_at", ...range } } : {}),
       orderBy: { column: "created_at", ascending: false },
       ...(cursor ? { cursor: { column: "created_at", value: cursor.ts, id: cursor.id } } : {}),
       limit,
