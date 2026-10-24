@@ -70,7 +70,8 @@ function Dashboard() {
   const { state, currentStore } = usePos();
   const { can } = useAuth();
   const { visible } = useVisibility();
-  const showStockValue = can("can_view_cost_margin") && visible("inventory.stockValue");
+  const showCostMargin = can("can_view_cost_margin");
+  const showStockValue = showCostMargin && visible("inventory.stockValue");
   const drawer = useDrawerEvents();
   const thresholds = defaultReviewThresholds;
 
@@ -215,8 +216,8 @@ function Dashboard() {
         <DisplayElement name="dashboard.revenueSummary"><div role="region" aria-label="Revenue summary" tabIndex={0} className="dashboard-swipe-row no-scrollbar grid min-w-0 grid-flow-col auto-cols-[minmax(10rem,72%)] snap-x snap-mandatory gap-3 overflow-x-auto overscroll-x-contain rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:grid-flow-row md:auto-cols-auto md:grid-cols-4 md:overflow-visible xl:grid-cols-7">
           <Kpi label="Revenue today" value={money(revenue)} highlight />
           <Kpi label="Gross revenue" value={money(profit.revenue)} />
-          <Kpi label="Total COGS" value={money(profit.cogs)} />
-          <Kpi label="Gross margin" value={`${margin.toFixed(1)}%`} />
+          {showCostMargin && <Kpi label="Total COGS" value={money(profit.cogs)} />}
+          {showCostMargin && <Kpi label="Gross margin" value={`${margin.toFixed(1)}%`} />}
           <Kpi label="Bills" value={String(live.length)} />
           <Kpi
             label="Refunds"
@@ -328,7 +329,7 @@ function Dashboard() {
           </section>
           </CarouselItem>
 
-        <CarouselItem className="basis-[92%] sm:basis-3/4 lg:basis-[48%] 2xl:basis-1/3">
+        {showCostMargin && <CarouselItem className="basis-[92%] sm:basis-3/4 lg:basis-[48%] 2xl:basis-1/3">
           <section className="flex h-88 min-w-0 flex-col rounded-lg border border-border bg-card p-4">
           <h2 className="mb-3 min-h-10 shrink-0 text-sm font-semibold">
             Profit by hour · gross profit {money(chartProfit.profit)}
@@ -356,7 +357,7 @@ function Dashboard() {
             </ResponsiveContainer>
           </div>
         </section>
-          </CarouselItem>
+          </CarouselItem>}
 
           </CarouselContent>
         </Carousel></DisplayElement>

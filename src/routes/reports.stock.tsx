@@ -50,7 +50,8 @@ const ALL = "__all__";
 const reasonLabel = (v: string) => STOCK_ADJUSTMENT_REASONS.find((r) => r.value === v)?.label ?? v;
 
 function StockReport() {
-  const { user } = useAuth();
+  const { user, can } = useAuth();
+  const showCostMargin = can('can_view_cost_margin');
   const { state, stores } = usePos();
   const init = defaultRange();
   const [from, setFrom] = useState(init.from);
@@ -124,7 +125,7 @@ function StockReport() {
                 r.before,
                 r.after,
                 r.delta,
-                r.cost,
+                showCostMargin ? r.cost : "",
                 r.staff,
                 r.note,
               ]),
@@ -212,7 +213,7 @@ function StockReport() {
           <StatCard label="Units short" value={String(short)} />
           <StatCard
             label="Cost impact"
-            value={money(impact)}
+            value={showCostMargin ? money(impact) : "Restricted"}
             hint={`${state.products.length} products in catalog`}
           />
         </div>
@@ -254,7 +255,7 @@ function StockReport() {
                   >
                     {r.delta > 0 ? `+${r.delta}` : r.delta}
                   </TableCell>
-                  <TableCell className="numeric text-right">{money(r.cost)}</TableCell>
+                  <TableCell className="numeric text-right">{showCostMargin ? money(r.cost) : "Restricted"}</TableCell>
                   <TableCell>{r.staff}</TableCell>
                 </TableRow>
               ))}

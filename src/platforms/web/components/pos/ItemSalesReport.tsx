@@ -1,3 +1,4 @@
+import { useAuth } from "@/lib/pos-auth";
 import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
 import { ReportReceiptLink } from "@/platforms/web/components/pos/ReportReceiptLink";
 import { useMemo } from "react";
@@ -25,6 +26,8 @@ import { branchDisplayName } from "@/lib/human-readable";
 
 
 export function ItemSalesReport() {
+  const { can } = useAuth();
+  const showCostMargin = can('can_view_cost_margin');
   const { state, stores } = usePos();
   const init = defaultRange(30);
   const { from, setFrom, to, setTo, storeId, setStoreId, cashier, setCashier, q, setQ } =
@@ -109,10 +112,10 @@ export function ItemSalesReport() {
                 l.discount,
                 l.tax,
                 l.revenue,
-                l.unitCost,
-                l.cost,
-                l.profit,
-                l.marginPct,
+                showCostMargin ? l.unitCost : "",
+                showCostMargin ? l.cost : "",
+                showCostMargin ? l.profit : "",
+                showCostMargin ? l.marginPct : "",
               ]),
             ])
           }
@@ -161,9 +164,9 @@ export function ItemSalesReport() {
           <StatCard label="Lines" value={String(totals.lines)} />
           <StatCard label="Units" value={String(totals.units)} />
           <StatCard label="Revenue" value={money(totals.revenue)} />
-          <StatCard label="Cost" value={money(totals.cost)} />
-          <StatCard label="Gross profit" value={money(totals.profit)} />
-          <StatCard label="Margin" value={`${totals.marginPct.toFixed(1)}%`} />
+          <StatCard label="Cost" value={showCostMargin ? money(totals.cost) : "Restricted"} />
+          <StatCard label="Gross profit" value={showCostMargin ? money(totals.profit) : "Restricted"} />
+          <StatCard label="Margin" value={showCostMargin ? `${totals.marginPct.toFixed(1)}%` : "Restricted"} />
         </div>
 
         <div className="rounded-2xl border border-border bg-card">
@@ -218,17 +221,17 @@ export function ItemSalesReport() {
                     {money(l.revenue)}
                   </TableCell>
                   <TableCell className="numeric text-right">
-                    {money(l.cost)}
-                    {l.estimatedCost && (
+                    {showCostMargin ? money(l.cost) : "Restricted"}
+                    {showCostMargin && l.estimatedCost && (
                       <span className="ml-1 text-xs text-muted-foreground">est.</span>
                     )}
                   </TableCell>
                   <TableCell
-                    className={`numeric text-right ${l.profit < 0 ? "text-destructive" : ""}`}
+                    className={`numeric text-right ${showCostMargin && l.profit < 0 ? "text-destructive" : ""}`}
                   >
-                    {money(l.profit)}
+                    {showCostMargin ? money(l.profit) : "Restricted"}
                   </TableCell>
-                  <TableCell className="numeric text-right">{l.marginPct.toFixed(1)}%</TableCell>
+                  <TableCell className="numeric text-right">{showCostMargin ? `${l.marginPct.toFixed(1)}%` : "Restricted"}</TableCell>
                 </TableRow>
               ))}
               {!rows.length && (

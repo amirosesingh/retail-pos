@@ -7,7 +7,8 @@ import { sameBranchId } from "@/lib/branch-id";
  * what is actually in the box. Any line that differs from what was
  * dispatched forces a written reason before the count can be posted.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { reconcileReceivingCounts } from "@/lib/receiving-counts";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
@@ -66,6 +67,7 @@ function ReceivingWorkspace() {
   const navigate = useNavigate();
   const { transfer, live, loading, error: loadError, retry } = useTransferRecord(id);
   const [counts, setCounts] = useState<Record<string, string>>({});
+  const countDelivery = useRef<string | null>(null);
   const [reason, setReason] = useState("");
   const [scan, setScan] = useState("");
   const [busy, setBusy] = useState(false);
@@ -89,10 +91,12 @@ function ReceivingWorkspace() {
     setScan("");
   }
 
-  // Start blank so the count is a real count, not a rubber stamp.
+  // Start a new delivery blank, but preserve unfinished counts on live refresh.
   useEffect(() => {
     if (!transfer) return;
-    setCounts(Object.fromEntries(transfer.items.map((i) => [i.productId, ""])));
+    const sameDelivery = countDelivery.current === transfer.id;
+    countDelivery.current = transfer.id;
+    setCounts(previous => reconcileReceivingCounts(previous, sameDelivery, transfer.items.map(item => item.productId)));
   }, [transfer]);
 
   const lines = useMemo(() => {

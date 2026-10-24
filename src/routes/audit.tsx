@@ -273,6 +273,7 @@ function AuditPage() {
   }
 
   function exportCsv() {
+    if (!can("can_export_reports")) return;
     const blob = new Blob([auditToCsv(rows)], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -305,9 +306,9 @@ function AuditPage() {
                 <Wrench className="size-4" /> Correct a record
               </Button>
             )}
-            <Button variant="outline" onClick={exportCsv}>
+            {can("can_export_reports") && <Button variant="outline" onClick={exportCsv}>
               <Download className="size-4" /> Export logs
-            </Button>
+            </Button>}
           </div>
         </header>
 
