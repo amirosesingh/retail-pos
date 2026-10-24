@@ -80,7 +80,7 @@ describe("restricted Retail workspace", () => {
     fixture.permissions.can_view_inventory = true;
     const html = renderToStaticMarkup(h(TerminalWorkspaceHome));
     const overview = html.split('aria-label="Workspace overview"')[1].split('</section>')[0];
-    expect(overview.match(/snap-start/g)).toHaveLength(2);
+    expect(overview.match(/flex-\[1_1_11rem\]/g)).toHaveLength(2);
     expect(overview.indexOf("Shift")).toBeLessThan(overview.indexOf("Low stock"));
     fixture.hidden = ["workspace.shiftStatus","workspace.lowStock"];
     expect(renderToStaticMarkup(h(TerminalWorkspaceHome))).not.toContain('aria-label="Workspace overview"');

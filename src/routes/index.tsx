@@ -37,6 +37,7 @@ import {
   Minus,
   Plus,
   Printer,
+  PrinterX,
   Search,
   ScanBarcode,
   Trash2,
@@ -496,6 +497,7 @@ function Register() {
   const [catalogOpen, setCatalogOpen] = useState(false);
   /** Code that failed to resolve, shown in the search dialog. */
   const [unknownCode, setUnknownCode] = useState<string | null>(null);
+  const [printThisBill, setPrintThisBill] = useState(true);
   /** The open ticket: lines, discount, member, coupon and bill number. */
   const {
     lines: rawCartLines,
@@ -528,6 +530,7 @@ function Register() {
     getMemberName: () => member?.name ?? null,
     // A discount unlock lasts for this ticket only.
     onReset: (reason) => {
+      setPrintThisBill(true);
       setDiscountOverride(false);
       if (reason === "voided" || reason === "cleared") {
         void invalidateAppliedApproval(
@@ -1268,6 +1271,7 @@ function Register() {
   });
 
   const { saving, lastSale, changeSale, dismissChange, completeSale, bookAndPayLater, sendSaleOnWhatsApp } = useCheckout({
+    getPrintReceipt: () => printThisBill,
     getActiveShift: () => activeShift,
     getCurrentStore: () => currentStore,
     getActiveCashier: () => activeCashier,
@@ -2453,8 +2457,15 @@ function Register() {
     </div>
   );
 
+  const receiptToggle = <Button type="button" variant={printThisBill ? "outline" : "secondary"} size="icon"
+    className="size-10 shrink-0" aria-label="Skip printing this bill" aria-pressed={!printThisBill}
+    title={printThisBill ? "Printing on. Click to skip the receipt for this bill only." : "Printing off for this bill only. The drawer still follows its cash-payment rules."}
+    disabled={saving || !lines.length} onClick={() => setPrintThisBill(value => !value)}>
+    {printThisBill ? <Printer className="size-4" /> : <PrinterX className="size-4" />}
+  </Button>;
   const atom_actCharge = can("can_process_sale") ? (
-    <div className="flex h-full min-w-0 items-center">
+    <div className="flex h-full min-w-0 items-center gap-2">
+      {receiptToggle}
       <ActionButton
         layout="inline"
         className="h-full w-full rounded-xl border-transparent bg-primary px-6 text-lg font-semibold text-primary-foreground shadow-md transition-[transform,box-shadow] hover:bg-primary/90 hover:shadow-lg active:scale-[0.995]"
@@ -3233,6 +3244,7 @@ function Register() {
           )}
 
           <DialogFooter className="items-center gap-2">
+            <div className="mr-auto flex items-center gap-2">{receiptToggle}<span className="text-xs text-muted-foreground">{printThisBill ? "Print receipt" : "No receipt · this bill only"}</span></div>
             {refundDue === 0 &&
               tenders.length > 0 &&
               validateTenders(balanceDue, tenders).error && (
@@ -3252,7 +3264,7 @@ function Register() {
                   !!validateTenders(balanceDue, tenders).error)
               }
             >
-              {saving ? "Saving…" : "Complete & print"}
+              {saving ? "Saving…" : printThisBill ? "Complete & print" : "Complete sale"}
             </Button>
           </DialogFooter>
         </DialogContent>
