@@ -130,6 +130,26 @@ it("allows the selected person to reject a request with an audit", async () => {
   expect(await decide(false)).toMatchObject({ ok: true });
   expect(state.audit).toHaveBeenCalledWith(expect.objectContaining({ outcome: "rejected" }));
 });
+it.each([true, false])(
+  "preserves a person's explicit exclusion after backup-role delay (approve=%s)",
+  async (approve) => {
+    state.scope.role = state.scope.roleSlug = "supervisor";
+    state.rule = {
+      ...state.rule,
+      allowedUserIds: ["!CHOSEN"],
+      escalationRoles: ["manager"],
+      escalationAfterMinutes: 1,
+    };
+    state.request.createdAt = new Date(Date.now() - 120_000).toISOString();
+    state.request.approvalRoute = {
+      primaryApprovers: [],
+      escalationAfterMinutes: 1,
+      escalationApprovers: [{ id: "chosen" }],
+    };
+    expect(await decide(approve)).toMatchObject({ ok: false });
+    expect(state.decide).not.toHaveBeenCalled();
+  },
+);
 it("saves a named-only sponsorship rule without adding roles or escalation", async () => {
   state.scope.role = state.scope.roleSlug = "admin";
   const result = await saveAuthorizationRule({

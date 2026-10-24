@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   canAuthorize,
+  canAuthorizeEscalated,
+  canDecideRequestAmount,
   canRequestApproval,
   defaultRule,
   normalizeRule,
@@ -8,6 +10,32 @@ import {
 } from "../authorization";
 
 describe("saved named-only approval audiences", () => {
+  it.each(["manager", "supervisor"])(
+    "retains explicit exclusions for %s backup approvals",
+    (role) => {
+      const rule = {
+        ...defaultRule("stock_transfer"),
+        allowedUserIds: ["chosen", "!CHOSEN"],
+        escalationRoles: ["manager"],
+        escalationAfterMinutes: 1,
+      };
+      for (const now of [59_000, 60_000, 120_000]) {
+        expect(
+          canAuthorizeEscalated(rule, { userId: "Chosen", role }, new Date(0).toISOString(), now),
+        ).toBe(false);
+        expect(
+          canAuthorizeEscalated(rule, { userId: "other", role }, new Date(0).toISOString(), now),
+        ).toBe(now >= 60_000);
+      }
+      expect(
+        canDecideRequestAmount(
+          rule,
+          { userId: "chosen", role },
+          { createdAt: new Date(0).toISOString(), requestedAmount: 5, requesterDirectLimit: 0 },
+        ),
+      ).toBe(false);
+    },
+  );
   it.each(["sponsorship", "delete_product", "stock_adjustment", "stock_transfer"] as const)(
     "keeps %s restricted to the selected people after saving and reloading",
     (action) => {

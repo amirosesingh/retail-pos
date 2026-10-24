@@ -700,6 +700,7 @@ export const submitAuthorizationRequest = createServerFn({ method: "POST" })
       const escalationApprovers = branchPeople.filter(
         (person) =>
           person.id.toLowerCase() !== requesterId &&
+          !excludedIds.has(person.id.toLowerCase()) &&
           (data.actionKey !== "sponsorship" || approverActionAllowed("sponsorship",person)) &&
           rule.escalationRoles.some((role) => role.toLowerCase() === person.role.toLowerCase()),
       );
@@ -1100,7 +1101,7 @@ export const decideAuthorizationRequest = createServerFn({ method: "POST" })
           { userId: who.id, role: who.role },
           requestedDecisionAmount,
           existing.requesterDirectLimit,
-        ) && canAuthorizeEscalated(currentRule, { role: who.role }, existing.createdAt);
+        ) && canAuthorizeEscalated(currentRule, { userId: who.id, role: who.role }, existing.createdAt);
       const updated = await decideRequest({
         id: data.id,
         approve: data.approve,

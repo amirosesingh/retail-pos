@@ -619,11 +619,12 @@ export function canBypassAuthorization(
 /** Backup roles become eligible only after the configured escalation delay. */
 export function canAuthorizeEscalated(
   rule: AuthorizationRule | undefined,
-  who: { role?: string | null },
+  who: { userId?: string | null; role?: string | null },
   createdAt: string,
   now = Date.now(),
 ): boolean {
   if (!rule?.escalationAfterMinutes || !rule.escalationRoles.length) return false;
+  if (who.userId && userIsExcluded(rule.allowedUserIds, who.userId.toLowerCase())) return false;
   const created = Date.parse(createdAt);
   if (!Number.isFinite(created)) return false;
   const role = authorizationRole(who.role);
