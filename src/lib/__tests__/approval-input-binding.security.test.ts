@@ -25,6 +25,11 @@ beforeEach(() => {
 });
 const input = { cashierToken: "valid-cashier-proof", actionKey: "manual_discount", authorizerId: "approver", pin: "1234", binding: "ticket-binding", requesterDirectLimit: 999, storeId: "branch-a", valueUnit: "percent" as const };
 describe("server-derived requester direct approval limit", () => {
+  it("rejects a valid approval PIN outside the person's saved approval branch selection",async()=>{
+    mocks.person.mockResolvedValue({user_id:"approver",role:"manager",role_slug:"supervisor",store_id:null,is_active:true,permissions:{can_give_discount:true,"approval_scope:configured":true,"approval_scope:branch:branch-b":true}});
+    expect((await authorizeWithPin({data:{...input,requestedAmount:15}})).ok).toBe(false);
+    expect(mocks.grant).not.toHaveBeenCalled();
+  });
   it("rejects a valid PIN when the current approver lacks the action permission", async () => {
     mocks.person.mockResolvedValue({ user_id: "approver", role: "manager", role_slug: "supervisor", store_id: "branch-a", is_active: true, permissions: { can_give_discount: false } });
     expect((await authorizeWithPin({ data: { ...input, requestedAmount: 15 } })).ok).toBe(false);

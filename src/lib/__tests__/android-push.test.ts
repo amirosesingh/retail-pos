@@ -111,7 +111,7 @@ describe("central Android push isolation", () => {
     await call(env, { action: "event", eventId });
     await call(env, { action: "event", eventId });
     expect(db.prepare("SELECT count(*) AS n FROM deliveries").get().n).toBe(1);
-    expect(db.prepare("SELECT done FROM deliveries").get().done).toBe(1);
+    expect(db.prepare("SELECT done FROM deliveries").get().done).toBe(6);
     expect(fetcher.mock.calls).toHaveLength(2);
     expect(fetcher).toHaveBeenLastCalledWith("https://company-a.example/api/v1/pos/push-service",expect.objectContaining({body:expect.stringContaining('"status":"skipped"')}));
   });
@@ -128,7 +128,7 @@ describe("central Android push isolation", () => {
     await call(env, { action: "event", eventId });
     expect(fetcher.mock.calls).toHaveLength(2);
     expect(fetcher).toHaveBeenLastCalledWith("https://company-a.example/api/v1/pos/push-service",expect.objectContaining({body:expect.stringContaining('"status":"skipped"')}));
-    expect(db.prepare("SELECT done FROM deliveries").get().done).toBe(1);
+    expect(db.prepare("SELECT done FROM deliveries").get().done).toBe(6);
   });
   it("sends generic alerts through OAuth without including financial details", async () => {
     const { env } = environment();
@@ -147,6 +147,29 @@ describe("central Android push isolation", () => {
     expect(message).not.toHaveProperty("message.notification");
     expect(message).toMatchObject({message:{android:{priority:"HIGH"}}});
     expect(JSON.stringify(message)).not.toMatch(/amount|cashier|password|sale_total/);
+  });
+  it("does not let an unregistered phone suppress another phone for the same recipient",async()=>{
+    const {env,db}=environment();
+    const otherDevice="33333333-3333-4333-8333-333333333333";
+    await call(env,{action:"register",deviceId,token:"old-token-".repeat(6),userId:"staff"});
+    await call(env,{action:"register",deviceId:otherDevice,token:"good-token-".repeat(6),userId:"staff"});
+    let history="queued", sends=0;
+    vi.stubGlobal("fetch",vi.fn(async(url:string,options:RequestInit)=>{
+      if(url.includes("company-")){
+        const body=JSON.parse(String(options.body));
+        if(body.action==="authorize")return Response.json({recipients:["queued","sent"].includes(history)?["staff"]:[]});
+        if(body.action==="delivery")history=body.status;
+        return Response.json({events:[]});
+      }
+      if(url.includes("oauth2"))return Response.json({access_token:"test-access"});
+      sends++;
+      if(JSON.parse(String(options.body)).message.token.startsWith("old-"))return Response.json({error:{details:[{errorCode:"UNREGISTERED"}]}},{status:404});
+      return Response.json({name:"accepted"});
+    }));
+    await call(env,{action:"event",eventId});
+    expect(sends).toBe(2);expect(history).toBe("sent");
+    expect(db.prepare("SELECT done FROM deliveries WHERE device_id=?").get(deviceId).done).toBe(6);
+    expect(db.prepare("SELECT done FROM deliveries WHERE device_id=?").get(otherDevice).done).toBe(1);
   });
   it("retries a failed delivery receipt without sending the accepted phone message twice",async()=>{
     const {env,db}=environment();

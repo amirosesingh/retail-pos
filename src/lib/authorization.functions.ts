@@ -10,6 +10,7 @@ import { approverActionAllowed } from "./approval-action-permissions";
 import { z } from "zod";
 import { loadRequesterDirectLimit } from "./approval-baseline.server";
 import { ticketDiscounts, ticketDiscountApprovalPercent } from "./authorization";
+import { approvalBranchAllowed, approvalAllBranchesAllowed, approvalScopeConfigured, approvalSelectedBranch, approvalPersonBranchAllowed } from "./approval-branch-scope";
 
 const caller = z.object({
   sessionToken: z.string().min(10).optional(),
@@ -161,6 +162,7 @@ type Caller = {
   isSupervisor: boolean;
   storeId: string;
   canAccessAllBranches: boolean;
+  branchRestricted: boolean;
   canManageRules: boolean;
   canManageStaff: boolean;
   canDiscardHeldOrder: boolean;
@@ -188,6 +190,7 @@ async function assertCaller(data: z.infer<typeof caller>): Promise<Caller> {
     isSupervisor: scope.isSupervisor,
     storeId: scope.storeId || "",
     canAccessAllBranches: role === "admin",
+    branchRestricted: scope.branchRestricted === true,
     canManageRules:
       scope.role === "admin" || scope.roleSlug === "admin" || scope.permissions.can_access_pos_settings === true,
     canManageStaff: role === "admin" || scope.permissions.can_manage_staff === true,
@@ -293,7 +296,7 @@ export const listAuthorizationPeople = createServerFn({ method: "POST" })
       const storeId =
         who.canAccessAllBranches && !data.storeId ? "" : callerStore(who, data.storeId);
       const { listAuthorizationPeopleRows } = await import("./authorization.server");
-      return { ok: true as const, people: await listAuthorizationPeopleRows(storeId) };
+      return { ok: true as const, people: (await listAuthorizationPeopleRows(storeId)).map(({id,name,role,storeId}) => ({id,name,role,storeId})) };
     } catch (e) {
       return { ok: false as const, error: (e as Error).message.slice(0, 300), people: [] };
     }
@@ -495,6 +498,7 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
     const { canAuthorize } = await import("./authorization");
     const currentAuthorizer = await approvalPerson(person.userId);
     if (!currentAuthorizer?.is_active ||
+        !approvalPersonBranchAllowed(currentAuthorizer,storeId) ||
         (currentAuthorizer.store_id && currentAuthorizer.store_id.toLowerCase() !== storeId.toLowerCase()) ||
         !approvalMethods(currentAuthorizer.permissions)[credentialMethod] ||
         !approverActionAllowed(data.actionKey, { role: currentAuthorizer.role, roleSlug: currentAuthorizer.role_slug, permissions: currentAuthorizer.permissions })) {
@@ -670,6 +674,7 @@ export const submitAuthorizationRequest = createServerFn({ method: "POST" })
       const primaryApprovers = globalPeople.filter(
         (person) =>
           person.id.toLowerCase() !== requesterId &&
+          approvalPersonBranchAllowed(person,storeId) &&
           !excludedIds.has(person.id.toLowerCase()) &&
           (namedIds.has(person.id.toLowerCase()) ||
             (branchIds.has(person.id.toLowerCase()) &&
@@ -689,10 +694,10 @@ export const submitAuthorizationRequest = createServerFn({ method: "POST" })
       const approvalRoute = {
         primaryRoles: rule.allowedRoles,
         primaryUserIds: [...namedIds],
-        primaryApprovers,
+        primaryApprovers: primaryApprovers.map(({id,name,role,storeId}) => ({id,name,role,storeId})),
         escalationAfterMinutes: rule.escalationAfterMinutes,
         escalationRoles: rule.escalationRoles,
-        escalationApprovers,
+        escalationApprovers: escalationApprovers.map(({id,name,role,storeId}) => ({id,name,role,storeId})),
         ruleScopeType: rule.scopeType,
         ruleScopeId: rule.scopeId,
       };
@@ -897,15 +902,24 @@ export const listAuthorizationRequests = createServerFn({ method: "POST" })
           await releaseDecidedHold(request.id).catch(() => undefined);
         }),
       );
-      if (data.allBranches && !who.canAccessAllBranches) {
+      const allApprovalBranches = approvalAllBranchesAllowed(who);
+      if (data.allBranches && !allApprovalBranches) {
         return {
           ok: false as const,
-          error: "Only administrators can view approvals across branches",
+          error: "Your approval permissions are limited to selected branches",
+          branchScopeLimited: true as const,
           requests: [] as never[],
           rules: [] as never[],
         };
       }
-      const requestedStoreId = data.allBranches ? "" : callerStore(who, data.storeId);
+      // A named cross-branch approver may have no home branch. Let the
+      // existing routed-recipient filter return only their assigned requests
+      // instead of rejecting the whole page. No general branch is inferred
+      // from an unbound caller's request-body store selection.
+      const requestedStoreId = data.allBranches ? ""
+        : approvalScopeConfigured(who.permissions) && !who.storeId && !allApprovalBranches ? approvalSelectedBranch(who.permissions)
+          : !who.storeId ? (allApprovalBranches ? data.storeId ?? "" : "")
+            : callerStore(who, data.storeId);
       // Fetch broadly on the trusted server, then return only branch-bound or
       // explicitly routed rows. This lets a named cross-branch approver see
       // their ticket without granting general cross-branch browsing.
@@ -917,8 +931,9 @@ export const listAuthorizationRequests = createServerFn({ method: "POST" })
         }
         return all.filter(r => {
           if (data.status !== "all" && r.status !== data.status) return false;
+          if ((approvalScopeConfigured(who.permissions) || who.branchRestricted) && !approvalBranchAllowed(who,r.storeId)) return false;
           const sameBranch = r.storeId === requestedStoreId;
-          const branchVisible = (data.allBranches && who.canAccessAllBranches) || sameBranch;
+          const branchVisible = ((data.allBranches && allApprovalBranches) || sameBranch) && approvalBranchAllowed(who,r.storeId);
           return canViewAuthorizationRequest(
             rulesByStore.get(r.storeId)?.[r.actionKey],
             { userId: who.id, role: who.role }, r, branchVisible, Date.now(),
@@ -939,7 +954,7 @@ export const listAuthorizationRequests = createServerFn({ method: "POST" })
         ok: true as const,
         requests: visible,
         pageInfo: result.pageInfo,
-        me: { id: who.id, role: who.role },
+        me: { id: who.id, role: who.role, canAccessAllBranches: allApprovalBranches, branchId: requestedStoreId },
         rules: Array.from(rulesByStore.entries())
           .filter(([branch]) => visibleBranches.has(branch))
           .flatMap(([, rules]) => Object.values(rules)),
@@ -974,7 +989,9 @@ export const decideAuthorizationRequest = createServerFn({ method: "POST" })
       if (!existing) return { ok: false as const, error: "That request no longer exists" };
       const routed = isRoutedApprover(existing, { userId: who.id });
       const explicitCrossBranch = !!existing.approvalRoute && routed;
-      if (!who.canAccessAllBranches && existing.storeId !== who.storeId && !explicitCrossBranch) {
+      const branchAllowed = approvalBranchAllowed(who,existing.storeId);
+      const explicitlyScoped = approvalScopeConfigured(who.permissions) || who.branchRestricted;
+      if (!branchAllowed && (explicitlyScoped || !explicitCrossBranch)) {
         return { ok: false as const, error: "Cross-branch access is not allowed" };
       }
       if (!(await hasRequestAudit(existing.id))) {

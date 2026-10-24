@@ -120,6 +120,10 @@ describe("offline Windows token verifier", () => {
   });
 });
 describe("approval credential switches", () => {
+  it("rejects an offline approval credential outside its explicitly saved branch scope",async()=>{
+    const denied = await verifySyncedApprovalPin(pool({approval_pin_enabled:true,"approval_scope:configured":true,"approval_scope:branch:branch-b":true}),"manager","123456","branch-a");
+    expect(denied).toMatchObject({ok:false,reason:"scope"});
+  });
   function pool(permissions: Record<string, boolean>) {
     return {
       request: () => {

@@ -1,4 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
+import { approvalPersonBranchAllowed } from "./approval-branch-scope";
 import { z } from "zod";
 import { PERMISSION_KEYS, hasPermission, type PermissionKey } from "./permissions";
 import { approvalMethods } from "./approval-credentials";
@@ -212,7 +213,7 @@ export const verifyManagerPin = createServerFn({ method: "POST" })
         overrideBranch = scope.storeId ?? "";
         const { approvalPerson } = await import("./approval-token-server");
         overridePerson = await approvalPerson(data.managerId);
-        if (!overridePerson?.is_active || !approvalMethods(overridePerson.permissions).pin || (overridePerson.store_id && overridePerson.store_id.toLowerCase() !== overrideBranch.toLowerCase()) ||
+        if (!overridePerson?.is_active || !approvalMethods(overridePerson.permissions).pin || !approvalPersonBranchAllowed(overridePerson,overrideBranch) || (overridePerson.store_id && overridePerson.store_id.toLowerCase() !== overrideBranch.toLowerCase()) ||
             !hasPermission({ role: overridePerson.role, roleSlug: overridePerson.role_slug, permissions: overridePerson.permissions }, data.permission))
           return { ok: false as const, error: "This user does not have the requested permission in this branch" };
       }
@@ -239,7 +240,7 @@ export const verifyManagerPin = createServerFn({ method: "POST" })
       if (overridePerson && data.permission) {
         const { approvalPerson } = await import("./approval-token-server");
         overridePerson = await approvalPerson(overridePerson.user_id);
-        if (!overridePerson?.is_active || !approvalMethods(overridePerson.permissions).pin || (overridePerson.store_id && overridePerson.store_id.toLowerCase() !== overrideBranch.toLowerCase()) ||
+        if (!overridePerson?.is_active || !approvalMethods(overridePerson.permissions).pin || !approvalPersonBranchAllowed(overridePerson,overrideBranch) || (overridePerson.store_id && overridePerson.store_id.toLowerCase() !== overrideBranch.toLowerCase()) ||
             !hasPermission({ role: overridePerson.role, roleSlug: overridePerson.role_slug, permissions: overridePerson.permissions }, data.permission))
           return { ok: false as const, error: "This user no longer has the requested permission in this branch" };
         const { writeLog } = await import("./authorization.server");

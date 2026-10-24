@@ -29,6 +29,7 @@ describe("assigned permission PIN overrides", () => {
     { ...person, permissions: { can_cancel_booking: true, approval_pin_enabled: false } },
     { ...person, store_id: "branch-b" },
     { ...person, is_active: false },
+    { ...person, store_id:null, permissions:{can_cancel_booking:true,approval_pin_enabled:true,"approval_scope:configured":true,"approval_scope:branch:branch-b":true} },
   ])("rejects unavailable authority before checking credentials", async candidate => {
     mocks.person.mockResolvedValue(candidate);
     expect((await verifyManagerPin({ data })).ok).toBe(false);

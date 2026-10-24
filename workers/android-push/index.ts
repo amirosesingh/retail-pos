@@ -115,22 +115,39 @@ async function settleDelivery(env: Env, row: Delivery, status: "sent" | "failed"
 }
 async function acknowledgeDelivery(env: Env, row: Delivery, status: "sent" | "failed" | "skipped") {
   try {
-    await callback(row.tenant, env, {
-      action: "delivery",
-      eventId: row.event_id,
-      userId: row.user_id,
-      status,
-      reason:
-        status === "sent"
-          ? "Accepted by Android phone service"
-          : status === "failed"
-            ? "Phone delivery failed after retries"
-            : "Account, device or rule is no longer eligible",
-    });
+    // Cloud history is per person; D1 work is per device. One stale device
+    // must not revoke the queued authorization of another active device.
+    const remaining = await env.DB.prepare(
+      "SELECT SUM(CASE WHEN done IN (0,3) THEN 1 ELSE 0 END) AS pending, SUM(CASE WHEN done IN (2,4) THEN 1 ELSE 0 END) AS failed FROM deliveries WHERE tenant=? AND event_id=? AND user_id=? AND device_id<>?",
+    )
+      .bind(row.tenant, row.event_id, row.user_id, row.device_id)
+      .first<{ pending: number; failed: number }>();
+    const report = status === "sent" || !remaining?.pending;
+    const recipientStatus =
+      status === "sent" ? "sent" : status === "failed" || remaining?.failed ? "failed" : "skipped";
+    if (report) {
+      await callback(row.tenant, env, {
+        action: "delivery",
+        eventId: row.event_id,
+        userId: row.user_id,
+        status: recipientStatus,
+        reason:
+          recipientStatus === "sent"
+            ? "Accepted by Android phone service"
+            : recipientStatus === "failed"
+              ? "Phone delivery failed after retries"
+              : "Account, device or rule is no longer eligible",
+      });
+    }
     await env.DB.prepare(
       "UPDATE deliveries SET done=? WHERE tenant=? AND event_id=? AND device_id=?",
     )
-      .bind(status === "failed" ? 2 : 1, row.tenant, row.event_id, row.device_id)
+      .bind(
+        status === "failed" ? 2 : status === "skipped" ? 6 : 1,
+        row.tenant,
+        row.event_id,
+        row.device_id,
+      )
       .run();
   } catch {
     /* Retry the receipt, never the already-accepted phone message. */

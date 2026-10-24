@@ -10,6 +10,7 @@ import { nativeApprovalCredentials } from "@/platform-config/approval-token";
 import { approvalMethods } from "@/lib/approval-credentials";
 import { PERMISSION_EDITOR_IDS } from "@/lib/permission-editor";
 import { PermissionHierarchy } from "./PermissionHierarchy";
+import { ApprovalBranchPermissions } from "./ApprovalBranchPermissions";
 import { useVisibility } from "@/lib/ui-visibility";
 import { UserDisplayPermissions } from "./UserDisplayPermissions";
 import { StaffIdleTimeout } from "./StaffIdleTimeout";
@@ -967,7 +968,7 @@ export function StaffManager() {
             <Button variant="outline" disabled={permissionsFor.role === "admin" || busy === "permissions"} onClick={() => setPermissionsFor({ ...permissionsFor, permissions: { ...(roles.find(role => role.slug === permissionsFor.role_slug)?.permissions ?? rolePermissions(permissionsFor.role)) } })}>Reset to role defaults</Button>
           </div>}
           {permissionsFor && <PermissionHierarchy
-            renderPageDetails={pageId => <UserDisplayPermissions pageId={pageId} permissions={permissionsFor.permissions} onChange={permissions => setPermissionsFor({ ...permissionsFor, permissions })} hidden={hidden} role={permissionsFor.role_slug} userId={permissionsFor.user_id} admin={permissionsFor.role === "admin"} busy={busy === "permissions"} search={permissionSearch} />}
+            renderPageDetails={pageId => <>{pageId === "approvals" && <ApprovalBranchPermissions permissions={permissionsFor.permissions} onChange={permissions => setPermissionsFor({ ...permissionsFor, permissions })} stores={stores} assignedBranch={permissionsFor.store_id} disabled={permissionsFor.role === "admin" || busy === "permissions"} />}<UserDisplayPermissions pageId={pageId} permissions={permissionsFor.permissions} onChange={permissions => setPermissionsFor({ ...permissionsFor, permissions })} hidden={hidden} role={permissionsFor.role_slug} userId={permissionsFor.user_id} admin={permissionsFor.role === "admin"} busy={busy === "permissions"} search={permissionSearch} /></>}
             hidden={hidden}
             displayRole={permissionsFor.role_slug}
             permissions={permissionsFor.permissions}

@@ -280,7 +280,7 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
 
 export const PERMISSION_KEYS = Object.keys(PERMISSION_LABELS) as PermissionKey[];
 
-export type StaffPermissions = Record<PermissionKey, boolean> & Record<PagePermissionKey, boolean> & Record<`display:${string}`, boolean>;
+export type StaffPermissions = Record<PermissionKey, boolean> & Record<PagePermissionKey, boolean> & Record<`display:${string}`, boolean> & Record<`approval_scope:${string}`, boolean>;
 
 const build = (on: PermissionKey[]): StaffPermissions =>
   PERMISSION_KEYS.reduce((acc, k) => {
@@ -426,6 +426,7 @@ export function normalizePermissions(
   }
   for (const [key, value] of Object.entries(raw)) {
     if (key.startsWith("display:") && typeof value === "boolean") base[key as `display:${string}`] = value;
+    if (key.startsWith("approval_scope:") && typeof value === "boolean") base[key as `approval_scope:${string}`] = value;
   }
   return base;
 }

@@ -15,6 +15,7 @@ import {
   type TicketSnapshot,
 } from "./authorization";
 
+import { approvalPersonBranchAllowed } from "./approval-branch-scope";
 type Row = Record<string, unknown>;
 
 async function rest(path: string, init: RequestInit & { prefer?: string } = {}) {
@@ -95,11 +96,11 @@ export async function saveRuleRow(rule: {
 
 export async function listAuthorizationPeopleRows(
   storeId: string,
-): Promise<Array<{ id: string; name: string; role: string; storeId: string }>> {
+): Promise<Array<{ id: string; name: string; role: string; storeId: string; permissions: Record<string,unknown> }>> {
   const branch = encodeURIComponent(storeId);
   const scope = storeId ? `&or=(store_id.eq.${branch},store_id.is.null,store_id.eq.)` : "";
   const rows = await readRows(
-    `app_users?select=user_id,full_name,role,store_id&is_active=eq.true${scope}&order=full_name.asc`,
+    `app_users?select=user_id,full_name,role,store_id,permissions&is_active=eq.true${scope}&order=full_name.asc`,
   );
   return rows
     .map((row) => ({
@@ -107,8 +108,9 @@ export async function listAuthorizationPeopleRows(
       name: String(row["full_name"] ?? row["user_id"] ?? ""),
       role: String(row["role"] ?? "staff"),
       storeId: String(row["store_id"] ?? ""),
+      permissions: row.permissions && typeof row.permissions === "object" ? row.permissions as Record<string,unknown> : {},
     }))
-    .filter((person) => person.id);
+    .filter((person) => person.id && (!storeId || approvalPersonBranchAllowed(person,storeId)));
 }
 
 // -------------------------------------------------------------------- log
