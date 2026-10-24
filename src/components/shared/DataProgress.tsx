@@ -3,8 +3,9 @@ import { Loader2 } from "lucide-react";
 import { dataProgress, subscribeDataProgress } from "@/lib/data-progress";
 import { cn } from "@/lib/utils";
 
-export function DataProgress({ variant = "inline" }: { variant?: "inline" | "panel" }) {
-  const tasks = useSyncExternalStore(subscribeDataProgress, dataProgress, dataProgress);
+export function DataProgress({ variant = "inline", labels }: { variant?: "inline" | "panel"; labels?: readonly string[] }) {
+  const all = useSyncExternalStore(subscribeDataProgress, dataProgress, dataProgress);
+  const tasks = labels ? all.filter(task => labels.includes(task.label)) : all;
   if (!tasks.length) return null;
   const task = tasks[tasks.length - 1];
   const percent =

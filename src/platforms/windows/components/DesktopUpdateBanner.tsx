@@ -13,7 +13,7 @@ export function DesktopUpdateBanner() {
   const downloading = state.status === "available" || state.status === "downloading";
   if (!ready && !failed && !downloading) return null;
   const detail = installError || (installing ? "Saving and synchronizing before restart" :
-    ready ? "Downloaded. Tap to install and restart." : failed ? (state.error ?? "Download failed. Tap to retry.") : `Downloading ${state.percent}%`);
+    ready ? "Downloaded. Tap to install and restart." : failed ? (state.error ?? "Download failed. Tap to retry.") : "Downloading update");
   return <NativeUpdateOrb label={`Application update ${state.available ?? ""}`} detail={detail}
     progress={state.percent} busy={downloading || installing} error={failed || !!installError}
     onClick={() => void (ready ? install() : check())} />;

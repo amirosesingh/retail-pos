@@ -253,9 +253,9 @@ export function TerminalWorkspaceHome() {
             </div>
           </header>
 
-          <section className="selling-overview no-scrollbar flex snap-x snap-mandatory gap-3 overflow-x-auto overscroll-x-contain sm:grid sm:overflow-x-visible sm:grid-cols-2 lg:grid-cols-4" aria-label="Workspace overview" tabIndex={0}>
-            {(["shift", "bills", "revenue", "stock"] as const).map(key => <div key={key} className="min-w-0 w-[82%] shrink-0 snap-start sm:w-auto [&>*]:h-full">{metrics[key]}</div>)}
-          </section>
+          {Object.values(metrics).some(Boolean) && <section className="selling-overview no-scrollbar flex snap-x snap-mandatory gap-3 overflow-x-auto overscroll-x-contain sm:grid sm:overflow-x-visible sm:grid-cols-2 lg:grid-cols-4" aria-label="Workspace overview" tabIndex={0}>
+            {(["shift", "bills", "revenue", "stock"] as const).filter(key => metrics[key]).map(key => <div key={key} className="min-w-0 w-[82%] shrink-0 snap-start sm:w-auto [&>*]:h-full">{metrics[key]}</div>)}
+          </section>}
 
           {actions}
         </div>

@@ -71,7 +71,8 @@ describe("settings categories", () => {
 
   it("keeps security with health and delivery preferences separate", () => {
     for (const id of ["logic-health", "security-alerts"]) expect(SETTINGS_CARDS.find(card => card.id === id)?.category).toBe("health");
-    for (const id of ["notifications", "shift-alerts"]) expect(SETTINGS_CARDS.find(card => card.id === id)?.category).toBe("notifications");
+    expect(SETTINGS_CARDS.find(card => card.id === "notifications")?.category).toBe("notifications");
+    expect(SETTINGS_CARDS.some(card => card.id === "shift-alerts")).toBe(false);
   });
 
   it("does not report compatibility redirects as missing workspace pages", () => {

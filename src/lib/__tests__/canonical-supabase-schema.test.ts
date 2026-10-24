@@ -199,6 +199,8 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261023160000_reusable_campaign_codes.sql",
       "supabase/migrations/20261024051916_enforce_store_sync_ownership.sql",
       "supabase/migrations/20261024073000_retire_global_permission_restrictions.sql",
+      "supabase/migrations/20261024095724_notification_rule_table.sql",
+      "supabase/migrations/20261024110442_notification_legacy_mode_guard.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

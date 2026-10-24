@@ -9,6 +9,7 @@ import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
  */
 import { serviceRest } from "@/core/api/pos-relay.server";
 import { defaultAndroidPushRules, type AndroidPushRules } from "./android-push-policy";
+import type { NotificationRule } from "./notification-rules";
 
 export type NotificationChannel = "off" | "app" | "whatsapp";
 
@@ -21,6 +22,8 @@ export type NotificationSettings = {
   channels: Record<string, NotificationChannel>;
   inApp?: Record<string, boolean>;
   androidPush?: AndroidPushRules;
+  rules?: NotificationRule[];
+  rulesVersion?: number;
 };
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
@@ -147,6 +150,19 @@ export async function writeActivityEvent(
   row: Omit<EventRecord, "whatsapp_status" | "whatsapp_error">,
 ): Promise<{ ok: boolean; error?: string }> {
   const cfg = await readNotificationSettings();
+  if (Array.isArray(cfg.rules)) {
+    // The database stamps recipients and queues deliveries in the same commit
+    // as the event. Duplicate event IDs cannot send a second WhatsApp message.
+    const path = row.client_event_id ? "activity_events?on_conflict=client_event_id" : "activity_events";
+    const response = await serviceRest(path, {method: "POST", headers: {Prefer: "return=representation,resolution=ignore-duplicates"},
+      body: JSON.stringify([{...row, whatsapp_status: "queued", whatsapp_error: null}])});
+    if (!response.ok) return {ok: false, error: "Could not record the notification event"};
+    const inserted = await response.json() as {id: string}[];
+    if (inserted.length) {
+      try { await (await import("./notification-delivery.server")).drainNotificationWhatsApp(3); } catch { /* Durable queue retains pending work. */ }
+    }
+    return {ok: true};
+  }
   const channel = cfg.channels[row.event_type] ?? "app";
   if (channel === "off") return { ok: true };
 

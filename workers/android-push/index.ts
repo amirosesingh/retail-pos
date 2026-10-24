@@ -56,6 +56,7 @@ async function callback(tenantId: string, env: Env, body: unknown) {
   return response.json() as Promise<{
     recipients?: string[];
     events?: { id: string; created_at: string }[];
+    cursor?: { id: string; created_at: string } | null;
   }>;
 }
 let oauth: { project: string; value: string; until: number } | undefined;
@@ -105,6 +106,49 @@ async function enqueue(tenant: string, eventId: string, env: Env) {
     .bind(eventId, tenant, Date.now())
     .run();
 }
+async function settleDelivery(env: Env, row: Delivery, status: "sent" | "failed" | "skipped") {
+  const receipt = status === "sent" ? 3 : status === "failed" ? 4 : 5;
+  await env.DB.prepare("UPDATE deliveries SET done=? WHERE tenant=? AND event_id=? AND device_id=?")
+    .bind(receipt, row.tenant, row.event_id, row.device_id)
+    .run();
+  await acknowledgeDelivery(env, row, status);
+}
+async function acknowledgeDelivery(env: Env, row: Delivery, status: "sent" | "failed" | "skipped") {
+  try {
+    await callback(row.tenant, env, {
+      action: "delivery",
+      eventId: row.event_id,
+      userId: row.user_id,
+      status,
+      reason:
+        status === "sent"
+          ? "Accepted by Android phone service"
+          : status === "failed"
+            ? "Phone delivery failed after retries"
+            : "Account, device or rule is no longer eligible",
+    });
+    await env.DB.prepare(
+      "UPDATE deliveries SET done=? WHERE tenant=? AND event_id=? AND device_id=?",
+    )
+      .bind(status === "failed" ? 2 : 1, row.tenant, row.event_id, row.device_id)
+      .run();
+  } catch {
+    /* Retry the receipt, never the already-accepted phone message. */
+  }
+}
+async function reconcileDeliveryReceipts(env: Env) {
+  const rows = (
+    await env.DB.prepare("SELECT * FROM deliveries WHERE done IN (3,4,5) LIMIT 20").all<
+      Delivery & { done: number }
+    >()
+  ).results;
+  for (const row of rows)
+    await acknowledgeDelivery(
+      env,
+      row,
+      row.done === 3 ? "sent" : row.done === 4 ? "failed" : "skipped",
+    );
+}
 async function processDeliveries(env: Env) {
   const rows = (
     await env.DB.prepare(
@@ -123,6 +167,7 @@ async function processDeliveries(env: Env) {
       .first<{ attempts: number }>();
     if (!claim) continue;
     try {
+      let deliveryStatus: "sent" | "skipped" = "skipped";
       const device = await env.DB.prepare(
         "SELECT user_id,token FROM devices WHERE tenant=? AND device_id=? AND expires_at>?",
       )
@@ -164,14 +209,14 @@ async function processDeliveries(env: Env) {
               .bind(row.tenant, row.token)
               .run();
           } else throw new Error("Delivery unavailable");
-        }
+        } else deliveryStatus = "sent";
       }
-      await env.DB.prepare(
-        "UPDATE deliveries SET done=1 WHERE tenant=? AND event_id=? AND device_id=?",
-      )
-        .bind(row.tenant, row.event_id, row.device_id)
-        .run();
+      await settleDelivery(env, row, deliveryStatus);
     } catch {
+      if (claim.attempts >= 8) {
+        await settleDelivery(env, row, "failed");
+        continue;
+      }
       await env.DB.prepare(
         "UPDATE deliveries SET next_attempt=?,done=? WHERE tenant=? AND event_id=? AND device_id=?",
       )
@@ -189,8 +234,16 @@ async function processDeliveries(env: Env) {
 export default {
   async fetch(request: Request, env: Env, ctx: Context) {
     if (request.method === "GET" && new URL(request.url).pathname === "/health") {
-      const configured = !!(env.FCM_PROJECT_ID && env.FCM_CLIENT_EMAIL && env.FCM_PRIVATE_KEY && Object.keys(tenants(env)).length);
-      return Response.json({service:"retail-pos-android-push",configured}, {status:configured ? 200 : 503});
+      const configured = !!(
+        env.FCM_PROJECT_ID &&
+        env.FCM_CLIENT_EMAIL &&
+        env.FCM_PRIVATE_KEY &&
+        Object.keys(tenants(env)).length
+      );
+      return Response.json(
+        { service: "retail-pos-android-push", configured },
+        { status: configured ? 200 : 503 },
+      );
     }
     if (request.method !== "POST") return new Response(null, { status: 405 });
     const tenantId = request.headers.get("X-POS-Tenant") ?? "";
@@ -253,7 +306,7 @@ export default {
           ...(cursor?.id ? { afterId: cursor.id } : {}),
         });
         for (const event of result.events ?? []) await enqueue(tenant, event.id, env);
-        const last = result.events?.at(-1);
+        const last = result.cursor ?? result.events?.at(-1);
         if (last)
           await env.DB.prepare(
             "INSERT INTO cursors(tenant,at,id) VALUES(?,?,?) ON CONFLICT(tenant) DO UPDATE SET at=excluded.at,id=excluded.id",
@@ -265,6 +318,7 @@ export default {
       }
     }
     await processDeliveries(env);
+    await reconcileDeliveryReceipts(env);
     await env.DB.prepare("DELETE FROM devices WHERE expires_at<=?").bind(Date.now()).run();
     await env.DB.prepare("DELETE FROM deliveries WHERE done<>0 AND created_at<?")
       .bind(Date.now() - 30 * 86400000)

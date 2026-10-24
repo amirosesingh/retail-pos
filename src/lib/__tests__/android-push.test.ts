@@ -112,7 +112,8 @@ describe("central Android push isolation", () => {
     await call(env, { action: "event", eventId });
     expect(db.prepare("SELECT count(*) AS n FROM deliveries").get().n).toBe(1);
     expect(db.prepare("SELECT done FROM deliveries").get().done).toBe(1);
-    expect(fetcher.mock.calls).toHaveLength(1);
+    expect(fetcher.mock.calls).toHaveLength(2);
+    expect(fetcher).toHaveBeenLastCalledWith("https://company-a.example/api/v1/pos/push-service",expect.objectContaining({body:expect.stringContaining('"status":"skipped"')}));
   });
   it("does not send an old user's queued event to a replacement account", async () => {
     const { env, db } = environment();
@@ -125,7 +126,8 @@ describe("central Android push isolation", () => {
     const fetcher = vi.fn(async () => Response.json({ recipients: ["old", "new"] }));
     vi.stubGlobal("fetch", fetcher);
     await call(env, { action: "event", eventId });
-    expect(fetcher.mock.calls).toHaveLength(1);
+    expect(fetcher.mock.calls).toHaveLength(2);
+    expect(fetcher).toHaveBeenLastCalledWith("https://company-a.example/api/v1/pos/push-service",expect.objectContaining({body:expect.stringContaining('"status":"skipped"')}));
     expect(db.prepare("SELECT done FROM deliveries").get().done).toBe(1);
   });
   it("sends generic alerts through OAuth without including financial details", async () => {
@@ -145,6 +147,26 @@ describe("central Android push isolation", () => {
     expect(message).not.toHaveProperty("message.notification");
     expect(message).toMatchObject({message:{android:{priority:"HIGH"}}});
     expect(JSON.stringify(message)).not.toMatch(/amount|cashier|password|sale_total/);
+  });
+  it("retries a failed delivery receipt without sending the accepted phone message twice",async()=>{
+    const {env,db}=environment();
+    await call(env,{action:"register",deviceId,token:"token-".repeat(6),userId:"staff"});
+    let failReceipt=true, sends=0;
+    vi.stubGlobal("fetch",vi.fn(async(url:string,options:RequestInit)=>{
+      if(url.includes("company-")){
+        const body=JSON.parse(String(options.body));
+        if(body.action==="authorize")return Response.json({recipients:["staff"]});
+        if(body.action==="delivery"&&failReceipt)return new Response(null,{status:503});
+        return Response.json({events:[]});
+      }
+      if(url.includes("oauth2"))return Response.json({access_token:"test-access"});
+      sends++;return Response.json({name:"accepted"});
+    }));
+    await call(env,{action:"event",eventId});
+    expect(sends).toBe(1);expect(db.prepare("SELECT done FROM deliveries").get().done).toBe(3);
+    failReceipt=false;
+    await worker.scheduled({},env);
+    expect(sends).toBe(1);expect(db.prepare("SELECT done FROM deliveries").get().done).toBe(1);
   });
 });
 describe("company notification rules", () => {

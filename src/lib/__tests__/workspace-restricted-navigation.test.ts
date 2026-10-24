@@ -17,7 +17,7 @@ vi.mock("@/platforms/web/components/pos/SellingShortcuts", () => ({ SellingShort
 vi.mock("@/lib/use-report-sales", () => ({ useReportSales: () => ({ sales: [], loading: false, error: null }) }));
 vi.mock("@/lib/use-viewed-branch-shift", () => ({ useViewedBranchShift: () => ({ shift: null, checked: true, error: false }) }));
 vi.mock("@/platforms/web/components/pos/AnimatedMetric", () => ({ AnimatedMetric: ({ value }: { value: number }) => value }));
-vi.mock("@/lib/ui-visibility", () => ({ useVisibility: () => ({ visible: () => true, visibleRoute }) }));
+vi.mock("@/lib/ui-visibility", () => ({ useVisibility: () => ({ visible: (key: string) => !fixture.hidden.includes(key), visibleRoute }) }));
 import { TerminalWorkspaceHome } from "@/platforms/web/components/pos/TerminalWorkspaceHome";
 import { SidebarNav } from "@/platforms/web/components/pos/SidebarNav";
 const can = (flag: PermissionFlag) => fixture.permissions[flag] === true;
@@ -76,6 +76,15 @@ describe("restricted Home and Selling navigation", () => {
 });
 
 describe("restricted Retail workspace", () => {
+  it("removes hidden card containers so low stock follows shift without empty slots", () => {
+    fixture.permissions.can_view_inventory = true;
+    const html = renderToStaticMarkup(h(TerminalWorkspaceHome));
+    const overview = html.split('aria-label="Workspace overview"')[1].split('</section>')[0];
+    expect(overview.match(/snap-start/g)).toHaveLength(2);
+    expect(overview.indexOf("Shift")).toBeLessThan(overview.indexOf("Low stock"));
+    fixture.hidden = ["workspace.shiftStatus","workspace.lowStock"];
+    expect(renderToStaticMarkup(h(TerminalWorkspaceHome))).not.toContain('aria-label="Workspace overview"');
+  });
   it("renders the cashier selling link without exposing revenue or reporting actions", () => {
     const html = renderToStaticMarkup(h(TerminalWorkspaceHome));
     expect(html).toContain("Retail workspace");

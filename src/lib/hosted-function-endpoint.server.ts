@@ -2,6 +2,9 @@ import { z } from "zod";
 
 // Explicit operations only: no caller-controlled module imports or arbitrary RPCs.
 const handlers: Record<string, (data: unknown) => Promise<unknown>> = Object.freeze({
+  "notification-rules.loadNotificationRuleTable": async (data) => (await import("./notification-rules.functions")).loadNotificationRuleTable({data: data as never}),
+  "notification-rules.saveNotificationRuleTable": async (data) => (await import("./notification-rules.functions")).saveNotificationRuleTable({data: data as never}),
+  "notification-rules.processNotificationDeliveries": async (data) => (await import("./notification-rules.functions")).processNotificationDeliveries({data: data as never}),
   "activity-events.pushActivityEvent": async (data) => (await import("./activity-events.functions")).pushActivityEvent({ data: data as never }),
   "activity-events.loadNotificationSettings": async (data) => (await import("./activity-events.functions")).loadNotificationSettings({ data: data as never }),
   "activity-events.saveNotificationSettings": async (data) => (await import("./activity-events.functions")).saveNotificationSettings({ data: data as never }),

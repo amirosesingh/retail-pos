@@ -174,7 +174,7 @@ describe("authoritative identity boundaries", () => {
       expect.objectContaining({
         actor_id: "cashier",
         actor_name: "Cashier",
-        actor_role: "staff",
+        actor_role: "cashier",
         title: "Reported activity: Claimed refund",
         meta: { client_reported: true },
       }),

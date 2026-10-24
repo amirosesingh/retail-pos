@@ -1,4 +1,5 @@
 import { useLocalStartupReady } from "@/lib/use-local-startup";
+import { useNotificationDeliveryPump } from "@/lib/use-notification-delivery-pump";
 import { signInDestination } from "@/lib/sign-in-destination";
 import { isManagementDevice } from "@/lib/management-device";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -134,6 +135,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
     can,
   } = useAuth();
   const [collapsed, setCollapsed] = useSidebarCollapsed();
+  useNotificationDeliveryPump(Boolean(user) && dataReady);
   const [drawerOpen, setDrawerOpen] = useState(false);
   // The drawer is portalled outside the hidden mobile header. Close it when
   // desktop navigation takes over, and do not reopen it on the next resize.

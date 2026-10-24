@@ -9,6 +9,7 @@ import { transferTableTotals } from "@/lib/stock-table-totals";
  * and the stock figures stay identical.
  */
 import { useMemo, useRef, useState } from "react";
+import { yieldToUi } from "@/lib/commit-progress";
 import { Loader2, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -143,6 +144,7 @@ export function TransferComposer({
     submittingRef.current = true;
     setSubmitting(true);
     try {
+      await yieldToUi();
       if (kind === "transfer") {
         // With sub-warehouse levels the check — and the pick — spans every level.
         for (const i of clean) {
@@ -174,7 +176,8 @@ export function TransferComposer({
   const totalUnits = items.reduce((a, i) => a + (Number(i.qty) || 0), 0);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" aria-busy={submitting}>
+      {submitting && <p role="status" className="rounded-lg border bg-muted/30 p-3">Submitting {items.length.toLocaleString()} lines. Waiting for the database to confirm the stock movement…</p>}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 [&>*]:min-w-0 [&>*]:break-words">
         <Fact
           label={kind === "request" ? "Requesting branch" : "Sending branch"}

@@ -421,10 +421,28 @@ class PushWorker {
             key: change.key,
           })),
         });
+        // Change-tracking recovery also runs for transactions created by older
+        // builds. Carry dependent rows and their saved parents in one request,
+        // just as the durable transaction journal does. Otherwise a completed
+        // draft can arrive before its sale, followed by orphan payment/items.
+        const operations = [{ table: table.cloudTable, dependencyOrder: table.dependencyOrder,
+          deletePhase: false, rows, changes: changes.filter(change => change.operation !== "D") }];
+        await includeMissingParents(operations, this.reader, this.registry, branchId);
+        const withParents = operations.length > 1;
+        if (withParents) {
+          operations.sort((a, b) => a.dependencyOrder - b.dependencyOrder);
+          const removed = changes.filter(change => change.operation === "D");
+          if (removed.length) operations.push({ table: table.cloudTable, deletePhase: true,
+            rows: [], changes: removed });
+          if (Buffer.byteLength(JSON.stringify(operations), "utf8") > 6 * 1024 * 1024)
+            throw Object.assign(new Error("One recovery transaction exceeds the 6 MiB sync limit."), { code: "EOVERSIZED" });
+        }
         let acknowledged;
         try {
           acknowledged = await this.retry(() =>
-            this.cloud.pushBatch({ batchId, branchId, table: table.cloudTable, changes, rows }),
+            withParents
+              ? this.cloud.pushAggregate({ batchId: stableUuid({ branchId, recovery: batchId, operations }), branchId, operations })
+              : this.cloud.pushBatch({ batchId, branchId, table: table.cloudTable, changes, rows }),
           );
         } catch (error) {
           if ((governance.has(table.cloudTable) || requiresSettingsProof) &&
