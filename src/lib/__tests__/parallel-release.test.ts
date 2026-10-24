@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRequire } from "node:module";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7,7 +7,8 @@ import { createHash } from "node:crypto";
 const require = createRequire(import.meta.url);
 const yaml = require("js-yaml");
 const { verifyPlatformRelease, publishAndroidArchive } = require("../../../scripts/verify-platform-release.cjs");
-const commit = "abcdef0" + "1".repeat(33), version = "1.4.74", rid = `v${version}-abcdef0`;
+describe.each(["1.4.74", "1.4.77+revision.1"])("paired publication %s", (version) => {
+const commit = "abcdef0" + "1".repeat(33), rid = `v${version}-abcdef0`;
 let root: string, windows: string, android: string;
 const json = (dir: string, name: string, value: unknown) => writeFileSync(join(dir, name), JSON.stringify(value));
 beforeEach(() => {
@@ -67,4 +68,18 @@ it("refuses to replace different historical Android bytes", async () => {
   const upload = vi.fn();
   await expect(publishAndroidArchive(android, { remote: async () => Buffer.from("old bytes"), upload })).rejects.toThrow("historical");
   expect(upload).not.toHaveBeenCalled();
+});
+it("rejects path traversal and unsupported metadata before storage access", async () => {
+  const remote = vi.fn(), upload = vi.fn();
+  for (const metadata of [
+    { file: "../Retail.apk", path: `pos-app/releases/${rid}/android/` },
+    { file: `Retail-${version}.apk`, path: "pos-app/releases/../../android/" },
+    { file: "Retail-1.4.77+other.1.apk", path: "pos-app/releases/v1.4.77+other.1-abcdef0/android/" },
+  ]) {
+    json(android, "latest.json", metadata);
+    await expect(publishAndroidArchive(android, { remote, upload })).rejects.toThrow("identity");
+  }
+  expect(remote).not.toHaveBeenCalled();
+  expect(upload).not.toHaveBeenCalled();
+});
 });

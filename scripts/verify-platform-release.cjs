@@ -32,7 +32,7 @@ function verifyPlatformRelease(windows, android, { version, commit }) {
 }
 async function publishAndroidArchive(directory, { remote, upload }) {
   const metadata = JSON.parse(fs.readFileSync(path.join(directory, 'latest.json'), 'utf8'));
-  if (!/^Retail-\d+\.\d+\.\d+\.apk$/.test(metadata.file) || !/^pos-app\/releases\/v\d+\.\d+\.\d+-[a-f0-9]{7,40}\/android\/$/.test(metadata.path))
+  if (!/^Retail-\d+\.\d+\.\d+(?:\+revision\.[1-9]\d*)?\.apk$/.test(metadata.file) || !/^pos-app\/releases\/v\d+\.\d+\.\d+(?:\+revision\.[1-9]\d*)?-[a-f0-9]{7,40}\/android\/$/.test(metadata.path))
     throw new Error('Invalid Android archive identity.');
   const file = path.join(directory, metadata.file);
   const bytes = fs.readFileSync(file);
