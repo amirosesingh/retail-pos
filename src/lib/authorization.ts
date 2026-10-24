@@ -350,13 +350,15 @@ export function normalizeRule(input: unknown): AuthorizationRule {
     scopeType: scope === "branch" || scope === "cluster" ? scope : "global",
     scopeId: String(field("scope_id", "scopeId") ?? ""),
     mode: asMode(row["mode"]),
-    allowedRoles: asStrings(field("allowed_roles", "allowedRoles")).length
-      ? asStrings(field("allowed_roles", "allowedRoles"))
-      : base.allowedRoles,
+    // An empty saved audience means named people only, not the default roles.
+    // Defaults apply only to legacy rows that do not contain this field.
+    allowedRoles: field("allowed_roles", "allowedRoles") == null
+      ? base.allowedRoles
+      : asStrings(field("allowed_roles", "allowedRoles")),
     allowedUserIds: asStrings(field("allowed_user_ids", "allowedUserIds")),
-    requesterRoles: asStrings(field("requester_roles", "requesterRoles")).length
-      ? asStrings(field("requester_roles", "requesterRoles"))
-      : base.requesterRoles,
+    requesterRoles: field("requester_roles", "requesterRoles") == null
+      ? base.requesterRoles
+      : asStrings(field("requester_roles", "requesterRoles")),
     requesterUserIds: asStrings(field("requester_user_ids", "requesterUserIds")),
     authorityLimits: asLimits(field("authority_limits", "authorityLimits")),
     extraAuthority: asLimits(field("extra_authority", "extraAuthority")),

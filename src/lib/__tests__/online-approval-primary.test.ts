@@ -164,7 +164,9 @@ describe("online approval primary database", () => {
     expect(panel).toContain("<SettingsSections");
     expect(panel).toContain("<RuleConfigurationDialog");
     expect(panel).not.toContain("Status / configuration summary");
-    expect(panel).toContain("Additional people (");
+    expect(panel).toContain('roles.length ? "Additional people" : "Selected people"');
+    expect(panel).toContain("Use specific people only");
+    expect(panel.match(/const WIRED_ACTIONS = new Set\(\[([\s\S]*?)\]\)/)?.[1]).toContain('"sponsorship"');
     expect(panel).toContain("Excluded people (");
     expect(panel).toContain("options={AUTH_MODES.filter");
     expect(panel).toContain("mode: mode ?? existing.mode");
