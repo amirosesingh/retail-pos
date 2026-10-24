@@ -6,6 +6,10 @@ const SERVER_ONLY_TABLES = new Set([
   "user_sessions",
   "sku_number_leases",
   "sku_number_state",
+  // These ledgers are served by checked online APIs, never terminal replication.
+  "notification_deliveries",
+  "sponsorship_issues",
+  "sponsorship_direct_issue_policy",
 ]);
 
 const EXCLUDED_COLUMNS = new Map([
