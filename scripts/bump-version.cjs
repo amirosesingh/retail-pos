@@ -60,9 +60,9 @@ fs.writeFileSync(
 // for both a PR-prepared release and the automatic main-branch bump.
 const installerPath = path.join(root, "database", "sqlserver", "retail-pos-local-database.sql");
 const installer = fs.readFileSync(installerPath, "utf8")
-  .replace(/Application version: \d+\.\d+\.\d+/, `Application version: ${pkg.version}`)
-  .replace(/N'\d+\.\d+\.\d+' AS application_version/, `N'${pkg.version}' AS application_version`)
-  .replace(/PRINT N'Retail POS \d+\.\d+\.\d+:/, `PRINT N'Retail POS ${pkg.version}:`);
+  .replace(/Application version: [^\r\n]+/, `Application version: ${pkg.version}`)
+  .replace(/N'[^']+' AS application_version/, `N'${pkg.version}' AS application_version`)
+  .replace(/PRINT N'Retail POS [^:]+:/, `PRINT N'Retail POS ${pkg.version}:`);
 fs.writeFileSync(installerPath, installer);
 const { migrationBundleSql } = require("../electron/db/installer-source.cjs");
 fs.writeFileSync(path.join(root, "database", "sqlserver", "retail-pos-local-update.sql"), migrationBundleSql(pkg.version));
