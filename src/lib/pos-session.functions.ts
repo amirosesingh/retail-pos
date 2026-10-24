@@ -36,12 +36,19 @@ export const issueCashierSession = createServerFn({ method: "POST" })
       if (!row?.user_id || !row.store_id) {
         return { ok: false as const, error: "This cashier is not assigned to a branch" };
       }
+      const { startSession } = await import("./session-guard.server");
+      const session = await startSession({
+        kind: "cashier", staffUserId: String(row.user_id), branchId: String(row.store_id),
+      });
       return {
         ok: true as const,
+        sessionToken: session.token,
+        idleMinutes: session.idleMinutes,
         token: signCashierSession({
           id: String(row.user_id),
           username: String(row.user_id),
           storeId: String(row.store_id),
+          sessionToken: session.token,
         }),
       };
     } catch {

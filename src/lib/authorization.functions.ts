@@ -7,6 +7,7 @@
  */
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { loadRequesterDirectLimit } from "./approval-baseline.server";
 import { ticketDiscounts, ticketDiscountApprovalPercent } from "./authorization";
 
 const caller = z.object({
@@ -414,6 +415,12 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
     }
     const rows = await loadRuleRows(storeId);
     const rule = resolveRules(rows, storeId)[data.actionKey];
+    let requesterDirectLimit: number;
+    try {
+      requesterDirectLimit = await loadRequesterDirectLimit(data.actionKey, storeId);
+    } catch (error) {
+      return { ok: false as const, error: (error as Error).message };
+    }
     if (
       !rule ||
       !rule.isEnabled ||
@@ -491,13 +498,13 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
         rule,
         { userId: person.userId, role: person.role },
         data.requestedAmount,
-        data.requesterDirectLimit,
+        requesterDirectLimit,
       )
     ) {
       const authority = effectiveApprovalAuthority(
         rule,
         { userId: person.userId, role: person.role },
-        data.requesterDirectLimit,
+        requesterDirectLimit,
       );
       await writeLog({
         actionKey: data.actionKey,
@@ -689,7 +696,7 @@ export const submitAuthorizationRequest = createServerFn({ method: "POST" })
         payload: data.payload,
         ttlHours: rule.approvalTimeoutMinutes / 60,
         requestedAmount: data.requestedAmount ?? snapshot?.requestedValue ?? null,
-        requesterDirectLimit: data.requesterDirectLimit ?? null,
+        requesterDirectLimit: await loadRequesterDirectLimit(data.actionKey, storeId),
         valueUnit: data.valueUnit,
         snapshot,
         snapshotHash: snapshotFingerprint(snapshot),
@@ -965,6 +972,9 @@ export const decideAuthorizationRequest = createServerFn({ method: "POST" })
       if (existing.status !== "pending") {
         return { ok: false as const, error: `This request is already ${existing.status}` };
       }
+      // Recheck old queued requests as well: their stored baseline may predate
+      // server-side input binding or a change to the branch's direct limit.
+      existing.requesterDirectLimit = await loadRequesterDirectLimit(existing.actionKey, existing.storeId);
       const rules = resolveRules(
         await loadRuleRows(existing.storeId).catch(() => []),
         existing.storeId,

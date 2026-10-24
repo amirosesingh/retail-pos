@@ -324,13 +324,14 @@ describe("relay authorisation", () => {
   });
 
   it("accepts a child pushed alongside its parent", async () => {
+    restMock.mockResolvedValue({ ok: true, json: async () => [] });
     const ops = [
       { kind: "insert" as const, table: "sales", rows: [{ id: "s9" }] },
       { kind: "insert" as const, table: "sale_items", rows: [{ id: "i", sale_id: "s9" }] },
     ];
     const out = await safeAuthorizeRelayOp(ops[1]!, cashier, batchInsertIds(ops));
     expect(out.ok).toBe(true);
-    expect(restMock).not.toHaveBeenCalled();
+    expect(restMock).toHaveBeenCalledWith("sale_items?id=eq.i&select=sale_id&limit=1");
   });
 
   it("refuses a transfer change by a branch at neither end", async () => {

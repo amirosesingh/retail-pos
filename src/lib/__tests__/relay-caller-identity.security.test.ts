@@ -70,16 +70,11 @@ describe("relay caller identity", () => {
     }
   });
 
-  it("uses the current signed POS user when an older device session is stale", async () => {
-    const caller = await verifyRelayCaller({
+  it("does not let an alternative proof revive a revoked device session", async () => {
+    await expect(verifyRelayCaller({
       sessionToken: "older-revoked-session",
       cashierToken: "verified-person",
-    });
-
-    expect(caller).toMatchObject({
-      kind: "cashier",
-      staffUserId: "shop-admin",
-    });
+    })).rejects.toThrow("Your session has ended");
   });
 
   it("still rejects a stale session when no other POS proof verifies", async () => {

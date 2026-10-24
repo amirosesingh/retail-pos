@@ -169,6 +169,59 @@ class OperationsRepository {
       throw error;
     }
   }
+  async assertProductPermissions(transaction, op, scope = {}) {
+    if (op.table !== "products" || scope.enforcePermissions !== true || scope.isSettingsAdmin === true) return;
+    const permissions = scope.permissions ?? {};
+    const refuse = () => { throw Object.assign(new Error("Product field permission is required."), { code: "PERMISSION_DENIED" }); };
+    if (op.kind === "delete") {
+      if (permissions.can_archive_product !== true) refuse();
+      return;
+    }
+    const table = this.tables.get("products");
+    const metadata = new Set(["id", "created_at", "updated_at", "row_version"]);
+    const stock = new Set(["stock_quantity", "stock_by_store"]);
+    const prices = new Set(["selling_price", "cost_price", "ecom_price", "landing_pct"]);
+    const canonical = value => Array.isArray(value) ? value.map(canonical)
+      : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
+    const same = (name, left, right) => {
+      if (left == null || right == null) return left == null && right == null;
+      const type = String(table.columns.find(column => column.sqlServerColumn === name)?.cloudType ?? "");
+      if (/numeric|decimal|integer|bigint|smallint|real|double/.test(type)) return Number(left) === Number(right);
+      if (type === "uuid") return recordId(left) === recordId(right);
+      return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
+    };
+    for (const values of op.rows ?? [op.values ?? {}]) {
+      const match = ["insert", "upsert"].includes(op.kind) ? { id: values.id } : op.match ?? {};
+      if (!Object.keys(match).length || Object.values(match).some(value => value === undefined)) refuse();
+      const request = new (this.connectionManager.sql().Request)(transaction);
+      const where = Object.entries(match).map(([name, value], index) => {
+        if (value === null) return `[${name}] IS NULL`;
+        request.input(`product_match_${index}`, valueForSql(value));
+        return `[${name}]=@product_match_${index}`;
+      }).join(" AND ");
+      const result = await request.query(`SELECT * FROM dbo.products WITH (UPDLOCK,HOLDLOCK) WHERE ${where};`);
+      if (!result.recordset?.length && ["insert", "upsert"].includes(op.kind)) {
+        if (permissions.can_add_new_product !== true) refuse();
+        continue;
+      }
+      for (const current of result.recordset ?? []) {
+        const existing = toRendererRow(table, current);
+        for (const [field, value] of Object.entries(values)) {
+          if (metadata.has(field) || stock.has(field) || same(field, value, existing[field])) continue;
+          const permitted = prices.has(field)
+            ? permissions.can_edit_product_price === true ||
+              (field === "cost_price" && scope.productWriteKind === "receiving" && permissions.can_receive_purchase_order === true)
+            : field === "is_archived" ? permissions[value ? "can_archive_product" : "can_restore_product"] === true
+            : ["archived_at", "deleted_at", "is_active"].includes(field) ?
+              permissions[(values.is_archived === false || (field === "archived_at" && value == null)) ? "can_restore_product" : "can_archive_product"] === true
+            : ["ecom_visible", "ecom_enabled", "is_published"].includes(field) ? permissions.can_publish_product === true
+            : ["barcode_aliases", "barcode_variants"].includes(field) ? permissions.can_link_product_barcode === true
+            : permissions.can_edit_product_details === true;
+          if (!permitted) refuse();
+        }
+      }
+    }
+  }
   async assertMemberPermissions(transaction, op, scope = {}) {
     if (op.table !== "members" || scope.enforcePermissions !== true) return;
     const permissions = scope.permissions ?? {};
@@ -345,6 +398,7 @@ class OperationsRepository {
       op = { ...op, values: { cleared_by: [String(person?.id ?? operator.subject)] } };
     }
     await this.assertLegacyExchange(transaction, op, scope);
+    await this.assertProductPermissions(transaction, op, scope);
     await this.assertSettingsPermissions(transaction, op, scope);
     await this.assertShiftOpening(transaction, op, scope);
     const { branchId, terminalId } = scope;

@@ -941,6 +941,33 @@ async function authorizeChild(
       ? op.rows.map((row) => row[parent.fk])
       : [op.match[parent.fk] ?? (op.kind === "update" ? op.values[parent.fk] : undefined)];
 
+  // Existing child ownership and a requested new parent are separate checks.
+  // A foreign child ID cannot be made writable by naming an own-branch parent.
+  if (op.kind === "update" || op.kind === "delete") {
+    let currentParent = op.match[parent.fk];
+    if (currentParent == null) {
+      if (op.match.id == null) return deny("STORE_FORBIDDEN", "A child ID or parent is required.");
+      const response = await serviceRest(`${op.table}?id=eq.${encodeURIComponent(String(op.match.id))}&select=${parent.fk}&limit=1`);
+      if (!response.ok) return deny("STORE_FORBIDDEN", "The existing record could not be checked.");
+      const rows = await response.json() as Record<string, unknown>[];
+      if (!rows.length) return { ok: true, op };
+      currentParent = rows[0][parent.fk];
+    }
+    ids.push(currentParent);
+    if (op.kind === "update" && op.values[parent.fk] !== undefined) ids.push(op.values[parent.fk]);
+    // Pin selection to the checked parent so a concurrent reparent cannot
+    // change the ownership of the row selected by this later PATCH/DELETE.
+    op = { ...op, match: { ...op.match, [parent.fk]: currentParent } };
+  } else {
+    for (const row of op.rows) {
+      if (row.id == null) continue;
+      const response = await serviceRest(`${op.table}?id=eq.${encodeURIComponent(String(row.id))}&select=${parent.fk}&limit=1`);
+      if (!response.ok) return deny("STORE_FORBIDDEN", "The existing record could not be checked.");
+      const rows = await response.json() as Record<string, unknown>[];
+      if (rows.length) ids.push(rows[0][parent.fk]);
+    }
+  }
+
   const known = batchIds?.get(parent.table);
   for (const id of ids) {
     if (id === undefined || id === null)

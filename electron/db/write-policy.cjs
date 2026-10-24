@@ -1,6 +1,8 @@
 const { recordId } = require("../sync/uuid-fields.cjs");
 /** Main owns permissions; renderer-selected aggregate labels grant no authority. */
 const KIND_TABLES = {
+  stock: ["products", "stock_adjustments", "stock_count_drafts", "item_activity_logs",
+    "stock_movements", "stock_delta_applied", "audit_logs", "activity_events", "entity_status_history", "record_edits"],
   sale: [
     "sales",
     "sale_items",
@@ -115,7 +117,7 @@ function aggregatePolicy(kind, operations, identity) {
       spent: Number(sale.total_amount),
     });
   }
-  return { enforcePermissions: true, memberAccrual, isSettingsAdmin: identity.level === "admin",
+  return { enforcePermissions: true, productWriteKind: kind, memberAccrual, isSettingsAdmin: identity.level === "admin",
     activityOperator: { subject: identity.subject, role: identity.level,
       mayViewGeneralActivity: identity.level === "admin" || identity.level === "supervisor" || permissions.can_view_audit_trail === true } };
 }

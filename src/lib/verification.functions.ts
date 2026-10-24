@@ -33,7 +33,7 @@ const listInput = z.object({ ...caller, limit: z.number().int().min(1).max(500).
 /** Any signed-in till user: cashier session token or staff access token. */
 async function requireStaff(data: { accessToken?: string; cashierToken?: string }) {
   const { verifyCashierSession } = await import("./pos-session.server");
-  const cashier = data.cashierToken ? verifyCashierSession(data.cashierToken)?.username : null;
+  const cashier = data.cashierToken ? (await verifyCashierSession(data.cashierToken))?.username : null;
   if (cashier) return { name: cashier, isAdmin: false };
   if (data.accessToken) {
     const { verifyPosStaff } = await import("./secure-settings.server");

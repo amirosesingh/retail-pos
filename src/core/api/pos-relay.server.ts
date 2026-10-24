@@ -632,6 +632,8 @@ export type RelayCaller = {
   storeId?: string | null;
   /** app_users.user_id, when the proof carries it. */
   staffUserId?: string | null;
+  /** A cashier proof's independently verified, revocable login. */
+  sessionToken?: string;
   /** Sign-in email, when the proof carries one. Used to find the staff record. */
   email?: string | null;
   /** Supabase Auth id, for staff signed in with email + password. */
@@ -665,7 +667,6 @@ export async function verifyRelayCaller(input: {
   let terminalId: string | null = null;
   let managementDevice = false;
   let managementMobileDevice = false;
-  let endedSession = false;
 
   // A cryptographic session record is the strongest proof: it can be revoked
   // centrally and expires when the till has been left idle.
@@ -683,18 +684,15 @@ export async function verifyRelayCaller(input: {
         staffUserId: s.staff_user_id ?? null,
       };
     }
-    // A device can retain an older raw session token while the same POS login
-    // has already issued a fresh signed cashier or Auth proof. Do not let that
-    // stale value prevent the other independently verified proofs below from
-    // identifying the person who is currently signed in.
-    endedSession = !check.ok && (check.reason === "revoked" || check.reason === "idle");
+    if (!check.ok && (check.reason === "revoked" || check.reason === "idle"))
+      throw new RelayAuthenticationError("Your session has ended — please sign in again.");
   }
 
   if (!identity && input.cashierToken) {
     const { verifyCashierSession } = await import("@/lib/pos-session.server");
-    const session = (() => {
+    const session = await (async () => {
       try {
-        return verifyCashierSession(input.cashierToken!);
+        return await verifyCashierSession(input.cashierToken!);
       } catch {
         return null;
       }
@@ -705,6 +703,7 @@ export async function verifyRelayCaller(input: {
         label: session.username,
         staffUserId: session.username,
         storeId: session.storeId,
+        sessionToken: session.sessionToken,
       };
   }
 
@@ -770,8 +769,6 @@ export async function verifyRelayCaller(input: {
     }
   }
 
-  if (!identity && endedSession)
-    throw new RelayAuthenticationError("Your session has ended — please sign in again.");
 
   if (!identity)
     throw new RelayAuthenticationError(

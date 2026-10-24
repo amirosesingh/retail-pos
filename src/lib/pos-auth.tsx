@@ -950,6 +950,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Retire requests made by the previous person before storing this
       // verified login; their late rejection must not clear the new tokens.
       bumpSessionEpoch();
+      // A fresh PIN login must replace the previous person's raw credentials.
+      clearStoredCredentials();
       let desktopRelaySessionReady = false;
       try {
         let cashierToken = verified?.cashierToken ?? "";

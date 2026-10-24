@@ -57,7 +57,7 @@ async function assertCaller(data: { accessToken?: string; terminalToken?: string
   }
   if (data.terminalToken) {
     const { verifyCashierSession } = await import("./pos-session.server");
-    const session = verifyCashierSession(data.terminalToken);
+    const session = await verifyCashierSession(data.terminalToken);
     if (session)
       return {
         id: session.id,
