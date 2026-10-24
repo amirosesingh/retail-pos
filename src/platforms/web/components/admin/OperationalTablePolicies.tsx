@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
-import { GlobalRestrictionPanel } from "./GlobalRestrictionPanel";
 import { TableColumnRulesPanel } from "./TableColumnRulesPanel";
 import { getRolesWithPermissions, type RoleDef } from "@/lib/role-admin";
 import { notifyError } from "@/lib/notify";
 
-export function GlobalPermissionPolicies() {
+export function OperationalTablePolicies() {
   const [roles, setRoles] = useState<RoleDef[]>([]);
   useEffect(() => {
     let active = true;
@@ -12,5 +11,5 @@ export function GlobalPermissionPolicies() {
       .catch(error => { if (active) notifyError(error, "Role defaults could not be loaded"); });
     return () => { active = false; };
   }, []);
-  return <div className="space-y-4"><p className="text-sm text-muted-foreground">Company-wide restrictions apply above each person's permissions. User display choices are managed inside Edit permissions.</p><GlobalRestrictionPanel /><TableColumnRulesPanel roles={roles} /></div>;
+  return <div className="space-y-4"><p className="text-sm text-muted-foreground">Set company-wide table column visibility here. Individual display choices remain in Edit permissions.</p><TableColumnRulesPanel roles={roles} /></div>;
 }

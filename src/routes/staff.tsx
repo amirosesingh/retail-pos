@@ -1,8 +1,8 @@
 import { useVisibility } from "@/lib/ui-visibility";
 import { Button } from "@/components/ui/button";
-import { GlobalPermissionPolicies } from "@/platforms/web/components/admin/GlobalPermissionPolicies";
+import { RulesSettings } from "./settings.rules";
 import { createFileRoute, useSearch, Link } from "@tanstack/react-router";
-import { ShieldAlert, Users, ShieldCheck, Eye, ChevronLeft } from "lucide-react";
+import { ShieldAlert, Users, ShieldCheck, ChevronLeft } from "lucide-react";
 import { usePos } from "@/lib/pos-store";
 import { AuthorizationRulesPanel } from "@/platforms/web/components/pos/settings/AuthorizationRulesPanel";
 
@@ -13,8 +13,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/lib/pos-auth";
 
 export const Route = createFileRoute("/staff")({
-  validateSearch: (search: Record<string, unknown>): { tab?: "accounts" | "roles" | "access" | "approvals" } => ({
-    tab: search.tab === "access" || search.tab === "roles" || search.tab === "approvals" ? search.tab : undefined,
+  validateSearch: (search: Record<string, unknown>): { tab?: "accounts" | "roles" | "policies" | "approvals" } => ({
+    tab: search.tab === "access" ? "policies" : search.tab === "policies" || search.tab === "roles" || search.tab === "approvals" ? search.tab : undefined,
   }),
   head: () => ({
     meta: [
@@ -32,11 +32,12 @@ export const Route = createFileRoute("/staff")({
   component: StaffManagement,
 });
 
-export function StaffPermissionsPanel() {
+export function StaffPermissionsPanel({ defaultTab = "accounts" }: { defaultTab?: "accounts" | "policies" }) {
   const { can, isAdmin } = useAuth();
   const { currentStore } = usePos();
   const { visibleRoute } = useVisibility();
   const accessAllowed = (isAdmin || can("can_access_pos_settings")) && visibleRoute("/settings/access");
+  const policiesAllowed = (isAdmin || can("can_access_pos_settings")) && visibleRoute("/settings/rules");
   const search = useSearch({ strict: false });
 
   if (!can("can_manage_staff")) {
@@ -64,12 +65,12 @@ export function StaffPermissionsPanel() {
           </p>
           </div>
         </header>
-        <Tabs key={search.tab ?? "accounts"} defaultValue={search.tab ?? "accounts"}>
+        <Tabs key={search.tab ?? defaultTab} defaultValue={search.tab ?? defaultTab}>
           <TabsList className="h-auto min-h-9 max-w-full justify-start overflow-x-auto overflow-y-hidden scrollbar-none">
             <TabsTrigger value="accounts"><Users className="mr-1.5 size-4" aria-hidden />People &amp; permissions</TabsTrigger>
             <TabsTrigger value="roles"><ShieldCheck className="mr-1.5 size-4" aria-hidden />Role defaults</TabsTrigger>
             {accessAllowed && <TabsTrigger value="approvals"><ShieldCheck className="mr-1.5 size-4" aria-hidden />Approver rules</TabsTrigger>}
-            {isAdmin && <TabsTrigger value="access"><Eye className="mr-1.5 size-4" aria-hidden />Global policies</TabsTrigger>}
+            {policiesAllowed && <TabsTrigger value="policies"><ShieldCheck className="mr-1.5 size-4" aria-hidden />Operational policies</TabsTrigger>}
           </TabsList>
           <TabsContent value="accounts" className="pt-4">
             <StaffManager />
@@ -77,7 +78,7 @@ export function StaffPermissionsPanel() {
           <TabsContent value="roles" className="pt-4">
             <RoleManager />
           </TabsContent>
-          {isAdmin && <TabsContent value="access" className="pt-4"><GlobalPermissionPolicies /></TabsContent>}
+          {policiesAllowed && <TabsContent value="policies" className="pt-4"><RulesSettings embedded /></TabsContent>}
           {accessAllowed && <TabsContent value="approvals" className="pt-4">
             {currentStore ? <AuthorizationRulesPanel storeId={currentStore.id} storeName={currentStore.name} mayEdit={isAdmin || can("can_access_pos_settings")} canEditGlobal={isAdmin} /> : <p>Select a branch to manage approval rules.</p>}
           </TabsContent>}

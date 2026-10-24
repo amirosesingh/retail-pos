@@ -1,11 +1,12 @@
 import { OperationalRulesPanel } from "@/platforms/web/components/pos/settings/panels/OperationalRulesPanel";
 import { ShiftClosingPolicy } from "@/platforms/web/components/admin/ShiftClosingPolicy";
+import { OperationalTablePolicies } from "@/platforms/web/components/admin/OperationalTablePolicies";
 import { SettingsBackLink } from "@/platforms/web/components/pos/settings/SettingsBackLink";
 import { HelpTip } from "@/components/ui/help-tip";
 import { PresetNumber } from "@/components/ui/preset-number";
 import { createFileRoute } from "@tanstack/react-router";
 import { SettingsTabs } from "@/platforms/web/components/pos/settings/SettingsTabs";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import {
   Loader2,
   RefreshCw,
@@ -56,7 +57,7 @@ export const Route = createFileRoute("/settings/rules")({
   component: RulesSettings,
 });
 
-function RulesSettings() {
+export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
   const {
     rules,
     loading,
@@ -248,13 +249,14 @@ function RulesSettings() {
     }
   }
 
+  const Shell = embedded ? Fragment : SettingsShell;
   return (
-    <SettingsShell>
-      <div className="pos-page-container">
-        <SettingsTabs current="/settings/rules" />
+    <Shell>
+      <div className={embedded ? "space-y-4" : "pos-page-container"}>
+        {!embedded && <SettingsTabs current="/settings/rules" />}
         <header className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-4">
           <div className="flex min-w-0 items-start gap-3">
-            <SettingsBackLink />
+            {!embedded && <SettingsBackLink />}
             <div className="min-w-0">
               <h1 className="text-2xl font-semibold">Operational policies</h1>
               <p className="text-sm text-muted-foreground page-description">
@@ -281,6 +283,7 @@ function RulesSettings() {
         {failureText && status !== "LIVE" && <p role="alert" className="text-sm text-destructive">Could not load current saved settings. Check the connection and reload.</p>}
 
         <ShiftClosingPolicy />
+        <OperationalTablePolicies />
         <section className="rounded-lg border border-border bg-card px-5">
           <div className="flex items-center justify-between gap-3 border-b border-border/60 py-4">
             <div>
@@ -421,6 +424,6 @@ function RulesSettings() {
           </div>
         )}
       </div>
-    </SettingsShell>
+    </Shell>
   );
 }

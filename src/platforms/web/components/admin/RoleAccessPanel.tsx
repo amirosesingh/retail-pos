@@ -1,5 +1,5 @@
-import { GlobalRestrictionPanel } from "./GlobalRestrictionPanel";
-import { TableColumnRulesPanel } from "./TableColumnRulesPanel";
+
+
 /**
  * Roles & access — one screen for both halves of the same question.
  *
@@ -98,8 +98,8 @@ export function RoleAccessPanel() {
 
   return (
     <section className="space-y-4"><header><h2 className="text-lg font-semibold">Roles &amp; access</h2><p className="text-sm text-muted-foreground">Pick a role to change screen visibility. Configure action permissions in Roles & permissions, and individual exceptions in Accounts. Administrators always keep full access, so nothing here can lock you out.</p></header>
-      <GlobalRestrictionPanel />
-      {isAdmin && <TableColumnRulesPanel roles={roles} />}
+
+
       <div className="space-y-5">
         <div className="flex flex-wrap items-end gap-3">
           <label className="min-w-56 flex-1 space-y-1">

@@ -28,7 +28,7 @@ describe("settings save actions", () => {
     expect(panel).toContain("setHidden");
     expect(panel).toContain('can("can_access_pos_settings")');
     expect(panel).toContain('visibleRoute("/settings/access")');
-    expect(read("src/routes/settings.access.tsx")).toContain('search: { tab: "access" }');
+    expect(read("src/routes/settings.access.tsx")).toContain('search: { tab: "policies" }');
   });
 
   it("keeps database recovery editable before scoped settings tables are available", () => {

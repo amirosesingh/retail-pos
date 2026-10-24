@@ -28,7 +28,7 @@ export function permissionSubpages(id: string) {
   const seen = new Set<string>();
   return destinations.filter(item => {
     const route = `${item.path}${item.hash ? `#${item.hash}` : ""}`;
-    if (!page || pageForRoute(item.path)?.id !== id || (!item.hash && page.routes.includes(item.path)) || seen.has(route)) return false;
+    if (!page || pageForRoute(item.path.split("?")[0])?.id !== id || (!item.hash && page.routes.includes(item.path)) || seen.has(route)) return false;
     seen.add(route);
     return true;
   });

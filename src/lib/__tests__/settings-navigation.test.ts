@@ -53,9 +53,10 @@ describe("settings categories", () => {
   });
 
   it("places transaction policies together and keeps retired routes out of search", () => {
-    for (const id of ["rules", "tax", "numbering", "stock-numbering", "sku"]) {
+    for (const id of ["tax", "numbering", "stock-numbering", "sku"]) {
       expect(SETTINGS_CARDS.find(card => card.id === id)?.category).toBe("pos-rules");
     }
+    expect(SETTINGS_CARDS.find(card => card.id === "rules")).toMatchObject({ category: "people", to: "/staff?tab=policies" });
     expect(matchSettings(SETTINGS_CARDS, "access").some(card => card.to === "/staff")).toBe(true);
     expect(SETTINGS_CARDS.some(card => card.to === "/settings/workspace")).toBe(false);
   });
