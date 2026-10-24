@@ -894,7 +894,7 @@ export function StaffManager() {
           <DialogHeader>
             <DialogTitle>Permissions · {permissionsFor?.full_name}</DialogTitle>
             <DialogDescription>
-              Manage this person's pages, actions, device access and visible information here, then Save. Branch assignments remain unchanged. Approver rules are managed separately. Administrators retain full access.
+              Manage this person's pages, actions and visible information here, then Save. Management device sign-in is in Edit account. Branch assignments remain unchanged. Approver rules are managed separately. Administrators retain full access.
             </DialogDescription>
           </DialogHeader>
           {permissionsFor && (

@@ -60,7 +60,7 @@ export function StaffPermissionsPanel() {
           <div>
           <h1 className="text-2xl font-semibold">Staff &amp; Permissions</h1>
           <p className="text-sm text-muted-foreground page-description">
-            Edit permissions on a person's account to manage pages, actions, device access, settings visibility and table columns. Role defaults are starting presets; Approval rules choose who may approve sensitive actions.
+            Use Edit permissions to manage pages, actions, settings visibility and table columns. Management device sign-in is in Edit account. Role defaults are starting presets; Approver rules choose who may approve sensitive actions.
           </p>
           </div>
         </header>
