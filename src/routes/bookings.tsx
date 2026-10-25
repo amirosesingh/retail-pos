@@ -105,15 +105,10 @@ function BookingsPage() {
     setBookingJobStatus,
   } = usePos();
   const { requirePermission } = useUserPermissions();
-  const { user, can } = useAuth();
+  const { user } = useAuth();
   const rules = bookingRulesOf(state.settings.integrations.bookingRules);
-  const isSupervisor = user?.role === "admin" || can("can_access_pos_settings");
-  /** Cancelling can be reserved for supervisors by the branch rules. */
+  /** Assigned cancellation authority decides access, regardless of role title. */
   const guardCancel = async () => {
-    if (rules.managerOnlyCancel && !isSupervisor) {
-      toast.error("Only a supervisor may cancel a booking");
-      return false;
-    }
     return requirePermission("can_cancel_booking");
   };
   const [query, setQuery] = useState("");
@@ -236,6 +231,7 @@ function BookingsPage() {
 
   /** Move a job card on, guarding incidents and unpaid handovers. */
   async function changeJobStatus(b: Booking, s: JobStatus, balance: number) {
+    if (!(await requirePermission(s === "collected" ? "can_collect_booking" : s === "cancelled" || s === "damaged" ? "can_cancel_booking" : "can_manage_bookings"))) return;
     if (s === "damaged" || s === "cancelled") {
       setIncidentFor({ booking: b, status: s });
       setIncidentNote(b.incidentNote ?? "");

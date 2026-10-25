@@ -15,7 +15,7 @@ import { Label } from "@/components/ui/label";
 import { useAuth } from "@/lib/pos-auth";
 
 import { activeBranchId, boundBranchName } from "@/lib/active-branch";
-import { isConfigurationFailure, type LoginFailure } from "@/lib/login-failure";
+import { countsAsWrongCashierPin, isConfigurationFailure, type LoginFailure } from "@/lib/login-failure";
 import { listTerminalStaff, type RosterReason, type TerminalStaff } from "@/lib/staff-admin";
 import { usernameFromAddress } from "@/lib/internal-domains";
 import {
@@ -184,6 +184,8 @@ export function CashierPinLogin({
             setError(message);
           } else if (deactivated) {
             setError("Account deactivated. Please contact an administrator.");
+          } else if (!countsAsWrongCashierPin(res.code)) {
+            setError(message);
           } else {
             const locked = notePinFailure();
             setLockedFor(locked);
@@ -197,6 +199,10 @@ export function CashierPinLogin({
         } else {
           clearPinFailures();
         }
+      } catch {
+        // A rejected network/session promise has not judged the PIN.
+        setError("Sign-in could not finish because the connection or local database did not respond. Please try again. Your PIN has not been rejected.");
+        setPin("");
       } finally {
         submittingRef.current = false;
         setBusy(false);

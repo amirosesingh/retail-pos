@@ -1,3 +1,4 @@
+import {useSponsorshipTotals} from "@/lib/use-sponsorship-totals";
 import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
 import { ReportReceiptLink } from "@/platforms/web/components/pos/ReportReceiptLink";
 import { createFileRoute } from "@tanstack/react-router";
@@ -60,6 +61,9 @@ export function BillsReport() {
     !shared,
   );
   const history = shared?.history ?? localHistory;
+  const includeSponsorship=state.settings.integrations.includeSponsorshipInDailySales===true;
+  const sponsorship=useSponsorshipTotals(storeId==="all"?stores.map(store=>store.id):[storeId],from,to,includeSponsorship&&cashier==="all"&&!q);
+  const showSponsorship=includeSponsorship&&cashier==="all"&&!q;
   const products = useMemo(
     () => new Map(state.products.map((product) => [product.id, product])),
     [state.products],
@@ -140,6 +144,7 @@ export function BillsReport() {
             label="Completed bills"
             value={String(rows.filter((sale) => !sale.refunded).length)}
           />
+          {showSponsorship&&<><StatCard label="Sales summary including sponsorship" value={sponsorship.loading?"Loading…":sponsorship.error?"Unavailable":money(totals.collected+sponsorship.total)}/><StatCard label="Sponsorship value included" value={sponsorship.error?"Unavailable":money(sponsorship.total)}/></>}
           <StatCard label="Net sales (ex tax)" value={money(totals.net)} />
           <StatCard label="Total collected" value={money(totals.collected)} />
           <StatCard label="Discounts given" value={money(totals.discount)} />

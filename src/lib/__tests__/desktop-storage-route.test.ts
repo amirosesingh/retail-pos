@@ -11,8 +11,15 @@ describe("desktop storage selection", () => {
   it("uses a validated local database regardless of internet connectivity", () => {
     expect(desktopStorageRoute({enabled:true,configured:true,connected:true,tradingReady:true})).toBe("local");
   });
-  it("does not silently redirect a configured broken or unvalidated database", () => {
-    for (const state of [null, {}, {enabled:true,configured:true,connected:false}, {enabled:true,configured:true,connected:true,tradingReady:false}]) expect(desktopStorageRoute(state)).toBe("pending");
+  it("waits for unknown state or connected SQL that has not finished validation", () => {
+    for (const state of [null, {}, {enabled:true,configured:true,connected:true,tradingReady:false}]) expect(desktopStorageRoute(state)).toBe("pending");
+  });
+  it("automatically uses online mode during a confirmed SQL disconnection", () => {
+    expect(desktopStorageRoute({state:"enabled_error",enabled:true,configured:true,connected:false,tradingReady:false})).toBe("online");
+    expect(desktopStorageRoute({enabled:true,configured:true,connected:true,tradingReady:true})).toBe("local");
+  });
+  it.each(["enabled_connecting", "enabled_validating", "enabled_bootstrapping"])("waits for the saved SQL attempt during %s", state => {
+    expect(desktopStorageRoute({state,enabled:true,configured:true,connected:false,tradingReady:false})).toBe("pending");
   });
   it("keeps configuration and reconnect accessible while business queries use cloud", async () => {
     const config = {server:"local-sql",database:"pos"};

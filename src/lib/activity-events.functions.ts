@@ -54,6 +54,8 @@ export const pushActivityEvent = createServerFn({ method: "POST" })
       ? (data.storeId ?? scope.storeId ?? null)
       : (scope.storeId ?? null);
     const { writeActivityEvent } = await import("./activity-events.server");
+    const safeMeta = Object.fromEntries(Object.entries(data.meta ?? {}).filter(([key]) =>
+      !key.startsWith("notification_") && !key.startsWith("audience") && key !== "in_app_disabled"));
     const res = await writeActivityEvent({
       event_type: data.type,
       severity: data.severity,
@@ -61,14 +63,14 @@ export const pushActivityEvent = createServerFn({ method: "POST" })
       message: data.message ?? "",
       actor_id: scope.staffUserId ?? null,
       actor_name: scope.actorName ?? null,
-      actor_role: scope.role,
+      actor_role: scope.roleSlug ?? scope.role,
       terminal_id: scope.terminalId ?? null,
       terminal_name: null,
       store_id: storeId,
       entity_type: data.entityType ?? null,
       entity_id: data.entityId ?? null,
       amount: data.amount ?? null,
-      meta: { ...(data.meta ?? {}), client_reported: true } as Record<string, unknown>,
+      meta: { ...safeMeta, client_reported: true } as Record<string, unknown>,
       client_event_id: data.clientEventId ?? null,
       created_at: data.createdAt ?? new Date().toISOString(),
     });
@@ -152,6 +154,9 @@ export const saveNotificationSettings = createServerFn({ method: "POST" })
     const { writeNotificationSettings, writeNotificationSection } =
       await import("./activity-events.server");
     try {
+      const {readNotificationSettings} = await import("./activity-events.server");
+      if (Array.isArray((await readNotificationSettings()).rules))
+        return {ok: false as const, error: "Notification delivery is now managed in the notification rules table."};
       if (data.section) {
         const settings = await writeNotificationSection(data.settings, data.section);
         return { ok: true as const, settings };

@@ -1,4 +1,5 @@
 import { withoutWorkspacePurpose } from "@/lib/retired-workspace-settings";
+import { commitRowCount, runProgressBatch, yieldToUi } from "@/lib/commit-progress";
 import { readCataloguePages } from "@/lib/catalogue-read";
 import { normalizeUuidFields } from "@/lib/uuid-fields";
 import { isLegacyExchange } from "@/lib/legacy-exchange";
@@ -1743,6 +1744,7 @@ export async function loadSalesPage(
   if (localDb()?.query) {
     const heads = (await routedQuery("sales", {
       match: { store_id: storeId },
+      ...(range ? { dateRange: { column: "created_at", ...range } } : {}),
       orderBy: { column: "created_at", ascending: false },
       ...(cursor ? { cursor: { column: "created_at", value: cursor.ts, id: cursor.id } } : {}),
       limit,
@@ -2151,8 +2153,8 @@ async function applyStockDeltas(deltas: StockDelta[]) {
 }
 
 /** Run one batch directly against the central database in order. */
-async function runBatchLive(context: string, ops: SyncOp[]) {
-  for (const op of ops) await runOpLive(context, op);
+async function runBatchLive(context: string, ops: SyncOp[], report?: (completed: number, total: number | null) => void) {
+  await runProgressBatch(ops, op => runOpLive(context, op), report);
 }
 
 /**
@@ -2163,10 +2165,17 @@ async function runBatchLive(context: string, ops: SyncOp[]) {
  * action — nothing moves on while the data is still only in memory.
  */
 export function commitOps(context: string, ops: SyncOp[]): Promise<CommitTarget> {
-  return withDataTask(context, () => commitOpsInternal(context, normalizeUuidFields(ops)));
+  return withDataTask(context, async task => {
+    const total = commitRowCount(ops);
+    task?.report(0,total);
+    if ((total ?? 0) >= 200 || ops.length >= 25) await yieldToUi();
+    const target = await commitOpsInternal(context, normalizeUuidFields(ops),task?.report);
+    if (target !== "offline" && total !== null) task?.report(total,total);
+    return target;
+  });
 }
 
-async function commitOpsInternal(context: string, ops: SyncOp[]): Promise<CommitTarget> {
+async function commitOpsInternal(context: string, ops: SyncOp[], report?: (completed: number, total: number | null) => void): Promise<CommitTarget> {
   if (!ops.length) return noteCommitTarget("cloud");
   // A packaged or browser till may carry an encrypted tenant override. Never
   // let an early write resolve the client against the build-time tenant first.
@@ -2272,7 +2281,7 @@ async function commitOpsInternal(context: string, ops: SyncOp[]): Promise<Commit
   // without turning the browser cache into a second permanent database.
   const pendingId = await persistBrowserBatch(context, ops, { wake: false }).catch(() => null);
   try {
-    await runBatchLive(context, cloudOps);
+    await runBatchLive(context, cloudOps, report);
     await applyStockDeltas(deltas);
     if (pendingId) await acknowledgeBrowserBatch(pendingId);
     noteConnectionRestored();

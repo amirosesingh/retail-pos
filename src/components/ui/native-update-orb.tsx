@@ -23,7 +23,6 @@ export function NativeUpdateOrb({ label, detail, progress, busy = false, error =
           strokeDasharray={`${measured ? percent * 1.3195 : 33} 132`} className={measured ? "" : "animate-spin"} />
       </svg>}
       {error ? <AlertCircle className="size-5 text-destructive" aria-hidden="true" /> : <Download className="size-5" aria-hidden="true" />}
-      {busy && measured && <span className="absolute -left-5 top-1/2 -translate-y-1/2 rounded-full border bg-card px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-foreground shadow-sm">{percent}%</span>}
     </button>
     <span className="sr-only">{detail}</span>
   </div>;

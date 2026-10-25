@@ -6,6 +6,9 @@ const fixture = vi.hoisted(() => ({
   project: "https://project.test",
   mobile: true,
   windows: false,
+  management: false,
+  receiver: false,
+  registerReceiver: vi.fn(),
   fetch: vi.fn(),
 }));
 vi.mock("capacitor-secure-storage-plugin", () => ({
@@ -26,7 +29,8 @@ vi.mock("capacitor-secure-storage-plugin", () => ({
 }));
 vi.mock("../server-origin", () => ({ posFetch: (...args: unknown[]) => fixture.fetch(...args) }));
 vi.mock("@/core/activation/terminal-tokens", () => ({
-  readTerminalConfig: () => ({ tokenId: fixture.terminal }),
+  readTerminalConfig: () => ({ tokenId: fixture.terminal,
+    deviceUse: fixture.management ? "management" : "operations", locationId: fixture.management ? "" : "branch-a" }),
 }));
 vi.mock("../external-supabase-config", () => ({
   supabaseConfig: () => ({ url: fixture.project }),
@@ -38,7 +42,7 @@ vi.mock("@/platform-config/features", () => ({ isMobileShell: () => fixture.mobi
 vi.mock("../secure-cloud-config", () => ({
   isMissingSecureValue: (error: Error) => error.message === "not found",
 }));
-vi.mock("@/core/local-db/local-db", () => ({ localDb: () => null }));
+vi.mock("@/core/local-db/local-db", () => ({ localDb: () => fixture.receiver ? { enrollApprovalVerifier: fixture.registerReceiver } : null }));
 import {
   enrollOwnApprovalToken,
   loadApprovalToken,
@@ -51,6 +55,9 @@ beforeEach(() => {
   fixture.project = "https://project.test";
   fixture.mobile = true;
   fixture.windows = false;
+  fixture.management = false;
+  fixture.receiver = false;
+  fixture.registerReceiver.mockReset().mockResolvedValue({ ok: true });
   fixture.terminal = "11111111-1111-4111-8111-111111111111";
   fixture.fetch.mockReset();
   fixture.fetch.mockResolvedValue({
@@ -187,7 +194,7 @@ it("deduplicates concurrent enrollment requests", async () => {
 });
 
 it("management Windows can provision and unlock its own token without a local SQL bridge", async () => {
- fixture.windows = true; fixture.mobile = false;
+ fixture.windows = true; fixture.mobile = false; fixture.management = true;
  await enrollOwnApprovalToken("manager");
  expect((await loadApprovalToken())?.userId).toBe("manager");
  await setupOfflineApprovalToken("874392");
@@ -195,4 +202,19 @@ it("management Windows can provision and unlock its own token without a local SQ
  expect((await unlockOfflineApprovalToken("874392")).userId).toBe("manager");
  expect(await loadApprovalToken()).toBeNull();
  await clearApprovalToken(true); expect(await offlineTokenOwner()).toBeNull();
+});
+
+it("keeps branch-PC approval receiving while suppressing token issuance and saved-token visibility", async () => {
+  await enrollOwnApprovalToken("manager");
+  await setupOfflineApprovalToken("874392");
+  fixture.windows = true; fixture.mobile = false; fixture.management = false; fixture.receiver = true;
+  fixture.fetch.mockClear();
+  await enrollOwnApprovalToken("manager");
+  expect(fixture.registerReceiver).toHaveBeenCalledOnce();
+  expect(fixture.fetch).not.toHaveBeenCalled();
+  expect(await loadApprovalToken()).toBeNull();
+  expect(await offlineTokenOwner()).toBeNull();
+  await expect(unlockOfflineApprovalToken("874392")).rejects.toThrow("not available on this device");
+  await revalidateOfflineApprovalToken();
+  expect(fixture.fetch).not.toHaveBeenCalled();
 });

@@ -18,10 +18,11 @@ export type StockNumberReset = "never" | "yearly" | "monthly" | "daily";
  * Which run of numbers a reference comes from. Each series keeps its own
  * counter, so a goods-received note can never take a stock count's number.
  */
-export type RefSeries = "stock" | "receiving" | "request" | "transfer";
+export type RefSeries = "stock" | "receiving" | "request" | "transfer" | "sponsorship";
 
 /** The prefix each series falls back to when the admin has not set one. */
 const SERIES_PREFIX: Record<RefSeries, string> = {
+  sponsorship: "SP",
   stock: "SC",
   receiving: "GRN",
   request: "SR",
@@ -97,6 +98,11 @@ const build = (
   parts.push(String(seq).padStart(padOf(cfg), "0"));
   return parts.join("-");
 };
+
+/** The shared database reserves this plan atomically with a sponsorship draft. */
+export function stockReferencePlan(cfg:StockNumberingSettings,branchCode:string,series:RefSeries,at=new Date()){
+ return {prefix:build(cfg,branchCode,at,1,series).replace(/-0*1$/,""),minimum:Math.max(1,Math.round(cfg.startNumber??1)),padding:padOf(cfg)};
+}
 
 /** What the next reference would look like, without consuming it. */
 export function previewStockRef(

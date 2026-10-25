@@ -8,7 +8,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { SettingsFrame } from "@/platforms/web/components/pos/settings/SettingsFrame";
+import { SettingsFrame, useSettingsCtx } from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -50,7 +50,8 @@ export const Route = createFileRoute("/settings/accounts")({
 });
 
 function AccountsForm() {
-  const { state, stores, updateSettings } = usePos();
+  const { state, stores } = usePos();
+  const { updateSettings } = useSettingsCtx();
   const integrations = state.settings.integrations;
   const accounts = integrations.paymentAccounts ?? [];
 

@@ -1,6 +1,6 @@
 import { PERMISSION_PAGES, pageEnabled, pageForRoute, setPageVisibility } from "./permission-pages";
 import { PERMISSION_LABELS, type PermissionKey, type StaffPermissions } from "./permissions";
-import { navGroups } from "@/platforms/web/components/pos/nav-config";
+import { navGroups, routePermissionForPath } from "@/platforms/web/components/pos/nav-config";
 import { SETTINGS_CARDS } from "./settings-catalog";
 
 /** Presentation only. Persisted page IDs, action keys and execution gates stay unchanged. */
@@ -8,7 +8,7 @@ export const PERMISSION_SECTIONS = [
   { id: "selling", label: "Selling", pageIds: ["register", "holds", "shifts", "receipts", "display"] },
   { id: "business", label: "Business overview", pageIds: ["dashboard", "analytics", "all-shops", "locations", "audit"] },
   { id: "approvals", label: "Approvals", pageIds: ["approvals"] },
-  { id: "inventory", label: "Inventory", pageIds: ["inventory", "stock", "purchasing", "receiving", "suppliers", "requests", "transfers"] },
+  { id: "inventory", label: "Inventory", pageIds: ["inventory", "stock", "purchasing", "receiving", "suppliers", "requests", "transfers", "sponsorship"] },
   { id: "membership", label: "Membership", pageIds: ["members", "verifications"] },
   { id: "bookings", label: "Booking & services", pageIds: ["bookings", "pos-general-booking", "pos-racket-service"] },
   { id: "marketing", label: "Marketing", pageIds: ["promotions", "coupons"] },
@@ -28,7 +28,7 @@ export function permissionSubpages(id: string) {
   const seen = new Set<string>();
   return destinations.filter(item => {
     const route = `${item.path}${item.hash ? `#${item.hash}` : ""}`;
-    if (!page || pageForRoute(item.path)?.id !== id || (!item.hash && page.routes.includes(item.path)) || seen.has(route)) return false;
+    if (!page || pageForRoute(item.path.split("?")[0])?.id !== id || (!item.hash && page.routes.includes(item.path)) || seen.has(route)) return false;
     seen.add(route);
     return true;
   });
@@ -36,6 +36,7 @@ export function permissionSubpages(id: string) {
 // Controls reused by a page but owned by another existing permission page.
 // This affects editor placement only; pageAllowsAction's ownership is untouched.
 const RELATED_CONTROLS: Record<string, PermissionKey[]> = {
+  audit: ["can_export_reports"],
   staff: ["can_access_pos_settings"],
   register: ["can_access_pos_settings", "can_add_member", "can_add_new_product", "can_edit_product_details", "can_hold_cart", "can_link_product_barcode", "can_manage_bookings", "can_open_shift", "can_reopen_held_order", "can_reprint_bill", "can_view_member_history"],
   receipts: ["can_edit_tenders"],
@@ -74,10 +75,27 @@ export function permissionEditableKeys(id: string): PermissionKey[] {
     .filter(key => permissionControlOwner(key)?.id === id);
 }
 export function permissionReferenceKeys(id: string): PermissionKey[] {
+  // Transfer actions share backend ownership with this queue, but do not grant
+  // authority to decide its requests. Show approval rules instead.
+  if (id === "approvals") return [];
   const page = PERMISSION_PAGES.find(page => page.id === id);
   return [...new Set([...(page?.keys ?? []), ...permissionRelatedKeys(id)])]
     .filter(key => permissionControlOwner(key)?.id !== id);
 }
 export function setEditablePageFeatures(matrix: StaffPermissions, id: string, enabled: boolean): StaffPermissions {
-  return { ...matrix, ...Object.fromEntries(permissionEditableKeys(id).map(key => [key, enabled])) };
+  return { ...matrix, ...Object.fromEntries(permissionEditableKeys(id).filter(key => !["can_use_management_pc", "can_use_management_mobile"].includes(key)).map(key => [key, enabled])) };
+}
+
+/** Entry requirements use the same registry as the route guard. Approval decisions
+ * remain request/rule scoped; opening that queue grants no approval authority. */
+export function permissionPageEntryKeys(id: string): PermissionKey[] {
+  const page = PERMISSION_PAGES.find(page => page.id === id);
+  if (!page || id === "approvals" || id === "register" || id === "display") return [];
+  if (id === "reports") return ["can_view_sales_reports"];
+  return [...new Set(page.routes.map(routePermissionForPath).filter(Boolean))] as PermissionKey[];
+}
+
+export function grantPageEntry(matrix: StaffPermissions, id: string): StaffPermissions {
+  return { ...setPageVisibility(matrix, id, true),
+    ...Object.fromEntries(permissionPageEntryKeys(id).map(key => [key, true])) };
 }

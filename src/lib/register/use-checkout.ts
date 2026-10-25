@@ -72,6 +72,8 @@ export type CheckoutDeps = {
   getExchangeRef: () => string | null;
   getPointsEarned: () => number;
   getBillNo: () => string | null;
+  /** One-ticket choice; never changes the saved printer or drawer settings. */
+  getPrintReceipt?: () => boolean;
   resetCart: () => void;
   setLines: (lines: CartLine[]) => void;
   setMemberId: (id: string | null) => void;
@@ -414,6 +416,7 @@ export function useCheckout(deps: CheckoutDeps) {
   }
 
   async function runCompleteSale() {
+    const printReceipt = deps.getPrintReceipt?.() !== false;
     const activeShift = deps.getActiveShift();
     const currentStore = deps.getCurrentStore();
     const activeCashier = deps.getActiveCashier();
@@ -726,10 +729,12 @@ export function useCheckout(deps: CheckoutDeps) {
         /* audit recovery must not break a completed checkout */
       }
     }
-    try {
-      printSaleReceipt(sale, member, "sale");
-    } catch (error) {
-      notifyError(error, "Sale saved, but printing failed");
+    if (printReceipt) {
+      try {
+        printSaleReceipt(sale, member, "sale");
+      } catch (error) {
+        notifyError(error, "Sale saved, but printing failed");
+      }
     }
     if (wa.enabled && wa.autoSendOnSale && customerNumber) {
       void sendSaleOnWhatsApp(sale, customerNumber);

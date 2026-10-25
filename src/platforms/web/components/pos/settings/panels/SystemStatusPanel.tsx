@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { usePos } from "@/lib/pos-store";
+import { useAuth } from "@/lib/pos-auth";
 import { MEMBER_FLAG, REDEEM_FLAG, setPublicFlag, usePublicFlags } from "@/lib/public-flags";
 import { cn } from "@/lib/utils";
 import {
@@ -75,7 +76,9 @@ function DomainSwitch({
 }
 
 export function SystemStatusPanel() {
-  const { state, updateSettings, saveConfiguredSettings } = usePos();
+  const { state, updateSettings, saveConfiguredSettings, settingsScope, scopeIds, settingsScopeLoading } = usePos();
+  const { isAdmin, can } = useAuth();
+  const canEditDomains = !settingsScopeLoading && (isAdmin || (can("can_access_pos_settings") && !!scopeIds.BRANCH && !settingsScope.locks.publicDomains));
   const integrations = state.settings.integrations;
   const [checks, setChecks] = useState<ServiceCheck[]>([]);
   const [busy, setBusy] = useState(false);
@@ -148,6 +151,7 @@ export function SystemStatusPanel() {
   };
 
   const saveDomains = async () => {
+    if (!canEditDomains) return;
     try {
       updateSettings({
         integrations: {
@@ -300,15 +304,15 @@ Switching one off keeps its unavailable page at the same address. The POS stays 
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Member domain</Label>
-            <Input value={memberDomain} onChange={(e) => setMemberDomain(e.target.value)} />
+            <Input disabled={!canEditDomains} value={memberDomain} onChange={(e) => setMemberDomain(e.target.value)} />
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Redeem domain</Label>
-            <Input value={redeemDomain} onChange={(e) => setRedeemDomain(e.target.value)} />
+            <Input disabled={!canEditDomains} value={redeemDomain} onChange={(e) => setRedeemDomain(e.target.value)} />
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button size="sm" onClick={() => void saveDomains()}>
+          <Button size="sm" disabled={!canEditDomains} onClick={() => void saveDomains()}>
             Save domains
           </Button>
           <Button size="sm" variant="outline" onClick={() => setDnsOpen(true)}>

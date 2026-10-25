@@ -1,4 +1,5 @@
 import { useLocalStartupReady } from "@/lib/use-local-startup";
+import { useNotificationDeliveryPump } from "@/lib/use-notification-delivery-pump";
 import { signInDestination } from "@/lib/sign-in-destination";
 import { isManagementDevice } from "@/lib/management-device";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -134,6 +135,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
     can,
   } = useAuth();
   const [collapsed, setCollapsed] = useSidebarCollapsed();
+  useNotificationDeliveryPump(Boolean(user) && dataReady);
   const [drawerOpen, setDrawerOpen] = useState(false);
   // The drawer is portalled outside the hidden mobile header. Close it when
   // desktop navigation takes over, and do not reopen it on the next resize.
@@ -371,7 +373,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
         <TerminalLogin />
       </>
     );
-  if ((isDesktop() || isNative()) && isManagementDevice() && !(isNative() ? can("can_use_management_mobile") : can("can_access_pos_settings")))
+  if ((isDesktop() || isNative()) && isManagementDevice() && !can(isNative() ? "can_use_management_mobile" : "can_use_management_pc"))
     return <div className="flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center">
       <h1 className="text-lg font-semibold">Management device</h1>
       <p>Sign in with an account permitted to use this management device. Your page and branch permissions still apply.</p>

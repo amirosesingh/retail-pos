@@ -1,9 +1,15 @@
 import { describe, it, expect, vi } from "vitest";
 import { readAllPages } from "../paged-read";
 import { dataProgress } from "../data-progress";
-import { queryReadsChangedTables, needsIdleCatchup } from "../live-query-tables";
+import { queryReadsChangedTables, needsIdleCatchup, primarySnapshotReadsTable } from "../live-query-tables";
 
 describe("quiet live refresh", () => {
+  it("does not restart primary reads for unrelated audit and notification traffic", () => {
+    for (const table of ["audit_logs", "system_audit_logs", "activity_events", "coupon_events", "authorization_action_history"])
+      expect(primarySnapshotReadsTable(table), table).toBe(false);
+    for (const table of ["products", "product_barcodes", "sales", "sale_items", "payment_transactions", "members", "promotions", "stores", "shifts", "pos_settings", "settings_locks", "app_users", "staff_roles"])
+      expect(primarySnapshotReadsTable(table), table).toBe(true);
+  });
   it("skips idle ticks without delaying queued writes or safety reconciliation", () => {
     for (const elapsed of [1000, 2000, 5000, 20000, 60000, 299999])
       expect(needsIdleCatchup(0, 1000, 1000 + elapsed)).toBe(false);

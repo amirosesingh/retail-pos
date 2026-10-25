@@ -4,6 +4,7 @@ import { PERMISSION_PAGES, pageKey, pageAllowsAction, type PagePermissionKey } f
 // ============================================================================
 
 export const PERMISSION_GROUPS = [
+  {id:"sponsorship",label:"Sponsorship",keys:["can_view_sponsorship","can_create_sponsorship","can_approve_sponsorship","can_issue_sponsorship"]},
   {
     id: "drawer",
     label: "Cash Drawer",
@@ -117,6 +118,7 @@ export const PERMISSION_GROUPS = [
       "can_manage_promotions",
       "can_manage_terminals",
       "can_use_management_mobile",
+      "can_use_management_pc",
       "can_manage_sync_backup",
     ],
   },
@@ -196,9 +198,18 @@ export type PermissionKey =
   | "can_manage_promotions"
   | "can_manage_terminals"
   | "can_use_management_mobile"
-  | "can_manage_sync_backup";
+  | "can_use_management_pc"
+  | "can_manage_sync_backup"
+  | "can_create_sponsorship"
+  | "can_view_sponsorship"
+  | "can_approve_sponsorship"
+  | "can_issue_sponsorship";
 
 export const PERMISSION_LABELS: Record<PermissionKey, string> = {
+  can_view_sponsorship: "View sponsorship records and receipts",
+  can_create_sponsorship: "Create sponsorship requests",
+  can_approve_sponsorship: "Approve sponsorship stock issues",
+  can_issue_sponsorship: "Hand over approved sponsorship products",
   can_open_drawer: "Open cash drawer",
   can_close_drawer: "Close / count drawer",
   can_view_drawer_balance: "View drawer balance",
@@ -271,13 +282,14 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   can_manage_staff: "Manage staff & permissions",
   can_manage_promotions: "Edit promotions & coupon rules",
   can_manage_terminals: "Manage terminal activation tokens",
-  can_use_management_mobile: "Sign in on management phones and tablets",
+  can_use_management_mobile: "Sign in on management mobiles and tablet",
+  can_use_management_pc: "Sign in on management computer",
   can_manage_sync_backup: "Manage database connection",
 };
 
 export const PERMISSION_KEYS = Object.keys(PERMISSION_LABELS) as PermissionKey[];
 
-export type StaffPermissions = Record<PermissionKey, boolean> & Record<PagePermissionKey, boolean>;
+export type StaffPermissions = Record<PermissionKey, boolean> & Record<PagePermissionKey, boolean> & Record<`display:${string}`, boolean> & Record<`approval_scope:${string}`, boolean>;
 
 const build = (on: PermissionKey[]): StaffPermissions =>
   PERMISSION_KEYS.reduce((acc, k) => {
@@ -390,6 +402,7 @@ export function normalizePermissions(
     const resolved = resolvePermission(key as PermissionFlag);
     if (resolved in base) base[resolved] = value === true;
   }
+  for (const key of ["can_view_sponsorship","can_create_sponsorship","can_approve_sponsorship","can_issue_sponsorship"] as const) if (!(key in raw)) base[key] = role === "admin";
   // Preserve old report-based visibility until this independent choice is saved.
   if (!("can_view_cost_margin" in raw)) base.can_view_cost_margin = base.can_view_sales_reports &&
     (!("page:reports" in raw) || raw["page:reports"] === true);
@@ -420,6 +433,10 @@ export function normalizePermissions(
   for (const page of PERMISSION_PAGES) {
     const key = pageKey(page.id);
     if (typeof raw[key] === "boolean") base[key] = raw[key];
+  }
+  for (const [key, value] of Object.entries(raw)) {
+    if (key.startsWith("display:") && typeof value === "boolean") base[key as `display:${string}`] = value;
+    if (key.startsWith("approval_scope:") && typeof value === "boolean") base[key as `approval_scope:${string}`] = value;
   }
   return base;
 }
@@ -515,7 +532,7 @@ export function getEffectivePermissions(
   const merged = { ...preset };
   for (const [key, value] of Object.entries(overrides)) {
     const resolved = resolvePermission(key as PermissionFlag);
-    if (resolved in merged || PERMISSION_PAGES.some(page => pageKey(page.id) === key))
+    if (resolved in merged || key.startsWith("display:") || PERMISSION_PAGES.some(page => pageKey(page.id) === key))
       merged[resolved] = value === true;
   }
   return merged;
@@ -534,7 +551,7 @@ export function getEffectivePermissions(
 export const SUPERVISOR_PERMISSIONS: StaffPermissions = build(
   PERMISSION_KEYS.filter(
     (k) =>
-      k !== "can_manage_staff" && k !== "can_manage_sync_backup" && k !== "can_access_pos_settings",
+      k !== "can_manage_staff" && k !== "can_manage_sync_backup" && k !== "can_access_pos_settings" && !k.endsWith("sponsorship"),
   ),
 );
 
@@ -620,6 +637,7 @@ export const PERMISSION_TAGS: Record<PermissionTag, { roles: StaffRole[]; keys: 
     "inventory-access": {
       roles: ["warehouse", "supervisor", "admin"],
       keys: [
+        "can_view_sponsorship", "can_create_sponsorship", "can_approve_sponsorship", "can_issue_sponsorship",
         "can_view_inventory",
         "can_edit_product_price",
         "can_add_new_product",
@@ -651,7 +669,7 @@ export const PERMISSION_TAGS: Record<PermissionTag, { roles: StaffRole[]; keys: 
     },
     "supervisor-only": {
       roles: ["supervisor", "admin"],
-      keys: ["can_edit_member_points", "can_manage_promotions", "can_manage_terminals", "can_use_management_mobile"],
+      keys: ["can_edit_member_points", "can_manage_promotions", "can_manage_terminals", "can_use_management_mobile", "can_use_management_pc"],
     },
     "admin-only": {
       roles: ["admin"],

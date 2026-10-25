@@ -1,3 +1,4 @@
+import {useSponsorshipTotals} from "@/lib/use-sponsorship-totals";
 import { CashierBillList } from "@/platforms/web/components/pos/CashierBillList";
 import { HomeShortcuts } from "@/platforms/web/components/pos/HomeShortcuts";
 import { productVisibleAt } from "@/lib/branch-policy";
@@ -41,6 +42,7 @@ import { inventoryMetrics } from "@/lib/inventory-metrics";
 import { AnimatedMetric } from "@/platforms/web/components/pos/AnimatedMetric";
 import { useAuth } from "@/lib/pos-auth";
 import { useVisibility } from "@/lib/ui-visibility";
+import { DisplayElement } from "@/components/shared/DisplayElement";
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({
@@ -69,7 +71,8 @@ function Dashboard() {
   const { state, currentStore } = usePos();
   const { can } = useAuth();
   const { visible } = useVisibility();
-  const showStockValue = can("can_view_cost_margin") && visible("inventory.stockValue");
+  const showCostMargin = can("can_view_cost_margin");
+  const showStockValue = showCostMargin && visible("inventory.stockValue");
   const drawer = useDrawerEvents();
   const thresholds = defaultReviewThresholds;
 
@@ -108,6 +111,8 @@ function Dashboard() {
   const { sales, loading: reportLoading, error: reportError } = useReportSales(state.sales, storeIds,
     posDayKey(new Date(Date.parse(`${readFrom}T12:00:00`) - 86_400_000)),
     posDayKey(new Date(Date.parse(`${readTo}T12:00:00`) + 86_400_000)));
+  const includeSponsorship=state.settings.integrations.includeSponsorshipInDailySales===true;
+  const sponsorship=useSponsorshipTotals(storeIds,today,today,includeSponsorship);
   const todaySales = useMemo(() => sales.filter((s) => posDayKey(s.createdAt) === today), [sales, today]);
   const live = useMemo(() => todaySales.filter((s) => !s.refunded), [todaySales]);
 
@@ -211,20 +216,21 @@ function Dashboard() {
 
 
         {reportError && <p role="alert" className="rounded-lg border border-destructive/40 p-3 text-sm text-destructive">Report incomplete: {reportError}</p>}
-        <div role="region" aria-label="Revenue summary" tabIndex={0} className="dashboard-swipe-row no-scrollbar grid min-w-0 grid-flow-col auto-cols-[minmax(10rem,72%)] snap-x snap-mandatory gap-3 overflow-x-auto overscroll-x-contain rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:grid-flow-row md:auto-cols-auto md:grid-cols-4 md:overflow-visible xl:grid-cols-7">
+        <DisplayElement name="dashboard.revenueSummary"><div role="region" aria-label="Revenue summary" tabIndex={0} className="dashboard-swipe-row no-scrollbar grid min-w-0 grid-flow-col auto-cols-[minmax(10rem,72%)] snap-x snap-mandatory gap-3 overflow-x-auto overscroll-x-contain rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:grid-flow-row md:auto-cols-auto md:grid-cols-4 md:overflow-visible xl:grid-cols-7">
+          {includeSponsorship&&<><Kpi label="Daily sales summary" value={sponsorship.loading?"Loading…":sponsorship.error?"Unavailable":money(revenue+sponsorship.total)} highlight/><Kpi label="Sponsorship value included" value={sponsorship.error?"Unavailable":money(sponsorship.total)}/></>}
           <Kpi label="Revenue today" value={money(revenue)} highlight />
           <Kpi label="Gross revenue" value={money(profit.revenue)} />
-          <Kpi label="Total COGS" value={money(profit.cogs)} />
-          <Kpi label="Gross margin" value={`${margin.toFixed(1)}%`} />
+          {showCostMargin && <Kpi label="Total COGS" value={money(profit.cogs)} />}
+          {showCostMargin && <Kpi label="Gross margin" value={`${margin.toFixed(1)}%`} />}
           <Kpi label="Bills" value={String(live.length)} />
           <Kpi
             label="Refunds"
             value={`${refunds.length} · ${money(refunds.reduce((a, s) => a + Math.abs(s.total), 0))}`}
           />
           <Kpi label="No-sale drawer opens" value={String(todayDrawer.length)} />
-        </div>
+        </div></DisplayElement>
 
-        <section className="rounded-lg border border-border bg-card p-4">
+        <DisplayElement name="dashboard.inventorySummary"><section className="rounded-lg border border-border bg-card p-4">
           <div className="mb-3">
             <h2 className="text-sm font-semibold">Inventory position · {currentStore.name}</h2>
             <p className="text-xs text-muted-foreground">
@@ -249,9 +255,9 @@ function Dashboard() {
               </>
             )}
           </div>
-        </section>
+        </section></DisplayElement>
 
-        <Carousel
+        <DisplayElement name="dashboard.tradingGraphs"><Carousel
           opts={{ align: "start", containScroll: "trimSnaps" }}
           aria-label="Live dashboard graphs"
           // Keep arrow keys inside charts available for Recharts data-point navigation.
@@ -327,7 +333,7 @@ function Dashboard() {
           </section>
           </CarouselItem>
 
-        <CarouselItem className="basis-[92%] sm:basis-3/4 lg:basis-[48%] 2xl:basis-1/3">
+        {showCostMargin && <CarouselItem className="basis-[92%] sm:basis-3/4 lg:basis-[48%] 2xl:basis-1/3">
           <section className="flex h-88 min-w-0 flex-col rounded-lg border border-border bg-card p-4">
           <h2 className="mb-3 min-h-10 shrink-0 text-sm font-semibold">
             Profit by hour · gross profit {money(chartProfit.profit)}
@@ -355,12 +361,12 @@ function Dashboard() {
             </ResponsiveContainer>
           </div>
         </section>
-          </CarouselItem>
+          </CarouselItem>}
 
           </CarouselContent>
-        </Carousel>
+        </Carousel></DisplayElement>
 
-        <section className="rounded-lg border border-border bg-card">
+        <DisplayElement name="dashboard.cashierReview"><section className="rounded-lg border border-border bg-card">
           <div className="flex items-center gap-2 px-5 py-3">
             <AlertTriangle className="size-4 text-warning" />
             <h2 className="text-sm font-semibold">Cashier review · today</h2>
@@ -400,9 +406,9 @@ function Dashboard() {
             ))}
             {!cashiers.length && <p className="p-6 text-center text-sm text-muted-foreground">{reportLoading ? "Loading cashier review…" : "No trading recorded today."}</p>}
           </div>
-        </section>
+        </section></DisplayElement>
 
-        <section className="rounded-lg border border-border bg-card">
+        <DisplayElement name="dashboard.drawerHistory"><section className="rounded-lg border border-border bg-card">
           <h2 className="px-5 py-3 text-sm font-semibold">Cash drawer opens without a sale</h2>
           <Separator />
           <Table tableId="routes/dashboard#1" loading={reportLoading}>
@@ -437,9 +443,9 @@ function Dashboard() {
               )}
             </TableBody>
           </Table>
-        </section>
+        </section></DisplayElement>
 
-        <section className="rounded-lg border border-border bg-card">
+        <DisplayElement name="dashboard.splitPayments"><section className="rounded-lg border border-border bg-card">
           <h2 className="px-5 pt-3 text-sm font-semibold">Split payments today</h2>
           <p className="px-5 pb-3 pt-1 text-xs text-muted-foreground">Bills paid in two or more parts, such as cash and card.</p>
           <Separator />
@@ -470,7 +476,7 @@ function Dashboard() {
               )}
             </TableBody>
           </Table>
-        </section>
+        </section></DisplayElement>
       </div>
     </AppShell>
   );

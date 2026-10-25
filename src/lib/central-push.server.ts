@@ -43,6 +43,11 @@ export async function authorizePhoneEvent(eventId: string) {
   const event = (await response.json())[0];
   if (!event) return { recipients: [] };
   const config = await readNotificationSettings();
+  if (Array.isArray(config.rules)) {
+    const allowed = await serviceRest("rpc/authorized_notification_push_users", {method:"POST",body:JSON.stringify({p_event:eventId})});
+    if (!allowed.ok) throw new Error("Could not verify notification rule recipients");
+    return {recipients: await allowed.json() as string[]};
+  }
   const rules = config.androidPush ?? defaultAndroidPushRules;
   if (
     !rules.enabled ||

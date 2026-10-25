@@ -208,6 +208,32 @@ test("completed draft download fetches its missing sale once before applying the
   assert.deepEqual(events,["sales","saved"]);
 });
 
+for (const child of ["held_orders", "payment_transactions", "sale_items"]) {
+  for (const rejected of [false, true]) test(`change tracking ${child} carries its sale atomically; rejected=${rejected}`, async () => {
+    const tables = [
+      {...table, cloudTable:"sales", sqlServerTable:"sales", dependencyOrder:1},
+      {...table, cloudTable:child, sqlServerTable:child, dependencyOrder:4},
+    ];
+    let saved = 0; const calls = [];
+    const sale = {id:"sale", store_id:"B1", bill_number:"BILL-1"};
+    const row = {id:"child", store_id:"B1", sale_id:"sale", bill_no:"BILL-1", status:"completed"};
+    const worker = new PushWorker({registry:{tables}, reader:{
+      pendingAggregates:async()=>[],
+      changedIds:async(t, version)=>t.cloudTable===child && !version ? [{operation:"U", version:5, key:{id:"child"}}] : [],
+      rows:async(t)=>t.cloudTable==="sales" ? [sale] : [row],
+      ticketCompletionParents:async()=>[{table:"sales",rows:[sale]}],
+    }, checkpoints:{list:async()=>[], save:async()=>{saved++;}}, cloud:{
+      pushBatch:async()=>{throw new Error("Dependent recovery must be atomic");},
+      pushAggregate:async(batch)=>{calls.push(batch); if(rejected) throw Object.assign(new Error("Rejected"),{status:400}); return {ok:true};},
+    }});
+    if(rejected) await assert.rejects(worker.run({branchId:"B1"}), /Rejected/);
+    else await worker.run({branchId:"B1"});
+    assert.equal(calls.length,1);
+    assert.deepEqual(calls[0].operations.map(op=>op.table),["sales",child]);
+    assert.equal(saved,rejected ? 0 : 1);
+  });
+}
+
 test("held cleanup waits for pending uploads without losing its pull cursor", async()=>{
   let pending=true,saved=0;const applied=[];const events=[];
   class Transaction {async begin(){} async commit(){events.push("commit");} async rollback(){events.push("rollback");}}

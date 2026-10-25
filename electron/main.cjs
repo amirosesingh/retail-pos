@@ -2049,22 +2049,26 @@ function registerIpc() {
     const terminal = terminalStore.read() ?? {};
     const abort = new AbortController();
     const timer = setTimeout(() => abort.abort(), 6_000);
-    const response = await fetch(`${authorizationUrl}/api/public/cashier-login`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      signal: abort.signal,
-      body: JSON.stringify({
-        username,
-        pin,
-        platform: "electron",
-        terminalId: terminal.tokenId ?? null,
-        branchId: localBranchId(),
-      }),
-    }).finally(() => clearTimeout(timer));
-    const result = await response.json().catch(() => ({
-      ok: false,
-      error: "The sign-in service returned an invalid response.",
-    }));
+    let response;
+    let result;
+    try {
+      response = await fetch(`${authorizationUrl}/api/public/cashier-login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        signal: abort.signal,
+        body: JSON.stringify({
+          username,
+          pin,
+          platform: "electron",
+          terminalId: terminal.tokenId ?? null,
+          branchId: localBranchId(),
+        }),
+      });
+      result = await response.json().catch(() => ({
+        ok: false,
+        error: "The sign-in service returned an invalid response.",
+      }));
+    } finally { clearTimeout(timer); }
     // The hosted endpoint has verified the PIN and re-read this account's
     // current permission matrix. Adopt that proof in the desktop process now,
     // before the renderer can submit its first sale. Requiring the separate
@@ -2254,7 +2258,7 @@ function registerIpc() {
   ipcMain.handle("update:diagnose", () => updater.diagnose());
   ipcMain.handle("update:download-page", () => updater.downloadPage());
   ipcMain.handle("app:version", () => app.getVersion());
-  ipcMain.handle("app:name", () => app.isPackaged ? app.getName() : (require("../package.json").build?.productName || app.getName()));
+  ipcMain.handle("app:name", () => require("../package.json").build?.productName || "Retail");
   ipcMain.handle("net:get-json", (_e, url) => netHttp.getJson(String(url)));
   ipcMain.handle("cloud:request", (_e, request) => require("./supabase-http.cjs").supabaseRequest(request, cloudCredentials.read()));
   ipcMain.handle("net:head", (_e, url) => netHttp.head(String(url)));

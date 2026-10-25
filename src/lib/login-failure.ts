@@ -131,3 +131,25 @@ export function failureFromProbeError(
   // Anything else was still an answer from a live project.
   return undefined;
 }
+
+/** A disconnected local verifier has not rejected a PIN. Keep that distinction at the keypad. */
+export function localCashierLoginFailure(reason: string): { ok: false; code: LoginFailure; error: string } {
+  if (reason === "invalid" || reason === "bad-pin")
+    return { ok: false, code: "invalid-credentials", error: "Invalid username or PIN" };
+  if (reason === "locked")
+    return { ok: false, code: "unknown-error", error: "Too many attempts. Please wait before trying again." };
+  if (reason === "inactive")
+    return { ok: false, code: "account-inactive", error: "Account deactivated" };
+  if (reason === "scope")
+    return { ok: false, code: "permission-denied", error: "This account cannot sign in at this branch." };
+  return {
+    ok: false,
+    code: "local-backend-unavailable",
+    error: reason === "missing"
+      ? "This account's sign-in PIN is not available in local SQL yet. Connect and sync the account before signing in offline."
+      : "The local SQL database is still connecting or is unavailable. Wait for the database to become ready, then retry. Your PIN has not been rejected.",
+  };
+}
+/** Legacy uncoded refusals keep their behavior; infrastructure errors never consume PIN attempts. */
+export const countsAsWrongCashierPin = (code: LoginFailure | "session-open-failed" | undefined) =>
+  code === undefined || code === "invalid-credentials";

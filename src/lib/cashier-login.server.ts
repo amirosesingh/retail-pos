@@ -188,6 +188,7 @@ async function cashierLoginCore(input: {
       id: cashier.id,
       username: cashier.username,
       storeId: cashier.store_id ?? "",
+      sessionToken: session.token,
     }),
     sessionToken: session.token,
     idleMinutes: session.idleMinutes,

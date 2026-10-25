@@ -31,9 +31,9 @@ import { issueCashierSession } from "@/lib/pos-session.functions";
 import { startDeviceSession, endDeviceSession } from "@/lib/user-sessions-client";
 import { loadSessionToken, saveSessionToken } from "@/lib/pos-credentials";
 import { isBareUsername, toLoginAddress, usernameFromAddress } from "@/lib/internal-domains";
-import { passwordUsername } from "@/lib/password-username";
+import { cashierServiceFailure, cashierFallbackFailure } from "@/lib/cashier-login-failure";
 import { activeBranchId, activeBranchName, bindTerminalBranch } from "@/lib/active-branch";
-import { verifyCachedPin } from "@/lib/offline-credentials";
+import { verifyCachedPinResult } from "@/lib/offline-credentials";
 import { recordSignIn } from "@/lib/shift-attendance";
 import { endShiftSessions } from "@/lib/shift-sessions";
 import { notifySessionExpired, onSessionExpired } from "@/lib/session-expiry";
@@ -584,7 +584,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(
     async (email: string, password: string) => {
       await sessionTransition.wait();
-      if (!email.trim() || !password) return {
+      if (!email.trim() || email.trim().startsWith("@") || !password) return {
         ok: false, code: "invalid-credentials" as const,
         error: "Enter your username or email and password.",
       };
@@ -622,13 +622,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setCentralSessionVerified(false);
       let authResult: Awaited<ReturnType<typeof supabase.auth.setSession>>;
       try {
-        const alias = passwordUsername(email);
-        if (alias || isBareUsername(email)) {
+        if (isBareUsername(email)) {
           const { posFetch } = await import("@/lib/server-origin");
           const response = await posFetch("/api/public/username-login", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ username: alias ?? email.trim(), password }),
+            body: JSON.stringify({ username: email.trim(), password }),
           });
           if (!response.ok) {
             const code = response.status === 401 ? "invalid-credentials" as const : "cloud-unreachable" as const;
@@ -790,7 +789,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         };
       };
       let verified: ServerLogin | null = null;
-      let failure = "";
       /** True when the server never got to judge the credential itself. */
       let unreachable = offline;
       if (!offline) {
@@ -806,35 +804,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             status = payload?.status ?? 503;
           } else {
             const { serverUrl } = await import("@/lib/server-origin");
-            // A till on a flaky line must not hang on the keypad: after six
-            // seconds the local database answers instead.
-            const abort = new AbortController();
-            const timer = window.setTimeout(() => abort.abort(), 6_000);
-            const res = await fetch(serverUrl("/api/public/cashier-login"), {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              signal: abort.signal,
-              body: JSON.stringify({
-                username: code,
-                pin,
-                platform: typeof navigator === "undefined" ? "web" : navigator.platform || "web",
-                // An all-branches account has no branch of its own, so the
-                // terminal's branch is what the session is stamped with.
-                branchId: activeBranchId(null),
-              }),
-            }).finally(() => window.clearTimeout(timer));
-            status = res.status;
-            payload = (await res.json().catch(() => null)) as ServerLogin | null;
+            const { requestCashierLogin } = await import("@/lib/cashier-login-request");
+            const response = await requestCashierLogin<ServerLogin>(serverUrl("/api/public/cashier-login"), {
+              username: code, pin,
+              platform: typeof navigator === "undefined" ? "web" : navigator.platform || "web",
+              branchId: activeBranchId(null),
+            });
+            status = response.status;
+            payload = response.payload;
           }
-          if (payload?.ok) verified = payload;
+          if (status >= 200 && status < 300 && payload?.ok && payload.cashier) verified = payload;
           else {
-            failure = payload?.error ?? "";
-            // A server that cannot reach the central database (missing key,
-            // 5xx, gateway) has not rejected anyone — fall through to the local
-            // database. A 401 is a real rejection and must stay one.
-            const code503 = payload?.code;
-            if (status >= 500 || code503 === "no_service_key" || code503 === "no_server")
-              unreachable = true;
+            const refused = cashierServiceFailure(status, payload);
+            if (!refused.useLocal) return refused;
+            unreachable = true;
           }
         } catch {
           unreachable = true;
@@ -859,23 +842,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             cashierId: local.staff.id,
             permissions: local.staff.permissions as unknown as TerminalUser["permissions"],
           };
-        } else if (local.reason === "inactive") {
-          return { ok: false, error: "Account deactivated" };
-        } else if (window.pos) {
-          return { ok: false, error: local.reason === "locked" ? "Too many attempts. Please wait before trying again." : local.reason === "invalid" ? "Invalid username or PIN" : "Offline sign-in is unavailable. Connect and sync this account’s sign-in PIN to the local SQL database first." };
+        } else if (["inactive", "scope", "locked"].includes(local.reason) || window.pos) {
+          return cashierFallbackFailure(local.reason, offline);
         } else {
           // Tier 2: the browser-storage verifier kept by earlier builds.
-          const cached = await verifyCachedPin(code, pin);
-          if (!cached)
-            return {
-              ok: false,
-              error:
-                local.reason === "invalid" || local.reason === "bad-pin"
-                  ? "Invalid username or PIN"
-                  : local.reason === "locked"
-                    ? local.error
-                    : "No connection and this account has not signed in on this terminal before. Connect once, then you can sign in offline.",
-            };
+          const cachedResult = await verifyCachedPinResult(code, pin);
+          if (!cachedResult.ok) return cashierFallbackFailure(
+            cachedResult.reason === "invalid" ? "invalid" : local.reason, offline,
+          );
+          const cached = cachedResult.credential;
           signedInOffline = true;
           next = {
             userCode: cached.username,
@@ -926,7 +901,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           /* offline sign-in stays on the browser-storage tier */
         }
       } else {
-        return { ok: false, error: failure || "Invalid username or PIN" };
+        return { ok: false, code: "unknown-error", error: loginFailureMessage("unknown-error") };
       }
       if (signedInOffline) {
         // Queue the sign-in so head office sees it once the line is back. The id
@@ -950,6 +925,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Retire requests made by the previous person before storing this
       // verified login; their late rejection must not clear the new tokens.
       bumpSessionEpoch();
+      // A fresh PIN login must replace the previous person's raw credentials.
+      clearStoredCredentials();
       let desktopRelaySessionReady = false;
       try {
         let cashierToken = verified?.cashierToken ?? "";
@@ -1199,9 +1176,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         metaRole:
           terminalUser.role === "admin"
             ? "admin"
-            : terminalUser.role === "manager"
-              ? "supervisor"
-              : ((terminalUser.roleSlug as MetaRole | null | undefined) ?? "cashier"),
+            : ((terminalUser.roleSlug as MetaRole | null | undefined) ??
+              (terminalUser.role === "manager" ? "supervisor" : "cashier")),
         roles: [terminalUser.role],
         storeId: isLocalAdmin ? null : terminalUser.storeId,
         permissions: terminalUserPermissions(terminalUser),

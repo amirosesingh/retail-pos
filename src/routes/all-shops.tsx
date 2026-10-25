@@ -66,6 +66,7 @@ function AllShops() {
   const { can, isAdmin } = useAuth();
   const allowed = isAdmin || can("can_view_inventory");
   const showMoney = isAdmin || can("can_view_sales_reports");
+  const showCostMargin = isAdmin || can("can_view_cost_margin");
   const canExport = can("can_export_reports");
   const storeIds = useMemo(() => stores.map((store) => store.id), [stores]);
   const today = isoDay(new Date());
@@ -276,7 +277,7 @@ function AllShops() {
                 {showMoney ? (
                   <>
                     {s.count} bill{s.count === 1 ? "" : "s"} in selected dates ·{" "}
-                    {s.stockVisible ? "current stock " + money(s.stockValue) : "Private stock"}
+                    {s.stockVisible ? (showCostMargin ? "current stock " + money(s.stockValue) : "Stock value restricted") : "Private stock"}
                   </>
                 ) : (
                   "Stock quantities only"

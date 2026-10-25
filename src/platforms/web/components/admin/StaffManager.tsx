@@ -10,6 +10,9 @@ import { nativeApprovalCredentials } from "@/platform-config/approval-token";
 import { approvalMethods } from "@/lib/approval-credentials";
 import { PERMISSION_EDITOR_IDS } from "@/lib/permission-editor";
 import { PermissionHierarchy } from "./PermissionHierarchy";
+import { ApprovalBranchPermissions } from "./ApprovalBranchPermissions";
+import { useVisibility } from "@/lib/ui-visibility";
+import { UserDisplayPermissions } from "./UserDisplayPermissions";
 import { StaffIdleTimeout } from "./StaffIdleTimeout";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -107,6 +110,8 @@ type Form = {
   roleSlug: string;
   branchId: string;
   active: boolean;
+  managementPc?: boolean;
+  managementMobile?: boolean;
 };
 
 const EMPTY: Form = {
@@ -166,6 +171,7 @@ async function propagateStaffChange(reason: string, tables: string[]) {
 }
 
 export function StaffManager() {
+  const { hidden } = useVisibility();
   const { stores } = usePos();
   const { authUserId, isAdmin } = useAuth();
   const [rows, setRows] = useState<Row[]>([]);
@@ -326,11 +332,18 @@ export function StaffManager() {
       roleSlug: row.role_slug,
       branchId: row.store_id ?? "all",
       active: row.is_active,
+      managementPc: row.permissions.can_use_management_pc,
+      managementMobile: row.permissions.can_use_management_mobile,
     });
     setFormOpen(true);
   };
 
   const selectedRole = roles.find((role) => role.slug === form.roleSlug);
+  const devicePermissions = {
+    can_use_management_pc: selectedRole?.baseLevel === "admin" || (form.managementPc ?? selectedRole?.permissions.can_use_management_pc ?? false),
+    can_use_management_mobile: selectedRole?.baseLevel === "admin" || (form.managementMobile ?? selectedRole?.permissions.can_use_management_mobile ?? false),
+  };
+  const deviceAccessChanged = !!editing && (devicePermissions.can_use_management_pc !== editing.permissions.can_use_management_pc || devicePermissions.can_use_management_mobile !== editing.permissions.can_use_management_mobile);
   const emailMode = editing ? !!form.email.trim() : looksLikeEmail(form.username);
   const nameValid = form.displayName.trim().length > 0;
   const identifierValid = editing
@@ -353,7 +366,7 @@ export function StaffManager() {
   const branchLabel = branchId ? branchDisplayName(stores, branchId) : "All branches";
 
   const credentialMatches = !credentialEnabled || form.credential === form.confirmCredential;
-  const statusOnly = Boolean(editing && form.active !== editing.is_active &&
+  const statusOnly = Boolean(editing && !deviceAccessChanged && form.active !== editing.is_active &&
     form.displayName === editing.full_name && form.username === (editing.login_username || editing.user_id) &&
     form.email === (isExternalEmail(editing.email) ? editing.email : "") &&
     form.roleSlug === editing.role_slug && form.branchId === (editing.store_id ?? "all") && !credentialEnabled);
@@ -378,8 +391,8 @@ export function StaffManager() {
           active: form.active,
           ...(credentialEnabled && form.credential ? { credential: form.credential } : {}),
         });
-        if (editing.role_slug !== selectedRole.slug) {
-          const permissions = selectedRole.permissions ?? rolePermissions(selectedRole.baseLevel);
+        if (editing.role_slug !== selectedRole.slug || deviceAccessChanged) {
+          const permissions = { ...(editing.role_slug !== selectedRole.slug ? selectedRole.permissions ?? rolePermissions(selectedRole.baseLevel) : editing.permissions), ...devicePermissions };
           const permissionResult = await setManagedStaffPermissions({
             data: {
               ...(await getPosCallerAuth()),
@@ -399,7 +412,7 @@ export function StaffManager() {
           branchId,
           roleSlug: selectedRole.slug,
           baseRole: selectedRole.baseLevel,
-          permissions: selectedRole.permissions,
+          permissions: { ...selectedRole.permissions, ...devicePermissions },
           active: form.active,
         });
         toast.success(`${form.displayName.trim()} created — ${branchLabel}`);
@@ -857,6 +870,9 @@ export function StaffManager() {
             </div>
           </div>
           {editing && <StaffIdleTimeout person={{key: editing.user_id, name: editing.full_name, kind: "account"}} />}
+          <UserDisplayPermissions devicesOnly compactDevice permissions={{ ...rolePermissions(selectedRole?.baseLevel ?? "cashier"), ...devicePermissions }}
+            onChange={permissions => setForm({ ...form, managementPc: permissions.can_use_management_pc, managementMobile: permissions.can_use_management_mobile })}
+            hidden={hidden} role={form.roleSlug} userId={editing?.user_id ?? ""} admin={selectedRole?.baseLevel === "admin"} busy={busy === "save"} search="" />
           <DialogFooter>
             <Button variant="outline" onClick={() => setFormOpen(false)} disabled={busy === "save"}>
               Cancel
@@ -879,7 +895,7 @@ export function StaffManager() {
           <DialogHeader>
             <DialogTitle>Permissions · {permissionsFor?.full_name}</DialogTitle>
             <DialogDescription>
-              Changes stay pending until Save. Copying changes permissions only; branch assignments remain unchanged. Administrators retain full access.
+              Manage this person's pages, actions and visible information here, then Save. Management device sign-in is in Edit account. Branch assignments remain unchanged. Approver rules are managed separately. Administrators retain full access.
             </DialogDescription>
           </DialogHeader>
           {permissionsFor && (
@@ -952,6 +968,9 @@ export function StaffManager() {
             <Button variant="outline" disabled={permissionsFor.role === "admin" || busy === "permissions"} onClick={() => setPermissionsFor({ ...permissionsFor, permissions: { ...(roles.find(role => role.slug === permissionsFor.role_slug)?.permissions ?? rolePermissions(permissionsFor.role)) } })}>Reset to role defaults</Button>
           </div>}
           {permissionsFor && <PermissionHierarchy
+            renderPageDetails={pageId => <>{pageId === "approvals" && <ApprovalBranchPermissions permissions={permissionsFor.permissions} onChange={permissions => setPermissionsFor({ ...permissionsFor, permissions })} stores={stores} assignedBranch={permissionsFor.store_id} disabled={permissionsFor.role === "admin" || busy === "permissions"} />}<UserDisplayPermissions pageId={pageId} permissions={permissionsFor.permissions} onChange={permissions => setPermissionsFor({ ...permissionsFor, permissions })} hidden={hidden} role={permissionsFor.role_slug} userId={permissionsFor.user_id} admin={permissionsFor.role === "admin"} busy={busy === "permissions"} search={permissionSearch} /></>}
+            hidden={hidden}
+            displayRole={permissionsFor.role_slug}
             permissions={permissionsFor.permissions}
             onChange={permissions => setPermissionsFor({ ...permissionsFor, permissions })}
             admin={permissionsFor.role === "admin"}

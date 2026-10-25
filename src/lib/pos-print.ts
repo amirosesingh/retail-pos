@@ -1,5 +1,7 @@
 import { formatDate as posDisplayDate, formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { receiptBarcode } from "./receipt-barcode";
+import { sponsorshipReceiptDetails } from "./sponsorship-receipt";
+import type { SponsorshipRecord } from "./sponsorship";
 import { tenderTotals, shiftSalesOf } from "./shift-close";
 import type {
   RoundingSettings,
@@ -1070,6 +1072,31 @@ function transferBody(transfer: Transfer, products: Product[], from: Store, to: 
 
 export function printTransferNote(transfer: Transfer, products: Product[], from: Store, to: Store) {
   printHtml(transfer.ref, transferBody(transfer, products, from, to), false);
+}
+export function printSponsorshipReceipt(record: SponsorshipRecord) {
+  const details = sponsorshipReceiptDetails(
+    record,
+    posDisplayDateTime(new Date(record.given_at ?? "")),
+  );
+  // Custom header fields must belong to this document, never the previous sale.
+  setTokens({
+    ...placeTokens(),
+    ...dateTokens(record.given_at ?? record.created_at),
+    receipt_number: record.reference,
+    cashier: record.given_by_name ?? record.created_by_name,
+    customer_name: record.recipient_name,
+    branch_name: record.store_name,
+    branch_code: activeBranch?.id === record.store_id ? activeBranch.code : "",
+    item_count: String(record.lines.reduce((sum, line) => sum + line.quantity, 0)),
+    subtotal: fmt(record.lines.reduce((sum, line) => sum + line.unit_value * line.quantity, 0)),
+    discount: fmt(record.lines.reduce((sum, line) => sum + (line.discount_amount ?? 0), 0)),
+    tax: fmt(0),
+    total: fmt(record.total_value),
+    payment_method: "Sponsorship",
+    received: fmt(0),
+    change: fmt(0),
+  });
+  return printHtml(record.reference, header() + details, true);
 }
 
 /**

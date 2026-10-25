@@ -208,6 +208,7 @@ export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
       "integrations.receivingNumbering",
       "integrations.requestNumbering",
       "integrations.transferNumbering",
+      "integrations.sponsorshipNumbering",
     ],
     lockedByDefault: false,
     scopeFamily: "business",

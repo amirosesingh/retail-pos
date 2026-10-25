@@ -146,6 +146,7 @@ class AggregateRepository {
           branchId: aggregate.branchId,
           terminalId: aggregate.terminalId,
           permissions: aggregate.permissions,
+          productWriteKind: aggregate.productWriteKind,
           enforcePermissions: true,
           isSettingsAdmin: aggregate.isSettingsAdmin === true,
           memberAccrual: aggregate.memberAccrual,

@@ -10,6 +10,17 @@ const cashier = {
 };
 
 describe("targeted activity notifications", () => {
+  it("keeps rule-selected app and push recipients independent", () => {
+    const row={store_id:"branch-a",meta:{notification_routes:{app:["cashier-1"],push:["someone-else"]},in_app_disabled:false}};
+    expect(activityVisibleTo(row,cashier)).toBe(true);
+    expect(activityVisibleTo(row,cashier,"push")).toBe(false);
+    expect(activityVisibleTo(row,{...cashier,userIds:["other"]})).toBe(false);
+  });
+  it("preserves an original terminal-only private notification", () => {
+    const row={store_id:"branch-a",meta:{notification_routes:{app:[],push:[],terminalApp:["terminal-a"]}}};
+    expect(activityVisibleTo(row,cashier)).toBe(true);
+    expect(activityVisibleTo(row,{...cashier,terminalId:"terminal-b"})).toBe(false);
+  });
   it("keeps in-app preferences independent of push audience checks", () => {
     const row = { store_id: "branch-a", meta: { audience_user_ids: ["cashier-1"], in_app_disabled: true } };
     expect(activityVisibleTo(row, cashier)).toBe(false);

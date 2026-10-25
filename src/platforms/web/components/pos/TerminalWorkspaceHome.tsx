@@ -1,3 +1,4 @@
+import {useSponsorshipTotals} from "@/lib/use-sponsorship-totals";
 import { useViewedBranchShift } from "@/lib/use-viewed-branch-shift";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { inventoryMetrics } from "@/lib/inventory-metrics";
@@ -93,6 +94,8 @@ export function TerminalWorkspaceHome() {
     loading,
     error,
   } = useReportSales(state.sales, storeIds, todayKey, todayKey);
+  const includeSponsorship=state.settings.integrations.includeSponsorshipInDailySales===true;
+  const sponsorship=useSponsorshipTotals(storeIds,todayKey,todayKey,includeSponsorship);
   const completedSales = todaySales.filter((sale) => !sale.refunded);
   const todayRevenue = completedSales.reduce((sum, sale) => sum + sale.total, 0);
   const paymentSummary = dailyPaymentSummary(completedSales);
@@ -127,13 +130,13 @@ export function TerminalWorkspaceHome() {
     revenue: can("can_view_sales_reports") && visible("workspace.todayRevenue") && (
               <Metric
                 key="revenue"
-                label="Today's revenue"
+                label={includeSponsorship?"Today's sales summary":"Today's revenue"}
                 payments={paymentSummary}
                 icon={BarChart3}
                 tone="text-category-2 bg-category-2/10"
                 value={
                   <AnimatedMetric
-                    value={todayRevenue}
+                    value={todayRevenue+sponsorship.total}
                     format={(value) =>
                       value.toLocaleString(undefined, {
                         minimumFractionDigits: 2,
@@ -143,7 +146,7 @@ export function TerminalWorkspaceHome() {
                   />
                 }
                 hint={
-                  error ? "Could not refresh totals" : loading ? "Updating…" : "Completed sales"
+                  error||sponsorship.error ? "Could not refresh totals" : loading||sponsorship.loading ? "Updating…" : includeSponsorship?`Includes ${sponsorship.total.toFixed(2)} sponsorship value`:"Completed sales"
                 }
               />
             ),
@@ -193,7 +196,7 @@ export function TerminalWorkspaceHome() {
                   className="group rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 >
                   <Card className="workspace-action-card h-full transition-[border-color,background-color] duration-[var(--motion-fast)] group-hover:border-primary/40 group-hover:bg-muted/25 motion-reduce:transition-none">
-                    <CardHeader className="workspace-action-header flex flex-row items-center gap-3 pb-2">
+                    <CardHeader className="workspace-action-header flex flex-row items-center space-y-0 gap-3 pb-2">
                       <span
                         className={`rounded-xl p-2.5 ${["bg-category-1/10 text-category-1", "bg-category-2/10 text-category-2", "bg-category-3/10 text-category-3", "bg-category-4/10 text-category-4"][index % 4]}`}
                       >
@@ -253,9 +256,9 @@ export function TerminalWorkspaceHome() {
             </div>
           </header>
 
-          <section className="selling-overview no-scrollbar flex snap-x snap-mandatory gap-3 overflow-x-auto overscroll-x-contain sm:grid sm:overflow-x-visible sm:grid-cols-2 lg:grid-cols-4" aria-label="Workspace overview" tabIndex={0}>
-            {(["shift", "bills", "revenue", "stock"] as const).map(key => <div key={key} className="min-w-0 w-[82%] shrink-0 snap-start sm:w-auto [&>*]:h-full">{metrics[key]}</div>)}
-          </section>
+          {Object.values(metrics).some(Boolean) && <section className="selling-overview flex flex-wrap gap-3" aria-label="Workspace overview" tabIndex={0}>
+            {(["shift", "bills", "revenue", "stock"] as const).filter(key => metrics[key]).map(key => <div key={key} className="min-w-0 flex-[1_1_11rem] [&>*]:h-full">{metrics[key]}</div>)}
+          </section>}
 
           {actions}
         </div>
@@ -281,7 +284,7 @@ function Metric({
 }) {
   return (
     <Card className="workspace-metric">
-      <CardContent className="p-3 xl:p-5">
+      <CardContent className="p-3 pt-3 sm:p-4 sm:pt-4 xl:p-5 xl:pt-5">
         <div className="flex items-center justify-between gap-3">
           <p className="text-sm font-medium text-muted-foreground">{label}</p>
           <span className={`rounded-xl p-2 ${tone}`}>

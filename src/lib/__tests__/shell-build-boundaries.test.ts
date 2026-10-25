@@ -33,9 +33,9 @@ it("keeps update notices outside connection and staff gates with one mount each"
   for (const name of ["AndroidUpdateBanner", "DesktopUpdateBanner"]) {
     expect(root.match(new RegExp(`<${name} />`, "g"))).toHaveLength(1);
   }
-  expect(root).toContain('RELEASE_CHANNEL === "beta" && <AppUpdateNotices />');
-  expect(root).toContain('RELEASE_CHANNEL !== "beta" && <AppUpdateNotices />');
-  expect(root.indexOf('RELEASE_CHANNEL === "beta" && <AppUpdateNotices />')).toBeLessThan(root.indexOf("<NativeBoot>"));
+  expect(root.match(/<AppUpdateNotices \/>/g)).toHaveLength(1);
+  expect(root.indexOf('<AppUpdateNotices />')).toBeGreaterThan(0);
+  expect(root.indexOf('<AppUpdateNotices />')).toBeLessThan(root.indexOf("<NativeBoot>"));
   expect(root.indexOf("<NativeBoot>")).toBeLessThan(root.indexOf("<OfflineGate"));
 });
 

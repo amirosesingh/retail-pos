@@ -324,13 +324,14 @@ describe("relay authorisation", () => {
   });
 
   it("accepts a child pushed alongside its parent", async () => {
+    restMock.mockResolvedValue({ ok: true, json: async () => [] });
     const ops = [
       { kind: "insert" as const, table: "sales", rows: [{ id: "s9" }] },
       { kind: "insert" as const, table: "sale_items", rows: [{ id: "i", sale_id: "s9" }] },
     ];
     const out = await safeAuthorizeRelayOp(ops[1]!, cashier, batchInsertIds(ops));
     expect(out.ok).toBe(true);
-    expect(restMock).not.toHaveBeenCalled();
+    expect(restMock).toHaveBeenCalledWith("sale_items?id=eq.i&select=sale_id&limit=1");
   });
 
   it("refuses a transfer change by a branch at neither end", async () => {
@@ -432,6 +433,17 @@ describe("relay authorisation", () => {
 });
 
 describe("management and branch-bound devices", () => {
+  it("allows explicitly permitted PC staff without settings or supervisor authority", async () => {
+    restMock.mockResolvedValue(Response.json([{ user_id: "u", role: "staff", role_slug: "cashier", store_id: "STORE-A", is_active: true, permissions: { can_use_management_pc: true, can_access_pos_settings: false, "page:settings-mobile-terminals": false } }]));
+    const scope = await resolveRelayScope({ kind: "staff", label: "User", authUserId: "id", terminalId: "pc", managementDevice: true });
+    expect(scope).toMatchObject({ storeId: "STORE-A", isSupervisor: false, branchRestricted: true });
+    expect(scope.permissions.can_use_management_pc).toBe(true);
+    expect((await safeAuthorizeRelayOp({ kind: "insert", table: "sales", rows: [{ id: "s", store_id: "STORE-B" }] }, scope)).ok).toBe(false);
+  });
+  it("honors a revoked PC grant for a supervisor", async () => {
+    restMock.mockResolvedValue(Response.json([{ user_id: "u", role: "manager", role_slug: "supervisor", is_active: true, permissions: { can_use_management_pc: false, can_access_pos_settings: true } }]));
+    await expect(resolveRelayScope({ kind: "staff", label: "User", authUserId: "id", managementDevice: true })).rejects.toThrow("not permitted");
+  });
   it("allows explicitly permitted mobile staff without granting cross-branch authority", async () => {
     restMock.mockImplementation(async () => Response.json([{ user_id: "u", role: "staff", role_slug: "staff", store_id: "STORE-A", is_active: true, permissions: { can_use_management_mobile: true } }]));
     const scope = await resolveRelayScope({ kind: "staff", label: "User", authUserId: "id", terminalId: "phone", managementDevice: true, managementMobileDevice: true });

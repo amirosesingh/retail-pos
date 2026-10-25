@@ -95,8 +95,8 @@ export async function saveSupplier(s: Supplier) {
 }
 
 export async function deleteSupplier(id: string) {
-  cache(cachedSuppliers().filter((x) => x.id !== id));
   await commitOps("Deleting supplier", [{ kind: "delete", table: "suppliers", match: { id } }]);
+  cache(cachedSuppliers().filter((x) => x.id !== id));
 }
 
 export const newSupplier = (name = ""): Supplier => ({

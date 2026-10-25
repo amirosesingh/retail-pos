@@ -37,6 +37,7 @@ import {
   Minus,
   Plus,
   Printer,
+  PrinterX,
   Search,
   ScanBarcode,
   Trash2,
@@ -496,6 +497,7 @@ function Register() {
   const [catalogOpen, setCatalogOpen] = useState(false);
   /** Code that failed to resolve, shown in the search dialog. */
   const [unknownCode, setUnknownCode] = useState<string | null>(null);
+  const [printThisBill, setPrintThisBill] = useState(true);
   /** The open ticket: lines, discount, member, coupon and bill number. */
   const {
     lines: rawCartLines,
@@ -528,6 +530,7 @@ function Register() {
     getMemberName: () => member?.name ?? null,
     // A discount unlock lasts for this ticket only.
     onReset: (reason) => {
+      setPrintThisBill(true);
       setDiscountOverride(false);
       if (reason === "voided" || reason === "cleared") {
         void invalidateAppliedApproval(
@@ -1268,6 +1271,7 @@ function Register() {
   });
 
   const { saving, lastSale, changeSale, dismissChange, completeSale, bookAndPayLater, sendSaleOnWhatsApp } = useCheckout({
+    getPrintReceipt: () => printThisBill,
     getActiveShift: () => activeShift,
     getCurrentStore: () => currentStore,
     getActiveCashier: () => activeCashier,
@@ -1428,7 +1432,6 @@ function Register() {
 
   /** House rules for bookings, set in Settings → Booking rules. */
   const bookingRules = bookingRulesOf(state.settings.integrations.bookingRules);
-  const isSupervisor = user?.role === "admin" || can("can_access_pos_settings");
   /** Payment timings the branch allows, in the order they are shown. */
   const allowedTimings = (["now", "deposit", "collection"] as BookingPaymentTiming[]).filter((t) =>
     t === "now"
@@ -1520,13 +1523,10 @@ function Register() {
   }
 
   /** Re-open the racket dialog on a booking already on the ticket. */
-  function editBookingSpecs(bookingId: string) {
+  async function editBookingSpecs(bookingId: string) {
     const b = state.bookings.find((x) => x.id === bookingId);
     if (!b) return;
-    if (bookingRules.managerOnlyEditPaidSpecs && b.paid > 0 && !isSupervisor) {
-      toast.error("A supervisor must change the specs once a deposit is held");
-      return;
-    }
+    if (!(await requirePermission("can_manage_bookings"))) return;
     setEditBookingId(b.id);
     setBookMode("racket");
     setRacketModel(b.job?.racketModel ?? "");
@@ -1546,6 +1546,7 @@ function Register() {
 
   /** Save spec edits made from the cart row back onto the stored booking. */
   async function saveSpecEdits() {
+    if (!(await requirePermission("can_manage_bookings"))) return;
     if (!editBookingId) return;
     const job = {
       racketModel: racketModel.trim() || undefined,
@@ -1700,10 +1701,7 @@ function Register() {
   /** Unlock the read-only labour fee — supervisor gate or a written reason. */
   async function unlockLabour() {
     if (labourUnlocked) return;
-    if (bookingRules.overrideNeedsSupervisor && !isSupervisor) {
-      const ok = await requirePermission("can_access_pos_settings");
-      if (!ok) return;
-    }
+    if (!(await requirePermission("can_override_price"))) return;
     setLabourUnlocked(true);
     toast.info("Labour fee unlocked — record the reason.");
   }
@@ -2459,8 +2457,15 @@ function Register() {
     </div>
   );
 
+  const receiptToggle = <Button type="button" variant={printThisBill ? "outline" : "secondary"} size="icon"
+    className="size-10 shrink-0" aria-label="Skip printing this bill" aria-pressed={!printThisBill}
+    title={printThisBill ? "Printing on. Click to skip the receipt for this bill only." : "Printing off for this bill only. The drawer still follows its cash-payment rules."}
+    disabled={saving || !lines.length} onClick={() => setPrintThisBill(value => !value)}>
+    {printThisBill ? <Printer className="size-4" /> : <PrinterX className="size-4" />}
+  </Button>;
   const atom_actCharge = can("can_process_sale") ? (
-    <div className="flex h-full min-w-0 items-center">
+    <div className="flex h-full min-w-0 items-center gap-2">
+      {receiptToggle}
       <ActionButton
         layout="inline"
         className="h-full w-full rounded-xl border-transparent bg-primary px-6 text-lg font-semibold text-primary-foreground shadow-md transition-[transform,box-shadow] hover:bg-primary/90 hover:shadow-lg active:scale-[0.995]"
@@ -3239,6 +3244,7 @@ function Register() {
           )}
 
           <DialogFooter className="items-center gap-2">
+            <div className="mr-auto flex items-center gap-2">{receiptToggle}<span className="text-xs text-muted-foreground">{printThisBill ? "Print receipt" : "No receipt · this bill only"}</span></div>
             {refundDue === 0 &&
               tenders.length > 0 &&
               validateTenders(balanceDue, tenders).error && (
@@ -3258,7 +3264,7 @@ function Register() {
                   !!validateTenders(balanceDue, tenders).error)
               }
             >
-              {saving ? "Saving…" : "Complete & print"}
+              {saving ? "Saving…" : printThisBill ? "Complete & print" : "Complete sale"}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -1,3 +1,5 @@
+import { effectiveDatabaseMode, subscribeDatabaseMode } from "@/core/local-db/db-mode";
+import { refreshResumedQueries } from "@/lib/query-resume";
 import { claimRestoredConnectionRetry } from "@/lib/restored-connection-retry";
 import { IosOtaBoot, IosUpdateBanner } from "@/platform-config/ios-ota";
 import { ApprovalTokenAgent } from "@/platform-config/approval-token";
@@ -326,12 +328,14 @@ function RootComponent() {
   useEffect(() => {
     if (customerDisplay) return;
     let refreshing = false;
-    const recover = () => {
+    const recover = (event: Event) => {
       if (refreshing || connectivity() !== "online") return;
       refreshing = true;
       void Promise.allSettled([
         queryClient.resumePausedMutations(),
-        queryClient.refetchQueries({ type: "active" }),
+        // Foregrounding reuses fresh cached queries. A confirmed reconnect
+        // still catches every active reader up after potentially missed events.
+        refreshResumedQueries(queryClient, event.type === CONNECTIVITY_RESTORED_EVENT),
         import("@/lib/terminal-session").then(({ ensureTerminalSession }) =>
           ensureTerminalSession(),
         ),
@@ -345,6 +349,24 @@ function RootComponent() {
       window.removeEventListener(CONNECTIVITY_RESTORED_EVENT, recover);
       window.removeEventListener(APP_RESUME_EVENT, recover);
     };
+  }, [queryClient, customerDisplay]);
+
+  // A SQL outage/recovery changes the source for every page, including cached
+  // reports. Retire old reads, then invalidate; pending mutations stay intact.
+  useEffect(() => {
+    if (customerDisplay) return;
+    let previous = effectiveDatabaseMode();
+    let generation = 0;
+    const off = subscribeDatabaseMode(() => {
+      const next = effectiveDatabaseMode();
+      if (next === previous) return;
+      previous = next;
+      const request = ++generation;
+      void queryClient.cancelQueries().then(() => {
+        if (request === generation) return queryClient.invalidateQueries({ refetchType: "active" });
+      }).catch(cause => notifyError(cause, "Switching the database connection"));
+    });
+    return () => { generation++; off(); };
   }, [queryClient, customerDisplay]);
 
   // Coalesce a committed sync page into one active-query refresh.
@@ -380,8 +402,8 @@ function RootComponent() {
         <NativeWindowFrame>
         {customerDisplay ? <Outlet /> : <>
         <NativeConnectionIndicator />
-        {/* Beta testers can update before provisioning a terminal or signing in. */}
-        {RELEASE_CHANNEL === "beta" && <AppUpdateNotices />}
+        {/* Native updates stay available before setup and sign-in on either channel. */}
+        <AppUpdateNotices />
         <NativeBoot>
           <ConnectionProfileBoot>
             <TerminalConnectionSetup>
@@ -446,7 +468,6 @@ function TillRuntime() {
               </PrivilegeGate>
             </FirstRunSetup>
 
-            {RELEASE_CHANNEL !== "beta" && <AppUpdateNotices />}
             <DesktopCloseSyncStatus />
             <ErrorNotifier />
           </RulesBridge>

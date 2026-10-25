@@ -27,6 +27,14 @@ export function activityVisibleTo(
 ): boolean {
   const meta =
     row.meta && typeof row.meta === "object" ? (row.meta as Record<string, unknown>) : {};
+  if (meta.notification_routes && typeof meta.notification_routes === "object") {
+    const routes = meta.notification_routes as Record<string, unknown>;
+    const recipients = strings(routes[channel]);
+    const selected = identity.userIds.some(id => recipients.includes(id.toLowerCase())) ||
+      (channel === "app" && !!identity.terminalId && strings(routes.terminalApp).includes(identity.terminalId.toLowerCase()));
+    const branch = String(row.store_id ?? "").trim();
+    return selected && (!branch || identity.role === "admin" || (!!identity.storeId && sameBranchId(branch, identity.storeId)));
+  }
   const audience = String(meta["audience"] ?? "").toLowerCase();
   if (channel === "app" && meta["in_app_disabled"] === true) return false;
   const targeted =

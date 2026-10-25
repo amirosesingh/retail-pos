@@ -363,6 +363,12 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
         },
         { status: 403 },
       );
+    try {
+      const { assertStoreSyncScope } = await import("./store-sync-scope.server");
+      assertStoreSyncScope(branchId, body.sqlServerBatch ? [body.sqlServerBatch] : body.sqlServerAggregate?.operations ?? []);
+    } catch {
+      return Response.json({ ok: false, code: "STORE_FORBIDDEN", error: "You can only synchronize your own store record." }, { status: 403 });
+    }
     const protectedSettingsTables = new Set([
       "pos_settings",
       "public_flags",
@@ -600,9 +606,8 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
   }[] = [];
   const { batchInsertIds } = await import("@/core/api/relay-policy.server");
   const all = body.ops ?? [];
-  const ops = all.filter((o) => o.kind !== "rpc");
-  // Parents inserted in this same push let their child rows through.
-  const batchIds = batchInsertIds(ops);
+  // Only parents whose authorized write succeeded can prove child ownership.
+  const batchIds = new Map<string, Set<string>>();
   for (const op of all) {
     try {
       const result =
@@ -610,6 +615,13 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
           ? await (await import("@/core/api/pos-relay.server")).runRelayRpc(op, scope)
           : await runRelayOp(op, scope, batchIds);
       results.push({ ...result, table: op.table, kind: op.kind });
+      if (result.ok && op.kind !== "rpc") {
+        for (const [table, ids] of batchInsertIds([op])) {
+          const accepted = batchIds.get(table) ?? new Set<string>();
+          for (const id of ids) accepted.add(id);
+          batchIds.set(table, accepted);
+        }
+      }
     } catch (e) {
       results.push({ ok: false, error: (e as Error).message, table: op.table, kind: op.kind });
     }

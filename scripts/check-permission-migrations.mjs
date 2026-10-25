@@ -1,6 +1,6 @@
-// Isolated test setup: npm install --prefix .tmp/permission-db --no-save --ignore-scripts @electric-sql/pglite@0.5.11
+// Isolated PostgreSQL regression; uses the pinned development dependency.
 // Run: node scripts/check-permission-migrations.mjs
-import { PGlite } from "../.tmp/permission-db/node_modules/@electric-sql/pglite/dist/index.js";
+import { PGlite } from "@electric-sql/pglite";
 import { readFile } from "node:fs/promises";
 import assert from "node:assert/strict";
 const db = new PGlite();
@@ -77,5 +77,38 @@ try {
   await policy(flags); await as(manager); await db.exec("SET ROLE authenticated");
   assert.deepEqual((await db.query("SELECT id FROM public.products")).rows, [], "unauthorized records never leave database");
   await db.exec("RESET ROLE");
-  console.log("PASS: PostgreSQL global restrictions, administrator exception, supervisor limits, override rejection, restoration, branch preservation and inactive account checks");
+  await as(admin);
+  // Native account edits upsert by user_id. BEFORE INSERT runs with a fresh ID
+  // even when ON CONFLICT updates the existing row; the retired trigger left
+  // a deferred child row referring to that discarded ID.
+  await db.exec("ALTER TABLE public.app_users ADD CONSTRAINT app_users_user_id_key UNIQUE (user_id)");
+  const discardedId = "00000000-0000-0000-0000-000000000099";
+  const upsertExisting = () => db.query(`INSERT INTO public.app_users
+    (id,user_id,role,role_slug,is_active,store_id,permissions)
+    VALUES ($1,'supervisor','manager','supervisor',true,'branch-a','{}')
+    ON CONFLICT (user_id) DO UPDATE SET role=excluded.role, updated_at=now()`, [discardedId]);
+  await assert.rejects(upsertExisting(), error => error.code === "23503",
+    "old global trigger creates an orphan permission row on account upsert");
+  const beforeRetirement = (await db.query("SELECT id,permissions,store_id FROM public.app_users WHERE id=$1", [manager])).rows[0];
+  await db.exec(await readFile(new URL("../supabase/migrations/20261024073000_retire_global_permission_restrictions.sql", import.meta.url), "utf8"));
+  await upsertExisting();
+  assert.deepEqual((await db.query("SELECT id,permissions,store_id FROM public.app_users WHERE id=$1", [manager])).rows[0],
+    beforeRetirement, "existing-account upsert preserves identity, effective permissions and branch after retirement");
+  assert.equal((await db.query("SELECT count(*)::int n FROM public.app_users WHERE id=$1", [discardedId])).rows[0].n, 0,
+    "upsert never inserts a duplicate account");
+  assert.equal((await db.query("SELECT to_regclass('private.requested_staff_permissions') value")).rows[0].value, null);
+
+  await as(manager);
+  assert.equal(await has("can_view_inventory"), false, "retirement preserves current effective account denials");
+  await db.query("UPDATE public.app_users SET permissions=permissions || $2::jsonb WHERE id=$1", [manager, JSON.stringify({ can_view_inventory: true, "page:inventory": true })]);
+  assert.equal(await has("can_view_inventory"), true, "account edits are no longer overwritten by hidden global policy");
+  assert.equal(await has("can_adjust_stock"), false, "retirement preserves unrelated individual denials");
+  assert.equal((await db.query("SELECT store_id FROM public.app_users WHERE id=$1", [manager])).rows[0].store_id, "branch-a");
+  assert.equal((await db.query("SELECT to_regprocedure('public.set_global_permission_restrictions(text[])') value")).rows[0].value, null);
+  assert.equal((await db.query("SELECT count(*)::int n FROM private.global_permission_audit")).rows[0].n > 0, true, "historical audits are retained");
+  await db.exec("SET ROLE authenticated");
+  assert.deepEqual((await db.query("SELECT id FROM public.products")).rows, [{ id: 1 }], "branch read isolation survives policy retirement");
+  await assert.rejects(db.query("SELECT pin_hash FROM public.app_users"), /permission denied/);
+  await db.exec("RESET ROLE");
+  console.log("PASS: PostgreSQL permission policy lifecycle, retirement, editable account permissions, audit retention, branch isolation and credential protection");
 } finally { await db.close(); }

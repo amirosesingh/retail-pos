@@ -1,3 +1,4 @@
+import {SponsorshipDirectIssuePolicy} from "@/platforms/web/components/admin/SponsorshipDirectIssuePolicy";
 /**
  * Which sensitive actions need authorising, and who may give it.
  *
@@ -61,6 +62,7 @@ type EditingRule = {
 };
 
 const WIRED_ACTIONS = new Set([
+  "sponsorship",
   "refund",
   "void_cart",
   "void_line",
@@ -225,6 +227,7 @@ function AudienceSelector({
   invalid,
   onRolesChange,
   onUsersChange,
+  onPeopleOnly,
 }: {
   id: string;
   title: string;
@@ -237,6 +240,7 @@ function AudienceSelector({
   invalid?: boolean;
   onRolesChange: (roles: string[]) => void;
   onUsersChange: (users: string[]) => void;
+  onPeopleOnly?: () => void;
 }) {
   const [peopleDialog, setPeopleDialog] = useState<"include" | "exclude" | null>(null);
   const included = includedAuthorizationUserIds(encodedUsers);
@@ -273,6 +277,20 @@ function AudienceSelector({
         </p>
       </div>
       <div className="flex flex-wrap gap-2">
+        {onPeopleOnly && (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={disabled}
+            onClick={() => {
+              onPeopleOnly();
+              setPeopleDialog("include");
+            }}
+          >
+            Use specific people only
+          </Button>
+        )}
         <span className="inline-flex items-center gap-1">
           <Button
             type="button"
@@ -282,7 +300,7 @@ function AudienceSelector({
             onClick={() => setPeopleDialog("include")}
           >
             <UserRoundPlus className="size-4" />
-            Additional people ({included.length})
+            {roles.length ? "Additional people" : "Selected people"} ({included.length})
           </Button>
           <HelpTip text="Add specific people who are not already covered by the selected roles." />
         </span>
@@ -303,12 +321,14 @@ function AudienceSelector({
         <DialogContent className="w-[min(94vw,48rem)] max-w-3xl">
           <DialogHeader>
             <DialogTitle>
-              {peopleDialog === "exclude" ? "Excluded people" : "Additional people"}
+              {peopleDialog === "exclude" ? "Excluded people" : roles.length ? "Additional people" : "Selected people"}
             </DialogTitle>
             <DialogDescription>
               {peopleDialog === "exclude"
                 ? "These people are denied for this rule even when their role is selected."
-                : "These people are allowed in addition to everyone covered by the selected roles."}
+                : roles.length
+                  ? "These people are allowed in addition to everyone covered by the selected roles."
+                  : "Only these selected people are included. Each person still needs the action permission, branch access and approval authority."}
             </DialogDescription>
           </DialogHeader>
           {peopleDialog === "exclude" ? (
@@ -324,8 +344,8 @@ function AudienceSelector({
           ) : (
             <PeopleMultiSelect
               id={`${id}-include`}
-              label="Additional authorized people"
-              help="Choose active staff who are not covered by the selected roles."
+              label={roles.length ? "Additional authorized people" : "Selected authorized people"}
+              help={roles.length ? "Choose active staff who are not covered by the selected roles." : "Choose the specific active staff allowed by this rule."}
               people={people}
               selected={included}
               disabled={disabled}
@@ -339,6 +359,11 @@ function AudienceSelector({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {onPeopleOnly && !roles.length && (
+        <p className="text-xs text-muted-foreground">
+          Only selected people are included here. Backup roles, if configured below, are separate.
+        </p>
+      )}
     </section>
   );
 }
@@ -473,6 +498,7 @@ function RuleConfigurationDialog({
             </DialogHeader>
 
             <div className="space-y-5 overflow-y-auto px-6 py-5">
+              {action.key==="sponsorship"&&<SponsorshipDirectIssuePolicy/>}
               <section className="rounded-lg border bg-muted/30 p-4">
                 <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                   <span className="inline-flex items-center gap-1.5">
@@ -530,6 +556,7 @@ function RuleConfigurationDialog({
                       invalid={hasIssue("authorizers")}
                       onRolesChange={(allowedRoles) => onChange({ allowedRoles })}
                       onUsersChange={(allowedUserIds) => onChange({ allowedUserIds })}
+                      onPeopleOnly={() => onChange({ allowedRoles: [], escalationAfterMinutes: null, escalationRoles: [] })}
                     />
                     {requestMode && (
                       <AudienceSelector
@@ -801,7 +828,7 @@ function RuleConfigurationDialog({
                       </Label>
                       <Switch
                         id={`reason-${action.key}`}
-                        disabled={!mayEdit}
+                        disabled={!mayEdit || action.key === "sponsorship"}
                         checked={rule.requireReason}
                         onCheckedChange={(requireReason) => onChange({ requireReason })}
                       />
@@ -1058,7 +1085,7 @@ export function AuthorizationRulesPanel({
                           className="h-9 w-full"
                           value={rule.mode}
                           onChange={(value) => openConfiguration(action, value as AuthMode)}
-                          options={AUTH_MODES.map((mode) => ({
+                          options={AUTH_MODES.filter(mode => action.key !== "sponsorship" || mode.value === "request").map((mode) => ({
                             value: mode.value,
                             label: mode.label,
                           }))}

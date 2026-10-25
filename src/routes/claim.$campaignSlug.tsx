@@ -53,6 +53,11 @@ function ClaimPage() {
 
   useEffect(() => {
     let alive = true;
+    setLoading(true);
+    setCampaign(null);
+    setLoadError("");
+    setError("");
+    setNeedName(false);
     loadCampaignBySlug(campaignSlug)
       .then((c) => {
         if (!alive) return;
