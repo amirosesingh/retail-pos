@@ -199,6 +199,10 @@ export function CashierPinLogin({
         } else {
           clearPinFailures();
         }
+      } catch {
+        // A rejected network/session promise has not judged the PIN.
+        setError("Sign-in could not finish because the connection or local database did not respond. Please try again. Your PIN has not been rejected.");
+        setPin("");
       } finally {
         submittingRef.current = false;
         setBusy(false);

@@ -59,6 +59,17 @@ describe("staff username/password login", () => {
     expect(mocks.signIn).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { message: "Failed to fetch" }, { message: "Request timed out", status: 503 },
+    { message: "Service unavailable", status: 503 },
+  ])("does not treat an Auth service failure as a wrong password: %j", async error => {
+    mocks.signIn.mockResolvedValue({ data: { session: null, user: null }, error });
+    expect(await staffUsernameLogin("alice", "password")).toEqual({ ok: false, code: "central_unavailable" });
+  });
+  it("preserves a confirmed incorrect password refusal", async () => {
+    mocks.signIn.mockResolvedValue({ data: { session: null, user: null }, error: { code: "invalid_credentials" } });
+    expect(await staffUsernameLogin("alice", "password")).toEqual({ ok: false, code: "invalid_credentials" });
+  });
   it("rejects database-filter syntax before sending a query", async () => {
     expect(await staffUsernameLogin("alice),is_active.eq.true", "password")).toEqual({
       ok: false, code: "invalid_credentials",
