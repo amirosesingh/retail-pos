@@ -421,6 +421,8 @@ async function listLocalActivityEventPage(filter: ActivityFilter): Promise<Activ
   if (!bridge?.query) return { rows: [], total: 0 };
   const result = await bridge.query("activity_events", {
     orderBy: { column: "created_at", ascending: false },
+    ...(filter.storeId ? { match: { store_id: filter.storeId } } : {}),
+    ...(filter.from && filter.to ? { dateRange: { column: "created_at", from: filter.from, to: filter.to } } : {}),
     limit: 2000,
   });
   if (!result.ok) throw new Error(result.error ?? "The local notification log could not be read.");

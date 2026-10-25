@@ -1,5 +1,16 @@
 import * as XLSX from "xlsx";
 
+/** Preserve existing row positions and the last entered quantity, in one batch. */
+export function mergeStockCountRows<T extends { productId: string }>(existing: T[], incoming: T[]): T[] {
+  const byId = new Map(existing.map(row => [row.productId, row]));
+  const added: string[] = [];
+  for (const row of incoming) {
+    if (!byId.has(row.productId)) added.push(row.productId);
+    byId.set(row.productId, row);
+  }
+  return [...added.reverse().map(id => byId.get(id)!), ...existing.map(row => byId.get(row.productId)!)];
+}
+
 export function stockCountTemplate() {
   const book = XLSX.utils.book_new();
   const sheet = XLSX.utils.aoa_to_sheet([["barcode", "sku", "counted"]]);

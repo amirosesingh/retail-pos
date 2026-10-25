@@ -15,7 +15,8 @@ import { yieldToUi } from "@/lib/commit-progress";
 import { ScanBarcode, Trash2, UploadCloud } from "lucide-react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
-import { parseStockCountRow, stockCountTemplate } from "@/lib/stock-count-import";
+import { mergeStockCountRows, parseStockCountRow, stockCountTemplate } from "@/lib/stock-count-import";
+import { TablePagination, usePagination } from "./TablePagination";
 import { parseProductImportFile } from "./product-import-file";
 import { useImportWorksheet } from "./use-import-worksheet";
 import { Button } from "@/components/ui/button";
@@ -44,7 +45,7 @@ import { useAuth } from "@/lib/pos-auth";
 import { db } from "@/core/api/pos-db";
 import { localTerminalId } from "@/lib/shift-hours";
 import { money, stockAt, usePos } from "@/lib/pos-store";
-import { resolveByBarcode } from "@/lib/product-lookup";
+import { normaliseCode, productCodes, resolveByBarcode } from "@/lib/product-lookup";
 import { CameraScanner } from "@/platforms/web/components/pos/CameraScanner";
 import { isNativeApp } from "@/platforms/mobile/camera";
 import { nextStockRef, saveStockDraftReference } from "@/lib/stock-ref";
@@ -105,6 +106,7 @@ export function ReviewTable({
   rows: CountRow[];
   onRemove?: (id: string) => void;
 }) {
+  const pager = usePagination(rows);
   if (!rows.length) {
     return (
       <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
@@ -130,7 +132,7 @@ export function ReviewTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {rows.map((r) => {
+          {pager.pageItems.map((r) => {
             const delta = r.counted - r.system;
             return (
               <TableRow key={r.productId} summaryValues={{ System: r.system, Counted: r.counted, Delta: delta, "Net impact": delta * r.cost }}>
@@ -173,6 +175,7 @@ export function ReviewTable({
           })}
         </TableBody>
       </Table>
+      <TablePagination {...pager} onPage={pager.setPage} onPageSize={pager.setPageSize} label="counted products" />
     </div>
   );
 }
@@ -225,6 +228,10 @@ export function StockCountDialog({
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [posting, setPosting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const importingRef = useRef(false);
+  const openRef = useRef(open);
+  openRef.current = open;
   const postingRef = useRef(false);
   const postedRecordsRef = useRef(new Set<string>());
   const codeRef = useRef<HTMLInputElement>(null);
@@ -253,6 +260,8 @@ export function StockCountDialog({
   useEffect(() => {
     if (!open) return;
     sessionRef.current += 1;
+    importingRef.current = false;
+    setImporting(false);
     setCode("");
     setSelectedProductId(null);
     setCounted("");
@@ -415,11 +424,7 @@ export function StockCountDialog({
       });
   };
 
-  const queue = (productId: string, qty: number) => {
-    const p = products.find((x: (typeof products)[number]) => x.id === productId);
-    if (!p) return;
-    setRows((prev) => {
-      const row: CountRow = {
+  const countedRow = (p: (typeof products)[number], qty: number): CountRow => ({
         productId: p.id,
         name: p.name,
         sku: p.sku ?? "",
@@ -428,15 +433,11 @@ export function StockCountDialog({
         system: stockAt(p, targetStore.id),
         counted: Math.max(0, Math.round(qty)),
         cost: p.cost ?? 0,
-      };
-      const idx = prev.findIndex((r) => r.productId === p.id);
-      if (idx >= 0) {
-        const next = [...prev];
-        next[idx] = row;
-        return next;
-      }
-      return [row, ...prev];
-    });
+      });
+  const queue = (productId: string, qty: number) => {
+    const p = products.find((x: (typeof products)[number]) => x.id === productId);
+    if (!p) return;
+    setRows(prev => mergeStockCountRows(prev, [countedRow(p, qty)]));
   };
 
   const commitPunch = () => {
@@ -567,21 +568,37 @@ export function StockCountDialog({
   };
 
   const importFile = async (file: File) => {
+    if (importingRef.current || postingRef.current) return;
+    const session = sessionRef.current;
+    importingRef.current = true;
+    setImporting(true);
     try {
+      await yieldToUi();
       const raw = await parseProductImportFile(file, undefined, chooseWorksheet);
+      if (session !== sessionRef.current || !openRef.current) return;
       const problems: string[] = [];
+      const imported: CountRow[] = [];
+      const byCode = new Map<string, (typeof products)[number]>();
+      for (const product of products)
+        for (const value of productCodes(product)) if (!byCode.has(value)) byCode.set(value, product);
       raw.forEach((r, i) => {
         const parsed = parseStockCountRow(r);
         if (parsed.error !== undefined) return problems.push(`Row ${i + 2}: ${parsed.error}`);
         const { key, quantity: qty } = parsed;
-        const p = resolveByBarcode(products, key);
+        const p = byCode.get(normaliseCode(key));
         if (!p) return problems.push(`Row ${i + 2}: "${key}" is not in the catalogue`);
-        queue(p.id, qty);
+        imported.push(countedRow(p, qty));
       });
+      setRows(previous => mergeStockCountRows(previous, imported));
       setErrors(problems);
       toast.success(`Imported ${raw.length - problems.length} row(s).`);
     } catch (error) {
-      if ((error as Error)?.name !== "AbortError") toast.error("That file could not be read. Use .xlsx or .csv.");
+      if (session === sessionRef.current && openRef.current && (error as Error)?.name !== "AbortError") toast.error("That file could not be read. Use .xlsx or .csv.");
+    } finally {
+      if (session === sessionRef.current) {
+        importingRef.current = false;
+        setImporting(false);
+      }
     }
   };
 
@@ -604,6 +621,7 @@ export function StockCountDialog({
           </DialogDescription>
         </DialogHeader>
 
+        {importing && <p role="status" className="rounded-lg border bg-muted/30 p-3 text-sm">Reading and validating the selected worksheet…</p>}
         {posting && <div className="space-y-2 rounded-lg border p-3"><p role="status">Posting {rows.length.toLocaleString()} counted lines. Waiting for the database to confirm the stock movements…</p><DataProgress variant="panel" labels={["Saving stock adjustment","Saving stock count draft"]} /></div>}
         <Tabs value={tab} onValueChange={value => {if (!posting) setTab(value);}} className="space-y-4">
           <TabsList>
@@ -810,7 +828,7 @@ export function StockCountDialog({
                 Discard draft
               </Button>
             )}
-            <Button onClick={post} disabled={!rows.length || posting}>
+            <Button onClick={post} disabled={!rows.length || posting || importing}>
               Post adjustments
             </Button>
           </div>

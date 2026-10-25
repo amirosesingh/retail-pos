@@ -23,6 +23,7 @@ import {
   type TicketSnapshot,
 } from "@/lib/ticket-snapshot";
 import { useCart } from "@/lib/register/use-cart";
+import { exceedsAvailableStock } from "@/lib/register/stock-guard";
 import { useTender } from "@/lib/register/use-tender";
 import { isoDaysFromNow, useBookingIntake } from "@/lib/register/use-booking-intake";
 import { useCheckout } from "@/lib/register/use-checkout";
@@ -1631,23 +1632,13 @@ function Register() {
       return;
     }
     if (p) {
-      /* Inventory guard — never string from a reel the branch does not hold. */
+      // Stocked job materials follow the same saved policy as ordinary lines.
       const onHand = availableAt(p, currentStore.id, state.bookings);
-      if (onHand <= 0) {
-        const ok = await requirePermission("can_adjust_stock");
-        if (!ok) {
-          toast.error(`${p.name} is out of stock at ${currentStore.name}`);
-          return;
-        }
-        const reason = window
-          .prompt(`${p.name} shows no stock here. Reason for using it anyway?`)
-          ?.trim();
-        if (!reason) {
-          toast.error("A reason is required to use out-of-stock string");
-          return;
-        }
-        toast.warning(`Out-of-stock string approved — ${reason}`);
+      if (exceedsAvailableStock(onHand, 1, rules.prevent_negative_stock_sale)) {
+        toast.error(`${p.name}: only ${onHand} available at ${currentStore.name}`);
+        return;
       }
+      if (onHand <= 0) toast.warning(`${p.name} is out of stock at ${currentStore.name} — using the saved policy to continue`);
     }
     setStringProductId(id);
     if (!p) {

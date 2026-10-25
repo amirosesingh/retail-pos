@@ -5,16 +5,29 @@
  */
 import { describe, it, expect, beforeEach } from "vitest";
 
-import { blocksOutOfStockSale } from "@/lib/register/stock-guard";
+import { blocksOutOfStockSale, exceedsAvailableStock } from "@/lib/register/stock-guard";
 import {
   effectiveLockSeconds,
   DEFAULT_AUTO_LOCK_SECONDS,
   remainingAutoLockMs,
   setAutoLockSeconds,
 } from "@/lib/auto-lock";
-import { DEFAULT_POS_RULES, requiresManagerPin, GATE_RULE_KEY } from "@/lib/pos-rules";
+import { DEFAULT_POS_RULES, normalizeRules, requiresManagerPin, GATE_RULE_KEY } from "@/lib/pos-rules";
 
 describe("prevent negative stock sale", () => {
+  it.each([false, "false", 0, "0"])("honors saved off value %s for ordinary lines and one-unit job materials", value => {
+    const rules = normalizeRules({ prevent_negative_stock_sale: value });
+    for (const onHand of [-1, 0, 0.5]) {
+      expect(exceedsAvailableStock(onHand, 1, rules.prevent_negative_stock_sale)).toBe(false);
+      expect(exceedsAvailableStock(onHand, 4, rules.prevent_negative_stock_sale)).toBe(false);
+    }
+  });
+  it("blocks insufficient job material and aggregated cart quantity when the policy is on", () => {
+    expect(exceedsAvailableStock(0, 1, true)).toBe(true);
+    expect(exceedsAvailableStock(0.5, 1, true)).toBe(true);
+    expect(exceedsAvailableStock(3, 4, true)).toBe(true);
+    expect(exceedsAvailableStock(3, 3, true)).toBe(false);
+  });
   it("blocks an out-of-stock item when the rule is on", () => {
     expect(blocksOutOfStockSale(0, true)).toBe(true);
   });

@@ -1,8 +1,18 @@
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
-import { parseStockCountRow, stockCountTemplate } from "../stock-count-import";
+import { mergeStockCountRows, parseStockCountRow, stockCountTemplate } from "../stock-count-import";
 
 describe("stock count upload templates", () => {
+  it("batches a large count while preserving existing rows, scan order and last duplicate quantity", () => {
+    const existing = [{ productId: "existing", counted: 1 }, { productId: "untouched", counted: 7 }];
+    const incoming = Array.from({ length: 10000 }, (_, index) => ({ productId: `p${index}`, counted: index }));
+    const merged = mergeStockCountRows(existing, [...incoming, { productId: "p0", counted: 42 }, { productId: "existing", counted: 2 }]);
+    expect(merged).toHaveLength(10002);
+    expect(merged[0].productId).toBe("p9999");
+    expect(merged.find(row => row.productId === "p0")?.counted).toBe(42);
+    expect(merged.slice(-2)).toEqual([{ productId: "existing", counted: 2 }, existing[1]]);
+    expect(existing[0].counted).toBe(1);
+  });
   it.each(["xlsx", "csv"] as const)("round trips a filled %s template without losing codes", (bookType) => {
     const book = stockCountTemplate();
     const sheet = book.Sheets[book.SheetNames[0]!]!;

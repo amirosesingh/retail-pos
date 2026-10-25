@@ -160,6 +160,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
         limit: 200,
         storeId: activeBranchId() ?? undefined,
         from: new Date(Date.now() - NOTIFICATION_RETENTION_MS).toISOString(),
+        to: new Date().toISOString(),
       });
       if (generation !== refreshGeneration.current) return;
       if (isActivityLogMissing()) {
