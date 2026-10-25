@@ -1,7 +1,7 @@
 import { subscribeSettingsRefresh } from "./settings-refresh";
 import { createRefreshQueue, requestBackgroundRefresh, subscribeBackgroundRefresh } from "./background-refresh";
 import { stockCountChanges } from "./stock-count-plan";
-import { retainUnchangedFields } from "./live-state";
+import { retainUnchangedFields, applyLiveRowChanges } from "./live-state";
 import { primarySnapshotReadsTable } from "./live-query-tables";
 import { isLegacyExchange } from "@/lib/legacy-exchange";
 import { redeemedPoints } from "./points-redemption";
@@ -1285,20 +1285,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
                 if (!active) return;
                 const changed = new Set(ids.map(canonicalBranchId).filter(id => requested.get(id) === versions.get(`products:${id}`)));
                 const records = incoming.filter(record => changed.has(canonicalBranchId(record.id)));
-                const byId = new Map(records.map((record) => [canonicalBranchId(record.id), record]));
                 setState((current) => {
-                  const known = new Set(current.products.map(product => canonicalBranchId(product.id)));
-                  return ({
-                  ...current,
-                  products: [
-                    ...current.products
-                      .filter((product) => !changed.has(canonicalBranchId(product.id)) || byId.has(canonicalBranchId(product.id)))
-                      .map((product) => byId.get(canonicalBranchId(product.id)) ?? product),
-                    ...records.filter(
-                      (record) => !known.has(canonicalBranchId(record.id)),
-                    ),
-                  ],
-                }); });
+                  const products = applyLiveRowChanges(current.products, changed, records,
+                    product => canonicalBranchId(product.id));
+                  return products === current.products ? current : { ...current, products };
+                });
               })
               .catch(() => {
                 /* the next reconnect snapshot remains the recovery path */
@@ -1323,24 +1314,13 @@ export function PosProvider({ children }: { children: ReactNode }) {
             .then((record) => {
               if (!active || requestedVersion !== versions.get(versionKey)) return;
               setState((current) => {
+                const changed = new Set([change.entityId!]);
                 if (kind === "members") {
-                  const members = record
-                    ? current.members.some((row) => row.id === record.id)
-                      ? current.members.map((row) =>
-                          row.id === record.id ? (record as Member) : row,
-                        )
-                      : [record as Member, ...current.members]
-                    : current.members.filter((row) => row.id !== change.entityId);
-                  return { ...current, members };
+                  const members = applyLiveRowChanges(current.members, changed, record ? [record as Member] : [], undefined, true);
+                  return members === current.members ? current : { ...current, members };
                 }
-                const promotions = record
-                  ? current.promotions.some((row) => row.id === record.id)
-                    ? current.promotions.map((row) =>
-                        row.id === record.id ? (record as Promotion) : row,
-                      )
-                    : [record as Promotion, ...current.promotions]
-                  : current.promotions.filter((row) => row.id !== change.entityId);
-                return { ...current, promotions };
+                const promotions = applyLiveRowChanges(current.promotions, changed, record ? [record as Promotion] : [], undefined, true);
+                return promotions === current.promotions ? current : { ...current, promotions };
               });
             })
             .catch(() => {
