@@ -233,6 +233,7 @@ export function AuthorizationDialog({
         Date.now() + (prompt?.approvalTimeoutMinutes ?? APPROVAL_TTL_MS / 60_000) * 60_000,
       ).toISOString(),
     });
+    if (currentPrompt.current !== prompt) return;
     if (!parked.parked) {
       toast.error(message || "Could not send the request");
       return;

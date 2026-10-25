@@ -246,11 +246,25 @@ it("downloads a missing verifier on demand independently of catalogue synchroniz
 });
 
 it("does not count an unavailable offline verifier as an incorrect token", async () => {
-  const pool = { request: vi.fn() };
+  const query = vi.fn(async (_sql: string) => ({ recordset: [{ key: "lookup" }] }));
+  const request = { input: () => request, query };
+  const pool = { request: () => request };
   const identifyTotp = vi.fn();
   const prepareTotp = vi.fn(async () => ({ ok: false, error: "Download the branch verifier first" }));
   expect(await verifySyncedApprovalPin(pool, "", "12345678", "branch-a", { identifyTotp, prepareTotp }))
     .toEqual({ ok: false, reason: "unavailable", error: "Download the branch verifier first" });
   expect(identifyTotp).not.toHaveBeenCalled();
-  expect(pool.request).not.toHaveBeenCalled();
+  expect(query).toHaveBeenCalledOnce();
+  expect(query.mock.calls[0][0]).toContain("target.attempts<5");
+});
+
+it("reserves the branch lookup budget before preparing an offline token", async () => {
+  const query = vi.fn(async () => ({ recordset: [] }));
+  const request = { input: () => request, query };
+  const prepareTotp = vi.fn();
+  const identifyTotp = vi.fn();
+  expect(await verifySyncedApprovalPin({ request: () => request }, "", "12345678", "branch-a", { identifyTotp, prepareTotp }))
+    .toMatchObject({ ok: false, reason: "locked" });
+  expect(prepareTotp).not.toHaveBeenCalled();
+  expect(identifyTotp).not.toHaveBeenCalled();
 });
