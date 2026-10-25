@@ -151,7 +151,7 @@ describe("SQL Server aggregate repository", () => {
     ).rejects.toThrow("Unsupported");
   });
 
-  it("rolls back an exchange when the original bill cannot be claimed", async () => {
+  it.each([["sales", "EEXCHANGE_STATE"], ["products", "EPRODUCT_STATE"]])("rolls back when required %s row is missing (%s)", async (table, code) => {
     const rollback = vi.fn();
     const commit = vi.fn();
     class Transaction {
@@ -177,8 +177,8 @@ describe("SQL Server aggregate repository", () => {
       pool: () => ({}),
       tables: new Map([
         [
-          "sales",
-          { sqlServerTable: "sales", columns: [{ sqlServerColumn: "id", primaryKey: true }] },
+          table,
+          { sqlServerTable: table, columns: [{ sqlServerColumn: "id", primaryKey: true }] },
         ],
       ]),
       validate: (value: unknown) => value,
@@ -195,14 +195,14 @@ describe("SQL Server aggregate repository", () => {
         operations: [
           {
             kind: "update",
-            table: "sales",
+            table,
             values: { exchanged_to_bill_number: "NEW-1" },
             match: { id: "22222222-2222-4222-8222-222222222222" },
             requireMatch: true,
           },
         ],
       }),
-    ).rejects.toMatchObject({ code: "EEXCHANGE_STATE" });
+    ).rejects.toMatchObject({ code });
     expect(rollback).toHaveBeenCalledOnce();
     expect(commit).not.toHaveBeenCalled();
   });

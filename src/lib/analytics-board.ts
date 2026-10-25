@@ -207,7 +207,7 @@ async function fetchBoardData(from: string, to: string): Promise<BoardData> {
       store_id: r.store_id == null ? null : canonicalBranchId(r.store_id),
       product_id: r.product_id,
       product_name: r.product_name,
-      product_category: String(r.product_category || "Uncategorized"),
+      product_category: String(r.product_category || "Default"),
       units: n(r.units),
       revenue: n(r.revenue),
       cost: n(r.cost),
@@ -339,7 +339,7 @@ export function topCategories(
     { name: string; revenue: number; units: number; productIds: Set<string> }
   >();
   for (const row of rows) {
-    const name = row.product_category.trim() || "Uncategorized";
+    const name = row.product_category.trim() || "Default";
     const current = map.get(name) ?? { name, revenue: 0, units: 0, productIds: new Set<string>() };
     current.revenue += row.revenue;
     current.units += row.units;

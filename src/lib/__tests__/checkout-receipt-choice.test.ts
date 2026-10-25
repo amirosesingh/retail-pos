@@ -47,6 +47,8 @@ vi.mock("@/core/api/pos-db", () => ({ db: { saleAttemptExists: async () => "no" 
 vi.mock("@/core/local-db/local-db", () => ({ localDb: () => null }));
 vi.mock("@/lib/notify", () => ({ notifyError: vi.fn(), describeError: () => "failure" }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
+import { toast } from "sonner";
+import { notifyError } from "@/lib/notify";
 import { useCheckout, type CheckoutDeps } from "../register/use-checkout";
 beforeEach(() => {
   vi.clearAllMocks();
@@ -119,6 +121,25 @@ describe("per-bill receipt choice", () => {
     expect(mocks.record).toHaveBeenCalledOnce();
     expect(mocks.drawer).not.toHaveBeenCalled();
     expect(mocks.print).not.toHaveBeenCalled();
+  });
+  it.each(["print", "drawer"] as const)("keeps the sale committed when %s fails after payment", async action => {
+    mocks[action].mockImplementationOnce(() => { throw new Error("Printer access denied"); });
+    await checkout(true).completeSale();
+    expect(mocks.record).toHaveBeenCalledOnce();
+    expect(mocks.reset).toHaveBeenCalledOnce();
+    expect(mocks.record.mock.invocationCallOrder[0]).toBeLessThan(mocks[action].mock.invocationCallOrder[0]);
+    expect(toast.success).toHaveBeenCalledWith("Sale BILL-1 completed");
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(notifyError).toHaveBeenCalledWith(expect.any(Error), action === "print"
+      ? "Sale saved, but printing failed" : "Sale saved, but the drawer did not open");
+  });
+  it("does not undo or duplicate payment when the native drawer returns a permission refusal", async () => {
+    mocks.drawer.mockResolvedValueOnce({ok:false,error:"Permission denied"});
+    await checkout(true).completeSale();
+    expect(mocks.record).toHaveBeenCalledOnce();
+    expect(mocks.reset).toHaveBeenCalledOnce();
+    expect(mocks.print).toHaveBeenCalledOnce();
+    expect(toast.error).not.toHaveBeenCalled();
   });
   it("does not print or pulse the drawer when the payment failed", async () => {
     mocks.record.mockRejectedValue(new Error("Not saved"));

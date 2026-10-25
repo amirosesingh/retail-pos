@@ -103,7 +103,7 @@ const blank = (storeId: string, taxRate = 0): Product => ({
   name: "",
   sku: "",
   barcode: "",
-  category: "General",
+  category: "Default",
   price: 0,
   cost: 0,
   ecomPrice: 0,

@@ -1,3 +1,4 @@
+import { productClassification } from "./product-classification";
 /**
  * The catalogue importer's thinking half.
  *
@@ -192,9 +193,22 @@ const equalNumber = (a: number | undefined, b: number | null) =>
 
 /** Numbers arrive as "RM 12.50", "1,200" or blank; read what is really there. */
 export function readNumber(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
   const raw = String(value ?? "").trim();
   if (!raw) return null;
-  const cleaned = raw.replace(/[^0-9.-]/g, "");
+  const numeric = raw.replace(/[\s\u00a0]/g, "");
+  if (/^[+-]?\d+(?:\.\d+)?e[+-]?\d+$/i.test(numeric)) {
+    const n = Number(numeric);
+    return Number.isFinite(n) ? n : null;
+  }
+  let cleaned = raw.replace(/[^0-9.,+-]/g, "");
+  if (cleaned.includes(",") && cleaned.includes(".")) {
+    cleaned = cleaned.lastIndexOf(",") > cleaned.lastIndexOf(".")
+      ? cleaned.replace(/\./g, "").replace(",", ".") : cleaned.replace(/,/g, "");
+  } else if (cleaned.includes(",")) {
+    cleaned = /^[+-]?\d{1,3}(,\d{3})+$/.test(cleaned) ? cleaned.replace(/,/g, "") : cleaned.replace(",", ".");
+  }
+  if (/^\(.*\)$/.test(raw) && !cleaned.startsWith("-")) cleaned = `-${cleaned}`;
   if (!cleaned || !/\d/.test(cleaned)) return null;
   const n = Number(cleaned);
   return Number.isFinite(n) ? n : null;
@@ -211,9 +225,9 @@ function validateReviewRow(row: ImportReviewRow): ImportReviewRow {
   const missingFields: ImportField[] = [];
   if (!row.barcode.trim()) missingFields.push("barcode");
   if (!row.name.trim()) missingFields.push("name");
-  if (row.price === null || row.price <= 0) missingFields.push("price");
-  if (row.cost !== null && row.cost < 0) missingFields.push("cost");
-  if (row.taxRate !== null && (row.taxRate < 0 || row.taxRate > 100)) missingFields.push("taxRate");
+  if (row.price === null || !Number.isFinite(row.price) || row.price <= 0) missingFields.push("price");
+  if (row.cost !== null && (!Number.isFinite(row.cost) || row.cost < 0)) missingFields.push("cost");
+  if (row.taxRate !== null && (!Number.isFinite(row.taxRate) || row.taxRate < 0 || row.taxRate > 100)) missingFields.push("taxRate");
   if (!Number.isFinite(row.stock) || row.stock < 0 || (row.quantityRequired && row.stock <= 0))
     missingFields.push("stock");
 
@@ -327,7 +341,7 @@ export function planImportReview(
         name: importedName || existing?.name || "",
         price: importedPrice ?? existing?.price ?? null,
         cost: importedCost ?? existing?.cost ?? null,
-        category: importedCategory || existing?.category || "",
+        category: productClassification(importedCategory || existing?.category),
         unit: importedUnit || existing?.unit || "",
         stock: Math.max(0, Math.round(stock ?? 0)),
         customPoints: readNumber(field("custom_points")) ?? existing?.customPoints ?? 0,
@@ -360,7 +374,7 @@ export function reviewRowToImport(row: ImportReviewRow): ImportRow | null {
     name: row.name.trim(),
     price: row.price,
     cost: row.cost ?? 0,
-    category: row.category.trim(),
+    category: productClassification(row.category),
     stock: row.stock,
     customPoints: row.customPoints,
     taxRate: row.taxRate === null ? undefined : row.taxRate / 100,
@@ -446,7 +460,7 @@ export function planImport(records: Record<string, unknown>[], catalogue: Produc
       name,
       price,
       cost: cost ?? Number((price * 0.6).toFixed(2)),
-      category: String(field("category") ?? "").trim() || "Imported",
+      category: productClassification(String(field("category") ?? "")),
       stock: Math.round(stock),
       customPoints: readNumber(field("custom_points")) ?? 0,
       taxRate: (() => {

@@ -10,7 +10,8 @@ import { setPersonalLanguage } from "@/lib/time-zone";
 import { useDisplayProfile } from "@/lib/display-profile";
 import { setSharedPrinterPrefs } from "@/lib/receipt-printer";
 import { LogOut, Menu, MapPin, ReceiptText, Store } from "lucide-react";
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { AppShellContext } from "@/lib/app-shell-context";
 import { usePos } from "@/lib/pos-store";
 import { useAuth, type PermissionFlag } from "@/lib/pos-auth";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
@@ -31,6 +32,7 @@ import {
 } from "@/platforms/web/components/pos/StatusCluster";
 
 import { ActivityBell } from "@/platforms/web/components/pos/ActivityBell";
+import { NativeUpdateSlot } from "@/components/ui/native-update-orb";
 import { MobileStatusSheet } from "@/platforms/web/components/pos/MobileStatusSheet";
 import { ShiftGuard } from "@/platforms/web/components/pos/ShiftGuard";
 import { PermissionDenied } from "@/platforms/web/components/pos/PermissionGate";
@@ -99,8 +101,6 @@ function requiredPermission(pathname: string): PermissionFlag | null | "unknown"
   if (pathname.replace(/\/+$/, "") === "/approvals") return null;
   return routePermissionForPath(pathname) ?? "unknown";
 }
-
-const AppShellContext = createContext(false);
 
 /**
  * Route components still wrap their content in AppShell for backwards
@@ -583,6 +583,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                 <MobileStatusSheet />
                 <ApprovalTokenButton compact />
                 {isMobile && <ActivityBell />}
+                <NativeUpdateSlot />
                 <span className="hidden sm:inline-flex">
                   <ThemeToggle />
                 </span>
@@ -599,6 +600,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                 <SystemAlertsButton />
                 <ApprovalTokenButton />
                 {!isMobile && <ActivityBell />}
+                <NativeUpdateSlot desktop />
 
                 {terminal.config && (
                   <Badge

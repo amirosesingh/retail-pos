@@ -109,6 +109,17 @@ describe("per-user notification state", () => {
     ]);
     expect(posFetch).not.toHaveBeenCalled();
   });
+  it("narrows local notification reads before loading rows into the renderer", async () => {
+    localBridge.current = { query: vi.fn(async () => ({ ok: true, rows: [] })) };
+    const activity = await import("../activity-events");
+    const from = "2026-10-18T00:00:00.000Z", to = "2026-10-25T00:00:00.000Z";
+    await activity.listActivityEvents({ storeId: "branch-1", from, to, limit: 200 });
+    expect(localBridge.current.query).toHaveBeenCalledWith("activity_events", {
+      orderBy: { column: "created_at", ascending: false }, match: { store_id: "branch-1" },
+      dateRange: { column: "created_at", from, to }, limit: 2000,
+    });
+    expect(posFetch).not.toHaveBeenCalled();
+  });
 
   it("does not call the protected endpoint without a signed-in person", async () => {
     readCredentials.mockResolvedValueOnce({});

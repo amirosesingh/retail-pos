@@ -12,7 +12,15 @@ async function finishShutdownSync({ run, progress = () => {}, sleep = ms => new 
     await sleep(attempt * 1000);
   }
 }
-async function runShutdownSync({ health, pendingSummary, run }) {
+async function runShutdownSync({ health, pendingSummary, run, signedOut = false, allowSignedOutExit = false }) {
+  if (signedOut && allowSignedOutExit) {
+    // Main has already drained accepted writes. A login screen has no person
+    // proof: leave durable journal rows pending rather than sending anonymous
+    // requests or manufacturing an acknowledgement. Shift-close and installer
+    // paths do not enable this branch.
+    const remaining = await pendingSummary();
+    return { ...remaining, ok: true, synchronized: false, authenticationRequired: true };
+  }
   const connection = await health();
   if (!connection.online && connection.code === "EOFFLINE") {
     const remaining = await pendingSummary(); // Must prove the local journal is readable.

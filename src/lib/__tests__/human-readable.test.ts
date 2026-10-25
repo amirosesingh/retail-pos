@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { branchDisplayName, friendlyReference, humanizeText } from "../human-readable";
+import { branchDisplayName, createTextHumanizer, friendlyReference, humanizeText } from "../human-readable";
 
 const stores = [{ id: "15a19c3f-1805-428b-8606-e82e474f0db3", name: "Guangdong 1" }];
 
 describe("human-readable references", () => {
+  it("reuses an isolated lookup without carrying names into another feed", () => {
+    const first = createTextHumanizer({ products: [{ id: "product.1", name: "Racket" }] });
+    expect(first("product.1 / product.1")).toBe("Racket / Racket");
+    expect(first("product.1 / product.1")).toBe("Racket / Racket");
+    expect(createTextHumanizer({})("product.1")).toBe("product.1");
+    expect(first("Plain message")).toBe("Plain message");
+  });
   it("shows the actual branch name instead of its database identifier", () => {
     expect(branchDisplayName(stores, stores[0].id)).toBe("Guangdong 1");
     expect(humanizeText(`Shift opened at ${stores[0].id}`, { stores })).toBe(

@@ -47,7 +47,7 @@ async function readAnalytics(connectionManager, branchId, from, to, timeZone = "
         SUM(CASE WHEN is_foc=1 THEN unit_price*quantity ELSE 0 END) foc_value,SUM(quantity) units FROM #facts GROUP BY sale_id) f ON f.sale_id=b.id
       GROUP BY b.sale_day,b.sale_month,b.store_id ORDER BY b.sale_day;
       SELECT TOP (500001) f.sale_day,f.store_id,f.product_id,f.product_name,
-        COALESCE(NULLIF(LTRIM(RTRIM(p.category)),''),'Uncategorized') product_category,
+        COALESCE(NULLIF(LTRIM(RTRIM(p.category)),''),'Default') product_category,
         SUM(f.quantity) units,SUM(f.line_revenue) revenue,SUM(f.line_cost) cost,SUM(f.line_revenue-f.line_cost) profit
       FROM #facts f LEFT JOIN dbo.products p ON p.id=f.product_id
       GROUP BY f.sale_day,f.store_id,f.product_id,f.product_name,p.category ORDER BY f.sale_day,f.product_id;

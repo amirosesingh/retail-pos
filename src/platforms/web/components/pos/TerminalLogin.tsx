@@ -39,7 +39,7 @@ export function TerminalLogin() {
   }, [terminal]);
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <div className="flex min-h-dvh items-center justify-center bg-background px-4 py-6">
       <div className="w-full max-w-sm space-y-5 rounded-lg border border-border bg-card p-6">
         <div className="flex items-center gap-3">
           <div className="flex size-10 items-center justify-center rounded-md bg-primary text-primary-foreground">
@@ -64,7 +64,7 @@ export function TerminalLogin() {
         >
           {terminal && (
             <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="cashier">Cashier PIN</TabsTrigger>
+              <TabsTrigger value="cashier">Sign in with PIN</TabsTrigger>
               <TabsTrigger value="admin">Supervisor / Admin</TabsTrigger>
             </TabsList>
           )}

@@ -151,7 +151,7 @@ import {
   type SettingsSectionId,
 } from "./settings-sections";
 import { localDb } from "@/core/local-db/local-db";
-import { businessReadsReady, transferReadsReady } from "./business-readiness";
+import { businessReadsReady, transferReadAllowed, transferReadsReady } from "./business-readiness";
 import { hasCentralAuthSession, subscribeCentralAuthSession } from "./session-presence";
 import { retryDataRead } from "./read-retry";
 import {
@@ -601,6 +601,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     setReloadTick((v) => v + 1);
   }, []);
   const { authUserId, terminalUser, user, can, isAdmin, ready: authReady } = useAuth();
+  const canReadTransfers = transferReadAllowed(can);
   // Nothing is fetched from the cloud until a cashier or supervisor session
   // exists — visitors never receive catalogue, member or sales data.
   const signedIn = Boolean(authUserId || terminalUser);
@@ -832,6 +833,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // their persisted headers and lines separately so a reload does not turn a
   // dispatched delivery into an empty receiving page or a read-only deep link.
   useEffect(() => {
+    // A cashier's catalogue access does not grant transfer access. Do not send
+    // forbidden reads or retain an earlier operator's transfer snapshot.
+    if (!canReadTransfers) {
+      setState(current => current.transfers.length ? { ...current, transfers: [] } : current);
+      return;
+    }
     // A remembered branch can exist before the Electron SQL pool finishes
     // connecting. Let the primary snapshot prove the selected backend is ready
     // before this secondary read; otherwise startup shows a false transfer
@@ -904,7 +911,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       offSettings();
       offLocal?.();
     };
-  }, [readsReady, loadPhase, snapshotIdentity, readIdentity, state.currentStoreId]);
+  }, [canReadTransfers, readsReady, loadPhase, snapshotIdentity, readIdentity, state.currentStoreId]);
 
   useEffect(() => {
     if (!ready) return;

@@ -21,7 +21,11 @@ export function branchDisplayName(
 
 /** Replace identifiers already known to the client with the names users recognise. */
 export function humanizeText(value: string, refs: FriendlyReferences): string {
-  let result = value;
+  return createTextHumanizer(refs)(value);
+}
+
+/** Build the catalogue lookup once for a feed, rather than once per rendered line. */
+export function createTextHumanizer(refs: FriendlyReferences): (value: string) => string {
   const replacements = [
     ...(refs.stores ?? []).map((row) => [row.id, row.name] as const),
     ...(refs.products ?? []).map((row) => [row.id, row.name] as const),
@@ -30,8 +34,17 @@ export function humanizeText(value: string, refs: FriendlyReferences): string {
   ]
     .filter(([id, name]) => id && name && id !== name)
     .sort((a, b) => b[0].length - a[0].length);
-  for (const [id, name] of replacements) result = result.split(id).join(name);
-  return result;
+  const cache = new Map<string, string>();
+  return value => {
+    const cached = cache.get(value);
+    if (cached !== undefined) return cached;
+    let result = value;
+    for (const [id, name] of replacements)
+      if (result.includes(id)) result = result.split(id).join(name);
+    if (cache.size >= 512) cache.clear();
+    cache.set(value, result);
+    return result;
+  };
 }
 
 export function friendlyReference(id: string | null | undefined, refs: FriendlyReferences): string {

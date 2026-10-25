@@ -198,7 +198,7 @@ export function IosOtaSettings() {
 export function IosUpdateBanner() {
   const state = useSyncExternalStore(iosOta.subscribe, iosOta.snapshot, iosOta.snapshot);
   const [error, setError] = useState("");
-  if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== "ios") return null;
+  if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== "ios" || !state.latest || state.phase === "idle") return null;
   const busy = ["checking", "downloading", "verifying", "installing"].includes(state.phase);
   const run = (action: () => Promise<unknown>) => {
     setError("");
@@ -208,8 +208,7 @@ export function IosUpdateBanner() {
     : state.phase === "downloading" ? "Downloading update"
       : state.phase === "installing" ? "Saving and reopening…" :
         state.phase === "checking" ? "Checking for updates" :
-          state.phase === "verifying" ? "Verifying update" :
-            state.phase === "idle" ? "Tap to check for updates" : "Update available. Tap to download.");
+          state.phase === "verifying" ? "Verifying update" : "Update available. Tap to download.");
   return <NativeUpdateOrb label={`${RELEASE_CHANNEL === "beta" ? "Beta update" : "Update"} ${state.latest ? displayReleaseVersion(state.latest.version) : ""}`}
     detail={detail} progress={state.phase === "downloading" ? state.progress : undefined} busy={busy} error={state.phase === "error" || !!error}
     onClick={() => {
@@ -218,7 +217,7 @@ export function IosUpdateBanner() {
           allowManualInstall();
           run(() => iosOta.install());
         }
-      } else if (state.phase === "error" || state.phase === "idle") run(() => iosOta.check(true));
+      } else if (state.phase === "error") run(() => iosOta.check(true));
       else run(() => iosOta.download());
     }} />;
 }

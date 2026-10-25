@@ -119,9 +119,9 @@ function SidebarRow({ entry, collapsed, active, inbound, onNavigate }: SidebarRo
       <NavIcon
         strokeWidth={1.75}
         aria-hidden="true"
-        className={cn(collapsed ? "size-5" : "size-4 shrink-0", active ? "text-primary" : iconTone)}
+        className={cn("size-4 shrink-0", active ? "text-primary" : iconTone)}
       />
-      <span aria-hidden={collapsed || undefined} className={cn("min-w-0 overflow-hidden whitespace-nowrap transition-[max-width,opacity] duration-[var(--motion-normal)] motion-reduce:transition-none", collapsed ? "max-w-0 opacity-0" : "max-w-44 opacity-100")}>{entry.label}</span>
+      {!collapsed && <span className="min-w-0 truncate">{entry.label}</span>}
       {entry.badge && inbound > 0 && !collapsed && (
         <Badge className="ml-auto h-5 min-w-5 shrink-0 justify-center px-1 text-[10px]">
           {inbound}

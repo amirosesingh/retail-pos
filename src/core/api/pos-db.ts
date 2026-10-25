@@ -1,3 +1,4 @@
+import { productClassification } from "@/lib/product-classification";
 import { withoutWorkspacePurpose } from "@/lib/retired-workspace-settings";
 import { commitRowCount, runProgressBatch, yieldToUi } from "@/lib/commit-progress";
 import { readCataloguePages } from "@/lib/catalogue-read";
@@ -144,9 +145,9 @@ export const rowToProduct = (r: Row): Product => normalizeUuidFields({
   name: r.name,
   sku: r.sku ?? r.barcode ?? "",
   barcode: r.barcode ?? "",
-  category: r.category ?? "",
-  group: r.product_group ?? undefined,
-  subCategory: r.sub_category ?? undefined,
+  category: productClassification(r.category),
+  group: productClassification(r.product_group),
+  subCategory: productClassification(r.sub_category),
   unit: r.unit ?? undefined,
   packs: Array.isArray(jsonValue(r.packs, [])) ? jsonValue(r.packs, []) : [],
   barcodes: Array.isArray(jsonValue(r.barcode_aliases, [])) ? jsonValue(r.barcode_aliases, []) : [],
@@ -263,9 +264,9 @@ export const productToRow = (p: Product): Row => {
     barcode: p.barcode || p.sku || p.id,
     name: p.name,
     sku: p.sku ?? null,
-    category: p.category ?? null,
-    product_group: p.group ?? null,
-    sub_category: p.subCategory ?? null,
+    category: productClassification(p.category),
+    product_group: productClassification(p.group),
+    sub_category: productClassification(p.subCategory),
     unit: p.unit ?? null,
     packs: safeArray(p.packs),
     barcode_aliases: safeArray<string>(p.barcodes)
@@ -2808,12 +2809,15 @@ export const db = {
     const storedId =
       onlineOnly && sale.clientTxnId ? await db.saleAttemptId(sale.clientTxnId) : null;
     if (storedId) sale.id = storedId;
-    // SQL Server enforces these foreign keys immediately. Materialize parent
-    // records before the sale graph so a newly synced member or product cannot
-    // make the otherwise atomic local transaction fail.
-    const ops: SyncOp[] = [];
-    if (products.length)
-      ops.push({ kind: "upsert", table: "products", rows: products.map(productToRow) });
+    // Catalogue rows already belong to the local SQL snapshot. Checkout must
+    // not rewrite redacted prices/costs or request catalogue-edit permissions.
+    // Update stock only; SQL's stock lifecycle trigger owns automatic archiving.
+    const ops: SyncOp[] = products.map(product => {
+      const row = productToRow(product);
+      return { kind: "update", table: "products", match: { id: row.id },
+        values: { stock_quantity: row.stock_quantity, stock_by_store: row.stock_by_store },
+        requireMatch: true };
+    });
     if (member) ops.push({ kind: "upsert", table: "members", rows: [memberToRow(member, tierId)] });
     ops.push(
       { kind: "upsert", table: "sales", rows: [saleToRow(sale)], onConflict: "id" },
