@@ -1299,7 +1299,7 @@ html, main, .pos-popup-surface, .overflow-auto, .overflow-y-auto, .overflow-x-au
   overflow: auto;
 }
 .register-lookup {
-  flex: 0 0 22rem;
+  flex: 0 0 auto;
   min-width: 0;
   min-height: 0;
   width: 100%;
@@ -1368,9 +1368,13 @@ html, main, .pos-popup-surface, .overflow-auto, .overflow-y-auto, .overflow-x-au
   min-height: 3rem;
   padding-inline-start: 2.5rem;
 }
+.register-lookup-results { max-height: 14rem; }
+.register-lookup-suggestions { display: none; }
 @container (min-width: 60rem) {
   .register-standard { gap: 0; }
   .register-standard > [role="separator"] { margin-inline: 0.375rem; }
+  .register-lookup-results { max-height: none; }
+  .register-lookup-suggestions { display: block; }
 }
 /* Shared settings presentation: readable controls, stable semantic category accents. */
 .settings-workspace .settings-form :where(input, select, textarea, label) {

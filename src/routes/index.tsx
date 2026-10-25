@@ -1836,7 +1836,7 @@ function Register() {
           <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><ReceiptText className="size-5" aria-hidden /></span>
           <div className="min-w-0">
           <p className="truncate text-lg font-semibold tracking-tight">Current bill</p>
-          <p className="numeric mt-1 break-all text-xs font-medium text-muted-foreground">
+          <p className="numeric mt-1 break-all text-sm font-semibold leading-snug text-primary" aria-label="Current bill number">
             {billNo ? `#${billNo}` : "New bill — scan an item to start"}
           </p>
           {appliedApproval && (
@@ -1921,7 +1921,7 @@ function Register() {
 
   const slot_standardProductLookup = (
     <section className="flex h-full min-h-0 flex-col bg-background">
-      <div className="space-y-4 border-b border-border bg-card p-4">
+      <div className="register-lookup-controls space-y-3 border-b border-border bg-card p-3 sm:p-4">
         {workspaceBackButton}
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -1954,7 +1954,7 @@ function Register() {
         </div>
       </div>
 
-      <ScrollArea className="min-h-24 flex-1">
+      <ScrollArea className={`register-lookup-results min-h-24 flex-1 ${deferredProductQuery.trim() ? "" : "register-lookup-suggestions"}`}>
         <div className="space-y-2 p-3">
           {!deferredProductQuery.trim() && recommendedProducts.length > 0 && (
             <p className="px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -2368,11 +2368,12 @@ function Register() {
       >
         <span className="min-w-0 flex-1 truncate text-muted-foreground">Bill discount</span>
         <ActionButton
+          fitContent
           layout="inline"
           variant="outline"
           size="sm"
           onClick={() => setPadTarget("bill")}
-          className="numeric h-10 min-h-10 max-w-full shrink-0 justify-center gap-2 px-3 text-xs"
+          className="numeric h-9 min-h-9 max-w-full shrink-0 justify-center gap-1.5 rounded-lg border-primary/25 bg-primary/5 px-2.5 py-1.5 text-xs text-primary hover:bg-primary/10"
           label={
             cartDiscount
               ? `${cartDiscount}${cartDiscountType === "percent" ? "%" : ""}`

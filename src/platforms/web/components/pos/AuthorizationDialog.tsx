@@ -6,7 +6,7 @@ import { nativeApprovalCredentials } from "@/platform-config/approval-token";
  * approve is standing there), an approval request (nobody is), or both. The
  * PIN itself is only ever checked inside the database.
  */
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Send, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
@@ -99,6 +99,9 @@ export function AuthorizationDialog({
   const [pin, setPin] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  const submitting = useRef(false);
+  const currentPrompt = useRef(prompt);
+  currentPrompt.current = prompt;
   const session = useAuthOptional();
   const me = session?.user ?? null;
 
@@ -107,6 +110,7 @@ export function AuthorizationDialog({
     const identity = approvalIdentity(tokenOnly, authorizerId, prompt.selfAuthorizer?.id);
     const expectedId = identity.authorizerId;
     const result = await verifyLocalApprovalPin(expectedId, pin);
+    if (currentPrompt.current !== prompt) return false;
     if (!result.ok) {
       toast.error(result.error);
       return false;
@@ -176,6 +180,7 @@ export function AuthorizationDialog({
         context: prompt.payload ?? {},
       },
     });
+    if (currentPrompt.current !== prompt) return false;
     if (!parked.parked) {
       toast.error("The approval could not be recorded in the local database.");
       return false;
@@ -248,7 +253,8 @@ export function AuthorizationDialog({
   }, [prompt]);
 
   async function submitPin() {
-    if (!prompt) return;
+    if (!prompt || submitting.current) return;
+    submitting.current = true;
     setBusy(true);
     try {
       if (typeof navigator !== "undefined" && !navigator.onLine) {
@@ -256,6 +262,7 @@ export function AuthorizationDialog({
         return;
       }
       const auth = await getPosCallerAuth();
+      if (currentPrompt.current !== prompt) return;
       const res = await authorizeWithPin({
         data: {
           ...auth,
@@ -273,6 +280,7 @@ export function AuthorizationDialog({
             : { requesterDirectLimit: prompt.requesterDirectLimit }),
         },
       });
+      if (currentPrompt.current !== prompt) return;
       if (!res.ok) {
         if (looksOffline(res.error)) await authorizeLocalPin();
         else toast.error(res.error ?? "Authorisation failed");
@@ -286,15 +294,18 @@ export function AuthorizationDialog({
         authorizer: res.authorizer,
       });
     } catch (e) {
+      if (currentPrompt.current !== prompt) return;
       if (looksOffline(e)) await authorizeLocalPin();
       else notifyError(e, "Authorisation failed");
     } finally {
+      submitting.current = false;
       setBusy(false);
     }
   }
 
   async function submitRequest() {
-    if (!prompt) return;
+    if (!prompt || submitting.current) return;
+    submitting.current = true;
     // One id follows the request through the direct cloud attempt, a lost
     // response, and the local offline fallback. Both databases therefore
     // converge on one request and one eventual decision.
@@ -302,6 +313,7 @@ export function AuthorizationDialog({
     setBusy(true);
     try {
       const auth = await getPosCallerAuth();
+      if (currentPrompt.current !== prompt) return;
       const res = await submitAuthorizationRequest({
         data: {
           ...auth,
@@ -322,6 +334,7 @@ export function AuthorizationDialog({
           ...(prompt.heldOrderId ? { heldOrderId: prompt.heldOrderId } : {}),
         },
       });
+      if (currentPrompt.current !== prompt) return;
       if (!res.ok || !res.request) {
         if (looksOffline(res.error)) await parkRequest(requestId, res.error ?? "");
         else toast.error(res.error ?? "Could not send the request");
@@ -335,10 +348,12 @@ export function AuthorizationDialog({
       // explicitly background operation and never delays this dialog.
       void syncNow(`approval-request:${res.request.id}`);
     } catch (e) {
+      if (currentPrompt.current !== prompt) return;
       if (looksOffline(e)) {
         await parkRequest(requestId, String((e as Error)?.message ?? e));
       } else notifyError(e, "Could not send the request");
     } finally {
+      submitting.current = false;
       setBusy(false);
     }
   }
@@ -386,7 +401,10 @@ export function AuthorizationDialog({
           value={pin}
           onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 8))}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !reasonMissing) void submitPin();
+            if (e.key === "Enter" && !e.repeat && !busy && !reasonMissing) {
+              e.preventDefault();
+              void submitPin();
+            }
           }}
         />
       </div>

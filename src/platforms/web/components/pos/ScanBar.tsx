@@ -99,18 +99,23 @@ export function ScanBar({
             ref={inputRef}
             value={code}
             autoFocus={autoFocus}
+            autoComplete="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            enterKeyHint="go"
             disabled={disabled}
             onChange={(e) => setCode(e.target.value)}
             placeholder="Scan or enter barcode…"
             aria-label="Scan barcode"
-            className={`numeric h-10 pl-9 ${hasCamera ? "pr-12" : ""}`}
+            className="numeric h-11 pl-9"
           />
-          {hasCamera && (
-            <Button type="button" variant="ghost" size="icon" className="absolute inset-y-0 right-1 my-auto size-8" aria-label="Scan barcode with camera" title="Scan barcode with camera" disabled={disabled} onClick={() => void cameraScan()}>
+        </div>
+        <Button type="submit" variant="outline" className="h-11 shrink-0 rounded-lg px-3" disabled={disabled || !code.trim()} aria-label="Add entered barcode">Add</Button>
+        {hasCamera && (
+            <Button type="button" variant="outline" size="icon" className="size-11 shrink-0 rounded-lg border-primary/25 bg-primary/5 text-primary hover:bg-primary/10" aria-label="Scan barcode with camera" title="Scan barcode with camera" disabled={disabled} onClick={() => void cameraScan()}>
               <ScanBarcode className="size-4" />
             </Button>
-          )}
-        </div>
+        )}
       </div>
     </form>
   );

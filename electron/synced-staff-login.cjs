@@ -46,6 +46,10 @@ async function verifySyncedPin(pool, username, pin, branchId, purpose, options =
   const secret = String(pin ?? "");
   let tokenOnly = false;
   if (!name && purpose === "approval" && /^\d{8}$/.test(secret) && typeof options.identifyTotp === "function") {
+    if (typeof options.prepareTotp === "function") {
+      const prepared = await options.prepareTotp(secret, branchId);
+      if (!prepared?.ok) return { ok: false, reason: "unavailable", error: prepared?.error || "Offline soft-token verification is not ready on this PC." };
+    }
     // Reserve every code-only attempt atomically, including successes: changing
     // guessed identities or restarting the renderer cannot reset the budget.
     const gate = await pool.request().input("key", `approval-lookup:${String(branchId).toLowerCase()}`)

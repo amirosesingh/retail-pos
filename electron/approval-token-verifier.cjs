@@ -105,6 +105,22 @@ function createApprovalTokenVerifier({
     const matches = bundle.entries.filter(entry => matchingStep(entry.secret, code) !== null);
     return matches.length === 1 ? String(matches[0].userId) : null;
   }
+  async function prepare(code, branchId) {
+    // An already downloaded offline token must not wait behind network or
+    // catalogue synchronization. Only an unknown code needs a bounded refresh.
+    if (identify(code, branchId)) return { ok: true };
+    await refresh();
+    const bundle = currentBundle(branchId);
+    if (!bundle) return {
+      ok: false,
+      error: "This PC has no valid downloaded soft-token verifier for this branch. Reconnect and sign in with staff-management permission to prepare offline approvals. The code has not been rejected.",
+    };
+    if (!bundle.entries.length) return {
+      ok: false,
+      error: "No eligible soft-token users have been downloaded for this branch. Check the user's token enrollment and approver rules, then reconnect this PC. The code has not been rejected.",
+    };
+    return { ok: true };
+  }
   async function verify(pool, userId, code, branchId) {
     const bundle = currentBundle(branchId);
     if (!bundle) return false;
@@ -129,6 +145,6 @@ function createApprovalTokenVerifier({
     }
     return false;
   }
-  return { refresh, verify, identify };
+  return { refresh, verify, identify, prepare };
 }
 module.exports = { tokenAt, matchingStep, createApprovalTokenVerifier };

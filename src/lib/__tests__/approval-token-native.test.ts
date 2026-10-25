@@ -225,3 +225,32 @@ it("finds the offline code owner without consuming and rejects ambiguous devices
   await f.verifier.refresh(true);
   expect(f.verifier.identify(code, "branch-a")).toBeNull();
 });
+
+it("uses a downloaded offline token immediately without a network refresh", async () => {
+  const f = fixture();
+  await f.verifier.refresh();
+  f.options.fetchBundle.mockClear();
+  const code = tokenAt(f.secret, Math.floor(Date.now() / 30000));
+  expect(await f.verifier.prepare(code, "branch-a")).toEqual({ ok: true });
+  expect(f.options.fetchBundle).not.toHaveBeenCalled();
+  expect(f.query).not.toHaveBeenCalled();
+});
+
+it("downloads a missing verifier on demand independently of catalogue synchronization", async () => {
+  const f = fixture();
+  const code = tokenAt(f.secret, Math.floor(Date.now() / 30000));
+  expect(await f.verifier.prepare(code, "branch-a")).toEqual({ ok: true });
+  expect(f.options.fetchBundle).toHaveBeenCalledOnce();
+  expect(f.verifier.identify(code, "branch-a")).toBe("manager");
+  expect(f.query).not.toHaveBeenCalled();
+});
+
+it("does not count an unavailable offline verifier as an incorrect token", async () => {
+  const pool = { request: vi.fn() };
+  const identifyTotp = vi.fn();
+  const prepareTotp = vi.fn(async () => ({ ok: false, error: "Download the branch verifier first" }));
+  expect(await verifySyncedApprovalPin(pool, "", "12345678", "branch-a", { identifyTotp, prepareTotp }))
+    .toEqual({ ok: false, reason: "unavailable", error: "Download the branch verifier first" });
+  expect(identifyTotp).not.toHaveBeenCalled();
+  expect(pool.request).not.toHaveBeenCalled();
+});
