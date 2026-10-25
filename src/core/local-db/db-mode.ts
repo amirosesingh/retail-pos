@@ -111,6 +111,16 @@ export function noteConnectionRestored() {
 
 const online = () => !isBrowser() || window.navigator.onLine;
 
+/** Electron's canonical connection state controls runtime fallback; pending writes stay in SQL. */
+export function setStartupOnlineMode(on: boolean): void {
+  if (!isBrowser()) return;
+  const wasOnline = window.sessionStorage?.getItem(ONLINE_STARTUP_OVERRIDE) === "1";
+  if (wasOnline === on) return;
+  if (on) window.sessionStorage.setItem(ONLINE_STARTUP_OVERRIDE, "1");
+  else window.sessionStorage.removeItem(ONLINE_STARTUP_OVERRIDE);
+  notify();
+}
+
 export function effectiveDatabaseMode(): DatabaseMode {
   const startupOnline = isBrowser() && window.sessionStorage?.getItem(ONLINE_STARTUP_OVERRIDE) === "1";
   return isOnlineOnly() || startupOnline ? "online" : "local";

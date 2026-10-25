@@ -1,3 +1,4 @@
+import { subscribeDatabaseMode } from "@/core/local-db/db-mode";
 import { subscribeSettingsRefresh } from "./settings-refresh";
 import { createRefreshQueue, requestBackgroundRefresh, subscribeBackgroundRefresh } from "./background-refresh";
 import { stockCountChanges } from "./stock-count-plan";
@@ -604,8 +605,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // exists — visitors never receive catalogue, member or sales data.
   const signedIn = Boolean(authUserId || terminalUser);
   const cloudSessionReady = useSyncExternalStore(subscribeCentralAuthSession, hasCentralAuthSession, () => false);
-  const readsReady = businessReadsReady(authReady, signedIn, effectiveDatabaseMode() === "local", authUserId, cloudSessionReady);
-  const readIdentity = terminalUser?.userCode ?? authUserId;
+  const databaseMode = useSyncExternalStore(subscribeDatabaseMode, effectiveDatabaseMode, () => "online");
+  const readsReady = businessReadsReady(authReady, signedIn, databaseMode === "local", authUserId, cloudSessionReady);
+  const requiresCloudReauthentication = databaseMode === "online" && authReady && Boolean(terminalUser) && !authUserId && !cloudSessionReady;
+  const personIdentity = terminalUser?.userCode ?? authUserId;
+  const readIdentity = personIdentity ? `${personIdentity}|${databaseMode}` : null;
   useEffect(() => {
     const name = state.settings.receipt.companyName?.trim();
     if (name && readBranding().company !== name) writeBranding({ company: name });
@@ -684,7 +688,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
         return;
       }
       if (!readsReady) {
-        if (!cancelled) { setReady(false); setLoadPhase("loading"); }
+        if (!cancelled) {
+          if (requiresCloudReauthentication) {
+            setReady(true); setLoadPhase("failed");
+            setLocationLoadError("The local SQL connection is unavailable. Sign in again while online to verify this cashier before reading central data.");
+          } else { setReady(false); setLoadPhase("loading"); }
+        }
         return;
       }
       if (
@@ -808,7 +817,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       window.clearTimeout(watchdog);
     };
-  }, [signedIn, authReady, readsReady, readIdentity, reloadTick]);
+  }, [signedIn, authReady, readsReady, readIdentity, reloadTick, requiresCloudReauthentication]);
 
   // Retry a failed initial read when the connection recovers. Do not restart
   // an active catalogue download or discard a successfully loaded snapshot.
@@ -1096,15 +1105,16 @@ export function PosProvider({ children }: { children: ReactNode }) {
     setState((s) => (s.currentStoreId === bound ? s : { ...s, currentStoreId: bound }));
   }, [state.stores, signedIn]);
 
-  // Web, Android and iOS hold nothing locally, so returning to the app must re-read the
-  // catalogue, members, prices and shift from the backend.
+  // Online shells keep the current snapshot while targeted change hints apply.
+  // Reconnect or a stale foreground snapshot gets a bounded primary refresh;
+  // ordinary focus must not repeatedly download unrelated history.
   useEffect(() => {
     if (effectiveDatabaseMode() !== "online" || !readsReady) return;
     let cancelled = false;
     let loading = false;
     let resumeTimer: number | undefined;
-    let lastResumeStarted = 0;
-    const resume = () => {
+    let lastResumeStarted = Date.now();
+    const resume = (event?: Event) => {
       if (document.visibilityState !== "visible" || !navigator.onLine) return;
       // Focus, visibility and the native app-state event often arrive together.
       // One foreground transition needs one snapshot, not three full reads.
@@ -1113,10 +1123,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
         resumeTimer = undefined;
         // Focus, visibility and native resume can arrive in separate bursts.
         // A recent or running snapshot already covers that foreground return.
-        if (loading || cancelled || Date.now() - lastResumeStarted < 5_000) return;
+        if (loading || cancelled || Date.now() - lastResumeStarted < (event?.type === "online" || event?.type === CONNECTIVITY_RESTORED_EVENT ? 5_000 : 300_000)) return;
         lastResumeStarted = Date.now();
         loading = true;
-        void loadCloudState()
+        const branch = activeBranchId(stateRef.current.currentStoreId) ?? stateRef.current.currentStoreId;
+        void loadPrimaryState(branch)
           .then((cloud) => {
             if (!cancelled) setState((s) => applyCloud(s, cloud, pendingSalesRef.current));
           })
@@ -1131,6 +1142,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     };
     document.addEventListener("visibilitychange", resume);
     window.addEventListener("online", resume);
+    window.addEventListener(CONNECTIVITY_RESTORED_EVENT, resume);
     window.addEventListener("focus", resume);
     window.addEventListener(APP_RESUME_EVENT, resume);
     let removeNative: (() => Promise<void>) | undefined;
@@ -1154,6 +1166,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       if (resumeTimer) window.clearTimeout(resumeTimer);
       document.removeEventListener("visibilitychange", resume);
       window.removeEventListener("online", resume);
+      window.removeEventListener(CONNECTIVITY_RESTORED_EVENT, resume);
       window.removeEventListener("focus", resume);
       window.removeEventListener(APP_RESUME_EVENT, resume);
       if (removeNative) void removeNative();

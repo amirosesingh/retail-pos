@@ -39,7 +39,7 @@ describe("connectivity lifecycle ownership", () => {
     expect(health).toContain('document.addEventListener("visibilitychange", resume)');
     expect(health).toContain('App.addListener("appStateChange"');
     expect(root).toContain("CONNECTIVITY_RESTORED_EVENT");
-    expect(root).toContain('queryClient.refetchQueries({ type: "active" })');
+    expect(root).toContain('refreshResumedQueries(queryClient, event.type === CONNECTIVITY_RESTORED_EVENT)');
     expect(auth).toContain("APP_RESUME_EVENT");
     expect(store).toContain("APP_RESUME_EVENT");
   });

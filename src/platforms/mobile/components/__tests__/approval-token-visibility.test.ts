@@ -4,6 +4,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 const state = vi.hoisted(() => ({
   registered: true,
+  windows: false,
+  management: false,
   signedIn: true,
   totpEnabled: false,
 }));
@@ -22,8 +24,11 @@ vi.mock("@/lib/pos-auth", () => ({
   }),
 }));
 vi.mock("@/core/activation/terminal-tokens", () => ({
-  readTerminalConfig: () => state.registered ? { tokenId: "terminal-a" } : null,
+  readTerminalConfig: () => state.registered ? { tokenId: "terminal-a",
+    deviceUse: state.management ? "management" : "operations", locationId: state.management ? "" : "branch-a" } : null,
+  subscribeTerminalConfig: () => () => {},
 }));
+vi.mock("@/platform-config/features", () => ({ isWindowsShell: () => state.windows }));
 vi.mock("@/lib/approval-token-client", () => ({
   TOKEN_CHANGED: "pos:approval-token-changed",
   enrollOwnApprovalToken: vi.fn(),
@@ -40,11 +45,24 @@ import { ApprovalTokenButton } from "../ApprovalToken";
 
 beforeEach(() => {
   state.registered = true;
+  state.windows = false;
+  state.management = false;
   state.signedIn = true;
   state.totpEnabled = false;
 });
 
 describe("soft token setup visibility", () => {
+  it("never renders soft-token setup on a branch Windows till even for an enabled user", () => {
+    state.windows = true;
+    state.totpEnabled = true;
+    expect(renderToStaticMarkup(createElement(ApprovalTokenButton))).toBe("");
+  });
+  it("preserves enabled token setup on a registered management PC", () => {
+    state.windows = true;
+    state.management = true;
+    state.totpEnabled = true;
+    expect(renderToStaticMarkup(createElement(ApprovalTokenButton))).toContain("Set up soft token");
+  });
   it("does not expose the token control before this user has permission", () => {
     expect(renderToStaticMarkup(createElement(ApprovalTokenButton))).toBe("");
   });

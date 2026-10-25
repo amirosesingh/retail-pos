@@ -205,6 +205,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261024120332_mandatory_sponsorship_stock_issues.sql",
       "supabase/migrations/20261024123525_sponsorship_line_discounts.sql",
       "supabase/migrations/20261024124905_sponsorship_direct_issue_and_numbering.sql",
+      "supabase/migrations/20261025003332_optimize_active_shift_lookup.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

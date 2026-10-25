@@ -1,5 +1,5 @@
 export const nativeApprovalCredentials = true;
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -13,7 +13,8 @@ import {
 import { approvalTotp } from "@/lib/approval-totp";
 import { subscribeBackgroundRefresh } from "@/lib/background-refresh";
 import { approvalMethods } from "@/lib/approval-credentials";
-import { readTerminalConfig } from "@/core/activation/terminal-tokens";
+import { readTerminalConfig, subscribeTerminalConfig } from "@/core/activation/terminal-tokens";
+import { canIssueApprovalTokenOnDevice } from "@/lib/approval-token-device";
 import { APP_RESUME_EVENT } from "@/core/activation/connection-health";
 
 export function ApprovalTokenAgent() {
@@ -36,6 +37,12 @@ export function ApprovalTokenAgent() {
 }
 /** Only an OS-vault enrollment bound to the retained sign-in and registered device is shown. */
 export function ApprovalTokenButton({ compact = false }: { compact?: boolean }) {
+  const eligible = useSyncExternalStore(subscribeTerminalConfig,
+    canIssueApprovalTokenOnDevice, canIssueApprovalTokenOnDevice);
+  return eligible ? <ApprovalTokenControl compact={compact} /> : null;
+}
+
+function ApprovalTokenControl({ compact = false }: { compact?: boolean }) {
   // The sign-in and offline recovery screens can render outside AuthProvider.
   // A saved, device-bound token must remain unlockable there without signing in.
   const auth = useAuthOptional();
