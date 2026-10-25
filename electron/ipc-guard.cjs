@@ -198,7 +198,7 @@ function options(value, { name = "options", max = 40 } = {}) {
  * table/column membership is validated again against the schema registry. */
 function queryOptions(value) {
   const raw = plainObject(value ?? {}, { name: "business query" });
-  const allowed = new Set(["columns", "match", "in", "orderBy", "limit", "offset", "cursor"]);
+  const allowed = new Set(["columns", "match", "in", "orderBy", "limit", "offset", "cursor", "dateRange"]);
   if (Object.keys(raw).some((field) => !allowed.has(field))) throw new BadArg("The business query contains an unexpected setting.");
   const result = {};
   if (raw.columns !== undefined) result.columns = text(raw.columns, { name: "selected columns", max: 2000 });
@@ -221,6 +221,16 @@ function queryOptions(value) {
   if (raw.orderBy !== undefined) {
     const order = plainObject(raw.orderBy, { name: "query order" });
     result.orderBy = { column: key(order.column, { name: "order column" }), ascending: order.ascending === undefined ? true : boolean(order.ascending, { name: "order direction" }) };
+  }
+  if (raw.dateRange !== undefined) {
+    const range = plainObject(raw.dateRange, { name: "query date range" });
+    if (Object.keys(range).some(field => !["column", "from", "to"].includes(field)))
+      throw new BadArg("The query date range contains an unexpected setting.");
+    const from = text(range.from, { name: "range start", max: 100 });
+    const to = text(range.to, { name: "range end", max: 100 });
+    if (!Number.isFinite(Date.parse(from)) || !Number.isFinite(Date.parse(to)) || Date.parse(from) > Date.parse(to))
+      throw new BadArg("The query date range is invalid.");
+    result.dateRange = { column: key(range.column, { name: "range column" }), from, to };
   }
   if (raw.cursor !== undefined) {
     const cursor = plainObject(raw.cursor, { name: "query cursor" });

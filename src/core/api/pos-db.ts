@@ -2808,12 +2808,15 @@ export const db = {
     const storedId =
       onlineOnly && sale.clientTxnId ? await db.saleAttemptId(sale.clientTxnId) : null;
     if (storedId) sale.id = storedId;
-    // SQL Server enforces these foreign keys immediately. Materialize parent
-    // records before the sale graph so a newly synced member or product cannot
-    // make the otherwise atomic local transaction fail.
-    const ops: SyncOp[] = [];
-    if (products.length)
-      ops.push({ kind: "upsert", table: "products", rows: products.map(productToRow) });
+    // Catalogue rows already belong to the local SQL snapshot. Checkout must
+    // not rewrite redacted prices/costs or request catalogue-edit permissions.
+    // Update stock only; SQL's stock lifecycle trigger owns automatic archiving.
+    const ops: SyncOp[] = products.map(product => {
+      const row = productToRow(product);
+      return { kind: "update", table: "products", match: { id: row.id },
+        values: { stock_quantity: row.stock_quantity, stock_by_store: row.stock_by_store },
+        requireMatch: true };
+    });
     if (member) ops.push({ kind: "upsert", table: "members", rows: [memberToRow(member, tierId)] });
     ops.push(
       { kind: "upsert", table: "sales", rows: [saleToRow(sale)], onConflict: "id" },

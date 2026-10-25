@@ -154,8 +154,10 @@ class AggregateRepository {
         });
         if (operation.requireMatch && operationAffected !== 1)
           throw Object.assign(
-            new Error("The original bill is missing, refunded, or has already been exchanged."),
-            { code: "EEXCHANGE_STATE" },
+            new Error(operation.table === "products"
+              ? "A sale product is missing from local SQL Server. Synchronize the catalogue before retrying payment."
+              : "The original bill is missing, refunded, or has already been exchanged."),
+            { code: operation.table === "products" ? "EPRODUCT_STATE" : "EEXCHANGE_STATE" },
           );
         affected += operationAffected;
         if (operation.kind !== "delete") {
@@ -185,7 +187,7 @@ class AggregateRepository {
       return { ok: true, operationId, replayed: false, affected };
     } catch (error) {
       await Promise.resolve(transaction.rollback()).catch(() => undefined);
-      if (["EIDEMPOTENCY", "EBRANCH", "EBRANCH_SCOPE", "SYNC_BRANCH_FORBIDDEN", "EEXCHANGE_STATE", "PERMISSION_DENIED"].includes(error?.code))
+      if (["EIDEMPOTENCY", "EBRANCH", "EBRANCH_SCOPE", "SYNC_BRANCH_FORBIDDEN", "EEXCHANGE_STATE", "EPRODUCT_STATE", "PERMISSION_DENIED"].includes(error?.code))
         throw error;
       const target = tableName ? ` while writing ${tableName}` : "";
       const native = error?.originalError?.info ?? error?.originalError ?? error;

@@ -76,6 +76,15 @@ describe("action-specific safe wording", () => {
     expect(message).not.toContain("could not be saved");
   });
 
+  it("classifies a missing local sale product and asks for catalogue sync rather than extra permissions", () => {
+    const error = {code: "EPRODUCT_STATE", message: "Local product missing"};
+    expect(classifyError(error)).toBe("not-found");
+    const message = describeError(error, "Saving the payment");
+    expect(message).toContain("Synchronize the catalogue");
+    expect(message).toContain("No successful payment save was confirmed");
+    expect(message).not.toContain("permission");
+  });
+
   it("identifies the failed local SQL table without exposing raw SQL", () => {
     const message = describeError(
       {

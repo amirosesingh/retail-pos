@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
+const guard = require("../../../electron/ipc-guard.cjs");
 const { OperationsRepository } = require("../../../electron/db/repositories/operations.cjs");
 function fixture() {
   const inputs: Record<string, unknown> = {};
@@ -16,7 +17,7 @@ function fixture() {
 describe("local SQL report date ranges", () => {
   it("filters in SQL using bound timestamps while retaining branch scope and pagination", async () => {
     const { repository, inputs, query } = fixture();
-    await repository.query("branch-a", "sales", { dateRange: { column: "created_at", from: "2026-01-01T00:00:00Z", to: "2026-01-31T23:59:59Z" }, limit: 500 });
+    await repository.query("branch-a", "sales", guard.queryOptions({ dateRange: { column: "created_at", from: "2026-01-01T00:00:00Z", to: "2026-01-31T23:59:59Z" }, limit: 500 }));
     expect(inputs).toMatchObject({ branch: "branch-a", limit: 500, rangeFrom: "2026-01-01T00:00:00.000Z", rangeTo: "2026-01-31T23:59:59.000Z" });
     expect(query.mock.calls[0][0]).toContain("source.[created_at]>=@rangeFrom AND source.[created_at]<=@rangeTo");
     expect(query.mock.calls[0][0]).toContain("@branch");
@@ -31,4 +32,13 @@ describe("local SQL report date ranges", () => {
     await expect(repository.query("branch-a", "sales", { dateRange })).rejects.toMatchObject({ code: "EQUERY_RANGE" });
     expect(query).not.toHaveBeenCalled();
   });
+});
+
+it.each([
+  { column: "created_at", from: "bad", to: "2026-01-02" },
+  { column: "created_at", from: "2026-01-03", to: "2026-01-02" },
+  { column: "created_at;DROP", from: "2026-01-01", to: "2026-01-02" },
+  { column: "created_at", from: "2026-01-01", to: "2026-01-02", rawSql: "DROP TABLE sales" },
+])("refuses malformed date-range requests at the IPC boundary: %o", dateRange => {
+  expect(() => guard.queryOptions({dateRange})).toThrow();
 });
