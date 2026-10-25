@@ -1,5 +1,6 @@
 const { normalizeUuidFields, recordId } = require("../../sync/uuid-fields.cjs");
 const { loadRegistry } = require("../schema-registry.cjs");
+const { assertFinancialWrite } = require("../financial-write-policy.cjs");
 const {
   branchPredicate,
   rendererReadBranchPredicate,
@@ -365,6 +366,17 @@ class OperationsRepository {
   }
   async applyOperation(transaction, op, scope = {}) {
     scope = normalizeUuidFields(scope);
+    const replacementSaleId = scope.enforcePermissions === true ? assertFinancialWrite(op, scope) : null;
+    if (replacementSaleId) {
+      // An immutable upsert can be a no-op. Verify the persisted replacement,
+      // not merely the renderer's proposed exchange header, in this transaction.
+      const replacement = await new (this.connectionManager.sql().Request)(transaction)
+        .input("replacement", replacementSaleId).input("branch", scope.branchId)
+        .input("bill", op.values.exchanged_to_bill_number).input("original", op.match.bill_number)
+        .query("SELECT id FROM dbo.sales WITH (UPDLOCK,HOLDLOCK) WHERE id=@replacement AND store_id=@branch AND bill_number=@bill AND original_bill_number=@original AND is_exchange=1 AND is_refunded=0;");
+      if (!replacement.recordset?.length)
+        throw Object.assign(new Error("The matching replacement exchange bill is not saved."), { code: "PERMISSION_DENIED" });
+    }
     if (op.table === "activity_events" && op.kind === "update") {
       const operator = scope.activityOperator;
       if (!operator?.subject || !scope.branchId)
