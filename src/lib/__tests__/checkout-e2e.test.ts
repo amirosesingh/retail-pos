@@ -137,6 +137,30 @@ describe("checkout commit", () => {
     expect(opsSent().some(op => op.table === "products")).toBe(false);
   });
 
+  it.each([1, 0])("local checkout preserves hidden catalogue fields with %i units left and no archive rights", async remaining => {
+    platform.offlineFirst = true;
+    setPreferredDatabaseMode("local");
+    const product: Product = { id: "p1", name: "Racket", sku: "R1", barcode: "10001", category: "Sports",
+      cost: 0, price: 100, reorderLevel: 0, taxRate: 0, stockByStore: { "store-1": remaining }, archived: remaining === 0 };
+    await expect(db.commitSale(sale(), [product], null)).resolves.toBe("local");
+    const operation = localAggregate.mock.calls[0][0].operations.find((op: {table:string}) => op.table === "products");
+    expect(operation).toEqual({ kind: "update", table: "products", match: { id: "p1" },
+      values: { stock_quantity: remaining, stock_by_store: { "store-1": remaining } }, requireMatch: true });
+    const { OperationsRepository } = await import("../../../electron/db/repositories/operations.cjs");
+    const current = { id: "p1", name: "Racket", cost_price: 60, selling_price: 100, stock_quantity: 1,
+      stock_by_store: '{"store-1":1}', is_archived: false, archived_at: null };
+    class Request { input() { return this; } async query() { return { recordset: [current] }; } }
+    const registry = { tables: [{ cloudTable: "products", sqlServerTable: "products", columns:
+      Object.keys(current).map(name => ({ cloudColumn: name, sqlServerColumn: name, cloudType: name === "stock_by_store" ? "jsonb" : "text" })) }] };
+    const writer = new OperationsRepository({ sql: () => ({ Request }) }, registry);
+    const scope = { enforcePermissions: true, productWriteKind: "sale", permissions: { can_process_sale: true } };
+    // The former full-row rewrite failed on redacted cost/automatic archiving.
+    await expect(writer.assertProductPermissions({}, { kind: "upsert", table: "products", rows: [{ ...current,
+      cost_price: 0, is_archived: true }] }, scope)).rejects.toMatchObject({code:"PERMISSION_DENIED"});
+    await expect(writer.assertProductPermissions({}, operation, scope)).resolves.toBeUndefined();
+    expect(live).not.toHaveBeenCalled();
+  });
+
   it("writes bill, lines, tender ledger and stock movement together", async () => {
     await db.commitSale(sale(), [], null);
     expect(opsSent().map((o) => `${o.kind}:${o.table}`)).toContain("rpc:sales");

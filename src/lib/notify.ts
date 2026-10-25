@@ -69,6 +69,7 @@ export function classifyError(error: unknown): ErrorCategory {
   const code = String((error as Failure | null)?.code ?? "").toUpperCase();
   const status = statusOf(error, raw);
   if (["EPRIVILEGE", "PERMISSION_DENIED", "EPERMISSION", "SYNC_BRANCH_FORBIDDEN"].includes(code)) return "permission";
+  if (code === "EPRODUCT_STATE") return "A sale product is missing from local SQL Server. Synchronize the catalogue before retrying payment. No successful payment save was confirmed.";
   if (code === "EBILL_COUNTER") return "database-write";
   if (code === "EMEMBER_BALANCE") return "conflict";
   if (["EBATCH_SIZE", "EOVERSIZED", "ESNAPSHOT_LIMIT", "EREPORT_LIMIT"].includes(code)) return "validation";
