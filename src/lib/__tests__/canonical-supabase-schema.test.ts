@@ -206,6 +206,8 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261024123525_sponsorship_line_discounts.sql",
       "supabase/migrations/20261024124905_sponsorship_direct_issue_and_numbering.sql",
       "supabase/migrations/20261025003332_optimize_active_shift_lookup.sql",
+      "supabase/migrations/20261025133911_soft_token_owner_admin_notification_rule.sql",
+      "supabase/migrations/20261025141638_personal_notification_acknowledgements.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

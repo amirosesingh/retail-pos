@@ -179,7 +179,7 @@ export function NotificationRulesPage() {
   const branches = stores.map((store) => ({ value: store.id, label: store.name }));
   const names = (rule: NotificationRule) =>
     rule.audience === "original"
-      ? "Original private recipients"
+      ? rule.event === "soft_token_approval" ? "Token owner and administrators" : "Original private recipients"
       : rule.audience === "branch"
         ? "Staff in matched branches"
         : rule.audience === "audit"
@@ -564,7 +564,10 @@ export function NotificationRulesPage() {
                     })
                   }
                   options={
-                    PRIVATE_NOTIFICATION_EVENTS.includes(draft.event)
+                    draft.event === "soft_token_approval"
+                      ? [{ value: "original", label: "Token owner and administrators" },
+                          { value: "selected", label: "Selected token owners or administrators" }]
+                      : PRIVATE_NOTIFICATION_EVENTS.includes(draft.event)
                       ? [{ value: "original", label: "Original private recipients" }]
                       : [
                           { value: "selected", label: "Selected users and roles" },

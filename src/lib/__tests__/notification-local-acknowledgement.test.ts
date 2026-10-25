@@ -76,7 +76,7 @@ describe("local notification acknowledgement", () => {
       "verified notification operator",
     );
   });
-  it("encodes the trusted acknowledgement exactly once for SQL Server text arrays", async () => {
+  it("preserves other recipients and encodes the trusted acknowledgement once for SQL Server text arrays", async () => {
     const parameters: Record<string, unknown>[] = [];
     class Request {
       values: Record<string, unknown> = {};
@@ -96,7 +96,8 @@ describe("local notification acknowledgement", () => {
               {
                 store_id: "branch-a",
                 event_type: "approval_requested",
-                meta: JSON.stringify({ audience_user_ids: ["verified-a"] }),
+                meta: JSON.stringify({ audience_user_ids: ["verified-a", "verified-b"] }),
+                cleared_by: JSON.stringify(["verified-b"]),
               },
             ],
           };
@@ -124,7 +125,7 @@ describe("local notification acknowledgement", () => {
       }),
     ).resolves.toBe(1);
     const written = parameters.find((values) => "v0" in values)?.v0;
-    expect(JSON.parse(String(written))).toEqual(["verified-a"]);
+    expect(JSON.parse(String(written))).toEqual(["verified-b", "verified-a"]);
     expect(JSON.parse(String(written))).not.toBeTypeOf("string");
   });
   it("permits signed-in staff to acknowledge visible notifications without granting general write access", () => {

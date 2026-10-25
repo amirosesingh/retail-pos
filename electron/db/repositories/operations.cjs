@@ -375,7 +375,7 @@ class OperationsRepository {
       const person = account.recordset?.[0];
       const ids = [operator.subject, person?.id, person?.user_id, person?.email].filter(Boolean).map(value => String(value).toLowerCase());
       const result = await new Request(transaction).input("event", op.match.id)
-        .query("SELECT store_id,terminal_id,event_type,meta FROM dbo.activity_events WITH (UPDLOCK,HOLDLOCK) WHERE id=@event;");
+        .query("SELECT store_id,terminal_id,event_type,meta,cleared_by FROM dbo.activity_events WITH (UPDLOCK,HOLDLOCK) WHERE id=@event;");
       const event = result.recordset?.[0];
       if (!event) throw Object.assign(new Error("Notification not found."), { code: "PERMISSION_DENIED" });
       let meta = event.meta;
@@ -399,7 +399,10 @@ class OperationsRepository {
       if (!visible) throw Object.assign(new Error("Notification access denied."), { code: "PERMISSION_DENIED" });
       // columnValueForSql owns JSON encoding for text[] columns. Supplying a
       // pre-encoded string here double-encodes it and violates ISJSON checks.
-      op = { ...op, values: { cleared_by: [String(person?.id ?? operator.subject)] } };
+      let acknowledged = event.cleared_by;
+      if (typeof acknowledged === "string") { try { acknowledged = JSON.parse(acknowledged); } catch { acknowledged = []; } }
+      const previous = Array.isArray(acknowledged) ? acknowledged.filter(value => typeof value === "string" && value) : [];
+      op = { ...op, values: { cleared_by: [...new Set([...previous, String(person?.id ?? operator.subject)])] } };
     }
     await this.assertLegacyExchange(transaction, op, scope);
     await this.assertProductPermissions(transaction, op, scope);

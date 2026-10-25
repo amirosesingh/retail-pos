@@ -242,7 +242,7 @@ for (const table of tables) {
       : table.cloudTable === "sale_items"
         ? `UPDATE SET "refunded_qty"=GREATEST(public."sale_items"."refunded_qty",EXCLUDED."refunded_qty"),"row_version"=GREATEST(public."sale_items"."row_version",EXCLUDED."row_version")`
         : table.cloudTable === "activity_events"
-          ? `UPDATE SET "cleared_by"=EXCLUDED."cleared_by"`
+          ? `UPDATE SET "cleared_by"=ARRAY(SELECT DISTINCT value FROM unnest(COALESCE(public."activity_events"."cleared_by",'{}'::text[]) || COALESCE(EXCLUDED."cleared_by",'{}'::text[])) AS acknowledged(value))`
           : ["authorization_requests", "authorization_log"].includes(table.cloudTable)
             ? "NOTHING"
             : updates.length && !immutable
