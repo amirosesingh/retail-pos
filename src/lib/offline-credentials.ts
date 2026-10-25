@@ -99,19 +99,29 @@ export function isExpired(row: CachedCredential, maxAgeDays = DEFAULT_MAX_AGE_DA
   return now - Date.parse(row.cachedAt) > maxAgeDays * 24 * 60 * 60 * 1000;
 }
 
-/** Verify a PIN against the local cache. Returns null when it cannot be used. */
-export async function verifyCachedPin(
+export type CachedPinResult =
+  | { ok: true; credential: CachedCredential }
+  | { ok: false; reason: "missing" | "invalid" };
+
+/** Keep a missing/expired cache distinct from a verified local PIN mismatch. */
+export async function verifyCachedPinResult(
   username: string,
   pin: string,
   maxAgeDays = DEFAULT_MAX_AGE_DAYS,
-): Promise<CachedCredential | null> {
+): Promise<CachedPinResult> {
   const row = read().find((r) => r.username === username.trim().toLowerCase());
-  if (!row) return null;
-  if (isExpired(row, maxAgeDays)) return null;
+  if (!row) return { ok: false, reason: "missing" };
+  if (isExpired(row, maxAgeDays)) return { ok: false, reason: "missing" };
   const candidate = await derive(pin, row.salt);
   // Constant-time-ish comparison.
-  if (candidate.length !== row.verifier.length) return null;
+  if (candidate.length !== row.verifier.length) return { ok: false, reason: "invalid" };
   let diff = 0;
   for (let i = 0; i < candidate.length; i += 1) diff |= candidate.charCodeAt(i) ^ row.verifier.charCodeAt(i);
-  return diff === 0 ? row : null;
+  return diff === 0 ? { ok: true, credential: row } : { ok: false, reason: "invalid" };
+}
+
+/** Compatibility API used by other offline consumers. */
+export async function verifyCachedPin(username: string, pin: string, maxAgeDays = DEFAULT_MAX_AGE_DAYS): Promise<CachedCredential | null> {
+  const result = await verifyCachedPinResult(username, pin, maxAgeDays);
+  return result.ok ? result.credential : null;
 }

@@ -4,6 +4,7 @@
  */
 import { createClient } from "@supabase/supabase-js";
 import { serviceRest } from "@/core/api/pos-relay.server";
+import { failureFromAuthError } from "@/lib/login-failure";
 import { supabaseConfig } from "@/lib/external-supabase-config";
 
 type StaffIdentity = {
@@ -44,7 +45,12 @@ export async function staffUsernameLogin(
     email: account.email,
     password,
   });
-  if (error || !data.session || data.user?.id.toLowerCase() !== account.auth_user_id.toLowerCase())
+  if (error) {
+    const failure = failureFromAuthError(error);
+    return { ok: false, code: failure === "invalid-credentials" || failure === "account-inactive"
+      ? "invalid_credentials" : "central_unavailable" };
+  }
+  if (!data.session || data.user?.id.toLowerCase() !== account.auth_user_id.toLowerCase())
     return { ok: false, code: "invalid_credentials" };
   return {
     ok: true,

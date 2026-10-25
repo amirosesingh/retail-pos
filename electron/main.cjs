@@ -2049,22 +2049,26 @@ function registerIpc() {
     const terminal = terminalStore.read() ?? {};
     const abort = new AbortController();
     const timer = setTimeout(() => abort.abort(), 6_000);
-    const response = await fetch(`${authorizationUrl}/api/public/cashier-login`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      signal: abort.signal,
-      body: JSON.stringify({
-        username,
-        pin,
-        platform: "electron",
-        terminalId: terminal.tokenId ?? null,
-        branchId: localBranchId(),
-      }),
-    }).finally(() => clearTimeout(timer));
-    const result = await response.json().catch(() => ({
-      ok: false,
-      error: "The sign-in service returned an invalid response.",
-    }));
+    let response;
+    let result;
+    try {
+      response = await fetch(`${authorizationUrl}/api/public/cashier-login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        signal: abort.signal,
+        body: JSON.stringify({
+          username,
+          pin,
+          platform: "electron",
+          terminalId: terminal.tokenId ?? null,
+          branchId: localBranchId(),
+        }),
+      });
+      result = await response.json().catch(() => ({
+        ok: false,
+        error: "The sign-in service returned an invalid response.",
+      }));
+    } finally { clearTimeout(timer); }
     // The hosted endpoint has verified the PIN and re-read this account's
     // current permission matrix. Adopt that proof in the desktop process now,
     // before the renderer can submit its first sale. Requiring the separate

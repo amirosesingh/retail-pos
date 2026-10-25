@@ -21,3 +21,28 @@ export function reconcileLiveRows<T extends { id: string }>(previous: T[], incom
   });
   return next.length === previous.length && next.every((row, index) => row === previous[index]) ? previous : next;
 }
+
+/** Apply a scoped refresh without comparing or replacing unrelated records. */
+export function applyLiveRowChanges<T extends { id: string }>(
+  previous: T[], changedIds: ReadonlySet<string>, incoming: readonly T[],
+  key: (row: T) => string = row => row.id,
+  prependNew = false,
+): T[] {
+  const remaining = new Map(incoming.filter(row => changedIds.has(key(row))).map(row => [key(row), row]));
+  let changed = false;
+  const next: T[] = [];
+  for (const old of previous) {
+    const id = key(old);
+    if (!changedIds.has(id)) { next.push(old); continue; }
+    const row = remaining.get(id);
+    remaining.delete(id);
+    if (!row) { changed = true; continue; }
+    if (old === row || JSON.stringify(old) === JSON.stringify(row)) next.push(old);
+    else { next.push(row); changed = true; }
+  }
+  if (remaining.size) {
+    const added = [...remaining.values()];
+    return prependNew ? [...added, ...next] : [...next, ...added];
+  }
+  return changed ? next : previous;
+}

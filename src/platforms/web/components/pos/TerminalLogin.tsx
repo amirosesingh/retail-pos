@@ -11,7 +11,6 @@ import { isLocalWebCashierTest, isNative, isTerminalApp } from "@/platform-confi
 import { EmergencyAccessLink } from "@/components/shared/EmergencyAccessLink";
 import { CashierPinLogin } from "@/platforms/web/components/auth/CashierPinLogin";
 import { isExternalEmail, usernameFromAddress } from "@/lib/internal-domains";
-import { passwordUsername } from "@/lib/password-username";
 import { isConfigurationFailure, type LoginFailure } from "@/lib/login-failure";
 import { hasNativePasswordManager, offerSaveLogin, requestSavedLogin } from "@/platform-config/password-manager";
 
@@ -102,7 +101,7 @@ export function TerminalLogin() {
                 const typed = submittedIdentifier.toLowerCase();
                 // A cashier with no password goes to the PIN keypad. A staff
                 // member who entered a password may use their login username.
-                if (terminal && typed && !isExternalEmail(typed) && !passwordUsername(typed) && !submittedPassword) {
+                if (terminal && typed && !isExternalEmail(typed) && !submittedPassword) {
                   setPinIdentifier(usernameFromAddress(typed));
                   setRouted(true);
                   setError("");
