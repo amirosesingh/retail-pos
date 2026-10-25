@@ -45,7 +45,7 @@ export function ScanBar({
 
   // Keyboard-wedge capture: a burst of characters ending with Enter is a scan.
   useEffect(() => {
-    if (!captureGlobal) return;
+    if (!captureGlobal || disabled) return;
     let buffer = "";
     let last = 0;
     const onKey = (e: KeyboardEvent) => {
@@ -69,10 +69,11 @@ export function ScanBar({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onScan, captureGlobal]);
+  }, [onScan, captureGlobal, disabled]);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (disabled) return;
     const value = code.trim();
     if (!value) return;
     onScan(value);
@@ -81,7 +82,7 @@ export function ScanBar({
   };
 
   const cameraScan = async () => {
-    if (!isNativeApp()) return;
+    if (disabled || !isNativeApp()) return;
     try {
       const value = await scanOnceNative();
       if (value) onScan(value);

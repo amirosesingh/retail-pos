@@ -391,11 +391,19 @@ class OperationsRepository {
       const targeted = !!audience || users.length || roles.length || !!terminal;
       const operational = ["stock_request_received","transfer_sent","transfer_received","po_finalised"].includes(event.event_type);
       const sensitive = ["sale_complete","sale_refund","sale_void","shift_open","shift_close","shift_cash_variance","drawer_open","xreport_print"].includes(event.event_type);
-      const visible = targeted
+      const legacyVisible = targeted
         ? sameBranch && (users.some(id => ids.includes(id)) || roles.includes(operator.role) || (terminal && terminal === String(scope.terminalId ?? "").toLowerCase()))
         : operational ? !!event.store_id && sameBranch
         : sensitive ? operator.role === "admin"
         : operator.mayViewGeneralActivity && (operator.role === "admin" || sameBranch);
+      // Saved channel routes supersede the legacy audience (which can contain
+      // push-only recipients). A terminal app route is also a valid recipient.
+      const routes = meta.notification_routes;
+      const routed = routes && typeof routes === "object";
+      const selected = routed && (values(routes.app).some(id => ids.includes(id)) ||
+        (scope.terminalId && values(routes.terminalApp).includes(String(scope.terminalId).toLowerCase())));
+      const visible = routed ? selected && (sameBranch || operator.role === "admin")
+        : meta.in_app_disabled !== true && legacyVisible;
       if (!visible) throw Object.assign(new Error("Notification access denied."), { code: "PERMISSION_DENIED" });
       // columnValueForSql owns JSON encoding for text[] columns. Supplying a
       // pre-encoded string here double-encodes it and violates ISJSON checks.
