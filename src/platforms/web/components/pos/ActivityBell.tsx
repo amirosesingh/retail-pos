@@ -25,8 +25,9 @@ import {
   type ActivityEvent,
 } from "@/lib/activity-events";
 import { usePosOptional } from "@/lib/pos-store";
-import { humanizeText } from "@/lib/human-readable";
+import { createTextHumanizer } from "@/lib/human-readable";
 import { hasStaffSession } from "@/core/api/sync-relay";
+import { localDb } from "@/core/local-db/local-db";
 
 const PIN_POLL_MS = 15_000;
 const AUTHENTICATED_POLL_MS = 60_000;
@@ -53,9 +54,10 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
     }),
     [pos?.stores, pos?.state.products, pos?.state.members, pos?.state.sales],
   );
-  const textRefs = useRef(refs);
-  textRefs.current = refs;
-  const eventText = useCallback((value: string) => humanizeText(value, textRefs.current), []);
+  const humanizer = useMemo(() => createTextHumanizer(refs), [refs]);
+  const textFormatter = useRef(humanizer);
+  textFormatter.current = humanizer;
+  const eventText = useCallback((value: string) => textFormatter.current(value), []);
 
   // Everyone polls the feed. Server and local audience filters return general
   // branch activity to supervisors and private approval notices to recipients.
@@ -65,6 +67,8 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
   const meKey = user?.staffId ?? user?.name ?? "";
   const [cleared, setCleared] = useState<string[]>(() => clearedIds(meKey));
   const [rows, setRows] = useState<ActivityEvent[]>([]);
+  const [rowsScope, setRowsScope] = useState<string | null>(null);
+  const [displayLimit, setDisplayLimit] = useState(30);
   const [, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
   const [missing, setMissing] = useState(false);
@@ -156,6 +160,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
         limit: 200,
         storeId: activeBranchId() ?? undefined,
         from: new Date(Date.now() - NOTIFICATION_RETENTION_MS).toISOString(),
+        to: new Date().toISOString(),
       });
       if (generation !== refreshGeneration.current) return;
       if (isActivityLogMissing()) {
@@ -163,6 +168,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
         return;
       }
       setRows((current) => (JSON.stringify(current) === JSON.stringify(list) ? current : list));
+      setRowsScope(preferenceScope);
       mergeRemoteActivityPreferences(meKey, list);
       const hidden = new Set(clearedIds(meKey));
       const fresh = unseenEvents(list, meKey).filter(
@@ -220,13 +226,17 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
         });
       }
     }
-  }, [eventText, meKey, showActivity, updatePreference]);
+  }, [eventText, meKey, showActivity, updatePreference, preferenceScope]);
   refreshLatest.current = refresh;
 
   useEffect(() => {
     if (!showActivity) return;
     const generation = refreshGeneration.current;
     mounted.current = true;
+    setRows([]);
+    setRowsScope(null);
+    announcedIdsRef.current.clear();
+    activityInitializedRef.current = false;
     const onCleared = () =>
       setCleared((current) => {
         const next = clearedIds(meKey);
@@ -236,8 +246,13 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
     const tick = () => {
       if (document.visibilityState !== "hidden") void refresh().catch(() => undefined);
     };
+    let eventTimer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = () => {
+      if (eventTimer) clearTimeout(eventTimer);
+      eventTimer = setTimeout(() => { eventTimer = undefined; tick(); }, 150);
+    };
     tick();
-    const off = subscribeActivityEvents(tick);
+    const off = subscribeActivityEvents(schedule);
     const t = setInterval(() => {
       // Stop polling a database that has no activity log.
       if (isActivityLogMissing()) {
@@ -245,13 +260,14 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
         return;
       }
       tick();
-    }, hasStaffSession() ? AUTHENTICATED_POLL_MS : PIN_POLL_MS);
+    }, localDb()?.onBusinessChanged || hasStaffSession() ? AUTHENTICATED_POLL_MS : PIN_POLL_MS);
     document.addEventListener("visibilitychange", tick);
     window.addEventListener("pos:activity-cleared-changed", onCleared);
     window.addEventListener("storage", onCleared);
     return () => {
       refreshGeneration.current = generation + 1;
       mounted.current = false;
+      if (eventTimer) clearTimeout(eventTimer);
       off();
       clearInterval(t);
       document.removeEventListener("visibilitychange", tick);
@@ -261,9 +277,10 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
   }, [showActivity, refresh, meKey]);
 
   const visibleRows = useMemo(
-    () => visibleActivityRows(rows, cleared, preferenceBusy, preferenceScope),
-    [rows, cleared, preferenceBusy, preferenceScope],
+    () => rowsScope === preferenceScope ? visibleActivityRows(rows, cleared, preferenceBusy, preferenceScope) : [],
+    [rows, rowsScope, cleared, preferenceBusy, preferenceScope],
   );
+  const displayedRows = useMemo(() => visibleRows.slice(0, displayLimit), [visibleRows, displayLimit]);
   const badge = unseenEvents(visibleRows, meKey).length;
   const saving = [...preferenceBusy].some(key => key.startsWith(`${preferenceScope}:`));
 
@@ -275,6 +292,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
       onOpenChange={(v) => {
         setOpen(v);
         if (v) {
+          setDisplayLimit(30);
           markActivitySeen(rows[0]?.createdAt ?? new Date().toISOString(), meKey);
           setUnread(0);
         }
@@ -286,8 +304,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
           size="icon"
           aria-label={badge ? `Notifications: ${badge} new` : "Notifications"}
           className={cn(
-            "relative shrink-0 bg-transparent shadow-none hover:bg-transparent",
-            badge ? "text-primary" : "",
+            "relative shrink-0 rounded-full border border-primary/15 bg-primary/5 text-primary shadow-none hover:bg-primary/10",
           )}
         >
           <Bell className="size-4" />
@@ -337,7 +354,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
             </p>
           ) : (
             <AnimatedList
-              items={visibleRows}
+              items={displayedRows}
               getKey={activityKey}
               empty={
                 <p className="px-3 py-6 text-center text-xs text-muted-foreground">
@@ -408,6 +425,10 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
               )}
             />
           )}
+          {displayedRows.length < visibleRows.length && <Button type="button" variant="outline" className="mt-2 w-full"
+            onClick={() => setDisplayLimit(value => value + 30)}>
+            Show more ({displayedRows.length} of {visibleRows.length})
+          </Button>}
         </div>
       </DialogContent>
     </Dialog>

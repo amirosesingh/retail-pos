@@ -594,7 +594,7 @@ function Purchasing() {
       name: "",
       sku: code,
       barcode: code,
-      category: "General",
+      category: "Default",
       price: 0,
       cost: 0,
       ecomPrice: 0,

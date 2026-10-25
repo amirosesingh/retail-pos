@@ -7,7 +7,7 @@ import { isElectron } from "@/platform-config/platform";
 export function DesktopUpdateBanner() {
   const { state, supported, install, check, download, installing, installError } = useAppUpdates();
   useEffect(() => updateBridge()?.onUpdateSafety?.(updateRestartSafe), []);
-  if (!supported || !isElectron()) return null;
+  if (!supported || !isElectron() || !["available", "downloading", "ready"].includes(state.status) && !(state.available && ["error", "checking"].includes(state.status))) return null;
   const ready = state.status === "ready";
   const failed = state.status === "error";
   const downloading = state.status === "downloading";

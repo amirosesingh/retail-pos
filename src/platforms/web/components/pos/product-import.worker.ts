@@ -2,16 +2,25 @@
 
 import * as XLSX from "xlsx";
 
-type ParseRequest = { name: string; buffer: ArrayBuffer };
+type ParseRequest = { name: string; buffer: ArrayBuffer } | { sheetName: string };
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
+let workbook: XLSX.WorkBook | null = null;
+let fileName = "";
 
 ctx.onmessage = (event: MessageEvent<ParseRequest>) => {
   try {
     ctx.postMessage({ type: "progress", percent: 10, label: "Reading the file…" });
-    const workbook = XLSX.read(event.data.buffer, { type: "array", dense: true });
-    const first = workbook.SheetNames[0];
-    const sheet = first ? workbook.Sheets[first] : undefined;
+    if ("buffer" in event.data) {
+      workbook = XLSX.read(event.data.buffer, { type: "array", dense: true, raw: true });
+      fileName = event.data.name;
+      if (workbook.SheetNames.length > 1) {
+        ctx.postMessage({ type: "sheets", names: workbook.SheetNames });
+        return;
+      }
+    }
+    const selected = "sheetName" in event.data ? event.data.sheetName : workbook?.SheetNames[0];
+    const sheet = selected && workbook?.SheetNames.includes(selected) ? workbook.Sheets[selected] : undefined;
     if (!sheet) throw new Error("The workbook does not contain a worksheet");
 
     ctx.postMessage({ type: "progress", percent: 45, label: "Reading spreadsheet rows…" });
@@ -26,7 +35,8 @@ ctx.onmessage = (event: MessageEvent<ParseRequest>) => {
         label: `Prepared ${end.toLocaleString()} of ${rows.length.toLocaleString()} rows…`,
       });
     }
-    ctx.postMessage({ type: "complete", total: rows.length, fileName: event.data.name });
+    ctx.postMessage({ type: "complete", total: rows.length, fileName });
+    workbook = null;
   } catch (error) {
     ctx.postMessage({
       type: "error",

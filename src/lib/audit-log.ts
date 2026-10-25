@@ -433,6 +433,25 @@ async function flushBatchUnderLock() {
   const pending = replayOrder(logs.filter((l) => !l.synced_to_cloud));
   setSync({ online, pending: pending.length });
   const desktop = localDb();
+  if (desktop?.logConnection && !hasSignedInIdentity()) {
+    // Startup/login navigation has no verified person to authorize a SQL
+    // audit write. Preserve only that anonymous, nonfinancial activity in
+    // native diagnostics. Never discard a person's pending business audit or
+    // mark it acknowledged by the cloud merely because the app is closing.
+    const recorded = new Set<string>();
+    for (const row of pending) {
+      if (row.staffId !== "anonymous" || !["browse", "security", "settings", "report", "other"].includes(row.category)) continue;
+      const result = await desktop.logConnection("application.signed-out-activity", {
+        category: "application", stage: "signed-out", scope: row.id,
+        message: `Signed-out ${row.category} activity recorded`,
+      });
+      if (!result?.ok) throw new Error("Signed-out activity could not be saved to the local diagnostic log.");
+      recorded.add(row.id);
+    }
+    if (recorded.size) { logs = logs.filter(row => !recorded.has(row.id)); emit(); }
+    setSync({ pending: logs.filter(row => !row.synced_to_cloud).length });
+    return;
+  }
   if ((!online && !desktop) || !pending.length) return;
   // Nobody signed in: the central journal would reject the write anyway.
   // The entries stay queued locally and go up on the next signed-in flush.

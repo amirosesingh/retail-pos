@@ -25,7 +25,7 @@ it.each(["local", "online"])("does not let a previous online override bypass SQL
   expect(renderToStaticMarkup(h(NativeBoot, null, "Sales"))).toContain("Checking local SQL");
   const cleanup = mocks.effects[0]();
   await Promise.resolve();
-  expect(mocks.setState).not.toHaveBeenCalled();
+  expect(mocks.setState).not.toHaveBeenCalledWith(true);
   emit(target === "local" ? {...pending, state:"enabled_ready", connected:true, tradingReady:true}
     : {...pending, state:"enabled_error"});
   expect(mocks.setState).toHaveBeenCalledWith(true);

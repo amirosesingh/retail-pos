@@ -93,34 +93,34 @@ export function SystemStatusBadge({
           )}
         </button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-[min(20rem,calc(100vw-1rem))] space-y-3">
-        <div className="flex items-center gap-2">
+      <PopoverContent align="end" className="w-[min(22rem,calc(100vw-1rem))] space-y-4 rounded-xl">
+        <div className="flex flex-wrap items-center gap-2">
           <CloudStateIcon tone={status.tone} />
           <p className="text-sm font-semibold">
-            {status.local.connected ? "Database connections" : "Central database connection"}
+            Database & synchronization
           </p>
           <span className="ml-auto text-[11px] text-muted-foreground">{status.label}</span>
         </div>
-        <p className="text-[11px] text-muted-foreground">{status.detail}</p>
+        <p className="text-xs leading-relaxed text-muted-foreground">{status.detail}</p>
+        <div className="rounded-lg border border-primary/15 bg-primary/5 px-3 py-2">
+          <p className="text-[11px] text-muted-foreground">Saving transactions to</p>
+          <p className="mt-1 text-sm font-semibold text-primary">{status.databaseMode}</p>
+        </div>
 
         <dl className="space-y-1.5 text-[11px]">
-          {status.local.connected && (
+          {
             <div className="flex justify-between gap-3">
-              <dt className="text-muted-foreground">Central Supabase</dt>
+              <dt className="text-muted-foreground">Online Supabase</dt>
               <dd
                 className={cn(
                   "font-medium",
-                  status.connectivity === "online" ? "text-success" : "text-destructive",
+                  status.connectivity === "online" ? "text-success" : status.connectivity === "connecting" ? "text-muted-foreground" : "text-destructive",
                 )}
               >
-                {status.connectivity === "online" ? "Connected" : "Unavailable"}
+                {!status.cloudConfigured ? "Not configured" : status.credentialsInvalid ? "Check credentials" : status.connectivity === "online" ? "Connected" : status.connectivity === "connecting" ? "Checking…" : "Unavailable"}
               </dd>
             </div>
-          )}
-          <div className="flex justify-between gap-3">
-            <dt className="text-muted-foreground">Database in use</dt>
-            <dd className="truncate font-medium">{status.databaseMode}</dd>
-          </div>
+          }
           <div className="flex justify-between gap-3">
             <dt className="text-muted-foreground">Connection checked</dt>
             <dd className="font-medium">{time(status.checkedAt)}</dd>
@@ -128,19 +128,15 @@ export function SystemStatusBadge({
           {status.local.connected && (
             <>
               <div className="flex justify-between gap-3">
-                <dt className="text-muted-foreground">Offline database</dt>
-                <dd className="truncate font-medium text-success">
-                  Connected · {status.local.database ?? "SQL Server"}
+                <dt className="text-muted-foreground">Local SQL Server</dt>
+                <dd className={cn("font-medium", status.local.ready ? "text-success" : "text-muted-foreground")}>
+                  {status.local.ready ? "Ready" : "Preparing"}{!status.local.inUse ? " · not in use" : ""}
                 </dd>
               </div>
               <div className="flex justify-between gap-3">
-                <dt className="text-muted-foreground">SQL Server activity</dt>
-                <dd className="font-medium">
-                  {status.syncing
-                    ? status.syncPhase.replaceAll("_", " ")
-                    : status.pending
-                      ? `${status.pending} waiting`
-                      : "Idle · ready"}
+                <dt className="text-muted-foreground">Local database</dt>
+                <dd className="max-w-48 break-all text-right font-medium">
+                  {status.local.database ?? "SQL Server"}
                 </dd>
               </div>
               <div className="flex justify-between gap-3">
@@ -156,9 +152,9 @@ export function SystemStatusBadge({
                 </dd>
               </div>
               <div className="flex justify-between gap-3">
-                <dt className="text-muted-foreground">Automatic synchronization</dt>
+                <dt className="text-muted-foreground">Synchronization</dt>
                 <dd className="font-medium">
-                  {status.syncing ? "Running now" : status.lastError ? "Retry scheduled" : "Active"}
+                  {status.syncing ? (status.syncPhase === "pulling" ? "Receiving updates" : "Sending updates") : status.lastError ? "Needs attention" : status.pending ? "Waiting to send" : status.lastSyncAt ? "Up to date" : "Waiting for first sync"}
                 </dd>
               </div>
               <div className="flex justify-between gap-3">

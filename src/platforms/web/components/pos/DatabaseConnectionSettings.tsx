@@ -40,7 +40,7 @@ export function DatabaseConnectionSettings() {
         />
         <Stat
           label="Writing to"
-          value={isWindowsShell() ? "Local SQL Server" : "Central database"}
+          value={status.databaseMode}
         />
       </div>
 

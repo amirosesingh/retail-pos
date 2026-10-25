@@ -42,3 +42,19 @@ test('offline close is refused if the local journal cannot be read', async () =>
   await assert.rejects(runShutdownSync({health:async()=>({online:false,ready:false,code:'EOFFLINE'}),
     pendingSummary:async()=>{throw new Error('Local DB unavailable');},run:async()=>{}}),/Local DB unavailable/);
 });
+
+test('signed-out normal exit preserves readable pending records without anonymous uploads or false ACKs', async () => {
+  const result = await runShutdownSync({ signedOut:true, allowSignedOutExit:true,
+    pendingSummary:async()=>({pending:3,failed:1}),
+    health:async()=>assert.fail('login screen should not call the cloud'),
+    run:async()=>assert.fail('login screen must not upload as a person') });
+  assert.deepEqual(result,{pending:3,failed:1,ok:true,synchronized:false,authenticationRequired:true});
+});
+test('signed-out exit refuses an unreadable journal and does not bypass installer or shift synchronization', async () => {
+  await assert.rejects(runShutdownSync({signedOut:true,allowSignedOutExit:true,
+    pendingSummary:async()=>{throw new Error('Journal unavailable');}}),/Journal unavailable/);
+  const result=await runShutdownSync({signedOut:true,allowSignedOutExit:false,
+    health:async()=>({online:true,ready:false,code:'HTTP_403'}),
+    pendingSummary:async()=>assert.fail('mandatory close cannot defer'),run:async()=>assert.fail('no authorization')});
+  assert.equal(result.ok,false);assert.equal(result.code,'HTTP_403');
+});

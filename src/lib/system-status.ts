@@ -1,5 +1,8 @@
 /** One online connection status shared by every client surface. */
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { effectiveDatabaseMode, subscribeDatabaseMode } from "@/core/local-db/db-mode";
+import { observeLiveSnapshot } from "./observe-live-snapshot";
+import { hasSupabaseConfig } from "./external-supabase-config";
 import {
   connectivity,
   lastHealth,
@@ -29,6 +32,8 @@ export type SystemStatus = {
   cloudConfigured: boolean;
   local: {
     connected: boolean;
+    ready: boolean;
+    inUse: boolean;
     server: string | null;
     database: string | null;
     lastReadAt: null;
@@ -69,6 +74,7 @@ export function useSystemStatus(): SystemStatus {
   const [, force] = useState(0);
   const [desktopDatabase, setDesktopDatabase] = useState<Record<string, unknown> | null>(null);
   const [desktopSync, setDesktopSync] = useState<Record<string, unknown> | null>(null);
+  const databaseMode = useSyncExternalStore(subscribeDatabaseMode, effectiveDatabaseMode, () => "online");
   useEffect(() => subscribeConnectivity(() => force((value) => value + 1)), []);
   useEffect(() => {
     if (!hasLocalSqlEngine()) return;
@@ -86,10 +92,10 @@ export function useSystemStatus(): SystemStatus {
         };
       }
     ).pos;
-    void bridge?.database?.getState().then(setDesktopDatabase);
-    void bridge?.sync?.getStatus().then(setDesktopSync);
-    const offDatabase = bridge?.database?.subscribe(setDesktopDatabase);
-    const offSync = bridge?.sync?.subscribe(setDesktopSync);
+    const offDatabase = bridge?.database && observeLiveSnapshot(
+      () => bridge.database!.getState(), callback => bridge.database!.subscribe(callback), setDesktopDatabase);
+    const offSync = bridge?.sync && observeLiveSnapshot(
+      () => bridge.sync!.getStatus(), callback => bridge.sync!.subscribe(callback), setDesktopSync);
     return () => {
       offDatabase?.();
       offSync?.();
@@ -98,16 +104,19 @@ export function useSystemStatus(): SystemStatus {
 
   const conn = connectivity();
   const health = lastHealth();
-  const status = describeStatus({ connectivity: conn });
+  const credentialsInvalid = desktopSync?.credentialsInvalid === true;
+  const status = describeStatus({ connectivity: conn, credentialsInvalid });
   const desktop = hasLocalSqlEngine();
   const localConnected = desktop && desktopDatabase?.connected === true;
+  const localReady = localConnected && desktopDatabase?.tradingReady === true;
+  const localInUse = localConnected && databaseMode === "local";
   const profile = (desktopDatabase?.profile ?? null) as {
     server?: string;
     database?: string;
   } | null;
   const syncing =
     desktop &&
-    (desktopSync?.running === true || (desktopSync?.phase != null && desktopSync.phase !== "idle"));
+    (desktopSync?.running === true || (desktopSync?.running == null && ["pushing", "pulling"].includes(String(desktopSync?.phase))));
   const lastPushAt = typeof desktopSync?.lastPushAt === "string" ? desktopSync.lastPushAt : null;
   const lastPullAt = typeof desktopSync?.lastPullAt === "string" ? desktopSync.lastPullAt : null;
   const lastSyncAt =
@@ -117,8 +126,10 @@ export function useSystemStatus(): SystemStatus {
       .at(-1) ?? null;
   const syncError = typeof desktopSync?.lastError === "string" ? desktopSync.lastError : null;
   const syncPhase = typeof desktopSync?.phase === "string" ? desktopSync.phase : "idle";
-  const desktopView = desktop
-    ? syncing
+  const desktopView = localInUse
+    ? !localReady
+      ? { tone: "connecting" as const, label: "Preparing local database", detail: "SQL Server is connected; store data is being prepared." }
+      : syncing
       ? {
           tone: "busy" as const,
           label: "Synchronizing",
@@ -150,8 +161,8 @@ export function useSystemStatus(): SystemStatus {
     connectivity: conn,
     ...desktopView,
     checkedAt: health?.at ? new Date(health.at).toISOString() : null,
-    credentialsInvalid: false,
-    databaseMode: localConnected ? "Local SQL Server + Supabase sync" : "Central database",
+    credentialsInvalid,
+    databaseMode: localInUse ? "Local SQL Server" : "Online Supabase",
     pending: Number(desktopSync?.pending ?? 0),
     conflicts: Number(desktopSync?.conflicts ?? 0),
     syncing,
@@ -160,9 +171,11 @@ export function useSystemStatus(): SystemStatus {
     syncEnabled: true,
     lastSyncAt,
     lastError: syncError,
-    cloudConfigured: conn !== "connecting",
+    cloudConfigured: hasSupabaseConfig(),
     local: {
       connected: localConnected,
+      ready: localReady,
+      inUse: localInUse,
       server: profile?.server ?? null,
       database: profile?.database ?? null,
       lastReadAt: null,

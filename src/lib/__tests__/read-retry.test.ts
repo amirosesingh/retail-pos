@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { retryDataRead, isTransientReadError, withReadDeadline } from "../read-retry";
 import { __resetSessionEpoch, bumpSessionEpoch } from "../session-epoch";
-import { businessReadsReady, transferReadsReady } from "../business-readiness";
+import { businessReadsReady, transferReadAllowed, transferReadsReady } from "../business-readiness";
+import { getEffectivePermissions, hasPermission } from "../permissions";
 
 describe("read-only transient recovery", () => {
   beforeEach(() => { __resetSessionEpoch(); vi.useFakeTimers(); });
@@ -76,6 +77,21 @@ describe("read-only transient recovery", () => {
 });
 
 describe("business read startup ordering", () => {
+  it("does not request transfers for catalogue-only staff", () => {
+    const permissions = getEffectivePermissions("cashier", { can_view_inventory: true, can_create_transfer: false, can_receive_transfer: false, can_approve_transfer: false });
+    expect(transferReadAllowed(flag => hasPermission(permissions, flag))).toBe(false);
+  });
+  it.each(["can_create_transfer", "can_receive_transfer", "can_approve_transfer"] as const)("allows saved %s for a cashier without a manager-role requirement", permission => {
+    const permissions = getEffectivePermissions("cashier", { [permission]: true });
+    expect(transferReadAllowed(flag => hasPermission(permissions, flag))).toBe(true);
+  });
+  it("stops transfer reads when every owning page is disabled", () => {
+    const permissions = getEffectivePermissions("cashier", { can_create_transfer: true, "page:requests": false, "page:transfers": false, "page:approvals": false, "page:verifications": false });
+    expect(transferReadAllowed(flag => hasPermission(permissions, flag))).toBe(false);
+  });
+  it("preserves administrator access using the existing permission resolver", () => {
+    expect(transferReadAllowed(flag => hasPermission({ role: "admin" }, flag))).toBe(true);
+  });
   it("waits for the current user's initial snapshot before loading transfers", () => {
     expect(transferReadsReady(true, "loading", "user-a", null, "store-a")).toBe(false);
     expect(transferReadsReady(true, "ready", "user-a", "user-b", "store-a")).toBe(false);

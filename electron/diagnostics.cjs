@@ -18,6 +18,7 @@ const MAX_BYTES = 512 * 1024;
 
 let baseDir = null;
 let crashDir = null;
+let sequence = 0;
 
 function dir() {
   if (baseDir) return baseDir;
@@ -51,35 +52,60 @@ function append(name, line) {
   }
 }
 
-const logCrash = (event, detail) =>
-  append("crash.log", `${event} ${detail ? JSON.stringify(detail) : ""}`.trim());
+const logCrash = (event, detail = {}) => logConnection(`application.${event}`, {
+  ...detail, category: "application", stage: "runtime",
+  message: detail.error ?? detail.reason ?? event,
+  failed: event !== "window.responsive",
+});
 
-const logServer = (line) => append("server.log", line);
+const logServer = (line) => logConnection("server.output", {
+  category: "server", message: String(line),
+  failed: /^(?:ERR\b|exited with code (?!0\b))|\b(?:error|fatal|exception)\b/i.test(String(line)),
+});
+
+function connectionFailed(event, detail) {
+  if (typeof detail.failed === "boolean") return detail.failed;
+  if (/\.(?:succeeded|success)$/.test(event)) return false;
+  if (/(?:failed|failure|error|unresponsive|timeout|migration_required)/i.test(event)) return true;
+  const state = String(detail.state ?? "");
+  if (["enabled_unconfigured", "enabled_validating", "enabled_connecting", "disabled", "disconnected"].includes(state)) return false;
+  return Boolean(detail.code) || detail.connected === false || /(?:failed|failure|error|timeout|migration_required)/i.test(state);
+}
 
 /** Durable, credential-free evidence for local SQL/cloud routing failures. */
 function logConnection(event, detail = {}) {
   const safe = {};
-  const allowed = ["state", "connected", "scope", "code", "stage", "category", "message", "latencyMs", "table", "sqlNumber"];
+  const allowed = ["state", "connected", "scope", "code", "stage", "category", "message", "latencyMs", "table", "sqlNumber", "reason", "exitCode", "type", "window"];
   for (const key of allowed) {
     const value = detail?.[key];
     if (value == null) continue;
     safe[key] = typeof value === "string"
       ? value
           .replace(/https?:\/\/[^\s]+/gi, "[url]")
-          .replace(/(apikey|authorization|token|password|key)\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]")
+          .replace(/(apikey|authorization|token|password|pin|secret|pwd|key)\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]")
+          .replace(/[\r\n\t]+/g, " ")
           .slice(0, 600)
       : value;
   }
-  append("connection.log", `${String(event ?? "connection").slice(0, 100)} ${JSON.stringify(safe)}`);
+  const name = String(event ?? "connection").replace(/[\r\n\t]+/g, " ").slice(0, 100);
+  const failed = connectionFailed(name, detail);
+  safe.outcome = failed ? "failure" : "success";
+  safe.sequence = ++sequence;
+  append(failed ? "failure.log" : "success.log", `${name} ${JSON.stringify(safe)}`);
 }
 
 /**
  * Returns recent database failures without requiring SQL Server to be online.
- * connection.log is the durable source so connection failures remain visible
+ * Success and failure logs are merged only for recovery classification. Older
+ * connection.log history remains readable without rewriting or deleting it.
  * even when the database that normally stores jobs cannot be opened.
  */
 function databaseErrors(limit = 100) {
-  const source = tail("connection.log", Math.max(200, Math.min(Number(limit) * 16, 3200)));
+  const size = Math.max(200, Math.min(Number(limit) * 16, 3200));
+  const source = ["connection.log.1", "connection.log", "success.log.1", "success.log", "failure.log.1", "failure.log"]
+    .flatMap(name => tail(name, size)).sort((left, right) =>
+      left.slice(0, 24).localeCompare(right.slice(0, 24)) ||
+      Number(left.match(/"sequence":(\d+)/)?.[1] ?? 0) - Number(right.match(/"sequence":(\d+)/)?.[1] ?? 0));
   const lastStart = source.map((line) => /\sapplication\.started\s/.test(line)).lastIndexOf(true);
   const active = new Map();
   for (const line of source.slice(lastStart < 0 ? 0 : lastStart + 1)) {
@@ -106,6 +132,7 @@ function databaseErrors(limit = 100) {
       }
       continue;
     }
+    if (detail.outcome === "success") continue;
     const normalUnconfiguredState = String(detail?.state ?? "").toLowerCase() === "enabled_unconfigured";
     const isFailure = (!normalUnconfiguredState && detail?.connected === false) || Boolean(detail?.code) || Boolean(detail?.message) || /(?:error|failed|failure|timeout|migration_required)/i.test(text);
     if (!isFailure || /(?:validating|connecting|disconnect(?:ed)?|disabled)$/i.test(String(detail?.state ?? ""))) continue;
@@ -140,8 +167,8 @@ function startCrashReporter() {
   try {
     const { crashReporter } = require("electron");
     crashReporter.start({
-      productName: "POS",
-      companyName: "POS",
+      productName: "Retail",
+      companyName: "Lucky Charm SDN BHD",
       submitURL: "",
       uploadToServer: false,
       compress: true,
@@ -215,7 +242,7 @@ const tail = (name, lines) => {
  */
 function writeReport(extra = {}) {
   const report = [
-    "POS diagnostic report",
+    "Retail diagnostic report",
     `generated: ${new Date().toISOString()}`,
     `platform:  ${process.platform} ${process.arch} (${os.release()})`,
     `electron:  ${process.versions.electron ?? "n/a"}  node: ${process.versions.node}`,
@@ -224,7 +251,13 @@ function writeReport(extra = {}) {
     "",
     ...Object.entries(extra).map(([key, value]) => `${key}: ${JSON.stringify(value)}`),
     "",
-    "--- crash.log (last 80) ---",
+    "--- failure.log (last 200) ---",
+    ...tail("failure.log", 200),
+    "",
+    "--- success.log (last 80) ---",
+    ...tail("success.log", 80),
+    "",
+    "--- legacy crash.log (last 80) ---",
     ...tail("crash.log", 80),
     "",
     "--- connection.log (last 200) ---",

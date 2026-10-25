@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   native: true,
   platform: "ios",
   orb: undefined as ComponentProps<typeof NativeUpdateOrb> | undefined,
-  desktop: { supported: true, state: { status: "idle", percent: 0 }, installing: false,
+  desktop: { supported: true, state: { status: "idle", percent: 0, available: undefined as string | undefined }, installing: false,
     check: vi.fn(), download: vi.fn(), install: vi.fn() },
   android: { available: false, state: { supported: true, latest: null as string | null,
     checking: false, downloading: false, percent: 0, readyUri: null as string | null, error: null as string | null },
@@ -39,23 +39,30 @@ import { IosUpdateBanner } from "@/platforms/ios/ui";
 
 beforeEach(() => { vi.clearAllMocks(); mocks.native = true; mocks.platform = "ios"; mocks.orb = undefined; });
 describe("global native update controls without an authenticated session", () => {
-  it("keeps Windows checking available before sign-in and after a successful check", () => {
-    for (const status of ["idle", "current", "error", "checking", "downloading", "available", "ready"]) {
+  it("shows Windows updates before sign-in only while an update exists", () => {
+    for (const status of ["idle", "current", "unavailable", "error", "checking"]) {
+      mocks.desktop.state.status = status;
+      mocks.desktop.state.available = undefined;
+      expect(renderToStaticMarkup(h(DesktopUpdateBanner))).toBe("");
+    }
+    mocks.desktop.state.available = "1.0.1";
+    for (const status of ["error", "checking", "downloading", "available", "ready"]) {
       mocks.desktop.state.status = status;
       const html = renderToStaticMarkup(h(DesktopUpdateBanner));
       expect(html).toContain("Application update");
       expect(mocks.orb?.busy).toBe(["checking", "downloading"].includes(status));
       if (!["checking", "downloading"].includes(status)) mocks.orb?.onClick();
     }
-    expect(mocks.desktop.check).toHaveBeenCalledTimes(3);
+    expect(mocks.desktop.check).toHaveBeenCalledOnce();
+    mocks.desktop.state.status = "current";
+    expect(renderToStaticMarkup(h(DesktopUpdateBanner))).toBe("");
     expect(mocks.desktop.download).toHaveBeenCalledOnce();
     expect(mocks.desktop.install).toHaveBeenCalledOnce();
   });
-  it("lets Android check without an available version and download/install when ready", () => {
+  it("hides Android controls when current and keeps download/install available without sign-in", () => {
     mocks.android.available = false;
-    expect(renderToStaticMarkup(h(AndroidUpdateBanner))).toContain("Tap to check for updates");
-    mocks.orb?.onClick();
-    expect(mocks.android.check).toHaveBeenCalledOnce();
+    expect(renderToStaticMarkup(h(AndroidUpdateBanner))).toBe("");
+    expect(mocks.android.check).not.toHaveBeenCalled();
     mocks.android.available = true; mocks.android.state.latest = "1.0.1";
     renderToStaticMarkup(h(AndroidUpdateBanner)); mocks.orb?.onClick();
     expect(mocks.android.download).toHaveBeenCalledOnce();
@@ -65,11 +72,13 @@ describe("global native update controls without an authenticated session", () =>
     mocks.android.state.readyUri = null; mocks.android.state.checking = true;
     expect(renderToStaticMarkup(h(AndroidUpdateBanner))).toContain('disabled=""');
     mocks.android.state.checking = false;
+    mocks.android.available = false;
+    expect(renderToStaticMarkup(h(AndroidUpdateBanner))).toBe("");
   });
-  it("lets iOS check before any manifest is loaded and requires confirmation to restart", () => {
+  it("hides iOS controls without an update and requires confirmation to restart", () => {
     mocks.iosState.phase = "idle"; mocks.iosState.latest = undefined;
-    expect(renderToStaticMarkup(h(IosUpdateBanner))).toContain("Tap to check for updates");
-    mocks.orb?.onClick(); expect(mocks.ios.check).toHaveBeenCalledWith(true);
+    expect(renderToStaticMarkup(h(IosUpdateBanner))).toBe("");
+    expect(mocks.ios.check).not.toHaveBeenCalled();
     mocks.iosState.phase = "ready"; mocks.iosState.latest = { version: "1.0.1" };
     const confirm = vi.fn().mockReturnValue(false);
     vi.stubGlobal("window", { confirm });

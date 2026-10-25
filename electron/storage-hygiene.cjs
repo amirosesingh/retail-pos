@@ -90,7 +90,7 @@ function entryBytes(target) {
 /** Byte-level storage report used by Settings; no file contents are exposed. */
 function usage(userData) {
   const cacheBytes = CACHE_DIRS.reduce((total, name) => total + entryBytes(path.join(userData, name)), 0);
-  const diagnosticBytes = ["crash.log", "crash.log.1", "connection.log", "connection.log.1", "server.log", "server.log.1"]
+  const diagnosticBytes = ["crash.log", "crash.log.1", "connection.log", "connection.log.1", "server.log", "server.log.1", "failure.log", "failure.log.1", "success.log", "success.log.1"]
     .reduce((total, name) => total + entryBytes(path.join(userData, name)), 0);
   const totalBytes = entryBytes(userData);
   return {

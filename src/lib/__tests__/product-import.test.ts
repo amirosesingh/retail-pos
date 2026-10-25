@@ -41,6 +41,15 @@ const row = (over: Record<string, unknown> = {}) => ({
 });
 
 describe("readNumber", () => {
+  it("preserves decimal and scientific numeric values and recognises decimal commas", () => {
+    for (const value of [12.3456, "12.3456", "12,3456"]) expect(readNumber(value)).toBe(12.3456);
+    expect(readNumber("1.234,56")).toBe(1234.56);
+    expect(readNumber("1,234.56")).toBe(1234.56);
+    expect(readNumber(1e-7)).toBe(1e-7);
+    expect(readNumber("1e-7")).toBe(1e-7);
+    expect(readNumber(Infinity)).toBeNull();
+    expect(readNumber("(12.50)")).toBe(-12.5);
+  });
   it("reads money-formatted values and leaves blanks empty", () => {
     expect(readNumber("RM 1,200.50")).toBe(1200.5);
     expect(readNumber("")).toBeNull();
@@ -119,6 +128,17 @@ describe("planImport", () => {
 });
 
 describe("reviewable product imports", () => {
+  it("does not report conflicts for equivalent decimal representations", () => {
+    const staged = planImportReview([row({ barcode: "111", name: "Existing item", price: "10,00", cost: "5.0000", category: "Coffee" })], [product()]).rows[0];
+    expect(staged.status).toBe("ready");
+    expect(staged.conflictFields).toEqual([]);
+  });
+  it("uses Default for a new product without a category and rejects nonfinite edits", () => {
+    const staged = planImportReview([row({ category: " " })], []).rows[0];
+    expect(staged.category).toBe("Default");
+    expect(reviewRowToImport(staged)?.category).toBe("Default");
+    expect(updateReviewRow(staged, { price: Infinity, cost: NaN }).missingFields).toEqual(expect.arrayContaining(["price", "cost"]));
+  });
   it("fills blank source fields from an existing database product", () => {
     const review = planImportReview(
       [row({ barcode: "111", name: "", price: "", cost: "", category: "" })],

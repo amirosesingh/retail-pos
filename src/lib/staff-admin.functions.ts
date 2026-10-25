@@ -41,12 +41,11 @@ export const listManagedStaffAccounts = createServerFn({ method: "POST" })
     try {
       await requireStaffManager(data);
       const { serviceRest } = await import("@/core/api/pos-relay.server");
-      const response = await serviceRest(
+      const [response, rulesResponse] = await Promise.all([serviceRest(
         "app_users?select=id,auth_user_id,user_id,login_username,full_name,email,role,role_slug,store_id,is_active,permissions,pin_length,pin_set_at,last_login_at,created_at&order=full_name.asc",
-      );
+      ), serviceRest("authorization_actions?select=*")]);
       if (!response.ok) throw new Error("Staff accounts could not be loaded.");
       const rows = z.array(managedStaffRow).parse(await response.json());
-      const rulesResponse = await serviceRest("authorization_actions?select=*");
       if (!rulesResponse.ok) throw new Error("Approval rules could not be loaded.");
       const { normalizeRule } = await import("./authorization");
       const { approvalPinEligible } = await import("./approval-pin-eligibility");
