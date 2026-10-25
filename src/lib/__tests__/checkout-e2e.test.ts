@@ -47,7 +47,7 @@ import {
   receivingCorrectionOps,
   type ReceivingInvoice,
 } from "@/core/api/pos-db";
-import { setPreferredDatabaseMode } from "@/core/local-db/db-mode";
+import { setPreferredDatabaseMode, setStartupOnlineMode } from "@/core/local-db/db-mode";
 import type { Member, Product, Sale } from "@/core/types/pos-types";
 
 const sale = (over: Partial<Sale> = {}): Sale =>
@@ -127,6 +127,26 @@ describe("checkout commit", () => {
     localQuery.mockResolvedValueOnce({ ok: false, error: "Disconnected" });
     expect(await db.saleAttemptExists("txn-1")).toBe("unknown");
     expect(attemptRows).not.toHaveBeenCalled();
+  });
+
+  it("an Electron till in online fallback saves through one central transaction, never its local bridge", async () => {
+    platform.offlineFirst = true;
+    const values = new Map<string,string>();
+    vi.stubGlobal("window", {sessionStorage: {getItem:(key:string)=>values.get(key) ?? null,
+      setItem:(key:string,value:string)=>values.set(key,value),removeItem:(key:string)=>values.delete(key)},
+      localStorage:{getItem:()=>null,removeItem:()=>{}}});
+    try {
+      setStartupOnlineMode(true);
+      await expect(db.commitSale(sale(), [], null)).resolves.toBe("cloud");
+      expect(live).toHaveBeenCalledOnce();
+      expect(saleArgs()?._sale).toMatchObject({store_id:"store-1"});
+      expect(localAggregate).not.toHaveBeenCalled();
+      expect(localWrite).not.toHaveBeenCalled();
+      live.mockReset().mockRejectedValueOnce(Object.assign(new Error("Sale permission revoked"),{code:"PERMISSION_DENIED"}));
+      await expect(db.commitSale(sale(),[],null)).rejects.toMatchObject({code:"PERMISSION_DENIED"});
+      expect(localAggregate).not.toHaveBeenCalled();
+      expect(localWrite).not.toHaveBeenCalled();
+    } finally { vi.unstubAllGlobals(); }
   });
 
   it("online checkout does not require catalogue-edit permissions after committing payment", async () => {
