@@ -10,7 +10,8 @@ import { setPersonalLanguage } from "@/lib/time-zone";
 import { useDisplayProfile } from "@/lib/display-profile";
 import { setSharedPrinterPrefs } from "@/lib/receipt-printer";
 import { LogOut, Menu, MapPin, ReceiptText, Store } from "lucide-react";
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { AppShellContext } from "@/lib/app-shell-context";
 import { usePos } from "@/lib/pos-store";
 import { useAuth, type PermissionFlag } from "@/lib/pos-auth";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
@@ -100,8 +101,6 @@ function requiredPermission(pathname: string): PermissionFlag | null | "unknown"
   if (pathname.replace(/\/+$/, "") === "/approvals") return null;
   return routePermissionForPath(pathname) ?? "unknown";
 }
-
-const AppShellContext = createContext(false);
 
 /**
  * Route components still wrap their content in AppShell for backwards
