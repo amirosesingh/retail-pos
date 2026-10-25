@@ -157,11 +157,11 @@ describe("checkout commit", () => {
     expect(opsSent().some(op => op.table === "products")).toBe(false);
   });
 
-  it.each([1, 0])("local checkout preserves hidden catalogue fields with %i units left and no archive rights", async remaining => {
+  it.each([1, 0, -1])("local checkout preserves hidden catalogue fields with %i units left and no archive rights", async remaining => {
     platform.offlineFirst = true;
     setPreferredDatabaseMode("local");
     const product: Product = { id: "p1", name: "Racket", sku: "R1", barcode: "10001", category: "Sports",
-      cost: 0, price: 100, reorderLevel: 0, taxRate: 0, stockByStore: { "store-1": remaining }, archived: remaining === 0 };
+      cost: 0, price: 100, reorderLevel: 0, taxRate: 0, stockByStore: { "store-1": remaining }, archived: remaining <= 0 };
     await expect(db.commitSale(sale(), [product], null)).resolves.toBe("local");
     const operation = localAggregate.mock.calls[0][0].operations.find((op: {table:string}) => op.table === "products");
     expect(operation).toEqual({ kind: "update", table: "products", match: { id: "p1" },
@@ -174,6 +174,13 @@ describe("checkout commit", () => {
       Object.keys(current).map(name => ({ cloudColumn: name, sqlServerColumn: name, cloudType: name === "stock_by_store" ? "jsonb" : "text" })) }] };
     const writer = new OperationsRepository({ sql: () => ({ Request }) }, registry);
     const scope = { enforcePermissions: true, productWriteKind: "sale", permissions: { can_process_sale: true } };
+    const { aggregatePolicy } = await import("../../../electron/db/write-policy.cjs");
+    expect(() => aggregatePolicy("sale", localAggregate.mock.calls[0][0].operations, {
+      level: "staff", source: "pos", subject: "cashier", permissions: scope.permissions,
+    })).not.toThrow();
+    expect(() => aggregatePolicy("sale", localAggregate.mock.calls[0][0].operations, {
+      level: "staff", source: "pos", subject: "cashier", permissions: { can_process_sale: false },
+    })).toThrow("Sale permission is required");
     // The former full-row rewrite failed on redacted cost/automatic archiving.
     await expect(writer.assertProductPermissions({}, { kind: "upsert", table: "products", rows: [{ ...current,
       cost_price: 0, is_archived: true }] }, scope)).rejects.toMatchObject({code:"PERMISSION_DENIED"});

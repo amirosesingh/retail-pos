@@ -23,7 +23,8 @@ export function parseStockCountRow(row: Record<string, unknown>):
   const key = [fields.barcode, fields.sku, fields.code]
     .map(value => String(value ?? "").trim()).find(Boolean);
   if (!key) return { error: "no barcode or SKU" };
-  const value = fields.counted ?? fields.quantity ?? fields.qty;
+  const value = [fields.counted, fields.quantity, fields.qty]
+    .find(candidate => candidate != null && String(candidate).trim() !== "");
   const quantity = Number(value);
   if (value == null || String(value).trim() === "" || typeof value === "boolean" ||
       !Number.isSafeInteger(quantity) || quantity < 0) {

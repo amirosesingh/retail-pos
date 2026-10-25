@@ -38,6 +38,7 @@ import {
   Plus,
   Printer,
   PrinterX,
+  ReceiptText,
   Search,
   ScanBarcode,
   Trash2,
@@ -1838,11 +1839,13 @@ function Register() {
   );
 
   const slot_billHeader = (
-    <div className="flex flex-col gap-2 border-b border-border px-4 py-3">
+    <div className="flex flex-col gap-3 border-b border-border bg-card px-5 py-4">
       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold">Current Bill</p>
-          <p className="numeric truncate text-[11px] text-muted-foreground">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><ReceiptText className="size-5" aria-hidden /></span>
+          <div className="min-w-0">
+          <p className="truncate text-lg font-semibold tracking-tight">Current bill</p>
+          <p className="numeric mt-1 break-all text-xs font-medium text-muted-foreground">
             {billNo ? `#${billNo}` : "New bill — scan an item to start"}
           </p>
           {appliedApproval && (
@@ -1850,6 +1853,7 @@ function Register() {
               Approval certificate · {appliedApprovalText}
             </p>
           )}
+          </div>
         </div>
         <span
           className={`shrink-0 rounded-full border px-2 py-1 text-[11px] font-medium ${
@@ -1866,6 +1870,7 @@ function Register() {
           <Button
             variant="outline"
             size="sm"
+            className="h-auto min-h-9 rounded-lg border-accent/20 bg-accent/5 px-3 py-2 text-accent hover:bg-accent/10"
             onClick={() => void beginExchange()}
           >
             <Repeat className="size-4" /> Exchange
@@ -1875,6 +1880,7 @@ function Register() {
           <Button
             variant="outline"
             size="sm"
+            className="h-auto min-h-9 rounded-lg border-primary/20 bg-primary/5 px-3 py-2 text-primary hover:bg-primary/10"
             disabled={tillLocked}
             onClick={() => setBookingHubOpen(true)}
           >
@@ -1924,11 +1930,11 @@ function Register() {
 
   const slot_standardProductLookup = (
     <section className="flex h-full min-h-0 flex-col bg-background">
-      <div className="space-y-3 border-b border-border p-4">
+      <div className="space-y-4 border-b border-border bg-card p-4">
         {workspaceBackButton}
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="font-semibold">Product lookup</p>
+            <p className="text-base font-semibold tracking-tight">Product lookup</p>
             <p className="truncate text-xs text-muted-foreground">{currentStore.name}</p>
           </div>
           {activeShift ? (
@@ -1952,7 +1958,7 @@ function Register() {
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search name, SKU, barcode or category…"
             aria-label="Search products"
-            className="h-11 pl-9"
+            className="h-12 rounded-xl pl-10 text-base"
           />
         </div>
       </div>
@@ -1971,10 +1977,10 @@ function Register() {
               variant="outline"
               disabled={!activeShift}
               onClick={() => addLine(product.id)}
-              className="grid h-auto w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg bg-card px-3 py-2.5 text-left font-normal hover:border-primary/60 hover:bg-primary/5"
+              className="grid h-auto min-h-14 w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-xl bg-card px-3 py-3 text-left font-normal shadow-none transition-colors hover:border-primary/60 hover:bg-primary/5"
             >
               <span className="min-w-0">
-                <span className="block truncate text-sm font-medium">{product.name}</span>
+                <span className="line-clamp-2 text-sm font-medium leading-snug">{product.name}</span>
                 <span className="numeric block truncate text-[11px] text-muted-foreground">
                   {product.sku} · {stockAt(product, currentStore.id)} in stock
                 </span>
@@ -2003,11 +2009,11 @@ function Register() {
       </ScrollArea>
 
       <div className="grid shrink-0 gap-2 border-t border-border p-3 sm:grid-cols-2 lg:grid-cols-1 2xl:grid-cols-2">
-        <Button variant="outline" disabled={!activeShift} onClick={() => setCatalogOpen(true)}>
+        <Button variant="outline" className="h-auto min-h-10 gap-2 rounded-lg px-3 py-2 text-xs" disabled={!activeShift} onClick={() => setCatalogOpen(true)}>
           <PackageSearch className="size-4" /> Browse all / Advanced search
         </Button>
         {visible("register.customerDisplay") && (
-          <Button variant="outline" onClick={openCustomerDisplay}>
+          <Button variant="outline" className="h-auto min-h-10 gap-2 rounded-lg px-3 py-2 text-xs" onClick={openCustomerDisplay}>
             <MonitorPlay className="size-4" /> Customer screen
           </Button>
         )}
@@ -2315,9 +2321,11 @@ function Register() {
             </div>
           ))}
           {!lines.length && (
-            <p className="px-4 py-12 text-center text-sm text-muted-foreground">
-              Tap a product to start the ticket.
-            </p>
+            <div className="flex flex-col items-center gap-3 px-6 py-16 text-center">
+              <span className="grid size-14 place-items-center rounded-2xl bg-muted text-muted-foreground"><PackageSearch className="size-6" aria-hidden /></span>
+              <div className="space-y-1"><p className="text-base font-medium">Your bill is empty</p>
+                <p className="text-sm text-muted-foreground">Scan a barcode or choose a product to get started.</p></div>
+            </div>
           )}
         </div>
       </ScrollArea>
@@ -2458,7 +2466,7 @@ function Register() {
   );
 
   const receiptToggle = <Button type="button" variant={printThisBill ? "outline" : "secondary"} size="icon"
-    className="size-10 shrink-0" aria-label="Skip printing this bill" aria-pressed={!printThisBill}
+    className="size-12 shrink-0 rounded-xl" aria-label="Skip printing this bill" aria-pressed={!printThisBill}
     title={printThisBill ? "Printing on. Click to skip the receipt for this bill only." : "Printing off for this bill only. The drawer still follows its cash-payment rules."}
     disabled={saving || !lines.length} onClick={() => setPrintThisBill(value => !value)}>
     {printThisBill ? <Printer className="size-4" /> : <PrinterX className="size-4" />}
@@ -2572,7 +2580,7 @@ function Register() {
   ) : null;
 
   const slot_billFooter = (
-    <div className="w-full min-w-0 shrink-0 space-y-2 border-t border-border pb-4 pt-2 text-sm">
+    <div className="w-full min-w-0 shrink-0 space-y-2 border-t border-border bg-card pb-4 pt-3 text-sm">
       {atom_totalsBlock}
       <div className="px-4">
         <Separator />
@@ -2742,7 +2750,7 @@ function Register() {
                     />
 
                     {/* Current sale owns the remaining width. */}
-                    <section className="register-sale flex flex-col bg-sidebar">
+                    <section className="register-sale flex flex-col bg-background">
                       {slot_billHeader}
 
                       <div className="border-b border-border px-4 py-3">{slot_memberSearch}</div>
@@ -2755,7 +2763,7 @@ function Register() {
                           {atom_actCoupon && (
                             <div className="h-10 min-w-32 flex-1">{atom_actCoupon}</div>
                           )}
-                          <Button asChild variant="outline" className="h-10 min-w-32 flex-1">
+                          <Button asChild variant="outline" className="h-auto min-h-10 min-w-32 flex-1 rounded-lg border-primary/20 bg-primary/5 px-3 py-2 text-primary hover:bg-primary/10">
                             <Link to="/holds">
                               <PauseCircle className="size-4" /> Held bills
                               {held.length > 0 && (
@@ -2768,7 +2776,7 @@ function Register() {
                           <Button
                             type="button"
                             variant="outline"
-                            className="h-10 min-w-28 flex-1"
+                            className="h-auto min-h-10 min-w-28 flex-1 rounded-lg px-3 py-2"
                             onClick={() => setReceiptPreview((open) => !open)}
                           >
                             <Printer className="size-4" /> Receipt
@@ -2776,7 +2784,7 @@ function Register() {
                           <Button
                             type="button"
                             variant="outline"
-                            className="h-10 min-w-28"
+                            className="h-auto min-h-10 min-w-28 rounded-lg px-3 py-2"
                             aria-expanded={deckOpen}
                             onClick={() => setDeckOpen((open) => !open)}
                           >

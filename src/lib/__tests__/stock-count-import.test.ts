@@ -18,4 +18,10 @@ describe("stock count upload templates", () => {
   it("accepts normalized headers and a SKU when barcode is blank", () => {
     expect(parseStockCountRow({ " Barcode ": "", SKU: "ABC", Counted: "4" })).toEqual({ key: "ABC", quantity: 4 });
   });
+  it("uses a populated quantity alias when workbook parsing supplies blank counted cells", () => {
+    expect(parseStockCountRow({ barcode: "001", counted: "", quantity: 4 })).toEqual({ key: "001", quantity: 4 });
+    expect(parseStockCountRow({ barcode: "001", counted: " ", quantity: "", qty: 0 })).toEqual({ key: "001", quantity: 0 });
+    expect(parseStockCountRow({ barcode: "001", counted: 0, quantity: 4 })).toEqual({ key: "001", quantity: 0 });
+    expect(parseStockCountRow({ barcode: "001", counted: "invalid", quantity: 4 })).toHaveProperty("error");
+  });
 });
