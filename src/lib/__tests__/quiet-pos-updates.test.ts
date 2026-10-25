@@ -23,9 +23,9 @@ describe("quiet POS updates",()=>{
   it("does not show a global progress strip after login or reload routes on resume",()=>{
     expect(readFileSync("src/platforms/web/components/pos/AppShell.tsx","utf8")).not.toContain("<DataProgress");
     const root=readFileSync("src/routes/__root.tsx","utf8");
-    const recovery=root.slice(root.indexOf("const recover = () =>"),root.indexOf("// Coalesce a committed sync page"));
+    const recovery=root.slice(root.indexOf("const recover = (event: Event) =>"),root.indexOf("// Coalesce a committed sync page"));
     expect(recovery).not.toContain("router.invalidate()");
-    expect(recovery).toContain('queryClient.refetchQueries({ type: "active" })');
+    expect(recovery).toContain('refreshResumedQueries(queryClient, event.type === CONNECTIVITY_RESTORED_EVENT)');
     expect(root).toContain("queryReadsChangedTables(query.meta, changed)");
   });
   it("does not recreate state when a background snapshot has no changes",()=>{

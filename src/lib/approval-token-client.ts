@@ -1,3 +1,4 @@
+import { canIssueApprovalTokenOnDevice } from "./approval-token-device";
 import { posFetch } from "./server-origin";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
 import { supabaseConfig } from "./external-supabase-config";
@@ -45,7 +46,7 @@ async function removeVault() {
   catch (error) { if (!isMissingSecureValue(error)) throw error; }
 }
 export async function offlineTokenOwner() {
-  if (!isMobileShell() && !isWindowsShell()) return null;
+  if ((!isMobileShell() && !isWindowsShell()) || !canIssueApprovalTokenOnDevice()) return null;
   const terminal = readTerminalConfig();
   if (!terminal?.tokenId) return null;
   const v = await withVault(readVault);
@@ -66,6 +67,7 @@ export async function setupOfflineApprovalToken(pin: string) {
   window.dispatchEvent(new Event(TOKEN_CHANGED));
 }
 export async function unlockOfflineApprovalToken(pin: string) {
+  if (!canIssueApprovalTokenOnDevice()) throw new Error("Soft tokens are not available on this device.");
   const stamp = revision;
   return withVault(async () => {
     const terminal = readTerminalConfig();
@@ -110,7 +112,7 @@ export function revalidateOfflineApprovalToken(): Promise<void> {
   return statusCheck;
 }
 async function checkOfflineApprovalToken() {
-  if ((!isMobileShell() && !isWindowsShell()) || !navigator.onLine) return;
+  if ((!isMobileShell() && !isWindowsShell()) || !navigator.onLine || !canIssueApprovalTokenOnDevice()) return;
   const terminal = readTerminalConfig();
   if (!terminal?.tokenId) return;
   const saved = await withVault(readVault);
@@ -153,7 +155,7 @@ export async function clearApprovalToken(removeOffline = false) {
   window.dispatchEvent(new Event(TOKEN_CHANGED));
 }
 export async function loadApprovalToken(): Promise<ApprovalToken | null> {
-  if (!isMobileShell() && !isWindowsShell()) return null;
+  if ((!isMobileShell() && !isWindowsShell()) || !canIssueApprovalTokenOnDevice()) return null;
   const terminal = readTerminalConfig();
   if (!terminal?.tokenId) return null;
   const binding = await sessionBinding();
@@ -194,7 +196,7 @@ async function enroll(userId: string) {
       accessToken: proof.accessToken,
     }).catch(() => undefined);
   }
-  if ((!isMobileShell() && !isWindowsShell()) || !navigator.onLine || !readTerminalConfig()?.tokenId) return;
+  if ((!isMobileShell() && !isWindowsShell()) || !navigator.onLine || !canIssueApprovalTokenOnDevice()) return;
   const version = ++revision;
   const binding = await sessionBinding();
   if (!binding) return;

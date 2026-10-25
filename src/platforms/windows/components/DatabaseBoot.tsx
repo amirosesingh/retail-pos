@@ -4,7 +4,7 @@ import { isRecoveryPath } from "@/lib/recovery-route";
 import { TillLoader } from "@/components/shared/TillLoader";
 import { desktopStorageRoute } from "@/lib/desktop-storage-route";
 import { observeLocalStartup } from "@/lib/local-startup";
-import { ONLINE_STARTUP_OVERRIDE } from "@/core/local-db/db-mode";
+import { ONLINE_STARTUP_OVERRIDE, setStartupOnlineMode } from "@/core/local-db/db-mode";
 import { toast } from "sonner";
 
 /** Resolve storage before any page/provider starts querying the desktop bridge. */
@@ -19,10 +19,10 @@ export function NativeBoot({ children }: { children: ReactNode }) {
     return observeLocalStartup(api, state => {
       const route = desktopStorageRoute(state);
       if (route === "local" || route === "online") toast.dismiss("pos-local-database-disconnected");
-      if (route === "online") window.sessionStorage.setItem(ONLINE_STARTUP_OVERRIDE, "1");
-      if (route === "local") window.sessionStorage.removeItem(ONLINE_STARTUP_OVERRIDE);
-      // A configured but disconnected database must not silently redirect writes.
-      // Keep the recovery page usable, including its explicit Continue online action.
+      if (route === "online") setStartupOnlineMode(true);
+      if (route === "local") setStartupOnlineMode(false);
+      // Use the saved cloud connection during a SQL outage. Return to SQL only
+      // after its schema/bootstrap is trading-ready; leave its pending outbox intact.
       if (route !== "pending" || window.sessionStorage.getItem(ONLINE_STARTUP_OVERRIDE) === "1") setReady(true);
       if (!state) setError("Could not read the local database status. Open database recovery.");
     });
