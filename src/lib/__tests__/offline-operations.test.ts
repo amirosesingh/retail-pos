@@ -164,7 +164,8 @@ describe("offline terminal operations", () => {
     expect(main).toContain("SHUTDOWN_SYNC_TIMEOUT_MS = 120_000");
     expect(main).toContain("SHUTDOWN_RESOURCE_TIMEOUT_MS = 12_000");
     expect(main).toContain("function settleWithin(");
-    expect(main).toContain("async function flushSyncBeforeShutdown()");
+    expect(main).toContain("async function flushSyncBeforeShutdown(");
+    expect(main).toContain("allowSignedOutExit: !forUpdate && !pendingShiftCloseSync.size");
     expect(main).toContain("event.preventDefault()");
     const shutdown = main.slice(main.indexOf('app.on("before-quit"'));
     expect(shutdown.indexOf("prepareApplicationClose()")).toBeLessThan(

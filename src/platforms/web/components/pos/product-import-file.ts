@@ -1,6 +1,7 @@
 export type ImportFileProgress = { percent: number; label: string };
 
 type WorkerMessage =
+  | { type: "sheets"; names: string[] }
   | { type: "progress"; percent: number; label: string }
   | { type: "rows"; rows: Record<string, unknown>[] }
   | { type: "complete"; total: number }
@@ -10,6 +11,7 @@ type WorkerMessage =
 export async function parseProductImportFile(
   file: File,
   onProgress?: (progress: ImportFileProgress) => void,
+  chooseWorksheet?: (names: string[]) => Promise<string | null>,
 ): Promise<Record<string, unknown>[]> {
   const buffer = await file.arrayBuffer();
   return new Promise((resolve, reject) => {
@@ -20,6 +22,16 @@ export async function parseProductImportFile(
     const rows: Record<string, unknown>[] = [];
     worker.onmessage = (event: MessageEvent<WorkerMessage>) => {
       const message = event.data;
+      if (message.type === "sheets") {
+        void (async () => {
+          try {
+            const name = chooseWorksheet ? await chooseWorksheet(message.names) : message.names[0];
+            if (!name) throw new DOMException("Worksheet selection cancelled", "AbortError");
+            if (!message.names.includes(name)) throw new Error("Choose a worksheet from this workbook");
+            worker.postMessage({ sheetName: name });
+          } catch (error) { worker.terminate(); reject(error); }
+        })();
+      }
       if (message.type === "progress") onProgress?.(message);
       if (message.type === "rows") rows.push(...message.rows);
       if (message.type === "complete") {

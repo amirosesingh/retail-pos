@@ -128,7 +128,7 @@ export function ProductSearchDialog({
       await onCreateProduct({
         name: trimmed,
         price: value,
-        category: category.trim() || "General",
+        category: category.trim() || "Default",
         barcode: unknownCode ?? "",
         sku,
       });
@@ -239,7 +239,7 @@ export function ProductSearchDialog({
                     <Input
                       value={category}
                       onChange={(e) => setCategory(e.target.value)}
-                      placeholder="General"
+                      placeholder="Default"
                       className="mt-1 h-10"
                     />
                   </div>

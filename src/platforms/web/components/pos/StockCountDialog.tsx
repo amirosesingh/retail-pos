@@ -16,6 +16,8 @@ import { ScanBarcode, Trash2, UploadCloud } from "lucide-react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 import { parseStockCountRow, stockCountTemplate } from "@/lib/stock-count-import";
+import { parseProductImportFile } from "./product-import-file";
+import { useImportWorksheet } from "./use-import-worksheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -198,6 +200,7 @@ export function StockCountDialog({
   onDiscard: (id: string) => void;
 }) {
   const { state, applyStockCount } = usePos();
+  const { chooseWorksheet, worksheetDialog } = useImportWorksheet(open);
   const { user } = useAuth();
   const products = state.products;
   const numbering = useMemo(
@@ -565,12 +568,7 @@ export function StockCountDialog({
 
   const importFile = async (file: File) => {
     try {
-      const wb = XLSX.read(await file.arrayBuffer(), { type: "array", raw: true });
-      const sheetName = wb.SheetNames[0];
-      if (!sheetName) throw new Error("empty");
-      const sheet = wb.Sheets[sheetName];
-      if (!sheet) throw new Error("empty");
-      const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet);
+      const raw = await parseProductImportFile(file, undefined, chooseWorksheet);
       const problems: string[] = [];
       raw.forEach((r, i) => {
         const parsed = parseStockCountRow(r);
@@ -582,14 +580,15 @@ export function StockCountDialog({
       });
       setErrors(problems);
       toast.success(`Imported ${raw.length - problems.length} row(s).`);
-    } catch {
-      toast.error("That file could not be read. Use .xlsx or .csv.");
+    } catch (error) {
+      if ((error as Error)?.name !== "AbortError") toast.error("That file could not be read. Use .xlsx or .csv.");
     }
   };
 
   return (
     <Dialog open={open} onOpenChange={changeOpen}>
       <DialogContent showCloseButton={!posting} className="max-h-[92vh] w-[min(96vw,90rem)] max-w-none overflow-y-auto">
+        {worksheetDialog}
         <DialogHeader>
           <DialogTitle>
             {draft?.status === "posted"

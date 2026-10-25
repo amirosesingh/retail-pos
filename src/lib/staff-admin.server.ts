@@ -31,26 +31,27 @@ async function adminFetch(path: string, init: RequestInit = {}) {
 
 /** Called only after staff-management authorization; return timestamps, never Auth profiles. */
 export async function staffLastSignIns(ids: string[], confirmations = new Map<string, boolean>()): Promise<Map<string, string>> {
-  const pending = new Set(ids.map(id => id.toLowerCase()));
+  const pending = [...new Set(ids.map(id => id.toLowerCase()))];
   const result = new Map<string, string>();
-  if (!pending.size) return result;
+  if (!pending.length) return result;
   const signal = AbortSignal.timeout(3000);
-  try {
-    for (let page = 1; page <= 20 && pending.size; page++) {
-      const response = await adminFetch(`admin/users?page=${page}&per_page=1000`, { signal });
-      if (!response.ok) break;
-      const body = await response.json() as { users?: { id?: string; last_sign_in_at?: string; email_confirmed_at?: string | null }[] };
-      if (!Array.isArray(body.users)) break;
-      for (const user of body.users) {
-        const id = user.id?.toLowerCase();
-        if (!id || !pending.has(id)) continue;
-        pending.delete(id);
+  // Fetch only linked staff identities, with bounded concurrency and one
+  // shared deadline. Listing up to 20,000 unrelated Auth users made every
+  // visit wait for a directory scan merely to show optional timestamps.
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(4, pending.length) }, async () => {
+    while (next < pending.length && !signal.aborted) {
+      const id = pending[next++];
+      try {
+        const response = await adminFetch(`admin/users/${encodeURIComponent(id)}`, { signal });
+        if (!response.ok) continue;
+        const user = await response.json() as { id?: string; last_sign_in_at?: string; email_confirmed_at?: string | null };
+        if (user.id?.toLowerCase() !== id) continue;
         confirmations.set(id, Boolean(user.email_confirmed_at));
         if (user.last_sign_in_at && Number.isFinite(Date.parse(user.last_sign_in_at))) result.set(id, user.last_sign_in_at);
-      }
-      if (body.users.length < 1000) break;
+      } catch { /* Optional metadata must never prevent staff administration. */ }
     }
-  } catch { /* Optional metadata must never prevent staff administration. */ }
+  }));
   return result;
 }
 

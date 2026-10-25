@@ -47,10 +47,12 @@ export function TillLoader({
   message = "Loading store data…",
   onContinueOffline,
   onRetry,
+  compact = false,
 }: {
   message?: string;
   onContinueOffline?: () => void;
   onRetry?: () => void;
+  compact?: boolean;
 }) {
   const [health, setHealth] = useState<HealthReport | null>(lastHealth());
   const [state, setState] = useState<Connectivity>(connectivity());
@@ -87,7 +89,7 @@ export function TillLoader({
   const style = TONE[tone];
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-4 px-6">
+    <div className={cn("flex flex-col items-center justify-center gap-4 px-6", !compact && "min-h-dvh")}>
       <div className="flex items-center gap-2">
         <CloudStateIcon tone={tone} className="size-5" />
         <p className="text-sm font-medium">{tone === "connecting" ? "Connecting…" : message}</p>
@@ -105,7 +107,7 @@ export function TillLoader({
       <p className={cn("text-xs", style.text)}>{style.label}</p>
       {!isOnlineOnly() && state !== "connecting" && health && (
         <div className="space-y-2 text-center"><p className="text-xs text-muted-foreground">
-          Terminal database {health.local ? "ready" : "unavailable"}
+          Local SQL Server {health.local ? "connected" : "unavailable"}
         </p>{!health.local && <EmergencyAccessLink />}</div>
       )}
 

@@ -31,6 +31,7 @@ import {
 } from "@/platforms/web/components/pos/StatusCluster";
 
 import { ActivityBell } from "@/platforms/web/components/pos/ActivityBell";
+import { NativeUpdateSlot } from "@/components/ui/native-update-orb";
 import { MobileStatusSheet } from "@/platforms/web/components/pos/MobileStatusSheet";
 import { ShiftGuard } from "@/platforms/web/components/pos/ShiftGuard";
 import { PermissionDenied } from "@/platforms/web/components/pos/PermissionGate";
@@ -583,6 +584,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                 <MobileStatusSheet />
                 <ApprovalTokenButton compact />
                 {isMobile && <ActivityBell />}
+                <NativeUpdateSlot />
                 <span className="hidden sm:inline-flex">
                   <ThemeToggle />
                 </span>
@@ -599,6 +601,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                 <SystemAlertsButton />
                 <ApprovalTokenButton />
                 {!isMobile && <ActivityBell />}
+                <NativeUpdateSlot desktop />
 
                 {terminal.config && (
                   <Badge

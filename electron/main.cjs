@@ -344,7 +344,7 @@ function settleWithin(work, timeoutMs = SHUTDOWN_RESOURCE_TIMEOUT_MS) {
   return Promise.race([operation, deadline]).finally(() => clearTimeout(timer));
 }
 
-async function flushSyncBeforeShutdown() {
+async function flushSyncBeforeShutdown({ allowSignedOutExit = false } = {}) {
   const branchId = localBranchId();
   if (!databaseManager.isConnected() || !branchId)
     return { ok:false, code:"ELOCALDB", error:"Connect the local database before closing so pending transactions can be checked." };
@@ -358,6 +358,8 @@ async function flushSyncBeforeShutdown() {
           health: () => syncCloud.health({ timeoutMs: 8000 }),
           pendingSummary: () => changeReader.pendingSummary(branchId),
           run: () => syncCoordinator.runFinal({branchId,batchSize:500}),
+          signedOut: !adminSession.hasPosAuthority(),
+          allowSignedOutExit,
         }), SHUTDOWN_SYNC_TIMEOUT_MS);
         if (settled.timedOut) return {ok:false,timedOut:true,error:"Synchronization is still running. Your data remains saved locally; retry closing when it finishes."};
         if (!settled.ok) return {ok:false,code:settled.error?.code,error:String(settled.error?.message ?? settled.error)};
@@ -578,7 +580,7 @@ function flushRendererBeforeClose(forUpdate = false) {
 function prepareApplicationClose(forUpdate = false) {
   if(closePreparation)return closePreparation;
   closePreparation=(async()=>{
-
+    let closeStage="renderer";
     mainWindow?.setEnabled(false);
     reportCloseProgress({ active: true, message: 'Saving pending activity and finishing local writes…' });
     try {
@@ -586,13 +588,16 @@ function prepareApplicationClose(forUpdate = false) {
       await flushRendererBeforeClose(forUpdate);
       // Even an unregistered window must pass the renderer safety check.
       if(isManagementDevice() || (!databaseService.snapshot().configured && !pendingShiftCloseSync.size))return {ok:true,skipped:true};
+      closeStage="local-writes";
       const drained=await settleWithin(() => closeWriteBarrier.sealAndDrain(), SHUTDOWN_SYNC_TIMEOUT_MS);
       if(!drained.ok)throw new Error("Local writes are still finishing. Keep the application open and retry closing.");
-      const result=await flushSyncBeforeShutdown();
+      closeStage="synchronization";
+      const result=await flushSyncBeforeShutdown({ allowSignedOutExit: !forUpdate && !pendingShiftCloseSync.size });
       if(!result?.ok)throw new Error(result?.error??"Pending data has not been acknowledged by the cloud.");
       pendingShiftCloseSync.clear();
       return result;
     } catch(error) {
+      diagnostics.logConnection("shutdown.prepare.failed",{category:"application",stage:closeStage,code:error?.code??"ECLOSE",message:String(error?.message??error)});
       closeWriteBarrier.reopen();
       return {ok:false,error:String(error?.message??error)};
     } finally { reportCloseProgress({ active: false }); if(mainWindow&&!mainWindow.isDestroyed())mainWindow.setEnabled(true); }
@@ -2362,7 +2367,8 @@ app.whenReady().then(async () => {
     for (const name of Object.keys(headers)) {
       if (["content-security-policy", "content-security-policy-report-only"].includes(name.toLowerCase())) delete headers[name];
     }
-    headers["Content-Security-Policy"] = [["default-src 'self' data: blob:", "script-src 'self' 'unsafe-inline' blob:", "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob: https:", "font-src 'self' data:", "connect-src 'self' https: wss: http://127.0.0.1:* http://localhost:*", "frame-ancestors 'none'", "object-src 'none'", "base-uri 'self'"].join("; ")];
+    const devSocket = DEV_URL ? " ws://127.0.0.1:* ws://localhost:*" : "";
+    headers["Content-Security-Policy"] = [["default-src 'self' data: blob:", "script-src 'self' 'unsafe-inline' blob:", "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob: https:", "font-src 'self' data:", `connect-src 'self' https: wss: http://127.0.0.1:* http://localhost:*${devSocket}`, "frame-ancestors 'none'", "object-src 'none'", "base-uri 'self'"].join("; ")];
     callback({ responseHeaders: headers });
   });
   try { storageHygiene.runOnLaunch(app.getPath("userData"), app.getVersion()); } catch (error) { if (DEBUG) console.warn("[pos] storage hygiene skipped:", fail(error).error); }

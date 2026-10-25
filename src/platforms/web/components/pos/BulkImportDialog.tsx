@@ -47,6 +47,8 @@ import {
 } from "@/lib/product-import";
 import { clearRun, findUnfinished, saveRun, type ImportRun } from "@/lib/import-journal";
 import { parseProductImportFile } from "./product-import-file";
+import { useImportWorksheet } from "./use-import-worksheet";
+import { ImportMoneyInput } from "./ImportMoneyInput";
 import { productCodes } from "@/lib/product-lookup";
 import { lookupProductsByCodes } from "@/lib/product-search";
 import type { Product } from "@/core/types/pos-types";
@@ -109,6 +111,7 @@ export function BulkImportDialog({
   ) => void;
 }) {
   const { state, currentStore, importProducts } = usePos();
+  const { chooseWorksheet, worksheetDialog } = useImportWorksheet(open);
   const inputRef = useRef<HTMLInputElement>(null);
   const [progress, setProgress] = useState(0);
   const [progressLabel, setProgressLabel] = useState("");
@@ -161,10 +164,12 @@ export function BulkImportDialog({
     const records = await parseProductImportFile(file, ({ percent, label }) => {
       setProgress(percent);
       setProgressLabel(label);
-    }).catch(() => null);
+    }, chooseWorksheet).catch(error => {
+      if (error?.name !== "AbortError") toast.error("Could not read that file — use the .xlsx or .csv template");
+      return null;
+    });
     if (!records) {
       setBusy("");
-      toast.error("Could not read that file — use the .xlsx or .csv template");
       return;
     }
 
@@ -361,6 +366,7 @@ export function BulkImportDialog({
 
   return (
     <>
+      {worksheetDialog}
       <Dialog
         open={open && !outcome}
         onOpenChange={(o) => {
@@ -611,33 +617,32 @@ export function BulkImportDialog({
                           />
                         </TableCell>
                         <TableCell>
-                          <Input
+                          <ImportMoneyInput
                             className="numeric h-8 w-24 text-right"
                             inputMode="decimal"
-                            value={r.price ?? ""}
+                            value={r.price}
                             aria-invalid={
                               r.missingFields.includes("price") ||
                               r.conflictFields.includes("price")
                             }
-                            onChange={(event) =>
+                            onValueChange={(value) =>
                               patchRow(r.line, {
-                                price:
-                                  event.target.value === "" ? null : Number(event.target.value),
+                                price: value,
                               })
                             }
                           />
                         </TableCell>
                         <TableCell>
-                          <Input
+                          <ImportMoneyInput
                             className="numeric h-8 w-24 text-right"
                             inputMode="decimal"
-                            value={r.cost ?? ""}
+                            value={r.cost}
                             aria-invalid={
                               r.missingFields.includes("cost") || r.conflictFields.includes("cost")
                             }
-                            onChange={(event) =>
+                            onValueChange={(value) =>
                               patchRow(r.line, {
-                                cost: event.target.value === "" ? null : Number(event.target.value),
+                                cost: value,
                               })
                             }
                           />

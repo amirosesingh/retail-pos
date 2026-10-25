@@ -14,7 +14,7 @@ export function AndroidUpdateBanner() {
     void download();
   }, [state.supported, state.latest, state.readyUri, state.downloading, state.error, available, download]);
 
-  if (!state.supported) return null;
+  if (!state.supported || !available || !state.latest) return null;
   const label = `${RELEASE_CHANNEL === "beta" ? "Beta update" : "Update"} ${available ? state.latest : ""}`.trim();
   const detail = state.readyUri ? (state.error ?? "Downloaded. Tap to install.")
     : state.downloading ? "Downloading update"

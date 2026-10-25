@@ -3,7 +3,7 @@ import { useLocation } from "@tanstack/react-router";
 import { isRecoveryPath } from "@/lib/recovery-route";
 import { TillLoader } from "@/components/shared/TillLoader";
 import { desktopStorageRoute } from "@/lib/desktop-storage-route";
-import { observeLocalStartup } from "@/lib/local-startup";
+import { observeLocalStartup, type LocalStartupState } from "@/lib/local-startup";
 import { setStartupOnlineMode } from "@/core/local-db/db-mode";
 import { toast } from "sonner";
 
@@ -13,10 +13,12 @@ export function NativeBoot({ children }: { children: ReactNode }) {
   const recovery = path === "/database-startup" || isRecoveryPath(path);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
+  const [database, setDatabase] = useState<LocalStartupState | null>(null);
   useEffect(() => {
     const api = window.pos?.database;
     if (!api) { setError("The desktop database bridge is unavailable. Restart the app."); return; }
     return observeLocalStartup(api, state => {
+      setDatabase(state);
       const route = desktopStorageRoute(state);
       if (route === "local" || route === "online") toast.dismiss("pos-local-database-disconnected");
       if (route === "online") setStartupOnlineMode(true);
@@ -28,5 +30,7 @@ export function NativeBoot({ children }: { children: ReactNode }) {
     });
   }, []);
   if (ready || recovery) return children;
-  return <div className="space-y-3 p-4"><TillLoader message={error || "Checking the local SQL Server connection…"} /><a className="text-sm underline" href="/database-startup">Open database recovery</a></div>;
+  const message = database?.state === "enabled_bootstrapping" ? "Preparing local store data…"
+    : database?.state === "enabled_connecting" ? "Connecting to local SQL Server…" : "Checking the local SQL Server connection…";
+  return <main className="flex min-h-dvh flex-col items-center justify-center gap-4 p-4"><TillLoader compact message={error || message} /><a className="text-sm underline" href="/database-startup">Open database recovery</a></main>;
 }

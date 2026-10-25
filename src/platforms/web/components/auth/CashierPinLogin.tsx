@@ -6,12 +6,15 @@ import { connectivity, subscribeConnectivity } from "@/core/activation/connectio
  * tap your PIN on the keypad. Sign-in fires as soon as the last digit lands.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Delete, Loader2, MapPin, ShieldAlert, UserRound } from "lucide-react";
+import { ArrowLeft, ChevronDown, Delete, Loader2, MapPin, ShieldAlert, UserRound } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PinEntryDots } from "@/components/ui/pin-entry-dots";
+import { LoginOptions } from "@/components/ui/login-options";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useAuth } from "@/lib/pos-auth";
 
 import { activeBranchId, boundBranchName } from "@/lib/active-branch";
@@ -25,7 +28,6 @@ import {
   lockoutRemaining,
   notePinFailure,
 } from "@/lib/pin-lockout";
-import { cn } from "@/lib/utils";
 
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
 
@@ -53,6 +55,7 @@ export function CashierPinLogin({
   const previousConnection = useRef(connection);
   useEffect(() => subscribeConnectivity(setConnection), []);
   const [staff, setStaff] = useState<TerminalStaff[]>([]);
+  const [staffSearch, setStaffSearch] = useState("");
   const [reason, setReason] = useState<RosterReason>("ok");
   // Set when the till itself is not connected — that is a setup problem, not
   // a wrong PIN, and it gets a way out of the screen instead of a lockout.
@@ -70,6 +73,7 @@ export function CashierPinLogin({
   const [draft, setDraft] = useState(initialUsername);
   const [manual, setManual] = useState(initialUsername.trim().toLowerCase());
   const [typing, setTyping] = useState(false);
+  const [keypadExpanded, setKeypadExpanded] = useState(false);
   const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -135,7 +139,7 @@ export function CashierPinLogin({
   // shows — so it is reduced to the username before anything is sent.
   const username = picked?.username ?? usernameFromAddress(manual);
   const storedLength = picked?.pinLength ?? 0;
-  // A numeric PIN is 4-6 digits. Anything longer is a typed passcode, which
+  // A numeric PIN is 4-12 digits. Anything longer is a typed passcode, which
   // gets a plain field with no length cap and no auto-submit.
   const passcodeAccount = storedLength > 12;
   // Known account: submit as soon as the expected digit lands. Unknown
@@ -272,13 +276,16 @@ export function CashierPinLogin({
             <Loader2 className="size-5 animate-spin text-muted-foreground" />
           </div>
         ) : staff?.length ? (
-          <div className="grid max-h-[46vh] grid-cols-2 gap-2 overflow-y-auto">
-            {staff.map((s) => (
+          <div className="space-y-2">
+          {staff.length > 6 && <Input aria-label="Find a staff member" placeholder="Find your name" value={staffSearch} onChange={event => setStaffSearch(event.target.value)} />}
+          <div className="grid max-h-[min(36dvh,18rem)] min-h-0 grid-cols-2 gap-2 overflow-y-auto overscroll-contain" aria-label="Staff sign-in list">
+            {staff.filter(person => `${person.fullName} ${person.username}`.toLowerCase().includes(staffSearch.trim().toLowerCase())).map((s) => (
               <button
                 key={s.username}
                 type="button"
                 onClick={() => {
                   setPicked(s);
+                  setKeypadExpanded(false);
                   setPin("");
                   setError("");
                 }}
@@ -293,6 +300,7 @@ export function CashierPinLogin({
                 </Badge>
               </button>
             ))}
+          </div>
           </div>
         ) : (
           <div className="space-y-2 rounded-md border border-border bg-surface-2 p-3">
@@ -314,6 +322,7 @@ export function CashierPinLogin({
           </div>
         )}
 
+        <LoginOptions>
         <form
           className="space-y-2"
           onSubmit={(e) => {
@@ -346,6 +355,7 @@ export function CashierPinLogin({
             Administrator sign in with email and password
           </Button>
         )}
+        </LoginOptions>
       </div>
     );
   }
@@ -372,6 +382,7 @@ export function CashierPinLogin({
             setManual("");
             setDraft("");
             setTyping(false);
+            setKeypadExpanded(false);
             setPin("");
             setError("");
           }}
@@ -380,21 +391,7 @@ export function CashierPinLogin({
         </Button>
       </div>
 
-      <div
-        className="flex items-center justify-center gap-3 rounded-md border border-border bg-surface-2 py-3"
-        aria-label="PIN entry"
-        role="status"
-      >
-        {Array.from({ length: Math.min(pinLength, 12) }).map((_, i) => (
-          <span
-            key={i}
-            className={cn(
-              "size-3.5 rounded-full border border-border",
-              i < pin.length ? "bg-primary" : "bg-transparent",
-            )}
-          />
-        ))}
-      </div>
+      <PinEntryDots length={pin.length} />
 
       {lockedFor > 0 && (
         <p className="flex items-center justify-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-center text-xs text-destructive">
@@ -404,6 +401,16 @@ export function CashierPinLogin({
       )}
 
       {keypadMode ? (
+      <Collapsible open={keypadExpanded} onOpenChange={setKeypadExpanded} className="space-y-3">
+      <div className="flex justify-center">
+        <CollapsibleTrigger asChild>
+          <Button type="button" variant="outline" size="icon" className="size-9 shrink-0 rounded-full" disabled={busy}
+            aria-label={keypadExpanded ? "Hide PIN keypad" : "Show PIN keypad"}>
+            <ChevronDown aria-hidden className={`size-4 transition-transform motion-reduce:transition-none ${keypadExpanded ? "rotate-180" : ""}`} />
+          </Button>
+        </CollapsibleTrigger>
+      </div>
+      <CollapsibleContent>
       <form
         className="grid grid-cols-3 gap-2"
         onSubmit={(e) => {
@@ -464,6 +471,8 @@ export function CashierPinLogin({
           </Button>
         )}
       </form>
+      </CollapsibleContent>
+      </Collapsible>
       ) : (
         <form
           className="space-y-2"
@@ -480,12 +489,12 @@ export function CashierPinLogin({
             autoComplete="off"
             {...(passcodeAccount
               ? { maxLength: 64 }
-              : { inputMode: "numeric" as const, pattern: "[0-9]*", maxLength: 6 })}
+              : { inputMode: "numeric" as const, pattern: "[0-9]*", maxLength: pinLength })}
             value={pin}
             disabled={busy || lockedFor > 0}
             onChange={(e) => {
               const raw = e.target.value;
-              setPin(passcodeAccount ? raw : raw.replace(/\D+/g, "").slice(0, 6));
+              setPin(passcodeAccount ? raw : raw.replace(/\D+/g, "").slice(0, pinLength));
               setError("");
             }}
             className="h-12 text-center"
@@ -494,22 +503,6 @@ export function CashierPinLogin({
             Sign in
           </Button>
         </form>
-      )}
-
-      {!passcodeAccount && (
-        <Button
-          type="button"
-          variant="ghost"
-          className="w-full text-xs"
-          disabled={busy}
-          onClick={() => {
-            setTyping(!typing);
-            setPin("");
-            setError("");
-          }}
-        >
-          {typing ? "Use the keypad" : "Type my passcode instead"}
-        </Button>
       )}
 
       {busy && (
@@ -530,6 +523,13 @@ export function CashierPinLogin({
           Open connection settings
         </Button>
       )}
+      <LoginOptions>
+      {!passcodeAccount && (
+        <Button type="button" variant="ghost" className="w-full text-xs" disabled={busy}
+          onClick={() => { setTyping(!typing); setPin(""); setError(""); }}>
+          {typing ? "Use the keypad" : "Type my passcode instead"}
+        </Button>
+      )}
       {onAdminLogin && (
         <Button type="button" variant="ghost" className="w-full text-xs" onClick={onAdminLogin}>
           Administrator sign in with email and password
@@ -539,6 +539,7 @@ export function CashierPinLogin({
         PINs are checked by the backend. Once you have signed in here, the same PIN works with
         no connection.
       </p>
+      </LoginOptions>
     </div>
   );
 }

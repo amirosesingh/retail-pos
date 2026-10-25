@@ -30,7 +30,11 @@ function branchPredicate(registry, table, alias = "source", seen = new Set()) {
     if (!parentFilter) continue;
     const parentColumn = parent.columns.find((candidate) => candidate.cloudColumn === column.foreignKeyTarget.column);
     const parentKey = parentColumn?.sqlServerColumn ?? column.foreignKeyTarget.column;
-    return `EXISTS (SELECT 1 FROM dbo.[${parent.sqlServerTable}] parent WHERE parent.[${parentKey}]=${alias}.[${column.sqlServerColumn}] AND ${parentFilter})`;
+    const linked = `EXISTS (SELECT 1 FROM dbo.[${parent.sqlServerTable}] parent WHERE parent.[${parentKey}]=${alias}.[${column.sqlServerColumn}] AND ${parentFilter})`;
+    // Match the cloud contract: a promotion without a free-item product is
+    // shared. A linked promotion still follows that product's branch scope.
+    return table.cloudTable === "promotions" && column.cloudColumn === "foc_product_id"
+      ? `(${alias}.[${column.sqlServerColumn}] IS NULL OR ${linked})` : linked;
   }
   return null;
 }
@@ -70,7 +74,9 @@ function rendererReadBranchPredicate(registry, table, alias = "source", seen = n
       (candidate) => candidate.cloudColumn === column.foreignKeyTarget.column,
     );
     const parentKey = parentColumn?.sqlServerColumn ?? column.foreignKeyTarget.column;
-    return `EXISTS (SELECT 1 FROM dbo.[${parent.sqlServerTable}] parent WHERE parent.[${parentKey}]=${alias}.[${column.sqlServerColumn}] AND ${parentFilter})`;
+    const linked = `EXISTS (SELECT 1 FROM dbo.[${parent.sqlServerTable}] parent WHERE parent.[${parentKey}]=${alias}.[${column.sqlServerColumn}] AND ${parentFilter})`;
+    return table.cloudTable === "promotions" && column.cloudColumn === "foc_product_id"
+      ? `(${alias}.[${column.sqlServerColumn}] IS NULL OR ${linked})` : linked;
   }
   return null;
 }
@@ -97,6 +103,10 @@ function scopedWhere(
   { historyDays = 90, alias = "source" } = {},
 ) {
   const clauses = [];
+  // These reserved keys are native-only lockout counters. They deliberately
+  // do not upload; preserve them, but exclude them from cloud comparisons.
+  if (table?.cloudTable === "pin_attempts")
+    clauses.push(`${alias}.[key] NOT LIKE N'electron:%' AND ${alias}.[key] NOT LIKE N'approval-lookup:%'`);
   const explicitScope =
     settingsScopePredicate(table, alias) ?? governanceScopePredicate(table, alias);
   if (explicitScope) clauses.push(explicitScope);

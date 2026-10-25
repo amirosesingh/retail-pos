@@ -8,6 +8,15 @@ class LocalDataLifecycle {
     Object.assign(this,{connectionManager,databaseService,jobManager,jobRepository,registry,cloud,syncCoordinator,checkpoints,reader,publish});
   }
   bootstrapType(historyDays){return `bootstrap_${historyDays}`;}
+  async cachedSnapshotReady(branchId,historyDays){
+    const state=this.databaseService.snapshot?.();
+    if(!state?.connected||!state.tradingReady)return false;
+    const completed=await this.jobRepository.completed(this.bootstrapType(historyDays),branchId);
+    if(!completed||await this.jobRepository.active())return false;
+    const result=await this.connectionManager.pool.request().input("branch",String(branchId))
+      .query("SELECT TOP (1) id FROM dbo.stores WHERE id=@branch;");
+    return Boolean(result.recordset?.length);
+  }
   async bootstrap(branchId,historyDays,existing=null){return this.jobManager.run(this.bootstrapType(historyDays),context=>runBootstrap({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,checkpoints:this.checkpoints,branchId,historyDays,context}),existing,{branchId});}
   async retain(branchId,historyDays,existing=null){if(historyDays===7300)return{status:"completed",skipped:true};return this.jobManager.run("retention",context=>runRetention({connectionManager:this.connectionManager,days:historyDays,context}),existing,{branchId});}
   async resume(branchId,historyDays){const active=await this.jobRepository.active();if(!active||String(active.branch_id??"")!==String(branchId))return null;if(String(active.job_type).startsWith("bootstrap_"))return this.bootstrap(branchId,Number(String(active.job_type).slice(10))||historyDays,active);if(active.job_type==="retention")return this.retain(branchId,historyDays,active);return null;}
@@ -43,7 +52,9 @@ class LocalDataLifecycle {
   }
   async ensure({branchId,historyDays=90,force=false}){
     if(!branchId)throw Object.assign(new Error("This terminal needs a branch before local data can be prepared."),{code:"EBRANCH"});
-    this.databaseService.transition("enabled_bootstrapping",{phase:"resume"});
+    const cachedReady=!force&&await this.cachedSnapshotReady(branchId,historyDays);
+    if(cachedReady)this.databaseService.markReady({phase:"background_sync",syncReady:false,branchId,historyDays});
+    else this.databaseService.transition("enabled_bootstrapping",{phase:"resume"});
     // Identity must arrive even if an unrelated upload or a large catalogue
     // delays bootstrap. Also repairs installations with old bootstrap markers.
     // refreshTable preserves rows with unacknowledged local edits.

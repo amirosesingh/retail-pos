@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>POS Recovery</title>
+    <title>Retail Recovery</title>
     <style>
       :root { color-scheme: dark; }
       * { box-sizing: border-box; }
@@ -30,7 +30,7 @@
   <body>
     <div class="card">
       <span class="pill">Safe mode</span>
-      <h1>The POS did not start correctly</h1>
+      <h1>Retail did not start correctly</h1>
       <p>
         The last <span id="failures">2</span> attempts to launch version <code id="version">—</code>
         never reached the till screen. Automatic updates are paused until this build starts cleanly.
@@ -86,7 +86,7 @@
           rollbackBtn.disabled = false;
           msg.textContent = res.error || "Roll back failed.";
         } else {
-          msg.textContent = "Installer starting. The POS will close and reopen on the older version.";
+          msg.textContent = "Installer starting. Retail will close and reopen on the older version.";
         }
       };
       api.onProgress((p) => { if (p && p.percent != null) msg.textContent = "Downloading… " + p.percent + "%"; });
