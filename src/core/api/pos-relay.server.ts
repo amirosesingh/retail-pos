@@ -1,4 +1,6 @@
 import { canCrossBranches } from "./relay-policy.server";
+import { recordId } from "@/lib/sale-identity";
+import { sameBranchId } from "@/lib/branch-id";
 /**
  * Server-side write relay for the POS database.
  *
@@ -544,6 +546,11 @@ export async function runRelayOp(
   const decision = await safeAuthorizeRelayOp(op, scope, batchIds);
   if (!decision.ok) return { ok: false, error: decision.error, code: decision.code };
   const safeOp = decision.op;
+  // Receipt graphs are immutable on replay, matching the native SQL writer.
+  // A permission check followed by merge-duplicates would still race another
+  // checkout inserting the same ID. Corrections have dedicated transactions.
+  const immutableReceipt = ["sales", "sale_items", "payment_transactions"].includes(safeOp.table);
+  const conflictResolution = immutableReceipt ? "ignore-duplicates" : "merge-duplicates";
 
   let res: Response;
   switch (safeOp.kind) {
@@ -557,7 +564,7 @@ export async function runRelayOp(
         {
           method: "POST",
           body: JSON.stringify(safeOp.rows),
-          prefer: keyed ? "return=minimal,resolution=merge-duplicates" : "return=minimal",
+          prefer: keyed ? `return=minimal,resolution=${conflictResolution}` : "return=minimal",
         },
       );
       break;
@@ -566,7 +573,7 @@ export async function runRelayOp(
       res = await serviceRest(`${safeOp.table}?on_conflict=${conflictKey(safeOp.table)}`, {
         method: "POST",
         body: JSON.stringify(safeOp.rows),
-        prefer: "return=minimal,resolution=merge-duplicates",
+        prefer: `return=minimal,resolution=${conflictResolution}`,
       });
       break;
     case "update":
@@ -584,7 +591,25 @@ export async function runRelayOp(
       break;
   }
 
-  if (res.ok) return { ok: true };
+  if (res.ok) {
+    if (safeOp.table === "sales" && (safeOp.kind === "insert" || safeOp.kind === "upsert") && !canCrossBranches(scope)) {
+      // An ignored duplicate is not evidence that this caller owns its parent.
+      // The batch can trust successful parent IDs for subsequent children only
+      // after checking the persisted branch, including a duplicate no-op.
+      const ids = [...new Set(safeOp.rows.map(row => recordId(String(row.id ?? ""))))];
+      if (ids.some(id => !id)) return { ok: false, code: "STORE_FORBIDDEN", error: "The sale identity is missing." };
+      if (ids.length) {
+        const quoted = ids.map(id => `"${id.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`).join(",");
+        const params = new URLSearchParams({ select: "id,store_id", id: `in.(${quoted})` });
+        const check = await serviceRest(`sales?${params}`);
+        if (!check.ok) return { ok: false, code: "STORE_FORBIDDEN", error: "The saved sale branch could not be verified." };
+        const saved = await check.json() as Array<{ id: string; store_id: string }>;
+        if (!scope.storeId || saved.length !== ids.length || saved.some(row => !ids.includes(recordId(row.id)) || !sameBranchId(row.store_id, scope.storeId)))
+          return { ok: false, code: "STORE_FORBIDDEN", error: "You cannot use another branch's sale." };
+      }
+    }
+    return { ok: true };
+  }
 
   // A re-pushed tender can collide with the copy the first attempt already
   // stored. The per-tender idempotency key settles it: when every row is

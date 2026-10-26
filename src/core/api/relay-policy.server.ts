@@ -181,8 +181,8 @@ const TABLE_PERMISSIONS: Record<string, { write?: string; remove?: string }> = {
   purchase_order_items: { write: "can_receive_purchase_order" },
   stock_adjustments: { write: "can_adjust_stock" },
   stock_count_drafts: { write: "can_adjust_stock", remove: "can_adjust_stock" },
-  sales: { remove: "can_void_item" },
-  sale_items: { remove: "can_void_item" },
+  sales: { write: "can_process_sale", remove: "can_void_item" },
+  sale_items: { write: "can_process_sale", remove: "can_void_item" },
   members: { write: "can_add_member" },
   // Only an account allowed into POS settings may change trading rules.
   pos_store_settings: { write: "can_access_pos_settings", remove: "can_access_pos_settings" },
@@ -588,7 +588,7 @@ export async function authorizeRelayOp(
     saleTenderCorrection =
       (op.kind === "update" &&
         (op.values["payment_type"] !== undefined || op.values["payments"] !== undefined)) ||
-      (op.kind === "upsert" && (await upsertChangesExistingTender(op.rows)));
+      ((op.kind === "insert" || op.kind === "upsert") && (await upsertChangesExistingTender(op.rows)));
     if (saleTenderCorrection) {
       return deny("PERMISSION_DENIED", "Only an administrator can correct a completed payment.");
     }
