@@ -474,7 +474,7 @@ export function ShiftCloseDialog({
                     <Row
                       label="Over / short"
                       value={money(recon.varianceTotal ?? 0)}
-                      tone={Math.abs(recon.varianceTotal ?? 0) > 0.005 ? "bad" : "good"}
+                      tone={(recon.varianceTotal ?? 0) < -0.005 ? "bad" : (recon.varianceTotal ?? 0) > 0.005 ? "good" : undefined}
                     />
                   )}
                 </div>
