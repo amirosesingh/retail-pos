@@ -91,9 +91,11 @@ export function BillsReport() {
         collected: a.collected + s.total,
         discount: a.discount + s.discount,
         tax: a.tax + s.tax,
+        rounding: a.rounding + (s.roundingAdjustment ?? 0),
       }),
-      { net: 0, collected: 0, discount: 0, tax: 0 },
+      { net: 0, collected: 0, discount: 0, tax: 0, rounding: 0 },
     );
+  const showTaxColumn = rows.some(sale => Math.abs(sale.tax) >= 0.005);
   const pager = usePagination(rows);
 
   return (
@@ -116,7 +118,7 @@ export function BillsReport() {
                 "Method",
                 "Subtotal",
                 "Discount",
-                "Tax",
+                ...(showTaxColumn ? ["Tax"] : []),
                 "Total",
               ],
               ...rows.map((s) => [
@@ -127,7 +129,7 @@ export function BillsReport() {
                 s.payments?.length ? paymentsLabel(s.payments) : methodLabel(s.method),
                 s.subtotal,
                 s.discount,
-                s.tax,
+                ...(showTaxColumn ? [s.tax] : []),
                 s.total,
               ]),
             ])
@@ -145,11 +147,19 @@ export function BillsReport() {
             value={String(rows.filter((sale) => !sale.refunded).length)}
           />
           {showSponsorship&&<><StatCard label="Sales summary including sponsorship" value={sponsorship.loading?"Loading…":sponsorship.error?"Unavailable":money(totals.collected+sponsorship.total)}/><StatCard label="Sponsorship value included" value={sponsorship.error?"Unavailable":money(sponsorship.total)}/></>}
-          <StatCard label="Net sales (ex tax)" value={money(totals.net)} />
+          <StatCard label="Net sales (ex tax & rounding)" value={money(totals.net)} />
           <StatCard label="Total collected" value={money(totals.collected)} />
           <StatCard label="Discounts given" value={money(totals.discount)} />
-          <StatCard label="Tax collected" value={money(totals.tax)} />
+          {Math.abs(totals.tax) >= 0.005 && <StatCard label="Tax collected" value={money(totals.tax)} />}
+          {Math.abs(totals.rounding) >= 0.005 && <StatCard label="Rounding adjustment" value={money(totals.rounding)} />}
         </div>
+
+        <p className="text-sm text-muted-foreground" role="note">
+          Net sales includes discounts already deducted and excludes tax and rounding. Bills marked refunded are excluded from these totals.
+          {" "}Net sales {money(totals.net)}{Math.abs(totals.tax) >= 0.005 ? ` + tax ${money(totals.tax)}` : ""}
+          {Math.abs(totals.rounding) >= 0.005 ? ` ${totals.rounding < 0 ? "−" : "+"} rounding ${money(Math.abs(totals.rounding))}` : ""}
+          {" "}= total collected {money(totals.collected)}. Negative rounding reduces the amount collected; positive rounding increases it.
+        </p>
 
         <div className="rounded-2xl border border-border bg-card">
           <Table tableId="routes/reports.sales#1" loading={history.loading}>
@@ -160,7 +170,7 @@ export function BillsReport() {
                 <TableHead>Cashier</TableHead>
                 <TableHead>Method</TableHead>
                 <TableHead className="text-right">Discount</TableHead>
-                <TableHead className="text-right">Tax</TableHead>
+                {showTaxColumn && <TableHead className="text-right">Tax</TableHead>}
                 <TableHead className="text-right">Total</TableHead>
               </TableRow>
             </TableHeader>
@@ -176,7 +186,7 @@ export function BillsReport() {
                     {s.payments?.length ? paymentsLabel(s.payments) : methodLabel(s.method)}
                   </TableCell>
                   <TableCell className="numeric text-right">{money(s.discount)}</TableCell>
-                  <TableCell className="numeric text-right">{money(s.tax)}</TableCell>
+                  {showTaxColumn && <TableCell className="numeric text-right">{money(s.tax)}</TableCell>}
                   <TableCell className="numeric text-right font-semibold">
                     {money(s.total)}
                   </TableCell>
@@ -185,7 +195,7 @@ export function BillsReport() {
               {!rows.length && (
                 <TableRow>
                   <TableCell
-                    colSpan={7}
+                    colSpan={showTaxColumn ? 7 : 6}
                     className="py-10 text-center text-sm text-muted-foreground"
                   >
                     No bills in this date range.

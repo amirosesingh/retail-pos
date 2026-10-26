@@ -15,6 +15,8 @@ export function setPersonalLanguage(language: string) {
 /** Common regions offered in settings; "" means "use this computer". */
 export const TIME_ZONES = [
   "UTC",
+  "Asia/Brunei",
+  "Africa/Nairobi",
   "Asia/Kuala_Lumpur",
   "Asia/Singapore",
   "Asia/Bangkok",
@@ -60,8 +62,8 @@ export function effectiveTimeZone(): string {
 
 const opts = (extra: Intl.DateTimeFormatOptions): Intl.DateTimeFormatOptions => ({
   hour12,
-  ...extra,
   ...(zone ? { timeZone: zone } : {}),
+  ...extra,
 });
 
 const asDate = (value: string | number | Date) =>

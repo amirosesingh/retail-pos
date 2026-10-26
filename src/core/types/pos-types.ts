@@ -994,6 +994,8 @@ export type IntegrationSettings = {
   timeZone?: string;
   /** ISO country of the business, used to suggest a zone and formats */
   country?: string;
+  /** Display currency; stored financial amounts are not converted. */
+  currency?: string;
   /** how dates read on screen and on slips */
   dateFormat?: DateFormat;
   /** 12-hour or 24-hour clock */

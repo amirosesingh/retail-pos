@@ -1,3 +1,4 @@
+import { posCurrency } from "./currency";
 import type { CartLine, PaymentDetails, PaymentMethod, RoundingSettings } from "@/core/types/pos-types";
 
 import { roundingOf, showsRoundingLine, type RoundingResult } from "@/core/pricing/rounding";
@@ -16,6 +17,7 @@ export type DisplayLine = {
 };
 
 export type DisplaySnapshot = {
+  currency?: string;
   at: number;
   mode: "idle" | "cart" | "paid" | "booking" | "transfer";
   companyName: string;
@@ -83,6 +85,7 @@ const chan = () => {
 /** Push the latest counter state to any open customer-facing window. */
 export function publishDisplay(snapshot: DisplaySnapshot) {
   if (typeof window === "undefined") return;
+  snapshot = { ...snapshot, currency: posCurrency() };
   try {
     window.localStorage.setItem(DISPLAY_STORAGE_KEY, JSON.stringify(snapshot));
   } catch {

@@ -1,3 +1,4 @@
+import { formatMoney, setPosCurrency } from "./currency";
 import { subscribeDatabaseMode } from "@/core/local-db/db-mode";
 import { subscribeSettingsRefresh } from "./settings-refresh";
 import { createRefreshQueue, requestBackgroundRefresh, subscribeBackgroundRefresh } from "./background-refresh";
@@ -1023,9 +1024,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
   }, [state.settings.integrations.memberDomain, state.settings.integrations.redeemDomain]);
 
   useEffect(() => {
+    setPosCurrency(state.settings.integrations.currency);
     setPosTimeZone(state.settings.integrations.timeZone);
     setPosFormats(state.settings.integrations.dateFormat, state.settings.integrations.timeFormat);
   }, [
+    state.settings.integrations.currency,
     state.settings.integrations.timeZone,
     state.settings.integrations.dateFormat,
     state.settings.integrations.timeFormat,
@@ -4247,10 +4250,7 @@ export function usePosOptional() {
   return useContext(PosContext);
 }
 
-export const money = (n: number) =>
-  new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
-    Number.isFinite(n) ? n : 0,
-  );
+export const money = (amount: number) => formatMoney(amount);
 
 /**
  * The one place a ticket turns into money. Line discounts (promotion first,

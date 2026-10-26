@@ -1,3 +1,4 @@
+import { posCurrency } from "./currency";
 import { formatDate as posDisplayDate, formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { receiptBarcode } from "./receipt-barcode";
 import { sponsorshipReceiptDetails } from "./sponsorship-receipt";
@@ -330,7 +331,7 @@ const shell = (title: string, body: string, autoPrint = true) => {
     .no-print { display: none !important; }
   }
   ${scopeReceiptCss(receiptCfg.css)}
-</style></head><body><div class="${RECEIPT_SCOPE.slice(1)}">${body}</div>
+</style></head><body><div class="${RECEIPT_SCOPE.slice(1)}">${body}<div class="c muted" style="margin-top:4px">Currency: ${esc(posCurrency())}</div></div>
 ${
   autoPrint
     ? `<script>window.onload=function(){window.focus();window.print();setTimeout(function(){window.close()},400)}</script>`

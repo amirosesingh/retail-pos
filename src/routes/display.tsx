@@ -1,3 +1,4 @@
+import { formatMoney } from "@/lib/currency";
 import { useEffect, useState } from "react";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { X } from "lucide-react";
@@ -34,7 +35,7 @@ export const Route = createFileRoute("/display")({
   component: CustomerDisplay,
 });
 
-const money = (n: number) => n.toLocaleString(undefined, { style: "currency", currency: "USD" });
+
 
 /** A basket left on screen this long without an update is stale: fall back to
  *  the idle screen rather than showing customers an abandoned order. */
@@ -42,6 +43,7 @@ const STALE_MS = 5 * 60 * 1000;
 
 function CustomerDisplay() {
   const [snap, setSnap] = useState<DisplaySnapshot | null>(null);
+  const money = (amount: number) => formatMoney(amount, snap?.currency);
   const [tillClosed, setTillClosed] = useState(false);
   const router = useRouter();
 
