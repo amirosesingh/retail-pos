@@ -1,3 +1,4 @@
+import { SettingsDisclosure } from "@/platforms/web/components/pos/settings/SettingsDisclosure";
 import { HelpTip } from "@/components/ui/help-tip";
 import { useEffect } from "react";
 import { ReceiptDocumentControls } from "@/platforms/web/components/pos/settings/ReceiptDocumentControls";
@@ -36,7 +37,7 @@ export const Route = createFileRoute("/settings/booking-slip")({
     <SettingsFrame
       title="Booking receipt settings"
       showPreview
-      description="Terms & conditions and the customer signature line printed on racket bookings and pay-later slips."
+      description="Customer booking slips, racket staff tags, terms & conditions and signature wording."
     >
       <SettingsTabs current="/settings/booking-slip" />
 
@@ -53,8 +54,8 @@ function BookingSlipForm() {
 
   return (
     <div className="space-y-4">
-      <ReceiptDocumentControls />
-      <div className="space-y-3 rounded-xl border bg-card p-4">
+      <ReceiptDocumentControls area="booking" />
+      <SettingsDisclosure title="Customer slip terms & conditions" description="Editable wording printed on booking customer slips.">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-1">
             <Label htmlFor="booking-terms">Terms &amp; conditions</Label>
@@ -86,9 +87,9 @@ function BookingSlipForm() {
           }
           onChange={(e) => patch({ terms: e.target.value })}
         />
-      </div>
+      </SettingsDisclosure>
 
-      <div className="space-y-3 rounded-xl border bg-card p-4">
+      <SettingsDisclosure title="Signature & part-payment receipts" description="Customer acceptance wording and repeat terms on payment slips.">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-1">
             <Label htmlFor="signature-caption">Customer signature block</Label>
@@ -110,7 +111,6 @@ function BookingSlipForm() {
           placeholder="I accept the terms above and confirm the racket details are correct."
           onChange={(e) => patch({ signatureCaption: e.target.value })}
         />
-      </div>
 
       <div className="flex items-center justify-between gap-4 rounded-xl border bg-card p-4">
         <div>
@@ -125,6 +125,7 @@ function BookingSlipForm() {
           onCheckedChange={(v) => patch({ termsOnPayment: v })}
         />
       </div>
+      </SettingsDisclosure>
 
 
     </div>

@@ -1,3 +1,4 @@
+import { SettingsDisclosure } from "@/platforms/web/components/pos/settings/SettingsDisclosure";
 import { HelpTip } from "@/components/ui/help-tip";
 /**
  * Bookable services, e.g. racket re-stringing.
@@ -100,10 +101,8 @@ function ServicesForm() {
       </div>
 
       {services.map((s) => (
-        <div
-          key={s.id}
-          className="grid gap-4 rounded-xl border bg-card p-4 sm:grid-cols-2"
-        >
+        <SettingsDisclosure key={s.id} title={s.name || "New service"} description={`${s.active ? "Active" : "Inactive"} · Default fee ${Number(s.fee || 0).toFixed(2)}${s.isStringingJob ? " · Racket / stringing" : ""}`} initialOpen={!s.name}>
+        <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Service</Label>
             <Input
@@ -151,6 +150,7 @@ function ServicesForm() {
             <Trash2 className="size-4 text-destructive" />
           </Button>
         </div>
+        </SettingsDisclosure>
       ))}
 
       {services.length === 0 && (

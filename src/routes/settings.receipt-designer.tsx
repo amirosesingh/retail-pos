@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { SettingsTabs } from "@/platforms/web/components/pos/settings/SettingsTabs";
 import {
@@ -41,7 +41,7 @@ export const Route = createFileRoute("/settings/receipt-designer")({
   component: () => (
     <SettingsFrame
       title="Receipt designer"
-      description="Logo placement and size, dynamic content and styling for every printed slip. The preview uses sample transaction data."
+      description="Sales receipt layout, printed fields and styling. Booking slips and racket tags are managed under Booking Rules & Services."
       showPreview
     >
       <SettingsTabs current="/settings/receipt-designer" />
@@ -53,7 +53,8 @@ export const Route = createFileRoute("/settings/receipt-designer")({
 type Target = { kind: "header" } | { kind: "footer" } | { kind: "line"; id: string };
 
 function Designer() {
-  const { effective, setField, setGlobal, receipt } = useSettingsCtx();
+  const { effective, setField, setGlobal, receipt, setPreviewDocument } = useSettingsCtx();
+  useEffect(() => { setPreviewDocument("sale"); }, [setPreviewDocument]);
   const { isAdmin, can } = useAuth();
   const mayEdit = isAdmin || can("can_access_pos_settings");
   const [target, setTarget] = useState<Target>({ kind: "footer" });
@@ -300,7 +301,7 @@ function Designer() {
           <p className="text-xs font-medium">
             Available fields — inserting into: <span className="text-primary">{targetLabel}</span>
           </p>
-          {["Slip", "People & place", "Money", "Booking"].map((group) => (
+          {["Slip", "People & place", "Money"].map((group) => (
             <div key={group} className="space-y-1">
               <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{group}</p>
               <div className="flex flex-wrap gap-1">

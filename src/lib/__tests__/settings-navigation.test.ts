@@ -15,7 +15,7 @@ import {
   initialOpenCategories,
   readOpenCategories,
 } from "@/platforms/web/components/pos/settings/SettingsNavTree";
-import { settingsCoverage } from "@/lib/settings-groups";
+import { settingsCoverage, SETTINGS_GROUPS as WORKSPACE_GROUPS } from "@/lib/settings-groups";
 import { matchSettings } from "@/platforms/web/components/pos/settings/use-settings-nav";
 
 describe("settings categories", () => {
@@ -26,6 +26,13 @@ describe("settings categories", () => {
     const accounts = SETTINGS_CARDS.find(card => card.id === "staff")!;
     expect(settingsCardForStaffAccess(accounts, false)).toBe(accounts);
   });
+  it("keeps booking printing only in booking rules and services", () => {
+    const owners = WORKSPACE_GROUPS.filter(group => group.tabs.some(tab => tab.to === "/settings/booking-slip"));
+    expect(owners.map(group => group.id)).toEqual(["booking-rules"]);
+    expect(SETTINGS_CARDS.find(card => card.id === "booking-slip")?.category).toBe("sales");
+    expect(SETTINGS_CARDS.find(card => card.id === "receipt-designer")?.category).toBe("receipts");
+  });
+
   it("gives every page a live category", () => {
     const live = new Set(SETTINGS_CATEGORIES.map((c) => c.id));
     for (const card of SETTINGS_CARDS) {

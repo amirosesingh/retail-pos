@@ -1,3 +1,5 @@
+import { Link } from "@tanstack/react-router";
+import { SettingsDisclosure } from "@/platforms/web/components/pos/settings/SettingsDisclosure";
 import { HelpTip } from "@/components/ui/help-tip";
 /**
  * Booking rules.
@@ -44,6 +46,7 @@ export const Route = createFileRoute("/settings/booking-rules")({
     >
       <SettingsTabs current="/settings/booking-rules" />
 
+      <p className="text-sm text-muted-foreground">Open a section to edit its rules. <Link to="/settings/booking-slip" className="font-semibold text-primary underline underline-offset-4">Booking slips, tags &amp; wording</Link> are managed separately from sales receipts.</p>
       <BookingRulesForm />
     </SettingsFrame>
   ),
@@ -81,13 +84,9 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="space-y-4 rounded-xl border bg-card p-4">
-      <div>
-        <h2 className="text-sm font-semibold">{title}</h2>
-        <p className="text-xs text-muted-foreground">{blurb}</p>
-      </div>
+    <SettingsDisclosure title={title} description={blurb} initialOpen={title === "Deposits & payment"}>
       {children}
-    </section>
+    </SettingsDisclosure>
   );
 }
 
