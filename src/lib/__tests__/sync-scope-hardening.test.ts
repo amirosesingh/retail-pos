@@ -116,7 +116,7 @@ describe("scoped SQL Server synchronization", () => {
     const operations = read("electron/db/repositories/operations.cjs");
     const inventory = read("src/routes/inventory.tsx");
     const store = read("src/lib/pos-store.tsx");
-    expect(operations).toContain("NULLIF(owner_store_id,N'') IS NULL OR owner_store_id=@branch");
+    expect(operations).toContain('rendererReadBranchPredicate(this.registry, table, "source")');
     expect(operations).toContain("product_price:%");
     expect(operations).toContain("global: 0, cluster: 1, branch: 2, terminal: 3");
     expect(inventory).toContain("Use these prices only at {currentStore.name}");

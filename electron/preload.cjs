@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld("pos", {
   commitAggregate: (aggregate) => invoke("business:commit-aggregate", aggregate),
   snapshot: (options) => invoke("business:snapshot", options),
   analytics: (from, to, timeZone) => invoke("business:analytics", from, to, timeZone),
+  managementReport: (options) => invoke("business:management-report", options),
   query: (table, options) => invoke("business:query", table, options),
   saveAuthorizationRule: (value) => invoke("business:save-authorization-rule", value),
   shiftExpectedTotals: (shiftId) => invoke("business:shift-expected", shiftId),

@@ -12778,29 +12778,44 @@ ON CONFLICT (action_key, scope_type, scope_id) DO NOTHING;
 CREATE OR REPLACE FUNCTION public.may_approve_cross_group_transfer()
 RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER
-SET search_path = public, pg_temp
-AS $$
+SET search_path = ''
+AS $function$
 DECLARE
   u record;
   rule public.authorization_actions;
 BEGIN
-  IF public.is_app_supervisor() THEN RETURN true; END IF;
   SELECT * INTO u FROM public.current_app_user();
-  IF u.id IS NULL OR NOT COALESCE(u.is_active, false) THEN RETURN false; END IF;
+  IF u.id IS NULL OR NOT COALESCE(u.is_active, false)
+     OR NOT public.has_perm('can_approve_transfer') THEN
+    RETURN false;
+  END IF;
 
   SELECT * INTO rule FROM public.authorization_actions
    WHERE action_key = 'cross_group_transfer_approval'
      AND scope_type = 'global' AND scope_id = '' LIMIT 1;
 
-  IF rule.id IS NULL OR NOT rule.is_enabled THEN
-    RETURN public.has_perm('can_approve_transfer');
-  END IF;
+  -- Preserve permission-based behavior on older/unconfigured installations.
+  -- Cross-cluster transfers still wait for an independent decision in the
+  -- existing lifecycle trigger; this does not pre-approve a stock movement.
+  IF rule.id IS NULL OR NOT rule.is_enabled THEN RETURN true; END IF;
 
-  RETURN (u.role::text = ANY (rule.allowed_roles))
-      OR (COALESCE(u.user_id, '') <> '' AND u.user_id = ANY (rule.allowed_user_ids))
-      OR (u.id::text = ANY (rule.allowed_user_ids));
-END $$;
+  IF EXISTS (
+    SELECT 1 FROM unnest(COALESCE(rule.allowed_user_ids, ARRAY[]::text[])) AS allowed(value)
+    WHERE lower(btrim(value)) IN (
+      '!' || lower(COALESCE(u.user_id, '')), '!' || lower(u.id::text)
+    )
+  ) THEN RETURN false; END IF;
 
+  RETURN EXISTS (
+    SELECT 1 FROM unnest(COALESCE(rule.allowed_roles, ARRAY[]::text[])) AS allowed(value)
+    WHERE lower(btrim(value)) IN (lower(u.role::text), lower(COALESCE((SELECT a.role_slug FROM public.app_users a WHERE a.id=u.id), '')))
+  ) OR EXISTS (
+    SELECT 1 FROM unnest(COALESCE(rule.allowed_user_ids, ARRAY[]::text[])) AS allowed(value)
+    WHERE lower(btrim(value)) IN (lower(COALESCE(u.user_id, '')), lower(u.id::text))
+      AND btrim(value) <> ''
+  );
+END;
+$function$;
 REVOKE ALL ON FUNCTION public.may_approve_cross_group_transfer() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.may_approve_cross_group_transfer() TO authenticated, service_role;
 
@@ -21666,6 +21681,342 @@ DO $ready$ BEGIN
    ON CONFLICT(key) DO UPDATE SET enabled=true,updated_at=now();
  END IF;
 END $ready$;
+COMMIT;
+
+-- Read availability is separate from permission to edit another branch's product.
+-- No ownership backfill, product rewrite, or widening of upload/write permissions.
+BEGIN;
+-- A product carries only destination branch IDs, not private transfer history.
+-- Users without transfer-history permission still need this proof after a
+-- legitimate receipt has subsequently sold down to zero.
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS catalogue_store_ids text[] NOT NULL DEFAULT '{}';
+CREATE OR REPLACE FUNCTION public.received_product_catalogue_stores(p_product uuid)
+RETURNS text[] LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $fn$
+ SELECT COALESCE(array_agg(DISTINCT t.to_store_id ORDER BY t.to_store_id),ARRAY[]::text[])
+ FROM public.stock_transfer_items i JOIN public.stock_transfers t ON t.id=i.transfer_id
+ WHERE i.product_id=p_product AND t.posted_at IS NOT NULL
+  AND t.status IN ('completed','completed_with_discrepancy')
+  AND COALESCE(i.quantity_verified,i.quantity_received,0)>0
+$fn$;
+REVOKE ALL ON FUNCTION public.received_product_catalogue_stores(uuid) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.received_product_catalogue_stores(uuid) TO service_role;
+
+CREATE OR REPLACE FUNCTION public.protect_product_catalogue_projection()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $fn$
+BEGIN
+ -- Ignore forged or stale cloud/cache projections, including service uploads.
+ NEW.catalogue_store_ids:=public.received_product_catalogue_stores(NEW.id);
+ RETURN NEW;
+END $fn$;
+REVOKE ALL ON FUNCTION public.protect_product_catalogue_projection() FROM PUBLIC,anon,authenticated;
+DROP TRIGGER IF EXISTS products_catalogue_projection ON public.products;
+CREATE TRIGGER products_catalogue_projection BEFORE INSERT OR UPDATE ON public.products
+ FOR EACH ROW EXECUTE FUNCTION public.protect_product_catalogue_projection();
+
+CREATE OR REPLACE FUNCTION public.refresh_transfer_catalogue_projection()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $fn$
+DECLARE affected uuid[]; old_id uuid; new_id uuid;
+BEGIN
+ IF TG_TABLE_NAME='stock_transfer_items' THEN
+  IF TG_OP<>'INSERT' THEN old_id:=OLD.product_id; END IF;
+  IF TG_OP<>'DELETE' THEN new_id:=NEW.product_id; END IF;
+  affected:=ARRAY[old_id,new_id];
+ ELSE
+  IF TG_OP<>'INSERT' THEN old_id:=OLD.id; END IF;
+  IF TG_OP<>'DELETE' THEN new_id:=NEW.id; END IF;
+  SELECT array_agg(DISTINCT i.product_id) INTO affected FROM public.stock_transfer_items i
+   WHERE i.transfer_id=ANY(ARRAY[old_id,new_id]);
+ END IF;
+ UPDATE public.products p SET catalogue_store_ids=public.received_product_catalogue_stores(p.id)
+ WHERE p.id=ANY(affected) AND p.catalogue_store_ids IS DISTINCT FROM public.received_product_catalogue_stores(p.id);
+ RETURN NULL;
+END $fn$;
+REVOKE ALL ON FUNCTION public.refresh_transfer_catalogue_projection() FROM PUBLIC,anon,authenticated;
+DROP TRIGGER IF EXISTS stock_transfers_catalogue_projection ON public.stock_transfers;
+CREATE TRIGGER stock_transfers_catalogue_projection AFTER INSERT OR UPDATE OR DELETE ON public.stock_transfers
+ FOR EACH ROW EXECUTE FUNCTION public.refresh_transfer_catalogue_projection();
+DROP TRIGGER IF EXISTS stock_transfer_items_catalogue_projection ON public.stock_transfer_items;
+CREATE TRIGGER stock_transfer_items_catalogue_projection AFTER INSERT OR UPDATE OR DELETE ON public.stock_transfer_items
+ FOR EACH ROW EXECUTE FUNCTION public.refresh_transfer_catalogue_projection();
+
+UPDATE public.products p SET catalogue_store_ids=public.received_product_catalogue_stores(p.id)
+ WHERE p.catalogue_store_ids IS DISTINCT FROM public.received_product_catalogue_stores(p.id);
+
+CREATE OR REPLACE FUNCTION public.branch_catalogue_is_private(p_branch text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $fn$
+ SELECT COALESCE((SELECT s.private_catalogue FROM public.stores s WHERE s.id=p_branch),true)
+ OR EXISTS (
+  SELECT 1 FROM public.pos_settings settings
+  CROSS JOIN LATERAL jsonb_each(COALESCE(settings.integration_settings->'branches','{}'::jsonb)) branch
+  WHERE lower(branch.key)=lower(p_branch) AND branch.value->>'privateCatalogue'='true'
+ ) OR EXISTS (
+  SELECT 1 FROM public.settings_scoped settings
+  CROSS JOIN LATERAL jsonb_each(COALESCE(settings.value->'branches','{}'::jsonb)) branch
+  WHERE settings.scope='GLOBAL' AND settings.scope_id='' AND settings.key='pos_field:integration_settings'
+   AND lower(branch.key)=lower(p_branch) AND branch.value->>'privateCatalogue'='true'
+ )
+$fn$;
+REVOKE ALL ON FUNCTION public.branch_catalogue_is_private(text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.branch_catalogue_is_private(text) TO service_role;
+CREATE OR REPLACE FUNCTION public.product_available_in_catalogue(p_product uuid,p_branch text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $fn$
+ SELECT EXISTS (
+  SELECT 1 FROM public.products p JOIN public.stores target ON target.id=p_branch
+  LEFT JOIN public.stores owner ON owner.id=p.owner_store_id
+  WHERE p.id=p_product AND (
+   p.owner_store_id=target.id
+   OR (NULLIF(btrim(owner.group_id),'') IS NOT NULL AND btrim(owner.group_id)=btrim(target.group_id))
+   OR (owner.id IS NOT NULL AND NULLIF(btrim(owner.group_id),'') IS NULL AND NULLIF(btrim(target.group_id),'') IS NULL
+       AND NOT public.branch_catalogue_is_private(owner.id) AND NOT public.branch_catalogue_is_private(target.id))
+   OR EXISTS (
+    SELECT 1 FROM public.stock_transfer_items i
+    JOIN public.stock_transfers t ON t.id=i.transfer_id
+    JOIN public.stores destination ON destination.id=t.to_store_id
+    WHERE i.product_id=p.id AND t.posted_at IS NOT NULL
+      AND t.status IN ('completed','completed_with_discrepancy')
+      AND COALESCE(i.quantity_verified,i.quantity_received,0)>0
+      AND (destination.id=target.id OR (NULLIF(btrim(target.group_id),'') IS NOT NULL AND btrim(destination.group_id)=btrim(target.group_id)))
+   )
+   OR (NULLIF(btrim(p.owner_store_id),'') IS NULL AND (
+    EXISTS (
+     SELECT 1 FROM jsonb_each_text(COALESCE(p.stock_by_store,'{}'::jsonb)) stock
+     JOIN public.stores evidence ON lower(evidence.id)=lower(stock.key)
+     WHERE (evidence.id=target.id OR (NULLIF(btrim(target.group_id),'') IS NOT NULL AND btrim(evidence.group_id)=btrim(target.group_id)))
+       AND CASE WHEN stock.value ~ '^-?[0-9]+([.][0-9]+)?$' THEN stock.value::numeric<>0 ELSE false END
+    )
+    OR (NOT public.branch_catalogue_is_private(target.id) AND (SELECT count(DISTINCT NULLIF(btrim(s.group_id),'')) FROM public.stores s)<=1)
+   ))
+  )
+ )
+$fn$;
+REVOKE ALL ON FUNCTION public.product_available_in_catalogue(uuid,text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.product_available_in_catalogue(uuid,text) TO service_role;
+
+CREATE OR REPLACE FUNCTION public.product_catalogue_visible_to_me(p_product uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $fn$
+ SELECT public.is_staff_now() AND EXISTS (
+  SELECT 1 FROM public.stores s WHERE public.user_has_store_access(s.id)
+   AND public.product_available_in_catalogue(p_product,s.id)
+ )
+$fn$;
+REVOKE ALL ON FUNCTION public.product_catalogue_visible_to_me(uuid) FROM PUBLIC,anon;
+GRANT EXECUTE ON FUNCTION public.product_catalogue_visible_to_me(uuid) TO authenticated,service_role;
+DROP POLICY IF EXISTS "Staff can read products" ON public.products;
+CREATE POLICY "Staff can read products" ON public.products FOR SELECT TO authenticated
+ USING (public.product_catalogue_visible_to_me(id));
+
+-- Patch only exact, inspected read predicates. Abort on an unfamiliar deployed
+-- function contract instead of guessing at or replacing other business logic.
+DO $read_contracts$
+DECLARE signature text; definition text; before_patch text; old_predicate text;
+BEGIN
+ FOREACH signature IN ARRAY ARRAY[
+  'public.pos_sync_bootstrap_scoped(text,text,text,text,text,integer,integer)',
+  'public.pos_sync_counts_scoped(text,text,text,integer)'
+ ] LOOP
+  SELECT pg_get_functiondef(signature::regprocedure) INTO definition;
+  before_patch:=definition;
+  old_predicate:='(NULLIF(x.owner_store_id::text,'''') IS NULL OR x.owner_store_id::text=p_branch_id)';
+  IF position(old_predicate IN definition)=0 AND position('product_available_in_catalogue(x.id,p_branch_id)' IN definition)=0 THEN
+   RAISE EXCEPTION 'Expected product read scope not found in %',signature;
+  END IF;
+  definition:=replace(definition,old_predicate,'public.product_available_in_catalogue(x.id,p_branch_id)');
+  old_predicate:='(NULLIF(p.owner_store_id::text,'''') IS NULL OR p.owner_store_id::text=p_branch_id)';
+  IF position(old_predicate IN definition)=0 AND position('product_available_in_catalogue(p.id,p_branch_id)' IN definition)=0 THEN
+   RAISE EXCEPTION 'Expected linked-product read scope not found in %',signature;
+  END IF;
+  definition:=replace(definition,old_predicate,'public.product_available_in_catalogue(p.id,p_branch_id)');
+  IF definition<>before_patch THEN EXECUTE definition; END IF;
+ END LOOP;
+ SELECT pg_get_functiondef('public.pos_sync_pull(text,text,text,bigint,integer)'::regprocedure) INTO definition;
+ FOREACH signature IN ARRAY ARRAY['products','product_barcodes','promotions'] LOOP
+  old_predicate:=format('FROM public."%s" x WHERE x."id"=((f.entity_id::jsonb)->>''id'')::uuid LIMIT 1)',signature);
+  IF position(old_predicate IN definition)=0 AND position('-- cluster-catalogue-read-filter' IN definition)=0 THEN
+   RAISE EXCEPTION 'Expected delta row contract not found for %',signature;
+  END IF;
+  definition:=replace(definition,old_predicate,replace(old_predicate,' LIMIT 1)',CASE signature
+   WHEN 'products' THEN ' AND public.product_available_in_catalogue(x.id,p_branch_id) LIMIT 1)'
+   WHEN 'product_barcodes' THEN ' AND public.product_available_in_catalogue(x.product_id,p_branch_id) LIMIT 1)'
+   ELSE ' AND (x.foc_product_id IS NULL OR public.product_available_in_catalogue(x.foc_product_id,p_branch_id)) LIMIT 1)' END));
+ END LOOP;
+ IF position('-- cluster-catalogue-read-filter' IN definition)=0 THEN
+  IF position('RETURN QUERY WITH feed_page' IN definition)=0 THEN RAISE EXCEPTION 'Expected delta pagination contract not found'; END IF;
+  definition:=replace(definition,'RETURN QUERY WITH feed_page',E'-- cluster-catalogue-read-filter\n RETURN QUERY WITH feed_page');
+  EXECUTE definition;
+ END IF;
+ SELECT pg_get_functiondef('public.prepare_sponsorship(uuid,text,text,text,text,jsonb,text)'::regprocedure) INTO definition;
+ old_predicate:='IF product.owner_store_id IS NOT NULL AND product.owner_store_id<>p_store THEN';
+ IF position(old_predicate IN definition)>0 THEN
+  EXECUTE replace(definition,old_predicate,'IF NOT public.product_available_in_catalogue(product.id,p_store) THEN');
+ ELSIF position('IF NOT public.product_available_in_catalogue(product.id,p_store) THEN' IN definition)=0 THEN
+  RAISE EXCEPTION 'Expected sponsorship catalogue guard not found';
+ END IF;
+END $read_contracts$;
+
+-- Every branch may receive an ID-only invalidation; the guarded pull above
+-- returns product values only for its own catalogue. This makes sibling and
+-- explicitly received catalogues update without full refreshes or reassigning owners.
+DO $feed_contracts$
+DECLARE signature text; definition text; old_scope text;
+BEGIN
+ FOREACH signature IN ARRAY ARRAY['public.sync_feed_products()','public.sync_feed_product_barcodes()'] LOOP
+  SELECT pg_get_functiondef(signature::regprocedure) INTO definition;
+  old_scope:=CASE WHEN signature='public.sync_feed_products()'
+    THEN 'COALESCE(NULLIF(COALESCE(NEW.owner_store_id,OLD.owner_store_id)::text,''''),''global'')'
+    ELSE 'COALESCE(NULLIF(p.owner_store_id::text,''''),''global'')' END;
+  IF position(old_scope IN definition)>0 THEN EXECUTE replace(definition,old_scope,'''global''::text');
+  ELSIF position('''global''::text branch_id' IN definition)=0 THEN RAISE EXCEPTION 'Expected product feed scope not found in %',signature; END IF;
+ END LOOP;
+ SELECT pg_get_functiondef('public.sync_feed_promotions()'::regprocedure) INTO definition;
+ old_scope:='COALESCE(NULLIF(p.owner_store_id::text,''''),''global'')';
+ IF position(old_scope IN definition)>0 THEN EXECUTE replace(definition,old_scope,'''global''::text');
+ ELSIF position('SELECT ''global''::text INTO v_branch' IN definition)=0 THEN RAISE EXCEPTION 'Expected promotion feed scope not found'; END IF;
+END $feed_contracts$;
+COMMIT;
+
+-- A native PIN session is verified by the POS relay, not an Auth JWT. Keep its
+-- account context confined to this approval transaction and this transfer.
+BEGIN;
+CREATE OR REPLACE FUNCTION private.native_transfer_approver(p_transfer_id uuid)
+RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $fn$
+  SELECT a.id FROM public.app_users a
+   WHERE auth.role() = 'service_role'
+     AND current_setting('pos.native_approval_transfer', true) = p_transfer_id::text
+     AND a.user_id = current_setting('pos.native_approval_staff', true)
+     AND a.is_active
+     AND a.permissions->'can_approve_transfer' = 'true'::jsonb
+   LIMIT 1
+$fn$;
+REVOKE ALL ON FUNCTION private.native_transfer_approver(uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION private.native_transfer_approver(uuid) TO service_role;
+
+-- Reuse the existing policy for both Auth and the narrowly scoped native call.
+DO $policy$
+DECLARE definition text; old_actor text := 'SELECT * INTO u FROM public.current_app_user();';
+BEGIN
+  SELECT pg_get_functiondef('public.may_approve_cross_group_transfer()'::regprocedure) INTO definition;
+  IF position(old_actor IN definition) > 0 THEN
+    definition := replace(definition, old_actor,
+      'IF auth.role() = ''service_role'' AND NULLIF(current_setting(''pos.native_approval_transfer'', true), '''') IS NOT NULL THEN
+         SELECT a.id,a.user_id,a.full_name,a.role,a.store_id,a.email,a.permissions,a.is_active INTO u
+           FROM public.app_users a WHERE a.id = private.native_transfer_approver(current_setting(''pos.native_approval_transfer'', true)::uuid);
+       ELSE SELECT * INTO u FROM public.current_app_user(); END IF;');
+    definition := replace(definition, 'OR NOT public.has_perm(''can_approve_transfer'')',
+      'OR NOT (CASE WHEN auth.role() = ''service_role'' THEN COALESCE(u.permissions->''can_approve_transfer'' = ''true''::jsonb,false) ELSE public.has_perm(''can_approve_transfer'') END)');
+    EXECUTE definition;
+  ELSIF position('private.native_transfer_approver' IN definition) = 0 THEN
+    RAISE EXCEPTION 'Expected configured transfer approver policy not found';
+  END IF;
+END $policy$;
+
+-- Preserve every existing lifecycle guard; extend only its approval authority
+-- check to the actor proven for this exact transfer by the service-only RPC.
+DO $lifecycle$
+DECLARE definition text; old_check text := 'OR public.has_perm(''can_approve_transfer'');';
+BEGIN
+ SELECT pg_get_functiondef('public.stock_transfers_enforce_lifecycle()'::regprocedure) INTO definition;
+ IF position(old_check IN definition)>0 THEN
+   EXECUTE replace(definition, old_check,
+     'OR public.has_perm(''can_approve_transfer'') OR private.native_transfer_approver(NEW.id) IS NOT NULL;');
+ ELSIF position('private.native_transfer_approver(NEW.id)' IN definition)=0 THEN
+   RAISE EXCEPTION 'Expected transfer lifecycle approval check not found';
+ END IF;
+END $lifecycle$;
+
+CREATE OR REPLACE FUNCTION public.stock_transfer_approve_for_staff(
+ p_transfer_id uuid, p_staff_user_id text, p_bound_store_id text DEFAULT NULL, p_lines jsonb DEFAULT NULL
+) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $fn$
+DECLARE
+ a public.app_users; t public.stock_transfers;
+ actor text;
+ previous_staff text := current_setting('pos.native_approval_staff',true);
+ previous_transfer text := current_setting('pos.native_approval_transfer',true);
+BEGIN
+ IF auth.role() IS DISTINCT FROM 'service_role' THEN
+   RAISE EXCEPTION 'Verified native staff session required' USING ERRCODE='insufficient_privilege';
+ END IF;
+ SELECT * INTO a FROM public.app_users WHERE user_id=p_staff_user_id FOR SHARE;
+ IF a.id IS NULL OR NOT a.is_active OR a.permissions->'can_approve_transfer' IS DISTINCT FROM 'true'::jsonb THEN
+   RAISE EXCEPTION 'Active transfer approver permission required' USING ERRCODE='insufficient_privilege';
+ END IF;
+ SELECT * INTO t FROM public.stock_transfers WHERE id=p_transfer_id FOR UPDATE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'TRANSFER_NOT_FOUND_OR_UNAVAILABLE'; END IF;
+ IF (NULLIF(p_bound_store_id,'') IS NOT NULL AND p_bound_store_id<>t.from_store_id)
+    OR (a.store_id IS NOT NULL AND a.store_id<>t.from_store_id)
+    OR (NULLIF(p_bound_store_id,'') IS NULL AND a.store_id IS NULL
+        AND a.role::text NOT IN ('admin','manager') AND COALESCE(a.role_slug,'') NOT IN ('admin','supervisor')) THEN
+   RAISE EXCEPTION 'You cannot approve transfers for this sending location' USING ERRCODE='insufficient_privilege';
+ END IF;
+ IF t.status<>'awaiting_approval' THEN RAISE EXCEPTION 'Transfer is not waiting for approval'; END IF;
+ actor := COALESCE(NULLIF(btrim(a.full_name),''),a.user_id);
+ PERFORM set_config('pos.native_approval_staff',a.user_id,true);
+ PERFORM set_config('pos.native_approval_transfer',t.id::text,true);
+ IF public.is_cross_group_transfer(t.from_store_id,t.to_store_id) THEN
+   IF NOT public.may_approve_cross_group_transfer()
+      OR lower(btrim(COALESCE(t.created_by,''))) IN (lower(actor),lower(a.user_id),lower(a.id::text)) THEN
+     RAISE EXCEPTION 'Independent configured cross-cluster approver required' USING ERRCODE='insufficient_privilege';
+   END IF;
+ END IF;
+ -- Same quantity approval semantics as the existing approval routine. No stock
+ -- is posted here; dispatch, receipt and verification retain their routines.
+ UPDATE public.stock_transfer_items i SET quantity_approved=COALESCE(
+   (SELECT (l->>'qty')::int FROM jsonb_array_elements(COALESCE(p_lines,'[]'::jsonb)) l
+     WHERE l->>'product_id'=i.product_id::text LIMIT 1),i.quantity)
+ WHERE i.transfer_id=t.id;
+ UPDATE public.stock_transfers SET status='approved',approved_by=actor,approved_at=now() WHERE id=t.id;
+ PERFORM set_config('pos.native_approval_staff',COALESCE(previous_staff,''),true);
+ PERFORM set_config('pos.native_approval_transfer',COALESCE(previous_transfer,''),true);
+END $fn$;
+REVOKE ALL ON FUNCTION public.stock_transfer_approve_for_staff(uuid,text,text,jsonb) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.stock_transfer_approve_for_staff(uuid,text,text,jsonb) TO service_role;
+COMMIT;
+
+-- Read-only history pagination. Keep the existing shift projection's exact
+-- permission masks and branch/active-terminal gates; do not grant table access.
+BEGIN;
+CREATE INDEX IF NOT EXISTS shifts_history_by_store_opened_id ON public.shifts(store_id,opened_at DESC,id DESC);
+CREATE OR REPLACE FUNCTION private.shift_page_secure_impl(
+ p_store_id text,p_from timestamptz DEFAULT NULL,p_to timestamptz DEFAULT NULL,
+ p_before_opened_at timestamptz DEFAULT NULL,p_before_id uuid DEFAULT NULL,p_limit integer DEFAULT 500
+)
+RETURNS SETOF jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $fn$
+ SELECT pg_catalog.to_jsonb(s) || pg_catalog.jsonb_build_object(
+  'opening_float', CASE WHEN (SELECT public.has_perm('can_shift_expected_cash_view')) THEN s.opening_float END,
+  'expected_cash', CASE WHEN (SELECT public.has_perm('can_shift_expected_cash_view')) THEN s.expected_cash END,
+  'expected_card', CASE WHEN (SELECT public.has_perm('can_shift_expected_cash_view')) THEN s.expected_card END,
+  'expected_digital', CASE WHEN (SELECT public.has_perm('can_shift_expected_cash_view')) THEN s.expected_digital END,
+  'counted_cash', CASE WHEN (SELECT public.has_perm('can_shift_counted_cash_view')) THEN s.counted_cash END,
+  'counted_card', CASE WHEN (SELECT public.has_perm('can_shift_counted_cash_view')) THEN s.counted_card END,
+  'counted_digital', CASE WHEN (SELECT public.has_perm('can_shift_counted_cash_view')) THEN s.counted_digital END,
+  'closing_float', CASE WHEN (SELECT public.has_perm('can_shift_counted_cash_view')) THEN s.closing_float END,
+  'final_counted_cash', CASE WHEN (SELECT public.has_perm('can_shift_counted_cash_view')) THEN s.final_counted_cash END,
+  'variance_cash', CASE WHEN (SELECT public.has_perm('can_shift_variance_view')) THEN s.variance_cash END,
+  'variance_card', CASE WHEN (SELECT public.has_perm('can_shift_variance_view')) THEN s.variance_card END,
+  'variance_digital', CASE WHEN (SELECT public.has_perm('can_shift_variance_view')) THEN s.variance_digital END,
+  'variance_total', CASE WHEN (SELECT public.has_perm('can_shift_variance_view')) THEN s.variance_total END,
+  'variance_status', CASE WHEN (SELECT public.has_perm('can_shift_variance_view')) THEN s.variance_status END
+ )
+ FROM public.shifts s
+ WHERE (SELECT public.is_staff((SELECT auth.uid())))
+  AND (SELECT public.is_terminal_active()) AND public.store_visible(s.store_id)
+  AND NULLIF(btrim(p_store_id),'') IS NOT NULL AND s.store_id=p_store_id
+  AND (p_from IS NULL OR s.opened_at>=p_from) AND (p_to IS NULL OR s.opened_at<=p_to)
+  AND ((p_before_opened_at IS NULL AND p_before_id IS NULL)
+    OR (p_before_opened_at IS NOT NULL AND p_before_id IS NOT NULL
+      AND (s.opened_at,s.id)<(p_before_opened_at,p_before_id)))
+ ORDER BY s.opened_at DESC,s.id DESC LIMIT LEAST(GREATEST(COALESCE(p_limit,500),1),500)
+$fn$;
+REVOKE ALL ON FUNCTION private.shift_page_secure_impl(text,timestamptz,timestamptz,timestamptz,uuid,integer) FROM PUBLIC,anon;
+GRANT EXECUTE ON FUNCTION private.shift_page_secure_impl(text,timestamptz,timestamptz,timestamptz,uuid,integer) TO authenticated,service_role;
+CREATE OR REPLACE FUNCTION public.shift_page_secure(
+ p_store_id text,p_from timestamptz DEFAULT NULL,p_to timestamptz DEFAULT NULL,
+ p_before_opened_at timestamptz DEFAULT NULL,p_before_id uuid DEFAULT NULL,p_limit integer DEFAULT 500
+)
+RETURNS SETOF jsonb LANGUAGE sql STABLE SECURITY INVOKER SET search_path='' AS $fn$
+ SELECT * FROM private.shift_page_secure_impl(p_store_id,p_from,p_to,p_before_opened_at,p_before_id,p_limit)
+$fn$;
+REVOKE ALL ON FUNCTION public.shift_page_secure(text,timestamptz,timestamptz,timestamptz,uuid,integer) FROM PUBLIC,anon;
+GRANT EXECUTE ON FUNCTION public.shift_page_secure(text,timestamptz,timestamptz,timestamptz,uuid,integer) TO authenticated,service_role;
 COMMIT;
 
 -- Final public-schema privilege hardening after notification rule definitions.

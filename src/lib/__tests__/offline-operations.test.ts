@@ -210,7 +210,9 @@ describe("offline terminal operations", () => {
     expect(main).toContain('!String(row?.store_id??"").trim()');
     expect(main).toContain("adminSession.branchId()");
     expect(main).toContain('code:"SYNC_BRANCH_FORBIDDEN"');
-    expect(aggregates).toContain("async assertBranch(transaction, table, record, match, branchId)");
+    expect(aggregates).toContain("async assertBranch(transaction, table, record, match, branchId, financialStock = false)");
+    expect(aggregates).toContain('financialStock ? rendererReadBranchPredicate(this.operationsRepository.registry, table, "candidate") : branchPredicate(this.operationsRepository.registry, table, "candidate")');
+    expect(readFileSync("electron/db/financial-stock-policy.cjs", "utf8")).toContain('scope.productWriteKind === "sale"');
     expect(aggregates).toContain("branchId: aggregate.branchId");
     expect(aggregates).toContain("terminalId: aggregate.terminalId");
     expect(aggregates).toContain('code: "SYNC_BRANCH_FORBIDDEN"');

@@ -520,9 +520,20 @@ export async function runRelayRpc(
             ? "p_verified_by"
             : null;
   const args = actorField ? { ...op.args, [actorField]: actor } : op.args;
-  const res = await serviceRest(`rpc/${op.fn}`, {
+  // Only the account resolved from the verified session may become the native
+  // database actor. Renderer attribution/actor parameters are never forwarded.
+  if (op.fn === "stock_transfer_approve" && (!scope.staffUserId || scope.stale || scope.kind === "terminal"))
+    return { ok: false, code: "PERMISSION_DENIED", error: "An active staff session is required to approve transfers." };
+  const nativeApproval = op.fn === "stock_transfer_approve";
+  const rpcArgs = nativeApproval ? {
+    p_transfer_id: id,
+    p_staff_user_id: scope.staffUserId,
+    p_bound_store_id: canCrossBranches(scope) ? null : scope.storeId,
+    p_lines: op.args.p_lines ?? null,
+  } : args;
+  const res = await serviceRest(`rpc/${nativeApproval ? "stock_transfer_approve_for_staff" : op.fn}`, {
     method: "POST",
-    body: JSON.stringify(args),
+    body: JSON.stringify(rpcArgs),
   });
   if (res.ok) return { ok: true };
   return { ok: false, error: (await res.text()).slice(0, 400) };

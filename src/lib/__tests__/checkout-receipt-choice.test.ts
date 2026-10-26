@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   drawer: vi.fn(),
   reset: vi.fn(),
   canDrawer: true,
+  flush: vi.fn(),
 }));
 vi.mock("@/lib/pos-store", () => ({
   usePos: () => ({
@@ -26,7 +27,7 @@ vi.mock("@/lib/pos-store", () => ({
   money: (v: number) => v.toFixed(2),
   cartTotals: vi.fn(),
 }));
-vi.mock("@/lib/session-draft", () => ({ flushTicketDrafts: async () => "BILL-1" }));
+vi.mock("@/lib/session-draft", () => ({ flushTicketDrafts: mocks.flush }));
 vi.mock("@/lib/receipt-printer", () => ({ canOpenDrawer: () => mocks.canDrawer }));
 vi.mock("@/lib/pos-print", () => ({
   printSaleReceipt: mocks.print,
@@ -53,9 +54,10 @@ import { useCheckout, type CheckoutDeps } from "../register/use-checkout";
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.canDrawer = true;
+  mocks.flush.mockReset().mockResolvedValue("BILL-1");
   mocks.record.mockImplementation(async (value) => ({ ...value, id: "sale", receiptNo: "BILL-1" }));
 });
-function checkout(print: boolean, method = "cash", shiftBranch = "branch") {
+function checkout(print: boolean, method = "cash", shiftBranch = "branch", overrides: Partial<CheckoutDeps> = {}) {
   const deps = {
     getActiveShift: () => ({ id: "shift", state: "ACTIVE", storeId: shiftBranch }),
     getCurrentStore: () => ({ id: "branch" }),
@@ -94,6 +96,7 @@ function checkout(print: boolean, method = "cash", shiftBranch = "branch") {
     cartSnapshot: () => ({}),
     getDisplayBase: () => ({}),
   } as unknown as CheckoutDeps;
+  Object.assign(deps, overrides);
   let hook!: ReturnType<typeof useCheckout>;
   function Harness() {
     hook = useCheckout(deps);
@@ -103,6 +106,30 @@ function checkout(print: boolean, method = "cash", shiftBranch = "branch") {
   return hook;
 }
 describe("per-bill receipt choice", () => {
+  it("refuses a branch change during permission approval before payment or draft flush", async () => {
+    let branch = "branch";
+    const hook = checkout(true, "cash", "branch", {
+      getCurrentStore: () => ({ id: branch }) as ReturnType<CheckoutDeps["getCurrentStore"]>,
+      requirePermission: async () => { branch = "other"; return true; },
+    });
+    await hook.completeSale();
+    expect(mocks.record).not.toHaveBeenCalled(); expect(mocks.flush).not.toHaveBeenCalled();
+  });
+  it("refuses a branch change while the draft is being flushed", async () => {
+    let branch = "branch";
+    mocks.flush.mockImplementationOnce(async () => { branch = "other"; return "OTHER-BILL"; });
+    await checkout(true, "cash", "branch", { getCurrentStore: () => ({ id: branch }) as ReturnType<CheckoutDeps["getCurrentStore"]> }).completeSale();
+    expect(mocks.record).not.toHaveBeenCalled(); expect(mocks.print).not.toHaveBeenCalled();
+  });
+  it("keeps a failed ticket's attempt id for retry but does not carry it into another bill", async () => {
+    let bill = "BILL-1";
+    mocks.flush.mockImplementation(async () => bill);
+    mocks.record.mockRejectedValueOnce(new Error("Not saved")).mockRejectedValueOnce(new Error("Not saved"));
+    const hook = checkout(false, "cash", "branch", { getBillNo: () => bill });
+    await hook.completeSale(); await hook.completeSale(); bill = "BILL-2"; await hook.completeSale();
+    expect(mocks.record.mock.calls[0][0].clientTxnId).toBe(mocks.record.mock.calls[1][0].clientTxnId);
+    expect(mocks.record.mock.calls[2][0].clientTxnId).not.toBe(mocks.record.mock.calls[1][0].clientTxnId);
+  });
   it("refuses another branch's shift before payment, printing or drawer operations", async () => {
     await checkout(true, "cash", "other-branch").completeSale();
     expect(mocks.record).not.toHaveBeenCalled();

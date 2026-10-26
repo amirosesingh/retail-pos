@@ -16,7 +16,8 @@ describe("closed shift exchange replay", () => {
     const branch = "a611a328-2217-4d77-944a-5f6a637d123b";
     expect(sameRecordId(branch.toUpperCase(), branch)).toBe(true);
     const route = readFileSync("src/routes/shifts.tsx", "utf8").replaceAll("\r\n", "\n");
-    expect(route).toContain("sameRecordId(s.storeId, currentStore.id)");
+    expect(route).toContain("useShiftSales(currentStore.id,activeShift?.id");
+    expect(route).toContain("sameRecordId(activeShift.storeId,currentStore.id)");
     expect(route).not.toContain("s.storeId === currentStore.id");
   });
 });

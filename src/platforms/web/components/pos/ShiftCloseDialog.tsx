@@ -34,6 +34,7 @@ import { useAuth } from "@/lib/pos-auth";
 import { parseAmount, parsePositiveAmount } from "@/core/pricing/amount";
 import { openCashDrawer, printShiftReport } from "@/lib/pos-print";
 import { canOpenDrawer } from "@/lib/receipt-printer";
+import { readCompleteShiftSales } from "@/lib/shift-sales-read";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
 import { localTerminalId } from "@/lib/shift-hours";
 import { localDb } from "@/core/local-db/local-db";
@@ -47,7 +48,7 @@ import {
   synchronizeShiftClose,
   type ShiftReconciliation,
 } from "@/lib/shift-closing";
-import type { ShiftState } from "@/core/types/pos-types";
+import type { ShiftState,Sale } from "@/core/types/pos-types";
 
 type Step = "reason" | "count" | "review" | "done";
 
@@ -248,13 +249,18 @@ export function ShiftCloseDialog({
       }).catch(error => notifyError(error, "Recording shift closure audit"));
     }
     const { printed, synchronized } = await closedShiftEffects({
-      print: () => printShiftReport(closed, state.sales, "zreport", {
+      print: async () => {
+        let complete:Sale[];
+        try { complete=await readCompleteShiftSales(closed.storeId,closed.id); }
+        catch { return {ok:false,error:"Shift closed; report data is unavailable. Reprint the Z report from Shifts later."}; }
+        return printShiftReport(closed, complete, "zreport", {
         financialSummary: maySeeFinancialSummary,
         paymentBreakdown: maySeePaymentBreakdown,
         expected: maySeeExpected,
         counted: maySeeCounted,
         variance: maySeeVariance,
-      }),
+        });
+      },
       synchronize: async () => {
         setSyncingClose(true);
         const syncToast = toast.loading("Shift closed · synchronizing pending transactions…");

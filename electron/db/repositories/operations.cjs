@@ -1,6 +1,8 @@
 const { normalizeUuidFields, recordId } = require("../../sync/uuid-fields.cjs");
 const { loadRegistry } = require("../schema-registry.cjs");
 const { assertFinancialWrite } = require("../financial-write-policy.cjs");
+const { isFinancialStockUpdate, assertFinancialStockUpdate } = require("../financial-stock-policy.cjs");
+const { catalogueStoreIdsProjection } = require("../catalogue-scope.cjs");
 const {
   branchPredicate,
   rendererReadBranchPredicate,
@@ -367,6 +369,15 @@ class OperationsRepository {
   }
   async applyOperation(transaction, op, scope = {}) {
     scope = normalizeUuidFields(scope);
+    if (op.table === "products" && scope.enforcePermissions === true && writeRows(op).some(row => Object.hasOwn(row, "catalogue_store_ids")))
+      throw Object.assign(new Error("Catalogue transfer provenance is centrally managed."), { code: "PERMISSION_DENIED" });
+    const financialStock = isFinancialStockUpdate(op, scope);
+    if (financialStock) {
+      const current = await new (this.connectionManager.sql().Request)(transaction)
+        .input("product", op.match.id).input("branch", scope.branchId)
+        .query(`SELECT source.* FROM dbo.products source WITH (UPDLOCK,HOLDLOCK) WHERE source.id=@product AND (${rendererReadBranchPredicate(this.registry, this.tables.get("products"), "source")});`);
+      assertFinancialStockUpdate(op, scope, current.recordset?.[0]);
+    }
     const replacementSaleId = scope.enforcePermissions === true ? assertFinancialWrite(op, scope) : null;
     if (replacementSaleId) {
       // An immutable upsert can be a no-op. Verify the persisted replacement,
@@ -472,7 +483,7 @@ class OperationsRepository {
     match.forEach(([, value], index) => { if (value !== null) request.input(`m${index}`, valueForSql(value)); });
     const where = match.map(([column, value], index) => value === null ? `[${column}] IS NULL` : `[${column}]=@m${index}`).join(" AND ");
     let query;
-    const ownership = this.branchPredicate(table, "source");
+    const ownership = financialStock ? rendererReadBranchPredicate(this.registry, table, "source") : this.branchPredicate(table, "source");
     const restrictedWhere = `${where}${ownership ? ` AND (${ownership})` : ""}`;
     if (op.kind === "delete" && table.deleteRule === "tombstone" && table.columns.some((column) => column.sqlServerColumn === "deleted_at")) {
       request.input("deletedAt", new Date().toISOString());
@@ -502,7 +513,7 @@ class OperationsRepository {
     const names = new Set(table.columns.map((column) => column.sqlServerColumn));
     const where = [];
     if (names.has("deleted_at")) where.push("deleted_at IS NULL");
-    if (name === "products") where.push("(NULLIF(owner_store_id,N'') IS NULL OR owner_store_id=@branch)");
+    if (name === "products") where.push(rendererReadBranchPredicate(this.registry, table, "source"));
     const sql = this.connectionManager.sql();
     const transaction = new sql.Transaction(this.pool());
     await transaction.begin(sql.ISOLATION_LEVEL?.READ_COMMITTED);
@@ -511,7 +522,7 @@ class OperationsRepository {
       for (let offset = 0; offset <= MAX_SNAPSHOT_ROWS; offset += SNAPSHOT_PAGE_ROWS) {
         const request = new sql.Request(transaction).input("offset", offset).input("limit", SNAPSHOT_PAGE_ROWS);
         if (name === "products") request.input("branch", branchId == null ? null : String(branchId));
-        const page = await request.query(`SELECT * FROM dbo.[${name}] ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY [id] OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY;`);
+        const page = await request.query(`SELECT ${name === "products" ? `source.*,${catalogueStoreIdsProjection(this.registry)} AS [_catalogue_store_ids]` : "*"} FROM dbo.[${name}]${name === "products" ? " source" : ""} ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY [id] OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY;`);
         const pageRows = page.recordset ?? [];
         // The extra empty page proves that exactly MAX_SNAPSHOT_ROWS is safe;
         // any row beyond it must fail visibly instead of being silently omitted.
@@ -611,7 +622,7 @@ class OperationsRepository {
     }
     request.input("limit", limit);
     request.input("offset", offset);
-    const select = columns.map((column) => `source.[${column.sqlServerColumn}] AS [${column.cloudColumn}]`).join(",");
+    const select = columns.map((column) => `source.[${column.sqlServerColumn}] AS [${column.cloudColumn}]`).join(",") + (tableName === "products" && columns.some(column => column.cloudColumn === "stock_by_store") ? `,${catalogueStoreIdsProjection(this.registry)} AS [_catalogue_store_ids]` : "");
     const tieOrder = primary.sqlServerColumn === orderColumn.sqlServerColumn ? "" : `,source.[${primary.sqlServerColumn}] ${direction}`;
     const result = await request.query(`SELECT ${select} FROM dbo.[${table.sqlServerTable}] source ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY source.[${orderColumn.sqlServerColumn}] ${direction}${tieOrder} OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY;`);
     return { ok: true, rows: (result.recordset ?? []).map((row) => toRendererRow(table, row)) };

@@ -158,7 +158,7 @@ function BookingsPage() {
   const paymentDisplay = useRef<DisplaySnapshot | null>(null);
   const balanceRead = useRef(0);
   useEffect(() => {
-    if (payFor && serverDue !== null) {
+    if (payFor && sameBranchId(payFor.storeId, currentStore.id) && serverDue !== null) {
       const snapshot = bookingPaymentDisplay(payFor, serverDue, currentStore, state.settings.receipt.companyName || currentStore.name, user?.name || payFor.cashier, method, state.settings.payment ?? null);
       paymentDisplay.current = snapshot;
       publishDisplay(snapshot);
@@ -674,7 +674,7 @@ function BookingsPage() {
         <TablePagination {...pager} onPage={pager.setPage} onPageSize={pager.setPageSize} label="bookings" />
       </div>
 
-      {historyFor ? (
+      {historyFor && sameBranchId(historyFor.storeId, currentStore.id) ? (
         <StatusHistoryDialog
           entity="booking"
           entityId={historyFor.id}
@@ -684,7 +684,7 @@ function BookingsPage() {
         />
       ) : null}
 
-      <Dialog open={!!incidentFor} onOpenChange={(o) => !o && setIncidentFor(null)}>
+      <Dialog open={!!incidentFor && sameBranchId(incidentFor.booking.storeId, currentStore.id)} onOpenChange={(o) => !o && setIncidentFor(null)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
@@ -743,7 +743,7 @@ function BookingsPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!refundFor} onOpenChange={(o) => !o && setRefundFor(null)}>
+      <Dialog open={!!refundFor && sameBranchId(refundFor.storeId, currentStore.id)} onOpenChange={(o) => !o && setRefundFor(null)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Refund · {refundFor?.ref}</DialogTitle>
@@ -822,7 +822,7 @@ function BookingsPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!cancelling} onOpenChange={(o) => !o && setCancelling(null)}>
+      <Dialog open={!!cancelling && sameBranchId(cancelling.storeId, currentStore.id)} onOpenChange={(o) => !o && setCancelling(null)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Cancel booking · {cancelling?.ref}</DialogTitle>
@@ -900,7 +900,7 @@ function BookingsPage() {
       </Dialog>
 
 
-      <Dialog open={!!payFor} onOpenChange={(o) => !o && setPayFor(null)}>
+      <Dialog open={!!payFor && sameBranchId(payFor.storeId, currentStore.id)} onOpenChange={(o) => !o && setPayFor(null)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
@@ -975,7 +975,7 @@ function BookingsPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!removing} onOpenChange={(o) => !o && setRemoving(null)}>
+      <Dialog open={!!removing && sameBranchId(removing.storeId, currentStore.id)} onOpenChange={(o) => !o && setRemoving(null)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Delete {removing?.ref}?</DialogTitle>

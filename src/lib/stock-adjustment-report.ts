@@ -1,5 +1,6 @@
 import { routedQuery, type QueryOptions } from "@/core/api/db-query";
 import { canonicalBranchId } from "./branch-id";
+import { effectiveTimeZone,inPosDayRange,reportScanEnd,reportScanStart } from "./time-zone";
 
 export type StockReportRow = {
   id: string;
@@ -20,9 +21,12 @@ export async function loadStockAdjustmentReport(
   storeIds: string[],
   from: string,
   to: string,
+  zone=effectiveTimeZone(),
 ): Promise<StockReportRow[]> {
-  const start = from ? Date.parse(from + "T00:00:00") : -Infinity;
-  const end = to ? Date.parse(to + "T23:59:59.999") : Infinity;
+  const start = from ? reportScanStart(from) : -Infinity;
+  const end = to ? reportScanEnd(to) : Infinity;
+  if((from && !Number.isFinite(start)) || (to && !Number.isFinite(end)) || (from && to && from>to))
+    throw new Error("Choose a valid stock history date range.");
   const found = new Map<string, StockReportRow>();
   for (const storeId of [...new Set(storeIds.map(canonicalBranchId).filter(Boolean))]) {
     let cursor: QueryOptions["cursor"];
@@ -31,12 +35,14 @@ export async function loadStockAdjustmentReport(
         match: { store_id: storeId },
         orderBy: { column: "created_at", ascending: false },
         limit: 500,
+        ...((from || to)?{dateRange:{column:"created_at",from:from?new Date(start).toISOString():"1900-01-01T00:00:00.000Z",to:to?new Date(end).toISOString():"9999-12-30T23:59:59.999Z"}}:{}),
         ...(cursor ? { cursor } : {}),
       });
       for (const row of page) {
         const at = String(row.created_at ?? "");
         const timestamp = Date.parse(at);
-        if (timestamp < start || timestamp > end || !Number.isFinite(timestamp)) continue;
+        if (timestamp < start || timestamp > end || !Number.isFinite(timestamp) || !inPosDayRange(at,from,to,zone)) continue;
+        if(row.store_id!=null && canonicalBranchId(row.store_id)!==storeId) continue;
         const id = String(row.id);
         found.set(id, {
           id,

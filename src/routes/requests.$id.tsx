@@ -1,3 +1,5 @@
+import { useManagerGate } from "@/lib/manager-gate";
+import { mayApproveTransferRelease } from "@/lib/transfer-approval-policy";
 import { TransferLoadError } from "@/platforms/web/components/pos/TransferWorkspace";
 import { sameBranchId } from "@/lib/branch-id";
 /**
@@ -30,7 +32,7 @@ import {
 import { useTransferRecord } from "@/platforms/web/components/pos/TransferWorkspace";
 import { usePos } from "@/lib/pos-store";
 import { useAuth } from "@/lib/pos-auth";
-import { groupOf } from "@/lib/stock-transfers";
+import { groupOf, scopeBetween } from "@/lib/stock-transfers";
 import { TRANSFER_STATUS_LABELS } from "@/core/types/pos-types";
 
 export const Route = createFileRoute("/requests/$id")({
@@ -57,7 +59,8 @@ export const Route = createFileRoute("/requests/$id")({
 function RequestDetail() {
   const { id } = Route.useParams();
   const { state, stores, currentStore, approveTransfer, rejectTransfer } = usePos();
-  const { can } = useAuth();
+  const { can, user, appUser } = useAuth();
+  const { rules: approvalRules } = useManagerGate();
   const { transfer, live, loading, error: loadError, retry } = useTransferRecord(id);
   const [approving, setApproving] = useState(false);
   const [rejecting, setRejecting] = useState(false);
@@ -81,6 +84,11 @@ function RequestDetail() {
   const storeOf = (sid: string) => stores.find((s) => s.id === sid);
   const source = storeOf(transfer.fromStoreId);
   const destination = storeOf(transfer.toStoreId);
+  const eligibleCrossClusterApprover = mayApproveTransferRelease(
+    scopeBetween(source, destination) === "INTER_GROUP", transfer.createdBy,
+    { ids: [user?.staffId ?? "", appUser?.id ?? ""], name: user?.name ?? "", role: user?.metaRole ?? user?.roles[0] ?? user?.role ?? "" },
+    approvalRules.cross_group_transfer_approval,
+  );
   const fulfillingTransfer = state.transfers.find((t) => t.sourceRequestId === transfer.id) ?? null;
 
   const requested = transfer.items.reduce((a, i) => a + i.qty, 0);
@@ -95,7 +103,7 @@ function RequestDetail() {
     mineToApprove &&
     (transfer.status === "awaiting_approval" ||
       (transfer.status === "approved" && !fulfillingTransfer)) &&
-    can("can_approve_transfer");
+    can("can_approve_transfer") && eligibleCrossClusterApprover;
   const canReject =
     live && mineToApprove && transfer.status === "awaiting_approval" && can("can_approve_transfer");
 

@@ -104,7 +104,7 @@ import { availableAt, cartTotals, money, stockAt, usePos } from "@/lib/pos-store
 import { variantForBarcode } from "@/lib/product-lookup";
 import { reserveBillNumber } from "@/lib/bill-number";
 import { useAuth } from "@/lib/pos-auth";
-import { productVisibleAt } from "@/lib/branch-policy";
+import { createCatalogueVisibility } from "@/lib/branch-policy";
 import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
 import {
   BOOKING_TIMING_LABELS,
@@ -777,9 +777,10 @@ function Register() {
   // One pass over the catalogue instead of one per render — the search dialog
   // gets the same array back until the catalogue or the branch actually change.
   const includeAutoZeroStock = state.settings.integrations.autoArchiveZeroStock !== false && !rules.prevent_negative_stock_sale;
+  const catalogueVisible = useMemo(() => createCatalogueVisibility(state.settings, state.stores, state.transfers), [state.settings, state.stores, state.transfers]);
   const visibleProducts = useMemo(
-    () => state.products.filter((p) => productVisibleAt(state.settings, p, state.currentStoreId)),
-    [state.products, state.settings, state.currentStoreId],
+    () => state.products.filter((p) => catalogueVisible(p, state.currentStoreId)),
+    [state.products, catalogueVisible, state.currentStoreId],
   );
   const deferredProductQuery = useDeferredValue(query);
   const recommendedProducts = useMemo(
@@ -1593,7 +1594,7 @@ function Register() {
 
   /* ---- racket intake: catalogue pickers, customer-provided gear, labour lock ---- */
   const catalogueOptions = (match: RegExp) =>
-    state.products
+    visibleProducts
       .filter((p) => !p.archived && match.test(`${p.category} ${p.subCategory ?? ""} ${p.name}`))
       .slice(0, 60)
       .map((p) => ({ value: p.id, label: `${p.name} — ${money(p.price)}` }));

@@ -141,20 +141,27 @@ function classify(source: string, sqlFile: string, message: string): BoardIssue 
   };
 }
 
-export function fetchBoard(from: string, to: string): Promise<BoardData> {
-  return fetchBoardData(from, to);
+export function fetchBoard(from: string, to: string, storeIds?: readonly string[]): Promise<BoardData> {
+  return fetchBoardData(from, to, storeIds);
 }
-async function fetchBoardData(from: string, to: string): Promise<BoardData> {
+async function fetchBoardData(from: string, to: string, storeIds?: readonly string[]): Promise<BoardData> {
+  const scopeIds = storeIds === undefined ? null : [...new Set(storeIds.filter(Boolean).map(canonicalBranchId))];
+  if (scopeIds && !scopeIds.length) return { storeDays: [], itemDays: [], bills: [], storeNames: {}, liveStoreIds: [] };
+  const allowed = (id: unknown) => !scopeIds || scopeIds.includes(canonicalBranchId(id));
+  // Scope every cloud read before pagination. A display-only filter would still
+  // download another company's private financial records.
+  const scoped = <T,>(query: T, column: string): T => scopeIds
+    ? (query as T & { in: (column: string, values: string[]) => T }).in(column, scopeIds) : query;
   const bridge = localDb();
   if (effectiveDatabaseMode() === "local") {
     if (!bridge?.analytics) throw new Error("Local SQL analytics are unavailable. Check the terminal database connection.");
     const result = await bridge.analytics(from, to, effectiveTimeZone());
     if (!result.ok) throw new Error(result.error ?? "Could not read the local sales report.");
-    const directory = result.directory ?? [];
-    const bills = result.bills ?? [];
+    const directory = (result.directory ?? []).filter(row => allowed(row.id));
+    const bills = (result.bills ?? []).filter(row => allowed(row.store_id));
     return {
-      storeDays: ((result.storeDays ?? []) as unknown as StoreDayRow[]).map(row => ({...row, store_id: row.store_id == null ? null : canonicalBranchId(row.store_id)})),
-      itemDays: ((result.itemDays ?? []) as unknown as ItemDayRow[]).map(row => ({...row, store_id: row.store_id == null ? null : canonicalBranchId(row.store_id)})),
+      storeDays: ((result.storeDays ?? []) as unknown as StoreDayRow[]).filter(row => allowed(row.store_id)).map(row => ({...row, store_id: row.store_id == null ? null : canonicalBranchId(row.store_id)})),
+      itemDays: ((result.itemDays ?? []) as unknown as ItemDayRow[]).filter(row => allowed(row.store_id)).map(row => ({...row, store_id: row.store_id == null ? null : canonicalBranchId(row.store_id)})),
       bills: bills.map(row => ({ store_id: canonicalBranchId(row.store_id), store_name: String(row.store_name_snapshot ?? ""),
         created_at: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
         total: n(row.total_amount), discount_amount: n(row.discount_amount), coupon_discount: n(row.coupon_discount) })),
@@ -164,17 +171,17 @@ async function fetchBoardData(from: string, to: string): Promise<BoardData> {
     };
   }
   const [storeRes, itemRes, billRes, directoryRes] = await Promise.all([
-    readAllPages((start,end,count) => supabase.from("v_daily_store_sales")
-      .select("sale_day, sale_month, store_id, bills, revenue, cost, profit, discount, foc_value, units",{count:count ? "exact" : undefined})
+    readAllPages((start,end,count) => scoped(supabase.from("v_daily_store_sales")
+      .select("sale_day, sale_month, store_id, bills, revenue, cost, profit, discount, foc_value, units",{count:count ? "exact" : undefined}), "store_id")
       .gte("sale_day",from).lte("sale_day",to).order("sale_day").order("store_id").range(start,end)),
-    readAllPages((start,end,count) => supabase.from("v_daily_item_sales")
-      .select("sale_day, store_id, product_id, product_name, units, revenue, cost, profit, product_category",{count:count ? "exact" : undefined})
+    readAllPages((start,end,count) => scoped(supabase.from("v_daily_item_sales")
+      .select("sale_day, store_id, product_id, product_name, units, revenue, cost, profit, product_category",{count:count ? "exact" : undefined}), "store_id")
       .gte("sale_day",from).lte("sale_day",to).order("sale_day").order("store_id").order("product_id").order("product_name").range(start,end)),
-    readAllPages((start,end,count) => supabase.from("sales")
-      .select("store_id, store_name_snapshot, created_at, total_amount, discount_amount, coupon_discount",{count:count ? "exact" : undefined})
+    readAllPages((start,end,count) => scoped(supabase.from("sales")
+      .select("store_id, store_name_snapshot, created_at, total_amount, discount_amount, coupon_discount",{count:count ? "exact" : undefined}), "store_id")
       .eq("is_refunded",false).gte("created_at",new Date(reportScanStart(from)).toISOString()).lte("created_at",new Date(reportScanEnd(to)).toISOString()).order("created_at").order("id").range(start,end)),
-    readAllPages((start,end,count) => supabase.from("stores")
-      .select("id,name,code,is_active",{count:count ? "exact" : undefined}).order("id").range(start,end)),
+    readAllPages((start,end,count) => scoped(supabase.from("stores")
+      .select("id,name,code,is_active",{count:count ? "exact" : undefined}), "id").order("id").range(start,end)),
   ]);
   if ([storeRes,itemRes,billRes,directoryRes].some(result => result.capped))
     throw new BoardError([{source:"analytics",sqlFile:"supabase/schema.sql",kind:"other",detail:"This report is too large. Select a shorter date range.",advice:"Choose a smaller date range."}]);

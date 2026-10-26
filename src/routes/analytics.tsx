@@ -1,3 +1,4 @@
+import { companyStoreScope } from "@/lib/company-store-scope";
 import { HomeShortcuts } from "@/platforms/web/components/pos/HomeShortcuts";
 import { PAGE_DATA_CACHE, pageDataScope } from "@/lib/page-data-cache";
 import { effectiveTimeZone } from "@/lib/time-zone";
@@ -68,8 +69,13 @@ export const Route = createFileRoute("/analytics")({
 const shift = (days: number) => isoDay(new Date(Date.now() - days * 86_400_000));
 
 function LiveBoard() {
-  const { allStores, stores, currentStore } = usePos();
-  const { can, isAdmin, user } = useAuth();
+  const { allStores: directoryStores, currentStore } = usePos();
+  const { can, isAdmin, user, terminalStoreId, canSwitchStores } = useAuth();
+  const stores = useMemo(() => companyStoreScope(directoryStores, terminalStoreId || user?.storeId || currentStore.id,
+    !canSwitchStores || !!terminalStoreId || !!user?.storeId),
+  [directoryStores, terminalStoreId, user?.storeId, currentStore.id, canSwitchStores]);
+  const allStores = stores;
+  const storeIds = useMemo(() => stores.map(store => store.id), [stores]);
   const allowed = isAdmin || can("can_view_sales_reports");
   const canExport = can("can_export_reports");
   const showCostMargin = isAdmin || can("can_view_cost_margin");
@@ -94,8 +100,8 @@ function LiveBoard() {
 
   const query = useQuery({
     queryKey: ["analytics-board", pageDataScope(user), currentStore.id, stores.map(store => store.id).sort().join("|"), effectiveTimeZone(), from, to],
-    queryFn: () => fetchBoard(from, to),
-    enabled: allowed,
+    queryFn: () => fetchBoard(from, to, storeIds),
+    enabled: allowed && storeIds.length > 0,
     meta: {
       tables: [
         "sales",
@@ -110,8 +116,12 @@ function LiveBoard() {
   });
 
   const filter = useMemo(
-    () => (picked.length ? new Set(picked.map(canonicalBranchId)) : undefined),
-    [picked],
+    () => {
+      const eligible = new Set(storeIds.map(canonicalBranchId));
+      const selected = picked.map(canonicalBranchId).filter(id => eligible.has(id));
+      return selected.length ? new Set(selected) : undefined;
+    },
+    [picked, storeIds],
   );
   const data = query.data;
   const nameOf = useCallback(
@@ -231,7 +241,7 @@ function LiveBoard() {
             <p className="text-sm text-muted-foreground page-description">
               {data?.localOnly
                 ? "This terminal’s branch — reports calculated from local SQL Server. Group-wide reports are available on the web."
-                : "Every shop combined — categories, item drilldown and revenue share. Updates when trading data changes."}
+                : "Selected company’s shops combined — categories, item drilldown and revenue share. Updates when trading data changes."}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
@@ -277,7 +287,7 @@ function LiveBoard() {
             <div className="flex flex-wrap gap-1">
               <Button
                 size="sm"
-                variant={picked.length === 0 ? "default" : "outline"}
+                variant={!filter ? "default" : "outline"}
                 onClick={() => setPicked([])}
               >
                 All

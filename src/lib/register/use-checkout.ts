@@ -113,6 +113,8 @@ export type DisplaySnapshotBase = {
 };
 
 export function useCheckout(deps: CheckoutDeps) {
+  const latestDeps = useRef(deps);
+  latestDeps.current = deps;
   const { state, recordSale, createBooking } = usePos();
   const [saving, setSaving] = useState(false);
   const [lastSale, setLastSale] = useState<Sale | null>(null);
@@ -123,11 +125,23 @@ export function useCheckout(deps: CheckoutDeps) {
    * reached the database instead of billing the customer twice.
    */
   const attemptId = useRef<string | null>(null);
+  const attemptTicket = useRef<string | null>(null);
   /**
    * Set the instant a payment starts. React state updates a moment later, so a
    * fast second tap on Pay could otherwise start a second bill.
    */
   const inFlight = useRef(false);
+  const contextOf = (current: CheckoutDeps) => JSON.stringify({
+    branch: current.getCurrentStore().id, shift: current.getActiveShift()?.id ?? null,
+    cashier: current.getActiveCashier(), lines: current.getLines(), totals: current.getTotals(),
+    member: current.getMemberId(), exchange: current.getExchangeRef(), coupon: current.getCoupon(),
+    voucher: current.getVoucherToken(), authorization: current.getAuthorization?.() ?? null,
+  });
+  const stillCurrent = (context: string) => {
+    if (context === contextOf(latestDeps.current)) return true;
+    toast.error("The branch, shift or ticket changed while this action was being authorized. Review the current ticket and try again.");
+    return false;
+  };
 
   /**
    * Stamp the effective global rate on committed lines. Totals already use
@@ -169,6 +183,7 @@ export function useCheckout(deps: CheckoutDeps) {
 
   async function bookAndPayLater(timingOverride?: "now") {
     if (deps.validateCouponBeforeCommit?.() === false) return;
+    const context = contextOf(deps);
     const activeShift = deps.getActiveShift();
     const currentStore = deps.getCurrentStore();
     const activeCashier = deps.getActiveCashier();
@@ -216,6 +231,7 @@ export function useCheckout(deps: CheckoutDeps) {
       return;
     }
     if (!(await deps.requirePermission("can_create_booking"))) return;
+    if (!stillCurrent(context)) return;
     const paymentTiming = timingOverride ?? bi.payTiming;
     const paidNow =
       paymentTiming === "collection"
@@ -355,6 +371,7 @@ export function useCheckout(deps: CheckoutDeps) {
           : undefined,
       };
       const draftBillNo = await flushTicketDrafts();
+      if (!stillCurrent(context)) return;
       if (deps.validateCouponBeforeCommit?.() === false) return;
       booking = await createBooking({ ...newBooking, draftBillNo: draftBillNo || deps.getBillNo() });
     } catch (e) {
@@ -430,6 +447,7 @@ export function useCheckout(deps: CheckoutDeps) {
   }
 
   async function runCompleteSale() {
+    const context = contextOf(deps);
     const printReceipt = deps.getPrintReceipt?.() !== false;
     const activeShift = deps.getActiveShift();
     const currentStore = deps.getCurrentStore();
@@ -469,11 +487,13 @@ export function useCheckout(deps: CheckoutDeps) {
     const policyError = exchangePolicyError(lines, totals.total, exchangeRef);
     if (policyError) { toast.error(policyError); return; }
     if (!(await deps.requirePermission("can_process_sale"))) return;
+    if (!stillCurrent(context)) return;
     // Permission is rechecked at the irreversible boundary. A held ticket,
     // restored draft, command shortcut or role change must not carry an old
     // exchange reference around the manager gate.
     if (exchangeRef && !(await deps.requirePermission("can_process_exchange"))) return;
     if (isRefund && !(await deps.requirePermission("can_process_refund"))) return;
+    if (!stillCurrent(context)) return;
     const splitting = tenders.length > 0;
     /**
      * Total rounding: runs once, on the number `cartTotals` produced, and the
@@ -565,7 +585,12 @@ export function useCheckout(deps: CheckoutDeps) {
     try {
       setSaving(true);
       billNo = (await flushTicketDrafts()) || billNo;
-      if (!attemptId.current) attemptId.current = crypto.randomUUID();
+      if (!stillCurrent(context)) return;
+      const ticket = JSON.stringify([currentStore.id, activeCashier, billNo]);
+      if (!attemptId.current || attemptTicket.current !== ticket) {
+        attemptId.current = crypto.randomUUID();
+        attemptTicket.current = ticket;
+      }
       if (deps.validateCouponBeforeCommit?.() === false) return;
       sale = await recordSale(
         {
@@ -657,6 +682,7 @@ export function useCheckout(deps: CheckoutDeps) {
       setSaving(false);
     }
     attemptId.current = null;
+    attemptTicket.current = null;
 
     // From this point the SQL transaction is complete. Restore a usable till
     // before starting printer, drawer, messaging or audit side effects: none

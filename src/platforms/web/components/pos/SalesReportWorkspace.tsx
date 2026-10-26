@@ -1,3 +1,4 @@
+import { companyStoreScope } from "@/lib/company-store-scope";
 import { useAuth } from "@/lib/pos-auth";
 import { salesReportScope } from "@/lib/sales-report-scope";
 import { canonicalBranchId } from "@/lib/branch-id";
@@ -25,13 +26,15 @@ export type SalesReportView = "bills" | "items" | "payments";
 export function SalesReportWorkspace({ initialView = "bills" }: { initialView?: SalesReportView }) {
   const { state, stores, currentStore } = usePos();
   const { user, terminalStoreId, canSwitchStores } = useAuth();
+  const companyStores = companyStoreScope(stores, terminalStoreId || user?.storeId || currentStore.id,
+    !canSwitchStores || !!terminalStoreId || !!user?.storeId);
   const baseFilters = useSalesReportFilters(defaultRange());
   // A changed global branch immediately selects that branch before effects run.
   const [selection, setSelection] = useState({ viewBranch: currentStore.id, storeId: currentStore.id });
   const requestedStore = selection.viewBranch === currentStore.id ? selection.storeId : currentStore.id;
   const reportScope = salesReportScope({
     selectedStoreId: requestedStore, currentStoreId: currentStore.id, terminalStoreId,
-    userStoreId: user?.storeId, canSwitchStores, storeIds: stores.map(store => store.id),
+    userStoreId: user?.storeId, canSwitchStores, storeIds: companyStores.map(store => store.id),
   });
   const filters = {
     ...baseFilters, storeId: reportScope.storeId,
@@ -108,7 +111,7 @@ export function SalesReportWorkspace({ initialView = "bills" }: { initialView?: 
                 [filters.from || "Any start date", filters.to || "Any end date"].join(" → ") +
                 " · " +
                 (filters.storeId === "all"
-                  ? "All permitted branches"
+                  ? "All permitted company branches"
                   : (stores.find((store) => store.id === filters.storeId)?.name ??
                     "Selected branch")) +
                 " · " +
@@ -126,7 +129,7 @@ export function SalesReportWorkspace({ initialView = "bills" }: { initialView?: 
                   value={filters.storeId}
                   onChange={filters.setStoreId}
                   options={[
-                    ...(reportScope.canAggregate ? [{ value: "all", label: "All permitted branches" }] : []),
+                    ...(reportScope.canAggregate ? [{ value: "all", label: "All permitted company branches" }] : []),
                     ...availableStores.map((store) => ({ value: canonicalBranchId(store.id), label: store.name })),
                   ]}
                 />

@@ -1,5 +1,6 @@
 const { recordId } = require("../sync/uuid-fields.cjs");
 const { exchangeLinks, assertFinancialWrite } = require("./financial-write-policy.cjs");
+const { financialStockDeltas } = require("./financial-stock-policy.cjs");
 /** Main owns permissions; renderer-selected aggregate labels grant no authority. */
 const KIND_TABLES = {
   stock: ["products", "stock_adjustments", "stock_count_drafts", "item_activity_logs",
@@ -120,7 +121,7 @@ function aggregatePolicy(kind, operations, identity) {
       spent: Number(sale.total_amount),
     });
   }
-  return { enforcePermissions: true, productWriteKind: kind, memberAccrual, financialExchangeLinks, isSettingsAdmin: identity.level === "admin",
+  return { enforcePermissions: true, productWriteKind: kind, financialStockDeltas: financialStockDeltas(operations, financial), memberAccrual, financialExchangeLinks, isSettingsAdmin: identity.level === "admin",
     activityOperator: { subject: identity.subject, role: identity.level,
       mayViewGeneralActivity: identity.level === "admin" || identity.level === "supervisor" || permissions.can_view_audit_trail === true } };
 }

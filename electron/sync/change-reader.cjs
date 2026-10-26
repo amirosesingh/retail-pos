@@ -1,5 +1,5 @@
 const { toCloudRow } = require("./row-codec.cjs");
-const { rendererReadBranchPredicate } = require("../db/branch-scope.cjs");
+const { branchPredicate, rendererReadBranchPredicate } = require("../db/branch-scope.cjs");
 const { ACTIVITY_TABLES } = require("./event-policy.cjs");
 
 class ChangeReader {
@@ -51,7 +51,7 @@ class ChangeReader {
     const scope = branchId && table.scope === "branch"
       // Recover unowned legacy purchase headers (and their children) before
       // PushWorker stamps the verified branch. Other branches stay excluded.
-      ? rendererReadBranchPredicate(this.registry, table, "source")
+      ? table.cloudTable === "products" ? branchPredicate(this.registry, table, "source") : rendererReadBranchPredicate(this.registry, table, "source")
       : null;
     if (scope) request.input("branch", String(branchId));
     const result = await request.query(`SELECT * FROM dbo.[${table.sqlServerTable}] source WHERE (${clauses.join(" OR ")})${scope ? ` AND (${scope})` : ""};`);

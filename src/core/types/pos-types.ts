@@ -76,6 +76,8 @@ export type Product = {
    * the item from the other branches.
    */
   ownerStoreId?: string | null;
+  /** Trusted posted incoming-transfer destinations, without transfer history. */
+  catalogueStoreIds?: string[];
 };
 
 export type ProductPack = {

@@ -1,9 +1,8 @@
-import { HelpTip } from "@/components/ui/help-tip";
 import {useSponsorshipTotals} from "@/lib/use-sponsorship-totals";
 import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
 import { ReportReceiptLink } from "@/platforms/web/components/pos/ReportReceiptLink";
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, type ReactNode } from "react";
+import { useMemo } from "react";
 import { ReportFrame as AppShell } from "@/platforms/web/components/pos/report-kit";
 import { SalesReportWorkspace } from "@/platforms/web/components/pos/SalesReportWorkspace";
 import { useSalesReportFilters, useSalesReportContext } from "@/lib/sales-report-context";
@@ -11,7 +10,7 @@ import { saleMatchesSearch } from "@/lib/sales-report-search";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { money, usePos } from "@/lib/pos-store";
-import { saleNetRevenue } from "@/core/pricing/profit";
+import { SalesReconciliation } from "@/platforms/web/components/pos/SalesReconciliation";
 import { paymentsLabel, methodLabel } from "@/core/types/pos-types";
 import { useReportSales } from "@/lib/use-report-sales";
 import {
@@ -83,18 +82,6 @@ export function BillsReport() {
     [history.sales, from, to, storeId, cashier, q, products],
   );
 
-  const totals = rows
-    .filter((sale) => !sale.refunded)
-    .reduce(
-      (a, s) => ({
-        net: a.net + saleNetRevenue(s),
-        collected: a.collected + s.total,
-        discount: a.discount + s.discount,
-        tax: a.tax + s.tax,
-        rounding: a.rounding + (s.roundingAdjustment ?? 0),
-      }),
-      { net: 0, collected: 0, discount: 0, tax: 0, rounding: 0 },
-    );
   const showTaxColumn = rows.some(sale => Math.abs(sale.tax) >= 0.005);
   const pager = usePagination(rows);
 
@@ -141,24 +128,8 @@ export function BillsReport() {
         ) : null}
         {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
-        <div className="summary-grid grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-          <SalesStatCard
-            label="Completed bills"
-            value={String(rows.filter((sale) => !sale.refunded).length)}
-          />
-{showSponsorship && !sponsorship.loading && !sponsorship.error && sponsorship.total > 0 && <><SalesStatCard label="Sales summary including sponsorship" value={sponsorship.loading?"Loading…":sponsorship.error?"Unavailable":money(totals.collected+sponsorship.total)}/><SalesStatCard label="Sponsorship value included" value={sponsorship.error?"Unavailable":money(sponsorship.total)}/></>}
-          <SalesStatCard label="Net sales (ex tax)" value={money(totals.net)} info={<>
-            <p>Sales after discounts, excluding tax and rounding. Bills marked refunded are excluded.</p>
-            <p className="mt-2">Net sales: {money(totals.net)}</p>
-            {Math.abs(totals.tax) >= 0.005 && <p>Tax: {money(totals.tax)}</p>}
-            <p>Rounding adjustment: {money(totals.rounding)}</p>
-            <p>Total collected: {money(totals.collected)}</p>
-            <p className="mt-2">Negative rounding reduces the amount collected; positive rounding increases it.</p>
-          </>} />
-          <SalesStatCard label="Total collected" value={money(totals.collected)} info="Completed bill totals after discounts, including any tax and final rounding. Refunded bills are excluded." />
-          <SalesStatCard label="Discounts given" value={money(totals.discount)} info="Recorded discounts on completed, non-refunded bills. These are already deducted from Net sales; do not subtract them again. Rounding adjustments are shown separately in the Net sales information." />
-          {Math.abs(totals.tax) >= 0.005 && <SalesStatCard label="Tax collected" value={money(totals.tax)} />}
-        </div>
+        {!history.loading && !history.error && <SalesReconciliation sales={rows} sponsorshipValue={showSponsorship && !sponsorship.error ? sponsorship.total : 0} />}
+        {showSponsorship && sponsorship.error && <p role="alert" className="text-sm text-destructive">Sponsorship values could not be refreshed. Customer payment totals are shown separately.</p>}
 
         <div className="rounded-2xl border border-border bg-card">
           <Table tableId="routes/reports.sales#1" loading={history.loading}>
@@ -218,12 +189,4 @@ export function BillsReport() {
       </div>
     </AppShell>
   );
-}
-
-/** Sales-only typography; other reports retain their existing appearance. */
-function SalesStatCard({ label, value, info }: { label: string; value: string; info?: ReactNode }) {
-  return <div className="min-w-0 rounded-xl border border-border bg-card p-4 font-sans">
-    <div className="flex items-center justify-between gap-2"><p className="text-sm font-normal text-muted-foreground">{label}</p>{info && <HelpTip label={`${label} information`} text={info} />}</div>
-    <p className="mt-1 break-words text-xl font-medium tabular-nums">{value}</p>
-  </div>;
 }

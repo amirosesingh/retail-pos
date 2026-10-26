@@ -1,7 +1,9 @@
 import { useMembershipTiers } from "@/lib/membership-tiers";
 import { Table } from "@/components/ui/table";
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { createCatalogueVisibility } from "@/lib/branch-policy";
+import { keepExistingMarketingOption, marketingSelectionError } from "@/lib/marketing-catalogue";
 import { Crown, Gift, Pencil, Percent, Plus, Sparkles, Trash2, Trophy } from "lucide-react";
 import { toast } from "sonner";
 import { notifyError } from "@/lib/notify";
@@ -81,6 +83,12 @@ function Promotions() {
   const { state, upsertPromotion, removePromotion, togglePromotion } = usePos();
   const { can } = useAuth();
   const [draft, setDraft] = useState<Promotion | null>(null);
+  const [draftContext,setDraftContext]=useState<{branch:string;original?:Promotion}>({branch:state.currentStoreId});
+  const catalogueProducts=useMemo(()=>{
+    const visible=createCatalogueVisibility(state.settings,state.stores,state.transfers);
+    return state.products.filter(product=>product.archived!==true&&visible(product,state.currentStoreId));
+  },[state.settings,state.stores,state.transfers,state.products,state.currentStoreId]);
+  const openDraft=(value:Promotion,original?:Promotion)=>{setDraftContext({branch:state.currentStoreId,original});setDraft(value);};
 
   // Reusable codes are managed in Coupon Campaigns, not duplicated here.
   const rules = state.promotions.filter((p) => p.type !== "code");
@@ -130,7 +138,7 @@ function Promotions() {
               {rules.filter((p) => isLive(p)).length} live · {rules.length} rules configured
             </p>
           </div>
-          <Button onClick={() => setDraft(blank())}>
+          <Button onClick={() => openDraft(blank())}>
             <Plus className="size-4" /> Add promotion / rule
           </Button>
         </header>
@@ -156,7 +164,7 @@ function Promotions() {
                     <td className="px-3 py-2">
                       <button
                         className="font-medium hover:text-primary"
-                        onClick={() => setDraft(p)}
+                        onClick={() => openDraft(p,p)}
                       >
                         {p.name || "Untitled rule"}
                       </button>
@@ -319,10 +327,10 @@ function Promotions() {
                       placeholder="Select a product…"
                       value={draft.focProductId ?? ""}
                       onChange={(v) => setDraft({ ...draft, focProductId: v })}
-                      options={state.products.map((p) => ({
+                      options={keepExistingMarketingOption(catalogueProducts.map((p) => ({
                         value: p.id,
                         label: `${p.name} · ${money(p.price)}`,
-                      }))}
+                      })),draft.focProductId,draftContext.original?.type==="foc"?draftContext.original.focProductId:undefined,"product")}
                     />
                   </div>
                 </>
@@ -453,6 +461,12 @@ function Promotions() {
                 if (draft.type === "foc" && !draft.focProductId) {
                   toast.error("Select the free product for this rule");
                   return;
+                }
+                if(draft.type==="foc") {
+                  const error=marketingSelectionError({kind:"product",value:draft.focProductId},
+                    draftContext.original?.type==="foc"?{kind:"product",value:draftContext.original.focProductId}:undefined,
+                    catalogueProducts,draftContext.branch,state.currentStoreId);
+                  if(error) {toast.error(error);return;}
                 }
                 try {
                   await upsertPromotion(draft);

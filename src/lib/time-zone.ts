@@ -139,6 +139,14 @@ export function inPosDayRange(value: string | number | Date, from: string, to: s
   return !!day && (!from || day >= from) && (!to || day <= to);
 }
 
+/** Date-only arithmetic stays independent of the viewing device's timezone. */
+export function shiftCalendarDay(day: string, days: number): string {
+  const date = new Date(`${day}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return day;
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 /** Generous UTC scan boundary; callers still filter by the exact business day. */
 export function reportScanStart(day: string): number {
   return Date.parse(`${day}T00:00:00Z`) - 86_400_000;

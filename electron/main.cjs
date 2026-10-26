@@ -1889,6 +1889,13 @@ function registerIpc() {
     const snapshot = await operationsRepository.snapshot(localBranchId(), terminalStore.read()?.tokenId ?? null, { salesOnly: options?.salesOnly === true, onProgress: (progress) => { if (!_e.sender.isDestroyed()) _e.sender.send("business:read-progress", progress); } });
     return require("./read-snapshot-policy.cjs").filterSnapshot({ ...snapshot, shifts: (snapshot.shifts ?? []).map(redactShiftRow) }, adminSession);
   }));
+  ipcMain.handle("business:management-report", (_e, options) => guard.guarded(async () => {
+    try {
+      const safe = guard.options(options, { name: "management report", max: 10 });
+      adminSession.touch();
+      return await require("./db/repositories/management-reports.cjs").readManagementReport({ manager: databaseManager, databaseService, session: adminSession, management: isManagementDevice(), options: safe, redactShift: redactShiftRow });
+    } catch (error) { return { ok: false, code: error?.code ?? "EMANAGEMENT_REPORT", error: String(error?.message ?? error) }; }
+  }));
   ipcMain.handle("business:analytics", (_e, from, to, timeZone) => guard.guarded(async () => {
     if (!adminSession.hasPosAuthority() || !adminSession.hasPermission("can_view_sales_reports"))
       return { ok: false, code: "PERMISSION_DENIED", error: "Sales report permission is required." };

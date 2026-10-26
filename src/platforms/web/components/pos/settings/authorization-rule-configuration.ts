@@ -11,6 +11,7 @@ const approverCount = (rule: AuthorizationRule) =>
   ]).size;
 
 export function authorizationRuleSummary(rule: AuthorizationRule): string {
+  if (rule.actionKey === "cross_group_transfer_approval") return `${approverCount(rule)} approver(s) • Independent transfer approval`;
   if (rule.mode === "none") return "No additional configuration";
   const count = approverCount(rule);
   const approvers = `${count} approver${count === 1 ? "" : "s"}`;
@@ -26,6 +27,9 @@ export function validateAuthorizationRuleConfiguration(
   rule: AuthorizationRule,
   action: Pick<AuthActionDef, "thresholdLabel">,
 ): AuthorizationRuleValidationIssue[] {
+  if (rule.actionKey === "cross_group_transfer_approval" &&
+      (rule.mode !== "request" || rule.scopeType !== "global" || rule.threshold !== null))
+    return [{ field: "mode", message: "Cross-cluster transfers require company-wide independent approval, with no bypass threshold." }];
   if (rule.mode === "none") return [];
   const issues: AuthorizationRuleValidationIssue[] = [];
   if (!rule.allowedRoles.length && !includedAuthorizationUserIds(rule.allowedUserIds).length) {
@@ -40,7 +44,7 @@ export function validateAuthorizationRuleConfiguration(
   ) {
     issues.push({ field: "threshold", message: `Enter ${action.thresholdLabel.toLowerCase()}.` });
   }
-  if (rule.mode === "request" || rule.mode === "either") {
+  if (rule.actionKey !== "cross_group_transfer_approval" && (rule.mode === "request" || rule.mode === "either")) {
     if (
       !rule.requesterRoles.length &&
       !includedAuthorizationUserIds(rule.requesterUserIds).length

@@ -308,6 +308,9 @@ export const listAuthorizationPeople = createServerFn({ method: "POST" })
   });
 
 function ruleConfigurationError(data: z.infer<typeof saveRuleInput>): string | null {
+  if (data.actionKey === "cross_group_transfer_approval" &&
+      (data.scopeType !== "global" || data.mode !== "request" || data.threshold !== null))
+    return "Cross-cluster transfers always require independent transfer approval. Configure approvers company-wide, with no bypass threshold.";
   if (data.actionKey === "sponsorship" && (data.mode !== "request" || !data.requireReason || data.threshold !== null)) return "Sponsorship always requires an approval request and a reason, with no bypass threshold.";
   if (data.mode === "none") return null;
   if (!data.allowedRoles.length && !data.allowedUserIds.length) {

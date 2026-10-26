@@ -3,7 +3,10 @@ import { subscribeSalesChange } from "./sync-engine";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { PAGE_DATA_CACHE, pageDataScope } from "./page-data-cache";
-import { loadSalesPage } from "@/core/api/pos-db";
+import { loadSalesPage, rowToSale } from "@/core/api/pos-db";
+import { isManagementDevice } from "./management-device";
+import { readManagementReport } from "./management-report-client";
+import { effectiveDatabaseMode } from "@/core/local-db/db-mode";
 import type { Sale } from "@/core/types/pos-types";
 import { uniqueSales } from "./sale-identity";
 import { canonicalBranchId } from "./branch-id";
@@ -39,13 +42,17 @@ export function useReportSales(
   from: string,
   to: string,
   enabled = true,
+  source: "auto" | "cloud" = "auto",
 ): { sales: Sale[]; loading: boolean; refreshing: boolean; error: string } {
   const { ready, user } = useAuth();
   const queryClient = useQueryClient();
   enabled = enabled && ready && Boolean(user);
   const reportZone = effectiveTimeZone();
+  const managementReplica = source === "auto" && isManagementDevice();
+  const offlineRead = source === "auto" && (managementReplica || effectiveDatabaseMode() === "local");
   const storeKey = storeIds.filter(Boolean).map(canonicalBranchId).sort().join("|");
   const seedRows = useMemo(() => {
+    if (source === "cloud" || managementReplica) return [];
     const start = dayStart(from);
     const end = dayEnd(to);
     const stores = new Set(storeIds.filter(Boolean).map(canonicalBranchId));
@@ -55,7 +62,7 @@ export function useReportSales(
         at >= start && at <= end && inPosDayRange(sale.createdAt, from, to, reportZone) && (!stores.size || stores.has(canonicalBranchId(sale.storeId)))
       );
     });
-  }, [seed, storeIds, from, to, reportZone]);
+  }, [seed, storeIds, from, to, reportZone, source, managementReplica]);
   const [revision, setRevision] = useState(0);
   const completedRevision = useRef(0);
   const refreshState = useRef({ running: false, queued: false });
@@ -79,14 +86,14 @@ export function useReportSales(
     });
     // Sales-change hints stay immediate; a full historical reconciliation is
     // only a fallback for missed events, not a once-per-minute table download.
-    const offCatchup = subscribeBackgroundRefresh(refresh, 300_000);
+    const offCatchup = subscribeBackgroundRefresh(refresh, 300_000, offlineRead);
     return () => {
       off();
       if (timer) clearTimeout(timer);
       offCatchup();
     };
-  }, [enabled, storeKey]);
-  const rangeKey = JSON.stringify([pageDataScope(user), storeKey, from, to, reportZone]);
+  }, [enabled, storeKey, offlineRead]);
+  const rangeKey = JSON.stringify([pageDataScope(user), storeKey, from, to, reportZone, source, managementReplica]);
   const cachedRows = enabled ? queryClient.getQueryData<Sale[]>(["report-sales", rangeKey]) : undefined;
   const [loaded, setLoaded] = useState<{ key: string; rows: Sale[] } | null>(cachedRows ? { key: rangeKey, rows: cachedRows } : null);
   const [loading, setLoading] = useState(false);
@@ -111,17 +118,33 @@ export function useReportSales(
           meta: { tables: ["sales", "sale_items", "payment_transactions"] },
           ...PAGE_DATA_CACHE,
           retry: false,
+          networkMode: offlineRead ? "always" : "online",
           // A change hint or reconciliation must recheck authority-backed rows;
           // navigating back to a fresh unchanged range can reuse its snapshot.
           staleTime: revision > completedRevision.current ? 0 : PAGE_DATA_CACHE.staleTime,
           queryFn: async ({ signal }) => {
             const found: Sale[] = [];
+            if (managementReplica && storeKey) {
+              let cursor: { ts: string; id: string } | null = null;
+              for (;;) {
+                if (signal.aborted) throw new Error("Report read cancelled");
+                const page = await readManagementReport({ kind: "sales", storeIds: ids, from, to, zone: reportZone, limit: 500, cursor });
+                if (!page) {
+                  if (cursor) throw new Error("The management replica changed during this report. Reconnect and refresh.");
+                  break; // No complete local replica: use the existing cloud read.
+                }
+                found.push(...(page.rows ?? []).map(rowToSale));
+                if (!page.hasMore || !page.cursor) return found;
+                if (cursor?.ts === page.cursor.ts && cursor.id === page.cursor.id) throw new Error("The management report cursor did not advance.");
+                cursor = page.cursor;
+              }
+            }
             for (const storeId of ids) {
               let cursor: { ts: string; id: string } | null = null;
               for (;;) {
                 if (signal.aborted) throw new Error("Report read cancelled");
                 const page = await loadSalesPage(storeId, cursor, 500, {
-                  from: new Date(start).toISOString(), to: new Date(end).toISOString(),
+                  from: new Date(start).toISOString(), to: new Date(end).toISOString(), source,
                 });
                 if (signal.aborted) throw new Error("Report read cancelled");
                 for (const sale of page.rows) {
@@ -160,7 +183,7 @@ export function useReportSales(
       cancelled = true;
       releaseRead();
     };
-  }, [from, to, storeKey, rangeKey, revision, enabled, reportZone, queryClient]);
+  }, [from, to, storeKey, rangeKey, revision, enabled, reportZone, queryClient, source, managementReplica, offlineRead]);
 
   const sales = useMemo(() => {
     // Live committed state wins over an older page snapshot (for example a refund).

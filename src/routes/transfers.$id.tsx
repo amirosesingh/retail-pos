@@ -1,3 +1,5 @@
+import { useManagerGate } from "@/lib/manager-gate";
+import { mayApproveTransferRelease } from "@/lib/transfer-approval-policy";
 import { TransferLoadError } from "@/platforms/web/components/pos/TransferWorkspace";
 import { sameBranchId } from "@/lib/branch-id";
 /**
@@ -28,7 +30,7 @@ import {
 import type { TransferStep } from "@/platforms/web/components/pos/TransferStepDialog";
 import { usePos } from "@/lib/pos-store";
 import { useAuth } from "@/lib/pos-auth";
-import { groupOf } from "@/lib/stock-transfers";
+import { groupOf, scopeBetween } from "@/lib/stock-transfers";
 import { TRANSFER_STATUS_LABELS } from "@/core/types/pos-types";
 
 export const Route = createFileRoute("/transfers/$id")({
@@ -63,7 +65,8 @@ function TransferDetail() {
     receiveTransfer,
     rejectTransfer,
   } = usePos();
-  const { can } = useAuth();
+  const { can, user, appUser } = useAuth();
+  const { rules: approvalRules } = useManagerGate();
   const navigate = useNavigate();
   const { transfer, live, loading, error: loadError, retry } = useTransferRecord(id);
   const [step, setStep] = useState<TransferStep | null>(null);
@@ -88,6 +91,11 @@ function TransferDetail() {
   const storeOf = (sid: string) => stores.find((s) => s.id === sid);
   const source = storeOf(transfer.fromStoreId);
   const destination = storeOf(transfer.toStoreId);
+  const eligibleCrossClusterApprover = mayApproveTransferRelease(
+    scopeBetween(source, destination) === "INTER_GROUP", transfer.createdBy,
+    { ids: [user?.staffId ?? "", appUser?.id ?? ""], name: user?.name ?? "", role: user?.metaRole ?? user?.roles[0] ?? user?.role ?? "" },
+    approvalRules.cross_group_transfer_approval,
+  );
   const sending = sameBranchId(transfer.fromStoreId, currentStore.id);
   const receiving = sameBranchId(transfer.toStoreId, currentStore.id);
   const parentRequest = transfer.sourceRequestId
@@ -99,7 +107,7 @@ function TransferDetail() {
   const counted = transfer.items.reduce((a, i) => a + (i.verifiedQty ?? 0), 0);
 
   const canApprove =
-    live && sending && transfer.status === "awaiting_approval" && can("can_approve_transfer");
+    live && sending && transfer.status === "awaiting_approval" && can("can_approve_transfer") && eligibleCrossClusterApprover;
   const canDispatch =
     live && sending && transfer.status === "approved" && can("can_create_transfer");
   const canReceive =

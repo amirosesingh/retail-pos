@@ -8,12 +8,11 @@ import { AnimatedMetric } from "./AnimatedMetric";
 import { useReportSales } from "@/lib/use-report-sales";
 import { dailyPaymentSummary } from "@/lib/daily-payment-summary";
 import { methodLabel } from "@/core/types/pos-types";
+import { createCatalogueVisibility } from "@/lib/branch-policy";
+import { posDayKey } from "@/lib/time-zone";
 import { SellingShortcuts } from "./SellingShortcuts";
+import { SalesReconciliation } from "./SalesReconciliation";
 
-const localDay = () => {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-};
 import {
   Activity,
   ArrowUpRight,
@@ -78,16 +77,18 @@ export function TerminalWorkspaceHome() {
       (!action.sell || can("can_process_sale")) &&
       visibleRoute(action.to),
   );
-  const [todayKey, setTodayKey] = useState(localDay);
+  const businessTimeZone = state.settings.integrations.timeZone;
+  const [todayKey, setTodayKey] = useState(() => posDayKey(new Date(), businessTimeZone));
   useEffect(() => {
-    const refreshDay = () => setTodayKey(localDay());
+    const refreshDay = () => setTodayKey(posDayKey(new Date(), businessTimeZone));
+    refreshDay();
     const timer = window.setInterval(refreshDay, 30_000);
     window.addEventListener("focus", refreshDay);
     return () => {
       window.clearInterval(timer);
       window.removeEventListener("focus", refreshDay);
     };
-  }, []);
+  }, [businessTimeZone]);
   const storeIds = useMemo(() => [currentStore.id], [currentStore.id]);
   const {
     sales: todaySales,
@@ -99,10 +100,14 @@ export function TerminalWorkspaceHome() {
   const completedSales = todaySales.filter((sale) => !sale.refunded);
   const todayRevenue = completedSales.reduce((sum, sale) => sum + sale.total, 0);
   const paymentSummary = dailyPaymentSummary(completedSales);
-  const stockMetrics = inventoryMetrics(state.products, currentStore.id);
+  const catalogueProducts = useMemo(() => {
+    const visible = createCatalogueVisibility(state.settings, state.stores, state.transfers);
+    return state.products.filter(product => visible(product, currentStore.id));
+  }, [state.settings, state.stores, state.transfers, state.products, currentStore.id]);
+  const stockMetrics = inventoryMetrics(catalogueProducts, currentStore.id);
   const lowStock = stockMetrics.lowStock;
-  const archivedProducts = state.products.filter((product) => product.archived === true).length;
-  const activeProducts = state.products.length - archivedProducts;
+  const archivedProducts = catalogueProducts.filter((product) => product.archived === true).length;
+  const activeProducts = catalogueProducts.length - archivedProducts;
   const PurposeIcon = detail.icon;
   const primaryAction = visibleActions[0];
 
@@ -259,6 +264,11 @@ export function TerminalWorkspaceHome() {
           {Object.values(metrics).some(Boolean) && <section className="selling-overview flex flex-wrap gap-3" aria-label="Workspace overview" tabIndex={0}>
             {(["shift", "bills", "revenue", "stock"] as const).filter(key => metrics[key]).map(key => <div key={key} className="min-w-0 flex-[1_1_11rem] [&>*]:h-full">{metrics[key]}</div>)}
           </section>}
+
+          {can("can_view_sales_reports") && visible("workspace.todayRevenue") && !loading && !error && <details className="rounded-xl border border-border bg-card p-4">
+            <summary className="cursor-pointer text-sm font-medium">Today's sales breakdown · {currentStore.name}</summary>
+            <div className="mt-3"><SalesReconciliation sales={completedSales} sponsorshipValue={includeSponsorship && !sponsorship.error ? sponsorship.total : 0} showBillCount={visible("workspace.todayBills")} /></div>
+          </details>}
 
           {actions}
         </div>

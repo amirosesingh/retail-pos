@@ -45,7 +45,7 @@ import { money, stockAt, usePos } from "@/lib/pos-store";
 import { useAuth } from "@/lib/pos-auth";
 import { useVisibility } from "@/lib/ui-visibility";
 
-import { productVisibleAt } from "@/lib/branch-policy";
+import { createCatalogueVisibility } from "@/lib/branch-policy";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { Switch } from "@/components/ui/switch";
 import { BulkImportDialog } from "@/platforms/web/components/pos/BulkImportDialog";
@@ -143,6 +143,7 @@ function Inventory() {
   // "show cost & margin" switch for this role.
   const showMoney = can("can_view_cost_margin") && visible("inventory.costColumns");
   const showStockValue = can("can_view_cost_margin") && visible("inventory.stockValue");
+  const catalogueVisible = useMemo(() => createCatalogueVisibility(state.settings, state.stores, state.transfers), [state.settings, state.stores, state.transfers]);
 
   const canCreate = can("can_add_new_product");
   const canEditDetails = can("can_edit_product_details");
@@ -164,7 +165,9 @@ function Inventory() {
   const [variantLabel, setVariantLabel] = useState("");
   const [variantCost, setVariantCost] = useState("");
   const [variantPrice, setVariantPrice] = useState("");
-  const [selected, setSelected] = useState<string[]>([]);
+  const [selectedIds, setSelected] = useState<string[]>([]);
+  const selected = useMemo(() => selectedIds.filter(id => state.products.some(product => product.id === id && catalogueVisible(product, state.currentStoreId))), [selectedIds, state.products, catalogueVisible, state.currentStoreId]);
+  useEffect(() => { setSelected([]); }, [state.currentStoreId]);
   const [expandedProducts, setExpandedProducts] = useState<string[]>([]);
   const [importOpen, setImportOpen] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
@@ -238,7 +241,7 @@ function Inventory() {
   const rows = useMemo(() => {
     const needle = settledQuery.trim().toLowerCase();
     return state.products.filter((p) => {
-      if (!productVisibleAt(state.settings, p, state.currentStoreId)) return false;
+      if (!catalogueVisible(p, state.currentStoreId)) return false;
       if (showArchived ? p.archived !== true : p.archived === true) return false;
       if (catFilter !== "all" && p.category !== catFilter) return false;
       if (groupFilter !== "all" && (p.group ?? "") !== groupFilter) return false;
@@ -266,6 +269,7 @@ function Inventory() {
   }, [
     state.products,
     state.settings,
+    catalogueVisible,
     state.currentStoreId,
     showArchived,
     catFilter,
@@ -313,9 +317,9 @@ function Inventory() {
   const catalogProducts = useMemo(
     () =>
       state.products.filter((product) =>
-        productVisibleAt(state.settings, product, state.currentStoreId),
+        catalogueVisible(product, state.currentStoreId),
       ),
-    [state.products, state.settings, state.currentStoreId],
+    [state.products, catalogueVisible, state.currentStoreId],
   );
   const costReviewCount = catalogProducts.filter(product => (showArchived ? product.archived === true : product.archived !== true) && needsCostReview(product.cost)).length;
   const metrics = useMemo(
@@ -852,6 +856,10 @@ function Inventory() {
                           : !canCreate
                       }
                       onClick={async () => {
+                        if (draftIsExisting && draft && !catalogueVisible(draft, state.currentStoreId)) {
+                          toast.error("This product is not in the selected branch's catalogue", { description: "Switch back to its branch before saving these changes." });
+                          return;
+                        }
                         if (!draft?.name.trim()) {
                           toast.error("Product name is required");
                           return;

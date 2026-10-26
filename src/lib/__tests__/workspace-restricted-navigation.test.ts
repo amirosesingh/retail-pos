@@ -3,12 +3,13 @@ import { createElement as h, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PermissionFlag } from "../permissions";
+import type { Product } from "@/core/types/pos-types";
 import { pageForRoute, pageEnabled } from "../permission-pages";
 import { canSeeNavigationItem, routePermissionForPath } from "@/platforms/web/components/pos/nav-config";
 import { shouldOpenRegister } from "../terminal-workspace";
-const fixture = vi.hoisted(() => ({ permissions: {} as Record<string, boolean>, hidden: [] as string[], desktop: false }));
+const fixture = vi.hoisted(() => ({ permissions: {} as Record<string, boolean>, hidden: [] as string[], desktop: false, products: [] as Product[] }));
 vi.mock("@/lib/pos-auth", () => ({ useAuth: () => ({ isAdmin: false, isSupervisor: false, isWarehouse: false, can: (key: string) => fixture.permissions[key] === true }) }));
-vi.mock("@/lib/pos-store", () => ({ usePos: () => ({ currentStore: { id: "branch-a", name: "Branch A" }, state: { sales: [], products: [], settings: { integrations: {} } } }) }));
+vi.mock("@/lib/pos-store", () => ({ usePos: () => ({ currentStore: { id: "branch-a", name: "Branch A" }, state: { sales: [], products: fixture.products, stores: [{ id: "branch-a", groupId: "shoes" }, { id: "branch-b", groupId: "clothes" }], transfers: [], settings: { integrations: {} } } }) }));
 vi.mock("@/lib/management-device", () => ({ isManagementDevice: () => false }));
 vi.mock("@/platform-config/platform", () => ({ isElectron: () => fixture.desktop }));
 vi.mock("@tanstack/react-router", () => ({ useRouterState: ({ select }: { select: (state: unknown) => unknown }) => select({ location: { pathname: "/" } }), Link: ({ to, children, search, ...props }: { to: string; children: ReactNode; search?: unknown }) => h("a", { ...props, href: to, "data-search": JSON.stringify(search) }, children) }));
@@ -29,7 +30,7 @@ const visibleRoute = (path: string) => {
 const render = (collapsed = false) => renderToStaticMarkup(h(SidebarNav, {
   collapsed, canSee: item => canSeeNavigationItem(item, can, false, visibleRoute),
 }));
-beforeEach(() => { fixture.permissions = { can_process_sale: true }; fixture.hidden = []; fixture.desktop = false; });
+beforeEach(() => { fixture.permissions = { can_process_sale: true }; fixture.hidden = []; fixture.desktop = false; fixture.products = []; });
 describe("restricted Home and Selling navigation", () => {
   it.each([false, true])("hides Home without dashboard permission, collapsed=%s", collapsed => {
     const html = render(collapsed);
@@ -77,6 +78,14 @@ describe("restricted Home and Selling navigation", () => {
 });
 
 describe("restricted Retail workspace", () => {
+  it("counts only the selected cluster catalogue in stock cards", () => {
+    fixture.permissions.can_view_inventory = true;
+    const product = { id: "one", name: "Shoe", sku: "S1", barcode: "S1", category: "Shoes", cost: 5, price: 10, reorderLevel: 2, taxRate: 0, ownerStoreId: "branch-a", stockByStore: { "branch-a": 1 } };
+    fixture.products = [product, { ...product, id: "foreign", ownerStoreId: "branch-b" }, { ...product, id: "archived-foreign", ownerStoreId: "branch-b", archived: true }];
+    const html = renderToStaticMarkup(h(TerminalWorkspaceHome));
+    expect(html).toMatch(/Active\s*<strong[^>]*>1<\/strong>/);
+    expect(html).toMatch(/Archived\s*<strong[^>]*>0<\/strong>/);
+  });
   it("shows bill history with reprint permission without granting reporting access", () => {
     fixture.permissions.can_reprint_bill = true;
     const html = renderToStaticMarkup(h(TerminalWorkspaceHome));
