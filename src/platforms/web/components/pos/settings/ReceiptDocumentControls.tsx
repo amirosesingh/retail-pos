@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+import { SettingsEditDialog } from "./SettingsEditDialog";
 import { SettingsDisclosure } from "./SettingsDisclosure";
 import { Link } from "@tanstack/react-router";
 import { Switch } from "@/components/ui/switch";
@@ -20,10 +22,14 @@ export function ReceiptDocumentControls({ area = "sales" }: { area?: "sales" | "
   return <section className="space-y-4 rounded-xl border bg-card p-4">
     <div><h2 className="text-lg font-semibold">{area === "sales" ? "Sales receipt fields" : "Booking slips & racket tags"}</h2><p className="mt-1 text-sm text-muted-foreground">{area === "sales" ? "Choose the fields printed on normal sales receipts." : "Choose a booking customer slip or racket staff tag to edit its printed fields and preview."} Changes are saved with Save settings.</p></div>
     {area === "booking" && <label className="block space-y-2"><span className="font-semibold">Receipt / slip type</span><select className="h-11 w-full rounded-lg border bg-background px-3 text-base" value={document} onChange={event => setPreviewDocument(event.target.value as ReceiptDocumentKind)}>{RECEIPT_DOCUMENTS.filter(item => item.value !== "sale").map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>}
-    <SettingsDisclosure title="Printed fields" description="Choose which details appear on this document." initialOpen={area === "sales"}>
+    <FieldsEditor area={area} summary={`${fields[document].filter(key => layout[key]).length} of ${fields[document].length} fields shown`}>
     <div className="grid gap-2 sm:grid-cols-2">{fields[document].map(key => <label key={key} className="flex min-h-12 items-center justify-between gap-3 rounded-lg border px-3 py-2"><span>{labels[key]}</span><Switch aria-label={labels[key]} checked={layout[key]} onCheckedChange={checked => setGlobal({ documentLayouts: { ...receipt.documentLayouts, [document]: { ...receipt.documentLayouts?.[document], [key]: checked } } })} /></label>)}</div>
-    </SettingsDisclosure>
+    </FieldsEditor>
     <p className="text-sm text-muted-foreground">{document === "racket-staff" ? "The staff tag uses its booking reference for barcode and QR identification." : "Barcode and QR switches also require their shared content to be enabled. Payment totals remain on customer receipts."}</p>
     <div className="flex flex-wrap gap-3 text-sm font-semibold text-primary"><Link to="/settings/type">Fonts &amp; text sizes</Link><Link to="/settings/printer">Paper &amp; margins</Link>{area === "booking" && <Link to="/settings/booking-rules">Booking rules &amp; service terms</Link>}</div>
   </section>;
+}
+
+function FieldsEditor({ area, summary, children }: { area: "sales" | "booking"; summary: string; children: ReactNode }) {
+  return area === "booking" ? <SettingsEditDialog title="Printed fields" summary={summary} description="Choose which details appear on the selected booking slip or tag.">{children}</SettingsEditDialog> : <SettingsDisclosure title="Printed fields" description="Choose which details appear on this document." initialOpen>{children}</SettingsDisclosure>;
 }

@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { SettingsDisclosure } from "@/platforms/web/components/pos/settings/SettingsDisclosure";
+import { SettingsEditDialog } from "@/platforms/web/components/pos/settings/SettingsEditDialog";
 import { HelpTip } from "@/components/ui/help-tip";
 /**
  * Booking rules.
@@ -46,7 +46,7 @@ export const Route = createFileRoute("/settings/booking-rules")({
     >
       <SettingsTabs current="/settings/booking-rules" />
 
-      <p className="text-sm text-muted-foreground">Open a section to edit its rules. <Link to="/settings/booking-slip" className="font-semibold text-primary underline underline-offset-4">Booking slips, tags &amp; wording</Link> are managed separately from sales receipts.</p>
+      <p className="text-sm text-muted-foreground">Select a rule to edit. <Link to="/settings/booking-slip" className="font-semibold text-primary underline underline-offset-4">Booking slips, tags &amp; wording</Link> are managed separately from sales receipts.</p>
       <BookingRulesForm />
     </SettingsFrame>
   ),
@@ -77,16 +77,18 @@ function Row({
 function Section({
   title,
   blurb,
+  summary,
   children,
 }: {
   title: string;
   blurb: string;
+  summary?: string;
   children: React.ReactNode;
 }) {
   return (
-    <SettingsDisclosure title={title} description={blurb} initialOpen={title === "Deposits & payment"}>
+    <SettingsEditDialog title={title} description={blurb} summary={summary}>
       {children}
-    </SettingsDisclosure>
+    </SettingsEditDialog>
   );
 }
 
@@ -151,10 +153,11 @@ function BookingRulesForm() {
   const num = (v: string) => Math.max(0, Number(v) || 0);
 
   return (
-    <div className="space-y-6">
+    <div className="grid items-start gap-3 sm:grid-cols-2">
       <Section
         title="Deposits & payment"
-        blurb="What has to be collected before a job leaves the counter."
+        blurb="Deposit minimums and payment choices at booking and collection."
+        summary={`${rules.requireDeposit ? "Deposit required" : "Deposit optional"} · Minimum ${rules.depositMin}${rules.depositMode === "percent" ? "%" : " (flat)"}`}
       >
         <Row
           label="Require a deposit on every booking"
@@ -234,7 +237,7 @@ function BookingRulesForm() {
         </Row>
       </Section>
 
-      <Section title="Scheduling" blurb="How the ready-by date and time are proposed and policed.">
+      <Section title="Scheduling" blurb="Ready-by dates and uncollected bookings." summary={`${rules.defaultTurnaroundHours || 0}h turnaround · Ready-by ${rules.requirePromisedAt ? "required" : "optional"}`}>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1">
             <div className="flex items-center gap-1"><Label className="text-xs text-muted-foreground">Default turnaround (hours)</Label><HelpTip label="About Default turnaround (hours)" text="Pre-fills the ready-by box. 0 leaves it blank." /></div>
@@ -281,7 +284,8 @@ function BookingRulesForm() {
 
       <Section
         title="Racket / stringing jobs"
-        blurb="What a job card carries before it can be saved."
+        blurb="Job tags, tension defaults and suggested racket and string models."
+        summary={`Tags ${rules.autoJobTag ? "on" : "off"} · ${rules.defaultTensionMain} / ${rules.defaultTensionCross} ${rules.defaultTensionUnit}`}
       >
         <Row
           label="Generate a job tag automatically"
@@ -379,7 +383,8 @@ function BookingRulesForm() {
 
       <Section
         title="Combo & overrides"
-        blurb="What happens when a racket and string are bought together, and who may unlock the labour fee."
+        blurb="Labour discounts when a racket and string are purchased together."
+        summary={rules.comboRule === "off" ? "Combo discount off" : rules.comboRule === "waive_labour" ? "Labour waived for combos" : `${rules.comboValue}${rules.comboRule === "percent" ? "%" : " flat"} off combo labour`}
       >
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1">
@@ -423,7 +428,8 @@ function BookingRulesForm() {
 
       <Section
         title="Service terms & high-tension liability"
-        blurb="Shown on the racket intake form and printed on job tags and settlement receipts."
+        blurb="Shown at racket intake and printed on job tags and settlement receipts."
+        summary={`Acceptance ${rules.requireLiabilityAccept ? "required" : "optional"} · Warning above ${rules.highTensionThreshold} ${rules.defaultTensionUnit}`}
       >
         <div className="space-y-1">
           <Label className="text-xs text-muted-foreground">
@@ -468,9 +474,7 @@ function BookingRulesForm() {
         </div>
       </Section>
 
-      <Section title="Control" blurb="Who may undo or re-spec a booking once it exists.">
-        <p className="text-sm text-muted-foreground">Assign Cancel/delete booking, Collect bookings, and Booking management permissions to each user in Staff &amp; Permissions. Role titles do not grant these actions.</p>
-      </Section>
+
     </div>
   );
 }

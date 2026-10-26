@@ -1,4 +1,5 @@
-import { SettingsDisclosure } from "@/platforms/web/components/pos/settings/SettingsDisclosure";
+import { SettingsEditDialog } from "@/platforms/web/components/pos/settings/SettingsEditDialog";
+import { useState } from "react";
 import { HelpTip } from "@/components/ui/help-tip";
 /**
  * Bookable services, e.g. racket re-stringing.
@@ -49,6 +50,7 @@ export const Route = createFileRoute("/settings/services")({
 
 function ServicesForm() {
   const { state } = usePos();
+  const [newServiceId, setNewServiceId] = useState<string | null>(null);
   const { updateSettings } = useSettingsCtx();
   const integrations = state.settings.integrations;
   const services = integrations.serviceTypes ?? [];
@@ -101,7 +103,7 @@ function ServicesForm() {
       </div>
 
       {services.map((s) => (
-        <SettingsDisclosure key={s.id} title={s.name || "New service"} description={`${s.active ? "Active" : "Inactive"} · Default fee ${Number(s.fee || 0).toFixed(2)}${s.isStringingJob ? " · Racket / stringing" : ""}`} initialOpen={!s.name}>
+        <SettingsEditDialog key={s.id} title={s.name || "New service"} summary={`${s.active ? "Active" : "Inactive"} · Default fee ${Number(s.fee || 0).toFixed(2)}${s.isStringingJob ? " · Racket / stringing" : ""}`} description="Service name, default fee and booking type." initialOpen={s.id === newServiceId}>
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Service</Label>
@@ -150,7 +152,7 @@ function ServicesForm() {
             <Trash2 className="size-4 text-destructive" />
           </Button>
         </div>
-        </SettingsDisclosure>
+        </SettingsEditDialog>
       ))}
 
       {services.length === 0 && (
@@ -161,9 +163,11 @@ function ServicesForm() {
 
       <Button
         size="sm"
-        onClick={() =>
-          save([...services, { id: crypto.randomUUID(), name: "", fee: 0, active: true }])
-        }
+        onClick={() => {
+          const id = crypto.randomUUID();
+          setNewServiceId(id);
+          save([...services, { id, name: "", fee: 0, active: true }]);
+        }}
       >
         <Plus className="size-3" /> Add service
       </Button>

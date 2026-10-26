@@ -1,4 +1,4 @@
-import { SettingsDisclosure } from "@/platforms/web/components/pos/settings/SettingsDisclosure";
+import { SettingsEditDialog } from "@/platforms/web/components/pos/settings/SettingsEditDialog";
 import { HelpTip } from "@/components/ui/help-tip";
 import { useEffect } from "react";
 import { ReceiptDocumentControls } from "@/platforms/web/components/pos/settings/ReceiptDocumentControls";
@@ -55,7 +55,7 @@ function BookingSlipForm() {
   return (
     <div className="space-y-4">
       <ReceiptDocumentControls area="booking" />
-      <SettingsDisclosure title="Customer slip terms & conditions" description="Editable wording printed on booking customer slips.">
+      <SettingsEditDialog title="Customer slip terms & conditions" description="Editable wording printed on booking customer slips." summary={cfg.showTerms ? "Printed on customer slips" : "Not printed"}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-1">
             <Label htmlFor="booking-terms">Terms &amp; conditions</Label>
@@ -87,9 +87,9 @@ function BookingSlipForm() {
           }
           onChange={(e) => patch({ terms: e.target.value })}
         />
-      </SettingsDisclosure>
+      </SettingsEditDialog>
 
-      <SettingsDisclosure title="Signature & part-payment receipts" description="Customer acceptance wording and repeat terms on payment slips.">
+      <SettingsEditDialog title="Signature & part-payment receipts" description="Customer acceptance wording and repeat terms on payment slips." summary={`Signature ${cfg.showSignature ? "on" : "off"} · Repeat terms ${cfg.termsOnPayment ? "on" : "off"}`}>
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-1">
             <Label htmlFor="signature-caption">Customer signature block</Label>
@@ -125,7 +125,7 @@ function BookingSlipForm() {
           onCheckedChange={(v) => patch({ termsOnPayment: v })}
         />
       </div>
-      </SettingsDisclosure>
+      </SettingsEditDialog>
 
 
     </div>
