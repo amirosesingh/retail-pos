@@ -109,6 +109,7 @@ export function SystemStatusPanel() {
         setChecks(r);
         refresh();
       })
+      .catch((error: unknown) => notifyError(error, "System health checks could not finish"))
       .finally(() => setBusy(false));
   };
 

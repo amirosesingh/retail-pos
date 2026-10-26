@@ -67,7 +67,7 @@ function PrinterControls({ shared, onSave, paper, onPaperChange }: {
     setPrefs(getPrinterPrefs());
   }, [shared]);
   useEffect(() => {
-    void listPrinters().then(setPrinters);
+    void listPrinters().then(setPrinters).catch(() => toast.error("Could not load printers. Refresh printers to retry."));
   }, []);
 
   const update = (next: PrinterPrefs) => {
@@ -356,7 +356,7 @@ function PrinterControls({ shared, onSave, paper, onPaperChange }: {
               toast.success(
                 list.length ? `${list.length} printer(s) found` : "No printers reported",
               );
-            })
+            }).catch(() => toast.error("Could not refresh printers. Check the printer connection and retry."))
           }
         >
           <RefreshCw className="size-3.5" /> Refresh printers

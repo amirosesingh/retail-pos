@@ -155,7 +155,7 @@ function SettingsHome() {
             Configuration is managed by an administrator.
           </p>
         ) : term ? (
-          <section className="settings-menu-grid grid grid-cols-2 gap-2 xl:block xl:space-y-2" aria-label="Search results">
+          <section className="settings-menu-grid grid grid-cols-1 gap-2 sm:grid-cols-2 xl:block xl:space-y-2" aria-label="Search results">
             {results.length ? (
               results.map((c) => (
                 <SettingsLink
@@ -180,7 +180,7 @@ function SettingsHome() {
             )}
           </section>
         ) : category ? (
-          <section className="settings-menu-grid grid grid-cols-2 gap-2 sm:gap-3" aria-label={category.label}>
+          <section className="settings-menu-grid grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3" aria-label={category.label}>
             {cards
               .filter((c) => c.category === category.id)
               .map((c) => (
@@ -189,7 +189,7 @@ function SettingsHome() {
           </section>
         ) : (
           <>
-            <div className="settings-menu-grid grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-3">
+            <div className="settings-menu-grid grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 xl:grid-cols-3">
               {categories.map((g) => (
                 <button
                   key={g.id}

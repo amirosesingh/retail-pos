@@ -136,7 +136,7 @@ export function NotificationRulesPage() {
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty, draft]);
   const save = async () => {
-    if (!data || busy || data.needsUpgrade) return;
+    if (!data || busy || loading || data.needsUpgrade) return;
     setBusy(true);
     setError("");
     try {
@@ -234,21 +234,21 @@ export function NotificationRulesPage() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
               />
-              <Button disabled={busy} onClick={() => setDraft(newNotificationRule())}>
+              <Button disabled={busy || loading} onClick={() => setDraft(newNotificationRule())}>
                 Add rule
               </Button>
               <Button
-                disabled={busy || data.needsUpgrade || (!dirty && !data.imported)}
+                disabled={busy || loading || data.needsUpgrade || (!dirty && !data.imported)}
                 onClick={() => void save()}
               >
                 {busy ? "Saving…" : "Save rules"}
               </Button>
               <Button
                 variant="outline"
-                disabled={busy || !!dirty || !!draft}
+                disabled={busy || loading || !!dirty || !!draft}
                 onClick={() => void load(offset)}
               >
-                Refresh saved rules
+                {loading ? "Refreshing…" : "Refresh saved rules"}
               </Button>
               {(dirty || data.imported) && <span className="text-sm">Unsaved changes</span>}
             </div>
@@ -321,7 +321,7 @@ export function NotificationRulesPage() {
                             <Button
                               variant="outline"
                               size="sm"
-                              disabled={busy}
+                              disabled={busy || loading}
                               onClick={() => setDraft({ ...rule })}
                               aria-label={`Edit ${rule.name}`}
                             >
@@ -330,7 +330,7 @@ export function NotificationRulesPage() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              disabled={busy}
+                              disabled={busy || loading}
                               onClick={() =>
                                 setRules((current) => current.filter((item) => item.id !== rule.id))
                               }
