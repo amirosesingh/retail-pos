@@ -1,4 +1,4 @@
-import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
+import { formatDateTime as posDisplayDateTime, posDayKey } from "@/lib/time-zone";
 import { subscribePageDataRefresh } from "@/lib/page-data-refresh";
 import { canOpenDrawer } from "@/lib/receipt-printer";
 import { tenderSales } from "@/lib/shift-close";
@@ -85,6 +85,8 @@ function Shifts() {
   const [shiftHistoryOpen, setShiftHistoryOpen] = useState(false);
   const [signSearch, setSignSearch] = useState("");
   const [historySearch, setHistorySearch] = useState("");
+  const [historyFrom, setHistoryFrom] = useState("");
+  const [historyTo, setHistoryTo] = useState("");
   const [signPage, setSignPage] = useState(0);
   const [historyPage, setHistoryPage] = useState(0);
   const matches = (values: unknown[], query: string) =>
@@ -150,8 +152,11 @@ function Shifts() {
 
   const storeSales = state.sales.filter((s) => sameRecordId(s.storeId, currentStore.id));
   const storeShifts = state.shifts.filter((s) => sameRecordId(s.storeId, currentStore.id));
+  const validHistoryRange = !historyFrom || !historyTo || historyFrom <= historyTo;
   const visibleShifts = storeShifts.filter((shift) =>
-    matches(
+    validHistoryRange &&
+    (!historyFrom || posDayKey(shift.openedAt) >= historyFrom) &&
+    (!historyTo || posDayKey(shift.openedAt) <= historyTo) && matches(
       [
         shift.cashier,
         shift.terminalName,
@@ -301,7 +306,7 @@ function Shifts() {
             <div className="grid gap-4 md:grid-cols-4">
               <Metric label="Opened by" value={activeShift.cashier} />
               <Metric label="Serving now" value={user?.name || activeShift.cashier} />
-              <Metric label="Opened" value={new Date(activeShift.openedAt).toLocaleTimeString()} />
+              <Metric label="Opened" value={posDisplayDateTime(activeShift.openedAt)} />
               <Metric label="Transactions" value={String(shiftSales.length)} />
               <Metric label="Terminal" value={activeShift.terminalName ?? "This PC"} />
               <Metric label="Running for" value={shiftDuration(activeShift)} />
@@ -569,9 +574,19 @@ function Shifts() {
           <DialogHeader>
             <DialogTitle>Shift history</DialogTitle>
             <DialogDescription>
-              Search this branch's shifts and open permitted reports.
+              Search {currentStore.name}'s shifts by opening date and open permitted reports. Dates use the configured store time zone.
             </DialogDescription>
           </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1"><Label htmlFor="shift-history-from">Opened from</Label><Input id="shift-history-from" type="date" value={historyFrom} onChange={event => { setHistoryFrom(event.target.value); setHistoryPage(0); }} /></div>
+            <div className="space-y-1"><Label htmlFor="shift-history-to">Opened through</Label><Input id="shift-history-to" type="date" value={historyTo} min={historyFrom || undefined} onChange={event => { setHistoryTo(event.target.value); setHistoryPage(0); }} /></div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={() => { const today = posDayKey(); setHistoryFrom(today); setHistoryTo(today); setHistoryPage(0); }}>Today</Button>
+            <Button size="sm" variant="outline" onClick={() => { setHistoryFrom(""); setHistoryTo(""); setHistoryPage(0); }}>All loaded shifts</Button>
+            {can("can_view_sales_reports") && <Button size="sm" variant="outline" onClick={() => window.location.assign("/reports/sales")}>Sales by date · Reports</Button>}
+          </div>
+          {!validHistoryRange && <p role="alert" className="text-sm text-destructive">Choose an end date on or after the start date.</p>}
           <Input
             aria-label="Search shift history"
             placeholder="Search cashier, terminal, status or date…"
