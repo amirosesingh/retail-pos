@@ -14,6 +14,7 @@ import type {
   FontStyleSettings,
   ReceiptOverride,
   ReceiptSettings,
+  ReceiptLinePlacement,
   Sale,
   Shift,
   Store,
@@ -28,6 +29,10 @@ import {
 } from "@/core/types/pos-types";
 import { defaultReceiptSettings } from "./pos-seed";
 import { normalizeReceiptLogoLayout } from "./receipt-logo";
+import { normalizeReceiptHeaderLayout } from "./receipt-header";
+import { readStoreGroups } from "./store-groups";
+import { safeSectionFont, type ReceiptSectionKey, type ReceiptSectionStyle } from "./receipt-sections";
+import { receiptDocumentLayout, type ReceiptDocumentKind } from "./receipt-documents";
 import { roundingOf, showsRoundingLine } from "@/core/pricing/rounding";
 import qrcode from "qrcode-generator";
 import { toast } from "sonner";
@@ -156,15 +161,15 @@ export const PAPER_LABELS: Record<PaperSize, string> = {
 export function paperCss(paper: PaperSize) {
   switch (paper) {
     case "30mm":
-      return { page: "30mm auto", width: "24mm", font: "8px", h1: "10px" };
+      return { page: "30mm auto", width: "30mm", font: "8px", h1: "10px" };
     case "58mm":
-      return { page: "58mm auto", width: "48mm", font: "10px", h1: "13px" };
+      return { page: "58mm auto", width: "58mm", font: "10px", h1: "13px" };
     case "a4":
-      return { page: "A4", width: "180mm", font: "13px", h1: "22px" };
+      return { page: "A4", width: "210mm", font: "13px", h1: "22px" };
     case "letter":
-      return { page: "Letter", width: "170mm", font: "13px", h1: "22px" };
+      return { page: "Letter", width: "216mm", font: "13px", h1: "22px" };
     default:
-      return { page: "80mm auto", width: "72mm", font: "12px", h1: "15px" };
+      return { page: "80mm auto", width: "80mm", font: "12px", h1: "15px" };
   }
 }
 
@@ -186,7 +191,48 @@ const FONT_STACKS: Record<string, string> = {
   mono: `"IBM Plex Mono", ui-monospace, monospace`,
   sans: `"Helvetica Neue", Arial, sans-serif`,
   serif: `Georgia, "Times New Roman", serif`,
+  arial: `Arial, Helvetica, sans-serif`,
+  verdana: `Verdana, Geneva, sans-serif`,
+  tahoma: `Tahoma, Verdana, sans-serif`,
+  georgia: `Georgia, "Times New Roman", serif`,
+  times: `"Times New Roman", Times, serif`,
+  courier: `"Courier New", Courier, monospace`,
 };
+
+const sectionSlot = (key: ReceiptSectionKey, html: string) => `<section data-receipt-slot="${key}">${html}</section>`;
+
+/** Only allowlisted styles and escaped text reach the print renderer. */
+function renderDocumentSections(html: string, document: ReceiptDocumentKind) {
+  const config = receiptCfg.documentSections?.[document];
+  const extra = Array.isArray(config?.extra) ? config.extra.slice(0, 100) : [];
+  const seen = new Set<string>();
+  const styled = (body: string, style: ReceiptSectionStyle | undefined, className: string, fallback = receiptCfg.fonts?.body ?? defaultReceiptSettings.fonts.body) => {
+    if (!style?.font) return body;
+    const font = safeSectionFont(style.font, fallback);
+    const css = `font-family:${FONT_STACKS[font.family]};font-size:${font.size}px!important;font-weight:${font.bold ? 700 : 400};letter-spacing:${font.spacing}px;`;
+    return `<div class="${className}"><style>.${className},.${className} :is(div,td,th,p,h1,h2,span){${css}}</style>${body}</div>`;
+  };
+  return html.replace(/<section data-receipt-slot="([a-z]+)">([\s\S]*?)<\/section>/g, (_match, raw: string, body: string) => {
+    const key = raw as ReceiptSectionKey;
+    const style = config?.styles?.[key];
+    if (body.trim() && typeof style?.heading === "string") {
+      const title = esc(renderReceiptText(style.heading, tokenCtx));
+      const old = key === "terms" ? "TERMS &amp; CONDITIONS" : key === "liability" ? "Service &amp; high-tension liability:" : key === "job" ? "RACKET JOB CARD" : null;
+      if (old && body.includes(old)) body = body.replace(old, title);
+      else if (title) body = `<div class="c b">${title}</div>${body}`;
+    }
+    if (body.trim() && key !== "header" && key !== "footer" && typeof style?.text === "string" && style.text.trim()) body += renderReceiptText(style.text, tokenCtx).split(/\r?\n/).map(line => `<div>${esc(line)}</div>`).join("");
+    let result = styled(body, style, `rsec-${document}-${key}`, receiptCfg.fonts?.[key === "header" ? "header" : key === "footer" ? "footer" : "body"] ?? defaultReceiptSettings.fonts.body);
+    if (!seen.has(key)) extra.forEach((item, index) => {
+      if (!item || item.enabled === false || item.after !== key) return;
+      const heading = typeof item.heading === "string" ? esc(renderReceiptText(item.heading, tokenCtx)) : "";
+      const text = typeof item.text === "string" ? renderReceiptText(item.text, tokenCtx).split(/\r?\n/).map(line => `<div>${esc(line)}</div>`).join("") : "";
+      if (heading || text) result += styled(`<hr>${heading ? `<div class="c b">${heading}</div>` : ""}${text}`, item, `rsec-${document}-extra-${index}`);
+    });
+    seen.add(key);
+    return result;
+  });
+}
 
 const fontCss = (f: FontStyleSettings) =>
   `font-family: ${FONT_STACKS[f.family] ?? FONT_STACKS.mono}; font-size: ${f.size}px; font-weight: ${
@@ -197,8 +243,8 @@ const fontCss = (f: FontStyleSettings) =>
 export function qrSvg(value: string, size: number) {
   if (!value.trim()) return "";
   const qr = qrcode(0, "M");
-  qr.addData(value);
-  qr.make();
+  try { qr.addData(value); qr.make(); }
+  catch { return '<div class="c muted">QR unavailable: shorten the saved QR link or text.</div>'; }
   const count = qr.getModuleCount();
   let rects = "";
   for (let r = 0; r < count; r++) {
@@ -206,14 +252,15 @@ export function qrSvg(value: string, size: number) {
       if (qr.isDark(r, c)) rects += `<rect x="${c}" y="${r}" width="1" height="1" fill="#000"/>`;
     }
   }
-  return `<div class="c" style="margin-top:6px"><svg width="${size}" height="${size}" viewBox="0 0 ${count} ${count}" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg"><rect width="${count}" height="${count}" fill="#fff"/>${rects}</svg></div>`;
+  return `<div class="c" style="margin-top:6px"><svg width="${size}" height="${size}" viewBox="-4 -4 ${count + 8} ${count + 8}" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg"><rect x="-4" y="-4" width="${count + 8}" height="${count + 8}" fill="#fff"/>${rects}</svg></div>`;
 }
 
-const customLines = (placement: "header" | "footer") =>
+const customLines = (placement: ReceiptLinePlacement) =>
   (receiptCfg.customLines ?? [])
     .filter((l) => l.placement === placement && l.text.trim())
     .map((l) => renderReceiptText(l.text, tokenCtx).trim())
     .filter(Boolean)
+    .flatMap(text => text.split(/\r?\n/))
     .map((text) => `<div class="c muted">${esc(text)}</div>`)
     .join("");
 
@@ -262,48 +309,26 @@ function printMargins() {
   return m;
 }
 
-/**
- * Real printable band of the paper, in millimetres.
- *
- * A "58mm" roll only prints roughly 48mm of it, and an "80mm" roll about 72mm.
- * Laying the body out at the full paper width is what pushed the left-hand
- * column off the edge of 58mm slips.
- */
+/** Selected paper width less the configured page margins, without a second width reduction. */
 export function printableWidthMm(paper: PaperSize) {
-  const prefs = getPrinterPrefs();
-  const band =
-    paper === "30mm"
-      ? (prefs.printWidth?.["30mm"] ?? 24)
-      : paper === "58mm"
-        ? (prefs.printWidth?.["58mm"] ?? 48)
-        : paper === "80mm"
-          ? (prefs.printWidth?.["80mm"] ?? 72)
-          : (PAPER_MM[paper] ?? 80);
   const m = printMargins();
-  return Math.max(paper === "30mm" ? 8 : 20, band - m.left - m.right);
+  return Math.max(1, (PAPER_MM[paper] ?? 80) - m.left - m.right);
 }
-
-/** Left nudge for printers whose print head starts a few millimetres in. */
-const printOffsetMm = () => getPrinterPrefs().printOffset ?? 0;
 
 const shell = (title: string, body: string, autoPrint = true) => {
   const p = paperCss(receiptCfg.paper);
   const f = receiptCfg.fonts ?? defaultReceiptSettings.fonts;
   const m = printMargins();
   const paper = receiptCfg.paper;
-  const slip = paper === "30mm" || paper === "58mm" || paper === "80mm";
   const width = printableWidthMm(paper);
   const bodyWidth = `${width}mm`;
-  // Slips are pinned to the left of the printable band (plus any nudge) so
-  // nothing can drift off the roll; sheets stay centred.
-  const bodyMargin = slip ? `0 0 0 ${printOffsetMm()}mm` : "0 auto";
   return `<!doctype html><html><head>
 <meta charset="utf-8"><title>${esc(title)}</title>
 <style>
   @page { size: ${p.page}; margin: ${m.top}mm ${m.right}mm ${m.bottom}mm ${m.left}mm; }
   * { box-sizing: border-box; }
   html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  body { ${fontCss(f.body)} color: #000; margin: ${bodyMargin}; width: ${bodyWidth}; max-width: 100%; overflow-wrap: anywhere; }
+  body { ${fontCss(f.body)} color: #000; margin: 0 auto; padding: ${m.top}mm ${m.right}mm ${m.bottom}mm ${m.left}mm; width: ${PAPER_MM[paper]}mm; max-width: 100%; overflow-wrap: anywhere; }
   .rcpt-head { ${fontCss(f.header)} }
   .rcpt-foot { ${fontCss(f.footer)} }
   h1 { ${fontCss(f.header)} font-size: ${Math.round(f.header.size * 1.25)}px; text-align: center; margin: 0 0 2px; }
@@ -326,7 +351,8 @@ const shell = (title: string, body: string, autoPrint = true) => {
   .c svg { max-width: 100%; height: auto; }
   .bc-text { text-align: center; font-size: 0.85em; letter-spacing: 3px; margin-top: 2px; }
   @media print {
-    html, body { width: ${bodyWidth}; margin: ${bodyMargin}; }
+    html { width: auto; }
+    body { width: ${bodyWidth}; margin: 0 auto; padding: 0; }
     .no-print { display: none !important; }
   }
   ${scopeReceiptCss(receiptCfg.css)}
@@ -339,7 +365,7 @@ ${
 </body></html>`;
 };
 
-const header = (subtitle?: string) => {
+const header = (subtitle?: string, document?: ReceiptDocumentKind) => {
   const initials = (receiptCfg.companyName || STORE.name)
     .split(/\s+/)
     .map((w) => w.replace(/[^A-Za-z0-9&]/g, "")[0] ?? "")
@@ -360,16 +386,24 @@ const header = (subtitle?: string) => {
     : "";
   const logoAt = (position: ReceiptSettings["logoLayout"]["position"]) =>
     logoLayout.position === position ? logo : "";
+  const heading = normalizeReceiptHeaderLayout(receiptCfg.headerLayout);
+  const groups = readStoreGroups();
+  const groupId = activeBranch?.groupId;
+  const clusterName = groupId && Array.isArray(groups) ? groups.find(group => group.id === groupId)?.name ?? "" : "";
+  const cluster = heading.showCluster && clusterName ? `<div class="c receipt-cluster">${esc(clusterName)}</div>` : "";
+  const clusterAt = (position: typeof heading.clusterPosition) => heading.clusterPosition === position ? cluster : "";
+  const storeName = activeBranch ? `${activeBranch.name}${heading.showStoreCode ? ` (${activeBranch.code})` : ""}` : STORE.line1;
   return `
   <div class="rcpt-head">
   ${logoAt("above-name")}
-  <h1>${esc(receiptCfg.companyName || STORE.name)}</h1>
+  ${clusterAt("above-company")}
+  ${heading.showCompany ? `<h1>${esc(receiptCfg.companyName || STORE.name)}</h1>` : ""}
+  ${clusterAt("below-company")}
   ${logoAt("below-name")}
   </div>
-  <div class="c muted">${esc(
-    activeBranch ? `${activeBranch.name} (${activeBranch.code})` : STORE.line1,
-  )}</div>
-  ${renderReceiptText(receiptCfg.headerText || "", tokenCtx)
+  ${heading.showStore ? `<div class="c muted receipt-store">${esc(storeName)}</div>` : ""}
+  ${clusterAt("after-store")}
+  ${renderReceiptText((document ? receiptCfg.documentSections?.[document]?.styles?.header?.text : undefined) ?? receiptCfg.headerText ?? "", tokenCtx)
     .split("\n")
     .filter(Boolean)
     .map((l) => `<div class="c muted">${esc(l)}</div>`)
@@ -377,12 +411,13 @@ const header = (subtitle?: string) => {
   ${info.map((l) => `<div class="c muted">${esc(l)}</div>`).join("")}
   ${logoAt("after-details")}
   ${customLines("header")}
-  ${qrBlock("header")}
+  ${!document || receiptDocumentLayout(receiptCfg.documentLayouts, document).showQr ? qrBlock("header") : ""}
   ${subtitle ? `<div class="c tag">${esc(subtitle)}</div>` : ""}
   <hr>`;
 };
 
 function saleBody(sale: Sale, member: Member | null, kind: ReceiptKind) {
+  const layout = receiptDocumentLayout(receiptCfg.documentLayouts, "sale");
   setTokens({
     ...placeTokens(),
     ...dateTokens(sale.createdAt),
@@ -419,12 +454,12 @@ function saleBody(sale: Sale, member: Member | null, kind: ReceiptKind) {
     .map(
       (l, index) =>
         `${sale.exchangeOfReceiptNo && (index === 0 || receiptLines[index - 1].credit !== l.credit)
-          ? `<tr><td colspan="2" class="b">${l.credit ? "ITEMS RETURNED FOR EXCHANGE" : "REPLACEMENT ITEMS"}</td></tr>` : ""}<tr><td>${esc(l.name)}${l.credit ? ' <span class="tag">EXCHANGED / RETURNED</span>' : ""}<div class="muted">${Math.abs(l.qty)} x ${fmt(l.price)}${
+          ? `<tr><td colspan="2" class="b">${l.credit ? "ITEMS RETURNED FOR EXCHANGE" : "REPLACEMENT ITEMS"}</td></tr>` : ""}<tr><td>${esc(l.name)}${l.credit ? ' <span class="tag">EXCHANGED / RETURNED</span>' : ""}<div class="muted">${layout.showQuantities ? Math.abs(l.qty) : ""}${layout.showQuantities && layout.showUnitPrices ? " x " : ""}${layout.showUnitPrices ? fmt(l.price) : ""}${
           l.discount
             ? ` - ${l.discountType === "percent" ? `${l.discount}%` : fmt(l.discount)} disc`
             : ""
         }</div></td>${
-          hidePrices
+          hidePrices || !layout.showLineTotals
             ? ""
             : `<td class="r">${fmt(sign * (l.price - lineUnitDiscount(l)) * l.qty)}</td>`
         }</tr>`,
@@ -471,7 +506,7 @@ function saleBody(sale: Sale, member: Member | null, kind: ReceiptKind) {
       <tr><td>Change</td><td class="r">${fmt(sale.change)}</td></tr>
     </table>`;
 
-  const memberBlock = member
+  const memberBlock = member && layout.showCustomer
     ? `<hr><div>Member ${esc(member.code)} · ${esc(member.name)}</div>
        ${
          receiptCfg.showPoints
@@ -480,27 +515,30 @@ function saleBody(sale: Sale, member: Member | null, kind: ReceiptKind) {
        }`
     : "";
 
-  return `${header(subtitle)}
+  return renderDocumentSections(`${sectionSlot("header", header(subtitle, "sale"))}
     ${sale.exchangeOfReceiptNo ? `<div class="c b big">EXCHANGE RECEIPT</div>` : ""}
-    <table>
+    ${sectionSlot("details", `<table>
       <tr><td>Receipt</td><td class="r b">${sale.correctedAt ? "Corrected " : ""}${esc(sale.receiptNo)}</td></tr>
       ${sale.exchangeOfReceiptNo ? `<tr><td>Original receipt</td><td class="r b">${esc(sale.exchangeOfReceiptNo)}</td></tr>` : ""}
       <tr><td>Date</td><td class="r">${posDisplayDateTime(new Date(sale.createdAt))}</td></tr>
       <tr><td>Cashier</td><td class="r">${esc(sale.cashier)}</td></tr>
-    </table>
+    </table>`)}
     <hr>
-    <table>${rows}</table>
-    ${totals}
-    ${memberBlock}
+    ${customLines("before-items")}
+    ${sectionSlot("items", `<table>${rows}</table>`)}
+    ${customLines("before-totals")}
+    ${sectionSlot("totals", totals)}
+    ${customLines("after-totals")}
+    ${sectionSlot("footer", `${memberBlock}
     <hr>
     ${
       kind === "gift"
-        ? receiptCfg.showBarcode
+        ? receiptCfg.showBarcode && layout.showBarcode
           ? `<div class="c muted">GIFT RETURN CODE</div>${barcodeSvg(`GIFT-${sale.receiptNo}`)}`
           : `<div class="c muted">GIFT RETURN CODE ${esc(sale.receiptNo)}</div>`
         : kind === "kitchen"
           ? ""
-          : `${receiptCfg.showBarcode ? barcodeSvg(sale.receiptNo) : ""}${
+          : `${receiptCfg.showBarcode && layout.showBarcode ? barcodeSvg(sale.receiptNo) : ""}${
               sale.method === "card"
                 ? `<div class="muted" style="margin-top:8px">Cardholder signature</div><div class="muted">______________________________</div>`
                 : ""
@@ -510,11 +548,11 @@ function saleBody(sale: Sale, member: Member | null, kind: ReceiptKind) {
     <div class="c muted rcpt-foot">${
       kind === "gift"
         ? "Exchangeable within 30 days with this slip"
-        : esc(renderReceiptText(receiptCfg.footerText || "", tokenCtx))
+        : esc(renderReceiptText(receiptCfg.documentSections?.sale?.styles?.footer?.text ?? receiptCfg.footerText ?? "", tokenCtx))
     }</div>
     ${customLines("footer")}
-    ${qrBlock("footer")}
-    <div class="c muted">${esc(sale.receiptNo)}</div>`;
+    ${layout.showQr ? qrBlock("footer") : ""}
+    <div class="c muted">${esc(sale.receiptNo)}</div>`)} `, "sale");
 }
 
 export type ShiftReportAccess = {
@@ -704,7 +742,7 @@ export function printSaleReceipt(sale: Sale, member: Member | null, kind: Receip
     `${sale.receiptNo} ${kind}`,
     saleBody(sale, member, kind),
     true,
-    receiptCfg.showBarcode && kind !== "kitchen"
+    receiptCfg.showBarcode && receiptDocumentLayout(receiptCfg.documentLayouts, "sale").showBarcode && kind !== "kitchen"
       ? kind === "gift"
         ? `GIFT-${sale.receiptNo}`
         : sale.receiptNo
@@ -821,11 +859,13 @@ const bookingTokens = (booking: Booking, member: Member | null): ReceiptTokenCon
 });
 
 function bookingBody(booking: Booking, member: Member | null, pay: PaymentDetails | null) {
+  const document = booking.job ? "racket-customer" : "booking";
+  const layout = receiptDocumentLayout(receiptCfg.documentLayouts, document);
   setTokens(bookingTokens(booking, member));
   const rows = booking.lines
     .map(
       (l) =>
-        `<tr><td>${esc(l.name)}<div class="muted">${l.qty} x ${fmt(l.price)}</div></td><td class="r">${fmt((l.price - lineUnitDiscount(l)) * l.qty)}</td></tr>`,
+        `<tr><td>${esc(l.name)}<div class="muted">${layout.showQuantities ? l.qty : ""}${layout.showQuantities && layout.showUnitPrices ? " x " : ""}${layout.showUnitPrices ? fmt(l.price) : ""}</div></td>${layout.showLineTotals ? `<td class="r">${fmt((l.price - lineUnitDiscount(l)) * l.qty)}</td>` : ""}</tr>`,
     )
     .join("");
   const balance = bookingBalance(booking);
@@ -835,17 +875,17 @@ function bookingBody(booking: Booking, member: Member | null, pay: PaymentDetail
         `<tr><td>${posDisplayDate(new Date(p.at))} · ${esc(p.method.toUpperCase())}</td><td class="r">${fmt(p.amount)}</td></tr>`,
     )
     .join("");
-  return `${header("BOOKING / PAY LATER SLIP")}
-    <table>
+  return renderDocumentSections(`${sectionSlot("header", header("BOOKING / PAY LATER SLIP", document))}
+    ${sectionSlot("details", `<table>
       <tr><td>Booking</td><td class="r b">${esc(booking.ref)}</td></tr>
       <tr><td>Date</td><td class="r">${posDisplayDateTime(new Date(booking.createdAt))}</td></tr>
       <tr><td>Cashier</td><td class="r">${esc(booking.cashier)}</td></tr>
-      ${booking.customerName ? `<tr><td>Customer</td><td class="r">${esc(booking.customerName)}</td></tr>` : ""}
-      ${booking.customerPhone ? `<tr><td>Phone</td><td class="r">${esc(booking.customerPhone)}</td></tr>` : ""}
-    </table>
-    <hr><table>${rows}</table>
-    ${chargesBlock(booking)}
-    <hr><table>
+      ${layout.showCustomer && booking.customerName ? `<tr><td>Customer</td><td class="r">${esc(booking.customerName)}</td></tr>` : ""}
+      ${layout.showPhone && booking.customerPhone ? `<tr><td>Phone</td><td class="r">${esc(booking.customerPhone)}</td></tr>` : ""}
+    </table>`)}
+    <hr>${sectionSlot("items", `<table>${rows}</table>`)}
+    ${sectionSlot("services", chargesBlock(booking))}
+    ${sectionSlot("totals", `<hr><table>
       <tr><td>Subtotal</td><td class="r">${fmt(booking.subtotal)}</td></tr>
       <tr><td>Discount</td><td class="r">-${fmt(booking.discount)}</td></tr>
       ${
@@ -854,54 +894,55 @@ function bookingBody(booking: Booking, member: Member | null, pay: PaymentDetail
           : ""
       }
       <tr class="b"><td>TOTAL</td><td class="r">${fmt(booking.total)}</td></tr>
-    </table>
-    <hr><div class="muted">Payments received</div>
-    <table>${paidRows || `<tr><td class="muted">None</td><td class="r">${fmt(0)}</td></tr>`}
+    </table>`)}
+    ${sectionSlot("payments", `<hr><div class="muted">Payments received</div>
+    <table>${layout.showPaymentHistory ? paidRows || `<tr><td class="muted">None</td><td class="r">${fmt(0)}</td></tr>` : ""}
       <tr><td>Paid to date</td><td class="r">${fmt(booking.paid)}</td></tr>
       <tr class="b big"><td>BALANCE DUE</td><td class="r">${fmt(balance)}</td></tr>
-    </table>
-    <hr>
-    <div class="c b">Collect &amp; settle by ${esc(new Date(booking.dueDate).toDateString())}</div>
-    <div class="c muted">Goods are reserved until this date. Bring this slip to collect.</div>
-    ${booking.note ? `<div class="c muted">${esc(booking.note)}</div>` : ""}
-    ${jobCardBlock(booking)}
-    ${termsBlock()}
-    ${serviceTermsBlock()}
+    </table>`)}
+    ${sectionSlot("collection", `${layout.showDueDate ? `<hr><div class="c b">Collect &amp; settle by ${esc(new Date(booking.dueDate).toDateString())}</div><div class="c muted">Goods are reserved until this date. Bring this slip to collect.</div>` : ""}
+    ${layout.showNotes && booking.note ? `<div class="c muted">${esc(booking.note)}</div>` : ""}
+    `)}
+    ${sectionSlot("job", jobCardBlock(booking))}
+    ${sectionSlot("terms", termsBlock())}
+    ${sectionSlot("liability", serviceTermsBlock())}
     ${booking.liabilityAccepted ? `<div class="c muted" style="font-size:9px">Accepted at intake by ${esc(booking.customerName || "customer")}</div>` : ""}
-    ${signatureBlock(booking.customerName)}
-    ${transferBlock(pay)}
-    ${member ? `<hr><div>Member ${esc(member.code)} · ${esc(member.name)}</div>` : ""}
-    <hr>${receiptCfg.showBarcode ? barcodeSvg(booking.ref) : ""}
-    <div class="c muted rcpt-foot">${esc(renderReceiptText(receiptCfg.footerText || "", tokenCtx))}</div>
+    ${sectionSlot("signature", signatureBlock(booking.customerName))}
+    ${sectionSlot("footer", `${transferBlock(pay)}
+    ${layout.showCustomer && member ? `<hr><div>Member ${esc(member.code)} · ${esc(member.name)}</div>` : ""}
+    <hr>${receiptCfg.showBarcode && layout.showBarcode ? barcodeSvg(booking.ref) : ""}
+    <div class="c muted rcpt-foot">${esc(renderReceiptText(receiptCfg.documentSections?.[document]?.styles?.footer?.text ?? receiptCfg.footerText ?? "", tokenCtx))}</div>
     ${customLines("footer")}
-    <div class="c muted">${esc(booking.ref)}</div>`;
+    ${layout.showQr ? qrBlock("footer") : ""}
+    <div class="c muted">${esc(booking.ref)}</div>`)} `, document);
 }
 
 function bookingPaymentBody(booking: Booking, payment: BookingPayment) {
+  const document = booking.job ? "racket-customer" : "booking";
   setTokens({
     ...bookingTokens(booking, null),
     ...dateTokens(payment.at),
     payment_method: payment.method ?? "",
     received: fmt(payment.amount),
   });
-  return `${header("PART PAYMENT RECEIPT")}
-    <table>
+  return renderDocumentSections(`${sectionSlot("header", header("PART PAYMENT RECEIPT", document))}
+    ${sectionSlot("details", `<table>
       <tr><td>Booking</td><td class="r b">${esc(booking.ref)}</td></tr>
       <tr><td>Date</td><td class="r">${posDisplayDateTime(new Date(payment.at))}</td></tr>
       <tr><td>Cashier</td><td class="r">${esc(payment.cashier)}</td></tr>
       ${booking.customerName ? `<tr><td>Customer</td><td class="r">${esc(booking.customerName)}</td></tr>` : ""}
-    </table>
-    <hr><table>
+    </table>`)}
+    ${sectionSlot("payments", `<hr><table>
       <tr class="b big"><td>PAID NOW (${esc(payment.method.toUpperCase())})</td><td class="r">${fmt(payment.amount)}</td></tr>
       <tr><td>Booking total</td><td class="r">${fmt(booking.total)}</td></tr>
       <tr><td>Paid to date</td><td class="r">${fmt(booking.paid)}</td></tr>
       <tr class="b"><td>BALANCE DUE</td><td class="r">${fmt(bookingBalance(booking))}</td></tr>
-    </table>
-    <hr><div class="c">Collect &amp; settle by ${esc(new Date(booking.dueDate).toDateString())}</div>
-    ${receiptCfg.bookingSlip?.termsOnPayment ? termsBlock() : ""}
-    ${booking.job ? serviceTermsBlock() : ""}
-    <hr><div class="c muted rcpt-foot">${esc(renderReceiptText(receiptCfg.footerText || "", tokenCtx))}</div>
-    <div class="c muted">${esc(booking.ref)}</div>`;
+    </table>`)}
+    ${sectionSlot("collection", `<hr><div class="c">Collect &amp; settle by ${esc(new Date(booking.dueDate).toDateString())}</div>`)}
+    ${sectionSlot("terms", receiptCfg.bookingSlip?.termsOnPayment ? termsBlock() : "")}
+    ${sectionSlot("liability", booking.job ? serviceTermsBlock() : "")}
+    ${sectionSlot("footer", `<hr><div class="c muted rcpt-foot">${esc(renderReceiptText(receiptCfg.documentSections?.[document]?.styles?.footer?.text ?? receiptCfg.footerText ?? "", tokenCtx))}</div>
+    <div class="c muted">${esc(booking.ref)}</div>`)} `, document);
 }
 
 export function printBookingSlip(
@@ -913,7 +954,7 @@ export function printBookingSlip(
     `${booking.ref} booking`,
     bookingBody(booking, member, pay),
     true,
-    receiptCfg.showBarcode ? booking.ref : undefined,
+    receiptCfg.showBarcode && receiptDocumentLayout(receiptCfg.documentLayouts, booking.job ? "racket-customer" : "booking").showBarcode ? booking.ref : undefined,
   );
 }
 
@@ -945,6 +986,7 @@ function chargesBlock(booking: Booking) {
 
 function jobCardRows(booking: Booking) {
   const j = booking.job;
+  const layout = receiptDocumentLayout(receiptCfg.documentLayouts, "racket-customer");
   if (!j) return "";
   const unit = j.tensionUnit ?? "lb";
   const timing: Record<string, string> = {
@@ -956,21 +998,21 @@ function jobCardRows(booking: Booking) {
     booking.serviceName
       ? `<tr><td>Service</td><td class="r">${esc(booking.serviceName)}</td></tr>`
       : "",
-    j.racketModel ? `<tr><td>Racket</td><td class="r">${esc(j.racketModel)}</td></tr>` : "",
-    j.stringType ? `<tr><td>String</td><td class="r">${esc(j.stringType)}</td></tr>` : "",
-    j.tensionMain || j.tensionCross
+    layout.showRacket && j.racketModel ? `<tr><td>Racket</td><td class="r">${esc(j.racketModel)}</td></tr>` : "",
+    layout.showString && j.stringType ? `<tr><td>String</td><td class="r">${esc(j.stringType)}</td></tr>` : "",
+    layout.showTension && (j.tensionMain || j.tensionCross)
       ? `<tr class="b"><td>Tension (main / cross)</td><td class="r b">${esc(String(j.tensionMain ?? "—"))} / ${esc(String(j.tensionCross ?? j.tensionMain ?? "—"))} ${esc(unit)}</td></tr>`
       : "",
-    j.grommetNotes
+    layout.showNotes && j.grommetNotes
       ? `<tr><td>Grommet / grip</td><td class="r">${esc(j.grommetNotes)}</td></tr>`
       : "",
     j.droppedOffAt
       ? `<tr><td>Dropped off</td><td class="r">${esc(posDisplayDateTime(new Date(j.droppedOffAt)))}</td></tr>`
       : "",
-    j.promisedAt
+    layout.showDueDate && j.promisedAt
       ? `<tr><td>Ready by</td><td class="r b">${esc(posDisplayDateTime(new Date(j.promisedAt)))}</td></tr>`
       : "",
-    booking.jobStatus
+    layout.showJobStatus && booking.jobStatus
       ? `<tr><td>Status</td><td class="r">${esc(booking.jobStatus.toUpperCase())}</td></tr>`
       : "",
     booking.paymentTiming
@@ -982,37 +1024,44 @@ function jobCardRows(booking: Booking) {
     .join("");
   if (!rows) return "";
   return `<hr><div class="c b">RACKET JOB CARD</div><table>${rows}</table>${
-    j.jobNotes ? `<div class="muted">Notes: ${esc(j.jobNotes)}</div>` : ""
+    layout.showNotes && j.jobNotes ? `<div class="muted">Notes: ${esc(j.jobNotes)}</div>` : ""
   }`;
 }
 
 /** Small tag tied to the racket itself while it waits on the rack. */
-export function printJobTag(booking: Booking) {
+function jobTagBody(booking: Booking) {
+  setTokens(bookingTokens(booking, null));
   const j = booking.job;
+  const layout = receiptDocumentLayout(receiptCfg.documentLayouts, "racket-staff");
   const unit = j?.tensionUnit ?? "lb";
-  const body = `${header("RACKET JOB TAG")}
-    <table>
+  const body = `${sectionSlot("header", header("RACKET JOB TAG", "racket-staff"))}
+    ${sectionSlot("job", `<table>
       <tr><td>Job</td><td class="r b">${esc(booking.ref)}</td></tr>
-      <tr><td>Customer</td><td class="r b">${esc(booking.customerName)}</td></tr>
-      ${booking.customerPhone ? `<tr><td>Phone</td><td class="r">${esc(booking.customerPhone)}</td></tr>` : ""}
-      ${j?.racketModel ? `<tr><td>Racket</td><td class="r">${esc(j.racketModel)}</td></tr>` : ""}
-      ${j?.stringType ? `<tr><td>String</td><td class="r">${esc(j.stringType)}</td></tr>` : ""}
+      ${layout.showCustomer ? `<tr><td>Customer</td><td class="r b">${esc(booking.customerName)}</td></tr>` : ""}
+      ${layout.showPhone && booking.customerPhone ? `<tr><td>Phone</td><td class="r">${esc(booking.customerPhone)}</td></tr>` : ""}
+      ${layout.showRacket && j?.racketModel ? `<tr><td>Racket</td><td class="r">${esc(j.racketModel)}</td></tr>` : ""}
+      ${layout.showString && j?.stringType ? `<tr><td>String</td><td class="r">${esc(j.stringType)}</td></tr>` : ""}
       ${
-        j?.tensionMain || j?.tensionCross
+        layout.showTension && (j?.tensionMain || j?.tensionCross)
           ? `<tr class="b big"><td>Tension</td><td class="r">${esc(String(j?.tensionMain ?? "—"))}/${esc(String(j?.tensionCross ?? j?.tensionMain ?? "—"))} ${esc(unit)}</td></tr>`
           : ""
       }
-      ${j?.promisedAt ? `<tr><td>Ready by</td><td class="r b">${esc(posDisplayDateTime(new Date(j.promisedAt)))}</td></tr>` : ""}
-      <tr><td>Status</td><td class="r">${esc((booking.jobStatus ?? "received").toUpperCase())}</td></tr>
+      ${layout.showDueDate && j?.promisedAt ? `<tr><td>Ready by</td><td class="r b">${esc(posDisplayDateTime(new Date(j.promisedAt)))}</td></tr>` : ""}
+      ${layout.showJobStatus ? `<tr><td>Status</td><td class="r">${esc((booking.jobStatus ?? "received").toUpperCase())}</td></tr>` : ""}
     </table>
-    ${j?.grommetNotes ? `<div class="muted">${esc(j.grommetNotes)}</div>` : ""}
-    ${j?.jobNotes ? `<div class="muted">${esc(j.jobNotes)}</div>` : ""}
-    <hr>${barcodeSvg(booking.ref)}
-    <div class="c">${qrSvg(booking.ref, 96)}</div>
-    ${serviceTermsBlock()}
+    ${layout.showNotes && j?.grommetNotes ? `<div class="muted">${esc(j.grommetNotes)}</div>` : ""}
+    ${layout.showNotes && j?.jobNotes ? `<div class="muted">${esc(j.jobNotes)}</div>` : ""}
+    `)}
+    ${sectionSlot("footer", `${(receiptCfg.documentSections?.["racket-staff"]?.styles?.footer?.text ?? "").split(/\r?\n/).map(line => `<div>${esc(renderReceiptText(line, tokenCtx))}</div>`).join("")}<hr>${layout.showBarcode ? barcodeSvg(booking.ref) : ""}
+    <div class="c">${layout.showQr ? qrSvg(booking.ref, 96) : ""}</div>
+    `)}
+    ${sectionSlot("liability", serviceTermsBlock())}
     <div class="c muted">${esc(booking.ref)}</div>`;
-  printHtml(`${booking.ref} job tag`, body, true, booking.ref);
+  return renderDocumentSections(body, "racket-staff");
 }
+
+export function jobTagPreview(booking: Booking) { return shell(booking.ref, jobTagBody(booking), false); }
+export function printJobTag(booking: Booking) { printHtml(`${booking.ref} job tag`, jobTagBody(booking), true, receiptDocumentLayout(receiptCfg.documentLayouts, "racket-staff").showBarcode ? booking.ref : undefined); }
 
 export function bookingSlipPreview(
   booking: Booking,

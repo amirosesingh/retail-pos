@@ -1,3 +1,4 @@
+import { productReadColumns } from "@/lib/ecommerce-device";
 import { normalizeUuidFields } from "@/lib/uuid-fields";
 /**
  * Routed table reads.
@@ -130,7 +131,7 @@ async function runQuery(
     }
   }
   const build = (start: number, end: number, withCount = false) => retryDataRead(async () => {
-    let q = from(cloudClient, table).select(options.columns ?? "*", withCount ? { count: "exact" } : {});
+    let q = from(cloudClient, table).select(table === "products" ? productReadColumns(options.columns) : options.columns ?? "*", withCount ? { count: "exact" } : {});
     // PostgREST uses `is.null`, not `eq.null`.  The latter can return no rows
     // (or fail outright) and leaves deleted/archived records stale in the UI.
     for (const [k, v] of Object.entries(options.match ?? {}))

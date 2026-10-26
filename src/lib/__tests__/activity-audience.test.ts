@@ -70,6 +70,18 @@ describe("targeted activity notifications", () => {
     expect(activityVisibleTo({ store_id: "BRANCH-A", meta: { audience_user_ids: ["CASHIER-1"] } }, cashier)).toBe(false);
   });
 
+  it("permits an explicitly verified all-store recipient without treating unknown scope as global", () => {
+    for (const meta of [{ audience_user_ids: ["cashier-1"] }, { notification_routes: { app: ["cashier-1"] } }]) {
+      const row = { store_id: "branch-a", meta };
+      expect(activityVisibleTo(row, { ...cashier, storeId: null })).toBe(false);
+      expect(activityVisibleTo(row, { ...cashier, storeId: null, allStores: true })).toBe(true);
+      expect(activityVisibleTo(row, { ...cashier, userIds: ["other"], storeId: null, allStores: true })).toBe(false);
+      expect(activityVisibleTo(row, { ...cashier, storeId: "branch-b", allStores: false })).toBe(false);
+    }
+    expect(activityVisibleTo({ store_id: "branch-a", meta: { audience_roles: ["cashier"] } },
+      { ...cashier, storeId: null, allStores: true })).toBe(false);
+  });
+
   it("keeps general activity behind audit access", () => {
     expect(activityVisibleTo({ store_id: "branch-a", meta: {} }, cashier)).toBe(false);
     expect(

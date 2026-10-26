@@ -142,7 +142,7 @@ export function ProductSearchDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex h-[85vh] max-w-4xl flex-col gap-3 overflow-hidden">
+      <DialogContent className="flex h-[85dvh] max-h-[95dvh] max-w-4xl flex-col gap-3 overflow-hidden">
         <DialogHeader>
           <DialogTitle>Search &amp; add product</DialogTitle>
         </DialogHeader>
@@ -158,12 +158,12 @@ export function ProductSearchDialog({
           />
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex shrink-0 gap-2 overflow-x-auto pb-1" aria-label="Product search fields">
           {FIELDS.map((f) => (
             <button
               key={f.id}
               onClick={() => setField(f.id)}
-              className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+              className={`min-h-11 shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
                 field === f.id
                   ? "border-primary bg-primary/15 text-primary"
                   : "border-border text-muted-foreground hover:text-foreground"
@@ -265,11 +265,11 @@ export function ProductSearchDialog({
                     selected === p.id ? "border-primary bg-primary/10" : "border-transparent"
                   }`}
                 >
-                  <span className="grid size-10 shrink-0 place-items-center rounded-md bg-surface-2 text-sm font-semibold text-muted-foreground">
+                  <span className="hidden size-10 shrink-0 place-items-center rounded-md bg-surface-2 text-sm font-semibold text-muted-foreground sm:grid">
                     {p.name.slice(0, 2).toUpperCase()}
                   </span>
-                  <button className="min-w-0 text-left" onClick={() => setSelected(p.id)}>
-                    <span className="block truncate text-sm font-medium">{p.name}</span>
+                  <button className="min-h-11 min-w-0 text-left max-sm:col-span-2" onClick={() => setSelected(p.id)}>
+                    <span className="line-clamp-2 text-sm font-medium leading-snug">{p.name}</span>
                     <span className="numeric block truncate text-[11px] text-muted-foreground">
                       {p.barcode || "no barcode"} · {p.sku} · {stockAt(p, storeId)} in stock
                     </span>
@@ -278,7 +278,7 @@ export function ProductSearchDialog({
                     <span className="numeric text-sm font-semibold text-primary">
                       {money(p.price)}
                     </span>
-                    <Button size="sm" onClick={() => onAdd(p.id)}>
+                    <Button size="sm" className="min-h-11 rounded-lg px-3" onClick={() => onAdd(p.id)}>
                       Add
                     </Button>
                   </span>

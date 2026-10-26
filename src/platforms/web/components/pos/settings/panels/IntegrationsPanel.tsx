@@ -16,7 +16,7 @@ type Fields = {
 
 export function WhatsAppFields({ whatsapp, setWhatsApp }: Fields) {
   return (
-    <div className="space-y-3">
+    <div className="space-y-4 rounded-xl border bg-card p-4">
       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-md border border-border px-3 py-2">
         <div className="min-w-0">
           <p className="text-sm">Send bills on WhatsApp</p>
@@ -62,6 +62,8 @@ export function WhatsAppFields({ whatsapp, setWhatsApp }: Fields) {
           ).map((o) => (
             <button
               key={o.v}
+              type="button"
+              aria-pressed={whatsapp.format === o.v}
               onClick={() => setWhatsApp({ format: o.v })}
               className={`rounded-md border px-3 py-2 text-sm transition-colors ${
                 whatsapp.format === o.v

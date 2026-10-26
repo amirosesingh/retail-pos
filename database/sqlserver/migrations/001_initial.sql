@@ -2712,6 +2712,7 @@ IF OBJECT_ID(N'dbo.members', N'U') IS NULL BEGIN CREATE TABLE dbo.[members] (
   [full_name] nvarchar(max) NOT NULL,
   [phone] nvarchar(450) NOT NULL,
   [email] nvarchar(max) NULL,
+  [contact_email] nvarchar(max) NULL,
   [address] nvarchar(max) NULL,
   [country_code] nvarchar(max) NULL,
   [postal_code] nvarchar(max) NULL,
@@ -2755,6 +2756,8 @@ IF COL_LENGTH(N'dbo.members', N'phone') IS NULL ALTER TABLE dbo.[members] ADD [p
 IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.members') AND c.name=N'phone' AND t.name IN (N'nvarchar',N'varchar') AND c.max_length=-1) ALTER TABLE dbo.[members] ALTER COLUMN [phone] nvarchar(450) NOT NULL;
 
 IF COL_LENGTH(N'dbo.members', N'email') IS NULL ALTER TABLE dbo.[members] ADD [email] nvarchar(max) NULL;
+
+IF COL_LENGTH(N'dbo.members', N'contact_email') IS NULL ALTER TABLE dbo.[members] ADD [contact_email] nvarchar(max) NULL;
 
 IF COL_LENGTH(N'dbo.members', N'address') IS NULL ALTER TABLE dbo.[members] ADD [address] nvarchar(max) NULL;
 
@@ -4156,7 +4159,7 @@ IF OBJECT_ID(N'dbo.products', N'U') IS NULL BEGIN CREATE TABLE dbo.[products] (
   [sku] nvarchar(max) NULL,
   [reorder_level] int NOT NULL CONSTRAINT [DF_products_reorder_level] DEFAULT (0),
   [tax_rate] decimal(38,12) NOT NULL CONSTRAINT [DF_products_tax_rate] DEFAULT (0),
-  [ecom_visible] bit NOT NULL CONSTRAINT [DF_products_ecom_visible] DEFAULT (1),
+  [ecom_visible] bit NOT NULL CONSTRAINT [DF_products_ecom_visible] DEFAULT (0),
   [stock_by_store] nvarchar(max) NOT NULL CONSTRAINT [DF_products_stock_by_store] DEFAULT (N'{}'),
   [updated_at] datetimeoffset(7) NOT NULL CONSTRAINT [DF_products_updated_at] DEFAULT (SYSDATETIMEOFFSET()),
   [landing_pct] decimal(38,12) NULL,
@@ -4304,10 +4307,10 @@ IF OBJECT_ID(N'dbo.products', N'U') IS NOT NULL AND COL_LENGTH(N'dbo.products', 
   SELECT 1 FROM sys.default_constraints dc
   JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
   WHERE dc.parent_object_id=OBJECT_ID(N'dbo.products') AND c.name=N'ecom_visible'
-) ALTER TABLE dbo.[products] ADD CONSTRAINT [DF_products_ecom_visible] DEFAULT (1) FOR [ecom_visible];
+) ALTER TABLE dbo.[products] ADD CONSTRAINT [DF_products_ecom_visible] DEFAULT (0) FOR [ecom_visible];
 
 IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.products') AND name=N'ecom_visible' AND is_nullable=1) BEGIN
-  EXEC sys.sp_executesql N'UPDATE dbo.[products] SET [ecom_visible]=1 WHERE [ecom_visible] IS NULL;';
+  EXEC sys.sp_executesql N'UPDATE dbo.[products] SET [ecom_visible]=0 WHERE [ecom_visible] IS NULL;';
   ALTER TABLE dbo.[products] ALTER COLUMN [ecom_visible] bit NOT NULL;
 END;
 

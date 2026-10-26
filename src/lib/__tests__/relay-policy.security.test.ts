@@ -22,6 +22,29 @@ const admin: RelayScope = { ...cashier, role: "admin", roleSlug: "admin", isSupe
 beforeEach(() => restMock.mockReset());
 
 describe("relay authorisation", () => {
+  it.each(["insert", "upsert", "delete"] as const)("allows only administrators to %s global payment methods", async kind => {
+    const op = kind === "delete" ? { kind, table: "payment_types", match: { id: "method" } }
+      : { kind, table: "payment_types", rows: [{ id: "method", name: "Cash", type_code: "cash" }] };
+    expect((await safeAuthorizeRelayOp(op, admin)).ok).toBe(true);
+    expect(await safeAuthorizeRelayOp(op, { ...cashier, permissions: { can_access_pos_settings: true } })).toMatchObject({ ok: false, code: "PERMISSION_DENIED" });
+    expect(restMock).not.toHaveBeenCalled();
+  });
+  it.each(["sales", "sale_items"])("requires the saved sale permission for generic %s writes", async table => {
+    for (const kind of ["insert", "upsert"] as const) {
+      const out = await safeAuthorizeRelayOp({ kind, table, rows: [{ id: "sale-denied" }] }, { ...cashier, permissions: { can_process_sale: false } });
+      expect(out).toMatchObject({ ok: false, code: "PERMISSION_DENIED" });
+    }
+    expect(restMock).not.toHaveBeenCalled();
+  });
+  it.each(["insert", "upsert"] as const)("rejects an existing tender change disguised as %s", async kind => {
+    restMock.mockResolvedValue({ ok: true, json: async () => [{ id: "sale-1", payment_type: "card", payments: [] }] });
+    const out = await safeAuthorizeRelayOp({ kind, table: "sales", rows: [{ id: "sale-1", payment_type: "cash" }] }, cashier);
+    expect(out).toMatchObject({ ok: false, code: "PERMISSION_DENIED" });
+  });
+  it.each(["insert", "upsert"] as const)("preserves an unchanged tender retry using %s", async kind => {
+    restMock.mockResolvedValue({ ok: true, json: async () => [{ id: "sale-1", payment_type: "card", payments: [] }] });
+    expect((await safeAuthorizeRelayOp({ kind, table: "sales", rows: [{ id: "sale-1", payment_type: "card", payments: [] }] }, cashier)).ok).toBe(true);
+  });
   it("stamps the caller's branch onto inserted rows", async () => {
     const out = await safeAuthorizeRelayOp(
       { kind: "insert", table: "sales", rows: [{ id: "1" }] },

@@ -23,6 +23,35 @@ const clear = {
   requireMatch: true,
 };
 describe("local notification acknowledgement", () => {
+  it.each([
+    { name: "selected app user", meta: { notification_routes: { app: ["operator-a"] } }, allowed: true },
+    { name: "selected app terminal", meta: { notification_routes: { app: [], terminalApp: ["terminal-a"] } }, allowed: true },
+    { name: "push-only recipient", meta: { audience_user_ids: ["operator-a"], notification_routes: { app: [], push: ["operator-a"] } }, allowed: false },
+    { name: "different app recipient", meta: { audience_user_ids: ["operator-a"], notification_routes: { app: ["operator-b"] } }, allowed: false },
+    { name: "disabled legacy app delivery", meta: { audience_user_ids: ["operator-a"], in_app_disabled: true }, allowed: false },
+    { name: "selected user in another branch", meta: { notification_routes: { app: ["operator-a"] } }, allowed: false, store: "branch-b" },
+  ])("checks saved delivery routes for $name", async ({ meta, allowed, store }) => {
+    let writes = 0;
+    class Request {
+      input() { return this; }
+      async query(sql: string) {
+        if (sql.includes("FROM dbo.app_users")) return { recordset: [{ id: "verified-a", user_id: "operator-a" }] };
+        if (sql.includes("FROM dbo.activity_events WITH")) return { recordset: [{ store_id: store ?? "branch-a", event_type: "approval_requested", meta: JSON.stringify(meta), cleared_by: "[]" }] };
+        writes++;
+        return { rowsAffected: [1] };
+      }
+    }
+    const guarded = new OperationsRepository({ sql: () => ({ Request }) }, { tables: [{
+      sqlServerTable: "activity_events", cloudTable: "activity_events", columns: [
+        { sqlServerColumn: "id", primaryKey: true }, { sqlServerColumn: "store_id" },
+        { sqlServerColumn: "cleared_by", cloudType: "text[]" },
+      ],
+    }] });
+    const result = guarded.applyOperation({}, clear, { branchId: "branch-a", terminalId: "terminal-a",
+      activityOperator: { subject: "operator-a", role: "staff", mayViewGeneralActivity: false } });
+    if (allowed) { await expect(result).resolves.toBe(1); expect(writes).toBe(1); }
+    else { await expect(result).rejects.toThrow("Notification access denied"); expect(writes).toBe(0); }
+  });
   it("allows a required-match acknowledgement without editing the event", () => {
     expect(repository.validate([clear])).toEqual([clear]);
   });
@@ -76,7 +105,7 @@ describe("local notification acknowledgement", () => {
       "verified notification operator",
     );
   });
-  it("encodes the trusted acknowledgement exactly once for SQL Server text arrays", async () => {
+  it("preserves other recipients and encodes the trusted acknowledgement once for SQL Server text arrays", async () => {
     const parameters: Record<string, unknown>[] = [];
     class Request {
       values: Record<string, unknown> = {};
@@ -96,7 +125,8 @@ describe("local notification acknowledgement", () => {
               {
                 store_id: "branch-a",
                 event_type: "approval_requested",
-                meta: JSON.stringify({ audience_user_ids: ["verified-a"] }),
+                meta: JSON.stringify({ audience_user_ids: ["verified-a", "verified-b"] }),
+                cleared_by: JSON.stringify(["verified-b"]),
               },
             ],
           };
@@ -124,7 +154,7 @@ describe("local notification acknowledgement", () => {
       }),
     ).resolves.toBe(1);
     const written = parameters.find((values) => "v0" in values)?.v0;
-    expect(JSON.parse(String(written))).toEqual(["verified-a"]);
+    expect(JSON.parse(String(written))).toEqual(["verified-b", "verified-a"]);
     expect(JSON.parse(String(written))).not.toBeTypeOf("string");
   });
   it("permits signed-in staff to acknowledge visible notifications without granting general write access", () => {

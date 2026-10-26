@@ -132,7 +132,7 @@ describe("scoped SQL Server synchronization", () => {
       'reorder_level: "can_edit_product_details"',
     );
     expect(inventory).toMatch(
-      /upsertProductPriceOverride\(\s*draft\.id,\s*draft\.price,\s*draft\.ecomPrice,?\s*\)/,
+      /upsertProductPriceOverride\(\s*draft\.id,\s*draft\.price,\s*canEcom \? draft\.ecomPrice : undefined,?\s*\)/,
     );
     expect(store).toContain("db.commitProductPriceOverride");
     expect(store).toContain("loadProductsByIds(wanted, { branchId, clusterId })");

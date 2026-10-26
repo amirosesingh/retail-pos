@@ -74,13 +74,18 @@ export function CashierPinLogin({
   const [manual, setManual] = useState(initialUsername.trim().toLowerCase());
   const [typing, setTyping] = useState(false);
   const [keypadExpanded, setKeypadExpanded] = useState(false);
-  const [pin, setPin] = useState("");
+  const [pin, setPinState] = useState("");
+  const pinRef = useRef("");
+  // Scanner/keypad bursts can deliver another key before React renders.
+  // Keep the authoritative input current synchronously, including clears.
+  const setPin = useCallback((value: string) => {
+    pinRef.current = value;
+    setPinState(value);
+  }, []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [lockedFor, setLockedFor] = useState(() => lockoutRemaining());
-  const pinRef = useRef(pin);
   const submittingRef = useRef(false);
-  pinRef.current = pin;
 
   // Countdown while the keypad is locked after too many wrong PINs.
   useEffect(() => {
@@ -132,7 +137,7 @@ export function CashierPinLogin({
     return () => {
       live = false;
     };
-  }, [connection]);
+  }, [connection, setPin]);
 
 
   // A whole internal address is accepted too — it is what the account list
@@ -212,11 +217,11 @@ export function CashierPinLogin({
         setBusy(false);
       }
     },
-    [cashierLogin, username],
+    [cashierLogin, username, setPin],
   );
 
   const press = (digit: string) => {
-    if (busy || lockedFor || pinRef.current.length >= pinLength) return;
+    if (submittingRef.current || busy || lockedFor || pinRef.current.length >= pinLength) return;
     const next = pinRef.current + digit;
     setPin(next);
     setError("");

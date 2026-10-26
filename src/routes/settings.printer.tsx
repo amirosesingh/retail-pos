@@ -24,6 +24,7 @@ export const Route = createFileRoute("/settings/printer")({
   component: () => (
     <SettingsFrame
       title="Receipt printer"
+      showPreview
       description="Edit the printer profile for the ownership selected in Settings inheritance: device, encoding, margins and cash drawer."
     >
       <SettingsTabs current="/settings/printer" />

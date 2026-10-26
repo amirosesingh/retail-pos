@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { SettingsTabs } from "@/platforms/web/components/pos/settings/SettingsTabs";
 import {
@@ -7,7 +7,6 @@ import {
   useSettingsCtx,
 } from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { PresetNumber } from "@/components/ui/preset-number";
@@ -15,6 +14,11 @@ import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
 import { useAuth } from "@/lib/pos-auth";
 import { RECEIPT_FIELDS, fieldTag, type ReceiptFieldToken } from "@/lib/receipt-template";
 import { receiptCssWarnings } from "@/lib/receipt-css";
+import { normalizeReceiptHeaderLayout } from "@/lib/receipt-header";
+import { Switch } from "@/components/ui/switch";
+import { SettingsDisclosure } from "@/platforms/web/components/pos/settings/SettingsDisclosure";
+import { ReceiptDocumentControls } from "@/platforms/web/components/pos/settings/ReceiptDocumentControls";
+import { RECEIPT_LINE_SECTIONS } from "@/lib/receipt-line-sections";
 import type { ReceiptCustomLine, ReceiptSettings } from "@/core/types/pos-types";
 
 export const Route = createFileRoute("/settings/receipt-designer")({
@@ -38,7 +42,7 @@ export const Route = createFileRoute("/settings/receipt-designer")({
   component: () => (
     <SettingsFrame
       title="Receipt designer"
-      description="Logo placement and size, dynamic content and styling for every printed slip. The preview uses sample transaction data."
+      description="Sales receipt layout, printed fields and styling. Booking slips and racket tags are managed under Booking Rules & Services."
       showPreview
     >
       <SettingsTabs current="/settings/receipt-designer" />
@@ -50,7 +54,8 @@ export const Route = createFileRoute("/settings/receipt-designer")({
 type Target = { kind: "header" } | { kind: "footer" } | { kind: "line"; id: string };
 
 function Designer() {
-  const { effective, setField, setGlobal, receipt } = useSettingsCtx();
+  const { effective, setField, setGlobal, receipt, setPreviewDocument } = useSettingsCtx();
+  useEffect(() => { setPreviewDocument("sale"); }, [setPreviewDocument]);
   const { isAdmin, can } = useAuth();
   const mayEdit = isAdmin || can("can_access_pos_settings");
   const [target, setTarget] = useState<Target>({ kind: "footer" });
@@ -79,6 +84,8 @@ function Designer() {
   };
 
   const logoLayout = receipt.logoLayout;
+  const heading = normalizeReceiptHeaderLayout(receipt.headerLayout);
+  const setHeading = (patch: Partial<typeof heading>) => setGlobal({ headerLayout: { ...heading, ...patch } });
   const setLogoLayout = (patch: Partial<ReceiptSettings["logoLayout"]>) =>
     setGlobal({ logoLayout: { ...logoLayout, ...patch } });
 
@@ -91,11 +98,32 @@ function Designer() {
 
   return (
     <div className="space-y-6">
+      <ReceiptDocumentControls />
+      <SettingsDisclosure title="Business heading visibility">
+
+        <p className="text-xs text-muted-foreground">Choose each line separately. The cluster uses the selected store’s assigned cluster name, without adding a store label.</p>
+        {([
+          ["showCompany", "Show company name"],
+          ["showCluster", "Show cluster name"],
+          ["showStore", "Show store name"],
+          ["showStoreCode", "Show store code beside store name"],
+        ] as const).map(([key, label]) => <label key={key} className="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm">
+          {label}<Switch aria-label={label} checked={heading[key]} disabled={key === "showStoreCode" && !heading.showStore} onCheckedChange={value => setHeading({ [key]: value })} />
+        </label>)}
+        {heading.showCluster && <div className="space-y-1">
+          <Label className="text-xs text-muted-foreground">Cluster position</Label>
+          <ThemedSelect ariaLabel="Cluster position" value={heading.clusterPosition} onChange={value => setHeading({ clusterPosition: value as typeof heading.clusterPosition })} options={[
+            { value: "above-company", label: "Above company heading" },
+            { value: "below-company", label: "Below company heading" },
+            { value: "after-store", label: "Below store details" },
+          ]} />
+        </div>}
+      </SettingsDisclosure>
       {/* ---------------- logo ---------------- */}
-      <section className="space-y-2 rounded-lg border border-border bg-card p-4">
+      <SettingsDisclosure title="Logo layout">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h3 className="text-sm font-semibold">Logo layout</h3>
+
             <p className="text-xs text-muted-foreground">
               Position and size respond to the selected paper width. The logo image itself is owned
               by Business identity.
@@ -196,13 +224,13 @@ function Designer() {
             />
           </div>
         </div>
-      </section>
+      </SettingsDisclosure>
 
       {/* ---------------- content + fields ---------------- */}
-      <section className="space-y-3 rounded-lg border border-border bg-card p-4">
-        <h3 className="text-sm font-semibold">Content</h3>
+      <SettingsDisclosure title="Shared wording & existing extra lines">
+
         <p className="text-xs text-muted-foreground">
-          Pick a block, then click a field to insert it. Fields resolve from the real transaction
+          These shared defaults remain available for existing templates. Section-specific wording above takes priority. Pick a block, then click a field to insert it. Fields resolve from the real transaction
           when the slip prints — the preview shows sample values.
         </p>
 
@@ -228,9 +256,12 @@ function Designer() {
 
         <div className="space-y-2">
           <Label className="text-xs text-muted-foreground">Extra lines</Label>
-          {lines.map((line) => (
-            <div key={line.id} className="flex items-center gap-2">
-              <Input
+          {lines.map((line, index) => (
+            <div key={line.id} className="space-y-2 rounded-lg border p-3">
+              <Label>Text block {index + 1}</Label>
+              <Textarea
+                rows={3}
+                aria-label={`Extra text block ${index + 1}`}
                 value={line.text}
                 placeholder="Served by {{cashier}} on {{terminal_name}}"
                 onFocus={() => setTarget({ kind: "line", id: line.id })}
@@ -240,6 +271,8 @@ function Designer() {
                   )
                 }
               />
+              <div className="flex items-center gap-2">
+              <ThemedSelect ariaLabel={`Extra text block ${index + 1} section`} className="min-w-0 flex-1" value={line.placement} options={[...RECEIPT_LINE_SECTIONS]} onChange={value => setLines(lines.map(item => item.id === line.id ? { ...item, placement: value as ReceiptCustomLine["placement"] } : item))} />
               <Button
                 variant="ghost"
                 size="icon"
@@ -248,6 +281,7 @@ function Designer() {
               >
                 <Trash2 className="size-4" />
               </Button>
+              </div>
             </div>
           ))}
           <Button
@@ -256,7 +290,7 @@ function Designer() {
             onClick={() =>
               setLines([
                 ...lines,
-                { id: `line-${Date.now()}`, text: "", placement: "footer" as const },
+                { id: crypto.randomUUID(), text: "", placement: "footer" as const },
               ])
             }
           >
@@ -268,7 +302,7 @@ function Designer() {
           <p className="text-xs font-medium">
             Available fields — inserting into: <span className="text-primary">{targetLabel}</span>
           </p>
-          {["Slip", "People & place", "Money", "Booking"].map((group) => (
+          {["Slip", "People & place", "Money"].map((group) => (
             <div key={group} className="space-y-1">
               <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{group}</p>
               <div className="flex flex-wrap gap-1">
@@ -287,11 +321,11 @@ function Designer() {
             </div>
           ))}
         </div>
-      </section>
+      </SettingsDisclosure>
 
       {/* ---------------- styling ---------------- */}
-      <section className="space-y-2 rounded-lg border border-border bg-card p-4">
-        <h3 className="text-sm font-semibold">Styling (CSS)</h3>
+      <SettingsDisclosure title="Advanced receipt CSS">
+
         <p className="text-xs text-muted-foreground">
           Applies to the printed receipt only. Rules are re-scoped to the slip, so nothing here can
           change the rest of the POS, load remote files or alter the paper width.
@@ -311,7 +345,7 @@ function Designer() {
             ))}
           </ul>
         )}
-      </section>
+      </SettingsDisclosure>
     </div>
   );
 }

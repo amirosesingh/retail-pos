@@ -7,10 +7,8 @@
  * share: save state, confirmed scope loading and live preview. Scope ownership
  * is managed only from Settings inheritance.
  */
-import { useRouter } from "@tanstack/react-router";
+import { useBlocker, useRouter } from "@tanstack/react-router";
 import {
-  createContext,
-  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -21,10 +19,14 @@ import { ChevronLeft, Eye, Loader2, RotateCcw, Save } from "lucide-react";
 import { toast } from "sonner";
 import { SettingsShell } from "@/platforms/web/components/pos/settings/SettingsShell";
 import { SaveIndicator } from "@/platforms/web/components/pos/settings/SaveIndicator";
+import { ReceiptPreviewFrame } from "@/platforms/web/components/pos/settings/ReceiptPreviewFrame";
 import { useEmbeddedSettings } from "@/platforms/web/components/pos/settings/embed";
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { usePos } from "@/lib/pos-store";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { usePos, PosSettingsDraftProvider } from "@/lib/pos-store";
+import { mergePatch } from "@/lib/settings-sections";
+import { settingsDraftPatch } from "@/lib/settings-draft";
+import { receiptQrError } from "@/lib/receipt-qr";
 import { useAuth } from "@/lib/pos-auth";
 import type { PermissionFlag } from "@/lib/permissions";
 import { defaultPaymentDetails, defaultReceiptSettings, defaultWhatsApp } from "@/lib/pos-seed";
@@ -32,21 +34,34 @@ import {
   PAPER_LABELS,
   paperCss,
   saleReceiptPreview,
+  bookingSlipPreview,
+  jobTagPreview,
   setPreviewReceiptCfg,
+  setServiceTerms,
   setPrintSettings,
 } from "@/lib/pos-print";
-import { defaultPaymentQr } from "@/core/types/pos-types";
+import { defaultPaymentQr, bookingRulesOf } from "@/core/types/pos-types";
 import type {
   FontStyleSettings,
   ReceiptOverride,
   ReceiptSettings,
   Sale,
+  Booking,
+  AppSettings,
 } from "@/core/types/pos-types";
 import { computeTax } from "@/core/pricing/tax";
+import { setSharedPrinterPrefs } from "@/lib/receipt-printer";
+import { SettingsCtx } from "./settings-context";
+export { useSettingsCtx } from "./settings-context";
 
-type Ctx = {
+import { RECEIPT_DOCUMENTS, type ReceiptDocumentKind } from "@/lib/receipt-documents";
+
+export type SettingsContextValue = {
+  previewDocument: ReceiptDocumentKind;
+  setPreviewDocument: (kind: ReceiptDocumentKind) => void;
   effective: ReceiptSettings;
   receipt: ReceiptSettings;
+  savedReceipt: ReceiptSettings;
   tax: ReturnType<typeof usePos>["state"]["settings"]["tax"];
   payment: NonNullable<ReturnType<typeof usePos>["state"]["settings"]["payment"]>;
   whatsapp: NonNullable<ReturnType<typeof usePos>["state"]["settings"]["whatsapp"]>;
@@ -60,14 +75,6 @@ type Ctx = {
   setPaymentQr: (patch: Partial<typeof defaultPaymentQr>) => void;
   paymentQr: typeof defaultPaymentQr;
 };
-
-const SettingsCtx = createContext<Ctx | null>(null);
-
-export function useSettingsCtx(): Ctx {
-  const ctx = useContext(SettingsCtx);
-  if (!ctx) throw new Error("useSettingsCtx must be used inside <SettingsFrame>");
-  return ctx;
-}
 
 type Props = {
   title: string;
@@ -105,20 +112,33 @@ export function SettingsFrame({
 }: Props) {
   const router = useRouter();
   const {
-    state,
+    state: persistedState,
     currentStore,
     updateSettings,
-    saveConfiguredSettings,
+    commitSettingsDraft,
     settingsScope,
     scopeIds,
     settingsScopeLoading,
+    loadPhase,
+    retryLoad,
   } = usePos();
   const { isAdmin, can } = useAuth();
+  const [draft, setDraft] = useState<AppSettings | null>(null);
+  const state = { ...persistedState, settings: draft ?? persistedState.settings };
   const requiredPermission =
     permission ?? (terminalManagement ? "can_manage_terminals" : "can_access_pos_settings");
   const canSettings = isAdmin || can(requiredPermission);
   // Rendered inside the settings workspace sheet: no app shell, no back link.
   const embedded = useEmbeddedSettings();
+  const [inlinePreview, setInlinePreview] = useState(false);
+  useEffect(() => {
+    if (!showPreview || embedded) return;
+    const viewport = window.matchMedia("(min-width: 1024px)");
+    const update = () => setInlinePreview(viewport.matches);
+    update();
+    viewport.addEventListener("change", update);
+    return () => viewport.removeEventListener("change", update);
+  }, [showPreview, embedded]);
 
   /* ---- Save / discard -------------------------------------------------- */
   // Edits apply live so the preview stays honest, but nothing is considered
@@ -136,6 +156,11 @@ export function SettingsFrame({
   const dirty = settingsJson !== snapshot;
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
+  useBlocker({
+    disabled: !showSaveBar || !canSettings,
+    enableBeforeUnload: false,
+    shouldBlockFn: () => dirtyRef.current && !window.confirm("Leave this page and discard unsaved settings? Save settings first to keep your changes."),
+  });
 
   // Changing branch/terminal or enabling an override replaces the effective
   // settings record. That is a new editing baseline, not an unsaved user edit.
@@ -154,9 +179,10 @@ export function SettingsFrame({
     if (previousScopeSignature.current === scopeSignature) return;
     previousScopeSignature.current = scopeSignature;
     localSettingsEdit.current = false;
-    setSnapshot(settingsJson);
+    setDraft(null);
+    setSnapshot(JSON.stringify(persistedState.settings));
     setSaveError("");
-  }, [scopeSignature, settingsJson]);
+  }, [scopeSignature, persistedState.settings]);
 
   useEffect(() => {
     settingsJsonRef.current = settingsJson;
@@ -176,6 +202,11 @@ export function SettingsFrame({
   }, []);
 
   const save = async () => {
+    const edited = settingsDraftPatch(JSON.parse(snapshot), state.settings);
+    if (edited.receipt?.qr && state.settings.receipt.qr.enabled) {
+      const error = receiptQrError(state.settings.receipt.qr.value);
+      if (error) { setSaveError(error); toast.error(error); return; }
+    }
     if (
       requireCompanyName &&
       !(
@@ -192,11 +223,12 @@ export function SettingsFrame({
     setSaveError("");
     const submittedSettings = settingsJsonRef.current;
     try {
-      await saveConfiguredSettings();
+      await commitSettingsDraft(settingsDraftPatch(JSON.parse(snapshot), JSON.parse(submittedSettings)));
       // An input may change while the database request is in flight. Only the
       // exact submitted state becomes clean; later edits remain visibly dirty.
       if (settingsJsonRef.current === submittedSettings) {
         localSettingsEdit.current = false;
+        setDraft(null);
         setSnapshot(submittedSettings);
       } else {
         localSettingsEdit.current = true;
@@ -214,7 +246,8 @@ export function SettingsFrame({
 
   const discard = () => {
     localSettingsEdit.current = false;
-    updateSettings(JSON.parse(snapshot));
+    setDraft(null);
+    setSnapshot(JSON.stringify(persistedState.settings));
     setSaveError("");
     toast.info("Changes discarded");
   };
@@ -268,7 +301,8 @@ export function SettingsFrame({
 
   const editSettings: typeof updateSettings = (patch) => {
     localSettingsEdit.current = true;
-    updateSettings(patch);
+    if (showSaveBar) setDraft(current => mergePatch(current ?? persistedState.settings, patch));
+    else updateSettings(patch);
   };
 
   const setField = <K extends keyof ReceiptOverride>(key: K, value: ReceiptOverride[K]) => {
@@ -287,6 +321,7 @@ export function SettingsFrame({
   const setPaymentQr = (patch: Partial<typeof paymentQr>) =>
     editSettings({ payment: { ...payment, paymentQr: { ...paymentQr, ...patch } } });
 
+  const [previewDocument, setPreviewDocument] = useState<ReceiptDocumentKind>("sale");
   const sample: Sale = useMemo(() => {
     const lines = [
       {
@@ -329,8 +364,11 @@ export function SettingsFrame({
   }, [tax, currentStore]);
 
   const previewHtml = useMemo(() => {
+    setSharedPrinterPrefs(state.settings.integrations.receiptPrinter);
     setPreviewReceiptCfg(effective, tax);
-    const html = saleReceiptPreview(
+    setServiceTerms(bookingRulesOf(state.settings.integrations.bookingRules).serviceTerms);
+    try {
+    const saleHtml = saleReceiptPreview(
       sample,
       {
         id: "m1",
@@ -345,9 +383,17 @@ export function SettingsFrame({
       },
       "sale",
     );
-    setPrintSettings(effective, tax);
+    const bookingSubtotal = sample.subtotal + (previewDocument.startsWith("racket") ? 8 : 0);
+    const bookingTax = computeTax(bookingSubtotal, tax);
+    const booking: Booking = { ...sample, ref: "BK-000001", subtotal: bookingSubtotal, total: bookingTax.total, tax: bookingTax.tax, paid: 10, payments: [], dueDate: "2026-11-01", memberId: null, customerName: "Sample customer", customerPhone: "555-0142", note: "Customer collection note", status: "active", ...(previewDocument.startsWith("racket") ? { serviceName: "Racket restringing", serviceFee: 8, job: { racketModel: "Sample racket", stringType: "Sample string", tensionMain: 24, tensionCross: 25, tensionUnit: "lb" as const, jobNotes: "Sample stringing instructions", promisedAt: "2026-11-01T10:00:00Z" }, jobStatus: "received" as const } : {}) };
+    const html = previewDocument === "sale" ? saleHtml : previewDocument === "racket-staff" ? jobTagPreview(booking) : bookingSlipPreview(booking, null, null);
     return html;
-  }, [effective, tax, sample]);
+    } finally {
+      setPrintSettings(persistedState.settings.receipt, persistedState.settings.tax, persistedState.settings.integrations.rounding);
+      setServiceTerms(bookingRulesOf(persistedState.settings.integrations.bookingRules).serviceTerms);
+      setSharedPrinterPrefs(persistedState.settings.integrations.receiptPrinter);
+    }
+  }, [effective, tax, sample, previewDocument, state.settings.integrations.receiptPrinter, state.settings.integrations.bookingRules, persistedState.settings]);
 
   if (!canSettings) {
     const denied = (
@@ -364,9 +410,11 @@ export function SettingsFrame({
 
   const geometry = paperCss(effective.paper);
 
-  const ctx: Ctx = {
+  const ctx: SettingsContextValue = {
+    previewDocument, setPreviewDocument,
     effective,
     receipt,
+    savedReceipt: persistedState.settings.receipt,
     tax,
     payment,
     whatsapp,
@@ -381,6 +429,7 @@ export function SettingsFrame({
 
   const body = (
     <SettingsCtx.Provider value={ctx}>
+      <PosSettingsDraftProvider settings={state.settings} onChange={editSettings}>
       <div
         className={
           embedded
@@ -415,24 +464,21 @@ export function SettingsFrame({
           {showPreview && (
             <Sheet>
               <SheetTrigger asChild>
-                <Button variant="outline" className="shrink-0">
+                <Button variant="outline" className="shrink-0" disabled={settingsScopeLoading}>
                   <Eye className="size-4" /> Preview receipt
                 </Button>
               </SheetTrigger>
               <SheetContent side="right" className="w-full sm:max-w-[520px]">
                 <SheetHeader>
                   <SheetTitle>Live receipt preview · {PAPER_LABELS[effective.paper]}</SheetTitle>
+                  <SheetDescription>Sample receipt. Updates as you edit; no sale is created or printed.</SheetDescription>
                 </SheetHeader>
                 <div className="overflow-auto px-4 pb-6">
                   <div
-                    className="mx-auto overflow-hidden rounded-md bg-white p-2"
+                    className="mx-auto overflow-hidden rounded-md bg-white"
                     style={{ maxWidth: geometry.width }}
                   >
-                    <iframe
-                      title="Receipt preview"
-                      srcDoc={previewHtml}
-                      className="h-[70vh] w-full border-0 bg-white"
-                    />
+                    <ReceiptPreviewFrame title="Receipt preview" html={previewHtml} paperWidth={geometry.width} />
                   </div>
                 </div>
               </SheetContent>
@@ -440,21 +486,32 @@ export function SettingsFrame({
           )}
         </header>
 
+        <div className={showPreview && !embedded ? "grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(240px,300px)]" : "min-w-0"}>
         <fieldset
           disabled={settingsScopeLoading && !allowWhileScopeLoading}
           className="settings-form w-full min-w-0 max-w-full space-y-5 rounded-2xl border border-border bg-card p-4 shadow-sm disabled:opacity-60 sm:p-5"
         >
-          {settingsScopeLoading && !allowWhileScopeLoading && (
+          {settingsScopeLoading && !allowWhileScopeLoading ? (
             <p role="status" className="flex items-center gap-2 rounded-xl bg-primary/5 p-3 text-sm text-muted-foreground">
               <Loader2 aria-hidden="true" className="size-4 shrink-0 animate-spin motion-reduce:animate-none text-primary" />
               Loading settings for this scope. Editing becomes available when loading succeeds.
             </p>
-          )}
-          {children}
+          ) : children}
         </fieldset>
+        {settingsScopeLoading && (loadPhase === "failed" || loadPhase === "stalled") && <Button type="button" variant="outline" size="sm" onClick={retryLoad}>Retry loading settings</Button>}
+        {showPreview && !embedded && inlinePreview && !settingsScopeLoading && (
+          <aside aria-label="Live receipt preview" className="sticky top-3 hidden min-w-0 rounded-2xl border bg-muted/30 p-3 lg:block">
+            <h2 className="text-sm font-semibold">Live receipt preview</h2>
+            <p className="mb-3 mt-1 text-xs text-muted-foreground">{PAPER_LABELS[effective.paper]} · {RECEIPT_DOCUMENTS.find(item => item.value === previewDocument)?.label}. Updates as you edit.</p>
+            <div className="mx-auto overflow-hidden rounded-lg bg-white ring-1 ring-border" style={{ maxWidth: geometry.width }}>
+              <ReceiptPreviewFrame title="Live receipt preview" html={previewHtml} paperWidth={geometry.width} />
+            </div>
+          </aside>
+        )}
+        </div>
 
         {/* Nothing is considered stored until this bar confirms it. */}
-        {showSaveBar && (
+        {showSaveBar && !settingsScopeLoading && (
           <div
             className={`sticky bottom-0 flex flex-wrap items-center gap-3 border-t border-border bg-background/95 py-3 backdrop-blur ${
               embedded ? "px-1" : "-mx-4 px-4 sm:-mx-6 sm:px-6"
@@ -467,7 +524,7 @@ export function SettingsFrame({
               </Button>
               <Button
                 size="sm"
-                disabled={saving || (!dirty && !saveError)}
+                disabled={saving || settingsScopeLoading || (!dirty && !saveError)}
                 onClick={() => void save()}
               >
                 {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
@@ -477,6 +534,7 @@ export function SettingsFrame({
           </div>
         )}
       </div>
+      </PosSettingsDraftProvider>
     </SettingsCtx.Provider>
   );
 

@@ -63,7 +63,7 @@ export async function lookupMembership(query: string, limit: number) {
     // the till is offline.
     phone: row.member_code,
     email: "",
-    tier: row.tier_name === "Gold" || row.tier_name === "Silver" ? row.tier_name : "Bronze",
+    tier: row.tier_name || "Bronze",
     points: Number(row.loyalty_points) || 0,
     totalSpend: 0,
     joinedAt: "",

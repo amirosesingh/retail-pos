@@ -27,9 +27,12 @@ beforeAll(async () => {
       ('00000000-0000-4000-8000-000000000005','cashier','cashier','cashier','a',true,'{}');
     CREATE TABLE stores(id text PRIMARY KEY,name text); INSERT INTO stores VALUES('a','Branch A'),('b','Branch B');
     CREATE TABLE activity_events(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),event_type text,severity text DEFAULT 'info',title text DEFAULT '',message text DEFAULT '',
-      actor_id text,actor_name text,actor_role text,store_id text,amount numeric,meta jsonb DEFAULT '{}',client_event_id text UNIQUE,
+      actor_id text,actor_name text,actor_role text,terminal_id text,store_id text,amount numeric,meta jsonb DEFAULT '{}',client_event_id text UNIQUE,
       entity_type text,entity_id text,created_at timestamptz DEFAULT now());
-    CREATE TABLE shift_notifications(shift_id uuid,summary text,closed_by text,store_id text,total_sales numeric);`);
+    CREATE TABLE shift_notifications(shift_id uuid,summary text,closed_by text,store_id text,total_sales numeric);
+    CREATE TABLE authorization_log(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),action_key text,outcome text,authorized_by text,
+      requested_by text,authorizer_role text,terminal_id text,store_id text,detail jsonb,created_at timestamptz DEFAULT now());`);
+  await db.exec(readFileSync("supabase/migrations/20261023141539_soft_token_approval_notifications.sql", "utf8"));
   const migration = readFileSync(
     "supabase/migrations/20261024095724_notification_rule_table.sql",
     "utf8",
@@ -39,6 +42,7 @@ beforeAll(async () => {
   await db.exec(
     readFileSync("supabase/migrations/20261024110442_notification_legacy_mode_guard.sql", "utf8"),
   );
+  await db.exec(readFileSync("supabase/migrations/20261025133911_soft_token_owner_admin_notification_rule.sql", "utf8"));
   await db.exec(
     readFileSync(
       "supabase/migrations/20261024113812_notification_rule_activation_compatibility.sql",
@@ -67,6 +71,39 @@ async function event(meta: unknown = {}, amount: number | null = 150) {
   );
 }
 describe("durable notification rule table", () => {
+  it("routes a soft-token approval to its owner and administrators through the saved rule only", async () => {
+    await db.exec(`INSERT INTO app_users VALUES('00000000-0000-4000-8000-000000000006','admin','admin','owner',NULL,true,'{}') ON CONFLICT DO NOTHING`);
+    const tokenRule = rule({ event: "soft_token_approval", audience: "original", roles: [], channels: ["app"], phones: [], phoneUsers: {} });
+    await save([tokenRule]);
+    await db.exec(`INSERT INTO authorization_log(action_key,outcome,authorized_by,requested_by,authorizer_role,store_id,detail)
+      VALUES('price_override','approved','manager-a','cashier','supervisor','a',
+        '{"credential_method":"totp","ticket_reference":"BILL-42","requested_by_name":"Cashier"}')`);
+    const events = await db.query<{meta: {notification_routes: {app: string[]}}}>("SELECT meta FROM activity_events WHERE event_type='soft_token_approval'");
+    expect(events.rows).toHaveLength(1);
+    expect(events.rows[0].meta.notification_routes.app.sort()).toEqual(["admin", "manager-a"]);
+    await save([{ ...tokenRule, enabled: false }], [tokenRule]);
+    await db.exec(`INSERT INTO authorization_log(action_key,outcome,authorized_by,requested_by,authorizer_role,store_id,detail)
+      VALUES('price_override','approved','manager-a','cashier','supervisor','a','{"credential_method":"totp"}')`);
+    const muted = await db.query<{meta: {notification_routes: {app: string[]}}}>("SELECT meta FROM activity_events WHERE event_type='soft_token_approval' ORDER BY created_at DESC LIMIT 1");
+    expect(muted.rows[0].meta.notification_routes.app).toEqual([]);
+    expect((await db.query("SELECT id FROM authorization_log")).rows).toHaveLength(2);
+  });
+
+  it("adds a missing token rule once without activating legacy settings or replacing an existing rule", async () => {
+    const upgrade = readFileSync("supabase/migrations/20261025133911_soft_token_owner_admin_notification_rule.sql", "utf8");
+    const read = async () => (await db.query<{notification_settings: {rules?: unknown[]}}>("SELECT notification_settings FROM pos_settings")).rows[0].notification_settings;
+    await db.exec(upgrade);
+    expect((await read()).rules).toBeUndefined();
+    await save([rule()]);
+    await db.exec(upgrade);
+    const seeded = (await read()).rules!;
+    expect(seeded).toHaveLength(2);
+    expect(notificationRulesSchema.safeParse(seeded).success).toBe(true);
+    expect(seeded[0]).toEqual(rule());
+    await db.exec(upgrade);
+    expect((await read()).rules).toEqual(seeded);
+  });
+
   it("keeps legacy in-app preferences and private audiences before activation", async () => {
     const first = (await event({ audience_user_ids: ["cashier"] })).rows[0];
     expect(first.meta.audience_user_ids).toEqual(["cashier"]);

@@ -2,11 +2,12 @@ import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { visibleActivityRows } from "@/lib/notification-visibility";
 import { activeBranchId } from "@/lib/active-branch";
 /** Shared, durable notification acknowledgements; business records remain unchanged. */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { Bell, Check, LoaderCircle } from "lucide-react";
+import { Bell, Check, LoaderCircle, Search } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { AnimatedList } from "@/components/ui/animated-list";
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
@@ -20,6 +21,8 @@ import {
   unseenEvents,
   clearAllActivityEntries,
   clearActivityEntry,
+  activityAcknowledgedBy,
+  activityAcknowledgementIds,
   clearedIds,
   subscribeActivityEvents,
   type ActivityEvent,
@@ -65,6 +68,8 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
   const allowed = true;
 
   const meKey = user?.staffId ?? user?.name ?? "";
+  const [search, setSearch] = useState("");
+  const searchQuery = useDeferredValue(search.trim().toLocaleLowerCase());
   const [cleared, setCleared] = useState<string[]>(() => clearedIds(meKey));
   const [rows, setRows] = useState<ActivityEvent[]>([]);
   const [rowsScope, setRowsScope] = useState<string | null>(null);
@@ -172,13 +177,13 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
       mergeRemoteActivityPreferences(meKey, list);
       const hidden = new Set(clearedIds(meKey));
       const fresh = unseenEvents(list, meKey).filter(
-        (row) => !hidden.has(row.id) && !row.clearedBy.length,
+        (row) => !hidden.has(row.id) && !activityAcknowledgedBy(row,meKey),
       );
       setUnread(fresh.length);
       const newlyArrived = activityInitializedRef.current
         ? list.filter(
             (row) =>
-              !announcedIdsRef.current.has(row.id) && !hidden.has(row.id) && !row.clearedBy.length,
+              !announcedIdsRef.current.has(row.id) && !hidden.has(row.id) && !activityAcknowledgedBy(row,meKey),
           )
         : [];
       for (const row of list) announcedIdsRef.current.add(row.id);
@@ -235,6 +240,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
     mounted.current = true;
     setRows([]);
     setRowsScope(null);
+    setSearch("");
     announcedIdsRef.current.clear();
     activityInitializedRef.current = false;
     const onCleared = () =>
@@ -277,10 +283,17 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
   }, [showActivity, refresh, meKey]);
 
   const visibleRows = useMemo(
-    () => rowsScope === preferenceScope ? visibleActivityRows(rows, cleared, preferenceBusy, preferenceScope) : [],
-    [rows, rowsScope, cleared, preferenceBusy, preferenceScope],
+    () => rowsScope === preferenceScope ? visibleActivityRows(rows, cleared, preferenceBusy, preferenceScope, activityAcknowledgementIds(meKey)) : [],
+    [rows, rowsScope, cleared, preferenceBusy, preferenceScope, meKey],
   );
-  const displayedRows = useMemo(() => visibleRows.slice(0, displayLimit), [visibleRows, displayLimit]);
+  const searchIndex = useMemo(() => visibleRows.map(row => ({
+    row,
+    text: [humanizer(row.title), humanizer(row.message), row.actorName,
+      pos?.stores.find(store => store.id === row.storeId)?.name,
+      row.meta["ticket_reference"], row.meta["reference"]].filter(Boolean).join(" ").toLocaleLowerCase(),
+  })), [visibleRows, humanizer, pos?.stores]);
+  const matchingRows = useMemo(() => searchIndex.filter(item => !searchQuery || item.text.includes(searchQuery)).map(item => item.row), [searchIndex, searchQuery]);
+  const displayedRows = useMemo(() => matchingRows.slice(0, displayLimit), [matchingRows, displayLimit]);
   const badge = unseenEvents(visibleRows, meKey).length;
   const saving = [...preferenceBusy].some(key => key.startsWith(`${preferenceScope}:`));
 
@@ -319,13 +332,18 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
         <div className="border-b border-border/60 px-4 py-4 pr-12">
           <DialogTitle className="flex items-center gap-2 text-base"><Bell className="size-4 text-primary" /> Notifications</DialogTitle>
         </div>
+        <div className="relative mx-3 mt-3">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+          <Input aria-label="Search notifications" placeholder="Search message, person, branch or bill…" value={search}
+            onChange={event => { setSearch(event.target.value); setDisplayLimit(30); }} className="h-11 rounded-lg pl-9 text-sm" />
+        </div>
 
         {saving && <p role="status" className="px-4 pt-3 text-xs text-muted-foreground">Saving changes…</p>}
         <div className="min-h-32 max-h-[65dvh] overflow-y-auto overscroll-contain p-3">
-          {showActivity && visibleRows.length > 0 && (
+          {showActivity && matchingRows.length > 0 && (
             <div className="flex items-center justify-between border-b border-border/60 px-3 py-1.5">
               <span className="text-[10px] font-medium text-muted-foreground">
-                Active notifications
+                {searchQuery ? `${matchingRows.length} matching notifications` : "Active notifications"}
               </span>
               <Button
                 type="button"
@@ -333,12 +351,12 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
                 variant="ghost"
                 className="h-9 px-3 text-xs"
                 onClick={() => void updatePreference(
-                  visibleRows.map(row => row.id),
-                  () => clearAllActivityEntries(meKey, visibleRows.map(row => row.id)),
+                  matchingRows.map(row => row.id),
+                  () => clearAllActivityEntries(meKey, matchingRows.map(row => row.id)),
                   "Some notifications could not be cleared. They have been restored; please try again.",
                 )}
               >
-                Clear all
+                {searchQuery ? "Clear results" : "Clear all"}
               </Button>
             </div>
           )}
@@ -358,7 +376,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
               getKey={activityKey}
               empty={
                 <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-                  {saving ? "Notifications cleared from this view. Saving…" : "You’re all caught up."}
+                  {saving ? "Notifications cleared from this view. Saving…" : searchQuery ? "No notifications match your search." : "You’re all caught up."}
                 </p>
               }
               renderItem={(r) => (
@@ -425,11 +443,14 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
               )}
             />
           )}
-          {displayedRows.length < visibleRows.length && <Button type="button" variant="outline" className="mt-2 w-full"
+          {displayedRows.length < matchingRows.length && <Button type="button" variant="outline" className="mt-2 w-full"
             onClick={() => setDisplayLimit(value => value + 30)}>
-            Show more ({displayedRows.length} of {visibleRows.length})
+            Show more ({displayedRows.length} of {matchingRows.length})
           </Button>}
         </div>
+        <p className="border-t border-border/60 px-4 py-3 text-[11px] leading-relaxed text-muted-foreground">
+          Clear hides an alert only for you. The activity event and its approval record remain saved.
+        </p>
       </DialogContent>
     </Dialog>
   );

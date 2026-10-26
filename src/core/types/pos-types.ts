@@ -128,7 +128,9 @@ export type Member = {
   name: string;
   phone: string;
   email: string;
-  tier: "Bronze" | "Silver" | "Gold";
+  tier: string;
+  /** Editable POS contact; does not change verified portal identity. */
+  contactEmail?: string;
   points: number;
   totalSpend: number;
   joinedAt: string;
@@ -856,7 +858,7 @@ export type TaxSettings = {
 
 export type PaperSize = "30mm" | "80mm" | "58mm" | "a4" | "letter";
 
-export type FontFamilyKey = "mono" | "sans" | "serif";
+export type FontFamilyKey = "mono" | "sans" | "serif" | "arial" | "verdana" | "tahoma" | "georgia" | "times" | "courier";
 
 export type FontStyleSettings = {
   family: FontFamilyKey;
@@ -867,7 +869,7 @@ export type FontStyleSettings = {
   spacing: number;
 };
 
-export type ReceiptLinePlacement = "header" | "footer";
+export type ReceiptLinePlacement = "header" | "before-items" | "before-totals" | "after-totals" | "footer";
 
 export type ReceiptCustomLine = {
   id: string;
@@ -880,7 +882,7 @@ export type ReceiptQrSettings = {
   value: string;
   /** px */
   size: number;
-  placement: ReceiptLinePlacement;
+  placement: "header" | "footer";
 };
 
 /** Wording printed on booking / racket job slips. */
@@ -899,6 +901,9 @@ export type BookingSlipSettings = {
 
 export type ReceiptSettings = {
   paper: PaperSize;
+  headerLayout?: import("@/lib/receipt-header").ReceiptHeaderLayout;
+  documentLayouts?: import("@/lib/receipt-documents").ReceiptDocumentLayouts;
+  documentSections?: import("@/lib/receipt-sections").ReceiptDocumentSections;
   /** business identity printed at the top of every slip */
   companyName: string;
   taxNumber: string;
@@ -971,6 +976,8 @@ export type TimeFormat = "12h" | "24h";
 export type SellingLayout = "standard" | "canvas";
 
 export type IntegrationSettings = {
+  /** Existing installs retain e-commerce until explicitly disabled. */
+  ecommerceEnabled?: boolean;
   /** Optional planning estimates; does not change purchase cost or profit. */
   totalUnitCost?: import("@/lib/total-unit-cost").TotalUnitCostSettings;
   /** Register presentation only; both options use the same cart and checkout engine. */

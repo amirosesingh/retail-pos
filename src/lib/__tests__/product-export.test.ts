@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Product } from "@/core/types/pos-types";
-import { productsForExport } from "@/lib/product-export";
+const exportMocks = vi.hoisted(() => ({ rows: vi.fn(), write: vi.fn() }));
+vi.mock("xlsx", () => ({ utils: { json_to_sheet: exportMocks.rows, book_new: () => ({}), book_append_sheet: vi.fn() }, writeFile: exportMocks.write }));
+import { productsForExport, exportProductsXlsx } from "@/lib/product-export";
 
 const product = (id: string, archived: boolean, stock: number): Product => ({
   id, name: id, sku: id, barcode: id, category: "Test", cost: 1, price: 2,
@@ -16,4 +18,13 @@ describe("inventory Excel export scope", () => {
     expect(productsForExport(products, "active-in-stock", "branch").map(p => p.id)).toEqual(["available"]);
     expect(productsForExport(products, "archived", "branch").map(p => p.id)).toEqual(["archived"]);
   });
+});
+
+it("omits cost and e-commerce columns from exports when those controls are unavailable", async () => {
+  const item={...product("item",false,2),cost:15,ecomPrice:25};
+  await exportProductsXlsx([item],[],"safe",false,false);
+  const rows=exportMocks.rows.mock.calls.at(-1)?.[0];
+  expect(rows[0]).not.toHaveProperty("cost");expect(rows[0]).not.toHaveProperty("ecom_price");expect(rows[0].price).toBe(2);
+  await exportProductsXlsx([item],[],"management",true,true);
+  expect(exportMocks.rows.mock.calls.at(-1)?.[0][0]).toMatchObject({cost:15,ecom_price:25});
 });

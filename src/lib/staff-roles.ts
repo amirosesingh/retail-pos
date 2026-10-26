@@ -1,7 +1,7 @@
 /**
  * Roles staff can be assigned to.
  *
- * Four roles are built in and can never be removed; an administrator can add
+ * Five role presets are built in and can never be removed; an administrator can add
  * as many custom roles as they like. Every role is only a starting point: the
  * permission checklist on a person's record can always be tuned afterwards,
  * and doing so marks that person as holding "Custom permissions".
@@ -32,7 +32,7 @@ export type RoleDef = {
 
 export const CORE_ROLE_NAMES: Record<StaffRole, string> = {
   cashier: "Cashier",
-  warehouse: "Warehouse Supervisor",
+  warehouse: "Warehouse",
   supervisor: "Supervisor",
   admin: "Admin",
 };
@@ -48,7 +48,7 @@ const coreRole = (base: StaffRole): RoleDef => ({
 /** Used before the roles table answers, and on older databases. */
 export const CORE_ROLES: RoleDef[] = (
   ["cashier", "warehouse", "supervisor", "admin"] as StaffRole[]
-).map(coreRole);
+).map(coreRole).concat([{ slug: "manager", name: "Manager", baseLevel: "supervisor", permissions: rolePermissions("supervisor"), isCore: true }]);
 
 const isStaffRole = (v: unknown): v is StaffRole =>
   v === "cashier" || v === "warehouse" || v === "supervisor" || v === "admin";
@@ -75,7 +75,7 @@ export async function listStaffRoles(): Promise<RoleDef[]> {
   try { data = await routedQuery("staff_roles", { orderBy: { column: "name" }, limit: 500 }) as Record<string, unknown>[]; }
   catch { return CORE_ROLES; }
   const rows = data.map(mapRow);
-  const roles = rows.length ? rows : CORE_ROLES;
+  const roles = [...rows, ...CORE_ROLES.filter(core => !rows.some(row => row.slug === core.slug))];
   // Keep the resolver working with no connection.
   cacheRoleDefinitions(roles);
   return roles;
