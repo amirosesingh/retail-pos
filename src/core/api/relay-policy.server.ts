@@ -90,6 +90,7 @@ const PARENT_OF: Record<string, { table: string; fk: string; parentStoreColumn: 
 
 /** Global catalogue tables: no branch, but permission-gated columns. */
 const GLOBAL_TABLES = new Set([
+  "payment_types",
   "products",
   "members",
   "audit_logs",
@@ -177,6 +178,7 @@ const COLUMN_PERMISSIONS: Record<string, Record<string, string>> = {
 
 /** Whole-table gates for a given operation kind. */
 const TABLE_PERMISSIONS: Record<string, { write?: string; remove?: string }> = {
+  payment_types: { write: "can_access_pos_settings", remove: "can_access_pos_settings" },
   purchase_orders: { write: "can_receive_purchase_order" },
   purchase_order_items: { write: "can_receive_purchase_order" },
   stock_adjustments: { write: "can_adjust_stock" },
@@ -489,7 +491,7 @@ export async function authorizeRelayOp(
   if (!scope.isSupervisor && !scope.storeId)
     return deny("SCOPE_MISSING", "This till is not assigned to a branch — sign in again.");
   const settingsAdmin = scope.role === "admin" || scope.roleSlug === "admin";
-  if (["pos_settings", "public_flags"].includes(op.table) && !settingsAdmin)
+  if (["pos_settings", "public_flags", "payment_types"].includes(op.table) && !settingsAdmin)
     return deny("PERMISSION_DENIED", "Global settings require an administrator.");
   if (["settings_overrides", "settings_locks"].includes(op.table))
     return authorizeSettingsMutation(op, scope);

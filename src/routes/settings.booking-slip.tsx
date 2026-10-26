@@ -49,9 +49,9 @@ function BookingSlipForm() {
   const patch = (p: Partial<BookingSlipSettings>) => setField("bookingSlip", { ...cfg, ...p });
 
   return (
-    <div className="space-y-6">
-      <div className="space-y-2">
-        <div className="flex items-center justify-between gap-3">
+    <div className="space-y-4">
+      <div className="space-y-3 rounded-xl border bg-card p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-1">
             <Label htmlFor="booking-terms">Terms &amp; conditions</Label>
             <HelpTip
@@ -84,7 +84,7 @@ function BookingSlipForm() {
         />
       </div>
 
-      <div className="space-y-2 border-t border-border pt-4">
+      <div className="space-y-3 rounded-xl border bg-card p-4">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-1">
             <Label htmlFor="signature-caption">Customer signature block</Label>
@@ -108,7 +108,7 @@ function BookingSlipForm() {
         />
       </div>
 
-      <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
+      <div className="flex items-center justify-between gap-4 rounded-xl border bg-card p-4">
         <div>
           <div className="flex items-center gap-1">
             <Label>Repeat terms on part-payment receipts</Label>
@@ -122,7 +122,7 @@ function BookingSlipForm() {
         />
       </div>
 
-      <div className="rounded-md border border-border bg-muted/40 p-3">
+      <div className="rounded-xl border bg-muted/40 p-4">
         <p className="mb-2 text-xs font-medium text-muted-foreground">Slip preview</p>
         <div className="whitespace-pre-wrap font-mono text-[11px] leading-4">
           {`RACKET JOB CARD

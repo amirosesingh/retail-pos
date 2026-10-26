@@ -12,6 +12,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { SettingsFrame, useSettingsCtx } from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DecimalSettingInput } from "@/components/ui/decimal-setting-input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
@@ -80,7 +81,7 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="space-y-2">
+    <section className="space-y-4 rounded-xl border bg-card p-4">
       <div>
         <h2 className="text-sm font-semibold">{title}</h2>
         <p className="text-xs text-muted-foreground">{blurb}</p>
@@ -189,11 +190,11 @@ function BookingRulesForm() {
             <Label className="text-xs text-muted-foreground">
               Minimum {rules.depositMode === "percent" ? "(%)" : "(amount)"}
             </Label>
-            <Input
+            <DecimalSettingInput
               className="numeric text-right"
-              inputMode="decimal"
-              value={rules.depositMin || ""}
-              onChange={(e) => patch({ depositMin: num(e.target.value) })}
+              aria-label="Minimum booking deposit"
+              value={rules.depositMin}
+              onValueChange={(depositMin) => patch({ depositMin })}
               placeholder="0"
             />
           </div>
@@ -314,21 +315,19 @@ function BookingRulesForm() {
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Default mains</Label>
-            <Input
+            <DecimalSettingInput
               className="numeric text-right"
-              inputMode="decimal"
-              value={rules.defaultTensionMain || ""}
-              onChange={(e) => patch({ defaultTensionMain: num(e.target.value) })}
+              value={rules.defaultTensionMain}
+              onValueChange={(defaultTensionMain) => patch({ defaultTensionMain })}
               placeholder="26"
             />
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Default cross</Label>
-            <Input
+            <DecimalSettingInput
               className="numeric text-right"
-              inputMode="decimal"
-              value={rules.defaultTensionCross || ""}
-              onChange={(e) => patch({ defaultTensionCross: num(e.target.value) })}
+              value={rules.defaultTensionCross}
+              onValueChange={(defaultTensionCross) => patch({ defaultTensionCross })}
               placeholder="28"
             />
           </div>
@@ -366,13 +365,12 @@ function BookingRulesForm() {
         />
         <div className="space-y-1">
           <div className="flex items-center gap-1"><Label className="text-xs text-muted-foreground">Locked base labour fee</Label><HelpTip label="About Locked base labour fee" text="Pre-filled and read-only on the intake screen. Cashiers must override it to change it." /></div>
-          <Input
+          <DecimalSettingInput
             className="numeric text-right"
-            inputMode="decimal"
-            value={integrations.baseLaborFee || ""}
-            onChange={(e) =>
+            value={integrations.baseLaborFee}
+            onValueChange={(baseLaborFee) =>
               updateSettings({
-                integrations: { ...integrations, baseLaborFee: num(e.target.value) },
+                integrations: { ...integrations, baseLaborFee },
               })
             }
             placeholder="0.00"
@@ -412,12 +410,11 @@ function BookingRulesForm() {
           </div>
           <div className="space-y-1">
             <div className="flex items-center gap-1"><Label className="text-xs text-muted-foreground">Combo discount value</Label><HelpTip label="About combo discount value" text="Applied to the labour line when a stock racket and a stock string are both on the job." /></div>
-            <Input
+            <DecimalSettingInput
               className="numeric text-right"
-              inputMode="decimal"
               disabled={rules.comboRule !== "percent" && rules.comboRule !== "amount"}
-              value={rules.comboValue || ""}
-              onChange={(e) => patch({ comboValue: num(e.target.value) })}
+              value={rules.comboValue}
+              onValueChange={(comboValue) => patch({ comboValue })}
               placeholder="0"
             />
           </div>
@@ -463,11 +460,10 @@ function BookingRulesForm() {
           <Label className="text-xs text-muted-foreground">
             High-tension warning above ({rules.defaultTensionUnit})
           </Label>
-          <Input
+          <DecimalSettingInput
             className="numeric text-right"
-            inputMode="decimal"
-            value={rules.highTensionThreshold || ""}
-            onChange={(e) => patch({ highTensionThreshold: num(e.target.value) })}
+            value={rules.highTensionThreshold}
+            onValueChange={(highTensionThreshold) => patch({ highTensionThreshold })}
             placeholder="26"
           />
         </div>

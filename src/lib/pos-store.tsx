@@ -13,7 +13,7 @@ import { isCompanyIdentityPath } from "./company-identity";
 import { readBranding, writeBranding } from "./branding";
 import { canSelectLocation, verifyTerminalLocation } from "@/core/api/location-directory";
 import { documentOrigin } from "./document-origin";
-import { SettingsWriteQueue } from "./settings-write-queue";
+import { SettingsWriteQueue, settingsWriteGroup } from "./settings-write-queue";
 import {
   createContext,
   useCallback,
@@ -646,8 +646,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // Scoped business/terminal overrides and global locks.
   const [scope, setScope] = useState<BranchSettingsState>(emptyBranchSettings);
   const settingsWrites = useRef(new SettingsWriteQueue());
-  const trackSettingsWrite = (key: string, save: () => Promise<unknown>) =>
-    settingsWrites.current.enqueue(key, save);
+  const trackSettingsWrite = (key: string, save: () => Promise<unknown>, latestGroup?: string) =>
+    latestGroup ? settingsWrites.current.enqueueLatest(key, latestGroup, save)
+      : settingsWrites.current.enqueue(key, save);
   const saveConfiguredSettings = () => settingsWrites.current.flush();
   const [settingsTerminalId, setSettingsTerminalId] = useState("");
   const loadedScopeKey = useRef("");
@@ -3408,6 +3409,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const writeGlobalSettings = useCallback((patch: Partial<AppSettings>) => {
+    const latestGroup = settingsWriteGroup(patch as Record<string, unknown>);
     {
       const prev = stateRef.current.settings;
       trackSettingsWrite("GLOBAL", () =>
@@ -3424,6 +3426,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
             dbError("Saving settings", error);
             throw error;
           }),
+        latestGroup,
       );
     }
     setState((s) => {
@@ -3530,6 +3533,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
               toast.error(`Scoped settings not saved: ${(error as Error).message}`);
               throw error;
             }),
+            ["payment", "paymentAccounts", "booking", "whatsapp"].includes(section) ? section : undefined,
           );
         }
       }

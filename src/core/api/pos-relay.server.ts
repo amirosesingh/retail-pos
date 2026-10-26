@@ -54,6 +54,7 @@ export const RELAY_TABLES = new Set([
   "sales",
   "sale_items",
   "payment_transactions",
+  "payment_types",
   "item_activity_logs",
   "shifts",
   "shift_sessions",

@@ -22,6 +22,13 @@ const admin: RelayScope = { ...cashier, role: "admin", roleSlug: "admin", isSupe
 beforeEach(() => restMock.mockReset());
 
 describe("relay authorisation", () => {
+  it.each(["insert", "upsert", "delete"] as const)("allows only administrators to %s global payment methods", async kind => {
+    const op = kind === "delete" ? { kind, table: "payment_types", match: { id: "method" } }
+      : { kind, table: "payment_types", rows: [{ id: "method", name: "Cash", type_code: "cash" }] };
+    expect((await safeAuthorizeRelayOp(op, admin)).ok).toBe(true);
+    expect(await safeAuthorizeRelayOp(op, { ...cashier, permissions: { can_access_pos_settings: true } })).toMatchObject({ ok: false, code: "PERMISSION_DENIED" });
+    expect(restMock).not.toHaveBeenCalled();
+  });
   it.each(["sales", "sale_items"])("requires the saved sale permission for generic %s writes", async table => {
     for (const kind of ["insert", "upsert"] as const) {
       const out = await safeAuthorizeRelayOp({ kind, table, rows: [{ id: "sale-denied" }] }, { ...cashier, permissions: { can_process_sale: false } });

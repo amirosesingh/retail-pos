@@ -21513,6 +21513,24 @@ REVOKE ALL ON FUNCTION public.sync_apply_activity_events(jsonb) FROM PUBLIC,anon
 GRANT EXECUTE ON FUNCTION public.sync_apply_activity_events(jsonb) TO service_role;
 
 
+-- Optional private/admin tables keep their existing server-only access.
+DO $private_fk_indexes$
+DECLARE previous_timeout text := current_setting('lock_timeout');
+BEGIN
+  PERFORM set_config('lock_timeout','2s',true);
+  IF to_regclass('admin_portal.activation_events') IS NOT NULL THEN
+    CREATE INDEX IF NOT EXISTS activation_events_activation_id_idx ON admin_portal.activation_events(activation_id);
+    CREATE INDEX IF NOT EXISTS activation_events_actor_id_idx ON admin_portal.activation_events(actor_id);
+  END IF;
+  IF to_regclass('admin_portal.activations') IS NOT NULL THEN
+    CREATE INDEX IF NOT EXISTS activations_admin_user_id_idx ON admin_portal.activations(admin_user_id);
+  END IF;
+  IF to_regclass('pos_private.approval_tokens') IS NOT NULL THEN
+    CREATE INDEX IF NOT EXISTS approval_tokens_terminal_id_idx ON pos_private.approval_tokens(terminal_id);
+  END IF;
+  PERFORM set_config('lock_timeout',previous_timeout,true);
+END $private_fk_indexes$;
+
 -- Final public-schema privilege hardening after notification rule definitions.
 DO $notification_hardening$
 DECLARE routine record;

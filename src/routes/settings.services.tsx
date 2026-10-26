@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { SettingsFrame, useSettingsCtx } from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DecimalSettingInput } from "@/components/ui/decimal-setting-input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { usePos } from "@/lib/pos-store";
@@ -101,7 +102,7 @@ function ServicesForm() {
       {services.map((s) => (
         <div
           key={s.id}
-          className="grid gap-3 rounded-md border border-border p-3 sm:grid-cols-[1fr_140px_auto_auto_auto]"
+          className="grid gap-4 rounded-xl border bg-card p-4 sm:grid-cols-2"
         >
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Service</Label>
@@ -113,11 +114,12 @@ function ServicesForm() {
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Default fee</Label>
-            <Input
+            <DecimalSettingInput
               className="numeric text-right"
-              inputMode="decimal"
-              value={s.fee || ""}
-              onChange={(e) => patch(s.id, { fee: Number(e.target.value) || 0 })}
+              aria-label={`Default fee for ${s.name || "new service"}`}
+              value={s.fee}
+              allowNegative
+              onValueChange={(fee) => patch(s.id, { fee })}
             />
           </div>
           <label className="flex items-end gap-2 pb-2 text-xs text-muted-foreground">
@@ -143,7 +145,7 @@ function ServicesForm() {
             className="self-end"
             onClick={() => {
               save(services.filter((x) => x.id !== s.id));
-              toast.success("Service removed");
+              toast.info("Service removed. Save settings to confirm the change.");
             }}
           >
             <Trash2 className="size-4 text-destructive" />

@@ -6,7 +6,7 @@
  * reconciliation matches each machine's own settlement report.
  */
 import { createFileRoute } from "@tanstack/react-router";
-import { Plus, Trash2 } from "lucide-react";
+import { CreditCard, Landmark, Plus, Smartphone, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { SettingsFrame, useSettingsCtx } from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
@@ -75,11 +75,11 @@ function AccountsForm() {
   };
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       {
-        <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
+        <div className="flex items-center justify-between gap-4 rounded-xl border bg-primary/5 p-4">
           <div>
-            <p className="text-sm">Ask for an account at the till</p>
+            <p className="text-sm font-semibold">Choose where each payment lands</p>
             <p className="text-xs text-muted-foreground">
               Card, transfer and wallet tenders get a dropdown of the accounts below.
             </p>
@@ -94,9 +94,12 @@ function AccountsForm() {
         </div>
       }
 
-      {accounts.map((a) => (
-        <div key={a.id} className="space-y-3 rounded-md border border-border p-3">
-          <div className="grid gap-3 sm:grid-cols-2">
+      <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-muted-foreground">{accounts.length} accounts · {accounts.filter(account => account.active).length} active</p><Button size="sm" variant="outline" className="h-9" onClick={add}><Plus className="size-4" />Add account</Button></div>
+      {accounts.map((a) => {
+        const AccountIcon = a.type === "card_machine" ? CreditCard : a.type === "bank_account" ? Landmark : Smartphone;
+        return <section aria-label={a.name || "New payment account"} key={a.id} className="space-y-4 rounded-xl border bg-card p-4">
+          <div className="flex items-center gap-3"><span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><AccountIcon className="size-5" /></span><div className="min-w-0"><h2 className="truncate text-sm font-semibold">{a.name || "New account"}</h2><p className="text-xs text-muted-foreground">{PAYMENT_ACCOUNT_LABELS[a.type]}</p></div></div>
+          <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">Name shown to the cashier</Label>
               <Input
@@ -172,7 +175,8 @@ function AccountsForm() {
                     type="button"
                     size="sm"
                     variant={on ? "default" : "outline"}
-                    className="h-7 px-2 text-[11px]"
+                    className="min-h-10 whitespace-normal px-3 py-2 text-xs"
+                    aria-pressed={on}
                     onClick={() =>
                       patch(a.id, {
                         storeIds: on
@@ -202,14 +206,14 @@ function AccountsForm() {
               variant="ghost"
               onClick={() => {
                 save(accounts.filter((x) => x.id !== a.id));
-                toast.success("Account removed");
+                toast.info("Account removed. Save settings to confirm the change.");
               }}
             >
               <Trash2 className="size-3 text-destructive" /> Remove
             </Button>
           </div>
-        </div>
-      ))}
+        </section>;
+      })}
 
       {accounts.length === 0 && (
         <p className="rounded-md border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
@@ -217,9 +221,7 @@ function AccountsForm() {
         </p>
       )}
 
-      <Button size="sm" onClick={add}>
-        <Plus className="size-3" /> Add account
-      </Button>
+      <p className="rounded-lg bg-muted/40 px-3 py-3 text-xs text-muted-foreground">Use the save bar below to confirm account changes. Existing bills keep their recorded payment details.</p>
     </div>
   );
 }

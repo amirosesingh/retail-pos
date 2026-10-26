@@ -2197,7 +2197,10 @@ async function commitOpsInternal(context: string, ops: SyncOp[], report?: (compl
       const sharedPosSettings =
         ops.some((op) => op.table === "pos_settings") &&
         ops.every((op) => op.table === "pos_settings" || op.table === "settings_scoped");
-      const aggregateKind = sharedPosSettings
+      const paymentCatalogue = ops.every(op => op.table === "payment_types");
+      const aggregateKind = paymentCatalogue
+        ? "general"
+        : sharedPosSettings
         ? "settings"
         : /sale/i.test(context)
           ? "sale"
