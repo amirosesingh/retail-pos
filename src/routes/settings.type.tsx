@@ -58,7 +58,7 @@ function TypographyForm() {
         const f = receipt.fonts[scope.key];
         return (
           <div key={scope.key} className="rounded-xl border border-border bg-card p-4">
-            <p className="text-sm font-medium">{scope.label}</p>
+            <h2 className="text-sm font-semibold">{scope.label}</h2>
             <div className="mt-3 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
               <div className="space-y-1">
                 <Label className="text-[11px] text-muted-foreground">Family</Label>

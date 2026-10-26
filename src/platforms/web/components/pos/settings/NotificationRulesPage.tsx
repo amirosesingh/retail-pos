@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Table } from "@/components/ui/table";
 import {
   Dialog,
   DialogContent,
@@ -253,7 +254,7 @@ export function NotificationRulesPage() {
               {(dirty || data.imported) && <span className="text-sm">Unsaved changes</span>}
             </div>
             <div className="overflow-x-auto rounded-lg border">
-              <table className="w-full text-left text-sm">
+              <Table aria-label="Notification rules" mobileCards={false} clientDataControls={false} className="w-full text-left text-sm">
                 <thead>
                   <tr>
                     {[
@@ -350,7 +351,7 @@ export function NotificationRulesPage() {
                     </tr>
                   )}
                 </tbody>
-              </table>
+              </Table>
             </div>
             <section className="space-y-3">
               <h2 className="text-lg font-semibold">Delivery history</h2>
@@ -360,7 +361,7 @@ export function NotificationRulesPage() {
                 not automatically resent.
               </p>
               <div className="overflow-x-auto rounded-lg border">
-                <table className="w-full text-left text-sm">
+                <Table aria-label="Notification delivery history" mobileCards={false} clientDataControls={false} className="w-full text-left text-sm">
                   <thead>
                     <tr>
                       {["Time", "Rule", "Channel", "Recipient", "Status / reason"].map((label) => (
@@ -398,7 +399,7 @@ export function NotificationRulesPage() {
                       </tr>
                     )}
                   </tbody>
-                </table>
+                </Table>
               </div>
               <div className="flex gap-2">
                 <Button

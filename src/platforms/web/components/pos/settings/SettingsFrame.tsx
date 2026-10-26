@@ -21,9 +21,10 @@ import { ChevronLeft, Eye, Loader2, RotateCcw, Save } from "lucide-react";
 import { toast } from "sonner";
 import { SettingsShell } from "@/platforms/web/components/pos/settings/SettingsShell";
 import { SaveIndicator } from "@/platforms/web/components/pos/settings/SaveIndicator";
+import { ReceiptPreviewFrame } from "@/platforms/web/components/pos/settings/ReceiptPreviewFrame";
 import { useEmbeddedSettings } from "@/platforms/web/components/pos/settings/embed";
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { usePos } from "@/lib/pos-store";
 import { useAuth } from "@/lib/pos-auth";
 import type { PermissionFlag } from "@/lib/permissions";
@@ -119,6 +120,15 @@ export function SettingsFrame({
   const canSettings = isAdmin || can(requiredPermission);
   // Rendered inside the settings workspace sheet: no app shell, no back link.
   const embedded = useEmbeddedSettings();
+  const [inlinePreview, setInlinePreview] = useState(false);
+  useEffect(() => {
+    if (!showPreview || embedded) return;
+    const viewport = window.matchMedia("(min-width: 1024px)");
+    const update = () => setInlinePreview(viewport.matches);
+    update();
+    viewport.addEventListener("change", update);
+    return () => viewport.removeEventListener("change", update);
+  }, [showPreview, embedded]);
 
   /* ---- Save / discard -------------------------------------------------- */
   // Edits apply live so the preview stays honest, but nothing is considered
@@ -422,17 +432,14 @@ export function SettingsFrame({
               <SheetContent side="right" className="w-full sm:max-w-[520px]">
                 <SheetHeader>
                   <SheetTitle>Live receipt preview · {PAPER_LABELS[effective.paper]}</SheetTitle>
+                  <SheetDescription>Sample receipt. Updates as you edit; no sale is created or printed.</SheetDescription>
                 </SheetHeader>
                 <div className="overflow-auto px-4 pb-6">
                   <div
                     className="mx-auto overflow-hidden rounded-md bg-white p-2"
                     style={{ maxWidth: geometry.width }}
                   >
-                    <iframe
-                      title="Receipt preview"
-                      srcDoc={previewHtml}
-                      className="h-[70vh] w-full border-0 bg-white"
-                    />
+                    <ReceiptPreviewFrame title="Receipt preview" html={previewHtml} />
                   </div>
                 </div>
               </SheetContent>
@@ -440,6 +447,7 @@ export function SettingsFrame({
           )}
         </header>
 
+        <div className={showPreview && !embedded ? "grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(240px,300px)]" : "min-w-0"}>
         <fieldset
           disabled={settingsScopeLoading && !allowWhileScopeLoading}
           className="settings-form w-full min-w-0 max-w-full space-y-5 rounded-2xl border border-border bg-card p-4 shadow-sm disabled:opacity-60 sm:p-5"
@@ -452,6 +460,16 @@ export function SettingsFrame({
           )}
           {children}
         </fieldset>
+        {showPreview && !embedded && inlinePreview && (
+          <aside aria-label="Live receipt preview" className="sticky top-3 hidden min-w-0 rounded-2xl border bg-muted/30 p-3 lg:block">
+            <h2 className="text-sm font-semibold">Live receipt preview</h2>
+            <p className="mb-3 mt-1 text-xs text-muted-foreground">{PAPER_LABELS[effective.paper]} · Sample bill. Updates as you edit.</p>
+            <div className="mx-auto overflow-hidden rounded-lg border bg-white" style={{ maxWidth: geometry.width }}>
+              <ReceiptPreviewFrame title="Live receipt preview" html={previewHtml} />
+            </div>
+          </aside>
+        )}
+        </div>
 
         {/* Nothing is considered stored until this bar confirms it. */}
         {showSaveBar && (
