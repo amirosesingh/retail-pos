@@ -215,6 +215,7 @@ class OperationsRepository {
         const existing = toRendererRow(table, current);
         for (const [field, value] of Object.entries(values)) {
           if (metadata.has(field) || stock.has(field) || same(field, value, existing[field])) continue;
+          if (field === "ecom_price" && permissions.can_publish_product !== true) refuse();
           const permitted = prices.has(field)
             ? permissions.can_edit_product_price === true ||
               (field === "cost_price" && scope.productWriteKind === "receiving" && permissions.can_receive_purchase_order === true)

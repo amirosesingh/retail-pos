@@ -159,6 +159,12 @@ export const VISIBILITY_ELEMENTS: VisibilityElement[] = [
     group: "Inventory",
   },
   {
+    key: "inventory.ecommerce",
+    label: "E-commerce prices & publication",
+    blurb: "Requires enabled e-commerce controls and Publish products permission; price editing also requires Edit product pricing.",
+    group: "Inventory",
+  },
+  {
     key: "inventory.stockValue",
     label: "Stock value totals",
     blurb: "Money value of stock on hand.",

@@ -382,7 +382,7 @@ type Ctx = {
   ) => Promise<{ ok: true; booking: Booking } | { ok: false; error: string }>;
 
   deleteBooking: (id: string, reason: string) => Promise<void>;
-  upsertProduct: (product: Product) => Promise<CommitTarget>;
+  upsertProduct: (product: Product, options?: { catalogOnly?: boolean; includeEcommerce?: boolean; includeCost?: boolean }) => Promise<CommitTarget>;
   upsertProductPriceOverride: (
     productId: string,
     price: number,
@@ -2628,11 +2628,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  const upsertProduct = useCallback(async (product: Product): Promise<CommitTarget> => {
+  const upsertProduct = useCallback(async (product: Product, options?: { catalogOnly?: boolean; includeEcommerce?: boolean; includeCost?: boolean }): Promise<CommitTarget> => {
     const prev = stateRef.current.products.find((p) => p.id === product.id);
     // The catalog is shared by every branch: make sure the product exists at
     // all stores (starting at zero) so it shows up everywhere after sync.
-    const stockByStore = { ...product.stockByStore };
+    const stockByStore = { ...(options?.catalogOnly ? prev?.stockByStore ?? {} : product.stockByStore) };
     for (const store of stateRef.current.stores) {
       if (stockByStore[store.id] === undefined) stockByStore[store.id] = 0;
     }
@@ -2664,7 +2664,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       ? { ...record, ownerStoreId: stateRef.current.currentStoreId }
       : record;
     // Store it before anything on screen says it was saved.
-    const target = await db.commitProduct(stored);
+    const target = await db.commitProduct(stored, options?.catalogOnly === true, { ecommerce: options?.includeEcommerce, cost: options?.includeCost });
     if (ownsNewItems) {
       const owners = {
         ...(stateRef.current.settings.integrations.productOwners ?? {}),
@@ -2677,7 +2677,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     setState((s) => ({
       ...s,
       products: s.products.some((p) => p.id === stored.id)
-        ? s.products.map((p) => (p.id === stored.id ? stored : p))
+        ? s.products.map((p) => (p.id === stored.id ? options?.catalogOnly ? { ...stored, stockByStore: p.stockByStore } : stored : p))
         : [stored, ...s.products],
     }));
     return target;
@@ -2705,7 +2705,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       setState((snapshot) => ({
         ...snapshot,
         products: snapshot.products.map((product) =>
-          product.id === productId ? { ...product, price, ecomPrice } : product,
+          product.id === productId ? { ...product, price, ...(ecomPrice !== undefined ? { ecomPrice } : {}) } : product,
         ),
       }));
       return target;

@@ -1,5 +1,5 @@
 -- Retail POS local database update — 1.4.80
--- Latest local migration: 018_sql_document_counters.sql
+-- Latest local migration: 020_unpublished_catalog_default.sql
 -- Source: retail-pos-local-database.sql bundled with this application.
 -- Select your configured POS database. This file never switches databases.
 -- Back up the existing database before upgrading. No business rows are deleted.
@@ -2724,6 +2724,7 @@ IF OBJECT_ID(N''dbo.members'', N''U'') IS NULL BEGIN CREATE TABLE dbo.[members] 
   [full_name] nvarchar(max) NOT NULL,
   [phone] nvarchar(450) NOT NULL,
   [email] nvarchar(max) NULL,
+  [contact_email] nvarchar(max) NULL,
   [address] nvarchar(max) NULL,
   [country_code] nvarchar(max) NULL,
   [postal_code] nvarchar(max) NULL,
@@ -2767,6 +2768,8 @@ IF COL_LENGTH(N''dbo.members'', N''phone'') IS NULL ALTER TABLE dbo.[members] AD
 IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE c.object_id=OBJECT_ID(N''dbo.members'') AND c.name=N''phone'' AND t.name IN (N''nvarchar'',N''varchar'') AND c.max_length=-1) ALTER TABLE dbo.[members] ALTER COLUMN [phone] nvarchar(450) NOT NULL;
 
 IF COL_LENGTH(N''dbo.members'', N''email'') IS NULL ALTER TABLE dbo.[members] ADD [email] nvarchar(max) NULL;
+
+IF COL_LENGTH(N''dbo.members'', N''contact_email'') IS NULL ALTER TABLE dbo.[members] ADD [contact_email] nvarchar(max) NULL;
 
 IF COL_LENGTH(N''dbo.members'', N''address'') IS NULL ALTER TABLE dbo.[members] ADD [address] nvarchar(max) NULL;
 
@@ -4168,7 +4171,7 @@ IF OBJECT_ID(N''dbo.products'', N''U'') IS NULL BEGIN CREATE TABLE dbo.[products
   [sku] nvarchar(max) NULL,
   [reorder_level] int NOT NULL CONSTRAINT [DF_products_reorder_level] DEFAULT (0),
   [tax_rate] decimal(38,12) NOT NULL CONSTRAINT [DF_products_tax_rate] DEFAULT (0),
-  [ecom_visible] bit NOT NULL CONSTRAINT [DF_products_ecom_visible] DEFAULT (1),
+  [ecom_visible] bit NOT NULL CONSTRAINT [DF_products_ecom_visible] DEFAULT (0),
   [stock_by_store] nvarchar(max) NOT NULL CONSTRAINT [DF_products_stock_by_store] DEFAULT (N''{}''),
   [updated_at] datetimeoffset(7) NOT NULL CONSTRAINT [DF_products_updated_at] DEFAULT (SYSDATETIMEOFFSET()),
   [landing_pct] decimal(38,12) NULL,
@@ -4316,10 +4319,10 @@ IF OBJECT_ID(N''dbo.products'', N''U'') IS NOT NULL AND COL_LENGTH(N''dbo.produc
   SELECT 1 FROM sys.default_constraints dc
   JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
   WHERE dc.parent_object_id=OBJECT_ID(N''dbo.products'') AND c.name=N''ecom_visible''
-) ALTER TABLE dbo.[products] ADD CONSTRAINT [DF_products_ecom_visible] DEFAULT (1) FOR [ecom_visible];
+) ALTER TABLE dbo.[products] ADD CONSTRAINT [DF_products_ecom_visible] DEFAULT (0) FOR [ecom_visible];
 
 IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N''dbo.products'') AND name=N''ecom_visible'' AND is_nullable=1) BEGIN
-  EXEC sys.sp_executesql N''UPDATE dbo.[products] SET [ecom_visible]=1 WHERE [ecom_visible] IS NULL;'';
+  EXEC sys.sp_executesql N''UPDATE dbo.[products] SET [ecom_visible]=0 WHERE [ecom_visible] IS NULL;'';
   ALTER TABLE dbo.[products] ALTER COLUMN [ecom_visible] bit NOT NULL;
 END;
 
@@ -11952,6 +11955,33 @@ IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version=18)
  INSERT dbo.pos_schema_migrations(version,name) VALUES(18,N''''sql_document_counters'''');'';
 COMMIT TRANSACTION;
 END;';
+-- 019_member_contact_email.sql
+EXEC sys.sp_executesql N'IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version=19)
+BEGIN
+BEGIN TRANSACTION;
+EXEC sys.sp_executesql N''-- Editable POS contact, separate from verified membership identity.
+IF OBJECT_ID(N''''dbo.members'''',N''''U'''') IS NOT NULL AND COL_LENGTH(N''''dbo.members'''',N''''contact_email'''') IS NULL
+ ALTER TABLE dbo.members ADD contact_email nvarchar(max) NULL;
+IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version=19)
+ INSERT dbo.pos_schema_migrations(version,name) VALUES(19,N''''member_contact_email'''');'';
+COMMIT TRANSACTION;
+END;';
+-- 020_unpublished_catalog_default.sql
+EXEC sys.sp_executesql N'IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version=20)
+BEGIN
+BEGIN TRANSACTION;
+EXEC sys.sp_executesql N''-- New operational products are unpublished until management chooses to publish.
+IF OBJECT_ID(N''''dbo.products'''',N''''U'''') IS NOT NULL AND COL_LENGTH(N''''dbo.products'''',N''''ecom_visible'''') IS NOT NULL
+BEGIN
+ DECLARE @commerceDefault sysname;
+ SELECT @commerceDefault=d.name FROM sys.default_constraints d JOIN sys.columns c ON c.object_id=d.parent_object_id AND c.column_id=d.parent_column_id WHERE d.parent_object_id=OBJECT_ID(N''''dbo.products'''') AND c.name=N''''ecom_visible'''';
+ IF @commerceDefault IS NOT NULL EXEC(N''''ALTER TABLE dbo.products DROP CONSTRAINT ''''+QUOTENAME(@commerceDefault));
+ ALTER TABLE dbo.products ADD CONSTRAINT DF_products_ecom_visible DEFAULT (0) FOR ecom_visible;
+END;
+IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version=20)
+ INSERT dbo.pos_schema_migrations(version,name) VALUES(20,N''''unpublished_catalog_default'''');'';
+COMMIT TRANSACTION;
+END;';
 BEGIN TRANSACTION;
 EXEC sys.sp_executesql N'-- SECTION 3: Verify all required tables, columns and migration versions
 
@@ -12405,6 +12435,7 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N''members'', N''full_name''),
   (N''members'', N''phone''),
   (N''members'', N''email''),
+  (N''members'', N''contact_email''),
   (N''members'', N''address''),
   (N''members'', N''country_code''),
   (N''members'', N''postal_code''),
@@ -13056,9 +13087,9 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N''authorization_actions'', N''is_enabled''),
   (N''authorization_actions'', N''row_version''),
   (N''authorization_actions'', N''updated_by''),
-  (N''authorization_actions'', N''created_at''),
-  (N''authorization_actions'', N''updated_at'');
+  (N''authorization_actions'', N''created_at'');
 INSERT INTO @RequiredColumns (table_name, column_name) VALUES
+  (N''authorization_actions'', N''updated_at''),
   (N''authorization_action_history'', N''id''),
   (N''authorization_action_history'', N''action_id''),
   (N''authorization_action_history'', N''action_key''),
@@ -13282,7 +13313,7 @@ IF @MissingColumnCount > 0
 IF OBJECT_ID(N''dbo.pos_schema_migrations'', N''U'') IS NULL
   THROW 51002, ''Retail POS local database migration history table is missing.'', 1;
 
-EXEC(N''IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 1) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 2) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 3) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 4) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 5) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 6) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 7) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 8) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 9) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 10) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 11) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 12) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 13) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 14) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 15) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 16) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 17) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 18)
+EXEC(N''IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 1) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 2) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 3) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 4) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 5) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 6) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 7) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 8) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 9) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 10) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 11) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 12) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 13) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 14) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 15) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 16) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 17) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 18) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 19) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 20)
   THROW 51002, ''''Retail POS local database migration history is incomplete.'''', 1;'');
 
 EXEC(N''SELECT version, name, applied_at

@@ -146,7 +146,7 @@ export function TerminalWorkspaceHome() {
                   />
                 }
                 hint={
-                  error||sponsorship.error ? "Could not refresh totals" : loading||sponsorship.loading ? "Updating…" : includeSponsorship?`Includes ${sponsorship.total.toFixed(2)} sponsorship value`:"Completed sales"
+                  error||sponsorship.error ? "Could not refresh totals" : loading||sponsorship.loading ? "Updating…" : includeSponsorship && sponsorship.total > 0 ?`Includes ${sponsorship.total.toFixed(2)} sponsorship value`:"Completed sales"
                 }
               />
             ),

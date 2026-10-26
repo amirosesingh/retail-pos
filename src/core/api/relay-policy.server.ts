@@ -23,6 +23,7 @@ import type { CallerClaims } from "@/core/api/relay-claims.server";
 export type RelayScope = {
   /** Device-bound, read-only replication; never used for business writes. */
   managementReplica?: boolean;
+  managementDevice?: boolean;
   kind: "cashier" | "terminal" | "staff";
   label: string;
   storeId: string | null;
@@ -296,6 +297,7 @@ export async function resolveRelayScope(caller: {
     staffUserId: row?.user_id ?? null,
     actorName: row?.full_name ?? caller.label ?? null,
     terminalId: caller.terminalId ?? null,
+    ...(caller.managementDevice ? { managementDevice: true } : {}),
     branchRestricted: Boolean(caller.terminalId && (row?.store_id || caller.storeId)),
     stale: branchMismatch || (!row && caller.kind !== "terminal"),
   };
@@ -390,7 +392,12 @@ async function authorizeProductOp(
   op: RelayOp,
   scope: RelayScope,
 ): Promise<{ ok: true; op: RelayOp } | RelayDenial> {
-  if (scope.role === "admin" || scope.roleSlug === "admin") return { ok: true, op };
+  const management = scope.managementDevice === true || (!scope.terminalId && scope.kind === "staff");
+  if (!management && op.kind !== "delete") {
+    const strip = (row: Record<string, unknown>) => Object.fromEntries(Object.entries(row).filter(([key]) => !["ecom_price", "ecom_visible", "ecom_enabled", "is_published"].includes(key)));
+    op = op.kind === "update" ? { ...op, values: strip(op.values) } : { ...op, rows: op.rows.map(strip) };
+  }
+  if (management && (scope.role === "admin" || scope.roleSlug === "admin")) return { ok: true, op };
   if (op.kind === "delete") {
     if (
       scope.permissions.can_bulk_edit_products !== true &&
@@ -429,8 +436,11 @@ async function authorizeProductOp(
     if (!before) {
       if (!allowed(scope, "can_add_new_product"))
         return deny("PERMISSION_DENIED", "Your account cannot add products.");
+      if (!management) payload.ecom_visible = false;
       continue;
     }
+    if (payload.ecom_price !== undefined && !sameJsonValue(payload.ecom_price, before.ecom_price) && !allowed(scope, "can_publish_product"))
+      return deny("PERMISSION_DENIED", "Publishing permission is required to edit e-commerce prices.");
     for (const [column, permission] of Object.entries(PRODUCT_FIELD_PERMISSIONS)) {
       if (
         payload[column] !== undefined &&
@@ -776,7 +786,7 @@ function authorizeProductPriceOverride(
       scope: "BRANCH",
       scope_id: branchId,
       key,
-      value: { selling_price: sellingPrice, ecom_price: ecomPrice },
+      value: { selling_price: sellingPrice, ...(scope.managementDevice === true || (!scope.terminalId && scope.kind === "staff") ? (rawEcomPrice !== undefined ? { ecom_price: ecomPrice } : {}) : {}) },
       is_overridden: true,
       updated_by: scope.staffUserId ?? scope.actorName ?? null,
     });

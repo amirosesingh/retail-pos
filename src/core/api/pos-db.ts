@@ -1,3 +1,4 @@
+import { productReadColumns, canUseEcommerceDevice } from "@/lib/ecommerce-device";
 import { productClassification } from "@/lib/product-classification";
 import { withoutWorkspacePurpose } from "@/lib/retired-workspace-settings";
 import { commitRowCount, runProgressBatch, yieldToUi } from "@/lib/commit-progress";
@@ -289,8 +290,8 @@ export const productToRow = (p: Product): Row => {
       .filter((v) => v.code),
     cost_price: safeNum(p.cost),
     selling_price: safeNum(p.price),
-    ecom_price: safeNumOrNull(p.ecomPrice),
-    ecom_visible: p.ecomVisible ?? true,
+    ...(canUseEcommerceDevice() ? { ecom_price: safeNumOrNull(p.ecomPrice) } : {}),
+    ...(canUseEcommerceDevice() ? { ecom_visible: p.ecomVisible ?? false } : {}),
     is_archived: p.archived === true,
     archived_at: p.archived ? new Date().toISOString() : null,
     // Stock is only ever written when the caller actually carries the per-branch
@@ -315,6 +316,7 @@ const rowToMember = (r: Row, tierName: (id: string | null) => MemberTier): Membe
   name: r.full_name,
   phone: r.phone ?? "",
   email: r.email ?? "",
+  contactEmail: typeof r.contact_email === "string" ? r.contact_email : undefined,
   tier: tierName(r.tier_id),
   points: num(r.loyalty_points),
   totalSpend: num(r.total_spent),
@@ -332,15 +334,27 @@ const rowToMember = (r: Row, tierName: (id: string | null) => MemberTier): Membe
   updatedAt: r.updated_at ?? undefined,
 });
 
-const memberToRow = (
+/** A catalogue edit never submits quantities, including stale stock from an open form. */
+export function catalogProductRow(product: Product, fields?: { ecommerce?: boolean; cost?: boolean }): Row {
+  const row = productToRow(product);
+  delete row.stock_quantity;
+  delete row.stock_by_store;
+  if (fields?.ecommerce === false) { delete row.ecom_price; delete row.ecom_visible; }
+  if (fields?.cost === false) { delete row.cost_price; delete row.landing_pct; }
+  return row;
+}
+
+export const memberToRow = (
   m: Member,
   tierId: (name: MemberTier) => string | null,
   includeBalances = true,
+  includeContact = false,
 ): Row => ({
   id: m.id,
   member_code: m.code,
   full_name: m.name,
   phone: m.phone,
+  ...(includeContact && m.contactEmail !== undefined ? { contact_email: m.contactEmail.trim() } : {}),
   // A normal cashier may enrol or edit a member without being allowed to
   // alter loyalty balances or tier. Omitting these columns lets a new row use the
   // database defaults and preserves the existing values on an upsert.
@@ -1151,6 +1165,9 @@ export function stableChildId(parentId: string, group: string, index: number): s
 let tierIdByName: Record<string, string> = {};
 let tierNameById: Record<string, MemberTier> = {};
 
+export function registerMembershipTierNames(tiers: {id:string;name:string}[]) {
+  for (const tier of tiers) { tierIdByName[tier.name] = recordId(tier.id); tierNameById[recordId(tier.id)] = tier.name; }
+}
 const tierId = (name: MemberTier) => tierIdByName[name] ?? null;
 const tierName = (id: string | null): MemberTier => (id && tierNameById[recordId(id)]) || "Bronze";
 
@@ -1299,7 +1316,7 @@ async function readProductCatalogue(client: typeof supabase, report: (completed:
     if (!hasStaffSession()) {
       return { data: null, error: { message: "The verified staff session ended while loading the catalogue." } };
     }
-    let query = client.from("products").select("*")
+    let query = client.from("products").select(productReadColumns())
       .is("deleted_at", null).order("id", { ascending: true }).limit(limit);
     if (afterId) query = query.gt("id", afterId);
     return await query;
@@ -3076,13 +3093,13 @@ export const db = {
       {
         kind: "upsert",
         table: "members",
-        rows: [memberToRow(m, tierId, includeBalances)],
+        rows: [memberToRow(m, tierId, includeBalances, true)],
       },
     ]),
 
   /** Save one product and wait until it is stored somewhere. */
-  commitProduct: (p: Product) =>
-    commitOps("Saving product", [{ kind: "upsert", table: "products", rows: [productToRow(p)] }]),
+  commitProduct: (p: Product, catalogOnly = false, fields?: { ecommerce?: boolean; cost?: boolean }) =>
+    commitOps("Saving product", [{ kind: "upsert", table: "products", rows: [catalogOnly ? catalogProductRow(p, fields) : productToRow(p)] }]),
 
   /**
    * Save a branch price as a scoped record. The product's global prices stay
@@ -3110,7 +3127,7 @@ export const db = {
             scope: "BRANCH",
             scope_id: branchId,
             key,
-            value: { selling_price: safeNum(price), ecom_price: safeNumOrNull(ecomPrice) },
+            value: { selling_price: safeNum(price), ...(ecomPrice !== undefined ? { ecom_price: safeNumOrNull(ecomPrice) } : settingsObject(current[0]?.value).ecom_price !== undefined ? { ecom_price: settingsObject(current[0]?.value).ecom_price } : {}) },
             is_overridden: true,
             updated_by: updatedBy ?? null,
             updated_at: new Date().toISOString(),

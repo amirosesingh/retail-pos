@@ -128,7 +128,9 @@ export type Member = {
   name: string;
   phone: string;
   email: string;
-  tier: "Bronze" | "Silver" | "Gold";
+  tier: string;
+  /** Editable POS contact; does not change verified portal identity. */
+  contactEmail?: string;
   points: number;
   totalSpend: number;
   joinedAt: string;
@@ -974,6 +976,8 @@ export type TimeFormat = "12h" | "24h";
 export type SellingLayout = "standard" | "canvas";
 
 export type IntegrationSettings = {
+  /** Existing installs retain e-commerce until explicitly disabled. */
+  ecommerceEnabled?: boolean;
   /** Optional planning estimates; does not change purchase cost or profit. */
   totalUnitCost?: import("@/lib/total-unit-cost").TotalUnitCostSettings;
   /** Register presentation only; both options use the same cart and checkout engine. */

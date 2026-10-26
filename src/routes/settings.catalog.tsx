@@ -1,3 +1,4 @@
+import { canUseEcommerceDevice } from "@/lib/ecommerce-device";
 import { SettingsBackLink } from "@/platforms/web/components/pos/settings/SettingsBackLink";
 import { HelpTip } from "@/components/ui/help-tip";
 import { createFileRoute } from "@tanstack/react-router";
@@ -211,6 +212,10 @@ function CatalogMetaSettings() {
   } = usePos();
   const autoArchiveZeroStock = configuredGlobalSettings.integrations.autoArchiveZeroStock !== false;
 
+  const [ecomDraft, setEcomDraft] = useState<boolean | null>(null);
+  const [ecomBusy, setEcomBusy] = useState(false);
+  const ecommerceEnabled = ecomDraft ?? configuredGlobalSettings.integrations.ecommerceEnabled !== false;
+
   const [unitCode, setUnitCode] = useState("");
   const [unitName, setUnitName] = useState("");
   const [unitDecimal, setUnitDecimal] = useState(false);
@@ -291,6 +296,11 @@ function CatalogMetaSettings() {
           </p>
           </div>
         </header>
+
+        {canUseEcommerceDevice() && <section className="space-y-3 rounded-xl border bg-card p-4">
+          <label className="flex items-center justify-between gap-3"><span><span className="block font-medium">E-commerce catalog controls</span><span className="block text-sm text-muted-foreground">Available on the management web app and registered management devices only, with Publish products permission. Price edits also require Edit product pricing.</span></span><Switch aria-label="Enable e-commerce catalog controls" checked={ecommerceEnabled} disabled={!can("can_access_pos_settings") || settingsScopeLoading || ecomBusy} onCheckedChange={setEcomDraft} /></label>
+          <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-muted-foreground">Disabling hides the controls and preserves existing e-commerce prices and publication records.</p><Button type="button" size="sm" disabled={ecomDraft === null || !can("can_access_pos_settings") || settingsScopeLoading || ecomBusy} onClick={async () => { setEcomBusy(true); try { updateGlobalSettings({ integrations: { ...configuredGlobalSettings.integrations, ecommerceEnabled } }); await saveConfiguredSettings(); setEcomDraft(null); toast.success("E-commerce catalog setting saved"); } catch (error) { notifyError(error, "Saving e-commerce catalog controls"); } finally { setEcomBusy(false); } }}>Save e-commerce setting</Button></div>
+        </section>}
 
         <div className="flex items-center justify-between gap-4 rounded-lg border border-border bg-card p-4">
           <div>

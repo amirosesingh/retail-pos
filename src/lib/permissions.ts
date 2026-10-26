@@ -269,7 +269,7 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   can_bulk_edit_products: "Bulk edit or delete products",
   can_merge_products: "Merge duplicate products / add alias barcodes",
   can_add_member: "Add members",
-  can_edit_member_points: "Edit member points",
+  can_edit_member_points: "Manage membership tiers & edit member points",
   can_apply_member_discount: "Apply member discount",
   can_redeem_points: "Redeem loyalty points at the till",
   can_view_member_history: "View member purchase history",

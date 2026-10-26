@@ -144,7 +144,7 @@ export function BillsReport() {
             label="Completed bills"
             value={String(rows.filter((sale) => !sale.refunded).length)}
           />
-          {showSponsorship&&<><StatCard label="Sales summary including sponsorship" value={sponsorship.loading?"Loading…":sponsorship.error?"Unavailable":money(totals.collected+sponsorship.total)}/><StatCard label="Sponsorship value included" value={sponsorship.error?"Unavailable":money(sponsorship.total)}/></>}
+          {showSponsorship && !sponsorship.loading && !sponsorship.error && sponsorship.total > 0 && <><StatCard label="Sales summary including sponsorship" value={sponsorship.loading?"Loading…":sponsorship.error?"Unavailable":money(totals.collected+sponsorship.total)}/><StatCard label="Sponsorship value included" value={sponsorship.error?"Unavailable":money(sponsorship.total)}/></>}
           <StatCard label="Net sales (ex tax)" value={money(totals.net)} />
           <StatCard label="Total collected" value={money(totals.collected)} />
           <StatCard label="Discounts given" value={money(totals.discount)} />

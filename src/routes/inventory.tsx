@@ -1,3 +1,4 @@
+import { canUseEcommerceDevice } from "@/lib/ecommerce-device";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useDebounced } from "@/hooks/use-debounced";
@@ -154,7 +155,7 @@ function Inventory() {
 
   const canBulk = can("can_bulk_edit_products");
   const canMerge = can("can_merge_products");
-  const canEcom = canPublish;
+  const canEcom = canUseEcommerceDevice() && state.settings.integrations.ecommerceEnabled !== false && canPublish && visible("inventory.ecommerce");
   const canOpenEditor = canCreate || canEditDetails || canPrice || canAdjustStock || canLinkBarcode;
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
@@ -329,7 +330,7 @@ function Inventory() {
       return;
     }
     setExportOpen(false);
-    void exportProductsXlsx(products, stores, `products-${currentStore.code}-${scope}`, showMoney)
+    void exportProductsXlsx(products, stores, `products-${currentStore.code}-${scope}`, showMoney, canEcom)
       .then(() => toast.success(`Exported ${products.length} products to Excel`))
       .catch(error => notifyError(error, "Exporting products"));
   }
@@ -769,6 +770,7 @@ function Inventory() {
                           }
                         />
                       </Field>
+                      {canEcom && (
                       <Field label="E-com price">
                         <Input
                           disabled={!canPrice}
@@ -779,6 +781,7 @@ function Inventory() {
                           }
                         />
                       </Field>
+                      )}
                       {state.products.some((product) => product.id === draft.id) && (
                         <Field label="Price scope" className="sm:col-span-2">
                           <div className="flex items-center justify-between gap-3 rounded-md border p-3">
@@ -787,8 +790,7 @@ function Inventory() {
                                 Use these prices only at {currentStore.name}
                               </p>
                               <p className="text-[11px] text-muted-foreground">
-                                Keeps the global product price unchanged. Only Price and E-com price
-                                are saved in this mode.
+                                Keeps the global product price unchanged. Only permitted prices are saved in this mode.
                               </p>
                             </div>
                             <Switch
@@ -812,20 +814,8 @@ function Inventory() {
                         </Field>
                       )}
                       <Field label={`Stock · ${currentStore.code}`}>
-                        <Input
-                          disabled={!canAdjustStock}
-                          className="numeric"
-                          value={stockAt(draft, currentStore.id)}
-                          onChange={(e) =>
-                            setDraft({
-                              ...draft,
-                              stockByStore: {
-                                ...draft.stockByStore,
-                                [currentStore.id]: Number(e.target.value) || 0,
-                              },
-                            })
-                          }
-                        />
+                        <output aria-label={`Stock at ${currentStore.code}`} className="numeric flex h-10 items-center rounded-lg border bg-muted/40 px-3">{stockAt(draft, currentStore.id)}</output>
+                        <p className="text-xs text-muted-foreground">View only. Add stock through purchases; use transfers or authorized stock adjustments for corrections.</p>
                       </Field>
                       <Field label="Reorder level">
                         <Input
@@ -878,10 +868,10 @@ function Inventory() {
                             target = await upsertProductPriceOverride(
                               draft.id,
                               draft.price,
-                              draft.ecomPrice,
+                              canEcom ? draft.ecomPrice : undefined,
                             );
                           } else {
-                            target = await upsertProduct({ ...draft, sku });
+                            target = await upsertProduct({ ...draft, sku }, { catalogOnly: true, includeEcommerce: canEcom, includeCost: showMoney });
                           }
                           setDraft(null);
                           setBranchPriceOnly(false);

@@ -586,7 +586,11 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     });
     if (response.ok && (body.sqlServerPull || body.sqlServerBootstrap)) {
       const { redactSyncDownload } = await import("./sync-download-redaction");
-      return Response.json(redactSyncDownload(await response.json(), body.sqlServerBootstrap?.table ?? ""));
+      const management = scope.managementReplica === true || scope.managementDevice === true;
+      const { commerceSyncIsolationReady } = await import("./commerce-sync-readiness.server");
+      // Activate field exclusion only after its atomic database preservation guard is ready.
+      const keepCommerce = management || !(await commerceSyncIsolationReady());
+      return Response.json(redactSyncDownload(await response.json(), body.sqlServerBootstrap?.table ?? "", keepCommerce));
     }
     return new Response(await response.text(), {
       status: response.status,

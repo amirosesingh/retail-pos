@@ -2,7 +2,7 @@
   "source": "supabase/schema.sql",
   "generatedAt": "2026-10-23T23:33:17.228Z",
   "tableCount": 70,
-  "columnCount": 1194,
+  "columnCount": 1195,
   "tables": [
     {
       "name": "coupon_campaigns",
@@ -2328,6 +2328,12 @@
           "hasDefault": false
         },
         {
+          "name": "contact_email",
+          "declaration": "text",
+          "nullable": true,
+          "hasDefault": false
+        },
+        {
           "name": "address",
           "declaration": "text",
           "nullable": true,
@@ -3328,7 +3334,7 @@
         },
         {
           "name": "ecom_visible",
-          "declaration": "boolean DEFAULT true NOT NULL",
+          "declaration": "boolean DEFAULT false NOT NULL",
           "nullable": false,
           "hasDefault": true
         },
