@@ -323,6 +323,19 @@ function Inventory() {
     [catalogProducts, currentStore.id],
   );
 
+  const totalUnitCostValue = useMemo(() => {
+    let value = 0;
+    for (const product of catalogProducts) {
+      if (product.archived === true) continue;
+      const quantity = stockAt(product, currentStore.id);
+      if (quantity === 0) continue;
+      const cost = totalUnitCost(product.cost, product.id, state.settings.integrations.totalUnitCost);
+      if (cost === null) return null;
+      value += cost * quantity;
+    }
+    return value;
+  }, [catalogProducts, currentStore.id, state.settings.integrations.totalUnitCost]);
+
   function exportCatalogue(scope: ProductExportScope) {
     const products = productsForExport(catalogProducts, scope, currentStore.id);
     if (!products.length) {
@@ -901,7 +914,10 @@ function Inventory() {
           <InventoryKpi label="Negative stock" value={metrics.negativeStock} tone="danger" />
           {showStockValue && (
             <>
-              <InventoryKpi label="Cost value" value={metrics.costValue} moneyValue />
+              <InventoryKpi label="Purchase cost value" value={metrics.costValue} moneyValue />
+              {totalUnitCostValue !== null
+                ? <InventoryKpi label="Total unit cost value" value={totalUnitCostValue} moneyValue />
+                : <p role="status" className="text-sm text-muted-foreground">Total unit cost value unavailable: review product costs and Total Unit Cost rules.</p>}
               <InventoryKpi label="Retail value" value={metrics.retailValue} moneyValue />
             </>
           )}
