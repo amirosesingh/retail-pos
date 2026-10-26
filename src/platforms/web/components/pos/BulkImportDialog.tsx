@@ -72,7 +72,9 @@ const sourceBarcode = (row: Record<string, unknown>) => {
 };
 
 function templateSheet(quantityRequired: boolean) {
-  const ws = XLSX.utils.aoa_to_sheet([[...IMPORT_HEADERS], ...TEMPLATE_ROWS]);
+  const stockColumn = IMPORT_HEADERS.indexOf("stock_quantity");
+  const sampleRows = quantityRequired ? TEMPLATE_ROWS : TEMPLATE_ROWS.map(row => row.map((value,index) => index === stockColumn ? 0 : value));
+  const ws = XLSX.utils.aoa_to_sheet([[...IMPORT_HEADERS], ...sampleRows]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Products");
   const instructions = XLSX.utils.aoa_to_sheet([
@@ -88,7 +90,7 @@ function templateSheet(quantityRequired: boolean) {
       quantityRequired ? "Yes" : "No",
       quantityRequired
         ? "Quantity to receive or transfer; must be greater than zero"
-        : "Opening quantity; blank becomes 0",
+        : "Leave blank or zero. Receive opening stock through Purchases.",
     ],
     ["custom_points", "No", "Loyalty points; blank becomes 0"],
     ["tax_rate_percent", "No", "0 to 100; blank uses enabled Tax Settings, otherwise 0"],
@@ -230,6 +232,7 @@ export function BulkImportDialog({
       toast.error("Complete or resolve at least one row before importing");
       return;
     }
+    if (mode === "inventory" && readyRows.some(row => row.stock !== 0)) { toast.error("Stock quantities cannot be imported from the catalog", {description: "Remove quantities from this file, or import it in Purchases to receive stock."}); return; }
     const importId = continueRun?.importId ?? crypto.randomUUID();
     const startedAt = continueRun?.startedAt ?? new Date().toISOString();
     const done = new Set(continueRun?.done ?? []);
@@ -389,7 +392,7 @@ export function BulkImportDialog({
                 ? "Known products are linked to the invoice. New products are created with zero stock; quantities post only when the invoice is finalized."
                 : mode === "transfer"
                   ? "Known products are added to the transfer. Complete missing product details here; stock moves only after the transfer is approved, dispatched and received."
-                  : `Rows are added to ${currentStore.name}. Matching barcodes top up existing stock.`}
+                  : "Catalog import creates products at zero stock. Receive quantities through Purchases."}
             </DialogDescription>
           </DialogHeader>
 
@@ -666,6 +669,8 @@ export function BulkImportDialog({
                             className="numeric h-8 w-20 text-right"
                             inputMode="numeric"
                             value={r.stock}
+                            readOnly={mode === "inventory"}
+                            aria-readonly={mode === "inventory"}
                             aria-invalid={r.missingFields.includes("stock")}
                             onChange={(event) =>
                               patchRow(r.line, { stock: Number(event.target.value) })

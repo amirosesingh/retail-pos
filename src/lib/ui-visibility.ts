@@ -155,13 +155,19 @@ export const VISIBILITY_ELEMENTS: VisibilityElement[] = [
   {
     key: "inventory.costColumns",
     label: "Cost & margin columns",
-    blurb: "Cost price, landed cost and margin in inventory tables.",
+    blurb: "Purchase Cost, Total Unit Cost and margin in inventory tables.",
+    group: "Inventory",
+  },
+  {
+    key: "inventory.ecommerce",
+    label: "E-commerce prices & publication",
+    blurb: "Requires enabled e-commerce controls and Publish products permission; price editing also requires Edit product pricing.",
     group: "Inventory",
   },
   {
     key: "inventory.stockValue",
     label: "Stock value totals",
-    blurb: "Money value of stock on hand.",
+    blurb: "Purchase cost value, Total Unit Cost value and retail value of stock on hand.",
     group: "Inventory",
   },
 ];

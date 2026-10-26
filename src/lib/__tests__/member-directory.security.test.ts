@@ -43,7 +43,7 @@ describe("member directory write boundaries", () => {
     expect(route).toContain('can("can_view_member_history")');
     expect(route).toContain('readOnly={!can("can_edit_member_points")}');
     expect(route).toContain('aria-readonly={!can("can_edit_member_points")}');
-    expect(route).toContain('disabled={!can("can_edit_member_points")}');
+    expect(route).toContain('disabled={!can("can_edit_member_points") || tiers.isLoading}');
     expect(relay).toContain('tier_id: "can_edit_member_points"');
   });
 });

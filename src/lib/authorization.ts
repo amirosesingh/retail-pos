@@ -584,6 +584,21 @@ export function effectiveApprovalAuthority(
   };
 }
 
+/** These existing workflows authorize an actual price, value or quantity. */
+export function requiresAuthorizationAmount(action: string): boolean {
+  return ["manual_discount", "discount_over_limit", "price_override", "refund", "stock_transfer", "sponsorship"].includes(action);
+}
+
+/** An earlier approval supplies values only to the action it actually approved. */
+export function approvalForAction<T extends { actionKey: string }>(action: string, approval: T | null | undefined): T | null {
+  return approval?.actionKey === action ? approval : null;
+}
+
+function amountWithinAuthority(action: string, amount: number | null | undefined, limit: number | null): boolean {
+  if (amount == null) return !requiresAuthorizationAmount(action);
+  return Number.isFinite(amount) && amount >= 0 && (limit === null || amount <= limit);
+}
+
 export function canAuthorizeAmount(
   rule: AuthorizationRule | undefined,
   who: { userId?: string | null; role?: string | null },
@@ -592,9 +607,7 @@ export function canAuthorizeAmount(
 ): boolean {
   if (!canAuthorize(rule, who)) return false;
   const limit = effectiveApprovalAuthority(rule, who, directLimit).effectiveMaximum;
-  return (
-    limit === null || amount == null || (Number.isFinite(amount) && amount >= 0 && amount <= limit)
-  );
+  return amountWithinAuthority(rule?.actionKey ?? "", amount, limit);
 }
 
 /**
@@ -647,9 +660,7 @@ export function canDecideRequestAmount(
     who,
     request.requesterDirectLimit,
   ).effectiveMaximum;
-  return (
-    limit === null || amount == null || (Number.isFinite(amount) && amount >= 0 && amount <= limit)
-  );
+  return amountWithinAuthority(rule?.actionKey ?? "", amount, limit);
 }
 
 /** Approval payloads stay flat so they survive the wire unchanged. */

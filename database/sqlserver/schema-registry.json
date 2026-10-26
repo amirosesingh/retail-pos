@@ -4792,6 +4792,19 @@
           "uniqueGroup": null
         },
         {
+          "cloudColumn": "contact_email",
+          "sqlServerColumn": "contact_email",
+          "cloudType": "text",
+          "sqlServerType": "nvarchar(max)",
+          "nullable": true,
+          "defaultRule": null,
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
+        },
+        {
           "cloudColumn": "address",
           "sqlServerColumn": "address",
           "cloudType": "text",
@@ -6796,7 +6809,7 @@
           "cloudType": "boolean",
           "sqlServerType": "bit",
           "nullable": false,
-          "defaultRule": "1",
+          "defaultRule": "0",
           "primaryKey": false,
           "foreignKey": false,
           "foreignKeyTarget": null,

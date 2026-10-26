@@ -190,6 +190,8 @@ export type TerminalUser = {
 
 /** Row loaded from public.app_users for the signed-in account. */
 export type AppUserProfile = {
+  /** Native acknowledgements use the account row UUID when supplied by the profile RPC. */
+  id?: string;
   user_id: string;
   full_name: string;
   role: AppRole;
@@ -1251,9 +1253,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setActivityAudienceIdentity(
       user
         ? {
-            userIds: [user.staffId, user.email].filter(Boolean),
+            userIds: [user.staffId, user.email, ...(appUser?.id ? [appUser.id] : [])].filter(Boolean),
             role: user.metaRole ?? user.roles[0] ?? user.role,
             storeId: activeBranchId(user.storeId),
+            allStores: appUser?.store_id === null && !activeBranchId(user.storeId),
             terminalId: readTerminalConfig()?.tokenId ?? null,
             mayViewGeneralActivity:
               user.role === "admin" || user.permissions.can_view_audit_trail === true,
@@ -1261,7 +1264,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         : null,
     );
     return () => setActivityAudienceIdentity(null);
-  }, [user]);
+  }, [user, appUser]);
 
   // Local, per-terminal record of who signed in today. Lets a shift opened by
   // one cashier be continued by another while still showing every user.

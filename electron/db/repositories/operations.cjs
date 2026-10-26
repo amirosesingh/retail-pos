@@ -1,5 +1,6 @@
 const { normalizeUuidFields, recordId } = require("../../sync/uuid-fields.cjs");
 const { loadRegistry } = require("../schema-registry.cjs");
+const { assertFinancialWrite } = require("../financial-write-policy.cjs");
 const {
   branchPredicate,
   rendererReadBranchPredicate,
@@ -214,6 +215,7 @@ class OperationsRepository {
         const existing = toRendererRow(table, current);
         for (const [field, value] of Object.entries(values)) {
           if (metadata.has(field) || stock.has(field) || same(field, value, existing[field])) continue;
+          if (field === "ecom_price" && permissions.can_publish_product !== true) refuse();
           const permitted = prices.has(field)
             ? permissions.can_edit_product_price === true ||
               (field === "cost_price" && scope.productWriteKind === "receiving" && permissions.can_receive_purchase_order === true)
@@ -365,6 +367,17 @@ class OperationsRepository {
   }
   async applyOperation(transaction, op, scope = {}) {
     scope = normalizeUuidFields(scope);
+    const replacementSaleId = scope.enforcePermissions === true ? assertFinancialWrite(op, scope) : null;
+    if (replacementSaleId) {
+      // An immutable upsert can be a no-op. Verify the persisted replacement,
+      // not merely the renderer's proposed exchange header, in this transaction.
+      const replacement = await new (this.connectionManager.sql().Request)(transaction)
+        .input("replacement", replacementSaleId).input("branch", scope.branchId)
+        .input("bill", op.values.exchanged_to_bill_number).input("original", op.match.bill_number)
+        .query("SELECT id FROM dbo.sales WITH (UPDLOCK,HOLDLOCK) WHERE id=@replacement AND store_id=@branch AND bill_number=@bill AND original_bill_number=@original AND is_exchange=1 AND is_refunded=0;");
+      if (!replacement.recordset?.length)
+        throw Object.assign(new Error("The matching replacement exchange bill is not saved."), { code: "PERMISSION_DENIED" });
+    }
     if (op.table === "activity_events" && op.kind === "update") {
       const operator = scope.activityOperator;
       if (!operator?.subject || !scope.branchId)
@@ -375,7 +388,7 @@ class OperationsRepository {
       const person = account.recordset?.[0];
       const ids = [operator.subject, person?.id, person?.user_id, person?.email].filter(Boolean).map(value => String(value).toLowerCase());
       const result = await new Request(transaction).input("event", op.match.id)
-        .query("SELECT store_id,terminal_id,event_type,meta FROM dbo.activity_events WITH (UPDLOCK,HOLDLOCK) WHERE id=@event;");
+        .query("SELECT store_id,terminal_id,event_type,meta,cleared_by FROM dbo.activity_events WITH (UPDLOCK,HOLDLOCK) WHERE id=@event;");
       const event = result.recordset?.[0];
       if (!event) throw Object.assign(new Error("Notification not found."), { code: "PERMISSION_DENIED" });
       let meta = event.meta;
@@ -391,15 +404,26 @@ class OperationsRepository {
       const targeted = !!audience || users.length || roles.length || !!terminal;
       const operational = ["stock_request_received","transfer_sent","transfer_received","po_finalised"].includes(event.event_type);
       const sensitive = ["sale_complete","sale_refund","sale_void","shift_open","shift_close","shift_cash_variance","drawer_open","xreport_print"].includes(event.event_type);
-      const visible = targeted
+      const legacyVisible = targeted
         ? sameBranch && (users.some(id => ids.includes(id)) || roles.includes(operator.role) || (terminal && terminal === String(scope.terminalId ?? "").toLowerCase()))
         : operational ? !!event.store_id && sameBranch
         : sensitive ? operator.role === "admin"
         : operator.mayViewGeneralActivity && (operator.role === "admin" || sameBranch);
+      // Saved channel routes supersede the legacy audience (which can contain
+      // push-only recipients). A terminal app route is also a valid recipient.
+      const routes = meta.notification_routes;
+      const routed = routes && typeof routes === "object";
+      const selected = routed && (values(routes.app).some(id => ids.includes(id)) ||
+        (scope.terminalId && values(routes.terminalApp).includes(String(scope.terminalId).toLowerCase())));
+      const visible = routed ? selected && (sameBranch || operator.role === "admin")
+        : meta.in_app_disabled !== true && legacyVisible;
       if (!visible) throw Object.assign(new Error("Notification access denied."), { code: "PERMISSION_DENIED" });
       // columnValueForSql owns JSON encoding for text[] columns. Supplying a
       // pre-encoded string here double-encodes it and violates ISJSON checks.
-      op = { ...op, values: { cleared_by: [String(person?.id ?? operator.subject)] } };
+      let acknowledged = event.cleared_by;
+      if (typeof acknowledged === "string") { try { acknowledged = JSON.parse(acknowledged); } catch { acknowledged = []; } }
+      const previous = Array.isArray(acknowledged) ? acknowledged.filter(value => typeof value === "string" && value) : [];
+      op = { ...op, values: { cleared_by: [...new Set([...previous, String(person?.id ?? operator.subject)])] } };
     }
     await this.assertLegacyExchange(transaction, op, scope);
     await this.assertProductPermissions(transaction, op, scope);

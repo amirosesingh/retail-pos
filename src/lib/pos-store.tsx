@@ -14,7 +14,7 @@ import { isCompanyIdentityPath } from "./company-identity";
 import { readBranding, writeBranding } from "./branding";
 import { canSelectLocation, verifyTerminalLocation } from "@/core/api/location-directory";
 import { documentOrigin } from "./document-origin";
-import { SettingsWriteQueue } from "./settings-write-queue";
+import { SettingsWriteQueue, settingsWriteGroup } from "./settings-write-queue";
 import {
   createContext,
   useCallback,
@@ -383,7 +383,7 @@ type Ctx = {
   ) => Promise<{ ok: true; booking: Booking } | { ok: false; error: string }>;
 
   deleteBooking: (id: string, reason: string) => Promise<void>;
-  upsertProduct: (product: Product) => Promise<CommitTarget>;
+  upsertProduct: (product: Product, options?: { catalogOnly?: boolean; includeEcommerce?: boolean; includeCost?: boolean }) => Promise<CommitTarget>;
   upsertProductPriceOverride: (
     productId: string,
     price: number,
@@ -429,6 +429,7 @@ type Ctx = {
   /** Write directly to the company-wide record, bypassing inherited scopes. */
   updateGlobalSettings: (patch: Partial<AppSettings>) => void;
   saveConfiguredSettings: () => Promise<void>;
+  commitSettingsDraft: (patch: Partial<AppSettings>) => Promise<void>;
   /** Which settings blocks each tier overrides, and which are locked globally. */
   settingsScope: BranchSettingsState;
   /** The persisted global record before cluster/store/terminal overrides are resolved. */
@@ -647,8 +648,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // Scoped business/terminal overrides and global locks.
   const [scope, setScope] = useState<BranchSettingsState>(emptyBranchSettings);
   const settingsWrites = useRef(new SettingsWriteQueue());
-  const trackSettingsWrite = (key: string, save: () => Promise<unknown>) =>
-    settingsWrites.current.enqueue(key, save);
+  const trackSettingsWrite = (key: string, save: () => Promise<unknown>, latestGroup?: string) =>
+    latestGroup ? settingsWrites.current.enqueueLatest(key, latestGroup, save)
+      : settingsWrites.current.enqueue(key, save);
   const saveConfiguredSettings = () => settingsWrites.current.flush();
   const [settingsTerminalId, setSettingsTerminalId] = useState("");
   const loadedScopeKey = useRef("");
@@ -2629,11 +2631,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  const upsertProduct = useCallback(async (product: Product): Promise<CommitTarget> => {
+  const upsertProduct = useCallback(async (product: Product, options?: { catalogOnly?: boolean; includeEcommerce?: boolean; includeCost?: boolean }): Promise<CommitTarget> => {
     const prev = stateRef.current.products.find((p) => p.id === product.id);
     // The catalog is shared by every branch: make sure the product exists at
     // all stores (starting at zero) so it shows up everywhere after sync.
-    const stockByStore = { ...product.stockByStore };
+    const stockByStore = { ...(options?.catalogOnly ? prev?.stockByStore ?? {} : product.stockByStore) };
     for (const store of stateRef.current.stores) {
       if (stockByStore[store.id] === undefined) stockByStore[store.id] = 0;
     }
@@ -2665,7 +2667,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       ? { ...record, ownerStoreId: stateRef.current.currentStoreId }
       : record;
     // Store it before anything on screen says it was saved.
-    const target = await db.commitProduct(stored);
+    const target = await db.commitProduct(stored, options?.catalogOnly === true, { ecommerce: options?.includeEcommerce, cost: options?.includeCost });
     if (ownsNewItems) {
       const owners = {
         ...(stateRef.current.settings.integrations.productOwners ?? {}),
@@ -2678,7 +2680,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     setState((s) => ({
       ...s,
       products: s.products.some((p) => p.id === stored.id)
-        ? s.products.map((p) => (p.id === stored.id ? stored : p))
+        ? s.products.map((p) => (p.id === stored.id ? options?.catalogOnly ? { ...stored, stockByStore: p.stockByStore } : stored : p))
         : [stored, ...s.products],
     }));
     return target;
@@ -2706,7 +2708,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       setState((snapshot) => ({
         ...snapshot,
         products: snapshot.products.map((product) =>
-          product.id === productId ? { ...product, price, ecomPrice } : product,
+          product.id === productId ? { ...product, price, ...(ecomPrice !== undefined ? { ecomPrice } : {}) } : product,
         ),
       }));
       return target;
@@ -3411,6 +3413,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const writeGlobalSettings = useCallback((patch: Partial<AppSettings>) => {
+    const latestGroup = settingsWriteGroup(patch as Record<string, unknown>);
     {
       const prev = stateRef.current.settings;
       trackSettingsWrite("GLOBAL", () =>
@@ -3427,6 +3430,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
             dbError("Saving settings", error);
             throw error;
           }),
+        latestGroup,
       );
     }
     setState((s) => {
@@ -3457,7 +3461,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     (patch: Partial<AppSettings>) => {
       if (confirmedScopeKey !== JSON.stringify(scopeIdsRef.current)) {
         toast.error("Settings are still loading. Please wait before editing.");
-        return;
+        return false;
       }
       logger.log("settings", "Settings updated", "settings", {
         sections: Object.keys(patch),
@@ -3484,7 +3488,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         const value = getPath(patch, path);
         if (JSON.stringify(value) === JSON.stringify(getPath(effective, path))) continue;
         if (isCompanyIdentityPath(path)) {
-          if (!isAdmin) { toast.error("Only an administrator can change company details shared by all branches."); return; }
+          if (!isAdmin) { toast.error("Only an administrator can change company details shared by all branches."); return false; }
           globalPatch = setPath(globalPatch, path, value);
           hasGlobal = true;
           continue;
@@ -3494,7 +3498,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         let staffTier: SettingTier | undefined;
         if (!isAdmin) {
           try { staffTier = staffSettingsTarget(section?.id ?? null, can("can_access_pos_settings"), ids.BRANCH, !!(section && scope.locks[section.id])); }
-          catch (error) { toast.error((error as Error).message); return; }
+          catch (error) { toast.error((error as Error).message); return false; }
         }
         const tier = staffTier ?? (
           section && !scope.locks[section.id]
@@ -3516,7 +3520,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         }
       }
       if (hasGlobal) writeGlobalSettings(globalPatch as Partial<AppSettings>);
-      if (!byTier.size) return;
+      if (!byTier.size) return true;
       setScope((s) => {
         const overrides = { ...s.overrides };
         for (const [tier, bag] of byTier) {
@@ -3533,9 +3537,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
               toast.error(`Scoped settings not saved: ${(error as Error).message}`);
               throw error;
             }),
+            ["payment", "paymentAccounts", "booking", "whatsapp", "receiptIdentity", "receiptLayout"].includes(section) ? section : undefined,
           );
         }
       }
+      return true;
     },
     [writeGlobalSettings, confirmedScopeKey, isAdmin, can],
   );
@@ -4172,7 +4178,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     settingsScope: scope,
     configuredGlobalSettings: state.settings,
     scopeIds,
-    settingsScopeLoading: confirmedScopeKey !== JSON.stringify(scopeIds),
+    settingsScopeLoading: !settingsSnapshotLoaded || confirmedScopeKey !== JSON.stringify(scopeIds),
     settingsTerminalId,
     setSettingsTerminalId,
     sourceOfPath,
@@ -4223,6 +4229,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
     togglePromotion,
     updateSettings,
     updateGlobalSettings: writeGlobalSettings,
+    commitSettingsDraft: async (patch) => {
+      if (!updateSettings(patch)) throw new Error("Settings could not be applied. Check the selected scope and your settings permissions.");
+      await settingsWrites.current.flush();
+    },
     saveConfiguredSettings,
     createTransfer,
     approveTransfer,
@@ -4248,6 +4258,14 @@ export function usePos() {
  */
 export function usePosOptional() {
   return useContext(PosContext);
+}
+
+/** Settings forms preview a local draft without publishing business settings. */
+export function PosSettingsDraftProvider({ settings, onChange, children }: {
+  settings: AppSettings; onChange: Ctx["updateSettings"]; children: ReactNode;
+}) {
+  const parent = usePos();
+  return <PosContext.Provider value={{ ...parent, state: { ...parent.state, settings }, updateSettings: onChange }}>{children}</PosContext.Provider>;
 }
 
 export const money = (amount: number) => formatMoney(amount);

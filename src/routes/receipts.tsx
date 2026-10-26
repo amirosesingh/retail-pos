@@ -1,5 +1,5 @@
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
-import { uniqueSales, sameRecordId } from "@/lib/sale-identity";
+import { branchReceiptHistory, receiptMatchesShift } from "@/lib/receipt-history";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Ban, Gift, Printer, ReceiptText, Search, ScrollText, Wallet, Wrench } from "lucide-react";
@@ -125,15 +125,20 @@ function ReceiptVault() {
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [findingExact, setFindingExact] = useState(false);
   const [cloudHistory, setCloudHistory] = useState<Set<string>>(() => new Set());
+  const historyBranch = useRef(currentStore.id);
+  historyBranch.current = currentStore.id;
+  useEffect(() => {
+    setOlder([]); setCursor(null); setExhausted(false); setSelectedId(null); setCloudHistory(new Set());
+  }, [currentStore.id]);
 
   // Employees only ever see the log of the store they are on duty at.
   const sales = useMemo(() => {
-    const live = state.sales.filter((s) => s.storeId === currentStore.id);
-
-    return uniqueSales([...older, ...live]);
+    return branchReceiptHistory(state.sales, older, currentStore.id);
   }, [state.sales, currentStore.id, older]);
 
   const loadOlder = async () => {
+    if (loadingOlder) return;
+    const requestedBranch = currentStore.id;
     setLoadingOlder(true);
     try {
       const from =
@@ -143,6 +148,7 @@ function ReceiptVault() {
           return last ? { ts: last.createdAt, id: last.id } : null;
         })();
       const page = await loadSalesPage(currentStore.id, from);
+      if (historyBranch.current !== requestedBranch) return;
       setOlder((prev) => [...prev, ...page.rows]);
       setCursor(page.cursor);
       if (!page.hasMore) setExhausted(true);
@@ -177,7 +183,7 @@ function ReceiptVault() {
   };
 
   const scoped = sales.filter((s) => {
-    if (scope === "shift") return activeShift ? sameRecordId(s.shiftId, activeShift.id) : false;
+    if (scope === "shift") return receiptMatchesShift(s, activeShift?.id ?? null);
     if (scope === "range") {
       const day = new Date(s.createdAt).toLocaleDateString("en-CA");
       if (fromDate && day < fromDate) return false;

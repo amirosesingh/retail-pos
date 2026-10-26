@@ -1,3 +1,4 @@
+import { productReadColumns, canUseEcommerceDevice } from "@/lib/ecommerce-device";
 import { productClassification } from "@/lib/product-classification";
 import { withoutWorkspacePurpose } from "@/lib/retired-workspace-settings";
 import { commitRowCount, runProgressBatch, yieldToUi } from "@/lib/commit-progress";
@@ -43,6 +44,7 @@ import { MAX_ROWS, readAllPages, type PagedRead } from "@/lib/paged-read";
 import { canonicalBranchId, canonicalStockMap } from "@/lib/branch-id";
 import { loadCashierToken, readCredentials } from "@/lib/pos-credentials";
 import { normalizeReceiptLogoLayout } from "@/lib/receipt-logo";
+import { normalizeReceiptHeaderLayout } from "@/lib/receipt-header";
 import {
   acknowledgeBrowserBatch,
   persistBrowserBatch,
@@ -54,6 +56,7 @@ import { safeCreatedAt, safeReceiptNo } from "@/lib/report-data-safety";
 import { isLinkedRecordError, usageBlock, type ProductUsage } from "@/lib/product-delete";
 import type {
   AppSettings,
+  ReceiptSettings,
   Member,
   MemberTier,
   PosState,
@@ -287,8 +290,8 @@ export const productToRow = (p: Product): Row => {
       .filter((v) => v.code),
     cost_price: safeNum(p.cost),
     selling_price: safeNum(p.price),
-    ecom_price: safeNumOrNull(p.ecomPrice),
-    ecom_visible: p.ecomVisible ?? true,
+    ...(canUseEcommerceDevice() ? { ecom_price: safeNumOrNull(p.ecomPrice) } : {}),
+    ...(canUseEcommerceDevice() ? { ecom_visible: p.ecomVisible ?? false } : {}),
     is_archived: p.archived === true,
     archived_at: p.archived ? new Date().toISOString() : null,
     // Stock is only ever written when the caller actually carries the per-branch
@@ -313,6 +316,7 @@ const rowToMember = (r: Row, tierName: (id: string | null) => MemberTier): Membe
   name: r.full_name,
   phone: r.phone ?? "",
   email: r.email ?? "",
+  contactEmail: typeof r.contact_email === "string" ? r.contact_email : undefined,
   tier: tierName(r.tier_id),
   points: num(r.loyalty_points),
   totalSpend: num(r.total_spent),
@@ -330,15 +334,27 @@ const rowToMember = (r: Row, tierName: (id: string | null) => MemberTier): Membe
   updatedAt: r.updated_at ?? undefined,
 });
 
-const memberToRow = (
+/** A catalogue edit never submits quantities, including stale stock from an open form. */
+export function catalogProductRow(product: Product, fields?: { ecommerce?: boolean; cost?: boolean }): Row {
+  const row = productToRow(product);
+  delete row.stock_quantity;
+  delete row.stock_by_store;
+  if (fields?.ecommerce === false) { delete row.ecom_price; delete row.ecom_visible; }
+  if (fields?.cost === false) { delete row.cost_price; delete row.landing_pct; }
+  return row;
+}
+
+export const memberToRow = (
   m: Member,
   tierId: (name: MemberTier) => string | null,
   includeBalances = true,
+  includeContact = false,
 ): Row => ({
   id: m.id,
   member_code: m.code,
   full_name: m.name,
   phone: m.phone,
+  ...(includeContact && m.contactEmail !== undefined ? { contact_email: m.contactEmail.trim() } : {}),
   // A normal cashier may enrol or edit a member without being allowed to
   // alter loyalty balances or tier. Omitting these columns lets a new row use the
   // database defaults and preserves the existing values on an upsert.
@@ -463,6 +479,9 @@ export const rowToSettings = (r: Row | null): AppSettings =>
           showLogo: r.show_logo ?? true,
           logo: settingsText((r as { logo_data_url?: unknown }).logo_data_url),
           logoLayout: normalizeReceiptLogoLayout(settingsObject(r.receipt_design).logoLayout),
+          headerLayout: normalizeReceiptHeaderLayout(settingsObject(r.receipt_design).headerLayout),
+          documentLayouts: settingsObject(settingsObject(r.receipt_design).documentLayouts),
+          documentSections: settingsObject(settingsObject(r.receipt_design).documentSections),
           showPoints: r.show_points ?? true,
           showBarcode: r.show_barcode ?? true,
           showTax: r.show_tax_details ?? true,
@@ -528,7 +547,7 @@ const buildSettingsRow = (s: AppSettings): Row => ({
   footer_text: s.receipt.footerText,
   show_logo: s.receipt.showLogo,
   logo_data_url: s.receipt.logo ?? "",
-  receipt_design: { logoLayout: s.receipt.logoLayout },
+  receipt_design: { logoLayout: s.receipt.logoLayout, headerLayout: normalizeReceiptHeaderLayout(s.receipt.headerLayout), documentLayouts: s.receipt.documentLayouts ?? {}, documentSections: s.receipt.documentSections ?? {} },
   show_points: s.receipt.showPoints,
   show_barcode: s.receipt.showBarcode,
   show_tax_details: s.receipt.showTax,
@@ -572,12 +591,23 @@ const SETTINGS_SECTION_COLUMNS: Record<keyof AppSettings, string[]> = {
   integrations: ["integration_settings"],
 };
 
+const RECEIPT_FIELD_COLUMNS: Record<keyof ReceiptSettings, string> = {
+  paper: "paper_size", companyName: "company_name", taxNumber: "tax_number", regNumber: "reg_number",
+  phone: "phone", website: "website", fonts: "fonts", customLines: "custom_lines", qr: "qr",
+  css: "receipt_css", bookingSlip: "booking_slip", headerText: "header_text", footerText: "footer_text",
+  showLogo: "show_logo", logo: "logo_data_url", logoLayout: "receipt_design", headerLayout: "receipt_design",
+  showPoints: "show_points", showBarcode: "show_barcode", showTax: "show_tax_details",
+  documentLayouts: "receipt_design", documentSections: "receipt_design",
+};
+
 /** Physical database fields affected by this UI patch. */
-const settingsPatchRow = (s: AppSettings, patch: Partial<AppSettings>): Row => {
+export const settingsPatchRow = (s: AppSettings, patch: { [K in keyof AppSettings]?: Partial<AppSettings[K]> }): Row => {
   const full = buildSettingsRow(s);
   const keys = new Set(
     Object.keys(patch).flatMap(
-      (section) => SETTINGS_SECTION_COLUMNS[section as keyof AppSettings] ?? [],
+      (section) => section === "receipt"
+        ? Object.keys(patch.receipt ?? {}).flatMap(key => RECEIPT_FIELD_COLUMNS[key as keyof ReceiptSettings] ? [RECEIPT_FIELD_COLUMNS[key as keyof ReceiptSettings]] : [])
+        : SETTINGS_SECTION_COLUMNS[section as keyof AppSettings] ?? [],
     ),
   );
   const row = Object.fromEntries(
@@ -1135,6 +1165,9 @@ export function stableChildId(parentId: string, group: string, index: number): s
 let tierIdByName: Record<string, string> = {};
 let tierNameById: Record<string, MemberTier> = {};
 
+export function registerMembershipTierNames(tiers: {id:string;name:string}[]) {
+  for (const tier of tiers) { tierIdByName[tier.name] = recordId(tier.id); tierNameById[recordId(tier.id)] = tier.name; }
+}
 const tierId = (name: MemberTier) => tierIdByName[name] ?? null;
 const tierName = (id: string | null): MemberTier => (id && tierNameById[recordId(id)]) || "Bronze";
 
@@ -1283,7 +1316,7 @@ async function readProductCatalogue(client: typeof supabase, report: (completed:
     if (!hasStaffSession()) {
       return { data: null, error: { message: "The verified staff session ended while loading the catalogue." } };
     }
-    let query = client.from("products").select("*")
+    let query = client.from("products").select(productReadColumns())
       .is("deleted_at", null).order("id", { ascending: true }).limit(limit);
     if (afterId) query = query.gt("id", afterId);
     return await query;
@@ -2197,7 +2230,10 @@ async function commitOpsInternal(context: string, ops: SyncOp[], report?: (compl
       const sharedPosSettings =
         ops.some((op) => op.table === "pos_settings") &&
         ops.every((op) => op.table === "pos_settings" || op.table === "settings_scoped");
-      const aggregateKind = sharedPosSettings
+      const paymentCatalogue = ops.every(op => op.table === "payment_types");
+      const aggregateKind = paymentCatalogue
+        ? "general"
+        : sharedPosSettings
         ? "settings"
         : /sale/i.test(context)
           ? "sale"
@@ -3057,13 +3093,13 @@ export const db = {
       {
         kind: "upsert",
         table: "members",
-        rows: [memberToRow(m, tierId, includeBalances)],
+        rows: [memberToRow(m, tierId, includeBalances, true)],
       },
     ]),
 
   /** Save one product and wait until it is stored somewhere. */
-  commitProduct: (p: Product) =>
-    commitOps("Saving product", [{ kind: "upsert", table: "products", rows: [productToRow(p)] }]),
+  commitProduct: (p: Product, catalogOnly = false, fields?: { ecommerce?: boolean; cost?: boolean }) =>
+    commitOps("Saving product", [{ kind: "upsert", table: "products", rows: [catalogOnly ? catalogProductRow(p, fields) : productToRow(p)] }]),
 
   /**
    * Save a branch price as a scoped record. The product's global prices stay
@@ -3091,7 +3127,7 @@ export const db = {
             scope: "BRANCH",
             scope_id: branchId,
             key,
-            value: { selling_price: safeNum(price), ecom_price: safeNumOrNull(ecomPrice) },
+            value: { selling_price: safeNum(price), ...(ecomPrice !== undefined ? { ecom_price: safeNumOrNull(ecomPrice) } : settingsObject(current[0]?.value).ecom_price !== undefined ? { ecom_price: settingsObject(current[0]?.value).ecom_price } : {}) },
             is_overridden: true,
             updated_by: updatedBy ?? null,
             updated_at: new Date().toISOString(),

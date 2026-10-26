@@ -1,3 +1,4 @@
+import { useMembershipTiers } from "@/lib/membership-tiers";
 import { Table } from "@/components/ui/table";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
@@ -60,7 +61,6 @@ const typeIcon: Record<PromoType, typeof Percent> = {
   code: Percent,
 };
 
-const TIERS: MemberTier[] = ["Bronze", "Silver", "Gold"];
 
 const blank = (): Promotion => ({
   id: crypto.randomUUID(),
@@ -76,6 +76,8 @@ const blank = (): Promotion => ({
 });
 
 function Promotions() {
+  const tiers = useMembershipTiers();
+  const TIERS: MemberTier[] = [...new Set([...(tiers.data ?? []).map(tier => tier.name), "Bronze", "Silver", "Gold"])];
   const { state, upsertPromotion, removePromotion, togglePromotion } = usePos();
   const { can } = useAuth();
   const [draft, setDraft] = useState<Promotion | null>(null);

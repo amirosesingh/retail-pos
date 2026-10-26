@@ -52,7 +52,7 @@ export const Route = createFileRoute("/settings/identity")({
 });
 
 function IdentityForm() {
-  const { effective, setField } = useSettingsCtx();
+  const { effective, savedReceipt, setField } = useSettingsCtx();
   const brand = useBranding();
   const [terminal, setTerminal] = useState("");
   const [logoBusy, setLogoBusy] = useState(false);
@@ -62,9 +62,9 @@ function IdentityForm() {
 
   // Keep the locally stored install name aligned with the receipt company name.
   useEffect(() => {
-    const name = typeof effective.companyName === "string" ? effective.companyName.trim() : "";
+    const name = typeof savedReceipt.companyName === "string" ? savedReceipt.companyName.trim() : "";
     if (name && name !== readBranding().company) writeBranding({ company: name });
-  }, [effective.companyName]);
+  }, [savedReceipt.companyName]);
 
   const pickLogo = async (file: File | null) => {
     if (!file) return;

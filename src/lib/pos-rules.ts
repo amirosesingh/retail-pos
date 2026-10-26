@@ -541,7 +541,7 @@ export const GATE_RULE_KEY: Record<GateAction, PosRuleKey> = {
 };
 
 /** Which rule says this action may only be approved with a live connection. */
-export const GATE_ONLINE_ONLY_KEY: Record<GateAction, PosRuleKey> = {
+export const GATE_ONLINE_ONLY_KEY: Record<GateAction, PosRuleKey | null> = {
   refund: "online_only_refund",
   void_cart: "online_only_void_cart",
   void_line: "online_only_void_line",
@@ -549,7 +549,9 @@ export const GATE_ONLINE_ONLY_KEY: Record<GateAction, PosRuleKey> = {
   manual_discount: "online_only_manual_discount",
   discount_over_limit: "online_only_manual_discount",
   price_override: "online_only_price_override",
-  no_sale_drawer: "online_only_void_cart",
+  // Opening a drawer is not voiding a bill. Its approval follows the global
+  // offline policy; there is no separate drawer online-only setting.
+  no_sale_drawer: null,
   stock_adjustment: "online_only_stock_adjustment",
   shift_close: "online_only_shift_close",
   edit_tenders: "online_only_edit_tenders",
@@ -565,7 +567,8 @@ export type OfflineApprovalMode = "refused" | "manager_pin" | "cached";
 
 export function offlineApprovalMode(rules: PosRules, action: GateAction): OfflineApprovalMode {
   if (!rules.allow_offline_approvals) return "refused";
-  if (rules[GATE_ONLINE_ONLY_KEY[action]]) return "refused";
+  const onlineOnlyKey = GATE_ONLINE_ONLY_KEY[action];
+  if (onlineOnlyKey && rules[onlineOnlyKey]) return "refused";
   return rules.offline_approval_requires_pin ? "manager_pin" : "cached";
 }
 

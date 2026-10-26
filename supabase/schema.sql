@@ -394,6 +394,7 @@ CREATE TABLE IF NOT EXISTS public.members (
     full_name text NOT NULL,
     phone text NOT NULL,
     email text,
+    contact_email text,
     address text,
     country_code text,
     postal_code text,
@@ -572,7 +573,7 @@ CREATE TABLE IF NOT EXISTS public.products (
     sku text,
     reorder_level integer DEFAULT 0 NOT NULL,
     tax_rate numeric DEFAULT 0 NOT NULL,
-    ecom_visible boolean DEFAULT true NOT NULL,
+    ecom_visible boolean DEFAULT false NOT NULL,
     stock_by_store jsonb DEFAULT '{}'::jsonb NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     landing_pct numeric,
@@ -21414,6 +21415,258 @@ REVOKE ALL ON FUNCTION public.shift_active_secure(text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.shift_active_secure(text) TO authenticated, service_role;
 NOTIFY pgrst, 'reload schema';
 
+
+-- supabase/migrations/20261025133911_soft_token_owner_admin_notification_rule.sql
+
+-- Preserve immutable approval records. The event's privacy ceiling is its
+-- verified token owner plus active administrators; saved rules select delivery
+-- channels and any narrower audience. Never store the token/PIN itself.
+CREATE OR REPLACE FUNCTION public.notify_soft_token_approval()
+RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER
+SET search_path = public, pg_temp AS $
+DECLARE
+  settings jsonb;
+  approver text;
+  requester text;
+  recipients jsonb;
+  reference text;
+BEGIN
+  IF NEW.outcome <> 'approved' OR NEW.detail->>'credential_method' IS DISTINCT FROM 'totp'
+     OR NULLIF(btrim(NEW.authorized_by), '') IS NULL THEN RETURN NEW; END IF;
+  SELECT notification_settings INTO settings FROM public.pos_settings WHERE id=1;
+  IF jsonb_typeof(settings->'rules') IS DISTINCT FROM 'array'
+     AND settings #> '{inApp,soft_token_approval}' = 'false'::jsonb THEN RETURN NEW; END IF;
+  approver := COALESCE(NULLIF(NEW.detail->>'approved_by_name', ''), NEW.authorized_by);
+  requester := COALESCE(NULLIF(NEW.detail->>'requested_by_name', ''), NEW.requested_by, 'A staff member');
+  reference := NULLIF(btrim(NEW.detail->>'ticket_reference'), '');
+  SELECT COALESCE(jsonb_agg(recipient ORDER BY recipient), '[]'::jsonb) INTO recipients FROM (
+    SELECT NEW.authorized_by::text AS recipient
+    UNION
+    SELECT a.user_id::text FROM public.app_users a
+    WHERE a.is_active AND (a.role::text='admin' OR a.role_slug='admin') AND NULLIF(btrim(a.user_id),'') IS NOT NULL
+  ) selected;
+  INSERT INTO public.activity_events (
+    event_type,severity,title,message,actor_id,actor_name,actor_role,
+    terminal_id,store_id,entity_type,entity_id,meta,client_event_id,created_at
+  ) VALUES (
+    'soft_token_approval','info','Soft token used for approval',
+    requester || ' used an approval from ' || approver || ' for ' || replace(NEW.action_key,'_',' ') ||
+      CASE WHEN reference IS NOT NULL THEN ' · Bill ' || reference ELSE '' END || '.',
+    NEW.authorized_by,approver,NEW.authorizer_role,NULLIF(NEW.terminal_id,''),NULLIF(NEW.store_id,''),
+    'authorization_log',NEW.id::text,
+    jsonb_strip_nulls(jsonb_build_object(
+      'audience_user_ids',recipients,'credential_method','totp','approval_id',NEW.id,
+      'approved_by',NEW.authorized_by,'approved_by_name',approver,
+      'requested_by',NEW.requested_by,'requested_by_name',requester,
+      'action_key',NEW.action_key,'ticket_reference',reference,'approval_status','approved'
+    )), 'soft-token-approval:' || NEW.id::text,NEW.created_at
+  ) ON CONFLICT (client_event_id) DO NOTHING;
+  RETURN NEW;
+END $;
+REVOKE ALL ON FUNCTION public.notify_soft_token_approval() FROM PUBLIC,anon,authenticated;
+
+-- Add only the missing event rule to already activated tables. Do not switch
+-- legacy sites into rules mode or replace an operator's existing token rule.
+UPDATE public.pos_settings s
+SET notification_settings=jsonb_set(s.notification_settings,'{rules}',
+  (s.notification_settings->'rules') || jsonb_build_array(jsonb_build_object(
+    'id',gen_random_uuid()::text,'name','Soft token used — owner and administrators','enabled',true,
+    'event','soft_token_approval','branches','[]'::jsonb,'actorUsers','[]'::jsonb,'actorRoles','[]'::jsonb,
+    'severities','[]'::jsonb,'minAmount',NULL,'maxAmount',NULL,'audience','original',
+    'users','[]'::jsonb,'roles','[]'::jsonb,'channels','["app"]'::jsonb,'phones','[]'::jsonb,
+    'phoneUsers','{}'::jsonb,'template',E'{{title}}\n{{message}}\n{{branch}}',
+    'quietFrom','','quietTo','','timeZone','UTC'
+  )))
+WHERE s.id=1 AND jsonb_typeof(s.notification_settings->'rules')='array'
+  AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(s.notification_settings->'rules') r
+    WHERE r->>'event'='soft_token_approval');
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- supabase/migrations/20261025141638_personal_notification_acknowledgements.sql
+-- Acknowledgements are monotonic per recipient. A stale or offline snapshot
+-- must never erase another recipient's clear; event contents remain immutable.
+CREATE OR REPLACE FUNCTION public.sync_apply_activity_events(p_rows jsonb)
+RETURNS integer LANGUAGE plpgsql SECURITY INVOKER
+SET search_path = public, pg_temp AS $fn$
+DECLARE v_count integer;
+BEGIN
+  INSERT INTO public.activity_events (
+    id,event_type,severity,title,message,actor_id,actor_name,actor_role,
+    terminal_id,terminal_name,store_id,entity_type,entity_id,amount,meta,
+    whatsapp_status,whatsapp_error,client_event_id,created_at,
+    previous_state,new_state,cleared_by,branch_id
+  )
+  SELECT id,event_type,severity,title,message,actor_id,actor_name,actor_role,
+    terminal_id,terminal_name,store_id,entity_type,entity_id,amount,meta,
+    whatsapp_status,whatsapp_error,client_event_id,created_at,
+    previous_state,new_state,cleared_by,branch_id
+  FROM jsonb_populate_recordset(NULL::public.activity_events,COALESCE(p_rows,'[]'::jsonb))
+  ON CONFLICT (id) DO UPDATE SET cleared_by=ARRAY(
+    SELECT DISTINCT value FROM unnest(COALESCE(public.activity_events.cleared_by,'{}'::text[]) ||
+      COALESCE(EXCLUDED.cleared_by,'{}'::text[])) AS acknowledged(value)
+  );
+  GET DIAGNOSTICS v_count=ROW_COUNT;
+  RETURN v_count;
+END $fn$;
+REVOKE ALL ON FUNCTION public.sync_apply_activity_events(jsonb) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.sync_apply_activity_events(jsonb) TO service_role;
+
+
+-- Optional private/admin tables keep their existing server-only access.
+DO $private_fk_indexes$
+DECLARE previous_timeout text := current_setting('lock_timeout');
+BEGIN
+  PERFORM set_config('lock_timeout','2s',true);
+  IF to_regclass('admin_portal.activation_events') IS NOT NULL THEN
+    CREATE INDEX IF NOT EXISTS activation_events_activation_id_idx ON admin_portal.activation_events(activation_id);
+    CREATE INDEX IF NOT EXISTS activation_events_actor_id_idx ON admin_portal.activation_events(actor_id);
+  END IF;
+  IF to_regclass('admin_portal.activations') IS NOT NULL THEN
+    CREATE INDEX IF NOT EXISTS activations_admin_user_id_idx ON admin_portal.activations(admin_user_id);
+  END IF;
+  IF to_regclass('pos_private.approval_tokens') IS NOT NULL THEN
+    CREATE INDEX IF NOT EXISTS approval_tokens_terminal_id_idx ON pos_private.approval_tokens(terminal_id);
+  END IF;
+  PERFORM set_config('lock_timeout',previous_timeout,true);
+END $private_fk_indexes$;
+
+-- Current catalog, membership and role defaults (idempotent).
+
+-- Add missing standard presets only; preserve every existing role and user override.
+BEGIN;
+INSERT INTO public.staff_roles(slug,name,base_level,permissions,is_core) VALUES
+('cashier','Cashier','cashier','{"can_view_sponsorship":false,"can_create_sponsorship":false,"can_approve_sponsorship":false,"can_issue_sponsorship":false,"can_open_drawer":true,"can_close_drawer":true,"can_view_drawer_balance":false,"can_open_shift":true,"can_close_shift":true,"can_bypass_shift_lock":false,"can_shift_cash_count":true,"can_shift_expected_cash_view":false,"can_shift_counted_cash_view":false,"can_shift_variance_view":false,"can_shift_financial_summary_view":false,"can_shift_payment_breakdown_view":false,"can_shift_signin_history_view":false,"can_shift_closing_history_view":false,"can_shift_report_reprint":false,"can_manage_other_shifts":false,"can_shift_variance_approve":false,"can_shift_cash_recount":false,"can_delete_line":false,"can_reduce_qty":false,"can_discount_bill":false,"can_override_price":false,"can_void_cart":false,"can_no_sale_open":false,"can_edit_tenders":false,"can_process_sale":true,"can_give_discount":false,"can_void_item":false,"can_hold_cart":true,"can_view_held_orders":true,"can_reopen_held_order":true,"can_discard_held_order":false,"can_process_refund":false,"can_process_exchange":false,"can_reprint_bill":true,"can_send_whatsapp_bill":false,"can_manage_bookings":true,"can_create_booking":true,"can_collect_booking":true,"can_cancel_booking":false,"can_view_inventory":true,"can_view_cost_margin":false,"can_edit_product_price":false,"can_add_new_product":false,"can_edit_product_details":false,"can_link_product_barcode":false,"can_archive_product":false,"can_restore_product":false,"can_publish_product":false,"can_receive_purchase_order":false,"can_adjust_stock":false,"can_create_transfer":false,"can_receive_transfer":false,"can_approve_transfer":false,"can_manage_locations":false,"can_manage_categories":false,"can_bulk_edit_products":false,"can_merge_products":false,"can_add_member":true,"can_edit_member_points":false,"can_apply_member_discount":true,"can_redeem_points":false,"can_view_member_history":true,"can_view_sales_reports":false,"can_view_dashboard":false,"can_view_audit_trail":false,"can_export_reports":false,"can_access_pos_settings":false,"can_customize_display":true,"can_manage_staff":false,"can_manage_promotions":false,"can_manage_terminals":false,"can_use_management_mobile":false,"can_use_management_pc":false,"can_manage_sync_backup":false}'::jsonb,true),
+('warehouse','Warehouse','warehouse','{"can_view_sponsorship":false,"can_create_sponsorship":false,"can_approve_sponsorship":false,"can_issue_sponsorship":false,"can_open_drawer":false,"can_close_drawer":false,"can_view_drawer_balance":false,"can_open_shift":false,"can_close_shift":false,"can_bypass_shift_lock":false,"can_shift_cash_count":false,"can_shift_expected_cash_view":false,"can_shift_counted_cash_view":false,"can_shift_variance_view":false,"can_shift_financial_summary_view":false,"can_shift_payment_breakdown_view":false,"can_shift_signin_history_view":false,"can_shift_closing_history_view":false,"can_shift_report_reprint":false,"can_manage_other_shifts":false,"can_shift_variance_approve":false,"can_shift_cash_recount":false,"can_delete_line":false,"can_reduce_qty":false,"can_discount_bill":false,"can_override_price":false,"can_void_cart":false,"can_no_sale_open":false,"can_edit_tenders":false,"can_process_sale":false,"can_give_discount":false,"can_void_item":false,"can_hold_cart":false,"can_view_held_orders":false,"can_reopen_held_order":false,"can_discard_held_order":false,"can_process_refund":false,"can_process_exchange":false,"can_reprint_bill":false,"can_send_whatsapp_bill":false,"can_manage_bookings":false,"can_create_booking":false,"can_collect_booking":false,"can_cancel_booking":false,"can_view_inventory":true,"can_view_cost_margin":false,"can_edit_product_price":true,"can_add_new_product":true,"can_edit_product_details":true,"can_link_product_barcode":true,"can_archive_product":true,"can_restore_product":true,"can_publish_product":true,"can_receive_purchase_order":true,"can_adjust_stock":true,"can_create_transfer":true,"can_receive_transfer":true,"can_approve_transfer":true,"can_manage_locations":true,"can_manage_categories":false,"can_bulk_edit_products":false,"can_merge_products":false,"can_add_member":false,"can_edit_member_points":false,"can_apply_member_discount":false,"can_redeem_points":false,"can_view_member_history":false,"can_view_sales_reports":false,"can_view_dashboard":false,"can_view_audit_trail":false,"can_export_reports":false,"can_access_pos_settings":false,"can_customize_display":true,"can_manage_staff":false,"can_manage_promotions":false,"can_manage_terminals":false,"can_use_management_mobile":false,"can_use_management_pc":false,"can_manage_sync_backup":false}'::jsonb,true),
+('supervisor','Supervisor','supervisor','{"can_view_sponsorship":false,"can_create_sponsorship":false,"can_approve_sponsorship":false,"can_issue_sponsorship":false,"can_open_drawer":true,"can_close_drawer":true,"can_view_drawer_balance":true,"can_open_shift":true,"can_close_shift":true,"can_bypass_shift_lock":true,"can_shift_cash_count":true,"can_shift_expected_cash_view":true,"can_shift_counted_cash_view":true,"can_shift_variance_view":true,"can_shift_financial_summary_view":true,"can_shift_payment_breakdown_view":true,"can_shift_signin_history_view":true,"can_shift_closing_history_view":true,"can_shift_report_reprint":true,"can_manage_other_shifts":true,"can_shift_variance_approve":true,"can_shift_cash_recount":true,"can_delete_line":true,"can_reduce_qty":true,"can_discount_bill":true,"can_override_price":true,"can_void_cart":true,"can_no_sale_open":true,"can_edit_tenders":true,"can_process_sale":true,"can_give_discount":true,"can_void_item":true,"can_hold_cart":true,"can_view_held_orders":true,"can_reopen_held_order":true,"can_discard_held_order":true,"can_process_refund":true,"can_process_exchange":true,"can_reprint_bill":true,"can_send_whatsapp_bill":true,"can_manage_bookings":true,"can_create_booking":true,"can_collect_booking":true,"can_cancel_booking":true,"can_view_inventory":true,"can_view_cost_margin":true,"can_edit_product_price":true,"can_add_new_product":true,"can_edit_product_details":true,"can_link_product_barcode":true,"can_archive_product":true,"can_restore_product":true,"can_publish_product":true,"can_receive_purchase_order":true,"can_adjust_stock":true,"can_create_transfer":true,"can_receive_transfer":true,"can_approve_transfer":true,"can_manage_locations":true,"can_manage_categories":true,"can_bulk_edit_products":true,"can_merge_products":true,"can_add_member":true,"can_edit_member_points":true,"can_apply_member_discount":true,"can_redeem_points":true,"can_view_member_history":true,"can_view_sales_reports":true,"can_view_dashboard":true,"can_view_audit_trail":true,"can_export_reports":true,"can_access_pos_settings":false,"can_customize_display":true,"can_manage_staff":false,"can_manage_promotions":true,"can_manage_terminals":true,"can_use_management_mobile":true,"can_use_management_pc":true,"can_manage_sync_backup":false}'::jsonb,true),
+('manager','Manager','supervisor','{"can_view_sponsorship":false,"can_create_sponsorship":false,"can_approve_sponsorship":false,"can_issue_sponsorship":false,"can_open_drawer":true,"can_close_drawer":true,"can_view_drawer_balance":true,"can_open_shift":true,"can_close_shift":true,"can_bypass_shift_lock":true,"can_shift_cash_count":true,"can_shift_expected_cash_view":true,"can_shift_counted_cash_view":true,"can_shift_variance_view":true,"can_shift_financial_summary_view":true,"can_shift_payment_breakdown_view":true,"can_shift_signin_history_view":true,"can_shift_closing_history_view":true,"can_shift_report_reprint":true,"can_manage_other_shifts":true,"can_shift_variance_approve":true,"can_shift_cash_recount":true,"can_delete_line":true,"can_reduce_qty":true,"can_discount_bill":true,"can_override_price":true,"can_void_cart":true,"can_no_sale_open":true,"can_edit_tenders":true,"can_process_sale":true,"can_give_discount":true,"can_void_item":true,"can_hold_cart":true,"can_view_held_orders":true,"can_reopen_held_order":true,"can_discard_held_order":true,"can_process_refund":true,"can_process_exchange":true,"can_reprint_bill":true,"can_send_whatsapp_bill":true,"can_manage_bookings":true,"can_create_booking":true,"can_collect_booking":true,"can_cancel_booking":true,"can_view_inventory":true,"can_view_cost_margin":true,"can_edit_product_price":true,"can_add_new_product":true,"can_edit_product_details":true,"can_link_product_barcode":true,"can_archive_product":true,"can_restore_product":true,"can_publish_product":true,"can_receive_purchase_order":true,"can_adjust_stock":true,"can_create_transfer":true,"can_receive_transfer":true,"can_approve_transfer":true,"can_manage_locations":true,"can_manage_categories":true,"can_bulk_edit_products":true,"can_merge_products":true,"can_add_member":true,"can_edit_member_points":true,"can_apply_member_discount":true,"can_redeem_points":true,"can_view_member_history":true,"can_view_sales_reports":true,"can_view_dashboard":true,"can_view_audit_trail":true,"can_export_reports":true,"can_access_pos_settings":false,"can_customize_display":true,"can_manage_staff":false,"can_manage_promotions":true,"can_manage_terminals":true,"can_use_management_mobile":true,"can_use_management_pc":true,"can_manage_sync_backup":false}'::jsonb,true),
+('admin','Administrator','admin','{"can_view_sponsorship":true,"can_create_sponsorship":true,"can_approve_sponsorship":true,"can_issue_sponsorship":true,"can_open_drawer":true,"can_close_drawer":true,"can_view_drawer_balance":true,"can_open_shift":true,"can_close_shift":true,"can_bypass_shift_lock":true,"can_shift_cash_count":true,"can_shift_expected_cash_view":true,"can_shift_counted_cash_view":true,"can_shift_variance_view":true,"can_shift_financial_summary_view":true,"can_shift_payment_breakdown_view":true,"can_shift_signin_history_view":true,"can_shift_closing_history_view":true,"can_shift_report_reprint":true,"can_manage_other_shifts":true,"can_shift_variance_approve":true,"can_shift_cash_recount":true,"can_delete_line":true,"can_reduce_qty":true,"can_discount_bill":true,"can_override_price":true,"can_void_cart":true,"can_no_sale_open":true,"can_edit_tenders":true,"can_process_sale":true,"can_give_discount":true,"can_void_item":true,"can_hold_cart":true,"can_view_held_orders":true,"can_reopen_held_order":true,"can_discard_held_order":true,"can_process_refund":true,"can_process_exchange":true,"can_reprint_bill":true,"can_send_whatsapp_bill":true,"can_manage_bookings":true,"can_create_booking":true,"can_collect_booking":true,"can_cancel_booking":true,"can_view_inventory":true,"can_view_cost_margin":true,"can_edit_product_price":true,"can_add_new_product":true,"can_edit_product_details":true,"can_link_product_barcode":true,"can_archive_product":true,"can_restore_product":true,"can_publish_product":true,"can_receive_purchase_order":true,"can_adjust_stock":true,"can_create_transfer":true,"can_receive_transfer":true,"can_approve_transfer":true,"can_manage_locations":true,"can_manage_categories":true,"can_bulk_edit_products":true,"can_merge_products":true,"can_add_member":true,"can_edit_member_points":true,"can_apply_member_discount":true,"can_redeem_points":true,"can_view_member_history":true,"can_view_sales_reports":true,"can_view_dashboard":true,"can_view_audit_trail":true,"can_export_reports":true,"can_access_pos_settings":true,"can_customize_display":true,"can_manage_staff":true,"can_manage_promotions":true,"can_manage_terminals":true,"can_use_management_mobile":true,"can_use_management_pc":true,"can_manage_sync_backup":true}'::jsonb,true)
+ON CONFLICT (slug) DO NOTHING;
+COMMIT;
+
+-- Contact email is separate from verified membership identity.
+BEGIN;
+ALTER TABLE public.members ADD COLUMN IF NOT EXISTS contact_email text;
+DO $check$ BEGIN
+  IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='members_contact_email_valid' AND conrelid='public.members'::regclass) THEN
+    ALTER TABLE public.members ADD CONSTRAINT members_contact_email_valid CHECK(contact_email IS NULL OR btrim(contact_email)='' OR (length(contact_email)<=254 AND contact_email ~ '^[^[:space:]@]+@[^[:space:]@]+[.][^[:space:]@]+$'));
+  END IF;
+END $check$;
+DO $patch$
+DECLARE definition text;
+BEGIN
+  IF to_regprocedure('public.sync_apply_members(jsonb)') IS NOT NULL THEN
+    definition := pg_get_functiondef('public.sync_apply_members(jsonb)'::regprocedure);
+    IF position('contact_email' in definition)=0 THEN
+      definition := replace(definition,'phone, email, address','phone, email, contact_email, address');
+      definition := replace(definition,'email = excluded.email,','email = excluded.email, contact_email = coalesce(excluded.contact_email, public.members.contact_email),');
+      EXECUTE definition;
+    END IF;
+  END IF;
+END;
+$patch$;
+CREATE OR REPLACE FUNCTION public.staff_membership_tier_save(p_name text,p_discount numeric DEFAULT 0,p_multiplier numeric DEFAULT 1,p_id uuid DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $fn$
+DECLARE result public.membership_tiers; clean_name text:=btrim(p_name);
+BEGIN
+  IF NOT coalesce(public.is_staff_now(),false) OR NOT coalesce(public.has_perm('can_edit_member_points'),false) THEN RAISE EXCEPTION 'MEMBER_TIER_PERMISSION_REQUIRED' USING ERRCODE='42501'; END IF;
+  IF clean_name IS NULL OR length(clean_name)<1 OR length(clean_name)>80 OR p_discount IS NULL OR p_discount<0 OR p_discount>100 OR p_discount::text IN ('NaN','Infinity','-Infinity') OR p_multiplier IS NULL OR p_multiplier<0 OR p_multiplier>100 OR p_multiplier::text IN ('NaN','Infinity','-Infinity') THEN RAISE EXCEPTION 'Invalid tier name, discount or points multiplier'; END IF;
+  PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('member-tier:'||lower(clean_name),0));
+  IF EXISTS(SELECT 1 FROM public.membership_tiers WHERE lower(btrim(name))=lower(clean_name) AND deleted_at IS NULL AND (p_id IS NULL OR id<>p_id)) THEN RAISE EXCEPTION 'A membership tier with this name already exists'; END IF;
+  IF p_id IS NULL THEN
+    INSERT INTO public.membership_tiers(name,discount_percentage,points_multiplier) VALUES(clean_name,p_discount,p_multiplier) RETURNING * INTO result;
+  ELSE
+    UPDATE public.membership_tiers SET name=clean_name,discount_percentage=p_discount,points_multiplier=p_multiplier,updated_at=now() WHERE id=p_id AND deleted_at IS NULL RETURNING * INTO result;
+    IF NOT FOUND THEN RAISE EXCEPTION 'Membership tier no longer exists'; END IF;
+  END IF;
+  RETURN to_jsonb(result);
+END;
+$fn$;
+REVOKE ALL ON FUNCTION public.staff_membership_tier_save(text,numeric,numeric,uuid) FROM PUBLIC,anon;
+GRANT EXECUTE ON FUNCTION public.staff_membership_tier_save(text,numeric,numeric,uuid) TO authenticated;
+NOTIFY pgrst,'reload schema';
+COMMIT;
+
+-- Management edits use the online write path. Branch SQL replication must never
+-- replace management-owned commerce values, including from an older till.
+BEGIN;
+ALTER TABLE public.products ALTER COLUMN ecom_visible SET DEFAULT false;
+DO $patch$
+DECLARE definition text; prefix text; selection text; tail text;
+BEGIN
+  definition:=pg_get_functiondef('public.sync_apply_products(jsonb)'::regprocedure);
+  IF position('"ecom_price"=EXCLUDED."ecom_price",' in definition)>0 THEN
+    prefix:=split_part(definition,'  SELECT ',1);
+    selection:=split_part(split_part(definition,'  SELECT ',2),'  ON CONFLICT',1);
+    tail:='  ON CONFLICT'||split_part(definition,'  ON CONFLICT',2);
+    IF prefix=definition OR selection='' OR tail='  ON CONFLICT' THEN RAISE EXCEPTION 'Unexpected product sync function shape'; END IF;
+    selection:=replace(selection,'"ecom_price"','NULL::numeric');
+    selection:=replace(selection,'"ecom_visible"','false');
+    tail:=replace(tail,'"ecom_price"=EXCLUDED."ecom_price",','');
+    tail:=replace(tail,'"ecom_visible"=EXCLUDED."ecom_visible",','');
+    EXECUTE prefix||'  SELECT '||selection||tail;
+  END IF;
+END;
+$patch$;
+-- Keep management's branch-specific commerce override when a till edits retail price.
+CREATE OR REPLACE FUNCTION public.preserve_product_commerce_override()
+RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path='' AS $fn$
+BEGIN
+ IF TG_TABLE_NAME='settings_scoped' THEN
+   IF NEW.key LIKE 'product_price:%' AND jsonb_typeof(NEW.value)='object' AND NOT (NEW.value ? 'ecom_price') AND OLD.value ? 'ecom_price' THEN
+     NEW.value:=NEW.value||jsonb_build_object('ecom_price',OLD.value->'ecom_price');
+   ELSIF NEW.key='pos_field:integration_settings' AND jsonb_typeof(NEW.value)='object' AND NOT (NEW.value ? 'ecommerceEnabled') AND OLD.value ? 'ecommerceEnabled' THEN
+     NEW.value:=NEW.value||jsonb_build_object('ecommerceEnabled',OLD.value->'ecommerceEnabled');
+   END IF;
+ ELSIF TG_TABLE_NAME='pos_settings' AND jsonb_typeof(NEW.integration_settings)='object' AND NOT (NEW.integration_settings ? 'ecommerceEnabled') AND OLD.integration_settings ? 'ecommerceEnabled' THEN
+   NEW.integration_settings:=NEW.integration_settings||jsonb_build_object('ecommerceEnabled',OLD.integration_settings->'ecommerceEnabled');
+ END IF;
+ RETURN NEW;
+END;
+$fn$;
+REVOKE ALL ON FUNCTION public.preserve_product_commerce_override() FROM PUBLIC,anon,authenticated;
+DO $scoped$
+DECLARE definition text;
+BEGIN
+ IF to_regclass('public.settings_scoped') IS NOT NULL THEN
+   DROP TRIGGER IF EXISTS preserve_product_commerce_override ON public.settings_scoped;
+   CREATE TRIGGER preserve_product_commerce_override BEFORE UPDATE OF value ON public.settings_scoped FOR EACH ROW EXECUTE FUNCTION public.preserve_product_commerce_override();
+ END IF;
+ IF to_regclass('public.pos_settings') IS NOT NULL THEN
+   DROP TRIGGER IF EXISTS preserve_product_commerce_override ON public.pos_settings;
+   CREATE TRIGGER preserve_product_commerce_override BEFORE UPDATE OF integration_settings ON public.pos_settings FOR EACH ROW EXECUTE FUNCTION public.preserve_product_commerce_override();
+ END IF;
+ IF to_regprocedure('public.sync_apply_settings_scoped(jsonb)') IS NOT NULL THEN
+   definition:=pg_get_functiondef('public.sync_apply_settings_scoped(jsonb)'::regprocedure);
+   definition:=replace(definition,'SELECT "scope","scope_id","key","value",','SELECT "scope","scope_id","key",CASE WHEN "key" LIKE ''product_price:%'' THEN "value"-''ecom_price'' WHEN "key"=''pos_field:integration_settings'' THEN "value"-''ecommerceEnabled'' ELSE "value" END,');
+   definition:=replace(definition,'"value"=EXCLUDED."value",',$guard$
+   "value"=CASE
+     WHEN EXCLUDED."key" LIKE 'product_price:%' THEN
+       (EXCLUDED."value"-'ecom_price')||CASE WHEN public.settings_scoped.value ? 'ecom_price' THEN jsonb_build_object('ecom_price',public.settings_scoped.value->'ecom_price') ELSE '{}'::jsonb END
+     WHEN EXCLUDED."key"='pos_field:integration_settings' THEN
+       (EXCLUDED."value"-'ecommerceEnabled')||CASE WHEN public.settings_scoped.value ? 'ecommerceEnabled' THEN jsonb_build_object('ecommerceEnabled',public.settings_scoped.value->'ecommerceEnabled') ELSE '{}'::jsonb END
+     ELSE EXCLUDED."value"
+   END,
+   $guard$);
+   EXECUTE definition;
+ END IF;
+ IF to_regprocedure('public.sync_apply_pos_settings(jsonb)') IS NOT NULL THEN
+   definition:=pg_get_functiondef('public.sync_apply_pos_settings(jsonb)'::regprocedure);
+   definition:=regexp_replace(definition,'"?integration_settings"?\s*=\s*EXCLUDED\."?integration_settings"?,',$guard$
+   "integration_settings"=(EXCLUDED."integration_settings"-'ecommerceEnabled')||CASE WHEN public.pos_settings.integration_settings ? 'ecommerceEnabled' THEN jsonb_build_object('ecommerceEnabled',public.pos_settings.integration_settings->'ecommerceEnabled') ELSE '{}'::jsonb END,
+   $guard$,'g');
+   EXECUTE definition;
+ END IF;
+END;
+$scoped$;
+DO $ready$ BEGIN
+ IF to_regclass('public.public_flags') IS NOT NULL THEN
+   INSERT INTO public.public_flags(key,enabled) VALUES('management_commerce_isolation_ready',true)
+   ON CONFLICT(key) DO UPDATE SET enabled=true,updated_at=now();
+ END IF;
+END $ready$;
+COMMIT;
 
 -- Final public-schema privilege hardening after notification rule definitions.
 DO $notification_hardening$

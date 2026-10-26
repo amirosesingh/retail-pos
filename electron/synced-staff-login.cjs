@@ -60,6 +60,10 @@ async function verifySyncedPin(pool, username, pin, branchId, purpose, options =
           VALUES(@key,1,SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET())
         OUTPUT inserted.[key];`);
     if (!gate.recordset?.length) return { ok: false, reason: "locked", error: "Too many token attempts. Try again in one minute." };
+    if (typeof options.prepareTotp === "function") {
+      const prepared = await options.prepareTotp(secret, branchId);
+      if (!prepared?.ok) return { ok: false, reason: "unavailable", error: prepared?.error || "Offline soft-token verification is not ready on this PC." };
+    }
     name = String(await options.identifyTotp(secret, branchId) ?? "").toLowerCase();
     tokenOnly = true;
   }

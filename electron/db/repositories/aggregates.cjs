@@ -150,6 +150,7 @@ class AggregateRepository {
           enforcePermissions: true,
           isSettingsAdmin: aggregate.isSettingsAdmin === true,
           memberAccrual: aggregate.memberAccrual,
+          financialExchangeLinks: aggregate.financialExchangeLinks,
           activityOperator: aggregate.activityOperator,
         });
         if (operation.requireMatch && operationAffected !== 1)

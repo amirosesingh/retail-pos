@@ -8,7 +8,7 @@
  * (working from this terminal), and only then may it offer a way out.
  */
 import { useEffect, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { ReceiptText, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   connectivity,
@@ -89,22 +89,22 @@ export function TillLoader({
   const style = TONE[tone];
 
   return (
-    <div className={cn("flex flex-col items-center justify-center gap-4 px-6", !compact && "min-h-dvh")}>
-      <div className="flex items-center gap-2">
+    <div className={cn("flex w-full flex-col items-center justify-center gap-4 px-5 py-6 text-center", !compact && "min-h-dvh bg-muted/30")}>
+      <div className="flex w-full max-w-sm flex-col items-center gap-4 rounded-2xl border border-border/60 bg-card p-6 shadow-sm">
+      <div className="flex items-center justify-center gap-3">
+        <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><ReceiptText className="size-6" aria-hidden /></span>
+        <div className="text-left"><p className="text-xl font-semibold tracking-tight">Retail</p><p className="text-xs text-muted-foreground">Opening your workspace</p></div>
+      </div>
+      <p role="status" aria-live="polite" className="text-sm font-medium leading-relaxed">{message}</p>
+      <div className="flex max-w-full items-center justify-center gap-2 rounded-full bg-muted/60 px-3 py-2">
         <CloudStateIcon tone={tone} className="size-5" />
-        <p className="text-sm font-medium">{tone === "connecting" ? "Connecting…" : message}</p>
-        {tone === "offline" && (
-          <span className="rounded-full border border-warning px-2 py-0.5 text-[11px] uppercase tracking-wide text-warning">
-            Offline
-          </span>
-        )}
+        <p className={cn("min-w-0 text-xs leading-snug", style.text)}>{style.label}</p>
       </div>
 
-      <div role="progressbar" aria-label={message} aria-valuemin={0} aria-valuemax={100} className="h-1.5 w-64 overflow-hidden rounded-full bg-muted">
+      <div role="progressbar" aria-label={message} aria-valuemin={0} aria-valuemax={100} className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
         <div className={cn("h-full rounded-full", style.bar, "w-1/2 animate-pulse")} />
       </div>
 
-      <p className={cn("text-xs", style.text)}>{style.label}</p>
       {!isOnlineOnly() && state !== "connecting" && health && (
         <div className="space-y-2 text-center"><p className="text-xs text-muted-foreground">
           Local SQL Server {health.local ? "connected" : "unavailable"}
@@ -132,6 +132,7 @@ export function TillLoader({
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

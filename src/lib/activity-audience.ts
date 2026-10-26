@@ -5,6 +5,8 @@ export type ActivityAudienceIdentity = {
   role?: string | null;
   storeId?: string | null;
   terminalId?: string | null;
+  /** Explicitly verified all-store account/device scope; missing branch alone is not enough. */
+  allStores?: boolean;
   mayViewGeneralActivity: boolean;
 };
 
@@ -30,10 +32,12 @@ export function activityVisibleTo(
   if (meta.notification_routes && typeof meta.notification_routes === "object") {
     const routes = meta.notification_routes as Record<string, unknown>;
     const recipients = strings(routes[channel]);
-    const selected = identity.userIds.some(id => recipients.includes(id.toLowerCase())) ||
+    const selectedUser = identity.userIds.some(id => recipients.includes(id.toLowerCase()));
+    const selected = selectedUser ||
       (channel === "app" && !!identity.terminalId && strings(routes.terminalApp).includes(identity.terminalId.toLowerCase()));
     const branch = String(row.store_id ?? "").trim();
-    return selected && (!branch || identity.role === "admin" || (!!identity.storeId && sameBranchId(branch, identity.storeId)));
+    return selected && (!branch || identity.role === "admin" ||
+      (identity.allStores === true && selectedUser) || (!!identity.storeId && sameBranchId(branch, identity.storeId)));
   }
   const audience = String(meta["audience"] ?? "").toLowerCase();
   if (channel === "app" && meta["in_app_disabled"] === true) return false;
@@ -65,5 +69,5 @@ export function activityVisibleTo(
     Boolean(terminalTarget) &&
     Boolean(identity.terminalId) &&
     terminalTarget === identity.terminalId!.toLowerCase();
-  return sameBranch && (exactUser || roleMatch || terminalMatch);
+  return (sameBranch || (identity.allStores === true && exactUser)) && (exactUser || roleMatch || terminalMatch);
 }

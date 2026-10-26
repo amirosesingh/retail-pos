@@ -1,10 +1,11 @@
 import * as React from "react";
 import { createPortal } from "react-dom";
-import { ArrowDown, ArrowUp, ArrowUpDown, Filter, Loader2, Columns3, Tickets, Shapes, CalendarClock, WalletCards, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Filter, Loader2, Columns3, Tickets, Shapes, CalendarClock, WalletCards, X, Maximize2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuCheckboxItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { useAuthOptional } from "@/lib/pos-auth";
 import { usePosOptional } from "@/lib/pos-store";
@@ -598,13 +599,15 @@ type TableProps = React.HTMLAttributes<HTMLTableElement> & {
 const Table = React.forwardRef<HTMLTableElement, TableProps>(
   ({ className, children, loading = false, loadingLabel, mobileCards = true, clientDataControls = true, managed = false, columnControls = false, layoutControls = false, controlsTarget, summaryFormats = {}, tableId, ...props }, ref) => {
     const [layout, setLayout] = React.useState<"auto" | "table" | "compact">("auto");
+    const [expanded, setExpanded] = React.useState(false);
+    const expandButtonRef = React.useRef<HTMLButtonElement>(null);
     const { profile, editable, update } = usePersonalAppearance();
     const auth = useAuthOptional();
     const user = auth?.user;
     const isAdmin = auth?.isAdmin ?? false;
     const pos = usePosOptional();
     const internalRef = React.useRef<HTMLTableElement>(null);
-    React.useImperativeHandle(ref, () => internalRef.current as HTMLTableElement, []);
+    React.useImperativeHandle(ref, () => internalRef.current as HTMLTableElement);
     const [sort, setSort] = React.useState<TableSortState>(null);
     const [filters, setFilters] = React.useState<TableFilters>({});
     const [activeFilter, setActiveFilter] = React.useState<number | null>(null);
@@ -748,7 +751,7 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
               <DropdownMenuSeparator /><DropdownMenuItem disabled={!editable} onSelect={() => { saveHiddenColumns([]); if (layoutControls) { setLayout("auto"); setWidths({}); } }}>{layoutControls ? "Reset view" : "Show all columns"}</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>);
-    return (
+    const tableContent = (
       <TableControlsContext.Provider value={controls}>
         {loading && !hasRows && <div role="status" className="flex items-center gap-2 border-b border-border/60 bg-muted/20 px-4 py-2 text-xs text-muted-foreground">
           <Loader2 aria-hidden="true" className="size-3.5 animate-spin text-primary motion-reduce:animate-none" />
@@ -761,13 +764,14 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
           </div>
           {columnMenu}
         </div>}
-        {!managed && (columnControls || tableId) && labels.length > 1 && (controlsTarget ? createPortal(columnMenu, controlsTarget) : <div className="flex justify-end px-3 py-2">{columnMenu}</div>)}
-        <div className="responsive-table-region relative min-w-0 w-full max-w-full overflow-x-auto overscroll-x-contain">
+        {!managed && (columnControls || tableId) && labels.length > 1 && (controlsTarget && !expanded ? createPortal(columnMenu, controlsTarget) : <div className="flex justify-end px-3 py-2">{columnMenu}</div>)}
+        <div className="responsive-table-region relative min-w-0 w-full max-w-full overflow-x-auto overscroll-x-contain" tabIndex={expanded ? 0 : undefined} role={expanded ? "region" : undefined} aria-label={expanded ? "Scrollable table" : undefined}>
           <table
             ref={internalRef}
-            data-mobile-cards={mobileCards && (!layoutControls || layout === "auto") ? "true" : "false"}
+            data-mobile-cards={!expanded && mobileCards && (!layoutControls || layout === "auto") ? "true" : "false"}
             className={cn("responsive-table w-full caption-bottom text-sm", layoutControls && layout === "compact" && "[&_td]:py-1.5 [&_th]:h-9", className)}
             {...props}
+            style={expanded ? { ...props.style, minWidth: Math.max(560, (labels.length - hiddenColumns.length) * 140) } : props.style}
             aria-busy={loading || props["aria-busy"]}
           >
             {displayedContent}
@@ -775,6 +779,24 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
         </div>
         {managed && <TablePagination {...pagination} onPage={pagination.setPage} onPageSize={pagination.setPageSize} label="rows" />}
       </TableControlsContext.Provider>
+    );
+    return (
+      <Dialog open={expanded} onOpenChange={setExpanded}>
+        {labels.length > 1 && <div className="flex justify-end px-3 py-1.5">
+          <Button ref={expandButtonRef} type="button" variant="ghost" size="sm" onClick={() => setExpanded(true)} aria-label={`Expand ${props["aria-label"] || "table"}`}>
+            <Maximize2 className="size-4" aria-hidden="true" /> Expand table
+          </Button>
+        </div>}
+        {expanded ? (
+          <DialogContent className="flex h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-none flex-col overflow-hidden p-3 sm:max-w-none sm:p-5" onCloseAutoFocus={event => { event.preventDefault(); expandButtonRef.current?.focus(); }}>
+            <DialogHeader className="shrink-0 pr-8">
+              <DialogTitle>{props["aria-label"] || "Expanded table"}</DialogTitle>
+              <DialogDescription>Scroll sideways to see more columns. Your filters, page and permitted columns stay the same.</DialogDescription>
+            </DialogHeader>
+            <div className="min-h-0 min-w-0 flex-1 overflow-auto">{tableContent}</div>
+          </DialogContent>
+        ) : tableContent}
+      </Dialog>
     );
   },
 );

@@ -6,7 +6,7 @@ import {
 } from "@/platforms/web/components/pos/report-kit";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Download, LoaderCircle, RefreshCw, RotateCcw } from "lucide-react";
+import { Check, Download, LoaderCircle, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,7 @@ import {
   EVENT_LABELS,
   SEVERITY_TONE,
   clearActivityEntry,
+  activityAcknowledgedBy,
   isActivityLogMissing,
   listActivityEvents,
   markActivitySeen,
@@ -49,7 +50,7 @@ const SEVERITY_OPTIONS = [
 const STATUS_OPTIONS = [
   { value: "all", label: "Active and history" },
   { value: "active", label: "Active notifications" },
-  { value: "history", label: "Cleared history" },
+  { value: "history", label: "Cleared by me" },
 ];
 
 const when = (iso: string) => {
@@ -96,7 +97,7 @@ function NotificationsReport() {
   const filtered = useMemo(() => {
     const needle = actor.trim().toLowerCase();
     return rows.filter((row) => {
-      const inHistory = row.clearedBy.length > 0;
+      const inHistory = activityAcknowledgedBy(row,meKey);
       if (status === "active" && inHistory) return false;
       if (status === "history" && !inHistory) return false;
       if (!needle) return true;
@@ -106,10 +107,10 @@ function NotificationsReport() {
         row.message.toLowerCase().includes(needle)
       );
     });
-  }, [rows, actor, status]);
+  }, [rows, actor, status, meKey]);
 
   const updatePreference = async (row: ActivityEvent) => {
-    const inHistory = row.clearedBy.length > 0;
+    const inHistory = activityAcknowledgedBy(row,meKey);
     if (inHistory) return;
     setPreferenceBusy(row.id);
     const saved = await clearActivityEntry(meKey, row.id);
@@ -231,7 +232,7 @@ function NotificationsReport() {
                     row.terminalName || "",
                     stores.find((store) => store.id === row.storeId)?.name ?? row.storeId,
                     row.whatsappStatus,
-                    row.clearedBy.length ? "Acknowledged" : "Active",
+                    activityAcknowledgedBy(row,meKey) ? "Cleared by me" : "Active",
                   ]),
                 ])
               }
@@ -309,27 +310,25 @@ function NotificationsReport() {
                     </TableCell>
                     <TableCell className="text-sm capitalize">{r.whatsappStatus}</TableCell>
                     <TableCell className="text-sm">
-                      {r.clearedBy.length > 0 ? "History" : "Active"}
+                      {activityAcknowledgedBy(r,meKey) ? "Cleared by me" : "Active"}
                     </TableCell>
                     <TableCell className="text-right">
                       <Button
                         type="button"
                         variant="ghost"
                         size="sm"
-                        className="h-7 px-2 text-xs"
-                        disabled={preferenceBusy === r.id || r.clearedBy.length > 0}
+                        className="min-h-11 px-2 text-xs"
+                        disabled={preferenceBusy === r.id || activityAcknowledgedBy(r,meKey)}
                         onClick={() => void updatePreference(r)}
                       >
                         {preferenceBusy === r.id ? (
                           <LoaderCircle className="size-3 animate-spin" />
-                        ) : r.clearedBy.length > 0 ? (
-                          <RotateCcw className="size-3" />
                         ) : (
                           <Check className="size-3" />
                         )}
                         {preferenceBusy === r.id
                           ? "Saving…"
-                          : r.clearedBy.length > 0
+                          : activityAcknowledgedBy(r,meKey)
                             ? "Cleared"
                             : "Clear"}
                       </Button>
