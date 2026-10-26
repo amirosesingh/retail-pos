@@ -475,7 +475,9 @@ export const isTerminalConfigHydrated = () => hydrated;
  * restart. Safe to call repeatedly.
  */
 export async function hydrateTerminalConfig(): Promise<TerminalConfig | null> {
-  if (typeof window === "undefined") return null;
+  // A browser is management access, never a registered native terminal. Leave
+  // any old saved activation untouched; only the matching native shell may use it.
+  if (typeof window === "undefined" || terminalRuntimePlatform() === "web") return null;
   if (hydrated) return cachedConfig;
   if (hydration) return hydration;
   hydration = restoreSavedTerminalConfig();
@@ -538,7 +540,7 @@ async function restoreSavedTerminalConfig(): Promise<TerminalConfig | null> {
 }
 
 export function readTerminalConfig(): TerminalConfig | null {
-  if (typeof window === "undefined") return null;
+  if (typeof window === "undefined" || terminalRuntimePlatform() === "web") return null;
   if (cachedConfig) return cachedConfig;
   // Before hydration finishes an older plain copy is still authoritative.
   return parseConfig(window.localStorage.getItem(CONFIG_KEY));

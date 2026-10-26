@@ -1,3 +1,4 @@
+import { profileStoreAssignment } from "./auth-branch-assignment";
 import { clearOperatorIdentity, isOperatorIdentity, matchesOperatorIdentity, readOperatorIdentity, saveOperatorIdentity } from "./operator-auth-identity";
 import { localStartupAuthReady } from "./local-startup";
 import { useLocalStartupReady } from "./use-local-startup";
@@ -876,7 +877,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // the desktop process independently verifies it before granting IPC.
           role: account.role,
           roleSlug: account.role_slug,
-          storeId: activeBranchId(account.store_id ?? null),
+          storeId: isTerminalApp()
+            ? activeBranchId(account.store_id ?? null)
+            : profileStoreAssignment(account),
           email: "",
           cashierId: account.id,
           permissions: account.permissions as unknown as TerminalUser["permissions"],
@@ -1220,12 +1223,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       storeId: isTrueAdmin
         ? null
         : isElevated
-          ? (appUser?.store_id ?? (meta["store_id"] as string | null | undefined) ?? null)
-          : (appUser?.store_id ??
+          ? profileStoreAssignment(appUser, meta["store_id"] as string | null | undefined)
+          : profileStoreAssignment(appUser,
             (meta["store_id"] as string | null | undefined) ??
-            terminalUser?.storeId ??
-            found?.storeId ??
-            null),
+            terminalUser?.storeId ?? found?.storeId ?? null),
       permissions: isTrueAdmin
         ? { ...FULL_PERMISSIONS }
         : isElevated
@@ -1255,8 +1256,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         ? {
             userIds: [user.staffId, user.email, ...(appUser?.id ? [appUser.id] : [])].filter(Boolean),
             role: user.metaRole ?? user.roles[0] ?? user.role,
-            storeId: activeBranchId(user.storeId),
-            allStores: appUser?.store_id === null && !activeBranchId(user.storeId),
+            storeId: readTerminalConfig()?.locationId?.trim() || user.storeId,
+            allStores: appUser?.store_id === null && !readTerminalConfig()?.locationId?.trim(),
             terminalId: readTerminalConfig()?.tokenId ?? null,
             mayViewGeneralActivity:
               user.role === "admin" || user.permissions.can_view_audit_trail === true,

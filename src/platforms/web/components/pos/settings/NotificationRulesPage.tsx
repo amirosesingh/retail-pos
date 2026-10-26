@@ -1,3 +1,4 @@
+import { formatDateTime as systemTimeStamp } from "@/lib/time-zone";
 import { useCallback, useEffect, useId, useState } from "react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
@@ -374,7 +375,7 @@ export function NotificationRulesPage() {
                   <tbody>
                     {data.history.map((row) => (
                       <tr key={row.id} className="border-t">
-                        <td className="p-3">{new Date(row.created_at).toLocaleString()}</td>
+                        <td className="p-3">{systemTimeStamp(row.created_at)}</td>
                         <td className="p-3">{row.rule_name}</td>
                         <td className="p-3">{row.channel}</td>
                         <td className="p-3">
@@ -387,7 +388,7 @@ export function NotificationRulesPage() {
                           {row.reason && ` · ${row.reason}`}
                           {row.status === "queued" &&
                             new Date(row.next_attempt) > new Date() &&
-                            ` · due ${new Date(row.next_attempt).toLocaleString()}`}
+                            ` · due ${systemTimeStamp(row.next_attempt)}`}
                         </td>
                       </tr>
                     ))}

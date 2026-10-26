@@ -55,9 +55,9 @@ beforeEach(() => {
   mocks.canDrawer = true;
   mocks.record.mockImplementation(async (value) => ({ ...value, id: "sale", receiptNo: "BILL-1" }));
 });
-function checkout(print: boolean, method = "cash") {
+function checkout(print: boolean, method = "cash", shiftBranch = "branch") {
   const deps = {
-    getActiveShift: () => ({ id: "shift", state: "ACTIVE" }),
+    getActiveShift: () => ({ id: "shift", state: "ACTIVE", storeId: shiftBranch }),
     getCurrentStore: () => ({ id: "branch" }),
     getActiveCashier: () => "Cashier",
     requirePermission: async () => true,
@@ -103,6 +103,13 @@ function checkout(print: boolean, method = "cash") {
   return hook;
 }
 describe("per-bill receipt choice", () => {
+  it("refuses another branch's shift before payment, printing or drawer operations", async () => {
+    await checkout(true, "cash", "other-branch").completeSale();
+    expect(mocks.record).not.toHaveBeenCalled();
+    expect(mocks.print).not.toHaveBeenCalled();
+    expect(mocks.drawer).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("another branch"));
+  });
   it("skips printing while preserving the committed cash sale and drawer pulse", async () => {
     await checkout(false).completeSale();
     expect(mocks.record).toHaveBeenCalledOnce();

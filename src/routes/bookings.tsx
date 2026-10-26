@@ -1,8 +1,11 @@
+import { publishDisplay, type DisplaySnapshot } from "@/lib/customer-display";
+import { bookingPaymentDisplay, idleBookingDisplay } from "@/lib/booking-payment-display";
+import { posDayKey as storeDay } from "@/lib/time-zone";
 import { formatDate as posDisplayDate, formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { CUSTOMER_REFUNDS_ALLOWED } from "@/lib/returns-policy";
 import { sameBranchId } from "@/lib/branch-id";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import {
   Printer,
@@ -151,6 +154,22 @@ function BookingsPage() {
   const [payBusy, setPayBusy] = useState(false);
   /** What the central database says is still owed, refreshed on open. */
   const [serverDue, setServerDue] = useState<number | null>(null);
+  const [payBalanceError, setPayBalanceError] = useState("");
+  const paymentDisplay = useRef<DisplaySnapshot | null>(null);
+  const balanceRead = useRef(0);
+  useEffect(() => {
+    if (payFor && serverDue !== null) {
+      const snapshot = bookingPaymentDisplay(payFor, serverDue, currentStore, state.settings.receipt.companyName || currentStore.name, user?.name || payFor.cashier, method, state.settings.payment ?? null);
+      paymentDisplay.current = snapshot;
+      publishDisplay(snapshot);
+    } else if (paymentDisplay.current) {
+      publishDisplay(idleBookingDisplay(paymentDisplay.current));
+      paymentDisplay.current = null;
+    }
+  }, [payFor, serverDue, currentStore, state.settings.receipt.companyName, state.settings.payment, user?.name, method]);
+  useEffect(() => () => {
+    if (paymentDisplay.current) publishDisplay(idleBookingDisplay(paymentDisplay.current));
+  }, []);
 
   const bookings = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -191,7 +210,7 @@ function BookingsPage() {
   }, [state.bookings, currentStore.id]);
 
   const memberOf = (b: Booking) => state.members.find((m) => m.id === b.memberId) ?? null;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = storeDay();
 
   async function openPay(b: Booking, full: boolean) {
     setPayFor(b);
@@ -200,7 +219,11 @@ function BookingsPage() {
     setMethod("cash");
     setPayToken(crypto.randomUUID());
     setServerDue(null);
+    setPayBalanceError("");
+    const request = ++balanceRead.current;
     const check = await readBookingBalance(b.id);
+    if (request !== balanceRead.current) return;
+    if (!check.ok) { setPayBalanceError(check.error); return; }
     if (check.ok) {
       setServerDue(check.state.outstanding);
       setAmount(check.state.outstanding.toFixed(2));
@@ -244,9 +267,7 @@ function BookingsPage() {
       if (!check.ok)
         { toast.error("Balance could not be verified", { description: check.error }); return; }
       if (due > 0) {
-        toast.error(`Balance of ${money(due)} must be settled before collection`, {
-          description: "Collect the balance to hand the racket over.",
-        });
+        toast.info(`Collect the remaining ${money(due)} before handover.`);
         void openPay(b, true);
         return;
       }
@@ -263,11 +284,11 @@ function BookingsPage() {
   }
 
   async function submitPayment() {
-    if (!payFor) return;
+    if (!payFor || serverDue === null || payBusy) return;
     if (!(await requirePermission("can_collect_booking"))) return;
     const value = r2(Number(amount || 0));
     const balance = serverDue ?? bookingBalance(payFor);
-    if (value <= 0) {
+    if (!Number.isFinite(value) || value <= 0) {
       toast.error("Enter an amount greater than zero");
       return;
     }
@@ -445,7 +466,7 @@ function BookingsPage() {
                         {b.customerName}
                         {b.customerPhone ? ` · ${b.customerPhone}` : ""} · booked{" "}
                         {posDisplayDate(new Date(b.createdAt))} · collect by{" "}
-                        {new Date(b.dueDate).toDateString()}
+                        {posDisplayDate(b.dueDate)}
                       </p>
                       <p className="mt-1 text-xs text-muted-foreground">
                         {b.lines.map((l) => `${l.qty} × ${l.name}`).join(" · ")}
@@ -895,7 +916,7 @@ function BookingsPage() {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Paid so far</span>
-                  <span className="numeric">{money(payFor.paid)}</span>
+                  <span className="numeric">{money(serverDue === null ? payFor.paid : r2(payFor.total - serverDue))}</span>
                 </div>
                 <div className="flex justify-between font-semibold">
                   <span>Balance due</span>
@@ -905,8 +926,8 @@ function BookingsPage() {
                 </div>
                 <p className="pt-1 text-[11px] text-muted-foreground">
                   {serverDue === null
-                    ? "Checking the balance with the central database…"
-                    : "Balance confirmed by the central database."}
+                    ? payBalanceError || "Checking the balance with the connected database…"
+                    : "Balance confirmed by the connected database."}
                 </p>
               </div>
               <div className="space-y-1">

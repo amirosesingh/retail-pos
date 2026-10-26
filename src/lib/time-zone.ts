@@ -146,3 +146,27 @@ export function reportScanStart(day: string): number {
 export function reportScanEnd(day: string): number {
   return Date.parse(`${day}T00:00:00Z`) + 2 * 86_400_000 - 1;
 }
+
+/** datetime-local values represent the configured business zone, never the viewer zone. */
+export function posDateTimeInput(value: string | number | Date): string {
+  const date = asDate(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: effectiveTimeZone(), year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23", numberingSystem: "latn" }).formatToParts(date);
+  const get = (type: string) => parts.find(part => part.type === type)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
+}
+export function posDateTimeToIso(value: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+  if (!match) throw new Error("Enter a valid business date and time.");
+  const [, year, month, day, hour, minute] = match.map(Number);
+  const target = Date.UTC(year, month - 1, day, hour, minute);
+  let instant = target;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const represented = Date.parse(`${posDateTimeInput(instant)}:00Z`);
+    const delta = target - represented;
+    if (!delta) break;
+    instant += delta;
+  }
+  if (posDateTimeInput(instant) !== value) throw new Error("This date/time does not exist in the configured business time zone. Choose another time.");
+  return new Date(instant).toISOString();
+}

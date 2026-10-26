@@ -905,12 +905,11 @@ function Inventory() {
         </header>
         {showMoney && costReviewOnly && <p role="status" className="rounded-xl border px-4 py-3 text-sm text-muted-foreground">Showing items with missing, zero or invalid cost. Open an item to review it using your existing edit permissions. Zero may be intentional for a free item; no costs are changed automatically.</p>}
 
-        <section aria-label="Inventory summary" className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3 xl:grid-cols-8">
+        <section aria-label="Inventory summary" className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,8rem),1fr))] gap-2 sm:gap-3">
           <InventoryKpi label="Active products" value={metrics.products} />
           <InventoryKpi label="Categories" value={metrics.categories} />
           <InventoryKpi label="On-hand units" value={metrics.units} />
           <InventoryKpi label="Low stock" value={metrics.lowStock} tone="warning" />
-          <InventoryKpi label="Out of stock" value={metrics.outOfStock} />
           <InventoryKpi label="Negative stock" value={metrics.negativeStock} tone="danger" />
           {showStockValue && (
             <>
@@ -1446,6 +1445,7 @@ function InventoryKpi({
   moneyValue?: boolean;
   tone?: "warning" | "danger";
 }) {
+  if (!Number.isFinite(value) || (moneyValue ? Math.abs(value) < 0.005 : value === 0)) return null;
   const color =
     tone === "danger" && value > 0 ? "text-destructive" : tone === "warning" ? "text-warning" : "";
   return (

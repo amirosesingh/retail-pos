@@ -1,3 +1,5 @@
+import { posDateTimeInput, posDateTimeToIso, posDayKey } from "@/lib/time-zone";
+import { formatTime as systemTime } from "@/lib/time-zone";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { DataProgress } from "@/components/shared/DataProgress";
 import { yieldToUi } from "@/lib/commit-progress";
@@ -136,12 +138,8 @@ type PutAwayLine = {
   targetId: string;
 };
 
-const today = () => new Date().toISOString().slice(0, 10);
-const localDateTime = (iso: string) => {
-  const d = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-};
+const today = () => posDayKey();
+const localDateTime = posDateTimeInput;
 const units = (inv: ReceivingInvoice) => inv.lines.reduce((a, l) => a + l.qty, 0);
 
 function Purchasing() {
@@ -382,7 +380,7 @@ function Purchasing() {
     storeId: receivingBranchId,
     storeCode: localReceiving ? hub.code : currentStore.code,
     invoiceDate,
-    entryDate: new Date(entryDate).toISOString(),
+    entryDate: posDateTimeToIso(entryDate),
     totalCost: totals.cost,
     itemCount: lines.length,
     createdAt: new Date().toISOString(),
@@ -1217,7 +1215,7 @@ function Purchasing() {
                   </span>
                   {draftSavedAt && (
                     <span className="ml-2 text-xs text-muted-foreground">
-                      · Draft saved {new Date(draftSavedAt).toLocaleTimeString()}
+                      · Draft saved {systemTime(draftSavedAt)}
                     </span>
                   )}
                 </div>
@@ -1580,7 +1578,7 @@ function Purchasing() {
                     onChange={(e) =>
                       setEditing({
                         ...editing,
-                        entryDate: new Date(e.target.value).toISOString(),
+                        entryDate: posDateTimeToIso(e.target.value),
                       })
                     }
                   />

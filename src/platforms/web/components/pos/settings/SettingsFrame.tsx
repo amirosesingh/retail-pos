@@ -1,3 +1,4 @@
+import { formatTime as systemTime } from "@/lib/time-zone";
 /**
  * Shared shell for every settings page.
  *
@@ -233,7 +234,7 @@ export function SettingsFrame({
       } else {
         localSettingsEdit.current = true;
       }
-      setSavedAt(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
+      setSavedAt(systemTime(new Date(), { hour: "2-digit", minute: "2-digit" }));
       toast.success("Settings saved");
     } catch (e) {
       const message = e instanceof Error ? e.message : "Could not reach the database";

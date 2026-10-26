@@ -221,7 +221,7 @@ export function ReportHeader({
       return isValidElement<{ children?: ReactNode }>(node) ? text(node.props.children) : "";
     };
     const tools = Children.toArray(children).filter(
-      (child) => !/\b(Branch|Cashier|Search|Tender|Method)\b/i.test(text(child)),
+      (child) => !/\b(Branch|Store|Cashier|Search|Tender|Method)\b/i.test(text(child)),
     );
     return tools.length ? <div className="flex flex-wrap items-end gap-3">{tools}</div> : null;
   }

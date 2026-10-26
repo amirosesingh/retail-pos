@@ -1,8 +1,18 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { currencyCode, formatMoney, posCurrency, setPosCurrency } from "../currency";
-import { formatDateTime, posDayKey, posHour, setPosTimeZone } from "../time-zone";
+import { formatDateTime, posDateTimeInput, posDateTimeToIso, posDayKey, posHour, setPosTimeZone } from "../time-zone";
 afterEach(() => { setPosCurrency(); setPosTimeZone(""); });
 describe("configured business currency and time", () => {
+  it("round trips entered booking times through the business zone rather than the device zone", () => {
+    setPosTimeZone("Asia/Singapore");
+    expect(posDateTimeToIso("2026-10-26T09:30")).toBe("2026-10-26T01:30:00.000Z");
+    expect(posDateTimeInput("2026-10-26T01:30:00Z")).toBe("2026-10-26T09:30");
+    setPosTimeZone("Africa/Nairobi");
+    expect(posDateTimeToIso("2026-10-26T09:30")).toBe("2026-10-26T06:30:00.000Z");
+    setPosTimeZone("Europe/London");
+    expect(() => posDateTimeToIso("2026-03-29T01:30")).toThrow("does not exist");
+    expect(() => posDateTimeToIso("2026-02-30T09:30")).toThrow();
+  });
   it("keeps the existing default and formats saved currency without converting values", () => {
     expect(formatMoney(12.5)).toBe("$12.50");
     setPosCurrency("BND");

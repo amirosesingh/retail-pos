@@ -1,3 +1,5 @@
+import { sameBranchId } from "../branch-id";
+import { posDateTimeToIso, formatDate as systemDate } from "../time-zone";
 import { canOpenDrawer } from "@/lib/receipt-printer";
 import { flushTicketDrafts } from "@/lib/session-draft";
 import { redeemedPoints } from "../points-redemption";
@@ -199,6 +201,10 @@ export function useCheckout(deps: CheckoutDeps) {
     }
     // Once closing has started the drawer is being counted — nothing more
     // may be added to this shift.
+    if (!sameBranchId(activeShift.storeId, currentStore.id)) {
+      toast.error("The open shift belongs to another branch. Select the correct branch and refresh its shift before continuing.");
+      return;
+    }
     if (activeShift.state && activeShift.state !== "ACTIVE") {
       toast.error("This shift is being closed — no further transactions can be taken.");
       return;
@@ -235,6 +241,14 @@ export function useCheckout(deps: CheckoutDeps) {
     if (racketMode) {
       if (!bi.racketCustomerOwned && !bi.racketProductId) {
         toast.error("Choose the new racket from the catalogue or scan its barcode.");
+        return;
+      }
+      if (!bi.stringCustomerOwned && !bi.stringProductId) {
+        toast.error("Choose a catalogue string or select Customer brings own string.");
+        return;
+      }
+      if (bi.stringCustomerOwned && !bi.stringType.trim()) {
+        toast.error("Enter the customer-provided string type / brand.");
         return;
       }
       if (bi.labourUnlocked && !bi.labourReason.trim()) {
@@ -335,7 +349,7 @@ export function useCheckout(deps: CheckoutDeps) {
               stencil: bi.stencil,
               overgrip: bi.overgrip,
               droppedOffAt: new Date().toISOString(),
-              promisedAt: bi.promisedAt ? new Date(bi.promisedAt).toISOString() : undefined,
+              promisedAt: bi.promisedAt ? posDateTimeToIso(bi.promisedAt) : undefined,
               notifyWhatsApp: bi.notifyWhatsApp,
             }
           : undefined,
@@ -353,7 +367,7 @@ export function useCheckout(deps: CheckoutDeps) {
     }
     if (canOpenDrawer() && paidNow > 0 && bi.depositMethod === "cash") openCashDrawer();
     printBookingSlip(booking, member, state.settings.payment);
-    if (booking.job) printJobTag(booking);
+    if (booking.job && bi.printRacketTag) printJobTag(booking);
     if (wa.enabled && wa.autoSendOnBooking) {
       void sendBillOnWhatsApp({
         cfg: wa,
@@ -400,7 +414,7 @@ export function useCheckout(deps: CheckoutDeps) {
     bi.setPayTiming("deposit");
     bi.setDueDate(isoDaysFromNow(14));
     toast.success(
-      `Booking ${booking.ref} reserved until ${new Date(booking.dueDate).toDateString()}`,
+      `Booking ${booking.ref} reserved until ${systemDate(booking.dueDate)}`,
     );
   }
 
@@ -441,6 +455,10 @@ export function useCheckout(deps: CheckoutDeps) {
     const wa = state.settings.whatsapp;
     if (!activeShift) {
       toast.error("Open a shift before taking payment");
+      return;
+    }
+    if (!sameBranchId(activeShift.storeId, currentStore.id)) {
+      toast.error("The open shift belongs to another branch. Select the correct branch and refresh its shift before continuing.");
       return;
     }
     if (activeShift.state && activeShift.state !== "ACTIVE") {

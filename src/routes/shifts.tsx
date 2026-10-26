@@ -1,3 +1,4 @@
+import { formatTime as systemTime } from "@/lib/time-zone";
 import { formatDateTime as posDisplayDateTime, posDayKey } from "@/lib/time-zone";
 import { subscribePageDataRefresh } from "@/lib/page-data-refresh";
 import { canOpenDrawer } from "@/lib/receipt-printer";
@@ -484,10 +485,10 @@ function Shifts() {
                       <TableCell className="numeric text-muted-foreground">{e.staffId}</TableCell>
                       <TableCell className="capitalize text-muted-foreground">{e.role}</TableCell>
                       <TableCell className="text-muted-foreground">
-                        {new Date(e.firstSeen).toLocaleTimeString()}
+                        {systemTime(e.firstSeen)}
                       </TableCell>
                       <TableCell className="text-muted-foreground">
-                        {new Date(e.lastSeen).toLocaleTimeString()}
+                        {systemTime(e.lastSeen)}
                       </TableCell>
                     </TableRow>
                   ))}

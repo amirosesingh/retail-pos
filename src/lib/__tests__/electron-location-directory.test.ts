@@ -4,6 +4,7 @@ import {
   resolveLocationDirectory,
   verifyTerminalLocation,
   canSelectLocation,
+  selectedLocation,
   type LocationDirectoryResult,
 } from "@/core/api/location-directory";
 import type { Store } from "@/core/types/pos-types";
@@ -149,4 +150,16 @@ it("keeps staff on the terminal branch while allowing admin branch views", () =>
   expect(canSelectLocation("other", store.id, false)).toBe(false);
   expect(canSelectLocation(store.id, store.id, false)).toBe(true);
   expect(canSelectLocation("other", store.id, true)).toBe(true);
+});
+
+it("keeps registered operations tills branch-pinned even for a user allowed management switching", () => {
+  expect(canSelectLocation("other", store.id, true, store.id)).toBe(false);
+  expect(canSelectLocation(store.id, store.id, true, store.id)).toBe(true);
+  expect(canSelectLocation("other", store.id, true, null)).toBe(true);
+});
+it("never substitutes an unrelated directory entry for an explicit or registered branch", () => {
+  expect(selectedLocation([store], "missing")).toBeUndefined();
+  expect(selectedLocation([store], store.id, "registered-missing")).toBeUndefined();
+  expect(selectedLocation([store], "")).toBe(store);
+  expect(selectedLocation([store], store.id)).toBe(store);
 });

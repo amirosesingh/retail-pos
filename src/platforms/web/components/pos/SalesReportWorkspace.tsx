@@ -1,4 +1,7 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useAuth } from "@/lib/pos-auth";
+import { salesReportScope } from "@/lib/sales-report-scope";
+import { canonicalBranchId } from "@/lib/branch-id";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import { AppShell } from "./AppShell";
 import { ReportHeader, defaultRange } from "./report-kit";
 import { SalesReportContext, useSalesReportFilters } from "@/lib/sales-report-context";
@@ -20,8 +23,24 @@ const Payments = lazy(() =>
 );
 export type SalesReportView = "bills" | "items" | "payments";
 export function SalesReportWorkspace({ initialView = "bills" }: { initialView?: SalesReportView }) {
-  const { state, stores } = usePos();
-  const filters = useSalesReportFilters(defaultRange());
+  const { state, stores, currentStore } = usePos();
+  const { user, terminalStoreId, canSwitchStores } = useAuth();
+  const baseFilters = useSalesReportFilters(defaultRange());
+  // A changed global branch immediately selects that branch before effects run.
+  const [selection, setSelection] = useState({ viewBranch: currentStore.id, storeId: currentStore.id });
+  const requestedStore = selection.viewBranch === currentStore.id ? selection.storeId : currentStore.id;
+  const reportScope = salesReportScope({
+    selectedStoreId: requestedStore, currentStoreId: currentStore.id, terminalStoreId,
+    userStoreId: user?.storeId, canSwitchStores, storeIds: stores.map(store => store.id),
+  });
+  const filters = {
+    ...baseFilters, storeId: reportScope.storeId,
+    setStoreId: (value: SetStateAction<string>) => setSelection({
+      viewBranch: currentStore.id,
+      storeId: typeof value === "function" ? value(reportScope.storeId) : value,
+    }),
+  };
+  const availableStores = stores.filter(store => reportScope.allowedStoreIds.includes(canonicalBranchId(store.id)));
   const [view, setView] = useState<SalesReportView>(initialView);
   useEffect(() => setView(initialView), [initialView]);
   const exportAction = useRef<(() => void) | undefined>(undefined);
@@ -56,11 +75,8 @@ export function SalesReportWorkspace({ initialView = "bills" }: { initialView?: 
       ))}
     </div>
   );
-  const storeIds = useMemo(
-    () => (filters.storeId === "all" ? stores.map((store) => store.id) : [filters.storeId]),
-    [filters.storeId, stores],
-  );
-  const history = useReportSales(state.sales, storeIds, filters.from, filters.to);
+  const storeIds = reportScope.storeIds;
+  const history = useReportSales(state.sales, storeIds, filters.from, filters.to, storeIds.length > 0);
   const cashiers = useMemo(
     () => [...new Set(history.sales.map((sale) => sale.cashier).filter(Boolean))].sort(),
     [history.sales],
@@ -110,8 +126,8 @@ export function SalesReportWorkspace({ initialView = "bills" }: { initialView?: 
                   value={filters.storeId}
                   onChange={filters.setStoreId}
                   options={[
-                    { value: "all", label: "All permitted branches" },
-                    ...stores.map((store) => ({ value: store.id, label: store.name })),
+                    ...(reportScope.canAggregate ? [{ value: "all", label: "All permitted branches" }] : []),
+                    ...availableStores.map((store) => ({ value: canonicalBranchId(store.id), label: store.name })),
                   ]}
                 />
               </div>

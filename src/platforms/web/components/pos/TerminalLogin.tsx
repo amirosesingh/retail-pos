@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useBranding } from "@/lib/branding";
-import { isLocalWebCashierTest, isNative, isTerminalApp } from "@/platform-config/platform";
+import { isNative, isTerminalApp } from "@/platform-config/platform";
 import { EmergencyAccessLink } from "@/components/shared/EmergencyAccessLink";
 import { CashierPinLogin } from "@/platforms/web/components/auth/CashierPinLogin";
 import { isExternalEmail, usernameFromAddress } from "@/lib/internal-domains";
@@ -17,11 +17,10 @@ import { hasNativePasswordManager, offerSaveLogin, requestSavedLogin } from "@/p
 export function TerminalLogin() {
   const { login } = useAuth();
   const brand = useBranding();
-  // Production browsers remain back-office only. Local Vite development also
-  // exposes the terminal tab so the complete cashier approval flow can be
-  // exercised against the configured backend before a device build is made.
+  // Every browser, including localhost preview, is back-office access.
+  // Registration and the PIN staff-list flow belong only to native shells.
   const [terminal, setTerminal] = useState(false);
-  useEffect(() => setTerminal(isTerminalApp() || isLocalWebCashierTest()), []);
+  useEffect(() => setTerminal(isTerminalApp()), []);
   const [error, setError] = useState("");
   // Why the last attempt failed. A connection problem gets a way out of the
   // screen; only a genuine refusal is presented as a wrong password.

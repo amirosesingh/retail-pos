@@ -1,3 +1,5 @@
+import { preserveSessionDrafts } from "./session-draft";
+import { branchReadApplies, latestOpenShiftForBranch, shiftIsOpenForBranch } from "./branch-shift-state";
 import { formatMoney, setPosCurrency } from "./currency";
 import { subscribeDatabaseMode } from "@/core/local-db/db-mode";
 import { subscribeSettingsRefresh } from "./settings-refresh";
@@ -12,7 +14,7 @@ import { uniqueSales, sameRecordId } from "./sale-identity";
 import { staffSettingsTarget } from "./settings-edit-policy";
 import { isCompanyIdentityPath } from "./company-identity";
 import { readBranding, writeBranding } from "./branding";
-import { canSelectLocation, verifyTerminalLocation } from "@/core/api/location-directory";
+import { canSelectLocation, selectedLocation, verifyTerminalLocation } from "@/core/api/location-directory";
 import { documentOrigin } from "./document-origin";
 import { SettingsWriteQueue, settingsWriteGroup } from "./settings-write-queue";
 import {
@@ -91,6 +93,7 @@ import { markStartupStage } from "./startup-timing";
 import {
   activeBranchId,
   bindTerminalBranch,
+  branchTerminalConfig,
   requireBranchId,
   setKnownBranches,
 } from "./active-branch";
@@ -602,7 +605,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     setSettingsSnapshotLoaded(false);
     setReloadTick((v) => v + 1);
   }, []);
-  const { authUserId, terminalUser, user, can, isAdmin, ready: authReady } = useAuth();
+  const { authUserId, terminalUser, user, can, isAdmin, canSwitchStores, ready: authReady } = useAuth();
   const canReadTransfers = transferReadAllowed(can);
   // Nothing is fetched from the cloud until a cashier or supervisor session
   // exists — visitors never receive catalogue, member or sales data.
@@ -972,14 +975,15 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // activation claim still knows the branch, so use it rather than showing a
   // placeholder that reads "No branch yet" and locks the register.
   const currentStore = useMemo(() => {
-    const found = state.stores.find((s) => s.id === state.currentStoreId) ?? state.stores[0];
+    const terminal = branchTerminalConfig();
+    const registeredBranchId = terminal?.deviceUse === "management" ? null : terminal?.locationId;
+    const found = selectedLocation(state.stores, state.currentStoreId, registeredBranchId);
     if (found) return found;
-    const terminal = readTerminalConfig();
-    const boundId = (terminal?.locationId ?? "").trim() || state.currentStoreId.trim();
+    const boundId = (registeredBranchId ?? "").trim() || state.currentStoreId.trim();
     return {
       id: boundId,
       code: "",
-      name: (terminal?.locationName ?? "").trim() || (boundId ? "This branch" : "No branch yet"),
+      name: (registeredBranchId ? terminal?.locationName?.trim() : "") || (boundId ? "This branch" : "No branch yet"),
       address: "",
       phone: "",
     };
@@ -1046,18 +1050,25 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // has not caught up yet — a slow replica must never re-lock the register.
   const justOpenedRef = useRef<{ shift: Shift; at: number } | null>(null);
 
+  const shiftReadSequence = useRef(0);
   const refreshActiveShift = useCallback(async () => {
     // The terminal's registered branch wins, so the read always matches the
     // branch the shift was opened against.
     const storeId =
       activeBranchId(stateRef.current.currentStoreId) ?? stateRef.current.currentStoreId;
+    const request = ++shiftReadSequence.current;
+    const isCurrentRead = () => branchReadApplies(storeId,
+      activeBranchId(stateRef.current.currentStoreId) ?? stateRef.current.currentStoreId,
+      request, shiftReadSequence.current);
     try {
-      const found = await loadActiveShift(storeId);
+      const read = await loadActiveShift(storeId);
+      if (!isCurrentRead()) return;
+      const found = shiftIsOpenForBranch(read, storeId) ? read : null;
       const fresh = justOpenedRef.current;
       // A shift opened on this till stays open until it is closed here. A read
       // that cannot see it yet (replica lag, offline queue) must never re-lock
       // the register, however long ago it was opened.
-      if (!found && fresh && fresh.shift.storeId === storeId) {
+      if (!found && fresh && shiftIsOpenForBranch(fresh.shift, storeId)) {
         setShiftReadError(null);
         setDbShift(fresh.shift);
         return;
@@ -1077,20 +1088,18 @@ export function PosProvider({ children }: { children: ReactNode }) {
         });
       }
     } catch (e) {
+      if (!isCurrentRead()) return;
       // Offline, refused or unreachable: never downgrade a trading till to
       // "locked" — keep the last known open shift and say we are reconnecting.
       setShiftReadError((e as Error).message || "Could not reach the central database");
       setDbShift(
         (prev) =>
-          (prev && prev.storeId === storeId && !prev.closedAt ? prev : null) ??
-          justOpenedRef.current?.shift ??
-          stateRef.current.shifts.find(
-            (s) => s.storeId === storeId && s.status !== "CLOSED" && !s.closedAt,
-          ) ??
-          null,
+          (shiftIsOpenForBranch(prev, storeId) ? prev : null) ??
+          (shiftIsOpenForBranch(justOpenedRef.current?.shift, storeId) ? justOpenedRef.current!.shift : null) ??
+          latestOpenShiftForBranch(stateRef.current.shifts, storeId),
       );
     } finally {
-      setShiftChecked(true);
+      if (isCurrentRead()) setShiftChecked(true);
     }
   }, []);
 
@@ -1509,11 +1518,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
 
   const activeShift = useMemo(() => {
     const branch = activeBranchId(currentStore.id) ?? currentStore.id;
-    if (dbShift && dbShift.storeId === branch && !dbShift.closedAt) return dbShift;
+    if (shiftIsOpenForBranch(dbShift, branch)) return dbShift;
     if (shiftChecked) return null;
-    return (
-      state.shifts.find((s) => s.storeId === branch && s.status !== "CLOSED" && !s.closedAt) ?? null
-    );
+    return latestOpenShiftForBranch(state.shifts, branch);
   }, [dbShift, shiftChecked, state.shifts, currentStore.id]);
 
   // Record the exact moment this user joined the open shift. Runs whenever the
@@ -1561,16 +1568,38 @@ export function PosProvider({ children }: { children: ReactNode }) {
     });
   }, [activeShift, activeShiftAnnouncementBranch]);
 
+  const branchSwitchPending = useRef(false);
   const setCurrentStore = useCallback(
-    (id: string) => {
-      const bound = activeBranchId(null) ?? user?.storeId;
-      if (!canSelectLocation(id, bound, isAdmin)) {
+    async (id: string) => {
+      const terminal = branchTerminalConfig();
+      const registeredBranchId = terminal?.deviceUse === "management" ? null : terminal?.locationId;
+      const bound = registeredBranchId ?? user?.storeId ?? activeBranchId(null);
+      if (!canSelectLocation(id, bound, canSwitchStores, registeredBranchId)) {
         toast.error("This terminal stays on its registered branch.");
         return;
       }
-      setState((s) => ({ ...s, currentStoreId: canonicalBranchId(id) }));
+      const selectedId = canonicalBranchId(id);
+      const location = stateRef.current.stores.find(store => sameBranchId(store.id, selectedId));
+      if (!location || location.active === false || location.archivedAt) {
+        toast.error("That branch is not available. Refresh the location directory first.");
+        return;
+      }
+      if (sameBranchId(stateRef.current.currentStoreId, selectedId)) return;
+      if (branchSwitchPending.current) return;
+      branchSwitchPending.current = true;
+      try {
+        // Preserve an open ticket under its original branch before changing view.
+        await preserveSessionDrafts();
+        if (!registeredBranchId) bindTerminalBranch(selectedId, location.name);
+        shiftReadSequence.current += 1;
+        setShiftChecked(false);
+        setShiftReadError(null);
+        setState((s) => ({ ...s, currentStoreId: selectedId }));
+      } catch (error) {
+        toast.error("Branch was not changed", { description: error instanceof Error ? error.message : "The open ticket could not be safely held." });
+      } finally { branchSwitchPending.current = false; }
     },
-    [isAdmin, user?.storeId],
+    [canSwitchStores, user?.storeId],
   );
 
   const upsertStore = useCallback(async (store: Store) => {
@@ -1654,7 +1683,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
       try {
       const terminal = readTerminalConfig();
       // The branch follows the terminal, never the staff record.
-      const storeId = requireBranchId(stateRef.current.currentStoreId);
+      const requestedBranch = stateRef.current.currentStoreId;
+      const storeId = requireBranchId(requestedBranch);
+      if (requestedBranch && !sameBranchId(requestedBranch, storeId)) {
+        throw new Error("The selected branch does not match this terminal's registered branch. Return to its branch before opening a shift.");
+      }
       const shift: Shift = {
         id: crypto.randomUUID(),
         storeId,
@@ -1842,7 +1875,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
       if (policyError) throw new Error(policyError);
       const counter = snapshot.counter + 1;
       // Never write a bill without a branch — the terminal's branch is authoritative.
-      const branchId = requireBranchId(input.storeId || snapshot.currentStoreId);
+      const requestedBranch = input.storeId || snapshot.currentStoreId;
+      const branchId = requireBranchId(requestedBranch);
+      if (requestedBranch && !sameBranchId(requestedBranch, branchId)) {
+        throw new Error("The selected branch does not match this terminal's registered branch. Return to its branch before completing the sale.");
+      }
       input = { ...input, storeId: branchId };
       const store = snapshot.stores.find((x) => x.id === branchId);
       const exchangeSource = input.exchangeOfReceiptNo

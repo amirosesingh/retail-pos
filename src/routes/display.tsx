@@ -1,3 +1,4 @@
+import { formatDate as storeDate } from "@/lib/time-zone";
 import { formatMoney } from "@/lib/currency";
 import { useEffect, useState } from "react";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
@@ -11,7 +12,7 @@ import {
   type DisplaySnapshot,
 } from "@/lib/customer-display";
 import { qrSvg } from "@/lib/pos-print";
-import { resolvePaymentQr, whatsappLink } from "@/core/types/pos-types";
+import { resolvePaymentQr, whatsappLink, methodLabel } from "@/core/types/pos-types";
 
 export const Route = createFileRoute("/display")({
   head: () => ({
@@ -245,11 +246,12 @@ function CustomerDisplay() {
             )}
             {snap?.mode === "booking" && (
               <div className="mt-3 space-y-1 border-t border-border pt-3">
-                <Row label="Deposit paid" value={money(snap.paid)} />
+                <Row label="Already paid" value={money(snap.paid)} />
+                  {snap.method && <Row label="Payment method" value={methodLabel(snap.method)} />}
                 <Row label="Balance due" value={money(snap.balance)} />
                 <p className="text-xs text-muted-foreground">
                   Booking {snap.reference} · collect by{" "}
-                  {snap.dueDate ? new Date(snap.dueDate).toDateString() : "—"}
+                  {snap.dueDate ? storeDate(snap.dueDate) : "—"}
                 </p>
               </div>
             )}

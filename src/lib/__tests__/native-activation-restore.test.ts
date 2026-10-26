@@ -11,12 +11,26 @@ describe("native activation restore", () => {
   beforeEach(() => {
     vi.resetModules();
     secrets.read.mockReset();
+    secrets.write.mockClear();
     secrets.read.mockResolvedValue(null);
     readDisk = vi.fn(async () => ({ ok: true, config }));
     vi.stubGlobal("window", { localStorage: { getItem: () => null, setItem: vi.fn(), removeItem: vi.fn() },
       dispatchEvent: vi.fn(), pos: { readTerminalConfig: readDisk, writeTerminalConfig: vi.fn(async () => ({ ok: true })) } });
   });
   afterEach(() => vi.unstubAllGlobals());
+  it("does not consume or delete a native registration saved in a browser", async () => {
+    Reflect.deleteProperty(window, "pos");
+    const removeItem = vi.fn();
+    Object.assign(window, { localStorage: { getItem: vi.fn(() => JSON.stringify(config)), removeItem } });
+    secrets.read.mockResolvedValue(config);
+    const terminal = await import("@/core/activation/terminal-tokens");
+    expect(terminal.readTerminalConfig()).toBeNull();
+    await expect(terminal.hydrateTerminalConfig()).resolves.toBeNull();
+    expect(secrets.read).not.toHaveBeenCalled();
+    expect(secrets.write).not.toHaveBeenCalled();
+    expect(removeItem).not.toHaveBeenCalled();
+    expect(readDisk).not.toHaveBeenCalled();
+  });
   it("restores the desktop registration before hydration completes, without internet", async () => {
     const terminal = await import("@/core/activation/terminal-tokens");
     await expect(terminal.hydrateTerminalConfig()).resolves.toMatchObject(config);
@@ -36,6 +50,7 @@ describe("native activation restore", () => {
   });
   it("keeps unreadable Android activation retryable instead of declaring it absent", async () => {
     Reflect.deleteProperty(window, "pos");
+    Object.assign(window, { Capacitor: { isNativePlatform: () => true, getPlatform: () => "android" } });
     secrets.read.mockRejectedValueOnce(new Error("storage not ready"));
     const terminal = await import("@/core/activation/terminal-tokens");
     await expect(terminal.hydrateTerminalConfig()).rejects.toThrow("registration has not been removed");

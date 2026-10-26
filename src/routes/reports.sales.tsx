@@ -1,8 +1,9 @@
+import { HelpTip } from "@/components/ui/help-tip";
 import {useSponsorshipTotals} from "@/lib/use-sponsorship-totals";
 import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
 import { ReportReceiptLink } from "@/platforms/web/components/pos/ReportReceiptLink";
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { ReportFrame as AppShell } from "@/platforms/web/components/pos/report-kit";
 import { SalesReportWorkspace } from "@/platforms/web/components/pos/SalesReportWorkspace";
 import { useSalesReportFilters, useSalesReportContext } from "@/lib/sales-report-context";
@@ -15,7 +16,6 @@ import { paymentsLabel, methodLabel } from "@/core/types/pos-types";
 import { useReportSales } from "@/lib/use-report-sales";
 import {
   ReportHeader,
-  StatCard,
   defaultRange,
   downloadReport,
   inRange,
@@ -142,24 +142,23 @@ export function BillsReport() {
         {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
         <div className="summary-grid grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-          <StatCard
+          <SalesStatCard
             label="Completed bills"
             value={String(rows.filter((sale) => !sale.refunded).length)}
           />
-{showSponsorship && !sponsorship.loading && !sponsorship.error && sponsorship.total > 0 && <><StatCard label="Sales summary including sponsorship" value={sponsorship.loading?"Loading…":sponsorship.error?"Unavailable":money(totals.collected+sponsorship.total)}/><StatCard label="Sponsorship value included" value={sponsorship.error?"Unavailable":money(sponsorship.total)}/></>}
-          <StatCard label="Net sales (ex tax & rounding)" value={money(totals.net)} />
-          <StatCard label="Total collected" value={money(totals.collected)} />
-          <StatCard label="Discounts given" value={money(totals.discount)} />
-          {Math.abs(totals.tax) >= 0.005 && <StatCard label="Tax collected" value={money(totals.tax)} />}
-          {Math.abs(totals.rounding) >= 0.005 && <StatCard label="Rounding adjustment" value={money(totals.rounding)} />}
+{showSponsorship && !sponsorship.loading && !sponsorship.error && sponsorship.total > 0 && <><SalesStatCard label="Sales summary including sponsorship" value={sponsorship.loading?"Loading…":sponsorship.error?"Unavailable":money(totals.collected+sponsorship.total)}/><SalesStatCard label="Sponsorship value included" value={sponsorship.error?"Unavailable":money(sponsorship.total)}/></>}
+          <SalesStatCard label="Net sales (ex tax)" value={money(totals.net)} info={<>
+            <p>Sales after discounts, excluding tax and rounding. Bills marked refunded are excluded.</p>
+            <p className="mt-2">Net sales: {money(totals.net)}</p>
+            {Math.abs(totals.tax) >= 0.005 && <p>Tax: {money(totals.tax)}</p>}
+            <p>Rounding adjustment: {money(totals.rounding)}</p>
+            <p>Total collected: {money(totals.collected)}</p>
+            <p className="mt-2">Negative rounding reduces the amount collected; positive rounding increases it.</p>
+          </>} />
+          <SalesStatCard label="Total collected" value={money(totals.collected)} info="Completed bill totals after discounts, including any tax and final rounding. Refunded bills are excluded." />
+          <SalesStatCard label="Discounts given" value={money(totals.discount)} info="Recorded discounts on completed, non-refunded bills. These are already deducted from Net sales; do not subtract them again. Rounding adjustments are shown separately in the Net sales information." />
+          {Math.abs(totals.tax) >= 0.005 && <SalesStatCard label="Tax collected" value={money(totals.tax)} />}
         </div>
-
-        <p className="text-sm text-muted-foreground" role="note">
-          Net sales includes discounts already deducted and excludes tax and rounding. Bills marked refunded are excluded from these totals.
-          {" "}Net sales {money(totals.net)}{Math.abs(totals.tax) >= 0.005 ? ` + tax ${money(totals.tax)}` : ""}
-          {Math.abs(totals.rounding) >= 0.005 ? ` ${totals.rounding < 0 ? "−" : "+"} rounding ${money(Math.abs(totals.rounding))}` : ""}
-          {" "}= total collected {money(totals.collected)}. Negative rounding reduces the amount collected; positive rounding increases it.
-        </p>
 
         <div className="rounded-2xl border border-border bg-card">
           <Table tableId="routes/reports.sales#1" loading={history.loading}>
@@ -219,4 +218,12 @@ export function BillsReport() {
       </div>
     </AppShell>
   );
+}
+
+/** Sales-only typography; other reports retain their existing appearance. */
+function SalesStatCard({ label, value, info }: { label: string; value: string; info?: ReactNode }) {
+  return <div className="min-w-0 rounded-xl border border-border bg-card p-4 font-sans">
+    <div className="flex items-center justify-between gap-2"><p className="text-sm font-normal text-muted-foreground">{label}</p>{info && <HelpTip label={`${label} information`} text={info} />}</div>
+    <p className="mt-1 break-words text-xl font-medium tabular-nums">{value}</p>
+  </div>;
 }

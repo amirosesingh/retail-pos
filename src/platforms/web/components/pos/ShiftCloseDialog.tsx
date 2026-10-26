@@ -1,3 +1,4 @@
+import { formatTime as systemTime } from "@/lib/time-zone";
 import { closedShiftEffects } from "@/lib/closed-shift-effects";
 import { DisplayElement } from "@/components/shared/DisplayElement";
 import { sameRecordId } from "@/lib/sale-identity";
@@ -321,7 +322,7 @@ export function ShiftCloseDialog({
           <p className="text-xs text-muted-foreground">
             Opened by {activeShift.cashier}
             {activeShift.closingStartedAt
-              ? ` · closing started ${new Date(activeShift.closingStartedAt).toLocaleTimeString()}`
+              ? ` · closing started ${systemTime(activeShift.closingStartedAt)}`
               : ""}
           </p>
 
