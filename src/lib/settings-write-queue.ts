@@ -9,6 +9,7 @@ export function settingsWriteGroup(patch: Record<string, unknown>): string | und
   if (integrations.length && integrations.every(key => ["bookingRules", "serviceTypes", "useServiceTypes", "allowCustomServiceType", "requireBookingCustomer", "baseLaborFee", "racketModels", "stringModels"].includes(key))) return "booking";
   const receipt = keys(patch.receipt);
   if (receipt.length === 1 && receipt[0] === "bookingSlip") return "bookingSlip";
+  if (receipt.length) return "receipt";
 }
 
 /** Serialize edits per scope and retain failed writes for an explicit retry. */
@@ -44,10 +45,12 @@ export class SettingsWriteQueue {
     this.latest.set(key, entry);
   }
   async flush() {
-    for (const [key, entry] of this.entries) {
-      const outcome = await entry.result;
-      if ("error" in outcome) await entry.save();
-      if (this.entries.get(key) === entry) this.entries.delete(key);
+    while (this.entries.size) {
+      for (const [key, entry] of [...this.entries]) {
+        const outcome = await entry.result;
+        if ("error" in outcome) await entry.save();
+        if (this.entries.get(key) === entry) this.entries.delete(key);
+      }
     }
   }
 }

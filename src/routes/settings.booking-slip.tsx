@@ -1,5 +1,6 @@
 import { HelpTip } from "@/components/ui/help-tip";
-import { formatDate as posDisplayDate } from "@/lib/time-zone";
+import { useEffect } from "react";
+import { ReceiptDocumentControls } from "@/platforms/web/components/pos/settings/ReceiptDocumentControls";
 import { createFileRoute } from "@tanstack/react-router";
 import { SettingsTabs } from "@/platforms/web/components/pos/settings/SettingsTabs";
 import {
@@ -33,7 +34,8 @@ export const Route = createFileRoute("/settings/booking-slip")({
   }),
   component: () => (
     <SettingsFrame
-      title="Booking slip wording"
+      title="Booking receipt settings"
+      showPreview
       description="Terms & conditions and the customer signature line printed on racket bookings and pay-later slips."
     >
       <SettingsTabs current="/settings/booking-slip" />
@@ -44,12 +46,14 @@ export const Route = createFileRoute("/settings/booking-slip")({
 });
 
 function BookingSlipForm() {
-  const { effective, setField } = useSettingsCtx();
+  const { effective, setField, setPreviewDocument } = useSettingsCtx();
+  useEffect(() => { setPreviewDocument("booking"); }, [setPreviewDocument]);
   const cfg: BookingSlipSettings = effective.bookingSlip ?? defaultReceiptSettings.bookingSlip;
   const patch = (p: Partial<BookingSlipSettings>) => setField("bookingSlip", { ...cfg, ...p });
 
   return (
     <div className="space-y-4">
+      <ReceiptDocumentControls />
       <div className="space-y-3 rounded-xl border bg-card p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-1">
@@ -122,21 +126,7 @@ function BookingSlipForm() {
         />
       </div>
 
-      <div className="rounded-xl border bg-muted/40 p-4">
-        <p className="mb-2 text-xs font-medium text-muted-foreground">Slip preview</p>
-        <div className="whitespace-pre-wrap font-mono text-[11px] leading-4">
-          {`RACKET JOB CARD
-Racket            Yonex Astrox 88D
-String            BG65 Ti
-Tension           24 / 26 lb
-Ready by          ${posDisplayDate(new Date())}
-`}
-          {cfg.showTerms && cfg.terms.trim() ? `\nTERMS & CONDITIONS\n${cfg.terms.trim()}\n` : ""}
-          {cfg.showSignature
-            ? `\n${cfg.signatureCaption}\n____________________\nCustomer signature\n____________________\nDate`
-            : ""}
-        </div>
-      </div>
+
     </div>
   );
 }

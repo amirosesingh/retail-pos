@@ -7,6 +7,8 @@ describe("scoped settings writes", () => {
     expect(settingsWriteGroup({ integrations: { paymentAccounts: [] } })).toBe("paymentAccounts");
     expect(settingsWriteGroup({ integrations: { serviceTypes: [], bookingRules: {} } })).toBe("booking");
     expect(settingsWriteGroup({ receipt: { bookingSlip: { terms: "terms" } } })).toBe("bookingSlip");
+    expect(settingsWriteGroup({ receipt: { css: ".total {font-weight:bold}" } })).toBe("receipt");
+    expect(settingsWriteGroup({ receipt: { headerLayout: { showCompany: false } } })).toBe("receipt");
     expect(settingsWriteGroup({ whatsapp: { greeting: "hello" } })).toBe("whatsapp");
     expect(settingsWriteGroup({ integrations: { serviceTypes: [], autoArchiveZeroStock: true } })).toBeUndefined();
     expect(settingsWriteGroup({ payment: {}, tax: {} })).toBeUndefined();
@@ -55,6 +57,24 @@ describe("scoped settings writes", () => {
     release();
     await queue.flush();
     expect(writes).toEqual([1, 2]);
+    expect(queue.pending).toBe(false);
+  });
+  it("waits for a replacement on the same scope before reporting all settings saved", async () => {
+    const queue = new SettingsWriteQueue();
+    let releaseFirst!: () => void, releaseSecond!: () => void;
+    const first = new Promise<void>(resolve => { releaseFirst = resolve; });
+    const second = new Promise<void>(resolve => { releaseSecond = resolve; });
+    queue.enqueue("GLOBAL", () => first);
+    let saved = false;
+    const saving = queue.flush().then(() => { saved = true; });
+    queue.enqueue("GLOBAL", () => second);
+    releaseFirst();
+    await first;
+    await Promise.resolve();
+    expect(saved).toBe(false);
+    releaseSecond();
+    await saving;
+    expect(saved).toBe(true);
     expect(queue.pending).toBe(false);
   });
   it("retries a failed write without redirecting it to global settings", async () => {

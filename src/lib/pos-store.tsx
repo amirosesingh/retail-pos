@@ -428,6 +428,7 @@ type Ctx = {
   /** Write directly to the company-wide record, bypassing inherited scopes. */
   updateGlobalSettings: (patch: Partial<AppSettings>) => void;
   saveConfiguredSettings: () => Promise<void>;
+  commitSettingsDraft: (patch: Partial<AppSettings>) => Promise<void>;
   /** Which settings blocks each tier overrides, and which are locked globally. */
   settingsScope: BranchSettingsState;
   /** The persisted global record before cluster/store/terminal overrides are resolved. */
@@ -3457,7 +3458,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     (patch: Partial<AppSettings>) => {
       if (confirmedScopeKey !== JSON.stringify(scopeIdsRef.current)) {
         toast.error("Settings are still loading. Please wait before editing.");
-        return;
+        return false;
       }
       logger.log("settings", "Settings updated", "settings", {
         sections: Object.keys(patch),
@@ -3484,7 +3485,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         const value = getPath(patch, path);
         if (JSON.stringify(value) === JSON.stringify(getPath(effective, path))) continue;
         if (isCompanyIdentityPath(path)) {
-          if (!isAdmin) { toast.error("Only an administrator can change company details shared by all branches."); return; }
+          if (!isAdmin) { toast.error("Only an administrator can change company details shared by all branches."); return false; }
           globalPatch = setPath(globalPatch, path, value);
           hasGlobal = true;
           continue;
@@ -3494,7 +3495,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         let staffTier: SettingTier | undefined;
         if (!isAdmin) {
           try { staffTier = staffSettingsTarget(section?.id ?? null, can("can_access_pos_settings"), ids.BRANCH, !!(section && scope.locks[section.id])); }
-          catch (error) { toast.error((error as Error).message); return; }
+          catch (error) { toast.error((error as Error).message); return false; }
         }
         const tier = staffTier ?? (
           section && !scope.locks[section.id]
@@ -3516,7 +3517,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         }
       }
       if (hasGlobal) writeGlobalSettings(globalPatch as Partial<AppSettings>);
-      if (!byTier.size) return;
+      if (!byTier.size) return true;
       setScope((s) => {
         const overrides = { ...s.overrides };
         for (const [tier, bag] of byTier) {
@@ -3533,10 +3534,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
               toast.error(`Scoped settings not saved: ${(error as Error).message}`);
               throw error;
             }),
-            ["payment", "paymentAccounts", "booking", "whatsapp"].includes(section) ? section : undefined,
+            ["payment", "paymentAccounts", "booking", "whatsapp", "receiptIdentity", "receiptLayout"].includes(section) ? section : undefined,
           );
         }
       }
+      return true;
     },
     [writeGlobalSettings, confirmedScopeKey, isAdmin, can],
   );
@@ -4173,7 +4175,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     settingsScope: scope,
     configuredGlobalSettings: state.settings,
     scopeIds,
-    settingsScopeLoading: confirmedScopeKey !== JSON.stringify(scopeIds),
+    settingsScopeLoading: !settingsSnapshotLoaded || confirmedScopeKey !== JSON.stringify(scopeIds),
     settingsTerminalId,
     setSettingsTerminalId,
     sourceOfPath,
@@ -4224,6 +4226,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
     togglePromotion,
     updateSettings,
     updateGlobalSettings: writeGlobalSettings,
+    commitSettingsDraft: async (patch) => {
+      if (!updateSettings(patch)) throw new Error("Settings could not be applied. Check the selected scope and your settings permissions.");
+      await settingsWrites.current.flush();
+    },
     saveConfiguredSettings,
     createTransfer,
     approveTransfer,
@@ -4249,6 +4255,14 @@ export function usePos() {
  */
 export function usePosOptional() {
   return useContext(PosContext);
+}
+
+/** Settings forms preview a local draft without publishing business settings. */
+export function PosSettingsDraftProvider({ settings, onChange, children }: {
+  settings: AppSettings; onChange: Ctx["updateSettings"]; children: ReactNode;
+}) {
+  const parent = usePos();
+  return <PosContext.Provider value={{ ...parent, state: { ...parent.state, settings }, updateSettings: onChange }}>{children}</PosContext.Provider>;
 }
 
 export const money = (n: number) =>

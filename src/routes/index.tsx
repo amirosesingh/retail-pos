@@ -2250,6 +2250,19 @@ function Register() {
                   {money((l.price - lineUnitDiscount(l)) * l.qty)}
                 </span>
               </div>
+              {!l.credit && !l.foc && l.discount > 0 && (
+                <div className="mt-2 rounded-xl border border-success/25 bg-success/5 p-3" aria-label={`Discount breakdown for ${l.name}`}>
+                  <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-success">
+                    <Percent className="size-4 shrink-0" aria-hidden="true" />
+                    {(l.discountType ?? "amount") === "percent" ? `${l.discount}% discount` : "Item discount"}
+                  </div>
+                  <dl className="grid grid-cols-3 gap-2 text-xs">
+                    <div><dt className="text-muted-foreground">Before</dt><dd className="numeric mt-1 break-words text-sm text-muted-foreground line-through">{money(l.price * l.qty)}</dd></div>
+                    <div><dt className="text-muted-foreground">Discount</dt><dd className="numeric mt-1 break-words text-sm font-medium text-success">−{money(lineDiscountTotal(l))}</dd></div>
+                    <div><dt className="text-muted-foreground">After</dt><dd className="numeric mt-1 break-words text-sm font-semibold">{money((l.price - lineUnitDiscount(l)) * l.qty)}</dd></div>
+                  </dl>
+                </div>
+              )}
               {!l.credit && !l.foc && !discountAllowed && (
                 <div className="mt-2 flex justify-end">
                   <Button
@@ -2366,7 +2379,7 @@ function Register() {
       <div
         className={`flex w-full min-w-0 items-center justify-between gap-3 ${discountAllowed ? "" : "hidden"}`}
       >
-        <span className="min-w-0 flex-1 truncate text-muted-foreground">Bill discount</span>
+        <span className="min-w-0 flex-1 truncate text-base font-semibold text-foreground">Bill discount</span>
         <ActionButton
           fitContent
           layout="inline"
@@ -2385,7 +2398,12 @@ function Register() {
       {promo.promoDiscount > 0 && (
         <Row label="Promotion discount" value={`-${money(promo.promoDiscount)}`} />
       )}
-      <Row label="Discount applied" value={`-${money(totals.discount)}`} />
+      {totals.discount > 0 ? (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5 text-emerald-800 dark:text-emerald-300" aria-label="Total discount applied">
+          <span className="text-sm font-semibold">Discount applied</span>
+          <strong className="numeric text-xl font-bold">−{money(totals.discount)}</strong>
+        </div>
+      ) : <Row label="Discount applied" value={`-${money(totals.discount)}`} />}
       {taxSettings.enabled && !!totals.tax && (
         <Row
           label={

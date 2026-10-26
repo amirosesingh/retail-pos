@@ -125,6 +125,8 @@ export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
       "receipt.paper",
       "receipt.showLogo",
       "receipt.logoLayout",
+      "receipt.headerLayout",
+      "receipt.documentLayouts",
       "receipt.showPoints",
       "receipt.showBarcode",
       "receipt.showTax",

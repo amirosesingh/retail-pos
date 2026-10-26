@@ -16,11 +16,19 @@ const FONT_SCOPES: { key: keyof ReceiptSettings["fonts"]; label: string }[] = [
   { key: "footer", label: "Footer" },
 ];
 
-const FAMILIES: { key: FontFamilyKey; label: string }[] = [
+const FONTS: { key: FontFamilyKey; label: string }[] = [
   { key: "mono", label: "Monospace" },
   { key: "sans", label: "Sans" },
   { key: "serif", label: "Serif" },
+  { key: "arial", label: "Arial · Sans-serif" },
+  { key: "verdana", label: "Verdana · Sans-serif" },
+  { key: "tahoma", label: "Tahoma · Sans-serif" },
+  { key: "georgia", label: "Georgia · Serif" },
+  { key: "times", label: "Times New Roman · Serif" },
+  { key: "courier", label: "Courier New · Monospace" },
 ];
+const familyOf = (font: FontFamilyKey): "mono" | "sans" | "serif" =>
+  ["serif", "georgia", "times"].includes(font) ? "serif" : ["sans", "arial", "verdana", "tahoma"].includes(font) ? "sans" : "mono";
 
 export const Route = createFileRoute("/settings/type")({
   head: () => ({
@@ -54,19 +62,30 @@ function TypographyForm() {
   const { receipt, setFont } = useSettingsCtx();
   return (
     <div className="space-y-3">
+      <p className="text-xs text-muted-foreground">Choose a font for each section. Select Custom… under Size to enter your own font size. Unavailable fonts use the matching family on that device.</p>
+      <p className="text-xs text-muted-foreground">Named fonts apply to Direct and Windows print dialog printing. Thermal text (ESC/POS) uses the printer’s built-in font.</p>
       {FONT_SCOPES.map((scope) => {
         const f = receipt.fonts[scope.key];
         return (
           <div key={scope.key} className="rounded-xl border border-border bg-card p-4">
             <h2 className="text-sm font-semibold">{scope.label}</h2>
-            <div className="mt-3 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="mt-3 grid gap-4 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label className="text-[11px] text-muted-foreground">Family</Label>
                 <ThemedSelect
                   ariaLabel={`${scope.label} font family`}
-                  value={f.family}
+                  value={familyOf(f.family)}
                   onChange={(v) => setFont(scope.key, { family: v as FontFamilyKey })}
-                  options={FAMILIES.map((o) => ({ value: o.key, label: o.label }))}
+                  options={FONTS.filter(o => ["mono", "sans", "serif"].includes(o.key)).map(o => ({ value: o.key, label: o.label }))}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[11px] text-muted-foreground">Font</Label>
+                <ThemedSelect
+                  ariaLabel={`${scope.label} font`}
+                  value={f.family}
+                  onChange={value => setFont(scope.key, { family: value as FontFamilyKey })}
+                  options={FONTS.filter(o => familyOf(o.key) === familyOf(f.family)).map(o => ({ value: o.key, label: o.key === familyOf(o.key) ? `${o.label} default` : o.label.split(" · ")[0] }))}
                 />
               </div>
               <div className="space-y-1">
@@ -76,6 +95,7 @@ function TypographyForm() {
                   value={f.size}
                   min={7}
                   max={40}
+                  step={0.5}
                   onChange={(size) => setFont(scope.key, { size })}
                   options={[8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40].map((value) => ({
                     value,

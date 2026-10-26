@@ -1,4 +1,5 @@
 import { canCrossBranches } from "@/core/api/relay-policy.server";
+import { canRetrieveHistoricalReceipt } from "./receipt-history-permission";
 import { alignVerifiedScopeIds } from "./verified-scope-ids";
 /**
  * Shared handler for the POS sync relay.
@@ -349,17 +350,13 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       );
     if (
       body.oldReceipt &&
-      !(
-        scope.role === "admin" ||
-        scope.roleSlug === "admin" ||
-        scope.permissions.can_process_refund === true
-      )
+      !canRetrieveHistoricalReceipt(scope)
     )
       return Response.json(
         {
           ok: false,
           code: "PERMISSION_DENIED",
-          error: "Refund permission is required to retrieve historical receipts.",
+          error: "Reprint bill or refund permission is required to retrieve historical receipts.",
         },
         { status: 403 },
       );

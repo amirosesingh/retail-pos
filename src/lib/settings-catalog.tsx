@@ -282,7 +282,7 @@ export const SETTINGS_CARDS: SettingsCard[] = [
   },
   {
     id: "receipt-designer",
-    label: "Receipt designer",
+    label: "Bill & booking receipt designer",
     blurb: "Logo placement and size, dynamic fields and scoped receipt CSS.",
     icon: ListPlus,
     category: "receipts",
@@ -476,7 +476,7 @@ export const SETTINGS_CARDS: SettingsCard[] = [
   },
   {
     id: "booking-slip",
-    label: "Booking slip wording",
+    label: "Booking receipt settings",
     blurb: "Terms & conditions and the customer signature line.",
     icon: ReceiptText,
     category: "sales",

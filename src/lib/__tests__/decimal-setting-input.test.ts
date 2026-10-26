@@ -26,3 +26,20 @@ it.each(["1.5", "1,5"])("keeps the separator while typing %s across controlled r
   (state.input.onBlur as (event: object) => void)({}); draw();
   expect(state.input.value).toBe("1.5");
 });
+
+it("allows replacing a bounded custom size without intermediate clamping corrupting the typed text", () => {
+  let value = 10;
+  const draw = () => { state.cursor = 0; renderToStaticMarkup(createElement(DecimalSettingInput, { value, normalizeValue: n => Math.max(7, Math.min(40, Math.round(n * 2) / 2)), onValueChange: next => { value = next; } })); state.effects.splice(0).forEach(effect => effect()); };
+  draw();
+  (state.input.onFocus as (event: object) => void)({});
+  for (const text of ["", "1", "11", "11.", "11.5"]) {
+    (state.input.onChange as (event: { target: { value: string } }) => void)({ target: { value: text } });
+    draw();
+    expect(state.input.value).toBe(text);
+  }
+  expect(value).toBe(11.5);
+  (state.input.onChange as (event: { target: { value: string } }) => void)({ target: { value: "99" } }); draw();
+  expect(value).toBe(40);
+  (state.input.onBlur as (event: object) => void)({}); draw();
+  expect(state.input.value).toBe("40");
+});

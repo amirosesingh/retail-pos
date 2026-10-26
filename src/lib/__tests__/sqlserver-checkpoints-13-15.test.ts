@@ -62,9 +62,9 @@ describe("SQL Server checkpoints 13 through 15", () => {
     });
   });
 
-  it("enforces branch and refund permission before the service-role historical lookup", () => {
+  it("enforces branch and receipt-read permission before the service-role historical lookup", () => {
     const endpoint = readFileSync("src/lib/sync-endpoint.server.ts", "utf8");
-    expect(endpoint).toMatch(/body\.oldReceipt[\s\S]+permissions\.can_process_refund/);
+    expect(endpoint).toContain("!canRetrieveHistoricalReceipt(scope)");
     expect(endpoint).toContain('code: "PERMISSION_DENIED"');
     expect(endpoint).toMatch(/branchId !== scope\.storeId/);
     expect(endpoint).toContain("terminalBound || !mayManageOtherBranches");

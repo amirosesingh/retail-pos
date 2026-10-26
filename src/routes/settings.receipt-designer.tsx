@@ -7,7 +7,6 @@ import {
   useSettingsCtx,
 } from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { PresetNumber } from "@/components/ui/preset-number";
@@ -15,6 +14,10 @@ import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
 import { useAuth } from "@/lib/pos-auth";
 import { RECEIPT_FIELDS, fieldTag, type ReceiptFieldToken } from "@/lib/receipt-template";
 import { receiptCssWarnings } from "@/lib/receipt-css";
+import { normalizeReceiptHeaderLayout } from "@/lib/receipt-header";
+import { Switch } from "@/components/ui/switch";
+import { ReceiptDocumentControls } from "@/platforms/web/components/pos/settings/ReceiptDocumentControls";
+import { RECEIPT_LINE_SECTIONS } from "@/lib/receipt-line-sections";
 import type { ReceiptCustomLine, ReceiptSettings } from "@/core/types/pos-types";
 
 export const Route = createFileRoute("/settings/receipt-designer")({
@@ -79,6 +82,8 @@ function Designer() {
   };
 
   const logoLayout = receipt.logoLayout;
+  const heading = normalizeReceiptHeaderLayout(receipt.headerLayout);
+  const setHeading = (patch: Partial<typeof heading>) => setGlobal({ headerLayout: { ...heading, ...patch } });
   const setLogoLayout = (patch: Partial<ReceiptSettings["logoLayout"]>) =>
     setGlobal({ logoLayout: { ...logoLayout, ...patch } });
 
@@ -91,6 +96,27 @@ function Designer() {
 
   return (
     <div className="space-y-6">
+      <ReceiptDocumentControls />
+      <section className="space-y-4 rounded-lg border border-border bg-card p-4">
+        <h3 className="text-sm font-semibold">Business heading, cluster &amp; store</h3>
+        <p className="text-xs text-muted-foreground">Choose each line separately. The cluster uses the selected store’s assigned cluster name, without adding a store label.</p>
+        {([
+          ["showCompany", "Show company name"],
+          ["showCluster", "Show cluster name"],
+          ["showStore", "Show store name"],
+          ["showStoreCode", "Show store code beside store name"],
+        ] as const).map(([key, label]) => <label key={key} className="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm">
+          {label}<Switch aria-label={label} checked={heading[key]} disabled={key === "showStoreCode" && !heading.showStore} onCheckedChange={value => setHeading({ [key]: value })} />
+        </label>)}
+        {heading.showCluster && <div className="space-y-1">
+          <Label className="text-xs text-muted-foreground">Cluster position</Label>
+          <ThemedSelect ariaLabel="Cluster position" value={heading.clusterPosition} onChange={value => setHeading({ clusterPosition: value as typeof heading.clusterPosition })} options={[
+            { value: "above-company", label: "Above company heading" },
+            { value: "below-company", label: "Below company heading" },
+            { value: "after-store", label: "Below store details" },
+          ]} />
+        </div>}
+      </section>
       {/* ---------------- logo ---------------- */}
       <section className="space-y-2 rounded-lg border border-border bg-card p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -228,9 +254,12 @@ function Designer() {
 
         <div className="space-y-2">
           <Label className="text-xs text-muted-foreground">Extra lines</Label>
-          {lines.map((line) => (
-            <div key={line.id} className="flex items-center gap-2">
-              <Input
+          {lines.map((line, index) => (
+            <div key={line.id} className="space-y-2 rounded-lg border p-3">
+              <Label>Text block {index + 1}</Label>
+              <Textarea
+                rows={3}
+                aria-label={`Extra text block ${index + 1}`}
                 value={line.text}
                 placeholder="Served by {{cashier}} on {{terminal_name}}"
                 onFocus={() => setTarget({ kind: "line", id: line.id })}
@@ -240,6 +269,8 @@ function Designer() {
                   )
                 }
               />
+              <div className="flex items-center gap-2">
+              <ThemedSelect ariaLabel={`Extra text block ${index + 1} section`} className="min-w-0 flex-1" value={line.placement} options={[...RECEIPT_LINE_SECTIONS]} onChange={value => setLines(lines.map(item => item.id === line.id ? { ...item, placement: value as ReceiptCustomLine["placement"] } : item))} />
               <Button
                 variant="ghost"
                 size="icon"
@@ -248,6 +279,7 @@ function Designer() {
               >
                 <Trash2 className="size-4" />
               </Button>
+              </div>
             </div>
           ))}
           <Button
@@ -256,7 +288,7 @@ function Designer() {
             onClick={() =>
               setLines([
                 ...lines,
-                { id: `line-${Date.now()}`, text: "", placement: "footer" as const },
+                { id: crypto.randomUUID(), text: "", placement: "footer" as const },
               ])
             }
           >

@@ -77,6 +77,13 @@ describe("restricted Home and Selling navigation", () => {
 });
 
 describe("restricted Retail workspace", () => {
+  it("shows bill history with reprint permission without granting reporting access", () => {
+    fixture.permissions.can_reprint_bill = true;
+    const html = renderToStaticMarkup(h(TerminalWorkspaceHome));
+    expect(html).toContain("Bill history");
+    expect(html).toContain('href="/receipts"');
+    expect(html).not.toContain("Today's revenue");
+  });
   it("removes hidden card containers so low stock follows shift without empty slots", () => {
     fixture.permissions.can_view_inventory = true;
     const html = renderToStaticMarkup(h(TerminalWorkspaceHome));

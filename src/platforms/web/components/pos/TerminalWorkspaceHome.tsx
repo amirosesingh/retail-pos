@@ -63,7 +63,7 @@ const ACTIONS: WorkspaceAction[] = [
       description: "Find and reprint completed sales.",
       to: "/receipts",
       icon: PackageSearch,
-      permission: "can_view_sales_reports",
+      permission: "can_reprint_bill",
     },
   ];
 

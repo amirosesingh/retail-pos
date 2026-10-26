@@ -1542,3 +1542,11 @@ html[data-native-caption] .pos-dialog-content.notification-panel { top: 44px; ma
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
 }
+
+/* Settings controls stay readable on touch screens without enlarging receipt previews. */
+.settings-workspace .settings-form :where(label, h3) { font-size: 0.9375rem; line-height: 1.5; }
+.settings-workspace .settings-form :where(button) > svg { flex-shrink: 0; }
+.settings-workspace .settings-form :where(button:not([role="switch"])) > svg { min-width: 1rem; min-height: 1rem; }
+@media (max-width: 640px) {
+  .settings-workspace .settings-form :where(input, select, textarea) { font-size: 1rem; }
+}

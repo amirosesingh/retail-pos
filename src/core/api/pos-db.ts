@@ -43,6 +43,7 @@ import { MAX_ROWS, readAllPages, type PagedRead } from "@/lib/paged-read";
 import { canonicalBranchId, canonicalStockMap } from "@/lib/branch-id";
 import { loadCashierToken, readCredentials } from "@/lib/pos-credentials";
 import { normalizeReceiptLogoLayout } from "@/lib/receipt-logo";
+import { normalizeReceiptHeaderLayout } from "@/lib/receipt-header";
 import {
   acknowledgeBrowserBatch,
   persistBrowserBatch,
@@ -54,6 +55,7 @@ import { safeCreatedAt, safeReceiptNo } from "@/lib/report-data-safety";
 import { isLinkedRecordError, usageBlock, type ProductUsage } from "@/lib/product-delete";
 import type {
   AppSettings,
+  ReceiptSettings,
   Member,
   MemberTier,
   PosState,
@@ -463,6 +465,8 @@ export const rowToSettings = (r: Row | null): AppSettings =>
           showLogo: r.show_logo ?? true,
           logo: settingsText((r as { logo_data_url?: unknown }).logo_data_url),
           logoLayout: normalizeReceiptLogoLayout(settingsObject(r.receipt_design).logoLayout),
+          headerLayout: normalizeReceiptHeaderLayout(settingsObject(r.receipt_design).headerLayout),
+          documentLayouts: settingsObject(settingsObject(r.receipt_design).documentLayouts),
           showPoints: r.show_points ?? true,
           showBarcode: r.show_barcode ?? true,
           showTax: r.show_tax_details ?? true,
@@ -528,7 +532,7 @@ const buildSettingsRow = (s: AppSettings): Row => ({
   footer_text: s.receipt.footerText,
   show_logo: s.receipt.showLogo,
   logo_data_url: s.receipt.logo ?? "",
-  receipt_design: { logoLayout: s.receipt.logoLayout },
+  receipt_design: { logoLayout: s.receipt.logoLayout, headerLayout: normalizeReceiptHeaderLayout(s.receipt.headerLayout), documentLayouts: s.receipt.documentLayouts ?? {} },
   show_points: s.receipt.showPoints,
   show_barcode: s.receipt.showBarcode,
   show_tax_details: s.receipt.showTax,
@@ -572,12 +576,23 @@ const SETTINGS_SECTION_COLUMNS: Record<keyof AppSettings, string[]> = {
   integrations: ["integration_settings"],
 };
 
+const RECEIPT_FIELD_COLUMNS: Record<keyof ReceiptSettings, string> = {
+  paper: "paper_size", companyName: "company_name", taxNumber: "tax_number", regNumber: "reg_number",
+  phone: "phone", website: "website", fonts: "fonts", customLines: "custom_lines", qr: "qr",
+  css: "receipt_css", bookingSlip: "booking_slip", headerText: "header_text", footerText: "footer_text",
+  showLogo: "show_logo", logo: "logo_data_url", logoLayout: "receipt_design", headerLayout: "receipt_design",
+  showPoints: "show_points", showBarcode: "show_barcode", showTax: "show_tax_details",
+  documentLayouts: "receipt_design",
+};
+
 /** Physical database fields affected by this UI patch. */
-const settingsPatchRow = (s: AppSettings, patch: Partial<AppSettings>): Row => {
+export const settingsPatchRow = (s: AppSettings, patch: { [K in keyof AppSettings]?: Partial<AppSettings[K]> }): Row => {
   const full = buildSettingsRow(s);
   const keys = new Set(
     Object.keys(patch).flatMap(
-      (section) => SETTINGS_SECTION_COLUMNS[section as keyof AppSettings] ?? [],
+      (section) => section === "receipt"
+        ? Object.keys(patch.receipt ?? {}).flatMap(key => RECEIPT_FIELD_COLUMNS[key as keyof ReceiptSettings] ? [RECEIPT_FIELD_COLUMNS[key as keyof ReceiptSettings]] : [])
+        : SETTINGS_SECTION_COLUMNS[section as keyof AppSettings] ?? [],
     ),
   );
   const row = Object.fromEntries(

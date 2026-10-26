@@ -12,13 +12,11 @@ import {
   listPrinters,
   printBridge,
   rawPulse,
-  setSharedPrinterPrefs,
   setPrinterPrefs,
   type PrinterPrefs,
 } from "@/lib/receipt-printer";
 import { toast } from "sonner";
 import { printTestReceipt } from "@/lib/pos-print";
-import { boundedInputNumber } from "@/lib/number-input";
 
 /** Terminal-local receipt printer choice used for silent printing and the
  *  raw cash-drawer pulse. Only meaningful inside the Windows desktop shell. */
@@ -63,8 +61,7 @@ function PrinterControls({ shared, onSave, paper, onPaperChange }: {
   const desktop = typeof window !== "undefined" && !!printBridge();
 
   useEffect(() => {
-    setSharedPrinterPrefs(shared);
-    setPrefs(getPrinterPrefs());
+    setPrefs(getPrinterPrefs(shared));
   }, [shared]);
   useEffect(() => {
     void listPrinters().then(setPrinters).catch(() => toast.error("Could not load printers. Refresh printers to retry."));
@@ -72,30 +69,15 @@ function PrinterControls({ shared, onSave, paper, onPaperChange }: {
 
   const update = (next: PrinterPrefs) => {
     setPrefs(next);
-    setSharedPrinterPrefs(next);
     onSave(next);
   };
 
   const margins = prefs.margins ?? { top: 4, right: 4, bottom: 4, left: 4 };
-  const widths = prefs.printWidth ?? { "58mm": 48, "80mm": 72 };
   const setMargin = (side: keyof typeof margins, raw: string) => {
     const n = Number(raw);
     update({
       ...prefs,
       margins: { ...margins, [side]: Number.isFinite(n) ? Math.min(30, Math.max(0, n)) : 0 },
-    });
-  };
-
-  const setWidth = (paper: "30mm" | "58mm" | "80mm", raw: string) => {
-    const n = Number(raw);
-    const max = paper === "30mm" ? 30 : paper === "58mm" ? 58 : 80;
-    const min = paper === "30mm" ? 20 : paper === "58mm" ? 30 : 50;
-    update({
-      ...prefs,
-      printWidth: {
-        ...widths,
-        [paper]: Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : widths[paper],
-      },
     });
   };
 
@@ -226,7 +208,7 @@ function PrinterControls({ shared, onSave, paper, onPaperChange }: {
       </div>
 
       <details className="mt-4 rounded-md border border-border p-3">
-        <summary className="cursor-pointer text-sm font-medium">Advanced paper calibration</summary>
+        <summary className="cursor-pointer text-sm font-medium">Paper margins</summary>
         <div className="mt-4 space-y-2">
           <Label className="text-xs text-muted-foreground">Print margins (mm)</Label>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -246,75 +228,12 @@ function PrinterControls({ shared, onSave, paper, onPaperChange }: {
             ))}
           </div>
           <p className="text-[11px] text-muted-foreground">
-            Applies to every printed document — receipts, reports and slips — on all paper sizes.
+            Content uses the selected paper width minus these margins. Applies to receipts, reports and slips.
             Increase the right margin if words are cut off at the edge, then use “Test receipt” to
             check the alignment.
           </p>
         </div>
 
-        <div className="mt-4 space-y-2">
-          <Label className="text-xs text-muted-foreground">Print width (mm)</Label>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <div className="space-y-1">
-              <Label className="text-[11px] text-muted-foreground">30mm roll</Label>
-              <Input
-                aria-label="30mm printable width"
-                type="number"
-                min={20}
-                max={30}
-                step={0.5}
-                value={widths["30mm"] ?? 24}
-                onChange={(e) => setWidth("30mm", e.target.value)}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-[11px] text-muted-foreground">58mm roll</Label>
-              <Input
-                type="number"
-                min={30}
-                max={58}
-                step={0.5}
-                value={widths["58mm"]}
-                onChange={(e) => setWidth("58mm", e.target.value)}
-                className="h-9 text-sm"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-[11px] text-muted-foreground">80mm roll</Label>
-              <Input
-                type="number"
-                min={50}
-                max={80}
-                step={0.5}
-                value={widths["80mm"]}
-                onChange={(e) => setWidth("80mm", e.target.value)}
-                className="h-9 text-sm"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-[11px] text-muted-foreground">Left nudge</Label>
-              <Input
-                type="number"
-                min={0}
-                max={20}
-                step={0.5}
-                value={prefs.printOffset ?? 0}
-                onChange={(e) => {
-                  update({
-                    ...prefs,
-                    printOffset: boundedInputNumber(e.target.value, prefs.printOffset ?? 0, 0, 20),
-                  });
-                }}
-                className="h-9 text-sm"
-              />
-            </div>
-          </div>
-          <p className="text-[11px] text-muted-foreground">
-            A 58mm roll only prints about 48mm of its width, and an 80mm roll about 72mm. If the
-            left side of the slip is cut off, lower the print width; if it prints too far left, add
-            a small nudge. “Test receipt” prints an edge ruler — both ends must be visible.
-          </p>
-        </div>
       </details>
 
       <div className="mt-4 space-y-1">
