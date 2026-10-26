@@ -16,6 +16,7 @@ import { RECEIPT_FIELDS, fieldTag, type ReceiptFieldToken } from "@/lib/receipt-
 import { receiptCssWarnings } from "@/lib/receipt-css";
 import { normalizeReceiptHeaderLayout } from "@/lib/receipt-header";
 import { Switch } from "@/components/ui/switch";
+import { SettingsDisclosure } from "@/platforms/web/components/pos/settings/SettingsDisclosure";
 import { ReceiptDocumentControls } from "@/platforms/web/components/pos/settings/ReceiptDocumentControls";
 import { RECEIPT_LINE_SECTIONS } from "@/lib/receipt-line-sections";
 import type { ReceiptCustomLine, ReceiptSettings } from "@/core/types/pos-types";
@@ -98,8 +99,8 @@ function Designer() {
   return (
     <div className="space-y-6">
       <ReceiptDocumentControls />
-      <section className="space-y-4 rounded-lg border border-border bg-card p-4">
-        <h3 className="text-sm font-semibold">Business heading, cluster &amp; store</h3>
+      <SettingsDisclosure title="Business heading visibility">
+
         <p className="text-xs text-muted-foreground">Choose each line separately. The cluster uses the selected store’s assigned cluster name, without adding a store label.</p>
         {([
           ["showCompany", "Show company name"],
@@ -117,12 +118,12 @@ function Designer() {
             { value: "after-store", label: "Below store details" },
           ]} />
         </div>}
-      </section>
+      </SettingsDisclosure>
       {/* ---------------- logo ---------------- */}
-      <section className="space-y-2 rounded-lg border border-border bg-card p-4">
+      <SettingsDisclosure title="Logo layout">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h3 className="text-sm font-semibold">Logo layout</h3>
+
             <p className="text-xs text-muted-foreground">
               Position and size respond to the selected paper width. The logo image itself is owned
               by Business identity.
@@ -223,13 +224,13 @@ function Designer() {
             />
           </div>
         </div>
-      </section>
+      </SettingsDisclosure>
 
       {/* ---------------- content + fields ---------------- */}
-      <section className="space-y-3 rounded-lg border border-border bg-card p-4">
-        <h3 className="text-sm font-semibold">Content</h3>
+      <SettingsDisclosure title="Shared wording & existing extra lines">
+
         <p className="text-xs text-muted-foreground">
-          Pick a block, then click a field to insert it. Fields resolve from the real transaction
+          These shared defaults remain available for existing templates. Section-specific wording above takes priority. Pick a block, then click a field to insert it. Fields resolve from the real transaction
           when the slip prints — the preview shows sample values.
         </p>
 
@@ -320,11 +321,11 @@ function Designer() {
             </div>
           ))}
         </div>
-      </section>
+      </SettingsDisclosure>
 
       {/* ---------------- styling ---------------- */}
-      <section className="space-y-2 rounded-lg border border-border bg-card p-4">
-        <h3 className="text-sm font-semibold">Styling (CSS)</h3>
+      <SettingsDisclosure title="Advanced receipt CSS">
+
         <p className="text-xs text-muted-foreground">
           Applies to the printed receipt only. Rules are re-scoped to the slip, so nothing here can
           change the rest of the POS, load remote files or alter the paper width.
@@ -344,7 +345,7 @@ function Designer() {
             ))}
           </ul>
         )}
-      </section>
+      </SettingsDisclosure>
     </div>
   );
 }

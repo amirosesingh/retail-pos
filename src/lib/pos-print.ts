@@ -31,6 +31,7 @@ import { defaultReceiptSettings } from "./pos-seed";
 import { normalizeReceiptLogoLayout } from "./receipt-logo";
 import { normalizeReceiptHeaderLayout } from "./receipt-header";
 import { readStoreGroups } from "./store-groups";
+import { safeSectionFont, type ReceiptSectionKey, type ReceiptSectionStyle } from "./receipt-sections";
 import { receiptDocumentLayout, type ReceiptDocumentKind } from "./receipt-documents";
 import { roundingOf, showsRoundingLine } from "@/core/pricing/rounding";
 import qrcode from "qrcode-generator";
@@ -197,6 +198,41 @@ const FONT_STACKS: Record<string, string> = {
   times: `"Times New Roman", Times, serif`,
   courier: `"Courier New", Courier, monospace`,
 };
+
+const sectionSlot = (key: ReceiptSectionKey, html: string) => `<section data-receipt-slot="${key}">${html}</section>`;
+
+/** Only allowlisted styles and escaped text reach the print renderer. */
+function renderDocumentSections(html: string, document: ReceiptDocumentKind) {
+  const config = receiptCfg.documentSections?.[document];
+  const extra = Array.isArray(config?.extra) ? config.extra.slice(0, 100) : [];
+  const seen = new Set<string>();
+  const styled = (body: string, style: ReceiptSectionStyle | undefined, className: string, fallback = receiptCfg.fonts?.body ?? defaultReceiptSettings.fonts.body) => {
+    if (!style?.font) return body;
+    const font = safeSectionFont(style.font, fallback);
+    const css = `font-family:${FONT_STACKS[font.family]};font-size:${font.size}px!important;font-weight:${font.bold ? 700 : 400};letter-spacing:${font.spacing}px;`;
+    return `<div class="${className}"><style>.${className},.${className} :is(div,td,th,p,h1,h2,span){${css}}</style>${body}</div>`;
+  };
+  return html.replace(/<section data-receipt-slot="([a-z]+)">([\s\S]*?)<\/section>/g, (_match, raw: string, body: string) => {
+    const key = raw as ReceiptSectionKey;
+    const style = config?.styles?.[key];
+    if (body.trim() && typeof style?.heading === "string") {
+      const title = esc(renderReceiptText(style.heading, tokenCtx));
+      const old = key === "terms" ? "TERMS &amp; CONDITIONS" : key === "liability" ? "Service &amp; high-tension liability:" : key === "job" ? "RACKET JOB CARD" : null;
+      if (old && body.includes(old)) body = body.replace(old, title);
+      else if (title) body = `<div class="c b">${title}</div>${body}`;
+    }
+    if (body.trim() && key !== "header" && key !== "footer" && typeof style?.text === "string" && style.text.trim()) body += renderReceiptText(style.text, tokenCtx).split(/\r?\n/).map(line => `<div>${esc(line)}</div>`).join("");
+    let result = styled(body, style, `rsec-${document}-${key}`, receiptCfg.fonts?.[key === "header" ? "header" : key === "footer" ? "footer" : "body"] ?? defaultReceiptSettings.fonts.body);
+    if (!seen.has(key)) extra.forEach((item, index) => {
+      if (!item || item.enabled === false || item.after !== key) return;
+      const heading = typeof item.heading === "string" ? esc(renderReceiptText(item.heading, tokenCtx)) : "";
+      const text = typeof item.text === "string" ? renderReceiptText(item.text, tokenCtx).split(/\r?\n/).map(line => `<div>${esc(line)}</div>`).join("") : "";
+      if (heading || text) result += styled(`<hr>${heading ? `<div class="c b">${heading}</div>` : ""}${text}`, item, `rsec-${document}-extra-${index}`);
+    });
+    seen.add(key);
+    return result;
+  });
+}
 
 const fontCss = (f: FontStyleSettings) =>
   `font-family: ${FONT_STACKS[f.family] ?? FONT_STACKS.mono}; font-size: ${f.size}px; font-weight: ${
@@ -367,7 +403,7 @@ const header = (subtitle?: string, document?: ReceiptDocumentKind) => {
   </div>
   ${heading.showStore ? `<div class="c muted receipt-store">${esc(storeName)}</div>` : ""}
   ${clusterAt("after-store")}
-  ${renderReceiptText(receiptCfg.headerText || "", tokenCtx)
+  ${renderReceiptText((document ? receiptCfg.documentSections?.[document]?.styles?.header?.text : undefined) ?? receiptCfg.headerText ?? "", tokenCtx)
     .split("\n")
     .filter(Boolean)
     .map((l) => `<div class="c muted">${esc(l)}</div>`)
@@ -479,21 +515,21 @@ function saleBody(sale: Sale, member: Member | null, kind: ReceiptKind) {
        }`
     : "";
 
-  return `${header(subtitle, "sale")}
+  return renderDocumentSections(`${sectionSlot("header", header(subtitle, "sale"))}
     ${sale.exchangeOfReceiptNo ? `<div class="c b big">EXCHANGE RECEIPT</div>` : ""}
-    <table>
+    ${sectionSlot("details", `<table>
       <tr><td>Receipt</td><td class="r b">${sale.correctedAt ? "Corrected " : ""}${esc(sale.receiptNo)}</td></tr>
       ${sale.exchangeOfReceiptNo ? `<tr><td>Original receipt</td><td class="r b">${esc(sale.exchangeOfReceiptNo)}</td></tr>` : ""}
       <tr><td>Date</td><td class="r">${posDisplayDateTime(new Date(sale.createdAt))}</td></tr>
       <tr><td>Cashier</td><td class="r">${esc(sale.cashier)}</td></tr>
-    </table>
+    </table>`)}
     <hr>
     ${customLines("before-items")}
-    <table>${rows}</table>
+    ${sectionSlot("items", `<table>${rows}</table>`)}
     ${customLines("before-totals")}
-    ${totals}
+    ${sectionSlot("totals", totals)}
     ${customLines("after-totals")}
-    ${memberBlock}
+    ${sectionSlot("footer", `${memberBlock}
     <hr>
     ${
       kind === "gift"
@@ -512,11 +548,11 @@ function saleBody(sale: Sale, member: Member | null, kind: ReceiptKind) {
     <div class="c muted rcpt-foot">${
       kind === "gift"
         ? "Exchangeable within 30 days with this slip"
-        : esc(renderReceiptText(receiptCfg.footerText || "", tokenCtx))
+        : esc(renderReceiptText(receiptCfg.documentSections?.sale?.styles?.footer?.text ?? receiptCfg.footerText ?? "", tokenCtx))
     }</div>
     ${customLines("footer")}
     ${layout.showQr ? qrBlock("footer") : ""}
-    <div class="c muted">${esc(sale.receiptNo)}</div>`;
+    <div class="c muted">${esc(sale.receiptNo)}</div>`)} `, "sale");
 }
 
 export type ShiftReportAccess = {
@@ -706,7 +742,7 @@ export function printSaleReceipt(sale: Sale, member: Member | null, kind: Receip
     `${sale.receiptNo} ${kind}`,
     saleBody(sale, member, kind),
     true,
-    receiptCfg.showBarcode && kind !== "kitchen"
+    receiptCfg.showBarcode && receiptDocumentLayout(receiptCfg.documentLayouts, "sale").showBarcode && kind !== "kitchen"
       ? kind === "gift"
         ? `GIFT-${sale.receiptNo}`
         : sale.receiptNo
@@ -839,17 +875,17 @@ function bookingBody(booking: Booking, member: Member | null, pay: PaymentDetail
         `<tr><td>${posDisplayDate(new Date(p.at))} · ${esc(p.method.toUpperCase())}</td><td class="r">${fmt(p.amount)}</td></tr>`,
     )
     .join("");
-  return `${header("BOOKING / PAY LATER SLIP", document)}
-    <table>
+  return renderDocumentSections(`${sectionSlot("header", header("BOOKING / PAY LATER SLIP", document))}
+    ${sectionSlot("details", `<table>
       <tr><td>Booking</td><td class="r b">${esc(booking.ref)}</td></tr>
       <tr><td>Date</td><td class="r">${posDisplayDateTime(new Date(booking.createdAt))}</td></tr>
       <tr><td>Cashier</td><td class="r">${esc(booking.cashier)}</td></tr>
       ${layout.showCustomer && booking.customerName ? `<tr><td>Customer</td><td class="r">${esc(booking.customerName)}</td></tr>` : ""}
       ${layout.showPhone && booking.customerPhone ? `<tr><td>Phone</td><td class="r">${esc(booking.customerPhone)}</td></tr>` : ""}
-    </table>
-    <hr><table>${rows}</table>
-    ${chargesBlock(booking)}
-    <hr><table>
+    </table>`)}
+    <hr>${sectionSlot("items", `<table>${rows}</table>`)}
+    ${sectionSlot("services", chargesBlock(booking))}
+    ${sectionSlot("totals", `<hr><table>
       <tr><td>Subtotal</td><td class="r">${fmt(booking.subtotal)}</td></tr>
       <tr><td>Discount</td><td class="r">-${fmt(booking.discount)}</td></tr>
       ${
@@ -858,53 +894,55 @@ function bookingBody(booking: Booking, member: Member | null, pay: PaymentDetail
           : ""
       }
       <tr class="b"><td>TOTAL</td><td class="r">${fmt(booking.total)}</td></tr>
-    </table>
-    <hr><div class="muted">Payments received</div>
+    </table>`)}
+    ${sectionSlot("payments", `<hr><div class="muted">Payments received</div>
     <table>${layout.showPaymentHistory ? paidRows || `<tr><td class="muted">None</td><td class="r">${fmt(0)}</td></tr>` : ""}
       <tr><td>Paid to date</td><td class="r">${fmt(booking.paid)}</td></tr>
       <tr class="b big"><td>BALANCE DUE</td><td class="r">${fmt(balance)}</td></tr>
-    </table>
-    ${layout.showDueDate ? `<hr><div class="c b">Collect &amp; settle by ${esc(new Date(booking.dueDate).toDateString())}</div><div class="c muted">Goods are reserved until this date. Bring this slip to collect.</div>` : ""}
+    </table>`)}
+    ${sectionSlot("collection", `${layout.showDueDate ? `<hr><div class="c b">Collect &amp; settle by ${esc(new Date(booking.dueDate).toDateString())}</div><div class="c muted">Goods are reserved until this date. Bring this slip to collect.</div>` : ""}
     ${layout.showNotes && booking.note ? `<div class="c muted">${esc(booking.note)}</div>` : ""}
-    ${jobCardBlock(booking)}
-    ${termsBlock()}
-    ${serviceTermsBlock()}
+    `)}
+    ${sectionSlot("job", jobCardBlock(booking))}
+    ${sectionSlot("terms", termsBlock())}
+    ${sectionSlot("liability", serviceTermsBlock())}
     ${booking.liabilityAccepted ? `<div class="c muted" style="font-size:9px">Accepted at intake by ${esc(booking.customerName || "customer")}</div>` : ""}
-    ${signatureBlock(booking.customerName)}
-    ${transferBlock(pay)}
+    ${sectionSlot("signature", signatureBlock(booking.customerName))}
+    ${sectionSlot("footer", `${transferBlock(pay)}
     ${layout.showCustomer && member ? `<hr><div>Member ${esc(member.code)} · ${esc(member.name)}</div>` : ""}
     <hr>${receiptCfg.showBarcode && layout.showBarcode ? barcodeSvg(booking.ref) : ""}
-    <div class="c muted rcpt-foot">${esc(renderReceiptText(receiptCfg.footerText || "", tokenCtx))}</div>
+    <div class="c muted rcpt-foot">${esc(renderReceiptText(receiptCfg.documentSections?.[document]?.styles?.footer?.text ?? receiptCfg.footerText ?? "", tokenCtx))}</div>
     ${customLines("footer")}
     ${layout.showQr ? qrBlock("footer") : ""}
-    <div class="c muted">${esc(booking.ref)}</div>`;
+    <div class="c muted">${esc(booking.ref)}</div>`)} `, document);
 }
 
 function bookingPaymentBody(booking: Booking, payment: BookingPayment) {
+  const document = booking.job ? "racket-customer" : "booking";
   setTokens({
     ...bookingTokens(booking, null),
     ...dateTokens(payment.at),
     payment_method: payment.method ?? "",
     received: fmt(payment.amount),
   });
-  return `${header("PART PAYMENT RECEIPT")}
-    <table>
+  return renderDocumentSections(`${sectionSlot("header", header("PART PAYMENT RECEIPT", document))}
+    ${sectionSlot("details", `<table>
       <tr><td>Booking</td><td class="r b">${esc(booking.ref)}</td></tr>
       <tr><td>Date</td><td class="r">${posDisplayDateTime(new Date(payment.at))}</td></tr>
       <tr><td>Cashier</td><td class="r">${esc(payment.cashier)}</td></tr>
       ${booking.customerName ? `<tr><td>Customer</td><td class="r">${esc(booking.customerName)}</td></tr>` : ""}
-    </table>
-    <hr><table>
+    </table>`)}
+    ${sectionSlot("payments", `<hr><table>
       <tr class="b big"><td>PAID NOW (${esc(payment.method.toUpperCase())})</td><td class="r">${fmt(payment.amount)}</td></tr>
       <tr><td>Booking total</td><td class="r">${fmt(booking.total)}</td></tr>
       <tr><td>Paid to date</td><td class="r">${fmt(booking.paid)}</td></tr>
       <tr class="b"><td>BALANCE DUE</td><td class="r">${fmt(bookingBalance(booking))}</td></tr>
-    </table>
-    <hr><div class="c">Collect &amp; settle by ${esc(new Date(booking.dueDate).toDateString())}</div>
-    ${receiptCfg.bookingSlip?.termsOnPayment ? termsBlock() : ""}
-    ${booking.job ? serviceTermsBlock() : ""}
-    <hr><div class="c muted rcpt-foot">${esc(renderReceiptText(receiptCfg.footerText || "", tokenCtx))}</div>
-    <div class="c muted">${esc(booking.ref)}</div>`;
+    </table>`)}
+    ${sectionSlot("collection", `<hr><div class="c">Collect &amp; settle by ${esc(new Date(booking.dueDate).toDateString())}</div>`)}
+    ${sectionSlot("terms", receiptCfg.bookingSlip?.termsOnPayment ? termsBlock() : "")}
+    ${sectionSlot("liability", booking.job ? serviceTermsBlock() : "")}
+    ${sectionSlot("footer", `<hr><div class="c muted rcpt-foot">${esc(renderReceiptText(receiptCfg.documentSections?.[document]?.styles?.footer?.text ?? receiptCfg.footerText ?? "", tokenCtx))}</div>
+    <div class="c muted">${esc(booking.ref)}</div>`)} `, document);
 }
 
 export function printBookingSlip(
@@ -916,7 +954,7 @@ export function printBookingSlip(
     `${booking.ref} booking`,
     bookingBody(booking, member, pay),
     true,
-    receiptCfg.showBarcode ? booking.ref : undefined,
+    receiptCfg.showBarcode && receiptDocumentLayout(receiptCfg.documentLayouts, booking.job ? "racket-customer" : "booking").showBarcode ? booking.ref : undefined,
   );
 }
 
@@ -992,11 +1030,12 @@ function jobCardRows(booking: Booking) {
 
 /** Small tag tied to the racket itself while it waits on the rack. */
 function jobTagBody(booking: Booking) {
+  setTokens(bookingTokens(booking, null));
   const j = booking.job;
   const layout = receiptDocumentLayout(receiptCfg.documentLayouts, "racket-staff");
   const unit = j?.tensionUnit ?? "lb";
-  const body = `${header("RACKET JOB TAG", "racket-staff")}
-    <table>
+  const body = `${sectionSlot("header", header("RACKET JOB TAG", "racket-staff"))}
+    ${sectionSlot("job", `<table>
       <tr><td>Job</td><td class="r b">${esc(booking.ref)}</td></tr>
       ${layout.showCustomer ? `<tr><td>Customer</td><td class="r b">${esc(booking.customerName)}</td></tr>` : ""}
       ${layout.showPhone && booking.customerPhone ? `<tr><td>Phone</td><td class="r">${esc(booking.customerPhone)}</td></tr>` : ""}
@@ -1012,11 +1051,13 @@ function jobTagBody(booking: Booking) {
     </table>
     ${layout.showNotes && j?.grommetNotes ? `<div class="muted">${esc(j.grommetNotes)}</div>` : ""}
     ${layout.showNotes && j?.jobNotes ? `<div class="muted">${esc(j.jobNotes)}</div>` : ""}
-    <hr>${layout.showBarcode ? barcodeSvg(booking.ref) : ""}
+    `)}
+    ${sectionSlot("footer", `${(receiptCfg.documentSections?.["racket-staff"]?.styles?.footer?.text ?? "").split(/\r?\n/).map(line => `<div>${esc(renderReceiptText(line, tokenCtx))}</div>`).join("")}<hr>${layout.showBarcode ? barcodeSvg(booking.ref) : ""}
     <div class="c">${layout.showQr ? qrSvg(booking.ref, 96) : ""}</div>
-    ${serviceTermsBlock()}
+    `)}
+    ${sectionSlot("liability", serviceTermsBlock())}
     <div class="c muted">${esc(booking.ref)}</div>`;
-  return body;
+  return renderDocumentSections(body, "racket-staff");
 }
 
 export function jobTagPreview(booking: Booking) { return shell(booking.ref, jobTagBody(booking), false); }

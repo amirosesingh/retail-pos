@@ -901,6 +901,7 @@ export type ReceiptSettings = {
   paper: PaperSize;
   headerLayout?: import("@/lib/receipt-header").ReceiptHeaderLayout;
   documentLayouts?: import("@/lib/receipt-documents").ReceiptDocumentLayouts;
+  documentSections?: import("@/lib/receipt-sections").ReceiptDocumentSections;
   /** business identity printed at the top of every slip */
   companyName: string;
   taxNumber: string;

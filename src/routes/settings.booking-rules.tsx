@@ -17,9 +17,8 @@ import { Input } from "@/components/ui/input";
 import { DecimalSettingInput } from "@/components/ui/decimal-setting-input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
 import { usePos } from "@/lib/pos-store";
-import { bookingRulesOf, DEFAULT_SERVICE_TERMS, type BookingRules } from "@/core/types/pos-types";
+import { bookingRulesOf, type BookingRules } from "@/core/types/pos-types";
 
 export const Route = createFileRoute("/settings/booking-rules")({
   head: () => ({
@@ -431,26 +430,7 @@ function BookingRulesForm() {
         blurb="Shown at racket intake and printed on job tags and settlement receipts."
         summary={`Acceptance ${rules.requireLiabilityAccept ? "required" : "optional"} · Warning above ${rules.highTensionThreshold} ${rules.defaultTensionUnit}`}
       >
-        <div className="space-y-1">
-          <Label className="text-xs text-muted-foreground">
-            Service terms &amp; high-tension liability disclaimer
-          </Label>
-          <Textarea
-            rows={5}
-            value={rules.serviceTerms}
-            onChange={(e) => patch({ serviceTerms: e.target.value })}
-            placeholder={DEFAULT_SERVICE_TERMS}
-          />
-          <div className="flex justify-end">
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => patch({ serviceTerms: DEFAULT_SERVICE_TERMS })}
-            >
-              Restore default wording
-            </Button>
-          </div>
-        </div>
+        <p className="text-sm text-muted-foreground">Edit the printed liability wording in <Link to="/settings/booking-slip" className="font-semibold text-primary underline">Booking receipt settings → Service / liability terms</Link>.</p>
         <Row
           label="Require the liability agreement at intake"
           hint="A racket job cannot be saved until the customer has accepted the terms."

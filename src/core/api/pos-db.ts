@@ -467,6 +467,7 @@ export const rowToSettings = (r: Row | null): AppSettings =>
           logoLayout: normalizeReceiptLogoLayout(settingsObject(r.receipt_design).logoLayout),
           headerLayout: normalizeReceiptHeaderLayout(settingsObject(r.receipt_design).headerLayout),
           documentLayouts: settingsObject(settingsObject(r.receipt_design).documentLayouts),
+          documentSections: settingsObject(settingsObject(r.receipt_design).documentSections),
           showPoints: r.show_points ?? true,
           showBarcode: r.show_barcode ?? true,
           showTax: r.show_tax_details ?? true,
@@ -532,7 +533,7 @@ const buildSettingsRow = (s: AppSettings): Row => ({
   footer_text: s.receipt.footerText,
   show_logo: s.receipt.showLogo,
   logo_data_url: s.receipt.logo ?? "",
-  receipt_design: { logoLayout: s.receipt.logoLayout, headerLayout: normalizeReceiptHeaderLayout(s.receipt.headerLayout), documentLayouts: s.receipt.documentLayouts ?? {} },
+  receipt_design: { logoLayout: s.receipt.logoLayout, headerLayout: normalizeReceiptHeaderLayout(s.receipt.headerLayout), documentLayouts: s.receipt.documentLayouts ?? {}, documentSections: s.receipt.documentSections ?? {} },
   show_points: s.receipt.showPoints,
   show_barcode: s.receipt.showBarcode,
   show_tax_details: s.receipt.showTax,
@@ -582,7 +583,7 @@ const RECEIPT_FIELD_COLUMNS: Record<keyof ReceiptSettings, string> = {
   css: "receipt_css", bookingSlip: "booking_slip", headerText: "header_text", footerText: "footer_text",
   showLogo: "show_logo", logo: "logo_data_url", logoLayout: "receipt_design", headerLayout: "receipt_design",
   showPoints: "show_points", showBarcode: "show_barcode", showTax: "show_tax_details",
-  documentLayouts: "receipt_design",
+  documentLayouts: "receipt_design", documentSections: "receipt_design",
 };
 
 /** Physical database fields affected by this UI patch. */

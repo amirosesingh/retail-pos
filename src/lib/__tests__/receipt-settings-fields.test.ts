@@ -11,12 +11,12 @@ describe("receipt field persistence", () => {
     const receipt = { ...defaultSettings.receipt, headerLayout: normalizeReceiptHeaderLayout({ showCompany: false }) };
     const row = settingsPatchRow({ ...defaultSettings, receipt }, { receipt: { [field]: receipt[field] } });
     expect(Object.keys(row).sort()).toEqual(["id", column, "updated_at"].sort());
-    if (column === "receipt_design") expect(row.receipt_design).toEqual({ logoLayout: receipt.logoLayout, headerLayout: receipt.headerLayout, documentLayouts: {} });
+    if (column === "receipt_design") expect(row.receipt_design).toEqual({ logoLayout: receipt.logoLayout, headerLayout: receipt.headerLayout, documentLayouts: {}, documentSections: {} });
   });
   it("persists document switches with the heading without writing payment or font settings", () => {
     const receipt = { ...defaultSettings.receipt, headerLayout: normalizeReceiptHeaderLayout({ showCompany: false }), documentLayouts: { booking: { showPhone: false }, "racket-staff": { showRacket: false } } };
     const row = settingsPatchRow({ ...defaultSettings, receipt }, { receipt: { documentLayouts: receipt.documentLayouts } });
-    expect(row.receipt_design).toEqual({ logoLayout: receipt.logoLayout, headerLayout: receipt.headerLayout, documentLayouts: receipt.documentLayouts });
+    expect(row.receipt_design).toEqual({ logoLayout: receipt.logoLayout, headerLayout: receipt.headerLayout, documentLayouts: receipt.documentLayouts, documentSections: {} });
     expect(row).not.toHaveProperty("fonts");
     expect(row).not.toHaveProperty("payment_details");
   });

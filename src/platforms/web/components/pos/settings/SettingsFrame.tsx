@@ -37,9 +37,10 @@ import {
   bookingSlipPreview,
   jobTagPreview,
   setPreviewReceiptCfg,
+  setServiceTerms,
   setPrintSettings,
 } from "@/lib/pos-print";
-import { defaultPaymentQr } from "@/core/types/pos-types";
+import { defaultPaymentQr, bookingRulesOf } from "@/core/types/pos-types";
 import type {
   FontStyleSettings,
   ReceiptOverride,
@@ -365,6 +366,7 @@ export function SettingsFrame({
   const previewHtml = useMemo(() => {
     setSharedPrinterPrefs(state.settings.integrations.receiptPrinter);
     setPreviewReceiptCfg(effective, tax);
+    setServiceTerms(bookingRulesOf(state.settings.integrations.bookingRules).serviceTerms);
     try {
     const saleHtml = saleReceiptPreview(
       sample,
@@ -381,14 +383,17 @@ export function SettingsFrame({
       },
       "sale",
     );
-    const booking: Booking = { ...sample, ref: "BK-000001", paid: 10, payments: [], dueDate: "2026-11-01", memberId: null, customerName: "Sample customer", customerPhone: "555-0142", note: "Customer collection note", status: "active", ...(previewDocument.startsWith("racket") ? { job: { racketModel: "Sample racket", stringType: "Sample string", tensionMain: 24, tensionCross: 25, tensionUnit: "lb" as const, jobNotes: "Sample stringing instructions", promisedAt: "2026-11-01T10:00:00Z" }, jobStatus: "received" as const } : {}) };
+    const bookingSubtotal = sample.subtotal + (previewDocument.startsWith("racket") ? 8 : 0);
+    const bookingTax = computeTax(bookingSubtotal, tax);
+    const booking: Booking = { ...sample, ref: "BK-000001", subtotal: bookingSubtotal, total: bookingTax.total, tax: bookingTax.tax, paid: 10, payments: [], dueDate: "2026-11-01", memberId: null, customerName: "Sample customer", customerPhone: "555-0142", note: "Customer collection note", status: "active", ...(previewDocument.startsWith("racket") ? { serviceName: "Racket restringing", serviceFee: 8, job: { racketModel: "Sample racket", stringType: "Sample string", tensionMain: 24, tensionCross: 25, tensionUnit: "lb" as const, jobNotes: "Sample stringing instructions", promisedAt: "2026-11-01T10:00:00Z" }, jobStatus: "received" as const } : {}) };
     const html = previewDocument === "sale" ? saleHtml : previewDocument === "racket-staff" ? jobTagPreview(booking) : bookingSlipPreview(booking, null, null);
     return html;
     } finally {
-      setPrintSettings(persistedState.settings.receipt, persistedState.settings.tax);
+      setPrintSettings(persistedState.settings.receipt, persistedState.settings.tax, persistedState.settings.integrations.rounding);
+      setServiceTerms(bookingRulesOf(persistedState.settings.integrations.bookingRules).serviceTerms);
       setSharedPrinterPrefs(persistedState.settings.integrations.receiptPrinter);
     }
-  }, [effective, tax, sample, previewDocument, state.settings.integrations.receiptPrinter, persistedState.settings]);
+  }, [effective, tax, sample, previewDocument, state.settings.integrations.receiptPrinter, state.settings.integrations.bookingRules, persistedState.settings]);
 
   if (!canSettings) {
     const denied = (
