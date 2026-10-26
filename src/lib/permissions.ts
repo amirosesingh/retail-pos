@@ -251,7 +251,7 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   can_collect_booking: "Collect bookings & take part payments",
   can_cancel_booking: "Cancel or delete a booking / job",
   can_view_inventory: "View inventory",
-  can_view_cost_margin: "View purchase costs, stock value & profit margins",
+  can_view_cost_margin: "View purchase costs, total unit costs, stock values & profit margins",
   can_edit_product_price: "Edit product pricing",
   can_add_new_product: "Add new products",
   can_edit_product_details: "Edit product details",
