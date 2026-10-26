@@ -218,11 +218,13 @@ export const verifyBusinessAuthorization = createServerFn({ method: "POST" })
       const who = await assertCaller(data);
       const storeId = callerStore(who, data.storeId);
       const { loadRuleRows } = await import("./authorization.server");
-      const { resolveRules, authorizationBinding, canBypassAuthorization } =
+      const { resolveRules, authorizationBinding, canBypassAuthorization, requiresAuthorizationAmount } =
         await import("./authorization");
       const { verifyOverrideGrant } = await import("./pos-rules.server");
       const rule = resolveRules(await loadRuleRows(storeId), storeId)[data.actionKey];
       if (!rule?.isEnabled || rule.mode === "none") return { ok: true as const, required: false };
+      if (requiresAuthorizationAmount(data.actionKey) && data.requestedAmount == null)
+        return { ok: false as const, error: "The value being authorized is required" };
       if (
         canBypassAuthorization(
           rule,
@@ -240,6 +242,9 @@ export const verifyBusinessAuthorization = createServerFn({ method: "POST" })
       if (!grant) {
         return { ok: false as const, error: "A valid authorization grant is required" };
       }
+      if (data.requestedAmount != null && (grant.approvedAmount == null ||
+          !Number.isFinite(grant.approvedAmount) || grant.approvedAmount < 0))
+        return { ok: false as const, error: "An approval covering the requested value is required" };
       if (
         grant.approvedAmount !== undefined &&
         grant.approvedAmount !== null &&

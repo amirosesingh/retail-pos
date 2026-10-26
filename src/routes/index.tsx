@@ -124,7 +124,7 @@ import { NO_SALE_REASON_MAX, NO_SALE_REASON_MIN, recordNoSale } from "@/lib/draw
 import { logger } from "@/lib/audit-log";
 import { DiscountPad } from "@/platforms/web/components/pos/DiscountPad";
 import { useManagerGate, type GateRequest } from "@/lib/manager-gate";
-import { authorizationBinding, ticketDiscountApprovalPercent, markTicketDiscountApprovals, ticketDiscounts, type TicketDiscount, type AuthPayload } from "@/lib/authorization";
+import { authorizationBinding, approvalForAction, ticketDiscountApprovalPercent, markTicketDiscountApprovals, ticketDiscounts, type TicketDiscount, type AuthPayload } from "@/lib/authorization";
 import { lineDiscountTotal } from "@/core/types/pos-types";
 import { usePosRules } from "@/lib/pos-rules.tsx";
 import { parsePositiveAmount } from "@/core/pricing/amount";
@@ -335,7 +335,7 @@ function Register() {
         : {}),
     };
     const verifyGrant = async (grantToken: string | null) => {
-      const resumedGrant = appliedApprovalRef.current;
+      const resumedGrant = approvalForAction(request.action, appliedApprovalRef.current);
       const requestedAmount =
         request.requestedAmount ??
         snapshot?.requestedValue ??
