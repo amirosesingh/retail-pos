@@ -1,23 +1,41 @@
 # What each shell can do
 
-One codebase runs in three places. This table is the reference to check before
+One codebase has web, mobile and Windows shells (Android and iOS mobile targets).
+This table is the reference to check before
 shipping anything that touches hardware, storage or updates, so a change does
 not silently land on one platform only.
 
-| Capability | Browser | Android phone | Windows till |
-| --- | --- | --- | --- |
-| Sells offline against a local database | no | no | yes |
-| Prints to attached hardware, opens the drawer | no | no | yes |
-| Camera barcode scanning | yes | yes | yes (when a webcam is attached) |
-| Staff PIN sign-in | no | yes | yes |
-| Terminal activation and emergency access | no | yes | yes |
-| Secrets sealed by the operating system | no | Keystore | DPAPI |
-| Receives new app code without reinstalling | yes (page reload) | yes (bundle update) | no — installer only |
-| Window chrome (title bar, kiosk) | no | no | yes |
+Reconciled 2026-10-27, source `1af373f5`. Read [project memory](PROJECT_MEMORY.md)
+and [current tasks](TASK_TRACKER.md). Entries describe source capabilities, not
+certification of every phone, OS, printer or installed build. Membership is on hold.
+
+| Capability | Browser | Android | iOS | Windows till |
+| --- | --- | --- | --- | --- |
+| Sells offline against a local database | no | no | no | yes, with ready configured SQL Server |
+| Direct attached thermal printing / drawer bridge | no | no | no | yes; physical acceptance required |
+| Camera barcode scanning | yes | yes | mobile capability; device acceptance required | yes, with a webcam |
+| Staff PIN sign-in | no | yes | mobile capability; device acceptance required | yes |
+| Native terminal activation / recovery | no | yes | mobile capability; device acceptance required | yes |
+| Native sealed secrets | no native vault | Keystore | native secure storage | DPAPI |
+| New app code without reinstalling | page reload | compatible signed bundle update | compatible signed OTA; see iOS runbook | no, installer required |
+| Native window chrome | no | no | no | yes |
 
 Source of truth in code: `src/platform-config/features.ts`.
+Platform build aliases select native versus empty web implementations; a stub
+in the web platform folder is not proof the native capability is absent.
+See [iOS OTA](ios-ota.md) for signing/build compatibility and physical limits.
+
+Operations terminals on either native platform remain branch-locked for all roles.
+Management admission never grants all branches. Windows management replication
+exists, but its offline report IPC integration is currently blocked (REP-02).
+Do not equate a complete replica, a SQL-ready state and authorized user access.
 
 ## POS operating parity audit
+
+The rows below preserve historical automated/source evidence. Their original
+"Verified" labels do not certify source `1af373f5` against the new eight-case
+terminal matrix or the current AUTH/FIN/SET findings. Use TASK_TRACKER.md for
+current status and record revision/environment/commands before a new pass claim.
 
 This is the implementation checklist for workflows that must survive a Windows
 till losing its connection. “Offline” means Electron with its configured local

@@ -37,3 +37,109 @@ that device builds require. The guard lives in
 
 - Preserve the existing iOS signing/OTA private key in `.ota-private/manifest-ed25519.pem` and any operator-supplied signing credentials. Never delete or rotate them during checkout, build, installer, or version cleanup.
 - Keep private keys ignored by Git and out of commits, logs, PRs, and published artifacts. Verify an existing key matches `ios-ota.public.json` before using it; do not generate a replacement without an explicit owner request.
+
+## Required project memory and session startup
+
+- Before development, read [PROJECT_MEMORY.md](docs/PROJECT_MEMORY.md) and
+  [TASK_TRACKER.md](docs/TASK_TRACKER.md), including the active approval boundary,
+  unresolved findings, on-hold work and latest owner decisions. Follow their
+  links to the relevant technical references; historical audit reports are
+  evidence for their recorded revision, not proof of the current system.
+- Verify the absolute Git root, branch, HEAD, version metadata and working-tree
+  changes before editing. This repository has multiple worktrees, including
+  older release checkouts. Never select a checkout by its folder name or version
+  label alone, reset someone else's work, or copy older source over newer work.
+- Reuse existing instructions and technical documents. Preserve applicable
+  rules and explain any targeted correction. Do not create competing trackers.
+- New owner instructions and corrections must be recorded in the tracker before
+  dependent implementation, with acceptance criteria, affected scopes and any
+  superseded decision. Update approved decisions in project memory. If authority
+  or intent is unclear, retain a pending clarification and continue independent
+  authorized work; never silently invent a business rule.
+- Preserve every unfinished task across interruptions, pauses, handoffs and
+  context compaction. Maintain a current next step and evidence. Report task
+  starts, entry into verification, completions and blockers with one concise
+  status update per meaningful transition (completed / working / pending).
+  Avoid repeating unchanged status. Do not discard tasks because a newer request
+  arrives unless the owner cancels or supersedes them.
+- Keep implemented work separate from verified work. Record revision, test
+  command/result, environment and unverified behavior. A visible page, enabled
+  checkbox, source assertion, build, merged PR or published installer alone is
+  not end-to-end verification. Track database application, merge, deployment
+  and publication separately.
+
+## Controlling POS architecture: branch-locked normal terminals
+
+- A normal/Operations Electron or mobile POS terminal is registered to one
+  specific branch. Every user, including an administrator or manager with wider
+  account permissions, remains restricted to that terminal's branch. There is
+  no ordinary branch-switching operation on that terminal.
+- Enforce that restriction on backend reads/writes, direct APIs/RPCs, Electron
+  IPC, local SQL/offline operations, caches and synchronization. Hiding a
+  selector is insufficient. Resolve branch identity from verified registration
+  and session state, never an untrusted renderer/request field. Omitting a
+  request token must not discard a persisted terminal binding.
+- Management device type, registered branch, account-authorized scope, role,
+  action permission and selected view are distinct. Management terminals may
+  select only authorized branches; their type or a NULL branch never grants all
+  data. Do not apply an Operations lock to an authorized management device.
+- Web management uses browser authentication, not native terminal registration.
+  Inspect the existing temporary registration, pairing and activation flows for
+  both Electron and mobile, including Operations versus Management, before
+  proposing related authorization changes. Do not duplicate or retire them
+  merely because their purpose is unclear.
+- Warehouse permissions and picking remain subordinate to a normal terminal's
+  branch. Another branch's protected warehouses or inventory require an
+  explicitly approved cross-branch workflow. Do not infer an independent
+  warehouse ACL or new access entitlement from the location hierarchy.
+- Shared physical SQL storage grants no shared access. Management replication
+  stores only its configured authorized scope. Preserve original business,
+  branch, warehouse, terminal and user attribution where applicable through
+  writes, reconnects, retries and synchronization; never relabel pending work.
+- Branch reassignment requires a separate authorized administrative process,
+  audit logging and safe handling of pending/failed/conflicted transactions.
+  Ordinary session adoption or renderer activation mirroring is not reassignment.
+- Preserve cluster catalogue boundaries and approved transfer rules. A broader
+  management view does not authorize merging catalogues or stock ownership.
+
+## Controlled audit and implementation
+
+- Membership is **ON HOLD**. Do not redesign, activate or modify it. A confirmed
+  critical shared dependency requires the owner's approval before any Membership
+  change; do not treat general stabilization approval as that exception.
+- The current owner-approved Batch 0 is documentation only. Application code,
+  tests, migrations and database data remain outside its scope. Read the tracker
+  for later, explicitly approved batches; approval for one batch is not approval
+  for the remainder of the roadmap.
+- Investigate first and present confirmed defects separately from suspected
+  risks and unverified behavior. For each proposed implementation batch identify
+  its recoverable Git baseline, affected files/dependencies, behavior, regression
+  risks, tests and recovery plan; obtain approval before implementation.
+- Preserve unrelated behavior and existing permission grants/denials. Never
+  bypass authorization, widen access or silently change operator settings to
+  make a test pass. Keep UI-only changes separate from financial/access changes
+  and avoid unnecessary refactoring. Scope expansion requires owner approval.
+- Use isolated fixtures/development databases for financial, stock, security and
+  failure tests. Never perform destructive tests against real business data or
+  apply production schema/data changes without explicit approval and reviewed
+  migrations. A beta connection label does not prove database isolation.
+- Require both allowed and denied cases for branch/warehouse access, direct
+  routes/APIs, permissions, revoked/stale sessions and offline/reconnect/retry.
+  The eight mandatory terminal scenarios are in PROJECT_MEMORY.md. Test the
+  installed IPC wrapper and complete workflow, not just a helper in isolation.
+- Audit modules, subpages, popups, settings persistence and shared dependencies.
+  Use agents for independent bounded audits/reviews when requested; give each
+  an explicit scope and write authority, reconcile results, and keep one owner
+  per edited file. An agent report is not verification by itself.
+- UI must be minimal, responsive, readable and practical on desktop/tablet/mobile.
+  Give each setting/field responsibility one clear management home; verify actual
+  consumers before consolidating duplicate editors. Preserve distinct scopes and
+  workflows, use links to shared controls, and retain necessary business fields.
+  Preserve essential business information; use compact rows/cards or expandable
+  detail rather than squeezing desktop tables into phones. Check actual renders,
+  accessible labels, keyboard/touch use, numeric wrapping, loading/empty/error
+  states and permission-hidden layout reflow. Report unavailable device checks.
+- After each batch inspect the final diff and report files changed, corrected
+  defects, executed checks/results, remaining risks, unverified behavior and
+  recovery instructions. Do not claim a full system or security scan passed
+  unless its requested scope was actually completed.

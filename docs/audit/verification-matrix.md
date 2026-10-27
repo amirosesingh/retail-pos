@@ -1,5 +1,13 @@
 # Verification matrix
 
+**Historical evidence:** the recorded v1.3.117 run below is preserved as reported,
+not a fresh result for later code. Current approved architecture and required
+acceptance are in [project memory](../PROJECT_MEMORY.md); open findings and actual
+verification status are in [the task tracker](../TASK_TRACKER.md). In particular,
+branch/terminal authority, booking collection, settings ownership and management
+offline integration have unresolved gaps. No global pass is implied by these rows.
+Membership remains on hold. Do not rewrite old results to imply tests ran again.
+
 What has actually been proven about this POS, how it was proven, and what is
 still only assumed. A row is "Proven" only when a test or a live check
 produced the result — never because the code looks right.
