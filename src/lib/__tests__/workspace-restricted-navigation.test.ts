@@ -7,13 +7,13 @@ import type { Product } from "@/core/types/pos-types";
 import { pageForRoute, pageEnabled } from "../permission-pages";
 import { canSeeNavigationItem, routePermissionForPath } from "@/platforms/web/components/pos/nav-config";
 import { shouldOpenRegister } from "../terminal-workspace";
-const fixture = vi.hoisted(() => ({ permissions: {} as Record<string, boolean>, hidden: [] as string[], desktop: false, products: [] as Product[] }));
+const fixture = vi.hoisted(() => ({ permissions: {} as Record<string, boolean>, hidden: [] as string[], desktop: false, products: [] as Product[], ready: true }));
 vi.mock("@/lib/pos-auth", () => ({ useAuth: () => ({ isAdmin: false, isSupervisor: false, isWarehouse: false, can: (key: string) => fixture.permissions[key] === true }) }));
-vi.mock("@/lib/pos-store", () => ({ usePos: () => ({ currentStore: { id: "branch-a", name: "Branch A" }, state: { sales: [], products: fixture.products, stores: [{ id: "branch-a", groupId: "shoes" }, { id: "branch-b", groupId: "clothes" }], transfers: [], settings: { integrations: {} } } }) }));
+vi.mock("@/lib/pos-store", () => ({ usePos: () => ({ ready: fixture.ready, loadPhase: fixture.ready ? "ready" : "loading", currentStore: { id: "branch-a", name: "Branch A" }, state: { sales: [], products: fixture.products, stores: [{ id: "branch-a", groupId: "shoes" }, { id: "branch-b", groupId: "clothes" }], transfers: [], settings: { integrations: {} } } }) }));
 vi.mock("@/lib/management-device", () => ({ isManagementDevice: () => false }));
 vi.mock("@/platform-config/platform", () => ({ isElectron: () => fixture.desktop }));
 vi.mock("@tanstack/react-router", () => ({ useRouterState: ({ select }: { select: (state: unknown) => unknown }) => select({ location: { pathname: "/" } }), Link: ({ to, children, search, ...props }: { to: string; children: ReactNode; search?: unknown }) => h("a", { ...props, href: to, "data-search": JSON.stringify(search) }, children) }));
-vi.mock("@/components/ui/tooltip", () => ({ Tooltip: ({ children }: { children: ReactNode }) => children, TooltipTrigger: ({ children }: { children: ReactNode }) => children, TooltipContent: ({ children }: { children: ReactNode }) => h("span", null, children) }));
+vi.mock("@/components/ui/tooltip", () => ({ TooltipProvider: ({ children }: { children: ReactNode }) => children, Tooltip: ({ children }: { children: ReactNode }) => children, TooltipTrigger: ({ children }: { children: ReactNode }) => children, TooltipContent: ({ children }: { children: ReactNode }) => h("span", null, children) }));
 vi.mock("@/platforms/web/components/pos/AppShell", () => ({ AppShell: ({ children }: { children: ReactNode }) => children }));
 vi.mock("@/platforms/web/components/pos/SellingShortcuts", () => ({ SellingShortcuts: () => null }));
 vi.mock("@/lib/use-report-sales", () => ({ useReportSales: () => ({ sales: [], loading: false, error: null }) }));
@@ -30,7 +30,7 @@ const visibleRoute = (path: string) => {
 const render = (collapsed = false) => renderToStaticMarkup(h(SidebarNav, {
   collapsed, canSee: item => canSeeNavigationItem(item, can, false, visibleRoute),
 }));
-beforeEach(() => { fixture.permissions = { can_process_sale: true }; fixture.hidden = []; fixture.desktop = false; fixture.products = []; });
+beforeEach(() => { fixture.permissions = { can_process_sale: true }; fixture.hidden = []; fixture.desktop = false; fixture.products = []; fixture.ready = true; });
 describe("restricted Home and Selling navigation", () => {
   it.each([false, true])("hides Home without dashboard permission, collapsed=%s", collapsed => {
     const html = render(collapsed);
@@ -78,13 +78,24 @@ describe("restricted Home and Selling navigation", () => {
 });
 
 describe("restricted Retail workspace", () => {
+  it("keeps revenue information inside the same permission and visibility boundary as its total", () => {
+    expect(renderToStaticMarkup(h(TerminalWorkspaceHome))).not.toContain("Subtotal before discounts");
+    fixture.permissions.can_view_sales_reports = true;
+    const html = renderToStaticMarkup(h(TerminalWorkspaceHome));
+    expect(html).toContain('aria-label="Today&#x27;s revenue information"');
+    expect(html).toContain("Subtotal before discounts");
+    expect(html).not.toContain("Less cost of goods sold");
+    expect(html).not.toContain("Gross profit");
+    fixture.hidden = ["workspace.todayRevenue"];
+    expect(renderToStaticMarkup(h(TerminalWorkspaceHome))).not.toContain("Subtotal before discounts");
+  });
   it("counts only the selected cluster catalogue in stock cards", () => {
     fixture.permissions.can_view_inventory = true;
     const product = { id: "one", name: "Shoe", sku: "S1", barcode: "S1", category: "Shoes", cost: 5, price: 10, reorderLevel: 2, taxRate: 0, ownerStoreId: "branch-a", stockByStore: { "branch-a": 1 } };
     fixture.products = [product, { ...product, id: "foreign", ownerStoreId: "branch-b" }, { ...product, id: "archived-foreign", ownerStoreId: "branch-b", archived: true }];
     const html = renderToStaticMarkup(h(TerminalWorkspaceHome));
     expect(html).toMatch(/Active\s*<strong[^>]*>1<\/strong>/);
-    expect(html).toMatch(/Archived\s*<strong[^>]*>0<\/strong>/);
+    expect(html).not.toContain("Archived");
   });
   it("shows bill history with reprint permission without granting reporting access", () => {
     fixture.permissions.can_reprint_bill = true;
@@ -95,12 +106,28 @@ describe("restricted Retail workspace", () => {
   });
   it("removes hidden card containers so low stock follows shift without empty slots", () => {
     fixture.permissions.can_view_inventory = true;
+    fixture.products = [{ id: "low", name: "Low", sku: "L", barcode: "L", category: "Shoes", cost: 5, price: 10, reorderLevel: 2, taxRate: 0, ownerStoreId: "branch-a", stockByStore: { "branch-a": 1 } }];
     const html = renderToStaticMarkup(h(TerminalWorkspaceHome));
     const overview = html.split('aria-label="Workspace overview"')[1].split('</section>')[0];
-    expect(overview.match(/flex-\[1_1_11rem\]/g)).toHaveLength(2);
+    expect(overview.match(/flex-\[1_1_13rem\]/g)).toHaveLength(2);
     expect(overview.indexOf("Shift")).toBeLessThan(overview.indexOf("Low stock"));
     fixture.hidden = ["workspace.shiftStatus","workspace.lowStock"];
     expect(renderToStaticMarkup(h(TerminalWorkspaceHome))).not.toContain('aria-label="Workspace overview"');
+  });
+  it("hides zero stock warnings but retains nonzero stock alerts and loading state", () => {
+    fixture.permissions.can_view_inventory = true;
+    const loadedEmpty = renderToStaticMarkup(h(TerminalWorkspaceHome));
+    expect(loadedEmpty).not.toContain("Explain low-stock figures");
+    fixture.products = [{ id: "zero", name: "Zero", sku: "Z", barcode: "Z", category: "Shoes", cost: 5, price: 10, reorderLevel: 2, taxRate: 0, ownerStoreId: "branch-a", stockByStore: { "branch-a": 0 } }];
+    const out = renderToStaticMarkup(h(TerminalWorkspaceHome));
+    expect(out).toContain("Out of stock");
+    expect(out).not.toContain("0 negative stock");
+    expect(out).not.toContain("0 low stock");
+    fixture.ready = false;
+    fixture.products = [];
+    const loading = renderToStaticMarkup(h(TerminalWorkspaceHome));
+    expect(loading).toContain("Loading branch inventory");
+    expect(loading).toContain("Loading…");
   });
   it("renders the cashier selling link without exposing revenue or reporting actions", () => {
     const html = renderToStaticMarkup(h(TerminalWorkspaceHome));

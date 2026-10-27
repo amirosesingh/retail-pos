@@ -782,7 +782,7 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
     );
     return (
       <Dialog open={expanded} onOpenChange={setExpanded}>
-        {labels.length > 1 && <div className="flex justify-end px-3 py-1.5">
+        {labels.length > 1 && <div className="flex justify-end px-3 py-1.5 sm:hidden">
           <Button ref={expandButtonRef} type="button" variant="ghost" size="sm" onClick={() => setExpanded(true)} aria-label={`Expand ${props["aria-label"] || "table"}`}>
             <Maximize2 className="size-4" aria-hidden="true" /> Expand table
           </Button>

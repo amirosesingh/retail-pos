@@ -80,6 +80,7 @@ import { localTerminalId } from "@/lib/shift-hours";
 import { cn } from "@/lib/utils";
 import { inventoryMetrics, inventoryUnitMargin, isLowStock, needsCostReview } from "@/lib/inventory-metrics";
 import { AnimatedMetric } from "@/platforms/web/components/pos/AnimatedMetric";
+import { InventorySummaryCards } from "@/platforms/web/components/pos/InventorySummaryCards";
 import { totalUnitCost } from "@/lib/total-unit-cost";
 import { TotalUnitCostDialog } from "@/platforms/web/components/pos/TotalUnitCostDialog";
 
@@ -128,6 +129,8 @@ const pickerOptions = (names: string[], current?: string) => [
 function Inventory() {
   const {
     state,
+    ready: inventoryReady,
+    loadPhase,
     stores,
     currentStore,
     upsertProduct,
@@ -359,15 +362,18 @@ function Inventory() {
           <div>
             <h1 className="text-2xl font-semibold">Inventory · {currentStore.name}</h1>
             <p className="text-sm text-muted-foreground page-description">
-              <AnimatedMetric value={metrics.products} /> active products ·{" "}
-              {showStockValue && (
+              {!inventoryReady ? <span role={loadPhase === "failed" ? "alert" : "status"}>{loadPhase === "failed" ? "Catalogue unavailable" : "Loading catalogue…"}</span> : <>
+              {metrics.products > 0 ? <><AnimatedMetric value={metrics.products} /> active products</> : "No active products at this branch"}
+              {showStockValue && Math.abs(metrics.costValue) >= 0.005 && (
                 <>
-                  purchase cost value <span className="numeric">{money(metrics.costValue)}</span> ·{" "}
+                  {" · "}purchase cost value <span className="numeric [overflow-wrap:anywhere]">{money(metrics.costValue)}</span>
                 </>
               )}
-              <span className="text-warning">
+              {metrics.lowStock > 0 && <span className="text-warning">
+                {" · "}
                 <AnimatedMetric value={metrics.lowStock} /> at or below reorder level (positive stock)
-              </span>
+              </span>}
+              </>}
             </p>
           </div>
           <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:flex-wrap lg:w-auto lg:justify-end">
@@ -913,22 +919,7 @@ function Inventory() {
         </header>
         {showMoney && costReviewOnly && <p role="status" className="rounded-xl border px-4 py-3 text-sm text-muted-foreground">Showing items with missing, zero or invalid cost. Open an item to review it using your existing edit permissions. Zero may be intentional for a free item; no costs are changed automatically.</p>}
 
-        <section aria-label="Inventory summary" className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,8rem),1fr))] gap-2 sm:gap-3">
-          <InventoryKpi label="Active products" value={metrics.products} />
-          <InventoryKpi label="Categories" value={metrics.categories} />
-          <InventoryKpi label="On-hand units" value={metrics.units} />
-          <InventoryKpi label="Low stock" value={metrics.lowStock} tone="warning" />
-          <InventoryKpi label="Negative stock" value={metrics.negativeStock} tone="danger" />
-          {showStockValue && (
-            <>
-              <InventoryKpi label="Purchase cost value" value={metrics.costValue} moneyValue />
-              {totalUnitCostValue !== null
-                ? <InventoryKpi label="Total unit cost value" value={totalUnitCostValue} moneyValue />
-                : <p role="status" className="text-sm text-muted-foreground">Total unit cost value unavailable: review product costs and Total Unit Cost rules.</p>}
-              <InventoryKpi label="Retail value" value={metrics.retailValue} moneyValue />
-            </>
-          )}
-        </section>
+        <InventorySummaryCards metrics={metrics} ready={inventoryReady} loadPhase={loadPhase} showStockValue={showStockValue} totalUnitCostValue={totalUnitCostValue} productLabel="Active products" />
 
         <Dialog open={advanced} onOpenChange={setAdvanced}>
           <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
@@ -1438,33 +1429,6 @@ function Field({
     <div className={`space-y-1 ${className}`}>
       <Label className="text-xs text-muted-foreground">{label}</Label>
       {children}
-    </div>
-  );
-}
-
-function InventoryKpi({
-  label,
-  value,
-  moneyValue = false,
-  tone,
-}: {
-  label: string;
-  value: number;
-  moneyValue?: boolean;
-  tone?: "warning" | "danger";
-}) {
-  if (!Number.isFinite(value) || (moneyValue ? Math.abs(value) < 0.005 : value === 0)) return null;
-  const color =
-    tone === "danger" && value > 0 ? "text-destructive" : tone === "warning" ? "text-warning" : "";
-  return (
-    <div className="flex min-h-20 min-w-0 flex-col justify-center rounded-lg border border-border bg-card px-3 py-3 sm:px-4">
-      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className={`break-words text-lg font-semibold leading-tight sm:text-xl ${color}`}>
-        <AnimatedMetric
-          value={value}
-          format={moneyValue ? (current) => money(current) : undefined}
-        />
-      </p>
     </div>
   );
 }

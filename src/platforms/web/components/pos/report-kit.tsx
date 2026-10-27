@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/dialog";
 import { SlidersHorizontal } from "lucide-react";
 import { ANALYTICS_COLORS, type AnalyticsTone } from "@/lib/analytics-design";
+import { FinancialInfoTip } from "./FinancialInfo";
 
 export function ReportFilters({
   children,
@@ -279,20 +280,22 @@ export function StatCard({
   value,
   hint,
   tone,
+  info,
 }: {
   label: string;
   value: string;
   hint?: string;
   tone?: AnalyticsTone;
+  info?: ReactNode;
 }) {
   return (
     <div
       className="summary-card report-stat min-w-0 rounded-2xl border border-border bg-card p-5"
       style={tone ? { borderTopColor: ANALYTICS_COLORS[tone] } : undefined}
     >
-      <p className="text-sm font-medium text-muted-foreground">{label}</p>
+      {info ? <div className="flex min-h-10 items-start justify-between gap-1"><p className="text-sm font-medium text-muted-foreground">{label}</p><FinancialInfoTip label={label}>{info}</FinancialInfoTip></div> : <p className="min-h-10 text-sm font-medium text-muted-foreground">{label}</p>}
       <p
-        className="numeric mt-2 break-words text-2xl font-semibold tracking-tight tabular-nums"
+        className="numeric mt-2 min-w-0 text-2xl font-semibold tracking-tight tabular-nums [overflow-wrap:anywhere]"
         style={tone ? { color: ANALYTICS_COLORS[tone] } : undefined}
       >
         {value}

@@ -6,7 +6,10 @@ import { tenderSales } from "@/lib/shift-close";
 import { sameRecordId } from "@/lib/sale-identity";
 import { companyStoreScope } from "@/lib/company-store-scope";
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { FinancialBreakdown, FinancialInfoTip, SalesTotalInfo } from "@/platforms/web/components/pos/FinancialInfo";
+import { salesReconciliation } from "@/lib/sales-reconciliation";
+import { SummaryCardRail } from "@/platforms/web/components/pos/SummaryCardRail";
 import { Pencil, Printer, Users, Vault } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
@@ -56,7 +59,6 @@ import { useReportSales } from "@/lib/use-report-sales";
 import { useReportShifts } from "@/lib/use-report-shifts";
 import { useShiftSales } from "@/lib/use-shift-sales";
 import { ReportFilters } from "@/platforms/web/components/pos/report-kit";
-import { SalesReconciliation } from "@/platforms/web/components/pos/SalesReconciliation";
 
 export const Route = createFileRoute("/shifts")({
   head: () => ({
@@ -323,7 +325,7 @@ function Shifts() {
             <p className="mb-3 text-xs text-muted-foreground">{summaryFrom} to {summaryTo}, using the store time zone. Collected is after discounts, tax and rounding. Refunded bills are excluded. Shift history below is filtered by shift opening date.</p>
             {!validSummaryRange ? <p role="alert" className="text-sm text-destructive">Choose a valid sales date range.</p> : summaryHistory.error ? <p role="alert" className="text-sm text-destructive">Report incomplete: {summaryHistory.error}</p> : summaryHistory.loading ? <p role="status" className="text-sm text-muted-foreground">Loading the complete sales period…</p> : <>
             {summaryHistory.refreshing && <p role="status" className="mb-2 text-xs text-muted-foreground">Updating sales…</p>}
-            <div className="grid gap-4 md:grid-cols-4">
+            <SummaryCardRail label="Shift page shop totals">
               {summaryStores.map((st) => {
                 const sales = summarySales.filter(
                   (s) => sameRecordId(s.storeId, st.id),
@@ -333,17 +335,18 @@ function Shifts() {
                     key={st.id}
                     label={`${st.code} · ${st.name} (${sales.length} sales)`}
                     value={money(sales.reduce((a, s) => a + s.total, 0))}
+                    info={<SalesTotalInfo totals={salesReconciliation(sales)} />}
                   />
                 );
               })}
-            </div>
-            <div className="mt-4"><SalesReconciliation sales={summarySales} title="Period sales breakdown" /></div>
+            </SummaryCardRail>
             </>}
           </section>
         )}
         <section className="rounded-lg border border-border bg-card p-5">
           {activeShift ? (
-            <div className="grid gap-4 md:grid-cols-4">
+            <div className="space-y-4">
+              <SummaryCardRail label="Active shift overview">
               <Metric label="Opened by" value={activeShift.cashier} />
               <Metric label="Serving now" value={user?.name || activeShift.cashier} />
               <Metric label="Opened" value={posDisplayDateTime(activeShift.openedAt)} />
@@ -351,10 +354,11 @@ function Shifts() {
               <Metric label="Terminal" value={activeShift.terminalName ?? "This PC"} />
               <Metric label="Running for" value={shiftDuration(activeShift)} />
               {(isAdmin || can("can_shift_expected_cash_view")) && (
-                <Metric label="Expected drawer" value={activeSales.sales ? money(expected) : "—"} highlight />
+                <Metric label="Expected drawer" value={activeSales.sales ? money(expected) : "—"} highlight info={activeSales.sales && <FinancialBreakdown rows={[["Opening float", money(activeShift.openingFloat)], ["Net cash sales", money(cashTaken)], ["Expected drawer", money(expected)]]}><p>Opening float plus net cash received in this shift. Card and digital payments are excluded; cash change is deducted.</p></FinancialBreakdown>} />
               )}
-              {activeSales.loading && <p role="status" className="md:col-span-4 text-xs text-muted-foreground">Loading all transactions for this shift…</p>}
-              {activeSales.error && <p role="alert" className="md:col-span-4 text-xs text-destructive">Shift totals could not be refreshed: {activeSales.error}</p>}
+              </SummaryCardRail>
+              {activeSales.loading && <p role="status" className="text-xs text-muted-foreground">Loading all transactions for this shift…</p>}
+              {activeSales.error && <p role="alert" className="text-xs text-destructive">Shift totals could not be refreshed: {activeSales.error}</p>}
               {overdueNow && (
                 <p className="md:col-span-4 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
                   This shift is past the trading-day window and is flagged as overdue.
@@ -837,15 +841,17 @@ function Metric({
   label,
   value,
   highlight,
+  info,
 }: {
   label: string;
   value: string;
   highlight?: boolean;
+  info?: ReactNode;
 }) {
   return (
-    <div className="rounded-md bg-surface-2 px-4 py-3">
-      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className={`numeric text-lg font-semibold ${highlight ? "text-primary" : ""}`}>{value}</p>
+    <div className="min-w-0 rounded-md bg-surface-2 px-4 py-3">
+      <div className="flex items-center justify-between gap-1"><p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>{info && <FinancialInfoTip label={label}>{info}</FinancialInfoTip>}</div>
+      <p className={`numeric min-w-0 text-lg font-semibold [overflow-wrap:anywhere] ${highlight ? "text-primary" : ""}`}>{value}</p>
     </div>
   );
 }

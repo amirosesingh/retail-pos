@@ -1,5 +1,7 @@
 import { companyStoreScope } from "@/lib/company-store-scope";
 import { HomeShortcuts } from "@/platforms/web/components/pos/HomeShortcuts";
+import { FinancialBreakdown, GrossProfitInfo } from "@/platforms/web/components/pos/FinancialInfo";
+import { SummaryCardRail } from "@/platforms/web/components/pos/SummaryCardRail";
 import { PAGE_DATA_CACHE, pageDataScope } from "@/lib/page-data-cache";
 import { effectiveTimeZone } from "@/lib/time-zone";
 import { branchChartColor, ANALYTICS_COLORS } from "@/lib/analytics-design";
@@ -67,6 +69,7 @@ export const Route = createFileRoute("/analytics")({
 
 
 const shift = (days: number) => isoDay(new Date(Date.now() - days * 86_400_000));
+const hasMoney = (value: number) => Number.isFinite(value) && Math.abs(value) >= 0.005;
 
 function LiveBoard() {
   const { allStores: directoryStores, currentStore } = usePos();
@@ -178,14 +181,20 @@ function LiveBoard() {
     const { days, months } = boardTradingPeriods(data?.storeDays ?? [], filter);
     return {
       revenue,
+      cost,
       profit: revenue - cost,
       marginPct: revenue ? ((revenue - cost) / revenue) * 100 : 0,
       bills,
       basket: bills ? revenue / bills : 0,
       given,
+      itemDiscount: shops.reduce((sum, shop) => sum + shop.itemDiscount, 0),
+      billDiscount: shops.reduce((sum, shop) => sum + shop.billDiscount, 0),
+      coupon: shops.reduce((sum, shop) => sum + shop.coupon, 0),
+      focValue: shops.reduce((sum, shop) => sum + shop.focValue, 0),
       perDay: revenue / days,
       perMonth: revenue / months,
       days,
+      months,
     };
   }, [shops, filter, data]);
 
@@ -227,7 +236,28 @@ function LiveBoard() {
     );
   }
 
-  const empty = !query.isLoading && shops.length === 0;
+  const summaryReady = !!data && !query.isLoading && !query.isError;
+  const empty = summaryReady && shops.length === 0;
+  const giveawayInfo = <FinancialBreakdown rows={[
+    ["Item discounts", money(totals.itemDiscount)],
+    ["Bill discounts", money(totals.billDiscount)],
+    ["Coupons", money(totals.coupon)],
+    ["Free-item value", money(totals.focValue)],
+    ["Total given away", money(totals.given)],
+  ]}><p>Already reflected in revenue. Do not deduct these values again; free-item value is not cash received.</p></FinancialBreakdown>;
+  const summaryCards = [
+    hasMoney(totals.revenue) && <StatCard key="revenue" label="Revenue" value={money(totals.revenue)} hint={`${totals.bills} bills`} info={<FinancialBreakdown rows={[["Net revenue", money(totals.revenue)]]}>
+      <p>Completed sales after discounts, excluding tax and rounding. Refunded bills are excluded.</p>
+      {giveawayInfo}
+      <p>This summary does not contain original bill subtotals or separate tax and rounding amounts.</p>
+    </FinancialBreakdown>} />,
+    showCostMargin && hasMoney(totals.profit) && <StatCard key="profit" label="Gross profit" value={money(totals.profit)} hint={`${totals.marginPct.toFixed(1)}% margin`} info={<GrossProfitInfo revenue={totals.revenue} cost={totals.cost} profit={totals.profit} marginPct={totals.marginPct} />} />,
+    hasMoney(totals.given) && <StatCard key="given" label="Given away" value={money(totals.given)} hint="Discounts, coupons, free items" info={giveawayInfo} />,
+    hasMoney(totals.basket) && <StatCard key="basket" label="Avg basket" value={money(totals.basket)} hint="Per bill" info={<FinancialBreakdown rows={[["Net revenue", money(totals.revenue)], ["Completed bills", String(totals.bills)], ["Average basket", money(totals.basket)]]}><p>Net revenue ÷ completed bills for these shops and dates.</p></FinancialBreakdown>} />,
+    hasMoney(totals.perDay) && <StatCard key="day" label="Avg / day" value={money(totals.perDay)} hint={`${totals.days} trading days`} info={<FinancialBreakdown rows={[["Net revenue", money(totals.revenue)], ["Trading days", String(totals.days)], ["Average per day", money(totals.perDay)]]}><p>Net revenue ÷ trading days represented in this report.</p></FinancialBreakdown>} />,
+    hasMoney(totals.perMonth) && <StatCard key="month" label="Avg / month" value={money(totals.perMonth)} hint="Across the range" info={<FinancialBreakdown rows={[["Net revenue", money(totals.revenue)], ["Trading months", String(totals.months)], ["Average per month", money(totals.perMonth)]]}><p>Net revenue ÷ trading months represented in this report.</p></FinancialBreakdown>} />,
+    !hasMoney(totals.revenue) && totals.bills !== 0 && <StatCard key="bills" label="Bills" value={String(totals.bills)} hint="Completed bills" />,
+  ].filter(Boolean);
 
   return (
     <AppShell>
@@ -325,29 +355,12 @@ function LiveBoard() {
           <AnalyticsErrorPanel error={query.error} onRetry={() => void query.refetch()} />
         )}
 
-        <div aria-label="Business totals" className="summary-grid grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
-          <StatCard label="Revenue" value={money(totals.revenue)} hint={`${totals.bills} bills`} />
-          {showCostMargin && <StatCard
-            label="Gross profit"
-            value={money(totals.profit)}
-            hint={`${totals.marginPct.toFixed(1)}% margin`}
-          />}
-          <StatCard
-            label="Given away"
-            value={money(totals.given)}
-            hint="Discounts, coupons, free items"
-          />
-          <StatCard label="Avg basket" value={money(totals.basket)} hint="Per bill" />
-          <StatCard
-            label="Avg / day"
-            value={money(totals.perDay)}
-            hint={`${totals.days} trading days`}
-          />
-          <StatCard label="Avg / month" value={money(totals.perMonth)} hint="Across the range" />
-        </div>
+        {summaryReady && (summaryCards.length ? <SummaryCardRail label="Business totals">
+          {summaryCards}
+        </SummaryCardRail> : !empty && <p role="status" className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">No financial totals to show for these shops and dates.</p>)}
 
         {query.isLoading && (
-          <p className="rounded-lg border border-border p-6 text-sm text-muted-foreground">
+          <p role="status" className="rounded-lg border border-border p-6 text-sm text-muted-foreground">
             Loading live figures…
           </p>
         )}
@@ -609,7 +622,8 @@ function LiveBoard() {
                     </Button>
                   </div>
                 </div>
-                <AnalyticsCardRail title="Categories">
+                <h2 className="mb-3 text-sm font-semibold">Categories</h2>
+                <SummaryCardRail label="Categories" desktopBehavior="finite-carousel">
                   {combinedCategories.map((category) => (
                     <button
                       key={category.name}
@@ -638,12 +652,12 @@ function LiveBoard() {
                       </span>
                     </button>
                   ))}
+                </SummaryCardRail>
                   {!combinedCategories.length && (
                     <p className="col-span-full py-8 text-center text-sm text-muted-foreground">
                       No category sales in this range.
                     </p>
                   )}
-                </AnalyticsCardRail>
               </section>
 
 
@@ -696,7 +710,8 @@ function LiveBoard() {
             )}
 
             <section className="rounded-lg border border-border p-4">
-              <AnalyticsCardRail title="Top categories per shop">
+              <h2 className="mb-3 text-sm font-semibold">Top categories per shop</h2>
+              <SummaryCardRail label="Top categories per shop" desktopBehavior="finite-carousel">
                   {shops.map((shop) => {
                     const rows = topCategories(
                       itemRows.filter((r) => (r.store_id ?? "") === shop.storeId),
@@ -741,7 +756,7 @@ function LiveBoard() {
                       </div>
                     );
                   })}
-              </AnalyticsCardRail>
+              </SummaryCardRail>
             </section>
 
           </>

@@ -8,7 +8,10 @@ import { useReportSales } from "@/lib/use-report-sales";
 import { dashboardDailyTrading } from "@/lib/dashboard-trading";
 import { allShopsScope } from "@/lib/all-shops-scope";
 import { terminalRuntimePlatform } from "@/core/activation/terminal-platform";
-import { SalesReconciliation } from "@/platforms/web/components/pos/SalesReconciliation";
+import { FinancialBreakdown, FinancialInfoTip, GrossProfitInfo, SalesTotalInfo } from "@/platforms/web/components/pos/FinancialInfo";
+import { salesReconciliation } from "@/lib/sales-reconciliation";
+import { InventorySummaryCards } from "@/platforms/web/components/pos/InventorySummaryCards";
+import { SummaryCardRail } from "@/platforms/web/components/pos/SummaryCardRail";
 import {
   Bar,
   BarChart,
@@ -43,7 +46,6 @@ import { defaultReviewThresholds } from "@/lib/pos-seed";
 import { sameBranchId } from "@/lib/branch-id";
 import { cashierReviewTotals, hasSplitPayments } from "@/lib/cashier-review";
 import { inventoryMetrics } from "@/lib/inventory-metrics";
-import { AnimatedMetric } from "@/platforms/web/components/pos/AnimatedMetric";
 import { useAuth } from "@/lib/pos-auth";
 import { useVisibility } from "@/lib/ui-visibility";
 import { DisplayElement } from "@/components/shared/DisplayElement";
@@ -70,9 +72,10 @@ export const Route = createFileRoute("/dashboard")({
 });
 
 const chartDay = (value: string, fallback: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : fallback;
+const hasMoney = (value: number) => Number.isFinite(value) && Math.abs(value) >= 0.005;
 
 function Dashboard() {
-  const { state, currentStore } = usePos();
+  const { state, currentStore, ready: inventoryReady, loadPhase } = usePos();
   const { can, canSwitchStores, terminalStoreId, user } = useAuth();
   const { visible } = useVisibility();
   const showCostMargin = can("can_view_cost_margin");
@@ -82,6 +85,8 @@ function Dashboard() {
 
   const [today, setToday] = useState(() => posDayKey());
   const [revenuePeriod, setRevenuePeriod] = useState<"7" | "14" | "30" | "90" | "month" | "custom">("14");
+  const [drawerColumnsTarget, setDrawerColumnsTarget] = useState<HTMLElement | null>(null);
+  const [splitColumnsTarget, setSplitColumnsTarget] = useState<HTMLElement | null>(null);
   const [customFrom, setCustomFrom] = useState(() => shiftCalendarDay(posDayKey(), -13));
   const [customTo, setCustomTo] = useState(() => posDayKey());
   useEffect(() => {
@@ -120,6 +125,7 @@ function Dashboard() {
   const todaySponsorship = useMemo(() => sponsorship.rows.filter(row => row.day === today).reduce((sum, row) => sum + Number(row.value), 0), [sponsorship.rows, today]);
   const todaySales = useMemo(() => sales.filter((s) => posDayKey(s.createdAt) === today), [sales, today]);
   const live = useMemo(() => todaySales.filter((s) => !s.refunded), [todaySales]);
+  const todayTotals = useMemo(() => salesReconciliation(live), [live]);
 
   const revenue = useMemo(() => live.reduce((a, s) => a + s.total, 0), [live]);
   // One shared profit helper, so this never drifts from the business report.
@@ -137,7 +143,6 @@ function Dashboard() {
     return !sale.refunded && day >= revenueFrom && day <= revenueTo;
   }), [sales, revenueFrom, revenueTo]);
   const chartProfit = useMemo(() => profitOf(chartSales, state.products), [chartSales, state.products]);
-  const chartSponsorship = useMemo(() => includeSponsorship && !sponsorship.error ? sponsorship.rows.filter(row => row.day >= revenueFrom && row.day <= revenueTo).reduce((sum, row) => sum + Number(row.value), 0) : 0, [includeSponsorship, sponsorship.error, sponsorship.rows, revenueFrom, revenueTo]);
 
   /** Revenue against gross profit, hour by hour in the selected range. */
   const profitByHour = useMemo(
@@ -188,6 +193,18 @@ function Dashboard() {
   }, [todaySales, todayDrawer, thresholds]);
 
   const flagged = cashiers.filter((c) => c.flags.length);
+  const summaryReady = inventoryReady && !reportLoading && !reportError;
+  const summaryCards = [
+    includeSponsorship && !sponsorship.loading && !sponsorship.error && hasMoney(todaySponsorship) && hasMoney(revenue + todaySponsorship) && <Kpi key="daily-value" label="Daily sales value" value={money(revenue + todaySponsorship)} highlight info={can("can_view_sales_reports") && <SalesTotalInfo totals={todayTotals} sponsorshipValue={todaySponsorship} />} />,
+    includeSponsorship && !sponsorship.loading && !sponsorship.error && hasMoney(todaySponsorship) && <Kpi key="sponsorship" label="Sponsorship value included" value={money(todaySponsorship)} info={<FinancialBreakdown rows={[["Sponsorship value", money(todaySponsorship)]]}><p>Included under the saved daily-sales policy. Stock value is separate from customer payments.</p></FinancialBreakdown>} />,
+    hasMoney(revenue) && <Kpi key="collected" label="Sales collected today" value={money(revenue)} highlight info={can("can_view_sales_reports") && <SalesTotalInfo totals={todayTotals} />} />,
+    hasMoney(profit.revenue) && <Kpi key="net" label="Net sales excluding tax" value={money(profit.revenue)} info={can("can_view_sales_reports") && <SalesTotalInfo totals={todayTotals} />} />,
+    showCostMargin && hasMoney(profit.cogs) && <Kpi key="cogs" label="Total COGS" value={money(profit.cogs)} info={<GrossProfitInfo revenue={profit.revenue} cost={profit.cogs} profit={profit.profit} />} />,
+    showCostMargin && Math.abs(margin) >= 0.05 && <Kpi key="margin" label="Gross margin" value={`${margin.toFixed(1)}%`} info={<GrossProfitInfo revenue={profit.revenue} cost={profit.cogs} profit={profit.profit} marginPct={margin} />} />,
+    live.length !== 0 && <Kpi key="bills" label="Bills" value={String(live.length)} />,
+    refunds.length !== 0 && <Kpi key="refunds" label="Refunds" value={`${refunds.length} · ${money(refunds.reduce((a, s) => a + Math.abs(s.total), 0))}`} />,
+    todayDrawer.length !== 0 && <Kpi key="drawer" label="No-sale drawer opens" value={String(todayDrawer.length)} />,
+  ].filter(Boolean);
 
   return (
     <AppShell>
@@ -207,21 +224,9 @@ function Dashboard() {
         {reportLoading && <p role="status" className="text-sm text-muted-foreground">Loading the complete sales history for these shops…</p>}
         {includeSponsorship && sponsorship.loading && <p role="status" className="text-sm text-muted-foreground">Sponsorship values are loading; the combined summary is not complete yet.</p>}
         {includeSponsorship && sponsorship.error && <p role="alert" className="rounded-lg border border-destructive/40 p-3 text-sm text-destructive">Sponsorship totals could not be loaded. Sales collections remain separate.</p>}
-        <DisplayElement name="dashboard.revenueSummary"><div role="region" aria-label="Revenue summary" tabIndex={0} className="dashboard-swipe-row no-scrollbar grid min-w-0 grid-flow-col auto-cols-[minmax(10rem,72%)] snap-x snap-mandatory gap-3 overflow-x-auto overscroll-x-contain rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:grid-flow-row md:auto-cols-auto md:grid-cols-4 md:overflow-visible xl:grid-cols-7">
-          {includeSponsorship && !sponsorship.loading && !sponsorship.error && todaySponsorship > 0 && <><Kpi label="Daily sales value" value={money(revenue+todaySponsorship)} highlight/><Kpi label="Sponsorship value included" value={money(todaySponsorship)}/></>}
-          <Kpi label="Sales collected today" value={money(revenue)} highlight />
-          <Kpi label="Net sales excluding tax" value={money(profit.revenue)} />
-          {showCostMargin && <Kpi label="Total COGS" value={money(profit.cogs)} />}
-          {showCostMargin && <Kpi label="Gross margin" value={`${margin.toFixed(1)}%`} />}
-          <Kpi label="Bills" value={String(live.length)} />
-          <Kpi
-            label="Refunds"
-            value={`${refunds.length} · ${money(refunds.reduce((a, s) => a + Math.abs(s.total), 0))}`}
-          />
-          <Kpi label="No-sale drawer opens" value={String(todayDrawer.length)} />
-        </div></DisplayElement>
-
-        {can("can_view_sales_reports") && <DisplayElement name="dashboard.tradingGraphs"><SalesReconciliation sales={chartSales} sponsorshipValue={chartSponsorship} title={`Sales breakdown · ${revenueFrom} to ${revenueTo}`} /></DisplayElement>}
+        <DisplayElement name="dashboard.revenueSummary">{summaryReady && (summaryCards.length ? <SummaryCardRail label="Revenue summary">
+          {summaryCards}
+        </SummaryCardRail> : <p role="status" className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">No trading totals to show today.</p>)}</DisplayElement>
 
         <DisplayElement name="dashboard.inventorySummary"><section className="rounded-lg border border-border bg-card p-4">
           <div className="mb-3">
@@ -230,24 +235,7 @@ function Dashboard() {
               Current active catalogue and on-hand value at this branch.
             </p>
           </div>
-          <div role="region" aria-label="Inventory summary" tabIndex={0} className="dashboard-swipe-row no-scrollbar grid min-w-0 grid-flow-col auto-cols-[minmax(9rem,65%)] snap-x snap-mandatory gap-3 overflow-x-auto overscroll-x-contain rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:grid-flow-row md:auto-cols-auto md:grid-cols-4 md:overflow-visible xl:grid-cols-8">
-            <Kpi label="Products" value={<AnimatedMetric value={stock.products} />} />
-            <Kpi label="Categories" value={<AnimatedMetric value={stock.categories} />} />
-            <Kpi label="On-hand units" value={<AnimatedMetric value={stock.units} />} />
-            <Kpi label="Low stock" value={<AnimatedMetric value={stock.lowStock} />} />
-            <Kpi
-              label="Negative stock"
-              value={<AnimatedMetric value={stock.negativeStock} />}
-              danger={stock.negativeStock > 0}
-            />
-            {showStockValue && (
-              <>
-                <Kpi label="Cost value" value={money(stock.costValue)} />
-                <Kpi label="Retail value" value={money(stock.retailValue)} />
-                <Kpi label="Potential profit" value={money(stock.potentialProfit)} highlight />
-              </>
-            )}
-          </div>
+          <InventorySummaryCards metrics={stock} ready={inventoryReady} loadPhase={loadPhase} showStockValue={showStockValue} showPotentialProfit />
         </section></DisplayElement>
 
         <DisplayElement name="dashboard.tradingGraphs"><Carousel
@@ -332,6 +320,7 @@ function Dashboard() {
           <section className="flex h-88 min-w-0 flex-col rounded-lg border border-border bg-card p-4">
           <h2 className="mb-3 min-h-10 shrink-0 text-sm font-semibold">
             Profit by hour · gross profit {money(chartProfit.profit)}
+            <FinancialInfoTip label="Selected-period gross profit"><GrossProfitInfo revenue={chartProfit.revenue} cost={chartProfit.cogs} profit={chartProfit.profit} marginPct={chartProfit.marginPct} /></FinancialInfoTip>
           </h2>
           <div className="min-h-0 min-w-0 flex-1">
             <ResponsiveContainer width="100%" height="100%">
@@ -404,9 +393,9 @@ function Dashboard() {
         </section></DisplayElement>
 
         <DisplayElement name="dashboard.drawerHistory"><section className="rounded-lg border border-border bg-card">
-          <h2 className="px-5 py-3 text-sm font-semibold">Cash drawer opens without a sale</h2>
+          <div className="flex items-center justify-between gap-2 px-5 py-3"><h2 className="min-w-0 flex-1 text-sm font-semibold">Cash drawer opens without a sale</h2><div ref={setDrawerColumnsTarget} className="ml-auto flex shrink-0 items-center justify-end" /></div>
           <Separator />
-          <Table tableId="routes/dashboard#1" loading={reportLoading}>
+          <Table tableId="routes/dashboard#1" loading={reportLoading} controlsTarget={drawerColumnsTarget}>
             <TableHeader>
               <TableRow>
                 <TableHead>When</TableHead>
@@ -441,10 +430,10 @@ function Dashboard() {
         </section></DisplayElement>
 
         <DisplayElement name="dashboard.splitPayments"><section className="rounded-lg border border-border bg-card">
-          <h2 className="px-5 pt-3 text-sm font-semibold">Split payments today</h2>
+          <div className="flex items-center justify-between gap-2 px-5 pt-3"><h2 className="min-w-0 flex-1 text-sm font-semibold">Split payments today</h2><div ref={setSplitColumnsTarget} className="ml-auto flex shrink-0 items-center justify-end" /></div>
           <p className="px-5 pb-3 pt-1 text-xs text-muted-foreground">Bills paid in two or more parts, such as cash and card.</p>
           <Separator />
-          <Table tableId="routes/dashboard#2" loading={reportLoading}>
+          <Table tableId="routes/dashboard#2" loading={reportLoading} controlsTarget={splitColumnsTarget}>
             <TableHeader>
               <TableRow>
                 <TableHead>Receipt</TableHead>
@@ -482,17 +471,22 @@ function Kpi({
   value,
   highlight,
   danger,
+  info,
 }: {
   label: string;
   value: ReactNode;
   highlight?: boolean;
   danger?: boolean;
+  info?: ReactNode;
 }) {
   return (
-    <div className="summary-card min-w-0 snap-start rounded-lg border border-border bg-card px-4 py-3">
-      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
+    <div className="summary-card flex h-full min-h-24 min-w-0 snap-start flex-col rounded-lg border border-border bg-card px-4 py-3">
+      <div className="flex min-h-10 items-start justify-between gap-1">
+        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
+        {info && <FinancialInfoTip label={label}>{info}</FinancialInfoTip>}
+      </div>
       <p
-        className={`numeric text-xl font-semibold ${highlight ? "text-primary" : ""} ${danger ? "text-destructive" : ""}`}
+        className={`numeric mt-auto min-w-0 pt-1 text-xl font-semibold [overflow-wrap:anywhere] ${highlight ? "text-primary" : ""} ${danger ? "text-destructive" : ""}`}
       >
         {value}
       </p>

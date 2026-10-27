@@ -7,7 +7,20 @@ The owner's latest inventory UI refinement (DEC-25) combines adjacent Products
 and Categories metrics into one compact card, hides loaded zero inventory
 indicators, and requires responsive cards to contain large numbers. Retain
 scope, visibility permissions, calculations and real loading/empty states;
-this does not remove meaningful zero sales or payment totals.
+The later DEC-26 explicitly extends zero-card hiding to financial/count cards on
+Live Dashboard and Live Business Board; keep All Shops zero-valued cards.
+Never hide meaningful negative balances or treat incomplete data as loaded zero.
+Expand table is phone-only; Columns belongs beside its table/section heading.
+DEC-27 further asks for small-screen summary cards to swipe sideways in a manual
+loop, last card back to first, with no visible scrollbar. Keep desktop layout,
+visibility grants and loaded data; do not interpret infinity as endless database
+fetches or introduce automatic movement.
+The owner's controlling correction DEC-29 excludes graphs, charts and their
+containing cards from the new loop. Apply it only to non-chart summary,
+inventory, financial and shop card groups; retain existing chart behavior.
+DEC-30 extends the same behavior to Windows/desktop when available container space
+would otherwise make cards wrap. Use responsive fit detection, not a phone-only
+platform check; keep the ordinary layout when all cards fit on one row.
 
 Read [../AGENTS.md](../AGENTS.md) and [TASK_TRACKER.md](TASK_TRACKER.md) first.
 The tracker records defects, unfinished work, verification and approvals.
@@ -39,6 +52,12 @@ the narrow AUTH-01/02 identity/branch enforcement corrections and their necessar
 tests are now authorized. No live database mutation, unrelated workflow redesign,
 installer publication or production promotion is approved by that instruction.
 Record required shared-boundary changes and remaining later-batch risks explicitly.
+
+On 2026-10-27 the owner additionally approved **report-only corrections** (DEC-32):
+align authorized sales/sponsorship scope and refunded-bill totals and explain
+before/after receipt adjustments and sponsorship values. Preserve checkout,
+receipts, stock and stored records; use a separate recoverable commit. This does
+not authorize forcing totals to a manually expected amount or rewriting history.
 
 ## Membership: ON HOLD
 
@@ -280,6 +299,18 @@ AUTH findings for missing cases. Use isolated data and installed IPC integration
 
 ## What is actually verified versus unfinished
 
+- Batch 1 source commit `608398c6` retains verified session terminal identity,
+  validates native activation adoption and protects sealed configuration. Hosted
+  and installed-Main isolated regressions pass, including legitimate cashier
+  grants. This does not close alternate direct database/RPC authority or establish
+  native-versus-web attestation; TASK_TRACKER.md records the residual scope.
+- Approved tooltip and inventory-card UI refinements use existing data/formulas
+  and permissions. The DEC-25 full candidate passed 544 files / 3,354 tests and
+  desktop/phone/tablet inventory card containment checks. DEC-26's live zero cards
+  and table controls passed separate render, allowed/denied visibility, desktop
+  heading and phone expanded-dialog checks. Adaptive non-chart loops passed actual
+  narrow-Windows/390px phone wraparound and 2200px fitting-row checks; graph
+  behavior is unchanged. There is no global UI/device verification guarantee.
 - The 2026-10-27 read-only audit inventoried 123 route source files, including 20
   API and 45 settings files, and a 70-table synchronization registry. Existing
   tests were inspected; no new automated suite or formal Codex Security scan ran

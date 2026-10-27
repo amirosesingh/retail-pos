@@ -1,13 +1,14 @@
 import { companyStoreScope } from "@/lib/company-store-scope";
 import { allShopsScope, allShopsTotalsScope, shopClusterKey } from "@/lib/all-shops-scope";
 import { useAllShopsLifetime } from "@/lib/use-all-shops-lifetime";
-import { useSponsorshipTotals } from "@/lib/use-sponsorship-totals";
-import { SalesReconciliation } from "@/platforms/web/components/pos/SalesReconciliation";
+import { FinancialBreakdown, FinancialInfoTip, GrossProfitInfo, SalesTotalInfo } from "@/platforms/web/components/pos/FinancialInfo";
+import { salesReconciliation } from "@/lib/sales-reconciliation";
+import { SummaryCardRail } from "@/platforms/web/components/pos/SummaryCardRail";
 import { HomeShortcuts } from "@/platforms/web/components/pos/HomeShortcuts";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { inventoryMetrics, isLowStock } from "@/lib/inventory-metrics";
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Download, Search } from "lucide-react";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Badge } from "@/components/ui/badge";
@@ -59,7 +60,7 @@ export const Route = createFileRoute("/all-shops")({
 });
 
 function AllShops() {
-  const { state, stores: directoryStores, currentStore } = usePos();
+  const { state, stores: directoryStores, currentStore, ready: inventoryReady, loadPhase } = usePos();
   const { can, isAdmin, user, terminalStoreId, canSwitchStores } = useAuth();
   const unrestrictedManagement = canSwitchStores && !terminalStoreId && !user?.storeId;
   const stores = useMemo(() => allShopsScope(directoryStores, terminalStoreId || user?.storeId || currentStore.id,
@@ -94,7 +95,6 @@ function AllShops() {
   const [to, setTo] = useState(today);
   const history = useReportSales(state.sales, periodStoreIds, from, to, isAdmin && periodStoreIds.length > 0);
   const lifetime = useAllShopsLifetime(storeIds,today,showMoney,showCostMargin);
-  const sponsorship = useSponsorshipTotals(periodStoreIds,from,to,isAdmin && state.settings.integrations.includeSponsorshipInDailySales===true);
   const [query, setQuery] = useState("");
   const [lowOnly, setLowOnly] = useState(false);
   const [category, setCategory] = useState("all");
@@ -134,7 +134,9 @@ function AllShops() {
     const financial = profitOf(todays, state.products);
     return {
       revenue: financial.revenue,
+      cost: financial.cogs,
       profit: financial.profit,
+      totals: salesReconciliation(todays),
       bills: todays.length,
       basket: todays.length ? financial.revenue / todays.length : 0,
       feed: [...todays].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
@@ -276,9 +278,9 @@ function AllShops() {
           </p>
         )}
 
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <SummaryCardRail label="Shop summaries">
           {perStore.map((s) => (
-            <div key={s.store.id} className="rounded-lg border border-border bg-card p-4">
+            <div key={s.store.id} className="min-w-0 rounded-lg border border-border bg-card p-4 [overflow-wrap:anywhere]">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium">{s.store.name}</p>
@@ -290,27 +292,27 @@ function AllShops() {
                   </Badge>
                 )}
               </div>
-              <p className="numeric mt-3 text-xl font-semibold">
+              <p className="numeric mt-3 min-w-0 text-xl font-semibold [overflow-wrap:anywhere]">
                 {showMoney && s.totals ? money(s.totals.revenue) : "—"}
               </p>
-              {showMoney && <p className="text-xs text-muted-foreground">Net sales to date · through {today}</p>}
-              {showCostMargin && showMoney && <p className="mt-1 text-sm">Gross profit to date <span className="numeric font-semibold">{s.totals ? money(s.totals.profit) : "—"}</span></p>}
+              {showMoney && <p className="text-xs text-muted-foreground">Net sales to date · through {today}{s.totals && <FinancialInfoTip label={`${s.store.name} net sales to date`}><FinancialBreakdown rows={[["Net sales to date", money(s.totals.revenue)]]}><p>Sales after discounts, excluding tax and rounding, through {today}. Refunded bills are excluded. This summary does not include individual bill deductions.</p></FinancialBreakdown></FinancialInfoTip>}</p>}
+              {showCostMargin && showMoney && <p className="mt-1 text-sm">Gross profit to date <span className="numeric font-semibold">{s.totals ? money(s.totals.profit) : "—"}</span>{s.totals && <FinancialInfoTip label={`${s.store.name} gross profit to date`}><FinancialBreakdown rows={[["Net sales to date", money(s.totals.revenue)], ["Gross profit to date", money(s.totals.profit)]]}><p>Gross profit is net sales less cost of goods sold, before other operating expenses. This summary does not include the separate cost or bill deductions.</p></FinancialBreakdown></FinancialInfoTip>}</p>}
               <p className="text-xs text-muted-foreground">
                 {showMoney ? (
                   <>
-                    {s.totals ? `${s.totals.bills} bills to date` : "Shop totals unavailable"} ·{" "}
-                    {s.stockVisible ? (showCostMargin ? "current stock " + money(s.stockValue) : "Stock value restricted") : "Private stock"}
+                    {s.totals ? `${s.totals.bills} bills to date` : "Shop totals unavailable"}
+                    {!s.stockVisible ? " · Private stock" : !inventoryReady ? (loadPhase === "failed" ? " · Stock unavailable" : " · Stock loading…") : !showCostMargin ? " · Stock value restricted" : Math.abs(s.stockValue) >= 0.005 ? " · current stock " + money(s.stockValue) : null}
                   </>
                 ) : (
                   "Stock quantities only"
                 )}
               </p>
-              {s.stockVisible && (
+              {s.stockVisible && inventoryReady && s.low > 0 && (
                 <p className="mt-1 text-xs text-warning">{s.low} below reorder level</p>
               )}
             </div>
           ))}
-        </div>
+        </SummaryCardRail>
 
         {isAdmin && (
           <section className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
@@ -330,13 +332,12 @@ function AllShops() {
               <span className="text-xs text-muted-foreground">{from} to {to} · Shop cards remain separate.</span>
             </div>
             <p className="text-xs text-muted-foreground">Net sales exclude tax and rounding. Collected includes the stored bill total after discounts, tax and rounding. Refunded bills are excluded.</p>
-            <div className="summary-grid grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <Kpi label="Gross profit" value={money(live.profit)} />
+            <SummaryCardRail label="Selected-period shop totals">
+              <Kpi label="Net sales · selected dates" value={money(live.revenue)} info={!history.loading && !history.error && <SalesTotalInfo totals={live.totals} />} />
+              <Kpi label="Gross profit" value={money(live.profit)} info={<GrossProfitInfo revenue={live.revenue} cost={live.cost} profit={live.profit} />} />
               <Kpi label="Bills" value={String(live.bills)} />
-              <Kpi label="Average basket · net sales" value={money(live.basket)} />
-            </div>
-            <SalesReconciliation sales={live.feed} sponsorshipValue={sponsorship.total} title="Selected period sales breakdown" />
-            {sponsorship.error && <p role="alert" className="text-sm text-destructive">Sponsorship values could not be refreshed.</p>}
+              <Kpi label="Average basket · net sales" value={money(live.basket)} info={<FinancialBreakdown rows={[["Net sales", money(live.revenue)], ["Completed bills", String(live.bills)], ["Average basket", money(live.basket)]]}><p>Net sales ÷ completed bills for the selected dates.</p></FinancialBreakdown>} />
+            </SummaryCardRail>
             <div className="overflow-auto rounded-md border border-border bg-card">
               <Table tableId="routes/all-shops#1">
                 <TableHeader>
@@ -392,11 +393,11 @@ function AllShops() {
   );
 }
 
-function Kpi({ label, value }: { label: string; value: string }) {
+function Kpi({ label, value, info }: { label: string; value: string; info?: ReactNode }) {
   return (
     <div className="summary-card rounded-lg border border-border bg-card p-4">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="numeric mt-1 text-xl font-semibold">{value}</p>
+      <div className="flex items-center justify-between gap-1"><p className="text-xs text-muted-foreground">{label}</p>{info && <FinancialInfoTip label={label}>{info}</FinancialInfoTip>}</div>
+      <p className="numeric mt-1 min-w-0 text-xl font-semibold [overflow-wrap:anywhere]">{value}</p>
     </div>
   );
 }

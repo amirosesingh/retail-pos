@@ -11,7 +11,9 @@ import { methodLabel } from "@/core/types/pos-types";
 import { createCatalogueVisibility } from "@/lib/branch-policy";
 import { posDayKey } from "@/lib/time-zone";
 import { SellingShortcuts } from "./SellingShortcuts";
-import { SalesReconciliation } from "./SalesReconciliation";
+import { FinancialInfoTip, SalesTotalInfo } from "./FinancialInfo";
+import { salesReconciliation } from "@/lib/sales-reconciliation";
+import { SummaryCardRail } from "./SummaryCardRail";
 
 import {
   Activity,
@@ -67,7 +69,7 @@ const ACTIONS: WorkspaceAction[] = [
   ];
 
 export function TerminalWorkspaceHome() {
-  const { state, currentStore } = usePos();
+  const { state, currentStore, ready: inventoryReady, loadPhase } = usePos();
   const { shift: viewedShift, checked: shiftChecked, error: shiftError } = useViewedBranchShift();
   const { can, user } = useAuth();
   const { visible, visibleRoute } = useVisibility();
@@ -98,6 +100,7 @@ export function TerminalWorkspaceHome() {
   const includeSponsorship=state.settings.integrations.includeSponsorshipInDailySales===true;
   const sponsorship=useSponsorshipTotals(storeIds,todayKey,todayKey,includeSponsorship);
   const completedSales = todaySales.filter((sale) => !sale.refunded);
+  const todayTotals = useMemo(() => salesReconciliation(todaySales), [todaySales]);
   const todayRevenue = completedSales.reduce((sum, sale) => sum + sale.total, 0);
   const paymentSummary = dailyPaymentSummary(completedSales);
   const catalogueProducts = useMemo(() => {
@@ -105,7 +108,12 @@ export function TerminalWorkspaceHome() {
     return state.products.filter(product => visible(product, currentStore.id));
   }, [state.settings, state.stores, state.transfers, state.products, currentStore.id]);
   const stockMetrics = inventoryMetrics(catalogueProducts, currentStore.id);
-  const lowStock = stockMetrics.lowStock;
+  const stockAlerts = [
+    { label: "Low stock", value: stockMetrics.lowStock },
+    { label: "Out of stock", value: stockMetrics.outOfStock },
+    { label: "Negative stock", value: stockMetrics.negativeStock },
+  ].filter(alert => alert.value > 0);
+  const mainStockAlert = stockAlerts[0];
   const archivedProducts = catalogueProducts.filter((product) => product.archived === true).length;
   const activeProducts = catalogueProducts.length - archivedProducts;
   const PurposeIcon = detail.icon;
@@ -136,6 +144,7 @@ export function TerminalWorkspaceHome() {
               <Metric
                 key="revenue"
                 label={includeSponsorship?"Today's sales summary":"Today's revenue"}
+                info={!loading && !error && <SalesTotalInfo totals={todayTotals} sponsorshipValue={includeSponsorship && !sponsorship.error ? sponsorship.total : 0} />}
                 payments={paymentSummary}
                 icon={BarChart3}
                 tone="text-category-2 bg-category-2/10"
@@ -155,28 +164,28 @@ export function TerminalWorkspaceHome() {
                 }
               />
             ),
-    stock: can("can_view_inventory") && visible("workspace.lowStock") && (
+    stock: can("can_view_inventory") && visible("workspace.lowStock") && (!inventoryReady || mainStockAlert) && (
               <Metric
                 key="stock"
                 icon={Boxes}
-                tone="text-warning bg-warning/10"
-                label={<>Low stock <StockExplanation><span className="block">Positive stock at or below reorder level</span><span className="block">{stockMetrics.outOfStock} out of stock · {stockMetrics.negativeStock} negative stock</span></StockExplanation></>}
-                value={<AnimatedMetric value={lowStock} />}
+                tone={mainStockAlert?.label === "Negative stock" ? "text-destructive bg-destructive/10" : "text-warning bg-warning/10"}
+                label={!inventoryReady ? "Stock" : <>{mainStockAlert.label} <StockExplanation><span className="block">Low stock means positive stock at or below reorder level.</span>{stockAlerts.map(alert => <span key={alert.label} className="block">{alert.value.toLocaleString()} {alert.label.toLowerCase()}</span>)}</StockExplanation></>}
+                value={!inventoryReady ? (loadPhase === "failed" ? "Unavailable" : "Loading…") : <AnimatedMetric value={mainStockAlert.value} />}
                 hint={
-                  <>
+                  !inventoryReady ? (loadPhase === "failed" ? "Catalogue could not be loaded" : "Loading branch inventory") : <>
                     <span className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-border/60 pt-2">
-                      <span>
+                      {activeProducts > 0 && <span>
                         Active{" "}
                         <strong className="font-medium text-foreground">
                           <AnimatedMetric value={activeProducts} />
                         </strong>
-                      </span>
-                      <span>
+                      </span>}
+                      {archivedProducts > 0 && <span>
                         Archived{" "}
                         <strong className="font-medium text-foreground">
                           <AnimatedMetric value={archivedProducts} />
                         </strong>
-                      </span>
+                      </span>}
                     </span>
                   </>
                 }
@@ -261,14 +270,9 @@ export function TerminalWorkspaceHome() {
             </div>
           </header>
 
-          {Object.values(metrics).some(Boolean) && <section className="selling-overview flex flex-wrap gap-3" aria-label="Workspace overview" tabIndex={0}>
-            {(["shift", "bills", "revenue", "stock"] as const).filter(key => metrics[key]).map(key => <div key={key} className="min-w-0 flex-[1_1_11rem] [&>*]:h-full">{metrics[key]}</div>)}
-          </section>}
-
-          {can("can_view_sales_reports") && visible("workspace.todayRevenue") && !loading && !error && <details className="rounded-xl border border-border bg-card p-4">
-            <summary className="cursor-pointer text-sm font-medium">Today's sales breakdown · {currentStore.name}</summary>
-            <div className="mt-3"><SalesReconciliation sales={completedSales} sponsorshipValue={includeSponsorship && !sponsorship.error ? sponsorship.total : 0} showBillCount={visible("workspace.todayBills")} /></div>
-          </details>}
+          {Object.values(metrics).some(Boolean) && <SummaryCardRail label="Workspace overview" className="selling-overview" desktopClassName="lg:flex lg:flex-wrap" desktopItemClassName="lg:flex-[1_1_13rem]">
+            {(["shift", "bills", "revenue", "stock"] as const).filter(key => metrics[key]).map(key => metrics[key])}
+          </SummaryCardRail>}
 
           {actions}
         </div>
@@ -284,6 +288,7 @@ function Metric({
   icon: Icon,
   tone,
   payments,
+  info,
 }: {
   label: ReactNode;
   value: ReactNode;
@@ -291,17 +296,21 @@ function Metric({
   icon: typeof Store;
   tone: string;
   payments?: { method: string; amount: number }[];
+  info?: ReactNode;
 }) {
   return (
     <Card className="workspace-metric">
       <CardContent className="p-3 pt-3 sm:p-4 sm:pt-4 xl:p-5 xl:pt-5">
         <div className="flex items-center justify-between gap-3">
-          <p className="text-sm font-medium text-muted-foreground">{label}</p>
+          <div className="flex min-w-0 items-center gap-1">
+            <p className="text-sm font-medium text-muted-foreground">{label}</p>
+            {info && <FinancialInfoTip label={typeof label === "string" ? label : "Financial total"}>{info}</FinancialInfoTip>}
+          </div>
           <span className={`rounded-xl p-2 ${tone}`}>
             <Icon aria-hidden="true" className="size-4" />
           </span>
         </div>
-        <p className="mt-2 break-words text-xl font-semibold tracking-tight tabular-nums xl:mt-3 xl:text-3xl">
+        <p className="mt-2 min-w-0 text-xl font-semibold tracking-tight tabular-nums [overflow-wrap:anywhere] xl:mt-3 xl:text-3xl">
           {value}
         </p>
         <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{hint}</p>
