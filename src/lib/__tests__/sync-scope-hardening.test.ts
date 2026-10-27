@@ -66,7 +66,8 @@ describe("scoped SQL Server synchronization", () => {
     expect(endpoint).toContain('p_terminal_id: scope.terminalId ?? ""');
     expect(endpoint).toContain("terminalSync && !scope.terminalId");
     expect(endpoint).toContain('code: "TERMINAL_REQUIRED"');
-    expect(relay).toContain("terminalId = input.terminalToken");
+    expect(relay).toContain("const requestedTerminal=storedTerminalId || input.terminalToken");
+    expect(relay).toContain("terminalId=terminal.id");
     expect(main).toContain("const branchId=localBranchId()");
     expect(main).not.toContain("branchId:input.branchId??localBranchId()");
     expect(read("supabase/schema.sql")).toContain("SYNC_TERMINAL_SCOPE_FORBIDDEN");

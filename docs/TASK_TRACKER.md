@@ -3,15 +3,15 @@
 Last reconciled: **2026-10-27, Asia/Brunei**.
 Read [../AGENTS.md](../AGENTS.md) and [PROJECT_MEMORY.md](PROJECT_MEMORY.md).
 This is the single current task ledger. Existing audit/checkpoint documents remain
-supporting evidence, not competing completion lists. No application correction is
-authorized by the documentation-only batch.
+supporting evidence, not competing completion lists. Batch 0 authorized documentation
+only; the owner's subsequent Batch 1 approval below authorizes its bounded fixes.
 
 ## Active plan and approval boundary
 
 | Order | Batch / current state | Exit requirement |
 | --- | --- | --- |
 | 0 | **Verified: owner-approved documentation only** | Original rules preserved; memory/ledger linked; carried-forward tasks and branch-lock decisions recorded; documentation-only checks and independent review completed. See evidence log. |
-| 1 | Pending approval: trusted terminal identity and native branch boundaries | Review temporary Electron/mobile registration and both device types first; approved small patch; required allowed/denied API/IPC/offline regressions. |
+| 1 | **Active: owner approved 2026-10-27, trusted terminal identity and native branch boundaries** | Review existing temporary Electron/mobile registration and both device types first; minimally fix AUTH-01/02 at shared boundaries; prove granted cashier checkout and denied foreign branch/API/IPC cases. No live DB change or publication. |
 | 2 | Pending approval: management/account scope and alternate authority paths | Correct assigned/selected/terminal scope without blanket role grants; review direct database and legacy RPC boundaries. |
 | 3 | Pending approval: settings and permission lifecycle | Section/path/tier ownership, live permission semantics, revocation and saved-state checks agree. |
 | 4 | Pending approval: atomic booking collection and receipt recovery | One authoritative financial/stock/link transaction; stable replay; canonical payment identity; ambiguous legacy records remain review-only. |
@@ -87,6 +87,10 @@ original statements are not invented. See memory for the full approved semantics
 | DEC-19 | Owner approved documentation-only Batch 0 on 2026-10-27. | Authorizes the instruction/memory/tracker and targeted documentation reconciliation only. |
 | DEC-20 | One clear management home per setting/field responsibility; consolidate genuine duplicate editors after tracing persistence/consumers. | Preserve necessary fields, distinct scopes and separate permissions/approver and sales/booking receipt responsibilities. No application-change approval implied. |
 | DEC-21 | One concise update on task start, entry into verification and completion; show completed/working/pending. | Preserve honest verification states and avoid repeated unchanged updates. |
+| DEC-22 | Owner approved Batch 1: check Electron/mobile activation for normal and management terminals, fix trusted branch locking, preserve cashier checkout and other functionality, use agents and beta first; Membership stays on hold. | Supersedes Batch-0-only application-work pause for this narrow batch. Does not approve unrelated fixes, live SQL/data changes, native publication or production promotion. |
+| DEC-23 | Owner explicitly requests removal of all added sales-breakdown panels, including Home, Selling, All Shops and Reports, while retaining normal totals and receipt details. | Supersedes the earlier request to add those reconciliation panels. Apply as a separate UI-only change/commit, not mixed into branch/security logic or financial formulas. |
+| DEC-24 | Show financial breakdown through small hover/click information icons on Revenue, Gross Profit and related summary totals instead of standalone panels; explain original amounts, deductions and resulting value using existing data. | Refines DEC-23. Keep icons compact, keyboard/touch usable, and calculations/receipts unchanged; do not fetch new item histories merely to open a tooltip. |
+| DEC-25 | Combine adjacent Products and Categories inventory metrics into one compact card on Live Dashboard and other existing inventory summary cards. Hide zero inventory indicators after loading and reveal changed nonzero values; prevent numeric overflow at desktop and mobile sizes. | Refines UI-08. Preserve calculation, scope, permissions and meaningful loading/empty states. This concerns inventory summaries, not removal of zero sales/payment totals. |
 
 ## Current work register
 
@@ -110,15 +114,15 @@ No earlier chat-wide “completed” message is treated as blanket verification.
 
 | ID | Status / severity | Expected versus actual; scope; next step / acceptance |
 | --- | --- | --- |
-| AUTH-01 | Pending / Critical | Verified normal-terminal session must retain terminal restriction when request token is absent. `pos-relay.server.ts:718` drops stored `terminal_id`; optional token restores it at :747; `relay-policy.server.ts:301,326` then lets a manager cross branches, reaching sale RPC :424. Preserve verified binding; test omission/forgery/revocation and valid cashier checkout A. |
-| AUTH-02 | Pending / Critical | Session adoption must not rewrite activation from untrusted renderer data. `electron/main.cjs:1700`, `ipc-guard.cjs:368`, `preload.cjs:21`: proved person plus supplied raw terminal can be sealed; local query/snapshot trust that branch. A fixed cashier write has a separate branch comparison; reads do not. Review complete registration proof before a fix; shared-SQL installed IPC tests required. |
+| AUTH-01 | Implemented / Critical | Batch 1 now retains persisted raw/cashier-session terminal identity when a request token is omitted; rejects contradictory, revoked, missing or reassigned activation and validates device proof for terminal-only/unbound issuance. Isolated hosted RPC/sync tests preserve cashier A and deny foreign branch B. Remaining: browser-shaped unbound Auth issuance is not native attestation; direct database/RLS/legacy boundaries remain AUTH-04/SEC-01, not certified closed. See evidence below and physical-device acceptance TST-01/04. |
+| AUTH-02 | Implemented / Critical | Main now rejects ordinary token/mode/branch/alias reassignment, verifies canonical activation descriptors, preserves operator-managed config/secrets, and checks account scope before local reads. Legacy missing proof is repaired only after server validation. Clearing removes usable identity while retaining non-secret origin; replacement requires administrative recovery, clean pending/failed/conflicted SQL work and local diagnostic attribution. Installed wrapper→Main isolated tests cover denied substitution and granted cashier access. Real DPAPI/SQL/device/restart acceptance remains TST-01/04; legacy plaintext import is not OS-user tamper protection. |
 | AUTH-03 | Pending / Critical | Assigned web manager A must not receive B scope. `relay-policy.server.ts:301,326` conditions restriction on terminal ID and then supervisor role. Current account scope principally represents one branch or NULL/all, not an explicit A+B-excluding-C subset. Verify actual representation and owner intent before any scope design; test assigned and all-authorized cases without inventing grants. |
 | AUTH-04 | Pending / Critical | Direct authenticated database/RPC paths must match terminal/account restrictions. `schema.sql:4418` `store_visible` grants supervisors broad visibility; generic cloud proxy does not establish terminal branch. Deployed definition inspected read-only. Trace all alternate consumers; do not blindly remove legitimate management access. |
 | AUTH-05 | Pending / High | Generic approval scope must allow authorized all-store supervisors while keeping bound admins A-only. `authorization.functions.ts:192,202` admin-only broad scope ignores normal-terminal binding. Align verified scope without granting action/approver rights; include sponsorship and product/transfer approvals. |
 | AUTH-06 | Pending / High | Sparse/null permission matrices must resolve the same way online, native and frontend. `permissions.ts:393` frontend supervisor defaults versus explicit-only `relay-claims.server.ts:19`. Confirm legacy cases; no automatic grant expansion or silent saved-matrix rewrite. |
 | AUTH-07 | Pending / Medium | Revoked/deleted/expired identity must be distinct from network unavailability. `session-permissions.server.ts:37` catches rejection as unavailable; `pos-auth.tsx:1320` preserves cached rights. UI staleness confirmed; native-write consequences unverified. Preserve legitimate offline behavior and test revocation. |
 | AUTH-08 | Pending / High | Correct warehouse role/access classification. `pos-auth.tsx:1509` treats ordinary web `staff` as warehouse; :1567 permits unassigned warehouse switching while relay may deny writes. Verify actual role slug and explicit scope; independent warehouse ACL remains unproven. |
-| AUTH-09 | Pending / High | Owner clarification DEC-04: inspect existing temporary registration, Electron activation and mobile activation for both Operations/Management through claim/session/adoption/reissue/revocation before AUTH-01/02/03 implementation. Document their distinct purposes; do not duplicate them or weaken proof. |
+| AUTH-09 | Implemented / High | Existing preclaim/manual/QR pairing, claim, PC/mobile Operations/Management descriptors, issuance, adoption, revalidation and revocation/re-pair paths reviewed under DEC-04/22. Preclaim discovery remains separate from completed activation; NULL branch needs explicit management designation and saved account admission. Compatibility proof handoffs repaired for staff rosters, approval credentials, recovery PIN and Operations replication. Typed registry outage stays unavailable; authoritative activation denial cannot trigger cached-login fallback. Real-device acceptance remains outstanding; no new activation mechanism or live records changed. |
 | AUTH-10 | Pending / Critical | Reassignment must handle pending/failed/conflicted offline transactions across remote reissue and all IPC paths. Local Unpair UI checks pending work; remote `20261021013221_terminal_reissue_and_mobile_tokens.sql:12` does not establish equivalent recovery. No data deletion proven. Require audit and recovery without relabeling old A work to B. |
 | AUTH-11 | Implemented / High | Role defaults, consolidated Edit permissions, account management-admission flags and delegated `can_manage_staff` exist. Complete create/edit/save/reload/revocation, direct URL/API and checkbox→actual-operation matrix; preserve explicit denials, cashier sale grant and admin's intentional authority. |
 | AUTH-12 | Implemented / High | Per-user approval PIN/soft-token paths exist; prior delayed-first-PIN/token failures were addressed in earlier patches but not certified on affected phone→offline Windows pair. Test eligibility, branch, limits, expiry/clocks, replay, attribution and unavailable-versus-incorrect messaging without sharing credentials. |
@@ -184,8 +188,9 @@ No earlier chat-wide “completed” message is treated as blanket verification.
 | UI-05 | Implemented / Medium | Login keypad collapsed behind circular control, minimum six PIN dots expanding for long PINs, bounded staff list, branding, splash and sidebar collapse need physical Electron/mobile acceptance. Remove special @ shortcut while preserving plain usernames/email and cashier PIN. |
 | UI-06 | Implemented / Medium | Native update indicator is global for signed-in/signed-out/nonadmin users, progress ring near login/profile/bell, hidden once completed. Verify availability/download/install/restart at all platforms/channels; web/native boundaries and signing keys preserved. |
 | UI-07 | Pending / Medium | Complete page/subpage/modal audit at mobile/tablet/desktop sizes, direct links and keyboard. Prior double app-shell/navigation reports and alignment/overflow require per-page evidence; do not include Membership redesign. |
-| UI-08 | Pending / Medium | Hide zero inventory warning cards/counts and remove duplicate out-of-stock action as requested; animate changed nonzero metrics reasonably and reflow permission-hidden cards/navigation without gaps. Verify accessibility and no misleading loading-as-zero. |
+| UI-08 | Active / Medium | DEC-25: combine adjacent Products/Categories inventory metrics into one compact card across existing summaries; hide loaded zero inventory indicators and reveal positive changed counts. Fix large-value overflow and responsive sizing. Preserve existing scope/permissions/calculations, meaningful loading/empty states, reasonable count animation and gap-free reflow. Remove duplicate out-of-stock action only where already requested and confirmed redundant. Keep separate from Batch 1 security commit. |
 | UI-09 | Pending / Low | Confirmed dev warning: exported RulesSettings route reused by staff prevents code splitting. Profile production impact and isolate only in an approved batch; not proof of a runtime freeze. |
+| UI-10 | Verified (scoped UI) / Medium | DEC-23/24: standalone SalesReconciliation panels removed from Home, Selling, All Shops, Reports and Shifts. Compact hover/click info icons explain existing financial totals, including Live Business Board, without new detail requests or cost-permission widening. Financial/visibility regression tests passed; live admin preview verified desktop and 390px phone-sized Revenue/Gross Profit tooltips plus Dashboard deductions. Calculations, receipts and loaded filters preserved. Physical phone/native rendering remains TST-04; DEC-25 inventory refinement is separate UI-08. |
 | NTF-01 | Implemented / High | Single rule table with selected users/roles, in-app/push/WhatsApp routes and no duplicate controls. Prior additive upgrade applied with owner approval; verify rule save/reload/delivery/disabled channel and only-selected audience using isolated fixtures, not sending real messages. |
 | NTF-02 | Implemented / High | Personal Clear/unseen queue/immutable audit and token-owner/admin notifications were patched. Verify new-event-only toasts, stale offline acknowledgements, restart/concurrency and unauthorized recipient denial; retain delivery audit even after personal clear. |
 | NTF-03 | Pending / High | External WhatsApp/push/device delivery and offline audit→cloud notification timing remain unverified. No real external messages authorized for this batch; provider/device tests need reviewed isolated recipients/configuration. |
@@ -204,7 +209,10 @@ No earlier chat-wide “completed” message is treated as blanket verification.
 | TST-04 | Pending | Full end-to-end/page/device/printing/customer-display/SQL-failure acceptance and final system regression remain unfinished. Track unavailable access or evidence explicitly; do not declare global verification from browser/admin smoke checks. |
 | HOLD-01 | On hold | Membership tiers, custom member email, table consolidation and related redesign requests are deferred by owner. Preserve existing behavior/data. Only a confirmed critical shared dependency with explicit Membership-change approval permits modification. |
 
-No application task is marked Active while its correction batch awaits approval.
+AUTH-01/02/09 are implemented under Batch 1 with the verification limits below;
+UI-10 and active UI-08 are separately owner-approved and remain independent UI
+changes. Other application corrections
+remain pending their separate approval.
 No task is currently designated Blocked merely because it is difficult or pending;
 record a concrete environment/access/decision blocker if it actually stops work.
 
@@ -232,6 +240,9 @@ to a new revision. Preserve the report; do not commit credential-bearing evidenc
 | Evidence | Actual scope and limits |
 | --- | --- |
 | Documentation-only Batch 0, 2026-10-27 | All 10 intended Markdown files checked for local links and allowed diff scope; original HEAD AGENTS retained as exact text prefix, below 32 KiB; 75 task IDs and 21 decisions unique; eight required cases and explicit Membership hold present; git diff --check passed. Two independent agent reviews completed and actionable corrections applied. Pre-existing drafts preserved, empty booking migration unchanged and signing-key path still ignored. No app tests/build/SQL or runtime data changes performed for this batch. |
+| Batch 1 + DEC-23/24, 2026-10-27 candidate | Independent pre-patch boundary investigation and one fresh candidate review; concrete compatibility findings corrected. Full isolated Vitest: 543 files / 3,344 tests passed; TypeScript and touched security/UI ESLint passed; web production build passed with existing bundler/config warnings. Post-review native attribution/compatibility follow-up: 8 files / 72 tests passed; financial/source-contract follow-up: 11 files / 94 tests passed. No real checkout, stock, credentials, terminal enrollment or database writes performed. |
+| Test-environment qualification | Windows sandbox module collection failed before assertions; authorized external-sandbox mocked runs succeeded. Initial broad run also exposed five obsolete source-contract assertions, now corrected, and the pre-existing empty untracked booking migration. Final full run temporarily held only that zero-byte draft under a non-SQL filename and restored it unchanged in finally; it is not part of the PR or applied SQL. Generated build health report restored; no test failure was hidden by deleting a draft or changing business logic to satisfy strings. |
+| Batch 1 remaining architecture limits | Persisted terminal identity retention and Main enforcement are tested; this is not a full security certification. Native/browser requests using the same unbound account bearer are not cryptographically distinguishable here. Legacy sessions/plaintext migration require separate reconciliation; direct RLS/RPC scope, arbitrary management branch subsets and installed Management report denial (REP-02) remain pending. Remote installed phone/Windows, DPAPI/shared SQL failure/reconnect and physical checkout/printing have not been executed in this batch. |
 | Source checkpoint `1af373f5` | Branch write/shift guards, cluster ownership/provenance, paged reports/shift history, timezone and settings/notification changes previously committed/pushed to PR #341. Newly audited defects remain. |
 | Prior automated runs (conversation record) | 531 files / 3,266 tests before final focused follow-ups; compatibility 29 and reconciliation/guards 27 checks; TypeScript, lint and web build reported passed. No fresh full run during read-only audit/Batch 0; untracked drafts not certified. |
 | Prior sync checks (conversation record) | 70-table registry/contract verified; 31 sync-pipeline checks passed. Not a field SQL Server failure/restore acceptance. |
@@ -268,10 +279,19 @@ Do not stage, delete or treat them as part of documentation-only Batch 0.
 - The activation clarification is DEC-04; newer refinements are DEC-20 (one clear
   management home per field responsibility) and DEC-21 (concise transition updates).
   They refine coverage/reporting, not the approved application-change boundary.
-- DOC-00 documentation validation/review is complete; report exact files/checks
-  and version-control state. Do not infer approval to implement AUTH/FIN/SET fixes.
-- Next application work, if separately approved: a bounded AUTH-09 investigation
-  and AUTH-01/02 correction plan with exact affected paths and eight-case fixtures.
+- DOC-00 is verified and committed locally as d0519d5a. The owner separately
+  approved Batch 1 (DEC-22); no approval is inferred for other AUTH/FIN/SET work.
+- Current baseline: d0519d5a, clean tracked files with pre-existing untracked
+  booking/scratch drafts preserved. Refreshed origin/beta e86bf889 is an ancestor
+  of this branch. Continue existing beta PR path without mixing older source.
+- AUTH-01/02/09 source corrections and isolated regressions implemented. Preserve
+  recorded limitations; do not mark all eight device scenarios globally verified.
+  Finish separate UI-08 DEC-25 inventory card refinement, its rendering tests and
+  final type/lint/diff checks, then update existing beta PR #341 with separate
+  security and UI commits. UI-10 tooltip behavior is scoped verified as above.
+- Recovery: code-only batch must be a separate reviewed commit, reversible without
+  rewriting business data; no live SQL migration, role grant or terminal reassignment
+  is part of Batch 1. An expanded architecture/schema need requires new approval.
 - Keep the local preview process unchanged/available for owner review. Starting,
   restarting or checking a server is not proof of correct SQL or authorization.
 - Before stopping, record any new decision, task change, approval and verification

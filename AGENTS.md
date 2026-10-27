@@ -107,10 +107,12 @@ that device builds require. The guard lives in
 - Membership is **ON HOLD**. Do not redesign, activate or modify it. A confirmed
   critical shared dependency requires the owner's approval before any Membership
   change; do not treat general stabilization approval as that exception.
-- The current owner-approved Batch 0 is documentation only. Application code,
-  tests, migrations and database data remain outside its scope. Read the tracker
-  for later, explicitly approved batches; approval for one batch is not approval
-  for the remainder of the roadmap.
+- Read the tracker's current batch authorization before editing. Batch 0 approved
+  documentation only; on 2026-10-27 the owner separately approved Batch 1 to review
+  Electron/mobile Operations and Management activation and fix trusted branch
+  locking while preserving cashier checkout. This does not authorize unrelated
+  corrections, live database changes, publication or production promotion.
+  Approval for one batch is not approval for the remainder of the roadmap.
 - Investigate first and present confirmed defects separately from suspected
   risks and unverified behavior. For each proposed implementation batch identify
   its recoverable Git baseline, affected files/dependencies, behavior, regression

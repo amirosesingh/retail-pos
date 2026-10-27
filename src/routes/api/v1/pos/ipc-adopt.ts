@@ -13,12 +13,14 @@ export const Route = createFileRoute("/api/v1/pos/ipc-adopt")({
           sessionToken: typeof input?.sessionToken === "string" ? input.sessionToken : undefined,
           cashierToken: typeof input?.cashierToken === "string" ? input.cashierToken : undefined,
           terminalToken: typeof input?.terminalToken === "string" ? input.terminalToken : undefined,
+          deviceBindingProof:typeof input?.deviceBindingProof==="string" ? input.deviceBindingProof : undefined,
         };
         if (
           (proof.accessToken?.length ?? 0) > 4000 ||
           (proof.sessionToken?.length ?? 0) > 400 ||
           (proof.cashierToken?.length ?? 0) > 2000 ||
-          (proof.terminalToken?.length ?? 0) > 2000
+          (proof.terminalToken?.length ?? 0) > 2000 ||
+          (proof.deviceBindingProof!==undefined && !/^[a-f0-9]{64}$/i.test(proof.deviceBindingProof))
         )
           return Response.json(
             { ok: false, error: "A valid sign-in is required." },
@@ -33,6 +35,8 @@ export const Route = createFileRoute("/api/v1/pos/ipc-adopt")({
         const { databaseAuthority } = await import("@/lib/desktop-database-authority.server");
         try {
           const caller = await verifyRelayCaller(proof);
+          const {resolveRelayScope}=await import("@/core/api/relay-policy.server");
+          const scope=await resolveRelayScope(caller);
           const authority = await databaseAuthority({
             userId: caller.staffUserId,
             authUserId: caller.authUserId,
@@ -55,7 +59,9 @@ export const Route = createFileRoute("/api/v1/pos/ipc-adopt")({
             ...authority,
             // A cashier session or terminal token may carry the verified
             // branch even when a global administrator has no store_id.
-            branchId: authority.branchId ?? caller.storeId ?? null,
+            branchId: scope.storeId,
+            accountScope:{branchId:authority.branchId},
+            terminal:caller.terminal??null,
           });
         } catch {
           return Response.json(

@@ -80,9 +80,10 @@ describe("SQL Server checkpoints 13 through 15", () => {
       "if (terminalStore) identity = { ...identity, storeId: terminalStore, terminalId }",
     );
     expect(cloud).toContain("JSON.stringify({ ...normalizeSyncPayload(payload), ...personProof, terminalToken: recordId(terminalToken),");
-    expect(cloud).toContain('terminal.deviceUse === "management" ? { deviceClaimProof: terminal.deviceClaimProof, deviceBindingProof: terminal.deviceBindingProof }');
+    expect(cloud).toContain('deviceBindingProof:terminal.deviceBindingProof');
+    expect(cloud).toContain('terminal.deviceUse === "management" ? { deviceClaimProof: terminal.deviceClaimProof }');
     expect(main).toContain(
-      "operationsRepository.snapshot(localBranchId(), terminalStore.read()?.tokenId ?? null,",
+      "operationsRepository.snapshot(authorizedLocalBranch(), terminalStore.read()?.tokenId ?? null,",
     );
     expect(operations).toContain("FROM dbo.shifts WHERE store_id=@branch");
     expect(operations).toContain("FROM dbo.sales WHERE store_id=@branch");

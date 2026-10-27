@@ -7,7 +7,7 @@ export const Route = createFileRoute("/api/v1/pos/ipc-authorize")({
         const length = Number(request.headers.get("content-length") ?? 0);
         if (length > 4096) return Response.json({ ok: false, error: "Request is too large." }, { status: 413 });
         const input = (await request.json().catch(() => null)) as
-          | { username?: unknown; pin?: unknown; terminalId?: unknown; branchId?: unknown }
+          | { username?: unknown; pin?: unknown; terminalId?: unknown; branchId?: unknown; deviceBindingProof?:unknown }
           | null;
         const username = typeof input?.username === "string" ? input.username.trim() : "";
         const pin = typeof input?.pin === "string" ? input.pin : "";
@@ -20,6 +20,7 @@ export const Route = createFileRoute("/api/v1/pos/ipc-authorize")({
           pin,
           request,
           platform: "windows-ipc-authorization",
+          deviceBindingProof: typeof input?.deviceBindingProof === "string" ? input.deviceBindingProof : undefined,
           terminalId: typeof input?.terminalId === "string" ? input.terminalId : null,
           branchId: typeof input?.branchId === "string" ? input.branchId : null,
         });

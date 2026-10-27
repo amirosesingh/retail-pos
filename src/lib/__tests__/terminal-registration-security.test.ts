@@ -110,7 +110,8 @@ describe("terminal registration trust boundary", () => {
 
   it("keeps pairing credentials behind the hosted proof-check endpoint", () => {
     const endpoint = source("src/routes/api/public/terminal-pairing.ts");
-    expect(endpoint).toContain("claim_proof=eq.");
+    expect(endpoint).toContain("terminalProofMatches(row,proofHash)");
+    expect(endpoint).toContain("claim_proof,claimed_proof_hash");
     expect(endpoint).toContain("Cache-Control");
     expect(endpoint).toContain("supabaseConfig()");
     expect(endpoint).not.toContain("SERVICE_ROLE_KEY");

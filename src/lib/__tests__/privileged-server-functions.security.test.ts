@@ -16,7 +16,7 @@ describe("privileged server functions", () => {
       expect(read(path)).toContain("requireCallerScope");
     }
     expect(read("src/lib/staff-admin.functions.ts")).toContain(
-      "verifyRelayCaller({ terminalToken: data.terminalToken })",
+      "verifyRelayCaller({ terminalToken: data.terminalToken, deviceBindingProof:data.deviceBindingProof })",
     );
     const notifications = read("src/lib/activity-events.functions.ts");
     expect(notifications).toContain("ok: false as const");

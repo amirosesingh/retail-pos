@@ -15,7 +15,7 @@ function secret(): Buffer {
 
 const b64 = (s: string) => Buffer.from(s, "utf8").toString("base64url");
 
-export function signCashierSession(payload: { id: string; username: string; storeId: string; sessionToken: string }): string {
+export function signCashierSession(payload: { id: string; username: string; storeId: string|null; sessionToken: string }): string {
   const body = b64(JSON.stringify({ ...payload, exp: Date.now() + TTL_MS }));
   const sig = createHmac("sha256", secret()).update(body).digest("base64url");
   return `${body}.${sig}`;
@@ -23,7 +23,7 @@ export function signCashierSession(payload: { id: string; username: string; stor
 
 export async function verifyCashierSession(
   token: string,
-): Promise<{ id: string; username: string; storeId: string; sessionToken: string } | null> {
+): Promise<{ id: string; username: string; storeId: string|null; sessionToken: string; terminalId?: string|null } | null> {
   const [body, sig] = (token || "").split(".");
   if (!body || !sig) return null;
   const expected = createHmac("sha256", secret()).update(body).digest("base64url");
@@ -34,11 +34,11 @@ export async function verifyCashierSession(
     const parsed = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as {
       id: string;
       username: string;
-      storeId: string;
+      storeId: string|null;
       exp: number;
       sessionToken?: string;
     };
-    if (!parsed.exp || parsed.exp < Date.now() || !parsed.storeId) return null;
+    if (!parsed.exp || parsed.exp < Date.now() || !(typeof parsed.storeId==="string" || parsed.storeId===null)) return null;
     // Unbound legacy proofs must be renewed with a PIN. Omitting a raw token
     // must not bypass the login's remote revocation or idle expiry.
     if (!parsed.sessionToken) return null;
@@ -46,8 +46,9 @@ export async function verifyCashierSession(
     const checked = await touchSession(parsed.sessionToken);
     if (!checked.ok || checked.session.kind !== "cashier" ||
         checked.session.staff_user_id !== parsed.username ||
-        checked.session.branch_id !== parsed.storeId) return null;
-    return { id: parsed.id, username: parsed.username, storeId: parsed.storeId, sessionToken: parsed.sessionToken };
+        (checked.session.branch_id||null) !== (parsed.storeId||null)) return null;
+    return { id: parsed.id, username: parsed.username, storeId: parsed.storeId, sessionToken: parsed.sessionToken,
+      ...(checked.session.terminal_id ? {terminalId:checked.session.terminal_id}: {}) };
   } catch {
     return null;
   }

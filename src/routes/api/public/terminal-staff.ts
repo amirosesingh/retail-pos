@@ -15,6 +15,7 @@ import { z } from "zod";
 const body = z.object({
   storeId: z.string().max(60).nullable().optional(),
   terminalToken: z.string().max(200).optional(),
+  deviceBindingProof: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
 });
 
 async function handlePost(request: Request): Promise<Response> {
@@ -35,7 +36,7 @@ async function handlePost(request: Request): Promise<Response> {
     try {
       const { verifyRelayCaller } = await import("@/core/api/pos-relay.server");
       // Throws when the token proves nothing (unknown, revoked, retired).
-      const caller = await verifyRelayCaller({ terminalToken: token }).catch(() => null);
+      const caller = await verifyRelayCaller({ terminalToken: token, deviceBindingProof:parsed.data.deviceBindingProof });
       if (!caller || caller.kind !== "terminal")
         return Response.json(
           { ok: false, error: "This terminal is not registered", staff: [] },
@@ -50,7 +51,7 @@ async function handlePost(request: Request): Promise<Response> {
     } catch (e) {
       return Response.json(
         { ok: false, error: (e as Error).message, staff: [] },
-        { status: 500 },
+        { status: (e as {status?:number}).status===503 ? 503 : 401 },
       );
     }
 }

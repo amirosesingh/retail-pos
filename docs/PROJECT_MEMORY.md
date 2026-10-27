@@ -3,6 +3,12 @@
 Last reconciled: **2026-10-27, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
 
+The owner's latest inventory UI refinement (DEC-25) combines adjacent Products
+and Categories metrics into one compact card, hides loaded zero inventory
+indicators, and requires responsive cards to contain large numbers. Retain
+scope, visibility permissions, calculations and real loading/empty states;
+this does not remove meaningful zero sales or payment totals.
+
 Read [../AGENTS.md](../AGENTS.md) and [TASK_TRACKER.md](TASK_TRACKER.md) first.
 The tracker records defects, unfinished work, verification and approvals.
 Technical detail remains in the existing references linked below.
@@ -24,6 +30,15 @@ No application/test code, migration, database record, permission or operator
 configuration change is authorized by that batch. Later correction batches need
 separate review/approval. Publication and production promotion retain AGENTS.md's
 separate approval gates.
+
+On **2026-10-27** the owner separately approved **Batch 1**: check Electron and
+mobile activation for Operations/normal and Management terminals; fix trusted
+branch locking; preserve cashier checkout and unrelated functionality; use agents
+and the beta-first workflow; keep Membership on hold. AUTH-09 investigation and
+the narrow AUTH-01/02 identity/branch enforcement corrections and their necessary
+tests are now authorized. No live database mutation, unrelated workflow redesign,
+installer publication or production promotion is approved by that instruction.
+Record required shared-boundary changes and remaining later-batch risks explicitly.
 
 ## Membership: ON HOLD
 
@@ -219,6 +234,15 @@ that future contributors must recreate. Preserve unrelated local work and drafts
 - Explain subtotal, item/bill discounts, net sales, applicable tax, rounding and
   final collected total in order. Hide zero tax/sponsorship breakdown rows. Report
   scope, sale-period versus shift-period semantics and cost estimates explicitly.
+- Later owner correction (2026-10-27, DEC-23): remove **all added sales-breakdown
+  panels** from Home, Selling, All Shops, Reports and other pages where added.
+  Preserve normal totals, receipt details and financial calculations. This
+  supersedes the presentation-panel request above, not the accounting rules.
+- DEC-24 clarifies that financial breakdown belongs in compact hover/click
+  information icons for Revenue, Gross Profit and related totals, including the
+  Business Board. Explain existing amounts/deductions and resulting values with
+  small keyboard/touch-accessible icons; avoid extra network/item-history reads
+  or revealing cost details without the existing permission.
 - One notification rules table includes WhatsApp, selected users/roles and routes;
   remove duplicate controls only after proving their responsibilities are covered.
   New events must not replay old toasts; retain unseen items in the user's queue.

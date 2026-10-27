@@ -1,6 +1,7 @@
 import { readCredentials, type PosCredentials } from "./pos-credentials";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
 import { isCurrentEpoch, sessionEpoch } from "./session-epoch";
+import { readNativeTerminalProof } from "./native-terminal-proof";
 
 type Result = { ok: boolean; level?: "admin" | "supervisor" | "staff"; error?: string };
 let pending: { epoch: number; bridge: unknown; refresh: boolean; promise: Promise<Result> } | null = null;
@@ -23,7 +24,9 @@ export function ensureDesktopPosSession(refresh = false, proof?: PosCredentials)
     if (!pending?.refresh && status?.unlocked && status.source === "pos") return { ok: true, level: status.level };
     const credentials = proof ?? await readCredentials();
     if (!isCurrentEpoch(epoch)) return { ok: false, error: "The signed-in user changed." };
-    const result = await bridge.adoptSession!(credentials, readTerminalConfig());
+    const registrationProof = await readNativeTerminalProof();
+    if (!isCurrentEpoch(epoch)) return { ok: false, error: "The signed-in user changed." };
+    const result = await bridge.adoptSession!({ ...credentials, ...registrationProof }, readTerminalConfig());
     return isCurrentEpoch(epoch) ? result : { ok: false, error: "The signed-in user changed." };
   })().finally(() => {
     if (pending?.promise === promise) pending = null;

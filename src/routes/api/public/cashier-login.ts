@@ -14,6 +14,7 @@ const body = z.object({
   pin: z.string().min(4).max(32),
   platform: z.string().max(60).optional(),
   terminalId: z.string().max(64).optional(),
+  deviceBindingProof:z.string().regex(/^[a-f0-9]{64}$/i).optional(),
   /** The branch this till is set to; only used for all-branches accounts. */
   branchId: z.string().max(80).nullish(),
 });

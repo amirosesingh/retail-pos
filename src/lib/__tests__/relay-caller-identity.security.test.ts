@@ -14,7 +14,8 @@ vi.mock("@/lib/session-guard.server", () => ({
             kind: "cashier",
             label: "shop-admin",
             staff_user_id: "shop-admin",
-            branch_id: null,
+            branch_id: "activated-branch",
+            terminal_id:"terminal-1",
           },
         })
       : Promise.resolve({ ok: false, reason: "revoked" }),
@@ -51,6 +52,7 @@ describe("relay caller identity", () => {
             status: "active",
             location_id: "activated-branch",
             revoked_at: null,
+            platform:"pc",is_claimed:true,claimed_at:"now",claim_proof:"a".repeat(64),
           },
         ]),
         { status: 200, headers: { "content-type": "application/json" } },

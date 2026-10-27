@@ -6,6 +6,8 @@ export type CashierFailure = { ok: false; code: LoginFailure | "session-open-fai
 export function cashierServiceFailure(status: number, payload: { code?: string; error?: string } | null): CashierFailure & { useLocal: boolean } {
   const code = payload?.code;
   const error = payload?.error ?? "";
+  if (code === "activation_denied")
+    return {ok:false,code:"permission-denied",error:error || "This device activation is not valid. Review its registration before signing in.",useLocal:false};
   if (code === "identity_mismatch")
     return { ok: false, code: "session-open-failed", error: error || "The verified cashier identity needs administrator repair.", useLocal: false };
   if (status === 429 || code === "locked")
