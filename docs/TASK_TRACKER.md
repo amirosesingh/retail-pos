@@ -124,6 +124,14 @@ installer/OTA publication or live sync migration application. Final candidate
 14suites/126tests plus29 sync and11 repair checks passed. Exclude .pending business
 backups, unrelated booking helpers/empty migration and supabase temp files from Git.
 
+Beta source1d24dae7 pushed. Initial CI: web/compile/windows/iOS/label passed;
+regression failed only on expected migration-list and superseded global-export
+source assertions. Corrected those two tests retaining payload/permission checks.
+Full local isolated suite passed551files/3422tests. Unrelated empty SQL draft was
+temporarily held and restored in finally (zero bytes) to match shipped CI files.
+Push follow-up and require fresh CI before beta merge. No live sync migration or
+installer publication performed.
+
 DEC-55: owner reports1/2 stock filter still not selecting quantities. Confirmed
 actual JSX heading plainText creates Stock ·  HC (double space), while parent
 columnValues uses Stock · HC; unknown-key fallback skipped filtering. Normalize
