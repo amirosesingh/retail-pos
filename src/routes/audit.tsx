@@ -1,3 +1,4 @@
+import { formatTime as systemTime } from "@/lib/time-zone";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { posDayKey, inPosDayRange } from "@/lib/time-zone";
 import { createFileRoute } from "@tanstack/react-router";
@@ -673,7 +674,7 @@ function AuditPage() {
                   label="Cloud sync"
                   value={
                     detail.synced_to_cloud
-                      ? `synced ${new Date(detail.syncedAt!).toLocaleTimeString()}`
+                      ? `synced ${systemTime(detail.syncedAt!)}`
                       : "pending (queued locally)"
                   }
                 />

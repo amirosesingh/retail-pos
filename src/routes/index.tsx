@@ -1,3 +1,4 @@
+import { posDateTimeInput, posDateTimeToIso } from "@/lib/time-zone";
 import { projectReusableCoupon } from "@/lib/reusable-coupon-code";
 import { formatDateTime as posDisplayDateTime, formatDate as posDisplayDate } from "@/lib/time-zone";
 import { canOpenDrawer } from "@/lib/receipt-printer";
@@ -103,7 +104,7 @@ import { availableAt, cartTotals, money, stockAt, usePos } from "@/lib/pos-store
 import { variantForBarcode } from "@/lib/product-lookup";
 import { reserveBillNumber } from "@/lib/bill-number";
 import { useAuth } from "@/lib/pos-auth";
-import { productVisibleAt } from "@/lib/branch-policy";
+import { createCatalogueVisibility } from "@/lib/branch-policy";
 import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
 import {
   BOOKING_TIMING_LABELS,
@@ -735,6 +736,8 @@ function Register() {
     setOvergrip,
     jobTag,
     setJobTag,
+    printRacketTag,
+    setPrintRacketTag,
     bookingHubOpen,
     setBookingHubOpen,
     editBookingId,
@@ -774,9 +777,10 @@ function Register() {
   // One pass over the catalogue instead of one per render — the search dialog
   // gets the same array back until the catalogue or the branch actually change.
   const includeAutoZeroStock = state.settings.integrations.autoArchiveZeroStock !== false && !rules.prevent_negative_stock_sale;
+  const catalogueVisible = useMemo(() => createCatalogueVisibility(state.settings, state.stores, state.transfers), [state.settings, state.stores, state.transfers]);
   const visibleProducts = useMemo(
-    () => state.products.filter((p) => productVisibleAt(state.settings, p, state.currentStoreId)),
-    [state.products, state.settings, state.currentStoreId],
+    () => state.products.filter((p) => catalogueVisible(p, state.currentStoreId)),
+    [state.products, catalogueVisible, state.currentStoreId],
   );
   const deferredProductQuery = useDeferredValue(query);
   const recommendedProducts = useMemo(
@@ -858,19 +862,21 @@ function Register() {
 
   /** A bill number is reserved the moment a ticket starts, so the header, the
    *  held record and the printed receipt all carry the same number. */
-  const billReservation = useRef<Promise<string> | null>(null);
+  const billReservation = useRef<{ branchId: string; promise: Promise<string> } | null>(null);
   function ensureDraftBillNumber() {
     if (billNo) return Promise.resolve(billNo);
-    if (billReservation.current) return billReservation.current;
-    billReservation.current = reserveBillNumber(
+    if (billReservation.current?.branchId === currentStore.id) return billReservation.current.promise;
+    const branchId = currentStore.id;
+    const promise = reserveBillNumber(
       currentStore.receiptPrefix?.trim() || currentStore.code || "R",
       state.sales.map((s) => s.receiptNo),
       {
         ...(state.settings.integrations.billNumbering ?? {}),
         timeZone: state.settings.integrations.timeZone || undefined,
       },
-    ).finally(() => { billReservation.current = null; });
-    return billReservation.current;
+    ).finally(() => { if (billReservation.current?.promise === promise) billReservation.current = null; });
+    billReservation.current = { branchId, promise };
+    return promise;
   }
   useEffect(() => {
     if (!lines.length || billNo) return;
@@ -1356,6 +1362,8 @@ function Register() {
       setOvergrip,
       jobTag,
       setJobTag,
+      printRacketTag,
+      setPrintRacketTag,
       bookingHubOpen,
       setBookingHubOpen,
       editBookingId,
@@ -1446,9 +1454,7 @@ function Register() {
   const proposedPromisedAt = () => {
     const hours = bookingRules.defaultTurnaroundHours;
     if (!hours) return "";
-    const at = new Date(Date.now() + hours * 3_600_000);
-    at.setMinutes(at.getMinutes() - at.getTimezoneOffset());
-    return at.toISOString().slice(0, 16);
+    return posDateTimeInput(Date.now() + hours * 3_600_000);
   };
   /** Smallest deposit this branch will accept on a booking of `total`. */
   const minDepositFor = (total: number) =>
@@ -1541,7 +1547,7 @@ function Register() {
     setStencil(!!b.job?.stencil);
     setOvergrip(!!b.job?.overgrip);
     setNotifyWhatsApp(!!b.job?.notifyWhatsApp);
-    setPromisedAt(b.job?.promisedAt ? new Date(b.job.promisedAt).toISOString().slice(0, 16) : "");
+    setPromisedAt(b.job?.promisedAt ? posDateTimeInput(b.job.promisedAt) : "");
     setJobTag(b.tagId ?? "");
     setBookOpen(true);
   }
@@ -1550,6 +1556,9 @@ function Register() {
   async function saveSpecEdits() {
     if (!(await requirePermission("can_manage_bookings"))) return;
     if (!editBookingId) return;
+    let readyAt: string | undefined;
+    try { readyAt = promisedAt ? posDateTimeToIso(promisedAt) : undefined; }
+    catch (error) { notifyError(error, "Checking the ready-by time"); return; }
     const job = {
       racketModel: racketModel.trim() || undefined,
       stringType: stringType.trim() || undefined,
@@ -1560,7 +1569,7 @@ function Register() {
       jobNotes: jobNotes.trim() || undefined,
       stencil,
       overgrip,
-      promisedAt: promisedAt ? new Date(promisedAt).toISOString() : undefined,
+      promisedAt: readyAt,
       notifyWhatsApp,
     };
     let updated;
@@ -1585,7 +1594,7 @@ function Register() {
 
   /* ---- racket intake: catalogue pickers, customer-provided gear, labour lock ---- */
   const catalogueOptions = (match: RegExp) =>
-    state.products
+    visibleProducts
       .filter((p) => !p.archived && match.test(`${p.category} ${p.subCategory ?? ""} ${p.name}`))
       .slice(0, 60)
       .map((p) => ({ value: p.id, label: `${p.name} — ${money(p.price)}` }));
@@ -3591,9 +3600,14 @@ function Register() {
             )}
             {racketMode && (
               <div className="space-y-2 rounded-md border border-border p-2">
-                <div className="grid grid-cols-2 gap-2" role="group" aria-label="Racket service type">
+                <div className="grid gap-2 sm:grid-cols-3" role="group" aria-label="Racket service type">
                   <Button type="button" size="sm" variant={racketCustomerOwned ? "default" : "outline"} onClick={() => setCustomerRacket(true)}>Restringing only</Button>
                   <Button type="button" size="sm" variant={!racketCustomerOwned ? "default" : "outline"} onClick={() => setCustomerRacket(false)}>New racket + service</Button>
+                  <Button type="button" size="sm" variant="outline" onClick={() => {
+                    if (racketProductId && !lines.some(line => line.productId === racketProductId)) addLine(racketProductId);
+                    setBookMode("cart");
+                    toast.info("Racket-only purchase uses General booking. Add the racket to the ticket; no stringing labour is charged.");
+                  }}>Racket only · book later</Button>
                 </div>
                 <div className="grid gap-2 sm:grid-cols-2">
                   <div className="space-y-1">
@@ -3610,7 +3624,7 @@ function Register() {
                     </>}
                   </div>
                   <div className="space-y-1">
-                    <Label>String from catalogue</Label>
+                    {!stringCustomerOwned && <><Label>String from catalogue</Label>
                     <ScanBar captureGlobal={false} autoFocus={false} onScan={code => scanBookingProduct(code, "string")} />
                     <ThemedSelect
                       ariaLabel="String from catalogue"
@@ -3619,12 +3633,13 @@ function Register() {
                       onChange={(v) => pickStringProduct(v)}
                       options={stringOptions}
                     />
+                    </>}
                     <label className="flex items-center gap-2 text-xs text-muted-foreground">
                       <Checkbox
                         checked={stringCustomerOwned}
                         onCheckedChange={(checked) => setCustomerString(checked === true)}
                       />
-                      Customer provided string (no charge)
+                      Customer brings own string (no string charge)
                     </label>
                   </div>
                 </div>
@@ -3638,6 +3653,7 @@ function Register() {
                     options={addOnOptions}
                   />
                 </div>
+                <details className="rounded-md border p-2"><summary className="cursor-pointer text-sm font-medium">Charges &amp; price overrides · {money(intake.subtotal)}</summary>
                 <div className="flex items-center justify-between">
                   <Label>Job charges</Label>
                   <button
@@ -3732,6 +3748,7 @@ function Register() {
                   <span className="text-muted-foreground">Charges total</span>
                   <span className="numeric font-semibold">{money(intake.subtotal)}</span>
                 </div>
+                </details>
               </div>
             )}
             <div className="space-y-1">
@@ -3788,6 +3805,7 @@ function Register() {
                 </div>
               </div>
             </div>
+            <details open={!racketMode} className="rounded-md border p-2"><summary className="cursor-pointer text-sm font-medium">Collection / payment deadline</summary>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
                 <Label>Collect &amp; settle by</Label>
@@ -3814,6 +3832,7 @@ function Register() {
                 </div>
               </div>
             </div>
+            </details>
             <div className="space-y-2 rounded-md border border-border p-2">
               <div className="flex items-center justify-between">
                 <Label>Customer</Label>
@@ -3879,6 +3898,7 @@ function Register() {
                 </div>
               </div>
             </div>
+            <details className="rounded-md border p-2"><summary className="cursor-pointer text-sm font-medium">Additional booking note (optional)</summary>
             <div className="space-y-1">
               <Label>Note</Label>
               <Input
@@ -3887,6 +3907,8 @@ function Register() {
                 placeholder="Colour, size, collection instructions…"
               />
             </div>
+
+            </details>
 
             {/* Racket stringing job card — racket bookings only */}
             {racketMode && (
@@ -3901,13 +3923,13 @@ function Register() {
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1">
                       <Label>Racket brand / model</Label>
-                      <Input
+                      {!racketCustomerOwned && racketProductId ? <p className="rounded-md border bg-muted/30 p-2 text-sm">{racketModel}</p> : <Input
                         value={racketModel}
                         readOnly={!racketCustomerOwned && !!racketProductId}
                         list="racket-models"
                         onChange={(e) => setRacketModel(e.target.value)}
-                        placeholder="Yonex Astrox 88D"
-                      />
+                        placeholder="Enter customer racket model"
+                      />}
                       <datalist id="racket-models">
                         {racketModelList.map((m) => (
                           <option key={m} value={m} />
@@ -3915,14 +3937,14 @@ function Register() {
                       </datalist>
                     </div>
                     <div className="space-y-1">
-                      <Label>String type / brand</Label>
-                      <Input
+                      <Label>{stringCustomerOwned ? "Customer string type / brand" : "Selected string"}</Label>
+                      {!stringCustomerOwned ? <p className="rounded-md border bg-muted/30 p-2 text-sm">{stringProductId ? stringType : "Choose catalogue string above, or select Customer brings own string."}</p> : <Input
                         value={stringType}
                         readOnly={!stringCustomerOwned && !!stringProductId}
                         list="string-models"
                         onChange={(e) => setStringType(e.target.value)}
-                        placeholder="BG65 Ti"
-                      />
+                        placeholder="Enter customer-provided string"
+                      />}
                       <datalist id="string-models">
                         {stringModelList.map((m) => (
                           <option key={m} value={m} />
@@ -4056,9 +4078,8 @@ function Register() {
                       </label>
                     </div>
                   ) : null}
-                  <p className="text-[11px] text-muted-foreground">
-                    A job tag prints with the slip so it can be tied to the racket.
-                  </p>
+                  <label className="flex items-center gap-2 text-sm"><Checkbox checked={printRacketTag} onCheckedChange={value => setPrintRacketTag(value === true)} />Print separate racket tag as well as customer slip</label>
+                  <p className="text-xs text-muted-foreground">The customer slip always prints. Select this only when you need a second document to attach to the racket.</p>
                 </div>
               </div>
             )}

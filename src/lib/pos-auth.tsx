@@ -1,3 +1,4 @@
+import { profileStoreAssignment } from "./auth-branch-assignment";
 import { clearOperatorIdentity, isOperatorIdentity, matchesOperatorIdentity, readOperatorIdentity, saveOperatorIdentity } from "./operator-auth-identity";
 import { localStartupAuthReady } from "./local-startup";
 import { useLocalStartupReady } from "./use-local-startup";
@@ -5,6 +6,8 @@ import { createSessionTransition } from "./session-transition";
 import { terminalUserPermissions } from "./terminal-user-permissions";
 import { createPermissionRefresh } from "./permission-refresh";
 import { ensureDesktopPosSession } from "./desktop-pos-session";
+import { readNativeTerminalProof } from "./native-terminal-proof";
+import { terminalRuntimePlatform } from "@/core/activation/terminal-platform";
 import { subscribeDataChange, subscribeSettingsChange } from "./sync-engine";
 import { normalizeUuidFields } from "./uuid-fields";
 import { preserveSessionDrafts } from "./session-draft";
@@ -719,8 +722,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             data: {
               kind: "staff",
               accessToken: token,
+              ...(await readNativeTerminalProof()),
               label: data.user?.email ?? email.trim(),
-              platform: typeof navigator === "undefined" ? "web" : navigator.platform || "web",
+              platform: terminalRuntimePlatform(),
             },
           });
           if (started.ok) {
@@ -807,9 +811,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           } else {
             const { serverUrl } = await import("@/lib/server-origin");
             const { requestCashierLogin } = await import("@/lib/cashier-login-request");
+            const registrationProof = await readNativeTerminalProof();
             const response = await requestCashierLogin<ServerLogin>(serverUrl("/api/public/cashier-login"), {
               username: code, pin,
-              platform: typeof navigator === "undefined" ? "web" : navigator.platform || "web",
+              ...(registrationProof.terminalToken ? { terminalId: registrationProof.terminalToken } : {}),
+              ...(registrationProof.deviceBindingProof ? { deviceBindingProof: registrationProof.deviceBindingProof } : {}),
+              platform: terminalRuntimePlatform(),
               branchId: activeBranchId(null),
             });
             status = response.status;
@@ -876,7 +883,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // the desktop process independently verifies it before granting IPC.
           role: account.role,
           roleSlug: account.role_slug,
-          storeId: activeBranchId(account.store_id ?? null),
+          storeId: isTerminalApp()
+            ? activeBranchId(account.store_id ?? null)
+            : profileStoreAssignment(account),
           email: "",
           cashierId: account.id,
           permissions: account.permissions as unknown as TerminalUser["permissions"],
@@ -934,7 +943,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         let cashierToken = verified?.cashierToken ?? "";
         const sessionToken = verified?.sessionToken ?? "";
         if (!cashierToken && !signedInOffline) {
-          const issued = await issueCashierSession({ data: { username: next.userCode, pin } });
+          const issued = await issueCashierSession({ data: { username: next.userCode, pin, ...(await readNativeTerminalProof()) } });
           if (issued.ok) cashierToken = issued.token;
         }
         if (cashierToken) {
@@ -953,11 +962,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               data: {
                 kind: "cashier",
                 cashierToken,
+                ...(await readNativeTerminalProof()),
                 label: next.name,
                 staffUserId: next.userCode,
                 ...(next.cashierId ? { cashierId: next.cashierId } : {}),
                 ...(next.storeId ? { branchId: next.storeId } : {}),
-                platform: typeof navigator === "undefined" ? "web" : navigator.platform || "web",
+                platform: terminalRuntimePlatform(),
               },
             });
             if (started.ok) {
@@ -1220,12 +1230,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       storeId: isTrueAdmin
         ? null
         : isElevated
-          ? (appUser?.store_id ?? (meta["store_id"] as string | null | undefined) ?? null)
-          : (appUser?.store_id ??
+          ? profileStoreAssignment(appUser, meta["store_id"] as string | null | undefined)
+          : profileStoreAssignment(appUser,
             (meta["store_id"] as string | null | undefined) ??
-            terminalUser?.storeId ??
-            found?.storeId ??
-            null),
+            terminalUser?.storeId ?? found?.storeId ?? null),
       permissions: isTrueAdmin
         ? { ...FULL_PERMISSIONS }
         : isElevated
@@ -1255,8 +1263,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         ? {
             userIds: [user.staffId, user.email, ...(appUser?.id ? [appUser.id] : [])].filter(Boolean),
             role: user.metaRole ?? user.roles[0] ?? user.role,
-            storeId: activeBranchId(user.storeId),
-            allStores: appUser?.store_id === null && !activeBranchId(user.storeId),
+            storeId: readTerminalConfig()?.locationId?.trim() || user.storeId,
+            allStores: appUser?.store_id === null && !readTerminalConfig()?.locationId?.trim(),
             terminalId: readTerminalConfig()?.tokenId ?? null,
             mayViewGeneralActivity:
               user.role === "admin" || user.permissions.can_view_audit_trail === true,

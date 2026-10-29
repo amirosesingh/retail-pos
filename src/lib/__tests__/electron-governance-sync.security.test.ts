@@ -236,7 +236,8 @@ describe("Electron supervisor/governance sync relay", () => {
       { ...cashier, permissions: { can_approve_transfer: true } },
     );
     expect(approved.ok).toBe(true);
-    const [, init] = fetchMock.mock.calls[1] as [string, RequestInit];
-    expect(JSON.parse(String(init.body))).toMatchObject({ p_approved_by: "Amy" });
+    const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(url).toContain("rpc/stock_transfer_approve_for_staff");
+    expect(JSON.parse(String(init.body))).toEqual({p_transfer_id:"transfer-1",p_staff_user_id:"u-1",p_bound_store_id:"STORE-A",p_lines:null});
   });
 });

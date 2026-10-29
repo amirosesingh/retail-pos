@@ -96,6 +96,14 @@ describe("per-user notification state", () => {
     expect(posFetch).toHaveBeenCalled();
   });
 
+  it("distinguishes a failed feed read from an empty notification queue when requested", async () => {
+    posFetch.mockResolvedValueOnce({ ok: false, json: async () => ({ ok: false }) });
+    const activity = await import("../activity-events");
+    await expect(activity.listActivityEvents({}, { requireSuccess: true })).rejects.toThrow("Could not load notifications");
+    posFetch.mockResolvedValueOnce({ ok: false, json: async () => ({ ok: false }) });
+    await expect(activity.listActivityEvents()).resolves.toEqual([]);
+  });
+
   it("waits for the server to acknowledge a clear", async () => {
     const activity = await import("../activity-events");
     expect(await activity.clearActivityEntry("manager-1", "event-2")).toBe(true);
@@ -273,7 +281,7 @@ describe("per-user notification state", () => {
     expect(bell).not.toContain('value="history"');
     const root = readFileSync("src/routes/__root.tsx", "utf8");
     expect(root).toContain('<Toaster position="top-right" closeButton={false} />');
-    expect(bell).toContain("<DialogContent showCloseButton={false}");
+    expect(bell).toContain("<DialogContent showCloseButton={true}");
     expect(bell).toContain("closeButton: false");
     expect(bell).not.toContain('value="attention"');
     expect(bell).not.toContain('value="warning"');
@@ -292,7 +300,7 @@ describe("per-user notification state", () => {
   it("keeps the live notification feed to seven days without deleting audit history", () => {
     const bell = readFileSync("src/platforms/web/components/pos/ActivityBell.tsx", "utf8");
     expect(bell).toContain("NOTIFICATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000");
-    expect(bell).toContain("from: new Date(Date.now() - NOTIFICATION_RETENTION_MS).toISOString()");
+    expect(bell).toContain("const retentionFrom = new Date(Date.now() - NOTIFICATION_RETENTION_MS).toISOString()");
     expect(bell).not.toContain("deleteActivityEvent");
   });
 });

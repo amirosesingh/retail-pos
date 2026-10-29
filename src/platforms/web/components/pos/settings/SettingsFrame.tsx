@@ -1,3 +1,4 @@
+import { formatTime as systemTime } from "@/lib/time-zone";
 /**
  * Shared shell for every settings page.
  *
@@ -175,6 +176,8 @@ export function SettingsFrame({
     ),
   });
   const previousScopeSignature = useRef(scopeSignature);
+  const saveScopeRef = useRef(JSON.stringify(scopeIds));
+  saveScopeRef.current = JSON.stringify(scopeIds);
   useEffect(() => {
     if (previousScopeSignature.current === scopeSignature) return;
     previousScopeSignature.current = scopeSignature;
@@ -182,6 +185,7 @@ export function SettingsFrame({
     setDraft(null);
     setSnapshot(JSON.stringify(persistedState.settings));
     setSaveError("");
+    setSavedAt(null);
   }, [scopeSignature, persistedState.settings]);
 
   useEffect(() => {
@@ -222,8 +226,12 @@ export function SettingsFrame({
     setSaving(true);
     setSaveError("");
     const submittedSettings = settingsJsonRef.current;
+    const submittedScope = saveScopeRef.current;
     try {
       await commitSettingsDraft(settingsDraftPatch(JSON.parse(snapshot), JSON.parse(submittedSettings)));
+      // The acknowledgment belongs to the branch/terminal that submitted it.
+      // Do not discard another scope's newer draft after navigation.
+      if (saveScopeRef.current !== submittedScope) return;
       // An input may change while the database request is in flight. Only the
       // exact submitted state becomes clean; later edits remain visibly dirty.
       if (settingsJsonRef.current === submittedSettings) {
@@ -233,9 +241,10 @@ export function SettingsFrame({
       } else {
         localSettingsEdit.current = true;
       }
-      setSavedAt(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
+      setSavedAt(systemTime(new Date(), { hour: "2-digit", minute: "2-digit" }));
       toast.success("Settings saved");
     } catch (e) {
+      if (saveScopeRef.current !== submittedScope) return;
       const message = e instanceof Error ? e.message : "Could not reach the database";
       setSaveError(message);
       toast.error("Could not save settings", { description: message });

@@ -1,10 +1,15 @@
-import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
+import { formatTime as systemTime } from "@/lib/time-zone";
+import { formatDateTime as posDisplayDateTime, posDayKey } from "@/lib/time-zone";
 import { subscribePageDataRefresh } from "@/lib/page-data-refresh";
 import { canOpenDrawer } from "@/lib/receipt-printer";
 import { tenderSales } from "@/lib/shift-close";
 import { sameRecordId } from "@/lib/sale-identity";
+import { companyStoreScope } from "@/lib/company-store-scope";
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { FinancialBreakdown, FinancialInfoTip, SalesTotalInfo } from "@/platforms/web/components/pos/FinancialInfo";
+import { salesReconciliation } from "@/lib/sales-reconciliation";
+import { SummaryCardRail } from "@/platforms/web/components/pos/SummaryCardRail";
 import { Pencil, Printer, Users, Vault } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
@@ -50,6 +55,10 @@ import { logSystemAction } from "@/lib/system-audit";
 import { correctClosedShift } from "@/lib/shift-corrections-client";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 import type { Shift } from "@/core/types/pos-types";
+import { useReportSales } from "@/lib/use-report-sales";
+import { useReportShifts } from "@/lib/use-report-shifts";
+import { useShiftSales } from "@/lib/use-shift-sales";
+import { ReportFilters } from "@/platforms/web/components/pos/report-kit";
 
 export const Route = createFileRoute("/shifts")({
   head: () => ({
@@ -69,7 +78,7 @@ export const Route = createFileRoute("/shifts")({
 
 function Shifts() {
   const { state, activeShift, openShift, currentStore, stores } = usePos();
-  const { user, isAdmin, can } = useAuth();
+  const { user, isAdmin, can, terminalStoreId, canSwitchStores } = useAuth();
   const { requirePermission } = useUserPermissions();
   const { rules } = usePosRules();
   const { authorize, rules: authorizationRules } = useManagerGate();
@@ -85,6 +94,10 @@ function Shifts() {
   const [shiftHistoryOpen, setShiftHistoryOpen] = useState(false);
   const [signSearch, setSignSearch] = useState("");
   const [historySearch, setHistorySearch] = useState("");
+  const [historyFrom, setHistoryFrom] = useState("");
+  const [historyTo, setHistoryTo] = useState("");
+  const [summaryFrom, setSummaryFrom] = useState(() => `${posDayKey().slice(0, 7)}-01`);
+  const [summaryTo, setSummaryTo] = useState(() => posDayKey());
   const [signPage, setSignPage] = useState(0);
   const [historyPage, setHistoryPage] = useState(0);
   const matches = (values: unknown[], query: string) =>
@@ -148,10 +161,22 @@ function Shifts() {
     };
   }, [currentStore.id, activeShift?.id, mayViewSignIns, signHistoryOpen]);
 
-  const storeSales = state.sales.filter((s) => sameRecordId(s.storeId, currentStore.id));
-  const storeShifts = state.shifts.filter((s) => sameRecordId(s.storeId, currentStore.id));
+  const summaryStores = useMemo(() => companyStoreScope(stores, terminalStoreId || user?.storeId || currentStore.id,
+    !canSwitchStores || !!terminalStoreId || !!user?.storeId),
+  [stores, terminalStoreId, user?.storeId, currentStore.id, canSwitchStores]);
+  const summaryStoreIds = useMemo(() => summaryStores.map(store => store.id), [summaryStores]);
+  const validSummaryRange = !!summaryFrom && !!summaryTo && summaryFrom <= summaryTo;
+  const summaryHistory = useReportSales(state.sales, summaryStoreIds, summaryFrom, summaryTo,
+    isAdmin && summaryStores.length > 0 && validSummaryRange);
+  const summarySales = summaryHistory.sales.filter(sale => !sale.refunded);
+  const shiftHistory = useReportShifts(state.shifts, currentStore.id, historyFrom, historyTo,
+    mayViewShiftHistory && shiftHistoryOpen);
+  const storeShifts = shiftHistory.shifts;
+  const validHistoryRange = !historyFrom || !historyTo || historyFrom <= historyTo;
   const visibleShifts = storeShifts.filter((shift) =>
-    matches(
+    validHistoryRange &&
+    (!historyFrom || posDayKey(shift.openedAt) >= historyFrom) &&
+    (!historyTo || posDayKey(shift.openedAt) <= historyTo) && matches(
       [
         shift.cashier,
         shift.terminalName,
@@ -162,9 +187,10 @@ function Shifts() {
       historySearch,
     ),
   );
-  const shiftSales = activeShift
-    ? storeSales.filter((s) => sameRecordId(s.shiftId, activeShift.id) && !s.refunded)
-    : [];
+  const activeSales = useShiftSales(currentStore.id,activeShift?.id,
+    !!activeShift && sameRecordId(activeShift.storeId,currentStore.id));
+  const shiftSales = (activeSales.sales ?? []).filter(sale=>!sale.refunded);
+  const [printingShift,setPrintingShift]=useState("");
   const cashTaken = tenderSales(activeShift, shiftSales, "cash");
   const expected = (activeShift?.openingFloat ?? 0) + cashTaken;
 
@@ -183,6 +209,23 @@ function Shifts() {
   const mayPrintXReport =
     (isAdmin || can("can_shift_financial_summary_view")) &&
     (isAdmin || can("can_shift_report_reprint"));
+  const printCompleteShiftReport=async(shift:Shift,kind:"xreport"|"zreport")=>{
+    if(printingShift || (kind==="xreport" ? !mayPrintXReport : !can("can_shift_report_reprint"))) return;
+    setPrintingShift(shift.id);
+    try{
+      const complete=await activeSales.readForPrint(shift);
+      await printShiftReport(shift,complete,kind,{
+        financialSummary:isAdmin || can("can_shift_financial_summary_view"),
+        paymentBreakdown:isAdmin || can("can_shift_payment_breakdown_view"),
+        expected:isAdmin || can("can_shift_expected_cash_view"),
+        counted:isAdmin || can("can_shift_counted_cash_view"),
+        variance:isAdmin || can("can_shift_variance_view"),
+      });
+      if(kind==="xreport") logSystemAction({actorName:user?.name ?? shift.cashier,actorRole:user?.role ?? null,
+        actionType:"X_REPORT_PRINTED",entityAffected:"shifts",entityId:shift.id,storeId:currentStore.id,terminalId:hereId});
+    }catch(error){notifyError(error,"Could not load the complete shift report. Nothing was printed.");}
+    finally{setPrintingShift("");}
+  };
   const storeIndex = stores.findIndex((s) => s.id === currentStore.id);
   const storeLabel = `Store ${storeIndex + 1}`;
 
@@ -272,42 +315,50 @@ function Shifts() {
         )}
         {isAdmin && (
           <section className="rounded-lg border border-border bg-card p-5">
-            <h2 className="mb-3 text-sm font-semibold">Aggregated multi-store statistics</h2>
-            <div className="grid gap-4 md:grid-cols-4">
-              {stores.map((st, i) => {
-                const sales = state.sales.filter(
-                  (s) => sameRecordId(s.storeId, st.id) && !s.refunded,
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold">{summaryStores.length > 1 ? "Current cluster" : "Current branch"} · sales by sale date</h2>
+              <ReportFilters title="Shift page sales period">
+                <div><Label htmlFor="shift-sales-from">From</Label><Input id="shift-sales-from" type="date" value={summaryFrom} max={summaryTo || undefined} onChange={event => setSummaryFrom(event.target.value)} /></div>
+                <div><Label htmlFor="shift-sales-to">Through</Label><Input id="shift-sales-to" type="date" value={summaryTo} min={summaryFrom || undefined} onChange={event => setSummaryTo(event.target.value)} /></div>
+              </ReportFilters>
+            </div>
+            <p className="mb-3 text-xs text-muted-foreground">{summaryFrom} to {summaryTo}, using the store time zone. Collected is after discounts, tax and rounding. Refunded bills are excluded. Shift history below is filtered by shift opening date.</p>
+            {!validSummaryRange ? <p role="alert" className="text-sm text-destructive">Choose a valid sales date range.</p> : summaryHistory.error ? <p role="alert" className="text-sm text-destructive">Report incomplete: {summaryHistory.error}</p> : summaryHistory.loading ? <p role="status" className="text-sm text-muted-foreground">Loading the complete sales period…</p> : <>
+            {summaryHistory.refreshing && <p role="status" className="mb-2 text-xs text-muted-foreground">Updating sales…</p>}
+            <SummaryCardRail label="Shift page shop totals">
+              {summaryStores.map((st) => {
+                const sales = summarySales.filter(
+                  (s) => sameRecordId(s.storeId, st.id),
                 );
                 return (
                   <Metric
                     key={st.id}
-                    label={`Store ${i + 1} · ${st.name} (${sales.length} sales)`}
+                    label={`${st.code} · ${st.name} (${sales.length} sales)`}
                     value={money(sales.reduce((a, s) => a + s.total, 0))}
+                    info={<SalesTotalInfo totals={salesReconciliation(sales)} />}
                   />
                 );
               })}
-              <Metric
-                label="Company-wide revenue"
-                value={money(
-                  state.sales.filter((s) => !s.refunded).reduce((a, s) => a + s.total, 0),
-                )}
-                highlight
-              />
-            </div>
+            </SummaryCardRail>
+            </>}
           </section>
         )}
         <section className="rounded-lg border border-border bg-card p-5">
           {activeShift ? (
-            <div className="grid gap-4 md:grid-cols-4">
+            <div className="space-y-4">
+              <SummaryCardRail label="Active shift overview">
               <Metric label="Opened by" value={activeShift.cashier} />
               <Metric label="Serving now" value={user?.name || activeShift.cashier} />
-              <Metric label="Opened" value={new Date(activeShift.openedAt).toLocaleTimeString()} />
-              <Metric label="Transactions" value={String(shiftSales.length)} />
+              <Metric label="Opened" value={posDisplayDateTime(activeShift.openedAt)} />
+              <Metric label="Transactions" value={activeSales.sales ? String(shiftSales.length) : "—"} />
               <Metric label="Terminal" value={activeShift.terminalName ?? "This PC"} />
               <Metric label="Running for" value={shiftDuration(activeShift)} />
               {(isAdmin || can("can_shift_expected_cash_view")) && (
-                <Metric label="Expected drawer" value={money(expected)} highlight />
+                <Metric label="Expected drawer" value={activeSales.sales ? money(expected) : "—"} highlight info={activeSales.sales && <FinancialBreakdown rows={[["Opening float", money(activeShift.openingFloat)], ["Net cash sales", money(cashTaken)], ["Expected drawer", money(expected)]]}><p>Opening float plus net cash received in this shift. Card and digital payments are excluded; cash change is deducted.</p></FinancialBreakdown>} />
               )}
+              </SummaryCardRail>
+              {activeSales.loading && <p role="status" className="text-xs text-muted-foreground">Loading all transactions for this shift…</p>}
+              {activeSales.error && <p role="alert" className="text-xs text-destructive">Shift totals could not be refreshed: {activeSales.error}</p>}
               {overdueNow && (
                 <p className="md:col-span-4 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
                   This shift is past the trading-day window and is flagged as overdue.
@@ -327,26 +378,8 @@ function Shifts() {
                 {mayPrintXReport && (
                   <Button
                     variant="outline"
-                    onClick={() => {
-                      // Read-only audit snapshot: derived from recorded sales,
-                      // never editable, and every print is logged.
-                      void printShiftReport(activeShift, storeSales, "xreport", {
-                        financialSummary: isAdmin || can("can_shift_financial_summary_view"),
-                        paymentBreakdown: isAdmin || can("can_shift_payment_breakdown_view"),
-                        expected: isAdmin || can("can_shift_expected_cash_view"),
-                        counted: isAdmin || can("can_shift_counted_cash_view"),
-                        variance: isAdmin || can("can_shift_variance_view"),
-                      });
-                      logSystemAction({
-                        actorName: user?.name ?? activeShift.cashier,
-                        actorRole: user?.role ?? null,
-                        actionType: "X_REPORT_PRINTED",
-                        entityAffected: "shifts",
-                        entityId: activeShift.id,
-                        storeId: currentStore.id,
-                        terminalId: hereId,
-                      });
-                    }}
+                    disabled={!!printingShift}
+                    onClick={() => void printCompleteShiftReport(activeShift,"xreport")}
                   >
                     <Printer className="size-4" /> Print X report
                   </Button>
@@ -479,10 +512,10 @@ function Shifts() {
                       <TableCell className="numeric text-muted-foreground">{e.staffId}</TableCell>
                       <TableCell className="capitalize text-muted-foreground">{e.role}</TableCell>
                       <TableCell className="text-muted-foreground">
-                        {new Date(e.firstSeen).toLocaleTimeString()}
+                        {systemTime(e.firstSeen)}
                       </TableCell>
                       <TableCell className="text-muted-foreground">
-                        {new Date(e.lastSeen).toLocaleTimeString()}
+                        {systemTime(e.lastSeen)}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -569,9 +602,22 @@ function Shifts() {
           <DialogHeader>
             <DialogTitle>Shift history</DialogTitle>
             <DialogDescription>
-              Search this branch's shifts and open permitted reports.
+              Search {currentStore.name}'s shifts by opening date and open permitted reports. Dates use the configured store time zone.
             </DialogDescription>
           </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1"><Label htmlFor="shift-history-from">Opened from</Label><Input id="shift-history-from" type="date" value={historyFrom} onChange={event => { setHistoryFrom(event.target.value); setHistoryPage(0); }} /></div>
+            <div className="space-y-1"><Label htmlFor="shift-history-to">Opened through</Label><Input id="shift-history-to" type="date" value={historyTo} min={historyFrom || undefined} onChange={event => { setHistoryTo(event.target.value); setHistoryPage(0); }} /></div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={() => { const today = posDayKey(); setHistoryFrom(today); setHistoryTo(today); setHistoryPage(0); }}>Today</Button>
+            <Button size="sm" variant="outline" onClick={() => { setHistoryFrom(""); setHistoryTo(""); setHistoryPage(0); }}>All shifts</Button>
+            {can("can_view_sales_reports") && <Button size="sm" variant="outline" onClick={() => window.location.assign("/reports/sales")}>Sales by date · Reports</Button>}
+          </div>
+          {!validHistoryRange && <p role="alert" className="text-sm text-destructive">Choose an end date on or after the start date.</p>}
+          {shiftHistory.loading && <p role="status" className="text-sm text-muted-foreground">Loading complete shift history…</p>}
+          {shiftHistory.refreshing && <p role="status" className="text-sm text-muted-foreground">Updating shift history…</p>}
+          {shiftHistory.error && <p role="alert" className="text-sm text-destructive">Complete history could not be loaded. Showing available cached shifts. {shiftHistory.error.includes("shift_page_secure") ? "The database needs the prepared shift-history upgrade." : shiftHistory.error}</p>}
           <Input
             aria-label="Search shift history"
             placeholder="Search cashier, terminal, status or date…"
@@ -584,7 +630,7 @@ function Shifts() {
           <section className="rounded-lg border border-border bg-card">
             <h2 className="px-5 py-3 text-sm font-semibold">Shift history</h2>
             <Separator />
-            <Table tableId="routes/shifts#3">
+            <Table tableId="routes/shifts#3" loading={shiftHistory.loading}>
               <TableHeader>
                 <TableRow>
                   <TableHead>Cashier</TableHead>
@@ -673,15 +719,8 @@ function Shifts() {
                         <Button
                           size="sm"
                           variant="ghost"
-                          onClick={() =>
-                            void printShiftReport(sh, storeSales, "zreport", {
-                              financialSummary: isAdmin || can("can_shift_financial_summary_view"),
-                              paymentBreakdown: isAdmin || can("can_shift_payment_breakdown_view"),
-                              expected: isAdmin || can("can_shift_expected_cash_view"),
-                              counted: isAdmin || can("can_shift_counted_cash_view"),
-                              variance: isAdmin || can("can_shift_variance_view"),
-                            })
-                          }
+                          disabled={!!printingShift}
+                          onClick={() => void printCompleteShiftReport(sh,"zreport")}
                         >
                           <Printer className="size-4" />
                         </Button>
@@ -802,15 +841,17 @@ function Metric({
   label,
   value,
   highlight,
+  info,
 }: {
   label: string;
   value: string;
   highlight?: boolean;
+  info?: ReactNode;
 }) {
   return (
-    <div className="rounded-md bg-surface-2 px-4 py-3">
-      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className={`numeric text-lg font-semibold ${highlight ? "text-primary" : ""}`}>{value}</p>
+    <div className="min-w-0 rounded-md bg-surface-2 px-4 py-3">
+      <div className="flex items-center justify-between gap-1"><p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>{info && <FinancialInfoTip label={label}>{info}</FinancialInfoTip>}</div>
+      <p className={`numeric min-w-0 text-lg font-semibold [overflow-wrap:anywhere] ${highlight ? "text-primary" : ""}`}>{value}</p>
     </div>
   );
 }

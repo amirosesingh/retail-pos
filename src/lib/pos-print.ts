@@ -1,3 +1,5 @@
+import { formatTime as systemTime } from "@/lib/time-zone";
+import { posCurrency } from "./currency";
 import { formatDate as posDisplayDate, formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { receiptBarcode } from "./receipt-barcode";
 import { sponsorshipReceiptDetails } from "./sponsorship-receipt";
@@ -120,7 +122,7 @@ const dateTokens = (iso?: string): ReceiptTokenContext => {
   if (Number.isNaN(d.getTime())) return { date: "", time: "" };
   return {
     date: posDisplayDate(d),
-    time: d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    time: systemTime(d, { hour: "2-digit", minute: "2-digit" }),
   };
 };
 
@@ -356,7 +358,7 @@ const shell = (title: string, body: string, autoPrint = true) => {
     .no-print { display: none !important; }
   }
   ${scopeReceiptCss(receiptCfg.css)}
-</style></head><body><div class="${RECEIPT_SCOPE.slice(1)}">${body}</div>
+</style></head><body><div class="${RECEIPT_SCOPE.slice(1)}">${body}<div class="c muted" style="margin-top:4px">Currency: ${esc(posCurrency())}</div></div>
 ${
   autoPrint
     ? `<script>window.onload=function(){window.focus();window.print();setTimeout(function(){window.close()},400)}</script>`
@@ -900,7 +902,7 @@ function bookingBody(booking: Booking, member: Member | null, pay: PaymentDetail
       <tr><td>Paid to date</td><td class="r">${fmt(booking.paid)}</td></tr>
       <tr class="b big"><td>BALANCE DUE</td><td class="r">${fmt(balance)}</td></tr>
     </table>`)}
-    ${sectionSlot("collection", `${layout.showDueDate ? `<hr><div class="c b">Collect &amp; settle by ${esc(new Date(booking.dueDate).toDateString())}</div><div class="c muted">Goods are reserved until this date. Bring this slip to collect.</div>` : ""}
+    ${sectionSlot("collection", `${layout.showDueDate ? `<hr><div class="c b">Collect &amp; settle by ${esc(posDisplayDate(booking.dueDate))}</div><div class="c muted">Goods are reserved until this date. Bring this slip to collect.</div>` : ""}
     ${layout.showNotes && booking.note ? `<div class="c muted">${esc(booking.note)}</div>` : ""}
     `)}
     ${sectionSlot("job", jobCardBlock(booking))}
@@ -938,7 +940,7 @@ function bookingPaymentBody(booking: Booking, payment: BookingPayment) {
       <tr><td>Paid to date</td><td class="r">${fmt(booking.paid)}</td></tr>
       <tr class="b"><td>BALANCE DUE</td><td class="r">${fmt(bookingBalance(booking))}</td></tr>
     </table>`)}
-    ${sectionSlot("collection", `<hr><div class="c">Collect &amp; settle by ${esc(new Date(booking.dueDate).toDateString())}</div>`)}
+    ${sectionSlot("collection", `<hr><div class="c">Collect &amp; settle by ${esc(posDisplayDate(booking.dueDate))}</div>`)}
     ${sectionSlot("terms", receiptCfg.bookingSlip?.termsOnPayment ? termsBlock() : "")}
     ${sectionSlot("liability", booking.job ? serviceTermsBlock() : "")}
     ${sectionSlot("footer", `<hr><div class="c muted rcpt-foot">${esc(renderReceiptText(receiptCfg.documentSections?.[document]?.styles?.footer?.text ?? receiptCfg.footerText ?? "", tokenCtx))}</div>

@@ -71,6 +71,7 @@ const WIRED_ACTIONS = new Set([
   "price_override",
   "shift_close",
   "stock_transfer",
+  "cross_group_transfer_approval",
   "edit_posted_stock",
   "edit_posted_purchase",
   "terminal_unpair",
@@ -475,7 +476,7 @@ function RuleConfigurationDialog({
   const action = editing?.action;
   const issues = rule && action ? validateAuthorizationRuleConfiguration(rule, action) : [];
   const hasIssue = (field: string) => issues.some((issue) => issue.field === field);
-  const requestMode = rule?.mode === "request" || rule?.mode === "either";
+  const requestMode = action?.key !== "cross_group_transfer_approval" && (rule?.mode === "request" || rule?.mode === "either");
   const authorityUnit = action ? AUTHORITY_UNIT[action.key] : undefined;
   const extraAuthorityEnabled = Boolean(
     rule && (Object.keys(rule.extraAuthority).length || Object.keys(rule.absoluteCeilings).length),
@@ -506,7 +507,7 @@ function RuleConfigurationDialog({
                     <HelpTip text={AUTH_MODES.find((mode) => mode.value === rule.mode)?.blurb || "Choose whether this action needs no approval, a manager PIN at the till, a request that another person decides, or either method."} />
                   </span>
                 </p>
-                <p className="mt-1 text-base font-semibold">{methodLabel(rule.mode)}</p>
+                <p className="mt-1 text-base font-semibold">{action.key === "cross_group_transfer_approval" ? "Independent transfer approval before dispatch" : methodLabel(rule.mode)}</p>
               </section>
 
               {approvalRequestBecomingInactive ? (
@@ -950,7 +951,7 @@ export function AuthorizationRulesPanel({
     setEditing({
       action,
       previousMode: existing.mode,
-      rule: { ...existing, mode: mode ?? existing.mode },
+      rule: { ...existing, mode: action.key === "cross_group_transfer_approval" ? "request" : mode ?? existing.mode },
     });
   };
 
@@ -1057,9 +1058,10 @@ export function AuthorizationRulesPanel({
           content: (
             <div className="pb-2">
               {AUTH_ACTIONS.filter(
-                (action) => action.group === group.id && WIRED_ACTIONS.has(action.key),
+                (action) => action.group === group.id && WIRED_ACTIONS.has(action.key) && (!branchScope || action.key !== "cross_group_transfer_approval"),
               ).map((action) => {
-                const rule = rules[action.key] ?? defaultRule(action.key);
+                const savedRule = rules[action.key] ?? defaultRule(action.key);
+                const rule = action.key === "cross_group_transfer_approval" ? { ...savedRule, mode: "request" as const } : savedRule;
                 return (
                   <div
                     key={action.key}
@@ -1085,7 +1087,7 @@ export function AuthorizationRulesPanel({
                           className="h-9 w-full"
                           value={rule.mode}
                           onChange={(value) => openConfiguration(action, value as AuthMode)}
-                          options={AUTH_MODES.filter(mode => action.key !== "sponsorship" || mode.value === "request").map((mode) => ({
+                          options={AUTH_MODES.filter(mode => !["sponsorship", "cross_group_transfer_approval"].includes(action.key) || mode.value === "request").map((mode) => ({
                             value: mode.value,
                             label: mode.label,
                           }))}

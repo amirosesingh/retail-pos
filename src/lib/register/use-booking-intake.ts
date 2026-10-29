@@ -7,12 +7,13 @@
  * acknowledgement). Lifted out of the register screen unchanged, so intake
  * behaves exactly as before.
  */
+import { posDayKey } from "../time-zone";
 import { useState } from "react";
 import type { BookingPaymentTiming, IntakeCharge, PaymentMethod } from "@/core/types/pos-types";
 
 /** A date this many days out, as `YYYY-MM-DD`. */
 export const isoDaysFromNow = (days: number) =>
-  new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+  posDayKey(Date.now() + days * 86_400_000);
 
 export function useBookingIntake() {
   const [bookOpen, setBookOpen] = useState(false);
@@ -40,6 +41,7 @@ export function useBookingIntake() {
   const [stencil, setStencil] = useState(false);
   const [overgrip, setOvergrip] = useState(false);
   /** Job tag / barcode printed on the racket and carried onto the ticket. */
+  const [printRacketTag, setPrintRacketTag] = useState(false);
   const [jobTag, setJobTag] = useState("");
   /** Booking hub chooser: racket service vs standard reservation. */
   const [bookingHubOpen, setBookingHubOpen] = useState(false);
@@ -76,6 +78,7 @@ export function useBookingIntake() {
     setStencil(false);
     setOvergrip(false);
     setJobTag("");
+    setPrintRacketTag(false);
     setEditBookingId(null);
     setBookMemberQuery("");
     setRacketProductId("");
@@ -131,6 +134,8 @@ export function useBookingIntake() {
     setOvergrip,
     jobTag,
     setJobTag,
+    printRacketTag,
+    setPrintRacketTag,
     bookingHubOpen,
     setBookingHubOpen,
     editBookingId,

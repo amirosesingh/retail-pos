@@ -76,6 +76,8 @@ export type Product = {
    * the item from the other branches.
    */
   ownerStoreId?: string | null;
+  /** Trusted posted incoming-transfer destinations, without transfer history. */
+  catalogueStoreIds?: string[];
 };
 
 export type ProductPack = {
@@ -1001,6 +1003,8 @@ export type IntegrationSettings = {
   timeZone?: string;
   /** ISO country of the business, used to suggest a zone and formats */
   country?: string;
+  /** Display currency; stored financial amounts are not converted. */
+  currency?: string;
   /** how dates read on screen and on slips */
   dateFormat?: DateFormat;
   /** 12-hour or 24-hour clock */

@@ -466,7 +466,7 @@ async function listLocalActivityEventPage(filter: ActivityFilter): Promise<Activ
             ? row.storeId
             : row.title;
   const direction = (filter.sortDirection ?? "desc") === "asc" ? 1 : -1;
-  rows.sort((left, right) => value(left).localeCompare(value(right)) * direction);
+  rows.sort((left, right) => value(left).localeCompare(value(right)) * direction || left.id.localeCompare(right.id));
   const total = rows.length;
   const offset = Math.max(0, filter.offset ?? 0);
   const limit = Math.max(1, Math.min(2000, filter.limit ?? 100));
@@ -493,11 +493,13 @@ const looksMissing = (error: unknown) => {
 };
 
 /** Newest first. Returns [] when the caller is not an admin or supervisor. */
-export async function listActivityEvents(filter: ActivityFilter = {}): Promise<ActivityEvent[]> {
+export async function listActivityEvents(filter: ActivityFilter = {}, options: { requireSuccess?: boolean } = {}): Promise<ActivityEvent[]> {
+  let localReadError: unknown;
   if (localDb()?.query) {
     try {
       return (await listLocalActivityEventPage(filter)).rows;
-    } catch {
+    } catch (error) {
+      localReadError = error;
       // A broken local connection may still fall back to the hosted history.
     }
   }
@@ -507,13 +509,18 @@ export async function listActivityEvents(filter: ActivityFilter = {}): Promise<A
     // A registered terminal proves the device, not the person. The activity
     // feed requires a current staff/cashier identity, so an offline or signed-
     // out supervisor view must stay quiet instead of polling a guaranteed 401.
-    if (!credentials.sessionToken && !credentials.cashierToken && !credentials.accessToken)
+    if (!credentials.sessionToken && !credentials.cashierToken && !credentials.accessToken) {
+      if (options.requireSuccess && localReadError) throw localReadError;
       return [];
+    }
     // A Windows till must use the Supabase project restored from its DPAPI
     // vault. Never send this preference read to the separately configured web
     // backend, and never fall back to it when the staff Auth session is absent.
     if (platformName() === "electron") {
-      if (!credentials.accessToken) return [];
+      if (!credentials.accessToken) {
+        if (options.requireSuccess && localReadError) throw localReadError;
+        return [];
+      }
       return (await listActivityEventPageDirect(filter)).rows;
     }
     const response = await posFetch("/api/v1/pos/activity-preferences", {
@@ -525,14 +532,16 @@ export async function listActivityEvents(filter: ActivityFilter = {}): Promise<A
     if (!response.ok || !result.ok) {
       if (looksMissing({ message: result.error })) logMissing = true;
       if (localDb()?.query) return (await listLocalActivityEventPage(filter)).rows;
+      if (options.requireSuccess && !logMissing) throw new Error("Could not load notifications.");
       return [];
     }
     return (result.rows ?? []).map(map);
-  } catch {
-    if (localDb()?.query)
-      return listLocalActivityEventPage(filter)
-        .then((page) => page.rows)
-        .catch(() => []);
+  } catch (error) {
+    if (localDb()?.query) {
+      const fallback = listLocalActivityEventPage(filter).then((page) => page.rows);
+      return options.requireSuccess ? fallback : fallback.catch(() => []);
+    }
+    if (options.requireSuccess) throw error;
     return [];
   }
 }

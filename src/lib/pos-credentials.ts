@@ -13,7 +13,7 @@
  * secure stores.
  */
 import { clearDeviceSecret, getDeviceSecret, setDeviceSecret } from "./device-secrets";
-import { readTerminalConfig } from "@/core/activation/terminal-tokens";
+import { readNativeTerminalProof } from "./native-terminal-proof";
 
 const SECRET = "cashier-session";
 /** The raw session token minted at sign-in; only its hash reaches the database. */
@@ -120,6 +120,8 @@ export type PosCredentials = {
   sessionToken?: string;
   cashierToken?: string;
   terminalToken?: string;
+  /** Existing terminal claim proof; never a replacement for a person session. */
+  deviceBindingProof?: string;
   accessToken?: string;
 };
 
@@ -134,16 +136,16 @@ export async function readCredentials(): Promise<PosCredentials> {
   // auth-storage lock while an optional account session is being refreshed.
   const { centralAuthAccessToken } = await import("./session-presence");
   const accessToken = centralAuthAccessToken();
-  let terminalToken: string | undefined;
+  let terminalProof: Pick<PosCredentials,"terminalToken"|"deviceBindingProof"> = {};
   try {
-    terminalToken = readTerminalConfig()?.tokenId ?? undefined;
+    terminalProof = await readNativeTerminalProof();
   } catch {
     /* no till registered */
   }
   return {
     ...(sessionToken ? { sessionToken } : {}),
     ...(cashierToken ? { cashierToken } : {}),
-    ...(terminalToken ? { terminalToken } : {}),
+    ...terminalProof,
     ...(accessToken ? { accessToken } : {}),
   };
 }

@@ -520,9 +520,20 @@ export async function runRelayRpc(
             ? "p_verified_by"
             : null;
   const args = actorField ? { ...op.args, [actorField]: actor } : op.args;
-  const res = await serviceRest(`rpc/${op.fn}`, {
+  // Only the account resolved from the verified session may become the native
+  // database actor. Renderer attribution/actor parameters are never forwarded.
+  if (op.fn === "stock_transfer_approve" && (!scope.staffUserId || scope.stale || scope.kind === "terminal"))
+    return { ok: false, code: "PERMISSION_DENIED", error: "An active staff session is required to approve transfers." };
+  const nativeApproval = op.fn === "stock_transfer_approve";
+  const rpcArgs = nativeApproval ? {
+    p_transfer_id: id,
+    p_staff_user_id: scope.staffUserId,
+    p_bound_store_id: canCrossBranches(scope) ? null : scope.storeId,
+    p_lines: op.args.p_lines ?? null,
+  } : args;
+  const res = await serviceRest(`rpc/${nativeApproval ? "stock_transfer_approve_for_staff" : op.fn}`, {
     method: "POST",
-    body: JSON.stringify(args),
+    body: JSON.stringify(rpcArgs),
   });
   if (res.ok) return { ok: true };
   return { ok: false, error: (await res.text()).slice(0, 400) };
@@ -670,6 +681,7 @@ export type RelayCaller = {
   terminalId?: string | null;
   managementDevice?: boolean;
   managementMobileDevice?: boolean;
+  terminal?: import("@/lib/terminal-binding.server").VerifiedTerminalDescriptor;
 };
 
 /**
@@ -687,12 +699,16 @@ export async function verifyRelayCaller(input: {
   cashierToken?: string;
   terminalToken?: string;
   accessToken?: string;
+  deviceBindingProof?: string;
 }): Promise<RelayCaller> {
   let identity: RelayCaller | null = null;
   let terminalStore: string | null = null;
   let terminalId: string | null = null;
   let managementDevice = false;
   let managementMobileDevice = false;
+  let storedTerminalId:string|null=null;
+  let storedBranch:string|null=null;
+  let terminal:import("@/lib/terminal-binding.server").VerifiedTerminalDescriptor|undefined;
 
   // A cryptographic session record is the strongest proof: it can be revoked
   // centrally and expires when the till has been left idle.
@@ -701,6 +717,8 @@ export async function verifyRelayCaller(input: {
     const check = await touchSession(input.sessionToken);
     if (check.ok) {
       const s = check.session;
+      storedTerminalId=s.terminal_id??null;
+      storedBranch=s.branch_id??null;
       const kind: RelayCaller["kind"] =
         s.kind === "cashier" ? "cashier" : s.kind === "terminal" ? "terminal" : "staff";
       identity = {
@@ -723,7 +741,9 @@ export async function verifyRelayCaller(input: {
         return null;
       }
     })();
-    if (session)
+    if (session) {
+      storedTerminalId=session.terminalId??null;
+      storedBranch=session.storeId??null;
       identity = {
         kind: "cashier",
         label: session.username,
@@ -731,34 +751,27 @@ export async function verifyRelayCaller(input: {
         storeId: session.storeId,
         sessionToken: session.sessionToken,
       };
+    }
   }
 
-  if (input.terminalToken) {
-    const res = await serviceRest(
-      `terminal_tokens?id=eq.${encodeURIComponent(input.terminalToken)}&select=id,status,location_id,platform,revoked_at`,
-    );
-    if (res.ok) {
-      const rows = (await res.json()) as {
-        status?: string;
-        location_id?: string | null;
-        platform?: string;
-        revoked_at?: string | null;
-      }[];
-      const row = rows[0];
-      // A revoked token (remote reset, branch removed) never proves anything.
-      if (row && !row.revoked_at && (row.status === "active" || row.status === "used")) {
-        terminalId = input.terminalToken;
-        terminalStore = row.location_id ?? null;
-        managementDevice = (row.platform === "mobile" || row.platform === "pc") && !terminalStore;
-        managementMobileDevice = row.platform === "mobile" && !terminalStore;
+  if(storedTerminalId && input.terminalToken && recordId(storedTerminalId)!==recordId(input.terminalToken))
+    throw new RelayAuthenticationError("The request does not match the signed-in terminal.");
+  const requestedTerminal=storedTerminalId || input.terminalToken;
+  if(requestedTerminal){
+    const {readVerifiedTerminal}=await import("@/lib/terminal-binding.server");
+    terminal=await readVerifiedTerminal(requestedTerminal,input.deviceBindingProof,!storedTerminalId);
+    terminalId=terminal.id;
+    terminalStore=terminal.branchId;
+    if(storedTerminalId && terminal.mode==="operations" && (!storedBranch || !sameBranchId(storedBranch,terminalStore)))
+      throw new RelayAuthenticationError("This terminal registration changed. Sign in again after its assignment is reviewed.");
+    managementDevice=terminal.mode==="management";
+    managementMobileDevice=managementDevice && terminal.platform==="mobile";
         identity ??= {
           kind: "terminal",
-          label: input.terminalToken,
+          label: requestedTerminal,
           storeId: terminalStore,
           terminalId,
         };
-      }
-    }
   }
 
   // Use Auth only when no person session identified the caller. PIN sign-in
@@ -806,5 +819,6 @@ export async function verifyRelayCaller(input: {
   // make the till read or write another branch's operational data.
   if (terminalStore) identity = { ...identity, storeId: terminalStore, terminalId };
   if (managementDevice) identity = { ...identity, terminalId, managementDevice: true, managementMobileDevice };
+  if(terminal)identity={...identity,terminal};
   return identity;
 }

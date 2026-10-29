@@ -1,3 +1,4 @@
+import { useSettingsNav } from "@/platforms/web/components/pos/settings/use-settings-nav";
 import { useLocalStartupReady } from "@/lib/use-local-startup";
 import { useNotificationDeliveryPump } from "@/lib/use-notification-delivery-pump";
 import { signInDestination } from "@/lib/sign-in-destination";
@@ -9,7 +10,7 @@ import { usePersonalAppearance, usePersonalAppearanceSync } from "@/lib/personal
 import { setPersonalLanguage } from "@/lib/time-zone";
 import { useDisplayProfile } from "@/lib/display-profile";
 import { setSharedPrinterPrefs } from "@/lib/receipt-printer";
-import { LogOut, Menu, MapPin, ReceiptText, Store } from "lucide-react";
+import { LogOut, Menu, MapPin, MonitorCog, ReceiptText, Store } from "lucide-react";
 import { useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { AppShellContext } from "@/lib/app-shell-context";
 import { usePos } from "@/lib/pos-store";
@@ -67,7 +68,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useUiScale } from "@/lib/use-ui-scale";
 import { useBranding, isDesktop } from "@/lib/branding";
-import { isNative } from "@/platform-config/platform";
+import { isNative, isTerminalApp } from "@/platform-config/platform";
 import { setBranchId } from "@/lib/activity-journal";
 import { soleBranchId } from "@/lib/active-branch";
 import { flushWhatsAppQueue } from "@/lib/whatsapp";
@@ -161,6 +162,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   const localStartupReady = useLocalStartupReady() && startup.registration === "registered";
   const location = useLocation();
   const { visibleRoute } = useVisibility();
+  const { cards: permittedSettings } = useSettingsNav();
 
   const navigate = useNavigate();
   const sawSignedOut = useRef(false);
@@ -403,7 +405,10 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   // The sidebar and the route guard below run exactly the same test, so a link
   // that is shown always opens, and a link that is hidden cannot be reached by
   // typing its address either.
-  const canSee = (item: NavItem) => canSeeNavigationItem(item, can, isAdmin, visibleRoute);
+  const canOpenSettings = permittedSettings.length > 0;
+  const canSee = (item: NavItem) => item.to === "/settings"
+    ? canOpenSettings && visibleRoute("/settings")
+    : canSeeNavigationItem(item, can, isAdmin, visibleRoute);
 
   const Brand = ({ mini }: { mini?: boolean }) => (
     <div
@@ -423,7 +428,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
         )}
       >
         <p className="truncate text-sm font-semibold leading-tight">{companyName}</p>
-        <p className="text-[11px] text-muted-foreground">{branding.terminal}</p>
+        <p className="text-[11px] text-muted-foreground">{isTerminalApp() ? branding.terminal : "Web management"}</p>
       </div>
     </div>
   );
@@ -489,6 +494,9 @@ function AppShellFrame({ children }: { children: ReactNode }) {
           </span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
+        {permittedSettings.some(card => card.id === "display") && <DropdownMenuItem onSelect={() => void navigate({ to: "/settings/display" })}>
+          <MonitorCog className="mr-2 size-4" /> Appearance
+        </DropdownMenuItem>}
         <DropdownMenuItem onSelect={() => void logout()}>
           <LogOut className="mr-2 size-4" /> Sign out
         </DropdownMenuItem>
@@ -635,7 +643,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                   const allowed = terminalManagement
                     ? can("can_manage_terminals")
                     : settingsHome
-                      ? can("can_access_pos_settings")
+                      ? canOpenSettings
                       : reportsHome
                         ? can("can_view_sales_reports") || can("can_view_audit_trail")
                         : required === null

@@ -1,6 +1,7 @@
 const { normalizeUuidFields } = require("../../sync/uuid-fields.cjs");
 const { createHash } = require("node:crypto");
-const { branchPredicate } = require("../branch-scope.cjs");
+const { branchPredicate, rendererReadBranchPredicate } = require("../branch-scope.cjs");
+const { isFinancialStockUpdate } = require("../financial-stock-policy.cjs");
 
 const AGGREGATE_KINDS = new Set([
   "sale", "payment", "refund", "shift", "product", "receiving", "stock",
@@ -41,10 +42,10 @@ class AggregateRepository {
     this.operationsRepository = operationsRepository;
   }
 
-  async assertBranch(transaction, table, record, match, branchId) {
+  async assertBranch(transaction, table, record, match, branchId, financialStock = false) {
     if (table.scope !== "branch") return;
     if (!branchId) throw Object.assign(new Error("The terminal branch is not configured."), { code: "EBRANCH" });
-    const predicate = branchPredicate(this.operationsRepository.registry, table, "candidate");
+    const predicate = financialStock ? rendererReadBranchPredicate(this.operationsRepository.registry, table, "candidate") : branchPredicate(this.operationsRepository.registry, table, "candidate");
     // Some catalogue tables are marked branch-aware but intentionally carry
     // stock for several stores in one shared row. Their generated registry has
     // no row predicate; server-side stock movement RPCs protect those writes.
@@ -147,6 +148,7 @@ class AggregateRepository {
           terminalId: aggregate.terminalId,
           permissions: aggregate.permissions,
           productWriteKind: aggregate.productWriteKind,
+          financialStockDeltas: aggregate.financialStockDeltas,
           enforcePermissions: true,
           isSettingsAdmin: aggregate.isSettingsAdmin === true,
           memberAccrual: aggregate.memberAccrual,
@@ -162,7 +164,7 @@ class AggregateRepository {
           );
         affected += operationAffected;
         if (operation.kind !== "delete") {
-          for (const record of records) await this.assertBranch(transaction, table, record, operation.match, aggregate.branchId);
+          for (const record of records) await this.assertBranch(transaction, table, record, operation.match, aggregate.branchId, isFinancialStockUpdate(operation, aggregate));
         }
         for (const record of records) {
           const request = new sql.Request(transaction)

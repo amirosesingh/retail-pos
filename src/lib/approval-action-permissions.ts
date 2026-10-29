@@ -9,6 +9,7 @@ export const APPROVAL_ACTION_PERMISSIONS: Record<string, PermissionKey> = {
   edit_tenders: "can_edit_tenders", no_sale_drawer: "can_no_sale_open", shift_close: "can_close_shift",
   shift_close_variance: "can_shift_variance_approve", stock_adjustment: "can_adjust_stock",
   stock_transfer: "can_create_transfer", delete_product: "can_archive_product", edit_posted_stock: "can_adjust_stock",
+  cross_group_transfer_approval: "can_approve_transfer",
   edit_posted_purchase: "can_receive_purchase_order", discard_draft: "can_discard_held_order",
   terminal_unpair: "can_manage_terminals", member_points_adjust: "can_edit_member_points",
 };

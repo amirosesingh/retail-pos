@@ -1,4 +1,5 @@
 import { productReadColumns } from "@/lib/ecommerce-device";
+import { createProductProjectionReader } from "@/lib/product-projection";
 import { normalizeUuidFields } from "@/lib/uuid-fields";
 /**
  * Routed table reads.
@@ -130,8 +131,9 @@ async function runQuery(
       throw new Error("The verified cloud staff session is still being restored.");
     }
   }
-  const build = (start: number, end: number, withCount = false) => retryDataRead(async () => {
-    let q = from(cloudClient, table).select(table === "products" ? productReadColumns(options.columns) : options.columns ?? "*", withCount ? { count: "exact" } : {});
+  const readProjection = createProductProjectionReader(table === "products" ? productReadColumns(options.columns) : options.columns ?? "*");
+  const build = (start: number, end: number, withCount = false) => retryDataRead(async () => readProjection(async columns => {
+    let q = from(cloudClient, table).select(columns, withCount ? { count: "exact" } : {});
     // PostgREST uses `is.null`, not `eq.null`.  The latter can return no rows
     // (or fail outright) and leaves deleted/archived records stale in the UI.
     for (const [k, v] of Object.entries(options.match ?? {}))
@@ -163,9 +165,11 @@ async function runQuery(
       count?: number | null;
       status?: number;
     };
+    return result;
+  }).then(result => {
     if (result.error) throw Object.assign(new Error(result.error.message), result.error, { status: result.status });
     return result;
-  }, () => PUBLIC_READ_TABLES.has(table) || hasCentralAuthSession());
+  }), () => PUBLIC_READ_TABLES.has(table) || hasCentralAuthSession());
   // A caller that asked for a capped read gets exactly that; an uncapped
   // read is paged so the database's 1,000-row response cap cannot silently
   // truncate a whole table.

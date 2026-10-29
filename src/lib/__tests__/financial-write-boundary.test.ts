@@ -20,7 +20,7 @@ describe("native posted financial mutation boundary", () => {
     for (const kind of ["update", "delete"]) await expect(repository.applyOperation({}, { kind, table, values: { amount: 0 }, match: { id: "existing" } }, { enforcePermissions: true })).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
   });
   it("preserves ordinary sale inserts and immutable upsert retries without inventory permissions", () => {
-    const operations = [create, { kind: "upsert", table: "sale_items", rows: [{ id: "item", sale_id: sale.id }] },
+    const operations = [create, { kind: "upsert", table: "sale_items", rows: [{ id: "item", sale_id: sale.id, product_id: "product", quantity: 1 }] },
       { kind: "upsert", table: "payment_transactions", rows: [{ id: "payment", sale_id: sale.id, amount: 12 }] },
       { kind: "update", table: "products", match: { id: "product" }, values: { stock_quantity: 2, stock_by_store: { "branch-a": 2 } } }];
     expect(aggregatePolicy("sale", operations, identity()).enforcePermissions).toBe(true);

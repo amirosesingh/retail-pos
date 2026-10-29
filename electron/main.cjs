@@ -109,7 +109,7 @@ const approvalTokenVerifier = createApprovalTokenVerifier({
     try {
       const response = await fetch(`${url}/api/v1/pos/sync?operation=authorization`, {
         method: "POST", signal: abort.signal, headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action: "approval_credentials", data: { action: "bundle", data: { terminalToken } } }),
+        body: JSON.stringify({ action: "approval_credentials", data: { action: "bundle", data: { terminalToken, deviceBindingProof:terminalStore.read()?.deviceBindingProof } } }),
       });
       return response.ok ? approvalVerifierKey.openEnvelope(await response.json()) : null;
     } finally { clearTimeout(timer); }
@@ -117,23 +117,45 @@ const approvalTokenVerifier = createApprovalTokenVerifier({
 });
 
 function isManagementDevice(){const t=terminalStore.read();return Boolean(t?.tokenId&&t.deviceUse==="management"&&!t.locationId&&!t.storeId&&!t.branchId);}
+const activationBoundary = require("./verified-activation.cjs");
 function localBranchId(){
   if(isManagementDevice())return null;
   const terminal=terminalStore.read()??{};
-  return [terminal.locationId,terminal.storeId,terminal.branchId,adminSession.branchId()]
+  return [terminal.locationId,terminal.storeId,terminal.branchId]
     .map(value=>recordId(String(value??"").trim())).find(Boolean)??null;
 }
-function rememberVerifiedBranch(branchId){
-  if(!branchId||isManagementDevice())return;
-  const terminal=terminalStore.read();
-  if(terminal?.tokenId&&!terminal.locationId&&!terminal.storeId&&!terminal.branchId){
-    terminalStore.write({...terminal,branchId});
-    // The renderer may already have loaded its first local snapshot while the
-    // sealed activation still lacked its branch mirror. Wake it immediately;
-    // otherwise SQL contains the catalogue but the till remains empty until a
-    // full application restart.
-    publishBusinessChange({kind:"branch",branchId:String(branchId)});
-  }
+function rememberVerifiedBranch(){ /* Account scope never assigns a physical terminal. */ }
+function authorizedLocalBranch(){return activationBoundary.authorizedBranch(terminalStore.read(),adminSession.branchId());}
+async function assertSafeRegistrationChange(config){
+  const previous=terminalStore.lastBinding();
+  if(!previous||activationBoundary.sameBinding(activationBoundary.binding(previous),activationBoundary.binding(config)))return;
+  if(!adminSession.hasLevel("admin")&&!adminSession.recoveryActive())throw new Error("An administrator must authorize terminal reassignment.");
+  if(!databaseManager.isConnected())throw new Error("Connect the local database before changing terminal registration so pending transactions can be checked.");
+  const branch=activationBoundary.binding(previous)?.branchId;
+  // Management can have pending work from several branches in the same SQL
+  // store. Inspect all unacknowledged work rather than treating null as a
+  // branch or preventing a legitimate replacement activation forever.
+  const summary=branch?await changeReader.pendingSummary(branch):{
+    pending:Number((await databaseManager.pool.request().query("SELECT COUNT_BIG(*) pending FROM dbo.sync_change_journal WHERE acknowledged_at IS NULL;")).recordset?.[0]?.pending??0),failed:0,
+  };
+  const conflicts=await conflictRepository.unresolved();
+  if(summary.pending||summary.failed||conflicts?.length)throw new Error("Synchronize or review pending transactions before changing terminal registration.");
+}
+function recordRegistrationChange(previous,config){
+  const before=activationBoundary.binding(previous),after=activationBoundary.binding(config);
+  if(!before||activationBoundary.sameBinding(before,after))return;
+  diagnostics.logConnection("activation.reassignment.succeeded",{category:"activation",stage:"reassignment",actor:adminSession.identity()?.subject??null,previousMode:before.mode,previousBranch:before.branchId,mode:after.mode,branch:after.branchId});
+}
+async function verifiedTerminalMirror(config){
+  const existing=terminalStore.read();
+  activationBoundary.assertUnchanged(existing,config);
+  if(existing&&(existing.deviceBindingProof||!config.deviceBindingProof))return {...existing};
+  const backend=authorizationServerUrl();
+  if(!backend||!config?.deviceBindingProof)throw new Error("Connect to the POS backend to verify this terminal registration.");
+  const response=await fetch(`${backend}/api/public/terminal-pairing`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({tokenId:config.tokenId,proofHash:config.deviceBindingProof}),signal:AbortSignal.timeout(8000)});
+  const result=await response.json();
+  if(!response.ok||!result.approved)throw new Error("The terminal registration could not be verified.");
+  return activationBoundary.canonicalConfig(config,result.terminal,existing);
 }
 function stampVerifiedBranchOperations(operations,branchId,aggregateKind=null){
   const branchStampedTables=new Set(["audit_logs","shift_sessions","activity_events","authorization_requests","authorization_log","record_edits","member_verifications","entity_status_history"]);
@@ -1677,7 +1699,7 @@ function registerIpc() {
       response = await fetch(`${authorizationUrl}/api/v1/pos/ipc-authorize`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ username: user, pin: secret, terminalId: terminalStore.read()?.tokenId ?? null }),
+        body: JSON.stringify({ username: user, pin: secret, terminalId: terminalStore.read()?.tokenId ?? null, deviceBindingProof:terminalStore.read()?.deviceBindingProof }),
         signal: controller.signal,
       });
     } catch {
@@ -1700,7 +1722,11 @@ function registerIpc() {
   ipcMain.handle("admin:adopt-session", async (_e, value, rawTerminal) => guard.guarded(async () => {
     const revision = ++sessionAdoptionRevision;
     const initialIdentity = adminSession.identity();
-    const proof=guard.credentialProof(typeof value==="string"?{accessToken:value}:value);
+    const supplied=guard.credentialProof(typeof value==="string"?{accessToken:value}:value);
+    const sealed=terminalStore.read();
+    const candidate=rawTerminal==null?sealed:guard.terminalConfig(rawTerminal);
+    if(sealed&&candidate)activationBoundary.assertUnchanged(sealed,candidate);
+    const proof={...supplied,...(sealed?.tokenId?{terminalToken:sealed.tokenId,deviceBindingProof:sealed.deviceBindingProof||supplied.deviceBindingProof}: {})};
     if(!proof.accessToken&&!proof.sessionToken&&!proof.cashierToken)return{ok:false,error:"A verified signed-in user is required."};
     const authorizationUrl=authorizationServerUrl();
     if(!authorizationUrl)return{ok:false,error:"Configure the hosted POS backend address before connecting the local database."};
@@ -1710,13 +1736,17 @@ function registerIpc() {
     const currentIdentity = adminSession.identity();
     if (revision !== sessionAdoptionRevision || initialIdentity?.subject !== currentIdentity?.subject || initialIdentity?.source !== currentIdentity?.source)
       return {ok:false,error:"The signed-in user changed while permissions were refreshing."};
-    // The hosted backend has now verified this live POS identity. This is the
-    // safe point to repair the native activation mirror that boot hydration
-    // could not write before a staff session existed.
-    const terminal=rawTerminal==null?null:guard.terminalConfig(rawTerminal);
-    if(terminal){
+    if(candidate){
+      const currentTerminal=terminalStore.read();
+      if(Boolean(sealed)!==Boolean(currentTerminal)||(sealed&&!activationBoundary.sameBinding(activationBoundary.binding(sealed),activationBoundary.binding(currentTerminal))))
+        return {ok:false,code:"EACTIVATION_BINDING",error:"The terminal registration changed while permissions were refreshing."};
+      const terminal=activationBoundary.canonicalConfig({...candidate,deviceBindingProof:proof.deviceBindingProof},result.terminal,sealed);
+      if(!sealed)await assertSafeRegistrationChange(terminal);
+      if(result.branchId&&terminal.deviceUse==="operations")activationBoundary.authorizedBranch(terminal,result.branchId);
+      const previous=terminalStore.lastBinding();
       const mirrored=terminalStore.write(terminal);
-      if(mirrored?.ok===false)return{ok:false,code:"EACTIVATION_STORE",error:mirrored.error??"Windows secure storage could not save the terminal activation."};
+      if(mirrored?.ok===false)return{ok:false,code:"EACTIVATION_STORE",error:mirrored.error};
+      recordRegistrationChange(previous,terminal);
     }
     adminSession.grant(result.level,result.subject,result.permissions,"pos",result.branchId);
     syncCloud.setAuthorizationProof(proof);
@@ -1730,7 +1760,7 @@ function registerIpc() {
     const response = await fetch(`${authorizationUrl}/api/v1/pos/ipc-authorize`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ username: user, pin: secret, terminalId: terminalStore.read()?.terminalId ?? null }),
+      body: JSON.stringify({ username: user, pin: secret, terminalId: terminalStore.read()?.tokenId ?? null, deviceBindingProof:terminalStore.read()?.deviceBindingProof }),
     });
     const result = await response.json().catch(() => ({ ok: false, error: "Authorization failed." }));
     if (!response.ok || !result.ok) return { ok: false, error: result.error ?? "Authorization failed." };
@@ -1886,13 +1916,20 @@ function registerIpc() {
   }));
   ipcMain.handle("business:snapshot", (_e, options) => guard.guarded(async () => {
     if(!databaseManager.isConnected())return{ok:false,code:"EDATABASE_NOT_READY",error:"SQL Server setup or connection is not complete yet."};
-    const snapshot = await operationsRepository.snapshot(localBranchId(), terminalStore.read()?.tokenId ?? null, { salesOnly: options?.salesOnly === true, onProgress: (progress) => { if (!_e.sender.isDestroyed()) _e.sender.send("business:read-progress", progress); } });
+    const snapshot = await operationsRepository.snapshot(authorizedLocalBranch(), terminalStore.read()?.tokenId ?? null, { salesOnly: options?.salesOnly === true, onProgress: (progress) => { if (!_e.sender.isDestroyed()) _e.sender.send("business:read-progress", progress); } });
     return require("./read-snapshot-policy.cjs").filterSnapshot({ ...snapshot, shifts: (snapshot.shifts ?? []).map(redactShiftRow) }, adminSession);
+  }));
+  ipcMain.handle("business:management-report", (_e, options) => guard.guarded(async () => {
+    try {
+      const safe = guard.options(options, { name: "management report", max: 10 });
+      adminSession.touch();
+      return await require("./db/repositories/management-reports.cjs").readManagementReport({ manager: databaseManager, databaseService, session: adminSession, management: isManagementDevice(), options: safe, redactShift: redactShiftRow });
+    } catch (error) { return { ok: false, code: error?.code ?? "EMANAGEMENT_REPORT", error: String(error?.message ?? error) }; }
   }));
   ipcMain.handle("business:analytics", (_e, from, to, timeZone) => guard.guarded(async () => {
     if (!adminSession.hasPosAuthority() || !adminSession.hasPermission("can_view_sales_reports"))
       return { ok: false, code: "PERMISSION_DENIED", error: "Sales report permission is required." };
-    return readAnalytics(databaseManager, localBranchId(), guard.text(from, { name: "from date", max: 10 }), guard.text(to, { name: "to date", max: 10 }), guard.text(timeZone || "UTC", { name: "time zone", max: 80 }));
+    return readAnalytics(databaseManager, authorizedLocalBranch(), guard.text(from, { name: "from date", max: 10 }), guard.text(to, { name: "to date", max: 10 }), guard.text(timeZone || "UTC", { name: "time zone", max: 80 }));
   }));
   ipcMain.handle("business:query", (_e, table, options) => guard.guarded(async () => {
     try {
@@ -1900,7 +1937,7 @@ function registerIpc() {
       if(!databaseManager.isConnected())return{ok:false,code:"EDATABASE_NOT_READY",rows:[],error:"SQL Server setup or connection is not complete yet."};
       const terminal = terminalStore.read() ?? {};
       const result = await operationsRepository.query(
-        localBranchId(), safeTable, guard.queryOptions(options),
+        authorizedLocalBranch(), safeTable, guard.queryOptions(options),
         terminal.tokenId ?? terminal.terminalId ?? null,
       );
       return safeTable === "shifts"
@@ -1911,8 +1948,8 @@ function registerIpc() {
       // Reads can race terminal restoration during startup; return a normal
       // not-ready result instead of rejecting the IPC promise and flooding the
       // Electron/Chromium console with an uncaught handler error.
-      if (error?.code === "EBRANCH") {
-        return { ok: false, code: "EBRANCH", rows: [], error: error.message };
+      if (error?.code === "EBRANCH" || error?.code === "EACTIVATION_BINDING") {
+        return { ok: false, code: error.code, rows: [], error: error.message };
       }
       throw error;
     }
@@ -2028,7 +2065,7 @@ function registerIpc() {
       const response = await fetch(`${url}/api/v1/pos/sync?operation=authorization`, {
         method: "POST", signal: abort.signal, headers: { "content-type": "application/json" },
         body: JSON.stringify({ action: "approval_credentials", data: { action: "register_verifier", data: {
-          ...data, terminalToken: terminalStore.read()?.tokenId, publicKey: approvalVerifierKey.publicKey(),
+          ...data, terminalToken: terminalStore.read()?.tokenId, deviceBindingProof:terminalStore.read()?.deviceBindingProof, publicKey: approvalVerifierKey.publicKey(),
         } } }),
       });
       const result = await response.json();
@@ -2066,6 +2103,7 @@ function registerIpc() {
           pin,
           platform: "electron",
           terminalId: terminal.tokenId ?? null,
+          deviceBindingProof: terminal.deviceBindingProof ?? null,
           branchId: localBranchId(),
         }),
       });
@@ -2270,9 +2308,13 @@ function registerIpc() {
   ipcMain.handle("net:get-binary", (_e, url) => netHttp.getBinary(String(url)));
 
   ipcMain.handle("terminal:read", () => ({ ok: true, config: terminalStore.read() }));
-  ipcMain.handle("terminal:write", (_e, raw) => {
+  ipcMain.handle("terminal:write", async (_e, raw) => {
     try {
-      const config=guard.terminalConfig(raw);
+      const before=terminalStore.read();
+      const config=await verifiedTerminalMirror(guard.terminalConfig(raw));
+      const after=terminalStore.read();
+      if(Boolean(before)!==Boolean(after)||(before&&!activationBoundary.sameBinding(activationBoundary.binding(before),activationBoundary.binding(after))))throw new Error("The terminal registration changed during verification.");
+      if(!before)await assertSafeRegistrationChange(config);
       const activationBackend=String(config?.backendUrl??"").trim().replace(/\/+$/,"");
       const savedBackend=String(configStore.get("backendUrl")??"").trim().replace(/\/+$/,"");
       // The connection page is authoritative. Older activation payloads may
@@ -2280,7 +2322,9 @@ function registerIpc() {
       // http origin; neither may erase a proven HTTPS deployment address.
       const backend=/^https:\/\/.+/i.test(savedBackend)?savedBackend:/^https:\/\/.+/i.test(activationBackend)?activationBackend:"";
       if(backend)configStore.set("backendUrl",backend);
+      const previous=terminalStore.lastBinding();
       const saved=terminalStore.write(config?{...config,...(backend?{backendUrl:backend}:{})}:config);
+      if(saved?.ok)recordRegistrationChange(previous,config);
       if(saved?.ok&&isManagementDevice()){managementReplica.resetRetry();terminalIdentityPausedSync=false;syncCoordinator.resume();scheduleAutomaticSync(250);}
       else if(saved?.ok&&config&&terminalIdentityPausedSync){terminalIdentityPausedSync=false;syncCoordinator.resume();scheduleAutomaticSync(250);}
       return saved;

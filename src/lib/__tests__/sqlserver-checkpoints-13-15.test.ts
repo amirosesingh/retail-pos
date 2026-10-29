@@ -80,13 +80,17 @@ describe("SQL Server checkpoints 13 through 15", () => {
       "if (terminalStore) identity = { ...identity, storeId: terminalStore, terminalId }",
     );
     expect(cloud).toContain("JSON.stringify({ ...normalizeSyncPayload(payload), ...personProof, terminalToken: recordId(terminalToken),");
-    expect(cloud).toContain('terminal.deviceUse === "management" ? { deviceClaimProof: terminal.deviceClaimProof, deviceBindingProof: terminal.deviceBindingProof }');
+    expect(cloud).toContain('deviceBindingProof:terminal.deviceBindingProof');
+    expect(cloud).toContain('terminal.deviceUse === "management" ? { deviceClaimProof: terminal.deviceClaimProof }');
     expect(main).toContain(
-      "operationsRepository.snapshot(localBranchId(), terminalStore.read()?.tokenId ?? null,",
+      "operationsRepository.snapshot(authorizedLocalBranch(), terminalStore.read()?.tokenId ?? null,",
     );
     expect(operations).toContain("FROM dbo.shifts WHERE store_id=@branch");
     expect(operations).toContain("FROM dbo.sales WHERE store_id=@branch");
-    expect(operations).toContain("NULLIF(owner_store_id,N'') IS NULL OR owner_store_id=@branch");
+    expect(operations).toContain('rendererReadBranchPredicate(this.registry, table, "source")');
+    const scope = readFileSync("electron/db/branch-scope.cjs", "utf8");
+    expect(scope).toContain("NULLIF(${alias}.[owner_store_id],N'') IS NULL OR ${alias}.[owner_store_id]=@branch");
+    expect(readFileSync("electron/sync/change-reader.cjs", "utf8")).toContain('table.cloudTable === "products" ? branchPredicate(this.registry, table, "source")');
   });
 
   it("publishes every synced table and pulls only branch or shared rows", () => {

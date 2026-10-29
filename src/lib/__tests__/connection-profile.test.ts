@@ -26,6 +26,7 @@ const electronStore = vi.hoisted(() => ({
 vi.mock("@/platform-config/platform", () => ({
   isTerminalApp: () => true,
   isNative: () => shell.mobile,
+  platformName: () => shell.mobile ? "android" : shell.windows ? "electron" : "web",
 }));
 
 vi.mock("@/platform-config/features", () => ({

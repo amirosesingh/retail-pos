@@ -9,7 +9,6 @@ import {
   useSettingsNav,
 } from "@/platforms/web/components/pos/settings/use-settings-nav";
 import { Input } from "@/components/ui/input";
-import { useAuth } from "@/lib/pos-auth";
 import {
   settingsCard,
   SETTINGS_CATEGORIES,
@@ -90,11 +89,10 @@ function Row({ c }: { c: SettingsCard }) {
 }
 
 function SettingsHome() {
-  const { can } = useAuth();
-  const allowed = can("can_access_pos_settings");
   const navigate = useNavigate({ from: "/settings/" });
   const { cat } = Route.useSearch();
   const { cards, categories } = useSettingsNav();
+  const allowed = cards.length > 0;
 
   const [query, setQuery] = useState("");
   const term = query.trim();
@@ -152,7 +150,7 @@ function SettingsHome() {
 
         {!allowed ? (
           <p className="text-sm text-muted-foreground">
-            Configuration is managed by an administrator.
+            No settings are available with your current permissions.
           </p>
         ) : term ? (
           <section className="settings-menu-grid grid grid-cols-1 gap-2 sm:grid-cols-2 xl:block xl:space-y-2" aria-label="Search results">

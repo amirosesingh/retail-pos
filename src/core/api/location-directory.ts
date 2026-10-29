@@ -71,11 +71,19 @@ export function verifyTerminalLocation(
   };
 }
 
-/** Staff terminals stay paired; administrator screens may view other branches. */
+/** Authorized management views may switch; a registered operations till stays paired for everyone. */
 export function canSelectLocation(
   id: string,
   boundId: string | null | undefined,
-  isAdmin: boolean,
+  maySwitchBranches: boolean,
+  registeredBranchId?: string | null,
 ): boolean {
-  return isAdmin || !boundId || sameBranchId(id, boundId);
+  if (registeredBranchId) return sameBranchId(id, registeredBranchId);
+  return maySwitchBranches || !boundId || sameBranchId(id, boundId);
+}
+
+/** An explicit or registered branch never falls back to an unrelated first row. */
+export function selectedLocation(stores: readonly Store[], selectedId: string, registeredBranchId?: string | null): Store | undefined {
+  const branchId = registeredBranchId?.trim() || selectedId.trim();
+  return branchId ? stores.find(store => sameBranchId(store.id, branchId)) : stores[0];
 }

@@ -11,6 +11,7 @@ export type VerifyInput = {
   sessionToken?: string;
   cashierToken?: string;
   terminalToken?: string;
+  deviceBindingProof?: string;
   accessToken?: string;
   storeId?: string;
 };
@@ -120,8 +121,8 @@ export async function verifySessionServer(input: VerifyInput): Promise<VerifyRes
   let caller: Awaited<ReturnType<typeof verifyRelayCaller>>;
   try {
     caller = await verifyRelayCaller(input);
-  } catch {
-    return { ok: false, reason: "revoked" };
+  } catch (error) {
+    return { ok: false, reason: (error as {status?:number}).status===503 ? "unavailable" : "revoked" };
   }
 
   if (caller.kind !== "terminal") {

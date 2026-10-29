@@ -4187,6 +4187,7 @@ IF OBJECT_ID(N''dbo.products'', N''U'') IS NULL BEGIN CREATE TABLE dbo.[products
   [row_version] int NOT NULL CONSTRAINT [DF_products_row_version] DEFAULT (1),
   [owner_store_id] nvarchar(450) NULL,
   [deleted_at] nvarchar(max) NULL,
+  [catalogue_store_ids] nvarchar(max) NOT NULL CONSTRAINT [DF_products_catalogue_store_ids] DEFAULT (N''[]''),
   CONSTRAINT [PK_products] PRIMARY KEY ([id])
 
 ); END;
@@ -4436,6 +4437,19 @@ IF COL_LENGTH(N''dbo.products'', N''owner_store_id'') IS NULL ALTER TABLE dbo.[p
 IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE c.object_id=OBJECT_ID(N''dbo.products'') AND c.name=N''owner_store_id'' AND t.name IN (N''nvarchar'',N''varchar'') AND c.max_length=-1) ALTER TABLE dbo.[products] ALTER COLUMN [owner_store_id] nvarchar(450) NULL;
 
 IF COL_LENGTH(N''dbo.products'', N''deleted_at'') IS NULL ALTER TABLE dbo.[products] ADD [deleted_at] nvarchar(max) NULL;
+
+IF COL_LENGTH(N''dbo.products'', N''catalogue_store_ids'') IS NULL ALTER TABLE dbo.[products] ADD [catalogue_store_ids] nvarchar(max) NULL;
+
+IF OBJECT_ID(N''dbo.products'', N''U'') IS NOT NULL AND COL_LENGTH(N''dbo.products'', N''catalogue_store_ids'') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N''dbo.products'') AND c.name=N''catalogue_store_ids''
+) ALTER TABLE dbo.[products] ADD CONSTRAINT [DF_products_catalogue_store_ids] DEFAULT (N''[]'') FOR [catalogue_store_ids];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N''dbo.products'') AND name=N''catalogue_store_ids'' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N''UPDATE dbo.[products] SET [catalogue_store_ids]=N''''[]'''' WHERE [catalogue_store_ids] IS NULL;'';
+  ALTER TABLE dbo.[products] ALTER COLUMN [catalogue_store_ids] nvarchar(max) NOT NULL;
+END;
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N''dbo.products'') AND name=N''UX_products_barcode'') CREATE UNIQUE INDEX [UX_products_barcode] ON dbo.[products]([barcode]);
 
@@ -12594,6 +12608,7 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N''products'', N''row_version''),
   (N''products'', N''owner_store_id''),
   (N''products'', N''deleted_at''),
+  (N''products'', N''catalogue_store_ids''),
   (N''promotions'', N''id''),
   (N''promotions'', N''title''),
   (N''promotions'', N''promo_type''),
@@ -13086,9 +13101,9 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N''authorization_actions'', N''threshold''),
   (N''authorization_actions'', N''is_enabled''),
   (N''authorization_actions'', N''row_version''),
-  (N''authorization_actions'', N''updated_by''),
-  (N''authorization_actions'', N''created_at'');
+  (N''authorization_actions'', N''updated_by'');
 INSERT INTO @RequiredColumns (table_name, column_name) VALUES
+  (N''authorization_actions'', N''created_at''),
   (N''authorization_actions'', N''updated_at''),
   (N''authorization_action_history'', N''id''),
   (N''authorization_action_history'', N''action_id''),

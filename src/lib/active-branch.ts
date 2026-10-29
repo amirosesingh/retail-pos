@@ -11,6 +11,10 @@
  */
 import { readBranch } from "@/core/local-db/local-db";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
+import { terminalRuntimePlatform } from "@/core/activation/terminal-platform";
+
+/** Browser management must never inherit a cached native activation claim. */
+export const branchTerminalConfig = () => terminalRuntimePlatform() === "web" ? null : readTerminalConfig();
 
 const clean = (v: string | null | undefined) => (v ?? "").trim() || null;
 
@@ -59,7 +63,7 @@ export function clearTerminalBranchBinding(): void {
  * trades in the terminal's branch even when their own record has none.
  */
 export function bindTerminalBranch(id?: string | null, name?: string | null): string | null {
-  const config = readTerminalConfig();
+  const config = branchTerminalConfig();
   if (config?.deviceUse === "management" && !clean(config.locationId)) {
     clearTerminalBranchBinding();
     return null;
@@ -89,10 +93,11 @@ export function soleBranchId(): string | null {
 
 /** Branch id for this till, or null when nothing knows one yet. */
 export function activeBranchId(inView?: string | null): string | null {
-  const config = readTerminalConfig();
+  const config = branchTerminalConfig();
+  if (terminalRuntimePlatform() === "web") return clean(inView) ?? boundBranchId() ?? clean(readBranch().branchId) ?? soleBranchId();
   if (config?.deviceUse === "management" && !clean(config.locationId)) return clean(inView);
   return (
-    clean(readTerminalConfig()?.locationId) ??
+    clean(config?.locationId) ??
     boundBranchId() ??
     clean(inView) ??
     clean(readBranch().branchId) ??
@@ -102,10 +107,11 @@ export function activeBranchId(inView?: string | null): string | null {
 
 /** Human name for the branch, for messages and headers. */
 export function activeBranchName(inView?: string | null): string | null {
-  const config = readTerminalConfig();
+  const config = branchTerminalConfig();
+  if (terminalRuntimePlatform() === "web") return clean(inView) ?? boundBranchName() ?? clean(readBranch().branchName);
   if (config?.deviceUse === "management" && !clean(config.locationId)) return clean(inView);
   return (
-    clean(readTerminalConfig()?.locationName) ??
+    clean(config?.locationName) ??
     boundBranchName() ??
     clean(inView) ??
     clean(readBranch().branchName)

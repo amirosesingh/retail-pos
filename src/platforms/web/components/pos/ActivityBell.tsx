@@ -1,3 +1,4 @@
+import { mergeNotificationFeed, notificationArrivals } from "@/lib/notification-feed";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { visibleActivityRows } from "@/lib/notification-visibility";
 import { activeBranchId } from "@/lib/active-branch";
@@ -77,6 +78,12 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
   const [, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
   const [missing, setMissing] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  const lastReconciled = useRef(0);
+  const initialReadThrough = useRef("");
   const preferenceScope = `${meKey}:${activeBranchId() ?? ""}`;
   const preferenceScopeRef = useRef(preferenceScope);
   preferenceScopeRef.current = preferenceScope;
@@ -159,14 +166,29 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
       return refreshInFlight.current;
     }
     const generation = refreshGeneration.current;
+    setRefreshing(true);
+    setLoadError("");
     const run = (async () => {
       void flushActivityQueue().catch(() => undefined);
-      const list = await listActivityEvents({
-        limit: 200,
-        storeId: activeBranchId() ?? undefined,
-        from: new Date(Date.now() - NOTIFICATION_RETENTION_MS).toISOString(),
-        to: new Date().toISOString(),
-      });
+      const retentionFrom = new Date(Date.now() - NOTIFICATION_RETENTION_MS).toISOString();
+      const reconcile = !activityInitializedRef.current || Date.now() - lastReconciled.current >= 300_000;
+      const previous = rowsRef.current;
+      const from = reconcile ? retentionFrom : previous[0]?.createdAt ?? retentionFrom;
+      const to = new Date().toISOString();
+      const incoming: ActivityEvent[] = [];
+      // Reuse the authenticated/audience-filtered endpoint. Only a full first
+      // snapshot or reconciliation rereads history; change hints fetch new rows.
+      for (let offset = 0; ; offset += 200) {
+        const batch = await listActivityEvents({
+          limit: 200, offset, storeId: activeBranchId() ?? undefined,
+          from, to, sortDirection: reconcile ? "desc" : "asc",
+        }, { requireSuccess: true });
+        if (generation !== refreshGeneration.current) return;
+        incoming.push(...batch);
+        if (reconcile || batch.length < 200) break;
+      }
+      const list = reconcile ? incoming : mergeNotificationFeed(previous, incoming, retentionFrom);
+      if (reconcile) lastReconciled.current = Date.now();
       if (generation !== refreshGeneration.current) return;
       if (isActivityLogMissing()) {
         setMissing(true);
@@ -181,11 +203,11 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
       );
       setUnread(fresh.length);
       const newlyArrived = activityInitializedRef.current
-        ? list.filter(
-            (row) =>
-              !announcedIdsRef.current.has(row.id) && !hidden.has(row.id) && !activityAcknowledgedBy(row,meKey),
+        ? notificationArrivals(list, announcedIdsRef.current, initialReadThrough.current).filter(
+            (row) => !hidden.has(row.id) && !activityAcknowledgedBy(row,meKey),
           )
         : [];
+      if (!activityInitializedRef.current) initialReadThrough.current = to;
       for (const row of list) announcedIdsRef.current.add(row.id);
       activityInitializedRef.current = true;
       // At most four compact cards are introduced at once. Sonner stacks them
@@ -222,7 +244,11 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
     refreshInFlight.current = run;
     try {
       await run;
+    } catch {
+      if (mounted.current && generation === refreshGeneration.current)
+        setLoadError("Notifications could not be loaded. Check the connection and try again.");
     } finally {
+      if (mounted.current && generation === refreshGeneration.current) setRefreshing(false);
       refreshInFlight.current = null;
       if (refreshPending.current && mounted.current) {
         refreshPending.current = false;
@@ -240,7 +266,11 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
     mounted.current = true;
     setRows([]);
     setRowsScope(null);
+    rowsRef.current = [];
+    setLoadError("");
     setSearch("");
+    lastReconciled.current = 0;
+    initialReadThrough.current = "";
     announcedIdsRef.current.clear();
     activityInitializedRef.current = false;
     const onCleared = () =>
@@ -306,6 +336,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
         setOpen(v);
         if (v) {
           setDisplayLimit(30);
+          if (!refreshInFlight.current) void refresh();
           markActivitySeen(rows[0]?.createdAt ?? new Date().toISOString(), meKey);
           setUnread(0);
         }
@@ -328,7 +359,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
           )}
         </Button>
       </DialogTrigger>
-      <DialogContent showCloseButton={false} overlayClassName="backdrop-blur-sm bg-black/20" aria-describedby={undefined} className="notification-panel max-w-lg translate-y-0 gap-0 overflow-hidden p-0 sm:p-0">
+      <DialogContent showCloseButton={true} overlayClassName="backdrop-blur-sm bg-black/20" aria-describedby={undefined} className="notification-panel flex max-w-lg translate-y-0 flex-col gap-0 overflow-hidden p-0 sm:p-0">
         <div className="border-b border-border/60 px-4 py-4 pr-12">
           <DialogTitle className="flex items-center gap-2 text-base"><Bell className="size-4 text-primary" /> Notifications</DialogTitle>
         </div>
@@ -338,8 +369,10 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
             onChange={event => { setSearch(event.target.value); setDisplayLimit(30); }} className="h-11 rounded-lg pl-9 text-sm" />
         </div>
 
+        {refreshing && <p role="status" className="px-4 pt-3 text-xs text-muted-foreground">{rowsScope === preferenceScope ? "Checking for new notifications…" : "Loading notifications…"}</p>}
+        {loadError && <div role="alert" className="px-4 pt-3 text-xs text-destructive">{loadError}<Button size="sm" variant="ghost" disabled={refreshing} onClick={() => void refresh()}>Try again</Button></div>}
         {saving && <p role="status" className="px-4 pt-3 text-xs text-muted-foreground">Saving changes…</p>}
-        <div className="min-h-32 max-h-[65dvh] overflow-y-auto overscroll-contain p-3">
+        <div className="min-h-0 max-h-[65dvh] flex-1 overflow-y-auto overscroll-contain p-3">
           {showActivity && matchingRows.length > 0 && (
             <div className="flex items-center justify-between border-b border-border/60 px-3 py-1.5">
               <span className="text-[10px] font-medium text-muted-foreground">
@@ -376,7 +409,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
               getKey={activityKey}
               empty={
                 <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-                  {saving ? "Notifications cleared from this view. Saving…" : searchQuery ? "No notifications match your search." : "You’re all caught up."}
+                  {saving ? "Notifications cleared from this view. Saving…" : loadError ? "Notifications are temporarily unavailable." : rowsScope !== preferenceScope ? "Loading notifications…" : searchQuery ? "No notifications match your search." : "You’re all caught up."}
                 </p>
               }
               renderItem={(r) => (

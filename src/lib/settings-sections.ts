@@ -222,6 +222,7 @@ export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
     blurb: "Country, time zone, date order and clock format.",
     paths: [
       "integrations.country",
+      "integrations.currency",
       "integrations.timeZone",
       "integrations.dateFormat",
       "integrations.timeFormat",

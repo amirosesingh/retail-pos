@@ -175,7 +175,8 @@ describe("local SQL Server discovery privilege", () => {
 
     expect(gate).toContain("ensureDesktopPosSession(true)");
     const handoff = readFileSync("src/lib/desktop-pos-session.ts", "utf8");
-    expect(handoff).toContain("bridge.adoptSession!(credentials, readTerminalConfig())");
+    expect(handoff).toContain("bridge.adoptSession!({ ...credentials, ...registrationProof }, readTerminalConfig())");
+    expect(handoff).toContain("readNativeTerminalProof()");
     expect(gate).toContain('requiredLevel === "admin" && adopted.level !== "admin"');
     expect(main).toContain('ipcMain.handle("admin:adopt-session"');
     expect(main).toContain('configStore.get("backendUrl")');
@@ -191,7 +192,10 @@ describe("local SQL Server discovery privilege", () => {
     expect(adoptRoute).not.toMatch(/authority\.permissions\.can_manage_sync_backup/);
     expect(main).toContain('adminSession.grant(result.level,result.subject,result.permissions,"pos",result.branchId)');
     expect(main).toContain("const mirrored=terminalStore.write(terminal)");
-    expect(main).toContain("terminal.locationId,terminal.storeId,terminal.branchId,adminSession.branchId()");
+    expect(main).toContain("terminal.locationId,terminal.storeId,terminal.branchId]");
+    expect(main).not.toContain("terminal.locationId,terminal.storeId,terminal.branchId,adminSession.branchId()");
+    expect(main).toContain("activationBoundary.canonicalConfig({...candidate,deviceBindingProof:proof.deviceBindingProof},result.terminal,sealed)");
+    expect(main).toContain("activationBoundary.authorizedBranch(terminalStore.read(),adminSession.branchId())");
     expect(ipcGate).toContain("adminSession.hasPosAuthority()");
     expect(wizard).toMatch(
       /const authorization = await authorizeDatabaseChange\(\);[\s\S]{0,220}const migrated = await api\(\)!\.migrateDatabase\(profile\)/,

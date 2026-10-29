@@ -18,10 +18,10 @@ import type { ReceiptOverride, ReceiptSettings } from "@/core/types/pos-types";
 
 const IDENTITY_FIELDS: { key: keyof ReceiptOverride; label: string; placeholder: string }[] = [
   { key: "companyName", label: "Company name", placeholder: "Enter the business name" },
-  { key: "taxNumber", label: "Tax / VAT number", placeholder: "88-2201194" },
-  { key: "regNumber", label: "Registration number", placeholder: "REG-000123" },
-  { key: "phone", label: "Phone", placeholder: "555-0100" },
-  { key: "website", label: "Website", placeholder: "www.example.com" },
+  { key: "taxNumber", label: "Tax / VAT number", placeholder: "Optional tax / VAT number" },
+  { key: "regNumber", label: "Registration number", placeholder: "Optional registration number" },
+  { key: "phone", label: "Phone", placeholder: "Optional phone number" },
+  { key: "website", label: "Website", placeholder: "Optional website" },
 ];
 
 export const Route = createFileRoute("/settings/identity")({

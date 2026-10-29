@@ -403,7 +403,7 @@ export const SETTINGS_CARDS: SettingsCard[] = [
   {
     id: "region",
     label: "Region & time",
-    blurb: "Country, time zone, date order and 12 / 24-hour clock.",
+    blurb: "Country, currency, time zone, date order and 12 / 24-hour clock.",
     icon: Globe,
     category: "business",
     scope: "company",

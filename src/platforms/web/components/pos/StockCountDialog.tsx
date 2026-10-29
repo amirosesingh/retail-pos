@@ -1,3 +1,4 @@
+import { formatTime as systemTime } from "@/lib/time-zone";
 /**
  * Physical count workspace, in a dialog.
  *
@@ -732,7 +733,7 @@ export function StockCountDialog({
             {draftId && draft?.status !== "posted" && (
               <p className="text-xs text-muted-foreground">
                 Draft saved automatically
-                {savedAt ? ` · last saved ${new Date(savedAt).toLocaleTimeString()}` : ""}
+                {savedAt ? ` · last saved ${systemTime(savedAt)}` : ""}
               </p>
             )}
 

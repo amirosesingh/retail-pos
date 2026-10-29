@@ -230,7 +230,9 @@ for (const table of tables) {
           ["stock_quantity", "stock_by_store"].includes(column.cloudColumn)
         ),
     )
-    .map((column) => `${q(column.cloudColumn)}=EXCLUDED.${q(column.cloudColumn)}`);
+    .map((column) => table.cloudTable === "products" && column.cloudColumn === "owner_store_id"
+      ? `"owner_store_id"=COALESCE(NULLIF(btrim(EXCLUDED."owner_store_id"),''),public."products"."owner_store_id")`
+      : `${q(column.cloudColumn)}=EXCLUDED.${q(column.cloudColumn)}`);
   const versionWhere = columnNames(table).has("row_version")
     ? ` WHERE EXCLUDED."row_version">public.${q(table.cloudTable)}."row_version"`
     : "";

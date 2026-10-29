@@ -16,6 +16,7 @@ const caller = z.object({
   sessionToken: z.string().min(10).optional(),
   accessToken: z.string().min(10).optional(),
   terminalToken: z.string().min(10).optional(),
+  deviceBindingProof:z.string().regex(/^[a-f0-9]{64}$/i).optional(),
   cashierToken: z.string().min(10).optional(),
 });
 
@@ -308,6 +309,9 @@ export const listAuthorizationPeople = createServerFn({ method: "POST" })
   });
 
 function ruleConfigurationError(data: z.infer<typeof saveRuleInput>): string | null {
+  if (data.actionKey === "cross_group_transfer_approval" &&
+      (data.scopeType !== "global" || data.mode !== "request" || data.threshold !== null))
+    return "Cross-cluster transfers always require independent transfer approval. Configure approvers company-wide, with no bypass threshold.";
   if (data.actionKey === "sponsorship" && (data.mode !== "request" || !data.requireReason || data.threshold !== null)) return "Sponsorship always requires an approval request and a reason, with no bypass threshold.";
   if (data.mode === "none") return null;
   if (!data.allowedRoles.length && !data.allowedUserIds.length) {
@@ -469,14 +473,14 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
 
     const { approvalPerson, verifyApprovalTotp, identifyApprovalTotp } = await import("./approval-token-server");
     const { approvalMethods } = await import("./approval-credentials");
-    const resolvedId = authorizerId || await identifyApprovalTotp(data.pin, storeId, data.terminalToken);
+    const resolvedId = authorizerId || await identifyApprovalTotp(data.pin, storeId, data.terminalToken,data.deviceBindingProof);
     if (!authorizerId && resolvedId && (await throttleStatus(`authz:${resolvedId.toLowerCase()}`)).locked) {
       return { ok: false as const, error: "This approval credential is temporarily locked. Try again later." };
     }
     const credentials = resolvedId ? await approvalPerson(resolvedId) : null;
     const methods = approvalMethods(credentials?.permissions);
     const pinPerson = authorizerId && methods.pin ? await verifyAuthorizationPin(authorizerId, data.pin, roles, users) : null;
-    const tokenPerson = !pinPerson && resolvedId && methods.totp ? await verifyApprovalTotp(resolvedId, data.pin, storeId, data.terminalToken) : null;
+    const tokenPerson = !pinPerson && resolvedId && methods.totp ? await verifyApprovalTotp(resolvedId, data.pin, storeId, data.terminalToken,data.deviceBindingProof) : null;
     const person = pinPerson ?? tokenPerson;
     const credentialMethod = tokenPerson ? "totp" : "pin";
     if (!person) {

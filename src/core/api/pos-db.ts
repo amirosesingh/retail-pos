@@ -1,4 +1,5 @@
 import { productReadColumns, canUseEcommerceDevice } from "@/lib/ecommerce-device";
+import { createProductProjectionReader } from "@/lib/product-projection";
 import { productClassification } from "@/lib/product-classification";
 import { withoutWorkspacePurpose } from "@/lib/retired-workspace-settings";
 import { commitRowCount, runProgressBatch, yieldToUi } from "@/lib/commit-progress";
@@ -10,6 +11,9 @@ import { recordId } from "@/lib/sale-identity";
 import { readLocalLocationDirectory, resolveLocationDirectory, type LocationDirectoryResult } from "./location-directory";
 export type { LocationDirectoryResult } from "./location-directory";
 import { beginDataTask, withDataTask } from "@/lib/data-progress";
+import { isManagementDevice } from "@/lib/management-device";
+import { readManagementReport } from "@/lib/management-report-client";
+import { effectiveTimeZone } from "@/lib/time-zone";
 import {
   authenticatedExternalClientSnapshot,
   supabaseExternal as supabase,
@@ -167,6 +171,7 @@ export const rowToProduct = (r: Row): Product => normalizeUuidFields({
   taxRate: num(r.tax_rate),
   customPoints: r.custom_points == null ? undefined : num(r.custom_points),
   ownerStoreId: (r.owner_store_id as string | null | undefined) ?? null,
+  catalogueStoreIds: jsonValue<unknown[]>(r._catalogue_store_ids ?? r.catalogue_store_ids, []).filter((id): id is string => typeof id === "string"),
 });
 
 /**
@@ -1312,14 +1317,17 @@ async function loadCompleteProductCatalogue(client: typeof supabase, showProgres
   try { return await readProductCatalogue(client, task.report); } finally { task.finish(); }
 }
 async function readProductCatalogue(client: typeof supabase, report: (completed: number, total: number | null) => void): Promise<PagedRead<Row>> {
+  const readProjection = createProductProjectionReader(productReadColumns());
   return readCataloguePages<Row>(async (afterId, limit) => {
     if (!hasStaffSession()) {
       return { data: null, error: { message: "The verified staff session ended while loading the catalogue." } };
     }
-    let query = client.from("products").select(productReadColumns())
-      .is("deleted_at", null).order("id", { ascending: true }).limit(limit);
-    if (afterId) query = query.gt("id", afterId);
-    return await query;
+    return readProjection(async columns => {
+      let query = client.from("products").select(columns)
+        .is("deleted_at", null).order("id", { ascending: true }).limit(limit);
+      if (afterId) query = query.gt("id", afterId);
+      return await query;
+    });
   }, report);
 }
 
@@ -1686,6 +1694,53 @@ export async function loadShiftsByIds(ids: string[]): Promise<Shift[]> {
   return rows.map(rowToShift);
 }
 
+/** Complete history uses the same masked projection as recent shift reads. */
+export async function loadShiftPage(
+  storeId: string,
+  cursor: Cursor = null,
+  limit = 500,
+  range?: { from?: string; to?: string; source?: "auto" | "cloud"; businessFrom?: string; businessTo?: string; timeZone?: string },
+): Promise<Page<Shift> & { source: "management-local" | "local" | "cloud" }> {
+  if (!storeId.trim()) throw new Error("Select a branch to load shift history.");
+  const pageSize = Math.min(500, Math.max(1, limit));
+  let rows: Row[] | undefined;
+  let source: "management-local" | "local" | "cloud" = "cloud";
+  if (range?.source !== "cloud" && isManagementDevice()) {
+    const replica=await readManagementReport({ kind:"shifts", storeIds:[storeId],
+      from:range?.businessFrom || range?.from?.slice(0,10) || "1900-01-01",
+      to:range?.businessTo || range?.to?.slice(0,10) || "9999-12-30",
+      zone:range?.timeZone || effectiveTimeZone(), cursor, limit:pageSize,
+    });
+    if(replica) {rows=(replica.rows??[]) as Row[];source="management-local";}
+  }
+  if (rows===undefined && range?.source !== "cloud" && !isManagementDevice() && effectiveDatabaseMode() === "local") {
+    source="local";
+    rows = await routedQuery("shifts", {
+      match: { store_id: storeId },
+      ...((range?.from || range?.to) ? { dateRange: {
+        column: "opened_at", from: range.from || "0001-01-01T00:00:00.000Z", to: range.to || "9999-12-31T23:59:59.999Z",
+      } } : {}),
+      orderBy: { column: "opened_at", ascending: false },
+      ...(cursor ? { cursor: { column: "opened_at", value: cursor.ts, id: cursor.id } } : {}),
+      limit: pageSize,
+    });
+  } else if(rows===undefined) {
+    const client = await authenticatedExternalClientSnapshot();
+    if (!client) throw new Error("The verified cloud staff session is still being restored.");
+    const response = await client.rpc("shift_page_secure" as never, {
+      p_store_id: storeId, p_from: range?.from || null, p_to: range?.to || null,
+      p_before_opened_at: cursor?.ts ?? null, p_before_id: cursor?.id ?? null, p_limit: pageSize,
+    } as never);
+    if (response.error) throw response.error;
+    rows = (response.data ?? []) as Row[];
+  }
+  const normalized = rows.map(row => ({ ...row,
+    opened_at: row.opened_at instanceof Date ? row.opened_at.toISOString() : String(row.opened_at),
+    id: String(row.id),
+  }));
+  return { rows: normalized.map(rowToShift), cursor: nextCursor(normalized, "opened_at", pageSize), hasMore: normalized.length >= pageSize, source };
+}
+
 export async function loadActiveShift(storeId: string): Promise<Shift | null> {
   const local = await localOpenShift(storeId);
   if (local !== undefined) return local;
@@ -1773,42 +1828,48 @@ export async function loadSalesPage(
   storeId: string,
   cursor: Cursor = null,
   limit = PAGE_SIZE,
-  range?: { from: string; to: string },
-): Promise<Page<Sale>> {
-  if (localDb()?.query) {
-    const heads = (await routedQuery("sales", {
-      match: { store_id: storeId },
-      ...(range ? { dateRange: { column: "created_at", ...range } } : {}),
+  range?: { from?: string; to?: string; shiftId?: string; source?: "auto" | "cloud" },
+): Promise<Page<Sale> & {source:"local"|"cloud"}> {
+  if (range?.source !== "cloud" && localDb()?.query) {
+    const heads:Row[] = ((await routedQuery("sales", {
+      match: { store_id: storeId, ...(range?.shiftId ? {shift_id:range.shiftId} : {}) },
+      ...(range?.from && range?.to ? { dateRange: { column: "created_at", from: range.from, to: range.to } } : {}),
       orderBy: { column: "created_at", ascending: false },
       ...(cursor ? { cursor: { column: "created_at", value: cursor.ts, id: cursor.id } } : {}),
       limit,
-    })) as Row[];
+    })) as Row[]).map<Row>(row=>({...row,created_at:row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at}));
     const items: Row[] = [];
     const ids = heads.map((row) => String(row.id));
     for (let start = 0; start < ids.length; start += 50) {
-      items.push(
-        ...((await routedQuery("sale_items", {
+      for(let offset=0;;offset+=2000){
+        const page=(await routedQuery("sale_items", {
           in: { column: "sale_id", values: ids.slice(start, start + 50) },
-          limit: 2000,
-        })) as Row[]),
-      );
+          orderBy:{column:"id",ascending:true},limit:2000,offset,
+        })) as Row[];
+        items.push(...page);
+        if(page.length<2000) break;
+      }
     }
     const bySale = new Map<string, Row[]>();
     for (const item of items) {
       const saleId = String(item.sale_id);
-      bySale.set(saleId, [...(bySale.get(saleId) ?? []), item]);
+      const lines=bySale.get(saleId);
+      if(lines) lines.push(item); else bySale.set(saleId,[item]);
     }
     const complete = heads.map((row) => ({ ...row, sale_items: bySale.get(String(row.id)) ?? [] }));
     return {
       rows: complete.map(rowToSale),
       cursor: nextCursor(complete, "created_at", limit),
       hasMore: complete.length >= limit,
+      source:"local",
     };
   }
   const query = () => {
     let q = supabase.from("sales").select(saleColumns());
     if (storeId) q = q.eq("store_id", storeId) as typeof q;
-    if (range) q = q.gte("created_at", range.from).lte("created_at", range.to) as typeof q;
+    if (range?.shiftId) q = q.eq("shift_id",range.shiftId) as typeof q;
+    if (range?.from) q = q.gte("created_at", range.from) as typeof q;
+    if (range?.to) q = q.lte("created_at", range.to) as typeof q;
     return keyset(q as never, "created_at", cursor, limit);
   };
   let res = await query();
@@ -1826,6 +1887,7 @@ export async function loadSalesPage(
     rows: rows.map(rowToSale),
     cursor: nextCursor(rows, "created_at", limit),
     hasMore: rows.length >= limit,
+    source:"cloud",
   };
 }
 

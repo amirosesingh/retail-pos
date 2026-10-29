@@ -14,7 +14,7 @@ import {
 } from "@/lib/staff-admin-client";
 import type { StaffPermissions, StaffRole } from "@/lib/permissions";
 import { isExternalEmail } from "@/lib/internal-domains";
-import { readTerminalConfig } from "@/core/activation/terminal-tokens";
+import { readNativeTerminalProof } from "./native-terminal-proof";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 
 export type StaffAccountInput = {
@@ -175,24 +175,24 @@ export async function listTerminalStaff(storeId: string | null): Promise<Termina
     const { serverOrigin, serverUnreachableOnDevice, posFetch } = await import("./server-origin");
     if (serverUnreachableOnDevice()) return { staff: [], reason: "no-server" };
     if (serverOrigin()) {
-      const terminalToken = readTerminalConfig()?.tokenId ?? "";
+      const terminalProof = await readNativeTerminalProof();
       const res = await posFetch("/api/public/terminal-staff", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ storeId, terminalToken }),
+        body: JSON.stringify({ storeId, ...terminalProof }),
       });
       if (res.status === 401 || res.status === 403) return { staff: [], reason: "not-authorised" };
       if (!res.ok) return { staff: [], reason: "unreachable" };
       return done(await mirror(rows(await res.json().catch(() => null))));
     }
 
-    const terminalToken = readTerminalConfig()?.tokenId;
-    if (!terminalToken) return { staff: [], reason: "not-authorised" };
+    const terminalProof = await readNativeTerminalProof();
+    if (!terminalProof.terminalToken) return { staff: [], reason: "not-authorised" };
     return done(
       await mirror(
         rows(
           await listTerminalStaffAccounts({
-            data: { storeId, terminalToken },
+            data: { storeId, ...terminalProof, terminalToken:terminalProof.terminalToken },
           }),
         ),
       ),

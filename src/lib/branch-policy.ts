@@ -5,7 +5,8 @@
  * may be cut off from the group entirely. The switches live in the shared
  * integration settings so every terminal of that branch agrees on them.
  */
-import { defaultBranchPolicy, type AppSettings, type BranchPolicy } from "@/core/types/pos-types";
+import { defaultBranchPolicy, type AppSettings, type BranchPolicy, type Product, type Store, type Transfer } from "@/core/types/pos-types";
+import { canonicalBranchId, canonicalStockMap, sameBranchId } from "./branch-id";
 
 export type BranchPolicyKey = keyof BranchPolicy;
 
@@ -15,16 +16,16 @@ export const BRANCH_POLICY_COPY: Record<
 > = {
   privateStock: {
     label: "Private stock",
-    hint: "Keep this branch's stock levels out of other branches and group totals.",
+    hint: "Keep stock separate by branch. Same-cluster terminals may view available stock; other clusters stay hidden. Authorized management retains its permitted access.",
     onWarning:
-      "Other branches will no longer see this branch's stock, and it will drop out of group inventory totals.",
-    offWarning: "This branch's stock will be visible to every other branch again.",
+      "Keep stock ownership separate while allowing read-only availability within this cluster. Sales and stock changes stay on the terminal's registered branch.",
+    offWarning: "Turn off this branch's private-stock preference. This does not grant another cluster access or allow a normal terminal to change its operating branch.",
   },
   privateCatalogue: {
     label: "Private catalogue",
-    hint: "Products created here stay local and are hidden from other branches.",
-    onWarning: "Products created at this branch from now on will not appear at other branches.",
-    offWarning: "Products owned by this branch will become visible everywhere again.",
+    hint: "Keep this catalogue separate from other clusters. Branches in the same cluster share its products; stock privacy is controlled separately. Completed incoming transfers remain available.",
+    onWarning: "Unassigned legacy products without stock or transfer evidence will be hidden. This does not separate branches in the same cluster.",
+    offWarning: "Allow the legacy shared catalogue where no separate cluster is assigned. Other clusters remain separate until products are transferred.",
   },
   allowTransfers: {
     label: "Allow stock transfers",
@@ -49,8 +50,18 @@ export const BRANCH_POLICY_COPY: Record<
 };
 
 /** Effective policy for one branch — anything unset falls back to shared. */
-export function branchPolicy(settings: AppSettings, storeId: string): BranchPolicy {
-  return { ...defaultBranchPolicy, ...(settings.integrations.branches?.[storeId] ?? {}) };
+export function branchPolicy(settings: AppSettings, storeId: string, stores: readonly Store[] = []): BranchPolicy {
+  const saved = Object.entries(settings.integrations.branches ?? {}).find(([id]) => sameBranchId(id, storeId))?.[1];
+  const store = stores.find(entry => sameBranchId(entry.id, storeId));
+  const policy = { ...defaultBranchPolicy, ...(saved ?? {}) };
+  // Either persisted source can enforce privacy while older installations finish
+  // synchronizing. A stale unchecked copy must not publish another catalogue.
+  return { ...policy, privateCatalogue: policy.privateCatalogue || store?.privateCatalogue === true };
+}
+
+/** Stamp only new records; legacy ownership is never inferred or rewritten. */
+export function branchOwnsNewCatalogue(settings: AppSettings, storeId: string, stores: readonly Store[]): boolean {
+  return !!stores.find(store => sameBranchId(store.id, storeId))?.groupId?.trim() || branchPolicy(settings, storeId, stores).privateCatalogue;
 }
 
 /** Store ids that hide their stock from everyone else. */
@@ -59,25 +70,82 @@ export function privateStockStores(settings: AppSettings): Set<string> {
   return new Set(Object.entries(map).filter(([, p]) => p?.privateStock).map(([id]) => id));
 }
 
+type CatalogueProduct = string | Pick<Product, "id"> & Partial<Pick<Product, "ownerStoreId" | "stockByStore" | "catalogueStoreIds">>;
+
 /**
- * Can this store see this product? Products owned by a private-catalogue
- * branch are only visible at that branch.
- *
- * The owning branch is read from the product itself when the caller has the
- * record — that is the value the central database now enforces on — and falls
- * back to the older settings map for records saved before the column existed.
+ * Build once per settings/directory/transfer change, not once per product row.
+ * A cluster is a catalogue boundary. Transfer visibility comes from posted
+ * destination records, never a draft request or a pre-created zero stock key.
  */
+export function createCatalogueVisibility(
+  settings: AppSettings,
+  stores: readonly Store[],
+  transfers: readonly Transfer[] = [],
+): (product: CatalogueProduct, storeId: string) => boolean {
+  const byId = new Map(stores.map(store => [canonicalBranchId(store.id), store]));
+  const groups = new Set(stores.map(store => canonicalBranchId(store.groupId)).filter((group): group is string => !!group));
+  const policies = new Map(stores.map(store => [canonicalBranchId(store.id), branchPolicy(settings, store.id, stores)]));
+  const policy = (id: string) => policies.get(id) ?? branchPolicy(settings, id);
+  const group = (id: string) => canonicalBranchId(byId.get(id)?.groupId);
+  const legacyOwners = new Map(Object.entries(settings.integrations.productOwners ?? {}).map(([id, owner]) => [canonicalBranchId(id), owner]));
+  const sameCatalogue = (left: string, right: string) => {
+    if (sameBranchId(left, right)) return true;
+    const leftGroup = group(left), rightGroup = group(right);
+    return !!leftGroup && !!rightGroup && leftGroup === rightGroup;
+  };
+  const receivedByProduct = new Map<string, Set<string>>();
+  for (const transfer of transfers) {
+    if (!transfer.postedAt || !["completed", "completed_with_discrepancy"].includes(transfer.status)) continue;
+    const destination = canonicalBranchId(transfer.toStoreId);
+    if (!destination) continue;
+    for (const item of transfer.items) {
+      const received = item.verifiedQty ?? item.receivedQty ?? 0;
+      if (!Number.isFinite(received) || received <= 0) continue;
+      const productId = canonicalBranchId(item.productId);
+      const destinations = receivedByProduct.get(productId) ?? new Set<string>();
+      destinations.add(destination);
+      receivedByProduct.set(productId, destinations);
+    }
+  }
+  return (product, storeId) => {
+    const target = canonicalBranchId(storeId);
+    if (!target || (stores.length > 0 && !byId.has(target))) return false;
+    const id = typeof product === "string" ? product : product.id;
+    const owner = canonicalBranchId((typeof product === "string" ? null : product.ownerStoreId) || legacyOwners.get(canonicalBranchId(id)));
+    if (owner && sameCatalogue(owner, target)) return true;
+    if (typeof product !== "string" && product.catalogueStoreIds?.some(destination => sameCatalogue(canonicalBranchId(destination), target))) return true;
+    const received = receivedByProduct.get(canonicalBranchId(id));
+    if (received && [...received].some(destination => sameCatalogue(destination, target))) return true;
+    if (owner) {
+      // Known distinct clusters stay separate even when both private switches
+      // are off. Missing cluster ownership cannot silently join a known group.
+      if ((stores.length > 0 && !byId.has(owner)) || group(owner) || group(target)) return false;
+      return !policy(owner).privateCatalogue && !policy(target).privateCatalogue;
+    }
+    // Legacy global rows need real branch activity as evidence. Every imported
+    // item can have every branch's zero bucket, so presence alone proves nothing.
+    if (typeof product !== "string") {
+      const hasLocalStock = Object.entries(canonicalStockMap(product.stockByStore)).some(
+        ([branch, quantity]) => quantity !== 0 && sameCatalogue(branch, target),
+      );
+      if (hasLocalStock) return true;
+    }
+    // Preserve the original shared catalogue for a single non-private catalogue.
+    // Ambiguous old zero-stock rows in private/multi-cluster data need owner
+    // review; do not guess ownership or rewrite stock to make them visible.
+    return groups.size <= 1 && !policy(target).privateCatalogue;
+  };
+}
+
+/** Compatibility entry point for callers without a loaded directory. */
 export function productVisibleAt(
   settings: AppSettings,
-  product: string | { id: string; ownerStoreId?: string | null },
+  product: CatalogueProduct,
   storeId: string,
+  stores: readonly Store[] = [],
+  transfers: readonly Transfer[] = [],
 ): boolean {
-  const id = typeof product === "string" ? product : product.id;
-  const owner =
-    (typeof product === "string" ? null : product.ownerStoreId) ||
-    settings.integrations.productOwners?.[id];
-  if (!owner || owner === storeId) return true;
-  return !branchPolicy(settings, owner).privateCatalogue;
+  return createCatalogueVisibility(settings, stores, transfers)(product, storeId);
 }
 
 /** Tables whose writes are governed by the inventory sync switch. */

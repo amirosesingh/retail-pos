@@ -115,7 +115,8 @@ describe("approval bill details", () => {
     expect(page).toContain("Purpose");
     expect(page).toContain("After discount");
     expect(page).toContain("Open ${row.status} approval details");
-    expect(page).toContain('if (unit === "currency") return `$${money(value)}`');
+    expect(page).toContain('if (unit === "currency") return formatMoney(value)');
+    expect(page).not.toContain('return `$${money(value)}`');
     expect(page).toContain("e.target.validity.badInput || value.length > 12");
     expect(page).not.toContain("e.target.value.slice(0, 12)");
   });

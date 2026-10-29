@@ -1,3 +1,5 @@
+import { sameBranchId } from "../branch-id";
+import { posDateTimeToIso, formatDate as systemDate } from "../time-zone";
 import { canOpenDrawer } from "@/lib/receipt-printer";
 import { flushTicketDrafts } from "@/lib/session-draft";
 import { redeemedPoints } from "../points-redemption";
@@ -111,6 +113,8 @@ export type DisplaySnapshotBase = {
 };
 
 export function useCheckout(deps: CheckoutDeps) {
+  const latestDeps = useRef(deps);
+  latestDeps.current = deps;
   const { state, recordSale, createBooking } = usePos();
   const [saving, setSaving] = useState(false);
   const [lastSale, setLastSale] = useState<Sale | null>(null);
@@ -121,11 +125,23 @@ export function useCheckout(deps: CheckoutDeps) {
    * reached the database instead of billing the customer twice.
    */
   const attemptId = useRef<string | null>(null);
+  const attemptTicket = useRef<string | null>(null);
   /**
    * Set the instant a payment starts. React state updates a moment later, so a
    * fast second tap on Pay could otherwise start a second bill.
    */
   const inFlight = useRef(false);
+  const contextOf = (current: CheckoutDeps) => JSON.stringify({
+    branch: current.getCurrentStore().id, shift: current.getActiveShift()?.id ?? null,
+    cashier: current.getActiveCashier(), lines: current.getLines(), totals: current.getTotals(),
+    member: current.getMemberId(), exchange: current.getExchangeRef(), coupon: current.getCoupon(),
+    voucher: current.getVoucherToken(), authorization: current.getAuthorization?.() ?? null,
+  });
+  const stillCurrent = (context: string) => {
+    if (context === contextOf(latestDeps.current)) return true;
+    toast.error("The branch, shift or ticket changed while this action was being authorized. Review the current ticket and try again.");
+    return false;
+  };
 
   /**
    * Stamp the effective global rate on committed lines. Totals already use
@@ -167,6 +183,7 @@ export function useCheckout(deps: CheckoutDeps) {
 
   async function bookAndPayLater(timingOverride?: "now") {
     if (deps.validateCouponBeforeCommit?.() === false) return;
+    const context = contextOf(deps);
     const activeShift = deps.getActiveShift();
     const currentStore = deps.getCurrentStore();
     const activeCashier = deps.getActiveCashier();
@@ -199,6 +216,10 @@ export function useCheckout(deps: CheckoutDeps) {
     }
     // Once closing has started the drawer is being counted — nothing more
     // may be added to this shift.
+    if (!sameBranchId(activeShift.storeId, currentStore.id)) {
+      toast.error("The open shift belongs to another branch. Select the correct branch and refresh its shift before continuing.");
+      return;
+    }
     if (activeShift.state && activeShift.state !== "ACTIVE") {
       toast.error("This shift is being closed — no further transactions can be taken.");
       return;
@@ -210,6 +231,7 @@ export function useCheckout(deps: CheckoutDeps) {
       return;
     }
     if (!(await deps.requirePermission("can_create_booking"))) return;
+    if (!stillCurrent(context)) return;
     const paymentTiming = timingOverride ?? bi.payTiming;
     const paidNow =
       paymentTiming === "collection"
@@ -235,6 +257,14 @@ export function useCheckout(deps: CheckoutDeps) {
     if (racketMode) {
       if (!bi.racketCustomerOwned && !bi.racketProductId) {
         toast.error("Choose the new racket from the catalogue or scan its barcode.");
+        return;
+      }
+      if (!bi.stringCustomerOwned && !bi.stringProductId) {
+        toast.error("Choose a catalogue string or select Customer brings own string.");
+        return;
+      }
+      if (bi.stringCustomerOwned && !bi.stringType.trim()) {
+        toast.error("Enter the customer-provided string type / brand.");
         return;
       }
       if (bi.labourUnlocked && !bi.labourReason.trim()) {
@@ -335,12 +365,13 @@ export function useCheckout(deps: CheckoutDeps) {
               stencil: bi.stencil,
               overgrip: bi.overgrip,
               droppedOffAt: new Date().toISOString(),
-              promisedAt: bi.promisedAt ? new Date(bi.promisedAt).toISOString() : undefined,
+              promisedAt: bi.promisedAt ? posDateTimeToIso(bi.promisedAt) : undefined,
               notifyWhatsApp: bi.notifyWhatsApp,
             }
           : undefined,
       };
       const draftBillNo = await flushTicketDrafts();
+      if (!stillCurrent(context)) return;
       if (deps.validateCouponBeforeCommit?.() === false) return;
       booking = await createBooking({ ...newBooking, draftBillNo: draftBillNo || deps.getBillNo() });
     } catch (e) {
@@ -353,7 +384,7 @@ export function useCheckout(deps: CheckoutDeps) {
     }
     if (canOpenDrawer() && paidNow > 0 && bi.depositMethod === "cash") openCashDrawer();
     printBookingSlip(booking, member, state.settings.payment);
-    if (booking.job) printJobTag(booking);
+    if (booking.job && bi.printRacketTag) printJobTag(booking);
     if (wa.enabled && wa.autoSendOnBooking) {
       void sendBillOnWhatsApp({
         cfg: wa,
@@ -400,7 +431,7 @@ export function useCheckout(deps: CheckoutDeps) {
     bi.setPayTiming("deposit");
     bi.setDueDate(isoDaysFromNow(14));
     toast.success(
-      `Booking ${booking.ref} reserved until ${new Date(booking.dueDate).toDateString()}`,
+      `Booking ${booking.ref} reserved until ${systemDate(booking.dueDate)}`,
     );
   }
 
@@ -416,6 +447,7 @@ export function useCheckout(deps: CheckoutDeps) {
   }
 
   async function runCompleteSale() {
+    const context = contextOf(deps);
     const printReceipt = deps.getPrintReceipt?.() !== false;
     const activeShift = deps.getActiveShift();
     const currentStore = deps.getCurrentStore();
@@ -443,6 +475,10 @@ export function useCheckout(deps: CheckoutDeps) {
       toast.error("Open a shift before taking payment");
       return;
     }
+    if (!sameBranchId(activeShift.storeId, currentStore.id)) {
+      toast.error("The open shift belongs to another branch. Select the correct branch and refresh its shift before continuing.");
+      return;
+    }
     if (activeShift.state && activeShift.state !== "ACTIVE") {
       toast.error("This shift is being closed — no further transactions can be taken.");
       return;
@@ -451,11 +487,13 @@ export function useCheckout(deps: CheckoutDeps) {
     const policyError = exchangePolicyError(lines, totals.total, exchangeRef);
     if (policyError) { toast.error(policyError); return; }
     if (!(await deps.requirePermission("can_process_sale"))) return;
+    if (!stillCurrent(context)) return;
     // Permission is rechecked at the irreversible boundary. A held ticket,
     // restored draft, command shortcut or role change must not carry an old
     // exchange reference around the manager gate.
     if (exchangeRef && !(await deps.requirePermission("can_process_exchange"))) return;
     if (isRefund && !(await deps.requirePermission("can_process_refund"))) return;
+    if (!stillCurrent(context)) return;
     const splitting = tenders.length > 0;
     /**
      * Total rounding: runs once, on the number `cartTotals` produced, and the
@@ -547,7 +585,12 @@ export function useCheckout(deps: CheckoutDeps) {
     try {
       setSaving(true);
       billNo = (await flushTicketDrafts()) || billNo;
-      if (!attemptId.current) attemptId.current = crypto.randomUUID();
+      if (!stillCurrent(context)) return;
+      const ticket = JSON.stringify([currentStore.id, activeCashier, billNo]);
+      if (!attemptId.current || attemptTicket.current !== ticket) {
+        attemptId.current = crypto.randomUUID();
+        attemptTicket.current = ticket;
+      }
       if (deps.validateCouponBeforeCommit?.() === false) return;
       sale = await recordSale(
         {
@@ -639,6 +682,7 @@ export function useCheckout(deps: CheckoutDeps) {
       setSaving(false);
     }
     attemptId.current = null;
+    attemptTicket.current = null;
 
     // From this point the SQL transaction is complete. Restore a usable till
     // before starting printer, drawer, messaging or audit side effects: none

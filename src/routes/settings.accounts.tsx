@@ -140,6 +140,7 @@ function AccountsForm() {
               <div className="space-y-1 sm:col-span-2">
                 <Label className="text-xs text-muted-foreground">Accepted cards (optional)</Label>
                 <Input
+                  key={JSON.stringify([a.id,a.acceptedCards])}
                   defaultValue={a.acceptedCards?.join(", ") ?? ""}
                   placeholder="Visa, Mastercard, Amex, bank cards"
                   onBlur={(event) =>

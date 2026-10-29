@@ -37,6 +37,7 @@ export type CashierLoginResult =
         | "invalid_credentials"
         | "locked"
         | "session_prepare_failed"
+        | "activation_denied"
         | "identity_mismatch"
         | "central_unavailable";
     };
@@ -46,6 +47,7 @@ async function cashierLoginCore(input: {
   pin: string;
   platform?: string | null;
   terminalId?: string | null;
+  deviceBindingProof?: string;
   /** Branch this till is set to; used when the account works at all branches. */
   branchId?: string | null;
 }): Promise<CashierLoginResult> {
@@ -111,6 +113,22 @@ async function cashierLoginCore(input: {
   }[];
   const profile = profiles[0];
   if (!profile?.is_active) return { ok: false, error: "Account deactivated" };
+  let terminal:import("./terminal-binding.server").VerifiedTerminalDescriptor|undefined;
+  if(input.terminalId){
+    try{
+      const {readVerifiedTerminal}=await import("./terminal-binding.server");
+      terminal=await readVerifiedTerminal(input.terminalId,input.deviceBindingProof,true);
+      if(profile.store_id && terminal.branchId && profile.store_id.toLowerCase()!==terminal.branchId.toLowerCase())
+        return {ok:false,error:"This account is assigned to a different branch"};
+      if(terminal.mode==="management"){
+        const {managementDeviceAllowed}=await import("./management-device-access");
+        if(!managementDeviceAllowed({role:profile.role,roleSlug:profile.role_slug,permissions:profile.permissions},terminal.platform==="mobile"))
+          return {ok:false,error:"This account is not permitted to sign in on this management device"};
+      }
+    }catch(error){return {ok:false,code:(error as {status?:number}).status===503 ? "central_unavailable" : "activation_denied",error:(error as Error).message};}
+  }else if(["electron","android","ios"].includes(input.platform??"")){
+    return {ok:false,code:"activation_denied",error:"Complete this device's terminal activation before signing in."};
+  }
   const authEmail = profile.email?.trim().toLowerCase() ?? "";
   if (!authEmail || !profile.auth_user_id) {
     return {
@@ -140,7 +158,7 @@ async function cashierLoginCore(input: {
   const ownBranch = profile.store_id ?? row.store_id ?? null;
   let tillBranch: string | null = null;
   const claimed = (input.branchId ?? "").trim();
-  if (!ownBranch && claimed) {
+  if (!terminal && !ownBranch && claimed) {
     const storeRes = await serviceRest(
       `stores?id=eq.${encodeURIComponent(claimed)}&select=id&limit=1`,
     );
@@ -154,7 +172,7 @@ async function cashierLoginCore(input: {
     id: profile.id,
     username: profile.user_id,
     full_name: profile.full_name || profile.user_id,
-    store_id: ownBranch ?? tillBranch,
+    store_id: ownBranch ?? terminal?.branchId ?? tillBranch,
     role: profile.role,
     role_slug: profile.role_slug ?? null,
     permissions: profile.permissions ?? {},
@@ -166,7 +184,7 @@ async function cashierLoginCore(input: {
     staffUserId: cashier.username,
     cashierId: cashier.id,
     branchId: cashier.store_id,
-    terminalId: input.terminalId ?? null,
+    terminalId: terminal?.id ?? null,
     platform: input.platform ?? null,
   });
 
@@ -187,7 +205,7 @@ async function cashierLoginCore(input: {
     cashierToken: signCashierSession({
       id: cashier.id,
       username: cashier.username,
-      storeId: cashier.store_id ?? "",
+      storeId: cashier.store_id,
       sessionToken: session.token,
     }),
     sessionToken: session.token,

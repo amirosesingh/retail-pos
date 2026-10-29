@@ -15,6 +15,7 @@ import { money, usePos } from "@/lib/pos-store";
 import { useQuery } from "@tanstack/react-query";
 import { loadStockAdjustmentReport } from "@/lib/stock-adjustment-report";
 import { sameBranchId } from "@/lib/branch-id";
+import { effectiveTimeZone } from "@/lib/time-zone";
 import { STOCK_ADJUSTMENT_REASONS } from "@/core/types/pos-types";
 import {
   ReportHeader,
@@ -50,9 +51,10 @@ const ALL = "__all__";
 const reasonLabel = (v: string) => STOCK_ADJUSTMENT_REASONS.find((r) => r.value === v)?.label ?? v;
 
 function StockReport() {
-  const { user, can } = useAuth();
+  const { user, can,ready } = useAuth();
   const showCostMargin = can('can_view_cost_margin');
   const { state, stores } = usePos();
+  const reportZone=state.settings.integrations.timeZone || effectiveTimeZone();
   const init = defaultRange();
   const [from, setFrom] = useState(init.from);
   const [to, setTo] = useState(init.to);
@@ -66,9 +68,10 @@ function StockReport() {
     [stores, store],
   );
   const history = useQuery({
-    queryKey: ["stock-adjustment-report", pageDataScope(user), from, to, storeIds.join("|")],
+    queryKey: ["stock-adjustment-report", pageDataScope(user), from, to, storeIds.join("|"),reportZone],
     meta: { tables: ["stock_adjustments"] },
-    queryFn: () => loadStockAdjustmentReport(storeIds, from, to),
+    queryFn: () => loadStockAdjustmentReport(storeIds, from, to,reportZone),
+    enabled:ready&&!!user&&storeIds.length>0&&(!from||!to||from<=to),
     ...PAGE_DATA_CACHE,
     refetchOnWindowFocus: true,
   });

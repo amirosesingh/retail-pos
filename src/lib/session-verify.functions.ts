@@ -5,6 +5,7 @@ const schema = z.object({
   sessionToken: z.string().max(400).optional(),
   cashierToken: z.string().max(2000).optional(),
   terminalToken: z.string().max(200).optional(),
+  deviceBindingProof: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
   accessToken: z.string().max(4000).optional(),
   storeId: z.string().max(64).optional(),
 });

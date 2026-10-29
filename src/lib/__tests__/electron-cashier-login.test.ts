@@ -18,7 +18,9 @@ describe("Electron cashier sign in", () => {
       'adminSession.grant(level, cashier.username ?? username, cashier.permissions ?? {}, "pos", branchId)',
     );
     expect(main).toContain("syncCloud.setAuthorizationProof(proof)");
-    expect(main).toContain('publishBusinessChange({kind:"branch",branchId:String(branchId)})');
+    expect(main).toContain("rememberVerifiedBranch(branchId)");
+    expect(main).toContain("function rememberVerifiedBranch(){ /* Account scope never assigns a physical terminal. */ }");
+    expect(main).toContain("deviceBindingProof: terminal.deviceBindingProof ?? null");
     expect(auth).toContain("window.pos?.cashierLogin");
     expect(privilege).toContain('"auth:cashier-login": OPEN');
   });

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "source": "supabase/schema.sql",
-  "generatedAt": "2026-10-23T23:33:17.228Z",
+  "generatedAt": "2026-10-26T23:17:35.708Z",
   "tables": [
     {
       "cloudTable": "coupon_campaigns",
@@ -7008,6 +7008,19 @@
           "sqlServerType": "nvarchar(max)",
           "nullable": true,
           "defaultRule": null,
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
+        },
+        {
+          "cloudColumn": "catalogue_store_ids",
+          "sqlServerColumn": "catalogue_store_ids",
+          "cloudType": "text[]",
+          "sqlServerType": "nvarchar(max)",
+          "nullable": false,
+          "defaultRule": "N'[]'",
           "primaryKey": false,
           "foreignKey": false,
           "foreignKeyTarget": null,

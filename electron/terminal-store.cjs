@@ -65,9 +65,20 @@ function read() {
   return legacy;
 }
 
+// Non-secret previous binding survives revocation solely to protect queued origin.
+const previousFile = () => path.join(app.getPath("userData"), "terminal-last-binding.bin");
+function lastBinding(){
+  try{return JSON.parse(safeStorage.decryptString(fs.readFileSync(previousFile())));}catch{return null;}
+}
+function rememberBinding(config){
+  if(!config?.tokenId||!canSeal())return;
+  const previous={tokenId:config.tokenId,deviceUse:config.deviceUse,deviceType:config.deviceType,locationId:config.locationId,storeId:config.storeId,branchId:config.branchId};
+  fs.writeFileSync(previousFile(),safeStorage.encryptString(JSON.stringify(previous)));
+}
 function write(config) {
   try {
     if (!config) {
+      rememberBinding(read());
       if (wasProvisioned()) markProvisioned();
       fs.rmSync(file(), { force: true });
       fs.rmSync(sealed(), { force: true });
@@ -83,6 +94,7 @@ function write(config) {
           "This computer's secure store is unavailable, so the activation cannot be saved. Sign in to Windows with a normal user profile (not a temporary one) and try again.",
       };
     }
+    rememberBinding(config);
     fs.writeFileSync(sealed(), safeStorage.encryptString(JSON.stringify(config)));
     markProvisioned();
     // The plain copy must not linger once the vault holds the activation.
@@ -99,4 +111,4 @@ function isSecure() {
   return canSeal();
 }
 
-module.exports = { read, write, isSecure, wasProvisioned };
+module.exports = { read, write, isSecure, wasProvisioned, lastBinding };

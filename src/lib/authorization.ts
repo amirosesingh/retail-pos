@@ -50,6 +50,7 @@ export type AuthActionKey =
   | "discard_draft"
   | "delete_product"
   | "stock_transfer"
+  | "cross_group_transfer_approval"
   | "sponsorship"
   | "member_points_adjust";
 
@@ -186,6 +187,13 @@ export const AUTH_ACTIONS: AuthActionDef[] = [
     deferrable: true,
   },
   {
+    key: "cross_group_transfer_approval",
+    group: "inventory",
+    label: "Cross-cluster transfer approvers",
+    blurb: "Choose who may approve release between separate cluster catalogues. Approval happens on the transfer before dispatch, must be by another person, and also requires Authorise transfers permission.",
+    deferrable: true,
+  },
+  {
     key: "delete_product",
     group: "inventory",
     label: "Delete a product",
@@ -289,7 +297,7 @@ export const defaultRule = (actionKey: AuthActionKey): AuthorizationRule => ({
   actionKey,
   scopeType: "global",
   scopeId: "",
-  mode: actionKey === "sponsorship" ? "request" : "none",
+  mode: actionKey === "sponsorship" || actionKey === "cross_group_transfer_approval" ? "request" : "none",
   allowedRoles: actionKey === "sponsorship" ? ["admin"] : ["admin", "manager"],
   allowedUserIds: [],
   requesterRoles: actionKey === "sponsorship" ? ["cashier", "staff", "manager", "admin", "warehouse"] : ["cashier", "staff", "manager", "admin"],
@@ -404,7 +412,7 @@ export function resolveRules(rows: AuthorizationRule[], storeId: string): RuleMa
     });
   if (storeId) {
     rows
-      .filter((r) => r.scopeType === "branch" && r.scopeId === storeId)
+      .filter((r) => r.scopeType === "branch" && r.scopeId === storeId && r.actionKey !== "cross_group_transfer_approval")
       .forEach((r) => {
         out[r.actionKey] = r;
       });

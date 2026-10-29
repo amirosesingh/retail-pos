@@ -1,10 +1,11 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import type { Sale } from "@/core/types/pos-types";
-import { QueryClient } from "@tanstack/query-core";
+import { QueryClient, onlineManager } from "@tanstack/query-core";
 const cache = vi.hoisted(() => ({ client: null as unknown as import("@tanstack/query-core").QueryClient }));
 vi.mock("@tanstack/react-query", () => ({ useQueryClient: () => cache.client }));
 const harness = vi.hoisted(() => ({
   auth: { ready: true, user: { staffId: "operator" } as { staffId: string } | null },
+  management: false, mode: "online" as "online" | "local",
   values: [] as unknown[],
   cursor: 0,
   effectCursor: 0,
@@ -42,7 +43,11 @@ vi.mock("react", () => ({
   },
 }));
 const load = vi.hoisted(() => vi.fn());
-vi.mock("@/core/api/pos-db", () => ({ loadSalesPage: (...args: unknown[]) => load(...args) }));
+vi.mock("@/core/api/pos-db", () => ({ loadSalesPage: (...args: unknown[]) => load(...args), rowToSale: (row: Sale) => row }));
+const managementRead = vi.hoisted(() => vi.fn());
+vi.mock("../management-device", () => ({ isManagementDevice: () => harness.management }));
+vi.mock("@/core/local-db/db-mode", () => ({ effectiveDatabaseMode: () => harness.mode }));
+vi.mock("../management-report-client", () => ({ readManagementReport: (...args: unknown[]) => managementRead(...args) }));
 vi.mock("../sync-engine", () => ({ subscribeSalesChange: (fn: (change?: { storeId?: string | null }) => void) => { harness.salesChange = fn; return () => {}; } }));
 vi.mock("../data-progress", () => ({
   beginDataTask: () => ({ report: vi.fn(), finish: vi.fn() }),
@@ -59,11 +64,11 @@ const sale = {
   total: 71,
 } as Sale;
 const page: { rows: Sale[]; hasMore: boolean; cursor: { ts: string; id: string } | null } = { rows: [sale], hasMore: false, cursor: null };
-function render(branch = "branch-a", from = "2026-10-12", to = from) {
+function render(branch = "branch-a", from = "2026-10-12", to = from, source: "auto" | "cloud" = "auto", seed: Sale[] = []) {
   harness.cursor = 0;
   harness.effectCursor = 0;
   // eslint-disable-next-line react-hooks/rules-of-hooks -- Deterministic hook dispatcher for refresh regression tests.
-  const result = useReportSales([], [branch], from, to);
+  const result = useReportSales(seed, [branch], from, to, true, source);
   const effects = harness.pending.splice(0);
   effects.forEach((fn) => fn());
   return result;
@@ -71,6 +76,8 @@ function render(branch = "branch-a", from = "2026-10-12", to = from) {
 beforeEach(() => {
   cache.client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   harness.auth = { ready: true, user: { staffId: "operator" } };
+  harness.management = false; harness.mode = "online";
+  managementRead.mockReset();
   harness.values = [];
   harness.effects = [];
   harness.pending = [];
@@ -84,6 +91,7 @@ beforeEach(() => {
   });
 });
 afterEach(() => {
+  onlineManager.setOnline(true);
   cache.client.clear();
   harness.effects.forEach((effect) => effect.cleanup?.());
   vi.unstubAllGlobals(); vi.useRealTimers();
@@ -95,6 +103,45 @@ async function loaded() {
   expect(render().sales).toHaveLength(1);
 }
 describe("report refresh stability", () => {
+  it("reads a complete management replica while disconnected without cloud or branch-cache substitution", async () => {
+    harness.management = true;
+    onlineManager.setOnline(false);
+    managementRead.mockResolvedValue({ ok: true, complete: true, rows: [sale], hasMore: false });
+    render();
+    await vi.waitFor(() => expect(render().sales).toEqual([sale]));
+    expect(load).not.toHaveBeenCalled();
+    expect(managementRead).toHaveBeenCalledWith(expect.objectContaining({ kind: "sales", storeIds: ["branch-a"] }));
+  });
+  it("does not pause branch-local reports merely because the network is disconnected", async () => {
+    harness.mode = "local";
+    onlineManager.setOnline(false);
+    load.mockResolvedValue(page);
+    render();
+    await vi.waitFor(() => expect(render().sales).toEqual([sale]));
+    expect(load).toHaveBeenCalledOnce();
+  });
+  it("separates cloud report cache from local rows and ignores stale local seeds", async () => {
+    await loaded();
+    const central = { ...sale, total: 90 };
+    load.mockResolvedValueOnce({ ...page, rows: [central] });
+    const cloud = () => render("branch-a", "2026-10-12", "2026-10-12", "cloud", [{ ...sale, total: 999 }]);
+    expect(cloud().sales).toEqual([]);
+    await vi.waitFor(() => expect(cloud().sales).toEqual([central]));
+    expect(load).toHaveBeenLastCalledWith("branch-a", null, 500, expect.objectContaining({ source: "cloud" }));
+    expect(cache.client.getQueryCache().findAll({ queryKey: ["report-sales"] })).toHaveLength(2);
+  });
+  it("continues keyset paging beyond thousands of bills", async () => {
+    const all = Array.from({ length: 2501 }, (_, index) => ({ ...sale, id: `sale-${index}`, total: 1 }));
+    let offset = 0;
+    load.mockImplementation(async () => {
+      const rows = all.slice(offset, offset + 500); offset += rows.length;
+      return { rows, hasMore: offset < all.length, cursor: offset < all.length ? { ts: sale.createdAt, id: rows.at(-1)!.id } : null };
+    });
+    render();
+    await vi.waitFor(() => expect(render().sales).toHaveLength(2501));
+    expect(load).toHaveBeenCalledTimes(6);
+    expect(render().sales.reduce((sum, row) => sum + row.total, 0)).toBe(2501);
+  });
   it("reuses a fresh range after a completed refresh and a range switch in the same mounted page", async () => {
     await loaded();
     load.mockResolvedValue(page);

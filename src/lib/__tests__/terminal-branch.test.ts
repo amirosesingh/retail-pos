@@ -11,6 +11,7 @@ const store = new Map<string, string>();
   },
 };
 
+vi.mock("@/core/activation/terminal-platform", () => ({ terminalRuntimePlatform: () => "electron" }));
 vi.mock("@/core/activation/terminal-tokens", () => ({ readTerminalConfig: () => null }));
 vi.mock("@/core/local-db/local-db", () => ({ readBranch: () => ({ branchId: null, branchName: null }) }));
 

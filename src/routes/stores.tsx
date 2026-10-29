@@ -1,6 +1,6 @@
 import { HomeShortcuts } from "@/platforms/web/components/pos/HomeShortcuts";
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   Archive,
   ArchiveRestore,
@@ -50,6 +50,7 @@ import {
 import { groupName, selectableGroups, useStoreGroups } from "@/lib/store-groups";
 import { permanentlyDeleteEmptyLocation } from "@/lib/location-admin";
 import { validateLocationReferences } from "@/lib/location-reference-validation";
+import { sameBranchId } from "@/lib/branch-id";
 
 export const Route = createFileRoute("/stores")({
   head: () => ({
@@ -118,6 +119,8 @@ function Locations() {
     setCurrentStore,
     state,
     updateSettings,
+    saveConfiguredSettings,
+    settingsScopeLoading,
   } = usePos();
   const { can } = useAuth();
   const groups = useStoreGroups();
@@ -127,6 +130,8 @@ function Locations() {
   const [deleteName, setDeleteName] = useState("");
   const [deleteBlockers, setDeleteBlockers] = useState<Record<string, number>>({});
   const [deleting, setDeleting] = useState(false);
+  const [policySaving, setPolicySaving] = useState(false);
+  const policyWritePending = useRef(false);
 
   const roots = useMemo(
     () => allStores.filter((s) => s.locationType !== "sub_warehouse"),
@@ -173,20 +178,33 @@ function Locations() {
   }
 
   async function setPolicy(store: Store, key: BranchPolicyKey, value: boolean) {
-    const current = branchPolicy(state.settings, store.id);
-    const next: BranchPolicy = { ...current, [key]: value };
-    updateSettings({
-      integrations: {
-        ...state.settings.integrations,
-        branches: { ...(state.settings.integrations.branches ?? {}), [store.id]: next },
-      },
-    });
-    // The private catalogue switch also lives on the branch record, because
-    // that is what the central database checks before showing an item.
-    if (key === "privateCatalogue") await upsertStore({ ...store, privateCatalogue: value });
-    toast.success(
-      `${BRANCH_POLICY_COPY[key].label} ${value ? "turned on" : "turned off"} for ${store.name}`,
-    );
+    if (policyWritePending.current) return;
+    if (settingsScopeLoading) throw new Error("Branch settings are still loading. Please wait before editing.");
+    policyWritePending.current = true;
+    setPolicySaving(true);
+    try {
+      const current = branchPolicy(state.settings, store.id, allStores);
+      const next: BranchPolicy = { ...current, [key]: value };
+      const branches = state.settings.integrations.branches ?? {};
+      const branchKey = Object.keys(branches).find(id => sameBranchId(id, store.id)) ?? store.id;
+      const accepted = updateSettings({
+        integrations: {
+          ...state.settings.integrations,
+          branches: { ...branches, [branchKey]: next },
+        },
+      });
+      if (accepted === false) throw new Error("Branch policy was not accepted. Check your settings access and retry.");
+      await saveConfiguredSettings();
+      // Keep both persisted privacy sources in agreement. A failed write must
+      // remain an error rather than displaying a successful save.
+      if (key === "privateCatalogue") await upsertStore({ ...store, privateCatalogue: value });
+      toast.success(
+        `${BRANCH_POLICY_COPY[key].label} ${value ? "turned on" : "turned off"} for ${store.name}`,
+      );
+    } finally {
+      policyWritePending.current = false;
+      setPolicySaving(false);
+    }
   }
 
   /** Saves the parent, then creates or renames each level underneath it. */
@@ -642,7 +660,8 @@ function Locations() {
                           subject={store.name}
                           onWarning={copy.onWarning}
                           offWarning={copy.offWarning}
-                          checked={branchPolicy(state.settings, store.id)[key]}
+                          checked={branchPolicy(state.settings, store.id, allStores)[key]}
+                          disabled={settingsScopeLoading || policySaving}
                           onConfirmedChange={(v) => {
                             void setPolicy(store, key, v).catch((error) =>
                               notifyError(error, "Saving branch policy"),

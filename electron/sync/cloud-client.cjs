@@ -135,7 +135,7 @@ class CloudClient {
     try { response = await fetch(`${base}/api/v1/pos/sync${suffix}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...normalizeSyncPayload(payload), ...personProof, terminalToken: recordId(terminalToken), ...(terminal.deviceUse === "management" ? { deviceClaimProof: terminal.deviceClaimProof, deviceBindingProof: terminal.deviceBindingProof } : {}) }),
+      body: JSON.stringify({ ...normalizeSyncPayload(payload), ...personProof, terminalToken: recordId(terminalToken), deviceBindingProof:terminal.deviceBindingProof, ...(terminal.deviceUse === "management" ? { deviceClaimProof: terminal.deviceClaimProof } : {}) }),
       signal: AbortSignal.timeout(30_000),
     }); } catch (error) {
       if (["TimeoutError","AbortError"].includes(error?.name)) {

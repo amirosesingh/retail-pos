@@ -25,6 +25,7 @@ const proof = {
   cashierToken: z.string().max(2000).optional(),
   accessToken: z.string().max(4000).optional(),
   terminalToken: z.string().max(200).optional(),
+  deviceBindingProof:z.string().regex(/^[a-f0-9]{64}$/i).optional(),
 };
 
 const startSchema = z.object({
@@ -50,6 +51,7 @@ export const startDeviceSession = createServerFn({ method: "POST" })
         ...(data.cashierToken ? { cashierToken: data.cashierToken } : {}),
         ...(data.accessToken ? { accessToken: data.accessToken } : {}),
         ...(data.terminalToken ? { terminalToken: data.terminalToken } : {}),
+        ...(data.deviceBindingProof ? { deviceBindingProof: data.deviceBindingProof } : {}),
       });
     } catch (e) {
       return { ok: false as const, error: (e as Error).message };

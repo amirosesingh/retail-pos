@@ -7,6 +7,7 @@ import { localDb } from "@/core/local-db/local-db";
 import { isWindowsShell, isMobileShell } from "@/platform-config/features";
 import { isMissingSecureValue } from "./secure-cloud-config";
 import { OFFLINE_APPROVAL_TOKEN_LEASE_MS } from "./approval-credentials";
+import { readNativeTerminalProof } from "./native-terminal-proof";
 export type ApprovalToken = {
   id: string;
   userId: string;
@@ -99,7 +100,7 @@ export async function approvalCredentialCall(
   const response = await posFetch("/api/v1/pos/sync?operation=authorization", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ action: "approval_credentials", data: { action, data } }),
+    body: JSON.stringify({ action: "approval_credentials", data: { action, data:{...data,...await readNativeTerminalProof()} } }),
   });
   const result = await response.json();
   if (!response.ok && !result.error) throw new Error("Approval credential service is unavailable");
