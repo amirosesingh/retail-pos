@@ -27,7 +27,7 @@ import { TablePagination, usePagination } from "@/platforms/web/components/pos/T
 import { money, stockAt, usePos } from "@/lib/pos-store";
 import { useAuth } from "@/lib/pos-auth";
 import { createCatalogueVisibility } from "@/lib/branch-policy";
-import { groupStockLocations } from "@/lib/all-shops-stock";
+import { stockDisplayLocations } from "@/lib/all-shops-stock";
 import { canonicalBranchId, sameBranchId } from "@/lib/branch-id";
 import { useReportSales } from "@/lib/use-report-sales";
 import {
@@ -77,13 +77,14 @@ function AllShops() {
   const catalogueVisibleAt = useMemo(() => createCatalogueVisibility(state.settings, state.stores, state.transfers),
     [state.settings, state.stores, state.transfers]);
   const stockStores = useMemo(
-    () => groupStockLocations(companyStoreScope(stores, terminalStoreId || user?.storeId || currentStore.id,
-      !unrestrictedManagement), state.settings, currentStore.id),
-    [stores, state.settings, currentStore.id, terminalStoreId, user?.storeId, unrestrictedManagement],
+    () => stockDisplayLocations(companyStoreScope(stores, terminalStoreId || user?.storeId || currentStore.id,
+      !unrestrictedManagement), { currentStoreId: currentStore.id, terminalStoreId, userStoreId: user?.storeId, canSwitchStores }),
+    [stores, currentStore.id, terminalStoreId, user?.storeId, unrestrictedManagement, canSwitchStores],
   );
   const stockStoreIds = useMemo(
-    () => new Set(groupStockLocations(stores, state.settings, currentStore.id).map((store) => canonicalBranchId(store.id))),
-    [stores, state.settings, currentStore.id],
+    () => new Set(stockDisplayLocations(stores, { currentStoreId: currentStore.id, terminalStoreId,
+      userStoreId: user?.storeId, canSwitchStores }).map(store => canonicalBranchId(store.id))),
+    [stores, currentStore.id, terminalStoreId, user?.storeId, canSwitchStores],
   );
   const allowed = isAdmin || can("can_view_inventory");
   const showMoney = isAdmin || can("can_view_sales_reports");

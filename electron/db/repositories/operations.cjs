@@ -462,7 +462,10 @@ class OperationsRepository {
         columns.forEach((column, index) => request.input(`v${index}`, columnValueForSql(table, column, normalizedRow[column])));
         const source = columns.map((column, index) => `@v${index} AS [${column}]`).join(",");
         const on = primary.map((column) => `target.[${column}]=source.[${column}]`).join(" AND ");
-        const updates = columns.filter((column) => !primary.includes(column) && column !== "row_version").map((column) => `target.[${column}]=source.[${column}]`);
+        const updates = columns.filter((column) => !primary.includes(column) && column !== "row_version").map((column) =>
+          op.table === "products" && column === "owner_store_id"
+            ? "target.[owner_store_id]=COALESCE(NULLIF(LTRIM(RTRIM(source.[owner_store_id])),N''),target.[owner_store_id])"
+            : `target.[${column}]=source.[${column}]`);
         if (hasRowVersion) updates.push("target.[row_version]=COALESCE(target.[row_version],0)+1");
         const update = updates.join(",");
         const insertColumns = columns.map((column) => `[${column}]`).join(",");

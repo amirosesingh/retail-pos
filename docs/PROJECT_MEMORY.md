@@ -74,7 +74,52 @@ current Active/Archived view and disclose filters limiting it. Preserve product
 status, branch/cluster catalogue visibility, stock and valuation calculations.
 This is not approval to automatically archive every zero-stock branch row.
 
+## Archive ownership clarification (2026-10-29)
+
+DEC-41..43 require ROSEGILL only for POS checks and explicit identification and
+approval before any database edit. Chrome independently verified project pos
+(`qhrufhtbeguxydenzfey`) in rosegill0011@gmail.com's Org
+(`bjxgimekljzlnwejuawj`). The owner confirmed the 592 hidden archived products
+belong to STR1 / 361 Degree Sports (`a611a328-2217-4d77-944a-5f6a637d123b`).
+Prepare the [ownership repair review](database/archive-ownership-repair-review.md);
+do not apply a database update without separate approval and trigger/sync checks.
+Private stock restricts quantities; it must not hide products belonging to the
+same configured cluster. Preserve other clusters' isolation and normal-terminal
+branch restrictions. Confirmation of provenance is not permission to merge
+catalogues, change stock/archive flags or bypass authorization.
+Actual STR1 location dialog confirms cluster **361 DEGREE SPORTS**, with both
+Private catalogue and Private stock enabled. Source audit INV-10 found stock
+privacy is not yet enforced consistently; do not describe the switches as proof
+of protected reads. DEC-45 confirms authorized management keeps stock access only
+within its granted branch scope; normal terminals expose their own quantities
+even when a management-role user signs in. Device type alone grants no scope.
+Keep redacted display/read projections separate from authoritative
+stock maps used for company-wide lifecycle and checkout mutation validation.
+DEC-47 further narrows Inventory Other Sources to active, authorized locations
+with positive stock in the selected branch's own cluster. Exclude zero/negative
+stock and other clusters even for a product available through a completed
+transfer; this does not narrow authorized management's separate All Shops cards.
+
 ## Membership: ON HOLD
+
+DEC-52 selected-branch Inventory classification: Active means quantity>0, Archive
+means quantity<=0 with explicit negative warning. It is a read-only catalogue
+view, not a change to global product archived flags or another branch's status.
+Footer, cost review and Inventory export choices follow the same branch view.
+Existing manual shared-status actions are explicitly labeled global/shared.
+
+Ownership sync durability candidate DEC-51 preserves established product owners
+on newer NULL/blank-owner uploads (cloud conflict update and local renderer
+upsert). Explicit nonblank assignment, new inserts and version/stock rules remain
+unchanged. Migration20261029064933 is locally tested, not yet applied; do not claim
+live protection until owner approves and the routine is deployed. Real installed
+Electron/mobile catalogue refresh remains unverified despite fixture pagination.
+
+Latest DEC-48 overrides the earlier own-stock-only display assumption: normal
+terminals may view positive available stock from other active locations in their
+registered branch's cluster. This is read-only stock availability, not permission
+to switch the operating branch or write another branch's stock/sales. SKU numbers
+remain globally allocated across clusters; catalogue data remains cluster-scoped.
 
 Do not redesign, activate or modify Membership. Preserve existing functionality
 and data. Only a confirmed critical shared dependency, with the owner's explicit

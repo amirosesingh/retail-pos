@@ -46,6 +46,11 @@ import { useAuth } from "@/lib/pos-auth";
 import { useVisibility } from "@/lib/ui-visibility";
 
 import { createCatalogueVisibility } from "@/lib/branch-policy";
+import { clusterAvailableStockLocations } from "@/lib/all-shops-stock";
+import { branchInventoryArchived, branchInventoryCounts } from "@/lib/inventory-branch-view";
+import { inventoryColumnsMatch } from "@/lib/inventory-column-filter";
+import { companyStoreScope } from "@/lib/company-store-scope";
+import { sameBranchId } from "@/lib/branch-id";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { Switch } from "@/components/ui/switch";
 import { BulkImportDialog } from "@/platforms/web/components/pos/BulkImportDialog";
@@ -55,7 +60,7 @@ import { notifyError } from "@/lib/notify";
 import { ProductDeleteBlockedDialog } from "@/platforms/web/components/pos/ProductDeleteBlockedDialog";
 import type { BlockedDelete } from "@/lib/product-delete";
 import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
-import { exportProductsXlsx, productsForExport, type ProductExportScope } from "@/lib/product-export";
+import { exportProductsXlsx, type ProductExportScope } from "@/lib/product-export";
 import {
   groupList,
   isActive,
@@ -79,7 +84,6 @@ import { nextSku, peekSku, readSkuSettings } from "@/lib/sku";
 import { localTerminalId } from "@/lib/shift-hours";
 import { cn } from "@/lib/utils";
 import { inventoryMetrics, inventoryUnitMargin, isLowStock, needsCostReview } from "@/lib/inventory-metrics";
-import { AnimatedMetric } from "@/platforms/web/components/pos/AnimatedMetric";
 import { InventorySummaryCards } from "@/platforms/web/components/pos/InventorySummaryCards";
 import { InventoryCatalogueStatus } from "@/platforms/web/components/pos/InventoryCatalogueStatus";
 import { totalUnitCost } from "@/lib/total-unit-cost";
@@ -141,13 +145,16 @@ function Inventory() {
     restoreProducts,
   } = usePos();
   const [branchPriceOnly, setBranchPriceOnly] = useState(false);
-  const { can, isAdmin } = useAuth();
+  const { can, isAdmin, user, terminalStoreId, canSwitchStores } = useAuth();
   const { visible } = useVisibility();
   // Money columns need the reporting permission *and* the administrator's
   // "show cost & margin" switch for this role.
   const showMoney = can("can_view_cost_margin") && visible("inventory.costColumns");
   const showStockValue = can("can_view_cost_margin") && visible("inventory.stockValue");
   const catalogueVisible = useMemo(() => createCatalogueVisibility(state.settings, state.stores, state.transfers), [state.settings, state.stores, state.transfers]);
+  const stockStores = useMemo(() => clusterAvailableStockLocations(stores, {
+    currentStoreId: currentStore.id, terminalStoreId, userStoreId: user?.storeId, canSwitchStores,
+  }), [stores, currentStore.id, terminalStoreId, user?.storeId, canSwitchStores]);
 
   const canCreate = can("can_add_new_product");
   const canEditDetails = can("can_edit_product_details");
@@ -181,6 +188,7 @@ function Inventory() {
   const [deleting, setDeleting] = useState<string[]>([]);
   const [bulkSaving, setBulkSaving] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
   const [catFilter, setCatFilter] = useState("all");
   const [groupFilter, setGroupFilter] = useState("all");
   const [subFilter, setSubFilter] = useState("all");
@@ -246,13 +254,30 @@ function Inventory() {
     const needle = settledQuery.trim().toLowerCase();
     return state.products.filter((p) => {
       if (!catalogueVisible(p, state.currentStoreId)) return false;
-      if (showArchived ? p.archived !== true : p.archived === true) return false;
+      if (branchInventoryArchived(p, state.currentStoreId) !== showArchived) return false;
       if (catFilter !== "all" && p.category !== catFilter) return false;
       if (groupFilter !== "all" && (p.group ?? "") !== groupFilter) return false;
       if (subFilter !== "all" && (p.subCategory ?? "") !== subFilter) return false;
       const skuNeedle = skuFilter.trim().toLowerCase();
       if (skuNeedle && !`${p.sku} ${p.barcode}`.toLowerCase().includes(skuNeedle)) return false;
       const branchStock = stockAt(p, state.currentStoreId);
+      if (Object.values(columnFilters).some(value => value.trim())) {
+      const sources = companyStoreScope(stockStores, currentStore.id).filter(store =>
+        !sameBranchId(store.id, currentStore.id) && store.active !== false && catalogueVisible(p, store.id) && stockAt(p, store.id) > 0);
+      const unitCost = totalUnitCost(p.cost, p.id, state.settings.integrations.totalUnitCost);
+      const columnValues: Record<string, string> = {
+        Product: `${p.name} ${p.sku} ${p.barcode}`,
+        Category: p.category,
+        "Sub-category": p.subCategory || "—",
+        "Purchase Cost": `${Number.isFinite(p.cost) ? `${p.cost} ${money(p.cost)}` : "—"} ${needsCostReview(p.cost) ? "Review" : ""}`,
+        "Total Unit Cost": `${unitCost === null ? "—" : `${unitCost} ${money(unitCost)}`} ${state.settings.integrations.totalUnitCost?.overrides?.[p.id] ? "Custom" : "Default"}`,
+        Price: `${p.price} ${money(p.price)}`,
+        Margin: inventoryUnitMargin(p, state.settings.integrations.totalUnitCost) === null ? "—" : `${Math.round(inventoryUnitMargin(p, state.settings.integrations.totalUnitCost)!)}%`,
+        [`Stock · ${currentStore.code}`]: `${branchStock} in stock${branchStock < 0 ? " Negative stock" : ""}`,
+        "Other stores": sources.length ? `Other Sources: ${sources.length} Total Available: ${sources.reduce((sum, store) => sum + stockAt(p, store.id), 0)} ${p.unit ?? "pcs"} ${sources.map(store => `${store.name} ${store.code} ${stockAt(p, store.id)}`).join(" ")}` : "No available sources",
+      };
+      if (!inventoryColumnsMatch(columnValues, columnFilters)) return false;
+      }
       if (stockFilter === "in" && branchStock <= 0) return false;
       if (stockFilter === "out" && branchStock !== 0) return false;
       if (stockFilter === "low" && !isLowStock(branchStock, p.reorderLevel)) return false;
@@ -276,6 +301,10 @@ function Inventory() {
     catalogueVisible,
     state.currentStoreId,
     showArchived,
+    columnFilters,
+    currentStore.code,
+    currentStore.id,
+    stockStores,
     catFilter,
     groupFilter,
     subFilter,
@@ -325,28 +354,16 @@ function Inventory() {
       ),
     [state.products, catalogueVisible, state.currentStoreId],
   );
-  const costReviewCount = catalogProducts.filter(product => (showArchived ? product.archived === true : product.archived !== true) && needsCostReview(product.cost)).length;
+  const costReviewCount = catalogProducts.filter(product => branchInventoryArchived(product, currentStore.id) === showArchived && needsCostReview(product.cost)).length;
+  const branchCounts = useMemo(() => branchInventoryCounts(catalogProducts, currentStore.id), [catalogProducts, currentStore.id]);
   const metrics = useMemo(
     () => inventoryMetrics(catalogProducts, currentStore.id),
     [catalogProducts, currentStore.id],
   );
   const archivedCount = useMemo(
-    () => catalogProducts.filter(product => product.archived === true).length,
-    [catalogProducts],
+    () => branchCounts.archived,
+    [branchCounts.archived],
   );
-  // Describe only filters the rows above actually apply; toggling Archive retains them.
-  const appliedFilters = [
-    settledQuery.trim() && "Search",
-    catFilter !== "all" && `Category: ${catFilter}`,
-    groupFilter !== "all" && `Group: ${groupFilter}`,
-    subFilter !== "all" && `Sub-category: ${subFilter}`,
-    skuFilter.trim() && "SKU / barcode",
-    stockFilter !== "all" && `Stock: ${{ in: "In stock", out: "Out of stock", low: "Low stock", negative: "Negative stock" }[stockFilter] ?? stockFilter}`,
-    showMoney && costReviewOnly && "Cost review",
-    minPrice !== "" && `Min price: ${minPrice}`,
-    maxPrice !== "" && `Max price: ${maxPrice}`,
-    minMargin !== "" && (showMoney ? `Min margin: ${minMargin}%` : "Margin filter"),
-  ].filter((filter): filter is string => typeof filter === "string" && filter.length > 0);
 
   const totalUnitCostValue = useMemo(() => {
     let value = 0;
@@ -362,7 +379,8 @@ function Inventory() {
   }, [catalogProducts, currentStore.id, state.settings.integrations.totalUnitCost]);
 
   function exportCatalogue(scope: ProductExportScope) {
-    const products = productsForExport(catalogProducts, scope, currentStore.id);
+    const products = scope === "all" ? catalogProducts : catalogProducts.filter(product =>
+      branchInventoryArchived(product, currentStore.id) === (scope === "archived"));
     if (!products.length) {
       toast.info("No products match this export choice");
       return;
@@ -921,13 +939,11 @@ function Inventory() {
             )}
           </div>
         </header>
-        <InventoryCatalogueStatus ready={inventoryReady} loadPhase={loadPhase} activeCount={metrics.products} archivedCount={archivedCount} shownCount={rows.length} showArchived={showArchived} filters={appliedFilters}>
-          {showStockValue && Math.abs(metrics.costValue) >= 0.005 && <p>Active purchase cost value <span className="numeric [overflow-wrap:anywhere]">{money(metrics.costValue)}</span></p>}
-          {metrics.lowStock > 0 && <p className="text-warning"><AnimatedMetric value={metrics.lowStock} /> at or below reorder level (positive stock)</p>}
-        </InventoryCatalogueStatus>
         {showMoney && costReviewOnly && <p role="status" className="rounded-xl border px-4 py-3 text-sm text-muted-foreground">Showing items with missing, zero or invalid cost. Open an item to review it using your existing edit permissions. Zero may be intentional for a free item; no costs are changed automatically.</p>}
 
-        <InventorySummaryCards metrics={metrics} ready={inventoryReady} loadPhase={loadPhase} showStockValue={showStockValue} totalUnitCostValue={totalUnitCostValue} productLabel="Active products" />
+        <p className="text-xs text-muted-foreground">{showArchived ? "Archive: zero or negative stock" : "Active: positive stock"} at {currentStore.name}. This view does not change the shared product status.</p>
+        {showArchived && branchCounts.negative > 0 && <p role="status" className="rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive">Warning: {branchCounts.negative} products have negative stock at this branch. Review purchases, transfers or authorized stock corrections.</p>}
+        <InventorySummaryCards metrics={{ ...metrics, products: branchCounts.active, negativeStock: branchCounts.negative }} ready={inventoryReady} loadPhase={loadPhase} showStockValue={showStockValue} totalUnitCostValue={totalUnitCostValue} productLabel="Active products at this branch" />
 
         <Dialog open={advanced} onOpenChange={setAdvanced}>
           <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
@@ -1137,7 +1153,7 @@ function Inventory() {
                   }}
                 >
                   <Archive className="size-4" />
-                  {deleting.length > 1 ? "Archiving…" : "Archive selected"}
+                  {deleting.length > 1 ? "Archiving…" : "Archive selected globally"}
                 </Button>
               )}
             </div>
@@ -1145,7 +1161,7 @@ function Inventory() {
         )}
 
         <div className="rounded-lg border border-border bg-card">
-          <Table tableId="routes/inventory#1" className="inventory-products" columnControls layoutControls controlsTarget={columnControlsTarget}>
+          <Table tableId="routes/inventory#1" className="inventory-products" columnControls layoutControls controlsTarget={columnControlsTarget} onColumnFiltersChange={setColumnFilters}>
             <TableHeader>
               <TableRow>
                 <TableHead className="w-10">
@@ -1233,19 +1249,19 @@ function Inventory() {
                       <Badge
                         variant="outline"
                         className={`numeric justify-center ${
-                          stockAt(p, currentStore.id) <= 0 || isLowStock(stockAt(p, currentStore.id), p.reorderLevel)
+                          stockAt(p, currentStore.id) < 0 ? "border-destructive/50 text-destructive" : stockAt(p, currentStore.id) === 0 || isLowStock(stockAt(p, currentStore.id), p.reorderLevel)
                             ? "border-warning/50 text-warning"
                             : ""
                         }`}
                       >
-                        {stockAt(p, currentStore.id)} in stock
+                        {stockAt(p, currentStore.id)} in stock{stockAt(p, currentStore.id) < 0 && " · Negative stock"}
                       </Badge>
                     </div>
                   </TableCell>
                   <TableCell className="text-center">
                     <OtherSourcesPopover
                       product={p}
-                      stores={stores}
+                      stores={stockStores.filter(store => catalogueVisible(p, store.id))}
                       currentStoreId={currentStore.id}
                     />
                   </TableCell>
@@ -1281,8 +1297,8 @@ function Inventory() {
                         size="icon"
                         variant="ghost"
                         disabled={deleting.includes(p.id)}
-                        title={deleting.includes(p.id) ? "Archiving…" : "Archive"}
-                        aria-label={`Archive ${p.name}`}
+                        title={deleting.includes(p.id) ? "Archiving…" : "Archive shared product globally"}
+                        aria-label={`Archive shared product globally: ${p.name}`}
                         onClick={async () => {
                           setDeleting((d) => [...d, p.id]);
                           try {
@@ -1312,7 +1328,7 @@ function Inventory() {
                           )
                         }
                       >
-                        Restore
+                        Restore shared product status
                       </Button>
                     )}
                   </TableCell>
@@ -1332,6 +1348,7 @@ function Inventory() {
             onPageSize={pager.setPageSize}
           />
         </div>
+        <InventoryCatalogueStatus ready={inventoryReady} loadPhase={loadPhase} activeCount={branchCounts.active} archivedCount={archivedCount} />
       </div>
       {canBulk && <BulkImportDialog open={importOpen} onOpenChange={setImportOpen} />}
       {canMerge && (

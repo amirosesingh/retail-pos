@@ -1,65 +1,57 @@
 import { createElement as h } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/platforms/web/components/pos/AnimatedMetric", () => ({
   AnimatedMetric: ({ value }: { value: number }) => h("span", { "data-count": value }, value),
 }));
 import { InventoryCatalogueStatus } from "@/platforms/web/components/pos/InventoryCatalogueStatus";
-
 const render = (props: Partial<Parameters<typeof InventoryCatalogueStatus>[0]> = {}) => renderToStaticMarkup(h(InventoryCatalogueStatus, {
-  ready: true, activeCount: 40, archivedCount: 5, shownCount: 5, showArchived: true, filters: [], ...props,
+  ready: true, activeCount: 40, archivedCount: 5, ...props,
 }));
 
-describe("inventory catalogue status", () => {
-  it("distinguishes archived product count from the active-only inventory totals", () => {
+describe("inventory catalogue footer totals", () => {
+  it("shows only total, active and archived counts without the removed status box", () => {
     const html = render();
-    expect(html).toContain("Viewing Archived");
-    expect(html).toContain("Search / advanced matches: 5 of 5 archived products");
-    expect(html).toContain("Active products");
+    expect(html).toContain('<footer aria-label="Catalogue totals"');
+    expect(html).toContain("Total products");
+    expect(html).toContain('data-count="45"');
+    expect(html).toContain(">Active</dt>");
     expect(html).toContain('data-count="40"');
-    expect(html).toContain("Archived products");
+    expect(html).toContain(">Archived</dt>");
     expect(html).toContain('data-count="5"');
-    expect(html).toContain("Inventory totals below use active products only");
-    expect(html).not.toContain("Applied search and advanced filters");
+    for (const removed of ["Viewing", "Search / advanced matches", "Applied search", "purchase cost", "rounded-lg", "bg-muted"]) expect(html).not.toContain(removed);
   });
 
-  it("retains the mode total when search and advanced filters narrow visible results", () => {
-    const html = render({ shownCount: 1, filters: ["Search", "Category: Rackets", "Stock: Out of stock", "Min price: 20"] });
-    expect(html).toContain("Search / advanced matches: 1 of 5 archived products");
-    expect(html).toContain('aria-label="Applied search and advanced filters"');
-    for (const label of ["Search", "Category: Rackets", "Stock: Out of stock", "Min price: 20"]) expect(html).toContain(label);
-    expect(html).toContain('data-count="40"');
-    expect(html).toContain('data-count="5"');
+  it("keeps authoritative zero counts visible without pretending to be loading", () => {
+    const html = render({ activeCount: 0, archivedCount: 0 });
+    expect(html.match(/data-count="0"/g)).toHaveLength(3);
+    expect(html).not.toContain("Loading catalogue");
   });
 
-  it("uses the active total in active mode and reports an authoritative empty archive", () => {
-    const active = render({ showArchived: false, shownCount: 12, filters: ["SKU / barcode"] });
-    expect(active).toContain("Viewing Active");
-    expect(active).toContain("Search / advanced matches: 12 of 40 active products");
-    const empty = render({ archivedCount: 0, shownCount: 0 });
-    expect(empty).toContain("Search / advanced matches: 0 of 0 archived products");
-    expect(empty).toContain('data-count="0"');
-    expect(empty).not.toContain("Loading catalogue");
-  });
-
-  it.each(["loading", "stalled", "failed"] as const)("does not misreport a %s catalogue as zero or leak stale filters/cost hints", loadPhase => {
-    const html = render({ ready: false, loadPhase, activeCount: 0, archivedCount: 0, filters: ["Search"], children: h("p", null, "Active purchase cost value 1234.56") });
+  it.each(["loading", "stalled", "failed"] as const)("does not misreport a %s catalogue as zero", loadPhase => {
+    const html = render({ ready: false, loadPhase, activeCount: 0, archivedCount: 0 });
     expect(html).toContain('aria-busy="true"');
     expect(html).toContain(loadPhase === "failed" ? 'role="alert"' : 'role="status"');
-    expect(html).not.toContain("Search / advanced matches");
     expect(html).not.toContain("data-count");
-    expect(html).not.toContain("1234.56");
-    expect(html).not.toContain("Applied search and advanced filters");
+    expect(html).not.toContain("Total products");
   });
 
-  it("shows only supplied permission-filtered cost hints and wraps long filter text", () => {
-    expect(render()).not.toContain("purchase cost");
-    const html = render({ children: h("p", null, "Active purchase cost value 1234.56"), filters: ["Category: A very long category <script>"] });
-    expect(html).toContain("1234.56");
+  it("wraps large counts in a compact responsive footer", () => {
+    const html = render({ activeCount: 123456789, archivedCount: 987654321 });
+    expect(html).toContain('data-count="1111111110"');
+    expect(html).toContain("flex-wrap");
     expect(html).toContain("[overflow-wrap:anywhere]");
-    expect(html).toContain("max-w-full");
-    expect(html).toContain("&lt;script&gt;");
-    expect(html).not.toContain("<script>");
+  });
+
+  it("places scoped catalogue totals after pagination and preserves search and mode controls", () => {
+    const source = readFileSync("src/routes/inventory.tsx", "utf8");
+    expect(source.indexOf("<TablePagination")).toBeLessThan(source.indexOf("<InventoryCatalogueStatus"));
+    expect(source).toContain("branchInventoryCounts(catalogProducts, currentStore.id)");
+    expect(source).toContain("activeCount={branchCounts.active} archivedCount={archivedCount}");
+    expect(source).toContain('aria-label="Search products"');
+    expect(source).toContain('aria-label="Advanced product filters"');
+    expect(source).toContain('showArchived ? "Show active" : "Show archived"');
   });
 });

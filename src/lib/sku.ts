@@ -100,14 +100,22 @@ function readLease(settings = readSkuSettings()): SkuLease | null {
     Number.isSafeInteger(value.next) &&
     Number.isSafeInteger(value.end) &&
     value.next <= value.end;
-  if (valid(volatileLease)) return volatileLease;
   try {
     const value = JSON.parse(window.localStorage.getItem(LEASE_KEY) ?? "null") as SkuLease | null;
-    if (!valid(value)) return null;
+    // Another tab may have advanced the shared cursor while this renderer was
+    // idle. Never prefer a stale in-memory cursor over the persisted lease.
+    // A failed quota write may instead leave our own cursor further ahead.
+    if (value && value.project === project && value.prefix === settings.prefix && value.pad === settings.pad &&
+      Number.isSafeInteger(value.next) && Number.isSafeInteger(value.end) && value.next > value.end) {
+      volatileLease = value;
+      return null;
+    }
+    if (!valid(value)) return valid(volatileLease) ? volatileLease : null;
+    if (volatileLease?.id === value!.id && volatileLease.next > value!.next) return valid(volatileLease) ? volatileLease : null;
     volatileLease = value;
     return value;
   } catch {
-    return null;
+    return valid(volatileLease) ? volatileLease : null;
   }
 }
 

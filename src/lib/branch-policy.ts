@@ -16,14 +16,14 @@ export const BRANCH_POLICY_COPY: Record<
 > = {
   privateStock: {
     label: "Private stock",
-    hint: "Keep this branch's stock levels out of other branches and group totals.",
+    hint: "Keep stock separate by branch. Same-cluster terminals may view available stock; other clusters stay hidden. Authorized management retains its permitted access.",
     onWarning:
-      "Other branches will no longer see this branch's stock, and it will drop out of group inventory totals.",
-    offWarning: "This branch's stock will be visible to every other branch again.",
+      "Keep stock ownership separate while allowing read-only availability within this cluster. Sales and stock changes stay on the terminal's registered branch.",
+    offWarning: "Turn off this branch's private-stock preference. This does not grant another cluster access or allow a normal terminal to change its operating branch.",
   },
   privateCatalogue: {
     label: "Private catalogue",
-    hint: "Keep legacy shared catalogues private. Branches in the same cluster and completed incoming transfers remain available.",
+    hint: "Keep this catalogue separate from other clusters. Branches in the same cluster share its products; stock privacy is controlled separately. Completed incoming transfers remain available.",
     onWarning: "Unassigned legacy products without stock or transfer evidence will be hidden. This does not separate branches in the same cluster.",
     offWarning: "Allow the legacy shared catalogue where no separate cluster is assigned. Other clusters remain separate until products are transferred.",
   },

@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { Product, Store } from "@/core/types/pos-types";
 import { cn } from "@/lib/utils";
+import { canonicalBranchId, canonicalStockMap, sameBranchId } from "@/lib/branch-id";
+import { companyStoreScope } from "@/lib/company-store-scope";
 
 type Props = {
   product: Product;
@@ -15,16 +17,25 @@ type Props = {
 const quantity = (value: number) =>
   Number.isInteger(value) ? value.toLocaleString() : value.toLocaleString(undefined, { maximumFractionDigits: 3 });
 
-/** Compact on the row; complete and scrollable on hover, click, or touch. */
+/** Stores must come from stockDisplayLocations and the product's catalogue scope. */
 export function OtherSourcesPopover({ product, stores, currentStoreId, className }: Props) {
   const [open, setOpen] = useState(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rows = useMemo(
-    () =>
-      stores
-        .filter((store) => store.id !== currentStoreId && store.active !== false)
-        .map((store) => ({ store, qty: Number(product.stockByStore?.[store.id] ?? 0) || 0 }))
-        .sort((a, b) => Number(b.qty > 0) - Number(a.qty > 0) || a.store.name.localeCompare(b.store.name)),
+    () => {
+      const stock = canonicalStockMap(product.stockByStore);
+      const seen = new Set<string>();
+      return companyStoreScope(stores, currentStoreId)
+        .filter(store => {
+          const id = canonicalBranchId(store.id);
+          if (!id || seen.has(id) || sameBranchId(id, currentStoreId) || store.active === false) return false;
+          seen.add(id);
+          return true;
+        })
+        .map(store => ({ store, qty: stock[canonicalBranchId(store.id)] ?? 0 }))
+        .filter(row => row.qty > 0)
+        .sort((a, b) => a.store.name.localeCompare(b.store.name));
+    },
     [currentStoreId, product.stockByStore, stores],
   );
   const available = rows.filter((row) => row.qty > 0);
@@ -43,6 +54,8 @@ export function OtherSourcesPopover({ product, stores, currentStoreId, className
     },
     [],
   );
+
+  if (!rows.length) return <span className="text-xs text-muted-foreground">No available sources</span>;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -80,7 +93,7 @@ export function OtherSourcesPopover({ product, stores, currentStoreId, className
       >
         <div className="border-b border-border px-3 py-2">
           <p className="truncate text-sm font-semibold">{product.name}</p>
-          <p className="text-xs text-muted-foreground">Stock at other branches and warehouses</p>
+          <p className="text-xs text-muted-foreground">Available stock in this cluster's permitted branches and warehouses</p>
         </div>
         <div className="max-h-72 overflow-y-auto overscroll-contain p-2">
           {rows.length === 0 ? (

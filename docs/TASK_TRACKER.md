@@ -106,8 +106,143 @@ original statements are not invented. See memory for the full approved semantics
 | DEC-36 | Investigate Archive showing only four products and an inactive product apparently absent from the top metric. | Check archived versus zero-stock status, retained filters/pagination, metric definition and authorized branch/cluster scope. Do not archive, unarchive, change stock or widen access during investigation. |
 | DEC-37 | Owner clarified the expected 6,851 may include bills never entered and will check the originals. | Missing bills are suspected, not confirmed. Do not force reports or create transactions to bridge the difference; link genuine omissions to the separately reviewed FIN-13 workflow. |
 | DEC-38 | Owner approved a separate UI-only clarification: explicit Archived products count, clear Active/Archived mode and visible active filters. | Baseline eb970d1b; preserve product status, stock, branch/cluster scope, valuation and filter behavior. Does not authorize automatic archiving, ownership repairs or database changes. |
+| DEC-39 | Owner superseded the new Catalogue status box: remove it, keep search/filter/actions, and show only Total / Active / Archived product counts at the bottom. | Supersedes DEC-38's box, mode and filter-chip presentation. Preserve filters, pagination, metric cards, status/stock and authorized catalogue scope; totals refer to the accessible catalogue, not inaccessible other companies. |
+| DEC-40 | Owner reports over 100 Supabase products below zero. | Negative stock is not equivalent to archived status. Trace archived-negative exclusion from metrics, zero-stock lifecycle and branch/cluster read scope before proposing corrections; do not alter real quantities, widen access or claim the loaded five rows exhaust database records. |
+| DEC-41 | Use ROSEGILL only for this chat; before any Supabase edit identify organization, project, ref and URLs and present the proposed change for approval. | Connector routing still denied the POS ref, but owner-opened Chrome independently exposes pos in rosegill0011@gmail.com's Org (bjxgimekljzlnwejuawj), project qhrufhtbeguxydenzfey. Do not use unrelated Primary projects as substitutes. Browser inspection is read-only; database writes need separate approval. |
+| DEC-42 | Owner confirmed the 592 hidden archived products belong to STR1 / 361 Degree Sports and requested preparation of the targeted repair for review. | STR1 ID a611a328-2217-4d77-944a-5f6a637d123b verified in the live stores table. Record ownership confirmation, capture exact IDs and inspect deployed triggers/sync before proposing application. This confirms provenance and authorizes repair preparation, not live execution. See database/archive-ownership-repair-review.md. |
+| DEC-43 | Private stock must not hide a cluster's own catalogue: products belonging to a cluster remain visible within that cluster until an explicitly approved transfer/merge changes availability. | Separate product catalogue membership from branch stock quantities. Preserve normal-terminal branch restrictions, action permissions, private-stock settings and other clusters' isolation. The ownership repair must use STR1's configured cluster, not merge catalogues or expose other branches' protected quantities. |
+| DEC-44 | Owner requests checking and correcting the location Private catalogue / Private stock behavior against cluster-shared products and private branch quantities. | Actual STR1 edit dialog shows cluster 361 DEGREE SPORTS and both privacy switches on. Keep saved switches; explain their distinct effects. Audit confirms same-cluster catalogue sharing already implemented but privateStock only affects All Shops stock presentation; Inventory Other Sources and raw product stock-map reads lack that policy. Required management-scope exception clarification is pending. Present a bounded correction batch; do not silently redact mutation inputs or apply live schema/data changes. |
+| DEC-45 | Owner confirms authorized management keeps stock access within its granted branch scope; normal branch terminals see only their own quantities. | Resolves DEC-44 management clarification. Management terminal type alone is not an entitlement: require verified account scope and existing function permission. A manager using a normal terminal remains branch-locked. Preserve same-cluster catalogue sharing, private quantities, transfer workflows and authoritative lifecycle/checkout data. This decision does not approve live DB execution or the 592-row ownership repair. |
+| DEC-46 | Owner approved the proposed first code-only stock display/copy/regression batch: Okay, do it. | Baseline HEAD 9e65a0c6 with existing footer/doc drafts preserved. Share one display scope between Inventory Other Sources and All Shops, clarify privacy copy and test terminal/user binding precedence and granted management scope. Preserve table column positions, selected-cluster stock export, catalogue visibility, stock maps, lifecycle and checkout. This fixes presentation only; backend read privacy and 592-row live repair are separate pending batches. No DB writes, installer publication or production promotion. |
+| DEC-47 | Owner clarified Other sources: show only sources with stock available, IN RESPECTED CLUSTER. | Narrow Other Sources to positive-stock, active, permitted locations in the currently selected branch's own cluster. Exclude zero/negative quantities, current branch, inactive and other-cluster sources; an approved transfer does not turn this popup into an all-clusters stock view. Keep management scope and normal-terminal restrictions; All Shops management card access remains separately authorized. |
 
 ## Current work register
+
+DEC-56: owner requests updating beta. Prepare reviewed source commit/PR341 update
+and merge into beta only after required checks pass. No production promotion,
+installer/OTA publication or live sync migration application. Final candidate
+14suites/126tests plus29 sync and11 repair checks passed. Exclude .pending business
+backups, unrelated booking helpers/empty migration and supabase temp files from Git.
+
+DEC-55: owner reports1/2 stock filter still not selecting quantities. Confirmed
+actual JSX heading plainText creates Stock ·  HC (double space), while parent
+columnValues uses Stock · HC; unknown-key fallback skipped filtering. Normalize
+column-label whitespace before matching and parse complete quantity token.
+Regression covers actual spaced label,1versus2 and scientific decimal quantities.
+No branch/data/checkout change.
+
+DEC-54: owner reports stock-column1/-1/0 filters return wrong quantities.
+Confirmed substring matching erroneously matches10/-10 etc. Match plain numeric
+stock queries by exact quantity, retaining textual stock searches and the current
+branch/cluster/Active-Archive scope. No stock/data/checkout changes.
+
+DEC-54 implemented: signed decimal stock terms use exact numeric equality;
+other column/text filters retain text matching. 3suites/22tests and scoped lint
+passed, including1/-1/0/fractional cases, text warnings and AND filters. Zero and
+negative matches remain under selected branch Archive, not Active. No DB writes.
+
+DEC-53: owner reports Inventory column filters ineffective and requires each
+column filter to match only that column while main search remains cross-field.
+Confirmed shared table filters run after Inventory slices pageRows. Add opt-in
+parent filtering callback so Inventory filters full authorized catalogue before
+pagination; preserve other tables' default behavior, scopes and checkout.
+
+DEC-53 implemented: optional shared-table label-keyed filter callback delegates
+Inventory filtering before usePagination. Per-column text covers Product,
+Category/Sub-category, visible monetary columns, branch stock and permitted
+same-cluster Other Sources; global search remains cross-product-field. Table's
+default internal filtering retained for other callers. 6 suites/36 tests,
+TypeScript, scoped lint and diff checks passed; previewHTTP200. Actual signed-in
+browser interaction remains unverified. No database or checkout changes.
+
+DEC-52 (2026-10-29): owner approves selected-branch Inventory Active qty>0,
+Archive qty<=0 with negative-stock warning. This is a read-only classification;
+never mutate shared is_archived flags, other branch status or checkout. Update
+rows/footer/cost-review/export classification consistently; preserve shared
+valuation formulas and label any existing global Archive/Restore actions clearly.
+Use agent review and fixture tests; no database change required.
+
+DEC-52 implemented locally: inventory-branch-view.ts canonical branch quantities
+classify rows, cost review, footer and Inventory export. Negative branch stock
+gets a warning banner and red labeled badge; product/negative counts use branch
+classification. Shared valuation helpers, product flags/maps and checkout untouched;
+global archive/restore actions explicitly labeled. 7 isolated suites/73 tests,
+TypeScript, scoped lint and diff checks passed. Local preview HTTP200. Browser
+visual/device verification is not established; no live DB data/status changes.
+
+DEC-51 (2026-10-29): owner authorizes ownership sync durability correction,
+Electron/mobile archive read checks and agent review; preserve checkout. Prepare
+minimal NULL/blank-owner upload protection in product sync conflict assignment,
+generator and local renderer upsert. Preserve insert semantics, nonblank owner
+assignments, version ordering, stock exclusions and authoritative cloud pulls.
+Live routine application requires exact change disclosure/approval. Inter-cluster
+barcode collision request is investigation/advice, not authorization to merge
+products or reassign ownership. Membership remains on hold.
+
+DEC-51 candidate implemented: migration20261029064933 updates only conflict-owner
+assignment in public.sync_apply_products(jsonb) to preserve established ownership
+when EXCLUDED.owner_store_id is NULL/blank. Same fix in contract generator/canonical
+schema and product-only native renderer upsert; authoritative cloud pull unchanged.
+29 isolated PGlite checks passed; 7 focused suites/82 tests passed (600 archive
+pagination, cluster/native scope, offline sync, ownership and checkout). TypeScript,
+scoped lint/syntax and diff checks passed. Live SELECT remains600archived/600visible/
+0hidden ownerless; migration NOT APPLIED. Need project-specific routine-update
+approval; installed Electron/mobile cache/replication and real checkout unverified.
+Transfer audit: existing product_id retained, quantities moved by branch, posted
+receipt grants destination availability, global SKU/barcode unique. Legacy verifier
+matches exact barcode and destination bucket; do not auto-merge similar names or
+different items. Duplicate/alias conflict review is separate proposed hardening.
+
+DEC-50 (2026-10-29): owner explicitly approved execution of exact594 ownership
+repair in ROSEGILL pos. Applied successfully after 594/594 fingerprint backup
+check. All594 before/after images differ only owner/version/time. Post-read:
+2169total/1569active/600archived/600 STR1-visible; repaired foreign-cluster visibility0,
+audit594/feed594; archive/stock/SKU/prices preserved, checkout code untouched.
+Before/after business backups remain local .pending files, excluded from commits.
+INV-09 ownership data correction is applied/DB-verified; signed-in UI and native
+SQL propagation not verified. Higher-version NULL-owner sync durability and raw
+stock-read enforcement remain pending; do not claim those fixed or replay repair.
+
+DEC-49 (2026-10-29): owner requests completing archived ownership repair, exact
+database change disclosed before application, agents and checkout preservation.
+ROSEGILL project pos qhrufhtbeguxydenzfey / org bjxgimekljzlnwejuawj is now
+accessible through connector link_6ab102f426708191b544bc0e70170ba0 (connector label
+beta; database is live). Latest SELECT: 2169 total /1569 active /600 archived /
+6 visible to STR1 /594 hidden ownerless archived zero-stock candidates. Frozen
+594-ID/full-row-MD5 manifest prepared in database/str1-archive-ownership-repair.review.sql.
+Preflight: no canonical stock map drift, quantity mismatch, transfer projection
+drift, foreign nonzero stock or conflicting legacy productOwners. Do not apply
+until isolated tests/review and project-specific approval. Owner confirmation
+previously covered 592; latest 594 cohort must be explicitly presented. Newer
+NULL-owner replica uploads can undo ownership; sync preservation remains a
+separately reviewed change, not silently bundled in data repair. Membership hold.
+
+Owner decision DEC-48 (2026-10-29): normal terminals may read positive available
+stock at other active branches/warehouses in their registered branch's cluster.
+This supersedes DEC-45/46's own-quantity-only display rule, not terminal branch
+locking for sales, mutations, settings or protected reports. Other clusters stay
+hidden. Authorized management scope remains unchanged. Keep SKU allocation one
+global sequence; use agents for implementation/review. No live data migration is
+approved by this code-change instruction. Membership remains ON HOLD.
+
+DEC-49 repair candidate verified: independent agent review plus root execution of
+11 isolated PGlite cases passed against final guarded SQL, including target-store
+FOR SHARE lock, frozen row fingerprints, stock/price/SKU/archive/sale preservation,
+same-cluster allow/foreign denial and failure rollback. Test harness uses synthetic
+representative triggers; no live UPDATE occurred. Await owner approval for exactly
+594 candidates in ROSEGILL pos; do not silently expand if manifest/data drifts.
+
+DEC-48 implementation: added separate clusterAvailableStockLocations for Inventory
+Other Sources; trusted terminal/account branch anchors its same-cluster read-only
+availability. Full stock reports retain stockDisplayLocations restrictions; no
+checkout/write/branch-switch guard changed. Updated privacy copy and tests.
+Agent SKU audit confirmed singleton global range allocation, with one stale
+cross-tab cache defect: readLease preferred memory over an advanced persisted
+cursor. Fixed persisted-cursor precedence while preserving quota fallback and
+added shared-storage two-module A1/B2/A3 regression. Final 9 focused suites /88
+tests passed; full raw-data read enforcement and archive ownership repair remain
+unapplied. SKU leases reserve ranges, so global uniqueness does not imply gapless
+chronological numbering across offline terminals. Source remains local/uncommitted.
 
 Source anchors below refer to checkpoint `1af373f5` unless stated otherwise.
 “Existing tests” means reviewed source coverage, not a new executed test result.
@@ -187,6 +322,8 @@ No earlier chat-wide “completed” message is treated as blanket verification.
 | INV-06 | Implemented / High | Bulk import/purchase finalization progress, failure recovery, decimal costs/rounding/conflict matching and workbook-sheet selection need unified acceptance across import surfaces. Prior UI/workflow improvements do not certify concurrent native finalization. |
 | INV-07 | Pending / High | Default category/group/subcategory naming and starting quantity via purchase must be reconciled against current imports/creation paths. No real catalogue renaming or stock initialization authorized. |
 | INV-08 | Implemented UI / pending completeness / Medium | DEC-36/38: source and preview show five archived products, no four/five-row cap; retained filters/catalogue scope apply. New InventoryCatalogueStatus shows separate active/archived counts, mode and search/advanced matches/filter labels. Counts use authorized catalogProducts before filters; active-only valuation remains unchanged. Eight focused suites / 59 tests, TypeScript, three-file ESLint and web build passed; desktop Active/Archived and 390px Archive display observed with no panel/document overflow. Preview signed out before final live search interaction; fixture filter tests pass. Supabase read unavailable, so stored-count completeness remains unverified. No lifecycle/scope/stock/backend changes. Revert only the separate UI commit for recovery. |
+| INV-09 | Confirmed discrepancy / repair preparation / High | DEC-40..43: read-only ROSEGILL Chrome table filters on 2026-10-29 showed 2,169 products, 597 archived, 596 stock_quantity=0 and 597 stock_quantity<1; 592 archived, non-deleted, stock_quantity=0 records have owner_store_id IS NULL. Inventory STR1 shows 1,577 / 1,572 active / 5 archived. The ownerless zero-stock cohort exactly matches the 592 count gap; source branch-policy and SQL catalogue rules exclude ambiguous zero-stock provenance, and the isolation migration deliberately had no ownership backfill. Owner confirms these 592 belong to STR1; prepare guarded identity-frozen repair, do not apply yet. Check stock_by_store, legacy productOwners, transfer evidence and deployed triggers/sync before execution; stock_quantity alone is not the lifecycle input. Archived-negative exclusion from inventoryMetrics is a separate confirmed calculation limitation awaiting its own approval. Do not widen cross-cluster access or silently change quantities/status. Review: database/archive-ownership-repair-review.md. |
+| INV-10 | Display implemented / scoped verified; backend pending / High | DEC-44..47 approved code-only batch: shared stockDisplayLocations enforces terminal binding, then account binding, then authorized management directory; unknown binding fails closed. Inventory Other Sources uses permitted product-catalogue locations, selected-cluster scope, active locations and qty>0 for rows/count/total; no hidden counts masquerade as zero. All Shops management stock cards retain authorized access; stock export remains selected-cluster scoped. Clarified private toggle copy; table column positions, authoritative stock maps, checkout, lifecycle and saved flags unchanged. Final 14 isolated suites /114 tests, TypeScript, scoped ESLint and diff checks passed; independent candidate review found no actionable regression. Preview signed out, so real signed-in popup/native behavior is unverified. Backend raw product stock maps still lack privacy projection, and the 592-record ownership repair is unapplied. No live migration or data change. |
 | REP-01 | Implemented / High | Complete paginated sales/shift history, current-shift/date-range receipt filters, branch/cluster totals, store timezone, full selected/all-shops totals and profit were patched. Verify thousands of records, midnight shifts and simultaneous management/normal clients; inspect final PR CI. |
 | REP-02 | Pending / High | Management report service exists, but `ipc-privilege.cjs:638` blanket business-channel guard blocks its installed handler with MANAGEMENT_ONLINE_ONLY. Test installed wrapper→repository with scoped complete replicas; preserve operations restrictions. |
 | REP-03 | Pending / High | Replica scope/completeness: current management discovery (`sync-endpoint.server.ts:257`) enumerates all stores; arbitrary configured subsets are not established. Separate desired scope from actual model. Do not infer completeness from schema-ready or bootstrap_7300 job name alone; verify compatible no-cutoff contract, counts/checkpoints and failed bootstrap behavior. |
@@ -307,6 +444,7 @@ to a new revision. Preserve the report; do not commit credential-bearing evidenc
 
 | Evidence | Actual scope and limits |
 | --- | --- |
+| DEC-46/47 stock display candidate, 2026-10-29 | 14 final focused suites /114 tests passed: stock display scope/render, canonical IDs, management branch switching, same-cluster/private catalogue, archive lifecycle/metrics/footer, cashier-sale permission and checkout contracts, exports, table columns, native catalogue predicates. TypeScript and six-file ESLint passed; git diff --check passed. Independent candidate review found no actionable regressions. Existing footer draft preserved. User preview was signed out during final render inspection; no user permissions/settings or transactions were changed. This proves the code-only display batch, not cloud/local raw-data isolation or installed end-to-end behavior. |
 | DEC-32 report-only candidate, 2026-10-27 | Independent read-only correctness review completed. Full isolated Vitest: 547 files / 3,381 tests passed after correcting two obsolete label assertions, with amount/permission/negative-visibility checks preserved. TypeScript, 14-file scoped ESLint, diff and web build passed. Sponsorship uses the sales report's authorized store IDs; completed summaries deduplicate/exclude refunds, while history/export retain explicit status in the original Bill column. No checkout/pricing/receipt/stock/formula or database writes. |
 | DEC-32 browser check, 2026-10-27 | Settled Bills/Payments matched at 80 completed bills; a new sale arrived after the earlier 79-bill snapshot. The saved Extra Discount reconciled before-adjustment net to final collections; sponsorship remained separate. At 390px the tooltip and report document stayed within the viewport, and temporary viewport was reset. Initial settings/currency hydration flicker remains DATA-01. No live business mutations were performed by the audit. |
 | Resumption, 2026-10-29 | Verified latest root/branch/HEAD/dirty files against c514762d; report changes preserved. The earlier documentation-update attempt failed because automatic approval review hit an account usage limit; it did not execute and was not an unsafe-action determination. Decisions DEC-34..37 now recorded. Restarted only the owned preview after sandbox socket/Wrangler errors; outside-sandbox server returned HTTP200 using existing .env.local without exposing values or changing configuration. New Archive investigation is read-only. |
@@ -354,6 +492,20 @@ Do not stage, delete or treat them as part of documentation-only Batch 0.
 
 ## Current handoff
 
+- Latest 2026-10-29: DEC-41..43 supersede the earlier account-access blocker for
+  read-only browser inspection only. ROSEGILL pos and STR1 identities verified;
+  the 592 ownerless archived zero-stock records match the missing count, and the
+  owner confirms STR1 provenance. Repair preparation is documented in
+  [the review plan](database/archive-ownership-repair-review.md), not applied or
+  tested as executable SQL. Same-cluster catalogue visibility must coexist with
+  private branch stock. Finish manifest/live trigger/sync preflight and isolated
+  repair tests before application approval. Connector routing remains denied;
+  no Primary project, credentials, stock or grant workaround is authorized.
+- DEC-46/47 display-only stock correction is implemented and scoped-verified
+  (14 suites /114 tests, types/lint/diff, independent review). Preserve its
+  explicit backend-read limitation and unapplied legacy repair. Worktree source
+  remains local/uncommitted with earlier approved footer draft; do not claim PR
+  delivery or installer publication. No additional live action is approved.
 - The activation clarification is DEC-04; newer refinements are DEC-20 (one clear
   management home per field responsibility) and DEC-21 (concise transition updates).
   They refine coverage/reporting, not the approved application-change boundary.

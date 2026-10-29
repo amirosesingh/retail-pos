@@ -594,10 +594,12 @@ type TableProps = React.HTMLAttributes<HTMLTableElement> & {
   mobileCards?: boolean;
   /** Disable page-local sort/filter controls when the caller supplies a server-paged slice. */
   clientDataControls?: boolean;
+  /** Caller filters its complete dataset before pagination, keyed by header label. */
+  onColumnFiltersChange?: (filters: Record<string, string>) => void;
 };
 
 const Table = React.forwardRef<HTMLTableElement, TableProps>(
-  ({ className, children, loading = false, loadingLabel, mobileCards = true, clientDataControls = true, managed = false, columnControls = false, layoutControls = false, controlsTarget, summaryFormats = {}, tableId, ...props }, ref) => {
+  ({ className, children, loading = false, loadingLabel, mobileCards = true, clientDataControls = true, onColumnFiltersChange, managed = false, columnControls = false, layoutControls = false, controlsTarget, summaryFormats = {}, tableId, ...props }, ref) => {
     const [layout, setLayout] = React.useState<"auto" | "table" | "compact">("auto");
     const [expanded, setExpanded] = React.useState(false);
     const expandButtonRef = React.useRef<HTMLButtonElement>(null);
@@ -694,10 +696,14 @@ const Table = React.forwardRef<HTMLTableElement, TableProps>(
       setWidths({});
       resizeCleanupRef.current?.();
     }, [labelSignature]);
+    const filterSignature = JSON.stringify(Object.fromEntries(Object.entries(filters).map(([column, value]) => [labels[Number(column)] ?? "", value])));
+    React.useEffect(() => {
+      onColumnFiltersChange?.(JSON.parse(filterSignature));
+    }, [filterSignature, onColumnFiltersChange]);
     const sorted = clientDataControls
       ? React.Children.map(children, (child) => sortTableBodies(child, sort))
       : children;
-    const content = clientDataControls
+    const content = clientDataControls && !onColumnFiltersChange
       ? React.Children.map(sorted, (child) => filterTableBodies(child, filters))
       : sorted;
     const managedRows = managed ? getManagedRows(content) : [];
