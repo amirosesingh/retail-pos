@@ -83,7 +83,7 @@ describe("financial summary visibility", () => {
   it("preserves negative money and reveals the same cards as values change", () => {
     fixture.revenue = -20; fixture.cost = 0; fixture.given = 0; fixture.costs = true;
     const html = render();
-    expect(html).toContain("<p>Revenue</p>");
+    expect(html).toContain("<p>Net revenue before adjustments</p>");
     expect(html).toContain("<p>Gross profit</p>");
     expect(html).toContain("-20.00");
     expect(html).not.toContain("<p>Given away</p>");
@@ -97,7 +97,7 @@ describe("financial summary visibility", () => {
     const html = render();
     expect(html).toContain("<p>Bills</p>");
     expect(html.match(/<article/g)).toHaveLength(1);
-    expect(html).not.toContain("<p>Revenue</p>");
+    expect(html).not.toContain("<p>Net revenue before adjustments</p>");
   });
 
   it("keeps loading and error states distinct from a loaded all-zero summary", () => {

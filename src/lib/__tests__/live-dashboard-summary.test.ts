@@ -87,7 +87,7 @@ describe("live dashboard summary", () => {
   it("retains signed sponsorship under the saved inclusion policy", () => {
     fixture.sponsor = -20;
     const html = render();
-    expect(html).toContain("Daily sales value");
+    expect(html).toContain("Sales value with sponsorship · not collections");
     expect(html).toContain("Sponsorship value included");
     expect(html).toContain("-20.00");
   });

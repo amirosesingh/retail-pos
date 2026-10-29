@@ -51,9 +51,10 @@ export function FinancialBreakdown({ rows, children }: {
   </div>;
 }
 
-export function SalesTotalInfo({ totals, sponsorshipValue = 0 }: {
+export function SalesTotalInfo({ totals, sponsorshipValue = 0, adjustmentLabel = "Receipt adjustments" }: {
   totals: ReturnType<typeof salesReconciliation>;
   sponsorshipValue?: number;
+  adjustmentLabel?: string;
 }) {
   const rows: [string, string][] = [
     ["Subtotal before discounts", formatMoney(totals.subtotal)],
@@ -62,17 +63,17 @@ export function SalesTotalInfo({ totals, sponsorshipValue = 0 }: {
       : [["Less recorded discounts", formatMoney(-totals.discounts)]] as [string, string][]),
     ...(Math.abs(totals.includedTax) >= 0.005 ? [["Less tax included in subtotal", formatMoney(-totals.includedTax)] as [string, string]] : []),
     ...(Math.abs(totals.recordDifference) >= 0.005 ? [["Recorded bill difference", formatMoney(-totals.recordDifference)] as [string, string]] : []),
-    ["Net sales excluding tax", formatMoney(totals.net)],
+    ["Net sales before receipt adjustments (ex tax)", formatMoney(totals.net)],
     ...(Math.abs(totals.tax) >= 0.005 ? [["Tax collected", formatMoney(totals.tax)] as [string, string]] : []),
-    ...(Math.abs(totals.rounding) >= 0.005 ? [["Rounding adjustment", formatMoney(totals.rounding)] as [string, string]] : []),
-    ["Total collected", formatMoney(totals.collected)],
+    ...(Math.abs(totals.rounding) >= 0.005 ? [[adjustmentLabel, formatMoney(totals.rounding)] as [string, string]] : []),
+    ["Total collected after receipt adjustments", formatMoney(totals.collected)],
     ...(Math.abs(sponsorshipValue) >= 0.005 ? [
       ["Sponsorship value", formatMoney(sponsorshipValue)],
-      ["Sales summary including sponsorship", formatMoney(totals.collected + sponsorshipValue)],
+      ["Sales value with sponsorship · not collections", formatMoney(totals.collected + sponsorshipValue)],
     ] as [string, string][] : []),
   ];
   return <FinancialBreakdown rows={rows}>
-    <p>Discounts and applicable coupons are counted once. Refunded bills are excluded.</p>
+    <p>Discounts and applicable coupons are counted once. Refunded bills are excluded. Net sales here are before saved receipt adjustments; collected is the final bill amount after them.</p>
     {totals.itemDiscounts === null && <p>Some historical lines are unavailable; recorded bill discounts are retained.</p>}
     {Math.abs(totals.recordDifference) >= 0.005 && <p>Some saved bill subtotals differ from their collected amounts. Stored values are preserved.</p>}
     {Math.abs(sponsorshipValue) >= 0.005 && <p>Sponsorship is stock value, separate from customer payments.</p>}

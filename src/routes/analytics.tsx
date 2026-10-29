@@ -246,8 +246,8 @@ function LiveBoard() {
     ["Total given away", money(totals.given)],
   ]}><p>Already reflected in revenue. Do not deduct these values again; free-item value is not cash received.</p></FinancialBreakdown>;
   const summaryCards = [
-    hasMoney(totals.revenue) && <StatCard key="revenue" label="Revenue" value={money(totals.revenue)} hint={`${totals.bills} bills`} info={<FinancialBreakdown rows={[["Net revenue", money(totals.revenue)]]}>
-      <p>Completed sales after discounts, excluding tax and rounding. Refunded bills are excluded.</p>
+    hasMoney(totals.revenue) && <StatCard key="revenue" label="Net revenue before adjustments" value={money(totals.revenue)} hint={`${totals.bills} bills`} info={<FinancialBreakdown rows={[["Net revenue", money(totals.revenue)]]}>
+      <p>Completed sales after discounts, excluding tax and before saved receipt adjustments. Refunded bills are excluded.</p>
       {giveawayInfo}
       <p>This summary does not contain original bill subtotals or separate tax and rounding amounts.</p>
     </FinancialBreakdown>} />,

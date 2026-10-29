@@ -68,8 +68,8 @@ describe("compact financial information", () => {
     const totals = salesReconciliation([sale({ subtotal: 110, discount: 11, tax: 9, total: 99, roundingAdjustment: 0, lines: [{ productId: "p", name: "Item", price: 110, qty: 1, discount: 0, taxRate: 0 }] })]);
     const html = renderToStaticMarkup(h(SalesTotalInfo, { totals }));
     expect(html.indexOf("Subtotal before discounts")).toBeLessThan(html.indexOf("Less bill discounts"));
-    expect(html.indexOf("Less tax included in subtotal")).toBeLessThan(html.indexOf("Net sales excluding tax"));
-    expect(html.indexOf("Net sales excluding tax")).toBeLessThan(html.indexOf("Tax collected"));
+    expect(html.indexOf("Less tax included in subtotal")).toBeLessThan(html.indexOf("Net sales before receipt adjustments (ex tax)"));
+    expect(html.indexOf("Net sales before receipt adjustments (ex tax)")).toBeLessThan(html.indexOf("Tax collected"));
     expect(html).toContain("Total collected");
     expect(html).not.toContain("cost");
     expect(html).not.toContain("profit");
@@ -81,13 +81,13 @@ describe("compact financial information", () => {
     expect(html).not.toContain("Sponsorship value");
     expect(html).toContain("Less recorded discounts");
     expect(html).toContain("historical lines are unavailable");
-    expect(html).toContain("Rounding adjustment");
+    expect(html).toContain("Receipt adjustments");
   });
 
   it("keeps policy-included sponsorship distinct from customer collections", () => {
     const html = renderToStaticMarkup(h(SalesTotalInfo, { totals: salesReconciliation([sale()]), sponsorshipValue: 20 }));
     expect(html).toContain("Sponsorship value");
-    expect(html).toContain("Sales summary including sponsorship");
+    expect(html).toContain("Sales value with sponsorship · not collections");
     expect(html).toContain("stock value, separate from customer payments");
     expect(html).toContain("118.95");
   });

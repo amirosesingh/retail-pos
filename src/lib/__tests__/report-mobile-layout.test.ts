@@ -42,7 +42,7 @@ describe("compact report records", () => {
 describe("sales workspace shared filters", () => {
   it("removes the legacy Store picker but retains unrelated date tools", () => {
     const set = () => undefined;
-    const context = { from: "2026-10-01", to: "2026-10-26", storeId: "branch-a", cashier: "all", q: "", tender: "all", setFrom: set, setTo: set, setStoreId: set, setCashier: set, setQ: set, setTender: set, history: { sales: [], loading: false, refreshing: false, error: "" } };
+    const context = { from: "2026-10-01", to: "2026-10-26", storeId: "branch-a", cashier: "all", q: "", tender: "all", setFrom: set, setTo: set, setStoreId: set, setCashier: set, setQ: set, setTender: set, reportStoreIds: [], history: { sales: [], loading: false, refreshing: false, error: "" } };
     const html = renderToStaticMarkup(h(SalesReportContext.Provider, { value: context },
       h(ReportHeader, { title: "Payments", subtitle: "Payment history", from: context.from, to: context.to, onFrom: set, onTo: set },
         h("div", {}, h("label", {}, "Store"), h("button", {}, "Legacy store picker")),

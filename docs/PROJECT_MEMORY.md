@@ -1,6 +1,6 @@
 # POS project memory
 
-Last reconciled: **2026-10-27, Asia/Brunei**. This is approved architecture and
+Last reconciled: **2026-10-29, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
 
 The owner's latest inventory UI refinement (DEC-25) combines adjacent Products
@@ -59,6 +59,15 @@ before/after receipt adjustments and sponsorship values. Preserve checkout,
 receipts, stock and stored records; use a separate recoverable commit. This does
 not authorize forcing totals to a manually expected amount or rewriting history.
 
+The owner subsequently confirmed that a proposed missed-bill entry is for a
+historical sale already paid and handed over, with a mandatory choice about
+whether its stock was already corrected (DEC-34). The owner explicitly requested
+design review before implementation (DEC-35). Keep that proposal separate from
+ordinary checkout and report display; no new financial write is authorized yet.
+The manual expected total may include unentered bills; the owner will compare
+the originals (DEC-37). Do not treat a suspected omission as an existing record
+that may be invented, overwritten or silently reattributed.
+
 ## Membership: ON HOLD
 
 Do not redesign, activate or modify Membership. Preserve existing functionality
@@ -71,7 +80,7 @@ tier/email enhancement and consolidation requests remain deferred in HOLD-01.
 | Item | Recorded baseline; re-check every session |
 | --- | --- |
 | Development checkout | `D:/Retail POS/retail-pos-main/retail-pos-main/work/security-review-fixes-beta` |
-| Branch / source checkpoint | `codex/shift-variance-colors` / `1af373f569876b761e6b67a324b084223396d5e7` |
+| Branch / source checkpoint | `codex/shift-variance-colors` / `c514762d98dc5d4fee925035ce0086ef23520037`; approved report-only working changes awaiting separate commit |
 | Source package version at that checkpoint | `1.4.80`; not an assertion of the latest published installer version |
 | Existing review | [PR #341](https://github.com/amirosesingh/retail-pos/pull/341), target `beta`; source/merge/check state must be refreshed before acting |
 | Last inspected remote refs | `origin/beta` `e86bf889`; `origin/main` `2f404e6f` (stable 1.4.79). Cached observations, not current remote guarantees. |

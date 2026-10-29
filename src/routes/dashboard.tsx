@@ -1,3 +1,4 @@
+import { receiptAdjustmentLabel } from "@/lib/report-display";
 import {useSponsorshipTotals} from "@/lib/use-sponsorship-totals";
 import { CashierBillList } from "@/platforms/web/components/pos/CashierBillList";
 import { HomeShortcuts } from "@/platforms/web/components/pos/HomeShortcuts";
@@ -195,10 +196,10 @@ function Dashboard() {
   const flagged = cashiers.filter((c) => c.flags.length);
   const summaryReady = inventoryReady && !reportLoading && !reportError;
   const summaryCards = [
-    includeSponsorship && !sponsorship.loading && !sponsorship.error && hasMoney(todaySponsorship) && hasMoney(revenue + todaySponsorship) && <Kpi key="daily-value" label="Daily sales value" value={money(revenue + todaySponsorship)} highlight info={can("can_view_sales_reports") && <SalesTotalInfo totals={todayTotals} sponsorshipValue={todaySponsorship} />} />,
+    includeSponsorship && !sponsorship.loading && !sponsorship.error && hasMoney(todaySponsorship) && hasMoney(revenue + todaySponsorship) && <Kpi key="daily-value" label="Sales value with sponsorship · not collections" value={money(revenue + todaySponsorship)} highlight info={can("can_view_sales_reports") && <SalesTotalInfo totals={todayTotals} adjustmentLabel={receiptAdjustmentLabel(live)} sponsorshipValue={todaySponsorship} />} />,
     includeSponsorship && !sponsorship.loading && !sponsorship.error && hasMoney(todaySponsorship) && <Kpi key="sponsorship" label="Sponsorship value included" value={money(todaySponsorship)} info={<FinancialBreakdown rows={[["Sponsorship value", money(todaySponsorship)]]}><p>Included under the saved daily-sales policy. Stock value is separate from customer payments.</p></FinancialBreakdown>} />,
-    hasMoney(revenue) && <Kpi key="collected" label="Sales collected today" value={money(revenue)} highlight info={can("can_view_sales_reports") && <SalesTotalInfo totals={todayTotals} />} />,
-    hasMoney(profit.revenue) && <Kpi key="net" label="Net sales excluding tax" value={money(profit.revenue)} info={can("can_view_sales_reports") && <SalesTotalInfo totals={todayTotals} />} />,
+    hasMoney(revenue) && <Kpi key="collected" label="Sales collected today" value={money(revenue)} highlight info={can("can_view_sales_reports") && <SalesTotalInfo totals={todayTotals} adjustmentLabel={receiptAdjustmentLabel(live)} />} />,
+    hasMoney(profit.revenue) && <Kpi key="net" label="Net sales before receipt adjustments (ex tax)" value={money(profit.revenue)} info={can("can_view_sales_reports") && <SalesTotalInfo totals={todayTotals} adjustmentLabel={receiptAdjustmentLabel(live)} />} />,
     showCostMargin && hasMoney(profit.cogs) && <Kpi key="cogs" label="Total COGS" value={money(profit.cogs)} info={<GrossProfitInfo revenue={profit.revenue} cost={profit.cogs} profit={profit.profit} />} />,
     showCostMargin && Math.abs(margin) >= 0.05 && <Kpi key="margin" label="Gross margin" value={`${margin.toFixed(1)}%`} info={<GrossProfitInfo revenue={profit.revenue} cost={profit.cogs} profit={profit.profit} marginPct={margin} />} />,
     live.length !== 0 && <Kpi key="bills" label="Bills" value={String(live.length)} />,

@@ -1,3 +1,4 @@
+import { reportSponsorshipStores, receiptAdjustmentLabel } from "@/lib/report-display";
 import { FinancialBreakdown, FinancialInfoTip, SalesTotalInfo } from "@/platforms/web/components/pos/FinancialInfo";
 import {useSponsorshipTotals} from "@/lib/use-sponsorship-totals";
 import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
@@ -63,7 +64,7 @@ export function BillsReport() {
   );
   const history = shared?.history ?? localHistory;
   const includeSponsorship=state.settings.integrations.includeSponsorshipInDailySales===true;
-  const sponsorship=useSponsorshipTotals(storeId==="all"?stores.map(store=>store.id):[storeId],from,to,includeSponsorship&&cashier==="all"&&!q);
+  const sponsorship=useSponsorshipTotals(reportSponsorshipStores(storeId,stores.map(store=>store.id),shared?.reportStoreIds),from,to,includeSponsorship&&cashier==="all"&&!q);
   const showSponsorship=includeSponsorship&&cashier==="all"&&!q;
   const products = useMemo(
     () => new Map(state.products.map((product) => [product.id, product])),
@@ -134,13 +135,13 @@ export function BillsReport() {
         {!history.loading && !history.error && <SummaryCardRail label="Sales report totals">
           <SalesStatCard label="Completed bills" value={String(totals.bills)} />
           {showSponsorship && !sponsorship.loading && !sponsorship.error && sponsorship.total > 0 && <>
-            <SalesStatCard label="Sales summary including sponsorship" value={money(totals.collected + sponsorship.total)} info={<SalesTotalInfo totals={totals} sponsorshipValue={sponsorship.total} />} />
+            <SalesStatCard label="Sales value with sponsorship · not collections" value={money(totals.collected + sponsorship.total)} info={<SalesTotalInfo totals={totals} adjustmentLabel={receiptAdjustmentLabel(rows)} sponsorshipValue={sponsorship.total} />} />
             <SalesStatCard label="Sponsorship value included" value={money(sponsorship.total)} info={<FinancialBreakdown rows={[["Sponsorship value", money(sponsorship.total)]]}><p>Included under the saved daily-sales policy. Stock value is separate from customer payments.</p></FinancialBreakdown>} />
           </>}
-          <SalesStatCard label="Net sales (ex tax)" value={money(totals.net)} info={<SalesTotalInfo totals={totals} />} />
-          <SalesStatCard label="Total collected" value={money(totals.collected)} info={<SalesTotalInfo totals={totals} />} />
-          <SalesStatCard label="Discounts given" value={money(totals.discounts)} info={<SalesTotalInfo totals={totals} />} />
-          {Math.abs(totals.tax) >= 0.005 && <SalesStatCard label="Tax collected" value={money(totals.tax)} info={<SalesTotalInfo totals={totals} />} />}
+          <SalesStatCard label="Net sales before receipt adjustments (ex tax)" value={money(totals.net)} info={<SalesTotalInfo totals={totals} adjustmentLabel={receiptAdjustmentLabel(rows)} />} />
+          <SalesStatCard label="Total collected · without sponsorship" value={money(totals.collected)} info={<SalesTotalInfo totals={totals} adjustmentLabel={receiptAdjustmentLabel(rows)} />} />
+          <SalesStatCard label="Discounts given" value={money(totals.discounts)} info={<SalesTotalInfo totals={totals} adjustmentLabel={receiptAdjustmentLabel(rows)} />} />
+          {Math.abs(totals.tax) >= 0.005 && <SalesStatCard label="Tax collected" value={money(totals.tax)} info={<SalesTotalInfo totals={totals} adjustmentLabel={receiptAdjustmentLabel(rows)} />} />}
         </SummaryCardRail>}
         {showSponsorship && sponsorship.error && <p role="alert" className="text-sm text-destructive">Sponsorship values could not be refreshed. Customer payment totals are shown separately.</p>}
 

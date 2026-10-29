@@ -1,3 +1,4 @@
+import { receiptAdjustmentLabel } from "@/lib/report-display";
 import { companyStoreScope } from "@/lib/company-store-scope";
 import { allShopsScope, allShopsTotalsScope, shopClusterKey } from "@/lib/all-shops-scope";
 import { useAllShopsLifetime } from "@/lib/use-all-shops-lifetime";
@@ -295,7 +296,7 @@ function AllShops() {
               <p className="numeric mt-3 min-w-0 text-xl font-semibold [overflow-wrap:anywhere]">
                 {showMoney && s.totals ? money(s.totals.revenue) : "—"}
               </p>
-              {showMoney && <p className="text-xs text-muted-foreground">Net sales to date · through {today}{s.totals && <FinancialInfoTip label={`${s.store.name} net sales to date`}><FinancialBreakdown rows={[["Net sales to date", money(s.totals.revenue)]]}><p>Sales after discounts, excluding tax and rounding, through {today}. Refunded bills are excluded. This summary does not include individual bill deductions.</p></FinancialBreakdown></FinancialInfoTip>}</p>}
+              {showMoney && <p className="text-xs text-muted-foreground">Net sales before adjustments to date · through {today}{s.totals && <FinancialInfoTip label={`${s.store.name} net sales to date`}><FinancialBreakdown rows={[["Net sales to date", money(s.totals.revenue)]]}><p>Sales after discounts, excluding tax and before saved receipt adjustments, through {today}. Refunded bills are excluded. This summary does not include individual bill deductions.</p></FinancialBreakdown></FinancialInfoTip>}</p>}
               {showCostMargin && showMoney && <p className="mt-1 text-sm">Gross profit to date <span className="numeric font-semibold">{s.totals ? money(s.totals.profit) : "—"}</span>{s.totals && <FinancialInfoTip label={`${s.store.name} gross profit to date`}><FinancialBreakdown rows={[["Net sales to date", money(s.totals.revenue)], ["Gross profit to date", money(s.totals.profit)]]}><p>Gross profit is net sales less cost of goods sold, before other operating expenses. This summary does not include the separate cost or bill deductions.</p></FinancialBreakdown></FinancialInfoTip>}</p>}
               <p className="text-xs text-muted-foreground">
                 {showMoney ? (
@@ -331,9 +332,9 @@ function AllShops() {
               </label>
               <span className="text-xs text-muted-foreground">{from} to {to} · Shop cards remain separate.</span>
             </div>
-            <p className="text-xs text-muted-foreground">Net sales exclude tax and rounding. Collected includes the stored bill total after discounts, tax and rounding. Refunded bills are excluded.</p>
+            <p className="text-xs text-muted-foreground">Net sales exclude tax and are before saved receipt adjustments. Collected is the final bill total after those adjustments. Refunded bills are excluded.</p>
             <SummaryCardRail label="Selected-period shop totals">
-              <Kpi label="Net sales · selected dates" value={money(live.revenue)} info={!history.loading && !history.error && <SalesTotalInfo totals={live.totals} />} />
+              <Kpi label="Net sales before adjustments · selected dates" value={money(live.revenue)} info={!history.loading && !history.error && <SalesTotalInfo totals={live.totals} adjustmentLabel={receiptAdjustmentLabel(live.feed)} />} />
               <Kpi label="Gross profit" value={money(live.profit)} info={<GrossProfitInfo revenue={live.revenue} cost={live.cost} profit={live.profit} />} />
               <Kpi label="Bills" value={String(live.bills)} />
               <Kpi label="Average basket · net sales" value={money(live.basket)} info={<FinancialBreakdown rows={[["Net sales", money(live.revenue)], ["Completed bills", String(live.bills)], ["Average basket", money(live.basket)]]}><p>Net sales ÷ completed bills for the selected dates.</p></FinancialBreakdown>} />

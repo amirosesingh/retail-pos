@@ -1,6 +1,6 @@
 # POS task tracker
 
-Last reconciled: **2026-10-27, Asia/Brunei**.
+Last reconciled: **2026-10-29, Asia/Brunei**.
 Read [../AGENTS.md](../AGENTS.md) and [PROJECT_MEMORY.md](PROJECT_MEMORY.md).
 This is the single current task ledger. Existing audit/checkpoint documents remain
 supporting evidence, not competing completion lists. Batch 0 authorized documentation
@@ -17,7 +17,7 @@ only; the owner's subsequent Batch 1 approval below authorizes its bounded fixes
 | 4 | Pending approval: atomic booking collection and receipt recovery | One authoritative financial/stock/link transaction; stable replay; canonical payment identity; ambiguous legacy records remain review-only. |
 | 5 | Pending approval: received-payment accounting and remaining sync/inventory gaps | Deposits counted once when received; pending-origin integrity; reviewed warehouse/cluster findings. Split into smaller batches where dependencies require. |
 | 6 | Scoped UI refinements DEC-23 through DEC-30 implemented/verified; broader UI audit pending approval | UI-08/10/11/12 scoped verified as recorded below. Broader audit and final physical-device regression remain separate. |
-| 7 | Approved report-only correction, DEC-32 / FIN-11 | Start from committed UI baseline; align report scope/refund totals and adjustment/sponsorship labels. Preserve checkout/receipts/stock, original records and existing business formulas. Manual source of 6,851 remains unresolved. |
+| 7 | Report-only correction implemented / scoped-verified, DEC-32 / FIN-11 | Separate commit after c514762d; align report scope/refund totals and adjustment/sponsorship labels. Preserve checkout/receipts/stock, records and formulas. Publish source to the beta PR and check CI. Owner compares originals for suspected missing bills. |
 
 Membership is **ON HOLD** throughout. Each future batch requires a recoverable
 baseline, specific files/dependencies, expected behavior, risks, regression tests,
@@ -99,6 +99,11 @@ original statements are not invented. See memory for the full approved semantics
 | DEC-30 | Apply the non-chart card loop on Windows too whenever cards would otherwise wrap into another row/column. Detect available container space rather than relying only on a phone/device breakpoint; retain the ordinary row when all cards fit. | Refines DEC-27's desktop exception: a Windows/desktop group that cannot fit must slide too. Keep card widths readable, loop real existing nodes, preserve graph exclusions and respond to window/container resizing and hidden-card changes. |
 | DEC-31 | Investigate conflicting sales/payment/sponsorship totals. Owner corrected expected all-method total collected to **6,851**, not 6,841; reported revenue around 6,489 and collected 6,468. Show without-sponsorship and including-sponsorship values clearly when applicable. | Manual expected total is evidence to reconcile, not permission to force values to match. Trace branch/cluster/date/timezone/status/payment/refund/rounding/discount sources before proposing financial corrections. Preserve checkout/receipts and original records. |
 | DEC-32 | Owner approved report-only fixes: same authorized branch scope for sales/sponsorship, consistent refunded-bill totals, and clear before/after Extra Discount and sponsorship labels. Preserve checkout, receipts, stock and stored records. | Separate reviewed commit/baseline after UI work. No permission, schema, historical financial data or checkout/receipt change; manual source of 6,851 remains a pending clarification, not a target to force. |
+| DEC-33 | Owner suspects some cashier bills were never entered and requests an Add missed bill option alongside Corrections. | Record a separate historical-sale workflow, not a fabricated report adjustment or edit of an existing bill. Investigate reuse first; stock-already-corrected handling, already-received payments and original/closed shift attribution require explicit decisions. No historical data entry, grant change or new financial write implementation in DEC-32. |
+| DEC-34 | Owner confirmed missed bills are historical sales already paid and handed over, with a required stock-handling choice. | Distinguish deducting unrecorded stock from stock already corrected; never charge or deduct twice. |
+| DEC-35 | Owner selected Review the design before implementation for Add missed bill. | FIN-13 remains proposal-only. Administrator correction access, original branch/date/cashier, received tenders, reason, optional original-shift link and current-drawer preservation were proposed, not approved for implementation. Present any migration separately before application. |
+| DEC-36 | Investigate Archive showing only four products and an inactive product apparently absent from the top metric. | Check archived versus zero-stock status, retained filters/pagination, metric definition and authorized branch/cluster scope. Do not archive, unarchive, change stock or widen access during investigation. |
+| DEC-37 | Owner clarified the expected 6,851 may include bills never entered and will check the originals. | Missing bills are suspected, not confirmed. Do not force reports or create transactions to bridge the difference; link genuine omissions to the separately reviewed FIN-13 workflow. |
 
 ## Current work register
 
@@ -113,7 +118,7 @@ No earlier chat-wide “completed” message is treated as blanket verification.
 | DOC-00 | Verified / High | Documentation-only Batch 0 completed on 2026-10-27: original AGENTS content retained verbatim; 10 Markdown files checked; local links valid; 75 unique task IDs, 21 decisions and eight terminal cases recorded. Two agent reviews reconciled PRIVATE settings, subset-scope and revocation wording. No application/runtime acceptance implied. |
 | DOC-01 | Pending / High | Maintain verified feature/dependency, per-operation permission and settings-scope matrices using existing `audit/feature-inventory.md`, audits and generators. Current 123-route/45-settings inventory is not an end-to-end pass. Expand evidence without duplicating trackers. |
 | SRC-01 | Implemented / High | Batch 1 source commit `608398c6` follows documentation `d0519d5a` and source baseline `1af373f5`, package 1.4.80; older primary folder remains 1.4.65. UI refinement follows separately. Refresh refs/source/release identity before each batch; no old folder cleanup/reset authorized here. |
-| REL-01 | Active / High | Beta PR #341 updated through `608398c6`; all reported CI gates succeeded, CodeRabbit explicitly skipped (not a review pass). Finish separate authorized UI refinements, update PR description/head and check new CI. Formal broader security review remains SEC-02; not merged/released. |
+| REL-01 | Active / High | Beta PR #341 updated through `c514762d`; all reported CI gates succeeded, CodeRabbit explicitly skipped (not a review pass). On 2026-10-29 PR remains open/clean and targets beta. Approved DEC-32 report-only correction passed local checks; commit/push it separately and inspect new-head CI. Broader security review remains SEC-02; no merge/publication recorded. |
 | REL-02 | Pending / High | Any beta merge, paired installers or native OTA: select checked immutable source and follow release runbook. Batch 0 grants no publication; exact “Publish beta now” gate remains. Record actual version/artifact/feed verification separately. |
 | REL-03 | Pending / Critical | Any new production promotion: separate beta→main PR and owner approval for that specific promotion. Earlier approvals or passes do not authorize this roadmap. |
 | REL-04 | Pending / Medium | Old build/source cleanup and signing-key preservation: prior cleanup request not fully reconciled. Inventory active checkouts/builds and unrelated work before any separately approved removal; never delete/rotate signing material. |
@@ -163,7 +168,10 @@ No earlier chat-wide “completed” message is treated as blanket verification.
 | FIN-08 | Pending / High | Offline sponsorship request/selected approval/handover/history/printing and sync remain incomplete. DEC-12 permits selected approver on PC only with offline approvals enabled. No fake zero history, unreviewed stock transaction or automatic historical repair. |
 | FIN-09 | Implemented / High | Racket/general booking intake: simplify unnecessary repeat fields; racket-only/customer-owned-string behavior, stocked materials, reservations, ready/collected/payment flow and customer display need per-workflow verification. Separate customer slip/tag is intentional. |
 | FIN-10 | Pending / Medium | Legacy records apparently saved under wrong branch or missing shift link need owner-reviewed evidence and explicit data-correction approval. Preserve original rows while diagnosing; UI branch fixes do not authorize historical rewrites. |
-| FIN-11 | Active / High | DEC-31/32: owner expects all-method collected 6,851. Bounded live SELECT confirmed configured Asia/Singapore period 2026-09-28..2026-10-27, STR1, 79 nonrefunded bills: cash 2,311 + card 3,489 + bank transfer 668 = 6,468; header/tender JSON/paid-minus-change/ledger agree. Net before saved Extra Discount adjustment 6,489.50; adjustment -21.50, tax 0; one issued sponsorship 348 yields combined 6,816; separate refunded bill 220. No broken header equations/orphan sale links found in this cohort; unexplained owner delta 383 is not auto-adjusted. Confirmed source inconsistencies: Payments includes refunded sales while Bills excludes them; Bills sponsorship all-store scope can differ from selected-company report scope. Owner approved report-only corrections; manual/local 6,851 source remains unanswered. Preserve checkout, receipts and stored records. |
+| FIN-11 | Active / High | DEC-31/32: owner expects all-method collected 6,851. Bounded live SELECT confirmed configured Asia/Singapore period 2026-09-28..2026-10-27, STR1, 79 nonrefunded bills: cash 2,311 + card 3,489 + bank transfer 668 = 6,468; header/tender JSON/paid-minus-change/ledger agree. Net before saved Extra Discount adjustment 6,489.50; adjustment -21.50, tax 0; one issued sponsorship 348 yields combined 6,816; separate refunded bill 220. No broken header equations/orphan sale links found in this cohort; unexplained owner delta 383 is not auto-adjusted. Confirmed source inconsistencies: Payments includes refunded sales while Bills excludes them; Bills sponsorship all-store scope can differ from selected-company report scope. Approved report-only corrections are implemented and scoped-verified by the evidence below. Owner will compare originals for suspected unentered bills (DEC-37); no missing bill is independently confirmed. Preserve checkout, receipts and stored records. |
+
+| FIN-12 | Pending / Medium | Independent report review found an unchanged tender-display inconsistency: `PaymentsReport.tsx` sums gross `Payment.amount`, while `daily-payment-summary.ts` subtracts represented cash change. A valid 90 bill paid with 100 cash/change 10 can therefore show collected 90 but Cash 100. Confirm affected saved representations with isolated fixtures and reuse retained-tender semantics in a separately approved correction; do not alter checkout or assume this explains FIN-11's observed zero-change cohort. |
+| FIN-13 | Pending design approval / High | DEC-33/34/35: owner confirmed already-paid historical entry with required stock choice, then requested design review before implementation. Existing posted-sale correction requires an existing ID/version; ordinary checkout requires an open shift, stamps now and deducts stock, so neither can be repurposed by bypassing guards. The proposed design below covers original attribution, received tenders, audit, retries and stock treatment. No new application write, live financial entry or migration authorized. |
 
 ### Inventory, warehouse, reports and data loading
 
@@ -176,6 +184,7 @@ No earlier chat-wide “completed” message is treated as blanket verification.
 | INV-05 | Implemented / High | Purchase cost, Total Unit Cost and retail on-hand values have calculation tests and UI; verify branch/cluster/date semantics at scale, negative signed quantities, archived items and historical cost estimates. Current source review found no separate Home-vs-Inventory formula; readiness issue is DATA-01. |
 | INV-06 | Implemented / High | Bulk import/purchase finalization progress, failure recovery, decimal costs/rounding/conflict matching and workbook-sheet selection need unified acceptance across import surfaces. Prior UI/workflow improvements do not certify concurrent native finalization. |
 | INV-07 | Pending / High | Default category/group/subcategory naming and starting quantity via purchase must be reconciled against current imports/creation paths. No real catalogue renaming or stock initialization authorized. |
+| INV-08 | Active investigation / Medium | DEC-36: Archive reportedly shows only four products; one inactive product apparently missing from top count. Read-only source trace: Archive requires archived=true after catalogue scope and retains search/advanced filters, page size25, no four-row cap; metrics intentionally exclude archived products and count active out-of-stock products separately from units. Auto-archive uses company stock totals, not just selected-branch stock. Finish live checks and identify the exact product/label before declaring missing data. Preserve branch/cluster isolation and records. |
 | REP-01 | Implemented / High | Complete paginated sales/shift history, current-shift/date-range receipt filters, branch/cluster totals, store timezone, full selected/all-shops totals and profit were patched. Verify thousands of records, midnight shifts and simultaneous management/normal clients; inspect final PR CI. |
 | REP-02 | Pending / High | Management report service exists, but `ipc-privilege.cjs:638` blanket business-channel guard blocks its installed handler with MANAGEMENT_ONLINE_ONLY. Test installed wrapper→repository with scoped complete replicas; preserve operations restrictions. |
 | REP-03 | Pending / High | Replica scope/completeness: current management discovery (`sync-endpoint.server.ts:257`) enumerates all stores; arbitrary configured subsets are not established. Separate desired scope from actual model. Do not infer completeness from schema-ready or bootstrap_7300 job name alone; verify compatible no-cutoff contract, counts/checkpoints and failed bootstrap behavior. |
@@ -221,11 +230,57 @@ No earlier chat-wide “completed” message is treated as blanket verification.
 | HOLD-01 | On hold | Membership tiers, custom member email, table consolidation and related redesign requests are deferred by owner. Preserve existing behavior/data. Only a confirmed critical shared dependency with explicit Membership-change approval permits modification. |
 
 AUTH-01/02/09 are implemented under Batch 1 with the verification limits below;
-UI-10 and active UI-08 are separately owner-approved and remain independent UI
-changes. Other application corrections
-remain pending their separate approval.
+UI-08/10/11/12 are separately approved, scoped-verified UI changes. FIN-11 has
+approved report-only corrections; its unentered-bill hypothesis is not verified.
+FIN-13 remains design-only. Other corrections require separate approval.
 No task is currently designated Blocked merely because it is difficult or pending;
 record a concrete environment/access/decision blocker if it actually stops work.
+
+## FIN-13: proposed Add missed bill design (awaiting review)
+
+This is a proposal, not implemented functionality or a new permission grant.
+
+- Entry point: an Add missed bill option beside the existing Audit/Corrections
+  links. Keep the current posted-record administrator correction boundary for
+  this first proposal; any future delegated permission needs its own decision.
+- Capture original branch, date/time interpreted in the saved store time zone,
+  original cashier, items with actual historical prices/discounts/tax, already
+  received tender amounts, original reference when available and a required
+  reason. Preserve the verified entering actor and entry timestamp separately.
+  Do not infer historical prices/costs from today's catalogue without disclosure.
+- Required stock choice, approved in principle by DEC-34: deduct unrecorded
+  quantities exactly once, or stock already corrected (no stock movement).
+  For the latter require an explanation and related adjustment reference when
+  available. Never silently alter starting stock or bypass stock policies.
+- Branch-locked terminals remain within their registered branch, including
+  administrators. Management may select only authorized branches. Product and
+  warehouse scope still follow the approved branch/cluster rules.
+- Proposed shift treatment: link the actual original shift if reliably known;
+  otherwise retain a clearly marked historical correction with unresolved shift
+  attribution. Never attach it to today's open shift just to satisfy checkout.
+  Closed-shift corrections must be visible as later adjustments, not rewrite a
+  previously issued Z report invisibly. This reporting treatment needs review.
+- Use a dedicated atomic authoritative operation with a stable idempotency key,
+  deterministic child/movement identity and an append-only audit trail. Reuse
+  existing mappings/journaling, not the ordinary checkout's current-time/open-shift
+  assumptions. Warn about a possible matching branch/reference/date/items before
+  entry; enforce persisted retry identity without conflating legitimate duplicate
+  reference numbers. Resolve concurrent online/local retries before acceptance.
+- No payment-provider charge, drawer pulse or automatic print. A later explicit
+  reprint may show the original sale date and that it was entered as a correction.
+  Proposed received-payment reporting belongs to the original payment context;
+  it must not add fresh money to today's drawer. Unknown attribution is explicit.
+- Acceptance before release: allowed/denied scope and correction access, both
+  stock choices, closed/unknown shift behavior, exact reports, timeout/retry,
+  duplicate/concurrent submission, native offline/reconnect and audit/reprint.
+  Use isolated fixtures only. Any cloud/local schema change requires a reviewed
+  migration and separate application approval; no live rollout is authorized.
+
+Existing source evidence: `audit.tsx` links to existing-record correction;
+`sale-corrections.functions.ts` requires an existing sale ID/version;
+`pos-store.tsx` ordinary recordSale requires a matching open shift and stamps now;
+`pos-db.ts` commitSale already has stable transaction identity/atomic posting.
+Do not bypass those safeguards to implement historical entry.
 
 ## Original supplied security report reconciliation
 
@@ -250,6 +305,10 @@ to a new revision. Preserve the report; do not commit credential-bearing evidenc
 
 | Evidence | Actual scope and limits |
 | --- | --- |
+| DEC-32 report-only candidate, 2026-10-27 | Independent read-only correctness review completed. Full isolated Vitest: 547 files / 3,381 tests passed after correcting two obsolete label assertions, with amount/permission/negative-visibility checks preserved. TypeScript, 14-file scoped ESLint, diff and web build passed. Sponsorship uses the sales report's authorized store IDs; completed summaries deduplicate/exclude refunds, while history/export retain explicit status in the original Bill column. No checkout/pricing/receipt/stock/formula or database writes. |
+| DEC-32 browser check, 2026-10-27 | Settled Bills/Payments matched at 80 completed bills; a new sale arrived after the earlier 79-bill snapshot. The saved Extra Discount reconciled before-adjustment net to final collections; sponsorship remained separate. At 390px the tooltip and report document stayed within the viewport, and temporary viewport was reset. Initial settings/currency hydration flicker remains DATA-01. No live business mutations were performed by the audit. |
+| Resumption, 2026-10-29 | Verified latest root/branch/HEAD/dirty files against c514762d; report changes preserved. The earlier documentation-update attempt failed because automatic approval review hit an account usage limit; it did not execute and was not an unsafe-action determination. Decisions DEC-34..37 now recorded. Restarted only the owned preview after sandbox socket/Wrangler errors; outside-sandbox server returned HTTP200 using existing .env.local without exposing values or changing configuration. New Archive investigation is read-only. |
+| Report candidate recheck, 2026-10-29 | Eight focused report/financial/cashier-permission suites / 50 tests passed after replacing test amounts with synthetic fixtures. The final application diff is the same candidate that passed the 547-file broad run; report helpers/formulas, scoped visibility, refunds and table-column positions retained. Generated build report preserved separately in stash ad285e6d16afa83078aac1c30ee6ffe4223fc9ef. Documentation checks: 77 task IDs / 37 decisions unique; Membership hold and untouched zero-byte booking migration confirmed. |
 | Documentation-only Batch 0, 2026-10-27 | All 10 intended Markdown files checked for local links and allowed diff scope; original HEAD AGENTS retained as exact text prefix, below 32 KiB; 75 task IDs and 21 decisions unique; eight required cases and explicit Membership hold present; git diff --check passed. Two independent agent reviews completed and actionable corrections applied. Pre-existing drafts preserved, empty booking migration unchanged and signing-key path still ignored. No app tests/build/SQL or runtime data changes performed for this batch. |
 | Batch 1 + DEC-23/24, 2026-10-27 candidate | Independent pre-patch boundary investigation and one fresh candidate review; concrete compatibility findings corrected. Full isolated Vitest: 543 files / 3,344 tests passed; TypeScript and touched security/UI ESLint passed; web production build passed with existing bundler/config warnings. Post-review native attribution/compatibility follow-up: 8 files / 72 tests passed; financial/source-contract follow-up: 11 files / 94 tests passed. No real checkout, stock, credentials, terminal enrollment or database writes performed. |
 | Test-environment qualification | Windows sandbox module collection failed before assertions; authorized external-sandbox mocked runs succeeded. Initial broad run also exposed five obsolete source-contract assertions, now corrected, and the pre-existing empty untracked booking migration. Final full run temporarily held only that zero-byte draft under a non-SQL filename and restored it unchanged in finally; it is not part of the PR or applied SQL. Generated build health report restored; no test failure was hidden by deleting a draft or changing business logic to satisfy strings. |
@@ -296,16 +355,23 @@ Do not stage, delete or treat them as part of documentation-only Batch 0.
   They refine coverage/reporting, not the approved application-change boundary.
 - DOC-00 is verified and committed locally as d0519d5a. The owner separately
   approved Batch 1 (DEC-22); no approval is inferred for other AUTH/FIN/SET work.
-- Batch 1 baseline/code: d0519d5a → 608398c6, pushed to beta PR #341 with all
-  reported CI gates successful (CodeRabbit skipped). Separate UI changes are
-  ready to commit; preserve pre-existing booking/scratch drafts. Origin/beta
+- Batch 1 baseline/code: d0519d5a → 608398c6, followed by independent UI
+  commit c514762d, pushed to beta PR #341 with all reported CI gates successful
+  (CodeRabbit skipped). Preserve pre-existing booking/scratch drafts. Origin/beta
   e86bf889 remains the inspected PR base. Continue without mixing older source.
 - AUTH-01/02/09 source corrections and isolated regressions implemented. Preserve
   recorded limitations; do not mark all eight device scenarios globally verified.
-  Commit scoped-verified UI-08/10/11/12 separately, then use that recoverable
-  baseline for newly approved report-only FIN-11/DEC-32 corrections. Preserve
+  UI-08/10/11/12 are committed as c514762d. Approved report-only FIN-11/DEC-32
+  corrections passed local checks and await a separate commit/push. Preserve
   original records/calculations; show sponsorship separately from cash receipts.
-  Manual/local source of 6,851 remains unanswered and must not be guessed.
+  Owner will compare originals for suspected unentered bills behind the expected
+  6,851 (DEC-37); no missing bill is independently confirmed.
+- FIN-13 is proposed design only. INV-08 Archive/inactive metrics is under
+  read-only investigation; exact product/visible counter label still needed.
+- Generated UI-build health metadata was preserved in scoped Git stash
+  c935d915326ba6f7563dd391b7e195adcf8b3b18 after approval review rejected a restore.
+  Later report-build metadata is preserved in stash
+  ad285e6d16afa83078aac1c30ee6ffe4223fc9ef. Do not drop either stash.
 - Recovery: code-only batch must be a separate reviewed commit, reversible without
   rewriting business data; no live SQL migration, role grant or terminal reassignment
   is part of Batch 1. An expanded architecture/schema need requires new approval.
