@@ -118,6 +118,18 @@ original statements are not invented. See memory for the full approved semantics
 
 ## Current work register
 
+DEC-57: owner APPROVE for administrator Add missed bill implementation after
+reviewed design. New branch codex/add-missed-bill from current beta bce925a2;
+preserve all unrelated untracked files. Capture historical branch/date/cashier/
+items/prices/discount/tax/receivedpayments/reason/originalref and required stock
+choice. Dedicated atomic/idempotent online service; no providercharge/drawer/
+autoprint and no reuse of normal checkout bypass. Preserve closed-shift guard:
+sale.shift_id NULL, validate/store originalShiftId in correction audit metadata,
+so historical reports gain record without today'sdrawer or issuedZ rewrites.
+Web/mobile/Electron use hosted online endpoint; offline atomic entry is pending,
+not silently queued. Live schema application remains separately approved.
+Use agents for backend and native/report review; Membership remains ON HOLD.
+
 DEC-56: owner requests updating beta. Prepare reviewed source commit/PR341 update
 and merge into beta only after required checks pass. No production promotion,
 installer/OTA publication or live sync migration application. Final candidate
@@ -316,7 +328,7 @@ No earlier chat-wide “completed” message is treated as blanket verification.
 | FIN-11 | Implemented / pending record reconciliation / High | DEC-31/32: owner expects all-method collected 6,851. Bounded live SELECT confirmed configured Asia/Singapore period 2026-09-28..2026-10-27, STR1, 79 nonrefunded bills: cash 2,311 + card 3,489 + bank transfer 668 = 6,468; header/tender JSON/paid-minus-change/ledger agree. Net before saved Extra Discount adjustment 6,489.50; adjustment -21.50, tax 0; one issued sponsorship 348 yields combined 6,816; separate refunded bill 220. No broken header equations/orphan sale links found in this cohort; unexplained owner delta 383 is not auto-adjusted. Report-only scope/refund/label corrections committed and pushed as eb970d1b, scoped-verified below. Owner will compare originals for suspected unentered bills (DEC-37); no missing bill is independently confirmed. Preserve checkout, receipts and stored records. |
 
 | FIN-12 | Pending / Medium | Independent report review found an unchanged tender-display inconsistency: `PaymentsReport.tsx` sums gross `Payment.amount`, while `daily-payment-summary.ts` subtracts represented cash change. A valid 90 bill paid with 100 cash/change 10 can therefore show collected 90 but Cash 100. Confirm affected saved representations with isolated fixtures and reuse retained-tender semantics in a separately approved correction; do not alter checkout or assume this explains FIN-11's observed zero-change cohort. |
-| FIN-13 | Pending design approval / High | DEC-33/34/35: owner confirmed already-paid historical entry with required stock choice, then requested design review before implementation. Existing posted-sale correction requires an existing ID/version; ordinary checkout requires an open shift, stamps now and deducts stock, so neither can be repurposed by bypassing guards. The proposed design below covers original attribution, received tenders, audit, retries and stock treatment. No new application write, live financial entry or migration authorized. |
+| FIN-13 | Implemented; isolated verification passed; live migration and device verification pending / High | DEC-33/34/35: owner confirmed already-paid historical entry with required stock choice, then requested design review before implementation. Existing posted-sale correction requires an existing ID/version; ordinary checkout requires an open shift, stamps now and deducts stock, so neither can be repurposed by bypassing guards. The proposed design below covers original attribution, received tenders, audit, retries and stock treatment. No new application write, live financial entry or migration authorized. |
 
 ### Inventory, warehouse, reports and data loading
 
@@ -383,7 +395,7 @@ FIN-13 remains design-only. Other corrections require separate approval.
 No task is currently designated Blocked merely because it is difficult or pending;
 record a concrete environment/access/decision blocker if it actually stops work.
 
-## FIN-13: proposed Add missed bill design (awaiting review)
+## FIN-13: original proposed design (approved and superseded by DEC-57 implementation)
 
 This is a proposal, not implemented functionality or a new permission grant.
 
@@ -550,3 +562,7 @@ Do not stage, delete or treat them as part of documentation-only Batch 0.
   restarting or checking a server is not proof of correct SQL or authorization.
 - Before stopping, record any new decision, task change, approval and verification
   limit here. Preserve Membership hold and every unresolved row.
+
+## FIN-13 implementation handoff — 2026-10-29
+DEC-57 supersedes earlier design-only statements above. Implemented on codex/add-missed-bill from beta bce925a2. Administrator-only online historical entry, required stock choice, original attribution, atomic retry protection and historical receipt marking are implemented. Original shift is audit-only; operational sale/payment shift remains NULL to preserve issued shift reports and the current drawer. No live migration or real sale was performed.
+Verification: 554 suites / 3,430 tests passed; 11 isolated PGlite scenarios passed; TypeScript and scoped ESLint passed; final registry/dialog checks 3 tests passed. Installed Electron/mobile transport, replica propagation and physical printing remain unverified. Browser interaction unavailable because browser use is disabled in Work settings. See database/add-missed-bill-review.md. Live database application requires separate project-specific approval. Membership remains ON HOLD.

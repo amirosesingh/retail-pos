@@ -2,6 +2,7 @@ import { formatTime as systemTime } from "@/lib/time-zone";
 import { posCurrency } from "./currency";
 import { formatDate as posDisplayDate, formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { receiptBarcode } from "./receipt-barcode";
+import { isMissedBillReference } from "./missed-bill-reference";
 import { sponsorshipReceiptDetails } from "./sponsorship-receipt";
 import type { SponsorshipRecord } from "./sponsorship";
 import { tenderTotals, shiftSalesOf } from "./shift-close";
@@ -423,7 +424,7 @@ function saleBody(sale: Sale, member: Member | null, kind: ReceiptKind) {
   setTokens({
     ...placeTokens(),
     ...dateTokens(sale.createdAt),
-    receipt_number: sale.correctedAt ? `Corrected ${sale.receiptNo}` : sale.receiptNo,
+    receipt_number: sale.correctedAt ? `Corrected ${sale.receiptNo}` : isMissedBillReference(sale.receiptNo) ? `Historical ${sale.receiptNo}` : sale.receiptNo,
     cashier: sale.cashier ?? "",
     customer_name: member?.name ?? "",
     customer_code: member?.code ?? "",
@@ -492,8 +493,8 @@ function saleBody(sale: Sale, member: Member | null, kind: ReceiptKind) {
       ${
         // Tax is settings-driven: no row at all when tax is off or the bill
         // carries none.
-        receiptCfg.showTax && taxCfg.enabled && sale.tax
-          ? `<tr><td>Tax ${taxCfg.rate}%${taxCfg.mode === "inclusive" ? " incl." : ""}</td><td class="r">${fmt(sign * sale.tax)}</td></tr>`
+        receiptCfg.showTax && (isMissedBillReference(sale.receiptNo) || taxCfg.enabled) && sale.tax
+          ? `<tr><td>${isMissedBillReference(sale.receiptNo) ? "Tax (original bill)" : `Tax ${taxCfg.rate}%${taxCfg.mode === "inclusive" ? " incl." : ""}`}</td><td class="r">${fmt(sign * sale.tax)}</td></tr>`
           : ""
       }
       ${
@@ -518,6 +519,7 @@ function saleBody(sale: Sale, member: Member | null, kind: ReceiptKind) {
     : "";
 
   return renderDocumentSections(`${sectionSlot("header", header(subtitle, "sale"))}
+    ${isMissedBillReference(sale.receiptNo) ? '<div class="c tag">Historical sale · entered later · payment already received</div>' : ""}
     ${sale.exchangeOfReceiptNo ? `<div class="c b big">EXCHANGE RECEIPT</div>` : ""}
     ${sectionSlot("details", `<table>
       <tr><td>Receipt</td><td class="r b">${sale.correctedAt ? "Corrected " : ""}${esc(sale.receiptNo)}</td></tr>

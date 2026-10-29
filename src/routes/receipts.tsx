@@ -52,6 +52,9 @@ import {
 } from "@/lib/record-edit-flow";
 import { billCorrectionTotals } from "@/lib/bill-correction";
 import { useManagerGate } from "@/lib/manager-gate";
+import { AddMissedBillDialog } from "@/platforms/web/components/pos/AddMissedBillDialog";
+import { rowToSale } from "@/core/api/pos-db";
+import { isMissedBillReference } from "@/lib/missed-bill-reference";
 
 export const Route = createFileRoute("/receipts")({
   head: () => ({
@@ -484,7 +487,21 @@ function ReceiptVault() {
               Viewing data for {currentStore.name} only · signed in as {user?.name}
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex min-w-0 flex-wrap gap-2">
+            <AddMissedBillDialog onSaved={result => {
+              if (historyBranch.current !== result.storeId) return;
+              if (result.receiptJson) {
+                const receipt = JSON.parse(result.receiptJson);
+                const sale = rowToSale({ ...receipt.sale, sale_items: receipt.items });
+                setOlder(previous => [sale, ...previous.filter(existing => existing.id !== sale.id)]);
+                setCloudHistory(previous => new Set(previous).add(sale.id));
+                setSelectedId(sale.id);
+                setScope("all");
+              } else {
+                setQuery(result.receiptNo);
+                toast.info("Use Find exact to load the saved historical bill from cloud history.");
+              }
+            }} />
             <div className="relative">
               <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -506,6 +523,7 @@ function ReceiptVault() {
             </Button>
           </div>
         </header>
+        {selected && isMissedBillReference(selected.receiptNo) && <p className="rounded-md border px-3 py-2 text-sm text-muted-foreground">Historical sale entered later. Payments were already received; this bill is not part of today's drawer.</p>}
 
         <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-card p-3">
           <div className="flex gap-2">

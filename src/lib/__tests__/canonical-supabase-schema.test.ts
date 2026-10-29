@@ -217,6 +217,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261026231535_verified_native_transfer_approval.sql",
       "supabase/migrations/20261026232513_paged_secure_shift_history.sql",
       "supabase/migrations/20261029064933_preserve_product_owner_on_stale_sync.sql",
+      "supabase/migrations/20261029073121_add_missed_bill_historical_entry.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

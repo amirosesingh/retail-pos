@@ -102,6 +102,16 @@ transfer; this does not narrow authorized management's separate All Shops cards.
 
 ## Membership: ON HOLD
 
+DEC-57 approved Add missed bill implementation (supersedes FIN-13 design-only
+status). Administrator-only historical, already-paid entry uses a separate atomic
+online service and requires an explicit stock-handling choice. Record original
+sale/payment time and cashier; keep operational shift IDs NULL and original shift
+as audit metadata, preserving current drawer and issued shift snapshots. No
+provider charge/drawer pulse/auto print. Web/mobile/Electron use hosted online
+transport; offline historical creation is deferred. Migration application is
+separately approved, never inferred from code approval. See
+[implementation/migration review](database/add-missed-bill-review.md).
+
 DEC-52 selected-branch Inventory classification: Active means quantity>0, Archive
 means quantity<=0 with explicit negative warning. It is a read-only catalogue
 view, not a change to global product archived flags or another branch's status.
