@@ -81,6 +81,7 @@ import { cn } from "@/lib/utils";
 import { inventoryMetrics, inventoryUnitMargin, isLowStock, needsCostReview } from "@/lib/inventory-metrics";
 import { AnimatedMetric } from "@/platforms/web/components/pos/AnimatedMetric";
 import { InventorySummaryCards } from "@/platforms/web/components/pos/InventorySummaryCards";
+import { InventoryCatalogueStatus } from "@/platforms/web/components/pos/InventoryCatalogueStatus";
 import { totalUnitCost } from "@/lib/total-unit-cost";
 import { TotalUnitCostDialog } from "@/platforms/web/components/pos/TotalUnitCostDialog";
 
@@ -329,6 +330,23 @@ function Inventory() {
     () => inventoryMetrics(catalogProducts, currentStore.id),
     [catalogProducts, currentStore.id],
   );
+  const archivedCount = useMemo(
+    () => catalogProducts.filter(product => product.archived === true).length,
+    [catalogProducts],
+  );
+  // Describe only filters the rows above actually apply; toggling Archive retains them.
+  const appliedFilters = [
+    settledQuery.trim() && "Search",
+    catFilter !== "all" && `Category: ${catFilter}`,
+    groupFilter !== "all" && `Group: ${groupFilter}`,
+    subFilter !== "all" && `Sub-category: ${subFilter}`,
+    skuFilter.trim() && "SKU / barcode",
+    stockFilter !== "all" && `Stock: ${{ in: "In stock", out: "Out of stock", low: "Low stock", negative: "Negative stock" }[stockFilter] ?? stockFilter}`,
+    showMoney && costReviewOnly && "Cost review",
+    minPrice !== "" && `Min price: ${minPrice}`,
+    maxPrice !== "" && `Max price: ${maxPrice}`,
+    minMargin !== "" && (showMoney ? `Min margin: ${minMargin}%` : "Margin filter"),
+  ].filter((filter): filter is string => typeof filter === "string" && filter.length > 0);
 
   const totalUnitCostValue = useMemo(() => {
     let value = 0;
@@ -361,20 +379,6 @@ function Inventory() {
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Inventory · {currentStore.name}</h1>
-            <p className="text-sm text-muted-foreground page-description">
-              {!inventoryReady ? <span role={loadPhase === "failed" ? "alert" : "status"}>{loadPhase === "failed" ? "Catalogue unavailable" : "Loading catalogue…"}</span> : <>
-              {metrics.products > 0 ? <><AnimatedMetric value={metrics.products} /> active products</> : "No active products at this branch"}
-              {showStockValue && Math.abs(metrics.costValue) >= 0.005 && (
-                <>
-                  {" · "}purchase cost value <span className="numeric [overflow-wrap:anywhere]">{money(metrics.costValue)}</span>
-                </>
-              )}
-              {metrics.lowStock > 0 && <span className="text-warning">
-                {" · "}
-                <AnimatedMetric value={metrics.lowStock} /> at or below reorder level (positive stock)
-              </span>}
-              </>}
-            </p>
           </div>
           <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:flex-wrap lg:w-auto lg:justify-end">
             <div className="col-span-2 flex w-full min-w-0 items-center gap-2 sm:w-auto">
@@ -917,6 +921,10 @@ function Inventory() {
             )}
           </div>
         </header>
+        <InventoryCatalogueStatus ready={inventoryReady} loadPhase={loadPhase} activeCount={metrics.products} archivedCount={archivedCount} shownCount={rows.length} showArchived={showArchived} filters={appliedFilters}>
+          {showStockValue && Math.abs(metrics.costValue) >= 0.005 && <p>Active purchase cost value <span className="numeric [overflow-wrap:anywhere]">{money(metrics.costValue)}</span></p>}
+          {metrics.lowStock > 0 && <p className="text-warning"><AnimatedMetric value={metrics.lowStock} /> at or below reorder level (positive stock)</p>}
+        </InventoryCatalogueStatus>
         {showMoney && costReviewOnly && <p role="status" className="rounded-xl border px-4 py-3 text-sm text-muted-foreground">Showing items with missing, zero or invalid cost. Open an item to review it using your existing edit permissions. Zero may be intentional for a free item; no costs are changed automatically.</p>}
 
         <InventorySummaryCards metrics={metrics} ready={inventoryReady} loadPhase={loadPhase} showStockValue={showStockValue} totalUnitCostValue={totalUnitCostValue} productLabel="Active products" />

@@ -68,6 +68,12 @@ The manual expected total may include unentered bills; the owner will compare
 the originals (DEC-37). Do not treat a suspected omission as an existing record
 that may be invented, overwritten or silently reattributed.
 
+On 2026-10-29 the owner approved UI-only Archive clarification (DEC-38): display
+the archived-product count separately from active-stock metrics, identify the
+current Active/Archived view and disclose filters limiting it. Preserve product
+status, branch/cluster catalogue visibility, stock and valuation calculations.
+This is not approval to automatically archive every zero-stock branch row.
+
 ## Membership: ON HOLD
 
 Do not redesign, activate or modify Membership. Preserve existing functionality
@@ -80,7 +86,7 @@ tier/email enhancement and consolidation requests remain deferred in HOLD-01.
 | Item | Recorded baseline; re-check every session |
 | --- | --- |
 | Development checkout | `D:/Retail POS/retail-pos-main/retail-pos-main/work/security-review-fixes-beta` |
-| Branch / source checkpoint | `codex/shift-variance-colors` / `c514762d98dc5d4fee925035ce0086ef23520037`; approved report-only working changes awaiting separate commit |
+| Branch / source checkpoint | `codex/shift-variance-colors` / report-only commit `eb970d1b21e7d7e5def4ad5d305cc523882f8414` after separate UI checkpoint `c514762d`; re-check HEAD for later approved Archive UI work |
 | Source package version at that checkpoint | `1.4.80`; not an assertion of the latest published installer version |
 | Existing review | [PR #341](https://github.com/amirosesingh/retail-pos/pull/341), target `beta`; source/merge/check state must be refreshed before acting |
 | Last inspected remote refs | `origin/beta` `e86bf889`; `origin/main` `2f404e6f` (stable 1.4.79). Cached observations, not current remote guarantees. |
