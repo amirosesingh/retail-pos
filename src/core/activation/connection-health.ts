@@ -9,8 +9,8 @@
  * driver in the Electron main process); this module only asks the bridge.
  */
 import { localConfigurationBridge } from "@/core/local-db/local-db";
-import { supabaseExternal } from "@/integrations/supabase/external-client";
-import { hasSupabaseConfig } from "@/lib/external-supabase-config";
+import { desktopSupabaseFetch } from "@/lib/desktop-supabase-fetch";
+import { hasSupabaseConfig, supabaseConfig } from "@/lib/external-supabase-config";
 import { awaitProfileHydrated } from "@/lib/connection-profile";
 import { clearConnectivityIssue } from "@/lib/session-expiry";
 import { isWindowsShell } from "@/platform-config/features";
@@ -53,11 +53,12 @@ export type HealthReport = {
 // A phone on mobile data regularly needs more than a second for the first
 // call of a session (DNS + TLS on a cold connection). Calling that "offline"
 // is what sent a correctly configured terminal back to the setup screen, so
-// the first probe of a launch is given a realistic budget and later probes,
-// which reuse a warm connection, stay quick.
+// web/mobile probes get a realistic budget even on a warm connection. A slow
+// responding central service is not evidence that the network disappeared.
+// Desktop keeps its shorter budget so ready local SQL remains available.
 const CLOUD_TIMEOUT_FIRST = 15_000;
 const CLOUD_TIMEOUT_DESKTOP = 5_000;
-const CLOUD_TIMEOUT_WEB_MOBILE = 8_000;
+const CLOUD_TIMEOUT_WEB_MOBILE = 15_000;
 const LOCAL_TIMEOUT = 800;
 const CACHE_MS = 2000;
 
@@ -124,21 +125,32 @@ async function probeCloudVerdict(signal?: AbortSignal): Promise<CloudVerdict> {
   // WebView network hints can be stale after foregrounding. Only the bounded
   // request may decide whether the configured backend is reachable.
   try {
-    const limited = supabaseExternal.from("public_flags").select("key").limit(1);
-    const request =
-      signal && typeof limited.abortSignal === "function" ? limited.abortSignal(signal) : limited;
-    const { error } = await request;
-    // Some query-builder versions cannot cancel the underlying fetch. In that
-    // case the promise may settle after our timeout; never let that expired
-    // result overwrite the newer timeout/recovery verdict.
+    // Connectivity must not wait for the staff client's Auth lock or token
+    // refresh. This public, one-row probe uses only the operator's configured
+    // project/key; protected data still uses its existing verified identity.
+    const { url, key } = supabaseConfig();
+    const headers: Record<string,string> = { apikey: key };
+    if (!key.startsWith("sb_publishable_") && !key.startsWith("sb_secret_"))
+      headers.Authorization = `Bearer ${key}`;
+    const response = await desktopSupabaseFetch(`${url.replace(/\/+$/, "")}/rest/v1/public_flags?select=key&limit=1`, {
+      method: "GET", headers, signal, cache: "no-store",
+    });
+    // An expired response must not overwrite a newer timeout/recovery verdict.
     if (signal?.aborted) return "unreachable";
-    if (!error) {
+    if (response.ok) {
       diagnosis = { issue: "none" };
       return "verified";
     }
-    const msg = error.message ?? "";
-    const status = Number((error as { status?: unknown }).status) || undefined;
-    const code = String((error as { code?: unknown }).code ?? "");
+    const status = response.status;
+    // Gateway failures are not credential judgments, even when their body
+    // mentions Auth/JWT/key errors. They also need no response-body parsing.
+    if (status === 408) { diagnosis = { issue: "timeout", status }; return "unreachable"; }
+    if (status === 429) { diagnosis = { issue: "rate-limited", status }; return "unreachable"; }
+    if (status >= 500) { diagnosis = { issue: "service-error", status }; return "unreachable"; }
+    const error = await response.json().catch(() => null) as { message?: string; code?: string } | null;
+    if (signal?.aborted) return "unreachable";
+    const msg = error?.message ?? "";
+    const code = String(error?.code ?? "");
     // A rejected key is a configuration fault, not a network fault: saying
     // "offline" here is what let a wrong key look like a working connection.
     if (/invalid api ?key/i.test(msg)) {
@@ -146,7 +158,9 @@ async function probeCloudVerdict(signal?: AbortSignal): Promise<CloudVerdict> {
       return "rejected";
     }
     if (status === 401 || /jwt|unauthorized|401/i.test(msg)) {
-      diagnosis = { issue: "authentication", status };
+      // This request carries only the configured public key, never a staff
+      // bearer. Its refusal cannot establish that an operator session expired.
+      diagnosis = { issue: "configuration", status };
       return "rejected";
     }
     // PostgREST only reaches table/RLS permission evaluation after accepting
@@ -171,9 +185,7 @@ async function probeCloudVerdict(signal?: AbortSignal): Promise<CloudVerdict> {
       diagnosis = { issue: "none", status };
       return "verified";
     }
-    if (status === 429) diagnosis = { issue: "rate-limited", status };
-    else if (status && status >= 500) diagnosis = { issue: "service-error", status };
-    else diagnosis = { issue: "transport", status };
+    diagnosis = { issue: "transport", status };
     return "unreachable";
   } catch {
     if (signal?.aborted) return "unreachable";
