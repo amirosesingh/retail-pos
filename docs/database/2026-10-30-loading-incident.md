@@ -80,3 +80,64 @@ Application corrections: bounded transient-only startup recovery on fresh succes
 Verification: 563 suites / 3,534 tests, TypeScript, scoped ESLint and independent review passed. The exact previously failed Node CI group passed 78/78 after its stale immediate-callback assertion was updated to verify the intended 250ms coalescing, branch/logout cancellation and stale-channel rejection. No application behavior was changed by that test correction. An unrelated empty booking migration was restored after test discovery hold.
 
 Live Authentication and Data API recovery remain unverified. The prepared branch-sync SQL migration has not been applied. The confirmed remaining issue requires investigation of the hosted Supabase service/database responsiveness; do not widen RLS, rewrite auth grants, change PINs or disable TLS as a speculative workaround. No additional restart, infrastructure upgrade or billing change is authorized by this checkpoint.
+
+## Manual-query chronology and I/O wait — 30 October, 19:34 Brunei
+
+The owner clarified that yesterday's edits were manual SQL in this chat/SQL Editor, possibly under another account. Migration history therefore cannot exclude those edits. An independent agent paginated the actual chat history (including browser SQL actions), and the local frozen repair manifest independently confirms the29October repair timestamp. Findings:
+
+| Local date/time | Verified action and limitation |
+| --- | --- |
+| 27 October,07:14–07:57 | Chat turn contains successful application of cluster-catalogue isolation and the other three approved access/history migrations. The expensive catalogue logic was not first deployed on29October in the recovered history. |
+| 29 October,approximately14:07–14:27 | Archive/trigger/function-definition SELECT preflight checks; no schema mutation found. |
+| 29 October,14:43:49 | Exact594-product ownership repair. Call completed6.095seconds; immediate count check2.267seconds. Changes to stock, SKU, prices and other business fields were guarded against. Normal history/feed/version effects can create a finite synchronization burst. |
+| 29 October,14:47 onward | Ownership-preserving sync patch prepared but explicitly not applied; live readback still shows the old conflict-owner assignment. |
+| 29 October,15:28 onward | Missed-bill migration prepared but explicitly not applied. |
+
+No29October schema/policy DDL was found in the recovered chat. There are no later evening29October turns in the recovered record; this does not exclude unrecorded/manual actions outside it or establish the exact onset of the outage.
+
+Live catalog inspection at19:31–19:34 confirms the set-based browser products policy is active, while native service bootstrap/counts still use per-product catalogue checks. The product-owner index and three inspected transfer indexes are valid/ready. Catalogue-reading SECURITY DEFINER helpers run as postgres with BYPASSRLS; no direct RLS recursion was demonstrated. A PostgREST timezone metadata query was active23seconds, without a lock blocker, and no POS bootstrap was active in that snapshot.
+
+Statistics reset at18:48:28 during the owner restart. No completed matching POS bootstrap/count/delta or Realtime calls appeared in the queried post-reset statement statistics. Completed internal pooler-authentication and migration-history operations remain slow. These are elapsed execution times, not host CPU attribution; failed/cancelled queries may be absent from completed statistics. Do not interpret zero post-reset user-table estimates as deleted business records.
+
+The owner now reports CPU about97% with about91% I/O wait. These are owner-reported dashboard values; do not add them together or claim independently verified current CPU. High I/O wait points toward storage waiting, including possible disk-budget/baseline limits or memory/swap pressure. It does not prove which cause applies. SQL track_io_timing is off, so zero block read/write timing cannot rule out slow storage; database block counters do not cover all host/system-disk/swap or time-zone filesystem reads. No heavy catalogue query or EXPLAIN ANALYZE was executed live.
+
+Official references: [Supabase High Disk I/O](https://supabase.com/kb/troubleshooting/exhaust-disk-io), [memory and swap](https://supabase.com/kb/troubleshooting/memory-and-swap-usage-explained-aPNgm0), and [PostgREST timezone startup performance](https://github.com/PostgREST/postgrest/issues/5100). Match current I/O wait, system/data disk latency/throughput, budget and RAM/swap over the same window before deciding on a correction. Log-query connector failures currently prevent fresh onset correlation. No new backup, repair, schema/configuration mutation, restart, rollback or data change was performed by this audit. Backup verification remains a prerequisite to repair.
+
+## Fresh service probes and dashboard inspection — 30 October, 19:47 onward
+
+The owner asks to fix continuing PostgREST unhealthiness and production connection warnings, then supplies a newer approximately60% I/O-wait/28%idle reading and requests direct dashboard inspection. Keep cluster rules unchanged and retain backup-first. This investigation changed only report filters/navigation and these local notes, not application code or live service/database configuration.
+
+| Evidence | Result |
+| --- | --- |
+| Configured public Data API probe around19:47 Brunei | HTTP503, PGRST002, 2,437ms: `Could not query the database for the schema cache. Retrying.` No protected records or credentials printed. |
+| Follow-up Data API probe at19:49:57 Brunei | Same HTTP503/PGRST002 in1,355ms after an automatic recovery interval. |
+| Auth health probe | HTTP200 in333ms; does not verify credential sign-in or refresh-token database work. |
+| Database activity19:46:30 | Six client connections, no other active query or idle transaction in that snapshot. |
+| Database activity19:48:17 | Authenticator running exact bare `SELECT name FROM pg_timezone_names`, then only1second old, zero blockers. This sample alone is not another confirmed timeout. |
+| Management project metadata | ACTIVE_HEALTHY; not proof of Data API readiness. PostgreSQL17.6, timezoneUTC; no inspected role-level custom pgrst schema/pre-request overrides. |
+
+Browser URL verification now succeeds. Refreshed Database Health, then selected the read-only last-ten-minute window19:41–19:51Brunei. CPU summary66.73%, chart dominated by I/O wait; memory usage425.64MB; memory commitment1.41GB markedSEVERE; data-disk summary1IOPS and22.3KB/s; six connections. The previous60minute view showed CPU81.22%, illustrating differing report summaries/windows. The separate Infrastructure view shows a week-scaleOct23–Oct30 chart with CPU93%, memory81%, disk I/O balance98%, and node tile CPU97%/RAM72%/11of60connections without an aligned timestamp. Do not call the discrepancy a calculation bug or compare these as the same instantaneous measurement.
+
+A specific historical19:13memory tooltip showed totalRAM433.92MB, Used303.84MB and cache/buffers123.09MB. Allocated swap415.23MB was displayed95.69%, mathematically relative to RAM, not the1GB swap capacity. Cache is reclaimable; allocated swap alone does not establish active swapping. Committed memory is Linux Committed_AS (promised memory), not actual physical/RSS usage; retain its exact label. Zero/gapped samples were present and must not be treated as successful idle/recovery measurements. See [metric definitions](https://supabase.com/docs/guides/observability/reports).
+
+Infrastructure disk usage29% (about568MBof1.93GB; database270.6MB, WAL128MB, system169.5MB). Neither this nor the98%I/O-balance summary supports a claim that disk space or burst balance is exhausted. Device-specific swap-in/out rates and storage latency/queue are still missing. Nano uses shared compute/up to0.5GBRAM; no paid resizing, plan or billing change was made. The displayed17.11.0.011 upgrade is a PostgreSQL project upgrade, not evidence of an available PostgREST-onlyv16 update. Auth/PostgREST version fields did not populate during this inspection. Do not click Upgrade project speculatively.
+
+### Provider escalation draft — prepared, not sent
+
+Project: ROSEGILL, rosegill0011@gmail.com's Org (`bjxgimekljzlnwejuawj`), pos (`qhrufhtbeguxydenzfey`), Sydneyap-southeast-2. APIhttps://qhrufhtbeguxydenzfey.supabase.co. Postgres17.6.1.155, PostgREST14.5 observed earlier. Owner restart18:48:29Brunei did not recover the Data API. Public read probes still return503/PGRST002 at19:47 and19:49:57. Earlier schema-cache57014 errors and47/54second timezone metadata samples exist; current activity reconfirms that exact query. Auth health responds but prior realtokenrequests failedconnecting tolocalhostPostgres. No current lock blocker/connection exhaustion demonstrated. Recent dashboard shows I/O-dominated host time and severe memory commitment; no evidence establishes disk-full, exhausted I/O credits or actual swap-thrashing rate.
+
+Please investigate project-specific host/system-disk/data-disk latency and errors, swap-in/out/available-memory pressure and PostgREST cache-retry failures. Confirm the exact latest failing schema-cache SQL stage and available supported PostgREST service recovery/version remediation. Avoid business schema replay, permission changes or deleting audit/feed records. The owner requires a verified recoverable backup before any repair; it is not yet available. Any infrastructure action, interruption or paid change needs a separate reviewed proposal/approval. This draft has not been submitted to Supabase or anyone else.
+
+Fresh log evidence remains blocked: plugin query_logs returns an internal error and the Unified Logs browser view remained loading during the bounded inspection. The public status page reports operational while Studio shows a technical-issue banner; neither identifies this project's root cause. No recovery or complete root-cause verification is claimed.
+
+## Later recovery and owner restart — 30 October, 20:15–20:24 Brunei
+
+Owner upgraded the organization to Pro. Browser at20:17 confirms Pro but still Nano compute; pg_postmaster_start_time remains18:48:29, max_connections60/shared_buffers224MB. Do not describe this as completed Micro resizing. [Official compute guidance](https://supabase.com/docs/guides/platform/compute-and-disk) explicitly says existing Nano is not automatically resized because of downtime.
+
+Fresh public probes20:16: DataAPI200(11,195ms), Auth health200(3,117ms), Storage status200(1,051ms). PGRST002 is no longer a continuous observed failure in that sample; latency and database-backed authorization/operations remain unverified. One SQL connection timed out while a later lightweight query succeeded.
+
+Log access recovered. Fresh20:10–20:19 records identify57014 from service_role pos_sync_bootstrap and anon terminal_token_heartbeat. The two earliest exact PostgreSQL query entries are20:10:27 and20:10:52, both bootstrap. Later PostgREST entries corroborate bootstrap20:15:48/20:18:49 and heartbeat20:16–20:18. Storage warnings show internal management health requests aborted after roughly4.6–5seconds. Do not alter bucket/table permissions based on those warnings. The prepared branch-sync set helper is still absent and per-row counts predicate still installed.
+
+The owner then restarted the project. At20:23:50, Management statusRESTARTING, DataAPI521 and Storage status200. Wait for restart completion/new start time before a new steady-state conclusion; do not issue another restart. No agent-side infrastructure/schema/data changes were performed.
+
+Backup attempt20:20:52 did not produce a usable archive: pg_dump process exited and the private .inprogress file is zero bytes. Native tools/TLS certificate material are prepared and verified; password was not supplied in chat or commands. No roles backup, archive-content validation or isolated restore completed. Correct the local interactive prompt, then retry after service readiness. No repair may rely on this failed attempt. Read the latest TASK_TRACKER checkpoint before acting on the older support draft above.

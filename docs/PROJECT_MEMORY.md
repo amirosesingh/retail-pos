@@ -1,6 +1,6 @@
 # POS project memory
 
-Last reconciled: **2026-10-29, Asia/Brunei**. This is approved architecture and
+Last reconciled: **2026-10-30, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
 
 The owner's latest inventory UI refinement (DEC-25) combines adjacent Products
@@ -21,6 +21,15 @@ inventory, financial and shop card groups; retain existing chart behavior.
 DEC-30 extends the same behavior to Windows/desktop when available container space
 would otherwise make cards wrap. Use responsive fit detection, not a phone-only
 platform check; keep the ordinary layout when all cards fit on one row.
+
+On30October the owner reconfirmed loaded-zero summary visibility and requested
+smooth appearance/reflow when a card gains data (UI-15). Animate presentation
+only; do not fetch again or reset operational state to animate. Preserve real
+loading/errors, meaningful negative balances, permission-hidden reflow and
+reduced-motion accessibility. The owner explicitly reconfirmed that All Shops
+continues showing every shop even when its totals are zero. Preserve required
+operational actions and chart behavior; a zero summary is not a reason to hide
+the controls needed to create the first transaction.
 
 Read [../AGENTS.md](../AGENTS.md) and [TASK_TRACKER.md](TASK_TRACKER.md) first.
 The tracker records defects, unfinished work, verification and approvals.

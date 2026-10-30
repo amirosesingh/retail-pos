@@ -1,6 +1,6 @@
 # POS task tracker
 
-Last reconciled: **2026-10-29, Asia/Brunei**.
+Last reconciled: **2026-10-30, Asia/Brunei**.
 Read [../AGENTS.md](../AGENTS.md) and [PROJECT_MEMORY.md](PROJECT_MEMORY.md).
 This is the single current task ledger. Existing audit/checkpoint documents remain
 supporting evidence, not competing completion lists. Batch 0 authorized documentation
@@ -19,6 +19,10 @@ only; the owner's subsequent Batch 1 approval below authorizes its bounded fixes
 | 6 | Scoped UI refinements DEC-23 through DEC-30 implemented/verified; broader UI audit pending approval | UI-08/10/11/12 scoped verified as recorded below. Broader audit and final physical-device regression remain separate. |
 | 7 | Report-only correction implemented / scoped-verified, DEC-32 / FIN-11 | Separate commit after c514762d; align report scope/refund totals and adjustment/sponsorship labels. Preserve checkout/receipts/stock, records and formulas. Publish source to the beta PR and check CI. Owner compares originals for suspected missing bills. |
 | 8 | Approved Archive UI clarification DEC-38 / INV-08, committed / scoped-verified | Separate active/archived totals, mode and search/advanced filter context use the authorized catalogue. Commit `45893068` pushed to beta PR #341; tests/types/lint/build passed and desktop/390px render checked. Its CI is running. Stored-count completeness and final live filter interaction remain unverified. |
+| 9 | PERF-12 committed / scoped-verified | `6defed4f`: single refresh ownership, settings readiness and cancellation fences. Preserve genuine trailing changes, offline SQL and all authority scopes. Physical-device acceptance remains separate. |
+| 10 | UI-15 committed / scoped-verified | `14cd2c9a`: loaded-zero summaries hide;220ms appearance/reflow with reduced-motion support; All Shops remains complete. Desktop/phone synthetic-browser checks passed without interaction network reads. |
+| 11 | FIN-13 follow-up committed / migration applied | `43d114f5`: authoritative branch-scoped cashier picker and native proof validation. Exact approved cloud migration applied/permissions verified; actual signed-in form/device check pending. |
+| 12 | SHIFT-14 / local SQL readiness investigation | No shift repair authorized. Both reported cloud shifts remain open, local failed-sync evidence requested. Local SQL connection works but migration20/default mismatch remains; exact local upgrade approval requested. |
 
 Membership is **ON HOLD** throughout. Each future batch requires a recoverable
 baseline, specific files/dependencies, expected behavior, risks, regression tests,
@@ -328,7 +332,7 @@ No earlier chat-wide “completed” message is treated as blanket verification.
 | FIN-11 | Implemented / pending record reconciliation / High | DEC-31/32: owner expects all-method collected 6,851. Bounded live SELECT confirmed configured Asia/Singapore period 2026-09-28..2026-10-27, STR1, 79 nonrefunded bills: cash 2,311 + card 3,489 + bank transfer 668 = 6,468; header/tender JSON/paid-minus-change/ledger agree. Net before saved Extra Discount adjustment 6,489.50; adjustment -21.50, tax 0; one issued sponsorship 348 yields combined 6,816; separate refunded bill 220. No broken header equations/orphan sale links found in this cohort; unexplained owner delta 383 is not auto-adjusted. Report-only scope/refund/label corrections committed and pushed as eb970d1b, scoped-verified below. Owner will compare originals for suspected unentered bills (DEC-37); no missing bill is independently confirmed. Preserve checkout, receipts and stored records. |
 
 | FIN-12 | Pending / Medium | Independent report review found an unchanged tender-display inconsistency: `PaymentsReport.tsx` sums gross `Payment.amount`, while `daily-payment-summary.ts` subtracts represented cash change. A valid 90 bill paid with 100 cash/change 10 can therefore show collected 90 but Cash 100. Confirm affected saved representations with isolated fixtures and reuse retained-tender semantics in a separately approved correction; do not alter checkout or assume this explains FIN-11's observed zero-change cohort. |
-| FIN-13 | Implemented; isolated verification passed; live migration and device verification pending / High | DEC-33/34/35: owner confirmed already-paid historical entry with required stock choice, then requested design review before implementation. Existing posted-sale correction requires an existing ID/version; ordinary checkout requires an open shift, stamps now and deducts stock, so neither can be repurposed by bypassing guards. The proposed design below covers original attribution, received tenders, audit, retries and stock treatment. No new application write, live financial entry or migration authorized. |
+| FIN-13 | Implemented / scoped-verified / live migration applied / High | DEC-57 supersedes original design-only boundary. Administrator-only original-day already-paid entry, explicit stock choice, atomic/idempotent service and audit are implemented. Cashier picker now uses authoritative eligible accounts and preserves native proof. Exact owner-approved live migration applied30October21:34Brunei; service-only/RLS checks passed. No real historical entry created by tests. Current drawer/normal checkout preserved; signed-in form and installed-device acceptance remain pending. Original proposal remains below as historical evidence. |
 
 ### Inventory, warehouse, reports and data loading
 
@@ -638,3 +642,210 @@ Independent agentfoundtworecoverygaps: transientfailedbootstrapmaynotretrywhenhe
 - Auth-to-local-PostgreSQL timeout/connection failures remain, including 19:00:39; shared Data API schema-cache failures remain separate. Membership unchanged. Realtime and Storage health recovered in the audited post-restart window.
 - Implemented bounded transient-only recovery, reconnect urgency retention and typed directory errors; 563 suites/3,534 tests, Node78, types/lint and independent review passed. Visual verification and fresh CPU metrics unavailable; do not claim live loading or Auth fixed.
 - CI stale notification timing assertion corrected without weakening branch/logout checks. Keep all other unfinished items, prepared-only SQL and financial migration approvals separate.
+
+### Backup-first database repair request — 30 October 2026
+The owner explicitly requests a backup before attempting schema/configuration recovery and preserving all current tables/records. No new live repair is permitted before a complete recoverable backup is obtained and verified. A full restore could erase post-backup sales, so preserve subsequent transactions and require a reviewed recovery point and maintenance plan; do not automatically restore on any error. Current authority is to obtain backup and investigate targeted repairs, not reset/recreate tables, widen grants, rerun the full canonical schema or replay already-applied migrations. Membership hold remains.
+Initial backup capability check: connected Supabase tools expose SQL/logs but no backup/export action; restore_project is not a selected-backup restoration tool. No DATABASE_URL/SUPABASE_DB_URL/SUPABASE_DB_PASSWORD/SUPABASE_ACCESS_TOKEN configured in process environment. Direct pg_dump/psql/Supabase executables not found on PATH. API public/secret keys are not database dump credentials. Backup is NOT created or verified. Discover supported backup access and continue read-only drift review; never substitute incomplete JSON exports for a restorable database backup. Never store dumps in Git or print credentials/business records.
+Backup setup decision: owner chose help configuring a secure local backup connection. Created .private-backups with inherited access removed, current Windows user and SYSTEM full control only, and self-ignoring .gitignore (*); no credentials or database records stored yet. Direct PostgreSQL DNS resolution failed on this PC; support exact-project Session pooler on5432, not transaction pooler. Local setup GUI preparation uses masked password and Windows DPAPI CurrentUser encrypted configuration; owner enters existing password locally. No password reset, API key creation or database changes authorized. CLI discovery failed npm DNS in restricted environment; official portable PostgreSQL client discovery is in progress. Complete backup and restore verification remain pending.
+
+### Read-only manual-SQL chronology and I/O investigation — 30 October 2026
+Owner paused repair, then authorized investigation of yesterday's changes only. Owner clarified that SQL was run manually through this same chat/SQL Editor, not necessarily recorded as migrations, and reports CPU about 97%, mostly I/O wait about 91%. These percentages are owner observations, not independently sampled measurements. Retain backup-first and all unfinished tasks; no new application, live SQL, configuration, restart, rollback or permission changes are authorized by this investigation. Membership stays ON HOLD.
+
+- Completed investigation: an independent agent paginated the actual chat history through every 29 October turn and the preceding 27 October application turn. The cluster-catalogue isolation migration was applied on 27 October morning (07:14–07:57 Brunei turn), not yesterday evening. On 29 October, SQL Editor checks at approximately14:07–14:27 were SELECTs. The confirmed live write was the exact594-product ownership repair at14:43:49 Brunei; its invariant-checked SQL completed in6.095seconds and the immediate count read in2.267seconds. Owner-preserving sync and missed-bill migrations were prepared but NOT applied. No other29October schema/policy DDL was found in the recovered chat; unrecorded/outside-chat changes cannot be excluded. A filename, migration-history gap or Git date is not proof of manual execution timing.
+- Live readback19:31–19:34 Brunei: browser products SELECT uses readable_catalogue_product_ids; service bootstrap/counts still use per-row product_available_in_catalogue. All four inspected product-owner/transfer indexes are valid and ready. Catalogue helpers are owned by postgres with BYPASSRLS, so the suspected direct RLS recursion was not demonstrated. The sync owner-preserving assignment remains absent; this separate known risk was not changed.
+- Confirmed costly query shapes: repeated product/branch/privacy/transfer checks in sync; casted barcode-to-product UUID lookup; global ID invalidation fan-out; per-product transfer projection on writes. They can amplify work but do not establish a persistent loop or explain the full current outage. Do not undo cluster isolation or the verified ownership repair speculatively.
+- Current wider bottleneck: PostgREST timezone metadata query observed active23seconds without a blocker. No POS bootstrap was active in that snapshot. pg_stat_statements reset with restart at18:48:28 and contains no completed matching bootstrap/count/delta/Realtime entries afterward; historical cumulative sync cost cannot be used as current CPU attribution. Pooler authentication and migration-history reads remain slow. The log-query connector returned internal errors twice; exact yesterday-evening onset could not be reconstructed from new log reads.
+- I/O: track_io_timing is off, so zero SQL I/O timing does not prove fast storage. Owner's high I/O wait makes disk latency/burst budget and memory/swap pressure priority hypotheses. Existing SQL counters do not identify host system-disk/swap or filesystem time-zone reads. Fresh aligned host metrics are still needed; do not claim disk budget exhausted or a single root cause proved. See database/2026-10-30-loading-incident.md.
+- Backup remains BLOCKED: local setup window failed because Windows script execution is disabled; no bypass or policy change performed. Official PostgreSQL portable ZIP downloaded and checksum verified, not extracted/executed. No credentials saved and no backup/export or restore verification completed. No live repair may proceed yet.
+
+### Time-zone dependency clarification — 30 October, 19:43 Brunei
+Owner suspects receipt/time-zone SQL introduced the slow dependency. Read-only live inspection confirms application uses as well as PostgREST's built-in use: v_sale_line_facts and v_daily_store_sales reference pg_timezone_names in their region CTEs; save_notification_rule_table uses it for validation. These match migration20261017083528_reconcile_business_analytics (committed17October) and notification_rule_table. Analytics and All Shops lifetime reads consume the reporting views; nested view calls can repeat zone-name validation. Earlier explanation covering only the service's startup use was incomplete. This establishes an additional application dependency, not the root cause of the outage or evidence it was applied yesterday. No active pg_timezone_names query was present in the19:43:09 snapshot. Removing application lookups would not remove PostgREST14.5's separate unconditional schema-cache lookup. Investigate an isolated equivalent report optimization preserving saved business/store time zone, date buckets, monetary calculations, RLS and grants; no preparation/application or rule change approved by this clarification. Do not drop the built-in system view, use a nonexistent14.5 disable flag, or switch reports to the viewing user's zone. Backup-first boundary and Membership hold remain.
+
+### PostgREST recovery investigation — 30 October, 19:47 onward
+Owner asks to check/fix continuing unhealthyPostgREST and production warnings, keeping cluster rules unchanged; authorizes direct dashboard inspection. Fresh DataAPI503/PGRST002 confirmed twice (2,437ms;19:49:57follow-up1,355ms). Authhealth200doesnotproveAuthDBtokenrecovery. Database snapshots show no open transaction/blocker, six clients, and later the barePostgRESTtimezonequery. ManagementACTIVE_HEALTHYdoesnotmeanDataAPIready.
+
+Dashboard browser access recovered. Refreshed health and aligned last-ten-minute19:41–19:51window: CPU66.73% mostlyI/Owait, memorycommit1.41GBSEVERE, dataIOPS1/throughput22.3KB/s, sixconnections. Separate Infrastructure weeksummarydiskIObalance98%,diskspace29%used,Nano up-to0.5GBRAM. Do notclaimdiskfull,creditsdepleted,memoryleakorswapthrashing. Committed_ASisnotphysicalRAM; allocatedswap415.23MBat19:13doesnotmeasurecurrentpagingrate, displayed95.69%usesRAMdenominator. Different chartwindows/hover/missingpointsaccountfornoncomparablefigures; noSupabaseUIcalculationbugconfirmed. Pending: actualhostswaprates/deviceawait, currentcachefailureSQLlogs (plugininternalerror;UIloading), provider-supportedservice/hostrecoveryproposal and verifiedbackup. Prepared providerescalationdraft in existingincidentreport; NOTsent. AvailableUI17.11PostgresupgradeisnotPostgREST-onlyupgradeapproval. No app/liveDB/service/billing changes, restart, additional grant or backup performed. Membership hold and all other unfinished tasks preserved.
+
+### Local backup execution — 30 October, owner renewed instruction
+Owner explicitly requests creating a local backup before a targeted repair; any restore must preserve newer transactions and have a separately reviewed recovery plan. Yesterday's migration investigation is FINISHED, not restarted. An old-named agent was briefly reused for backup review; owner objected to the misleading status, so it was stopped and replaced with a clearly named backup-only reviewer.
+
+Verified official PostgreSQL17.11 archive SHA256, extracted only native client executables/dependency DLLs under the ignored/private backup directory, and verified pg_dump/pg_restore versions. No installer/service/PATH/security-policy changes. Downloaded official curl CA bundle and verified its published SHA256 (796F1389BFEA13C0ED78F663B765BAAFF54A508E5483786BD6ECE73C5E3E3CBE). Exact ROSEGILL pos Connect dialog confirms Session pooler aws-0-ap-southeast-2.pooler.supabase.com:5432, user postgres.qhrufhtbeguxydenzfey, database postgres. Password is entered locally only, never chat/arguments/logs; no password reset.
+
+Native pg_dump attempt at20:20:52 used verify-full TLS, read-only session, one connection, custom archive and five-second lock wait. PID17832 exited; database.dump.inprogress is zero bytes. Capture metadata exists only in private pos-20261030-202052 folder. This is a FAILED/UNVERIFIED attempt, not a backup. No roles export, archive decoding or isolated restore has occurred. Correct the interactive console launch and retry only after the owner's current project restart completes. Preserve failed artifact; do not repair/restore based on it. Full backup coverage must include schema/data/ACL/RLS/routines, separately captured roles without passwords, Storage-object coverage and compatible isolated restore acceptance.
+
+### Pro plan verification and owner restart — 30 October, 20:15–20:24
+Owner reports adding Micro/Pro, asks to fix current database/Storage timeouts, then reports another self-performed project restart. Browser confirms organization Pro but the existing pos project still Nano; SQL20:17:31 still shows original18:48:29 start, max_connections60/shared_buffers224MB. Official compute documentation confirms paid plan does not automatically resize existing Nano, to avoid unrequested downtime. No paid resize or restart performed by the agent.
+
+Fresh pre-restart probes20:16: Data API200 in11,195ms, Auth health200 in3,117ms, Storage status200 in1,051ms. This supersedes earlier continuous PGRST002 as the current state, without certifying sign-in/protected reads. Working logs now identify pos_sync_bootstrap timeouts20:10:27/20:10:52/20:15:48/20:18:49, and anon terminal_token_heartbeat57014 failures20:16–20:18. Storage warnings are aborted internal health reads (~4.6–5seconds), not observed permission denials. The prepared set-based branch-sync helper is still absent; current counts use per-row catalogue checks. No live optimization applied.
+
+At20:23:50 Management status is RESTARTING, public Data API521, Storage status200. Do not conflate restart-transition failures with steady-state corruption or repeatedly restart. Next: verify new start/actual compute and fresh allowed/denied read readiness, complete local backup, then present the exact supported correction. Current schema-cache outage, later application RPC timeouts and current restart are separate stages. Backup-first, branch/cluster isolation, checkout permissions and Membership hold remain intact.
+
+### Owner stopped backup and repair work — 30 October
+Latest instruction: stop all backup preparation/database repair because the app is now working; owner wants to focus on further changes/updates. Backup and repair tasks are PAUSED at the owner's request. Do not launch another backup prompt, request the password or run repair/restore automatically. Earlier pending password-entry question is superseded. Preserve private preparation files and incomplete zero-byte attempts; no verified backup exists. No repair, live migration or restore was applied. Keep unrelated pending tasks and Membership hold; next implementation scope awaits owner instruction. Leave the local preview unchanged.
+
+Preserve investigation evidence for later, without resuming it: owner restart verified20:25:21Brunei; PostgREST logs confirm schema cache queried2,288.6ms/loaded19.1ms at20:25:58, including1,196timezones. Subsequent57014 contexts20:27–20:28 identify change_history bootstrap JSON-ID text sorting specifically. Live read-only EXPLAIN WITHOUT ANALYZE shows SeqScan+Sort(~19,288estimatedrows) for existing expression order, versus existing valid change_history_pkey IndexScan for bareUUIDorder. No actual history scan, row rewrite, index creation or routine change was executed. Targeted pagination proposal remains unimplemented/unapproved and must preserve scope/JSONcursor contracts, collation/order equivalence and future generator consistency; never replay the whole generator/schema. Separate heartbeat source review found duplicate ten-second monitor instances on Updates and global feed/broadcast per heartbeat; preserve revocation cadence and verify any later correction separately.
+
+Latest native console backup attempts did not complete: pos-20261030-202747 archive0bytes, exitcode1. A private user-operated Run-Pos-Backup.cmd was prepared/reviewed, inherited service/host overrides cleared, and no-connection self-test passed17.11tools; it was NOT handed off for execution before the owner stopped the task. No manual launch should now be requested. Isolated restore/Storage-object coverage remain unfinished. Pro organization was verified while compute remained Nano; no agent resize or billing change was made.
+
+### Local live preview requested — 30 October
+Owner requests the latest working code running alongside the chat with live updates. Started Vite dev from D:/Retail POS/retail-pos-main/retail-pos-main/work/security-review-fixes-beta, branch codex/add-missed-bill, HEAD bf4460dc, package1.4.80, POS_RELEASE_CHANNEL=beta. Existing .env.local loaded without printing values. Loopback sandbox restrictions required the authorized outside-sandbox server. URLhttp://127.0.0.1:8080; strictPort; Vite8.3.4; managed exec session51105; port ownerPID24852 command independently matches this checkout. Homepage, Inventory and /@vite/client returnedHTTP200. First requests included dev compilation warm-up, not a measured database regression. Keep this dev server running; backup/repair stays paused, no application/database changes or deployment performed. Actual signed-in business functionality and a browser hot-update interaction are not certified by HTTP readiness alone.
+
+### PERF-12 — Repeated client data loading, 30 October
+
+**Active, narrow owner-authorized correction.** Owner reports data loading then
+loading again, asks to fix unnecessary reloads, explicitly requests agents and
+preservation of functionality. Recoverable baseline: `bf4460dc`, version1.4.80,
+`codex/add-missed-bill`; preserve the pre-existing incident documentation and
+untracked artifacts. Backup/database repair remains paused; no live database,
+Membership, checkout, payment, print, permission or business-rule changes belong
+to this batch. Beta first; no publication or production promotion authorized.
+
+- Confirmed by isolated actual QueryClient/QueryObserver reproduction: root
+  meta-table refresh and per-hook refresh both consume one event, starting two
+  report reads (slow case also aborts the first). `cancelRefetch:false` alone
+  does not prevent two sequential fast reads. Affected observed-query consumers:
+  shift history, shift sales, All Shops lifetime and sponsorship totals.
+- Confirmed startup amplification: ScopeIds depends on the stores array object,
+  reinstalling an initial settings read even when effective scope IDs are equal;
+  scoped settings start before directory resolution. Shared settings reads may
+  run during the primary bootstrap. A second full catalogue bootstrap for an
+  unchanged valid identity/branch has NOT been demonstrated.
+- Implementation scope: a single owner/coordinator for the affected active
+  query refreshes, preserving offline eligibility, authorized query keys/store
+  filters, sponsorship60-second reconciliation and genuine trailing changes;
+  scalar settings-scope dependencies and readiness-aware shared settings reads.
+  Imperative report readers, mutations, source-switch/session cancellation and
+  explicit print reads must retain their behavior. Independent bounded agents
+  own query refresh files and settings files separately; root owns this ledger.
+- Acceptance: one committed hint gives one refresh for fast and slow readers;
+  newer committed data during an in-flight read retains a trailing pass;
+  lifecycle bursts reuse fresh data, reconnect catches up; local SQL refreshes
+  offline while cloud-only reads remain gated. Equal scope IDs do not restart
+  settings; actual branch/user/source changes remain isolated; no early empty
+  scope read before authoritative directory discovery. Test allowed/disabled
+  readers, scope transitions, existing checkout/permission/print regressions.
+- Recovery: revert only this batch's client changes, preserving unrelated work;
+  no schema/data rollback is needed. Pending: implementation, independent diff
+  review, isolated regressions, type/lint checks and preview verification. Do not
+  call the entire app or all real devices verified from these isolated checks.
+
+### UI-15 / FIN-13 follow-up — 30 October owner request
+
+Owner requests loaded zero/no-data summary cards/sections to hide and appear
+smoothly when values become positive, without extra loading; run local SQL and
+latest live preview alongside; make Add missed bill available for original-day
+transactions recorded while the older POS operates in parallel. Owner separately
+reconfirmed **All Shops must keep every shop visible even at zero**. Preserve
+meaningful negative balances, real loading/error states, permission visibility,
+branch/cluster scope and Membership hold. Do not animate charts as sliding cards.
+
+**Active approved narrow implementation:** reuse shared summary-card UI for
+lightweight appearance/reflow motion and correct remaining summary visibility
+guards; preserve directory/shop listings. Reuse existing FIN-13 historical-sale
+implementation rather than adding another checkout path. Agent found its cashier
+picker reads legacy `useAuth().staff`, while StaffManager uses managed database
+accounts; investigate and correct that confirmed connection with the same
+administrator/branch authority. Previously approved historical-payment, stock
+choice, original-time, audit and retry contracts remain controlling. A required
+live migration must be identified and presented for exact-project approval first;
+this UI request is not approval to create real financial records or apply SQL.
+
+Baseline remains `bf4460dc`, version1.4.80, `codex/add-missed-bill`. Preserve and
+finish interrupted PERF-12 regressions before declaring the combined preview
+verified. One agent owns refresh code, one summary motion/JSX, one historical-entry
+investigation; root owns tracker and dev process checks. No publication/production
+promotion, backup/repair restart or Membership work. Local service inspection
+confirms MSSQL$LCRPOS Running; app SQL connection/readiness and live preview still
+require verification. Preserve operator database configuration and credentials.
+
+#### Verification and rollout evidence
+
+- PERF-12 completed source safety checks: synchronous cancellation now fences
+  stale dirty work, hidden/offline commits survive, initial/lifecycle hints do not
+  duplicate a read, real newer commits retain a trailing pass. Agent tests and
+  independent review completed. Root integrated run:32 files/276tests passed;
+  `npx tsc --noEmit` passed. Actual physical Electron/mobile acceptance remains
+  separate; do not claim every loading recurrence or all modules fully verified.
+- UI-15 implemented220ms native card appearance/grid reflow on visible-key
+  changes only; Embla retains slide movement, reduced-motion/static fallback
+  supported. Selling/report summaries now omit confirmed loaded zeros while
+  preserving negatives, loading/errors and positive bill counts for free sales.
+  All Shops listings unchanged. Agent7suites/58tests and independent source
+  review passed; browser fixture verification pending.
+- FIN-13 picker now reads authoritative active branch/all-branch accounts on
+  demand, minimal IDs/names, fresh administrator/terminal-branch authorization,
+  scoped cache/pagination/error/retry. Native binding proof survives validation
+  and is excluded from the financial payload. Agent43focused tests and existing
+  11isolated SQL cases passed. No real historical sale entered during tests.
+- Owner explicitly approved the exact missed-bill migration for ROSEGILL ->
+  rosegill0011@gmail.com's Org (`bjxgimekljzlnwejuawj`) -> pos
+  (`qhrufhtbeguxydenzfey`, https://qhrufhtbeguxydenzfey.supabase.co).
+  Applied2026-10-30 at13:34:07UTC (21:34:07Brunei), Supabase history version
+  `20261030133407`, name `add_missed_bill_historical_entry`; source file remains
+  `20261029073121_add_missed_bill_historical_entry.sql`. Verified audit table
+  exists/RLS enabled, authenticated SELECT/EXECUTE denied, service EXECUTE allowed.
+  Application creates no sales/stock movements; no existing rows changed by SQL.
+- Live Vite restarted after interruption, version1.4.80, same worktree,
+  http://127.0.0.1:8080, session64909. Visible Electron opened against that server.
+  MSSQL$LCRPOS/POS_Local and Electron's existing native driver passed SELECT-only
+  Windows-auth/direct1433 probes. Existing app profile still reports ECONNECTION;
+  this is NOT verified local trading readiness. Public-profile diagnosis pending;
+  no operator settings, SQL services or credentials manually changed. See the
+  automatic-startup migration caveat below before assessing schema changes.
+
+  Correction after deeper read-only inspection: the local migration ledger
+  contains version19 `member_contact_email` at21:26:17Brunei, matching the GUI
+  startup. The existing application's automatic upgrader may have recorded it;
+  no pre-start ledger snapshot proves its earlier state. Therefore do not claim
+  that launching the app performed no local schema work. The diagnostic probes
+  and agents themselves performed SELECT-only checks, not migrations. Current
+  metadata has all required tables/columns/indexes; version20 is absent and
+  `DF_products_ecom_visible` remains DEFAULT((1)), while current source expects0.
+  Saved-profile TCP/driver/auth/read-only transaction checks pass. Startup's full
+  installer replay was observed, but its failing statement remains unproven.
+  Exact local version20-only application to LAPTOP-N0QBONGL/LCRPOS/POS_Local is
+  awaiting owner approval; do not replay the whole installer as a manual repair.
+
+- Final integrated checks:34 focused files/290tests across two recorded runs,
+  11isolated PGlite scenarios, TypeScript and scoped ESLint/diff checks passed.
+  Actual synthetic-browser fixture at1440x900 and390x844 confirmed220ms running
+  entrance, unchanged-value stability, zero-removal/reflow, reduced-motion
+  suppression, no page overflow/errors and zero interaction network requests.
+  Root inspected desktop/phone screenshots. No Supabase/business reads or writes
+  were made by this fixture. Live local Receipt History is signed out; owner
+  sign-in requested for the real form check, without credentials or a real sale.
+- Source commits are separately recoverable: `6defed4f` refresh/settings,
+  `14cd2c9a` summary UI, `43d114f5` historical cashier/proof connection. Target
+  remains existing draft beta PR342; no production promotion or installer/OTA
+  publication. Preserve all unrelated untracked files and iOS signing material.
+
+### SHIFT-14 — Closure notification with two cloud-open shifts, 30 October
+
+**Active read-only incident investigation; no financial/shift record repair.**
+Owner reports closure notification but unchanged data and two open shifts.
+ROSEGILL pos SELECT confirms event21:08:09Brunei for shift
+`8be4c1e9-3f88-4e7b-b52f-a6f31b5005c8` and event15:04:18Brunei for
+`f725325a-8919-4d9d-b9cb-24f43d185147`, both branch
+`a611a328-2217-4d77-944a-5f6a637d123b`. Both cloud rows remain OPEN/ACTIVE,
+row_version1, closed_atNULL and unchanged since opening. No corresponding cloud
+shift_cash_counts/shift_close_events rows found. A reported activity event is
+not proof the cashier completed the local closure. One aggregate receipt near
+21:07:35 has applied_count1 but stores no per-entity payload, so cannot identify
+its shift or prove an equal-version skip.
+
+Independent source audit confirms two distinct risks: remote shift row refresh
+updates state.shifts while activeShift can retain cached dbShift; sync_apply_shifts
+ignores equal/older row_versions while native PushWorker acknowledges ok:true
+without verifying the resulting closure, and independent activity aggregates may
+upload after a failed/deferred closure. Current native operations increment row
+versions; affected older-build/local-outbox evidence is still needed to establish
+the incident's exact cause. Do not silently close/reopen/delete either shift,
+change counts/totals or weaken concurrency rules.
+
+Next: affected cashier PC version plus pending/failed shift-sync error requested.
+Proposed separate correction batch: acknowledge closure only after authoritative
+same-branch closed-state confirmation (preserve genuine idempotent replay and
+pending failures), deliver accurate closure status, reconcile cached active shift
+only from a confirmed same-branch record. Requires bounded files/dependencies,
+isolated allowed/denied/retry/offline regressions and owner approval before code
+changes; any live migration or historical record repair needs separate approval.
