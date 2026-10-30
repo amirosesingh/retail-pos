@@ -159,7 +159,7 @@ import { localDb } from "@/core/local-db/local-db";
 import { businessReadsReady, transferReadAllowed, transferReadsReady } from "./business-readiness";
 import { hasCentralAuthSession, subscribeCentralAuthSession } from "./session-presence";
 import { retryDataRead, withReadDeadline } from "./read-retry";
-import { beginDataReadAttempt, dataReadIdentity, dataSnapshotReady } from "./data-read-attempt";
+import { beginDataReadAttempt, createScopedReadFlight, dataReadIdentity, dataSnapshotReady, needsBootstrapBranchResolution, snapshotRefreshReady } from "./data-read-attempt";
 import {
   batches,
   DEFAULT_BATCH_SIZE,
@@ -622,6 +622,14 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const personIdentity = terminalUser?.userCode ?? authUserId;
   const bootstrapBranch = activeBranchId(state.currentStoreId) ?? state.currentStoreId;
   const readIdentity = dataReadIdentity(personIdentity, databaseMode, bootstrapBranch);
+  const primaryReadFlights = useRef(createScopedReadFlight<CloudSlice>());
+  const deferredPrimaryRefresh = useRef({ identity: readIdentity, dirty: false });
+  if (deferredPrimaryRefresh.current.identity !== readIdentity)
+    deferredPrimaryRefresh.current = { identity: readIdentity, dirty: false };
+  const refreshPrimarySnapshot = useCallback((branch: string | null) => {
+    const key = JSON.stringify([readIdentity, bootstrapGeneration.current, canonicalBranchId(branch ?? "")]);
+    return primaryReadFlights.current.read(key, () => withReadDeadline(() => loadPrimaryState(branch), 60_000));
+  }, [readIdentity]);
   useEffect(() => {
     const name = state.settings.receipt.companyName?.trim();
     if (name && readBranding().company !== name) writeBranding({ company: name });
@@ -741,6 +749,21 @@ export function PosProvider({ children }: { children: ReactNode }) {
             return directory;
           }, () => attempt.current()).catch(error => ({ ok: false as const, error: error instanceof Error ? error : new Error(String(error)) }))
           : null;
+        // An unscoped cold read would be thrown away when directory discovery
+        // selects the first authorized branch. Resolve that scope before
+        // starting the expensive catalogue, sales and settings snapshot.
+        if (locationTask && needsBootstrapBranchResolution(effectiveDatabaseMode(), bootstrapBranch, true)) {
+          const directory = await locationTask;
+          if (!attempt.current()) return;
+          if (!directory.ok) throw directory.error;
+          const resolved = applyLocationDirectory(stateRef.current, directory.stores);
+          if (resolved.currentStoreId) {
+            setState(current => attempt.current() ? applyLocationDirectory(current, directory.stores) : current);
+            setStoresLoaded(true);
+            markStartupStage("location");
+            return;
+          }
+        }
         let fullSnapshotApplied = false;
         const settingsRevision = settingsWrites.current.revision;
         const loadSnapshot = () => loadPrimaryState(bootstrapBranch || undefined, locationTask ?? undefined, (name) => {
@@ -1143,8 +1166,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // Reconnect or a stale foreground snapshot gets a bounded primary refresh;
   // ordinary focus must not repeatedly download unrelated history.
   useEffect(() => {
-    if (effectiveDatabaseMode() !== "online" || !readsReady) return;
+    if (effectiveDatabaseMode() !== "online" || !snapshotRefreshReady(readsReady, loadPhase, readIdentity, snapshotIdentity)) return;
     let cancelled = false;
+    const generation = bootstrapGeneration.current;
+    const currentRead = () => !cancelled && generation === bootstrapGeneration.current;
     let loading = false;
     let resumeTimer: number | undefined;
     let lastResumeStarted = Date.now();
@@ -1157,13 +1182,13 @@ export function PosProvider({ children }: { children: ReactNode }) {
         resumeTimer = undefined;
         // Focus, visibility and native resume can arrive in separate bursts.
         // A recent or running snapshot already covers that foreground return.
-        if (loading || cancelled || Date.now() - lastResumeStarted < (event?.type === "online" || event?.type === CONNECTIVITY_RESTORED_EVENT ? 5_000 : 300_000)) return;
+        if (loading || !currentRead() || Date.now() - lastResumeStarted < (event?.type === "online" || event?.type === CONNECTIVITY_RESTORED_EVENT ? 5_000 : 300_000)) return;
         lastResumeStarted = Date.now();
         loading = true;
         const branch = activeBranchId(stateRef.current.currentStoreId) ?? stateRef.current.currentStoreId;
-        void loadPrimaryState(branch)
+        void refreshPrimarySnapshot(branch)
           .then((cloud) => {
-            if (!cancelled) setState((s) => applyCloud(s, cloud, pendingSalesRef.current));
+            if (currentRead()) setState((s) => currentRead() ? applyCloud(s, cloud, pendingSalesRef.current) : s);
           })
           .catch(() => {
             /* the offline gate takes over if the connection is gone */
@@ -1205,41 +1230,55 @@ export function PosProvider({ children }: { children: ReactNode }) {
       window.removeEventListener(APP_RESUME_EVENT, resume);
       if (removeNative) void removeNative();
     };
-  }, [readsReady, readIdentity, state.currentStoreId, refreshActiveShift]);
+  }, [readsReady, readIdentity, state.currentStoreId, refreshActiveShift, refreshPrimarySnapshot, loadPhase, snapshotIdentity]);
 
   // Sparse reconciliation also covers relayed/PIN sessions and missed row hints.
   // Never reset readiness: mounted tables, dialogs and checkout drafts stay intact.
   useEffect(() => {
     if (!readsReady) return;
+    const snapshotCurrent = snapshotRefreshReady(readsReady, loadPhase, readIdentity, snapshotIdentity);
     let cancelled = false;
+    const generation = bootstrapGeneration.current;
+    const currentRead = () => !cancelled && generation === bootstrapGeneration.current;
     let revision = 0;
     const refresh = createRefreshQueue(async () => {
       const started = revision;
       const branch = activeBranchId(stateRef.current.currentStoreId) ?? stateRef.current.currentStoreId;
-      const cloud = await loadPrimaryState(branch);
-      if (cancelled) return;
+      if (!snapshotCurrent || !currentRead()) return;
+      const cloud = await refreshPrimarySnapshot(branch);
+      if (!currentRead()) return;
       if (started !== revision) { void refresh.refresh(); return; }
-      setState(current => applyCloud(current, cloud, pendingSalesRef.current));
+      setState(current => currentRead() ? applyCloud(current, cloud, pendingSalesRef.current) : current);
     });
     const wake = async () => {
+      if (!snapshotCurrent || !currentRead()) return;
       // Keep the existing native worker wake; reads still come from SQL Server.
       if (effectiveDatabaseMode() !== "online")
         await Promise.resolve(localDb()?.sync?.auto?.()).catch(() => undefined);
-      if (!cancelled) void refresh.refresh();
+      if (currentRead()) void refresh.refresh();
     };
     const offCatchup = subscribeBackgroundRefresh(() => void wake(), 300_000, effectiveDatabaseMode() !== "online", effectiveDatabaseMode() !== "online");
     let timer: ReturnType<typeof setTimeout> | undefined;
     const offData = subscribeDataChange(change => {
+      if (!currentRead()) return;
       if (change.storeId && state.currentStoreId && !sameBranchId(change.storeId, state.currentStoreId)) return;
       if (!primarySnapshotReadsTable(change.table)) return;
       revision += 1;
       if (change.entityId && !["product_barcodes", "stores"].includes(change.table)) return;
       if (!["products", "product_barcodes", "members", "promotions", "shifts", "stores"].includes(change.table)) return;
+      if (!snapshotCurrent) {
+        if (deferredPrimaryRefresh.current.identity === readIdentity) deferredPrimaryRefresh.current.dirty = true;
+        return;
+      }
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => { timer = undefined; void refresh.refresh(); }, 200);
     });
+    if (snapshotCurrent && deferredPrimaryRefresh.current.identity === readIdentity && deferredPrimaryRefresh.current.dirty) {
+      deferredPrimaryRefresh.current.dirty = false;
+      void refresh.refresh();
+    }
     return () => { cancelled = true; refresh.stop(); offCatchup(); offData(); if (timer) clearTimeout(timer); };
-  }, [readsReady, readIdentity, state.currentStoreId]);
+  }, [readsReady, readIdentity, state.currentStoreId, loadPhase, snapshotIdentity, refreshPrimarySnapshot]);
 
   useEffect(() => {
     if (!readsReady) return;
