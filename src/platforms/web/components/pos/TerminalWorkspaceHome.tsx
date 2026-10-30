@@ -102,6 +102,8 @@ export function TerminalWorkspaceHome() {
   const completedSales = todaySales.filter((sale) => !sale.refunded);
   const todayTotals = useMemo(() => salesReconciliation(todaySales), [todaySales]);
   const todayRevenue = completedSales.reduce((sum, sale) => sum + sale.total, 0);
+  const salesSummaryReady = !loading && !error;
+  const revenueSummaryReady = salesSummaryReady && (!includeSponsorship || (!sponsorship.loading && !sponsorship.error));
   const paymentSummary = dailyPaymentSummary(completedSales);
   const catalogueProducts = useMemo(() => {
     const visible = createCatalogueVisibility(state.settings, state.stores, state.transfers);
@@ -130,7 +132,7 @@ export function TerminalWorkspaceHome() {
                 hint={shiftError ? "Reconnecting — showing last known status" : viewedShift ? viewedShift.cashier : !shiftChecked ? "Checking selected branch" : "No open shift at this branch"}
               />
             ),
-    bills: can("can_view_sales_reports") && visible("workspace.todayBills") && (
+    bills: can("can_view_sales_reports") && visible("workspace.todayBills") && (!salesSummaryReady || todaySales.length > 0) && (
               <Metric
                 key="bills"
                 label="Today's bills"
@@ -140,7 +142,7 @@ export function TerminalWorkspaceHome() {
                 hint={error ? "Could not refresh totals" : loading ? "Updating…" : "Current branch"}
               />
             ),
-    revenue: can("can_view_sales_reports") && visible("workspace.todayRevenue") && (
+    revenue: can("can_view_sales_reports") && visible("workspace.todayRevenue") && (!revenueSummaryReady || Math.abs(todayRevenue + sponsorship.total) >= 0.005) && (
               <Metric
                 key="revenue"
                 label={includeSponsorship?"Today's sales summary":"Today's revenue"}

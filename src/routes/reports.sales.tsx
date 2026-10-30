@@ -133,14 +133,14 @@ export function BillsReport() {
         {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
         {!history.loading && !history.error && <SummaryCardRail label="Sales report totals">
-          <SalesStatCard label="Completed bills" value={String(totals.bills)} />
+          {totals.bills !== 0 && <SalesStatCard label="Completed bills" value={String(totals.bills)} />}
           {showSponsorship && !sponsorship.loading && !sponsorship.error && sponsorship.total > 0 && <>
             <SalesStatCard label="Sales value with sponsorship · not collections" value={money(totals.collected + sponsorship.total)} info={<SalesTotalInfo totals={totals} adjustmentLabel={receiptAdjustmentLabel(rows)} sponsorshipValue={sponsorship.total} />} />
             <SalesStatCard label="Sponsorship value included" value={money(sponsorship.total)} info={<FinancialBreakdown rows={[["Sponsorship value", money(sponsorship.total)]]}><p>Included under the saved daily-sales policy. Stock value is separate from customer payments.</p></FinancialBreakdown>} />
           </>}
-          <SalesStatCard label="Net sales before receipt adjustments (ex tax)" value={money(totals.net)} info={<SalesTotalInfo totals={totals} adjustmentLabel={receiptAdjustmentLabel(rows)} />} />
-          <SalesStatCard label="Total collected · without sponsorship" value={money(totals.collected)} info={<SalesTotalInfo totals={totals} adjustmentLabel={receiptAdjustmentLabel(rows)} />} />
-          <SalesStatCard label="Discounts given" value={money(totals.discounts)} info={<SalesTotalInfo totals={totals} adjustmentLabel={receiptAdjustmentLabel(rows)} />} />
+          {Math.abs(totals.net) >= 0.005 && <SalesStatCard label="Net sales before receipt adjustments (ex tax)" value={money(totals.net)} info={<SalesTotalInfo totals={totals} adjustmentLabel={receiptAdjustmentLabel(rows)} />} />}
+          {Math.abs(totals.collected) >= 0.005 && <SalesStatCard label="Total collected · without sponsorship" value={money(totals.collected)} info={<SalesTotalInfo totals={totals} adjustmentLabel={receiptAdjustmentLabel(rows)} />} />}
+          {Math.abs(totals.discounts) >= 0.005 && <SalesStatCard label="Discounts given" value={money(totals.discounts)} info={<SalesTotalInfo totals={totals} adjustmentLabel={receiptAdjustmentLabel(rows)} />} />}
           {Math.abs(totals.tax) >= 0.005 && <SalesStatCard label="Tax collected" value={money(totals.tax)} info={<SalesTotalInfo totals={totals} adjustmentLabel={receiptAdjustmentLabel(rows)} />} />}
         </SummaryCardRail>}
         {showSponsorship && sponsorship.error && <p role="alert" className="text-sm text-destructive">Sponsorship values could not be refreshed. Customer payment totals are shown separately.</p>}
