@@ -82,3 +82,31 @@ existing closing timestamps. A read-only invocation on those existing closed
 rows returned acknowledgement version1 with both same-branch revision4 proofs.
 No real shift transaction was submitted. Installer
 rollout/affected-device reconnect acceptance remains separate from this migration.
+
+## Revision-trigger correction: version2 prepared, live approval pending
+
+The first fixture omitted the real shift triggers. Subsequent tests with all seven
+canonical triggers found that PostgreSQL's enabled revision trigger stores OLD+1,
+while a disconnected PC may have accumulated several revisions. Thus comparing
+cloud revision>=incoming could reject a valid closure after its facts were saved.
+For example, cloudOPEN4/localCLOSED8 produces cloudCLOSED5, not revision8.
+
+Additive migration20261030164829_bind_shift_closure_proof_to_requested_revision.sql
+replaces only pos_sync_shift_closure_ack. It preserves the exact closing-facts,
+ownership, duplicate, state/timestamp and service-only checks. Version2 reports
+the actual positive cloud revision and echoes requested_row_version. Native code
+binds that requested version to its exact snapshot instead of comparing independent
+revision clocks. Applied version1 and the global revision trigger are unchanged.
+
+Twenty-four scenarios now install all seven actual triggers, reproduce the
+version1 false conflict, and verify gapped local/cloud revisions, batch recovery,
+unfinished-ticket rollback, equivalent replay, semantic conflicts and lost-response
+PushWorker retry. Independent reviewer reran all24 plus25 native cases successfully.
+This corrects the scope of the earlier20-case evidence; those earlier passes were
+not sufficient trigger-integration verification.
+
+Version2 LIVE APPLICATION IS PENDING separate exact ROSEGILL pos approval. Until
+then version1 can keep valid sparse-revision closures pending. Keep PR342 draft;
+do not publish the version1-aware native checkpoint. Existing legacy1.4.79 clients
+ignore additional proof fields; any version1-aware preview needs the version2
+native source/restart alongside the corrected helper. No real closure was tested.

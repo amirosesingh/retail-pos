@@ -28,7 +28,7 @@ function assertShiftClosureAcknowledgement(acknowledgement, operations, branchId
     ), { code: "ESHIFT_CLOSURE_UNCONFIRMED", table: "shifts" });
   };
   const branch = recordId(branchId);
-  if (!branch || acknowledgement?.shift_closure_ack_version !== 1 ||
+  if (!branch || acknowledgement?.shift_closure_ack_version !== 2 ||
       !Array.isArray(acknowledgement.shift_closures)) return fail();
   const expected = new Map();
   for (const row of rows) {
@@ -40,8 +40,9 @@ function assertShiftClosureAcknowledgement(acknowledgement, operations, branchId
   const seen = new Set();
   for (const proof of acknowledgement.shift_closures) {
     const id = recordId(proof?.id), rowVersion = revision(proof?.row_version);
+    const requestedVersion = revision(proof?.requested_row_version);
     if (!expected.has(id) || seen.has(id) || recordId(proof?.store_id) !== branch ||
-        rowVersion === null || rowVersion < expected.get(id)) return fail();
+        rowVersion === null || requestedVersion !== expected.get(id)) return fail();
     seen.add(id);
   }
 }

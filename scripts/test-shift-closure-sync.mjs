@@ -9,7 +9,8 @@ import { fileURLToPath } from "node:url";
 const require = createRequire(import.meta.url);
 const { PushWorker } = require("../electron/sync/push-worker.cjs");
 const schema = await readFile(new URL("../supabase/schema.sql", import.meta.url), "utf8");
-const migration = await readFile(new URL("../supabase/migrations/20261030153259_confirm_shift_closure_sync_acknowledgement.sql", import.meta.url), "utf8");
+const firstMigration = await readFile(new URL("../supabase/migrations/20261030153259_confirm_shift_closure_sync_acknowledgement.sql", import.meta.url), "utf8");
+const migration = await readFile(new URL("../supabase/migrations/20261030164829_bind_shift_closure_proof_to_requested_revision.sql", import.meta.url), "utf8");
 const sourceFunction = (name, source = schema) => {
   const start = source.lastIndexOf(`CREATE OR REPLACE FUNCTION public.${name}(`);
   assert(start >= 0, name);
@@ -49,6 +50,9 @@ await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_
   CREATE TABLE audit_logs(id uuid PRIMARY KEY,store_id text);
   CREATE TABLE sync_idempotency_receipts(batch_id uuid PRIMARY KEY,organization_id text,branch_id text,
     table_name text,payload_hash text,applied_count int);
+  CREATE TABLE sync_change_feed(cursor bigint GENERATED ALWAYS AS IDENTITY,organization_id text,branch_id text,
+    terminal_id text,table_name text,entity_id text,operation text,row_version bigint,tombstone boolean,changed_at timestamptz DEFAULT now());
+  CREATE TABLE held_orders(store_id text,shift_id text,status text);
   ${table}
   ALTER TABLE shifts ADD PRIMARY KEY(id),ADD COLUMN state text,ADD COLUMN close_reason text,
     ADD COLUMN closing_started_at timestamptz,ADD COLUMN closing_started_by text,
@@ -62,6 +66,15 @@ await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_
   ${originalApply}
   ${originalBatch}
   ${originalAggregate}
+  ${["skip_stale_update","bump_row_version","shifts_guard_client_writes","update_updated_at_column",
+    "shifts_sync_status","guard_shift_unfinished_tickets","sync_feed_shifts"].map(name => sourceFunction(name)).join("\n")}
+  CREATE TRIGGER shifts_aa_stale_guard BEFORE UPDATE ON shifts FOR EACH ROW EXECUTE FUNCTION skip_stale_update();
+  CREATE TRIGGER shifts_bump_row_version BEFORE UPDATE ON shifts FOR EACH ROW EXECUTE FUNCTION bump_row_version();
+  CREATE TRIGGER shifts_guard_client_writes BEFORE INSERT OR UPDATE ON shifts FOR EACH ROW EXECUTE FUNCTION shifts_guard_client_writes();
+  CREATE TRIGGER shifts_set_updated_at BEFORE UPDATE ON shifts FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+  CREATE TRIGGER shifts_sync_status_trg BEFORE INSERT OR UPDATE ON shifts FOR EACH ROW EXECUTE FUNCTION shifts_sync_status();
+  CREATE TRIGGER shifts_unfinished_tickets BEFORE UPDATE ON shifts FOR EACH ROW EXECUTE FUNCTION guard_shift_unfinished_tickets();
+  CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON shifts FOR EACH ROW EXECUTE FUNCTION sync_feed_shifts();
   INSERT INTO terminal_tokens VALUES('t-a','a','active',NULL),('t-b','b','active',NULL),('management',NULL,'active',NULL);
   SELECT set_config('test.auth_role','service_role',false);`);
 
@@ -85,8 +98,9 @@ const batch = (rows, batchId = randomUUID(), branch = "a", terminal = "t-a") =>
   db.query("SELECT pos_sync_push_batch($1::uuid,'default',$2,$3,'shifts',$4::jsonb,'[]'::jsonb) result", [batchId, branch, terminal, JSON.stringify(rows)]);
 const state = async () => (await db.query("SELECT status,state,row_version,store_id,counted_cash,closed_at FROM shifts WHERE id=$1::uuid", [id])).rows[0];
 async function seed(value = openRow()) {
-  await db.exec("TRUNCATE shifts,sync_idempotency_receipts,audit_logs; SELECT set_config('test.auth_role','service_role',false);");
+  await db.exec("TRUNCATE shifts,sync_idempotency_receipts,audit_logs,sync_change_feed,held_orders; SELECT set_config('test.auth_role','service_role',false); SELECT set_config('pos.shift_fn','on',false);");
   await db.query("INSERT INTO shifts SELECT * FROM jsonb_populate_record(NULL::shifts,$1::jsonb)", [JSON.stringify(value)]);
+  await db.exec("SELECT set_config('pos.shift_fn','',false)");
 }
 let passed = 0;
 async function test(name, work) { await seed(); await work(); console.log(`PASS ${name}`); passed++; }
@@ -98,6 +112,12 @@ try {
     assert.equal((await state()).status, "OPEN");
     assert.equal(response.shift_closure_ack_version, undefined);
   });
+  await db.exec(firstMigration);
+  await test("first proof version falsely rejects a valid closure across independent revision clocks", async () => {
+    await seed(openRow({ row_version: 4 }));
+    await assert.rejects(aggregate([operation([row({ row_version: 8 })])]), /SYNC_SHIFT_CLOSURE_CONFLICT/);
+    assert.equal((await state()).status,"OPEN");
+  });
   await db.exec(migration);
   await test("equal-version ignored closure fails atomically and cannot save a receipt", async () => {
     await assert.rejects(aggregate([operation([row({ row_version: 1 })])]), /SYNC_SHIFT_CLOSURE_CONFLICT/);
@@ -106,9 +126,30 @@ try {
   });
   await test("newer closure persists and returns exact same-branch proof", async () => {
     const response = (await aggregate([operation([row()])])).rows[0].result;
-    assert.equal(response.shift_closure_ack_version, 1);
-    assert.deepEqual(response.shift_closures, [{ id, store_id: "a", row_version: 2 }]);
+    assert.equal(response.shift_closure_ack_version, 2);
+    assert.deepEqual(response.shift_closures, [{ id, store_id: "a", row_version: 2, requested_row_version: 2 }]);
     assert.equal((await state()).status, "CLOSED");
+  });
+  await test("sparse offline closure revisions acknowledge actual PostgreSQL OLD+1 and requested snapshot separately", async () => {
+    await seed(openRow({ row_version: 4 }));
+    const key=randomUUID(); const operations=[operation([row({ row_version: 8 })])];
+    const response=(await aggregate(operations,key)).rows[0].result;
+    assert.deepEqual(response.shift_closures,[{ id,store_id:"a",row_version:5,requested_row_version:8 }]);
+    assert.equal(response.shift_closure_ack_version,2); assert.equal((await state()).status,"CLOSED");
+    const replay=(await aggregate(operations,key)).rows[0].result;
+    assert.equal(replay.replayed,true); assert.deepEqual(replay.shift_closures,response.shift_closures);
+    assert.equal((await state()).row_version,5);
+  });
+  await test("table recovery proof also keeps independent revision clocks across sparse updates", async () => {
+    await seed(openRow({ row_version: 3 }));
+    const response=(await batch([row({ row_version: 20 })])).rows[0].result;
+    assert.deepEqual(response.shift_closures,[{ id,store_id:"a",row_version:4,requested_row_version:20 }]);
+  });
+  await test("authoritative unfinished-ticket guard still rolls back a closure and acknowledgement", async () => {
+    await db.query("INSERT INTO held_orders VALUES('a',$1,'draft')",[id]);
+    await assert.rejects(aggregate([operation([row()])]),/Complete or cancel all draft/);
+    assert.equal((await state()).status,"OPEN");
+    assert.equal((await db.query("SELECT count(*)::int n FROM sync_idempotency_receipts")).rows[0].n,0);
   });
   await test("equivalent equal and higher-revision cloud closures remain idempotent", async () => {
     await seed(row({ row_version: 5 }));
@@ -124,7 +165,7 @@ try {
   await test("matching same-key retry and SQL-normalized timestamps/numbers replay", async () => {
     const key = randomUUID(); const operations = [operation([row({ counted_cash: "110.00", closed_at: "2026-10-01T16:00:00+08:00" })])];
     await aggregate(operations, key); const response = (await aggregate(operations, key)).rows[0].result;
-    assert.equal(response.replayed, true); assert.equal(response.shift_closure_ack_version, 1);
+    assert.equal(response.replayed, true); assert.equal(response.shift_closure_ack_version, 2);
     assert.equal((await db.query("SELECT count(*)::int n FROM sync_idempotency_receipts")).rows[0].n, 1);
   });
   await test("old incorrect aggregate receipt cannot bypass the postcondition", async () => {
@@ -141,7 +182,7 @@ try {
   await test("table batch replay canonicalizes SQL-equivalent branch metadata", async () => {
     const key = randomUUID(); const rows = [row({ store_id: "A " })];
     await batch(rows, key); const response = (await batch(rows, key)).rows[0].result;
-    assert.equal(response.replayed, true); assert.deepEqual(response.shift_closures, [{ id, store_id: "a", row_version: 2 }]);
+    assert.equal(response.replayed, true); assert.deepEqual(response.shift_closures, [{ id, store_id: "a", row_version: 2, requested_row_version: 2 }]);
   });
   await test("mixed aggregate rollback includes preceding successful non-shift writes", async () => {
     await assert.rejects(aggregate([{ table: "audit_logs", rows: [{ id: randomUUID(), store_id: "a" }], changes: [] },operation([row({ row_version: 1 })])]), /SYNC_SHIFT_CLOSURE_CONFLICT/);
@@ -179,8 +220,9 @@ try {
     assert.equal((await state()).counted_cash,"110");
   });
   await test("ambiguous response loss retries once without duplicate closure or journal loss", async () => {
+    await seed(openRow({ row_version: 4 }));
     const pending = new Set(["closure"]); let calls = 0; const failures = [];
-    const localRow = row();
+    const localRow = row({ row_version: 8 });
     const shiftTable = { cloudTable: "shifts", sqlServerTable: "shifts", dependencyOrder: 0,
       columns: [{ cloudColumn: "id", sqlServerColumn: "id", primaryKey: true },{ cloudColumn: "store_id", sqlServerColumn: "store_id" }] };
     const worker = new PushWorker({ registry: { tables: [shiftTable] }, reader: {
@@ -196,7 +238,7 @@ try {
     await worker.pushAggregates("a",100,true); assert(pending.has("closure")); assert.equal(failures[0], "ETIMEDOUT");
     await worker.pushAggregates("a",100,true); assert.equal(pending.size, 0); assert.equal(calls, 2);
     assert.equal((await db.query("SELECT count(*)::int n FROM sync_idempotency_receipts")).rows[0].n, 1);
-    assert.equal((await state()).row_version, 2);
+    assert.equal((await state()).row_version, 5);
   });
   await test("new helper privileges remain service-only without changing original sync privileges", async () => {
     const { rows } = await db.query("SELECT has_function_privilege('authenticated','pos_sync_shift_closure_ack(jsonb,text)','EXECUTE') AS ordinary,has_function_privilege('service_role','pos_sync_shift_closure_ack(jsonb,text)','EXECUTE') AS service");
@@ -212,15 +254,15 @@ try {
   });
   await test("generated contract retains the same helpers and atomic closure/replay behavior", async () => {
     for (const name of ["pos_sync_assert_shift_ownership","pos_sync_shift_closure_ack","pos_sync_aggregate_shift_closure_ack"])
-      assert.equal(sourceFunction(name, generatedContract), sourceFunction(name, migration));
+      assert.equal(sourceFunction(name, generatedContract), sourceFunction(name, name === "pos_sync_shift_closure_ack" ? migration : firstMigration));
     await db.exec(["sync_apply_shifts","pos_sync_push_batch","pos_sync_push_aggregate"]
       .map(name => sourceFunction(name,generatedContract)).join("\n"));
     await assert.rejects(aggregate([operation([row({ row_version: 1 })])]), /SYNC_SHIFT_CLOSURE_CONFLICT/);
     const key = randomUUID(); const operations = [operation([row()])];
     await aggregate(operations,key);
     const response = (await aggregate(operations,key)).rows[0].result;
-    assert.equal(response.replayed,true); assert.equal(response.shift_closure_ack_version,1);
-    assert.deepEqual(response.shift_closures,[{ id,store_id:"a",row_version:2 }]);
+    assert.equal(response.replayed,true); assert.equal(response.shift_closure_ack_version,2);
+    assert.deepEqual(response.shift_closures,[{ id,store_id:"a",row_version:2,requested_row_version:2 }]);
     await db.exec(migration); // Regeneration followed by migration is safe too.
   });
   console.log(`${passed} isolated shift closure synchronization scenarios passed.`);

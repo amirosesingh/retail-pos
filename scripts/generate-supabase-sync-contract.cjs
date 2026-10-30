@@ -12,9 +12,17 @@ const end = "-- SQLSERVER_SYNC_CONTRACT_END";
 // Keep newly generated sync routines aligned with the reviewed incremental fix.
 const shiftClosureMigration = fs.readFileSync(path.join(root, "supabase", "migrations",
   "20261030153259_confirm_shift_closure_sync_acknowledgement.sql"), "utf8");
-const shiftClosureHelpers = shiftClosureMigration.split("-- SHIFT_CLOSURE_SYNC_HELPERS_BEGIN")[1]
+const legacyShiftClosureHelpers = shiftClosureMigration.split("-- SHIFT_CLOSURE_SYNC_HELPERS_BEGIN")[1]
   ?.split("-- SHIFT_CLOSURE_SYNC_HELPERS_END")[0];
-if (!shiftClosureHelpers) throw new Error("The shift closure acknowledgement helpers are missing.");
+const shiftClosureProofMigration = fs.readFileSync(path.join(root,"supabase","migrations",
+  "20261030164829_bind_shift_closure_proof_to_requested_revision.sql"),"utf8");
+const shiftClosureProof = shiftClosureProofMigration.split("-- SHIFT_CLOSURE_SYNC_PROOF_V2_BEGIN")[1]
+  ?.split("-- SHIFT_CLOSURE_SYNC_PROOF_V2_END")[0]?.trim();
+if (!legacyShiftClosureHelpers || !shiftClosureProof) throw new Error("The shift closure acknowledgement helpers are missing.");
+const legacyProofStart = legacyShiftClosureHelpers.indexOf("CREATE OR REPLACE FUNCTION public.pos_sync_shift_closure_ack(");
+const legacyProofEnd = legacyShiftClosureHelpers.indexOf("END $fn$;",legacyProofStart)+"END $fn$;".length;
+if (legacyProofStart<0 || legacyProofEnd<=legacyProofStart) throw new Error("The legacy closure proof boundary is missing.");
+const shiftClosureHelpers = legacyShiftClosureHelpers.slice(0,legacyProofStart)+shiftClosureProof+legacyShiftClosureHelpers.slice(legacyProofEnd);
 const q = (value) => `"${value}"`;
 const primary = (table) => table.columns.filter((column) => column.primaryKey);
 const columnNames = (table) => new Set(table.columns.map((column) => column.cloudColumn));

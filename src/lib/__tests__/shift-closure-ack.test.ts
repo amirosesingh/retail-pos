@@ -13,8 +13,8 @@ const table = { cloudTable: "shifts", sqlServerTable: "shifts", dependencyOrder:
   scope: "branch", columns: [{ cloudColumn: "id", primaryKey: true }, { cloudColumn: "store_id" }] };
 const operation = { table: "shifts", rows: [row] };
 const proof = (revision: number | string = 2) => ({ ok: true, applied_count: 0,
-  shift_closure_ack_version: 1,
-  shift_closures: [{ id: row.id, store_id: branch, row_version: revision }] });
+  shift_closure_ack_version: 2,
+  shift_closures: [{ id: row.id, store_id: branch, row_version: revision, requested_row_version: 2 }] });
 
 function fixture(result: unknown = { ok: true }) {
   let pending = true;
@@ -46,7 +46,7 @@ describe("authoritative shift closure acknowledgements", () => {
     },
   );
 
-  it.each([2, "2", 3])("accepts a confirmed equivalent replay at revision %s", async version => {
+  it.each([1, 2, "2", 3])("accepts a confirmed equivalent replay at cloud revision %s", async version => {
     const f = fixture(proof(version));
     expect(await f.worker.pushAggregates(branch, 100, true)).toBe(1);
     expect(f.pending()).toBe(false);
@@ -77,7 +77,7 @@ describe("authoritative shift closure acknowledgements", () => {
   it.each([
     [{ id: row.id, store_id: otherBranch, row_version: 2 }],
     [{ id: "different", store_id: branch, row_version: 2 }],
-    [{ id: row.id, store_id: branch, row_version: 1 }],
+    [{ id: row.id, store_id: branch, row_version: 1, requested_row_version: 1 }],
     [{ id: row.id, store_id: branch, row_version: 0 }],
     [{ id: row.id, store_id: branch, row_version: null }],
     [{ id: row.id, store_id: branch, row_version: 2.1 }],
@@ -94,6 +94,14 @@ describe("authoritative shift closure acknowledgements", () => {
       rows: [{ ...row, id: row.id.toUpperCase(), store_id: branch.toUpperCase() }] }], branch)).not.toThrow();
     expect(() => assertShiftClosureAcknowledgement(proof(), [{ ...operation,
       rows: [{ ...row, store_id: otherBranch }] }], branch)).toThrow(/not confirmed/);
+  });
+
+  it("accepts independently bumped cloud revisions only with the exact requested revision proof", () => {
+    const incoming = { ...row, row_version: 8 };
+    const response = { ...proof(5), shift_closures: [{ ...proof(5).shift_closures[0], requested_row_version: 8 }] };
+    expect(() => assertShiftClosureAcknowledgement(response, [{ ...operation, rows: [incoming] }], branch)).not.toThrow();
+    expect(() => assertShiftClosureAcknowledgement({ ...response, shift_closure_ack_version: 1 },
+      [{ ...operation, rows: [incoming] }], branch)).toThrow(/not confirmed/);
   });
 
   it("requires proof for partial closure flags too, and leaves ordinary uploads unchanged", () => {
