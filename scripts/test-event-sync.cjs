@@ -127,7 +127,8 @@ function loadTs(file, name, dependencies={}) {
   return new Function(...Object.keys(dependencies),`${source}\nreturn ${name};`)(...Object.values(dependencies));
 }
 
-test('private notifications follow branch changes, validate hints and stop on logout', async () => {
+test('private notifications follow branch changes, validate hints and stop on logout', async (t) => {
+  t.mock.timers.enable({apis:['setTimeout']});
   const createSerialChannelReplacer=loadTs('src/lib/realtime-channel-replacer.ts','createSerialChannelReplacer');
   const createSyncWakeChannels=loadTs('src/lib/sync-wake-channels.ts','createSyncWakeChannels',{createSerialChannelReplacer});
   const channels=[];const removed=[];const hints=[];let reconnects=0;
@@ -141,10 +142,23 @@ test('private notifications follow branch changes, validate hints and stop on lo
   assert.deepEqual(channels.map(c=>c.topic),['pos-sync:default:global','pos-sync:default:branch:A','pos-sync:default:terminal:T1']);
   assert.ok(channels.every(c=>c.options.config.private===true));
   channels[1].receive({payload:{table:'sales'}});channels[1].receive({payload:{table:'invalid table'}});
-  assert.deepEqual(hints,['sales']);channels[0].status('SUBSCRIBED');assert.equal(reconnects,1);
+  assert.deepEqual(hints,['sales']);
+  for(const channel of channels)channel.status('SUBSCRIBED');
+  assert.equal(reconnects,0);
+  t.mock.timers.tick(249);assert.equal(reconnects,0);
+  t.mock.timers.tick(1);assert.equal(reconnects,1);
+  // Repeated status callbacks do not schedule another catch-up.
+  channels[0].status('SUBSCRIBED');t.mock.timers.tick(250);assert.equal(reconnects,1);
+  channels[0].status('CLOSED');channels[0].status('SUBSCRIBED');
   await wakes.replace('B','T2',true);assert.equal(removed.length,3);
+  t.mock.timers.tick(250);assert.equal(reconnects,1);
+  channels[1].receive({payload:{table:'products'}});assert.deepEqual(hints,['sales']);
   assert.equal(channels[4].topic,'pos-sync:default:branch:B');
+  channels[4].receive({payload:{table:'products'}});assert.deepEqual(hints,['sales','products']);
+  channels[4].status('SUBSCRIBED');
   await wakes.replace('B','T2',false);assert.equal(removed.length,6);
+  t.mock.timers.tick(250);assert.equal(reconnects,1);
+  channels[4].receive({payload:{table:'sales'}});assert.deepEqual(hints,['sales','products']);
 });
 
 test('fresh installer contains the exact additive private notification upgrade', () => {
