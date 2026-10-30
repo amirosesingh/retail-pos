@@ -849,3 +849,15 @@ pending failures), deliver accurate closure status, reconcile cached active shif
 only from a confirmed same-branch record. Requires bounded files/dependencies,
 isolated allowed/denied/retry/offline regressions and owner approval before code
 changes; any live migration or historical record repair needs separate approval.
+
+### Beta PR342 delivery and CI checkpoint — 30 October
+
+Source and evidence commits pushed through `e1ef8071` to the existing draft
+beta PR342 (base beta, head codex/add-missed-bill). No beta/main merge or release
+publication. PR title/body reconciled around final behavior and actual database
+application. Full CI permission run:567suites/3,586tests passed,1test failed and
+1skipped; sole failure was an obsolete source assertion expecting the old
+settings callback name. Corrected only sales-realtime.test.ts to verify the new
+startup-aware reader, preserving channel, canonical-read, reconnect and branch
+guards. Four focused suites/30tests and ESLint/diff checks passed; CI rerun at
+the follow-up commit remains pending. Do not report the first CI run as green.
