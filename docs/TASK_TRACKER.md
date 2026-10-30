@@ -1,6 +1,6 @@
 # POS task tracker
 
-Last reconciled: **2026-10-30, Asia/Brunei**.
+Last reconciled: **2026-10-31, Asia/Brunei**.
 Read [../AGENTS.md](../AGENTS.md) and [PROJECT_MEMORY.md](PROJECT_MEMORY.md).
 This is the single current task ledger. Existing audit/checkpoint documents remain
 supporting evidence, not competing completion lists. Batch 0 authorized documentation
@@ -22,7 +22,13 @@ only; the owner's subsequent Batch 1 approval below authorizes its bounded fixes
 | 9 | PERF-12 committed / scoped-verified | `6defed4f`: single refresh ownership, settings readiness and cancellation fences. Preserve genuine trailing changes, offline SQL and all authority scopes. Physical-device acceptance remains separate. |
 | 10 | UI-15 committed / scoped-verified | `14cd2c9a`: loaded-zero summaries hide;220ms appearance/reflow with reduced-motion support; All Shops remains complete. Desktop/phone synthetic-browser checks passed without interaction network reads. |
 | 11 | FIN-13 follow-up committed / migration applied | `43d114f5`: authoritative branch-scoped cashier picker and native proof validation. Exact approved cloud migration applied/permissions verified; actual signed-in form/device check pending. |
-| 12 | SHIFT-14 / local SQL readiness investigation | No shift repair authorized. Both reported cloud shifts remain open, local failed-sync evidence requested. Local SQL connection works but migration20/default mismatch remains; exact local upgrade approval requested. |
+| 12 | SHIFT-14 v2 committed/pushed/scoped verified; corrective live approval pending | ec4e3e7e fixes the v1 independent-revision regression. All seven actual shift triggers are installed in 24 passing isolated SQL cases. Native proof checks pass; live v1 remains installed until exact v2 approval/application. Do not merge/release v1 alone. No business rows rewritten. |
+| 13 | HISTORY-16 / SHIFT-15 committed/pushed/scoped CI verified | ff94abb8 removes Shifts sign-in-history entry and adds store-day range shortcuts. Real browser Previous/Next moved both dates31→30→31 on ReceiptHistory; no transaction submitted. Shift/mobile interaction checks remain. |
+| 14 | INV-18/19/UI-20 committed/pushed/scoped CI verified | 2ce39509 compact low/negative number actions, reviewed count handoff and exact current-stock search across Active+Archive. Permission/branch denial and retry recovery tests passed; no live quantity changes. Actual UI checks remain. |
+| 15 | REFRESH-17/PERF-18 active | Confirmed whole-page connection visibility gate; prepare same-scope inert cached-content recovery without granting offline writes. Ordinary row refresh does not navigate/reload; exact intermittent freeze cause not yet proven. |
+| 16 | LOC-21 copy committed / NOTIF-22 correction pending preparation approval | 8e465dc9 text-only scope clarification passed CI. Core notification migration deployed but rules not saved/activated. Soft-token follow-up SQL tests pass; personal-clear upgrade failed foreign-branch acknowledgement test and cannot be applied unchanged. |
+| 17 | PERF-24 committed/pushed/scoped verified | 8b840192 fixes first-paint report completeness, restored-session landing and scoped-settings initial readiness/retry. Independent review passed; 11 focused suites/96 tests passed. Latest PR checks are green. No formula/grant/Membership change. |
+| 18 | AUTH-12 confirmed low security finding; correction plan pending approval | Completed immutable Codex Security diff scan found anonymous PIN-login account-state disclosure. Keep private verifier diagnostics/attempt semantics; normalize every exposed transport in a separate reviewed batch. No authorization bypass or account access was demonstrated. |
 
 Membership is **ON HOLD** throughout. Each future batch requires a recoverable
 baseline, specific files/dependencies, expected behavior, risks, regression tests,
@@ -963,3 +969,235 @@ ran6suites/71tests plus13Node upgrade checks; actual Electron readiness and live
 human-only selector are verified as above. Physical cashier login/payment/print
 and offline-shift upload acceptance remain separate. No production promotion or
 installer/OTA publication authorized; keep the live server and native preview up.
+
+Delivery verification: follow-ups and tracker pushed through `750a8c97` to draft
+beta PR342. Full CI41074071503 PASSED:568suites/3,593tests passed,1skipped;
+permission/account lifecycle,sync/startup/database-upgrade,SQLcontracts,updater
+boundaries,lint,typecheck/build,dependency audit passed. Android41074071520 passed;
+iPhonecompile-only41074071535 still running. PR body reconciled with current
+local20ready/human-picker/closed-cloud-shift evidence. No merge or publication.
+The prevention-batch approval was pending at that checkpoint; the subsequent
+explicit owner approval below supersedes that approval status only. Preserve all
+other unfinished tasks.
+
+## 30–31 October: approved shift correction and follow-up requests
+
+**Baseline:** 750a8c97 on codex/add-missed-bill, draft beta PR342. At batch start,
+only prior tracker evidence was tracked-dirty. Unrelated untracked drafts, the
+zero-byte booking migration and private signing credentials remain preserved.
+
+### SHIFT-14: reliable closure acknowledgement
+
+Owner explicitly approved correction code and isolated tests. The actual worker
+and PostgreSQL reproduction showed local CLOSED/cloud OPEN at equal revision
+could apply zero rows while returning success and clearing the pending journal.
+That proves a defect, but the affected PC's original revision/outbox is unknown.
+Both incident shifts had already closed through online-client requests; agents
+never repaired them or submitted closing counts.
+
+Implemented and pushed in 3ede8f7e: atomic semantic closure postconditions, exact
+same-branch proof before journal/checkpoint acknowledgement, equivalent replay,
+conflict retention, accurate reported/confirmed activity wording and active-shift
+cache reconciliation. Empty/error/stale reads do not fabricate closure. Existing
+checkout, grants, stock and other-table acknowledgement contracts are preserved.
+
+Owner then separately approved the exact live migration on ROSEGILL →
+rosegill0011@gmail.com's Org (bjxgimekljzlnwejuawj) → pos
+(qhrufhtbeguxydenzfey), https://qhrufhtbeguxydenzfey.supabase.co.
+Source migration20261030153259 was applied as live history20261030155938 at
+23:59:38 Brunei, 30 October. All three prior routine hashes matched the reviewed
+baseline; definitions were retained in ignored node_modules/.cache for rollback.
+Readback confirms three guarded routines and three service-only SECURITY INVOKER
+helpers. Both incident rows retained revision4/CLOSED/existing timestamps. A
+read-only call returned both same-branch closure proofs. No live financial test.
+See database/shift-closure-sync-review.md. Device reconnect acceptance is separate.
+
+### HISTORY-16 / SHIFT-15
+
+Owner requested Previous day / Today / Next day beside receipt/shift From–To
+ranges, preserving store timezone and explicit ranges, and removal of the Shifts
+Sign-in history button. Implemented in ff94abb8; shift history and authentication
+audit storage remain. Real signed-in browser Receipt History test moved both dates
+31→30→31 October. No transaction submitted. Shift/mobile interactions remain.
+
+### INV-18 / INV-19 / UI-20
+
+Owner requested one compact Low/Negative stock card with clickable numeric counts.
+Low opens the matching selected-branch list. Negative opens read-only review and
+then the existing stock-count workflow. Physical counts start blank, explicit0 is
+allowed after counting, and existing permission/reason/audit/idempotent Post is
+required. No automatic zero-all action, product deletion or live stock test.
+
+Current and Other stores numeric filters match their displayed stock quantities,
+not source count/name/barcode; Other stores remains positive, authorized,
+same-cluster availability with the existing three-decimal display. Owner explicitly
+chose numeric CURRENT-BRANCH Stock searches across BOTH Active and Archive.
+Other intentional filters and cluster/branch scope remain; mode/scope is explained,
+and clearing restores the previous view. Main search remains broad. Added space
+between valuation cards and the catalogue. Commit2ce39509 includes these changes
+and review-link recovery tests (denied/wrong branch/empty → corrected state opens
+once). No stock/status/SKU/price/checkout changes.
+
+### LOC-21
+
+Owner asked what Private shop/catalogue/stock actually means and requested accurate
+copy. There is no separate Private shop flag. Same-cluster products are shared;
+quantities belong to locations, normal operations remain branch-locked, permitted
+same-cluster availability and authorized management views remain. privateStock is
+a saved preference with no separate runtime consumer; do not claim the switch
+adds privacy. Text-only8e465dc9 explains that gap. The owner immediately reversed
+removing All Shops/Live Dashboard buttons: KEEP both. No policy/default changes.
+
+### NOTIF-22: live audit and additional correction approval pending
+
+Read-only ROSEGILL pos metadata confirms the core24October rule-table migration,
+RLS, triggers and service-only save/claim/recipient helpers are deployed. At that
+checkpoint no rules array/rulesVersion was saved, legacy enabled=false and the
+delivery table was empty. Preserve operator values; no live rule creation,
+activation, test messages or delivery certification was performed. The optional
+clear-RPC alias is absent but has a valid protected fallback; do not add it solely
+because an optional fast path is missing.
+
+Two25October upgrades are absent: personal clear union and owner-plus-admin
+soft-token notification rule. Isolated tests found a confirmed blocker in the
+personal upgrade: a Branch A upload can reuse a Branch B event ID, relabel the
+incoming store A, and mutate B's cleared_by. Do NOT apply that migration unchanged.
+New scripts/test-notification-upgrades.mjs currently reports14 passes/1 failure;
+existing notification tests43 passed. Soft-token owner/admin scenarios pass, but
+that upgrade still requires exact live-project approval and current-state review.
+See database/notification-upgrades-review.md.
+
+A separate additive ownership-check/union correction and isolated tests were
+proposed. Preparation approval is PENDING; no old migration was rewritten and no
+live notification upgrade applied. Preserve immutable content, personal clears,
+legitimate retries and branch denial; no silent skip/false acknowledgement.
+
+### REFRESH-17 / PERF-18 / PERF-24
+
+Owner requested required-only updates/cache reuse rather than whole-page/database
+reload on clicks and row changes, and correction of partial initial data.
+Ordinary background refresh preserves the shell and loaded slices; no ordinary
+row-change document reload was found. Report changes still reconcile the selected
+authorized date range because hints omit sale IDs. A bounded authorized sale-graph
+by-ID reader plus reliable parent hints is a separate future optimization; do not
+skip reconciliation and lose older refunds/missed bills. Exact intermittent
+production CPU-freeze cause remains unproven.
+
+Confirmed first-render bug: useReportSales exposed recent seed rows as complete
+before its effect started. Scope-keyed read/error status now marks uncached totals
+incomplete, retains confirmed/fresh/empty cached ranges and background rows,
+without query/formula changes. Restored deep links also incorrectly defaulted to
+Home when a per-tab sign-in marker was absent; observed real PIN/password sign-in
+still gets its default landing. These changes and the scoped-settings follow-up
+are committed/pushed in8b840192;39 early focused checks were followed by the
+broader96-case run and independent review below.
+
+Confirmed initial-settings gap: primary readiness can precede scoped overrides and
+locks. A current-user/mode/branch/cluster/terminal readiness/error/scope-only retry
+correction passed independent review. Actual installed IPC tests confirm cashier
+read access without settings-edit permission. Review caught and corrected timeout
+overlap, same-user session-generation reuse and lost queued hints on Retry. Raw
+composite singleflight, safe late results and exactly one real trailing read pass;
+11 suites/96 checks passed, including the independently repeated critical75.
+No grant, SQL or Membership change was made by this read-status correction.
+
+The browser connection gate also replaces loaded content with a fullscreen view
+after repeated failures. A retained-content attempt is UNCOMMITTED. Actual
+390/1440px Chrome fixtures proved body-mounted Radix portals escape hidden/inert:
+PointerUp changes a Select; dialogs remain visible after configuration/scope
+failure; modal locks block Retry. Zero external requests were made. Evidence is
+under ignored node_modules/.cache/offline-gate-portals. Do not release that partial
+change. A roughly14-file optional gated portal-container correction (10 shared
+wrappers plus context/gate/browser tests) needs PENDING owner approval. Preserve
+unsaved forms, retry focus, outside-context behavior and native offline access.
+
+### REL-23: beta delivery and remaining gates
+
+Owner requests all current fixes verified, committed and merged incrementally into
+beta, then beta release. Do not replace the repository, reset unrelated work,
+force push, bypass checks or promote main. Refreshed origin/beta remains bce925a2
+and is an ancestor; no divergence/conflict at that checkpoint.
+
+Six completed commits are pushed through ec4e3e7e to draft PR342. The latest
+exact-HEAD CI41094719520 passed577 suites/3,717 tests,1 skipped; permission/account
+lifecycle, sync/startup/local upgrade,24 isolated shift SQL cases with all actual
+triggers, SQL contracts, updater, lint/typecheck/build and dependency audit passed.
+Android and Windows renderer41094719408 and unsigned iPhone compile41094719421
+passed. GitHub reports CLEAN/no merge conflict, but the PR remains draft because
+v2 live application and other correction approvals are pending. Classic branch
+protection returns404; repository rulesets were not verified. These are CI checks,
+not themselves a Codex Security scan. The separate immutable security diff scan
+completed for bce925a2..ec4e3e7e (be78d091-88ee-4677-956a-330f0ff27f61): all 161
+inventory files reviewed, one LOW finding. Uncommitted portal and notification
+experiments are excluded. No merge or installer/OTA publication.
+
+Local preview http://127.0.0.1:8080 remains running with current source and Vite
+client HTTP200. Separate verification tab avoids the owner's unsaved receipt
+settings. Cua does not expose performance globals; no invented navigation-counter
+or CPU-freeze proof. Next beta version calculation currently returns1.4.81-beta.1;
+refresh release tags/checks at publication. AGENTS.md requires exact owner request
+“Publish beta now” at the concrete publication step. No publication tag/dispatch
+before that instruction. Membership stays ON HOLD; all older unfinished work and
+prepared-only migrations remain in this ledger.
+### SHIFT-14 follow-up: revision trigger blocker; do not merge v1
+
+Further actual-trigger review found a HIGH regression in the v1 guard: local and
+cloud revisions are independent. The enabled cloud shifts_bump_row_version
+trigger sets OLD+1, so valid local CLOSEDv8 over cloud OPENv4 stores cloudv5;
+the v1 >=incoming assertion then rejects/rolls back that valid upload. The first
+20-case fixture omitted the actual shift triggers. CI at3ede8f7e therefore is not
+proof of this interaction; PR342 remains draft with a do-not-merge explanation.
+No sales/stock/count data was rewritten, but v1 can hold valid closures pending.
+
+Prepare corrective additive migration20261030164829 (never rewrite appliedv1 or
+the global revision trigger). Version2 checks the same exact closing facts,
+returns the actual positive cloud revision plus requested_row_version echo,
+and binds native acknowledgement to that requested revision rather than comparing
+different revision clocks. Tests must install all seven actual canonical shift
+triggers and cover sparse sync, receipt replay and conflicts. Source correction
+is within approved closure-correction intent; LIVE application still needs exact
+project/migration approval after tests. Root native version2 checks passed25cases.
+
+A separate stale OPEN/high-revision reopening of an already CLOSED shift reproduces
+on BOTH baseline and new guard; no legitimate reopen flow identified yet. Keep
+this pre-existing issue distinct and investigate/seek a bounded correction rather
+than silently changing lifecycle rules or modifying live shifts.
+
+### Completed security diff review / AUTH-12 — 31 October
+
+Scan be78d091-88ee-4677-956a-330f0ff27f61 completed for exact immutable
+bce925a2..ec4e3e7e. All161 authoritative source/test/CI inventory files were
+reviewed in four disjoint partitions: authentication47, finance/sync39,
+loading38, inventory/history/UI37. Five changed documentation files were context.
+One validated LOW finding (CWE-204), no high/critical new diff finding. This is a
+completed diff review, not a repository-wide/deep scan or installed-device proof.
+Canonical report is stored in the Codex Security workbench, finding
+csf_005b69baa9b5fd14bafe9d44 / occurrence occ_95d9ce1532b10354c1c99dc9.
+
+AUTH-12: arbitrary syntactically valid PIN plus a guessed inactive/unconfigured
+identifier yields account_inactive/credential_unavailable before credential
+verification, while unknown identifiers yield invalid_credentials. New private
+SQL statuses are forwarded at cashier-login.server.ts81–84, then returned by
+public cashier-login.ts95. Baseline normalized these cases; the registered
+terminal roster does not intentionally disclose them anonymously. No session,
+name, secret or permission grant is returned; guessing throttles remain.
+Actual isolated verifier tests11passed; public response propagation was traced,
+not attacked on live accounts. Parent follow-up also found the unchanged
+ipc-authorize transport returns the same shared-helper refusal envelope, so a
+correction must cover both public responses. This adds no separate root cause.
+
+Proposed bounded batch: a shared public-result projection plus the two exposed
+route consumers and focused tests. Keep detailed verifier outcomes inside the
+trusted server so only genuine invalid PINs consume the existing wrong-attempt
+budgets. Do not accidentally label unavailable verification as a wrong PIN or
+enable fallback for a revoked/inactive identity. Preserve successful login,
+device/branch checks, checkout grants and SQL credential sources. Verify allowed,
+denied, unavailable, locked, native/offline and both HTTP transport cases. No DB
+or permission change is proposed. Baseline ec4e3e7e is recoverable; rollback is a
+revert of that future bounded batch. Approval pending; no AUTH-12 code fix yet.
+
+The report retains separate live-v2, portal, notification, stale-OPEN and management
+replication-scope limitations. No new live write, restart or publication occurred.
+Security tool reports32,366,649 aggregate chat tokens across four threads,
+including31,446,144 cached-input tokens; this is thread-rollout accounting rather
+than an isolated incremental scan-cost measurement. Existing pending tasks remain.

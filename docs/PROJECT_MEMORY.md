@@ -1,6 +1,6 @@
 # POS project memory
 
-Last reconciled: **2026-10-30, Asia/Brunei**. This is approved architecture and
+Last reconciled: **2026-10-31, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
 
 The owner's latest inventory UI refinement (DEC-25) combines adjacent Products
@@ -34,6 +34,28 @@ the controls needed to create the first transaction.
 Read [../AGENTS.md](../AGENTS.md) and [TASK_TRACKER.md](TASK_TRACKER.md) first.
 The tracker records defects, unfinished work, verification and approvals.
 Technical detail remains in the existing references linked below.
+
+Latest30October decisions: SHIFT-14 correction code/isolated tests are approved;
+the exact shift-sync migration was subsequently approved and applied at23:59:38
+Brunei (livehistory20261030155938). Future live changes still need separate
+exact-project approval. Never treat
+a client/local closure notification or aggregate applied count as proof that the
+central shift closed. Same-branch, same-shift authoritative acknowledgement and
+idempotent replay are required; no existing shift/count repair is authorized.
+See [prepared correction review](database/shift-closure-sync-review.md).
+
+The owner also approved compact Low/Negative stock alerts with clickable numbers
+and a review→existing stock-count workflow. Physical counts begin blank, require
+explicit review (0 when actually counted), permission and audited posting. Never
+silently zero live stock. Numeric current-branch Stock column searches explicitly
+include both Active and Archive; clear UI scope must distinguish this from the
+ordinary selected-view filter. Preserve branch/cluster boundaries and global SKU.
+
+Manage locations keeps All Shops/Live Dashboard buttons. Catalogue and quantity
+scope are distinct: same-cluster products, per-location quantities, permitted
+same-cluster availability and authorized management views. A saved privateStock
+preference currently has no independent runtime consumer; explanatory text must
+not claim that switch alone enforces privacy. Do not silently invent a new rule.
 
 ## Authority and current work boundary
 
@@ -452,3 +474,31 @@ The previously approved catalogue read policy is now verified active (18:26/18:2
 
 ## Owner restart and Authentication-first scope — 30 October 2026
 The owner performed the approved restart; PostgreSQL start is verified at 18:48:29 Asia/Brunei. Do not issue another restart under the consumed approval. Authentication is now the first live incident priority; preserve other pending tasks. Auth role/login/expiry, required grants, listening addresses and sampled connection capacity are valid. Internal connection/lookup timeouts persist; do not treat them as wrong passwords, PINs or missing staff permissions. No credential/grant/TLS change was made. Prepared sync migration remains unapplied and Membership dependencies remain unchanged. Current recovery code is independently reviewed and regression-tested, but hosted Auth/Data API recovery and fresh CPU usage are not certified.
+
+## Latest source and deployment boundary — 31 October 2026
+
+PR342's pushed source ec4e3e7e includes reviewed initial report/scoped-settings
+readiness and restored-session landing corrections in8b840192. Confirm current
+person/session generation, mode and branch/cluster/terminal before declaring
+settings ready. Keep confirmed same-scope data during background failure; bounded
+loading status does not cancel/restart the underlying read. Retry must preserve a
+real trailing change hint and avoid overlapping composite reads. No permission,
+formula, operator configuration or Membership dependency changed.
+
+Shift proof v1 was applied with exact approval, but its first fixture omitted the
+actual revision trigger. Local and cloud revision clocks are independent: valid
+local CLOSEDv8/cloud OPENv4 can become cloud CLOSEDv5. Source correction v2 binds
+requested_row_version separately while preserving exact closing facts and branch
+checks. All seven actual triggers are now tested. LIVE v2 application remains
+pending separate approval for20261030164829; do not publish the v1-only checkpoint
+or silently alter the global revision trigger/business rows. A stale high-version
+OPEN upload can also reopen a closed shift on the pre-change baseline; this is a
+separate unresolved lifecycle defect requiring a controlled correction plan.
+
+The reconnect retained-content/portal experiment and notification acknowledgement
+correction are not part of committed HEAD. Actual browser tests found portal
+escape/modal-lock problems; isolated notification tests found a foreign-branch
+event-ID acknowledgement mutation. Preserve both findings and pending approvals.
+Do not apply the old personal-clear migration unchanged or claim either fixed.
+Keep beta merge, live migration, website deployment and installer/OTA publication
+as separate states. Membership remains ON HOLD.
