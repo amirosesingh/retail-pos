@@ -60,14 +60,14 @@ describe("cashier login infrastructure failures", () => {
     mocks.rest.mockResolvedValue(Response.json({ status: "invalid" }));
     const response = await handleCashierLogin(request());
     expect(response.status).toBe(401);
-    expect(await response.json()).toMatchObject({ code: "invalid_credentials" });
+    expect(await response.json()).toMatchObject({ code: "sign_in_failed" });
     expect(mocks.fail).toHaveBeenCalledTimes(2);
   });
   it.each(["locked", "credential_unavailable", "account_inactive", "invalid_input"])("does not consume outer wrong-PIN attempts for %s", async status => {
     mocks.rest.mockResolvedValue(Response.json({ status }));
     const response = await handleCashierLogin(request());
-    expect(response.status).toBe(status === "locked" ? 429 : 401);
-    expect(await response.json()).toMatchObject({ ok: false, code: status });
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({ ok: false, code: "sign_in_failed" });
     expect(mocks.fail).not.toHaveBeenCalled();
     expect(mocks.audit).not.toHaveBeenCalled();
   });

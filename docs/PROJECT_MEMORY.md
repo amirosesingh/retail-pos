@@ -502,3 +502,16 @@ event-ID acknowledgement mutation. Preserve both findings and pending approvals.
 Do not apply the old personal-clear migration unchanged or claim either fixed.
 Keep beta merge, live migration, website deployment and installer/OTA publication
 as separate states. Membership remains ON HOLD.
+
+## Public PIN response boundary — 31 October 2026
+
+AUTH-12 was approved by the owner's “Check and fix” instruction. Keep typed PIN
+diagnostics private through server accounting, then use the shared public response
+serializer in every exposed login transport. Unknown/wrong, inactive, unavailable
+verifier, lock and private input-validation results must not disclose account
+state through body or status, including repeated attempts and aliases. Validate
+blank public usernames before lock checks. Public failures use neutral guidance;
+actual server lock enforcement/counters, successful permissions and device/branch
+checks remain unchanged. Preserve independent offline messages and safe fallback
+only for existing infrastructure failures. Never turn a missing verifier into a
+wrong-PIN attempt or grant a stale local session after authoritative denial.

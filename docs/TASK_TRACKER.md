@@ -28,7 +28,7 @@ only; the owner's subsequent Batch 1 approval below authorizes its bounded fixes
 | 15 | REFRESH-17/PERF-18 active | Confirmed whole-page connection visibility gate; prepare same-scope inert cached-content recovery without granting offline writes. Ordinary row refresh does not navigate/reload; exact intermittent freeze cause not yet proven. |
 | 16 | LOC-21 copy committed / NOTIF-22 correction pending preparation approval | 8e465dc9 text-only scope clarification passed CI. Core notification migration deployed but rules not saved/activated. Soft-token follow-up SQL tests pass; personal-clear upgrade failed foreign-branch acknowledgement test and cannot be applied unchanged. |
 | 17 | PERF-24 committed/pushed/scoped verified | 8b840192 fixes first-paint report completeness, restored-session landing and scoped-settings initial readiness/retry. Independent review passed; 11 focused suites/96 tests passed. Latest PR checks are green. No formula/grant/Membership change. |
-| 18 | AUTH-12 confirmed low security finding; correction plan pending approval | Completed immutable Codex Security diff scan found anonymous PIN-login account-state disclosure. Keep private verifier diagnostics/attempt semantics; normalize every exposed transport in a separate reviewed batch. No authorization bypass or account access was demonstrated. |
+| 18 | AUTH-12 implemented / focused checks passed; final PR checks pending | Shared public PIN response boundary covers both transports, alias, lockouts and validation probes. Private counters, grants and offline handling remain. 13 suites/152 tests, 12 isolated SQL scenarios, typecheck and lint passed. |
 
 Membership is **ON HOLD** throughout. Each future batch requires a recoverable
 baseline, specific files/dependencies, expected behavior, risks, regression tests,
@@ -1201,3 +1201,67 @@ replication-scope limitations. No new live write, restart or publication occurre
 Security tool reports32,366,649 aggregate chat tokens across four threads,
 including31,446,144 cached-input tokens; this is thread-rollout accounting rather
 than an isolated incremental scan-cost measurement. Existing pending tasks remain.
+
+### AUTH-12 implementation authorization — 31 October
+
+The owner selected the P3 public PIN account-state finding and instructed “Check
+and fix.” This approves its bounded correction and tests; it does not approve
+other pending UI/notification batches, the v2 live migration, merge or publication.
+Recoverable baseline:51f5d7c8 on codex/add-missed-bill, existing draft beta PR342.
+Preserve unrelated dirty OfflineGate/__root files and all scratch work.
+
+Root and a fresh read-only investigator traced private verifier results through
+both public cashier-login (including its alias) and ipc-authorize. A shared public
+response projection must run after private accounting. Never convert unavailable
+credentials into invalid_credentials before server or keypad wrong-PIN counting.
+Tests must compare exact response bodies/statuses, preserve true private counters,
+unavailable/timeout fallback, actual locked denial, successful session/authority
+and branch checks. Repeated requests and aliases are alternate disclosure cases
+to challenge before finalizing. No new SQL, account, grant or checkout changes.
+
+Files in scope: a shared server response helper, the two route consumers and
+focused transport/consumer regressions; direct callers are reviewed for API
+compatibility. Keep private RPC/result diagnostics available to trusted server
+code. Apply no live database operations. Run type/lint, original-trigger and
+legitimate-control tests, nearest login/offline regressions and one fresh
+read-only bypass/regression review. Rollback is a revert of this correction's
+future commit; retain all other pending work.
+
+### AUTH-12 correction and verification checkpoint
+
+The shared publicCashierLoginResponse serializer now runs after private accounting
+for public cashier-login, its alias and ipc-authorize. Unknown/wrong, inactive,
+missing/unsupported verifier, locked and private SQL validation results share one
+neutral401 envelope. No private diagnostic/attempt fields are copied. The early
+public username lock uses the same boundary. Whitespace-only usernames are
+rejected before lock checks, retaining the existing raw length limit.
+
+Online presentation deliberately no longer reveals the wrong-PIN distinction or
+private lock countdown. SQL/account/address counters and actual lock denial are
+unchanged; unavailable credentials do not become false wrong-PIN attempts.
+Neutral refusal cannot use local fallback or increment keypad failures. Real
+connection/session failures still keep their existing status/fallback semantics;
+independent offline/local PIN messages and attempts are unchanged. Successful
+sessions, native branch binding, cashier checkout grants and IPC maintenance
+permission remain protected by the existing code.
+
+The fresh review identified an address-budget oracle via validation results.
+Root reproduced five failing isolated transport cases and added neutral private
+invalid_input handling plus early blank-username validation. Two astral Unicode
+characters pass IPC's JS length4 check but PostgreSQL counts2; public Zod already
+rejects them, so the claimed Unicode public-route bypass was not reproduced.
+Stateful tests now prime19 distinct guesses, submit the target, and compare both
+probe classes after private counters diverge, through all three entry paths.
+They pass without flattening or resetting the actual private counters.
+
+Verification: original pre-patch transport trigger19failed/10legitimate controls
+passed; final13focused suites/152tests passed, including43privacy cases. Existing
+PGlite verifier tests now12passed, including actual Unicode character validation,
+alias locks, missing/unsupported hashes, private grants and successful login.
+TypeScript and scoped ESLint passed; final diff inspected. One sandbox temporary
+SSR-cache ENOENT was resolved using the repository-local Vitest module-cache path;
+no assertion was bypassed. No real PIN, account, SQL schema/data, permission,
+Membership or checkout code was modified. This does not claim constant-time
+authentication or installed-device acceptance. Final clean-clone CI follows the
+bounded commit/push; original sealed security scan remains immutable evidence for
+its earlier revision, not an updated scan or a closed workbench finding.

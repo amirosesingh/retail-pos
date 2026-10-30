@@ -98,6 +98,12 @@ try {
     assert.equal((await verify('cashier','1')).status,'invalid_input');
     assert.equal(await attempts('cashier'),undefined);
   });
+  await check('SQL character validation rejects short Unicode PINs without consuming attempts', async () => {
+    const pin = String.fromCodePoint(0x1f600, 0x1f600);
+    assert.equal(pin.length, 4);
+    assert.equal((await verify('cashier',pin)).status,'invalid_input');
+    assert.equal(await attempts('cashier'),undefined);
+  });
   await check('anon and authenticated cannot execute private verifier; service role can', async () => {
     for (const role of ['anon','authenticated']) {
       await db.exec(`SET ROLE ${role}`);

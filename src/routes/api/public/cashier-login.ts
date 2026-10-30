@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 
 import { corsPreflight, withCors } from "@/lib/public-cors";
+import { publicCashierLoginResponse } from "@/lib/cashier-login-response.server";
 import { z } from "zod";
 
 /**
@@ -10,7 +11,7 @@ import { z } from "zod";
  * credential and is verified server-side with the internal key.
  */
 const body = z.object({
-  username: z.string().min(1).max(120),
+  username: z.string().min(1).max(120).refine(username => username.trim().length > 0),
   pin: z.string().min(4).max(32),
   platform: z.string().max(60).optional(),
   terminalId: z.string().max(64).optional(),
@@ -56,13 +57,13 @@ export async function handleCashierLogin(request: Request): Promise<Response> {
   try {
     const state = await throttleStatus(userKey,signal);
     if (state.locked)
-      return Response.json(
+      return publicCashierLoginResponse(
         {
           ok: false,
           code: "locked",
           error: `Too many wrong PINs. Try again in ${minutesLeft(state)} minutes.`,
         },
-        { status: 429 },
+        429,
       );
   } catch {
     return Response.json(
@@ -92,7 +93,7 @@ export async function handleCashierLogin(request: Request): Promise<Response> {
         : result.code === "identity_mismatch"
           ? 409
           : 401;
-    return Response.json(result, { status });
+    return publicCashierLoginResponse(result, status);
   } catch (e) {
     if (signal.aborted) return Response.json({ok:false,code:"central_unavailable",error:"The sign-in service did not complete in time. Your PIN has not been rejected."},{status:503});
     return Response.json({ ok: false, error: (e as Error).message }, { status: 500 });

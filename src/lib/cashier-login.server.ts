@@ -10,6 +10,7 @@ import { serviceRest } from "@/core/api/pos-relay.server";
 import { startSession } from "./session-guard.server";
 import { writeSystemAudit } from "./system-audit.server";
 
+/** Private diagnostics drive counters; HTTP callers must use publicCashierLoginResponse. */
 export type CashierLoginResult =
   | {
       ok: true;
