@@ -4,6 +4,7 @@ import { BranchOperationGate } from "./branch-operation-gate";
 import { formatMoney, setPosCurrency } from "./currency";
 import { subscribeDatabaseMode } from "@/core/local-db/db-mode";
 import { subscribeSettingsRefresh } from "./settings-refresh";
+import { createSettingsStartupRefresh } from "./settings-startup-refresh";
 import { createRefreshQueue, requestBackgroundRefresh, subscribeBackgroundRefresh } from "./background-refresh";
 import { stockCountChanges } from "./stock-count-plan";
 import { retainUnchangedFields, applyLiveRowChanges } from "./live-state";
@@ -684,15 +685,15 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const [confirmedScopeKey, setConfirmedScopeKey] = useState("");
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
-  // Which cluster, branch and terminal the settings editor is resolving.
-  const scopeIds = useMemo<ScopeIds>(() => {
-    const store = state.stores.find((s) => s.id === state.currentStoreId);
-    return {
-      CLUSTER: store?.groupId ?? "",
-      BRANCH: state.currentStoreId ?? "",
-      TERMINAL: settingsTerminalId || readTerminalConfig()?.tokenId || "",
-    };
-  }, [state.stores, state.currentStoreId, settingsTerminalId]);
+  // Equivalent directory rows must not restart the same initial scope read.
+  const scopeClusterId = state.stores.find((s) => s.id === state.currentStoreId)?.groupId ?? "";
+  const scopeBranchId = state.currentStoreId ?? "";
+  const scopeTerminalId = settingsTerminalId || readTerminalConfig()?.tokenId || "";
+  const scopeIds = useMemo<ScopeIds>(() => ({
+    CLUSTER: scopeClusterId,
+    BRANCH: scopeBranchId,
+    TERMINAL: scopeTerminalId,
+  }), [scopeClusterId, scopeBranchId, scopeTerminalId]);
   const scopeIdsRef = useRef<ScopeIds>(emptyScopeIds);
   scopeIdsRef.current = scopeIds;
   const whoRef = useRef("Manager");
@@ -984,7 +985,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // Global locks and empty override sets still need confirmation before
     // editing global settings, even before the first branch is created.
-    if (!readsReady) return;
+    if (!readsReady || !storesLoaded) return;
     let cancelled = false;
     const scopeKey = JSON.stringify(scopeIds);
     if (loadedScopeKey.current !== scopeKey) {
@@ -1018,7 +1019,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       off();
     };
-  }, [readsReady, readIdentity, state.currentStoreId, scopeIds]);
+  }, [readsReady, readIdentity, storesLoaded, scopeIds]);
 
   // The directory may not have loaded yet (a cashier signs in with a PIN and
   // has no central-database account of their own). The terminal's own
@@ -1545,24 +1546,30 @@ export function PosProvider({ children }: { children: ReactNode }) {
 
   // Refresh shared settings after remote edits and reconnects, with polling
   // when Realtime is unavailable. Never overwrite an edit with an older read.
+  const sharedSettingsReady = snapshotRefreshReady(readsReady, loadPhase, readIdentity, snapshotIdentity);
+  const sharedSettingsReadyRef = useRef(sharedSettingsReady);
+  sharedSettingsReadyRef.current = sharedSettingsReady;
+  const sharedSettingsReader = useRef<ReturnType<typeof createSettingsStartupRefresh> | null>(null);
   useEffect(() => {
     if (!signedIn) return;
     let cancelled = false;
-    let running = false;
-    let queued = false;
-    const refresh = async () => {
-      if (running) { queued = true; return; }
+    const reader = createSettingsStartupRefresh(async canApply => {
       if (settingsWrites.current.pending) return;
-      running = true;
       const revision = settingsWrites.current.revision;
+      const generation = bootstrapGeneration.current;
       try {
         const settings = await loadCloudSettings();
         if (
           !cancelled &&
+          canApply() &&
+          sharedSettingsReadyRef.current &&
+          generation === bootstrapGeneration.current &&
           !settingsWrites.current.pending &&
           revision === settingsWrites.current.revision
         )
           setState((current) => {
+            if (!canApply() || !sharedSettingsReadyRef.current || generation !== bootstrapGeneration.current ||
+                settingsWrites.current.pending || revision !== settingsWrites.current.revision) return current;
             const next = mergeCloudSettings(settings);
             return hasSameValue(current.settings, next)
               ? current
@@ -1570,20 +1577,26 @@ export function PosProvider({ children }: { children: ReactNode }) {
           });
       } catch {
         /* Keep the last confirmed settings until a later refresh. */
-      } finally {
-        running = false;
-        if (queued && !cancelled) { queued = false; void refresh(); }
       }
-    };
-    const unsubscribe = subscribeSettingsRefresh(refresh, (change) =>
+    });
+    sharedSettingsReader.current = reader;
+    void reader.setReady(sharedSettingsReadyRef.current);
+    // Subscribe before readiness so real edits/reconnects during bootstrap are
+    // retained. A ready bootstrap alone already contains the global settings.
+    const unsubscribe = subscribeSettingsRefresh(reader.refresh, (change) =>
       ["pos_settings","pos_store_settings","settings_scoped","settings_overrides","settings_locks"].includes(change.table) ||
       ["desktop:pull-complete", "reconnect", "realtime:subscribed"].includes(change.reason),
     );
     return () => {
       cancelled = true;
+      reader.stop();
+      if (sharedSettingsReader.current === reader) sharedSettingsReader.current = null;
       unsubscribe();
     };
-  }, [signedIn]);
+  }, [signedIn, readIdentity]);
+  useEffect(() => {
+    void sharedSettingsReader.current?.setReady(sharedSettingsReady);
+  }, [sharedSettingsReady]);
 
   const activeShift = useMemo(() => {
     const branch = activeBranchId(currentStore.id) ?? currentStore.id;
