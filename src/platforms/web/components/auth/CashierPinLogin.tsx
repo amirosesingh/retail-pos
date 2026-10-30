@@ -180,7 +180,7 @@ export function CashierPinLogin({
       try {
         const res = await cashierLogin(username, value);
         if (!res.ok) {
-          const message = res.error ?? "That PIN was not recognised";
+          const message = res.error ?? "Sign-in could not finish. Please try again. Your PIN has not been confirmed.";
           const deactivated = /deactivat|not active|blocked/i.test(message);
           setPin("");
           if (res.code === "session-open-failed") {

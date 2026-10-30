@@ -150,6 +150,6 @@ export function localCashierLoginFailure(reason: string): { ok: false; code: Log
       : "The local SQL database is still connecting or is unavailable. Wait for the database to become ready, then retry. Your PIN has not been rejected.",
   };
 }
-/** Legacy uncoded refusals keep their behavior; infrastructure errors never consume PIN attempts. */
+/** Only a verified credential refusal consumes a PIN attempt; missing codes prove nothing. */
 export const countsAsWrongCashierPin = (code: LoginFailure | "session-open-failed" | undefined) =>
-  code === undefined || code === "invalid-credentials";
+  code === "invalid-credentials";

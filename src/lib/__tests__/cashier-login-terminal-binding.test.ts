@@ -14,7 +14,7 @@ beforeEach(()=>{
  vi.clearAllMocks();h.start.mockResolvedValue({token:"session",idleMinutes:30});h.sign.mockReturnValue("signed");h.mint.mockResolvedValue("auth-proof");
  activation={id:"terminal",platform:"pc",status:"used",location_id:"A",is_claimed:true,claim_proof:proof,management_registration:false};
  profile={id:"person",user_id:"cashier",full_name:"Cashier",email:"person@example.test",auth_user_id:"auth",role:"staff",role_slug:"cashier",store_id:null,is_active:true,permissions:{can_process_sale:true}};
- h.rest.mockImplementation(async(path:string)=>path==="rpc/verify_terminal_pin" ? Response.json([{user_id:"cashier",store_id:null}])
+ h.rest.mockImplementation(async(path:string)=>path==="rpc/verify_terminal_pin_result" ? Response.json({status:"verified",account:{user_id:"cashier",store_id:null}})
   :path.startsWith("app_users?")?Response.json([profile]):path.startsWith("terminal_tokens?")?Response.json([activation]):Response.json([]));
 });
 describe("native PIN session issuance",()=>{
@@ -26,7 +26,7 @@ describe("native PIN session issuance",()=>{
   expect(h.start).not.toHaveBeenCalled();
  });
  it("reports registry transport failure as unavailable rather than incorrect PIN",async()=>{
-  h.rest.mockImplementation(async(path:string)=>path==="rpc/verify_terminal_pin" ? Response.json([{user_id:"cashier"}]):path.startsWith("app_users?")?Response.json([profile]):new Response(null,{status:503}));
+  h.rest.mockImplementation(async(path:string)=>path==="rpc/verify_terminal_pin_result" ? Response.json({status:"verified",account:{user_id:"cashier"}}):path.startsWith("app_users?")?Response.json([profile]):new Response(null,{status:503}));
   expect(await cashierLoginServer({username:"cashier",pin:"1234",terminalId:"terminal",deviceBindingProof:proof})).toMatchObject({ok:false,code:"central_unavailable"});
   expect(h.start).not.toHaveBeenCalled();
  });

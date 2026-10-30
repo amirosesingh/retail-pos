@@ -39,6 +39,9 @@ export type CashierLoginResult =
         | "session_prepare_failed"
         | "activation_denied"
         | "identity_mismatch"
+        | "credential_unavailable"
+        | "account_inactive"
+        | "invalid_input"
         | "central_unavailable";
     };
 
@@ -60,7 +63,7 @@ async function cashierLoginCore(input: {
     return { ok: false, error: "Enter your PIN or passcode" };
   }
 
-  const res = await serviceRest("rpc/verify_terminal_pin", {
+  const res = await serviceRest("rpc/verify_terminal_pin_result", {
     method: "POST",
     body: JSON.stringify({ p_user_id: username, p_pin: secret }),
   });
@@ -71,15 +74,18 @@ async function cashierLoginCore(input: {
       error: "Could not reach the central database",
     };
 
-  const rows = (await res.json()) as
-    | {
-        user_id: string;
-        full_name: string;
-        store_id: string | null;
-      }[]
-    | null;
-  const row = Array.isArray(rows) ? rows[0] : null;
-  if (!row) {
+  const result = await res.json() as { status?: string; account?: { user_id?: string; store_id?: string | null } } | null;
+  if (result?.status === "locked")
+    return { ok: false, code: "locked", error: "Too many wrong PINs. Please wait before trying again." };
+  if (result?.status === "credential_unavailable")
+    return { ok: false, code: "credential_unavailable", error: "PIN sign-in is not ready for this account. Ask an administrator to review its sign-in PIN." };
+  if (result?.status === "account_inactive")
+    return { ok: false, code: "account_inactive", error: "Account deactivated" };
+  if (result?.status === "invalid_input")
+    return { ok: false, code: "invalid_input", error: "Enter your username and PIN or passcode." };
+  if (result?.status !== "invalid" && (result?.status !== "verified" || typeof result.account?.user_id !== "string" || !result.account.user_id))
+    return { ok: false, code: "central_unavailable", error: "The central database did not complete the PIN check" };
+  if (result.status === "invalid") {
     // A failed sign-in is recorded too — repeated failures are the signal.
     await writeSystemAudit({
       actorId: username,
@@ -93,9 +99,10 @@ async function cashierLoginCore(input: {
     });
     return { ok: false, code: "invalid_credentials", error: "Invalid username or PIN" };
   }
+  const row = result.account!;
 
   const profileResponse = await serviceRest(
-    `app_users?user_id=eq.${encodeURIComponent(row.user_id)}&select=id,user_id,full_name,email,store_id,role,role_slug,permissions,is_active,auth_user_id&limit=1`,
+    `app_users?user_id=eq.${encodeURIComponent(row.user_id!)}&select=id,user_id,full_name,email,store_id,role,role_slug,permissions,is_active,auth_user_id&limit=1`,
   );
   if (!profileResponse.ok)
     return { ok: false, code: "central_unavailable", error: "Could not load this staff account" };
@@ -111,8 +118,10 @@ async function cashierLoginCore(input: {
     is_active: boolean;
     auth_user_id: string | null;
   }[];
-  const profile = profiles[0];
-  if (!profile?.is_active) return { ok: false, error: "Account deactivated" };
+  const profile = Array.isArray(profiles) ? profiles[0] : null;
+  if (!profile || typeof profile.is_active !== "boolean")
+    return { ok: false, code: "central_unavailable", error: "The staff profile could not be loaded completely. Please retry." };
+  if (!profile.is_active) return { ok: false, error: "Account deactivated" };
   let terminal:import("./terminal-binding.server").VerifiedTerminalDescriptor|undefined;
   if(input.terminalId){
     try{

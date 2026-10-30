@@ -36,7 +36,7 @@ describe("cashier login infrastructure failures", () => {
   });
   it("distinguishes a failed profile read from an inactive account", async () => {
     mocks.rest
-      .mockResolvedValueOnce(Response.json([{ user_id: "staff1" }]))
+      .mockResolvedValueOnce(Response.json({ status: "verified", account: { user_id: "staff1" } }))
       .mockResolvedValueOnce(new Response("unavailable", { status: 500 }));
     const response = await handleCashierLogin(request());
     expect(response.status).toBe(503);
@@ -48,11 +48,35 @@ describe("cashier login infrastructure failures", () => {
     expect(mocks.rest).toHaveBeenCalledTimes(1);
     expect(mocks.fail).not.toHaveBeenCalled();
   });
+  it.each([[], null, {}])("does not call an incomplete profile %j deactivated or a wrong PIN", async payload => {
+    mocks.rest.mockResolvedValueOnce(Response.json({ status: "verified", account: { user_id: "staff1" } }))
+      .mockResolvedValueOnce(Response.json(payload));
+    const response = await handleCashierLogin(request());
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ code: "central_unavailable" });
+    expect(mocks.fail).not.toHaveBeenCalled();
+  });
   it("still refuses and counts a genuinely wrong PIN", async () => {
-    mocks.rest.mockResolvedValue(Response.json([]));
+    mocks.rest.mockResolvedValue(Response.json({ status: "invalid" }));
     const response = await handleCashierLogin(request());
     expect(response.status).toBe(401);
     expect(await response.json()).toMatchObject({ code: "invalid_credentials" });
     expect(mocks.fail).toHaveBeenCalledTimes(2);
+  });
+  it.each(["locked", "credential_unavailable", "account_inactive", "invalid_input"])("does not consume outer wrong-PIN attempts for %s", async status => {
+    mocks.rest.mockResolvedValue(Response.json({ status }));
+    const response = await handleCashierLogin(request());
+    expect(response.status).toBe(status === "locked" ? 429 : 401);
+    expect(await response.json()).toMatchObject({ ok: false, code: status });
+    expect(mocks.fail).not.toHaveBeenCalled();
+    expect(mocks.audit).not.toHaveBeenCalled();
+  });
+  it.each([null, { error: "incomplete response" }])("does not count malformed successful verification data %j as a wrong PIN", async payload => {
+    mocks.rest.mockResolvedValue(Response.json(payload));
+    const response = await handleCashierLogin(request());
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ code: "central_unavailable" });
+    expect(mocks.fail).not.toHaveBeenCalled();
+    expect(mocks.audit).not.toHaveBeenCalled();
   });
 });

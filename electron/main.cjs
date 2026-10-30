@@ -2090,7 +2090,9 @@ function registerIpc() {
       return { ok: false, status: 503, code: "no_server", error: "The hosted POS backend is not configured." };
     const terminal = terminalStore.read() ?? {};
     const abort = new AbortController();
-    const timer = setTimeout(() => abort.abort(), 6_000);
+    // Match the browser PIN request budget: verification also prepares Auth
+    // and the device session. Six seconds abandoned valid slow sign-ins.
+    const timer = setTimeout(() => abort.abort(), 30_000);
     let response;
     let result;
     try {
