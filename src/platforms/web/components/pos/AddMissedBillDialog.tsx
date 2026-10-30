@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -14,8 +15,10 @@ import { createCatalogueVisibility } from "@/lib/branch-policy";
 import { sameBranchId } from "@/lib/branch-id";
 import { effectiveTimeZone, posDateTimeToIso } from "@/lib/time-zone";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
-import { addMissedBill } from "@/lib/missed-bill-client";
+import { addMissedBill, listMissedBillCashiers } from "@/lib/missed-bill-client";
 import { missedBillInput, type MissedBillInput } from "@/lib/missed-bill-input";
+import { pageDataScope } from "@/lib/page-data-cache";
+import { withReadDeadline } from "@/lib/read-retry";
 
 type Line = { key: string; productId: string; quantity: string; unitPrice: string; unitCost: string; discountAmount: string; taxAmount: string };
 const blankLine = (): Line => ({ key: crypto.randomUUID(), productId: "", quantity: "1", unitPrice: "", unitCost: "", discountAmount: "0", taxAmount: "0" });
@@ -23,7 +26,7 @@ const methods = [["cash", "Cash"], ["card", "Card"], ["bank_transfer", "Bank tra
 
 export function AddMissedBillDialog({ onSaved }: { onSaved: (result: { saleId: string; receiptNo: string; receiptJson?: string; storeId: string }) => void }) {
   const { state, currentStore } = usePos();
-  const { isAdmin, staff } = useAuth();
+  const { isAdmin, user } = useAuth();
   const [open, setOpen] = useState(false);
   const [date, setDate] = useState("");
   const [cashier, setCashier] = useState("");
@@ -42,13 +45,24 @@ export function AddMissedBillDialog({ onSaved }: { onSaved: (result: { saleId: s
   const clientKey = useRef(crypto.randomUUID());
   const submitted = useRef<MissedBillInput | null>(null);
   const branchAtOpen = useRef(currentStore.id);
+  const branchChanged = !sameBranchId(branchAtOpen.current, currentStore.id);
+  const cashiers = useQuery({
+    queryKey: ["missed-bill-cashiers", ...pageDataScope(user), currentStore.id],
+    enabled: open && isAdmin && Boolean(currentStore.id) && !branchChanged,
+    staleTime: 0, gcTime: 300_000, retry: false,
+    refetchOnWindowFocus: false, refetchOnReconnect: false,
+    queryFn: ({ signal }) => withReadDeadline(async () => {
+      const result = await listMissedBillCashiers({ data: { ...await getPosCallerAuth(), storeId: currentStore.id }, signal });
+      if (!result.ok) throw new Error(result.error);
+      return result.rows;
+    }, 20_000),
+  });
   const catalogue = useMemo(() => {
     const visible = createCatalogueVisibility(state.settings, state.stores, state.transfers);
     return state.products.filter(p => visible(p, currentStore.id)).map(p => ({ value: p.id, label: `${p.name} · ${p.sku} · ${p.barcode}` }));
   }, [state.settings, state.stores, state.transfers, state.products, currentStore.id]);
   const total = Math.round(lines.reduce((sum, line) => sum + Number(line.quantity) * Number(line.unitPrice) - Number(line.discountAmount) + Number(line.taxAmount), 0) * 100) / 100;
   const paid = Math.round(Object.values(payments).reduce((sum, value) => sum + Number(value || 0), 0) * 100) / 100;
-  const branchChanged = !sameBranchId(branchAtOpen.current, currentStore.id);
   const patchLine = (key: string, field: keyof Line, value: string) => setLines(previous => previous.map(line => line.key === key ? { ...line, [field]: value } : line));
   const reset = () => {
     setDate(""); setCashier(""); setShift("none"); setReference(""); setReason(""); setStock(""); setStockReason("");
@@ -102,7 +116,11 @@ export function AddMissedBillDialog({ onSaved }: { onSaved: (result: { saleId: s
         <fieldset disabled={busy || locked || branchChanged} className="min-w-0 space-y-4">
           <div className="grid gap-3 sm:grid-cols-2">
             <Label className="space-y-1">Original date/time ({effectiveTimeZone()})<Input type="datetime-local" value={date} onChange={e => setDate(e.target.value)} /></Label>
-            <div className="space-y-1"><Label>Original cashier</Label><ThemedSelect value={cashier} onChange={setCashier} placeholder="Select original cashier" ariaLabel="Original cashier" options={staff.filter(person => !person.storeId || sameBranchId(person.storeId, currentStore.id)).map(person => ({ value: person.staffId, label: `${person.name} · ${person.staffId}` }))} disabled={busy || locked || branchChanged} /></div>
+            <div className="space-y-1"><Label>Original cashier</Label><ThemedSelect value={cashier} onChange={setCashier} placeholder={cashiers.isFetching ? "Loading original cashiers…" : "Select original cashier"} ariaLabel="Original cashier" options={(cashiers.data ?? []).map(person => ({ value: person.userId, label: `${person.name} · ${person.userId}` }))} disabled={busy || locked || branchChanged || cashiers.isFetching} />
+              {cashiers.isError && <div role="alert" className="text-xs text-destructive">{cashiers.error.message} <Button type="button" size="sm" variant="ghost" disabled={cashiers.isFetching} onClick={() => void cashiers.refetch()}>Retry cashiers</Button></div>}
+              {cashiers.fetchStatus === "paused" && <p role="status" className="text-xs text-muted-foreground">Connect online to load the original cashier accounts.</p>}
+              {cashiers.isSuccess && cashiers.data.length === 0 && <p role="status" className="text-xs text-muted-foreground">No active cashiers are assigned to this branch or all branches.</p>}
+            </div>
             <Label className="space-y-1">Original paper/reference number (if available)<Input value={reference} maxLength={128} onChange={e => setReference(e.target.value)} /></Label>
             <div className="space-y-1"><Label>Original shift reference</Label><ThemedSelect value={shift} onChange={setShift} ariaLabel="Original shift reference" options={[{ value: "none", label: "Unknown / no shift reference" }, ...state.shifts.filter(s => sameBranchId(s.storeId, currentStore.id)).map(s => ({ value: s.id, label: `${s.openedAt} · ${s.status}` }))]} disabled={busy || locked || branchChanged} /></div>
           </div>
@@ -123,7 +141,7 @@ export function AddMissedBillDialog({ onSaved }: { onSaved: (result: { saleId: s
         <div className="flex flex-wrap justify-between gap-2 rounded-md bg-muted p-3 text-sm"><span>Bill total: <strong>{money(Number.isFinite(total) ? total : 0)}</strong></span><span>Payments recorded: <strong>{money(Number.isFinite(paid) ? paid : 0)}</strong></span></div>
         {error && <p role="alert" className="break-words text-sm text-destructive">{error}</p>}
         {locked && <p role="status" className="text-xs text-muted-foreground">This entry is locked after submission. Retry sends the exact same bill to prevent duplicate stock or payments. Closing retains this form for retry.</p>}
-        <div className="flex justify-end gap-2"><Button variant="outline" disabled={busy} onClick={() => setOpen(false)}>Close</Button><Button disabled={busy || branchChanged} onClick={() => void save()}>{busy ? "Saving historical bill…" : locked ? "Retry same entry" : "Save missed bill"}</Button></div>
+        <div className="flex justify-end gap-2"><Button variant="outline" disabled={busy} onClick={() => setOpen(false)}>Close</Button><Button disabled={busy || branchChanged || (!locked && (cashiers.isPending || cashiers.isError))} onClick={() => void save()}>{busy ? "Saving historical bill…" : locked ? "Retry same entry" : "Save missed bill"}</Button></div>
       </DialogContent>
     </Dialog>
   </>;

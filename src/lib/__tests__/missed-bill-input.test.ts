@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { missedBillInput } from "../missed-bill-input";
+import { missedBillCashiersInput, missedBillInput } from "../missed-bill-input";
 import { posDateTimeToIso, setPosTimeZone } from "../time-zone";
 import { isMissedBillReference } from "../missed-bill-reference";
 const input = () => ({
@@ -20,6 +20,13 @@ describe("missed-bill entry contract", () => {
     expect(missedBillInput.safeParse(input()).success).toBe(true);
     expect(missedBillInput.safeParse({ ...input(), stockHandling: "" }).success).toBe(false);
     expect(missedBillInput.safeParse({ ...input(), stockReason: "" }).success).toBe(false);
+  });
+  it("preserves optional native binding proof for both guarded operations and rejects malformed proof", () => {
+    const deviceBindingProof = "A".repeat(64);
+    expect(missedBillCashiersInput.parse({ storeId: "branch-a", deviceBindingProof }).deviceBindingProof).toBe(deviceBindingProof);
+    expect(missedBillInput.parse({ ...input(), deviceBindingProof }).deviceBindingProof).toBe(deviceBindingProof);
+    expect(missedBillCashiersInput.safeParse({ storeId: "branch-a", deviceBindingProof: "bad" }).success).toBe(false);
+    expect(missedBillInput.safeParse({ ...input(), deviceBindingProof: "bad" }).success).toBe(false);
   });
   it("rejects duplicate products, invalid amounts and incomplete historical attribution", () => {
     const value = input();

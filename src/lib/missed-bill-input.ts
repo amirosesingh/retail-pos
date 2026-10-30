@@ -1,9 +1,17 @@
 import { z } from "zod";
 
 const money = z.number().finite().nonnegative().max(100000000).refine(value => Math.abs(value * 100 - Math.round(value * 100)) < 0.000001, "Use at most two decimal places");
+export const missedBillCashiersInput = z.object({
+  sessionToken: z.string().min(10).max(400).optional(), accessToken: z.string().max(4000).optional(),
+  terminalToken: z.string().max(200).optional(), cashierToken: z.string().max(2000).optional(),
+  deviceBindingProof: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
+  storeId: z.string().trim().min(1).max(128),
+});
+export type MissedBillCashier = { userId: string; name: string };
 export const missedBillInput = z.object({
   sessionToken: z.string().min(10).optional(), accessToken: z.string().optional(),
   terminalToken: z.string().optional(), cashierToken: z.string().optional(),
+  deviceBindingProof: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
   storeId: z.string().trim().min(1).max(128), clientKey: z.string().uuid(),
   originalReference: z.string().trim().max(128), occurredAt: z.string().datetime({ offset: true }),
   cashierId: z.string().trim().min(1).max(64), originalShiftId: z.string().uuid().nullable(),
