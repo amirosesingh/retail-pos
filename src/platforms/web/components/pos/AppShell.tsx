@@ -118,7 +118,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   const isMobile = useIsMobile();
   useEffect(() => startSyncEngine(), []);
   useEffect(() => localDb()?.onBeforeClose?.(() => flushTicketDrafts().then(() => undefined)), []);
-  const { stores, currentStore, setCurrentStore, state, ready: dataReady, retryLoad } = usePos();
+  const { stores, currentStore, setCurrentStore, state, ready: dataReady, loadPhase, locationLoadError, retryLoad } = usePos();
   useEffect(() => {
     setSharedPrinterPrefs(state.settings.integrations.receiptPrinter);
     return () => setSharedPrinterPrefs(undefined);
@@ -145,7 +145,6 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   }, [isMobile]);
   // Set when the operator chooses to carry on from the terminal's own copy
   // after the first load could not reach the central database.
-  const [offlineBypass, setOfflineBypass] = useState(false);
   const [activationFlowOpen, setActivationFlowOpen] = useState(false);
   const beginActivationReview = useCallback(() => setActivationFlowOpen(true), []);
   // The saved connection profile is read out of platform storage, which takes
@@ -381,8 +380,18 @@ function AppShellFrame({ children }: { children: ReactNode }) {
       <p>Sign in with an account permitted to use this management device. Your page and branch permissions still apply.</p>
       <Button onClick={() => void logout()}>Use another account</Button>
     </div>;
-  if (!dataReady && !offlineBypass)
-    return <TillLoader onRetry={retryLoad} onContinueOffline={() => setOfflineBypass(true)} />;
+  if (!dataReady) {
+    if (loadPhase === "failed" || loadPhase === "stalled")
+      return <div className="flex min-h-dvh items-center justify-center p-6">
+        <div className="w-full max-w-md space-y-4 rounded-lg border border-border bg-surface-1 p-6 text-center">
+          <h1 className="text-lg font-semibold">{loadPhase === "stalled" ? "Store data is taking longer to load" : "Could not load store data"}</h1>
+          <p className="text-sm text-muted-foreground">{locationLoadError || "The complete store data has not arrived. Retry without clearing your saved connection."}</p>
+          <Button onClick={retryLoad}>Try again</Button>
+          {isAdmin && <Button asChild variant="outline"><Link to="/recovery">Connection recovery</Link></Button>}
+        </div>
+      </div>;
+    return <TillLoader onRetry={retryLoad} />;
+  }
   // Nothing can be sold, received or moved without somewhere to book it to.
   if (!activeLocations(stores).length && !isLocationSetupRoute(location.pathname))
     return <LocationBootGuard />;
@@ -509,6 +518,10 @@ function AppShellFrame({ children }: { children: ReactNode }) {
       <div className="pos-scaled flex h-dvh min-h-dvh flex-col overflow-hidden bg-background text-foreground">
         <DbConnectionModal />
         <CloudSetupGate />
+        {(loadPhase === "failed" || loadPhase === "stalled") && <div role="status" className="flex flex-wrap items-center justify-center gap-2 bg-warning/15 px-3 py-2 text-sm text-warning">
+          Showing the last loaded store data. Refresh has not completed.
+          <Button variant="outline" size="sm" onClick={retryLoad}>Try again</Button>
+        </div>}
         <ShiftGuard>
           <div className="flex min-h-0 min-w-0 flex-1">
             {/* Desktop / tablet sidebar */}

@@ -158,7 +158,8 @@ import {
 import { localDb } from "@/core/local-db/local-db";
 import { businessReadsReady, transferReadAllowed, transferReadsReady } from "./business-readiness";
 import { hasCentralAuthSession, subscribeCentralAuthSession } from "./session-presence";
-import { retryDataRead } from "./read-retry";
+import { retryDataRead, withReadDeadline } from "./read-retry";
+import { beginDataReadAttempt, dataReadIdentity, dataSnapshotReady } from "./data-read-attempt";
 import {
   batches,
   DEFAULT_BATCH_SIZE,
@@ -599,7 +600,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const [storesLoaded, setStoresLoaded] = useState(false);
   const [locationLoadError, setLocationLoadError] = useState<string | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
+  const bootstrapGeneration = useRef(0);
   const retryLoad = useCallback(() => {
+    // Invalidate the previous attempt synchronously, before React runs cleanup.
+    bootstrapGeneration.current++;
     setStoresLoaded(false);
     setLocationLoadError(null);
     setLoadPhase("loading");
@@ -616,7 +620,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const readsReady = businessReadsReady(authReady, signedIn, databaseMode === "local", authUserId, cloudSessionReady);
   const requiresCloudReauthentication = databaseMode === "online" && authReady && Boolean(terminalUser) && !authUserId && !cloudSessionReady;
   const personIdentity = terminalUser?.userCode ?? authUserId;
-  const readIdentity = personIdentity ? `${personIdentity}|${databaseMode}` : null;
+  const bootstrapBranch = activeBranchId(state.currentStoreId) ?? state.currentStoreId;
+  const readIdentity = dataReadIdentity(personIdentity, databaseMode, bootstrapBranch);
   useEffect(() => {
     const name = state.settings.receipt.companyName?.trim();
     if (name && readBranding().company !== name) writeBranding({ company: name });
@@ -678,17 +683,17 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const updateSettingsRef = useRef<((patch: Partial<AppSettings>) => void) | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
+    const attempt = beginDataReadAttempt(bootstrapGeneration);
     // A read that is taking too long is reported as exactly that. It is never
     // turned into "the data arrived", which would show an empty, healthy-looking
     // shop built out of nothing.
     const watchdog = window.setTimeout(() => {
-      if (!cancelled) setLoadPhase((p) => (p === "loading" ? "stalled" : p));
+      if (attempt.current()) setLoadPhase((p) => (p === "loading" ? "stalled" : p));
     }, 15000);
-    void (async () => {
+    void withReadDeadline(async () => {
       // Anonymous visitors get nothing: no products, members or sales.
       if (!signedIn) {
-        if (authReady && !cancelled) {
+        if (authReady && attempt.current()) {
           setSnapshotIdentity(null);
           setReady(true);
           setLoadPhase("ready");
@@ -696,7 +701,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         return;
       }
       if (!readsReady) {
-        if (!cancelled) {
+        if (attempt.current()) {
           if (requiresCloudReauthentication) {
             setReady(true); setLoadPhase("failed");
             setLocationLoadError("The local SQL connection is unavailable. Sign in again while online to verify this cashier before reading central data.");
@@ -709,7 +714,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         !navigator.onLine &&
         effectiveDatabaseMode() === "online"
       ) {
-        if (!cancelled) {
+        if (attempt.current()) {
           setReady(true);
           setLoadPhase("ready");
         }
@@ -734,35 +739,32 @@ export function PosProvider({ children }: { children: ReactNode }) {
             const directory = await loadLocationDirectory();
             if (!directory.ok) throw directory.error;
             return directory;
-          }, () => !cancelled).catch(error => ({ ok: false as const, error: error instanceof Error ? error : new Error(String(error)) }))
+          }, () => attempt.current()).catch(error => ({ ok: false as const, error: error instanceof Error ? error : new Error(String(error)) }))
           : null;
         let fullSnapshotApplied = false;
         const settingsRevision = settingsWrites.current.revision;
-        const loadSnapshot = () => loadPrimaryState(undefined, locationTask ?? undefined, (name) => {
-          if (cancelled || fullSnapshotApplied || settingsWrites.current.pending ||
+        const loadSnapshot = () => loadPrimaryState(bootstrapBranch || undefined, locationTask ?? undefined, (name) => {
+          if (!attempt.current() || fullSnapshotApplied || settingsWrites.current.pending ||
               settingsWrites.current.revision !== settingsRevision) return;
-          setState((current) => ({ ...current, settings: {
+          setState((current) => !attempt.current() ? current : ({ ...current, settings: {
             ...current.settings,
             receipt: { ...current.settings.receipt, companyName: name },
           } }));
         }, true);
         const cloudTask = effectiveDatabaseMode() === "online"
-          ? retryDataRead(loadSnapshot, () => !cancelled) : loadSnapshot();
+          ? retryDataRead(loadSnapshot, () => attempt.current()) : loadSnapshot();
         // Observe a fast SQL failure immediately while cloud discovery is pending.
         void cloudTask.catch(() => undefined);
         const directory = locationTask ? await locationTask : null;
-        if (!cancelled) setLocationLoadError(directory && !directory.ok ? directory.error.message : null);
-        if (cancelled) return;
+        if (attempt.current()) setLocationLoadError(directory && !directory.ok ? directory.error.message : null);
+        if (!attempt.current()) return;
         if (directory?.ok) {
           markStartupStage("location");
-          setState((s) => applyLocationDirectory(s, directory.stores));
+          setState((s) => attempt.current() ? applyLocationDirectory(s, directory.stores) : s);
           setStoresLoaded(true);
-          setReady(true);
-          setLoadPhase("ready");
-          markStartupStage("essential-pos-ready");
         }
         const loaded = await cloudTask;
-        if (cancelled) return;
+        if (!attempt.current()) return;
         const terminal = readTerminalConfig();
         const verifiedLocations = verifyTerminalLocation(
           {ok: true, stores: loaded.stores, source: "local"},
@@ -784,9 +786,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
           throw directory.error;
         const cloud = directory?.ok ? { ...loaded, stores: directory.stores } : loaded;
         fullSnapshotApplied = true;
-        setState((s) => applyCloud(s, cloud, pendingSalesRef.current));
-        setSnapshotIdentity(readIdentity ?? null);
-        setSettingsSnapshotLoaded(true);
+        setState((s) => attempt.current() ? applyCloud(s, cloud, pendingSalesRef.current) : s);
+        setSnapshotIdentity((current) => attempt.current() ? readIdentity ?? null : current);
+        setSettingsSnapshotLoaded((current) => attempt.current() ? true : current);
+        markStartupStage("essential-pos-ready");
         markStartupStage("remaining-data-ready");
         // The locations question now has a real answer, empty or not.
         setStoresLoaded(true);
@@ -797,8 +800,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
         // without them, so they arrive after the first screen is up.
         void loadBookings()
           .then((cloudBookings) => {
-            if (cancelled || !cloudBookings.length) return;
+            if (!attempt.current() || !cloudBookings.length) return;
             setState((s: PosState) => {
+              if (!attempt.current()) return s;
               const seen = new Set(cloudBookings.map((b) => b.id));
               const bookings = [...cloudBookings, ...s.bookings.filter((b) => !seen.has(b.id))];
               return hasSameValue(s.bookings, bookings) ? s : { ...s, bookings };
@@ -808,24 +812,32 @@ export function PosProvider({ children }: { children: ReactNode }) {
             /* offline or not permitted — the local list still works */
           });
       } catch (e) {
-        if (cancelled) return;
+        if (!attempt.current()) return;
         void localDb()?.logConnection?.("renderer.bootstrap.failed", {
           scope: "initial-data",
           code: String((e as { code?: unknown })?.code ?? "ELOAD"),
           message: e instanceof Error ? e.message : String(e),
         });
         dbError("Loading data", e);
-        if (!cancelled) setLoadPhase("failed");
+        setLoadPhase("failed");
+        setReady(true);
+        attempt.invalidate();
       } finally {
-        if (!cancelled) setReady(true);
+        if (attempt.current()) setReady(true);
       }
-    })();
+    }, 60_000).catch(error => {
+      if (!attempt.current()) return;
+      attempt.invalidate();
+      setLocationLoadError(error instanceof Error ? error.message : 'The data service did not respond in time. Please retry.');
+      setLoadPhase('failed');
+      setReady(true);
+    });
 
     return () => {
-      cancelled = true;
+      attempt.cancel();
       window.clearTimeout(watchdog);
     };
-  }, [signedIn, authReady, readsReady, readIdentity, reloadTick, requiresCloudReauthentication]);
+  }, [signedIn, authReady, readsReady, readIdentity, bootstrapBranch, reloadTick, requiresCloudReauthentication]);
 
   // Retry a failed initial read when the connection recovers. Do not restart
   // an active catalogue download or discard a successfully loaded snapshot.
@@ -1597,6 +1609,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
       try {
         // Preserve an open ticket under its original branch before changing view.
         await preserveSessionDrafts();
+        // Retire old-branch results before the binding or React view changes.
+        bootstrapGeneration.current++;
+        setSettingsSnapshotLoaded(false);
         if (!registeredBranchId) bindTerminalBranch(selectedId, location.name);
         shiftReadSequence.current += 1;
         setShiftChecked(false);
@@ -4242,7 +4257,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
   );
 
   const value: Ctx = {
-    ready,
+    ready: dataSnapshotReady(ready, signedIn, readIdentity, snapshotIdentity),
     loadPhase,
     storesLoaded,
     locationLoadError,

@@ -7,7 +7,7 @@ import { isNative } from "@/platform-config/platform";
  * Neither holds business data, so every screen needs the backend. Nothing is
  * ever declared offline on a guess: while the first heartbeat is still in
  * flight the app shows only the pulsing cloud icon — no logo, no toast, no
- * error — and it keeps showing it for as long as the check takes. The Windows
+ * error. A slow check offers recovery without unlocking protected data. The Windows
  * till never renders the gate: `isOnlineOnly()` is false there.
  */
 import { useEffect, useState, type ReactNode } from "react";
@@ -15,6 +15,7 @@ import { CloudOff, RefreshCw } from "lucide-react";
 import { useRouterState } from "@tanstack/react-router";
 
 import { EmergencyAccessLink } from "@/components/shared/EmergencyAccessLink";
+import { Button } from "@/components/ui/button";
 import { useStartupGate } from "@/core/activation/registration-status";
 import { subscribeConfigReady, type ConfigReadiness } from "@/lib/platform-config-ready";
 import { needsSetupRecovery } from "@/lib/startup-recovery";
@@ -57,6 +58,17 @@ export function OfflineStatus({ force = false }: { force?: boolean } = {}) {
   const recovery = isRecoveryPath(pathname) || onRecoveryScreen();
   const [state, setState] = useState<Connectivity>(connectivity());
   const [checking, setChecking] = useState(false);
+  const [connectingDelayed, setConnectingDelayed] = useState(false);
+  useEffect(() => {
+    setConnectingDelayed(false);
+    if (state !== "connecting") return;
+    const timer = setTimeout(() => setConnectingDelayed(true), 15_000);
+    return () => clearTimeout(timer);
+  }, [state]);
+  const retry = () => {
+    setChecking(true);
+    void heartbeat().finally(() => setChecking(false));
+  };
 
   useEffect(() => {
     if (recovery) return;
@@ -69,13 +81,13 @@ export function OfflineStatus({ force = false }: { force?: boolean } = {}) {
 
   if ((!live && !force) || recovery) return null;
 
-  // Still checking: the cloud icon alone, nothing else on screen.
+  // Never guess that the service is ready; offer recovery if checking stalls.
   if (state === "connecting" && isNative() && typeof navigator !== "undefined" && navigator.onLine === false)
     return <OfflineLoginInterface />;
   if (state === "connecting")
     return (
       <div
-        className="flex min-h-screen items-center justify-center bg-background"
+        className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background p-6 text-center"
         role="status"
         aria-label="Connecting"
       >
@@ -83,6 +95,12 @@ export function OfflineStatus({ force = false }: { force?: boolean } = {}) {
           <span className="absolute inline-flex size-12 animate-ping rounded-full bg-primary/20" />
           <CloudIconPulse />
         </span>
+        {connectingDelayed && <>
+          <p className="max-w-sm text-sm text-muted-foreground">Checking the central database is taking longer than usual. Your saved connection has not been changed.</p>
+          <Button variant="outline" onClick={retry} disabled={checking}>
+            <RefreshCw className="mr-2 size-4" /> {checking ? "Checking…" : "Try again"}
+          </Button>
+        </>}
       </div>
     );
 
@@ -128,11 +146,6 @@ export function OfflineStatus({ force = false }: { force?: boolean } = {}) {
               : diagnosis.issue === "service-error"
                 ? `The central service returned an error${diagnosis.status ? ` (${diagnosis.status})` : ""}. The app will recover automatically when it is available.`
                 : "The device has internet access, but it could not establish a connection to the central service. This can be caused by DNS, TLS, a proxy, or browser policy. The app will keep retrying automatically.";
-
-  const retry = () => {
-    setChecking(true);
-    void heartbeat().finally(() => setChecking(false));
-  };
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background px-8 text-center">
