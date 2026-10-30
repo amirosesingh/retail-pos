@@ -30,6 +30,8 @@ jobs:
         run: node scripts/check-permission-migrations.mjs
       - name: Sync, startup and database-upgrade regression tests
         run: node --test scripts/test-sync-pipeline.cjs scripts/test-startup-cloud.cjs scripts/test-event-sync.cjs scripts/test-company-identity.cjs scripts/test-database-upgrade.cjs scripts/test-update-install.cjs
+      - name: Atomic shift closure database and retry tests
+        run: node scripts/test-shift-closure-sync.mjs
       - name: SQL schema and synchronization contract checks
         run: |
           npm run verify:sqlserver-schema

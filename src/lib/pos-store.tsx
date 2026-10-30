@@ -1,5 +1,5 @@
 import { preserveSessionDrafts } from "./session-draft";
-import { branchReadApplies, latestOpenShiftForBranch, shiftIsOpenForBranch } from "./branch-shift-state";
+import { branchReadApplies, latestOpenShiftForBranch, reconcileActiveShiftRows, shiftIsOpenForBranch } from "./branch-shift-state";
 import { BranchOperationGate } from "./branch-operation-gate";
 import { formatMoney, setPosCurrency } from "./currency";
 import { subscribeDatabaseMode } from "@/core/local-db/db-mode";
@@ -1095,6 +1095,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // Falls back to the cached list when the terminal is offline. Purely
   // status-driven: a shift opened days ago stays active until it is closed.
   const [dbShift, setDbShift] = useState<Shift | null>(null);
+  const dbShiftRef = useRef(dbShift);
+  dbShiftRef.current = dbShift;
   const [shiftChecked, setShiftChecked] = useState(false);
   const [shiftReadError, setShiftReadError] = useState<string | null>(null);
   // A shift opened on this till a moment ago is trusted even if the next read
@@ -1102,13 +1104,23 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const justOpenedRef = useRef<{ shift: Shift; at: number } | null>(null);
 
   const shiftReadSequence = useRef(0);
+  const shiftMutationSequence = useRef(0);
+  const shiftReadIdentity = useRef({ identity: readIdentity, enabled: readsReady && signedIn });
+  if (shiftReadIdentity.current.identity !== readIdentity || shiftReadIdentity.current.enabled !== (readsReady && signedIn)) {
+    shiftReadIdentity.current = { identity: readIdentity, enabled: readsReady && signedIn };
+    shiftReadSequence.current++;
+    shiftMutationSequence.current++;
+  }
   const refreshActiveShift = useCallback(async () => {
     // The terminal's registered branch wins, so the read always matches the
     // branch the shift was opened against.
     const storeId =
       activeBranchId(stateRef.current.currentStoreId) ?? stateRef.current.currentStoreId;
     const request = ++shiftReadSequence.current;
-    const isCurrentRead = () => branchReadApplies(storeId,
+    const identity = shiftReadIdentity.current;
+    const generation = bootstrapGeneration.current;
+    const isCurrentRead = () => identity.enabled && identity === shiftReadIdentity.current &&
+      generation === bootstrapGeneration.current && branchReadApplies(storeId,
       activeBranchId(stateRef.current.currentStoreId) ?? stateRef.current.currentStoreId,
       request, shiftReadSequence.current);
     try {
@@ -1116,22 +1128,37 @@ export function PosProvider({ children }: { children: ReactNode }) {
       if (!isCurrentRead()) return;
       const found = shiftIsOpenForBranch(read, storeId) ? read : null;
       const fresh = justOpenedRef.current;
-      // A shift opened on this till stays open until it is closed here. A read
-      // that cannot see it yet (replica lag, offline queue) must never re-lock
-      // the register, however long ago it was opened.
-      if (!found && fresh && shiftIsOpenForBranch(fresh.shift, storeId)) {
+      let confirmed: Shift | undefined;
+      const cached = shiftIsOpenForBranch(dbShiftRef.current, storeId) ? dbShiftRef.current : fresh?.shift;
+      if (!found && shiftIsOpenForBranch(cached, storeId)) {
+        // An empty active lookup may be replica lag. Verify this exact cached
+        // row before ending a trading shift, including after a missed row hint.
+        const rows = await loadShiftsByIds([cached.id]);
+        if (!isCurrentRead()) return;
+        confirmed = rows.find(row => sameRecordId(row.id, cached.id) && sameBranchId(row.storeId, storeId));
+        if (confirmed && sameRecordId(justOpenedRef.current?.shift.id ?? "", confirmed.id) &&
+          !shiftIsOpenForBranch(confirmed, storeId)) justOpenedRef.current = null;
+      }
+      // A local open remains trusted until an explicit close is confirmed. A
+      // missing row (replica lag, offline queue) must never re-lock the register.
+      if (!found && !confirmed && fresh && shiftIsOpenForBranch(fresh.shift, storeId)) {
         setShiftReadError(null);
         setDbShift(fresh.shift);
         return;
       }
       setShiftReadError(null);
-      setDbShift(previous => hasSameValue(previous, found) ? previous : found);
+      setDbShift(previous => {
+        if (!isCurrentRead()) return previous;
+        const next = found ?? reconcileActiveShiftRows(previous, confirmed ? [confirmed] : [], storeId);
+        return hasSameValue(previous, next) ? previous : next;
+      });
       // Only a real close ends a shift. An empty read never rewrites the
       // cached shift to CLOSED — the database row stays OPEN, and marking it
       // closed locally is what used to lock a trading till after a sign-out.
-      if (found) {
-        const row = found;
+      if (found || confirmed) {
+        const row = found ?? confirmed!;
         setState((s) => {
+          if (!isCurrentRead()) return s;
           const shifts = s.shifts.some((x) => x.id === row.id)
             ? s.shifts.map((x) => (x.id === row.id ? row : x))
             : [row, ...s.shifts];
@@ -1144,7 +1171,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       // "locked" — keep the last known open shift and say we are reconnecting.
       setShiftReadError((e as Error).message || "Could not reach the central database");
       setDbShift(
-        (prev) =>
+        (prev) => !isCurrentRead() ? prev :
           (shiftIsOpenForBranch(prev, storeId) ? prev : null) ??
           (shiftIsOpenForBranch(justOpenedRef.current?.shift, storeId) ? justOpenedRef.current!.shift : null) ??
           latestOpenShiftForBranch(stateRef.current.shifts, storeId),
@@ -1301,26 +1328,63 @@ export function PosProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!readsReady) return;
     let active = true;
+    const identity = shiftReadIdentity.current;
+    const branch = activeBranchId(stateRef.current.currentStoreId) ?? stateRef.current.currentStoreId;
+    let revision = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const ids = new Set<string>();
     const off = subscribeDataChange(change => {
       if (change.table !== "shifts" || !change.entityId) return;
       ids.add(change.entityId);
+      // Retire a response as soon as a newer hint arrives, before debounce.
+      const request = ++revision;
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
-        const changed = new Set(ids); ids.clear();
+        // Retain IDs until the latest response applies: a second hint during a
+        // slow read must not discard the first shift's closure.
+        const changed = new Set(ids);
+        const mutation = shiftMutationSequence.current;
+        const generation = bootstrapGeneration.current;
+        const currentRead = () => active && identity.enabled && identity === shiftReadIdentity.current &&
+          generation === bootstrapGeneration.current && mutation === shiftMutationSequence.current && branchReadApplies(branch,
+            activeBranchId(stateRef.current.currentStoreId) ?? stateRef.current.currentStoreId,
+            request, revision);
         void loadShiftsByIds([...changed]).then(rows => {
-          if (!active) return;
+          if (!currentRead()) return;
+          for (const id of changed) ids.delete(id);
+          const opened = justOpenedRef.current?.shift;
+          const cached = dbShiftRef.current ?? opened;
+          const confirmedClose = cached && rows.some(row => sameRecordId(row.id, cached.id) &&
+            sameBranchId(row.storeId, branch) && !shiftIsOpenForBranch(row, branch));
+          if (confirmedClose) {
+            // A terminal shift never reopens after a confirmed close. Retire an
+            // older active lookup, but unrelated/OPEN hints must not cancel it.
+            shiftReadSequence.current++;
+            setShiftChecked(true);
+          }
+          if (opened && rows.some(row => sameRecordId(row.id, opened.id) &&
+            sameBranchId(row.storeId, branch) && !shiftIsOpenForBranch(row, branch)))
+            justOpenedRef.current = null;
+          setDbShift(previous => {
+            if (!currentRead()) return previous;
+            // If a shift just closed locally, an older OPEN response must not
+            // resurrect it. New remote openings use the fresh active lookup.
+            const next = shiftIsOpenForBranch(previous, branch) ? reconcileActiveShiftRows(previous, rows, branch) : previous;
+            return hasSameValue(previous, next) ? previous : next;
+          });
           setState(current => {
+            if (!currentRead()) return current;
             const byId = new Map(rows.map(row => [row.id,row]));
             const known = new Set(current.shifts.map(row=>row.id));
             return {...current,shifts:[...current.shifts.filter(row=>!changed.has(row.id)||byId.has(row.id)).map(row=>byId.get(row.id)??row),...rows.filter(row=>!known.has(row.id))]};
           });
-        }).catch(cause => { if (active) dbError("Refreshing shifts",cause); });
+          if (!shiftIsOpenForBranch(cached, branch) && rows.some(row => shiftIsOpenForBranch(row, branch)))
+            void refreshActiveShift();
+        }).catch(cause => { if (currentRead()) dbError("Refreshing shifts",cause); });
       },200);
     });
     return () => { active = false; off(); if (timer) clearTimeout(timer); };
-  }, [readsReady, readIdentity, state.currentStoreId]);
+  }, [readsReady, readIdentity, state.currentStoreId, refreshActiveShift]);
 
   // Reload only changed bookings; local payments also wake their parent balances.
   useEffect(() => {
@@ -1854,6 +1918,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
       });
       setState((s) => ({ ...s, shifts: [shift, ...s.shifts] }));
       justOpenedRef.current = { shift, at: Date.now() };
+      shiftReadSequence.current++;
+      shiftMutationSequence.current++;
       setShiftReadError(null);
       setDbShift(shift);
       setShiftChecked(true);
@@ -1901,6 +1967,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
         shifts: s.shifts.map((x) => (x.id === closed.id ? closed : x)),
       }));
       justOpenedRef.current = null;
+      shiftReadSequence.current++;
+      shiftMutationSequence.current++;
       setDbShift(null);
       setShiftChecked(true);
       const transitionWritten = trackTransition({

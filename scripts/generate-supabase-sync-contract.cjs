@@ -9,6 +9,12 @@ const registry = JSON.parse(
 );
 const begin = "-- SQLSERVER_SYNC_CONTRACT_BEGIN";
 const end = "-- SQLSERVER_SYNC_CONTRACT_END";
+// Keep newly generated sync routines aligned with the reviewed incremental fix.
+const shiftClosureMigration = fs.readFileSync(path.join(root, "supabase", "migrations",
+  "20261030153259_confirm_shift_closure_sync_acknowledgement.sql"), "utf8");
+const shiftClosureHelpers = shiftClosureMigration.split("-- SHIFT_CLOSURE_SYNC_HELPERS_BEGIN")[1]
+  ?.split("-- SHIFT_CLOSURE_SYNC_HELPERS_END")[0];
+if (!shiftClosureHelpers) throw new Error("The shift closure acknowledgement helpers are missing.");
 const q = (value) => `"${value}"`;
 const primary = (table) => table.columns.filter((column) => column.primaryKey);
 const columnNames = (table) => new Set(table.columns.map((column) => column.cloudColumn));
@@ -217,6 +223,8 @@ REVOKE ALL ON FUNCTION public.pos_sync_validate_scope(text,text,text) FROM PUBLI
 GRANT EXECUTE ON FUNCTION public.pos_sync_validate_scope(text,text,text) TO service_role;`,
 ];
 
+out.push(shiftClosureHelpers);
+
 for (const table of tables) {
   const omitted = excludedColumns(table.cloudTable);
   const portableColumns = table.columns.filter((column) => !omitted.has(column.cloudColumn));
@@ -234,7 +242,7 @@ for (const table of tables) {
       ? `"owner_store_id"=COALESCE(NULLIF(btrim(EXCLUDED."owner_store_id"),''),public."products"."owner_store_id")`
       : `${q(column.cloudColumn)}=EXCLUDED.${q(column.cloudColumn)}`);
   const versionWhere = columnNames(table).has("row_version")
-    ? ` WHERE EXCLUDED."row_version">public.${q(table.cloudTable)}."row_version"`
+    ? ` WHERE EXCLUDED."row_version">public.${q(table.cloudTable)}."row_version"${table.cloudTable === "shifts" ? ' AND EXCLUDED."store_id"=public."shifts"."store_id"' : ""}`
     : "";
   const immutable =
     table.conflictRule === "immutable_reversal" || table.conflictRule === "movement_delta";
@@ -340,6 +348,7 @@ BEGIN
   ${table.cloudTable === "stores" ? "IF NULLIF(current_setting('pos.sync_branch',true),'') IS NULL OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'id' IS DISTINCT FROM current_setting('pos.sync_branch',true)) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;" : ""}
   ${refundOn}
   ${shiftGuardOn}
+  ${table.cloudTable === "shifts" ? "PERFORM public.pos_sync_assert_shift_ownership(p_rows,current_setting('pos.sync_branch',true));" : ""}
   INSERT INTO public.${q(table.cloudTable)} (${columns.join(",")})
   SELECT ${columns.join(",")} FROM jsonb_populate_recordset(NULL::public.${q(table.cloudTable)}, COALESCE(p_rows,'[]'::jsonb))
   ON CONFLICT (${primary(table)
@@ -349,6 +358,7 @@ BEGIN
   ${applyStock}
   ${shiftGuardOff}
   ${refundOff}
+  ${table.cloudTable === "shifts" ? "PERFORM public.pos_sync_shift_closure_ack(p_rows,current_setting('pos.sync_branch',true));" : ""}
   RETURN v_count;
 END $fn$;`);
   const deleteWhere = primary(table)
@@ -439,10 +449,10 @@ BEGIN
   IF NOT (v_me.role='admin' OR v_me.store_id IS NULL OR v_me.store_id=p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;
  END IF;
  SELECT payload_hash INTO v_prior FROM public.sync_idempotency_receipts WHERE batch_id=p_batch_id;
- IF FOUND THEN IF v_prior<>v_hash THEN RAISE EXCEPTION 'SYNC_IDEMPOTENCY_MISMATCH'; END IF; RETURN jsonb_build_object('ok',true,'replayed',true,'batch_id',p_batch_id); END IF;
+ IF FOUND THEN IF v_prior<>v_hash THEN RAISE EXCEPTION 'SYNC_IDEMPOTENCY_MISMATCH'; END IF; RETURN jsonb_build_object('ok',true,'replayed',true,'batch_id',p_batch_id)||CASE WHEN p_table='shifts' THEN public.pos_sync_shift_closure_ack(p_rows,p_branch_id) ELSE '{}'::jsonb END; END IF;
  CASE p_table ${applyCases("p_rows", "p_changes")} ELSE RAISE EXCEPTION 'SYNC_TABLE_FORBIDDEN'; END CASE;
  INSERT INTO public.sync_idempotency_receipts(batch_id,organization_id,branch_id,table_name,payload_hash,applied_count) VALUES(p_batch_id,p_organization_id,p_branch_id,p_table,v_hash,v_count);
- RETURN jsonb_build_object('ok',true,'applied',v_count,'batch_id',p_batch_id);
+ RETURN jsonb_build_object('ok',true,'applied',v_count,'batch_id',p_batch_id)||CASE WHEN p_table='shifts' THEN public.pos_sync_shift_closure_ack(p_rows,p_branch_id) ELSE '{}'::jsonb END;
 END $fn$;`);
 
 out.push(`CREATE OR REPLACE FUNCTION public.pos_sync_push_aggregate(p_batch_id uuid,p_organization_id text,p_branch_id text,p_terminal_id text,p_operations jsonb)
@@ -460,7 +470,7 @@ BEGIN
   IF v_me.id IS NULL OR NOT (v_me.role='admin' OR COALESCE((v_me.permissions->>'can_manage_sync_backup')::boolean,false)) THEN RAISE EXCEPTION 'SYNC_FORBIDDEN'; END IF;
   IF NOT (v_me.role='admin' OR v_me.store_id IS NULL OR v_me.store_id=p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; END IF;
  SELECT payload_hash INTO v_prior FROM public.sync_idempotency_receipts WHERE batch_id=p_batch_id;
- IF FOUND THEN IF v_prior<>v_hash THEN RAISE EXCEPTION 'SYNC_IDEMPOTENCY_MISMATCH'; END IF; RETURN jsonb_build_object('ok',true,'replayed',true,'batch_id',p_batch_id); END IF;
+ IF FOUND THEN IF v_prior<>v_hash THEN RAISE EXCEPTION 'SYNC_IDEMPOTENCY_MISMATCH'; END IF; RETURN jsonb_build_object('ok',true,'replayed',true,'batch_id',p_batch_id)||public.pos_sync_aggregate_shift_closure_ack(p_operations,p_branch_id); END IF;
  FOR v_op IN SELECT value FROM jsonb_array_elements(p_operations) LOOP v_table:=v_op->>'table'; v_rows:=COALESCE(v_op->'rows','[]'::jsonb);
   IF v_table='products' AND EXISTS(SELECT 1 FROM jsonb_array_elements(p_operations) related WHERE related->>'table' IN ('item_activity_logs','stock_delta_applied')) THEN
    SELECT COALESCE(jsonb_agg((row_value-'stock_quantity'-'stock_by_store')||jsonb_build_object('stock_quantity',0,'stock_by_store','{}'::jsonb)),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(v_rows) AS product_rows(row_value);
@@ -468,7 +478,7 @@ BEGIN
   CASE v_table ${applyCases("v_rows", "v_op->'changes'")} ELSE RAISE EXCEPTION 'SYNC_TABLE_FORBIDDEN'; END CASE; v_total:=v_total+v_count;
  END LOOP;
  INSERT INTO public.sync_idempotency_receipts(batch_id,organization_id,branch_id,table_name,payload_hash,applied_count) VALUES(p_batch_id,p_organization_id,p_branch_id,'__aggregate__',v_hash,v_total);
- RETURN jsonb_build_object('ok',true,'applied',v_total,'batch_id',p_batch_id);
+ RETURN jsonb_build_object('ok',true,'applied',v_total,'batch_id',p_batch_id)||public.pos_sync_aggregate_shift_closure_ack(p_operations,p_branch_id);
 END $fn$;`);
 
 const pullFunction = `CREATE OR REPLACE FUNCTION public.pos_sync_pull(p_organization_id text,p_branch_id text,p_terminal_id text,p_after_cursor bigint DEFAULT 0,p_limit integer DEFAULT 500)

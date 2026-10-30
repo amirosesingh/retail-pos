@@ -222,6 +222,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261030081625_product_bootstrap_uuid_keyset.sql",
       "supabase/migrations/20261030081804_optimize_catalogue_read_policy.sql",
       "supabase/migrations/20261030102943_optimize_branch_catalogue_sync_reads.sql",
+      "supabase/migrations/20261030153259_confirm_shift_closure_sync_acknowledgement.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

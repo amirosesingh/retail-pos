@@ -2,6 +2,7 @@ const { recordId } = require("./uuid-fields.cjs");
 const { retryDelay } = require("./retry.cjs");
 const { stableUuid } = require("../db/repositories/aggregates.cjs");
 const { ACTIVITY_TABLES } = require("./event-policy.cjs");
+const { assertShiftClosureAcknowledgement } = require("./shift-closure-ack.cjs");
 
 function groupBy(values, key) {
   const groups = new Map();
@@ -11,6 +12,14 @@ function groupBy(values, key) {
     groups.get(name).push(value);
   }
   return groups;
+}
+
+async function uploadRows(table, rows) {
+  if (table !== "activity_events") return rows;
+  const { unconfirmedShiftClosureActivityRow } = await import("../shift-closure-activity.mjs");
+  // A local audit event can upload independently of its shift transaction.
+  // Never turn that report into proof that the central closure was saved.
+  return rows.map(unconfirmedShiftClosureActivityRow);
 }
 
 function collapseChanges(changes) {
@@ -179,6 +188,10 @@ class PushWorker {
         // Leave it to the durable scheduler rather than block this pass for
         // another four deadlines and keep login/focus callers waiting.
         if (error?.code === "ETIMEDOUT" || ["TimeoutError","AbortError"].includes(error?.name)) throw error;
+        // A semantic closing conflict needs review, not five immediate retries
+        // of the same immutable facts (even if a gateway reports it as 500).
+        if ([error?.code, error?.message].some(value =>
+          /^SYNC_SHIFT_CLOSURE_(CONFLICT|DUPLICATE)$/.test(String(value ?? "")))) throw error;
         const status = Number(error?.status ?? 0);
         const retryable = status === 408 || status === 429 || status >= 500 ||
           ["ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "TimeoutError", "AbortError"].includes(error?.code ?? error?.name) ||
@@ -235,11 +248,11 @@ class PushWorker {
             dependencyOrder: table.dependencyOrder,
             deletePhase: false,
             changes: live,
-            rows: rowsForBranch(
+            rows: await uploadRows(table.cloudTable, rowsForBranch(
               table,
               await this.reader.rows(table, live, { branchId }),
               branchId,
-            ),
+            )),
           });
         if (removed.length)
           operations.push({
@@ -286,6 +299,7 @@ class PushWorker {
         );
         if (!acknowledged?.ok)
           throw new Error(acknowledged?.error ?? "Cloud did not acknowledge the aggregate.");
+        assertShiftClosureAcknowledgement(acknowledged, operations, branchId);
         for (const id of originalIds) await this.reader.acknowledgeAggregate(id);
         pushed += aggregate.changes.length;
         onProgress({ direction: "push", table: operations.map(op => op.table).join(", "), completed: aggregate.changes.length });
@@ -389,11 +403,11 @@ class PushWorker {
           deferredTables.add(table.cloudTable); break;
         }
         let live = changes.filter((change) => change.operation !== "D");
-        let rows = rowsForBranch(
+        let rows = await uploadRows(table.cloudTable, rowsForBranch(
           table,
           await this.reader.rows(table, live, { branchId }),
           branchId,
-        );
+        ));
         while (Buffer.byteLength(JSON.stringify({ changes, rows }), "utf8") > 6 * 1024 * 1024) {
           const versions = [...new Set(changes.map((change) => Number(change.version)))];
           if (versions.length <= 1)
@@ -404,11 +418,11 @@ class PushWorker {
           const last = versions.at(-1);
           changes = changes.filter((change) => Number(change.version) !== last);
           live = changes.filter((change) => change.operation !== "D");
-          rows = rowsForBranch(
+          rows = await uploadRows(table.cloudTable, rowsForBranch(
             table,
             await this.reader.rows(table, live, { branchId }),
             branchId,
-          );
+          ));
         }
         const batchId = stableUuid({
           branchId,
@@ -451,6 +465,7 @@ class PushWorker {
         }
         if (!acknowledged?.ok)
           throw new Error(acknowledged?.error ?? "Cloud did not acknowledge the batch.");
+        assertShiftClosureAcknowledgement(acknowledged, operations, branchId);
         const version = Math.max(...changes.map((row) => Number(row.version)));
         await this.checkpoints.save(branchId, table.sqlServerTable, "push", {
           change_tracking_version: version,
