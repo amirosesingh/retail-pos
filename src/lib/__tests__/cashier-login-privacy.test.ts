@@ -27,6 +27,7 @@ import { Route as IpcRoute } from "@/routes/api/v1/pos/ipc-authorize";
 import { cashierServiceFailure } from "../cashier-login-failure";
 import { countsAsWrongCashierPin } from "../login-failure";
 import { publicCashierLoginResponse } from "../cashier-login-response.server";
+import { cashierLoginServer } from "../cashier-login.server";
 
 type TestRoute = { options: { server: { handlers: { POST: (input: { request: Request }) => Promise<Response> } } } };
 const alias = (AliasRoute as unknown as TestRoute).options.server.handlers.POST;
@@ -99,7 +100,7 @@ describe.each(endpoints)("PIN response privacy: $name", endpoint => {
     expect(h.accountFail).not.toHaveBeenCalled(); expect(h.start).not.toHaveBeenCalled();
   });
 
-  it.each(["unicode-pin", "blank-username"])("prevents an address-budget probe using %s from distinguishing the target state", async probe => {
+  it.each(["unicode-pin", "long-unicode-pin", "blank-username"])("prevents an address-budget probe using %s from distinguishing the target state", async probe => {
     const replies = [];
     for (const targetState of ["invalid", "account_inactive", "credential_unavailable"]) {
       let addressFailures = 0;
@@ -118,10 +119,12 @@ describe.each(endpoints)("PIN response privacy: $name", endpoint => {
       await endpoint.run(request({ username: "guessed-target" }));
       expect(addressFailures).toBe(targetState === "invalid" ? 20 : 19);
       replies.push(await envelope(await endpoint.run(request(probe === "unicode-pin"
-        ? { username: "probe", pin: "😀😀" } : { username: " " }))));
+        ? { username: "probe", pin: "😀😀" } : probe === "long-unicode-pin"
+          ? { username: "probe", pin: "😀".repeat(20) } : { username: " " }))));
     }
     expect(replies[1]).toEqual(replies[0]); expect(replies[2]).toEqual(replies[0]);
-    expect(replies[0].status).toBe(probe === "unicode-pin" && endpoint.ipc ? 401 : 400);
+    const validationPassed = probe === "unicode-pin" ? endpoint.ipc : probe === "long-unicode-pin" && !endpoint.ipc;
+    expect(replies[0].status).toBe(validationPassed ? 401 : 400);
     expect(h.start).not.toHaveBeenCalled(); expect(h.authority).not.toHaveBeenCalled();
   });
 
@@ -167,6 +170,16 @@ it("keeps the IPC maintenance permission required after a valid PIN", async () =
   const result = await envelope(await ipc({ request: request() }));
   expect(result.status).toBe(403); expect(result.body.ok).toBe(false);
 });
+
+it.each([{ username: " ", pin: "1234" }, { username: "cashier", pin: "😀".repeat(20) }])(
+  "keeps early core validation typed and private without consuming attempts: %j", async input => {
+    const result = await cashierLoginServer(input);
+    expect(result).toMatchObject({ ok: false, code: "invalid_input" });
+    expect(h.rest).not.toHaveBeenCalled(); expect(h.finish).not.toHaveBeenCalled();
+    expect(h.accountFail).not.toHaveBeenCalled(); expect(h.start).not.toHaveBeenCalled();
+    expect(await envelope(publicCashierLoginResponse(result, 401))).toEqual({ status: 401, body: refusal });
+  },
+);
 
 it("does not carry private diagnostic fields or attempt metadata into a refusal", async () => {
   const privateResult = { ok: false, code: "credential_unavailable", error: "private verifier detail",

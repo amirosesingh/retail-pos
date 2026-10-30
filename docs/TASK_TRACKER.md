@@ -28,7 +28,7 @@ only; the owner's subsequent Batch 1 approval below authorizes its bounded fixes
 | 15 | REFRESH-17/PERF-18 active | Confirmed whole-page connection visibility gate; prepare same-scope inert cached-content recovery without granting offline writes. Ordinary row refresh does not navigate/reload; exact intermittent freeze cause not yet proven. |
 | 16 | LOC-21 copy committed / NOTIF-22 correction pending preparation approval | 8e465dc9 text-only scope clarification passed CI. Core notification migration deployed but rules not saved/activated. Soft-token follow-up SQL tests pass; personal-clear upgrade failed foreign-branch acknowledgement test and cannot be applied unchanged. |
 | 17 | PERF-24 committed/pushed/scoped verified | 8b840192 fixes first-paint report completeness, restored-session landing and scoped-settings initial readiness/retry. Independent review passed; 11 focused suites/96 tests passed. Latest PR checks are green. No formula/grant/Membership change. |
-| 18 | AUTH-12 implemented / focused checks passed; final PR checks pending | Shared public PIN response boundary covers both transports, alias, lockouts and validation probes. Private counters, grants and offline handling remain. 13 suites/152 tests, 12 isolated SQL scenarios, typecheck and lint passed. |
+| 18 | AUTH-12 implemented / focused checks passed; final PR checks pending | Shared public PIN response boundary covers both transports, alias, lockouts and validation probes. Private counters, grants and offline handling remain. 13 suites/157 tests, 12 isolated SQL scenarios, typecheck and lint passed. |
 
 Membership is **ON HOLD** throughout. Each future batch requires a recoverable
 baseline, specific files/dependencies, expected behavior, risks, regression tests,
@@ -1265,3 +1265,15 @@ Membership or checkout code was modified. This does not claim constant-time
 authentication or installed-device acceptance. Final clean-clone CI follows the
 bounded commit/push; original sealed security scan remains immutable evidence for
 its earlier revision, not an updated scan or a closed workbench finding.
+
+AUTH-12 final input-boundary follow-up: both early core validation returns now
+carry private invalid_input rather than uncoded errors. Stateful long-Unicode
+tests reproduced two additional leaks: public Zod accepts20Unicode characters,
+but core's existing32UTF-16-unit ceiling refuses them after the address check.
+Typing that existing refusal routes it through the same serializer without
+changing accepted PINs or counting it as wrong. The IPC route already rejects
+that long representation before throttling. Final13focused suites/157tests pass,
+including48privacy cases; final typecheck/lint/diff checks pass. Earlier152/43
+figures above describe the preceding checkpoint. No new reviewer cycle or live
+credential request was used; root challenged the upper as well as lower Unicode
+boundary after the fresh review and verified the confirmed correction.

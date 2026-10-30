@@ -56,12 +56,12 @@ async function cashierLoginCore(input: {
   branchId?: string | null;
 }, signal?: AbortSignal): Promise<CashierLoginResult> {
   const username = input.username.trim().toLowerCase();
-  if (!username) return { ok: false, error: "Enter your username" };
+  if (!username) return { ok: false, code: "invalid_input", error: "Enter your username" };
   // Accounts are provisioned with a 4-32 character credential, so the login
   // must accept the same range — a longer or alphanumeric passcode is valid.
   const secret = input.pin;
   if (secret.length < 4 || secret.length > 32) {
-    return { ok: false, error: "Enter your PIN or passcode" };
+    return { ok: false, code: "invalid_input", error: "Enter your PIN or passcode" };
   }
 
   const res = await serviceRest("rpc/verify_terminal_pin_result", {
