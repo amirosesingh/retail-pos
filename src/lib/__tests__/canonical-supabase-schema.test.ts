@@ -219,6 +219,8 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261029064933_preserve_product_owner_on_stale_sync.sql",
       "supabase/migrations/20261029073121_add_missed_bill_historical_entry.sql",
       "supabase/migrations/20261030075132_typed_terminal_pin_verification.sql",
+      "supabase/migrations/20261030081625_product_bootstrap_uuid_keyset.sql",
+      "supabase/migrations/20261030081804_optimize_catalogue_read_policy.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

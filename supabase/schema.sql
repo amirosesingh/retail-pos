@@ -22245,6 +22245,109 @@ GRANT EXECUTE ON FUNCTION public.verify_terminal_pin_result(text,text) TO servic
 NOTIFY pgrst, 'reload schema';
 COMMIT;
 
+-- Read-only performance correction for two UUID-keyed bootstrap cases only.
+-- Preserve catalogue predicates, returned JSON cursors, grants and page limits.
+-- The live minimum is 10; legacy fresh-install definitions may still use 100.
+BEGIN;
+DO $product_uuid_keyset$
+DECLARE
+  signature text := 'public.pos_sync_bootstrap_scoped(text,text,text,text,text,integer,integer)';
+  definition text;
+  original_definition text;
+  table_name text;
+  start_at integer;
+  end_at integer;
+  old_case text;
+  new_case text;
+  old_tail text := 'AND (p_after_cursor IS NULL OR jsonb_build_object(''id'',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object(''id'',x."id")::text LIMIT ';
+  new_tail text := 'AND (p_after_cursor IS NULL OR x."id">((p_after_cursor::jsonb)->>''id'')::uuid) ORDER BY x."id" LIMIT ';
+BEGIN
+  SELECT pg_get_functiondef(signature::regprocedure) INTO definition;
+  original_definition := definition;
+  FOREACH table_name IN ARRAY ARRAY['products','product_barcodes'] LOOP
+    start_at := strpos(definition, format('WHEN %L THEN',table_name));
+    IF start_at = 0 THEN RAISE EXCEPTION 'Missing inspected bootstrap case: %',table_name; END IF;
+    end_at := strpos(substring(definition FROM start_at),';');
+    IF end_at = 0 THEN RAISE EXCEPTION 'Incomplete bootstrap case: %',table_name; END IF;
+    old_case := substring(definition FROM start_at FOR end_at);
+    IF strpos(old_case,format('FROM public."%s" x',table_name)) = 0
+      OR strpos(old_case,'jsonb_build_object(''id'',x."id")::text cursor') = 0
+      OR strpos(old_case,'public.product_available_in_catalogue(') = 0
+      OR (strpos(old_case,'LIMIT LEAST(GREATEST(p_limit,100),2000)') = 0
+          AND strpos(old_case,'LIMIT LEAST(GREATEST(p_limit,10),2000)') = 0)
+    THEN RAISE EXCEPTION 'Unrecognized bootstrap read contract: %',table_name; END IF;
+    IF strpos(old_case,old_tail)>0 THEN
+      new_case := replace(old_case,old_tail,new_tail);
+      definition := overlay(definition PLACING new_case FROM start_at FOR end_at);
+    ELSIF strpos(old_case,new_tail)=0 THEN
+      RAISE EXCEPTION 'Unrecognized bootstrap keyset contract: %',table_name;
+    END IF;
+  END LOOP;
+  IF definition <> original_definition THEN EXECUTE definition; END IF;
+END $product_uuid_keyset$;
+NOTIFY pgrst, 'reload schema';
+COMMIT;
+
+-- Read-policy optimization only. Preserve the existing catalogue availability
+-- predicates and all checkout, transfer, mutation and ownership helpers.
+BEGIN;
+
+CREATE OR REPLACE FUNCTION public.readable_catalogue_product_ids()
+RETURNS SETOF uuid LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $fn$
+ WITH authorized_branches AS MATERIALIZED (
+  SELECT s.id,s.group_id FROM public.stores s
+  WHERE public.user_has_store_access(s.id)
+ ), branch_privacy AS MATERIALIZED (
+  -- Resolve the legacy and scoped JSON settings once per branch, not once
+  -- per product/branch pair. Reuse the exact existing precedence semantics.
+  SELECT s.id,public.branch_catalogue_is_private(s.id) AS private
+  FROM public.stores s
+ ), cluster_count AS MATERIALIZED (
+  SELECT count(DISTINCT NULLIF(btrim(s.group_id),'')) AS total FROM public.stores s
+ ), received_catalogue AS MATERIALIZED (
+  SELECT DISTINCT i.product_id,destination.id,destination.group_id
+  FROM public.stock_transfer_items i
+  JOIN public.stock_transfers t ON t.id=i.transfer_id
+  JOIN public.stores destination ON destination.id=t.to_store_id
+  WHERE t.posted_at IS NOT NULL AND t.status IN ('completed','completed_with_discrepancy')
+    AND COALESCE(i.quantity_verified,i.quantity_received,0)>0
+ )
+ SELECT p.id FROM public.products p
+ LEFT JOIN public.stores owner ON owner.id=p.owner_store_id
+ WHERE (SELECT public.is_staff_now()) AND EXISTS (
+  SELECT 1 FROM authorized_branches target
+  WHERE p.owner_store_id=target.id
+   OR (NULLIF(btrim(owner.group_id),'') IS NOT NULL AND btrim(owner.group_id)=btrim(target.group_id))
+   OR (owner.id IS NOT NULL AND NULLIF(btrim(owner.group_id),'') IS NULL AND NULLIF(btrim(target.group_id),'') IS NULL
+       AND NOT (SELECT privacy.private FROM branch_privacy privacy WHERE privacy.id=owner.id)
+       AND NOT (SELECT privacy.private FROM branch_privacy privacy WHERE privacy.id=target.id))
+   OR EXISTS (
+    SELECT 1 FROM received_catalogue received WHERE received.product_id=p.id
+      AND (received.id=target.id OR (NULLIF(btrim(target.group_id),'') IS NOT NULL AND btrim(received.group_id)=btrim(target.group_id)))
+   )
+   OR (NULLIF(btrim(p.owner_store_id),'') IS NULL AND (
+    EXISTS (
+     SELECT 1 FROM jsonb_each_text(COALESCE(p.stock_by_store,'{}'::jsonb)) stock
+     JOIN public.stores evidence ON lower(evidence.id)=lower(stock.key)
+     WHERE (evidence.id=target.id OR (NULLIF(btrim(target.group_id),'') IS NOT NULL AND btrim(evidence.group_id)=btrim(target.group_id)))
+       AND CASE WHEN stock.value ~ '^-?[0-9]+([.][0-9]+)?$' THEN stock.value::numeric<>0 ELSE false END
+    )
+    OR (NOT (SELECT privacy.private FROM branch_privacy privacy WHERE privacy.id=target.id)
+        AND (SELECT total FROM cluster_count)<=1)
+   ))
+ )
+$fn$;
+REVOKE ALL ON FUNCTION public.readable_catalogue_product_ids() FROM PUBLIC,anon;
+GRANT EXECUTE ON FUNCTION public.readable_catalogue_product_ids() TO authenticated,service_role;
+
+-- The uncorrelated set is computed once per SELECT statement; the former
+-- product-specific function repeated the same branch/settings work per row.
+DROP POLICY IF EXISTS "Staff can read products" ON public.products;
+CREATE POLICY "Staff can read products" ON public.products FOR SELECT TO authenticated
+ USING (id IN (SELECT public.readable_catalogue_product_ids()));
+NOTIFY pgrst,'reload schema';
+COMMIT;
+
 -- Final public-schema privilege hardening after notification rule definitions.
 DO $notification_hardening$
 DECLARE routine record;
