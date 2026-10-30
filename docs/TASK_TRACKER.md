@@ -860,4 +860,106 @@ application. Full CI permission run:567suites/3,586tests passed,1test failed and
 settings callback name. Corrected only sales-realtime.test.ts to verify the new
 startup-aware reader, preserving channel, canonical-read, reconnect and branch
 guards. Four focused suites/30tests and ESLint/diff checks passed; CI rerun at
-the follow-up commit remains pending. Do not report the first CI run as green.
+the follow-up commit `dd8dd1f2` PASSED:568suites/3,587tests passed,1skipped.
+Security workflow41067640698 also passed account-permission lifecycle,
+sync/startup/database-upgrade checks, SQL contracts, updater/release boundaries,
+lint, typecheck/build and dependency audit. Android compile41067640735 passed;
+iPhone compile-only41067640745 remains running. No publication/merge. PR body
+updated with this evidence. Do not report the first CI run as green.
+
+Further local diagnostic: the exact temporary-table readiness probe passed via
+Electron's native driver (CREATE/INSERT only in private #pos_write_probe, rolled
+back, no permanent schema or business-record change). This strengthens the
+distinction between working connection/readiness probes and the failing existing
+automatic installer replay; exact replay error is still unproven. Local20-only
+approval, real form sign-in and affected-PC shift-sync/version replies remain
+pending. Keep server64909 and SQL Server running; preserve all unfinished work.
+
+### Owner reply — local20 and signed-in verification, 30 October
+
+Owner explicitly approves ONLY existing local migration
+`database/sqlserver/migrations/020_unpublished_catalog_default.sql` on
+LAPTOP-N0QBONGL/LCRPOS/POS_Local in a guarded transaction. Preserve operator
+configuration, existing product rows, stock/SKU/prices, permissions and sales;
+do not replay the full installer or apply another migration. Independent agent
+review requires server/database/default/ledger guards, no concurrent automatic
+installer, DDL-trigger inspection, exact binary-JSON product snapshots compared
+both directions, rollback on any mismatch, and post-commit readiness verification.
+Source remains `dd8dd1f2`; no app-code change authorized by this SQL approval.
+
+Owner reports the affected cashier PC shows its shifts CLOSED locally, while
+cloud remains open. This confirms the observed local/cloud mismatch from the
+owner's view; the exact failed upload/version/outbox evidence is still absent.
+Continue SHIFT-14 read-only root-cause work, without manual shift/count repair or
+silently widening scope. Owner also reports Administrator sign-in completed for
+the local missed-bill form check. Inspect the live preview without submitting a
+real sale. Keep Membership ON HOLD and unrelated unfinished work preserved.
+
+Approved-local20 execution found a confirmed syntax defect: SQL Server Msg102
+near QUOTENAME in `EXEC(N'ALTER TABLE ...'+QUOTENAME(@commerceDefault))`.
+Batch compilation failed before execution; independent readback confirms no
+version20 entry and default still((1)). Correct only that dynamic-SQL construction
+to assign the same safely quoted text to an nvarchar variable before EXEC.
+Keep the exact approved new-product-default/ledger effects, current data and
+all other migrations unchanged. Agent owns canonical020 and matching generated
+installer/download-bundle blocks plus focused regression; root owns live guarded
+application/readback. This repairs the actual existing auto-upgrade syntax error,
+not a connection/driver/credential problem. No full installer replay authorized.
+
+Fresh SHIFT-14 readback supersedes the earlier open state: both cloud shifts now
+CLOSED/CLOSED at22:15:06 and22:15:37Brunei via successful direct online close-start
+and cash-count-submit RPCs, with closing child records present. Root did NOT
+repair these records. Owner/online-client action completed them; don't attribute
+that recovery to an unimplemented sync fix. The earlier offline propagation cause
+remains under investigation. An isolated actual PushWorker/PGlite reproduction
+confirms equal-version localCLOSED/cloudOPEN can apply0 and still acknowledge the
+outbox; higher-version control closes correctly. This is a confirmed integrity
+defect, not proof of the affected PC's original row version. Separate correction
+plan/approval and prevention regressions remain required.
+
+Local20 outcome: syntax-only correction applied to canonical020, its packaged
+installer section and generated Settings-download section; no other migration
+body changed.13Node upgrade tests,16registry tests/70-table verifier, ESLint and
+an actual rolled-back tempdb fixture passed (old value retained, new default0,
+repeat ledger entry prevented). The existing app's automatic upgrader consumed
+the corrected source and recorded20 at22:23:26Brunei before root's next guarded
+attempt. That guarded attempt therefore reported already_applied=true and made
+no second change; exact binary-JSON comparison found all2,170product rows stable
+during that verification. Do not misstate it as a before/after snapshot of the
+earlier automatic execution. No new migration other than20 is recorded.
+
+Post-upgrade actual Electron validator PASSED:ready=true,statusready,77/77required
+tables,compatiblecolumns,missingMigrationVersions=[],differences=[],temporary
+write-probe rolled back,ChangeTrackingenabled. Clicking Retry local database
+reached the real branch-bound cashier/PIN sign-in screen with saved staff names.
+No credential was entered and no cashier transaction performed. Local SQL is
+ready; separate cloud bootstrap still logs HTTP503/ECHANGEGAP retries. Preserve
+that distinction and do not resume Supabase backup/repair automatically.
+
+Real Administrator browser check completed at localhostReceiptHistory:button and
+historical fields rendered; original cashier fetched from central accounts. It
+revealed machine identities in that new selector. A second agent corrected only
+the picker to reuse canonical isOperatorIdentity, retain human PIN users and
+terminal.-prefixed human names, keep email server-only and paginate beyond
+machine-only pages. Two-file scope; no write routine/permission/schema change.
+Agent47tests passed; root6suites/71tests plus TypeScript/scoped ESLint passed.
+Live close/reopen confirmed exactly four human options, no machine accounts.
+No form values or financial entry were submitted. Keep that blank form open for
+owner review. Beta PR342 follow-up commits/delivery pending, no release approval.
+
+SHIFT-14 current actor evidence: terminal registry reports1.4.79; cached main
+contains migrations1–18, so do NOT blame this PC's separate20issue for the
+affected terminal's earlier closure problem. Stale09:18telemetry cannot prove
+its current queue empty. Current cloud closure records are confirmed, but the
+reproducible silent-ack defect and cached-dbShift risk remain unfixed. Owner
+approval requested for a separate prevention-code/isolated-test batch; any live
+SQL migration would need separate exact-project approval. No manual shift repair.
+
+Follow-up source commits: `78ac3e30` fixes only020dynamic-DDL syntax and its
+installer/download copies; `248dbae7` excludes machine identities from the
+original-cashier picker. They preserve checkout functions, saved user grants and
+financial write contracts. Target remains draft beta PR342. Latest local check
+ran6suites/71tests plus13Node upgrade checks; actual Electron readiness and live
+human-only selector are verified as above. Physical cashier login/payment/print
+and offline-shift upload acceptance remain separate. No production promotion or
+installer/OTA publication authorized; keep the live server and native preview up.
