@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import {
+  locationReadError,
   readLocalLocationDirectory,
   resolveLocationDirectory,
   verifyTerminalLocation,
@@ -7,6 +8,7 @@ import {
   selectedLocation,
   type LocationDirectoryResult,
 } from "@/core/api/location-directory";
+import { createBootstrapRecovery } from "@/lib/data-read-attempt";
 import type { Store } from "@/core/types/pos-types";
 
 const store = { id: "paired-branch", name: "Branch", active: true } as Store;
@@ -21,6 +23,23 @@ function bridgeFor(
 }
 
 describe("Electron location discovery", () => {
+  it("preserves a transient SDK directory error for bounded recovery", () => {
+    let now = 1000;
+    const recovery = createBootstrapRecovery(() => now);
+    recovery.failed(locationReadError({ message: "Schema cache unavailable", code: "PGRST002" }), 1);
+    now += 30_001;
+    expect(recovery.healthy({ cloud: true, at: now }, 1)).toBe(true);
+  });
+
+  it("preserves permission refusals instead of retrying them as outages", () => {
+    let now = 1000;
+    const recovery = createBootstrapRecovery(() => now);
+    const error = locationReadError({ message: "Access denied", code: "42501", status: 403 });
+    expect(error).toMatchObject({ code: "42501", status: 403 });
+    recovery.failed(error, 1);
+    now += 30_001;
+    expect(recovery.healthy({ cloud: true, at: now }, 1)).toBe(false);
+  });
   it.each([
     { enabled: false, connected: false },
     { enabled: true, connected: false },

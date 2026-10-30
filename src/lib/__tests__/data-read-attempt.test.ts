@@ -1,7 +1,88 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { beginDataReadAttempt, createScopedReadFlight, dataReadIdentity, dataSnapshotReady, needsBootstrapBranchResolution, snapshotRefreshReady } from "../data-read-attempt";
+import { beginDataReadAttempt, createBootstrapRecovery, createReconnectUrgency, createScopedReadFlight, dataReadIdentity, dataSnapshotReady, needsBootstrapBranchResolution, snapshotRefreshReady } from "../data-read-attempt";
 import { withReadDeadline } from "../read-retry";
 afterEach(() => vi.useRealTimers());
+it("recovers a transient bootstrap after fresh health success without requiring an offline transition", () => {
+  let now = 1000;
+  const recovery = createBootstrapRecovery(() => now);
+  const retry = vi.fn();
+  recovery.failed({ status: 503 }, 7);
+  const health = (cloud: boolean, at = now, generation = 7) => {
+    if (recovery.healthy({ cloud, at }, generation)) retry();
+  };
+  now = 20_000; health(true);
+  expect(retry).not.toHaveBeenCalled();
+  now = 31_000; health(false); health(true, 1000); health(true, now, 8);
+  expect(retry).not.toHaveBeenCalled();
+  health(true); health(true);
+  expect(retry).toHaveBeenCalledOnce();
+});
+it("caps automatic bootstrap recovery when public health succeeds but protected reads still fail", () => {
+  let now = 0;
+  const recovery = createBootstrapRecovery(() => now);
+  for (let cycle = 0; cycle < 4; cycle++) {
+    recovery.failed({ code: "57014" }, cycle);
+    now += 30_000;
+    expect(recovery.healthy({ cloud: true, at: now }, cycle)).toBe(cycle < 2);
+  }
+  recovery.reset(); // Explicit manual retry or a new person/branch gets a new budget.
+  recovery.failed(new DOMException("Read expired", "TimeoutError"), 9);
+  now += 30_000;
+  expect(recovery.healthy({ cloud: true, at: now }, 9)).toBe(true);
+});
+it("never automatically retries permission, account, validation or schema failures", () => {
+  let now = 0;
+  const recovery = createBootstrapRecovery(() => now);
+  for (const error of [
+    { status: 401 }, { status: 403 }, { code: "42501" }, { code: "23503" },
+    new Error("Account disabled"), new Error("Access denied"), { status: 404 },
+    { code: "PGRST002", status: 403 }, { code: "PGRST301" }, { code: "PGRST116" },
+  ]) {
+    recovery.failed({ status: 503 }, 1);
+    recovery.failed(error, 1); // A definitive rejection must replace the transient hint.
+    now += 30_000;
+    expect(recovery.healthy({ cloud: true, at: now }, 1)).toBe(false);
+  }
+});
+it("recovers raw PostgREST connection/pool/schema-cache failures even when the SDK omits HTTP status", () => {
+  for (const code of ["PGRST000", "PGRST001", "PGRST002", "PGRST003"]) {
+    let now = 0;
+    const recovery = createBootstrapRecovery(() => now);
+    recovery.failed({ code, message: "Database service unavailable", details: null, hint: null }, 2);
+    now = 30_000;
+    expect(recovery.healthy({ cloud: true, at: now }, 2)).toBe(true);
+  }
+});
+it("reset or a superseding branch generation cannot retry an earlier failed bootstrap", () => {
+  let now = 0;
+  const recovery = createBootstrapRecovery(() => now);
+  recovery.failed({ status: 503 }, 4);
+  now = 30_000;
+  expect(recovery.healthy({ cloud: true, at: now }, 5)).toBe(false);
+  recovery.reset();
+  expect(recovery.healthy({ cloud: true, at: now }, 4)).toBe(false);
+});
+it("preserves reconnect urgency when focus replaces its debounce timer", async () => {
+  vi.useFakeTimers();
+  const urgency = createReconnectUrgency();
+  const read = vi.fn();
+  let timer: ReturnType<typeof setTimeout>;
+  const wake = (reconnect: boolean) => {
+    urgency.note(reconnect);
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (60_000 >= (urgency.take() ? 5000 : 300_000)) read();
+    }, 200);
+  };
+  wake(true);
+  await vi.advanceTimersByTimeAsync(100);
+  wake(false);
+  await vi.advanceTimersByTimeAsync(200);
+  expect(read).toHaveBeenCalledOnce();
+  wake(false);
+  await vi.advanceTimersByTimeAsync(200);
+  expect(read).toHaveBeenCalledOnce();
+});
 it("a retry invalidates a late snapshot even before React effect cleanup", async () => {
   const generation = { current: 0 };
   const first = beginDataReadAttempt(generation);

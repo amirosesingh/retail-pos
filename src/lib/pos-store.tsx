@@ -84,7 +84,7 @@ import { notifyError } from "./notify";
 import type { CloudSlice, CommitTarget } from "@/core/api/pos-db";
 import { effectiveDatabaseMode } from "@/core/local-db/db-mode";
 import { platformName } from "@/platform-config/platform";
-import { APP_RESUME_EVENT, CONNECTIVITY_RESTORED_EVENT } from "@/core/activation/connection-health";
+import { APP_RESUME_EVENT, CONNECTIVITY_RESTORED_EVENT, subscribeHealth } from "@/core/activation/connection-health";
 import { useAuth } from "@/lib/pos-auth";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
 import { reserveBillNumber } from "./bill-number";
@@ -159,7 +159,7 @@ import { localDb } from "@/core/local-db/local-db";
 import { businessReadsReady, transferReadAllowed, transferReadsReady } from "./business-readiness";
 import { hasCentralAuthSession, subscribeCentralAuthSession } from "./session-presence";
 import { retryDataRead, withReadDeadline } from "./read-retry";
-import { beginDataReadAttempt, createScopedReadFlight, dataReadIdentity, dataSnapshotReady, needsBootstrapBranchResolution, snapshotRefreshReady } from "./data-read-attempt";
+import { beginDataReadAttempt, createBootstrapRecovery, createReconnectUrgency, createScopedReadFlight, dataReadIdentity, dataSnapshotReady, needsBootstrapBranchResolution, snapshotRefreshReady } from "./data-read-attempt";
 import {
   batches,
   DEFAULT_BATCH_SIZE,
@@ -601,7 +601,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const [locationLoadError, setLocationLoadError] = useState<string | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
   const bootstrapGeneration = useRef(0);
-  const retryLoad = useCallback(() => {
+  const bootstrapRecovery = useRef(createBootstrapRecovery());
+  const retryBootstrap = useCallback(() => {
     // Invalidate the previous attempt synchronously, before React runs cleanup.
     bootstrapGeneration.current++;
     setStoresLoaded(false);
@@ -610,6 +611,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
     setSettingsSnapshotLoaded(false);
     setReloadTick((v) => v + 1);
   }, []);
+  const retryLoad = useCallback(() => {
+    bootstrapRecovery.current.reset();
+    retryBootstrap();
+  }, [retryBootstrap]);
   const { authUserId, terminalUser, user, can, isAdmin, canSwitchStores, ready: authReady } = useAuth();
   const canReadTransfers = transferReadAllowed(can);
   // Nothing is fetched from the cloud until a cashier or supervisor session
@@ -626,6 +631,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const deferredPrimaryRefresh = useRef({ identity: readIdentity, dirty: false });
   if (deferredPrimaryRefresh.current.identity !== readIdentity)
     deferredPrimaryRefresh.current = { identity: readIdentity, dirty: false };
+  const recoveryIdentity = useRef(readIdentity);
+  if (recoveryIdentity.current !== readIdentity) {
+    recoveryIdentity.current = readIdentity;
+    bootstrapRecovery.current.reset();
+  }
   const refreshPrimarySnapshot = useCallback((branch: string | null) => {
     const key = JSON.stringify([readIdentity, bootstrapGeneration.current, canonicalBranchId(branch ?? "")]);
     return primaryReadFlights.current.read(key, () => withReadDeadline(() => loadPrimaryState(branch), 60_000));
@@ -845,6 +855,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         setLoadPhase("failed");
         setReady(true);
         attempt.invalidate();
+        bootstrapRecovery.current.failed(e, bootstrapGeneration.current);
       } finally {
         if (attempt.current()) setReady(true);
       }
@@ -854,6 +865,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       setLocationLoadError(error instanceof Error ? error.message : 'The data service did not respond in time. Please retry.');
       setLoadPhase('failed');
       setReady(true);
+      bootstrapRecovery.current.failed(error, bootstrapGeneration.current);
     });
 
     return () => {
@@ -862,14 +874,16 @@ export function PosProvider({ children }: { children: ReactNode }) {
     };
   }, [signedIn, authReady, readsReady, readIdentity, bootstrapBranch, reloadTick, requiresCloudReauthentication]);
 
-  // Retry a failed initial read when the connection recovers. Do not restart
-  // an active catalogue download or discard a successfully loaded snapshot.
+  // A brief outage may never change the retained "online" category. A fresh
+  // successful heartbeat can therefore recover a transient failed bootstrap
+  // without waiting for a connectivity transition. It never retries denials,
+  // loops on a merely healthy public probe, or unlocks an absent snapshot.
   useEffect(() => {
     if (!signedIn || loadPhase !== "failed") return;
-    const recover = () => retryLoad();
-    window.addEventListener(CONNECTIVITY_RESTORED_EVENT, recover);
-    return () => window.removeEventListener(CONNECTIVITY_RESTORED_EVENT, recover);
-  }, [signedIn, loadPhase, retryLoad]);
+    return subscribeHealth(report => {
+      if (bootstrapRecovery.current.healthy(report, bootstrapGeneration.current)) retryBootstrap();
+    });
+  }, [signedIn, loadPhase, readIdentity, retryBootstrap]);
 
   // Transfers are not part of the register's small startup snapshot. Restore
   // their persisted headers and lines separately so a reload does not turn a
@@ -1172,17 +1186,20 @@ export function PosProvider({ children }: { children: ReactNode }) {
     const currentRead = () => !cancelled && generation === bootstrapGeneration.current;
     let loading = false;
     let resumeTimer: number | undefined;
+    const urgency = createReconnectUrgency();
     let lastResumeStarted = Date.now();
     const resume = (event?: Event) => {
       if (document.visibilityState !== "visible" || !navigator.onLine) return;
+      urgency.note(event?.type === "online" || event?.type === CONNECTIVITY_RESTORED_EVENT);
       // Focus, visibility and the native app-state event often arrive together.
       // One foreground transition needs one snapshot, not three full reads.
       if (resumeTimer) window.clearTimeout(resumeTimer);
       resumeTimer = window.setTimeout(() => {
         resumeTimer = undefined;
+        const reconnect = urgency.take();
         // Focus, visibility and native resume can arrive in separate bursts.
         // A recent or running snapshot already covers that foreground return.
-        if (loading || !currentRead() || Date.now() - lastResumeStarted < (event?.type === "online" || event?.type === CONNECTIVITY_RESTORED_EVENT ? 5_000 : 300_000)) return;
+        if (loading || !currentRead() || Date.now() - lastResumeStarted < (reconnect ? 5_000 : 300_000)) return;
         lastResumeStarted = Date.now();
         loading = true;
         const branch = activeBranchId(stateRef.current.currentStoreId) ?? stateRef.current.currentStoreId;
