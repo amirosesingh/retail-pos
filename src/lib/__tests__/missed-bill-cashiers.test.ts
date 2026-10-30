@@ -8,7 +8,7 @@ import { addMissedBill, listMissedBillCashiers } from "../missed-bill.functions"
 import { handleHostedFunctionRequest } from "../hosted-function-endpoint.server";
 
 const request = { data: { storeId: "branch-a", sessionToken: "admin-proof-token" } };
-const account = (id: string, storeId: string | null = "branch-a") => ({ user_id: id, full_name: `Name ${id}`, store_id: storeId });
+const account = (id: string, storeId: string | null = "branch-a") => ({ user_id: id, full_name: `Name ${id}`, store_id: storeId, email: `${id}@pos-internal.local` });
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -28,7 +28,7 @@ describe("historical original cashier selection", () => {
         expect(query.get("deleted_at")).toBe("is.null");
         return Response.json([{ id: "branch-a" }]);
       }
-      expect(query.get("select")).toBe("user_id,full_name,store_id");
+      expect(query.get("select")).toBe("user_id,full_name,store_id,email");
       expect(query.get("is_active")).toBe("eq.true");
       expect(query.get("or")).toBe('(store_id.is.null,store_id.eq."",store_id.eq."branch-a")');
       return Response.json([
@@ -42,6 +42,52 @@ describe("historical original cashier selection", () => {
     expect(Object.keys(result.rows[0])).toEqual(["userId", "name"]);
     expect(JSON.stringify(result)).not.toMatch(/never-return|private@example|permissions|foreign/);
     expect(mocks.verify).toHaveBeenCalledOnce();
+  });
+
+  it("excludes machine identities while preserving PIN staff and terminal-prefixed human usernames", async () => {
+    mocks.rest.mockImplementation(async (path: string) => path.startsWith("stores?")
+      ? Response.json([{ id: "branch-a" }])
+      : Response.json([
+        { ...account("terminal.machine"), email: " TERMINAL.machine@POS.LOCAL " },
+        account("cashier"),
+        { ...account("person"), email: "person@example.test" },
+        account("terminal.smith"),
+      ]));
+    const result = await listMissedBillCashiers(request);
+    expect(result.ok).toBe(true);
+    expect(result.rows.map(row => row.userId)).toEqual(["cashier", "person", "terminal.smith"]);
+    expect(result.rows.every(row => Object.keys(row).join(",") === "userId,name")).toBe(true);
+    expect(JSON.stringify(result)).not.toMatch(/terminal\.machine|@|email/);
+  });
+
+  it("continues past a complete page of excluded machine accounts to later human staff", async () => {
+    mocks.rest.mockImplementation(async (path: string) => {
+      if (path.startsWith("stores?")) return Response.json([{ id: "branch-a" }]);
+      const offset = Number(new URL(path, "https://fixture.test/").searchParams.get("offset"));
+      return Response.json(offset === 0
+        ? Array.from({ length: 200 }, (_, i) => ({ ...account(`terminal.${i}`), email: `terminal.${i}@pos.local` }))
+        : [account("cashier")]);
+    });
+    const result = await listMissedBillCashiers(request);
+    expect(result).toEqual({ ok: true, rows: [{ userId: "cashier", name: "Name cashier" }] });
+    expect(mocks.rest).toHaveBeenCalledTimes(3);
+    expect(new URL(mocks.rest.mock.calls[2][0], "https://fixture.test/").searchParams.get("offset")).toBe("200");
+  });
+
+  it("stops a repeated page even when all its machine accounts were excluded", async () => {
+    mocks.rest.mockImplementation(async (path: string) => path.startsWith("stores?")
+      ? Response.json([{ id: "branch-a" }])
+      : Response.json(Array.from({ length: 200 }, (_, i) => ({ ...account(`terminal.${i}`), email: `terminal.${i}@pos.local` }))));
+    const result = await listMissedBillCashiers(request);
+    expect(result.ok).toBe(false);
+    expect("error" in result && result.error).toMatch(/did not advance/);
+    expect(mocks.rest).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([undefined, null, { unexpected: "terminal@pos.local" }])("fails closed when account identity metadata is missing or malformed: %j", async email => {
+    mocks.rest.mockResolvedValueOnce(Response.json([{ id: "branch-a" }]))
+      .mockResolvedValueOnce(Response.json([{ ...account("cashier"), email }]));
+    expect((await listMissedBillCashiers(request)).ok).toBe(false);
   });
 
   it.each([

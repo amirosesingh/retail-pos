@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { missedBillCashiersInput, missedBillInput, type MissedBillCashier } from "./missed-bill-input";
+import { isOperatorIdentity } from "./operator-auth-identity";
 
 /** Original attribution uses current authoritative accounts, never legacy local duty rows. */
 export const listMissedBillCashiers = createServerFn({ method: "POST" })
@@ -25,7 +26,7 @@ export const listMissedBillCashiers = createServerFn({ method: "POST" })
       const quotedBranch = JSON.stringify(data.storeId);
       for (let offset = 0; ; offset += 200) {
         const query = new URLSearchParams({
-          select: "user_id,full_name,store_id", is_active: "eq.true",
+          select: "user_id,full_name,store_id,email", is_active: "eq.true",
           or: `(store_id.is.null,store_id.eq."",store_id.eq.${quotedBranch})`,
           order: "user_id.asc", limit: "200", offset: String(offset),
         });
@@ -35,12 +36,17 @@ export const listMissedBillCashiers = createServerFn({ method: "POST" })
         if (!Array.isArray(page)) throw new Error("The staff service returned an invalid response. Please retry.");
         const before = seen.size;
         for (const value of page) {
-          const row = value as { user_id?: unknown; full_name?: unknown; store_id?: unknown };
-          if (!row || typeof row.user_id !== "string" || typeof row.full_name !== "string" || (row.store_id !== null && typeof row.store_id !== "string"))
+          const row = value as { user_id?: unknown; full_name?: unknown; store_id?: unknown; email?: unknown };
+          if (!row || typeof row.user_id !== "string" || typeof row.full_name !== "string" || typeof row.email !== "string" || (row.store_id !== null && typeof row.store_id !== "string"))
             throw new Error("The staff service returned an invalid account. Please retry.");
+          // Progress follows every source row, including excluded machine accounts.
+          // A page of terminals must not hide human staff on a subsequent page.
+          if (seen.has(row.user_id)) continue;
+          seen.add(row.user_id);
           const branchId = typeof row.store_id === "string" ? row.store_id : "";
           if (branchId && branchId.toLowerCase() !== data.storeId.toLowerCase()) continue;
-          if (!seen.has(row.user_id)) { seen.add(row.user_id); rows.push({ userId: row.user_id, name: row.full_name || row.user_id }); }
+          if (!isOperatorIdentity({ id: row.user_id, email: row.email })) continue;
+          rows.push({ userId: row.user_id, name: row.full_name || row.user_id });
         }
         if (page.length < 200) break;
         if (seen.size === before) throw new Error("The staff service did not advance its account list. Please retry.");
