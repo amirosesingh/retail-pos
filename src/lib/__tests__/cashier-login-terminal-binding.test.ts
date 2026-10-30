@@ -33,7 +33,7 @@ describe("native PIN session issuance",()=>{
  it("keeps authorized cashier branch and ignores a renderer branch suggestion",async()=>{
   const result=await cashierLoginServer({username:"cashier",pin:"1234",platform:"electron",terminalId:"terminal",deviceBindingProof:proof,branchId:"B"});
   expect(result).toMatchObject({ok:true,cashier:{store_id:"A",permissions:{can_process_sale:true}}});
-  expect(h.start).toHaveBeenCalledWith(expect.objectContaining({branchId:"A",terminalId:"terminal"}));
+  expect(h.start).toHaveBeenCalledWith(expect.objectContaining({branchId:"A",terminalId:"terminal"}),expect.objectContaining({signal:expect.any(AbortSignal)}));
  });
  it.each([undefined,"b".repeat(64)])("does not mint a session or Auth handoff with invalid device proof",async(deviceBindingProof)=>{
   expect(await cashierLoginServer({username:"cashier",pin:"1234",platform:"electron",terminalId:"terminal",deviceBindingProof})).toMatchObject({ok:false,code:"activation_denied"});
@@ -48,7 +48,7 @@ describe("native PIN session issuance",()=>{
   activation={...activation,platform,location_id:null,management_registration:true};
   profile.permissions={can_process_sale:true,can_use_management_pc:true,can_use_management_mobile:true};
   expect(await cashierLoginServer({username:"cashier",pin:"1234",terminalId:"terminal",deviceBindingProof:proof,branchId:"B"})).toMatchObject({ok:true,cashier:{store_id:null}});
-  expect(h.start).toHaveBeenCalledWith(expect.objectContaining({branchId:null,terminalId:"terminal"}));
+  expect(h.start).toHaveBeenCalledWith(expect.objectContaining({branchId:null,terminalId:"terminal"}),expect.objectContaining({signal:expect.any(AbortSignal)}));
   expect(h.sign).toHaveBeenCalledWith(expect.objectContaining({storeId:null}));
  });
  it("refuses management sign-in when its admission flag is denied",async()=>{

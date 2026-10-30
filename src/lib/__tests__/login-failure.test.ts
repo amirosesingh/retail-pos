@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   failureFromAuthError,
+  failureFromLoginProfileError,
   failureFromReadiness,
   isConfigurationFailure,
   loginFailureMessage,
@@ -14,6 +15,16 @@ const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 const have = { supabaseUrl: false, supabaseKey: false, backendUrl: false };
 
 describe("sign-in failure categories", () => {
+  it.each([408, 500, 503, 504])("does not label Auth HTTP %s database errors as a wrong password", status => {
+    expect(failureFromAuthError({ status, message: "context deadline exceeded" })).toBe("cloud-unreachable");
+    expect(failureFromAuthError({ status, code: "invalid_credentials", message: "upstream failed" })).toBe("cloud-unreachable");
+  });
+  it("distinguishes post-password profile outage from real authorization denial", () => {
+    expect(failureFromLoginProfileError({ code: "57014", message: "canceling statement due to statement timeout" })).toBe("cloud-unreachable");
+    expect(failureFromLoginProfileError({ status: 504, message: "context deadline exceeded" })).toBe("cloud-unreachable");
+    expect(failureFromLoginProfileError({ code: "42501", message: "permission denied" })).toBe("permission-denied");
+    expect(failureFromLoginProfileError({ code: "42P01", message: "relation does not exist" })).toBe("cloud-schema-missing");
+  });
   it("names a missing or half-saved connection as a configuration problem", () => {
     expect(failureFromReadiness({ ready: false, state: "missing", have })).toBe(
       "configuration-required",

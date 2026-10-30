@@ -87,6 +87,16 @@ describe("session verification after resume", () => {
     expect(await verifySessionServer({ terminalToken: "registered" })).toEqual({ ok: true, kind: "terminal", storeId: null });
     expect(mocks.rest).not.toHaveBeenCalled();
   });
+  it("does not report a branch deleted or validate its existence when the branch read fails", async () => {
+    mocks.relay.mockResolvedValue({ kind: "terminal", storeId: "branch-a" });
+    mocks.rest.mockResolvedValueOnce(new Response(null, { status: 503 }));
+    expect(await verifySessionServer({ terminalToken: "registered" })).toEqual({ ok: false, reason: "unavailable" });
+  });
+  it("still rejects an authoritatively missing branch", async () => {
+    mocks.relay.mockResolvedValue({ kind: "terminal", storeId: "branch-a" });
+    mocks.rest.mockResolvedValueOnce(Response.json([]));
+    expect(await verifySessionServer({ terminalToken: "registered" })).toMatchObject({ ok: false, reason: "branch_missing", storeId: "branch-a" });
+  });
 
   it("maps a server-side GoTrue refusal to a clean revoked result", async () => {
     const request = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
@@ -117,6 +127,25 @@ describe("session verification after resume", () => {
     expect(mocks.relay).not.toHaveBeenCalled();
     request.mockRestore();
   });
+  it("bounds a stalled Auth check without declaring the saved token revoked", async () => {
+    vi.useFakeTimers();
+    const request = vi.spyOn(globalThis, "fetch").mockImplementationOnce(async (_url, init) =>
+      new Promise<Response>((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true })));
+    try {
+      const result = verifySessionServer({ accessToken: "saved-token" });
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(await result).toEqual({ ok: false, reason: "unavailable" });
+      expect(mocks.rest).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { request.mockRestore(); vi.useRealTimers(); }
+  });
+  it.each([null, {}, { id: 123 }])("keeps malformed Auth identity %j unavailable", async payload => {
+    const request = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(Response.json(payload));
+    try {
+      expect(await verifySessionServer({ accessToken: "saved-token" })).toEqual({ ok: false, reason: "unavailable" });
+      expect(mocks.rest).not.toHaveBeenCalled();
+    } finally { request.mockRestore(); }
+  });
 });
 
 describe("logout scope", () => {
@@ -140,7 +169,7 @@ describe("logout scope", () => {
     expect(auth).toContain('import("@/lib/session-verify-client")');
     expect(auth).toContain("data: { accessToken: current.access_token }");
     expect(auth).toContain("validateCentralAuthSession(");
-    expect(auth).toContain('if (authCheck.state === "verified" && matchesOperatorIdentity(authCheck.session?.user, operatorAuthId.current))');
-    expect(auth).toContain('authCheck.state === "rejected" || !matchesOperatorIdentity(authCheck.session?.user, operatorAuthId.current)');
+    expect(auth).toContain('resumedAuthProof(authCheck, centralSessionVerifiedRef.current, operatorAuthId.current)');
+    expect(auth).toContain('if (resumedProof)');
   });
 });

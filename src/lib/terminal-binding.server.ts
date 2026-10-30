@@ -32,9 +32,10 @@ export function terminalDescriptor(row:TerminalBindingRow):VerifiedTerminalDescr
 }
 
 /** Read-only validation: never claims, provisions or repairs a registration. */
-export async function readVerifiedTerminal(id:string,proof?:string,requireProof=false):Promise<VerifiedTerminalDescriptor>{
+export async function readVerifiedTerminal(id:string,proof?:string,requireProof=false,signal?:AbortSignal):Promise<VerifiedTerminalDescriptor>{
  let response:Response;
- try { response=await serviceRest(`terminal_tokens?id=eq.${encodeURIComponent(id)}&select=id,platform,status,location_id,revoked_at,is_claimed,claimed_at,claim_proof,claimed_proof_hash,claimed_platform,management_registration&limit=1`); } catch { throw new TerminalBindingUnavailableError("The terminal activation could not be verified. Check the connection and retry."); }
+ const path=`terminal_tokens?id=eq.${encodeURIComponent(id)}&select=id,platform,status,location_id,revoked_at,is_claimed,claimed_at,claim_proof,claimed_proof_hash,claimed_platform,management_registration&limit=1`;
+ try { response=signal ? await serviceRest(path,{signal}) : await serviceRest(path); } catch { throw new TerminalBindingUnavailableError("The terminal activation could not be verified. Check the connection and retry."); }
  if(!response.ok)throw new TerminalBindingUnavailableError("The terminal activation could not be verified. Check the connection and retry.");
  let rows:TerminalBindingRow[];
  try { rows=await response.json() as TerminalBindingRow[]; if(!Array.isArray(rows))throw new Error("Invalid registry response"); } catch { throw new TerminalBindingUnavailableError("The terminal activation could not be verified. Check the connection and retry."); }

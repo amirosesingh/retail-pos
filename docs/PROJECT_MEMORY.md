@@ -428,3 +428,8 @@ AUTH findings for missing cases. Use isolated data and installed IPC integration
 - [Beta releases](beta-releases.md), [iOS OTA](ios-ota.md),
   [stable revisions](stable-release-revisions.md),
   [PR template](../.github/PULL_REQUEST_TEMPLATE.md).
+
+## 30 October 2026 — login and loading recovery
+The owner approved fixing administrator/password and cashier/PIN login, Auth resume, Realtime refresh duplication and confirmed service-delay classification. Preserve real credential lockouts, branch/device binding and user permissions; unavailable verification must not consume incorrect-credential attempts or grant a new session. Scope downstream timeouts to login callers, preserving shared checkout defaults.
+The owner explicitly declined the proposed Membership shared-loader correction and repeated: ignore Membership for now. Membership workflows AND bootstrap dependencies remain unchanged, even though the audit recorded that a denied Membership read can block the shared snapshot. Do not silently mark that dependency resolved or remove its reads in a later session.
+Catalogue read-policy optimization remains approved for pos qhrufhtbeguxydenzfey but last confirmed helper is absent. Supabase migration-history initialization repeatedly times out. Product/barcode UUID pagination and typed PIN verifier are applied. Recheck exact catalog state before any retry; do not infer application from a source commit or successful isolated test.

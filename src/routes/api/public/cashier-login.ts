@@ -49,8 +49,12 @@ export async function handleCashierLogin(request: Request): Promise<Response> {
   const { throttleStatus, throttleFail, throttleReset, minutesLeft } =
     await import("@/lib/pin-throttle.server");
   const userKey = `cashier:${parsed.data.username.trim().toLowerCase()}`;
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(),25_000);
+  const signal = AbortSignal.any([abort.signal,request.signal]);
   try {
-    const state = await throttleStatus(userKey);
+  try {
+    const state = await throttleStatus(userKey,signal);
     if (state.locked)
       return Response.json(
         {
@@ -69,12 +73,13 @@ export async function handleCashierLogin(request: Request): Promise<Response> {
 
   const { cashierLoginServer } = await import("@/lib/cashier-login.server");
   try {
-    const result = await cashierLoginServer({ ...parsed.data, request });
+    const result = await cashierLoginServer({ ...parsed.data, request }, { signal });
     if (result.ok) {
-      await throttleReset(userKey);
+      await throttleReset(userKey,signal);
     } else if (result.code === "invalid_credentials") {
-      await throttleFail(userKey);
+      await throttleFail(userKey,5,signal);
     }
+    signal.throwIfAborted();
     // Infrastructure/identity preparation failures are not wrong PINs. Do not
     // consume an attempt; 503 also lets a terminal use its verified local PIN
     // cache while the hosted Auth handoff is temporarily unavailable.
@@ -89,8 +94,10 @@ export async function handleCashierLogin(request: Request): Promise<Response> {
           : 401;
     return Response.json(result, { status });
   } catch (e) {
+    if (signal.aborted) return Response.json({ok:false,code:"central_unavailable",error:"The sign-in service did not complete in time. Your PIN has not been rejected."},{status:503});
     return Response.json({ ok: false, error: (e as Error).message }, { status: 500 });
   }
+  } finally { clearTimeout(timer); }
 }
 
 export const Route = createFileRoute("/api/public/cashier-login")({

@@ -11,7 +11,7 @@ import { isNative, isTerminalApp } from "@/platform-config/platform";
 import { EmergencyAccessLink } from "@/components/shared/EmergencyAccessLink";
 import { CashierPinLogin } from "@/platforms/web/components/auth/CashierPinLogin";
 import { isExternalEmail, usernameFromAddress } from "@/lib/internal-domains";
-import { isConfigurationFailure, type LoginFailure } from "@/lib/login-failure";
+import { failureFromAuthError, isConfigurationFailure, loginFailureMessage, type LoginFailure } from "@/lib/login-failure";
 import { hasNativePasswordManager, offerSaveLogin, requestSavedLogin } from "@/platform-config/password-manager";
 
 export function TerminalLogin() {
@@ -26,6 +26,7 @@ export function TerminalLogin() {
   // screen; only a genuine refusal is presented as a wrong password.
   const [failure, setFailure] = useState<LoginFailure | null>(null);
   const [busy, setBusy] = useState(false);
+  const submitting = useRef(false);
   const usernameField = useRef<HTMLInputElement>(null);
   const passwordField = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState("admin");
@@ -91,6 +92,7 @@ export function TerminalLogin() {
               className="space-y-4"
               onSubmit={async (e) => {
                 e.preventDefault();
+                if (submitting.current) return;
                 // Password managers can fill DOM fields without firing React's
                 // change event. Read the submitted form so that autofill works
                 // on both native WebViews as well as in the browser.
@@ -108,19 +110,26 @@ export function TerminalLogin() {
                   return;
                 }
                 setBusy(true);
+                submitting.current = true;
                 setError("");
                 setFailure(null);
-                const res = await login(submittedIdentifier, submittedPassword);
-                if (!res.ok) {
-                  setError(res.error ?? "Sign in could not be completed.");
-                  setFailure((res as { code?: LoginFailure }).code ?? null);
-                } else if (hasNativePasswordManager) {
-                  // The native OS password manager decides whether to save or
-                  // update this successfully verified login. Never persist it
-                  // in the POS's preferences, local SQL, or cloud tables.
-                  void offerSaveLogin(submittedIdentifier, submittedPassword).catch(() => {});
+                try {
+                  const res = await login(submittedIdentifier, submittedPassword);
+                  if (!res.ok) {
+                    setError(res.error ?? "Sign in could not be completed.");
+                    setFailure((res as { code?: LoginFailure }).code ?? null);
+                  } else if (hasNativePasswordManager) {
+                    // The native OS password manager owns successfully verified credentials.
+                    void offerSaveLogin(submittedIdentifier, submittedPassword).catch(() => {});
+                  }
+                } catch (cause) {
+                  const code = failureFromAuthError(cause as Error);
+                  setFailure(code);
+                  setError(loginFailureMessage(code));
+                } finally {
+                  submitting.current = false;
+                  setBusy(false);
                 }
-                setBusy(false);
 
               }}
             >

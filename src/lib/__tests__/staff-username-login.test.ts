@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   rest: vi.fn(),
@@ -22,6 +22,7 @@ const account = {
 };
 
 describe("staff username/password login", () => {
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
   beforeEach(() => {
     vi.resetAllMocks();
     mocks.createClient.mockReturnValue({ auth: { signInWithPassword: mocks.signIn } });
@@ -50,7 +51,52 @@ describe("staff username/password login", () => {
       data: { user: { id: "wrong" }, session: { access_token: "access", refresh_token: "refresh" } },
       error: null,
     });
-    expect(await staffUsernameLogin("alice", "password")).toEqual({ ok: false, code: "invalid_credentials" });
+    expect(await staffUsernameLogin("alice", "password")).toEqual({ ok: false, code: "central_unavailable" });
+  });
+
+  it.each([null, {}, [{ ...account, auth_user_id: null }], [{ ...account, email: "" }]])(
+    "does not consume a wrong-password result for incomplete account metadata %j", async payload => {
+      mocks.rest.mockResolvedValue(Response.json(payload));
+      expect(await staffUsernameLogin("alice", "password")).toEqual({ ok: false, code: "central_unavailable" });
+      expect(mocks.signIn).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([null, {}, { access_token: "access" }])("does not call incomplete successful Auth session %j a wrong password", async session => {
+    mocks.signIn.mockResolvedValue({ data: { user: { id: "auth-1" }, session }, error: null });
+    expect(await staffUsernameLogin("alice", "password")).toEqual({ ok: false, code: "central_unavailable" });
+  });
+
+  it("bounds the account lookup with the shared password deadline", async () => {
+    const controller = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+    mocks.rest.mockImplementationOnce((_path, options) => new Promise((_resolve, reject) => {
+      options.signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+    }));
+    const checking = staffUsernameLogin("alice", "password");
+    controller.abort();
+    expect(await checking).toEqual({ ok: false, code: "central_unavailable" });
+    expect(timeout).toHaveBeenCalledExactlyOnceWith(20_000);
+    expect(mocks.signIn).not.toHaveBeenCalled();
+  });
+
+  it("shares the same deadline with Auth fetch without automatic credential resubmission", async () => {
+    const controller = new AbortController();
+    vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+    const fetch = vi.fn((_input, options) => new Promise((_resolve, reject) => {
+      options.signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+    }));
+    vi.stubGlobal("fetch", fetch);
+    mocks.signIn.mockImplementationOnce(async () => {
+      const configured = mocks.createClient.mock.calls[0][2];
+      await configured.global.fetch("https://project.supabase.co/auth/v1/token", {});
+    });
+    const checking = staffUsernameLogin("alice", "password");
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    expect(fetch.mock.calls[0][1].signal).toBe(mocks.rest.mock.calls[0][1].signal);
+    controller.abort();
+    expect(await checking).toEqual({ ok: false, code: "central_unavailable" });
+    expect(mocks.signIn).toHaveBeenCalledOnce();
   });
 
   it("does not treat database failure as a wrong password", async () => {

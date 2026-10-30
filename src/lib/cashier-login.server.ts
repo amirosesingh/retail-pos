@@ -53,7 +53,7 @@ async function cashierLoginCore(input: {
   deviceBindingProof?: string;
   /** Branch this till is set to; used when the account works at all branches. */
   branchId?: string | null;
-}): Promise<CashierLoginResult> {
+}, signal?: AbortSignal): Promise<CashierLoginResult> {
   const username = input.username.trim().toLowerCase();
   if (!username) return { ok: false, error: "Enter your username" };
   // Accounts are provisioned with a 4-32 character credential, so the login
@@ -65,6 +65,7 @@ async function cashierLoginCore(input: {
 
   const res = await serviceRest("rpc/verify_terminal_pin_result", {
     method: "POST",
+    signal,
     body: JSON.stringify({ p_user_id: username, p_pin: secret }),
   });
   if (!res.ok)
@@ -96,13 +97,14 @@ async function cashierLoginCore(input: {
       entityId: username,
       terminalId: input.terminalId ?? null,
       note: "Invalid username or PIN",
-    });
+    }, { signal });
     return { ok: false, code: "invalid_credentials", error: "Invalid username or PIN" };
   }
   const row = result.account!;
 
   const profileResponse = await serviceRest(
     `app_users?user_id=eq.${encodeURIComponent(row.user_id!)}&select=id,user_id,full_name,email,store_id,role,role_slug,permissions,is_active,auth_user_id&limit=1`,
+    { signal },
   );
   if (!profileResponse.ok)
     return { ok: false, code: "central_unavailable", error: "Could not load this staff account" };
@@ -126,7 +128,7 @@ async function cashierLoginCore(input: {
   if(input.terminalId){
     try{
       const {readVerifiedTerminal}=await import("./terminal-binding.server");
-      terminal=await readVerifiedTerminal(input.terminalId,input.deviceBindingProof,true);
+      terminal=await readVerifiedTerminal(input.terminalId,input.deviceBindingProof,true,signal);
       if(profile.store_id && terminal.branchId && profile.store_id.toLowerCase()!==terminal.branchId.toLowerCase())
         return {ok:false,error:"This account is assigned to a different branch"};
       if(terminal.mode==="management"){
@@ -150,8 +152,9 @@ async function cashierLoginCore(input: {
   const { createVerifiedPinSignInToken } = await import("./staff-admin.server");
   let authTokenHash: string;
   try {
-    authTokenHash = await createVerifiedPinSignInToken(authEmail, profile.auth_user_id);
+    authTokenHash = await createVerifiedPinSignInToken(authEmail, profile.auth_user_id,signal);
   } catch (error) {
+    signal?.throwIfAborted();
     const mismatch = (error as Error).message.includes("does not match");
     return {
       ok: false,
@@ -170,6 +173,7 @@ async function cashierLoginCore(input: {
   if (!terminal && !ownBranch && claimed) {
     const storeRes = await serviceRest(
       `stores?id=eq.${encodeURIComponent(claimed)}&select=id&limit=1`,
+      { signal },
     );
     if (storeRes.ok) {
       const found = (await storeRes.json()) as { id: string }[];
@@ -187,6 +191,7 @@ async function cashierLoginCore(input: {
     permissions: profile.permissions ?? {},
   };
 
+  signal?.throwIfAborted();
   const session = await startSession({
     kind: "cashier",
     label: cashier.full_name,
@@ -195,7 +200,7 @@ async function cashierLoginCore(input: {
     branchId: cashier.store_id,
     terminalId: terminal?.id ?? null,
     platform: input.platform ?? null,
-  });
+  }, { signal });
 
   await writeSystemAudit({
     actorId: cashier.username,
@@ -207,8 +212,9 @@ async function cashierLoginCore(input: {
     terminalId: input.terminalId ?? null,
     storeId: cashier.store_id,
     note: input.platform ?? null,
-  });
+  }, { signal });
 
+  signal?.throwIfAborted();
   return {
     ok: true,
     cashierToken: signCashierSession({
@@ -227,18 +233,35 @@ async function cashierLoginCore(input: {
 /** Share the address throttle with the other public PIN verification paths. */
 export async function cashierLoginServer(input: Parameters<typeof cashierLoginCore>[0] & {
   request?: Request;
-}): Promise<CashierLoginResult> {
+}, options: { signal?: AbortSignal } = {}): Promise<CashierLoginResult> {
   const { beginPinRequest, finishPinRequest } = await import("./pin-request-throttle.server");
+  const requestAbort = new AbortController();
+  const requestTimer = setTimeout(() => requestAbort.abort(),25_000);
+  const requestSignal = options.signal ? AbortSignal.any([options.signal,requestAbort.signal]) : requestAbort.signal;
+  let coreTimer: ReturnType<typeof setTimeout> | undefined;
+  const coreAbort = new AbortController();
+  try {
   let attempt: Awaited<ReturnType<typeof beginPinRequest>>;
   try {
-    attempt = await beginPinRequest(input.request);
+    attempt = await beginPinRequest(input.request,requestSignal);
   } catch {
     return { ok: false, code: "central_unavailable", error: "Central PIN protection is unavailable" };
   }
   if (attempt.locked)
     return { ok: false, code: "locked", error: "Too many wrong PINs. Try again later." };
-  const result = await cashierLoginCore(input);
-  if (result.ok || result.code === "invalid_credentials")
-    await finishPinRequest(attempt.key, result.ok);
-  return result;
+  // Keep the shared checkout relay unchanged. Only this sign-in request's
+  // database, Auth, device-session and awaited audit work shares this budget.
+  coreTimer = setTimeout(() => coreAbort.abort(),20_000);
+  const signal = AbortSignal.any([requestSignal,coreAbort.signal]);
+  try {
+    const result = await cashierLoginCore(input,signal);
+    if (result.ok || result.code === "invalid_credentials")
+      await finishPinRequest(attempt.key, result.ok,requestSignal);
+    requestSignal.throwIfAborted();
+    return result;
+  } catch (error) {
+    if (!signal.aborted) throw error;
+    return {ok:false,code:"central_unavailable",error:"The sign-in service did not complete in time. Your PIN has not been rejected."};
+  }
+  } finally { clearTimeout(coreTimer); clearTimeout(requestTimer); }
 }
