@@ -23,6 +23,11 @@ const legacyProofStart = legacyShiftClosureHelpers.indexOf("CREATE OR REPLACE FU
 const legacyProofEnd = legacyShiftClosureHelpers.indexOf("END $fn$;",legacyProofStart)+"END $fn$;".length;
 if (legacyProofStart<0 || legacyProofEnd<=legacyProofStart) throw new Error("The legacy closure proof boundary is missing.");
 const shiftClosureHelpers = legacyShiftClosureHelpers.slice(0,legacyProofStart)+shiftClosureProof+legacyShiftClosureHelpers.slice(legacyProofEnd);
+const activityAckMigration = fs.readFileSync(path.join(root, "supabase", "migrations",
+  "20261030234813_guard_activity_acknowledgement_branch_ownership.sql"), "utf8");
+const activityAckOwnership = activityAckMigration.split("-- ACTIVITY_ACK_OWNERSHIP_BEGIN")[1]
+  ?.split("-- ACTIVITY_ACK_OWNERSHIP_END")[0]?.trim();
+if (!activityAckOwnership) throw new Error("The activity acknowledgement ownership contract is missing.");
 const q = (value) => `"${value}"`;
 const primary = (table) => table.columns.filter((column) => column.primaryKey);
 const columnNames = (table) => new Set(table.columns.map((column) => column.cloudColumn));
@@ -259,9 +264,7 @@ for (const table of tables) {
       ? `UPDATE SET "is_refunded"=(public."sales"."is_refunded" OR EXCLUDED."is_refunded"),"row_version"=GREATEST(public."sales"."row_version",EXCLUDED."row_version")`
       : table.cloudTable === "sale_items"
         ? `UPDATE SET "refunded_qty"=GREATEST(public."sale_items"."refunded_qty",EXCLUDED."refunded_qty"),"row_version"=GREATEST(public."sale_items"."row_version",EXCLUDED."row_version")`
-        : table.cloudTable === "activity_events"
-          ? `UPDATE SET "cleared_by"=ARRAY(SELECT DISTINCT value FROM unnest(COALESCE(public."activity_events"."cleared_by",'{}'::text[]) || COALESCE(EXCLUDED."cleared_by",'{}'::text[])) AS acknowledged(value))`
-          : ["authorization_requests", "authorization_log"].includes(table.cloudTable)
+        : ["authorization_requests", "authorization_log"].includes(table.cloudTable)
             ? "NOTHING"
             : updates.length && !immutable
               ? `UPDATE SET ${updates.join(",")}${versionWhere}`
@@ -284,7 +287,9 @@ for (const table of tables) {
     END IF;
   END LOOP;`
       : "";
-  if (table.cloudTable === "issued_vouchers") {
+  if (table.cloudTable === "activity_events") {
+    out.push(activityAckOwnership);
+  } else if (table.cloudTable === "issued_vouchers") {
     out.push(`CREATE OR REPLACE FUNCTION public.sync_apply_issued_vouchers(p_rows jsonb) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER AS $fn$
 DECLARE v_count integer:=0; v_row jsonb; v_existing public.issued_vouchers%ROWTYPE; v_branch text;
 BEGIN

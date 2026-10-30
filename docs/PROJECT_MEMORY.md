@@ -543,3 +543,11 @@ or broaden a user's branch scope to make setup/login succeed. Saved registration
 details are local evidence, not proof of online authorization. Default bundled
 Android/iOS/Electron sources are tested; actual installed-device acceptance and
 the optional remote-hosted Android artifact remain distinct verification limits.
+
+NOTIF-22 preparation verified31October: additive20261030234813 checks existing
+event ownership at conflict time against verified transaction-local terminal/
+branch context before unioning personal acknowledgements. Preserve immutable
+content, service-only access, existing global-event handling and legitimate
+retries. Canonical/generator parity,23 isolated SQL cases and6 actual two-session
+races pass independently. This migration is not applied live; preparation
+approval does not authorize application, notification-rule activation or messages.

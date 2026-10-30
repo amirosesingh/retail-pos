@@ -26,7 +26,7 @@ only; the owner's subsequent Batch 1 approval below authorizes its bounded fixes
 | 13 | HISTORY-16 / SHIFT-15 committed/pushed/scoped CI verified | ff94abb8 removes Shifts sign-in-history entry and adds store-day range shortcuts. Real browser Previous/Next moved both dates31→30→31 on ReceiptHistory; no transaction submitted. Shift/mobile interaction checks remain. |
 | 14 | INV-18/19/UI-20 committed/pushed/scoped CI verified | 2ce39509 compact low/negative number actions, reviewed count handoff and exact current-stock search across Active+Archive. Permission/branch denial and retry recovery tests passed; no live quantity changes. Actual UI checks remain. |
 | 15 | REFRESH-17/PERF-18 shared-popup correction approved / active | Owner approved scoped shared popup wrappers/context and isolated browser tests31October. Keep mounted same-scope drafts, gate-owned portals inside the pause guard, release focus/pointer locks for Retry, preserve native offline access. Ordinary row refresh does not navigate/reload; exact intermittent freeze cause not yet proven. |
-| 16 | LOC-21 copy committed / NOTIF-22 correction preparation approved and active | 8e465dc9 text-only scope clarification passed CI. Core notification migration deployed but rules not saved/activated. Soft-token follow-up SQL tests pass; personal-clear upgrade failed foreign-branch acknowledgement test and cannot be applied unchanged. Owner approved corrected additive migration/isolated tests31October; live application remains separately gated. |
+| 16 | LOC-21 committed / NOTIF-22 additive correction prepared and independently verified | New20261030234813 fixes existing-event foreign-branch acknowledgement;23 isolated PostgreSQL/generator cases,6 real independent-session races and44 related tests passed. Activity-only canonical/generator parity and CI step included. Live application NOT approved/applied; core rules remain unchanged/unactivated. |
 | 17 | PERF-24 committed/pushed/scoped verified | 8b840192 fixes first-paint report completeness, restored-session landing and scoped-settings initial readiness/retry. Independent review passed; 11 focused suites/96 tests passed. Latest PR checks are green. No formula/grant/Membership change. |
 | 18 | AUTH-12 committed / exact-head CI passed | afcf92d1 shared public PIN response boundary covers both transports, alias, lockouts and validation probes. Private counters, grants and offline handling remain.13 suites/157 tests plus12 isolated SQL scenarios passed. Exact-head securityCI:578suites/3765tests passed/1skipped; Android, Windows, iOS and Cloudflarebeta checks passed. No merge/publication. |
 | 19 | TERM-13 implemented / focused verification and independent review | Protected recovery links, awaited saved-profile status, retry/stale-read fences, strict Electron store restore and verified roster503 classification. Preserve saved bytes, true denials, branch authority and checkout; all-platform automated route/gate cases pass. Physical-device acceptance remains separate. |
@@ -1367,6 +1367,39 @@ lint evidence is not an installed phone/Windows run. Browser surfaces were
 unavailable during this checkpoint; no physical activation, re-pairing, sale,
 stock or account write was performed. A beta PR source commit/checkpoint follows;
 no installer/OTA publication is authorized by this task.
+
+TERM-13 owner clarification: the affected phone runs the last published beta;
+the exact build cannot be read from its current login screen. Selecting/using
+Administrator sign-in reportedly returns to cashier/PIN sign-in with Open
+terminal setup. Root is tracing this distinct login-method transition; do not
+claim the repaired recovery link alone proves it resolved. Current source has
+an automatic native tab-default effect and an explicit plain-username/no-password
+PIN redirect. Asked which trigger the owner observes (selection, password
+submission or blank-password submission) before changing intended login rules.
+The phone's actual installed artifact/build mode remains unverified.
+
+NOTIF-22 approved preparation completed31October: CLI-generated additive file
+20261030234813_guard_activity_acknowledgement_branch_ownership.sql replaces only
+service-only sync_apply_activity_events. The first generated234442 filename
+collided with the just-applied live shift-proof history timestamp; it was
+regenerated through the CLI before staging, not applied or silently renumbered.
+The existing immutable event's actual conflict-time ownership must match the
+verified native branch (existing unowned/global behavior retained). Otherwise
+raise and roll back the whole batch/receipt; preserve monotonic personal clear
+union, content, grants and legitimate retry. Generator and both canonical
+activity-only copies match the exact correction; the new isolated CI step runs
+without a live database. Old applied migrations are not edited.
+
+Before correction, expanded baseline reproduced5failures with18controls passed.
+After correction23PGlite/actual-generator scenarios pass;6 genuine two-session
+PostgreSQL17.11 races confirm real lock waits, commit/rollback, union and replay.
+Independent reviewer repeated all23+6 plus44 relevant Vitest tests and found no
+actionable regression. The disposable race harness accepts binaries only, not
+external database profiles, and stopped/removed its own loopback fixtures.
+No notifications, rule selections, recipients or live data were changed. This
+is source preparation; exact-project application approval/readback is still
+required before applying this notification upgrade. See
+database/notification-upgrades-review.md for full evidence and rollback limits.
 
 SHIFT-14 version2 live application completed after the resumed exact approval:
 unchanged reviewed SQL applied once, history20261030234442; original helper/ACL
