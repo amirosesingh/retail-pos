@@ -37,6 +37,20 @@ describe("native activation restore", () => {
     expect(terminal.isTerminalConfigHydrated()).toBe(true);
     expect(readDisk).toHaveBeenCalledOnce();
   });
+  it("keeps a failed native registration read retryable instead of publishing an unregistered terminal", async () => {
+    readDisk.mockResolvedValueOnce({ ok: false, code: "EACTIVATION_STORE" });
+    const terminal = await import("@/core/activation/terminal-tokens");
+
+    await expect(terminal.hydrateTerminalConfig()).rejects.toThrow("Could not restore the saved terminal registration");
+    expect(terminal.isTerminalConfigHydrated()).toBe(false);
+    expect(terminal.readTerminalConfig()).toBeNull();
+    expect(secrets.write).not.toHaveBeenCalled();
+    expect(window.localStorage.removeItem).not.toHaveBeenCalled();
+
+    await expect(terminal.hydrateTerminalConfig()).resolves.toMatchObject(config);
+    expect(terminal.isTerminalConfigHydrated()).toBe(true);
+    expect(readDisk).toHaveBeenCalledTimes(2);
+  });
   it("shares concurrent restores instead of publishing a temporary missing registration", async () => {
     let finish!: (value: unknown) => void;
     secrets.read.mockImplementation(() => new Promise(resolve => { finish = resolve; }));

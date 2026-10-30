@@ -2309,7 +2309,10 @@ function registerIpc() {
   ipcMain.handle("net:head", (_e, url) => netHttp.head(String(url)));
   ipcMain.handle("net:get-binary", (_e, url) => netHttp.getBinary(String(url)));
 
-  ipcMain.handle("terminal:read", () => ({ ok: true, config: terminalStore.read() }));
+  ipcMain.handle("terminal:read", () => {
+    try { return { ok: true, config: terminalStore.read({ strict: true }) }; }
+    catch { return { ok: false, code: "EACTIVATION_STORE", error: "Could not restore the saved terminal registration. Your registration has not been removed. Retry opening the app." }; }
+  });
   ipcMain.handle("terminal:write", async (_e, raw) => {
     try {
       const before=terminalStore.read();

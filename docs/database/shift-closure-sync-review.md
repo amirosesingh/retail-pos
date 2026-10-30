@@ -83,7 +83,7 @@ rows returned acknowledgement version1 with both same-branch revision4 proofs.
 No real shift transaction was submitted. Installer
 rollout/affected-device reconnect acceptance remains separate from this migration.
 
-## Revision-trigger correction: version2 prepared, live approval pending
+## Revision-trigger correction: version2 applied after exact approval
 
 The first fixture omitted the real shift triggers. Subsequent tests with all seven
 canonical triggers found that PostgreSQL's enabled revision trigger stores OLD+1,
@@ -105,8 +105,29 @@ PushWorker retry. Independent reviewer reran all24 plus25 native cases successfu
 This corrects the scope of the earlier20-case evidence; those earlier passes were
 not sufficient trigger-integration verification.
 
-Version2 LIVE APPLICATION IS PENDING separate exact ROSEGILL pos approval. Until
-then version1 can keep valid sparse-revision closures pending. Keep PR342 draft;
-do not publish the version1-aware native checkpoint. Existing legacy1.4.79 clients
+On31October the owner separately approved the exact corrective migration.
+Preflight confirmed ROSEGILL pos/org/ref above, the original version1 helper,
+all seven enabled shift triggers and service-only SECURITY INVOKER privileges.
+The prior definition/ACL/schema metadata is saved locally in ignored
+node_modules/.cache/shift-proof-v2-preflight-20261031.json for reviewed recovery.
+The unchanged committed SQL was applied once, successfully; live migration
+history recorded20261030234442 (31October07:44:42Brunei) with name
+bind_shift_closure_proof_to_requested_revision. Supabase assigns that application
+timestamp independently of the reviewed source filename20261030164829.
+
+Post-application catalogue readback confirms version2/request-bound proof and
+unchanged service-only privileges (PUBLIC/anon/authenticated execution denied).
+The empty validation returns version2. Read-only validation on the latest two
+existing CLOSED rows returns actual revision4/requested revision9 for each,
+demonstrating independent clocks without changing those rows or counts.
+All24 actual-trigger isolated scenarios passed again before application.
+Security advisor categories/counts are unchanged; none identifies this helper.
+Those existing advisories are not a full security clearance or newly authorized
+configuration changes. Installed-device closure/reconnect acceptance remains
+unverified; do not describe read-only validation as a real till closure.
+
+Existing legacy1.4.79 clients
 ignore additional proof fields; any version1-aware preview needs the version2
-native source/restart alongside the corrected helper. No real closure was tested.
+native source/restart alongside the corrected helper. No real closure was submitted.
+Keep the PR draft until its remaining independent UI/notification checks pass;
+live dependency readiness alone is not merge or installer publication approval.

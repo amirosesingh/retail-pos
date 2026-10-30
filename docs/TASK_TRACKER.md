@@ -22,13 +22,14 @@ only; the owner's subsequent Batch 1 approval below authorizes its bounded fixes
 | 9 | PERF-12 committed / scoped-verified | `6defed4f`: single refresh ownership, settings readiness and cancellation fences. Preserve genuine trailing changes, offline SQL and all authority scopes. Physical-device acceptance remains separate. |
 | 10 | UI-15 committed / scoped-verified | `14cd2c9a`: loaded-zero summaries hide;220ms appearance/reflow with reduced-motion support; All Shops remains complete. Desktop/phone synthetic-browser checks passed without interaction network reads. |
 | 11 | FIN-13 follow-up committed / migration applied | `43d114f5`: authoritative branch-scoped cashier picker and native proof validation. Exact approved cloud migration applied/permissions verified; actual signed-in form/device check pending. |
-| 12 | SHIFT-14 v2 committed/pushed/scoped verified; corrective live approval pending | ec4e3e7e fixes the v1 independent-revision regression. All seven actual shift triggers are installed in 24 passing isolated SQL cases. Native proof checks pass; live v1 remains installed until exact v2 approval/application. Do not merge/release v1 alone. No business rows rewritten. |
+| 12 | SHIFT-14 v2 source verified / live applied after approval | ec4e3e7e fixes the v1 independent-revision regression. All seven actual shift triggers are installed in24 passing isolated cases. Owner approval received31October; exact reviewed helper applied with livehistory20261030234442. Read-only live proofs return v2/cloud4/requested9; service-only access preserved, no business rows rewritten. Installed-device reconnect acceptance separate. |
 | 13 | HISTORY-16 / SHIFT-15 committed/pushed/scoped CI verified | ff94abb8 removes Shifts sign-in-history entry and adds store-day range shortcuts. Real browser Previous/Next moved both dates31→30→31 on ReceiptHistory; no transaction submitted. Shift/mobile interaction checks remain. |
 | 14 | INV-18/19/UI-20 committed/pushed/scoped CI verified | 2ce39509 compact low/negative number actions, reviewed count handoff and exact current-stock search across Active+Archive. Permission/branch denial and retry recovery tests passed; no live quantity changes. Actual UI checks remain. |
-| 15 | REFRESH-17/PERF-18 active | Confirmed whole-page connection visibility gate; prepare same-scope inert cached-content recovery without granting offline writes. Ordinary row refresh does not navigate/reload; exact intermittent freeze cause not yet proven. |
-| 16 | LOC-21 copy committed / NOTIF-22 correction pending preparation approval | 8e465dc9 text-only scope clarification passed CI. Core notification migration deployed but rules not saved/activated. Soft-token follow-up SQL tests pass; personal-clear upgrade failed foreign-branch acknowledgement test and cannot be applied unchanged. |
+| 15 | REFRESH-17/PERF-18 shared-popup correction approved / active | Owner approved scoped shared popup wrappers/context and isolated browser tests31October. Keep mounted same-scope drafts, gate-owned portals inside the pause guard, release focus/pointer locks for Retry, preserve native offline access. Ordinary row refresh does not navigate/reload; exact intermittent freeze cause not yet proven. |
+| 16 | LOC-21 copy committed / NOTIF-22 correction preparation approved and active | 8e465dc9 text-only scope clarification passed CI. Core notification migration deployed but rules not saved/activated. Soft-token follow-up SQL tests pass; personal-clear upgrade failed foreign-branch acknowledgement test and cannot be applied unchanged. Owner approved corrected additive migration/isolated tests31October; live application remains separately gated. |
 | 17 | PERF-24 committed/pushed/scoped verified | 8b840192 fixes first-paint report completeness, restored-session landing and scoped-settings initial readiness/retry. Independent review passed; 11 focused suites/96 tests passed. Latest PR checks are green. No formula/grant/Membership change. |
-| 18 | AUTH-12 implemented / focused checks passed; final PR checks pending | Shared public PIN response boundary covers both transports, alias, lockouts and validation probes. Private counters, grants and offline handling remain. 13 suites/157 tests, 12 isolated SQL scenarios, typecheck and lint passed. |
+| 18 | AUTH-12 committed / exact-head CI passed | afcf92d1 shared public PIN response boundary covers both transports, alias, lockouts and validation probes. Private counters, grants and offline handling remain.13 suites/157 tests plus12 isolated SQL scenarios passed. Exact-head securityCI:578suites/3765tests passed/1skipped; Android, Windows, iOS and Cloudflarebeta checks passed. No merge/publication. |
+| 19 | TERM-13 implemented / focused verification and independent review | Protected recovery links, awaited saved-profile status, retry/stale-read fences, strict Electron store restore and verified roster503 classification. Preserve saved bytes, true denials, branch authority and checkout; all-platform automated route/gate cases pass. Physical-device acceptance remains separate. |
 
 Membership is **ON HOLD** throughout. Each future batch requires a recoverable
 baseline, specific files/dependencies, expected behavior, risks, regression tests,
@@ -1277,3 +1278,99 @@ including48privacy cases; final typecheck/lint/diff checks pass. Earlier152/43
 figures above describe the preceding checkpoint. No new reviewer cycle or live
 credential request was used; root challenged the upper as well as lower Unicode
 boundary after the fresh review and verified the confirmed correction.
+
+### TERM-13 — saved native configuration and setup navigation
+
+31October resumed owner approvals (received together while TERM-13 is active):
+the shared-popup reconnect correction and isolated browser tests are approved;
+the corrected additive notification acknowledgement migration and isolated tests
+are approved for preparation ONLY, not live application; corrective shift-proof
+migration20261030164829 is explicitly approved for ROSEGILL→
+rosegill0011@gmail.com's Org(bjxgimekljzlnwejuawj)→pos(qhrufhtbeguxydenzfey),
+https://qhrufhtbeguxydenzfey.supabase.co. The owner also reconfirmed PIN-response
+correction approval (already implemented atafcf92d1, exact-head CI passed).
+Preserve all existing pending tasks, Membership ON HOLD, checkout and grants.
+TERM-13 remains active; independent agents will prepare the popup and notification
+slices without overlapping ownership. Live shift-proof application requires
+the approved exact file, live definition/history preflight and postverification;
+record application separately from source/tests. No installer or production
+promotion approval is inferred from these replies.
+
+The owner reports that Android shows a terminal-setup button despite a saved
+registration and tapping it does not open setup. They request agents check and
+fix this across applicable platforms, and specifically suspect saved configuration
+restoration. Investigate Android/iOS secure storage and Electron vault hydration,
+including slow/failed reads and existing Operations/Management registrations.
+Do not assume that a rejected staff-list request proves registration is missing.
+
+Root and an independent agent confirmed CashierPinLogin routes setup to the
+signed-in Windows /settings/terminals administration page and connection repair
+to signed-in /settings/database. That can return a signed-out native user to the
+same login gate. Existing /recovery is outside startup/auth navigation gates and
+retains EmergencyPinGate. Its activation card does not currently support an
+explicit selection and captures initial defaultOpen before async status settles.
+
+Planned navigation boundary: use the existing protected native recovery screen
+for these actions, selecting the relevant activation/connection card. Preserve
+web's lack of native registration and all existing recovery/permission checks.
+Saved read failures must remain unknown/retryable rather than clearing credentials
+or inventing an unregistered device. Separate agents investigate restoration and
+platform parity; root owns recovery navigation/UI. Confirm exact storage defects
+before edits. No re-registration, branch reassignment, secret/config resets, live
+database changes, checkout edits or Membership work is authorized by this task.
+Baseline afcf92d1 remains recoverable; unrelated OfflineGate/__root drafts remain
+excluded. Record source tests versus actual physical-device verification clearly.
+
+TERM-13 investigation confirmed two additional causes. The staff-list endpoint
+conflates verified-terminal roster SQL failures with invalid registration; split
+those phases so transient roster failures are503, preserving real proof denials
+and trusted-branch scope. An independent mocked Electron reproduction found an
+existing unreadable DPAPI activation returnsnull and IPC reports ok:true. A narrow
+strict read/IPC error contract must preserve stored bytes and ordinary Main caller
+compatibility. One agent owns terminal-staff endpoint/tests, another owns native
+activation store/IPC/tests; root owns recovery navigation and state UI. Normal
+Android/iOS startup storage tests6suites/41passed; no demonstrated destructive
+phone storage loss, so do not rewrite saved configuration speculatively.
+
+The optional remote-hosted Android artifact can load a web build that excludes
+native setup UI; actual affected phone build mode is not yet known. Keep this
+separate from confirmed default bundled-mode bugs and do not silently retire that
+build option or widen web registration. No production database/device mutation.
+
+TERM-13 implementation checkpoint31October: login repair actions now use client
+links to the existing gated /recovery with allowlisted section hints. Requested
+cards open even when missing-status arrives asynchronously. Recovery waits for
+the shared local profile restore; unreadable settings remain retryable, never
+missing, and edits stay unmounted until reads succeed. Configuration events
+refresh local status with queued, generation-fenced reads; no business bootstrap
+or automatic polling is added. Saved registration is read-only before activation
+options, Management is distinguished from branch-bound Operations, and origins
+are sanitized by the existing details component.
+
+Electron strict IPC reports EACTIVATION_STORE on unreadable sealed/legacy data,
+while background readers remain nonthrowing. Existing sealed data never falls
+through to editable plaintext; every write/clear validates existing data before
+touching seal/binding/provision bytes. A reviewer found a legacy-only replacement
+gap; three prepatch failures reproduced it, the bounded correction passed and
+independent recheck confirmed byte preservation. Valid migration/new setup still
+pass. Verified-terminal roster outages now return generic503; real401/403 proof
+denials, fixed Operations branch and existing Management semantics are retained.
+
+Executed evidence: root combined14suites/154tests passed (branch isolation,
+activation/IPC/profile, terminal roster, online PIN errors, checkout/receipt
+safety); two recovery state/route suites20tests passed, including Android/iOS/
+Electron protected-gate checks, ordinary-web redirect, no secret rendering,
+async Card state, retry and stale first-cloud-read/config-change regression.
+Agent's broader store/profile/native suite98tests and independent API/proof/
+relay review41tests passed; these overlap and must not be summed. Source/types/
+lint evidence is not an installed phone/Windows run. Browser surfaces were
+unavailable during this checkpoint; no physical activation, re-pairing, sale,
+stock or account write was performed. A beta PR source commit/checkpoint follows;
+no installer/OTA publication is authorized by this task.
+
+SHIFT-14 version2 live application completed after the resumed exact approval:
+unchanged reviewed SQL applied once, history20261030234442; original helper/ACL
+saved locally before application. Post-readback service-only/invoker privileges
+unchanged; empty proofv2 and two existing closed-row cloud4/requested9 validation
+proofs passed. No business rows rewritten. See shift-closure-sync-review.md for
+exact target, evidence, rollback boundary and remaining installed-device limits.

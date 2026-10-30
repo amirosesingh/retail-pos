@@ -6,6 +6,7 @@ import { connectivity, subscribeConnectivity } from "@/core/activation/connectio
  * tap your PIN on the keypad. Sign-in fires as soon as the last digit lands.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { ArrowLeft, ChevronDown, Delete, Loader2, MapPin, ShieldAlert, UserRound } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -38,7 +39,7 @@ const ROSTER_WORDING: Record<RosterReason, string> = {
   unreachable:
     "Your company system did not answer, so the staff list could not load. You can still type your username below and sign in from this till's own records.",
   "not-authorised":
-    "This till is not registered yet, so it is not allowed to load the staff list. Complete terminal setup first.",
+    "This terminal's registration needs review before the staff list can load. Open terminal setup to check its saved registration.",
   empty: "Nobody is assigned to this branch yet. Type your username below.",
 };
 
@@ -312,16 +313,14 @@ export function CashierPinLogin({
             <p className="text-xs text-muted-foreground">{ROSTER_WORDING[reason]}</p>
             {(reason === "no-server" || reason === "not-authorised") && (
               <Button
-                type="button"
+                asChild
                 variant="outline"
                 size="sm"
                 className="w-full"
-                onClick={() => {
-                  window.location.href =
-                    reason === "no-server" ? "/settings/database" : "/settings/terminals";
-                }}
               >
-                {reason === "no-server" ? "Open connection settings" : "Open terminal setup"}
+                <Link to="/recovery" search={{ section: reason === "no-server" ? "connection" : "activation" }}>
+                  {reason === "no-server" ? "Open connection settings" : "Open terminal setup"}
+                </Link>
               </Button>
             )}
           </div>

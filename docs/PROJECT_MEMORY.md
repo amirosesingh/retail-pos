@@ -44,6 +44,16 @@ central shift closed. Same-branch, same-shift authoritative acknowledgement and
 idempotent replay are required; no existing shift/count repair is authorized.
 See [prepared correction review](database/shift-closure-sync-review.md).
 
+31October follow-up: the owner explicitly approved the corrective version2
+shift-proof helper. The unchanged reviewed20261030164829 source was applied to
+the exact ROSEGILL pos target; live history20261030234442 confirms it. Pre/post
+checks retain service-only SECURITY INVOKER access and exact closing/branch
+facts. Live read-only validation returns cloud revision4/requested revision9;
+no business rows were rewritten. Installed-terminal acceptance remains separate.
+The owner also approved shared-popup reconnect correction plus isolated browser
+tests, and notification acknowledgement correction preparation/isolated tests
+only. No live notification migration approval is inferred.
+
 The owner also approved compact Low/Negative stock alerts with clickable numbers
 and a review→existing stock-count workflow. Physical counts begin blank, require
 explicit review (0 when actually counted), permission and audited posting. Never
@@ -489,16 +499,19 @@ Shift proof v1 was applied with exact approval, but its first fixture omitted th
 actual revision trigger. Local and cloud revision clocks are independent: valid
 local CLOSEDv8/cloud OPENv4 can become cloud CLOSEDv5. Source correction v2 binds
 requested_row_version separately while preserving exact closing facts and branch
-checks. All seven actual triggers are now tested. LIVE v2 application remains
-pending separate approval for20261030164829; do not publish the v1-only checkpoint
-or silently alter the global revision trigger/business rows. A stale high-version
+checks. All seven actual triggers are now tested. The owner's31October approval
+was followed by live v2 application (history20261030234442); see the exact-target
+application evidence above and shift-closure-sync-review.md. Do not silently
+alter the global revision trigger/business rows. A stale high-version
 OPEN upload can also reopen a closed shift on the pre-change baseline; this is a
 separate unresolved lifecycle defect requiring a controlled correction plan.
 
 The reconnect retained-content/portal experiment and notification acknowledgement
-correction are not part of committed HEAD. Actual browser tests found portal
-escape/modal-lock problems; isolated notification tests found a foreign-branch
-event-ID acknowledgement mutation. Preserve both findings and pending approvals.
+correction are in newly approved preparation, not the last pushed HEAD. Actual
+earlier browser tests found portal escape/modal-lock problems; isolated notification
+tests found a foreign-branch event-ID acknowledgement mutation. Preserve both
+findings until independently verified corrections are committed. The notification
+approval permits preparation/isolated tests only, not live application.
 Do not apply the old personal-clear migration unchanged or claim either fixed.
 Keep beta merge, live migration, website deployment and installer/OTA publication
 as separate states. Membership remains ON HOLD.
@@ -515,3 +528,18 @@ actual server lock enforcement/counters, successful permissions and device/branc
 checks remain unchanged. Preserve independent offline messages and safe fallback
 only for existing infrastructure failures. Never turn a missing verifier into a
 wrong-PIN attempt or grant a stale local session after authoritative denial.
+
+## Terminal restore and repair navigation — 31 October2026
+
+TERM-13 confirms native login setup links must reach the existing protected
+recovery flow, not authenticated PC token administration. Search/section hints
+are presentation only; retain EmergencyPinGate and web's no-native-registration
+redirect. Await shared profile hydration before deciding registration/connection
+is missing, preserve unreadable stored activation for retry, and subscribe to
+configuration changes with stale-result fences. An unavailable staff roster does
+not invalidate proven registration. Never overwrite/clear unreadable sealed or
+legacy activation, fall through from a failed sealed read to editable plaintext,
+or broaden a user's branch scope to make setup/login succeed. Saved registration
+details are local evidence, not proof of online authorization. Default bundled
+Android/iOS/Electron sources are tested; actual installed-device acceptance and
+the optional remote-hosted Android artifact remain distinct verification limits.
