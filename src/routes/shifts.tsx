@@ -1,16 +1,14 @@
-import { formatTime as systemTime } from "@/lib/time-zone";
 import { formatDateTime as posDisplayDateTime, posDayKey } from "@/lib/time-zone";
-import { subscribePageDataRefresh } from "@/lib/page-data-refresh";
 import { canOpenDrawer } from "@/lib/receipt-printer";
 import { tenderSales } from "@/lib/shift-close";
 import { sameRecordId } from "@/lib/sale-identity";
 import { companyStoreScope } from "@/lib/company-store-scope";
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { FinancialBreakdown, FinancialInfoTip, SalesTotalInfo } from "@/platforms/web/components/pos/FinancialInfo";
 import { salesReconciliation } from "@/lib/sales-reconciliation";
 import { SummaryCardRail } from "@/platforms/web/components/pos/SummaryCardRail";
-import { Pencil, Printer, Users, Vault } from "lucide-react";
+import { Pencil, Printer, Vault } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Button } from "@/components/ui/button";
@@ -42,11 +40,8 @@ import { defaultTradingHours } from "@/lib/pos-seed";
 import { useAuth } from "@/lib/pos-auth";
 import { useUserPermissions } from "@/lib/pos-permissions";
 import { openCashDrawer, printShiftReport } from "@/lib/pos-print";
-import { signInsForDay, type SignInEntry } from "@/lib/shift-attendance";
-import { localShiftSessions, mergeSessions } from "@/lib/shift-sessions";
-import { commitLabel, loadShiftSessions } from "@/core/api/pos-db";
+import { commitLabel } from "@/core/api/pos-db";
 import { notifyError } from "@/lib/notify";
-import type { ShiftSession } from "@/core/types/pos-types";
 import { parsePositiveAmount } from "@/core/pricing/amount";
 import { usePosRules } from "@/lib/pos-rules.tsx";
 import { useManagerGate } from "@/lib/manager-gate";
@@ -59,6 +54,7 @@ import { useReportSales } from "@/lib/use-report-sales";
 import { useReportShifts } from "@/lib/use-report-shifts";
 import { useShiftSales } from "@/lib/use-shift-sales";
 import { ReportFilters } from "@/platforms/web/components/pos/report-kit";
+import { HistoryDateNavigation } from "@/platforms/web/components/pos/HistoryDateNavigation";
 
 export const Route = createFileRoute("/shifts")({
   head: () => ({
@@ -86,37 +82,16 @@ function Shifts() {
   // Never carry a suggested or previous drawer count into a new shift.
   const [float, setFloat] = useState("");
   const [closeOpen, setCloseOpen] = useState(false);
-  const [signIns, setSignIns] = useState<SignInEntry[]>([]);
-  const [sessions, setSessions] = useState<ShiftSession[]>([]);
-  const mayViewSignIns = isAdmin || can("can_shift_signin_history_view");
   const mayViewShiftHistory = isAdmin || can("can_shift_closing_history_view");
-  const [signHistoryOpen, setSignHistoryOpen] = useState(false);
   const [shiftHistoryOpen, setShiftHistoryOpen] = useState(false);
-  const [signSearch, setSignSearch] = useState("");
   const [historySearch, setHistorySearch] = useState("");
   const [historyFrom, setHistoryFrom] = useState("");
   const [historyTo, setHistoryTo] = useState("");
   const [summaryFrom, setSummaryFrom] = useState(() => `${posDayKey().slice(0, 7)}-01`);
   const [summaryTo, setSummaryTo] = useState(() => posDayKey());
-  const [signPage, setSignPage] = useState(0);
   const [historyPage, setHistoryPage] = useState(0);
   const matches = (values: unknown[], query: string) =>
     values.join(" ").toLowerCase().includes(query.trim().toLowerCase());
-  const visibleSignIns = signIns.filter((entry) =>
-    matches([entry.name, entry.staffId, entry.role, entry.firstSeen], signSearch),
-  );
-  const visibleSessions = sessions.filter((entry) =>
-    matches(
-      [
-        entry.staffName,
-        entry.role,
-        entry.terminalName,
-        entry.signedInAt,
-        posDisplayDateTime(new Date(entry.signedInAt)),
-      ],
-      signSearch,
-    ),
-  );
   const [correcting, setCorrecting] = useState<Shift | null>(null);
   const [correctCash, setCorrectCash] = useState("");
   const [correctCard, setCorrectCard] = useState("");
@@ -124,42 +99,6 @@ function Shifts() {
   const [correctReason, setCorrectReason] = useState("");
   const [correctBusy, setCorrectBusy] = useState(false);
   const correctionClientKey = useRef<string | null>(null);
-
-  // Local per-terminal log — read after mount so SSR and hydration match.
-  useEffect(() => {
-    if (!mayViewSignIns || !signHistoryOpen) {
-      setSignIns([]);
-      return;
-    }
-    const refresh = () => setSignIns(signInsForDay());
-    refresh();
-    const t = window.setInterval(refresh, 30_000);
-    return () => window.clearInterval(t);
-  }, [user?.staffId, mayViewSignIns, signHistoryOpen]);
-
-  // Central record of every sign-in against a shift, with the local cache as
-  // the offline fallback.
-  useEffect(() => {
-    if (!mayViewSignIns || !signHistoryOpen) {
-      setSessions([]);
-      return;
-    }
-    let alive = true;
-    const refresh = async () => {
-      const local = localShiftSessions();
-      try {
-        const remote = await loadShiftSessions(currentStore.id);
-        if (alive) setSessions(mergeSessions(remote, local));
-      } catch {
-        if (alive) setSessions(local);
-      }
-    };
-    const offData = subscribePageDataRefresh(refresh, ["shift_sessions"], { allowOffline: true, initial: true });
-    return () => {
-      alive = false;
-      offData();
-    };
-  }, [currentStore.id, activeShift?.id, mayViewSignIns, signHistoryOpen]);
 
   const summaryStores = useMemo(() => companyStoreScope(stores, terminalStoreId || user?.storeId || currentStore.id,
     !canSwitchStores || !!terminalStoreId || !!user?.storeId),
@@ -450,11 +389,6 @@ function Shifts() {
           )}
         </section>
         <div className="flex flex-wrap gap-2">
-          {mayViewSignIns && (
-            <Button variant="outline" onClick={() => setSignHistoryOpen(true)}>
-              <Users className="size-4" /> Sign-in history
-            </Button>
-          )}
           {mayViewShiftHistory && (
             <Button variant="outline" onClick={() => setShiftHistoryOpen(true)}>
               Shift history
@@ -463,140 +397,6 @@ function Shifts() {
         </div>{" "}
       </div>
 
-      <Dialog open={mayViewSignIns && signHistoryOpen} onOpenChange={setSignHistoryOpen}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-5xl">
-          <DialogHeader>
-            <DialogTitle>Sign-in history</DialogTitle>
-            <DialogDescription>Staff sign-ins for this branch and terminal.</DialogDescription>
-          </DialogHeader>
-          <Input
-            aria-label="Search sign-in history"
-            placeholder="Search staff, role or terminal…"
-            value={signSearch}
-            onChange={(event) => {
-              setSignSearch(event.target.value);
-              setSignPage(0);
-            }}
-          />{" "}
-          <section className="rounded-lg border border-border bg-card">
-            <h2 className="flex items-center gap-2 px-5 py-3 text-sm font-semibold">
-              <Users className="size-4" /> Signed in today on this terminal
-            </h2>
-            <Separator />
-            {visibleSignIns.length === 0 ? (
-              <p className="px-5 py-4 text-sm text-muted-foreground">
-                No sign-ins recorded yet today.
-              </p>
-            ) : (
-              <Table tableId="routes/shifts#1">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>User</TableHead>
-                    <TableHead>Staff ID</TableHead>
-                    <TableHead>Role</TableHead>
-                    <TableHead>First sign-in</TableHead>
-                    <TableHead>Last seen</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {visibleSignIns.map((e) => (
-                    <TableRow key={e.staffId}>
-                      <TableCell className="font-medium">
-                        {e.name}
-                        {user && (user.staffId === e.staffId || user.name === e.name) && (
-                          <Badge variant="outline" className="ml-2">
-                            signed in
-                          </Badge>
-                        )}
-                      </TableCell>
-                      <TableCell className="numeric text-muted-foreground">{e.staffId}</TableCell>
-                      <TableCell className="capitalize text-muted-foreground">{e.role}</TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {systemTime(e.firstSeen)}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {systemTime(e.lastSeen)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </section>
-          <section className="rounded-lg border border-border bg-card">
-            <h2 className="flex items-center gap-2 px-5 py-3 text-sm font-semibold">
-              <Users className="size-4" /> Shift sign-in history (all terminals)
-            </h2>
-            <Separator />
-            {visibleSessions.length === 0 ? (
-              <p className="px-5 py-4 text-sm text-muted-foreground">
-                No shift sessions recorded for this branch yet.
-              </p>
-            ) : (
-              <Table tableId="routes/shifts#2">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>User</TableHead>
-                    <TableHead>Role</TableHead>
-                    <TableHead>Terminal</TableHead>
-                    <TableHead>Signed in</TableHead>
-                    <TableHead>Signed out</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {visibleSessions.slice(signPage * 25, (signPage + 1) * 25).map((s) => (
-                    <TableRow key={s.id}>
-                      <TableCell className="font-medium">
-                        {s.staffName}
-                        {s.shiftId === activeShift?.id && !s.signedOutAt && (
-                          <Badge variant="outline" className="ml-2">
-                            on shift
-                          </Badge>
-                        )}
-                      </TableCell>
-                      <TableCell className="capitalize text-muted-foreground">
-                        {s.role ?? "—"}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {s.terminalName ?? "—"}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {posDisplayDateTime(new Date(s.signedInAt))}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {s.signedOutAt
-                          ? posDisplayDateTime(new Date(s.signedOutAt))
-                          : "Still signed in"}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </section>
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-sm text-muted-foreground">
-              {visibleSessions.length} sign-ins · Page {signPage + 1}
-            </span>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                disabled={signPage === 0}
-                onClick={() => setSignPage((page) => page - 1)}
-              >
-                Previous
-              </Button>
-              <Button
-                variant="outline"
-                disabled={(signPage + 1) * 25 >= visibleSessions.length}
-                onClick={() => setSignPage((page) => page + 1)}
-              >
-                Next
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
       <Dialog open={mayViewShiftHistory && shiftHistoryOpen} onOpenChange={setShiftHistoryOpen}>
         <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-6xl">
           <DialogHeader>
@@ -610,7 +410,11 @@ function Shifts() {
             <div className="space-y-1"><Label htmlFor="shift-history-to">Opened through</Label><Input id="shift-history-to" type="date" value={historyTo} min={historyFrom || undefined} onChange={event => { setHistoryTo(event.target.value); setHistoryPage(0); }} /></div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" onClick={() => { const today = posDayKey(); setHistoryFrom(today); setHistoryTo(today); setHistoryPage(0); }}>Today</Button>
+            <HistoryDateNavigation from={historyFrom} to={historyTo} onChange={range => {
+              setHistoryFrom(range.from);
+              setHistoryTo(range.to);
+              setHistoryPage(0);
+            }} />
             <Button size="sm" variant="outline" onClick={() => { setHistoryFrom(""); setHistoryTo(""); setHistoryPage(0); }}>All shifts</Button>
             {can("can_view_sales_reports") && <Button size="sm" variant="outline" onClick={() => window.location.assign("/reports/sales")}>Sales by date · Reports</Button>}
           </div>

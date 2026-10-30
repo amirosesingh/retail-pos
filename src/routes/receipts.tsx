@@ -53,6 +53,7 @@ import {
 import { billCorrectionTotals } from "@/lib/bill-correction";
 import { useManagerGate } from "@/lib/manager-gate";
 import { AddMissedBillDialog } from "@/platforms/web/components/pos/AddMissedBillDialog";
+import { HistoryDateNavigation } from "@/platforms/web/components/pos/HistoryDateNavigation";
 import { rowToSale } from "@/core/api/pos-db";
 import { isMissedBillReference } from "@/lib/missed-bill-reference";
 
@@ -576,16 +577,10 @@ function ReceiptVault() {
                   className="mt-1 h-9 w-40"
                 />
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setFromDate(storeDay());
-                  setToDate(storeDay());
-                }}
-              >
-                Today
-              </Button>
+              <HistoryDateNavigation from={fromDate} to={toDate} onChange={range => {
+                setFromDate(range.from);
+                setToDate(range.to);
+              }} />
             </div>
           )}
 

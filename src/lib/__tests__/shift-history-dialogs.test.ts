@@ -13,13 +13,13 @@ describe("shift history visibility", () => {
         .can_shift_signin_history_view,
     ).toBe(false);
   });
-  it("moves searchable histories into dialogs and removes the duplicate receipts table", () => {
+  it("keeps searchable shift history without the removed sign-in history entry point", () => {
     const route = readFileSync("src/routes/shifts.tsx", "utf8");
-    expect(route).toContain("open={mayViewSignIns && signHistoryOpen}");
     expect(route).toContain("open={mayViewShiftHistory && shiftHistoryOpen}");
-    expect(route).toContain('aria-label="Search sign-in history"');
     expect(route).toContain('aria-label="Search shift history"');
-    expect(route).toContain("!mayViewSignIns || !signHistoryOpen");
+    expect(route).not.toContain("signHistoryOpen");
+    expect(route).not.toContain("loadShiftSessions");
+    expect(route).not.toContain("Sign-in history");
     expect(route).not.toContain("storeSales.map((s)");
     expect(route).not.toContain("printSaleReceipt");
     expect(route).toContain("Current shift, drawer control and X / Z reports");
