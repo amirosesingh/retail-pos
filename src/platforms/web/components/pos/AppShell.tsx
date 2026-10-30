@@ -118,7 +118,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   const isMobile = useIsMobile();
   useEffect(() => startSyncEngine(), []);
   useEffect(() => localDb()?.onBeforeClose?.(() => flushTicketDrafts().then(() => undefined)), []);
-  const { stores, currentStore, setCurrentStore, state, ready: dataReady, loadPhase, locationLoadError, retryLoad } = usePos();
+  const { stores, currentStore, setCurrentStore, state, ready: dataReady, loadPhase, locationLoadError, retryLoad, settingsScopeLoading, settingsScopeError, retrySettingsScope } = usePos();
   useEffect(() => {
     setSharedPrinterPrefs(state.settings.integrations.receiptPrinter);
     return () => setSharedPrinterPrefs(undefined);
@@ -180,12 +180,10 @@ function AppShellFrame({ children }: { children: ReactNode }) {
       : authUserId ? `auth:${authUserId}` : `user:${user.email || user.staffId || user.name}`;
     if (handledIdentity.current === identity) return;
     handledIdentity.current = identity;
-    let previous = "";
-    try {
-      previous = window.sessionStorage.getItem("pos.last-signed-in-identity") ?? "";
-      window.sessionStorage.setItem("pos.last-signed-in-identity", identity);
-    } catch { /* In-memory tracking still prevents repeated redirects. */ }
-    const freshSignIn = sawSignedOut.current || (previous !== identity);
+    // Missing per-tab storage is not a sign-in event. A restored, verified
+    // session may open a deep link without that old landing marker. The real
+    // PIN/password forms render while ready and signed out, arming this flag.
+    const freshSignIn = sawSignedOut.current;
     sawSignedOut.current = false;
     if (freshSignIn) {
       const to = signInDestination(isAdmin, can("can_view_dashboard"), visibleRoute("/dashboard"));
@@ -391,6 +389,18 @@ function AppShellFrame({ children }: { children: ReactNode }) {
         </div>
       </div>;
     return <TillLoader onRetry={retryLoad} />;
+  }
+  if (settingsScopeLoading) {
+    if (settingsScopeError)
+      return <div className="flex min-h-dvh items-center justify-center p-6">
+        <div className="w-full max-w-md space-y-4 rounded-lg border border-border bg-surface-1 p-6 text-center" role="alert">
+          <h1 className="text-lg font-semibold">Could not load store settings</h1>
+          <p className="text-sm text-muted-foreground">{settingsScopeError}</p>
+          <Button onClick={retrySettingsScope}>Try again</Button>
+          {isAdmin && <Button asChild variant="outline"><Link to="/recovery">Connection recovery</Link></Button>}
+        </div>
+      </div>;
+    return <TillLoader message="Loading store settings…" onRetry={retrySettingsScope} />;
   }
   // Nothing can be sold, received or moved without somewhere to book it to.
   if (!activeLocations(stores).length && !isLocationSetupRoute(location.pathname))

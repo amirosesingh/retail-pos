@@ -72,6 +72,22 @@ it("retains a settings change arriving during the initial scope read", async () 
   stop(); finish(); await Promise.resolve();
 });
 
+it("exposes Retry on the existing subscription without consuming a queued settings change", async () => {
+  setup();
+  let finish!: () => void;
+  const read = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));
+  const stop = subscribeSettingsRefresh(read, undefined, { initial: true });
+  state.change!({ table: "settings_overrides", reason: "edit" });
+  await vi.advanceTimersByTimeAsync(100);
+  await stop.retry(); await stop.retry();
+  expect(read).toHaveBeenCalledTimes(1);
+  finish(); await Promise.resolve();
+  expect(read).toHaveBeenCalledTimes(2);
+  finish(); await Promise.resolve();
+  stop(); await stop.retry();
+  expect(read).toHaveBeenCalledTimes(2);
+});
+
 it("event-only readers stay idle until a matching change and defer hidden-page reads", async () => {
  const { doc, win } = setup();
  const read = vi.fn(async () => {});

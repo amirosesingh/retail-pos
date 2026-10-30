@@ -7,7 +7,7 @@ export function subscribeSettingsRefresh(
   read: () => Promise<unknown>,
   accept: (change: { table: string; reason: string; storeId?: string | null }) => boolean = () => true,
   { initial = false, eventOnly = false } = {},
-): () => void {
+): (() => void) & { retry: () => Promise<void> } {
   const queue = createRefreshQueue(read);
   let timer: ReturnType<typeof setTimeout> | undefined;
   let dirty = false;
@@ -27,9 +27,10 @@ export function subscribeSettingsRefresh(
   if (eventOnly) document.addEventListener("visibilitychange", catchupPending);
   const offCatchup = eventOnly ? () => {} : subscribeBackgroundRefresh(wake, 60_000, true);
   if (initial) void queue.refresh();
-  return () => {
+  const stop = () => {
     offSettings(); offCatchup(); queue.stop();
     document.removeEventListener("visibilitychange", catchupPending);
     if (timer !== undefined) clearTimeout(timer);
   };
+  return Object.assign(stop, { retry: queue.retry });
 }

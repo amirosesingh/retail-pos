@@ -167,6 +167,11 @@ describe("settings provider integration guards (source contract)", () => {
     expect(effect).toContain("if (!readsReady || !storesLoaded) return;");
     expect(effect).not.toContain("!state.stores.length");
     expect(effect).not.toContain("!scopeIds.BRANCH");
-    expect(effect).toContain("[readsReady, readIdentity, storesLoaded, scopeIds]");
+    expect(effect).toContain("[readsReady, readIdentity, storesLoaded, scopeIds, scopeReadKey, scopeReadEpoch]");
+    expect(effect).toContain("scopeReadsEnabled.current && scopeReadKeyRef.current === scopeKey");
+    expect(effect).toContain("epoch: scopeReadEpoch");
+    expect(effect).not.toContain("scopeRetryTick");
+    expect(effect).toContain("scopeRetry.current = retry");
+    expect(effect).toContain("void off.retry()");
   });
 });

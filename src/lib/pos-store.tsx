@@ -5,6 +5,8 @@ import { formatMoney, setPosCurrency } from "./currency";
 import { subscribeDatabaseMode } from "@/core/local-db/db-mode";
 import { subscribeSettingsRefresh } from "./settings-refresh";
 import { createSettingsStartupRefresh } from "./settings-startup-refresh";
+import { createScopedSettingsReader, scopedSettingsReadKey, type ScopedSettingsReadStatus } from "./scoped-settings-read";
+import { sessionEpoch } from "./session-epoch";
 import { createRefreshQueue, requestBackgroundRefresh, subscribeBackgroundRefresh } from "./background-refresh";
 import { stockCountChanges } from "./stock-count-plan";
 import { retainUnchangedFields, applyLiveRowChanges } from "./live-state";
@@ -443,6 +445,8 @@ type Ctx = {
   /** The cluster, branch and selected terminal ids used for configuration. */
   scopeIds: ScopeIds;
   settingsScopeLoading: boolean;
+  settingsScopeError: string | null;
+  retrySettingsScope: () => void;
   settingsTerminalId: string;
   setSettingsTerminalId: (id: string) => void;
   /** Start (or stop) overriding one block at one tier. */
@@ -682,7 +686,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const saveConfiguredSettings = () => settingsWrites.current.flush();
   const [settingsTerminalId, setSettingsTerminalId] = useState("");
   const loadedScopeKey = useRef("");
+  const scopedSettingsFlights = useRef(createScopedReadFlight<BranchSettingsState>());
   const [confirmedScopeKey, setConfirmedScopeKey] = useState("");
+  const confirmedScopeKeyRef = useRef(confirmedScopeKey);
+  confirmedScopeKeyRef.current = confirmedScopeKey;
+  const [scopeReadStatus, setScopeReadStatus] = useState<(ScopedSettingsReadStatus & { key: string }) | null>(null);
+  const scopeRetry = useRef<{ key: string; retry: () => void } | null>(null);
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
   // Equivalent directory rows must not restart the same initial scope read.
@@ -696,6 +705,16 @@ export function PosProvider({ children }: { children: ReactNode }) {
   }), [scopeClusterId, scopeBranchId, scopeTerminalId]);
   const scopeIdsRef = useRef<ScopeIds>(emptyScopeIds);
   scopeIdsRef.current = scopeIds;
+  const scopeReadEpoch = sessionEpoch();
+  const scopeReadKey = scopedSettingsReadKey(readIdentity, scopeIds, scopeReadEpoch);
+  const scopeReadKeyRef = useRef(scopeReadKey);
+  scopeReadKeyRef.current = scopeReadKey;
+  const scopeReadsEnabled = useRef(false);
+  scopeReadsEnabled.current = readsReady && storesLoaded;
+  const retrySettingsScope = useCallback(() => {
+    if (scopeReadsEnabled.current && scopeRetry.current?.key === scopeReadKeyRef.current)
+      scopeRetry.current.retry();
+  }, []);
   const whoRef = useRef("Manager");
   whoRef.current = actorRef.current;
   // Lets earlier callbacks reach the settings writer defined further down.
@@ -986,40 +1005,41 @@ export function PosProvider({ children }: { children: ReactNode }) {
     // Global locks and empty override sets still need confirmation before
     // editing global settings, even before the first branch is created.
     if (!readsReady || !storesLoaded) return;
-    let cancelled = false;
-    const scopeKey = JSON.stringify(scopeIds);
+    const scopeKey = scopeReadKey;
     if (loadedScopeKey.current !== scopeKey) {
       loadedScopeKey.current = scopeKey;
       setConfirmedScopeKey("");
       setScope(emptyBranchSettings);
     }
-    let running = false;
-    const refreshScope = async () => {
-      if (running || settingsWrites.current.pending) return;
-      running = true;
-      const revision = settingsWrites.current.revision;
-      try {
-        const next = await loadBranchSettings(scopeIds, true);
-        if (
-          !cancelled &&
-          !settingsWrites.current.pending &&
-          revision === settingsWrites.current.revision
-        ) {
-          setScope((current) => (hasSameValue(current, next) ? current : next));
-          setConfirmedScopeKey(scopeKey);
-        }
-      } catch {
-        /* Preserve confirmed scope on a failed refresh. */
-      } finally {
-        running = false;
-      }
-    };
-    const off = subscribeSettingsRefresh(refreshScope, undefined, { initial: true });
+    const reader = createScopedSettingsReader({
+      // Scope observers share the raw composite read, including a slow locks
+      // query; a UI deadline must not start another overrides/locks batch.
+      read: () => scopedSettingsFlights.current.read(
+        JSON.stringify([scopeKey, settingsWrites.current.revision]),
+        () => loadBranchSettings(scopeIds, true),
+      ),
+      writes: settingsWrites.current,
+      epoch: scopeReadEpoch,
+      isCurrent: () => scopeReadsEnabled.current && scopeReadKeyRef.current === scopeKey,
+      confirmed: confirmedScopeKeyRef.current === scopeKey,
+      accept: next => {
+        setScope(current => hasSameValue(current, next) ? current : next);
+        setConfirmedScopeKey(scopeKey);
+      },
+      status: next => setScopeReadStatus({ ...next, key: scopeKey }),
+    });
+    const off = subscribeSettingsRefresh(reader.refresh, undefined, { initial: true });
+    const retry = { key: scopeKey, retry: () => {
+      reader.retryStatus();
+      void off.retry();
+    } };
+    scopeRetry.current = retry;
     return () => {
-      cancelled = true;
+      if (scopeRetry.current === retry) scopeRetry.current = null;
+      reader.stop();
       off();
     };
-  }, [readsReady, readIdentity, storesLoaded, scopeIds]);
+  }, [readsReady, readIdentity, storesLoaded, scopeIds, scopeReadKey, scopeReadEpoch]);
 
   // The directory may not have loaded yet (a cashier signs in with a PIN and
   // has no central-database account of their own). The terminal's own
@@ -3684,7 +3704,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
    */
   const updateSettings = useCallback(
     (patch: Partial<AppSettings>) => {
-      if (confirmedScopeKey !== JSON.stringify(scopeIdsRef.current)) {
+      if (confirmedScopeKey !== scopeReadKeyRef.current) {
         toast.error("Settings are still loading. Please wait before editing.");
         return false;
       }
@@ -4403,7 +4423,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
     settingsScope: scope,
     configuredGlobalSettings: state.settings,
     scopeIds,
-    settingsScopeLoading: !settingsSnapshotLoaded || confirmedScopeKey !== JSON.stringify(scopeIds),
+    settingsScopeLoading: !settingsSnapshotLoaded || confirmedScopeKey !== scopeReadKey,
+    settingsScopeError: scopeReadStatus?.key === scopeReadKey ? scopeReadStatus.error : null,
+    retrySettingsScope,
     settingsTerminalId,
     setSettingsTerminalId,
     sourceOfPath,
