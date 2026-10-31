@@ -1646,3 +1646,91 @@ separate exact ROSEGILL-project approval; deploy DB before new client. No live
 dispatch/stock write, notification-channel change, installer/OTA publication or
 main promotion. Full scope, limits and recovery:
 [transfer dispatch review](database/transfer-dispatch-recovery-review.md).
+PR348 merged to beta as33f1996e649e9b601d0f7d8f5a8485554b877cdc after
+root/independent verification of exact a4b5abd4 checks: security/regressions,
+Android, Windows, iOS, Cloudflare beta and labels passed. CodeRabbit skipped;
+not counted as a completed review. Post-merge tree exactly equals reviewed head;
+base remained bce925a2. PR342 closed as superseded, branches/history preserved.
+No main promotion or installer/OTA publication. Local8080/8081 respond200;
+Electron relaunched with saved profile, visible Register — Retail PID27240.
+
+SQL-07 new separate finding: local SQL reaches Ready but business:snapshot fails
+with Latin1_General_BIN2 versus SQL_Latin1_General_CP1_CI_AS comparison error.
+Logs show the same issue30October before the latest popup/login corrections.
+Read-only agent trace strongly matches catalogue-scope.cjs same() comparisons of
+OPENJSON binary keys with normal store ID text (predicate from27October1af373f5).
+Exact first failing comparison/column collations still need isolated verification.
+Propose only explicit compatible comparison collation in the existing helper,
+with actual mixed-collation SQL Server snapshot/catalogue/branch-denial/checkout
+regressions. Do not alter global/database/column collation, operator settings,
+product data, stock or permissions. Not bundled into PR348 or declared fixed.
+
+31October owner approved the separate SQL-07 correction and isolated tests.
+Baseline33f1996e, new branch codex/sql-loading-collation-beta in its own clean
+worktree; preserve the running previews, native profile and unrelated drafts.
+One agent owns the existing catalogue comparison helper and focused regressions;
+another independently reviews semantics/branch-denials. Root owns approval/task
+records, actual SQL Server isolated reproduction and final integration review.
+Acceptance: generated reads load under mixed JSON/database collations; existing
+same-cluster, foreign-cluster, transfer and terminal/user restrictions remain;
+checkout stock checks and ordinary reports retain behavior. No live schema,
+data, global/column/database collation, settings or permission change. Membership
+remains ON HOLD. Commit/create a separate beta PR after checks; no publication or
+production promotion is authorized by this approval.
+
+TRF-15 owner report31October: a stock request approves successfully, but opening
+the transfer and dispatching a quantity fails with a generic completion error.
+Start a separate read-only trace of request/approval/dispatch state, permissions,
+branch ownership and stock validation. Need reference, sending/receiving branches,
+platform and exact error. Do not alter stock, transfer records, settings or grants,
+or bundle an unreviewed transfer change with SQL-07. Agent source investigation
+runs alongside root's bounded central-database inspection; SQL-07 continues.
+
+SQL-07 implementation/scoped verification: only catalogue-scope.cjs same() adds
+DATABASE_DEFAULT after existing LOWER/CONVERT on each operand. Old full native
+predicate reproduced468 against actual POS_Local metadata-only TOP(0); fixed full
+predicate/projection compiles. Source predicate otherwise identical after removing
+COLLATE; fallback/projection/writes unchanged. Real SQL Server harness31 checks passed and was
+independently repeated: baseline468 plus15 scenarios each normal/BIN2 column
+fixtures, actual snapshot/catalogue/locked stock reads, private flags and branch/
+cluster denials. Only session #fixtures used; no business records/schema/settings
+changed. Database default remains verified SQLCI_AS; binary-default DB not tested.
+
+Local runtime restarted normally from the corrected checkout using saved profile
+and existing8081 renderer. Main-process path verified. No new collation error in
+observed session; actual full UI acceptance is NOT complete: Store settings could
+not be loaded gate is visible and shutdown logs a renderer account-permission
+failure. Record separate SQL-08 investigation; do not bypass auth/settings guards,
+clear local data, change grants/config or include an unapproved repair in SQL-07.
+Broader startup503/change-tracking recovery warnings also remain separate evidence.
+
+TRF-15 now has explicit owner correction/test approval in its own branch/worktree.
+Central readback for ST-STR1-WEB01-20261031-0001 confirms approved/no dispatch,
+requested1/source STR1stock0/no child warehouses; logs23514 Short by1 match.
+Current shortage correctly rolled back. Approved follow-up addresses safe error
+feedback, atomic dispatch/linked-request close and verified native actor handling;
+live migration application remains unapproved. It must preserve stock shortages,
+permissions and existing documented partial/zero request-close semantics.
+
+SQL-07 final clean suite585files/3878tests passed; actual31SQL fixtures and
+metadata-only before/after compilation independently repeated. Redundant literal
+comparison probes omitted from final diff; executable SQL behavior is the regression.
+No new migration/schema/config/grant change. Prepare targeted commit/beta PR.
+
+TRF-15 implementation boundary: preserve existing notification channel/off/
+WhatsApp behavior. Direct SQL event emission would change legacy behavior, so
+it is not part of this batch. Keep the established client event on a fresh
+confirmed dispatch, avoid duplicate replay emission, and never report stock
+dispatch failed solely because a later notification failed. Existing lost-response
+notification best-effort limitations remain separately tracked; no exactly-once
+external delivery guarantee is claimed. Atomic stock/request completion remains
+required. Actual duplicate-product ambiguity must fail before stock mutation,
+not silently merge quantities or rewrite existing records.
+
+Integration checkpoint31October: SQL-07 source ba61f580 is already merged through
+PR349 into beta e1c78d84997acda118338f8acae5b697b38ce76f; exact-head platform,
+security/regression and Cloudflare checks passed. Its merge tree equals reviewed
+head. TRF-15 source42160659 is now being integrated with that latest beta; retain
+both evidence histories above. Only this ledger's parallel append conflicted;
+no application-code conflict. SQL-08 remains pending separate investigation/
+approval; do not treat SQL-07's merge as proof that the settings/auth gate is fixed.

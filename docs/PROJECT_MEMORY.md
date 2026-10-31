@@ -596,3 +596,22 @@ diff, dependent workflow regressions and exact reviewed-head CI before merging;
 retain a recoverable baseline/targeted rollback and report unverified behavior.
 Merge method alone is not a correctness guarantee. Production promotion still
 needs separate explicit owner approval. See AGENTS.md for mandatory enforcement.
+
+SQL-07 is an approved query-only local SQL correction. Keep existing normalized
+catalogue ID comparisons explicit about collation when OPENJSON keys meet stored
+text, preserving current database semantics and all cluster/privacy/transfer guards.
+No schema/data/global-collation/configuration repair or grant change is authorized
+or required by it. Actual SQL compile and isolated fixture success do not establish
+all Electron readiness/settings/auth gates or real checkout success; tracker
+SQL-08 retains the separate settings-read blocker observed after restart.
+
+TRF-15 is separately approved correction code and isolated tests, with exact live
+database approval still required. Preserve existing shortage checks and partial/
+zero close-without-remainder behavior. Stock picking and linked-request completion
+must commit together; retry requires immutable dispatch intent plus current
+authorization and must not deduct twice. Native identity/terminal binding comes
+only from the verified server session, never renderer labels. Do not set goods
+verification fields to attribute request paperwork. Preserve current notification
+channels and fresh-event behavior; lost-response delivery remains best effort.
+Historical dispatched rows without proof and changed document facts stay review-only.
+See database/transfer-dispatch-recovery-review.md for the exact migration and limits.
