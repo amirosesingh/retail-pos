@@ -15,6 +15,7 @@ import { isLegacyExchange } from "@/lib/legacy-exchange";
 import { redeemedPoints } from "./points-redemption";
 import { CUSTOMER_REFUNDS_ALLOWED, NO_REFUND_MESSAGE, exchangePolicyError } from "./returns-policy";
 import { uniqueSales, sameRecordId } from "./sale-identity";
+import { stockRequestFulfilmentId } from "./stock-request-identity";
 import { staffSettingsTarget } from "./settings-edit-policy";
 import { isCompanyIdentityPath } from "./company-identity";
 import { readBranding, writeBranding } from "./branding";
@@ -113,16 +114,17 @@ import {
   approveTransferInDb,
   dispatchTransferInDb,
   receiveTransferInDb,
-  closeRequestInDb,
   scopeBetween,
   verifyTransferInDb,
   saveTransfer,
   loadTransfer,
+  loadRequestApprovalState,
   loadTransfers,
   setTransferStatus,
   type LineQty,
   type RpcResult,
 } from "./stock-transfers";
+import { reconcileDispatchProducts } from "./transfer-dispatch-result";
 import { computeTax } from "@/core/pricing/tax";
 import { commitBooking, deleteBookingRow, loadBookings } from "./bookings-db";
 import { trackTransition } from "./status-history";
@@ -3979,23 +3981,43 @@ export function PosProvider({ children }: { children: ReactNode }) {
    * because nothing has been picked yet.
    */
   const approveTransfer = useCallback(async (id: string, lines?: LineQty[]): Promise<RpcResult> => {
-    const before = stateRef.current.transfers.find((x) => x.id === id);
-    const existingFulfilment = stateRef.current.transfers.find((x) => x.sourceRequestId === id);
-    if (existingFulfilment) {
-      // A fulfilment proves a previous approval reached durable storage, but
-      // this till may still hold an awaiting snapshot. Reconcile the request
-      // before treating the retry as complete.
-      const durableRequest = await loadTransfer(id);
-      if (!durableRequest)
-        return {
-          success: false,
-          error: "The saved transfer request could not be verified. Refresh transfers and retry.",
-        };
-      setState((s) => ({
+    const epoch = sessionEpoch(), generation = bootstrapGeneration.current;
+    const operatingStoreId = stateRef.current.currentStoreId;
+    const mayContinue = () => sessionEpoch() === epoch && bootstrapGeneration.current === generation && sameBranchId(stateRef.current.currentStoreId, operatingStoreId);
+    const changedSession = (): RpcResult => ({ success: false, code: "SESSION_CHANGED", error: "The session or branch changed. Refresh the request before continuing; an approval already sent may have been saved." });
+    let before = stateRef.current.transfers.find((x) => sameRecordId(x.id, id));
+    if (!before) return { success: false, error: "Transfer is not awaiting approval." };
+    const requestedId = before.id;
+    let existingFulfilment: Transfer | undefined;
+    if (before.kind === "request") {
+      let durableRequest: Transfer | null;
+      try {
+        const central = await loadRequestApprovalState(before.id);
+        existingFulfilment = central.fulfilment ?? undefined;
+        durableRequest = central.request;
+      } catch {
+        return { success: false, error: "The saved request and fulfilment could not be verified. Refresh both records before approving it." };
+      }
+      if (!mayContinue()) return changedSession();
+      if (stateRef.current.transfers.some(row => sameRecordId(row.sourceRequestId ?? "", requestedId) &&
+          (!existingFulfilment || !sameRecordId(row.id, existingFulfilment.id))))
+        return { success: false, error: "A saved local fulfilment has not been confirmed centrally. Synchronize or refresh both records before approving this request." };
+      if (!durableRequest || durableRequest.kind !== "request" || !sameRecordId(durableRequest.id, before.id) ||
+          !sameBranchId(durableRequest.fromStoreId, before.fromStoreId) || !sameBranchId(durableRequest.toStoreId, before.toStoreId) ||
+          existingFulfilment && (existingFulfilment.kind !== "transfer" || !sameRecordId(existingFulfilment.sourceRequestId ?? "", durableRequest.id) ||
+            !sameBranchId(existingFulfilment.fromStoreId, durableRequest.fromStoreId) || !sameBranchId(existingFulfilment.toStoreId, durableRequest.toStoreId)))
+        return { success: false, error: "The saved request or fulfilment has changed. Review its branches and approval before continuing." };
+      // Lost acknowledgements and upgrades adopt durable approval/legacy IDs;
+      // they never invent another approval or override its saved quantities.
+      const savedFulfilment = existingFulfilment, savedRequest = durableRequest;
+      setState((s) => !mayContinue() || !sameBranchId(s.currentStoreId, operatingStoreId) ? s : ({
         ...s,
-        transfers: s.transfers.map((row) => (row.id === id ? durableRequest : row)),
+        transfers: [...(savedFulfilment ? [savedFulfilment] : []), ...s.transfers.filter(row => !sameRecordId(row.sourceRequestId ?? "", savedRequest.id))]
+          .map((row) => (sameRecordId(row.id, id) ? savedRequest : row)),
       }));
-      if (durableRequest.status === "approved") return { success: true };
+      before = durableRequest;
+      if (existingFulfilment) return durableRequest.status === "approved" ? { success: true } :
+        { success: false, error: "This request already has a saved fulfilment. Review both records before changing its approval." };
     }
     const repairingRequest =
       before?.kind === "request" && before.status === "approved" && !existingFulfilment;
@@ -4007,16 +4029,28 @@ export function PosProvider({ children }: { children: ReactNode }) {
           qty: item.approvedQty ?? item.qty,
         }))
       : linesFor(before, lines, (i) => i.qty);
+    // Prepare the identity before approval writes. Preserve any legacy child
+    // already linked to this request rather than creating a replacement ID.
+    let fulfilmentId: string | undefined;
+    if (before.kind === "request" && allowed.some(line => line.qty > 0)) {
+      try {
+        fulfilmentId = existingFulfilment?.id ?? await stockRequestFulfilmentId(before.id);
+      } catch {
+        return { success: false, error: "The stock-transfer identity could not be prepared. Reopen the app and refresh this request before approving it." };
+      }
+      if (!mayContinue()) return changedSession();
+    }
     if (!repairingRequest) {
       const persisted = await approveTransferInDb(id, actorRef.current, allowed);
       if (!persisted.success) return persisted;
+      if (!mayContinue()) return changedSession();
     }
 
     if (!repairingRequest)
-      setState((s) => ({
+      setState((s) => !mayContinue() || !sameBranchId(s.currentStoreId, operatingStoreId) ? s : ({
         ...s,
         transfers: s.transfers.map((x) =>
-          x.id === id
+          sameRecordId(x.id, id)
             ? {
                 ...x,
                 status: "approved",
@@ -4047,17 +4081,17 @@ export function PosProvider({ children }: { children: ReactNode }) {
           createdBy: actorRef.current,
           sourceRequestId: before.id,
           needsApproval: false,
-          forcedId: stableChildId(before.id, "8", 0),
+          forcedId: fulfilmentId,
         });
     }
-    logger.log("inventory", "Stock transfer approved", "transfers", {
+    if (!repairingRequest) logger.log("inventory", "Stock transfer approved", "transfers", {
       transferId: id,
       ref: before.ref,
       fromStoreId: before.fromStoreId,
       toStoreId: before.toStoreId,
       quantity: allowed.reduce((a, l) => a + l.qty, 0),
     });
-    trackTransition({
+    if (!repairingRequest) trackTransition({
       entity: "stock_transfer",
       entityId: id,
       from: "awaiting_approval",
@@ -4076,94 +4110,95 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const dispatchTransfer = useCallback(
     async (id: string, lines?: LineQty[]): Promise<RpcResult> => {
       const s0 = stateRef.current;
+      const epoch = sessionEpoch();
+      const generation = bootstrapGeneration.current;
       const before = s0.transfers.find((x) => x.id === id);
       if (!before || before.status !== "approved")
         return { success: false, error: "Transfer is not approved." };
       const sent = linesFor(before, lines, (i) => i.approvedQty ?? i.qty);
-      const moving = sent.filter((l) => l.qty > 0);
-      const asked = before.items.reduce((a, i) => a + i.qty, 0);
       const total = sent.reduce((a, l) => a + l.qty, 0);
-      const fulfilment: Transfer["fulfilment"] =
-        total === 0 ? "none" : total >= asked ? "full" : "partial";
-      const now = new Date().toISOString();
 
-      const persisted = await dispatchTransferInDb(id, actorRef.current, sent);
+      const persisted = await dispatchTransferInDb(id, actorRef.current, sent, before);
       if (!persisted.success) return persisted;
+      const proof = persisted.dispatch;
+      if (!proof) return { success: false, code: "TRANSFER_DISPATCH_UNCONFIRMED", error: "Refresh the transfer before retrying; dispatch was not confirmed." };
+      const mayApply = (storeId: string) => sessionEpoch() === epoch && bootstrapGeneration.current === generation && sameBranchId(storeId, s0.currentStoreId);
+      if (!mayApply(stateRef.current.currentStoreId)) return persisted;
+      const now = proof.dispatched_at;
+      const fulfilment = proof.fulfilment;
 
-      setState((s) => ({
+      setState((s) => !mayApply(s.currentStoreId) ? s : ({
         ...s,
-        products: bumpItems(
-          s.products,
-          moving,
-          before.fromStoreId,
-          -1,
-          s.settings.integrations.autoArchiveZeroStock !== false,
-        ),
+        // Only this source-root bucket is in the proof. Warehouse buckets
+        // continue to refresh through authorized sync; never subtract twice.
+        products: reconcileDispatchProducts(s.products, s0.products, proof, s.settings.integrations.autoArchiveZeroStock !== false),
         transfers: s.transfers.map((x) =>
-          x.id === id
+          x.id === id && sameBranchId(x.fromStoreId, proof.from_store_id) && sameBranchId(x.toStoreId, proof.to_store_id) && !["rejected", "cancelled"].includes(x.status)
             ? {
                 ...x,
-                status: "dispatched",
-                dispatchedBy: actorRef.current,
+                status: ["received", "completed", "completed_with_discrepancy"].includes(x.status) ? x.status : proof.status === "verified" ? "completed" : proof.status,
+                dispatchedBy: proof.dispatched_by ?? undefined,
                 dispatchedAt: now,
-                closedAt: now,
+                closedAt: x.closedAt ?? now,
                 fulfilment,
                 items: x.items.map((i) => ({
                   ...i,
-                  dispatchedQty: sent.find((l) => l.productId === i.productId)?.qty ?? 0,
+                  dispatchedQty: proof.lines.find((l) => sameRecordId(l.product_id, i.productId))?.qty ?? 0,
                 })),
-                updatedAt: now,
+                updatedAt: Date.parse(x.updatedAt) > Date.parse(now) ? x.updatedAt : now,
               }
             : x,
         ),
       }));
 
       // The request behind this transfer closes on what was actually sent.
-      if (before.sourceRequestId) {
-        const requestId = before.sourceRequestId;
-        const request = s0.transfers.find((x) => x.id === requestId);
-        const requested = request?.items.reduce((a, i) => a + i.qty, 0) ?? asked;
-        const requestFulfilment: Transfer["fulfilment"] =
-          total === 0 ? "none" : total >= requested ? "full" : "partial";
-        setState((s) => ({
+      if (proof.source_request_id && proof.request_closed) {
+        const requestId = proof.source_request_id;
+        setState((s) => !mayApply(s.currentStoreId) ? s : ({
           ...s,
           transfers: s.transfers.map((x) =>
-            x.id === requestId
+            sameRecordId(x.id, requestId) && sameBranchId(x.fromStoreId, proof.from_store_id) && sameBranchId(x.toStoreId, proof.to_store_id)
               ? {
                   ...x,
                   status: "completed",
-                  closedAt: now,
-                  fulfilment: requestFulfilment,
-                  updatedAt: now,
+                  closedAt: proof.request_closed_at ?? now,
+                  fulfilment: proof.request_fulfilment ?? "partial",
+                  updatedAt: proof.request_closed_at ?? now,
                 }
               : x,
           ),
         }));
-        await closeRequestInDb(requestId, requestFulfilment ?? "partial");
       }
-      logger.log("inventory", "Stock transfer dispatched", "transfers", {
+      if (proof.replayed) return persisted;
+      const observe = (work: () => unknown) => {
+        try { void Promise.resolve(work()).catch(() => undefined); }
+        catch { /* The database proof remains authoritative after an observer failure. */ }
+      };
+      observe(() => logger.log("inventory", "Stock transfer dispatched", "transfers", {
         transferId: id,
         ref: before.ref,
         fromStoreId: before.fromStoreId,
         toStoreId: before.toStoreId,
         quantity: total,
         fulfilment,
-      });
-      trackTransition({
+      }));
+      observe(() => trackTransition({
         entity: "stock_transfer",
         entityId: id,
         from: "approved",
         to: "dispatched",
-        actorName: actorRef.current,
+        actorName: proof.dispatched_by ?? actorRef.current,
         storeId: before.fromStoreId,
         metadata: { ref: before.ref, toStoreId: before.toStoreId, fulfilment, lines: sent },
-      });
+      }));
+      // Preserve the existing rules/legacy notification pipeline on a fresh
+      // confirmation. Replays must not send a second notification.
       const source = s0.stores.find((x) => x.id === before.fromStoreId)?.name;
-      recordActivity({
+      observe(() => recordActivity({
         type: "transfer_sent",
         title: `Transfer ${before.ref} is on its way`,
         message: `${source || "The sending branch"} dispatched ${total} unit(s) to this branch.`,
-        actorName: actorRef.current,
+        actorName: proof.dispatched_by ?? actorRef.current,
         storeId: before.toStoreId,
         entityType: "stock_transfer",
         entityId: before.id,
@@ -4173,8 +4208,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
           audience_roles: ["admin", "manager", "supervisor", "warehouse", "cashier"],
           sender_store_id: before.fromStoreId,
         },
-      });
-      return { success: true };
+      }));
+      return persisted;
     },
     [],
   );

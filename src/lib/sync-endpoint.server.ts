@@ -45,6 +45,7 @@ const opSchema = z.discriminatedUnion("kind", [
       "shift_cash_count_submit",
       "stock_transfer_approve",
       "stock_transfer_dispatch",
+      "stock_transfer_dispatch_atomic",
       "stock_transfer_receive",
       "stock_transfer_verify",
     ]),
@@ -156,6 +157,7 @@ const bodySchema = z.object({
     .optional(),
   read: z
     .discriminatedUnion("kind", [
+      z.object({ kind: z.literal("transferRequestApprovalState"), requestId: z.string().uuid() }),
       z.object({ kind: z.literal("activeShift"), storeId: z.string().min(1).max(64) }),
       z.object({ kind: z.literal("stores") }),
       z.object({ kind: z.literal("health") }),
@@ -274,8 +276,8 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
         { status: 403 },
       );
     try {
-      const result = await runRelayRead(body.read);
-      return Response.json(result, { status: result.ok ? 200 : 500 });
+      const result = body.read.kind === "transferRequestApprovalState" ? await runRelayRead(body.read, scope) : await runRelayRead(body.read);
+      return Response.json(result, { status: result.ok ? 200 : result.status ?? 500 });
     } catch (e) {
       return Response.json({ ok: false, error: (e as Error).message }, { status: 503 });
     }

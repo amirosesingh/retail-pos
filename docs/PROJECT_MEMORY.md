@@ -604,3 +604,30 @@ No schema/data/global-collation/configuration repair or grant change is authoriz
 or required by it. Actual SQL compile and isolated fixture success do not establish
 all Electron readiness/settings/auth gates or real checkout success; tracker
 SQL-08 retains the separate settings-read blocker observed after restart.
+
+TRF-15 correction code/isolated tests and its exact ROSEGILL live migration were
+separately approved. The reviewed migration was applied on 31 October at 15:47
+(Asia/Brunei) as
+live history20261031074715; future live changes still require separate approval.
+Preserve existing shortage checks and partial/
+zero close-without-remainder behavior. Stock picking and linked-request completion
+must commit together; retry requires immutable dispatch intent plus current
+authorization and must not deduct twice. Native identity/terminal binding comes
+only from the verified server session, never renderer labels. Do not set goods
+verification fields to attribute request paperwork. Preserve current notification
+channels and fresh-event behavior; lost-response delivery remains best effort.
+Historical dispatched rows without proof and changed document facts stay review-only.
+See database/transfer-dispatch-recovery-review.md for the exact migration and limits.
+
+TRF-16 confirms shared child-ID formatting must not be nested for request and
+fulfilment records in the same child table: its replaced UUID suffix can steal
+the original row. New fulfilment headers use a full-request-derived,
+domain-separated UUID while checkout/draft identities and legacy children remain
+preserved. Request approval reconciles central authority, not local/cache absence;
+pending local children deny replacement until synchronization. The owner
+separately approved the parent guard and one exact historical request-line repair:
+applied on 31 October at16:31Brunei, guard history20261031083126 and an append-only
+maintenance audit. Existing stock/SKU/prices, child/header states, approval grants
+and shortage checks stay preserved. Future live repairs require their own evidence
+and exact-project approval; never infer missing original quantities from a child.
+Physical-device and fresh-installer limits remain tracked separately.

@@ -30,6 +30,8 @@ only; the owner's subsequent Batch 1 approval below authorizes its bounded fixes
 | 17 | PERF-24 committed/pushed/scoped verified | 8b840192 fixes first-paint report completeness, restored-session landing and scoped-settings initial readiness/retry. Independent review passed; 11 focused suites/96 tests passed. Latest PR checks are green. No formula/grant/Membership change. |
 | 18 | AUTH-12 committed / exact-head CI passed | afcf92d1 shared public PIN response boundary covers both transports, alias, lockouts and validation probes. Private counters, grants and offline handling remain.13 suites/157 tests plus12 isolated SQL scenarios passed. Exact-head securityCI:578suites/3765tests passed/1skipped; Android, Windows, iOS and Cloudflarebeta checks passed. No merge/publication. |
 | 19 | TERM-13 implemented / focused verification and independent review | Protected recovery links, awaited saved-profile status, retry/stale-read fences, strict Electron store restore and verified roster503 classification. Preserve saved bytes, true denials, branch authority and checkout; all-platform automated route/gate cases pass. Physical-device acceptance remains separate. |
+| 20 | TRF-15 implemented / isolated verification passed; approved live upgrade applied | Atomic dispatch/request completion, immutable retry intent, verified native actor and safe errors. ROSEGILL migration history20261031074715 verified. Require final exact-head CI/beta merge and separate installed-device acceptance; the reported transfer remains undispatched. |
+| 21 | TRF-16 source implemented / approved guard and exact repair applied | Nested item-ID collision reproduced and corrected for new fulfilments; shared checkout IDs unchanged. Guard history20261031083126 and one audited request-line restoration verified; request-integrity read returns true. Final source CI/beta merge and physical-device acceptance remain separate. |
 
 Membership is **ON HOLD** throughout. Each future batch requires a recoverable
 baseline, specific files/dependencies, expected behavior, risks, regression tests,
@@ -1607,6 +1609,45 @@ UI uses Vite HMR; native Main-code changes require a normal restart, not a claim
 of instant backend hot replacement. Local SQL readiness was not certified by
 the window-title/process check.
 
+TRF-15 approved separate correction/test batch31October. Owner reported approved
+stock request ST-STR1-WEB01-20261031-0001 fails dispatch. ROSEGILL pos readback
+shows child transfer approved, no dispatched quantity/time, requested1 pair,
+source STR1 stock0 and no child warehouses. Logs23514 report Short by1; the
+current incident rolled back correctly. Never invent stock or bypass shortage.
+
+Source trace additionally confirms post-commit linked-request closure can fail
+after dispatch; native approval has a verified-staff adapter but dispatch lacks
+one; browser transport discards structured SQL error codes. Owner approved fixing
+these paths with isolated tests, preserving stock/approval/permission/branch
+rules. Any live migration needs separate exact-project approval; no real transfer,
+approval, stock, grants or settings writes during tests. Baseline33f1996e, branch
+codex/transfer-dispatch-recovery-beta, separate from approved SQL-07 loading fix.
+Implement atomic dispatch/request completion with validated linked ownership and
+existing fulfilment semantics; do not silently change partial-request rules.
+Use agents with distinct server/SQL and client/error ownership plus independent
+review. Record and escalate business-rule ambiguities; Membership remains ON HOLD.
+
+TRF-15 preparation checkpoint31October: final migration SHA256
+972A62DF76BEE85B93CBC7CB0C7C3985EC8C7109D6456AFBC1B36384B35579D2.
+Root and independent review repeat44 canonical-trigger and44 captured-live
+25-trigger PostgreSQL scenarios plus8 real independent-session races. New private
+append-only dispatch intent prevents fabricated replay after mutable document
+facts change; strict new-RPC item/ceiling preflight runs before stock mutation.
+Legacy void clamp/default semantics and original ACL remain; new internals are
+owner-only, public atomic RPC authenticated-only, verified-native adapter service-only.
+Collision/default/owner/PK rollback and repeated-application tests pass.
+
+Actual SQL output passes the real client proof parser for web/native/replay and
+uppercase UUIDs; stale ceilings fail before any stock movement. Client suites,
+types and scoped lint pass. The final native response sanitizer/status correction
+also passed independent review; only bounded diagnostic code/status stay private,
+definite denials do not retry and ambiguous gateway errors retain one exact retry.
+Combined full regression checks and a scoped beta PR against the latest beta are
+the remaining source-delivery steps. Applying the new receipt table/routines requires
+separate exact ROSEGILL-project approval; deploy DB before new client. No live
+dispatch/stock write, notification-channel change, installer/OTA publication or
+main promotion. Full scope, limits and recovery:
+[transfer dispatch review](database/transfer-dispatch-recovery-review.md).
 PR348 merged to beta as33f1996e649e9b601d0f7d8f5a8485554b877cdc after
 root/independent verification of exact a4b5abd4 checks: security/regressions,
 Android, Windows, iOS, Cloudflare beta and labels passed. CodeRabbit skipped;
@@ -1687,3 +1728,162 @@ notification best-effort limitations remain separately tracked; no exactly-once
 external delivery guarantee is claimed. Atomic stock/request completion remains
 required. Actual duplicate-product ambiguity must fail before stock mutation,
 not silently merge quantities or rewrite existing records.
+
+Integration checkpoint31October: SQL-07 source ba61f580 is already merged through
+PR349 into beta e1c78d84997acda118338f8acae5b697b38ce76f; exact-head platform,
+security/regression and Cloudflare checks passed. Its merge tree equals reviewed
+head. TRF-15 source42160659 is now being integrated with that latest beta; retain
+both evidence histories above. Only this ledger's parallel append conflicted;
+no application-code conflict. SQL-08 remains pending separate investigation/
+approval; do not treat SQL-07's merge as proof that the settings/auth gate is fixed.
+
+TRF-15 final source verification: full590-suite/3953-test run passed using stable
+local test TEMP/TMP and four workers; default sandbox runs had transform-temp
+ENOENT and two environment-dependent timeouts, not accepted as passing evidence.
+Full ESLint/TypeScript and schema/install-order/sync/merge checks passed. After
+latest-beta integration def3dc20,63 focused actual catalogue/transfer/protocol
+checks passed. SQL SHA remains972A62DF…579D2 with44+44 isolated scenarios and8
+real PostgreSQL races independently repeated; no live rows were used. Independent
+server/client review finds no remaining scoped blocker. Capture exact-head PR
+checks before merge; live migration and installed-device acceptance remain pending.
+Both local development servers respond200 at8080/8081. The owner pressed Escape
+to stop Computer Use; root stopped app interaction and continued only approved
+source/testing/Git work. Do not infer further GUI control from this checkpoint.
+
+31October owner explicitly approved applying the exact tested TRF-15 migration
+20261031042447_atomic_transfer_dispatch_and_verified_native_actor.sql to ROSEGILL
+→rosegill0011@gmail.com's Org(bjxgimekljzlnwejuawj)→pos(qhrufhtbeguxydenzfey),
+https://qhrufhtbeguxydenzfey.supabase.co, database postgres. Approved SHA256
+972A62DF76BEE85B93CBC7CB0C7C3985EC8C7109D6456AFBC1B36384B35579D2;
+application/readback and independent ACL/definition review are the active steps.
+Prior definitions/ACLs are retained in ignored local cache. PR350 exact head
+e7d7e089 has passing security/regression, Android/Windows, iPhone, Cloudflare
+and label checks; CodeRabbit skipped, not a completed review. Apply once with
+preflight, then verify and merge beta only. No real dispatch/stock adjustment,
+Membership change, production promotion or installer/OTA publication authorized.
+
+TRF-15 approved migration applied once on 31 October at 15:47 (Asia/Brunei); live history
+20261031074715. Immediately-before preimages match saved definitions/ACLs;
+the reviewed SQL checksum is unchanged. Readback verifies the exact guarded
+warehouse-picker copy, original legacy wrapper ACL/owner, exact lifecycle/history
+delta (CRLF-normalized comparison) and unchanged lifecycle/history metadata.
+The new 6-column receipt table is empty, RLS-enabled and owner-only with the
+append-only trigger; effective execute denies anon/authenticated/service_role on
+all new private helpers, grants the public atomic endpoint only authenticated
+and native adapter only service_role. Security-advisor categories are unchanged;
+the SECURITY DEFINER advisory adds the intended authenticated atomic endpoint
+(92→93 routine findings). Its explicit permission/branch checks and role grants
+passed isolated and installed-definition review; do not remove required access
+or claim all historical advisories are resolved. The no-policy informational
+advisory adds the private receipt table (10→11): no raw client/service-role table
+grants or policies are intended; only the guarded owner routines access it.
+Read-only 15:49 (Asia/Brunei) check of ST-STR1-WEB01-20261031-0001 still shows approved,
+dispatched_at NULL and receipt count 0. No real dispatch/stock correction was run.
+Persist before/after definitions in ignored cache; no existing business rows or
+grants were rewritten by the migration. Independent live read-only review passed:
+all new bodies match approved source, 8 private-helper execute checks per role,
+15 receipt-table privilege checks, complete receipt shape/trigger/default and
+single migration history verified. Evidence is retained in ignored independent
+postapply metadata. Only three documentation files change after e7d7e089; rerun
+final exact-head beta checks and merge. Physical-device acceptance remains pending.
+
+TRF-16 new owner report: 31 October 15:51:30 (Asia/Brunei),23514
+TRANSFER_REQUEST_INVALID. Owner explicitly asked to check and fix. Live log traces
+legacy dispatch→atomic core line33, rejecting invalid linked-request facts.
+Read-only rows show SR-BET2-WEB01-20261031-0001 has zero items; its approved child
+ST-STR1-WEB01-20261031-0001 holds the single original line ID, quantity1, source
+stock0 and no dispatch. Real derivation proves stableChildId(parent,"6",0) equals
+stableChildId(stableChildId(parent,"8",0),"6",0). The child upsert reassigned the
+original line; the new SQL validator correctly refuses unproven request completion.
+Prior fixtures had independent header IDs and missed this actual creation sequence.
+
+Approved necessary source correction: derive only NEW fulfilment header UUIDs
+from the full normalized request UUID using domain-separated WebCrypto SHA-256
+(UUIDv8), preserving existing sourceRequestId discovery, legacy fulfilment IDs,
+normal/direct/draft line IDs and the shared stableChildId used by checkout.
+Test real save/approval/upsert sequence, retry/case/failure behavior and no stock
+mutation. Also prepare an additive immutable stock_transfer_items.transfer_id
+guard with isolated same-parent/native-sync/retry tests after checking legitimate
+writers; do not apply it live without separate exact-project approval. Never
+relax missing-parent/branch/approval/shortage guards to dispatch this record.
+Original request-line repair needs audit-backed original values and separate
+review/approval; do not infer original quantities from the child. Root reads audit
+history while agent owns bounded source/tests/guard preparation. PR350 remains
+draft and merge is held. Membership remains on hold; no data repair is performed.
+
+Owner confirmed the original SR-BET2-WEB01-20261031-0001 request was exactly
+1 pair of W572511105-3-8 M's Signature Basketbal Shoes, STR1→BET2. Barcode
+6927050888645/SKU-000000178020 identifies the surviving child snapshot, cost49.
+Client-reported approval history lists this product/quantity1 and the original
+activity reports total1; no authoritative old item row was found in change_history.
+Prepare an exact guarded one-row request-line restoration using the owner's
+confirmation plus those observations, a new item UUID and unchanged child row.
+Test idempotence, stale-state refusal, rollback and preserved product/movement
+facts with actual triggers. Add an immutable change_history audit entry using
+verified deployed schema and explicit maintenance attribution. This confirmation
+is evidence for the proposed values, not permission to apply the repair or the
+new parent-identity guard live; present both exact changes/project for approval.
+
+TRF-16 necessary compatibility dependency: selected local SQL is not authoritative
+proof that no legacy child exists online. Request approval itself uses the online
+verified path, so add only a named transfer-request approval-state read through
+the existing native verified relay, bounded by the requested ID and its parent/
+child lines. Derive permissions/staff/terminal branch server-side; no generic
+service-role query, renderer branch override, grant change, broad catalogue read
+or shared router-mode change. Browser uses its authenticated central client.
+Refresh the saved request and existing child before deciding new identity or
+repairing an approval acknowledgement; reject ambiguity, unavailable authority,
+changed scope and stale deferred UI updaters. All-zero approval does not require
+crypto. Existing partial/zero/branch/approval semantics remain unchanged.
+
+Owner explicitly approved applying both exact TRF-16 changes to ROSEGILL→
+rosegill0011@gmail.com's Org(bjxgimekljzlnwejuawj)→pos(qhrufhtbeguxydenzfey),
+https://qhrufhtbeguxydenzfey.supabase.co: guard20261031080149 SHA256
+36D22E840F9D5063AC447AD6F1E4854062F4939D81B84DA7FE1A55AAEE40C0E3, then
+one-line maintenance repair SHA256
+6C99BACB16C6D90238A23DEBB290EBB3CFB42CB1E2005D141EDF3A557735A7CF.
+Apply unchanged guard first, verify it, then exact bounded repair; abort on busy
+or changed facts. Original child/header/stock/SKU/price/grant preservation and
+audited idempotence remain mandatory. Final isolated evidence:40 repair cases
+and9 real concurrency cases independently repeated, with an additional real-role
+trigger privilege check; actual creation/approval sequence23 cases and15 focused
+UI/API/checkout/receipt/branch suites182 tests pass. Scope excludes real dispatch,
+general data repair, new approval rules, Membership and publication/promotion.
+
+TRF-16 deployment on 31 October (Asia/Brunei): approved immutable-parent guard
+applied once at 16:31:26, history20261031083126; exact approved maintenance script
+succeeded at 16:31:50. Preflight confirmed both approved headers/revisions, one
+surviving child row, missing original line, no receipt and absent guard. Root
+readback 16:32:26 verifies restored row8a470cac…97e6 requested1/approved1/cost49,
+new UUID distinct from unchanged child rowffc1465d…0000 (revision3). Both headers
+remain approved/revisions2 and1; no dispatch/receipt. Read-only request-integrity
+helper now returns true. Audit3d69b8ca…f017 records exact line/owner-confirmed facts
+with postgres maintenance attribution. SKU/barcode/cost/selling169/source stock0
+remain unchanged. Guard enabled BEFORE UPDATE OF transfer_id; SECURITY INVOKER,
+owner-only execute; existing branch/approval rules untouched. No real dispatch or
+business stock movement. Independent live verification at16:33:36 also passed,
+matching original incident headers/child exactly. Ignored before/after evidence
+retained. Final source regression/CI and beta merge remain, separate from devices.
+
+TRF-16 limits: older installed Electron clients may create local pending collisions
+until updated; cloud guard does not retroactively repair local SQL. Concurrent
+old/new creators can leave competing pending headers, rejected for review; atomic
+dispatch permits at most one child to fulfil the request. No global uniqueness
+or automatic legacy re-key is authorized. Creation tests exposed missing private
+approval/one-argument helpers in canonical fresh-installer SQL; captured live
+definitions are used only in fixtures. Preserve that separate fresh-install audit
+item and do not claim all installer/device behavior verified.
+
+TRF-16 final verification: full592 suites/3987 tests passed after one compatibility
+fix kept all pre-existing relay reads' one-argument call shape; the new named read
+alone receives scope. The original full run caught that health-call regression;
+purchase-order code/tests were not changed. Full lint/TypeScript, merge readiness
+and SQL install-order checks passed. Root repeated23 actual create/save/approve
+scenarios with captured25 live baseline triggers and immutable-parent guard,
+40 maintenance SQL scenarios and9 real busy-transaction cases; independent review
+also passed23 workflow cases,185 focused tests and10 real PostgreSQL busy/ACL
+checks. Shared checkout ID helper, Electron and receipt-printer files have no diff.
+Independent live readback after approved guard/repair passed. No other empty
+request-with-linked-transfer cases were found by the bounded related-data scan.
+Commit only reviewed files, leave unrelated .temp untracked, require final-head
+CI and merge PR350 into beta; publication/main promotion remain unapproved.
