@@ -1378,6 +1378,30 @@ PIN redirect. Asked which trigger the owner observes (selection, password
 submission or blank-password submission) before changing intended login rules.
 The phone's actual installed artifact/build mode remains unverified.
 
+Owner clarified the redirect occurs AFTER entering BOTH administrator username
+and password and pressing Sign in, while terminal management shows it online.
+The blank-password PIN shortcut is not the reported trigger and must remain
+unchanged. Independent in-memory actual AppShellFrame/startupDecision/TerminalLogin
+reproduction confirms a connection verdict can replace the Admin form with
+OfflineStatus; recovery remounts it on cashier and loses its failure message.
+This is a confirmed possible source path, not proof of that phone's exact trace.
+Normal password rejection itself does not select PIN. Approved TERM-13 follow-up
+will preserve ONLY ephemeral method/error/failure/busy/request ownership in
+AppShellFrame across its existing gate returns; no credentials or auth state,
+no bypass, no login form outside gates. Shared request identity must suppress
+duplicate in-flight requests across remounts and stale completions after reset.
+Clear UI state after successful identity adoption/logout; keep web Admin and
+native PIN defaults and intentional blank-password behavior. Agent owns this
+narrow TerminalLogin/AppShell/controller/tests slice; root records/reviews it.
+
+Read-only release comparison: last published beta is1.4.81-beta.1,26October.
+Its tag is an ancestor of the current source (no older checkout copied over).
+That tag's staff-list request sends terminalToken but omits deviceBindingProof;
+current source readNativeTerminalProof sends the already-saved valid proof (or
+existing device hash fallback). An online heartbeat is not proof that every
+legacy request includes required identity. Do not weaken proof verification,
+wipe registration or require reactivation simply to hide this compatibility gap.
+
 NOTIF-22 approved preparation completed31October: CLI-generated additive file
 20261030234813_guard_activity_acknowledgement_branch_ownership.sql replaces only
 service-only sync_apply_activity_events. The first generated234442 filename
@@ -1400,6 +1424,16 @@ No notifications, rule selections, recipients or live data were changed. This
 is source preparation; exact-project application approval/readback is still
 required before applying this notification upgrade. See
 database/notification-upgrades-review.md for full evidence and rollback limits.
+
+NOTIF-22 exact8fa492ac CI caught two stale static-test expectations: canonical
+SQL's explicit migration allowlist lacked the new file, and the notification
+state test expected union SQL inline in the generator rather than its new exact
+shared migration source. Root updates those two assertions to retain explicit
+inventory plus shared union/context/ownership/rollback checks. No runtime SQL
+or permission logic change is required. The local untracked zero-byte booking
+placeholder remains excluded from commits; it must not be deleted or silently
+allowed merely to make the local inventory test pass. Clean-CI verification is
+required after this bounded test correction.
 
 SHIFT-14 version2 live application completed after the resumed exact approval:
 unchanged reviewed SQL applied once, history20261030234442; original helper/ACL

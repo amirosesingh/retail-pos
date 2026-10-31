@@ -224,6 +224,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261030102943_optimize_branch_catalogue_sync_reads.sql",
       "supabase/migrations/20261030153259_confirm_shift_closure_sync_acknowledgement.sql",
       "supabase/migrations/20261030164829_bind_shift_closure_proof_to_requested_revision.sql",
+      "supabase/migrations/20261030234813_guard_activity_acknowledgement_branch_ownership.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
