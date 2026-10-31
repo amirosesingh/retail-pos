@@ -551,3 +551,15 @@ content, service-only access, existing global-event handling and legitimate
 retries. Canonical/generator parity,23 isolated SQL cases and6 actual two-session
 races pass independently. This migration is not applied live; preparation
 approval does not authorize application, notification-rule activation or messages.
+
+TERM-13 Admin view retention: preserve chosen sign-in method, visible failure
+and in-flight request ownership across existing shell readiness/connection
+returns. Keep this presentation state instance-local and credential-free; reset
+on verified identity adoption/logout and reject stale request completions.
+Do not bypass a startup/branch/device gate to retain the form. Preserve web
+password-only access, native PIN default and the explicit blank-password PIN
+shortcut. An online registry heartbeat does not establish that a legacy client's
+staff-list/login request supplies the required terminal proof. The last published
+beta1.4.81-beta.1 is an ancestor of the current source and omits device proof
+from roster requests; current source sends the existing saved proof. Test the
+updated installed app before attributing that phone's exact failure to one path.

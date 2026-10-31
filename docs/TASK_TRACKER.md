@@ -1441,3 +1441,59 @@ saved locally before application. Post-readback service-only/invoker privileges
 unchanged; empty proofv2 and two existing closed-row cloud4/requested9 validation
 proofs passed. No business rows rewritten. See shift-closure-sync-review.md for
 exact target, evidence, rollback boundary and remaining installed-device limits.
+
+TERM-13 Admin follow-up implemented/scoped verified31October: AppShellFrame now
+owns an instance-local presentation controller (method/error/failure/busy plus
+active request symbol). Existing startup/registration/authorization gates remain
+first; no identifier, PIN, password or authenticated account enters this state.
+Explicit password submit retains Admin even before platform detection. Pending
+requests block method changes and duplicate submissions across recovery remount;
+identity adoption/logout invalidates earlier catch/finally results. Preserve the
+existing native password-manager offer only after verified success. Blank native
+username/no-password PIN shortcut remains; browsers remain password-only.
+Native Admin configuration errors on Android/iOS/Electron now link directly to
+protected connection recovery; the prior Electron signed-in Settings dead end
+is removed. Authentication/session/permission functions are unchanged.
+
+Root independent10suite/140test regression and scoped lint/diff checks passed.
+Implementer8focused suites54tests, full TypeScript, syntax and lint passed.
+scripts/test-terminal-login-view.cjs ran10 real Chrome DOM scenarios at390/1440
+for Android/iOS/Electron and web, with zero external requests and page/console
+errors. It uses actual login components plus synthetic Auth/roster and a gate
+unmount wrapper; actual AppShell decisions are exercised separately in unit
+tests. Root visually checked the390Android error view: Admin retained, failure
+wrapped/readable, credentials blank after remount and direct repair link visible.
+This does not verify real Supabase Auth or the installed phone. Revert the
+bounded UI commit to roll back; never clear device registration/credentials or
+change account grants as recovery.
+
+REFRESH-17/PERF-18 further fixture investigation confirms a PREEXISTING normal
+online nested-dialog freeze, independently reproduced outside OfflineGate:
+separate copies of Radix focus/pointer-lock contexts prevent coordination,
+leaving body pointer events locked after Escape. Fixture-only aliases to one
+already-installed module copy fix the reproduction without package changes.
+Owner approval is requested for the additional shared build-config/helper/test
+batch (AGENTS scope-expansion rule); no actual Vite change is made yet. Keep
+this distinct from the authorized portal-ownership/iOS cleanup correction and
+do not declare its full nested suite green or release unstable popup code.
+
+Owner separately approved the shared dialog-module build correction31October:
+make builds use one existing installed copy of the two focus/pointer-lock
+modules, with a shared helper, Vite configuration and regression tests. No
+package upgrade, dependency-version change, authorization or database edits.
+Implement only the verified module-identity correction, retain all original
+exports/consumers, and independently test full nested behavior across build
+targets. This supersedes the preceding pending-build-approval state; isolated
+fixture aliases alone are not deployment. Agent owns the narrow helper/Vite/
+test integration plus approved popup slice; root owns reconciliation/commits.
+
+Owner's31October delivery instruction: after fixes, create a NEW reviewed PR,
+merge without replacing prior code or damaging unrelated features, and commit
+to beta. This explicitly authorizes the completed scoped beta merge, not main
+promotion or installer/OTA publication. Keep source/test/migration/publication
+states distinct. After agents finish, verify the latest beta baseline and final
+diff; use an isolated integration worktree if needed so local live preview is
+not interrupted. Carry forward the already reviewed/approved PR342 changes
+without resets or branch-wide copies; new PR must clearly identify supersession
+and scope. Run exact-head CI/checkouts/permissions before a standard merge
+commit, enforce the reviewed head, and preserve signing/operator files.

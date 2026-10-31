@@ -82,6 +82,7 @@ import { LocationBootGuard } from "@/platforms/web/components/pos/LocationBootGu
 import { activeLocations } from "@/lib/locations";
 import { flushTicketDrafts } from "@/lib/session-draft";
 import { localDb } from "@/core/local-db/local-db";
+import { createLoginView } from "@/lib/login-view";
 import { startSyncEngine } from "@/lib/sync-engine";
 
 /** The only screens any signed-in account may open. Everything else must have
@@ -135,6 +136,17 @@ function AppShellFrame({ children }: { children: ReactNode }) {
     lock,
     can,
   } = useAuth();
+  // The shell survives its startup/connection gates. Keep only sign-in
+  // presentation and request ownership here so returning does not select PIN
+  // or erase a password refusal. This controller never retains credentials.
+  const [loginView] = useState(createLoginView);
+  const loginIdentity = user ? terminalUser?.userCode ?? authUserId ?? user.staffId : null;
+  const previousLoginIdentity = useRef(loginIdentity);
+  useEffect(() => {
+    if (previousLoginIdentity.current === loginIdentity) return;
+    previousLoginIdentity.current = loginIdentity;
+    loginView.reset();
+  }, [loginIdentity, loginView]);
   const [collapsed, setCollapsed] = useSidebarCollapsed();
   useNotificationDeliveryPump(Boolean(user) && dataReady);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -369,7 +381,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
             Offline mode — this terminal is registered and keeps working locally.
           </div>
         )}
-        <TerminalLogin />
+        <TerminalLogin view={loginView} />
       </>
     );
   if ((isDesktop() || isNative()) && isManagementDevice() && !can(isNative() ? "can_use_management_mobile" : "can_use_management_pc"))

@@ -1,42 +1,42 @@
 import { ApprovalTokenButton } from "@/platform-config/approval-token";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Loader2, Lock, ReceiptText } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 import { useAuth } from "@/lib/pos-auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useBranding } from "@/lib/branding";
-import { isNative, isTerminalApp } from "@/platform-config/platform";
-import { EmergencyAccessLink } from "@/components/shared/EmergencyAccessLink";
+import { isTerminalApp } from "@/platform-config/platform";
 import { CashierPinLogin } from "@/platforms/web/components/auth/CashierPinLogin";
 import { isExternalEmail, usernameFromAddress } from "@/lib/internal-domains";
 import { failureFromAuthError, isConfigurationFailure, loginFailureMessage, type LoginFailure } from "@/lib/login-failure";
 import { hasNativePasswordManager, offerSaveLogin, requestSavedLogin } from "@/platform-config/password-manager";
+import { createLoginView, type LoginView } from "@/lib/login-view";
 
-export function TerminalLogin() {
+export function TerminalLogin({ view: suppliedView }: { view?: LoginView } = {}) {
   const { login } = useAuth();
   const brand = useBranding();
+  const [localView] = useState(createLoginView);
+  const view = suppliedView ?? localView;
+  const { mode, error, failure, busy } = useSyncExternalStore(view.subscribe, view.getSnapshot, view.getSnapshot);
   // Every browser, including localhost preview, is back-office access.
   // Registration and the PIN staff-list flow belong only to native shells.
   const [terminal, setTerminal] = useState(false);
-  useEffect(() => setTerminal(isTerminalApp()), []);
-  const [error, setError] = useState("");
-  // Why the last attempt failed. A connection problem gets a way out of the
-  // screen; only a genuine refusal is presented as a wrong password.
-  const [failure, setFailure] = useState<LoginFailure | null>(null);
-  const [busy, setBusy] = useState(false);
-  const submitting = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    setTerminal(isTerminalApp());
+    return () => { mounted.current = false; };
+  }, []);
   const usernameField = useRef<HTMLInputElement>(null);
   const passwordField = useRef<HTMLInputElement>(null);
-  const [tab, setTab] = useState("admin");
+  // Platform detection may finish after the operator's choice. Only the
+  // initial default depends on the platform; a browser always uses passwords.
+  const tab = terminal ? mode ?? "cashier" : "admin";
   const [pinIdentifier, setPinIdentifier] = useState("");
   const [routed, setRouted] = useState(false);
-
-
-  useEffect(() => {
-    setTab(terminal ? "cashier" : "admin");
-  }, [terminal]);
 
   return (
     <div className="flex min-h-dvh items-center justify-center bg-background px-4 py-6">
@@ -58,14 +58,14 @@ export function TerminalLogin() {
         <Tabs
           value={tab}
           onValueChange={(v) => {
-            setTab(v);
-            setError("");
+            if (view.getSnapshot().busy) return;
+            if (v === "admin" || (terminal && v === "cashier")) view.chooseMode(v);
           }}
         >
           {terminal && (
             <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="cashier">Sign in with PIN</TabsTrigger>
-              <TabsTrigger value="admin">Supervisor / Admin</TabsTrigger>
+              <TabsTrigger value="cashier" disabled={busy}>Sign in with PIN</TabsTrigger>
+              <TabsTrigger value="admin" disabled={busy}>Supervisor / Admin</TabsTrigger>
             </TabsList>
           )}
 
@@ -81,7 +81,7 @@ export function TerminalLogin() {
                 initialUsername={pinIdentifier}
                 onAdminLogin={() => {
                   setRouted(false);
-                  setTab("admin");
+                  view.chooseMode("admin");
                 }}
               />
             </TabsContent>
@@ -92,7 +92,7 @@ export function TerminalLogin() {
               className="space-y-4"
               onSubmit={async (e) => {
                 e.preventDefault();
-                if (submitting.current) return;
+                if (view.getSnapshot().busy) return;
                 // Password managers can fill DOM fields without firing React's
                 // change event. Read the submitted form so that autofill works
                 // on both native WebViews as well as in the browser.
@@ -105,30 +105,24 @@ export function TerminalLogin() {
                 if (terminal && typed && !isExternalEmail(typed) && !submittedPassword) {
                   setPinIdentifier(usernameFromAddress(typed));
                   setRouted(true);
-                  setError("");
-                  setTab("cashier");
+                  view.chooseMode("cashier");
                   return;
                 }
-                setBusy(true);
-                submitting.current = true;
-                setError("");
-                setFailure(null);
+                const request = view.beginRequest();
+                if (!request) return;
                 try {
                   const res = await login(submittedIdentifier, submittedPassword);
                   if (!res.ok) {
-                    setError(res.error ?? "Sign in could not be completed.");
-                    setFailure((res as { code?: LoginFailure }).code ?? null);
+                    view.failRequest(request, res.error ?? "Sign in could not be completed.", (res as { code?: LoginFailure }).code ?? null);
                   } else if (hasNativePasswordManager) {
                     // The native OS password manager owns successfully verified credentials.
                     void offerSaveLogin(submittedIdentifier, submittedPassword).catch(() => {});
                   }
                 } catch (cause) {
                   const code = failureFromAuthError(cause as Error);
-                  setFailure(code);
-                  setError(loginFailureMessage(code));
+                  view.failRequest(request, loginFailureMessage(code), code);
                 } finally {
-                  submitting.current = false;
-                  setBusy(false);
+                  view.finishRequest(request);
                 }
 
               }}
@@ -137,11 +131,11 @@ export function TerminalLogin() {
                 <Button type="button" variant="outline" className="w-full" disabled={busy}
                   onClick={() => {
                     void requestSavedLogin().then((saved) => {
-                      if (!saved) return;
+                      if (!mounted.current || !saved) return;
                       if (usernameField.current) usernameField.current.value = saved.username;
                       if (passwordField.current) passwordField.current.value = saved.password;
-                      setError("");
-                    }).catch(() => setError("No saved login was selected. Enter your username and password to continue."));
+                      view.setError("");
+                    }).catch(() => { if (mounted.current) view.setError("No saved login was selected. Enter your username and password to continue."); });
                   }}>
                   Use saved password
                 </Button>
@@ -158,7 +152,7 @@ export function TerminalLogin() {
                   autoCorrect="off"
                   spellCheck={false}
                   placeholder="Email or username"
-                  onChange={() => setError("")}
+                  onChange={() => view.setError("")}
                 />
               </div>
               <div className="space-y-1">
@@ -169,13 +163,17 @@ export function TerminalLogin() {
                   name="password"
                   type="password"
                   autoComplete="current-password"
-                  onChange={() => setError("")}
+                  onChange={() => view.setError("")}
                 />
               </div>
               {error && (
                 <div className="space-y-2">
                   <p className="text-sm text-destructive">{error}</p>
-                  {failure && isConfigurationFailure(failure) && (isNative() ? <EmergencyAccessLink /> : (
+                  {failure && isConfigurationFailure(failure) && (isTerminalApp() ? (
+                    <Button asChild variant="outline" className="w-full">
+                      <Link to="/recovery" search={{ section: "connection" }}>Open connection settings</Link>
+                    </Button>
+                  ) : (
                     <Button
                       type="button"
                       variant="outline"
