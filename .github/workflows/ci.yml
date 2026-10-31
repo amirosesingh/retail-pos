@@ -38,6 +38,8 @@ jobs:
         run: node scripts/test-stock-request-creation.mjs
       - name: Guarded request-line repair and audit rollback tests
         run: node scripts/test-request-line-repair.mjs
+      - name: History bootstrap UUID paging and scope regressions
+        run: node scripts/test-change-history-bootstrap-keyset.mjs
       - name: Notification acknowledgement ownership and delivery regressions
         run: node scripts/test-notification-upgrades.mjs
       - name: SQL schema and synchronization contract checks

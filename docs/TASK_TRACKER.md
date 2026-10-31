@@ -2034,3 +2034,123 @@ while other physical-device, offline sale and final installed acceptance remain.
 Retain original backend restoration record locally; leave current owner-approved
 HTTPS beta address and both latest previews running. Source commit/PR next after
 final scoped diff review; no publication or production promotion is authorized.
+
+SQL-09 owner approval31October: separately approved diagnostic-only sync changes
+and isolated tests after existing read-only investigation. Baseline c15fdd21,
+branch codex/sync-bootstrap-diagnostics-beta. Approved surface: only allowlisted
+failed-table/phase/origin/HTTP-status/non-JSON breadcrumbs in CloudClient, bootstrap,
+lifecycle, Main logging and diagnostics normalizer, plus isolated actual-module
+tests. Preserve request payloads, return/error identity, retry/timing, transactions,
+rollback, queues and checkpoints; no record/schema/permission/setting/Membership
+change, no manual resync/repair/cursor reset or security bypass. This identifies
+the next automatic failure; it is not approval to repair the still-unproven503.
+
+Related SQL-08 correction a140c12f is in beta PR351; full595 suites/4091tests,
+TSC/full lint and platform/security CI passed. Its separately approved compatible
+HTTPS beta backend/original native origin let normal owner sign-in verify and seal
+the existing proof; Settings/Approvals open, same STR1 branch and SQL ready.
+Formal immutable security diff scan is in progress; preserve its source unchanged.
+Latest permanent decisions/evidence are in that PR's existing memory/tracker;
+merge/reconcile them before this diagnostics branch is run or submitted, preserving
+both task histories. Do not copy an older source tree over the running correction.
+
+Readonly SQL-09 evidence: local change_history checkpoint1083 is below MIN_VALID
+VERSION2206/current3510, last updated19October, retention7days. No new bootstrap
+job; current503 could be settings prefetch or targeted gap recovery. Sampled
+Supabase bootstrap requests were all200; bounded beta Worker tail missed the later
+503 completion, so provider/layer/table is unproven. Native normal-close warning
+correctly refuses to close with the expired-history error. Latest renderer was
+reloaded via its development server only; Electron Main/SQL/pending work stayed
+running and no close guard was bypassed. A read-only diagnostic proposal is not a
+transaction or baseline repair. No existing proofs, cloud claims or grants changed.
+SQL-09 implementation frozen: exactly five approved source files and one new
+actual-module test; author4suites/75tests and independent6suites/83tests passed.
+TypeScript, scoped lint, five CJS syntax checks and diff checks passed. Tagging
+preserves payload bytes, original/frozen/primitive errors and retry/transaction/
+checkpoint ordering; only registry/enums/status/boolean enter existing log events.
+It does not repair503. Original SQL-08 PR351 has now merged into beta f4fc2207;
+parents c15fdd21/a140c12f and exact tested tree708422dc8bc7fa64d44ff68cc3fb5c0672e6f139
+verified. Formal Codex Security scan33f2e945 completed with all21paths reviewed,
+zero reportable findings; all required platform/CF/permission checks passed.
+CodeRabbit was skipped, not counted as a completed review. No publication/main
+promotion. Merge current beta into this isolated diagnostic branch and preserve
+both task histories, then run combined regressions; no copying older code.
+
+Requested latest-code reload completed by restarting only native Vite at the
+same43117origin (nowPID11272). Main6552 was kept running because normal close
+correctly reported incomplete synchronization/expired change_history tracking;
+no force exit/close-guard bypass. Reloaded UI remained signed in at STR1.
+A separate no-window read-only helper is probing exactly one page of pos_settings
+and settings_scoped with the existing sealed verified device proof. It opens no
+SQL connection and imports no Main/lifecycle/apply routines; no downloaded rows,
+credentials, URLs or request/response bodies are logged, followed or applied.
+Only sanitized table/status/nonJSON/finite error class/latency are retained in
+ignored local evidence. Results remain pending; this probe is not a resync/repair.
+
+Latest31October owner steering: keep audit-scope correction and GLOBAL-history
+policy PENDING; do not prepare/apply those access-rule changes. Owner requested
+commit/merge of approved updated features and publication of the beta version,
+preserving existing functionality. Subsequently asked to fix the change_history
+JSON/download gap now if feasible while beta release preparation continues.
+This reactivates narrow download reliability/performance work ONLY, not the held
+access-scope/GLOBAL decisions or any production promotion.
+
+SQL-11 active plan under that fix request: cap only change_history page growth,
+use bounded smaller-page retries for non-JSON503 pressure, and reuse immutable
+server redaction lookup sets while retaining identical rows/fields/masking. Add
+actual-module lossless paging, no-duplicate-apply/checkpoint and denied-operation
+regressions. Other tables' default page policy remains unchanged. Prepare/test
+UUID-index ordering for the existing audit read case only, preserving every
+current predicate, cursor representation, grant and returned row. This SQL
+optimization is preparation only: any live routine application needs a separate
+exact-project proposal/approval after isolated tests. No audit event/branch scope,
+SKU, stock, sale, PIN, permission, database setting or checkpoint is rewritten.
+Recoverable baseline62abf346 (integrates beta f4fc2207 and diagnostic source3c810d1e).
+
+SQL-09 runtime verification: new automatic failure at10:35:55UTC identifies
+change_history/download/gap_recovery, HTTP503, nonJsonResponse=true. Settings
+prefetch and local SQL application were not that event's failing stage. Separate
+one-page read-only probes of pos_settings/settings_scoped/change_history returned
+200JSON; no SQL connection or rows applied by the probes. A completed temporary
+helper left an Error window; only that identified no-SQL helper was removed.
+The corrected file-output/redirected helper exited cleanly. The GPU/network
+'killed' records do not establish a driver defect; no GPU/config change is made.
+Integrated diagnostics passed root596suites/4114tests plus TSC/fullESLint. No live
+routine/record/policy change, manual sync/repair or cursor reset performed.
+Beta publication remains a separate checked-commit operation under existing
+release controls; unsigned IPA and signed OTA are distinct artifacts. Preserve
+existing signing keys and operator settings. Capture final tested release SHA.
+
+SQL-11 implementation/verification31October: two source files cap only
+change_history pages100/no-growth and retry only trusted non-JSON503 twice at the
+same cursor with250/500ms delay. Two immutable redaction sets moved outside
+recursion; exact row/field/masking parity retained. No access-policy/Membership,
+checkout, stock, price, grant, operator setting, queue or cursor-reset change.
+Independent client5suites94tests and redactor5suites55tests passed. Root combined
+598suites4143tests passed (threads2 runner); fullTSC/fullESLint and final scopedlint
+passed. Initial default-fork runner was abandoned after worker failures; thread
+run passed without harness/source changes. Node regressions84/86 passed initially;
+2publication cases were GitBash sandbox startup denials, then all6publication
+guard cases passed outside that sandbox (all86 covered). Do not misclassify runner
+restrictions as an application defect. A redundant single-thread rerun was stopped
+after the full success became available. Canonical32/captured32 SQL scenarios,
+canonical24tests and independent repeats passed; actual target ICUen-US synthetic
+1031UUID parity check true, no business rows scanned. No local real-PG ICU run
+is claimed. SQL test is added to CI. Prepared read optimization preserves generic
+plan limitations and old installer100/live10 bounds; see database review.
+
+Owner explicitly approved exact SQL-11 live application. Verified ROSEGILL link
+beta, orgbjxgimekljzlnwejuawj, posqhrufhtbeguxydenzfey ACTIVE_HEALTHY before write.
+Applied unchanged20261031105517_change_history_bootstrap_uuid_keyset.sql,
+SHA256893885224E5C5CF0297E4AF8A51C39E14F5C978D57CF2408B1D84C7C2DA3C1FE,
+at11:04:29UTC/19:04:29Brunei, livehistory20261031110429. Deployed full-definition
+MD5b4306345e37e638c610e8484a479c510 equals captured source with only approved tail
+replacement; metadataMD5eb2fe1be978f2957607466022359f559 unchanged, ownerpostgres,
+SECURITYDEFINER unchanged, anon/authenticatedfalse/service_roletrue EXECUTE.
+No business data/index/grant/checkpoint writes. Held audit/GLOBAL correction stays
+PENDING. Affected-PC full recovery remains unverified; do not skip history/reset
+baseline or force-close POS. Next: commit exact source/docs, security diff scan,
+new beta PR/exact-head platform checks, merge beta and owner-requested beta
+publication from the checked merge SHA. No production promotion. Existing iOS
+key presence/match verified without printing private material; signed OTA is a
+separate release artifact and is not implied by an unsigned IPA build.

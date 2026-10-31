@@ -2,6 +2,7 @@ const { normalizeSyncPayload } = require("./uuid-payload.cjs");
 const { recordId } = require("./uuid-fields.cjs");
 const { policy } = require("./conflicts.cjs");
 const { toLocalValue } = require("./row-codec.cjs");
+const { tagBootstrapDiagnostic } = require("../diagnostics.cjs");
 
 // A cloud row is authoritative when its version matches a cached terminal
 // row. A genuinely pending terminal edit has already advanced its version and
@@ -144,19 +145,20 @@ class CloudClient {
       }
       throw error;
     }
+    let nonJsonResponse = false;
     const data = await response
       .json()
-      .catch(() => ({ ok: false, error: `HTTP ${response.status}` }));
+      .catch(() => { nonJsonResponse = true; return { ok: false, error: `HTTP ${response.status}` }; });
     if (!response.ok || data?.ok === false) {
       // PostgREST reports raised SQL errors in `message`, while the POS relay
       // uses `error`. Preserve both so diagnostics show SYNC_BRANCH_FORBIDDEN
       // instead of an unhelpful generic HTTP 400.
       const message = data?.error ?? data?.message ?? `HTTP ${response.status}`;
-      throw Object.assign(new Error(message), {
+      throw tagBootstrapDiagnostic(Object.assign(new Error(message), {
         code: data?.code ?? `HTTP_${response.status}`,
         status: response.status,
         detail: data?.details ?? data?.detail ?? null,
-      });
+      }), { httpStatus: response.status, nonJsonResponse });
     }
     return normalizeSyncPayload(data);
   }
