@@ -588,3 +588,11 @@ deployed-definition drift; test captured installed definitions as well as fresh
 generated installs. Owner confirmation and central readback show the original
 31October STR1 OPEN shift uploaded successfully after correction. This does not
 certify all queues, live checkout or the separate stale-OPEN acknowledgement gap.
+
+Permanent delivery rule: beta and production PRs must contain only approved
+feature/fix diffs and necessary reviewed dependencies, preserving other behavior.
+No repository/check-out replacement or blanket staging. Check the latest target
+diff, dependent workflow regressions and exact reviewed-head CI before merging;
+retain a recoverable baseline/targeted rollback and report unverified behavior.
+Merge method alone is not a correctness guarantee. Production promotion still
+needs separate explicit owner approval. See AGENTS.md for mandatory enforcement.

@@ -18,6 +18,25 @@
   operator-managed database configuration. PR labels do not grant access or
   authorize production deployment.
 
+## Scoped PR changes and regression protection — beta and production
+
+- Creating, updating or merging a PR must preserve existing features. Include
+  only the approved feature/fix changes and their necessary reviewed dependencies;
+  do not replace a checkout/repository, copy older source over newer code, stage
+  every local file, or bundle unrelated edits/refactoring.
+- Compare against the latest destination branch, inspect the final file/content
+  diff and resolve conflicts by preserving both intended behaviors. A particular
+  Git merge method does not guarantee correctness. Never treat a clean merge as
+  proof that workflows, permissions or data integrity still work.
+- Before merge, run relevant regression checks for the changed feature and its
+  shared dependencies, including applicable checkout/receipt, authorization,
+  branch/cluster, offline/sync and platform paths. Require passing checks on the
+  exact reviewed head; document limits instead of claiming untested behavior is
+  preserved. Keep a recoverable baseline and a targeted rollback path.
+- If a necessary correction expands the approved scope, obtain owner approval
+  first. These rules apply equally to beta and production PRs and do not replace
+  the separate explicit approval required for each production promotion.
+
 ## Supabase configuration (do not regress)
 
 `supabaseConfig()` in `src/lib/external-supabase-config.ts` is the single

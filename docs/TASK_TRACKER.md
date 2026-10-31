@@ -1586,3 +1586,23 @@ is verified recovered; other queued tables and actual checkout/closure acceptanc
 are separate. Details/recovery: database/shift-closure-sync-review.md.
 Popup source committed0d0bcd66; include this separate correction in the new beta
 PR and require exact-head checks. Preserve unrelated drafts and all branch guards.
+
+Owner's permanent PR rule31October: creating/updating/merging a PR must preserve
+existing functionality in beta AND production. Commit only approved feature/fix
+diffs and necessary reviewed dependencies; never replace the repository or include
+unrelated local changes. Review the latest destination diff and relevant dependent
+workflow tests before merge, retain rollback history, and report unverified behavior.
+Record this in AGENTS.md/PROJECT_MEMORY.md; a specific merge method is not the
+safety guarantee. Existing separate exact production-promotion approval remains.
+
+Delivery checkpoint: new beta PR348 created from clean integration branch
+codex/terminal-recovery-beta atdaa304f0, carrying38 approved scoped commits from
+unchanged beta bce925a2; final clean585file/3878test suite passed. Exact-head
+platform/security checks run before merge. No main promotion/installers/OTA.
+Owner requested local Electron as well: separate DESKTOP_BUILD/beta Vite server
+8081 and actual Electron from the latest source launched; process928 has visible
+Register — Retail window and8081/@vite/client responds200. Browser8080 remains
+live. Saved native/operator configuration was not changed by the agent. Renderer
+UI uses Vite HMR; native Main-code changes require a normal restart, not a claim
+of instant backend hot replacement. Local SQL readiness was not certified by
+the window-title/process check.
