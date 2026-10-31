@@ -1,0 +1,5 @@
+/* Already-open retained surfaces resume at their settled geometry. Closing
+   changes data-state first, preserving the ordinary exit and next entrance. */
+[data-offline-gate-portals] [data-offline-gate-restored][data-state="open"] {
+  animation-name: none !important;
+}

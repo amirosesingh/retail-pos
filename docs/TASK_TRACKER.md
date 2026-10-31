@@ -1497,3 +1497,70 @@ not interrupted. Carry forward the already reviewed/approved PR342 changes
 without resets or branch-wide copies; new PR must clearly identify supersession
 and scope. Run exact-head CI/checkouts/permissions before a standard merge
 commit, enforce the reviewed head, and preserve signing/operator files.
+
+Owner clarified the delivery instruction: a particular merge method is not
+mandatory. The requirement is targeted, reviewed changes to the existing beta
+code, preserving unrelated features and history; do not replace the repository
+or stage every local file. Continue the approved fixes and regression checks,
+then create the new beta PR. The popup restoration candidate remains uncommitted
+until its nested-dialog dismissal regression passes independent verification.
+
+Clean integration checkpoint: codex/terminal-recovery-beta at86056b72, based on
+unchanged origin/beta bce925a2, passed the full582file/3832test Vitest suite,
+merge readiness and70table SQL Server/sync contracts. Independent18suite/
+127test review covers online/local checkout, receipt/print, native branch and
+activation boundaries, offline PIN and login-view guards. These are committed
+baseline results, not certification of the still-uncommitted popup candidate
+or physical installed devices. The preview was restarted from the latest source
+worktree on8080 and /@vite/client returned200. Unrelated drafts remain excluded.
+
+SHIFT-15 new owner report31October: a cashier opens a shift on a recent
+production installation but it does not update centrally (installed beta/other
+version still uncertain). Start read-only cloud/source/release investigation;
+do not assume the closure-proof correction fixes OPEN uploads. Need the affected
+branch, opening time, installed version and pending/failed sync diagnostic to
+identify the exact local record. Preserve existing shifts, counts, transactions,
+terminal ownership and permissions; no live record repair authorized. An agent
+traces production opening/upload behavior while root checks cloud facts.
+
+SHIFT-15 confirmed live regression: ROSEGILL pos ACTIVE_HEALTHY;31October
+00:00–11:18Brunei logs show245 aggregate400responses. PostgreSQL context names
+pos_sync_assert_shift_ownership→sync_apply_shifts→five-argument aggregate.
+The deployed aggregate/batch establish pos.sync_terminal but NOT pos.sync_branch;
+the newly applied closure guard requires that missing branch context even for
+OPEN rows. Source/canonical test fixtures already establish both and missed
+this deployed-definition compatibility case. Production PC heartbeat reports
+1.4.79, current STR1 cloud opening latest30October15:04Brunei, no31October row.
+These facts identify a genuine upload blocker, separate from cashier grants.
+Read-only live definitions saved under ignored cache for isolated reproduction.
+Prepare a narrowly scoped correction proposal; do not remove ownership checks,
+relabel pending rows, bypass permissions or apply any live repair without exact
+approval. Both source and deployed-definition tests are required before release.
+
+Owner approved SHIFT-15 preparation and isolated tests only. Prepare a CLI-named
+additive migration targeting the verified-terminal aggregate/batch overloads,
+establishing transaction-local pos.sync_branch only after existing scope
+validation. Preserve all deployed amendments, ACLs and legacy overloads; abort
+on unexpected definitions. Add deployed-preimage/OPEN/CLOSED/replay/rollback and
+foreign-branch denial tests. No live application or record edits are approved.
+
+REFRESH-17/PERF-18 popup correction implemented and independently verified:
+gate-owned portals remain inside the inert boundary and park during outages;
+Activity preserves drafts while releasing focus/pointer/scroll effects. Nested
+cleanup finishes before ordered restore/settle commits, with dismissal paused
+until listeners are ready. Existing normal online freezes also required one
+Dialog-compatible installed copy of each Radix focus/dismissable runtime in all
+four build targets; no dependency upgrade. Only owned popup surfaces settle
+retained entrance geometry; ordinary closes/new opens and child indicators keep
+their animation. Native offline access and outside-gate controls are preserved.
+
+Final frozen source: official and independent46scenario Chrome runs pass with
+zero external requests/errors; independent16deep nested two-outage/fast-flap
+cases retain child→middle→outer Escape order. Three unit suites46tests, types,
+scoped lint/syntax/diff checks pass. The no-motion-CSS A/B independently retained
+correct layer order but produced357 raw ResizeObserver errors, demonstrating
+the separate geometry requirement; that failing diagnostic is not a pass claim.
+Fixture covers390/1440 layouts, all10wrappers, same-scope draft/DOM retention,
+Retry, revoked/switching scope, native bypass, cold start, paused unmount and
+simulated iPhone drawer cleanup. Physical devices/live checkout remain untested
+by this fixture. Root reviewed final scoped diff; commit only approved files.

@@ -49,6 +49,7 @@ import { NativeWindowFrame } from "@/components/shared/NativeWindowFrame";
 import { zodCspBootScript } from "@/lib/csp-zod-boot";
 import { AndroidPushAgent } from "@/platforms/mobile/components/AndroidPushAgent";
 import { OfflineGate } from "@/platforms/mobile/components/OfflineGate";
+import { OfflineGateSnapshot } from "@/components/shared/OfflineGateSnapshot";
 import {
   APP_RESUME_EVENT,
   CONNECTIVITY_RESTORED_EVENT,
@@ -457,6 +458,7 @@ function TillRuntime() {
     <AuthProvider>
       <PermissionsProvider>
         <PosProvider>
+          <OfflineGateSnapshot />
           <RulesBridge>
             <AuditTracker />
             <AndroidPushAgent />

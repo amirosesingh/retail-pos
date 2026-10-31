@@ -5,12 +5,19 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { createOfflineGateContent, createOfflineGatePortal } from "@/lib/offline-gate-snapshot-context";
+
+const GateDialogContent = createOfflineGateContent(DialogPrimitive.Content);
+const GateDialogOverlay = createOfflineGateContent(DialogPrimitive.Overlay, []);
 
 const Dialog = DialogPrimitive.Root;
 
 const DialogTrigger = DialogPrimitive.Trigger;
 
-const DialogPortal = DialogPrimitive.Portal;
+const ScopedDialogPortal = createOfflineGatePortal(DialogPrimitive.Portal);
+function DialogPortal(props: React.ComponentProps<typeof DialogPrimitive.Portal>) {
+  return <ScopedDialogPortal {...props} />;
+}
 
 const DialogClose = DialogPrimitive.Close;
 
@@ -18,7 +25,7 @@ const DialogOverlay = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Overlay>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Overlay>
 >(({ className, ...props }, ref) => (
-  <DialogPrimitive.Overlay
+  <GateDialogOverlay
     ref={ref}
     className={cn(
       "ui-overlay-motion fixed inset-0 z-50 bg-black/45 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
@@ -35,7 +42,7 @@ const DialogContent = React.forwardRef<
 >(({ className, children, showCloseButton = true, overlayClassName, ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay className={overlayClassName} />
-    <DialogPrimitive.Content
+    <GateDialogContent
       ref={ref}
       className={cn(
         "pos-dialog-content pos-popup-surface ui-surface-motion fixed left-1/2 top-1/2 z-50 grid max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto overscroll-contain rounded-2xl border border-border bg-popover p-5 shadow-xl sm:p-6 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
@@ -48,7 +55,7 @@ const DialogContent = React.forwardRef<
         <X className="h-4 w-4" />
         <span className="sr-only">Close</span>
       </DialogPrimitive.Close>}
-    </DialogPrimitive.Content>
+    </GateDialogContent>
   </DialogPortal>
 ));
 DialogContent.displayName = DialogPrimitive.Content.displayName;

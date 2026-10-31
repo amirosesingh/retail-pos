@@ -563,3 +563,18 @@ staff-list/login request supplies the required terminal proof. The last publishe
 beta1.4.81-beta.1 is an ancestor of the current source and omits device proof
 from roster requests; current source sends the existing saved proof. Test the
 updated installed app before attributing that phone's exact failure to one path.
+
+31October delivery clarification: the owner requires targeted commits/diffs to
+the existing beta code and preservation of unrelated features, rather than a
+particular Git merge method. Never replace the checkout, stage all local files,
+or copy older code over current beta. A new reviewed beta PR is authorized after
+verification; production promotion and installer/OTA publication remain separate.
+
+Popup recovery preserves same-scope loaded browser presentation only, always
+inert while disconnected. Initial/unconfirmed, revoked, permission/configuration
+and changed-scope states remain gated. Owned portals must pause document effects
+without discarding drafts, complete delayed focus cleanup before restoring
+parents/children in order, and keep Retry accessible. Shared Radix focus/layer
+runtime identity is required across builds; do not deduplicate blindly to an
+older incompatible module or suppress global browser errors. Final isolated
+browser/unit evidence is in TASK_TRACKER.md; it does not certify physical devices.
