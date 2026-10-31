@@ -596,3 +596,11 @@ diff, dependent workflow regressions and exact reviewed-head CI before merging;
 retain a recoverable baseline/targeted rollback and report unverified behavior.
 Merge method alone is not a correctness guarantee. Production promotion still
 needs separate explicit owner approval. See AGENTS.md for mandatory enforcement.
+
+SQL-07 is an approved query-only local SQL correction. Keep existing normalized
+catalogue ID comparisons explicit about collation when OPENJSON keys meet stored
+text, preserving current database semantics and all cluster/privacy/transfer guards.
+No schema/data/global-collation/configuration repair or grant change is authorized
+or required by it. Actual SQL compile and isolated fixture success do not establish
+all Electron readiness/settings/auth gates or real checkout success; tracker
+SQL-08 retains the separate settings-read blocker observed after restart.
