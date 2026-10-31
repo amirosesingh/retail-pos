@@ -13813,18 +13813,44 @@ CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."issu
 
 REVOKE ALL ON FUNCTION public.sync_feed_issued_vouchers() FROM PUBLIC, anon, authenticated;
 
-CREATE OR REPLACE FUNCTION public.sync_apply_activity_events(p_rows jsonb) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
-DECLARE v_count integer; v_row jsonb;
+CREATE OR REPLACE FUNCTION public.sync_apply_activity_events(p_rows jsonb)
+RETURNS integer LANGUAGE plpgsql SECURITY INVOKER
+SET search_path = public, pg_temp AS $fn$
+DECLARE v_count integer; v_branch text := current_setting('pos.sync_branch',true);
 BEGIN
-
-
-  INSERT INTO public."activity_events" ("id","event_type","severity","title","message","actor_id","actor_name","actor_role","terminal_id","terminal_name","store_id","entity_type","entity_id","amount","meta","whatsapp_status","whatsapp_error","client_event_id","created_at","previous_state","new_state","cleared_by","branch_id")
-  SELECT "id","event_type","severity","title","message","actor_id","actor_name","actor_role","terminal_id","terminal_name","store_id","entity_type","entity_id","amount","meta","whatsapp_status","whatsapp_error","client_event_id","created_at","previous_state","new_state","cleared_by","branch_id" FROM jsonb_populate_recordset(NULL::public."activity_events", COALESCE(p_rows,'[]'::jsonb))
-  ON CONFLICT ("id") DO UPDATE SET "cleared_by"=EXCLUDED."cleared_by";
+  -- The verified native batch owns this context. Raw rows cannot select a
+  -- branch, and management/unregistered/revoked terminals gain no new path.
+  PERFORM public.pos_sync_validate_scope('default',v_branch,current_setting('pos.sync_terminal',true));
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r
+    WHERE r->>'store_id' IS DISTINCT FROM v_branch) THEN
+    RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN';
+  END IF;
+  INSERT INTO public.activity_events (
+    id,event_type,severity,title,message,actor_id,actor_name,actor_role,
+    terminal_id,terminal_name,store_id,entity_type,entity_id,amount,meta,
+    whatsapp_status,whatsapp_error,client_event_id,created_at,
+    previous_state,new_state,cleared_by,branch_id
+  )
+  SELECT id,event_type,severity,title,message,actor_id,actor_name,actor_role,
+    terminal_id,terminal_name,store_id,entity_type,entity_id,amount,meta,
+    whatsapp_status,whatsapp_error,client_event_id,created_at,
+    previous_state,new_state,cleared_by,branch_id
+  FROM jsonb_populate_recordset(NULL::public.activity_events,COALESCE(p_rows,'[]'::jsonb))
+  ON CONFLICT (id) DO UPDATE SET cleared_by=ARRAY(
+    SELECT DISTINCT value FROM unnest(COALESCE(public.activity_events.cleared_by,'{}'::text[]) ||
+      COALESCE(EXCLUDED.cleared_by,'{}'::text[])) AS acknowledged(value)
+  )
+  -- ON CONFLICT locks and checks the actual row, including a concurrent insert.
+  -- Unowned/global events keep their existing shared acknowledgement behavior;
+  -- their immutable branch and contents are never assigned to the uploader.
+  WHERE NULLIF(btrim(public.activity_events.store_id),'') IS NULL
+     OR lower(btrim(public.activity_events.store_id))=lower(btrim(v_branch));
   GET DIAGNOSTICS v_count=ROW_COUNT;
-
-
-
+  -- A filtered conflict is a refusal, not a successful partial acknowledgement.
+  -- Raising here rolls back every row, trigger side effect and batch receipt.
+  IF v_count <> jsonb_array_length(COALESCE(p_rows,'[]'::jsonb)) THEN
+    RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN';
+  END IF;
   RETURN v_count;
 END $fn$;
 
@@ -21499,14 +21525,21 @@ WHERE s.id=1 AND jsonb_typeof(s.notification_settings->'rules')='array'
 NOTIFY pgrst, 'reload schema';
 
 
--- supabase/migrations/20261025141638_personal_notification_acknowledgements.sql
+-- supabase/migrations/20261030234813_guard_activity_acknowledgement_branch_ownership.sql
 -- Acknowledgements are monotonic per recipient. A stale or offline snapshot
 -- must never erase another recipient's clear; event contents remain immutable.
 CREATE OR REPLACE FUNCTION public.sync_apply_activity_events(p_rows jsonb)
 RETURNS integer LANGUAGE plpgsql SECURITY INVOKER
 SET search_path = public, pg_temp AS $fn$
-DECLARE v_count integer;
+DECLARE v_count integer; v_branch text := current_setting('pos.sync_branch',true);
 BEGIN
+  -- The verified native batch owns this context. Raw rows cannot select a
+  -- branch, and management/unregistered/revoked terminals gain no new path.
+  PERFORM public.pos_sync_validate_scope('default',v_branch,current_setting('pos.sync_terminal',true));
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r
+    WHERE r->>'store_id' IS DISTINCT FROM v_branch) THEN
+    RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN';
+  END IF;
   INSERT INTO public.activity_events (
     id,event_type,severity,title,message,actor_id,actor_name,actor_role,
     terminal_id,terminal_name,store_id,entity_type,entity_id,amount,meta,
@@ -21521,8 +21554,18 @@ BEGIN
   ON CONFLICT (id) DO UPDATE SET cleared_by=ARRAY(
     SELECT DISTINCT value FROM unnest(COALESCE(public.activity_events.cleared_by,'{}'::text[]) ||
       COALESCE(EXCLUDED.cleared_by,'{}'::text[])) AS acknowledged(value)
-  );
+  )
+  -- ON CONFLICT locks and checks the actual row, including a concurrent insert.
+  -- Unowned/global events keep their existing shared acknowledgement behavior;
+  -- their immutable branch and contents are never assigned to the uploader.
+  WHERE NULLIF(btrim(public.activity_events.store_id),'') IS NULL
+     OR lower(btrim(public.activity_events.store_id))=lower(btrim(v_branch));
   GET DIAGNOSTICS v_count=ROW_COUNT;
+  -- A filtered conflict is a refusal, not a successful partial acknowledgement.
+  -- Raising here rolls back every row, trigger side effect and batch receipt.
+  IF v_count <> jsonb_array_length(COALESCE(p_rows,'[]'::jsonb)) THEN
+    RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN';
+  END IF;
   RETURN v_count;
 END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_activity_events(jsonb) FROM PUBLIC,anon,authenticated;
@@ -22017,6 +22060,623 @@ RETURNS SETOF jsonb LANGUAGE sql STABLE SECURITY INVOKER SET search_path='' AS $
 $fn$;
 REVOKE ALL ON FUNCTION public.shift_page_secure(text,timestamptz,timestamptz,timestamptz,uuid,integer) FROM PUBLIC,anon;
 GRANT EXECUTE ON FUNCTION public.shift_page_secure(text,timestamptz,timestamptz,timestamptz,uuid,integer) TO authenticated,service_role;
+COMMIT;
+
+-- supabase/migrations/20261029073121_add_missed_bill_historical_entry.sql
+-- Historical, already-paid sales are entered through a dedicated admin service.
+-- Do not attach them to today's drawer or bypass normal checkout/shift guards.
+BEGIN;
+CREATE TABLE IF NOT EXISTS public.missed_bill_entries (
+  id uuid PRIMARY KEY,
+  sale_id uuid NOT NULL UNIQUE REFERENCES public.sales(id),
+  store_id text NOT NULL REFERENCES public.stores(id),
+  original_reference text NOT NULL DEFAULT '',
+  occurred_at timestamptz NOT NULL,
+  original_cashier_id text NOT NULL,
+  original_shift_id uuid REFERENCES public.shifts(id),
+  stock_handling text NOT NULL CHECK(stock_handling IN ('deduct','already_corrected')),
+  stock_reason text NOT NULL,
+  reason text NOT NULL,
+  actor_id text NOT NULL,
+  terminal_id text,
+  request_value jsonb NOT NULL,
+  entered_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS missed_bill_original_reference_idx ON public.missed_bill_entries(store_id,lower(original_reference)) WHERE original_reference<>'';
+ALTER TABLE public.missed_bill_entries ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.missed_bill_entries FROM PUBLIC,anon,authenticated,service_role;
+GRANT SELECT,INSERT ON TABLE public.missed_bill_entries TO service_role;
+COMMENT ON TABLE public.missed_bill_entries IS 'Append-only historical sale provenance; original shift is attribution only, never a current drawer posting.';
+
+CREATE OR REPLACE FUNCTION public.pos_admin_add_missed_bill(p_entry jsonb,p_actor_id text,p_terminal text DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+DECLARE
+  key uuid; target text; occurred timestamptz; original_shift uuid; original_ref text;
+  actor public.app_users%ROWTYPE; cashier public.app_users%ROWTYPE; branch public.stores%ROWTYPE;
+  prior public.missed_bill_entries%ROWTYPE; receipt text; request_value jsonb;
+  item jsonb; tender jsonb; product public.products%ROWTYPE; position integer := 0;
+  qty integer; price numeric; cost numeric; reduction numeric; line_tax numeric;
+  subtotal numeric := 0; discount numeric := 0; tax numeric := 0; total numeric; received numeric := 0;
+  payments jsonb := '[]'::jsonb; payment_method text; stock_mode text; prevent_negative boolean;
+  movement_id uuid; delta_map jsonb := '{}'::jsonb; saved public.sales%ROWTYPE;
+BEGIN
+  IF current_user NOT IN ('service_role','postgres') THEN RAISE EXCEPTION 'Administrator server authorization required' USING ERRCODE='42501'; END IF;
+  SELECT * INTO actor FROM public.app_users WHERE user_id=p_actor_id AND is_active FOR SHARE;
+  IF NOT FOUND OR (actor.role::text<>'admin' AND COALESCE(actor.role_slug,'')<>'admin') THEN RAISE EXCEPTION 'Only an active administrator can add a missed bill' USING ERRCODE='42501'; END IF;
+  key := (p_entry->>'clientKey')::uuid; target := btrim(p_entry->>'storeId'); occurred := (p_entry->>'occurredAt')::timestamptz;
+  original_shift := NULLIF(p_entry->>'originalShiftId','')::uuid;
+  original_ref := btrim(COALESCE(p_entry->>'originalReference','')); stock_mode := p_entry->>'stockHandling';
+  IF key IS NULL OR NULLIF(target,'') IS NULL OR occurred IS NULL OR occurred>now()+interval '1 minute' THEN RAISE EXCEPTION 'A past sale date, branch and retry key are required'; END IF;
+  IF length(original_ref)>128 OR length(btrim(COALESCE(p_entry->>'reason','')))<3 OR length(p_entry->>'reason')>500
+    OR stock_mode NOT IN ('deduct','already_corrected') OR stock_mode IS NULL
+    OR length(btrim(COALESCE(p_entry->>'stockReason','')))<3 OR length(p_entry->>'stockReason')>500 THEN RAISE EXCEPTION 'Enter the reason and required stock-handling choice'; END IF;
+  IF NULLIF(actor.store_id,'') IS NOT NULL AND lower(actor.store_id)<>lower(target) THEN RAISE EXCEPTION 'Administrator account is assigned to another branch' USING ERRCODE='42501'; END IF;
+  IF p_terminal IS NOT NULL THEN
+    IF NOT EXISTS(SELECT 1 FROM public.terminal_tokens t WHERE t.id::text=p_terminal AND t.status IN ('active','used') AND t.revoked_at IS NULL
+      AND (t.location_id IS NULL OR lower(t.location_id)=lower(target))) THEN RAISE EXCEPTION 'Terminal branch mismatch or inactive registration' USING ERRCODE='42501'; END IF;
+  END IF;
+  SELECT * INTO branch FROM public.stores WHERE id=target AND deleted_at IS NULL AND is_active FOR SHARE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Select an active branch'; END IF;
+  request_value := jsonb_build_object('entry',p_entry,'actor',p_actor_id);
+  PERFORM pg_advisory_xact_lock(hashtextextended('missed-bill:'||key::text,0));
+  SELECT * INTO prior FROM public.missed_bill_entries WHERE id=key;
+  IF FOUND THEN
+    IF prior.request_value IS DISTINCT FROM request_value THEN RAISE EXCEPTION 'This retry key belongs to a different historical entry'; END IF;
+    SELECT * INTO saved FROM public.sales WHERE id=prior.sale_id;
+    RETURN jsonb_build_object('saleId',saved.id,'receiptNo',saved.bill_number,'sale',to_jsonb(saved),'items',
+      (SELECT COALESCE(jsonb_agg(to_jsonb(si) ORDER BY si.id),'[]'::jsonb) FROM public.sale_items si WHERE si.sale_id=saved.id));
+  END IF;
+  SELECT * INTO cashier FROM public.app_users WHERE user_id=p_entry->>'cashierId' AND is_active
+    AND (NULLIF(store_id,'') IS NULL OR lower(store_id)=lower(target)) FOR SHARE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Select an active cashier assigned to this branch or all branches'; END IF;
+  IF original_shift IS NOT NULL AND NOT EXISTS(SELECT 1 FROM public.shifts WHERE id=original_shift AND store_id=target
+    AND opened_at<=occurred AND (closed_at IS NULL OR closed_at>=occurred)) THEN RAISE EXCEPTION 'Original shift does not match the branch and sale time'; END IF;
+  IF original_ref<>'' THEN
+    PERFORM pg_advisory_xact_lock(hashtextextended('missed-reference:'||target||':'||lower(original_ref),0));
+    IF EXISTS(SELECT 1 FROM public.sales WHERE store_id=target AND lower(bill_number)=lower(original_ref))
+      OR EXISTS(SELECT 1 FROM public.missed_bill_entries WHERE store_id=target AND lower(original_reference)=lower(original_ref))
+    THEN RAISE EXCEPTION 'A bill with this original reference is already recorded; review history before adding it'; END IF;
+  END IF;
+  IF jsonb_typeof(p_entry->'items') IS DISTINCT FROM 'array' OR jsonb_array_length(p_entry->'items') NOT BETWEEN 1 AND 500
+    OR jsonb_typeof(p_entry->'payments') IS DISTINCT FROM 'array' OR jsonb_array_length(p_entry->'payments') NOT BETWEEN 1 AND 20 THEN RAISE EXCEPTION 'Add valid items and already-received payments'; END IF;
+  IF (SELECT count(*) FROM jsonb_array_elements(p_entry->'items'))<>(SELECT count(DISTINCT (value->>'productId')::uuid) FROM jsonb_array_elements(p_entry->'items')) THEN RAISE EXCEPTION 'Combine duplicate product lines'; END IF;
+  -- Lock in product order for safe simultaneous stock adjustments.
+  PERFORM 1 FROM public.products p JOIN jsonb_array_elements(p_entry->'items') x ON p.id=(x->>'productId')::uuid ORDER BY p.id FOR UPDATE OF p;
+  SELECT COALESCE((SELECT prevent_negative_stock_sale FROM public.pos_store_settings WHERE store_id=target),
+    (SELECT prevent_negative_stock_sale FROM public.pos_store_settings WHERE store_id=''),false) INTO prevent_negative;
+  FOR item IN SELECT value FROM jsonb_array_elements(p_entry->'items') LOOP
+    IF EXISTS(SELECT 1 FROM (VALUES ('quantity'),('unitPrice'),('unitCost'),('discountAmount'),('taxAmount')) f(name)
+      WHERE jsonb_typeof(item->f.name) IS DISTINCT FROM 'number' OR (item->>f.name)!~'^[0-9]+([.][0-9]+)?$') THEN RAISE EXCEPTION 'Item quantities and amounts must be finite nonnegative numbers'; END IF;
+    qty := (item->>'quantity')::integer; price := (item->>'unitPrice')::numeric; cost := (item->>'unitCost')::numeric;
+    reduction := (item->>'discountAmount')::numeric; line_tax := (item->>'taxAmount')::numeric;
+    IF qty NOT BETWEEN 1 AND 100000 OR qty::numeric<>(item->>'quantity')::numeric OR price>100000000 OR cost>100000000
+      OR reduction>price*qty OR reduction>100000000 OR line_tax>100000000
+      OR price<>round(price,2) OR cost<>round(cost,2) OR reduction<>round(reduction,2) OR line_tax<>round(line_tax,2)
+      OR (price*qty-reduction=0 AND line_tax>0)
+      THEN RAISE EXCEPTION 'Check historical quantities, prices, discount and tax'; END IF;
+    SELECT * INTO product FROM public.products WHERE id=(item->>'productId')::uuid AND deleted_at IS NULL;
+    IF NOT FOUND OR NOT public.product_available_in_catalogue(product.id,target) THEN RAISE EXCEPTION 'Product is not in this branch cluster catalogue'; END IF;
+    IF stock_mode='deduct' AND prevent_negative AND COALESCE((product.stock_by_store->>target)::numeric,0)<qty THEN RAISE EXCEPTION 'Insufficient branch stock; negative stock prevention is enabled'; END IF;
+    subtotal := subtotal+price*qty; discount := discount+reduction; tax := tax+line_tax;
+  END LOOP;
+  total := round(subtotal-discount+tax,2);
+  IF total<=0 OR total>100000000 THEN RAISE EXCEPTION 'Historical bill total must be positive and within the supported limit'; END IF;
+  FOR tender IN SELECT value FROM jsonb_array_elements(p_entry->'payments') LOOP
+    IF tender->>'method' NOT IN ('cash','card','bank_transfer','wallet') OR tender->>'method' IS NULL OR jsonb_typeof(tender->'amount') IS DISTINCT FROM 'number'
+      OR tender->>'amount'!~'^[0-9]+([.][0-9]+)?$' OR (tender->>'amount')::numeric<=0 OR (tender->>'amount')::numeric>100000000
+      OR (tender->>'amount')::numeric<>round((tender->>'amount')::numeric,2) THEN RAISE EXCEPTION 'Enter valid already-received payments'; END IF;
+    received := received+(tender->>'amount')::numeric;
+    payments := payments||jsonb_build_array(jsonb_build_object('method',tender->>'method','amount',(tender->>'amount')::numeric));
+  END LOOP;
+  IF round(received,2)<>total THEN RAISE EXCEPTION 'Already-received payments must equal the historical bill total'; END IF;
+  payment_method := CASE WHEN jsonb_array_length(payments)=1 THEN payments->0->>'method' ELSE 'split' END;
+  receipt := 'MB-'||key::text;
+  INSERT INTO public.sales(id,bill_number,store_id,cashier_id,cashier_name,subtotal_amount,discount_amount,tax_amount,total_amount,
+    paid_amount,change_amount,payment_type,payments,created_at,shift_id,client_transaction_id,created_by,updated_by,store_name_snapshot,store_address_snapshot)
+    VALUES(key,receipt,target,cashier.user_id,cashier.full_name,subtotal,discount,tax,total,total,0,payment_method,payments,occurred,NULL,
+      'missed:'||key::text,p_actor_id,p_actor_id,branch.name,branch.address) RETURNING * INTO saved;
+  FOR item IN SELECT value FROM jsonb_array_elements(p_entry->'items') LOOP
+    position := position+1; qty := (item->>'quantity')::integer; price := (item->>'unitPrice')::numeric;
+    reduction := (item->>'discountAmount')::numeric; line_tax := (item->>'taxAmount')::numeric;
+    SELECT * INTO product FROM public.products WHERE id=(item->>'productId')::uuid;
+    INSERT INTO public.sale_items(id,sale_id,branch_id,product_id,product_name,unit_price,unit_cost,quantity,discount_amount,tax_rate,created_at)
+      VALUES(md5(key::text||':item:'||position)::uuid,key,target,product.id,product.name,price,(item->>'unitCost')::numeric,qty,reduction/qty,
+        CASE WHEN price*qty-reduction>0 THEN line_tax/(price*qty-reduction) ELSE 0 END,occurred);
+    IF stock_mode='deduct' THEN
+      movement_id := md5(key::text||':stock:'||product.id::text)::uuid;
+      PERFORM public.stock_apply_delta(movement_id,product.id,target,-qty);
+      INSERT INTO public.item_activity_logs(id,product_id,store_id,activity_type,reference,quantity_delta,staff_name,note)
+        VALUES(movement_id,product.id,target,'adjustment',receipt,-qty,actor.full_name,'Historical missed bill: '||(p_entry->>'stockReason'));
+      delta_map := delta_map||jsonb_build_object(product.id::text,-qty);
+    END IF;
+  END LOOP;
+  position := 0;
+  FOR tender IN SELECT value FROM jsonb_array_elements(payments) LOOP
+    position := position+1;
+    INSERT INTO public.payment_transactions(id,source_type,sale_id,store_id,shift_id,terminal_id,amount,method,kind,reference,
+      cashier_id,cashier_name,note,paid_at,created_at,status,client_transaction_id,metadata)
+      VALUES(md5(key::text||':payment:'||position)::uuid,'sale',key,target,NULL,p_terminal,(tender->>'amount')::numeric,tender->>'method','payment',original_ref,
+        cashier.user_id,cashier.full_name,'Historical payment already received; no drawer collection',occurred,occurred,'completed','missed:'||key::text||':'||position,
+        jsonb_build_object('historicalEntry',true,'originalShiftId',original_shift,'enteredAt',now()));
+  END LOOP;
+  INSERT INTO public.missed_bill_entries(id,sale_id,store_id,original_reference,occurred_at,original_cashier_id,original_shift_id,
+    stock_handling,stock_reason,reason,actor_id,terminal_id,request_value)
+    VALUES(key,key,target,original_ref,occurred,cashier.user_id,original_shift,stock_mode,p_entry->>'stockReason',p_entry->>'reason',p_actor_id,p_terminal,request_value);
+  INSERT INTO public.record_edits(id,record_type,record_id,reference,store_id,terminal_id,action_key,edited_by,edited_by_name,
+    authorized_by,authorized_by_name,mode_used,before_value,after_value,stock_deltas,note)
+    VALUES(key,'sale',key::text,receipt,target,p_terminal,'MISSED_BILL_ADDED',p_actor_id,actor.full_name,p_actor_id,actor.full_name,'admin','{}'::jsonb,
+      jsonb_build_object('sale',to_jsonb(saved),'historicalEntry',p_entry,'enteredAt',now()),delta_map,p_entry->>'reason');
+  RETURN jsonb_build_object('saleId',saved.id,'receiptNo',saved.bill_number,'sale',to_jsonb(saved),'items',
+    (SELECT COALESCE(jsonb_agg(to_jsonb(si) ORDER BY si.id),'[]'::jsonb) FROM public.sale_items si WHERE si.sale_id=saved.id));
+END $fn$;
+REVOKE ALL ON FUNCTION public.pos_admin_add_missed_bill(jsonb,text,text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.pos_admin_add_missed_bill(jsonb,text,text) TO service_role;
+NOTIFY pgrst,'reload schema';
+COMMIT;
+
+-- Additive, service-only sign-in result contract. Existing PIN RPCs remain intact.
+-- No credentials, permissions, transactions or stock records are rewritten.
+BEGIN;
+
+CREATE OR REPLACE FUNCTION public.verify_terminal_pin_result(p_user_id text, p_pin text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'public', 'extensions', 'pg_temp'
+AS $$
+DECLARE
+  account public.app_users%rowtype;
+  terminal public.cashiers%rowtype;
+  attempt_key text;
+  state jsonb;
+  terminal_hash text;
+BEGIN
+  IF p_user_id IS NULL OR btrim(p_user_id) = '' OR p_pin IS NULL
+     OR length(p_pin) < 4 OR length(p_pin) > 32 THEN
+    RETURN jsonb_build_object('status', 'invalid_input');
+  END IF;
+  SELECT * INTO account FROM public.app_users a
+    WHERE lower(a.user_id) = lower(btrim(p_user_id))
+       OR lower(a.login_username) = lower(btrim(p_user_id))
+       OR lower(a.email) = lower(btrim(p_user_id))
+    ORDER BY (lower(a.user_id) = lower(btrim(p_user_id))) DESC, a.id LIMIT 1;
+  attempt_key := 'terminal-pin:' || lower(coalesce(account.user_id, btrim(p_user_id)));
+  PERFORM pg_advisory_xact_lock(hashtextextended(attempt_key, 0));
+  state := public.pin_throttle_status(attempt_key);
+  IF coalesce((state->>'locked')::boolean, true) THEN
+    RETURN jsonb_build_object('status', 'locked', 'locked_until', state->'locked_until');
+  END IF;
+  -- Unknown identifiers still consume the durable guessing budget. The hosted
+  -- endpoint must not expose account existence from these private statuses.
+  IF account.id IS NULL THEN
+    state := public.pin_throttle_fail(attempt_key, 5, 900, 300);
+    RETURN jsonb_build_object('status', 'invalid');
+  END IF;
+  IF account.is_active IS NOT TRUE THEN
+    RETURN jsonb_build_object('status', 'account_inactive');
+  END IF;
+  -- Same independent sign-in credential source as the local SQL verifier.
+  -- Never fall back to app_users.pin_hash, which belongs to action approval.
+  IF account.email LIKE '%@%' AND lower(account.email) NOT LIKE '%@pos-internal.local'
+     AND lower(account.email) NOT LIKE '%@pos.local' THEN
+    terminal_hash := account.offline_login_pin_hash;
+  ELSE
+    SELECT * INTO terminal FROM public.cashiers c
+      WHERE lower(c.username) = lower(account.user_id) AND c.is_active IS TRUE
+      ORDER BY c.updated_at DESC, c.id DESC LIMIT 1;
+    terminal_hash := terminal.pin_hash;
+  END IF;
+  -- pgcrypto's bf provisioner emits $2a$. Unsupported formats have not judged
+  -- this PIN and must not consume the guessing budget as an incorrect match.
+  IF coalesce(terminal_hash, '') !~ '^[$]2a[$][0-9]{2}[$][./A-Za-z0-9]{53}$' THEN
+    RETURN jsonb_build_object('status', 'credential_unavailable');
+  END IF;
+  IF terminal_hash IS DISTINCT FROM extensions.crypt(p_pin, terminal_hash) THEN
+    state := public.pin_throttle_fail(attempt_key, 5, 900, 300);
+    RETURN jsonb_build_object('status', 'invalid');
+  END IF;
+  PERFORM public.pin_throttle_reset(attempt_key);
+  UPDATE public.app_users SET last_login_at = now() WHERE id = account.id;
+  IF terminal.id IS NOT NULL THEN
+    UPDATE public.cashiers SET last_login_at = now() WHERE id = terminal.id;
+  END IF;
+  RETURN jsonb_build_object('status', 'verified', 'account', jsonb_build_object(
+    'user_id', account.user_id, 'full_name', account.full_name, 'role', account.role,
+    'store_id', account.store_id, 'email', account.email));
+END;
+$$;
+REVOKE ALL ON FUNCTION public.verify_terminal_pin_result(text,text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.verify_terminal_pin_result(text,text) TO service_role;
+NOTIFY pgrst, 'reload schema';
+COMMIT;
+
+-- Read-only performance correction for two UUID-keyed bootstrap cases only.
+-- Preserve catalogue predicates, returned JSON cursors, grants and page limits.
+-- The live minimum is 10; legacy fresh-install definitions may still use 100.
+BEGIN;
+DO $product_uuid_keyset$
+DECLARE
+  signature text := 'public.pos_sync_bootstrap_scoped(text,text,text,text,text,integer,integer)';
+  definition text;
+  original_definition text;
+  table_name text;
+  start_at integer;
+  end_at integer;
+  old_case text;
+  new_case text;
+  old_tail text := 'AND (p_after_cursor IS NULL OR jsonb_build_object(''id'',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object(''id'',x."id")::text LIMIT ';
+  new_tail text := 'AND (p_after_cursor IS NULL OR x."id">((p_after_cursor::jsonb)->>''id'')::uuid) ORDER BY x."id" LIMIT ';
+BEGIN
+  SELECT pg_get_functiondef(signature::regprocedure) INTO definition;
+  original_definition := definition;
+  FOREACH table_name IN ARRAY ARRAY['products','product_barcodes'] LOOP
+    start_at := strpos(definition, format('WHEN %L THEN',table_name));
+    IF start_at = 0 THEN RAISE EXCEPTION 'Missing inspected bootstrap case: %',table_name; END IF;
+    end_at := strpos(substring(definition FROM start_at),';');
+    IF end_at = 0 THEN RAISE EXCEPTION 'Incomplete bootstrap case: %',table_name; END IF;
+    old_case := substring(definition FROM start_at FOR end_at);
+    IF strpos(old_case,format('FROM public."%s" x',table_name)) = 0
+      OR strpos(old_case,'jsonb_build_object(''id'',x."id")::text cursor') = 0
+      OR strpos(old_case,'public.product_available_in_catalogue(') = 0
+      OR (strpos(old_case,'LIMIT LEAST(GREATEST(p_limit,100),2000)') = 0
+          AND strpos(old_case,'LIMIT LEAST(GREATEST(p_limit,10),2000)') = 0)
+    THEN RAISE EXCEPTION 'Unrecognized bootstrap read contract: %',table_name; END IF;
+    IF strpos(old_case,old_tail)>0 THEN
+      new_case := replace(old_case,old_tail,new_tail);
+      definition := overlay(definition PLACING new_case FROM start_at FOR end_at);
+    ELSIF strpos(old_case,new_tail)=0 THEN
+      RAISE EXCEPTION 'Unrecognized bootstrap keyset contract: %',table_name;
+    END IF;
+  END LOOP;
+  IF definition <> original_definition THEN EXECUTE definition; END IF;
+END $product_uuid_keyset$;
+NOTIFY pgrst, 'reload schema';
+COMMIT;
+
+-- Read-policy optimization only. Preserve the existing catalogue availability
+-- predicates and all checkout, transfer, mutation and ownership helpers.
+BEGIN;
+
+CREATE OR REPLACE FUNCTION public.readable_catalogue_product_ids()
+RETURNS SETOF uuid LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $fn$
+ WITH authorized_branches AS MATERIALIZED (
+  SELECT s.id,s.group_id FROM public.stores s
+  WHERE public.user_has_store_access(s.id)
+ ), branch_privacy AS MATERIALIZED (
+  -- Resolve the legacy and scoped JSON settings once per branch, not once
+  -- per product/branch pair. Reuse the exact existing precedence semantics.
+  SELECT s.id,public.branch_catalogue_is_private(s.id) AS private
+  FROM public.stores s
+ ), cluster_count AS MATERIALIZED (
+  SELECT count(DISTINCT NULLIF(btrim(s.group_id),'')) AS total FROM public.stores s
+ ), received_catalogue AS MATERIALIZED (
+  SELECT DISTINCT i.product_id,destination.id,destination.group_id
+  FROM public.stock_transfer_items i
+  JOIN public.stock_transfers t ON t.id=i.transfer_id
+  JOIN public.stores destination ON destination.id=t.to_store_id
+  WHERE t.posted_at IS NOT NULL AND t.status IN ('completed','completed_with_discrepancy')
+    AND COALESCE(i.quantity_verified,i.quantity_received,0)>0
+ )
+ SELECT p.id FROM public.products p
+ LEFT JOIN public.stores owner ON owner.id=p.owner_store_id
+ WHERE (SELECT public.is_staff_now()) AND EXISTS (
+  SELECT 1 FROM authorized_branches target
+  WHERE p.owner_store_id=target.id
+   OR (NULLIF(btrim(owner.group_id),'') IS NOT NULL AND btrim(owner.group_id)=btrim(target.group_id))
+   OR (owner.id IS NOT NULL AND NULLIF(btrim(owner.group_id),'') IS NULL AND NULLIF(btrim(target.group_id),'') IS NULL
+       AND NOT (SELECT privacy.private FROM branch_privacy privacy WHERE privacy.id=owner.id)
+       AND NOT (SELECT privacy.private FROM branch_privacy privacy WHERE privacy.id=target.id))
+   OR EXISTS (
+    SELECT 1 FROM received_catalogue received WHERE received.product_id=p.id
+      AND (received.id=target.id OR (NULLIF(btrim(target.group_id),'') IS NOT NULL AND btrim(received.group_id)=btrim(target.group_id)))
+   )
+   OR (NULLIF(btrim(p.owner_store_id),'') IS NULL AND (
+    EXISTS (
+     SELECT 1 FROM jsonb_each_text(COALESCE(p.stock_by_store,'{}'::jsonb)) stock
+     JOIN public.stores evidence ON lower(evidence.id)=lower(stock.key)
+     WHERE (evidence.id=target.id OR (NULLIF(btrim(target.group_id),'') IS NOT NULL AND btrim(evidence.group_id)=btrim(target.group_id)))
+       AND CASE WHEN stock.value ~ '^-?[0-9]+([.][0-9]+)?$' THEN stock.value::numeric<>0 ELSE false END
+    )
+    OR (NOT (SELECT privacy.private FROM branch_privacy privacy WHERE privacy.id=target.id)
+        AND (SELECT total FROM cluster_count)<=1)
+   ))
+ )
+$fn$;
+REVOKE ALL ON FUNCTION public.readable_catalogue_product_ids() FROM PUBLIC,anon;
+GRANT EXECUTE ON FUNCTION public.readable_catalogue_product_ids() TO authenticated,service_role;
+
+-- The uncorrelated set is computed once per SELECT statement; the former
+-- product-specific function repeated the same branch/settings work per row.
+DROP POLICY IF EXISTS "Staff can read products" ON public.products;
+CREATE POLICY "Staff can read products" ON public.products FOR SELECT TO authenticated
+ USING (id IN (SELECT public.readable_catalogue_product_ids()));
+NOTIFY pgrst,'reload schema';
+COMMIT;
+
+-- Owner-approved preparation and isolated tests only; not approved for live apply.
+-- Read-only service sync optimization. Explicit branch scope is distinct from
+-- the authenticated browser's union of authorized catalogue branches.
+BEGIN;
+CREATE OR REPLACE FUNCTION public.catalogue_product_ids_for_branch(p_branch text)
+RETURNS SETOF uuid LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $fn$
+ WITH target AS MATERIALIZED (
+  SELECT s.id,s.group_id,public.branch_catalogue_is_private(s.id) AS private
+  FROM public.stores s WHERE s.id=p_branch
+ ), branch_privacy AS MATERIALIZED (
+  SELECT s.id,public.branch_catalogue_is_private(s.id) AS private FROM public.stores s
+ ), cluster_count AS MATERIALIZED (
+  SELECT count(DISTINCT NULLIF(btrim(s.group_id),'')) AS total FROM public.stores s
+ ), received_catalogue AS MATERIALIZED (
+  SELECT DISTINCT i.product_id FROM public.stock_transfer_items i
+  JOIN public.stock_transfers t ON t.id=i.transfer_id
+  JOIN public.stores destination ON destination.id=t.to_store_id
+  JOIN target ON destination.id=target.id
+    OR (NULLIF(btrim(target.group_id),'') IS NOT NULL AND btrim(destination.group_id)=btrim(target.group_id))
+  WHERE t.posted_at IS NOT NULL AND t.status IN ('completed','completed_with_discrepancy')
+    AND COALESCE(i.quantity_verified,i.quantity_received,0)>0
+ )
+ SELECT p.id FROM public.products p
+ LEFT JOIN public.stores owner ON owner.id=p.owner_store_id
+ CROSS JOIN target
+ WHERE p.owner_store_id=target.id
+  OR (NULLIF(btrim(owner.group_id),'') IS NOT NULL AND btrim(owner.group_id)=btrim(target.group_id))
+  OR (owner.id IS NOT NULL AND NULLIF(btrim(owner.group_id),'') IS NULL AND NULLIF(btrim(target.group_id),'') IS NULL
+      AND NOT (SELECT privacy.private FROM branch_privacy privacy WHERE privacy.id=owner.id)
+      AND NOT target.private)
+  OR EXISTS (SELECT 1 FROM received_catalogue received WHERE received.product_id=p.id)
+  OR (NULLIF(btrim(p.owner_store_id),'') IS NULL AND (
+   EXISTS (
+    SELECT 1 FROM jsonb_each_text(COALESCE(p.stock_by_store,'{}'::jsonb)) stock
+    JOIN public.stores evidence ON lower(evidence.id)=lower(stock.key)
+    WHERE (evidence.id=target.id OR (NULLIF(btrim(target.group_id),'') IS NOT NULL AND btrim(evidence.group_id)=btrim(target.group_id)))
+      AND CASE WHEN stock.value ~ '^-?[0-9]+([.][0-9]+)?$' THEN stock.value::numeric<>0 ELSE false END
+   )
+   OR (NOT target.private AND (SELECT total FROM cluster_count)<=1)
+  ))
+$fn$;
+REVOKE ALL ON FUNCTION public.catalogue_product_ids_for_branch(text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.catalogue_product_ids_for_branch(text) TO service_role;
+
+DO $branch_catalogue_sync_reads$
+DECLARE
+ signature text;
+ definition text;
+ before_patch text;
+ table_name text;
+ marker text;
+ start_at integer;
+ end_at integer;
+ read_case text;
+ old_predicate text;
+ new_predicate text;
+ patched_case text;
+BEGIN
+ FOREACH signature IN ARRAY ARRAY[
+  'public.pos_sync_bootstrap_scoped(text,text,text,text,text,integer,integer)',
+  'public.pos_sync_counts_scoped(text,text,text,integer)'
+ ] LOOP
+  SELECT pg_get_functiondef(signature::regprocedure) INTO definition;
+  before_patch:=definition;
+  IF strpos(definition,'public.pos_sync_validate_read_scope(')=0 THEN
+   RAISE EXCEPTION 'Expected validated read scope absent from %',signature;
+  END IF;
+  FOREACH table_name IN ARRAY ARRAY['products','product_barcodes'] LOOP
+   IF signature LIKE '%bootstrap%' THEN
+    marker:=format('WHEN %L THEN',table_name);
+   ELSE
+    marker:=format('SELECT %L::text table_name,',table_name);
+   END IF;
+   start_at:=strpos(definition,marker);
+   IF start_at=0 THEN RAISE EXCEPTION 'Missing inspected sync table % in %',table_name,signature; END IF;
+   IF signature LIKE '%bootstrap%' THEN
+    end_at:=strpos(substring(definition FROM start_at),';');
+   ELSE
+    end_at:=strpos(substring(definition FROM start_at),' UNION ALL ')-1;
+   END IF;
+   IF end_at<=0 THEN RAISE EXCEPTION 'Unknown sync table boundary % in %',table_name,signature; END IF;
+   read_case:=substring(definition FROM start_at FOR end_at);
+   IF table_name='products' THEN
+    old_predicate:='public.product_available_in_catalogue(x.id,p_branch_id)';
+    new_predicate:='x.id IN (SELECT public.catalogue_product_ids_for_branch(p_branch_id))';
+   ELSE
+    old_predicate:='EXISTS(SELECT 1 FROM public."products" p WHERE p."id"::text=x."product_id"::text AND public.product_available_in_catalogue(p.id,p_branch_id))';
+    new_predicate:='x.product_id IN (SELECT public.catalogue_product_ids_for_branch(p_branch_id))';
+   END IF;
+   IF strpos(read_case,old_predicate)>0 THEN
+    patched_case:=replace(read_case,old_predicate,new_predicate);
+    definition:=overlay(definition PLACING patched_case FROM start_at FOR end_at);
+   ELSIF strpos(read_case,new_predicate)=0 THEN
+    RAISE EXCEPTION 'Unrecognized catalogue predicate % in %',table_name,signature;
+   END IF;
+  END LOOP;
+  IF definition<>before_patch THEN EXECUTE definition; END IF;
+ END LOOP;
+END $branch_catalogue_sync_reads$;
+NOTIFY pgrst,'reload schema';
+COMMIT;
+
+-- Prepared SHIFT-14 closure acknowledgement contract
+-- SHIFT-14: acknowledge a closed shift only after its closing facts persisted.
+-- Preparation only. Applying this migration changes routines, not business rows.
+BEGIN;
+
+-- SHIFT_CLOSURE_SYNC_HELPERS_BEGIN
+CREATE OR REPLACE FUNCTION public.pos_sync_assert_shift_ownership(p_rows jsonb,p_branch_id text)
+RETURNS void LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+BEGIN
+  IF NULLIF(btrim(p_branch_id),'') IS NULL OR EXISTS (
+    SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) incoming
+    WHERE NULLIF(btrim(incoming->>'store_id'),'') IS NULL
+       OR lower(btrim(incoming->>'store_id'))<>lower(btrim(p_branch_id))
+  ) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;
+  -- A globally unique id does not authorize moving an existing shift between shops.
+  IF EXISTS (
+    SELECT 1 FROM jsonb_populate_recordset(NULL::public.shifts,COALESCE(p_rows,'[]'::jsonb)) incoming
+    JOIN public.shifts existing ON existing.id=incoming.id
+    WHERE existing.store_id IS DISTINCT FROM p_branch_id
+  ) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;
+END $fn$;
+
+CREATE OR REPLACE FUNCTION public.pos_sync_shift_closure_ack(p_rows jsonb,p_branch_id text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+DECLARE incoming public.shifts%ROWTYPE; persisted public.shifts%ROWTYPE; confirmed jsonb:='[]'::jsonb;
+BEGIN
+  -- Match the established request-boundary canonicalization, including replay.
+  SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(row_value->>'store_id'),'') IS NULL
+    OR lower(btrim(row_value->>'store_id'))=lower(btrim(p_branch_id))
+    THEN row_value||jsonb_build_object('store_id',p_branch_id) ELSE row_value END),'[]'::jsonb)
+  INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) row_value;
+  PERFORM public.pos_sync_assert_shift_ownership(p_rows,p_branch_id);
+  FOR incoming IN
+    SELECT * FROM jsonb_populate_recordset(NULL::public.shifts,COALESCE(p_rows,'[]'::jsonb)) candidate
+    WHERE upper(COALESCE(candidate.status,''))='CLOSED'
+       OR upper(COALESCE(candidate.state,''))='CLOSED' OR candidate.closed_at IS NOT NULL
+  LOOP
+    SELECT * INTO persisted FROM public.shifts WHERE id=incoming.id FOR SHARE;
+    IF NOT FOUND OR persisted.store_id IS DISTINCT FROM p_branch_id
+       OR incoming.status IS DISTINCT FROM 'CLOSED' OR incoming.state IS DISTINCT FROM 'CLOSED'
+       OR incoming.closed_at IS NULL OR incoming.row_version IS NULL OR incoming.row_version<1
+       OR persisted.status IS DISTINCT FROM 'CLOSED' OR persisted.state IS DISTINCT FROM 'CLOSED'
+       OR persisted.row_version<incoming.row_version
+       OR ROW(persisted.closed_at,persisted.closed_by_name,persisted.closed_by_staff_id,persisted.closed_by_role,
+              persisted.counted_cash,persisted.counted_card,persisted.counted_digital,
+              persisted.expected_cash,persisted.expected_card,persisted.expected_digital,
+              persisted.closing_float,persisted.variance_cash,persisted.variance_card,persisted.variance_digital,
+              persisted.variance_total,persisted.close_reason,persisted.closing_started_at,
+              persisted.closing_started_by,persisted.final_counted_cash,persisted.variance_status)
+          IS DISTINCT FROM
+          ROW(incoming.closed_at,incoming.closed_by_name,incoming.closed_by_staff_id,incoming.closed_by_role,
+              incoming.counted_cash,incoming.counted_card,incoming.counted_digital,
+              incoming.expected_cash,incoming.expected_card,incoming.expected_digital,
+              incoming.closing_float,incoming.variance_cash,incoming.variance_card,incoming.variance_digital,
+              incoming.variance_total,incoming.close_reason,incoming.closing_started_at,
+              incoming.closing_started_by,incoming.final_counted_cash,incoming.variance_status)
+    THEN RAISE EXCEPTION 'SYNC_SHIFT_CLOSURE_CONFLICT'; END IF;
+    IF EXISTS(SELECT 1 FROM jsonb_array_elements(confirmed) previous WHERE previous->>'id'=incoming.id::text)
+    THEN RAISE EXCEPTION 'SYNC_SHIFT_CLOSURE_DUPLICATE'; END IF;
+    confirmed:=confirmed||jsonb_build_array(jsonb_build_object(
+      'id',persisted.id,'store_id',persisted.store_id,'row_version',persisted.row_version));
+  END LOOP;
+  RETURN jsonb_build_object('shift_closure_ack_version',1,'shift_closures',confirmed);
+END $fn$;
+
+CREATE OR REPLACE FUNCTION public.pos_sync_aggregate_shift_closure_ack(p_operations jsonb,p_branch_id text)
+RETURNS jsonb LANGUAGE sql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+  SELECT public.pos_sync_shift_closure_ack(COALESCE(jsonb_agg(
+    CASE WHEN NULLIF(btrim(incoming->>'store_id'),'') IS NULL
+           OR lower(btrim(incoming->>'store_id'))=lower(btrim(p_branch_id))
+      THEN incoming||jsonb_build_object('store_id',p_branch_id) ELSE incoming END),'[]'::jsonb),p_branch_id)
+  FROM jsonb_array_elements(COALESCE(p_operations,'[]'::jsonb)) operation
+  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(operation->'rows','[]'::jsonb)) incoming
+  WHERE operation->>'table'='shifts'
+$fn$;
+
+REVOKE ALL ON FUNCTION public.pos_sync_assert_shift_ownership(jsonb,text) FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON FUNCTION public.pos_sync_shift_closure_ack(jsonb,text) FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON FUNCTION public.pos_sync_aggregate_shift_closure_ack(jsonb,text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.pos_sync_assert_shift_ownership(jsonb,text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.pos_sync_shift_closure_ack(jsonb,text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.pos_sync_aggregate_shift_closure_ack(jsonb,text) TO service_role;
+-- SHIFT_CLOSURE_SYNC_HELPERS_END
+
+-- Patch only the existing functions' closure checks/acknowledgements. Preserve
+-- current scope validation, privacy, product ownership and other table behavior.
+DO $migration$
+DECLARE definition text; updated text; signature regprocedure; receipt_return text;
+        acknowledgement text; routine text;
+BEGIN
+  signature:='public.sync_apply_shifts(jsonb)'::regprocedure;
+  definition:=replace(pg_get_functiondef(signature),E'\r\n',E'\n');
+  IF position('pos_sync_shift_closure_ack' in definition)=0 THEN
+    updated:=replace(definition,E'\nBEGIN\n',E'\nBEGIN\n  PERFORM public.pos_sync_assert_shift_ownership(p_rows,current_setting(''pos.sync_branch'',true));\n');
+    updated:=replace(updated,'RETURN v_count;',
+      'PERFORM public.pos_sync_shift_closure_ack(p_rows,current_setting(''pos.sync_branch'',true)); RETURN v_count;');
+    updated:=replace(updated,'WHERE EXCLUDED."row_version">public."shifts"."row_version"',
+      'WHERE EXCLUDED."row_version">public."shifts"."row_version" AND EXCLUDED."store_id"=public."shifts"."store_id"');
+    IF updated=definition OR position('pos_sync_assert_shift_ownership' in updated)=0
+       OR position('pos_sync_shift_closure_ack' in updated)=0
+       OR position('AND EXCLUDED."store_id"=public."shifts"."store_id"' in updated)=0
+    THEN RAISE EXCEPTION 'Could not install shift closure postcondition'; END IF;
+    EXECUTE updated;
+  END IF;
+
+  FOREACH routine IN ARRAY ARRAY['pos_sync_push_batch','pos_sync_push_aggregate'] LOOP
+    signature:=CASE routine WHEN 'pos_sync_push_batch'
+      THEN 'public.pos_sync_push_batch(uuid,text,text,text,text,jsonb,jsonb)'::regprocedure
+      ELSE 'public.pos_sync_push_aggregate(uuid,text,text,text,jsonb)'::regprocedure END;
+    definition:=replace(pg_get_functiondef(signature),E'\r\n',E'\n');
+    CONTINUE WHEN position('shift_closure_ack' in definition)>0;
+    acknowledgement:=CASE routine WHEN 'pos_sync_push_batch'
+      THEN 'CASE WHEN p_table=''shifts'' THEN public.pos_sync_shift_closure_ack(p_rows,p_branch_id) ELSE ''{}''::jsonb END'
+      ELSE 'public.pos_sync_aggregate_shift_closure_ack(p_operations,p_branch_id)' END;
+    receipt_return:='RETURN jsonb_build_object(''ok'',true,''replayed'',true,''batch_id'',p_batch_id);';
+    updated:=replace(definition,receipt_return,
+      'RETURN jsonb_build_object(''ok'',true,''replayed'',true,''batch_id'',p_batch_id)||'||acknowledgement||';');
+    IF updated=definition THEN RAISE EXCEPTION 'Could not guard replay acknowledgement in %',routine; END IF;
+    definition:=updated;
+    updated:=replace(definition,
+      CASE routine WHEN 'pos_sync_push_batch' THEN 'RETURN jsonb_build_object(''ok'',true,''applied'',v_count,''batch_id'',p_batch_id);'
+      ELSE 'RETURN jsonb_build_object(''ok'',true,''applied'',v_total,''batch_id'',p_batch_id);' END,
+      CASE routine WHEN 'pos_sync_push_batch' THEN 'RETURN jsonb_build_object(''ok'',true,''applied'',v_count,''batch_id'',p_batch_id)||'
+      ELSE 'RETURN jsonb_build_object(''ok'',true,''applied'',v_total,''batch_id'',p_batch_id)||' END||acknowledgement||';');
+    IF updated=definition THEN RAISE EXCEPTION 'Could not guard new acknowledgement in %',routine; END IF;
+    EXECUTE updated;
+  END LOOP;
+END $migration$;
+
+COMMIT;
+
+-- Shift closure proof v2 — independent local/cloud revisions
+-- Shift closure proof v2: PostgreSQL revision triggers advance OLD+1, while a
+-- disconnected till can accumulate several local revisions. Keep these clocks
+-- separate and bind the proof to the exact requested snapshot instead.
+-- This changes one service-only read/validation helper; no stored rows or global
+-- row-version triggers are rewritten. Exact closing facts remain mandatory.
+BEGIN;
+-- SHIFT_CLOSURE_SYNC_PROOF_V2_BEGIN
+CREATE OR REPLACE FUNCTION public.pos_sync_shift_closure_ack(p_rows jsonb,p_branch_id text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+DECLARE incoming public.shifts%ROWTYPE; persisted public.shifts%ROWTYPE; confirmed jsonb:='[]'::jsonb;
+BEGIN
+  -- Match the established request-boundary canonicalization, including replay.
+  SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(row_value->>'store_id'),'') IS NULL
+    OR lower(btrim(row_value->>'store_id'))=lower(btrim(p_branch_id))
+    THEN row_value||jsonb_build_object('store_id',p_branch_id) ELSE row_value END),'[]'::jsonb)
+  INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) row_value;
+  PERFORM public.pos_sync_assert_shift_ownership(p_rows,p_branch_id);
+  FOR incoming IN
+    SELECT * FROM jsonb_populate_recordset(NULL::public.shifts,COALESCE(p_rows,'[]'::jsonb)) candidate
+    WHERE upper(COALESCE(candidate.status,''))='CLOSED'
+       OR upper(COALESCE(candidate.state,''))='CLOSED' OR candidate.closed_at IS NOT NULL
+  LOOP
+    SELECT * INTO persisted FROM public.shifts WHERE id=incoming.id FOR SHARE;
+    IF NOT FOUND OR persisted.store_id IS DISTINCT FROM p_branch_id
+       OR incoming.status IS DISTINCT FROM 'CLOSED' OR incoming.state IS DISTINCT FROM 'CLOSED'
+       OR incoming.closed_at IS NULL OR incoming.row_version IS NULL OR incoming.row_version<1
+       OR persisted.status IS DISTINCT FROM 'CLOSED' OR persisted.state IS DISTINCT FROM 'CLOSED'
+       OR persisted.row_version IS NULL OR persisted.row_version<1
+       OR ROW(persisted.closed_at,persisted.closed_by_name,persisted.closed_by_staff_id,persisted.closed_by_role,
+              persisted.counted_cash,persisted.counted_card,persisted.counted_digital,
+              persisted.expected_cash,persisted.expected_card,persisted.expected_digital,
+              persisted.closing_float,persisted.variance_cash,persisted.variance_card,persisted.variance_digital,
+              persisted.variance_total,persisted.close_reason,persisted.closing_started_at,
+              persisted.closing_started_by,persisted.final_counted_cash,persisted.variance_status)
+          IS DISTINCT FROM
+          ROW(incoming.closed_at,incoming.closed_by_name,incoming.closed_by_staff_id,incoming.closed_by_role,
+              incoming.counted_cash,incoming.counted_card,incoming.counted_digital,
+              incoming.expected_cash,incoming.expected_card,incoming.expected_digital,
+              incoming.closing_float,incoming.variance_cash,incoming.variance_card,incoming.variance_digital,
+              incoming.variance_total,incoming.close_reason,incoming.closing_started_at,
+              incoming.closing_started_by,incoming.final_counted_cash,incoming.variance_status)
+    THEN RAISE EXCEPTION 'SYNC_SHIFT_CLOSURE_CONFLICT'; END IF;
+    IF EXISTS(SELECT 1 FROM jsonb_array_elements(confirmed) previous WHERE previous->>'id'=incoming.id::text)
+    THEN RAISE EXCEPTION 'SYNC_SHIFT_CLOSURE_DUPLICATE'; END IF;
+    confirmed:=confirmed||jsonb_build_array(jsonb_build_object(
+      'id',persisted.id,'store_id',persisted.store_id,'row_version',persisted.row_version,'requested_row_version',incoming.row_version));
+  END LOOP;
+  RETURN jsonb_build_object('shift_closure_ack_version',2,'shift_closures',confirmed);
+END $fn$;
+-- SHIFT_CLOSURE_SYNC_PROOF_V2_END
+REVOKE ALL ON FUNCTION public.pos_sync_shift_closure_ack(jsonb,text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.pos_sync_shift_closure_ack(jsonb,text) TO service_role;
 COMMIT;
 
 -- Final public-schema privilege hardening after notification rule definitions.

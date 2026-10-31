@@ -15,9 +15,11 @@ import { CloudConnectionPanel } from "@/platforms/web/components/pos/settings/pa
 import { RecoveryPrinterSettings } from "@/platforms/web/components/pos/ReceiptPrinterSettings";
 import { TerminalActivation } from "@/platforms/web/components/pos/TerminalActivation";
 import { isTerminalApp } from "@/platform-config/platform";
-import { readTerminalConfig } from "@/core/activation/terminal-tokens";
-import { cloudKeyStatus, subscribeCloudKeys } from "@/lib/secure-cloud-config";
-import { boundBranchName } from "@/lib/active-branch";
+import type { TerminalConfig } from "@/core/activation/terminal-tokens";
+import { useRecoveryProfile } from "@/lib/use-recovery-profile";
+import type { RecoverySection } from "@/lib/recovery-section";
+import { Button } from "@/components/ui/button";
+import { TerminalRegistrationDetails } from "@/components/shared/TerminalRegistrationDetails";
 import { emergencyMode, useStartupGate } from "@/core/activation/registration-status";
 
 type Health = "ok" | "todo" | "info";
@@ -68,10 +70,14 @@ function Card({
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(Boolean(defaultOpen));
+  // The saved profile is asynchronous. Open a requested/missing section once
+  // its status arrives, while still allowing the operator to collapse it.
+  useEffect(() => { if (defaultOpen) setOpen(true); }, [defaultOpen]);
   return (
     <section className="rounded-lg border border-border bg-card">
       <button
         type="button"
+        aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-start gap-3 p-4 text-left"
       >
@@ -123,11 +129,33 @@ function ModeBanner() {
   return <div className={`rounded-lg border px-3 py-2 text-xs ${tone}`}>{text}</div>;
 }
 
-export function RecoveryHub() {
+function ActivationSettings({ config }: { config: TerminalConfig | null }) {
+  const [review, setReview] = useState(false);
+  return <div className="space-y-3">
+    {config && <>
+      <p className="text-xs text-muted-foreground">Saved registration on this device. Online validation is separate.</p>
+      <TerminalRegistrationDetails details={{
+        tokenId: config.tokenId,
+        deviceName: config.deviceName,
+        locationId: config.locationId,
+        locationName: config.deviceUse === "management" && !config.locationId ? "Management" : config.locationName,
+        backendUrl: config.backendUrl,
+        supabaseUrl: config.supabaseUrl,
+      }} />
+      {!review && <Button variant="outline" size="sm" onClick={() => setReview(true)}>Review activation options</Button>}
+    </>}
+    {(!config || review) && <TerminalActivation embedded onActivated={() => window.location.reload()} />}
+  </div>;
+}
+
+export function RecoveryHub({ section }: { section?: RecoverySection } = {}) {
   const terminalApp = isTerminalApp();
-  const [activated, setActivated] = useState<boolean | null>(null);
-  const [cloud, setCloud] = useState<boolean | null>(null);
-  const [branch, setBranch] = useState<string | null>(null);
+  const profile = useRecoveryProfile();
+  const { config, cloud } = profile;
+  const ready = !profile.loading && !profile.error;
+  const management = config?.deviceUse === "management" && !config.locationId;
+  const branch = management ? "Management" : config?.locationName || config?.locationId || null;
+  const unread = profile.loading ? "Checking saved settings…" : "Could not read saved settings";
 
   // A terminal that cannot sign anybody in cannot be asked for a supervisor
   // sign-in before it is repaired. Passing the recovery code therefore opens
@@ -135,31 +163,24 @@ export function RecoveryHub() {
   // branch and hardware. The audit trail, backups and app control are
   // not here: they are not repairs and still need a real administrator.
 
-  useEffect(() => {
-    setActivated(Boolean(readTerminalConfig()));
-    setBranch(boundBranchName());
-    const read = () =>
-      void cloudKeyStatus()
-        .then((s) => setCloud(Boolean(s.configured)))
-        .catch(() => setCloud(false));
-    read();
-    return subscribeCloudKeys(read);
-  }, []);
-
   return (
     <div className="space-y-3">
-      <ModeBanner />
+      {ready && <ModeBanner />}
+      {!ready && <div role="status" className="space-y-2 rounded-lg border border-border p-3 text-sm">
+        <p>{profile.loading ? "Restoring this device's saved registration and connection settings…" : "Saved settings could not be read. They have not been removed. Retry before changing this device's setup."}</p>
+        {profile.error && <Button variant="outline" size="sm" onClick={profile.retry}>Retry saved settings</Button>}
+      </div>}
 
       {terminalApp && (
         <Card
           icon={ShieldCheck}
           title="Terminal activation"
           blurb="Link this machine to a location with an activation code or phone pairing."
-          health={activated ? "ok" : "todo"}
-          status={activated ? "Activated" : "Not activated"}
-          defaultOpen={activated === false}
+          health={!ready ? "info" : config ? "ok" : "todo"}
+          status={!ready ? unread : config ? "Saved registration" : "Not activated"}
+          defaultOpen={section === "activation" || (ready && !config)}
         >
-          <TerminalActivation embedded onActivated={() => window.location.reload()} />
+          {ready ? <ActivationSettings config={config} /> : <p className="text-sm text-muted-foreground">{unread}</p>}
         </Card>
       )}
 
@@ -167,23 +188,25 @@ export function RecoveryHub() {
         icon={KeyRound}
         title="Database & cloud connection"
         blurb="Database URL, publishable key and POS backend address for this device."
-        health={cloud ? "ok" : "todo"}
-        status={cloud === null ? "Checking…" : cloud ? "Configured" : "Missing"}
-        defaultOpen={cloud === false}
+        health={!ready ? "info" : cloud ? "ok" : "todo"}
+        status={!ready ? unread : cloud ? "Configured" : "Missing"}
+        defaultOpen={section === "connection" || (ready && cloud === false)}
       >
-        <CloudConnectionPanel recoveryUnlocked />
+        {ready ? <CloudConnectionPanel recoveryUnlocked /> : <p className="text-sm text-muted-foreground">{unread}</p>}
       </Card>
 
       <Card
         icon={Building2}
         title="Branch binding"
         blurb="Which store or warehouse this terminal books its sales and stock to."
-        health={branch ? "ok" : "todo"}
-        status={branch ?? "Not bound"}
+        health={!ready ? "info" : branch ? "ok" : "todo"}
+        status={!ready ? unread : branch ?? "Not bound"}
       >
         <p className="text-sm text-muted-foreground">
-          {branch
-            ? `This device is bound to ${branch}. The binding comes from the activation code — re-activate above with a code issued for another location to move it.`
+          {!ready ? unread : management
+            ? "This is a Management terminal. Each user's permissions determine which branches they can access."
+            : branch
+            ? `This device is bound to ${branch}. Changing its branch requires authorized reassignment and checks for pending transactions.`
             : "No branch is bound yet. Activate this terminal with a code issued for the right location; the binding is applied automatically."}
         </p>
       </Card>

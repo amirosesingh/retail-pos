@@ -1,9 +1,15 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { cashierServiceFailure, cashierFallbackFailure } from "../cashier-login-failure";
-import { requestCashierLogin } from "../cashier-login-request";
+import { CASHIER_LOGIN_TIMEOUT_MS, requestCashierLogin } from "../cashier-login-request";
+import { readFileSync } from "node:fs";
 import { countsAsWrongCashierPin } from "../login-failure";
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+it("does not turn a confirmed unavailable online credential into a wrong PIN or stale local fallback", () => {
+  const result = cashierServiceFailure(401, { code: "credential_unavailable" });
+  expect(result.useLocal).toBe(false);
+  expect(countsAsWrongCashierPin(result.code)).toBe(false);
+});
 it.each([200, 408, 500, 502, 503, 504])("does not label an incomplete HTTP %s response as a wrong PIN", status => {
   const result = cashierServiceFailure(status, null);
   expect(result.useLocal).toBe(true);
@@ -34,10 +40,10 @@ it.each(["scope", "inactive", "locked"])("retains local %s refusals rather than 
 });
 it("waits for a delayed successful PIN response without prematurely rejecting or retrying", async () => {
   vi.useFakeTimers();
-  const fetch = vi.fn(() => new Promise<Response>(resolve => setTimeout(() => resolve(Response.json({ ok: true })), 5_000)));
+  const fetch = vi.fn(() => new Promise<Response>(resolve => setTimeout(() => resolve(Response.json({ ok: true })), 10_000)));
   vi.stubGlobal("fetch", fetch);
   const promise = requestCashierLogin<{ code?: string; error?: string }>("https://app.example", { username: "staff", pin: "test-pin" });
-  await vi.advanceTimersByTimeAsync(5_000);
+  await vi.advanceTimersByTimeAsync(10_000);
   expect(await promise).toEqual({ status: 200, payload: { ok: true } });
   expect(fetch).toHaveBeenCalledOnce();
   expect(vi.getTimerCount()).toBe(0);
@@ -52,10 +58,16 @@ it("keeps the deadline active while reading a stalled response body", async () =
   });
   vi.stubGlobal("fetch", fetch);
   const promise = requestCashierLogin<{ code?: string; error?: string }>("https://app.example", { username: "staff", pin: "test-pin" });
-  await vi.advanceTimersByTimeAsync(6_000);
+  await vi.advanceTimersByTimeAsync(CASHIER_LOGIN_TIMEOUT_MS);
   const result = await promise;
   expect(result.payload).toBeNull();
   expect(cashierServiceFailure(result.status, result.payload).code).toBe("cloud-unreachable");
   expect(fetch).toHaveBeenCalledOnce();
   expect(vi.getTimerCount()).toBe(0);
+});
+it("keeps the installed Electron PIN request budget aligned with the browser", () => {
+  const main = readFileSync("electron/main.cjs", "utf8");
+  const handler = main.slice(main.indexOf('ipcMain.handle("auth:cashier-login"'), main.indexOf('// The hosted endpoint has verified the PIN'));
+  const budget = handler.match(/setTimeout\(\(\) => abort\.abort\(\), ([\d_]+)\)/);
+  expect(Number(budget?.[1].replaceAll("_", ""))).toBe(CASHIER_LOGIN_TIMEOUT_MS);
 });

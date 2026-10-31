@@ -30,7 +30,12 @@ describe("row-rule regression", () => {
   });
 
   it("keeps audit-log access behind the canonical staff gate", () => {
-    const tail = schema.slice(schema.lastIndexOf("CREATE POLICY audit_logs_staff_insert"));
+    // Inspect the three audit policies, not unrelated appended read helpers.
+    const tail = ["insert", "read", "update"].map(action => {
+      const start = schema.lastIndexOf(`CREATE POLICY audit_logs_staff_${action}`);
+      expect(start).toBeGreaterThan(-1);
+      return schema.slice(start, schema.indexOf(";", start) + 1);
+    }).join("\n");
     expect(tail).toContain("CREATE POLICY audit_logs_staff_insert");
     expect(tail).toContain("CREATE POLICY audit_logs_staff_read");
     expect(tail).toContain("CREATE POLICY audit_logs_staff_update");

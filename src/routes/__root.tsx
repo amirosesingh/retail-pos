@@ -5,10 +5,11 @@ import { IosOtaBoot, IosUpdateBanner } from "@/platform-config/ios-ota";
 import { ApprovalTokenAgent } from "@/platform-config/approval-token";
 import { VIEWPORT_FIT } from "@/platform-config/viewport";
 import { RELEASE_CHANNEL } from "@/lib/release-channel";
-import { createRefreshQueue, subscribeBackgroundRefresh } from "@/lib/background-refresh";
-import { queryReadsChangedTables } from "@/lib/live-query-tables";
+import { BACKGROUND_REFRESH_EVENT } from "@/lib/background-refresh";
+import { createLiveQueryRefresh } from "@/lib/live-query-refresh";
+import { hasSignedInIdentity } from "@/lib/session-presence";
 import { notifyError } from "@/lib/notify";
-import { subscribeDataChange } from "@/lib/sync-engine";
+import { subscribeDataChange, subscribeSalesChange } from "@/lib/sync-engine";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   Outlet,
@@ -48,6 +49,7 @@ import { NativeWindowFrame } from "@/components/shared/NativeWindowFrame";
 import { zodCspBootScript } from "@/lib/csp-zod-boot";
 import { AndroidPushAgent } from "@/platforms/mobile/components/AndroidPushAgent";
 import { OfflineGate } from "@/platforms/mobile/components/OfflineGate";
+import { OfflineGateSnapshot } from "@/components/shared/OfflineGateSnapshot";
 import {
   APP_RESUME_EVENT,
   CONNECTIVITY_RESTORED_EVENT,
@@ -372,28 +374,27 @@ function RootComponent() {
   // Coalesce a committed sync page into one active-query refresh.
   useEffect(() => {
     if (customerDisplay) return;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const tables = new Set<string>();
-    const refresh = createRefreshQueue(async () => {
-      const changed = new Set(tables); tables.clear();
-      await queryClient.invalidateQueries({ refetchType: "active", predicate: query => queryReadsChangedTables(query.meta, changed) });
-    }, cause => notifyError(cause, "Refreshing live data"));
-    const offCatchup = subscribeBackgroundRefresh(() => {
-      for (const query of queryClient.getQueryCache().getAll()) {
-        if (query.isActive() && Array.isArray(query.meta?.tables))
-          for (const table of query.meta.tables) if (typeof table === "string") tables.add(table);
-      }
-      if (tables.size) void refresh.refresh();
-    }, 300_000);
-    const off = subscribeDataChange((change) => {
-      tables.add(change.table);
-      if (timer) return;
-      timer = setTimeout(() => {
-        timer = undefined;
-        void refresh.refresh();
-      }, 100);
+    const refresh = createLiveQueryRefresh(queryClient, {
+      canRefresh: () => document.visibilityState !== "hidden" && hasSignedInIdentity(),
+      online: () => navigator.onLine,
+      onError: cause => notifyError(cause, "Refreshing live data"),
     });
-    return () => { off(); offCatchup(); refresh.stop(); if (timer) clearTimeout(timer); };
+    const off = subscribeDataChange(change => refresh.change(change));
+    const offSales = subscribeSalesChange(change => refresh.salesChange(change));
+    const resume = () => refresh.resume();
+    const reconnect = () => refresh.resume(true);
+    const requested = () => refresh.reconcile(true);
+    for (const event of ["focus", "online", APP_RESUME_EVENT]) window.addEventListener(event, resume);
+    window.addEventListener(CONNECTIVITY_RESTORED_EVENT, reconnect);
+    window.addEventListener(BACKGROUND_REFRESH_EVENT, requested);
+    document.addEventListener("visibilitychange", resume);
+    return () => {
+      off(); offSales(); refresh.stop();
+      for (const event of ["focus", "online", APP_RESUME_EVENT]) window.removeEventListener(event, resume);
+      window.removeEventListener(CONNECTIVITY_RESTORED_EVENT, reconnect);
+      window.removeEventListener(BACKGROUND_REFRESH_EVENT, requested);
+      document.removeEventListener("visibilitychange", resume);
+    };
   }, [queryClient, customerDisplay]);
 
   return (
@@ -457,6 +458,7 @@ function TillRuntime() {
     <AuthProvider>
       <PermissionsProvider>
         <PosProvider>
+          <OfflineGateSnapshot />
           <RulesBridge>
             <AuditTracker />
             <AndroidPushAgent />

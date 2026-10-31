@@ -10,6 +10,7 @@ const SERVER_ONLY_TABLES = new Set([
   "notification_deliveries",
   "sponsorship_issues",
   "sponsorship_direct_issue_policy",
+  "missed_bill_entries",
 ]);
 
 const EXCLUDED_COLUMNS = new Map([

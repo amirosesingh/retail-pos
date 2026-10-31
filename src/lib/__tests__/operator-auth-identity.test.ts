@@ -35,7 +35,7 @@ describe("operator login boundary on all platforms", () => {
     const source=readFileSync('src/lib/pos-auth.tsx','utf8');
     expect(source).toContain('if (next && !matchesOperatorIdentity(next.user, operatorAuthId.current)) return;');
     expect(source).toContain('const next = matchesOperatorIdentity(checked.session?.user, operatorAuthId.current) ? checked.session : null;');
-    expect(source).toContain('authCheck.state === "verified" && matchesOperatorIdentity(authCheck.session?.user, operatorAuthId.current)');
+    expect(source).toContain('resumedAuthProof(authCheck, centralSessionVerifiedRef.current, operatorAuthId.current)');
     const login=source.slice(source.indexOf('const login ='), source.indexOf('const cashierLogin ='));
     expect(login.indexOf('profile["is_active"] === false')).toBeLessThan(login.indexOf('saveOperatorIdentity(data.session.user)'));
   });

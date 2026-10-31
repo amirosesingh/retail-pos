@@ -3,6 +3,10 @@ import * as ContextMenuPrimitive from "@radix-ui/react-context-menu";
 import { Check, ChevronRight, Circle } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { createOfflineGateContent, createOfflineGatePortal } from "@/lib/offline-gate-snapshot-context";
+
+const GateContextMenuContent = createOfflineGateContent(ContextMenuPrimitive.Content);
+const GateContextMenuSubContent = createOfflineGateContent(ContextMenuPrimitive.SubContent);
 
 const ContextMenu = ContextMenuPrimitive.Root;
 
@@ -10,7 +14,10 @@ const ContextMenuTrigger = ContextMenuPrimitive.Trigger;
 
 const ContextMenuGroup = ContextMenuPrimitive.Group;
 
-const ContextMenuPortal = ContextMenuPrimitive.Portal;
+const ScopedContextMenuPortal = createOfflineGatePortal(ContextMenuPrimitive.Portal);
+function ContextMenuPortal(props: React.ComponentProps<typeof ContextMenuPrimitive.Portal>) {
+  return <ScopedContextMenuPortal {...props} />;
+}
 
 const ContextMenuSub = ContextMenuPrimitive.Sub;
 
@@ -41,7 +48,7 @@ const ContextMenuSubContent = React.forwardRef<
   React.ElementRef<typeof ContextMenuPrimitive.SubContent>,
   React.ComponentPropsWithoutRef<typeof ContextMenuPrimitive.SubContent>
 >(({ className, ...props }, ref) => (
-  <ContextMenuPrimitive.SubContent
+  <GateContextMenuSubContent
     ref={ref}
     className={cn(
       "ui-menu-motion z-50 min-w-[8rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-lg data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 origin-(--radix-context-menu-content-transform-origin)",
@@ -56,8 +63,8 @@ const ContextMenuContent = React.forwardRef<
   React.ElementRef<typeof ContextMenuPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof ContextMenuPrimitive.Content>
 >(({ className, ...props }, ref) => (
-  <ContextMenuPrimitive.Portal>
-    <ContextMenuPrimitive.Content
+  <ContextMenuPortal>
+    <GateContextMenuContent
       ref={ref}
       className={cn(
         "ui-menu-motion z-50 max-h-(--radix-context-menu-content-available-height) min-w-[8rem] overflow-y-auto overflow-x-hidden overscroll-contain rounded-md border bg-popover p-1 text-popover-foreground shadow-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 origin-(--radix-context-menu-content-transform-origin)",
@@ -65,7 +72,7 @@ const ContextMenuContent = React.forwardRef<
       )}
       {...props}
     />
-  </ContextMenuPrimitive.Portal>
+  </ContextMenuPortal>
 ));
 ContextMenuContent.displayName = ContextMenuPrimitive.Content.displayName;
 

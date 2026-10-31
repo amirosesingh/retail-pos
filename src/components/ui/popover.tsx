@@ -2,6 +2,11 @@ import * as React from "react";
 import * as PopoverPrimitive from "@radix-ui/react-popover";
 
 import { cn } from "@/lib/utils";
+import { createOfflineGateContent, createOfflineGatePortal } from "@/lib/offline-gate-snapshot-context";
+
+const GatePopoverContent = createOfflineGateContent(PopoverPrimitive.Content);
+
+const PopoverPortal = createOfflineGatePortal(PopoverPrimitive.Portal);
 
 const Popover = PopoverPrimitive.Root;
 
@@ -13,8 +18,8 @@ const PopoverContent = React.forwardRef<
   React.ElementRef<typeof PopoverPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof PopoverPrimitive.Content>
 >(({ className, align = "center", sideOffset = 4, ...props }, ref) => (
-  <PopoverPrimitive.Portal>
-    <PopoverPrimitive.Content
+  <PopoverPortal>
+    <GatePopoverContent
       ref={ref}
       align={align}
       sideOffset={sideOffset}
@@ -24,7 +29,7 @@ const PopoverContent = React.forwardRef<
       )}
       {...props}
     />
-  </PopoverPrimitive.Portal>
+  </PopoverPortal>
 ));
 PopoverContent.displayName = PopoverPrimitive.Content.displayName;
 

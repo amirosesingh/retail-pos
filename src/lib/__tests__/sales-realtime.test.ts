@@ -25,8 +25,22 @@ describe("sales realtime refresh", () => {
     expect(store).toContain("subscribeSalesChange");
     expect(store).toContain("subscribeSettingsChange");
     expect(store).toContain('"pos_store_settings","settings_scoped","settings_overrides","settings_locks"');
-    expect(store).toContain('subscribeSettingsRefresh(refresh, (change) =>');
+    const settingsReader = store.slice(
+      store.indexOf("const sharedSettingsReady = snapshotRefreshReady"),
+      store.indexOf("const activeShift = useMemo"),
+    );
+    expect(settingsReader).toContain("snapshotRefreshReady(readsReady, loadPhase, readIdentity, snapshotIdentity)");
+    expect(settingsReader).toContain("const reader = createSettingsStartupRefresh(async canApply =>");
+    expect(settingsReader).toContain("loadCloudSettings()");
+    expect(settingsReader).toContain("void reader.setReady(sharedSettingsReadyRef.current)");
+    expect(settingsReader).toContain('subscribeSettingsRefresh(reader.refresh, (change) =>');
+    expect(settingsReader).toContain("canApply() &&");
+    expect(settingsReader).toContain("generation === bootstrapGeneration.current");
+    expect(settingsReader).toContain("reader.stop()");
+    expect(settingsReader).toContain("[signedIn, readIdentity]");
+    expect(settingsReader).toContain("sharedSettingsReader.current?.setReady(sharedSettingsReady)");
     expect(store).toContain('["desktop:pull-complete", "reconnect", "realtime:subscribed"].includes(change.reason)');
+    expect(store).toContain("if (change.storeId && active && !sameBranchId(change.storeId, active)) return;");
     expect(store).toContain("loadSalesPage(active, null, 500)");
     expect(store).toContain("loadCloudSettings()");
     expect(store).toContain("subscribeDataChange");

@@ -26,7 +26,9 @@ describe("quiet POS updates",()=>{
     const recovery=root.slice(root.indexOf("const recover = (event: Event) =>"),root.indexOf("// Coalesce a committed sync page"));
     expect(recovery).not.toContain("router.invalidate()");
     expect(recovery).toContain('refreshResumedQueries(queryClient, event.type === CONNECTIVITY_RESTORED_EVENT)');
-    expect(root).toContain("queryReadsChangedTables(query.meta, changed)");
+    expect(root).toContain("createLiveQueryRefresh(queryClient");
+    expect(root).toContain("subscribeDataChange(change => refresh.change(change))");
+    expect(readFileSync("src/lib/live-query-refresh.ts","utf8")).toContain("queryReadsChangedTables(query.meta, tables)");
   });
   it("does not recreate state when a background snapshot has no changes",()=>{
     const previous={products:[{id:"one",price:10}],members:[{id:"member"}],settings:{theme:"emerald"}};

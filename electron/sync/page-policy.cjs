@@ -2,6 +2,7 @@ const MAX_PAGE_BYTES = 6 * 1024 * 1024;
 async function readPage(fetchPage, preferred = 100) {
   let limit = Math.max(10, Math.min(500, Number(preferred) || 100));
   let timedOut = false;
+  let timeoutRetries = 0;
   for (;;) {
     try {
       const batch = await fetchPage(limit);
@@ -22,6 +23,13 @@ async function readPage(fetchPage, preferred = 100) {
         throw error;
       timedOut ||= timeout;
       limit = Math.max(10, Math.floor(limit / 2));
+      // A cancelled query is a pressure signal. Give the central service a
+      // bounded recovery interval before the smaller read; do not immediately
+      // launch another expensive page. Payload-size retries need no delay.
+      if (timeout) {
+        const delay = Math.min(2_000, 250 * (2 ** timeoutRetries++));
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
     }
   }
 }

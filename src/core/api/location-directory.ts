@@ -5,6 +5,14 @@ import type { Store } from "@/core/types/pos-types";
 export type LocationDirectoryResult =
   { ok: true; stores: Store[]; source: "relay" | "direct" | "local" } | { ok: false; error: Error };
 
+/** Keep typed refusals distinct from transient infrastructure failures. */
+export function locationReadError(failure: { message: string; code?: unknown; status?: unknown }): Error {
+  const error: Error & { code?: string; status?: number } = new Error(failure.message || "Could not load locations");
+  if (typeof failure.code === "string") error.code = failure.code;
+  if (typeof failure.status === "number") error.status = failure.status;
+  return error;
+}
+
 type DirectoryBridge = Pick<NonNullable<ReturnType<typeof localDb>>, "database" | "query">;
 
 /** Only query a usable SQL replica; a scoped read can still fail during pairing. */

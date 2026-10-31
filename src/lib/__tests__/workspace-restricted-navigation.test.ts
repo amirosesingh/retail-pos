@@ -3,11 +3,11 @@ import { createElement as h, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PermissionFlag } from "../permissions";
-import type { Product } from "@/core/types/pos-types";
+import type { Product, Sale } from "@/core/types/pos-types";
 import { pageForRoute, pageEnabled } from "../permission-pages";
 import { canSeeNavigationItem, routePermissionForPath } from "@/platforms/web/components/pos/nav-config";
 import { shouldOpenRegister } from "../terminal-workspace";
-const fixture = vi.hoisted(() => ({ permissions: {} as Record<string, boolean>, hidden: [] as string[], desktop: false, products: [] as Product[], ready: true }));
+const fixture = vi.hoisted(() => ({ permissions: {} as Record<string, boolean>, hidden: [] as string[], desktop: false, products: [] as Product[], ready: true, sales: [] as Sale[], loading: false, error: "" }));
 vi.mock("@/lib/pos-auth", () => ({ useAuth: () => ({ isAdmin: false, isSupervisor: false, isWarehouse: false, can: (key: string) => fixture.permissions[key] === true }) }));
 vi.mock("@/lib/pos-store", () => ({ usePos: () => ({ ready: fixture.ready, loadPhase: fixture.ready ? "ready" : "loading", currentStore: { id: "branch-a", name: "Branch A" }, state: { sales: [], products: fixture.products, stores: [{ id: "branch-a", groupId: "shoes" }, { id: "branch-b", groupId: "clothes" }], transfers: [], settings: { integrations: {} } } }) }));
 vi.mock("@/lib/management-device", () => ({ isManagementDevice: () => false }));
@@ -16,7 +16,7 @@ vi.mock("@tanstack/react-router", () => ({ useRouterState: ({ select }: { select
 vi.mock("@/components/ui/tooltip", () => ({ TooltipProvider: ({ children }: { children: ReactNode }) => children, Tooltip: ({ children }: { children: ReactNode }) => children, TooltipTrigger: ({ children }: { children: ReactNode }) => children, TooltipContent: ({ children }: { children: ReactNode }) => h("span", null, children) }));
 vi.mock("@/platforms/web/components/pos/AppShell", () => ({ AppShell: ({ children }: { children: ReactNode }) => children }));
 vi.mock("@/platforms/web/components/pos/SellingShortcuts", () => ({ SellingShortcuts: () => null }));
-vi.mock("@/lib/use-report-sales", () => ({ useReportSales: () => ({ sales: [], loading: false, error: null }) }));
+vi.mock("@/lib/use-report-sales", () => ({ useReportSales: () => ({ sales: fixture.sales, loading: fixture.loading, error: fixture.error }) }));
 vi.mock("@/lib/use-viewed-branch-shift", () => ({ useViewedBranchShift: () => ({ shift: null, checked: true, error: false }) }));
 vi.mock("@/platforms/web/components/pos/AnimatedMetric", () => ({ AnimatedMetric: ({ value }: { value: number }) => value }));
 vi.mock("@/lib/ui-visibility", () => ({ useVisibility: () => ({ visible: (key: string) => !fixture.hidden.includes(key), visibleRoute }) }));
@@ -30,7 +30,8 @@ const visibleRoute = (path: string) => {
 const render = (collapsed = false) => renderToStaticMarkup(h(SidebarNav, {
   collapsed, canSee: item => canSeeNavigationItem(item, can, false, visibleRoute),
 }));
-beforeEach(() => { fixture.permissions = { can_process_sale: true }; fixture.hidden = []; fixture.desktop = false; fixture.products = []; fixture.ready = true; });
+const sale = (total = 10): Sale => ({ id: "sale", receiptNo: "R1", storeId: "branch-a", shiftId: "shift", createdAt: "2026-10-30T12:00:00Z", cashier: "Cashier", lines: [], subtotal: total, discount: 0, tax: 0, total, paid: total, change: 0, method: "cash", memberId: null, pointsEarned: 0 });
+beforeEach(() => { fixture.permissions = { can_process_sale: true }; fixture.hidden = []; fixture.desktop = false; fixture.products = []; fixture.ready = true; fixture.sales = []; fixture.loading = false; fixture.error = ""; });
 describe("restricted Home and Selling navigation", () => {
   it.each([false, true])("hides Home without dashboard permission, collapsed=%s", collapsed => {
     const html = render(collapsed);
@@ -81,6 +82,7 @@ describe("restricted Retail workspace", () => {
   it("keeps revenue information inside the same permission and visibility boundary as its total", () => {
     expect(renderToStaticMarkup(h(TerminalWorkspaceHome))).not.toContain("Subtotal before discounts");
     fixture.permissions.can_view_sales_reports = true;
+    fixture.sales = [sale()];
     const html = renderToStaticMarkup(h(TerminalWorkspaceHome));
     expect(html).toContain('aria-label="Today&#x27;s revenue information"');
     expect(html).toContain("Subtotal before discounts");
@@ -88,6 +90,28 @@ describe("restricted Retail workspace", () => {
     expect(html).not.toContain("Gross profit");
     fixture.hidden = ["workspace.todayRevenue"];
     expect(renderToStaticMarkup(h(TerminalWorkspaceHome))).not.toContain("Subtotal before discounts");
+  });
+  it("hides loaded zero trading cards and reveals changed or negative values without extra readers", () => {
+    fixture.permissions.can_view_sales_reports = true;
+    const zero = renderToStaticMarkup(h(TerminalWorkspaceHome));
+    expect(zero).not.toContain("Today&#x27;s bills");
+    expect(zero).not.toContain("Today&#x27;s revenue");
+    fixture.sales = [sale()];
+    expect(renderToStaticMarkup(h(TerminalWorkspaceHome))).toContain("Today&#x27;s bills");
+    expect(renderToStaticMarkup(h(TerminalWorkspaceHome))).toContain("Today&#x27;s revenue");
+    fixture.sales = [sale(-10)];
+    expect(renderToStaticMarkup(h(TerminalWorkspaceHome))).toContain("Today&#x27;s revenue");
+    fixture.sales = [sale(0)];
+    const free = renderToStaticMarkup(h(TerminalWorkspaceHome));
+    expect(free).toContain("Today&#x27;s bills");
+    expect(free).not.toContain("Today&#x27;s revenue");
+  });
+  it("keeps loading and failed trading summaries visible rather than claiming zero activity", () => {
+    fixture.permissions.can_view_sales_reports = true;
+    fixture.loading = true;
+    expect(renderToStaticMarkup(h(TerminalWorkspaceHome))).toContain("Updating…");
+    fixture.loading = false; fixture.error = "Offline";
+    expect(renderToStaticMarkup(h(TerminalWorkspaceHome))).toContain("Could not refresh totals");
   });
   it("counts only the selected cluster catalogue in stock cards", () => {
     fixture.permissions.can_view_inventory = true;

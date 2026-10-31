@@ -83,6 +83,7 @@ function BusinessReport() {
     queryFn: () =>
       loadCompleteReceivingHistory(storeId === "all" ? null : storeId, storeId === "all"),
     ...PAGE_DATA_CACHE,
+    refetchOnWindowFocus: false, refetchOnReconnect: false,
   });
   const arrivedByProduct = useMemo(() => {
     const dates = new Map<string, string>();

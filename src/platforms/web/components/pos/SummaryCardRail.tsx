@@ -1,6 +1,7 @@
-import { Children, Fragment, isValidElement, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
+import { Children, Fragment, isValidElement, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { Carousel, CarouselContent, CarouselItem, type CarouselApi } from "@/components/ui/carousel";
 import { cn } from "@/lib/utils";
+import { animateSummaryCardLayout, type SummaryCardPosition } from "@/lib/summary-card-motion";
 
 function visibleCards(children: ReactNode, prefix = ""): { node: ReactElement; key: string }[] {
   return Children.toArray(children).flatMap((child, index) => {
@@ -26,6 +27,9 @@ export function SummaryCardRail({ label, children, className, desktopClassName, 
 }) {
   const cards = visibleCards(children);
   const rootRef = useRef<HTMLDivElement>(null);
+  const cardNodes = useRef(new Map<string, HTMLElement>());
+  const previousPositions = useRef(new Map<string, SummaryCardPosition>());
+  const visibleKeys = JSON.stringify(cards.map(card => card.key));
   const [geometry, setGeometry] = useState<RailGeometry | null>(null);
   const [api, setApi] = useState<CarouselApi>();
   const desktopCarousel = desktopBehavior === "finite-carousel";
@@ -73,6 +77,23 @@ export function SummaryCardRail({ label, children, className, desktopClassName, 
       "(prefers-reduced-motion: reduce)": { duration: 0 },
     },
   }), [active, loop]);
+  useLayoutEffect(() => {
+    const motion = animateSummaryCardLayout(
+      previousPositions.current,
+      cardNodes.current,
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
+      { origin: rootRef.current?.getBoundingClientRect(), reflow: !active },
+    );
+    previousPositions.current = motion.positions;
+    return motion.cancel;
+    // Values changing in an existing card must not restart its appearance.
+  }, [active, visibleKeys]);
+  useLayoutEffect(() => {
+    // A resize changes the baseline, not the set of cards that just appeared.
+    previousPositions.current = animateSummaryCardLayout(previousPositions.current, cardNodes.current, true, {
+      origin: rootRef.current?.getBoundingClientRect(),
+    }).positions;
+  }, [geometry]);
   if (!cards.length) return null;
   return <Carousel
     ref={rootRef}
@@ -100,7 +121,10 @@ export function SummaryCardRail({ label, children, className, desktopClassName, 
       {cards.map(card => <CarouselItem key={card.key}
         className={cn("[&>*]:h-full", finiteDesktop ? "basis-[48%] pl-4 2xl:basis-1/3" : "basis-auto pl-0", desktopItemClassName)}
         style={loop ? { flex: `0 0 ${slideWidth}px`, paddingLeft: 0 } : undefined}>
-        {card.node}
+        <div ref={node => { if (node) cardNodes.current.set(card.key, node); else cardNodes.current.delete(card.key); }}
+          className="h-full min-w-0 [&>*]:h-full" data-summary-card-motion="true">
+          {card.node}
+        </div>
       </CarouselItem>)}
     </CarouselContent>
   </Carousel>;

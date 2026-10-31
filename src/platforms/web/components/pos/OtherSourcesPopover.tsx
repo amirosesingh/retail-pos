@@ -6,6 +6,7 @@ import type { Product, Store } from "@/core/types/pos-types";
 import { cn } from "@/lib/utils";
 import { canonicalBranchId, canonicalStockMap, sameBranchId } from "@/lib/branch-id";
 import { companyStoreScope } from "@/lib/company-store-scope";
+import { displayedStockQuantity } from "@/lib/stock-quantity-display";
 
 type Props = {
   product: Product;
@@ -14,8 +15,7 @@ type Props = {
   className?: string;
 };
 
-const quantity = (value: number) =>
-  Number.isInteger(value) ? value.toLocaleString() : value.toLocaleString(undefined, { maximumFractionDigits: 3 });
+const quantity = (value: number) => displayedStockQuantity(value).toLocaleString(undefined, { maximumFractionDigits: 3 });
 
 /** Stores must come from stockDisplayLocations and the product's catalogue scope. */
 export function OtherSourcesPopover({ product, stores, currentStoreId, className }: Props) {

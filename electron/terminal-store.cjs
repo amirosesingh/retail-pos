@@ -30,39 +30,53 @@ const canSeal = () => {
   }
 };
 
-function read() {
-  // Preferred, and the only trusted source: the OS vault copy (DPAPI on
-  // Windows, Keychain on macOS).
-  if (canSeal()) {
-    try {
-      const buf = fs.readFileSync(sealed());
-      const parsed = JSON.parse(safeStorage.decryptString(buf));
-      if (parsed && parsed.tokenId) return parsed;
-    } catch {
-      /* unreadable or tampered: fall through to the one-time migration */
-    }
+function readSealed() {
+  if (!canSeal()) throw new Error("The Windows credential vault is not ready. Retry restoring the saved terminal registration.");
+  try {
+    const parsed = JSON.parse(safeStorage.decryptString(fs.readFileSync(sealed())));
+    if (typeof parsed?.tokenId !== "string" || !parsed.tokenId.trim()) throw new Error("Invalid activation");
+    return parsed;
+  } catch {
+    throw new Error("The saved terminal registration could not be read. Your registration has not been removed.");
   }
+}
 
-  // Legacy unencrypted activation from an older build. It is only ever used to
-  // seal itself; if it cannot be sealed it is discarded and the till goes
-  // through normal reactivation rather than trusting an editable file.
+function readLegacy() {
+  if (!fs.existsSync(file())) return null;
   let legacy = null;
   try {
     legacy = JSON.parse(fs.readFileSync(file(), "utf8"));
   } catch {
-    return null;
+    throw new Error("The saved terminal registration could not be read. Your registration has not been removed.");
   }
-  if (!legacy || !legacy.tokenId) {
-    fs.rmSync(file(), { force: true });
-    return null;
-  }
-  const migrated = write(legacy);
-  if (!migrated.ok) {
-    // No vault: the plain copy must not survive as a usable activation.
-    fs.rmSync(file(), { force: true });
-    return null;
+  if (typeof legacy?.tokenId !== "string" || !legacy.tokenId.trim()) {
+    throw new Error("The saved terminal registration could not be read. Your registration has not been removed.");
   }
   return legacy;
+}
+
+function readStrict() {
+  // An existing vault copy is authoritative even when it cannot currently be
+  // opened. Never replace it with an editable legacy file after a read error.
+  if (fs.existsSync(sealed())) return readSealed();
+
+  // Legacy unencrypted activation from an older build. It is only ever used to
+  // seal itself. If the vault is unavailable, leave it inert for a retry;
+  // never expose the editable activation as a usable registration.
+  const legacy = readLegacy();
+  if (!legacy) return null;
+  const migrated = write(legacy);
+  if (!migrated.ok) {
+    throw new Error("Could not restore the saved terminal registration into the Windows vault. Retry opening the app.");
+  }
+  return readSealed();
+}
+
+// Background readers can pause without throwing from ordinary Main startup.
+// Startup's IPC reader must distinguish an unreadable activation from absence.
+function read(options = {}) {
+  try { return readStrict(); }
+  catch (error) { if (options.strict) throw error; return null; }
 }
 
 // Non-secret previous binding survives revocation solely to protect queued origin.
@@ -77,8 +91,12 @@ function rememberBinding(config){
 }
 function write(config) {
   try {
+    // Check before changing the seal, its previous binding or provision marker.
+    // A failed read is never permission to replace or erase a registration.
+    const existing = fs.existsSync(sealed()) ? readSealed() : readLegacy();
     if (!config) {
-      rememberBinding(read());
+      if (existing && !canSeal()) throw new Error("The Windows credential vault is not ready. Retry restoring the saved terminal registration.");
+      rememberBinding(existing);
       if (wasProvisioned()) markProvisioned();
       fs.rmSync(file(), { force: true });
       fs.rmSync(sealed(), { force: true });

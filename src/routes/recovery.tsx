@@ -18,10 +18,12 @@ import { EmergencyPinGate } from "@/platforms/web/components/pos/EmergencyPinGat
 import { heartbeat } from "@/core/activation/connection-health";
 import { APP_DISPLAY_VERSION as APP_VERSION } from "@/version";
 import { isTerminalApp } from "@/platform-config/platform";
+import { recoverySearch } from "@/lib/recovery-section";
 
 
 
 export const Route = createFileRoute("/recovery")({
+  validateSearch: recoverySearch,
   head: () => ({
     meta: [
       { title: "Emergency Access & Recovery — Retail" },
@@ -53,6 +55,7 @@ function RecoveryPage() {
 
 function RecoverySettings() {
   const navigate = useNavigate();
+  const { section } = Route.useSearch();
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-2xl flex-col gap-4 bg-background p-6">
@@ -69,7 +72,7 @@ function RecoverySettings() {
         </p>
       </header>
 
-      <RecoveryHub />
+      <RecoveryHub section={section} />
 
       <div className="flex flex-wrap gap-2 pt-2">
         <Button

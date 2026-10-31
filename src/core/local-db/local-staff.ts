@@ -1,9 +1,9 @@
 /**
  * Offline sign-in backed by the till's local SQL database.
  *
- * The desktop shell mirrors the staff roster into its local database and keeps
- * a PBKDF2 verifier for anyone who has signed in online on this machine. When
- * the central database cannot be reached, sign-in is answered from there.
+ * The desktop shell synchronizes staff and their terminal PIN hashes from the
+ * cloud into SQL. When the central database cannot be reached, sign-in checks
+ * those synced hashes. Merely loading a roster does not enroll an offline PIN.
  *
  * On the web build the bridge is absent and every call is a no-op, so the
  * existing browser-storage cache remains the fallback.
@@ -43,7 +43,7 @@ export async function cacheStaffRoster(rows: Record<string, unknown>[]): Promise
   }
 }
 
-/** Remember this PIN (as a verifier) after a successful online sign-in. */
+/** Legacy bridge compatibility; current Electron enrolls hashes through SQL sync only. */
 export async function rememberLocalPin(username: string, pin: string): Promise<void> {
   try {
     await localDb()?.rememberStaffPin?.(username, pin);

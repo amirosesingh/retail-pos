@@ -25,17 +25,17 @@ export function LocationBootGuard({ children }: { children?: ReactNode }) {
   if (activeLocations(stores).length > 0 || isLocationSetupRoute(pathname)) return <>{children}</>;
 
   // Still waiting on the answer — say so rather than claiming there is nothing.
-  if (!storesLoaded && loadPhase !== "failed") return <TillLoader message="Loading locations…" />;
+  if (!storesLoaded && loadPhase !== "failed" && loadPhase !== "stalled") return <TillLoader message="Loading locations…" />;
 
   if (!storesLoaded)
     return (
       <div className="flex min-h-screen items-center justify-center p-6">
         <div className="w-full max-w-md space-y-4 rounded-lg border border-border bg-surface-1 p-6 text-center">
           <div className="space-y-1">
-            <h1 className="text-lg font-semibold">Could not load locations</h1>
+            <h1 className="text-lg font-semibold">{loadPhase === "stalled" ? "Locations are taking longer to load" : "Could not load locations"}</h1>
             <p className="text-sm text-muted-foreground">
               {locationLoadError ||
-                "The location list did not come back. Try again once the connection settles."}
+                (loadPhase === "stalled" ? "The location list is still loading. You can retry without clearing your saved data." : "The location list did not come back. Try again once the connection settles.")}
             </p>
           </div>
           <Button className="w-full" onClick={retryLoad}>
