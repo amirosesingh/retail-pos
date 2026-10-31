@@ -30,8 +30,10 @@ only; the owner's subsequent Batch 1 approval below authorizes its bounded fixes
 | 17 | PERF-24 committed/pushed/scoped verified | 8b840192 fixes first-paint report completeness, restored-session landing and scoped-settings initial readiness/retry. Independent review passed; 11 focused suites/96 tests passed. Latest PR checks are green. No formula/grant/Membership change. |
 | 18 | AUTH-12 committed / exact-head CI passed | afcf92d1 shared public PIN response boundary covers both transports, alias, lockouts and validation probes. Private counters, grants and offline handling remain.13 suites/157 tests plus12 isolated SQL scenarios passed. Exact-head securityCI:578suites/3765tests passed/1skipped; Android, Windows, iOS and Cloudflarebeta checks passed. No merge/publication. |
 | 19 | TERM-13 implemented / focused verification and independent review | Protected recovery links, awaited saved-profile status, retry/stale-read fences, strict Electron store restore and verified roster503 classification. Preserve saved bytes, true denials, branch authority and checkout; all-platform automated route/gate cases pass. Physical-device acceptance remains separate. |
-| 20 | TRF-15 implemented / isolated verification passed; approved live upgrade applied | Atomic dispatch/request completion, immutable retry intent, verified native actor and safe errors. ROSEGILL migration history20261031074715 verified. Require final exact-head CI/beta merge and separate installed-device acceptance; the reported transfer remains undispatched. |
-| 21 | TRF-16 source implemented / approved guard and exact repair applied | Nested item-ID collision reproduced and corrected for new fulfilments; shared checkout IDs unchanged. Guard history20261031083126 and one audited request-line restoration verified; request-integrity read returns true. Final source CI/beta merge and physical-device acceptance remain separate. |
+| 20 | TRF-15 merged into beta / approved live upgrade applied | PR350 head610df65e passed exact-head checks and merged as c15fdd21; merge tree equals the tested head. Atomic dispatch/request completion, immutable retry intent, verified native actor and safe errors; migration history20261031074715 verified. Installed-device acceptance remains separate; the reported transfer remains undispatched. No installer publication or main promotion. |
+| 21 | TRF-16 merged into beta / approved guard and exact repair applied | PR350/c15fdd21 includes the new fulfilment-ID correction; shared checkout IDs unchanged. Guard history20261031083126 and one audited request-line restoration verified; request-integrity read returns true. Full592 suites/3987 tests and exact-head platform/security checks passed; beta website deployment passed. Physical-device acceptance remains separate. |
+| 22 | SQL-08 implemented / isolated and signed-in local Settings verified | Separate approved typed adoption/read-error correction preserves terminal binding and cashier authority. Full595 suites/4091 tests, TypeScript and full lint pass. Owner-approved HTTPS beta backend plus original native origin43117 permits normal verified sign-in and seals the recovered existing proof; Approvals and Settings open with STR1/local SQL ready. Other devices/offline real-sale acceptance, commit and beta PR remain separate. |
+| 23 | SQL-09 active read-only investigation / correction not approved | Separate expired change_history Change Tracking and HTTP503 bootstrap warnings remain after SQL-08 sign-in recovery. UI reports local SQL ready and queue0/errors0, but this is not proof of successful bootstrap. Identify exact failed table/stage from existing jobs/logs without resetting cursors, resyncing, changing Membership dependencies or touching pending/business data. |
 
 Membership is **ON HOLD** throughout. Each future batch requires a recoverable
 baseline, specific files/dependencies, expected behavior, risks, regression tests,
@@ -1887,3 +1889,148 @@ Independent live readback after approved guard/repair passed. No other empty
 request-with-linked-transfer cases were found by the bounded related-data scan.
 Commit only reviewed files, leave unrelated .temp untracked, require final-head
 CI and merge PR350 into beta; publication/main promotion remain unapproved.
+
+SQL-08 renewed owner report31October: after signing into the latest local Electron,
+Could not load store settings / saved settings have not been replaced. Read-only
+investigation baseline beta c15fdd2144536a31b5f057de8484628d31fe6028, source tree
+equal tested610df65e, isolated branch codex/electron-settings-authority-beta.
+Running Electron34416 and renderers8080/8081 remain on the reviewed source; no
+restart, unpairing, queue clearing or configuration write was performed for this
+investigation. Root and two agents traced the actual failure boundary.
+
+Confirmed: enabled_ready SQL connection does not establish verified POS authority.
+Current Electron stderr repeatedly records admin:adopt-session -> canonicalConfig
+line21 -> EACTIVATION_BINDING, activation does not match the verified computer
+registration. This line executes only after the hosted endpoint returns success
+and ok:true; a failed local settings-edit grant is not the cause. Strict
+loadBranchSettings fails before settings_overrides/settings_locks reach local SQL.
+These are operational read channels; do not add settings-edit permission to fix it.
+
+Read-only Windows-vault metadata inspection (no credential/proof values printed)
+confirms the saved POS backend is https://pos.luckycharmsdnbhd.com, a pc activation,
+consistent STR1 branch aliases and a legacy missing deviceUse/proof field. Missing
+legacy fields alone do not establish invalid registration: binding() infers
+Operations from the saved branch, and renderer proof hydration is separate.
+Main's authorizationServerUrl prioritizes that saved backend over the local Vite
+API. Inspected production origin/main2f404e6f ipc-adopt returns authority/branch
+without terminal; current beta requires the verified id/platform/mode/branch
+response. This is a source-confirmed protocol incompatibility and the strongest
+incident explanation, not a captured live response-shape proof. A real central
+registration mismatch remains a separate possibility until compared. Keep the
+strict descriptor guard; never trust a renderer branch or synthesize authority.
+Public sync-health on production, beta and local backend returned HTTP200 with
+serviceConfigured=true during this check; that is not full database health proof.
+Separate earlier sync bootstrap503/change-tracking warnings are not explained or
+resolved by the successful adoption-response mismatch.
+
+Proposed narrow batch, awaiting owner approval: distinguish an incompatible/missing
+verified descriptor from a genuine binding denial; preserve structured temporary
+unavailability versus denied outcomes through adoption and the settings gate.
+Verify the latest local Electron against a compatible backend only with explicit
+approval before changing this profile's saved POS backend. Preserve all sealed
+registration/SQL/cloud credentials, grants, pending work, checkout and receipts.
+Do not silently switch operator URLs, trust older unsigned response fields or
+claim a generic Retry will resolve a protocol mismatch. Actual affected files:
+electron/verified-activation.cjs, Main admin:adopt-session, desktop-pos-session,
+ipc-adopt route and narrowly required settings/error propagation consumers,
+plus integration tests; finalize scope before implementation. A new live schema,
+account grant or stock/sale mutation is not proposed.
+
+Acceptance: actual installed Main handler plus routed strict scoped reads succeed
+for a matching pc Operations descriptor with an ordinary permitted cashier;
+missing/foreign/mobile/mode/branch descriptors deny before SQL without altering
+saved registration or grants;503 stays unavailable and401/403 stays denied;
+existing verified offline source:pos authority reads SQL without contacting cloud;
+maintenance authority is not a POS identity; late user/branch/activation changes
+cannot adopt stale results. Genuine changed registration requires the existing
+authorized reassignment process. Separate management-scope/read-policy findings
+remain pending rather than bundled. Six relevant existing suites/51 tests passed
+in the agent's read-only run; no new integration fix is claimed. Rollback for a
+future code batch is its targeted beta PR revert; any separately approved local
+backend change must retain its original value for explicit restoration. Membership
+and its shared loader dependencies remain unchanged and ON HOLD.
+
+SQL-08 owner approval31October: explicitly approved changing only this local
+development Electron profile's POS backend from the production address above to
+http://127.0.0.1:8080, retaining the original for restoration. Separately approved
+beta correction and isolated tests for incompatible terminal-verification
+responses and temporary-connection versus authorization-denial classification.
+This supersedes SQL-08's pending-approval state, not its no-grant/no-data boundaries.
+No production URL, schema, account, stock, sale, print, Membership or installer
+change is authorized. Use the isolated c15fdd21 branch, bounded file ownership and
+independent review. Shared authority helpers may change only through an explicitly
+scoped opt-in used by this adoption path; existing consumers must retain behavior.
+Record recovered legacy proof and failed/missing proof cases in regression tests.
+SQL-08 implementation dependency review: preserve browser/unpaired ipc-adopt
+success with terminal:null; do not add a terminal-only endpoint restriction.
+Main alone requires a matching verified descriptor when a saved/candidate native
+registration exists. The earlier resolveRelayScope fetchAppUser read also turns
+HTTP failures into missing account; permit endpoint-only strictAvailability on
+that helper, with unchanged default consumers and allow/deny semantics. This is
+necessary error classification within the approved adoption batch, not broader
+relay authorization redesign. Existing typed503 must not become inactive403.
+Approved local profile backend change completed: only backendUrl now points to
+http://127.0.0.1:8080; equality check confirms all other decrypted settings unchanged
+and sealed registration/cloud credential hashes unchanged. Original production
+address retained in ignored local restoration record. Runtime verification next.
+SQL-08 local transport test outcome: HTTP8080 was explicitly approved but rejected
+by CloudClient's existing HTTPS-only synchronization guard (EBACKEND_HTTPS).
+Restored the original production backend immediately, with registration/cloud
+credential hashes and all other settings unchanged. No HTTP exception is proposed.
+Owner subsequently explicitly approved HTTPS beta for this local development
+profile: https://beta-pos.luckycharmsdnbhd.com. Changed only backendUrl to that
+address with the same invariants; original retained in ignored restoration record.
+Readonly central registry lookup using an ID fingerprint confirms saved pc token
+is used/claimed/not revoked, claimed_platform electron, correct STR1 branch,
+management_registration false and both proof fields present. No token or proof
+value printed, no registry write. This metadata does not prove the renderer's
+currently supplied HMAC matches; investigate any true denial separately.
+
+SQL-08 latest owner instruction31October: start local Electron with the current
+correction so the owner can enter the password, then inspect the loading issue.
+Earlier Escape stopped Computer Use; do not resume window control until its new
+approval gate is satisfied. CLI server/code checks and the requested app startup
+continue. Current source remains uncommitted on c15fdd21; all scoped slices frozen.
+Prior full run:595 suites,4089 passed/1 legacy-message assertion failure. The
+assertion now expects the approved fixed public message and confirms no SQL query;
+focused repeat passed. Final whole-suite rerun/types/lint remain before commit.
+Actual HTTPS beta sync returned SESSION_INVALID / activation belongs to another
+device. Registry metadata is valid STR1; no proof reset, registry update or grant
+change performed. Source/isolated actual-module tests confirm origin-local HMAC
+key changes when renderer origin changes. Historical profile contains43117,52888,
+8080,8081 loopback origins; Main preferred packaged port is43117. Start the native
+preview at that existing stable origin while preserving the same userData/session;
+this is a verification attempt, not proof of recovered identity or permission to
+rebind. Compatible backend must verify the existing proof before normal sealing.
+Membership and all unrelated tasks remain unchanged/on hold as recorded.
+SQL-08 final source checks31October: full595 suites/4091 tests passed in111.95s
+with two thread workers; root TypeScript and full ESLint exit0, diffcheck clean.
+Initial whole run caught one obsolete raw-error-message assertion; targeted test
+now asserts the fixed generic message, retains EPRIVILEGE and proves no SQL query.
+No product/price/stock/sale/checkout/receipt or grant change was introduced.
+
+Owner explicitly resumed Electron inspection and signed in themselves. Actual
+latest MainPID6552 runs this worktree with Windows renderer43117 (native Vite2884)
+and web preview8080 (Vite4432). Older owned preview processes and redundant8082
+probe were stopped after identity checks; no unrelated process was terminated.
+Full same-profile sign-in has now recovered the EXISTING HMAC at the original
+native origin through normal online verification: nonsecret sealed metadata shows
+operations, same STR1 branch, consistent aliases and bindingProofPresent=true,
+compared with legacy null mode/missing proof before sign-in. No proof/key values
+printed/copied, no central registration/claim/account grant edits or unpairing.
+This supports the origin-mismatch mechanism; it does not prove every legacy device
+has a recoverable key or authorize an automatic origin search/claim repair.
+
+Actual read-only Electron observation17:40-17:41Brunei: Approvals opens with All
+branches disabled on this Operations terminal, own STR1 context and local SQL ready.
+Settings opens and shows expected configuration groups without the previous load
+gate. Connection panel shows queue0/errors0 but Needs attention from expired
+change_history Change Tracking; latest bootstrap still returns untyped HTTP503.
+Keep SQL-09 separate and read-only: existing local jobs/checkpoint metadata may
+identify whether pre-bootstrap settings reads or a later table failed. No manual
+resync/repair, cursor reset, stock/sale mutation or Membership change performed.
+No real checkout/receipt printed; automated permission/offline regressions passed,
+while other physical-device, offline sale and final installed acceptance remain.
+Retain original backend restoration record locally; leave current owner-approved
+HTTPS beta address and both latest previews running. Source commit/PR next after
+final scoped diff review; no publication or production promotion is authorized.

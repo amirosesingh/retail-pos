@@ -184,7 +184,7 @@ describe("local SQL Server discovery privilege", () => {
     expect(main).not.toContain('`${baseUrl}/api/v1/pos/ipc-adopt`');
     expect(main).toContain('`${authorizationUrl}/api/v1/pos/ipc-authorize`');
     expect(main).not.toContain('`${baseUrl}/api/v1/pos/ipc-authorize`');
-    expect(adoptRoute).toContain("verifyRelayCaller(proof)");
+    expect(adoptRoute).toMatch(/verifyRelayCaller\(proof(?:,|\))/);
     expect(adoptRoute).toContain("sessionToken:");
     expect(adoptRoute).toContain("cashierToken:");
     expect(adoptRoute).not.toMatch(/role\s*:\s*input/);
