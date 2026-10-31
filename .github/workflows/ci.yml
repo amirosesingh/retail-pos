@@ -32,6 +32,8 @@ jobs:
         run: node --test scripts/test-sync-pipeline.cjs scripts/test-startup-cloud.cjs scripts/test-event-sync.cjs scripts/test-company-identity.cjs scripts/test-database-upgrade.cjs scripts/test-update-install.cjs
       - name: Atomic shift closure database and retry tests
         run: node scripts/test-shift-closure-sync.mjs
+      - name: Atomic transfer dispatch, authorization and retry tests
+        run: node scripts/test-transfer-dispatch-atomic.mjs
       - name: Notification acknowledgement ownership and delivery regressions
         run: node scripts/test-notification-upgrades.mjs
       - name: SQL schema and synchronization contract checks

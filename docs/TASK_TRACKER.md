@@ -1606,3 +1606,43 @@ live. Saved native/operator configuration was not changed by the agent. Renderer
 UI uses Vite HMR; native Main-code changes require a normal restart, not a claim
 of instant backend hot replacement. Local SQL readiness was not certified by
 the window-title/process check.
+
+TRF-15 approved separate correction/test batch31October. Owner reported approved
+stock request ST-STR1-WEB01-20261031-0001 fails dispatch. ROSEGILL pos readback
+shows child transfer approved, no dispatched quantity/time, requested1 pair,
+source STR1 stock0 and no child warehouses. Logs23514 report Short by1; the
+current incident rolled back correctly. Never invent stock or bypass shortage.
+
+Source trace additionally confirms post-commit linked-request closure can fail
+after dispatch; native approval has a verified-staff adapter but dispatch lacks
+one; browser transport discards structured SQL error codes. Owner approved fixing
+these paths with isolated tests, preserving stock/approval/permission/branch
+rules. Any live migration needs separate exact-project approval; no real transfer,
+approval, stock, grants or settings writes during tests. Baseline33f1996e, branch
+codex/transfer-dispatch-recovery-beta, separate from approved SQL-07 loading fix.
+Implement atomic dispatch/request completion with validated linked ownership and
+existing fulfilment semantics; do not silently change partial-request rules.
+Use agents with distinct server/SQL and client/error ownership plus independent
+review. Record and escalate business-rule ambiguities; Membership remains ON HOLD.
+
+TRF-15 preparation checkpoint31October: final migration SHA256
+972A62DF76BEE85B93CBC7CB0C7C3985EC8C7109D6456AFBC1B36384B35579D2.
+Root and independent review repeat44 canonical-trigger and44 captured-live
+25-trigger PostgreSQL scenarios plus8 real independent-session races. New private
+append-only dispatch intent prevents fabricated replay after mutable document
+facts change; strict new-RPC item/ceiling preflight runs before stock mutation.
+Legacy void clamp/default semantics and original ACL remain; new internals are
+owner-only, public atomic RPC authenticated-only, verified-native adapter service-only.
+Collision/default/owner/PK rollback and repeated-application tests pass.
+
+Actual SQL output passes the real client proof parser for web/native/replay and
+uppercase UUIDs; stale ceilings fail before any stock movement. Client suites,
+types and scoped lint pass. The final native response sanitizer/status correction
+also passed independent review; only bounded diagnostic code/status stay private,
+definite denials do not retry and ambiguous gateway errors retain one exact retry.
+Combined full regression checks and a scoped beta PR against the latest beta are
+the remaining source-delivery steps. Applying the new receipt table/routines requires
+separate exact ROSEGILL-project approval; deploy DB before new client. No live
+dispatch/stock write, notification-channel change, installer/OTA publication or
+main promotion. Full scope, limits and recovery:
+[transfer dispatch review](database/transfer-dispatch-recovery-review.md).

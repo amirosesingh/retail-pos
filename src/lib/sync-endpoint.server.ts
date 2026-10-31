@@ -45,6 +45,7 @@ const opSchema = z.discriminatedUnion("kind", [
       "shift_cash_count_submit",
       "stock_transfer_approve",
       "stock_transfer_dispatch",
+      "stock_transfer_dispatch_atomic",
       "stock_transfer_receive",
       "stock_transfer_verify",
     ]),

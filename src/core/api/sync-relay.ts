@@ -144,7 +144,8 @@ export function canRelay(): boolean {
 const syncPath = (): string => (serverOrigin() ? "/api/public/sync" : "/api/v1/pos/sync");
 
 /** Push one operation through the relay. */
-export async function relayOp(op: SyncOp): Promise<{ ok: boolean; error?: string; code?: string }> {
+export type RelayOpResult = { ok: boolean; error?: string; code?: string; data?: unknown; status?: number };
+export async function relayOp(op: SyncOp): Promise<RelayOpResult> {
   const startedAt = sessionEpoch();
   try {
     const res = await fetchWithDeadline(serverUrl(syncPath()), {
@@ -157,7 +158,7 @@ export async function relayOp(op: SyncOp): Promise<{ ok: boolean; error?: string
       error?: string;
       code?: string;
       detail?: { table?: string; kind?: string; role?: string | null; branch?: string | null };
-      results?: { ok: boolean; error?: string }[];
+      results?: RelayOpResult[];
     } | null;
     await inspectRelay(res, body, startedAt);
     if (!res.ok) {
@@ -171,12 +172,17 @@ export async function relayOp(op: SyncOp): Promise<{ ok: boolean; error?: string
         ok: false,
         error: `${body?.error ?? `Relay refused (${res.status})`}${where}`,
         ...(body?.code ? { code: body.code } : {}),
+        status: res.status,
       };
     }
     const first = body?.results?.[0];
     return first ?? { ok: !!body?.ok };
   } catch (e) {
-    return { ok: false, error: (e as Error).message };
+    const cause = e as { message?: string; code?: unknown; name?: string } | null;
+    const code = typeof cause?.code === "string" ? cause.code : ["TimeoutError", "AbortError"].includes(cause?.name ?? "") ? cause!.name : undefined;
+    return { ok: false, error: (e as Error).message,
+      ...(code ? { code } : {}),
+    };
   }
 }
 

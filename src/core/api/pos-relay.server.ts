@@ -1,6 +1,7 @@
 import { canCrossBranches } from "./relay-policy.server";
 import { recordId } from "@/lib/sale-identity";
 import { sameBranchId } from "@/lib/branch-id";
+import { dispatchFailure } from "@/lib/transfer-dispatch-result";
 /**
  * Server-side write relay for the POS database.
  *
@@ -366,6 +367,12 @@ const RELAY_RPCS: Record<
     idArg: "p_transfer_id",
     storeColumn: "from_store_id",
   },
+  stock_transfer_dispatch_atomic: {
+    permission: "can_create_transfer",
+    ownerTable: "stock_transfers",
+    idArg: "p_transfer_id",
+    storeColumn: "from_store_id",
+  },
   stock_transfer_receive: {
     permission: "can_receive_transfer",
     ownerTable: "stock_transfers",
@@ -380,6 +387,25 @@ const RELAY_RPCS: Record<
   },
 };
 
+/** Native dispatch responses expose operational guidance, never database text. */
+async function nativeDispatchFailure(response: Response): Promise<{ ok: false; error: string; code?: string; status: number }> {
+  const body: unknown = await response.json().catch(() => null);
+  const fields = body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : {};
+  const safe = dispatchFailure({ ...fields, status: response.status });
+  const upstreamCode = typeof fields.code === "string" ? fields.code : "";
+  const sqlDenial = /^[0-9A-Z]{5}$/.test(upstreamCode);
+  // Only a bounded diagnostic code/status stays server-side. Messages, hints,
+  // details and gateway response bodies can contain private database context.
+  const diagnosticCode = sqlDenial || /^PGRST\d{3}$/.test(upstreamCode) ? upstreamCode : "UNKNOWN";
+  console.warn("[transfer-dispatch] Backend rejection", { code: diagnosticCode, status: response.status });
+  // A genuine gateway/transport failure may have committed before the response
+  // was lost. Keep its HTTP status and omit a definitive business-error code so
+  // the client can make its single identical, receipt-backed reconciliation.
+  const ambiguous = !sqlDenial && safe.code === "TRANSFER_DISPATCH_UNCONFIRMED" &&
+    (response.status >= 500 || response.status === 408);
+  return { ok: false, error: safe.error, status: response.status, ...(!ambiguous ? { code: safe.code } : {}) };
+}
+
 /**
  * Run one allow-listed routine on the caller's behalf.
  *
@@ -390,7 +416,7 @@ const RELAY_RPCS: Record<
 export async function runRelayRpc(
   op: RelayRpc,
   scope: RelayScope,
-): Promise<{ ok: boolean; error?: string; code?: string }> {
+): Promise<{ ok: boolean; error?: string; code?: string; status?: number; data?: unknown }> {
   if (op.fn === "pos_sale_commit") {
     if (
       scope.role !== "admin" &&
@@ -472,6 +498,7 @@ export async function runRelayRpc(
   }
 
   const spec = RELAY_RPCS[op.fn];
+  const nativeDispatch = op.fn === "stock_transfer_dispatch" || op.fn === "stock_transfer_dispatch_atomic";
   if (!spec) return { ok: false, code: "TABLE_FORBIDDEN", error: `"${op.fn}" cannot be run` };
   if (
     scope.role !== "admin" &&
@@ -491,7 +518,7 @@ export async function runRelayRpc(
   const lookup = await serviceRest(
     `${spec.ownerTable}?id=eq.${encodeURIComponent(id)}&select=${spec.storeColumn}&limit=1`,
   );
-  if (!lookup.ok) return { ok: false, error: (await lookup.text()).slice(0, 300) };
+  if (!lookup.ok) return nativeDispatch ? nativeDispatchFailure(lookup) : { ok: false, error: (await lookup.text()).slice(0, 300) };
   const rows = (await lookup.json()) as Record<string, unknown>[];
   const owner = rows[0];
   if (!owner) return { ok: false, code: "SCOPE_MISSING", error: "That record no longer exists." };
@@ -522,20 +549,22 @@ export async function runRelayRpc(
   const args = actorField ? { ...op.args, [actorField]: actor } : op.args;
   // Only the account resolved from the verified session may become the native
   // database actor. Renderer attribution/actor parameters are never forwarded.
-  if (op.fn === "stock_transfer_approve" && (!scope.staffUserId || scope.stale || scope.kind === "terminal"))
-    return { ok: false, code: "PERMISSION_DENIED", error: "An active staff session is required to approve transfers." };
   const nativeApproval = op.fn === "stock_transfer_approve";
-  const rpcArgs = nativeApproval ? {
+  if ((nativeApproval || nativeDispatch) && (!scope.staffUserId || scope.stale || scope.kind === "terminal"))
+    return { ok: false, code: "PERMISSION_DENIED", error: "An active staff session is required to act on transfers." };
+  const rpcArgs = nativeApproval || nativeDispatch ? {
     p_transfer_id: id,
     p_staff_user_id: scope.staffUserId,
     p_bound_store_id: canCrossBranches(scope) ? null : scope.storeId,
     p_lines: op.args.p_lines ?? null,
+    ...(nativeDispatch ? { p_strict_lines: op.fn === "stock_transfer_dispatch_atomic" } : {}),
   } : args;
-  const res = await serviceRest(`rpc/${nativeApproval ? "stock_transfer_approve_for_staff" : op.fn}`, {
+  const res = await serviceRest(`rpc/${nativeApproval ? "stock_transfer_approve_for_staff" : nativeDispatch ? "stock_transfer_dispatch_atomic_for_staff" : op.fn}`, {
     method: "POST",
     body: JSON.stringify(rpcArgs),
   });
-  if (res.ok) return { ok: true };
+  if (res.ok) return op.fn === "stock_transfer_dispatch_atomic" ? { ok: true, data: await res.json() } : { ok: true };
+  if (nativeDispatch) return nativeDispatchFailure(res);
   return { ok: false, error: (await res.text()).slice(0, 400) };
 }
 

@@ -14,6 +14,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
 import { isTerminalApp } from "@/platform-config/platform";
 import { relayOp } from "@/core/api/sync-relay";
+import { sessionEpoch } from "./session-epoch";
+import { recordId, sameRecordId } from "./sale-identity";
+import { dispatchFailure, mayReconcileDispatch, readDispatchProof, type DispatchExpected, type DispatchProof } from "./transfer-dispatch-result";
 
 const sb = supabaseExternal as unknown as SupabaseClient;
 
@@ -298,23 +301,24 @@ export type LineQty = { productId: string; qty: number };
 const toLines = (lines: LineQty[] | undefined) =>
   lines?.length ? lines.map((l) => ({ product_id: l.productId, qty: Math.max(0, l.qty) })) : null;
 
-export type RpcResult = { success: boolean; error?: string };
+export type RpcResult = { success: boolean; error?: string; code?: string; dispatch?: DispatchProof };
 
 async function runTransferRpc(
   fn:
     | "stock_transfer_approve"
     | "stock_transfer_dispatch"
+    | "stock_transfer_dispatch_atomic"
     | "stock_transfer_receive"
     | "stock_transfer_verify",
   args: Record<string, unknown>,
-): Promise<RpcResult> {
+): Promise<RpcResult & { data?: unknown; status?: number }> {
   if (isTerminalApp()) {
     const result = await relayOp({ kind: "rpc", table: "stock_transfers", fn, args });
-    return result.ok ? { success: true } : { success: false, error: result.error };
+    return result.ok ? { success: true, data: result.data } : { success: false, error: result.error, code: result.code, status: result.status };
   }
   const result = await sb.rpc(fn, args as never);
-  if (result.error) throw new Error(result.error.message);
-  return { success: true };
+  if (result.error) throw Object.assign(new Error(result.error.message), { code: result.error.code, status: result.status });
+  return { success: true, data: result.data };
 }
 
 /**
@@ -344,17 +348,36 @@ export async function approveTransferInDb(
 export async function dispatchTransferInDb(
   id: string,
   who: string,
-  lines?: LineQty[],
+  lines: LineQty[],
+  expected: DispatchExpected,
 ): Promise<RpcResult> {
-  try {
-    return await runTransferRpc("stock_transfer_dispatch", {
-      p_transfer_id: id,
-      p_dispatched_by: who,
-      p_lines: toLines(lines),
-    });
-  } catch (e) {
-    return { success: false, error: describeError(e, "Dispatching the transfer") };
+  const epoch = sessionEpoch();
+  if (!expected || !sameRecordId(id, expected.id) || !Array.isArray(lines) || !lines.length ||
+      Array.from(lines).some(line => !line || typeof line.productId !== "string" || !line.productId.trim() || !Number.isSafeInteger(line.qty) || line.qty < 0) ||
+      new Set(lines.map(line => recordId(line.productId))).size !== lines.length)
+    return dispatchFailure({ code: "TRANSFER_DISPATCH_CONFLICT" });
+  const requested = lines.map(line => ({ productId: line.productId, qty: line.qty }));
+  const args = { p_transfer_id: id, p_dispatched_by: who, p_lines: toLines(requested) };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (sessionEpoch() !== epoch) return dispatchFailure({ code: "SESSION_CHANGED" });
+    try {
+      // This versioned endpoint closes a validated linked request atomically.
+      // An older void RPC is never a safe fallback after an upgrade failure.
+      const result = await runTransferRpc("stock_transfer_dispatch_atomic", args);
+      if (!result.success) throw Object.assign(new Error(result.error), { code: result.code, status: result.status });
+      if (sessionEpoch() !== epoch) return dispatchFailure({ code: "SESSION_CHANGED" });
+      const proof = readDispatchProof(result.data, expected, requested);
+      return proof ? { success: true, dispatch: proof } : dispatchFailure({ code: "TRANSFER_DISPATCH_UNCONFIRMED" });
+    } catch (error) {
+      if (sessionEpoch() !== epoch) return dispatchFailure({ code: "SESSION_CHANGED" });
+      // The exact same request reads the locked committed dispatch on replay;
+      // the upgraded routine never deducts stock a second time. Definite SQL
+      // denials and unavailable upgrades are not retried.
+      if (attempt === 0 && sessionEpoch() === epoch && mayReconcileDispatch(error)) continue;
+      return dispatchFailure(error);
+    }
   }
+  return dispatchFailure({ code: "TRANSFER_DISPATCH_UNCONFIRMED" });
 }
 
 /**
