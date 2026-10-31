@@ -1887,3 +1887,55 @@ Independent live readback after approved guard/repair passed. No other empty
 request-with-linked-transfer cases were found by the bounded related-data scan.
 Commit only reviewed files, leave unrelated .temp untracked, require final-head
 CI and merge PR350 into beta; publication/main promotion remain unapproved.
+
+SQL-09 owner approval31October: separately approved diagnostic-only sync changes
+and isolated tests after existing read-only investigation. Baseline c15fdd21,
+branch codex/sync-bootstrap-diagnostics-beta. Approved surface: only allowlisted
+failed-table/phase/origin/HTTP-status/non-JSON breadcrumbs in CloudClient, bootstrap,
+lifecycle, Main logging and diagnostics normalizer, plus isolated actual-module
+tests. Preserve request payloads, return/error identity, retry/timing, transactions,
+rollback, queues and checkpoints; no record/schema/permission/setting/Membership
+change, no manual resync/repair/cursor reset or security bypass. This identifies
+the next automatic failure; it is not approval to repair the still-unproven503.
+
+Related SQL-08 correction a140c12f is in beta PR351; full595 suites/4091tests,
+TSC/full lint and platform/security CI passed. Its separately approved compatible
+HTTPS beta backend/original native origin let normal owner sign-in verify and seal
+the existing proof; Settings/Approvals open, same STR1 branch and SQL ready.
+Formal immutable security diff scan is in progress; preserve its source unchanged.
+Latest permanent decisions/evidence are in that PR's existing memory/tracker;
+merge/reconcile them before this diagnostics branch is run or submitted, preserving
+both task histories. Do not copy an older source tree over the running correction.
+
+Readonly SQL-09 evidence: local change_history checkpoint1083 is below MIN_VALID
+VERSION2206/current3510, last updated19October, retention7days. No new bootstrap
+job; current503 could be settings prefetch or targeted gap recovery. Sampled
+Supabase bootstrap requests were all200; bounded beta Worker tail missed the later
+503 completion, so provider/layer/table is unproven. Native normal-close warning
+correctly refuses to close with the expired-history error. Latest renderer was
+reloaded via its development server only; Electron Main/SQL/pending work stayed
+running and no close guard was bypassed. A read-only diagnostic proposal is not a
+transaction or baseline repair. No existing proofs, cloud claims or grants changed.
+SQL-09 implementation frozen: exactly five approved source files and one new
+actual-module test; author4suites/75tests and independent6suites/83tests passed.
+TypeScript, scoped lint, five CJS syntax checks and diff checks passed. Tagging
+preserves payload bytes, original/frozen/primitive errors and retry/transaction/
+checkpoint ordering; only registry/enums/status/boolean enter existing log events.
+It does not repair503. Original SQL-08 PR351 has now merged into beta f4fc2207;
+parents c15fdd21/a140c12f and exact tested tree708422dc8bc7fa64d44ff68cc3fb5c0672e6f139
+verified. Formal Codex Security scan33f2e945 completed with all21paths reviewed,
+zero reportable findings; all required platform/CF/permission checks passed.
+CodeRabbit was skipped, not counted as a completed review. No publication/main
+promotion. Merge current beta into this isolated diagnostic branch and preserve
+both task histories, then run combined regressions; no copying older code.
+
+Requested latest-code reload completed by restarting only native Vite at the
+same43117origin (nowPID11272). Main6552 was kept running because normal close
+correctly reported incomplete synchronization/expired change_history tracking;
+no force exit/close-guard bypass. Reloaded UI remained signed in at STR1.
+A separate no-window read-only helper is probing exactly one page of pos_settings
+and settings_scoped with the existing sealed verified device proof. It opens no
+SQL connection and imports no Main/lifecycle/apply routines; no downloaded rows,
+credentials, URLs or request/response bodies are logged, followed or applied.
+Only sanitized table/status/nonJSON/finite error class/latency are retained in
+ignored local evidence. Results remain pending; this probe is not a resync/repair.
