@@ -29,7 +29,7 @@ describe("desktop POS authority handoff", () => {
   it("does not accept a maintenance PIN as a signed-in operator", async () => {
     mocks.status.mockResolvedValue({ unlocked: true, source: "manual", level: "admin" });
     mocks.adopt.mockResolvedValue({ ok: false, error: "Session revoked" });
-    expect(await ensureDesktopPosSession()).toEqual({ ok: false, error: "Session revoked" });
+    expect(await ensureDesktopPosSession()).toEqual({ ok: false, error: "The signed-in account could not be verified on this PC." });
   });
   it("rejects a handoff that finishes after logout or user switching", async () => {
     let finish!: (value: unknown) => void;

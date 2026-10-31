@@ -35,6 +35,24 @@ Read [../AGENTS.md](../AGENTS.md) and [TASK_TRACKER.md](TASK_TRACKER.md) first.
 The tracker records defects, unfinished work, verification and approvals.
 Technical detail remains in the existing references linked below.
 
+31October SQL-08 verification: a new native build must receive a compatible,
+server-verified terminal descriptor before adopting local POS authority. An older
+backend without that descriptor is an upgrade requirement, not a reason to trust
+renderer identity or widen permissions. Temporary verification failures remain
+distinct from genuine denials. The owner separately approved changing only this
+development profile to the HTTPS beta backend; do not switch other devices or
+production configuration automatically. HTTP local transport is not an exception
+to the synchronization HTTPS requirement.
+
+Electron's legacy device HMAC key is origin-local. Preserve the existing native
+renderer origin/session during development and test upgrades; restoring a sealed
+activation alone does not restore a missing renderer key at another origin.
+On this PC, normal sign-in at the existing native origin43117 verified the proof
+and saved it in the sealed activation; STR1 binding stayed unchanged. Never copy
+a central claim proof, reset a claim or unpair a terminal to bypass a mismatch.
+Local Settings/Approvals now load; separate Change Tracking/bootstrap503 warnings
+remain unfinished in SQL-09. This is not full installed-device or sync verification.
+
 Latest30October decisions: SHIFT-14 correction code/isolated tests are approved;
 the exact shift-sync migration was subsequently approved and applied at23:59:38
 Brunei (livehistory20261030155938). Future live changes still need separate

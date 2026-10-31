@@ -1,4 +1,5 @@
 import { alignVerifiedScopeIds } from "@/lib/verified-scope-ids";
+import { readAdoptionAccounts } from "@/lib/desktop-adoption-availability.server";
 /**
  * Server-side authorisation for the POS write relay.
  *
@@ -233,19 +234,25 @@ const SELECT_APP_USER = "select=user_id,full_name,store_id,role,role_slug,permis
  */
 const userLookups = new Map<string, Promise<AppUserRow | null>>();
 
-async function fetchAppUser(filter: string): Promise<AppUserRow | null> {
-  const pending = userLookups.get(filter);
+async function fetchAppUser(filter: string, strictAvailability = false): Promise<AppUserRow | null> {
+  const key = strictAvailability ? `adoption:${filter}` : filter;
+  const pending = userLookups.get(key);
   if (pending) return pending;
   const lookup = (async () => {
-    const res = await serviceRest(`app_users?${filter}&${SELECT_APP_USER}&limit=1`);
-    if (!res.ok) return null;
-    const rows = (await res.json()) as AppUserRow[];
+    const read = () => serviceRest(`app_users?${filter}&${SELECT_APP_USER}&limit=1`);
+    let rows: AppUserRow[];
+    if (strictAvailability) rows = await readAdoptionAccounts(read);
+    else {
+      const res = await read();
+      if (!res.ok) return null;
+      rows = (await res.json()) as AppUserRow[];
+    }
     const row = rows[0];
     return !row || row.is_active !== true ? null : row;
   })();
-  userLookups.set(filter, lookup);
+  userLookups.set(key, lookup);
   try { return await lookup; }
-  finally { if (userLookups.get(filter) === lookup) userLookups.delete(filter); }
+  finally { if (userLookups.get(key) === lookup) userLookups.delete(key); }
 }
 
 const supervisorRole = (role: string | null, slug: string | null) =>
@@ -263,14 +270,14 @@ export async function resolveRelayScope(caller: {
   terminalId?: string | null;
   managementDevice?: boolean;
   managementMobileDevice?: boolean;
-}): Promise<RelayScope> {
+}, options: { strictAvailability?: boolean } = {}): Promise<RelayScope> {
   // Authenticated claims identify a token, not current account authority.
   // In particular, Supabase user_metadata is editable by the account holder.
   let row: AppUserRow | null = null;
   if (caller.authUserId) {
-    row = await fetchAppUser(`auth_user_id=eq.${encodeURIComponent(caller.authUserId)}`);
+    row = await fetchAppUser(`auth_user_id=eq.${encodeURIComponent(caller.authUserId)}`, options.strictAvailability);
   } else if (caller.kind !== "terminal" && caller.staffUserId) {
-    row = await fetchAppUser(`user_id=eq.${encodeURIComponent(caller.staffUserId)}`);
+    row = await fetchAppUser(`user_id=eq.${encodeURIComponent(caller.staffUserId)}`, options.strictAvailability);
   }
   const role = row?.role ?? null;
   const roleSlug = row?.role_slug ?? null;
