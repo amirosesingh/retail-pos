@@ -605,8 +605,11 @@ or required by it. Actual SQL compile and isolated fixture success do not establ
 all Electron readiness/settings/auth gates or real checkout success; tracker
 SQL-08 retains the separate settings-read blocker observed after restart.
 
-TRF-15 is separately approved correction code and isolated tests, with exact live
-database approval still required. Preserve existing shortage checks and partial/
+TRF-15 correction code/isolated tests and its exact ROSEGILL live migration were
+separately approved. The reviewed migration was applied on 31 October at 15:47
+(Asia/Brunei) as
+live history20261031074715; future live changes still require separate approval.
+Preserve existing shortage checks and partial/
 zero close-without-remainder behavior. Stock picking and linked-request completion
 must commit together; retry requires immutable dispatch intent plus current
 authorization and must not deduct twice. Native identity/terminal binding comes

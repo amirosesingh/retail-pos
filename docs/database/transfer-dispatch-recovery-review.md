@@ -1,6 +1,10 @@
 # TRF-15: atomic transfer dispatch and verified native operator
 
-Status: approved code and isolated-test batch; **not applied to the live database**.
+Status: approved code and isolated-test batch; the exact reviewed migration was
+separately approved and **applied to ROSEGILL pos on 31 October 2026 at 15:47
+(Asia/Brunei)**,
+live history `20261031074715`. Final beta merge and installed-device acceptance
+are separate steps.
 Membership remains on hold. No real dispatch, approval, stock correction or
 permission change is authorized by the test batch.
 
@@ -97,6 +101,22 @@ Before application, separately obtain approval for this exact target:
 - Organization: **rosegill0011@gmail.com's Org**, `bjxgimekljzlnwejuawj`.
 - Project/database: **pos**, `qhrufhtbeguxydenzfey`.
 - API URL: <https://qhrufhtbeguxydenzfey.supabase.co>.
+
+That approval was received for SHA256
+`972A62DF76BEE85B93CBC7CB0C7C3985EC8C7109D6456AFBC1B36384B35579D2`.
+Immediately-before definitions matched the saved preimages. Installed readback
+confirms the exact guarded picker copy and lifecycle/history changes, preserved
+legacy grants, owner-only private helpers/receipt table, public authenticated-only
+atomic RPC and service-only native adapter. The receipt table had zero rows and
+the reported transfer remained approved/undispatched. Independent live read-only
+review also passed. Advisor categories match the baseline; the
+[authenticated SECURITY DEFINER advisory](https://supabase.com/docs/guides/database/database-linter?lint=0029_authenticated_security_definer_function_executable)
+adds the intended atomic entrypoint (92 to 93 routine findings). Its explicit
+action/branch guards and minimal grants are verified; this does not certify or
+resolve all historical database advisories. The no-policy informational advisory
+also adds the private receipt table (10 to 11). It intentionally has no client or
+service-role raw table access; guarded owner routines handle it. No real transfer
+was executed as a live test.
 
 Capture the installed routines/metadata before application; verify recognized
 definitions, table absence/shape, exact ACLs, migration checksum and project

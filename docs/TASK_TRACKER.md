@@ -30,7 +30,7 @@ only; the owner's subsequent Batch 1 approval below authorizes its bounded fixes
 | 17 | PERF-24 committed/pushed/scoped verified | 8b840192 fixes first-paint report completeness, restored-session landing and scoped-settings initial readiness/retry. Independent review passed; 11 focused suites/96 tests passed. Latest PR checks are green. No formula/grant/Membership change. |
 | 18 | AUTH-12 committed / exact-head CI passed | afcf92d1 shared public PIN response boundary covers both transports, alias, lockouts and validation probes. Private counters, grants and offline handling remain.13 suites/157 tests plus12 isolated SQL scenarios passed. Exact-head securityCI:578suites/3765tests passed/1skipped; Android, Windows, iOS and Cloudflarebeta checks passed. No merge/publication. |
 | 19 | TERM-13 implemented / focused verification and independent review | Protected recovery links, awaited saved-profile status, retry/stale-read fences, strict Electron store restore and verified roster503 classification. Preserve saved bytes, true denials, branch authority and checkout; all-platform automated route/gate cases pass. Physical-device acceptance remains separate. |
-| 20 | TRF-15 implemented / isolated verification passed; live upgrade awaiting approval | Atomic dispatch/request completion, immutable retry intent, verified native actor and safe errors. Current reported transfer remains blocked by real stock shortage. Require exact ROSEGILL migration approval, exact-head CI, beta merge and separate installed-device acceptance. |
+| 20 | TRF-15 implemented / isolated verification passed; approved live upgrade applied | Atomic dispatch/request completion, immutable retry intent, verified native actor and safe errors. ROSEGILL migration history20261031074715 verified. Require final exact-head CI/beta merge and separate installed-device acceptance; the reported transfer remains undispatched. |
 
 Membership is **ON HOLD** throughout. Each future batch requires a recoverable
 baseline, specific files/dependencies, expected behavior, risks, regression tests,
@@ -1748,3 +1748,40 @@ checks before merge; live migration and installed-device acceptance remain pendi
 Both local development servers respond200 at8080/8081. The owner pressed Escape
 to stop Computer Use; root stopped app interaction and continued only approved
 source/testing/Git work. Do not infer further GUI control from this checkpoint.
+
+31October owner explicitly approved applying the exact tested TRF-15 migration
+20261031042447_atomic_transfer_dispatch_and_verified_native_actor.sql to ROSEGILL
+→rosegill0011@gmail.com's Org(bjxgimekljzlnwejuawj)→pos(qhrufhtbeguxydenzfey),
+https://qhrufhtbeguxydenzfey.supabase.co, database postgres. Approved SHA256
+972A62DF76BEE85B93CBC7CB0C7C3985EC8C7109D6456AFBC1B36384B35579D2;
+application/readback and independent ACL/definition review are the active steps.
+Prior definitions/ACLs are retained in ignored local cache. PR350 exact head
+e7d7e089 has passing security/regression, Android/Windows, iPhone, Cloudflare
+and label checks; CodeRabbit skipped, not a completed review. Apply once with
+preflight, then verify and merge beta only. No real dispatch/stock adjustment,
+Membership change, production promotion or installer/OTA publication authorized.
+
+TRF-15 approved migration applied once on 31 October at 15:47 (Asia/Brunei); live history
+20261031074715. Immediately-before preimages match saved definitions/ACLs;
+the reviewed SQL checksum is unchanged. Readback verifies the exact guarded
+warehouse-picker copy, original legacy wrapper ACL/owner, exact lifecycle/history
+delta (CRLF-normalized comparison) and unchanged lifecycle/history metadata.
+The new 6-column receipt table is empty, RLS-enabled and owner-only with the
+append-only trigger; effective execute denies anon/authenticated/service_role on
+all new private helpers, grants the public atomic endpoint only authenticated
+and native adapter only service_role. Security-advisor categories are unchanged;
+the SECURITY DEFINER advisory adds the intended authenticated atomic endpoint
+(92→93 routine findings). Its explicit permission/branch checks and role grants
+passed isolated and installed-definition review; do not remove required access
+or claim all historical advisories are resolved. The no-policy informational
+advisory adds the private receipt table (10→11): no raw client/service-role table
+grants or policies are intended; only the guarded owner routines access it.
+Read-only 15:49 (Asia/Brunei) check of ST-STR1-WEB01-20261031-0001 still shows approved,
+dispatched_at NULL and receipt count 0. No real dispatch/stock correction was run.
+Persist before/after definitions in ignored cache; no existing business rows or
+grants were rewritten by the migration. Independent live read-only review passed:
+all new bodies match approved source, 8 private-helper execute checks per role,
+15 receipt-table privilege checks, complete receipt shape/trigger/default and
+single migration history verified. Evidence is retained in ignored independent
+postapply metadata. Only three documentation files change after e7d7e089; rerun
+final exact-head beta checks and merge. Physical-device acceptance remains pending.
