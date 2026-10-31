@@ -30,6 +30,7 @@ only; the owner's subsequent Batch 1 approval below authorizes its bounded fixes
 | 17 | PERF-24 committed/pushed/scoped verified | 8b840192 fixes first-paint report completeness, restored-session landing and scoped-settings initial readiness/retry. Independent review passed; 11 focused suites/96 tests passed. Latest PR checks are green. No formula/grant/Membership change. |
 | 18 | AUTH-12 committed / exact-head CI passed | afcf92d1 shared public PIN response boundary covers both transports, alias, lockouts and validation probes. Private counters, grants and offline handling remain.13 suites/157 tests plus12 isolated SQL scenarios passed. Exact-head securityCI:578suites/3765tests passed/1skipped; Android, Windows, iOS and Cloudflarebeta checks passed. No merge/publication. |
 | 19 | TERM-13 implemented / focused verification and independent review | Protected recovery links, awaited saved-profile status, retry/stale-read fences, strict Electron store restore and verified roster503 classification. Preserve saved bytes, true denials, branch authority and checkout; all-platform automated route/gate cases pass. Physical-device acceptance remains separate. |
+| 20 | TRF-15 implemented / isolated verification passed; live upgrade awaiting approval | Atomic dispatch/request completion, immutable retry intent, verified native actor and safe errors. Current reported transfer remains blocked by real stock shortage. Require exact ROSEGILL migration approval, exact-head CI, beta merge and separate installed-device acceptance. |
 
 Membership is **ON HOLD** throughout. Each future batch requires a recoverable
 baseline, specific files/dependencies, expected behavior, risks, regression tests,
@@ -1734,3 +1735,16 @@ head. TRF-15 source42160659 is now being integrated with that latest beta; retai
 both evidence histories above. Only this ledger's parallel append conflicted;
 no application-code conflict. SQL-08 remains pending separate investigation/
 approval; do not treat SQL-07's merge as proof that the settings/auth gate is fixed.
+
+TRF-15 final source verification: full590-suite/3953-test run passed using stable
+local test TEMP/TMP and four workers; default sandbox runs had transform-temp
+ENOENT and two environment-dependent timeouts, not accepted as passing evidence.
+Full ESLint/TypeScript and schema/install-order/sync/merge checks passed. After
+latest-beta integration def3dc20,63 focused actual catalogue/transfer/protocol
+checks passed. SQL SHA remains972A62DF…579D2 with44+44 isolated scenarios and8
+real PostgreSQL races independently repeated; no live rows were used. Independent
+server/client review finds no remaining scoped blocker. Capture exact-head PR
+checks before merge; live migration and installed-device acceptance remain pending.
+Both local development servers respond200 at8080/8081. The owner pressed Escape
+to stop Computer Use; root stopped app interaction and continued only approved
+source/testing/Git work. Do not infer further GUI control from this checkpoint.
