@@ -15,7 +15,7 @@ async function refreshTable({registry,cloud,connectionManager,branchId,historyDa
   let diagnosticPhase="download";
   try{do{
     diagnosticPhase="download";
-    const page=await readPage(limit=>cloud.bootstrapPage({table:table.cloudTable,branchId,historyDays,cursor,limit}),size);const batch=page.batch;size=page.nextLimit;
+    const page=await readPage(limit=>cloud.bootstrapPage({table:table.cloudTable,branchId,historyDays,cursor,limit}),size,{table:table.cloudTable});const batch=page.batch;size=page.nextLimit;
     diagnosticPhase="local_apply";
     const rows=batch.rows??[];
     const selected=rows.filter(rowFilter);
@@ -43,7 +43,7 @@ async function runBootstrap({registry,cloud,connectionManager,checkpoints,branch
     do{
       await context.waitWhilePaused();
       diagnosticPhase="download";
-      const page=await readPage(limit=>cloud.bootstrapPage({table:table.cloudTable,branchId,historyDays,cursor,limit}),size);const batch=page.batch;size=page.nextLimit;
+      const page=await readPage(limit=>cloud.bootstrapPage({table:table.cloudTable,branchId,historyDays,cursor,limit}),size,{table:table.cloudTable});const batch=page.batch;size=page.nextLimit;
       diagnosticPhase="local_apply";
       const rows=batch.rows??[];
       const sql=connectionManager.sql(); const transaction=new sql.Transaction(connectionManager.pool); await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);

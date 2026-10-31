@@ -53,6 +53,21 @@ a central claim proof, reset a claim or unpair a terminal to bypass a mismatch.
 Local Settings/Approvals now load; separate Change Tracking/bootstrap503 warnings
 remain unfinished in SQL-09. This is not full installed-device or sync verification.
 
+31October SQL-09/11 follow-up: automatic diagnostics identify a non-JSON503 while
+downloading change_history during expired-history recovery. One-page100-row reads
+succeeded; this does not prove the entire recovery completed or identify the
+upstream503 cause. The owner requested a narrow download reliability/performance
+fix and beta release preparation. Preserve all records and cursor/checkpoint
+integrity; do not skip history, force a new baseline or clear pending work.
+Audit-history branch/GLOBAL access-rule corrections remain explicitly PENDING.
+The new request does not reactivate those policy changes. Any prepared database
+read optimization still requires separate exact-project approval before live use.
+The owner subsequently approved SQL-11's exact UUID history-read optimization;
+unchanged source89388522…DA3C1FE was applied to ROSEGILL pos with live history
+20261031110429. Post-apply definition matches only the reviewed CASE-tail delta;
+all function metadata and service-only grants are unchanged. This does not resolve
+the held audit-scope/GLOBAL policy or certify full affected-PC recovery.
+
 Latest30October decisions: SHIFT-14 correction code/isolated tests are approved;
 the exact shift-sync migration was subsequently approved and applied at23:59:38
 Brunei (livehistory20261030155938). Future live changes still need separate

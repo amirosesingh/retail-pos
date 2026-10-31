@@ -526,11 +526,19 @@ out.push(pullFunction);
 const bootstrapCases = tables
   .map((table) => {
     const key = keyJson(table, "x");
+    // Keep the reviewed audit bootstrap seek on its existing UUID index. Its
+    // serialized cursor, predicates and every other table's paging stay intact.
+    const auditUuidKey = table.cloudTable === "change_history";
+    if (auditUuidKey && (primary(table).length !== 1 ||
+      primary(table)[0].cloudColumn !== "id" || primary(table)[0].cloudType !== "uuid"))
+      throw new Error("The change_history UUID bootstrap key contract changed.");
+    const comparison = auditUuidKey ? `x."id">((p_after_cursor::jsonb)->>'id')::uuid` : `${key}>p_after_cursor`;
+    const order = auditUuidKey ? `x."id"` : key;
     const history =
       table.retentionClass === "historical" && dateColumn(table)
         ? `AND (p_history_days>=7300 OR x.${q(dateColumn(table))}>=now()-make_interval(days=>GREATEST(p_history_days,30)))`
         : "";
-    return `WHEN '${table.cloudTable}' THEN SELECT COALESCE(jsonb_agg(${rowJson(table, "page.row_data")} ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT ${key} cursor,x row_data FROM public.${q(table.cloudTable)} x WHERE (${branchPredicate(table)}) ${history} AND (p_after_cursor IS NULL OR ${key}>p_after_cursor) ORDER BY ${key} LIMIT LEAST(GREATEST(p_limit,100),2000)) page;`;
+    return `WHEN '${table.cloudTable}' THEN SELECT COALESCE(jsonb_agg(${rowJson(table, "page.row_data")} ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT ${key} cursor,x row_data FROM public.${q(table.cloudTable)} x WHERE (${branchPredicate(table)}) ${history} AND (p_after_cursor IS NULL OR ${comparison}) ORDER BY ${order} LIMIT LEAST(GREATEST(p_limit,100),2000)) page;`;
   })
   .join("\n    ");
 const bootstrapFunction = `CREATE OR REPLACE FUNCTION public.pos_sync_bootstrap(p_organization_id text,p_branch_id text,p_terminal_id text,p_table text,p_after_cursor text DEFAULT NULL,p_history_days integer DEFAULT 90,p_limit integer DEFAULT 500)
