@@ -2,6 +2,7 @@ import { canCrossBranches } from "./relay-policy.server";
 import { recordId, sameRecordId } from "@/lib/sale-identity";
 import { sameBranchId } from "@/lib/branch-id";
 import { dispatchFailure } from "@/lib/transfer-dispatch-result";
+import { DesktopAdoptionUnavailableError } from "@/lib/desktop-adoption-availability.server";
 import { STOCK_REQUEST_HEAD_COLUMNS, STOCK_REQUEST_ITEM_COLUMNS, STOCK_REQUEST_PAGE_SIZE, checkedStockRequestApprovalState, completeStockRequestRows, projectStockRequestRows, stockRequestItemPage, validateStockRequestHead } from "@/lib/stock-request-contract";
 /**
  * Server-side write relay for the POS database.
@@ -772,7 +773,7 @@ export async function verifyRelayCaller(input: {
   terminalToken?: string;
   accessToken?: string;
   deviceBindingProof?: string;
-}): Promise<RelayCaller> {
+}, options: { strictAvailability?: boolean } = {}): Promise<RelayCaller> {
   let identity: RelayCaller | null = null;
   let terminalStore: string | null = null;
   let terminalId: string | null = null;
@@ -786,7 +787,14 @@ export async function verifyRelayCaller(input: {
   // centrally and expires when the till has been left idle.
   if (input.sessionToken) {
     const { touchSession } = await import("@/lib/session-guard.server");
-    const check = await touchSession(input.sessionToken);
+    let check: Awaited<ReturnType<typeof touchSession>>;
+    try { check = await touchSession(input.sessionToken); }
+    catch (error) {
+      if (options.strictAvailability) throw new DesktopAdoptionUnavailableError();
+      throw error;
+    }
+    if (options.strictAvailability && !check.ok && check.reason === "unavailable")
+      throw new DesktopAdoptionUnavailableError();
     if (check.ok) {
       const s = check.session;
       storedTerminalId=s.terminal_id??null;
@@ -808,8 +816,11 @@ export async function verifyRelayCaller(input: {
     const { verifyCashierSession } = await import("@/lib/pos-session.server");
     const session = await (async () => {
       try {
-        return await verifyCashierSession(input.cashierToken!);
+        return options.strictAvailability
+          ? await verifyCashierSession(input.cashierToken!, { strictAvailability: true })
+          : await verifyCashierSession(input.cashierToken!);
       } catch {
+        if (options.strictAvailability) throw new DesktopAdoptionUnavailableError();
         return null;
       }
     })();
@@ -855,14 +866,39 @@ export async function verifyRelayCaller(input: {
       identity.kind === "terminal" ||
       (identity.kind === "staff" && !identity.staffUserId))
   ) {
-    const res = await fetch(`${supabaseConfig().url}/auth/v1/user`, {
-      headers: {
-        apikey: supabaseConfig().key,
-        Authorization: `Bearer ${input.accessToken}`,
-      },
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${supabaseConfig().url}/auth/v1/user`, {
+        headers: {
+          apikey: supabaseConfig().key,
+          Authorization: `Bearer ${input.accessToken}`,
+        },
+      });
+    } catch (error) {
+      if (options.strictAvailability) {
+        throw new DesktopAdoptionUnavailableError();
+      }
+      throw error;
+    }
+    if (options.strictAvailability && !res.ok) {
+      if (res.status === 400 || res.status === 401 || res.status === 403)
+        throw new RelayAuthenticationError("Your sign-in could not be verified.");
+      throw new DesktopAdoptionUnavailableError();
+    }
     if (res.ok) {
-      const user = (await res.json()) as { id?: string; email?: string };
+      let user: { id?: string; email?: string };
+      if (options.strictAvailability) {
+        try {
+          const value: unknown = await res.json();
+          if (!value || typeof value !== "object" || Array.isArray(value) ||
+              typeof (value as { id?: unknown }).id !== "string" || !(value as { id: string }).id.trim() ||
+              ((value as { email?: unknown }).email != null && typeof (value as { email?: unknown }).email !== "string"))
+            throw new Error("Invalid verification response");
+          user = value as { id: string; email?: string };
+        } catch {
+          throw new DesktopAdoptionUnavailableError();
+        }
+      } else user = (await res.json()) as { id?: string; email?: string };
       if (user.id) {
         // The token is proven; only now are its claims worth reading.
         const { claimsFromJwt, claimsFromPayload } = await import("@/core/api/relay-claims.server");

@@ -1,5 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 
+const denied = (status: 401 | 403 = 401) => Response.json(
+  { ok: false, code: "EAUTH_DENIED", error: "Your sign-in could not be verified." }, { status },
+);
+
 export const Route = createFileRoute("/api/v1/pos/ipc-adopt")({
   server: {
     handlers: {
@@ -22,26 +26,20 @@ export const Route = createFileRoute("/api/v1/pos/ipc-adopt")({
           (proof.terminalToken?.length ?? 0) > 2000 ||
           (proof.deviceBindingProof!==undefined && !/^[a-f0-9]{64}$/i.test(proof.deviceBindingProof))
         )
-          return Response.json(
-            { ok: false, error: "A valid sign-in is required." },
-            { status: 401 },
-          );
+          return denied();
         if (!proof.accessToken && !proof.sessionToken && !proof.cashierToken)
-          return Response.json(
-            { ok: false, error: "A valid sign-in is required." },
-            { status: 401 },
-          );
+          return denied();
         const { verifyRelayCaller } = await import("@/core/api/pos-relay.server");
         const { databaseAuthority } = await import("@/lib/desktop-database-authority.server");
         try {
-          const caller = await verifyRelayCaller(proof);
+          const caller = await verifyRelayCaller(proof, { strictAvailability: true });
           const {resolveRelayScope}=await import("@/core/api/relay-policy.server");
-          const scope=await resolveRelayScope(caller);
+          const scope=await resolveRelayScope(caller, { strictAvailability: true });
           const authority = await databaseAuthority({
             userId: caller.staffUserId,
             authUserId: caller.authUserId,
             email: caller.email,
-          });
+          }, { strictAvailability: true });
           // Session adoption establishes the signed-in person's complete,
           // server-verified POS permission set.  It must not require the
           // unrelated database-maintenance permission: an ordinary cashier
@@ -49,10 +47,7 @@ export const Route = createFileRoute("/api/v1/pos/ipc-adopt")({
           // Database and sync channels independently require
           // can_manage_sync_backup in electron/ipc-privilege.cjs.
           if (!authority) {
-            return Response.json(
-              { ok: false, error: "This staff account is not active." },
-              { status: 403 },
-            );
+            return denied(403);
           }
           return Response.json({
             ok: true,
@@ -63,11 +58,14 @@ export const Route = createFileRoute("/api/v1/pos/ipc-adopt")({
             accountScope:{branchId:authority.branchId},
             terminal:caller.terminal??null,
           });
-        } catch {
-          return Response.json(
-            { ok: false, error: "Your sign-in could not be verified." },
-            { status: 401 },
-          );
+        } catch (error) {
+          const status = error && typeof error === "object" && "status" in error ? error.status : undefined;
+          if (status === 503)
+            return Response.json(
+              { ok: false, code: "EAUTH_UNAVAILABLE", error: "Sign-in verification is temporarily unavailable. Please try again." },
+              { status: 503 },
+            );
+          return denied(status === 403 ? 403 : 401);
         }
       },
     },

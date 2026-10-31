@@ -2,8 +2,9 @@ import { readCredentials, type PosCredentials } from "./pos-credentials";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
 import { isCurrentEpoch, sessionEpoch } from "./session-epoch";
 import { readNativeTerminalProof } from "./native-terminal-proof";
+import { desktopAuthorityFailure, type DesktopAuthorityFailureCode } from "./desktop-authority-error";
 
-type Result = { ok: boolean; level?: "admin" | "supervisor" | "staff"; error?: string };
+type Result = { ok: boolean; level?: "admin" | "supervisor" | "staff"; error?: string; code?: DesktopAuthorityFailureCode; status?: number };
 let pending: { epoch: number; bridge: unknown; refresh: boolean; promise: Promise<Result> } | null = null;
 
 /** Share the native handoff between startup, reports and permission refreshes.
@@ -27,7 +28,9 @@ export function ensureDesktopPosSession(refresh = false, proof?: PosCredentials)
     const registrationProof = await readNativeTerminalProof();
     if (!isCurrentEpoch(epoch)) return { ok: false, error: "The signed-in user changed." };
     const result = await bridge.adoptSession!({ ...credentials, ...registrationProof }, readTerminalConfig());
-    return isCurrentEpoch(epoch) ? result : { ok: false, error: "The signed-in user changed." };
+    if (!isCurrentEpoch(epoch)) return { ok: false, error: "The signed-in user changed." };
+    if (result.ok) return { ok: true, level: result.level };
+    return desktopAuthorityFailure(result) ?? { ok: false, error: "The signed-in account could not be verified on this PC." };
   })().finally(() => {
     if (pending?.promise === promise) pending = null;
   });

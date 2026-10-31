@@ -1,5 +1,6 @@
 import { effectivePagePermissions } from "./permission-pages";
 import { serviceRest } from "@/core/api/pos-relay.server";
+import { readAdoptionAccounts } from "./desktop-adoption-availability.server";
 
 type Account = {
   user_id: string;
@@ -16,7 +17,7 @@ export async function databaseAuthority(identity: {
   userId?: string | null;
   authUserId?: string | null;
   email?: string | null;
-}): Promise<{
+}, options: { strictAvailability?: boolean } = {}): Promise<{
   subject: string;
   level: "admin" | "supervisor" | "staff";
   permissions: Record<string, boolean>;
@@ -29,11 +30,15 @@ export async function databaseAuthority(identity: {
   ].filter((value): value is string => Boolean(value));
   let account: Account | undefined;
   for (const filter of filters) {
-    const response = await serviceRest(
-      `app_users?${filter}&select=user_id,role,role_slug,permissions,store_id,is_active&limit=1`,
-    );
-    if (!response.ok) return null;
-    const rows = (await response.json()) as Account[];
+    const read = () => serviceRest(`app_users?${filter}&select=user_id,role,role_slug,permissions,store_id,is_active&limit=1`);
+    let rows: Account[];
+    if (options.strictAvailability) {
+      rows = await readAdoptionAccounts(read);
+    } else {
+      const response = await read();
+      if (!response.ok) return null;
+      rows = (await response.json()) as Account[];
+    }
     account = rows[0];
     if (account) break;
   }

@@ -1720,37 +1720,66 @@ function registerIpc() {
     return { ok: true };
   });
   ipcMain.handle("admin:adopt-session", async (_e, value, rawTerminal) => guard.guarded(async () => {
+    // A transport or backend-protocol failure is not a staff permission denial.
+    // Return only fixed operational guidance; upstream details may be private.
+    const failed=(code,status)=>({ok:false,code,status,stage:"authorize",error:{
+      EBACKEND_UPGRADE_REQUIRED:"The configured POS backend must be updated before this terminal registration can be verified. Ask an administrator to review the backend version; saved settings have not been changed.",
+      EACTIVATION_BINDING:"The verified registration does not match this computer's saved terminal. Ask an administrator to review its registration; do not change the branch to bypass this check.",
+      EAUTH_DENIED:"The signed-in user or terminal could not be authorized. Sign in again or ask an administrator to review access.",
+      EAUTH_UNAVAILABLE:"The POS authorization service could not be reached or did not answer correctly. Reconnect and retry; saved registration and permissions have not been changed.",
+      EACTIVATION_STORE:"This computer could not save the verified registration in its secure store. Retry after checking Windows secure storage.",
+    }[code]??"The signed-in POS session could not be verified."});
+    try {
     const revision = ++sessionAdoptionRevision;
     const initialIdentity = adminSession.identity();
+    const current=()=>revision===sessionAdoptionRevision&&JSON.stringify(initialIdentity)===JSON.stringify(adminSession.identity());
     const supplied=guard.credentialProof(typeof value==="string"?{accessToken:value}:value);
     const sealed=terminalStore.read();
     const candidate=rawTerminal==null?sealed:guard.terminalConfig(rawTerminal);
     if(sealed&&candidate)activationBoundary.assertUnchanged(sealed,candidate);
     const proof={...supplied,...(sealed?.tokenId?{terminalToken:sealed.tokenId,deviceBindingProof:sealed.deviceBindingProof||supplied.deviceBindingProof}: {})};
-    if(!proof.accessToken&&!proof.sessionToken&&!proof.cashierToken)return{ok:false,error:"A verified signed-in user is required."};
+    if(!proof.accessToken&&!proof.sessionToken&&!proof.cashierToken)return failed("EAUTH_DENIED",401);
     const authorizationUrl=authorizationServerUrl();
-    if(!authorizationUrl)return{ok:false,error:"Configure the hosted POS backend address before connecting the local database."};
+    if(!authorizationUrl)return failed("EAUTH_UNAVAILABLE",503);
     const response=await fetch(`${authorizationUrl}/api/v1/pos/ipc-adopt`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(proof),signal:AbortSignal.timeout(8_000)});
-    const result=await response.json().catch(()=>({ok:false,error:"Authorization failed."}));
-    if(!response.ok||!result.ok)return{ok:false,error:result.error??"Authorization failed."};
-    const currentIdentity = adminSession.identity();
-    if (revision !== sessionAdoptionRevision || initialIdentity?.subject !== currentIdentity?.subject || initialIdentity?.source !== currentIdentity?.source)
-      return {ok:false,error:"The signed-in user changed while permissions were refreshing."};
+    const result=await response.json().catch(()=>null);
+    if(!response.ok||result?.ok!==true){
+      if(response.status===401||response.status===403)return failed("EAUTH_DENIED",response.status);
+      if(response.status===426||result?.code==="EBACKEND_UPGRADE_REQUIRED")return failed("EBACKEND_UPGRADE_REQUIRED",426);
+      if(result?.code==="EAUTH_DENIED"&&response.status<500)return failed("EAUTH_DENIED",403);
+      return failed("EAUTH_UNAVAILABLE",503);
+    }
+    if(!["admin","supervisor","staff"].includes(result.level)||typeof result.subject!=="string"||!result.subject.trim()||
+       !result.permissions||typeof result.permissions!=="object"||Array.isArray(result.permissions)||
+       Object.values(result.permissions).some(flag=>typeof flag!=="boolean")||
+       (result.branchId!==null&&typeof result.branchId!=="string"))return failed("EBACKEND_UPGRADE_REQUIRED",426);
+    if(!current())return failed("EAUTH_DENIED",401);
     if(candidate){
       const currentTerminal=terminalStore.read();
       if(Boolean(sealed)!==Boolean(currentTerminal)||(sealed&&!activationBoundary.sameBinding(activationBoundary.binding(sealed),activationBoundary.binding(currentTerminal))))
-        return {ok:false,code:"EACTIVATION_BINDING",error:"The terminal registration changed while permissions were refreshing."};
+        return failed("EACTIVATION_BINDING",403);
       const terminal=activationBoundary.canonicalConfig({...candidate,deviceBindingProof:proof.deviceBindingProof},result.terminal,sealed);
       if(!sealed)await assertSafeRegistrationChange(terminal);
       if(result.branchId&&terminal.deviceUse==="operations")activationBoundary.authorizedBranch(terminal,result.branchId);
+      // Registration safety checks may await SQL; do not adopt an earlier
+      // user's or activation's response after that asynchronous boundary.
+      if(!current())return failed("EAUTH_DENIED",401);
+      const latestTerminal=terminalStore.read();
+      if(Boolean(sealed)!==Boolean(latestTerminal)||(sealed&&!activationBoundary.sameBinding(activationBoundary.binding(sealed),activationBoundary.binding(latestTerminal))))return failed("EACTIVATION_BINDING",403);
       const previous=terminalStore.lastBinding();
       const mirrored=terminalStore.write(terminal);
-      if(mirrored?.ok===false)return{ok:false,code:"EACTIVATION_STORE",error:mirrored.error};
+      if(mirrored?.ok===false)return failed("EACTIVATION_STORE",503);
       recordRegistrationChange(previous,terminal);
     }
     adminSession.grant(result.level,result.subject,result.permissions,"pos",result.branchId);
     syncCloud.setAuthorizationProof(proof);
     rememberVerifiedBranch(result.branchId);return{ok:true,level:result.level};
+    }catch(error){
+      if(error?.name==="BadArg")throw error;
+      if(error?.code==="EBACKEND_UPGRADE_REQUIRED")return failed("EBACKEND_UPGRADE_REQUIRED",426);
+      if(error?.code==="EACTIVATION_BINDING")return failed("EACTIVATION_BINDING",403);
+      return failed("EAUTH_UNAVAILABLE",503);
+    }
   }));
   ipcMain.handle("admin:unlock", async (_e, username, pin) => guard.guarded(async () => {
     const user = guard.text(username, { name: "username", max: 160 });

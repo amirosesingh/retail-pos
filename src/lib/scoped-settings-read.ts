@@ -1,5 +1,6 @@
 import type { ScopeIds } from "./branch-settings";
 import { isCurrentEpoch, sessionEpoch } from "./session-epoch";
+import { desktopAuthorityFailure } from "./desktop-authority-error";
 
 export type ScopedSettingsReadStatus = { phase: "loading" | "ready" | "failed"; error: string | null };
 
@@ -64,8 +65,11 @@ export function createScopedSettingsReader<T>({
           accept(next);
           confirmed = true;
           status({ phase: "ready", error: null });
-        } catch {
-          failed("Store settings could not be loaded. Check the connection and try again; saved settings have not been replaced.");
+        } catch (error) {
+          const authority = desktopAuthorityFailure(error);
+          failed(authority
+            ? `${authority.error} Your saved settings have not been replaced.`
+            : "Store settings could not be loaded. Check the connection and try again; saved settings have not been replaced.");
         } finally {
           clearTimeout(deadline);
           deadline = undefined;
