@@ -578,3 +578,13 @@ parents/children in order, and keep Retry accessible. Shared Radix focus/layer
 runtime identity is required across builds; do not deduplicate blindly to an
 older incompatible module or suppress global browser errors. Final isolated
 browser/unit evidence is in TASK_TRACKER.md; it does not certify physical devices.
+
+SHIFT-15 deployed-context correction is applied after separate exact-project
+approval: ROSEGILL pos live history20261031032545. Validated native aggregate
+and batch establish transaction-local branch context after terminal validation,
+as the shift ownership guard requires. Preserve it during regeneration/upgrades.
+No cashier grant change/data repair was needed. Source-only fixtures can miss
+deployed-definition drift; test captured installed definitions as well as fresh
+generated installs. Owner confirmation and central readback show the original
+31October STR1 OPEN shift uploaded successfully after correction. This does not
+certify all queues, live checkout or the separate stale-OPEN acknowledgement gap.

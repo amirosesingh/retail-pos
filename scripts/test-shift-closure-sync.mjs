@@ -11,6 +11,7 @@ const { PushWorker } = require("../electron/sync/push-worker.cjs");
 const schema = await readFile(new URL("../supabase/schema.sql", import.meta.url), "utf8");
 const firstMigration = await readFile(new URL("../supabase/migrations/20261030153259_confirm_shift_closure_sync_acknowledgement.sql", import.meta.url), "utf8");
 const migration = await readFile(new URL("../supabase/migrations/20261030164829_bind_shift_closure_proof_to_requested_revision.sql", import.meta.url), "utf8");
+const contextMigration = await readFile(new URL("../supabase/migrations/20261031031945_preserve_validated_branch_context_for_shift_sync.sql", import.meta.url), "utf8");
 const sourceFunction = (name, source = schema) => {
   const start = source.lastIndexOf(`CREATE OR REPLACE FUNCTION public.${name}(`);
   assert(start >= 0, name);
@@ -264,6 +265,115 @@ try {
     assert.equal(response.replayed,true); assert.equal(response.shift_closure_ack_version,2);
     assert.deepEqual(response.shift_closures,[{ id,store_id:"a",row_version:2,requested_row_version:2 }]);
     await db.exec(migration); // Regeneration followed by migration is safe too.
+  });
+  // The deployed entry points had older independent amendments and omitted
+  // this context even though current generated source already includes it.
+  // Model that pre-upgrade contract instead of testing only a fresh installer.
+  const signatures = ["public.pos_sync_push_aggregate(uuid,text,text,text,jsonb)",
+    "public.pos_sync_push_batch(uuid,text,text,text,text,jsonb,jsonb)"];
+  const definitions = async () => (await db.query("SELECT oid::regprocedure::text signature,pg_get_functiondef(oid) definition,proacl::text acl,prosecdef,proowner,proconfig FROM pg_proc WHERE oid=ANY($1::regprocedure[]) ORDER BY oid::regprocedure::text", [signatures])).rows;
+  await test("context upgrade is a byte-preserving no-op on already-correct generated routines", async () => {
+    const before = await definitions(); await db.exec(contextMigration);
+    assert.deepEqual(await definitions(), before);
+  });
+  const readyDefinitions = await definitions();
+  for (const routine of readyDefinitions) {
+    const context = "PERFORM set_config('pos.sync_branch',p_branch_id,true);";
+    assert.equal(routine.definition.split(context).length, 2);
+    await db.exec(routine.definition.replace(context, ""));
+  }
+  await test("older validated aggregate without branch context rejects a genuinely new OPEN shift", async () => {
+    const incoming = openRow({ id: randomUUID() });
+    await assert.rejects(aggregate([operation([incoming])]), /SYNC_BRANCH_FORBIDDEN/);
+    assert.equal((await db.query("SELECT count(*)::int n FROM shifts WHERE id=$1::uuid", [incoming.id])).rows[0].n, 0);
+  });
+  await test("older table recovery without branch context rejects OPEN and CLOSED uploads", async () => {
+    await assert.rejects(batch([openRow({ id: randomUUID() })]), /SYNC_BRANCH_FORBIDDEN/);
+    await assert.rejects(aggregate([operation([row()])]), /SYNC_BRANCH_FORBIDDEN/);
+    assert.equal((await state()).status, "OPEN");
+  });
+  await test("older missing-context failure rolls back preceding rows and saves no receipt", async () => {
+    await assert.rejects(aggregate([{ table: "audit_logs", rows: [{ id: randomUUID(), store_id: "a" }], changes: [] },operation([openRow({ id: randomUUID() })])]), /SYNC_BRANCH_FORBIDDEN/);
+    assert.equal((await db.query("SELECT count(*)::int n FROM audit_logs")).rows[0].n, 0);
+    assert.equal((await db.query("SELECT count(*)::int n FROM sync_idempotency_receipts")).rows[0].n, 0);
+  });
+  const beforeContextUpgrade = await definitions();
+  await db.exec(contextMigration);
+  await test("context upgrade changes only the validated branch assignment and retains routine metadata", async () => {
+    const after = await definitions();
+    for (let index = 0; index < after.length; index++) {
+      assert.deepEqual({ ...after[index], definition: beforeContextUpgrade[index].definition }, beforeContextUpgrade[index]);
+      assert.equal(after[index].definition,
+        beforeContextUpgrade[index].definition.replace("PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id);",
+          "PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id);\n PERFORM pg_catalog.set_config('pos.sync_branch',p_branch_id,true);"));
+    }
+  });
+  await test("corrected aggregate stores a new OPEN shift and safely replays its exact retry", async () => {
+    const incoming = openRow({ id: randomUUID() }); const key = randomUUID(); const operations = [operation([incoming])];
+    assert.equal((await aggregate(operations,key)).rows[0].result.applied, 1);
+    assert.equal((await aggregate(operations,key)).rows[0].result.replayed, true);
+    assert.deepEqual((await db.query("SELECT status,state,store_id,terminal_id FROM shifts WHERE id=$1::uuid", [incoming.id])).rows,
+      [{ status: "OPEN", state: "ACTIVE", store_id: "a", terminal_id: "t-a" }]);
+  });
+  await test("corrected table recovery stores a new OPEN shift without changing its branch", async () => {
+    const incoming = openRow({ id: randomUUID() }); const key = randomUUID();
+    assert.equal((await batch([incoming],key)).rows[0].result.applied, 1);
+    assert.equal((await batch([incoming],key)).rows[0].result.replayed, true);
+    assert.equal((await db.query("SELECT store_id FROM shifts WHERE id=$1::uuid", [incoming.id])).rows[0].store_id, "a");
+  });
+  await test("corrected entry point retains sparse-revision CLOSED proof and exact closing facts", async () => {
+    await seed(openRow({ row_version: 4 }));
+    const response = (await aggregate([operation([row({ row_version: 8 })])])).rows[0].result;
+    assert.deepEqual(response.shift_closures, [{ id, store_id: "a", row_version: 5, requested_row_version: 8 }]);
+    assert.equal(response.shift_closure_ack_version, 2); assert.equal((await state()).status, "CLOSED");
+  });
+  await test("corrected context does not authorize a different terminal or a foreign branch row", async () => {
+    await assert.rejects(aggregate([operation([openRow({ id: randomUUID(), store_id: "b" })])]), /SYNC_BRANCH_FORBIDDEN/);
+    await assert.rejects(aggregate([operation([openRow({ id: randomUUID() })])],randomUUID(),"a","t-b"), /SYNC_TERMINAL_SCOPE_FORBIDDEN/);
+    await assert.rejects(batch([openRow({ id: randomUUID() })],randomUUID(),"a","t-b"), /SYNC_TERMINAL_SCOPE_FORBIDDEN/);
+  });
+  await test("corrected context preserves existing ownership and atomic rollback", async () => {
+    await seed(openRow({ store_id: "b", terminal_id: "t-b" }));
+    await assert.rejects(aggregate([{ table: "audit_logs", rows: [{ id: randomUUID(), store_id: "a" }], changes: [] },operation([row({ row_version: 99 })])]), /SYNC_BRANCH_FORBIDDEN/);
+    assert.equal((await state()).store_id, "b");
+    assert.equal((await db.query("SELECT count(*)::int n FROM audit_logs")).rows[0].n, 0);
+  });
+  await test("corrected context preserves changed-payload replay denial and transaction-local lifetime", async () => {
+    const incoming = openRow({ id: randomUUID() }); const key = randomUUID();
+    await aggregate([operation([incoming])],key);
+    await assert.rejects(aggregate([operation([{ ...incoming, opening_float: 999 }])],key), /SYNC_IDEMPOTENCY_MISMATCH/);
+    assert.notEqual((await db.query("SELECT current_setting('pos.sync_branch',true) branch")).rows[0].branch, "a");
+  });
+  await test("context upgrade is repeatable and retains rows, receipts and routine privileges", async () => {
+    await aggregate([operation([openRow({ id: randomUUID() })])]);
+    const before = { definitions: await definitions(), rows: (await db.query("SELECT row_to_json(s) row FROM shifts s ORDER BY id")).rows,
+      receipts: (await db.query("SELECT * FROM sync_idempotency_receipts ORDER BY batch_id")).rows };
+    await db.exec(contextMigration);
+    assert.deepEqual(await definitions(), before.definitions);
+    assert.deepEqual((await db.query("SELECT row_to_json(s) row FROM shifts s ORDER BY id")).rows, before.rows);
+    assert.deepEqual((await db.query("SELECT * FROM sync_idempotency_receipts ORDER BY batch_id")).rows, before.receipts);
+  });
+  await test("context upgrade rejects extra branch logic rather than silently accepting it", async () => {
+    const correct = await definitions();
+    await db.exec(correct[0].definition.replace("PERFORM pg_catalog.set_config('pos.sync_branch',p_branch_id,true);",
+      "PERFORM pg_catalog.set_config('pos.sync_branch',p_branch_id,true);\n PERFORM set_config( 'pos.sync_branch', 'other', true);"));
+    const before = await definitions();
+    await assert.rejects(db.exec(contextMigration), /Unexpected existing branch-context logic/);
+    assert.deepEqual(await definitions(), before);
+    await db.exec(correct.map(routine => routine.definition).join(";\n"));
+  });
+  await test("unexpected second validation anchor aborts without partially upgrading the first routine", async () => {
+    const correct = await definitions();
+    for (const [index,routine] of correct.entries()) {
+      let definition = routine.definition.replace("PERFORM pg_catalog.set_config('pos.sync_branch',p_branch_id,true);", "");
+      if (index===1) definition=definition.replace("PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id);",
+        "PERFORM public.pos_sync_validate_scope( p_organization_id,p_branch_id,p_terminal_id);");
+      await db.exec(definition);
+    }
+    const before = await definitions();
+    await assert.rejects(db.exec(contextMigration), /Unexpected terminal-validation anchor/);
+    assert.deepEqual(await definitions(), before);
+    await db.exec(correct.map(routine => routine.definition).join(";\n"));
   });
   console.log(`${passed} isolated shift closure synchronization scenarios passed.`);
 } finally { await db.close(); }

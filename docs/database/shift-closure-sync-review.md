@@ -131,3 +131,63 @@ ignore additional proof fields; any version1-aware preview needs the version2
 native source/restart alongside the corrected helper. No real closure was submitted.
 Keep the PR draft until its remaining independent UI/notification checks pass;
 live dependency readiness alone is not merge or installer publication approval.
+
+## SHIFT-15: deployed entry-point context compatibility
+
+On31October the owner reported a production cashier opening a shift locally
+without a central update. ROSEGILL pos was healthy, but the local-day log window
+contained245 aggregate400responses. PostgreSQL context explicitly traced
+SYNC_BRANCH_FORBIDDEN through pos_sync_assert_shift_ownership, sync_apply_shifts
+and the five-argument aggregate. The active STR1 PC reports1.4.79.
+
+The deployed validated aggregate/batch set pos.sync_terminal but omitted
+pos.sync_branch. The newer ownership guard requires that context even for OPEN
+rows, so legitimate uploads failed. Earlier fixtures already supplied both
+settings and missed this deployed-definition compatibility case. This is an
+upgrade regression, not evidence that cashier grants should be widened.
+
+The owner approved preparation/tests and separately approved exact application
+of20261031031945_preserve_validated_branch_context_for_shift_sync.sql to the
+ROSEGILL organization/project/ref/URL above. A single atomic guarded DO adds
+transaction-local pg_catalog.set_config('pos.sync_branch',p_branch_id,true)
+immediately after existing terminal/branch validation in only the five-argument
+aggregate and seven-argument batch. It preserves each installed definition's
+other amendments, grants, owner, security mode and search path. Already-correct
+routines are byte-preserving no-ops; unexpected anchors/additional branch logic
+abort the entire change. Legacy terminal-free overloads remain byte-identical.
+
+Root saved prior definitions/metadata in ignored
+node_modules/.cache/shift15-preflight-before-approved-application-20261031.json.
+Reviewed file SHA256:
+19B0B0B16D1055A926406FED4758A5B4B9AE998168E9FCD876BC98E361AE034F.
+Application succeeded once at11:25:45Brunei,31October; live history20261031032545.
+Readback matched the exact one-statement insertion in both functions and retained
+postgres/service_role-only ACLs and all metadata. Empty closure proof remainsv2.
+No business-row write or real shift RPC was submitted by the agent. Existing
+advisor categories remain; none names the changed entry points. This is not a
+general security clearance.
+
+Permanent SQL regression covers38 actual-trigger scenarios, including the
+missing-context OPEN/CLOSED reproduction, fresh OPEN aggregate/table recovery,
+sparse closure proofs, wrong-terminal/foreign-row/existing-owner denial, retry,
+atomic rollback, context lifetime, idempotence and unexpected definitions. A
+separate ignored fixture installs nine exact captured live definitions and runs
+the actual migration:12 scenarios passed. Root and an independent reviewer
+repeated38+12;58 focused checkout/branch/closure tests passed. Legacy overload
+preservation was checked by definition identity, not successful legacy execution.
+
+Affected-PC recovery is now observed: the owner reported the opening visible;
+central readback at11:28Brunei confirms original STR1 shift
+1a349429-cea1-4f45-8d2b-36678d37ad27, opened31October10:22:18.108Brunei,
+OPEN/ACTIVE revision1 with no close timestamp. A successful upload receipt is
+dated11:27:01.929Brunei. Pending native work reached the original branch without
+an agent creating a replacement shift or changing grants. The terminal heartbeat
+last_sync_at field still shows an older value; do not use that field alone to
+override direct row/receipt evidence or certify every queued table.
+
+The independent stale-OPEN zero-applied acknowledgement issue remains unresolved;
+this correction does not claim to fix it or verify live checkout/closing counts.
+Rollback requires a reviewed replacement of only these routine definitions from
+the saved preflight; restoring missing context recreates the upload failure.
+Never roll back business rows, clear pending journals or replay the full schema
+to reverse a routine change.

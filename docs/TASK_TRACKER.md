@@ -1564,3 +1564,25 @@ Fixture covers390/1440 layouts, all10wrappers, same-scope draft/DOM retention,
 Retry, revoked/switching scope, native bypass, cold start, paused unmount and
 simulated iPhone drawer cleanup. Physical devices/live checkout remain untested
 by this fixture. Root reviewed final scoped diff; commit only approved files.
+
+SHIFT-15 final prepared migration20261031031945 passed38 permanent actual-trigger
+SQL scenarios,12 captured-live-definition scenarios and58 checkout/branch/closure
+tests. Root and independent reviewer repeated the38+12; SHA25619B0B0B1…61AE034F.
+The owner separately approved applying this exact correction to ROSEGILL→
+rosegill0011@gmail.com's Org(bjxgimekljzlnwejuawj)→pos(qhrufhtbeguxydenzfey).
+Preflight confirms ACTIVE_HEALTHY, both target routines service-role/postgres-only,
+missing branch context and no prior migration. Their full prior definitions and
+metadata are saved locally in ignored cache before application. Apply once,
+verify exact definition/ACL delta and central upload recovery; do not fabricate
+or replay a real shift from this session or alter cashier grants.
+
+SHIFT-15 applied once31October11:25:45Brunei; live history20261031032545.
+Readback proves exact insertion in both routines and unchanged ACL/owner/security/
+search-path metadata; proofv2 remains. Owner now confirms the opening visible.
+Central readback11:28 confirms original STR1 shift1a349429…ad27 opened10:22:18,
+OPEN/ACTIVE revision1; successful upload receipt11:27:01. No agent business-row
+write/replacement shift or grant change. This specific production upload defect
+is verified recovered; other queued tables and actual checkout/closure acceptance
+are separate. Details/recovery: database/shift-closure-sync-review.md.
+Popup source committed0d0bcd66; include this separate correction in the new beta
+PR and require exact-head checks. Preserve unrelated drafts and all branch guards.
