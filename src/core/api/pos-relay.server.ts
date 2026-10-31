@@ -1,7 +1,8 @@
 import { canCrossBranches } from "./relay-policy.server";
-import { recordId } from "@/lib/sale-identity";
+import { recordId, sameRecordId } from "@/lib/sale-identity";
 import { sameBranchId } from "@/lib/branch-id";
 import { dispatchFailure } from "@/lib/transfer-dispatch-result";
+import { STOCK_REQUEST_HEAD_COLUMNS, STOCK_REQUEST_ITEM_COLUMNS, STOCK_REQUEST_PAGE_SIZE, checkedStockRequestApprovalState, completeStockRequestRows, projectStockRequestRows, stockRequestItemPage, validateStockRequestHead } from "@/lib/stock-request-contract";
 /**
  * Server-side write relay for the POS database.
  *
@@ -39,6 +40,7 @@ export type RelayRpc = { kind: "rpc"; table: string; fn: string; args: Record<st
 
 /** Read requests the relay may answer for a proven till. */
 export type RelayRead =
+  | { kind: "transferRequestApprovalState"; requestId: string }
   | { kind: "health" }
   | { kind: "activeShift"; storeId: string }
   | { kind: "stores" }
@@ -166,14 +168,55 @@ export function hasServiceKey(): boolean {
  * Answer a read for a proven till. This keeps offline/compatibility sessions
  * working when no live backend Auth session is available.
  */
-export async function runRelayRead(read: RelayRead): Promise<{
+export async function runRelayRead(read: RelayRead, scope?: RelayScope): Promise<{
   ok: boolean;
   row?: Record<string, unknown> | null;
   rows?: Record<string, unknown>[];
   error?: string;
+  code?: string;
+  status?: number;
   inventoryMode?: "deep" | "legacy";
   inventoryWarning?: string;
 }> {
+  if (read.kind === "transferRequestApprovalState") {
+    if (!scope || scope.managementReplica || scope.kind === "terminal" || scope.stale || !scope.staffUserId ||
+        (scope.role !== "admin" && scope.roleSlug !== "admin" && scope.permissions.can_approve_transfer !== true))
+      return { ok: false, status: 403, code: "PERMISSION_DENIED", error: "An active transfer approver session is required." };
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(read.requestId))
+      return { ok: false, status: 400, code: "SCOPE_MISSING", error: "The stock request identity is invalid." };
+    try {
+      const response = await serviceRest(`stock_transfers?id=eq.${encodeURIComponent(recordId(read.requestId))}&select=${STOCK_REQUEST_HEAD_COLUMNS}&limit=1`);
+      if (!response.ok) throw new Error("Request read failed");
+      const request = projectStockRequestRows(await response.json(), STOCK_REQUEST_HEAD_COLUMNS)[0];
+      if (!request || request.kind !== "request" || !sameRecordId(String(request.id), read.requestId))
+        return { ok: false, status: 404, code: "SCOPE_MISSING", error: "The stock request is no longer available." };
+      validateStockRequestHead(request, "request");
+      if (scope.storeId ? !sameBranchId(request.from_store_id, scope.storeId) : !canCrossBranches(scope))
+        return { ok: false, status: 403, code: "STORE_FORBIDDEN", error: "You can only approve stock requests for your sending branch." };
+      const count = (res: Response) => { const total = res.headers.get("content-range")?.match(/\/(\d+)$/)?.[1]; return total === undefined ? null : Number(total); };
+      const childResponse = await serviceRest(`stock_transfers?source_request_id=eq.${encodeURIComponent(String(request.id))}&select=${STOCK_REQUEST_HEAD_COLUMNS}&order=id&limit=2`, { prefer: "count=exact" });
+      if (!childResponse.ok) throw new Error("Fulfilment read failed");
+      const children = completeStockRequestRows(await childResponse.json(), count(childResponse), STOCK_REQUEST_HEAD_COLUMNS, 1);
+      const fulfilment = children[0] ?? null;
+      if (fulfilment && (fulfilment.kind !== "transfer" || !sameRecordId(String(fulfilment.source_request_id), String(request.id)) ||
+          !sameBranchId(fulfilment.from_store_id, request.from_store_id) || !sameBranchId(fulfilment.to_store_id, request.to_store_id)))
+        throw new Error("Inconsistent fulfilment");
+      const lines = async (id: unknown) => {
+        const rows: Record<string, unknown>[] = []; let total: number | null = null;
+        do {
+          const res = await serviceRest(`stock_transfer_items?transfer_id=eq.${encodeURIComponent(String(id))}&select=${STOCK_REQUEST_ITEM_COLUMNS}&order=id&limit=${STOCK_REQUEST_PAGE_SIZE}&offset=${rows.length}`, { prefer: "count=exact" });
+          if (!res.ok) throw new Error("Request line read failed");
+          const page = stockRequestItemPage(await res.json(), count(res), total, rows.length);
+          rows.push(...page.rows); total = page.count;
+        } while (rows.length < total);
+        return rows;
+      };
+      const [requestItems, fulfilmentItems] = await Promise.all([lines(request.id), fulfilment ? lines(fulfilment.id) : Promise.resolve([])]);
+      return { ok: true, row: checkedStockRequestApprovalState({ request, fulfilment, requestItems, fulfilmentItems }) };
+    } catch {
+      return { ok: false, status: 503, code: "TRANSFER_REQUEST_UNAVAILABLE", error: "The central request and fulfilment could not be read completely. Refresh them before approval." };
+    }
+  }
   // The endpoint has already verified the caller and resolved its branch.
   // A health check must never attempt a write with a fabricated record ID.
   if (read.kind === "health") return { ok: true };

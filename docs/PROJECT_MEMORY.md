@@ -618,3 +618,16 @@ verification fields to attribute request paperwork. Preserve current notificatio
 channels and fresh-event behavior; lost-response delivery remains best effort.
 Historical dispatched rows without proof and changed document facts stay review-only.
 See database/transfer-dispatch-recovery-review.md for the exact migration and limits.
+
+TRF-16 confirms shared child-ID formatting must not be nested for request and
+fulfilment records in the same child table: its replaced UUID suffix can steal
+the original row. New fulfilment headers use a full-request-derived,
+domain-separated UUID while checkout/draft identities and legacy children remain
+preserved. Request approval reconciles central authority, not local/cache absence;
+pending local children deny replacement until synchronization. The owner
+separately approved the parent guard and one exact historical request-line repair:
+applied on 31 October at16:31Brunei, guard history20261031083126 and an append-only
+maintenance audit. Existing stock/SKU/prices, child/header states, approval grants
+and shortage checks stay preserved. Future live repairs require their own evidence
+and exact-project approval; never infer missing original quantities from a child.
+Physical-device and fresh-installer limits remain tracked separately.

@@ -11,12 +11,16 @@ import { commitOps, stableChildId } from "@/core/api/pos-db";
 import { routedQuery } from "@/core/api/db-query";
 import { describeError } from "./notify";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { supabaseExternal } from "@/integrations/supabase/external-client";
+import { authenticatedExternalClientSnapshot, supabaseExternal } from "@/integrations/supabase/external-client";
 import { isTerminalApp } from "@/platform-config/platform";
-import { relayOp } from "@/core/api/sync-relay";
+import { relayOp, relayTransferRequestApprovalState } from "@/core/api/sync-relay";
 import { sessionEpoch } from "./session-epoch";
+import { effectiveDatabaseMode } from "@/core/local-db/db-mode";
+import { localDb } from "@/core/local-db/local-db";
 import { recordId, sameRecordId } from "./sale-identity";
+import { sameBranchId } from "./branch-id";
 import { dispatchFailure, mayReconcileDispatch, readDispatchProof, type DispatchExpected, type DispatchProof } from "./transfer-dispatch-result";
+import { STOCK_REQUEST_HEAD_COLUMNS, STOCK_REQUEST_ITEM_COLUMNS, STOCK_REQUEST_PAGE_SIZE, checkedStockRequestApprovalState, completeStockRequestRows, projectStockRequestRows, stockRequestItemPage, type StockRequestApprovalState } from "./stock-request-contract";
 
 const sb = supabaseExternal as unknown as SupabaseClient;
 
@@ -182,6 +186,53 @@ export async function loadTransfer(id: string, options: { throwOnError?: boolean
     if (import.meta.env.DEV) console.error("[transfers] detail load failed");
     return null;
   }
+}
+
+/** Approval is online: local SQL/cache absence cannot disprove a cloud legacy child. */
+export async function loadRequestApprovalState(requestId: string): Promise<{ request: StoredTransfer; fulfilment: StoredTransfer | null }> {
+  let state: StockRequestApprovalState;
+  if (isTerminalApp()) {
+    const result = await relayTransferRequestApprovalState(recordId(requestId));
+    if (!result.ok) throw new Error("The central stock request could not be verified.");
+    state = checkedStockRequestApprovalState(result.row);
+    // A queued local child is denial evidence, never authority to declare a
+    // remote child absent. Keep it intact until its upload is reconciled.
+    if (effectiveDatabaseMode() === "local") {
+      if (!localDb()?.query) throw new Error("Local fulfilment synchronization could not be checked.");
+      const pending = await routedQuery("stock_transfers", {
+        columns: "id,kind,source_request_id,from_store_id,to_store_id",
+        match: { source_request_id: recordId(requestId) }, limit: 2,
+      }) as Row[];
+      if (pending.length > 1 || pending.some(row => !state.fulfilment || !sameRecordId(String(row.id), String(state.fulfilment.id)) ||
+          row.kind !== "transfer" || !sameRecordId(String(row.source_request_id), requestId) ||
+          !sameBranchId(row.from_store_id, state.request.from_store_id) || !sameBranchId(row.to_store_id, state.request.to_store_id)))
+        throw new Error("A local fulfilment is still pending central synchronization.");
+    }
+  } else {
+    const central = await authenticatedExternalClientSnapshot();
+    if (!central) throw new Error("A verified central staff session is required.");
+    const requestResult = await central.from("stock_transfers").select(STOCK_REQUEST_HEAD_COLUMNS).eq("id", recordId(requestId)).limit(1);
+    if (requestResult.error) throw new Error("The central stock request could not be read.");
+    const request = projectStockRequestRows(requestResult.data, STOCK_REQUEST_HEAD_COLUMNS)[0];
+    if (!request) throw new Error("The stock request is no longer available.");
+    const childResult = await central.from("stock_transfers").select(STOCK_REQUEST_HEAD_COLUMNS, { count: "exact" }).eq("source_request_id", recordId(requestId)).limit(2);
+    if (childResult.error) throw new Error("The saved fulfilment could not be read.");
+    const fulfilment = completeStockRequestRows(childResult.data, childResult.count, STOCK_REQUEST_HEAD_COLUMNS, 1)[0] ?? null;
+    const lines = async (id: unknown) => {
+      const rows: Row[] = []; let total: number | null = null;
+      do {
+        const result = await central.from("stock_transfer_items").select(STOCK_REQUEST_ITEM_COLUMNS, { count: "exact" }).eq("transfer_id", String(id)).order("id").range(rows.length, rows.length + STOCK_REQUEST_PAGE_SIZE - 1);
+        if (result.error) throw new Error("The stock request lines could not be read.");
+        const page = stockRequestItemPage(result.data, result.count, total, rows.length);
+        rows.push(...page.rows); total = page.count;
+      } while (rows.length < total);
+      return rows;
+    };
+    const [requestItems, fulfilmentItems] = await Promise.all([lines(request.id), fulfilment ? lines(fulfilment.id) : Promise.resolve([])]);
+    state = checkedStockRequestApprovalState({ request, fulfilment, requestItems, fulfilmentItems });
+  }
+  if (!sameRecordId(String(state.request.id), requestId)) throw new Error("The stock request identity changed.");
+  return { request: rowToTransfer(state.request, state.requestItems), fulfilment: state.fulfilment ? rowToTransfer(state.fulfilment, state.fulfilmentItems) : null };
 }
 
 export type SaveTransferInput = {

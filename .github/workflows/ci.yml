@@ -34,6 +34,10 @@ jobs:
         run: node scripts/test-shift-closure-sync.mjs
       - name: Atomic transfer dispatch, authorization and retry tests
         run: node scripts/test-transfer-dispatch-atomic.mjs
+      - name: Stock request creation, legacy retry and item ownership tests
+        run: node scripts/test-stock-request-creation.mjs
+      - name: Guarded request-line repair and audit rollback tests
+        run: node scripts/test-request-line-repair.mjs
       - name: Notification acknowledgement ownership and delivery regressions
         run: node scripts/test-notification-upgrades.mjs
       - name: SQL schema and synchronization contract checks

@@ -15,6 +15,7 @@ import { isLegacyExchange } from "@/lib/legacy-exchange";
 import { redeemedPoints } from "./points-redemption";
 import { CUSTOMER_REFUNDS_ALLOWED, NO_REFUND_MESSAGE, exchangePolicyError } from "./returns-policy";
 import { uniqueSales, sameRecordId } from "./sale-identity";
+import { stockRequestFulfilmentId } from "./stock-request-identity";
 import { staffSettingsTarget } from "./settings-edit-policy";
 import { isCompanyIdentityPath } from "./company-identity";
 import { readBranding, writeBranding } from "./branding";
@@ -117,6 +118,7 @@ import {
   verifyTransferInDb,
   saveTransfer,
   loadTransfer,
+  loadRequestApprovalState,
   loadTransfers,
   setTransferStatus,
   type LineQty,
@@ -3979,23 +3981,43 @@ export function PosProvider({ children }: { children: ReactNode }) {
    * because nothing has been picked yet.
    */
   const approveTransfer = useCallback(async (id: string, lines?: LineQty[]): Promise<RpcResult> => {
-    const before = stateRef.current.transfers.find((x) => x.id === id);
-    const existingFulfilment = stateRef.current.transfers.find((x) => x.sourceRequestId === id);
-    if (existingFulfilment) {
-      // A fulfilment proves a previous approval reached durable storage, but
-      // this till may still hold an awaiting snapshot. Reconcile the request
-      // before treating the retry as complete.
-      const durableRequest = await loadTransfer(id);
-      if (!durableRequest)
-        return {
-          success: false,
-          error: "The saved transfer request could not be verified. Refresh transfers and retry.",
-        };
-      setState((s) => ({
+    const epoch = sessionEpoch(), generation = bootstrapGeneration.current;
+    const operatingStoreId = stateRef.current.currentStoreId;
+    const mayContinue = () => sessionEpoch() === epoch && bootstrapGeneration.current === generation && sameBranchId(stateRef.current.currentStoreId, operatingStoreId);
+    const changedSession = (): RpcResult => ({ success: false, code: "SESSION_CHANGED", error: "The session or branch changed. Refresh the request before continuing; an approval already sent may have been saved." });
+    let before = stateRef.current.transfers.find((x) => sameRecordId(x.id, id));
+    if (!before) return { success: false, error: "Transfer is not awaiting approval." };
+    const requestedId = before.id;
+    let existingFulfilment: Transfer | undefined;
+    if (before.kind === "request") {
+      let durableRequest: Transfer | null;
+      try {
+        const central = await loadRequestApprovalState(before.id);
+        existingFulfilment = central.fulfilment ?? undefined;
+        durableRequest = central.request;
+      } catch {
+        return { success: false, error: "The saved request and fulfilment could not be verified. Refresh both records before approving it." };
+      }
+      if (!mayContinue()) return changedSession();
+      if (stateRef.current.transfers.some(row => sameRecordId(row.sourceRequestId ?? "", requestedId) &&
+          (!existingFulfilment || !sameRecordId(row.id, existingFulfilment.id))))
+        return { success: false, error: "A saved local fulfilment has not been confirmed centrally. Synchronize or refresh both records before approving this request." };
+      if (!durableRequest || durableRequest.kind !== "request" || !sameRecordId(durableRequest.id, before.id) ||
+          !sameBranchId(durableRequest.fromStoreId, before.fromStoreId) || !sameBranchId(durableRequest.toStoreId, before.toStoreId) ||
+          existingFulfilment && (existingFulfilment.kind !== "transfer" || !sameRecordId(existingFulfilment.sourceRequestId ?? "", durableRequest.id) ||
+            !sameBranchId(existingFulfilment.fromStoreId, durableRequest.fromStoreId) || !sameBranchId(existingFulfilment.toStoreId, durableRequest.toStoreId)))
+        return { success: false, error: "The saved request or fulfilment has changed. Review its branches and approval before continuing." };
+      // Lost acknowledgements and upgrades adopt durable approval/legacy IDs;
+      // they never invent another approval or override its saved quantities.
+      const savedFulfilment = existingFulfilment, savedRequest = durableRequest;
+      setState((s) => !mayContinue() || !sameBranchId(s.currentStoreId, operatingStoreId) ? s : ({
         ...s,
-        transfers: s.transfers.map((row) => (row.id === id ? durableRequest : row)),
+        transfers: [...(savedFulfilment ? [savedFulfilment] : []), ...s.transfers.filter(row => !sameRecordId(row.sourceRequestId ?? "", savedRequest.id))]
+          .map((row) => (sameRecordId(row.id, id) ? savedRequest : row)),
       }));
-      if (durableRequest.status === "approved") return { success: true };
+      before = durableRequest;
+      if (existingFulfilment) return durableRequest.status === "approved" ? { success: true } :
+        { success: false, error: "This request already has a saved fulfilment. Review both records before changing its approval." };
     }
     const repairingRequest =
       before?.kind === "request" && before.status === "approved" && !existingFulfilment;
@@ -4007,16 +4029,28 @@ export function PosProvider({ children }: { children: ReactNode }) {
           qty: item.approvedQty ?? item.qty,
         }))
       : linesFor(before, lines, (i) => i.qty);
+    // Prepare the identity before approval writes. Preserve any legacy child
+    // already linked to this request rather than creating a replacement ID.
+    let fulfilmentId: string | undefined;
+    if (before.kind === "request" && allowed.some(line => line.qty > 0)) {
+      try {
+        fulfilmentId = existingFulfilment?.id ?? await stockRequestFulfilmentId(before.id);
+      } catch {
+        return { success: false, error: "The stock-transfer identity could not be prepared. Reopen the app and refresh this request before approving it." };
+      }
+      if (!mayContinue()) return changedSession();
+    }
     if (!repairingRequest) {
       const persisted = await approveTransferInDb(id, actorRef.current, allowed);
       if (!persisted.success) return persisted;
+      if (!mayContinue()) return changedSession();
     }
 
     if (!repairingRequest)
-      setState((s) => ({
+      setState((s) => !mayContinue() || !sameBranchId(s.currentStoreId, operatingStoreId) ? s : ({
         ...s,
         transfers: s.transfers.map((x) =>
-          x.id === id
+          sameRecordId(x.id, id)
             ? {
                 ...x,
                 status: "approved",
@@ -4047,17 +4081,17 @@ export function PosProvider({ children }: { children: ReactNode }) {
           createdBy: actorRef.current,
           sourceRequestId: before.id,
           needsApproval: false,
-          forcedId: stableChildId(before.id, "8", 0),
+          forcedId: fulfilmentId,
         });
     }
-    logger.log("inventory", "Stock transfer approved", "transfers", {
+    if (!repairingRequest) logger.log("inventory", "Stock transfer approved", "transfers", {
       transferId: id,
       ref: before.ref,
       fromStoreId: before.fromStoreId,
       toStoreId: before.toStoreId,
       quantity: allowed.reduce((a, l) => a + l.qty, 0),
     });
-    trackTransition({
+    if (!repairingRequest) trackTransition({
       entity: "stock_transfer",
       entityId: id,
       from: "awaiting_approval",

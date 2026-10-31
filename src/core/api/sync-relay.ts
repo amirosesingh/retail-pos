@@ -212,6 +212,26 @@ export async function relayActiveShift(
   }
 }
 
+/** Online-only, scope-verified reconciliation before a request approval. */
+export async function relayTransferRequestApprovalState(requestId: string): Promise<{
+  ok: boolean; row?: Record<string, unknown> | null; error?: string; code?: string;
+}> {
+  const startedAt = sessionEpoch();
+  try {
+    const res = await fetchWithDeadline(serverUrl(syncPath()), {
+      method: "POST", headers: await relayHeaders(),
+      body: JSON.stringify({ ...(await credentials()), read: { kind: "transferRequestApprovalState", requestId } }),
+    });
+    const body = await res.json().catch(() => null) as { ok?: boolean; row?: Record<string, unknown>; code?: string } | null;
+    await inspectRelay(res, body, startedAt);
+    if (!res.ok || !body?.ok || startedAt !== sessionEpoch())
+      return { ok: false, code: startedAt !== sessionEpoch() ? "SESSION_CHANGED" : body?.code, error: "The central stock request could not be verified. Refresh it before approval." };
+    return { ok: true, row: body.row ?? null };
+  } catch {
+    return { ok: false, error: "The central stock request could not be verified. Reconnect before approval." };
+  }
+}
+
 /** Protected branch-list read for startup and terminal administration. */
 export async function relayStores(): Promise<{
   ok: boolean;
