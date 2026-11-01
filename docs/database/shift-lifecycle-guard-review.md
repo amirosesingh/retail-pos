@@ -11,6 +11,14 @@ beta `423950b4`. The six prepared files were retained; root repeated the 71
 captured-definition scenarios at that baseline. The reviewed runtime fragments
 and migration digest did not change during this integration.
 
+The first remote CI run correctly failed the existing explicit SQL-file inventory:
+the new migration was not yet registered in its expected list. The required
+test-only seventh file now adds that exact filename without changing assertions,
+skipping tests or changing runtime SQL. After merging beta `ead66f30` (the
+independently reviewed status correction), root passed all602 suites/4,249tests
+in96.50s, including the24 canonical-schema cases. The migration digest is
+unchanged. Exact updated-head remote CI remains a separate gate.
+
 ## Confirmed defect and bounded change
 
 The existing native upload routine accepts a higher-revision full OPEN snapshot
