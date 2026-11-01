@@ -59,6 +59,22 @@ reset checkpoints or clear queues. Use the existing registered production profil
 for any approved recovery; a separate beta installation is not that profile.
 The earlier broad history-recovery investigation remains deferred.
 
+The owner selected original saved-closing recovery first on 1 November. Preserve
+its actual closing timestamp as well as counts/IDs; a cloud activity report is
+supporting evidence, not a substitute for the complete saved local graph. The
+closed-shift count correction currently does not edit time or close an OPEN row.
+Any administrator-only fallback for one selected unresolved shift requires a
+separate audited workflow; do not remove the existing closed-only recount guard
+or change ordinary manager/cashier closing permissions to implement it. The
+primary current-shift card is singular; complete history must offer clear
+status/filter/identity controls without changing checkout's selected shift.
+
+Source correction PR #353 is now merged into beta as b31c74e4 after exact-head
+checks and Codex code review. That does not update an installed production
+Electron Main process or recover its existing queue. Production preparation is
+separate draft PR #354; main merge can automatically initiate stable publication,
+so the owner's approval of that exact promotion remains mandatory.
+
 31October SQL-08 verification: a new native build must receive a compatible,
 server-verified terminal descriptor before adopting local POS authority. An older
 backend without that descriptor is an upgrade requirement, not a reason to trust

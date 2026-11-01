@@ -34,7 +34,10 @@ only; the owner's subsequent Batch 1 approval below authorizes its bounded fixes
 | 21 | TRF-16 merged into beta / approved guard and exact repair applied | PR350/c15fdd21 includes the new fulfilment-ID correction; shared checkout IDs unchanged. Guard history20261031083126 and one audited request-line restoration verified; request-integrity read returns true. Full592 suites/3987 tests and exact-head platform/security checks passed; beta website deployment passed. Physical-device acceptance remains separate. |
 | 22 | SQL-08 implemented / isolated and signed-in local Settings verified | Separate approved typed adoption/read-error correction preserves terminal binding and cashier authority. Full595 suites/4091 tests, TypeScript and full lint pass. Owner-approved HTTPS beta backend plus original native origin43117 permits normal verified sign-in and seals the recovered existing proof; Approvals and Settings open with STR1/local SQL ready. Other devices/offline real-sale acceptance, commit and beta PR remain separate. |
 | 23 | SQL-09 active read-only investigation / correction not approved | Separate expired change_history Change Tracking and HTTP503 bootstrap warnings remain after SQL-08 sign-in recovery. UI reports local SQL ready and queue0/errors0, but this is not proof of successful bootstrap. Identify exact failed table/stage from existing jobs/logs without resetting cursors, resyncing, changing Membership dependencies or touching pending/business data. |
-| 24 | SHIFT-28A committed / draft beta PR #353 / isolated regressions verified; SHIFT-28B awaits affected-PC evidence | Owner approved atomic trusted closing journals and the shared current-graph upload correction. Full 600 suites/4,193 tests, TypeScript/lint and 68 PostgreSQL scenarios passed. Preserve checkout, receipts, branch/actor identity and v2 acknowledgement. Existing stuck shifts are not repaired; read-only UltraViewer handoff and an exact separately approved recovery remain pending. TERM-29 is owner-verified in the latest beta. |
+| 24 | SHIFT-28A merged beta b31c74e4 / PR #353; SHIFT-28B read-only affected-PC inspection | Full 600 suites/4,193 tests, TypeScript/lint, 68 PostgreSQL scenarios, exact-head CI and Codex code review passed. Preserve checkout, receipts, branch/actor identity and v2 acknowledgement. Existing stuck shifts are not repaired. Owner resumed UltraViewer inspection; credentials remain user-entered. TERM-29 is owner-verified in latest beta. |
+| 25 | SHIFT-31 implemented / isolated UI and full regressions verified | Complete-history All/Open/Closed and permitted column filters before paging, clear retained filters, precise row/dialog identity. Full 601 suites/4,204 tests, TypeScript/lint, independent review and desktop/390px synthetic browser interactions passed. Preserve active checkout selection, column permission IDs and disabled open-row recount. Commit/beta PR checks remain separate. |
+| 26 | SHIFT-32 approved preparation and isolated tests / active | Prevent stale nonfinal upload from reopening a CLOSED shift while preserving branch/actor checks and existing valid closing/recount acknowledgements. Separate beta-based worktree; no live application approved. Report obsolete-write/ack tradeoff explicitly. |
+| 27 | REL-29 cumulative production draft PR #354 / not signed off | Separate beta-to-main draft labelled production/awaiting-owner-approval. Explicit version proposal, installed Windows acceptance, exact live dependencies and unresolved critical risks remain gates. No exact promotion/main merge/release approved. |
 
 Membership is **ON HOLD** throughout. Each future batch requires a recoverable
 baseline, specific files/dependencies, expected behavior, risks, regression tests,
@@ -2307,8 +2310,9 @@ notification rules.
 
 Root independently passed 82 Node sync/startup/event/database/shutdown cases,
 38 isolated closure cases, 15 canonical full-graph cases and 15 cases using all
-three captured deployed-definition sets. SQL Server/schema and sync registry
-checks each verified 70 tables/decisions. Four focused suites passed 87 tests.
+three captured deployed-definition sets. Static generated SQL Server schema and
+sync registry checks each verified 70 tables/decisions; they do not certify the
+affected PC's installed schema. Four focused suites passed 87 tests.
 Full lint passed. The first full Vitest run completed with one outdated source
 assertion; that assertion was updated for the three approved writer substitutions
 and passed in the focused run. The final full run passed all 600 suites/4,193
@@ -2338,3 +2342,163 @@ Automatic exact-head checks are pending. No merge, release tag, installer/OTA
 publication, production promotion or live database change has been performed.
 The owner's read-only affected-PC handoff remains pending; do not infer that
 published beta or this draft has recovered the existing production closure.
+
+### 1 November — shift visibility, timing and production preparation
+
+Owner reports that two cloud shifts remain open, but the primary Shifts card
+shows one; an older shift has run for about 26 hours 46 minutes. Existing Correct
+edits closing counts only, and the owner wants administrators to be able to
+resolve selected open shifts individually, including their actual closing time.
+The owner explicitly selected **recover the original saved closing first**.
+Never infer its timestamp from duration, use today's time for an older close,
+fabricate counts, or close the currently active drawer as a side effect.
+
+SHIFT-28B remains active diagnosis/preparation. The affected-PC read-only
+UltraViewer handoff was requested again; no resume/readiness reply has arrived.
+Actual legacy recovery still requires matching local saved graph/revision/identity
+and a separately approved exact repair. Admin manual closure/time correction is
+a new fallback workflow, SHIFT-30, not authorization to remove the closed-only
+guard from the current recount correction routine. Prepare its requirements and
+affected files before seeking implementation approval; no new workflow or live
+shift change is currently applied.
+
+SHIFT-31 read-only visibility audit: the top card and active-shift query select a
+single newest open shift. Complete branch Shift history has no status restriction;
+that does not establish an all-open control screen. Audit exact ID/open time,
+terminal, branch and filters before concluding a row is missing. Any proposed
+all-open list or targeted close action must preserve active checkout selection.
+
+REL-29 active preparation: owner requests final validation, update the beta line,
+and prepare accumulated beta updates for production. PR #353 exact head ce6ee9e5
+now has passing Security checks, Android compile, iPhone build and label checks;
+The Cloudflare check reports successful deployment for that exact source; the
+served official beta URL/source was not independently read back. This does not publish updated Windows
+Main or prove affected-PC acceptance. The latest published beta installer still
+omits this shift fix. Browser live reload at 8080 does not execute Electron Main.
+Prepare an exact beta-to-main draft promotion, review release/rollback boundaries
+and report blockers. No specific production promotion is approved. Main merge
+automatically leads to stable release workflows after checks, so do not merge or
+enable auto-merge there without the owner's approval for that exact promotion.
+Membership and broader history/audit-scope recovery remain on hold/deferred.
+
+Owner timing clarification: existing correction edits tender counts but not the
+closing time. Preserve the exact original timestamp during saved-close recovery;
+administrator fallback must target one explicit shift and record before/after
+time, counts, actor and reason. It must not turn cloud lag into a fabricated new
+closing. Future normal sync should carry these original facts without requiring
+an administrator recount. Manual time/closure implementation remains a separate
+proposed batch; owner selected recovery first.
+
+Agent review confirmed a separate UI limitation: shared status-column filtering
+runs after Shifts history's 25-row pagination, and All shifts leaves prior search
+text in place. SHIFT-31 proposal is an explicit All/Open/Closed filter before
+pagination, clear-filter behavior and unambiguous row/dialog identity. Owner
+approval requested before source edits. SHIFT-32 separately proposes preparation
+and isolated tests only for rejection of stale OPEN uploads after CLOSED; no
+live guard application is authorized. The existing risk predates PR #353.
+
+Read-only current cloud checks: both identified shifts remain OPEN revision 1,
+closed_at NULL, zero cash-count/reconciliation rows. Actual public active-shift
+RPC delegates to a private implementation; that implementation enforces current
+staff/terminal/branch visibility and selects newest OPEN with no close time,
+ORDER BY opened_at DESC LIMIT 1. The public-wrapper substring check alone was
+inconclusive and was followed through correctly; no deployed active-sort bug was
+confirmed. No migration is justified merely by seeing two persisted OPEN rows.
+
+REL-29 detailed gates and proposed stable version are now in the existing
+go-live-checklist.md. Source metadata is 1.4.80; unchanged automatic stable release
+would publish that version. Proposed stable 1.4.81 is not silently committed.
+PR #353 was marked ready for review under the owner's beta-update request; an
+automatic Codex code review completed on ce6ee9e5 with no findings. CodeRabbit skipped automatic
+review for the nondefault beta target; do not claim a CodeRabbit pass. Existing
+exact-head CI is green. No beta merge, installer publication or main promotion
+has occurred at this checkpoint.
+
+Additional incident evidence: cloud activity for the older shift contains a
+shift_cash_variance report e383e067-ea8b-4ca1-bef0-9946c0ddf82c and a separate
+shift_close activity. The variance metadata reports original close time
+2026-10-31T13:08:56.837Z (21:08:56.837 Asia/Brunei), original opening matching the
+shift row, original STR1/Gardong identities and reconciliation ID
+7a49fc63-da14-41c6-b7d7-c1ddda5871fa. That reconciliation row and all closing counts
+are absent centrally. This is stronger evidence of partial upload, but an activity
+report is not the original complete local closing graph or authoritative recovery
+proof. Match these IDs/time against the affected PC; do not synthesize children
+from a notification. No event or business row was changed.
+
+Windows source-package preflight passed against the current source and native
+driver dependencies. No unpacked installer was supplied to that check, so it is
+not a packaged executable or actual SQL Server runtime acceptance. A bounded
+read-only last-24-hour log aggregation found no matching branch-denial,
+closure-error or statement-timeout strings in the queried postgres/edge events;
+this neither proves no other errors nor proves an attempted closure upload.
+
+Production preparation now has separate draft
+[PR #354](https://github.com/amirosesingh/retail-pos/pull/354), `beta` to `main`,
+labelled `production` and `awaiting-owner-approval`. It records the cumulative
+source inventory, explicit version proposal and unresolved gates. It does not
+approve or perform main merge/auto-merge/publication. The draft currently follows
+beta 273c685c and must acquire PR #353 before candidate finalization; updating beta
+will update this draft automatically. No other open main promotion existed when
+the draft was created. The owner has not approved this exact promotion.
+
+Owner approvals received: read-only UltraViewer inspection is resumed; target is
+the affected **Electron production app**, not the web production site. User will
+enter any required credentials. Do not retry, repair, clear queues or change
+settings/business data during inspection. SHIFT-31 UI correction/tests are now
+approved: three files (Shifts route, pure shift-history view helper and tests),
+no shared Table rewrite, no current-drawer/checkout changes or open-row recount.
+SHIFT-32 preparation and isolated tests are also approved; no live guard migration
+or data mutation. Its precise stale-write/acknowledgement tradeoff must be tested
+and reported before any live approval. Membership remains untouched.
+
+PR #353 merged into beta as b31c74e4 on 1 November after exact-head CI and Codex
+code review completed with no findings. Merge source tree/installed-device
+acceptance remain distinct. Production main is unchanged. Root starts SHIFT-31
+branch codex/shift-history-visibility-beta from that beta commit, retaining only
+the current documentation changes. Separate SHIFT-32 preparation uses its own
+beta-based worktree/PR. The local web preview follows the current UI worktree;
+changed native Main still requires an updated Electron process/installer.
+
+SHIFT-28B actual affected-PC evidence, 1 November around 13:38–13:42 Asia/Brunei:
+owner signed into the production Electron app; root inspected only existing
+status/navigation/error views through UltraViewer. The registered STR1 app uses
+local SQL `POS_Local`, connection/schema Ready, measured UI response 224 ms, and
+online Supabase Connected. The current operating shift is the 1 November opening
+at 10:29:21. Main sync still reports expired `change_history` Change Tracking.
+Saved Errors show ECHANGEGAP/Automatic repeated 105 times, plus Bootstrap HTTP503
+and Database.State HTTP503 repeated 105 times. Last upload/download display Never;
+no database job was active. Background journal counts briefly changed 0→27→0,
+then showed audit_logs queued; root did not start/retry/pause/repair any job.
+This directly matches the structural journal-before-CT failure and explains why
+queue zero is not full synchronization proof. It does not yet prove the old
+shift's full local closing graph/revision or permit a repair.
+
+SHIFT-31 source/tests frozen: root independently passed full 601 Vitest suites /
+4,204 tests in 130.04 seconds, final TypeScript and changed-file lint. Independent
+review and isolated actual Shifts/shared Table desktop1440x1000 and phone390x844
+interactions passed. Review caught and corrected new-filter granular column ACL
+inference before commit: metadata-only main search is preserved, while permitted
+column filtering uses the same table catalogue/role/user visibility policy.
+One memoized history timestamp drives both duration filters and cells. No API
+polling, shared Table, checkout, closing-action or permission-grant changes.
+Fixtures mock auth/data/mutations and do not certify installed devices.
+
+SHIFT-32 source preparation is frozen in a separate worktree, not applied live.
+Initial author validation covers canonical/captured closure and full-graph cases
+plus six actual PostgreSQL17.11 two-session races; independent review is active.
+Only a clean, otherwise identical delayed opening is acknowledged as obsolete;
+different nonclosing facts/counts/progress remain conflicts with pending work
+retained. Do not describe preparation as repairing the existing missing closure.
+
+Beta merge preservation verified: b31c74e4 and the exact reviewed ce6ee9e5 head
+have identical Git tree c0316615bfba51c69b0f2942d23fb48b8f1a9bd7. The merge did
+not replace other source or introduce unreviewed runtime differences. Current
+SHIFT-31 branch/source differs from that beta only in its three approved UI/test
+files plus the project memory/tracker/readiness documentation.
+
+Current system-status screen also reports green POS sync queue / "Everything on
+this till has been uploaded" while native history recovery is failing. Treat this
+as a separate misleading status finding, SHIFT-33, not proof of completeness.
+Source audit/preparation only is underway; no status/queue logic is approved or
+changed in this batch. Do not conflate browser outbox, native journal, CT uploads,
+bootstrap progress and actual business-row acknowledgement.

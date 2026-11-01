@@ -9,6 +9,71 @@ This is an acceptance checklist, not a record of completed checks. Transaction,
 stock, concurrency and failure tests require isolated/restored fixtures and
 approved test devices; never damage real business data. Membership is on hold.
 
+## 1 November 2026 — cumulative beta promotion preparation
+
+**Production is not signed off.** Prepare one cumulative beta source candidate,
+not a combination of old installers or a replacement checkout. Current production
+is `v1.4.79` (`2f404e6f`). Published beta `1.4.81-beta.2` uses source `dd4331b0`,
+whose tree equals beta `273c685c`. The newer Windows closing-journal correction
+is [PR #353](https://github.com/amirosesingh/retail-pos/pull/353), source `1c867a43`
+and reviewed head `ce6ee9e5`; neither published installer includes it yet.
+
+The checked main-to-beta comparison contains 88 beta-only commits and 566 changed
+files before PR #353. Existing tests and prior scoped acceptance are evidence for
+their recorded revisions, not complete certification of this accumulated release.
+Main's two unique release/merge commits currently add no distinct runtime tree
+changes; preserve their history through a reviewed merge, never overwrite main.
+
+Version decision: `prepare-beta.cjs --next` currently reports `1.4.81-beta.3`,
+while committed source metadata is `1.4.80`. The stable release workflow preserves
+an untagged source version, so unchanged promotion would publish `1.4.80`.
+Recommend explicitly preparing stable `1.4.81`; this is a proposal, not a version
+change or publication approval. Check the exact release identities again before
+the owner approves a specific beta-to-main PR.
+
+Required gates before that promotion:
+
+- [ ] Merge the reviewed shift fix into beta and verify the exact candidate's
+      checks. PR #353 head `ce6ee9e5` passed Security checks, Android compile,
+      iPhone build and a Cloudflare deployment/check for that source; the official
+      served URL/source was not independently read back. These are not a new Windows installer
+      or affected-PC runtime acceptance.
+- [ ] Recover/verify the affected PC's original locally saved closing graph and
+      timestamp, preserving counts, identity, queue and active drawer. Cloud still
+      has both identified STR1 shifts OPEN with no closing children. No automatic
+      historical repair is approved. A separate beta profile cannot stand in for
+      the affected production profile's pending data.
+- [ ] Resolve or explicitly review the known higher-revision stale OPEN upload
+      that can reopen a CLOSED row. PR #353 does not correct this older lifecycle
+      risk. No live guard migration is currently approved.
+- [ ] Review the separate all-open history/filter and administrator timing/closure
+      requirements. Current Correct is a closed-count recount, not an open-shift
+      closing/time repair. The owner selected original-closing recovery first.
+- [ ] Reconcile exact live dependencies. The tested notification acknowledgement
+      upgrade `20261030234813` remains not approved/applied live. Never replay all
+      migrations or treat an applied filename as proof of every installed body.
+- [ ] Reconcile unresolved critical audit findings in TASK_TRACKER.md, including
+      alternate authority paths, booking atomicity/received-payment allocation and
+      stock privacy, before claiming whole-system readiness. Preserve Membership
+      and its dependencies; do not remove earlier beta work by copying older code.
+- [ ] Build/restart the exact Windows runtime. Verify two successive cashier
+      sales and receipts, branch denial, offline final count/recount, reconnect,
+      exact cloud acknowledgement, queue preservation and original attribution on
+      isolated test data and authorized test hardware. Browser hot reload does
+      not execute the changed Electron Main/SQL worker.
+- [ ] Prepare/review a separate `[PRODUCTION]` beta-to-main PR, label it
+      `production` and `awaiting-owner-approval`, with exact source/version,
+      dependency readiness, evidence limits and rollback. No production merge or
+      auto-merge until the owner approves that specific promotion.
+
+Main merge is a release action: after successful main Security checks,
+`version-release.yml` can commit/tag the stable version and dispatch platform
+publication automatically. Keep beta installer publication separate; it requires
+the exact owner instruction “Publish beta now”. Source/client rollback must retain
+business rows and pending journals/receipts; it cannot undo already synchronized
+closures or delivered notifications. Do not restore an older whole database or
+clear queues as a release rollback.
+
 ## Before the day
 
 - [ ] Every branch exists in the system with the right name, code and address.
