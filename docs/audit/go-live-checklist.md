@@ -33,11 +33,17 @@ the owner approves a specific beta-to-main PR.
 
 Required gates before that promotion:
 
-- [ ] Merge the reviewed shift fix into beta and verify the exact candidate's
-      checks. PR #353 head `ce6ee9e5` passed Security checks, Android compile,
-      iPhone build and a Cloudflare deployment/check for that source; the official
-      served URL/source was not independently read back. These are not a new Windows installer
-      or affected-PC runtime acceptance.
+- [x] Merge the reviewed shift source into beta. PR #353 merged as `b31c74e4`;
+      history UI PR #355 subsequently merged as `423950b4`. Both merge trees
+      equal their exact reviewed/passing source trees. Automatic Codex code
+      reviews reported no findings; CodeRabbit skipped beta. These are source
+      checks, not a new Windows installer or affected-PC runtime acceptance.
+- [x] Finish status-only PR #356's exact-head checks/review and beta integration
+      as `ead66f30`, whose tree matches the reviewed source.
+      Its five-file patch passed602 suites/4,249tests, TypeScript/lint and
+      independent browser/IDB fixtures. A zero journal must not claim complete
+      Change Tracking upload; current errors and unavailable reads must stay
+      visible. No retry/queue/data behavior is changed by that patch.
 - [ ] Recover/verify the affected PC's original locally saved closing graph and
       timestamp, preserving counts, identity, queue and active drawer. Cloud still
       has both identified STR1 shifts OPEN with no closing children. No automatic
@@ -45,10 +51,15 @@ Required gates before that promotion:
       the affected production profile's pending data.
 - [ ] Resolve or explicitly review the known higher-revision stale OPEN upload
       that can reopen a CLOSED row. PR #353 does not correct this older lifecycle
-      risk. No live guard migration is currently approved.
-- [ ] Review the separate all-open history/filter and administrator timing/closure
-      requirements. Current Correct is a closed-count recount, not an open-shift
-      closing/time repair. The owner selected original-closing recovery first.
+      risk. Draft PR #357 prepares two service-only routine guards;71 captured
+      SQL scenarios,16 real concurrency cases and complete-graph tests passed
+      independently. No live guard migration is currently approved. Native
+      higher-local-revision convergence remains a separate unresolved boundary.
+- [x] Implement and independently test complete-history All/Open/Closed filtering
+      and clear row identity in PR #355, preserving current checkout selection.
+- [ ] Review the separate administrator timing/closure fallback. Current Correct
+      is a closed-count recount, not an open-shift closing/time repair. The owner
+      selected original-closing recovery first.
 - [ ] Reconcile exact live dependencies. The tested notification acknowledgement
       upgrade `20261030234813` remains not approved/applied live. Never replay all
       migrations or treat an applied filename as proof of every installed body.
@@ -61,10 +72,12 @@ Required gates before that promotion:
       exact cloud acknowledgement, queue preservation and original attribution on
       isolated test data and authorized test hardware. Browser hot reload does
       not execute the changed Electron Main/SQL worker.
-- [ ] Prepare/review a separate `[PRODUCTION]` beta-to-main PR, label it
-      `production` and `awaiting-owner-approval`, with exact source/version,
-      dependency readiness, evidence limits and rollback. No production merge or
-      auto-merge until the owner approves that specific promotion.
+- [x] Create separate draft `[PRODUCTION]` beta-to-main PR #354, labelled
+      `production` and `awaiting-owner-approval`, recording the version proposal,
+      dependency readiness, evidence limits and rollback.
+- [ ] Finalize the exact production candidate/version after remaining gates and
+      obtain the owner's approval of that specific promotion. No production
+      merge or auto-merge is authorized yet.
 
 Main merge is a release action: after successful main Security checks,
 `version-release.yml` can commit/tag the stable version and dispatch platform

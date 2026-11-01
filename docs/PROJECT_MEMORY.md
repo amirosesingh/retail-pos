@@ -75,6 +75,26 @@ Electron Main process or recover its existing queue. Production preparation is
 separate draft PR #354; main merge can automatically initiate stable publication,
 so the owner's approval of that exact promotion remains mandatory.
 
+SHIFT-31 history visibility is subsequently merged as beta423950b4 / PR #355;
+its merge tree equals the reviewed source. SHIFT-33 status-only PR #356 is now
+merged as betaead66f30, with the reviewed tree preserved. SHIFT-32 draft guard
+PR #357 remains preparation only. A native journal count must never be
+presented as proof that all Change Tracking history reached cloud. Durable
+browser counts include backed-off work; status reads must neither create storage
+nor modify queues/retries. Current error/unknown state and newer subscription
+events take precedence over delayed diagnostic reads.
+
+Read-only affected-PC evidence confirms the original31October closing remains
+saved locally with its exact timestamp and matching reconciliation, while the
+cloud parent remains OPEN. Stable1.4.79's CT-only closing and expired earlier
+history checkpoint establish a blocking path; the exact original CT entry and
+delivery/checkpoint/acknowledgement sequence still require investigation.
+Recovery must preserve the original
+graph/time/profile, verify its full facts, obtain exact repair approval, and
+verify central parent/children afterwards. A notification, generic ok response,
+opening acknowledgement or zero journal is insufficient proof. No original
+closing is to be fabricated or changed into today's closing.
+
 31October SQL-08 verification: a new native build must receive a compatible,
 server-verified terminal descriptor before adopting local POS authority. An older
 backend without that descriptor is an upgrade requirement, not a reason to trust

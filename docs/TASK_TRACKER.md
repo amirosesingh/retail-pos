@@ -35,9 +35,10 @@ only; the owner's subsequent Batch 1 approval below authorizes its bounded fixes
 | 22 | SQL-08 implemented / isolated and signed-in local Settings verified | Separate approved typed adoption/read-error correction preserves terminal binding and cashier authority. Full595 suites/4091 tests, TypeScript and full lint pass. Owner-approved HTTPS beta backend plus original native origin43117 permits normal verified sign-in and seals the recovered existing proof; Approvals and Settings open with STR1/local SQL ready. Other devices/offline real-sale acceptance, commit and beta PR remain separate. |
 | 23 | SQL-09 active read-only investigation / correction not approved | Separate expired change_history Change Tracking and HTTP503 bootstrap warnings remain after SQL-08 sign-in recovery. UI reports local SQL ready and queue0/errors0, but this is not proof of successful bootstrap. Identify exact failed table/stage from existing jobs/logs without resetting cursors, resyncing, changing Membership dependencies or touching pending/business data. |
 | 24 | SHIFT-28A merged beta b31c74e4 / PR #353; SHIFT-28B read-only affected-PC inspection | Full 600 suites/4,193 tests, TypeScript/lint, 68 PostgreSQL scenarios, exact-head CI and Codex code review passed. Preserve checkout, receipts, branch/actor identity and v2 acknowledgement. Existing stuck shifts are not repaired. Owner resumed UltraViewer inspection; credentials remain user-entered. TERM-29 is owner-verified in latest beta. |
-| 25 | SHIFT-31 implemented / isolated UI and full regressions verified | Complete-history All/Open/Closed and permitted column filters before paging, clear retained filters, precise row/dialog identity. Full 601 suites/4,204 tests, TypeScript/lint, independent review and desktop/390px synthetic browser interactions passed. Preserve active checkout selection, column permission IDs and disabled open-row recount. Commit/beta PR checks remain separate. |
-| 26 | SHIFT-32 approved preparation and isolated tests / active | Prevent stale nonfinal upload from reopening a CLOSED shift while preserving branch/actor checks and existing valid closing/recount acknowledgements. Separate beta-based worktree; no live application approved. Report obsolete-write/ack tradeoff explicitly. |
+| 25 | SHIFT-31 merged beta 423950b4 / PR #355 | Complete-history All/Open/Closed and permitted column filters before paging, clear retained filters, precise row/dialog identity. Full 601 suites/4,204 tests, TypeScript/lint, independent review and desktop/390px synthetic browser interactions passed. Exact-head platform/security/deployment checks and Codex code review passed. Merge tree equals reviewed e334fc52; installed-device acceptance remains separate. |
+| 26 | SHIFT-32 prepared / independently verified / draft beta PR #357 | Two existing service-only routines prevent stale reopening and validate existing-receipt replay.71 canonical/captured SQL scenarios,16 real concurrency cases,19+19 full graphs and94 focused tests passed. Updated head a5d31e67 includes required test inventory registration and beta ead66f30; integrated602 suites/4,249tests passed. Remote CI rerun pending. No live application or historical recovery approved; native convergence remains separate. |
 | 27 | REL-29 cumulative production draft PR #354 / not signed off | Separate beta-to-main draft labelled production/awaiting-owner-approval. Explicit version proposal, installed Windows acceptance, exact live dependencies and unresolved critical risks remain gates. No exact promotion/main merge/release approved. |
+| 28 | SHIFT-33 merged beta ead66f30 / scoped-verified / PR #356 | Five approved files; current native errors defeat zero-queue green claims. Root full602 suites/4,249tests, TypeScript, scoped lint and independent desktop/phone/IDB checks passed. Exact-head CI and Codex review passed; merge tree equals tested a3945e5f. No polling/retry/queue/schema/data/permission changes. Installed-device acceptance remains separate. |
 
 Membership is **ON HOLD** throughout. Each future batch requires a recoverable
 baseline, specific files/dependencies, expected behavior, risks, regression tests,
@@ -2502,3 +2503,155 @@ as a separate misleading status finding, SHIFT-33, not proof of completeness.
 Source audit/preparation only is underway; no status/queue logic is approved or
 changed in this batch. Do not conflate browser outbox, native journal, CT uploads,
 bootstrap progress and actual business-row acknowledgement.
+
+SHIFT-31 committed as e334fc52 and pushed to
+[beta PR #355](https://github.com/amirosesingh/retail-pos/pull/355). The six-file
+diff contains its three UI/test files plus current memory, tracker and readiness
+records. Full 601/4,204, TypeScript/lint and desktop/phone fixture evidence are
+recorded above; exact-head automatic checks/review remain separate.
+
+Owner separately approved SHIFT-33's four-file status correction/tests. Use a
+pure summary, the current native status during existing health checks and the
+local SQL status panel; no additional polling/cloud requests, retries, queue,
+checkpoint, settings or permission changes. A zero journal count must not claim
+all CT-only business records uploaded. Browser/mobile use their actual durable
+outbox signal, not the compatibility zero stub. Keep current and past errors
+distinct. Separate beta-based worktree; preserve the live UI preview branch.
+
+SHIFT-32 independent review confirmed an upgrade gap: a pre-existing zero-applied
+OPEN receipt can return before the new upsert validation and acknowledge changed
+metadata on replay. Owner approved extending preparation/isolated tests into the
+existing receipt-replay validation, preserving old receipts and genuine pending
+changes. No live application is authorized. A separate revision-convergence risk
+also remains: cloud CLOSED5 may not replace local OPEN99 through an ordinary
+version-gated pull. Do not claim server guard tests establish that native
+convergence or silently expand into local adoption/writers. Test/document the
+boundary before any production claim.
+
+Owner follow-up approval: SHIFT-33 may also edit the fifth file, the existing
+browser outbox module, to expose a read-only persisted queue count and test it.
+Reuse its storage constants; do not create/upgrade its database, change queued
+records, retries, permissions or business data. Connect this signal only to the
+existing diagnostic run. The owner needs help opening an already installed SQL
+Server Management Studio on the affected PC. Root may locate/open that tool;
+the owner handles any connection/authentication prompt. Inspection remains
+SELECT-only after confirming POS_Local and the affected terminal identity.
+
+SHIFT-31 merged into beta as 423950b486734e2c099a658a2bc0479c30e7f6ea after
+exact-head checks passed for e334fc52, including role/permission regression,
+Windows renderer, Android, iPhone and beta website deployment. Automatic Codex
+code review completed with no findings; CodeRabbit skipped this beta target.
+The merge and reviewed head both have Git tree
+6f51bcbf2f4259b0d5557ed3d21886c947a213d6. Production PR #354 follows this beta
+head but remains draft; main, installers and real business data are unchanged.
+The local Vite preview returned HTTP 200. Root opened the already installed
+SSMS22 on DESKTOP-VIB2MIL; its saved connection identifies the existing
+DESKTOP-VIB2MIL\\LCRPOS / POS_Local database. Root stopped at the connection
+prompt and asked the owner to connect and leave a blank query editor visible.
+
+SHIFT-28B original parent now verified by SELECT-only SSMS inspection on the
+affected PC: database POS_Local, server DESKTOP-VIB2MIL\\LCRPOS, current CT36193
+at the initial read. Exact old shift 1a349429-cea1-4f45-8d2b-36678d37ad27,
+expected STR1 branch and Gardong terminal predicates return one row, status and
+state CLOSED, opened2026-10-31T02:22:18.1080000+00:00,
+closed2026-10-31T13:08:56.8370000+00:00, row_version3. The close time matches
+the cloud variance activity. Cloud parent was OPEN revision1 with no closing
+children at the last independent read. Original child graph/journal/checkpoint
+verification remains pending; no mutation or upload retry was performed.
+UltraViewer text transfer lagged and temporarily pasted stale clipboard content;
+root verified the eventual SELECT text visually before execution. Unverified
+text was never executed. The owner handled SQL authentication personally.
+
+Additional SELECT-only affected-PC evidence: one saved cash count, one
+reconciliation, three shift-event rows, one shift summary and one variance alert;
+all seven child records have the expected branch. Reconciliation
+7a49fc63-da14-41c6-b7d7-c1ddda5871fa links count
+dd2b330a-bcfc-44f6-9949-8d912cdbca80, has the exact original close timestamp and
+matches the cloud activity. At current CT36253, change_history push checkpoint
+22619 is below its minimum25728; shift_variance_alerts checkpoint24745 is below
+its separately displayed minimum25728. Cash-count, event, summary and
+reconciliation push checkpoints are29273, shifts29281, each with displayed
+minimum25728.
+The shifts-only journal result contains an acknowledged revision1 opening, not
+a pending revision3 closing. The complete six-table journal and exact saved
+financial/link/actor graph still require verification before any repair plan.
+
+Fresh read-only ROSEGILL pos check after this local evidence still shows both
+identified cloud parents OPEN/ACTIVE revision1, no close timestamp and zero
+counts/reconciliations/events/summaries/alerts. Project metadata is ACTIVE_HEALTHY.
+The confirmed stable1.4.79 path writes closing through Change Tracking, uploads
+opening journal entries first, then aborts on the expired history gate. This is
+a proven blocking mechanism, not yet proof of the sole cause of the original
+missing close: its exact CT entry/context relative to shifts checkpoint29281
+still needs reading. Neither green connection health nor an empty journal proves
+delivery. Stable also lacks coherent graph capture
+and client v2 proof validation. Do not seed recovery metadata under the old
+binary and call generic ok or queue0 authoritative recovery. A separately
+approved exact recovery must preserve saved facts, use a reviewed transport on
+the same production profile and read back the complete central graph. No repair,
+checkpoint reset, retry, unpair, configuration or business-data change occurred.
+
+SHIFT-33 final independent review caught and corrected missing/malformed native
+DB metadata and stale getState overwriting newer disconnect/disable events.
+Root final602 suites/4,249tests passed in143.97s on latest beta423950b4 plus the
+five-file patch; TypeScript passed. Agent expanded64 tests/four suites and
+independent45 focused tests plus real isolated Chrome/IndexedDB fixture passed.
+The fixture uses synthetic native signals and Table/Dialog/CSS boundaries; it
+does not certify installed IPC, successful uploads or full-app styling. Commit
+a3945e5f8add8681d9b480e3a839dd075dd60041 was pushed to beta PR #356. Existing
+retry/queue/checkpoint behavior, checkout, grants and Membership are unchanged.
+
+SHIFT-32 replay extension is committed5ca18128c3fa68b996cadce9d7e90997f9223232
+in draft beta PR #357. Root repeated71 captured-definition SQL scenarios after
+advancing to beta423950b4. Independent final review repeated16 real PostgreSQL
+concurrency cases and19 captured full graphs; generator parity changes only two
+effective signatures. The rejected waiting-lock design reproduced a two-parent
+deadlock; the final new nonfinal validator uses NOWAIT, returns55P03/BUSY and
+retains receipts/pending work for existing bounded retries. It preserves pure
+CLOSED proof behavior and existing upsert order. Native OPEN99/cloud CLOSED5
+adoption and existing opposite-order fresh-writer deadlocks remain outside this
+guard. No live application, historic repair or production approval is inferred.
+Migration20261101052452 SHA256:
+032CF56FF5BB377AEFC67576B2CC41027D6A5331C3E43D0F4A3D2659236026A1.
+
+SHIFT-33 exact-head platform, role/permission, Windows-renderer and deployment
+checks all passed; automatic Codex code review completed with no findings.
+CodeRabbit skipped the beta target. PR #356 merged as
+ead66f306c365135b2e9e6aede691ca6b621a872; both merge and reviewed a3945e5f
+have tree7f64a3b8d5e351b84a61d7ac9fa8404fbbee6adf. Root advanced the existing
+live Vite preview to that beta source without replacing or copying a checkout;
+the updated system-health module returned HTTP200. Production PR #354 stays
+draft and no installer/publication/main merge or live repair occurred.
+
+SHIFT-28B final SELECT-only CT probe: local parent remains revision3;
+CHANGETABLE(VERSION dbo.shifts) reports version35061, context NULL, remote-skip
+flag0, push checkpoint29281, current table minimum25744 and current CT36321.
+Thus the retained latest closing change is still beyond its checkpoint, not an
+already-passed or remote-marked latest version. The current earlier history gap
+blocks this CT pass. Count kind is ORIGINAL; all four consistency predicates
+passed: branch/terminal scope, exact count/reconciliation/closing time, count
+tenders versus reconciliation, and parent final/count/expected/variance facts
+versus reconciliation. These are bounded reads, not a transactionally frozen
+complete repair payload. Other historical causes are not globally ruled out.
+
+The stable source and these incident facts now agree: the protected closing is
+saved CT-only, the earlier opening was journaled/uploaded, and the expired earlier
+history gate prevents reaching the retained closing. Trusted new closing-journal
+source is already beta, not installed production. The owner was asked to approve
+separate one-shift recovery preparation and isolated tests; no live recovery or
+metadata stage is authorized or executed. Present any exact local repair and
+resulting central closing writes separately after full graph/journal validation.
+Preserve the actual close timestamp/counts, existing current shift, original
+profile, receipts, checkpoints, grants and business rows. Never turn queue0,
+notification presence or generic old-client ok into successful-recovery proof.
+
+SHIFT-32 first remote CI failed only the explicit canonical SQL-file inventory:
+the new migration made215 files while the expected list still had214. Root and
+agent added its exact filename to the existing required test, without weakening
+assertions/skipping checks. This necessary test registration is within approved
+preparation/tests, introduces no new runtime scope, and is the seventh changed
+file. Root merged current betaead66f30 into the isolated guard branch, preserved
+both features, and all602 suites/4,249tests passed in96.50s; changed-test lint and
+diff checks passed. Commit a5d31e67dbae904c7f8662c3939f8cdb786f3034 was pushed
+to draft PR #357. Migration SHA256 remains unchanged. Exact updated-head CI is
+rerunning; do not present the earlier failed run or draft as merge/live approval.
