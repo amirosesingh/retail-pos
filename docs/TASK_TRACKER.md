@@ -34,7 +34,7 @@ only; the owner's subsequent Batch 1 approval below authorizes its bounded fixes
 | 21 | TRF-16 merged into beta / approved guard and exact repair applied | PR350/c15fdd21 includes the new fulfilment-ID correction; shared checkout IDs unchanged. Guard history20261031083126 and one audited request-line restoration verified; request-integrity read returns true. Full592 suites/3987 tests and exact-head platform/security checks passed; beta website deployment passed. Physical-device acceptance remains separate. |
 | 22 | SQL-08 implemented / isolated and signed-in local Settings verified | Separate approved typed adoption/read-error correction preserves terminal binding and cashier authority. Full595 suites/4091 tests, TypeScript and full lint pass. Owner-approved HTTPS beta backend plus original native origin43117 permits normal verified sign-in and seals the recovered existing proof; Approvals and Settings open with STR1/local SQL ready. Other devices/offline real-sale acceptance, commit and beta PR remain separate. |
 | 23 | SQL-09 active read-only investigation / correction not approved | Separate expired change_history Change Tracking and HTTP503 bootstrap warnings remain after SQL-08 sign-in recovery. UI reports local SQL ready and queue0/errors0, but this is not proof of successful bootstrap. Identify exact failed table/stage from existing jobs/logs without resetting cursors, resyncing, changing Membership dependencies or touching pending/business data. |
-| 24 | SHIFT-28A implemented / isolated regressions verified; SHIFT-28B awaits affected-PC evidence | Owner approved atomic trusted closing journals and the shared current-graph upload correction. Full 600 suites/4,193 tests, TypeScript/lint and 68 PostgreSQL scenarios passed. Preserve checkout, receipts, branch/actor identity and v2 acknowledgement. Existing stuck shifts are not repaired; read-only UltraViewer handoff and an exact separately approved recovery remain pending. TERM-29 is owner-verified in the latest beta. |
+| 24 | SHIFT-28A committed / draft beta PR #353 / isolated regressions verified; SHIFT-28B awaits affected-PC evidence | Owner approved atomic trusted closing journals and the shared current-graph upload correction. Full 600 suites/4,193 tests, TypeScript/lint and 68 PostgreSQL scenarios passed. Preserve checkout, receipts, branch/actor identity and v2 acknowledgement. Existing stuck shifts are not repaired; read-only UltraViewer handoff and an exact separately approved recovery remain pending. TERM-29 is owner-verified in the latest beta. |
 
 Membership is **ON HOLD** throughout. Each future batch requires a recoverable
 baseline, specific files/dependencies, expected behavior, risks, regression tests,
@@ -2328,3 +2328,13 @@ client; retain existing saved business rows, journal entries and receipts. No
 database migration or data rollback accompanies this patch. The older client
 does not gain the new closing-journal protection. Beta merge, installer release
 and a separate explicitly approved production promotion remain distinct steps.
+
+Delivery: source/test correction committed as `1c867a43` and pushed to the
+isolated branch. Draft [beta PR #353](https://github.com/amirosesingh/retail-pos/pull/353)
+targets `beta` and carries the `beta` label. The 15-file diff contains only this
+approved correction, necessary tests/CI and project records. The destination was
+refreshed before commit; no conflict or source replacement was introduced.
+Automatic exact-head checks are pending. No merge, release tag, installer/OTA
+publication, production promotion or live database change has been performed.
+The owner's read-only affected-PC handoff remains pending; do not infer that
+published beta or this draft has recovered the existing production closure.
