@@ -5,7 +5,9 @@
  */
 import { readBusinessValue, writeBusinessValue } from "./business-storage";
 import { supabaseExternal } from "@/integrations/supabase/external-client";
-import { pendingCount, retryQuarantined } from "@/lib/sync-outbox";
+import { retryQuarantined } from "@/lib/sync-outbox";
+import { readBrowserOutboxStatus } from "./browser-sync-outbox";
+import { browserSyncSummary, isNativeDatabaseSnapshot, nativeSyncSummary, type NativeDatabaseSnapshot, type NativeSyncSnapshot } from "./sync-status-summary";
 
 export type ServiceId = "database" | "realtime" | "sync" | (string & {});
 export type ServiceState = "ok" | "degraded" | "down" | "checking";
@@ -190,19 +192,46 @@ export async function checkDomain(input: string, label: string): Promise<Service
   }
 }
 
-/** Anything still waiting to be pushed up from this terminal? */
-export function checkSync(): ServiceCheck {
-  const pending = pendingCount();
+async function readNativeStatus<T>(read: () => Promise<T> | undefined): Promise<T | undefined> {
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(read),
+      new Promise<never>((_, reject) => { deadline = setTimeout(() => reject(new Error("Native status did not answer.")), 5_000); }),
+    ]);
+  } finally { clearTimeout(deadline); }
+}
+
+/** Read existing transport status once during the existing diagnostic run.
+ * Neither a journal count nor a renderer compatibility stub proves all records
+ * uploaded. Online fallback can have both native and browser work to report. */
+export async function checkSync(): Promise<ServiceCheck> {
   const online = typeof navigator === "undefined" ? true : navigator.onLine;
+  const bridge = typeof window === "undefined" ? undefined : (window as unknown as {
+    pos?: { database?: { getState?(): Promise<NativeDatabaseSnapshot> };
+      sync?: { getStatus?(): Promise<NativeSyncSnapshot> } };
+  }).pos;
+  const native = typeof bridge?.database?.getState === "function" || typeof bridge?.sync?.getStatus === "function";
+  const [browserResult, databaseResult, syncResult] = await Promise.allSettled([
+    readBrowserOutboxStatus(),
+    native ? readNativeStatus(() => bridge?.database?.getState?.()) : Promise.resolve(undefined),
+    native ? readNativeStatus(() => bridge?.sync?.getStatus?.()) : Promise.resolve(undefined),
+  ]);
+  const browser = browserSyncSummary(browserResult.status === "fulfilled" ? browserResult.value
+    : { state: "unavailable", pending: null }, online);
+  const database = databaseResult.status === "fulfilled" && isNativeDatabaseSnapshot(databaseResult.value)
+    ? databaseResult.value : null;
+  const snapshot = syncResult.status === "fulfilled" && syncResult.value && typeof syncResult.value === "object"
+    ? syncResult.value : null;
+  const local = native ? nativeSyncSummary(snapshot, database ?? {},
+    !database || syncResult.status === "rejected" || !snapshot) : null;
+  const summaries = local ? [local, browser] : [browser];
   return {
     id: "sync",
     label: "POS sync queue",
-    state: !online ? "degraded" : pending > 0 ? "degraded" : "ok",
-    detail: !online
-      ? "Offline — sales are queued locally and will upload on reconnect."
-      : pending > 0
-        ? `${pending} change${pending === 1 ? "" : "s"} waiting to upload.`
-        : "Everything on this till has been uploaded.",
+    state: summaries.some(summary => summary.state === "degraded") ? "degraded"
+      : summaries.some(summary => summary.state === "checking") ? "checking" : "ok",
+    detail: local ? `Local SQL: ${local.detail} Browser: ${browser.detail}` : browser.detail,
     at: now(),
   };
 }
@@ -230,10 +259,11 @@ export async function runDiagnostics(
   const entries = domains.map((d) =>
     typeof d === "string" ? { url: d, label: normaliseDomain(d)?.host ?? d } : d,
   );
-  const [database, realtime, ...domainChecks] = await Promise.all([
+  const [database, realtime, sync, ...domainChecks] = await Promise.all([
     checkDatabase(),
     checkRealtime(),
+    checkSync(),
     ...entries.map((e) => checkDomain(e.url, e.label)),
   ]);
-  return [database, realtime, ...domainChecks, checkSync()];
+  return [database, realtime, ...domainChecks, sync];
 }
