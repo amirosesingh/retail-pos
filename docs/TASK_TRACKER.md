@@ -36,7 +36,7 @@ only; the owner's subsequent Batch 1 approval below authorizes its bounded fixes
 | 23 | SQL-09 active read-only investigation / correction not approved | Separate expired change_history Change Tracking and HTTP503 bootstrap warnings remain after SQL-08 sign-in recovery. UI reports local SQL ready and queue0/errors0, but this is not proof of successful bootstrap. Identify exact failed table/stage from existing jobs/logs without resetting cursors, resyncing, changing Membership dependencies or touching pending/business data. |
 | 24 | SHIFT-28A merged beta b31c74e4 / PR #353; SHIFT-28B read-only affected-PC inspection | Full 600 suites/4,193 tests, TypeScript/lint, 68 PostgreSQL scenarios, exact-head CI and Codex code review passed. Preserve checkout, receipts, branch/actor identity and v2 acknowledgement. Existing stuck shifts are not repaired. Owner resumed UltraViewer inspection; credentials remain user-entered. TERM-29 is owner-verified in latest beta. |
 | 25 | SHIFT-31 merged beta 423950b4 / PR #355 | Complete-history All/Open/Closed and permitted column filters before paging, clear retained filters, precise row/dialog identity. Full 601 suites/4,204 tests, TypeScript/lint, independent review and desktop/390px synthetic browser interactions passed. Exact-head platform/security/deployment checks and Codex code review passed. Merge tree equals reviewed e334fc52; installed-device acceptance remains separate. |
-| 26 | SHIFT-32 prepared / independently verified / draft beta PR #357 | Two existing service-only routines prevent stale reopening and validate existing-receipt replay.71 canonical/captured SQL scenarios,16 real concurrency cases,19+19 full graphs and94 focused tests passed; source committed5ca18128. No live application or historical recovery approved. Native revision-convergence boundary remains separate. |
+| 26 | SHIFT-32 prepared / independently verified / draft beta PR #357 | Two existing service-only routines prevent stale reopening and validate existing-receipt replay.71 canonical/captured SQL scenarios,16 real concurrency cases,19+19 full graphs and94 focused tests passed. Updated head a5d31e67 includes required test inventory registration and beta ead66f30; integrated602 suites/4,249tests passed. Remote CI rerun pending. No live application or historical recovery approved; native convergence remains separate. |
 | 27 | REL-29 cumulative production draft PR #354 / not signed off | Separate beta-to-main draft labelled production/awaiting-owner-approval. Explicit version proposal, installed Windows acceptance, exact live dependencies and unresolved critical risks remain gates. No exact promotion/main merge/release approved. |
 | 28 | SHIFT-33 merged beta ead66f30 / scoped-verified / PR #356 | Five approved files; current native errors defeat zero-queue green claims. Root full602 suites/4,249tests, TypeScript, scoped lint and independent desktop/phone/IDB checks passed. Exact-head CI and Codex review passed; merge tree equals tested a3945e5f. No polling/retry/queue/schema/data/permission changes. Installed-device acceptance remains separate. |
 
@@ -2644,3 +2644,14 @@ resulting central closing writes separately after full graph/journal validation.
 Preserve the actual close timestamp/counts, existing current shift, original
 profile, receipts, checkpoints, grants and business rows. Never turn queue0,
 notification presence or generic old-client ok into successful-recovery proof.
+
+SHIFT-32 first remote CI failed only the explicit canonical SQL-file inventory:
+the new migration made215 files while the expected list still had214. Root and
+agent added its exact filename to the existing required test, without weakening
+assertions/skipping checks. This necessary test registration is within approved
+preparation/tests, introduces no new runtime scope, and is the seventh changed
+file. Root merged current betaead66f30 into the isolated guard branch, preserved
+both features, and all602 suites/4,249tests passed in96.50s; changed-test lint and
+diff checks passed. Commit a5d31e67dbae904c7f8662c3939f8cdb786f3034 was pushed
+to draft PR #357. Migration SHA256 remains unchanged. Exact updated-head CI is
+rerunning; do not present the earlier failed run or draft as merge/live approval.
