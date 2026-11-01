@@ -86,14 +86,29 @@ events take precedence over delayed diagnostic reads.
 
 Read-only affected-PC evidence confirms the original31October closing remains
 saved locally with its exact timestamp and matching reconciliation, while the
-cloud parent remains OPEN. Stable1.4.79's CT-only closing and expired earlier
-history checkpoint establish a blocking path; the exact original CT entry and
-delivery/checkpoint/acknowledgement sequence still require investigation.
-Recovery must preserve the original
+cloud parent remains OPEN. The final bounded read found retained local CT35061
+beyond upload checkpoint29281, context NULL, with original count/reconciliation
+scope, timing and financial consistency predicates all passing. The earlier
+expired history gate blocks reaching this eligible closing change; this does
+not globally certify other historic upload sequences. The owner has now approved
+one-shift recovery preparation and isolated tests only. Unknown complete
+manifest/database identity/fingerprint stays an unset release gate; no live
+metadata staging or retry is authorized. Recovery must preserve the original
 graph/time/profile, verify its full facts, obtain exact repair approval, and
 verify central parent/children afterwards. A notification, generic ok response,
 opening acknowledgement or zero journal is insufficient proof. No original
 closing is to be fabricated or changed into today's closing.
+
+SHIFT-28B recovery preparation is now independently verified in disposable local
+SQL Server fixtures:58 cases, including the actual current reader/worker with a
+synthetic cloud adapter. The repository artifact stays CAPTURE-only by default;
+real database GUID, whole-row manifest/digest and approval/transport references
+remain unset. A future separately approved stage would insert only eight exact
+saved-graph journal keys and one receipt, never business rows or checkpoints.
+It cannot prove the installed uploader or cloud delivery. Full actual capture,
+same-profile transport, notification-rule review, exact execution approval and
+authoritative cloud parent/child readback remain gates. See
+[the recovery procedure](database/str1-original-closing-recovery.md).
 
 31October SQL-08 verification: a new native build must receive a compatible,
 server-verified terminal descriptor before adopting local POS authority. An older

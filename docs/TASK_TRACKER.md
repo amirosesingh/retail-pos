@@ -34,9 +34,9 @@ only; the owner's subsequent Batch 1 approval below authorizes its bounded fixes
 | 21 | TRF-16 merged into beta / approved guard and exact repair applied | PR350/c15fdd21 includes the new fulfilment-ID correction; shared checkout IDs unchanged. Guard history20261031083126 and one audited request-line restoration verified; request-integrity read returns true. Full592 suites/3987 tests and exact-head platform/security checks passed; beta website deployment passed. Physical-device acceptance remains separate. |
 | 22 | SQL-08 implemented / isolated and signed-in local Settings verified | Separate approved typed adoption/read-error correction preserves terminal binding and cashier authority. Full595 suites/4091 tests, TypeScript and full lint pass. Owner-approved HTTPS beta backend plus original native origin43117 permits normal verified sign-in and seals the recovered existing proof; Approvals and Settings open with STR1/local SQL ready. Other devices/offline real-sale acceptance, commit and beta PR remain separate. |
 | 23 | SQL-09 active read-only investigation / correction not approved | Separate expired change_history Change Tracking and HTTP503 bootstrap warnings remain after SQL-08 sign-in recovery. UI reports local SQL ready and queue0/errors0, but this is not proof of successful bootstrap. Identify exact failed table/stage from existing jobs/logs without resetting cursors, resyncing, changing Membership dependencies or touching pending/business data. |
-| 24 | SHIFT-28A merged beta b31c74e4 / PR #353; SHIFT-28B read-only affected-PC inspection | Full 600 suites/4,193 tests, TypeScript/lint, 68 PostgreSQL scenarios, exact-head CI and Codex code review passed. Preserve checkout, receipts, branch/actor identity and v2 acknowledgement. Existing stuck shifts are not repaired. Owner resumed UltraViewer inspection; credentials remain user-entered. TERM-29 is owner-verified in latest beta. |
+| 24 | SHIFT-28A merged beta b31c74e4 / PR #353; SHIFT-28B preparation independently verified | New-closing code: full 600 suites/4,193 tests, TypeScript/lint, 68 PostgreSQL scenarios and exact-head checks passed. Original-closing recovery: 58 isolated real SQL Server/current-reader-worker scenarios passed independently; actual manifest capture, exact staging/transport approval and cloud readback remain pending. No old shift has been repaired. TERM-29 is owner-verified in latest beta. |
 | 25 | SHIFT-31 merged beta 423950b4 / PR #355 | Complete-history All/Open/Closed and permitted column filters before paging, clear retained filters, precise row/dialog identity. Full 601 suites/4,204 tests, TypeScript/lint, independent review and desktop/390px synthetic browser interactions passed. Exact-head platform/security/deployment checks and Codex code review passed. Merge tree equals reviewed e334fc52; installed-device acceptance remains separate. |
-| 26 | SHIFT-32 prepared / independently verified / draft beta PR #357 | Two existing service-only routines prevent stale reopening and validate existing-receipt replay.71 canonical/captured SQL scenarios,16 real concurrency cases,19+19 full graphs and94 focused tests passed. Updated head a5d31e67 includes required test inventory registration and beta ead66f30; integrated602 suites/4,249tests passed. Remote CI rerun pending. No live application or historical recovery approved; native convergence remains separate. |
+| 26 | SHIFT-32 prepared / independently verified / draft beta PR #357 | Two existing service-only routines prevent stale reopening and validate existing-receipt replay.71 canonical/captured SQL scenarios,16 real concurrency cases,19+19 full graphs and94 focused tests passed. Final head a3a00352 includes required schema/generator fixture registration; all exact-head checks passed, CodeRabbit skipped. Integrated602 suites/4,249tests passed. No live application or historical recovery approved; native convergence remains separate. |
 | 27 | REL-29 cumulative production draft PR #354 / not signed off | Separate beta-to-main draft labelled production/awaiting-owner-approval. Explicit version proposal, installed Windows acceptance, exact live dependencies and unresolved critical risks remain gates. No exact promotion/main merge/release approved. |
 | 28 | SHIFT-33 merged beta ead66f30 / scoped-verified / PR #356 | Five approved files; current native errors defeat zero-queue green claims. Root full602 suites/4,249tests, TypeScript, scoped lint and independent desktop/phone/IDB checks passed. Exact-head CI and Codex review passed; merge tree equals tested a3945e5f. No polling/retry/queue/schema/data/permission changes. Installed-device acceptance remains separate. |
 
@@ -2655,3 +2655,62 @@ both features, and all602 suites/4,249tests passed in96.50s; changed-test lint a
 diff checks passed. Commit a5d31e67dbae904c7f8662c3939f8cdb786f3034 was pushed
 to draft PR #357. Migration SHA256 remains unchanged. Exact updated-head CI is
 rerunning; do not present the earlier failed run or draft as merge/live approval.
+
+Owner approved SHIFT-28B one-shift recovery preparation and isolated tests on
+1November: prepare only original STR1 shift
+1a349429-cea1-4f45-8d2b-36678d37ad27. Preserve its actual saved close time/counts,
+original profile/branch/terminal, current drawer, receipts/checkpoints and
+business data. Proposed staging restores only missing upload metadata for the
+exact validated saved graph; success requires authoritative cloud readback.
+This is NOT approval to execute staging, retry the affected PC, change live SQL/
+Supabase records/settings, apply the separate lifecycle guard or publish/promote.
+Preparation branch codex/str1-closing-recovery-beta starts at current beta
+fd41a37f. Use independent agents and disposable local-only SQL Server tests;
+do not read credentials or business databases to provision fixtures. Unknown
+full manifest/DB identity/fingerprint remains an unset release gate. Present
+the exact private repair, target, effects and rollback separately after review.
+Membership and broader history/audit-policy recovery remain on hold/deferred.
+
+SHIFT-28B preparation checkpoint, 1 November 2026:
+Three bounded artifacts are prepared: the incident-specific maintenance SQL,
+the real local SQL Server regression harness and the recovery review document.
+Root and independent reviewer each repeated all58 scenarios successfully against
+random nonce-owned disposable databases; cleanup succeeded. The actual current
+ChangeReader/PushWorker were exercised with a synthetic cloud adapter only.
+No affected POS_Local, production profile or Supabase records were changed.
+
+Review reproduced and corrected a preparation-only transaction hazard: THROW
+under inherited XACT_ABORT ON could roll back existing operator work. Pre-owned
+refusals now use RAISERROR16 plus RETURN; owned transaction failures still roll
+back atomically. Explicit/active-implicit caller work and options are tested.
+Other tests cover exact scope/time/money, full-field drift, linked metadata,
+ambiguous identities, immutable replay, partial staging rollback, NOWAIT and
+concurrency, actual graph capture and v2 acknowledgement/retry retention.
+
+Frozen SHA256:
+SQL8B84095E39A7BB966FC410B5BA2598744D677781949180E6A03B146971B9DEC4
+Test6BC198563A058BF345967198AD53559602B3D68920E2DC5188E393D880F74A7E
+Procedure658F119D72EA5973E68B703772E2CB456118A219A79747753BF4DBC539E9069C
+Node22 syntax, changed-file ESLint and whitespace checks passed. Runtime checkout,
+permissions, Membership, settings and database schemas are outside this diff.
+No whole-system, installed-device or real cloud recovery verification is claimed.
+
+The future reviewed stage has eight journal inserts plus one receipt only, with
+STAGE inputs deliberately NULL/unbound in source. No retry starts here. Original
+business records/current drawer/checkpoints remain untouched. Locks may briefly
+cover ranges; an exact maintenance window and reviewed uploader on the original
+profile are required. Existing server notification rules may run on eventual
+upload; no delivery/deduplication guarantee follows from synthetic tests.
+
+Actual capture is pending: UltraViewer currently shows the affected PC's Windows
+PIN/lock screen; input stopped and the owner was asked to unlock it. Never enter
+credentials or automate that screen. Full actual manifest/database GUID and
+linked journal/receipt evidence must be privately captured and reviewed before
+presenting exact execution approval. No live stage, retry, lifecycle-guard apply,
+installer publication or production promotion is authorized by this checkpoint.
+
+SHIFT-32 follow-up: draft PR357 head a3a003529389404663936d6a51b8dfb5bb185b82
+now passes every exact-head automatic check; CodeRabbit is SKIPPED. The required
+notification-generator fixture was updated for the new migration and exact LF
+comparison, with all23 isolated generator cases repeated independently. Migration
+SHA256 remains032CF56F…36026A1. Draft status/live approval gates remain unchanged.
