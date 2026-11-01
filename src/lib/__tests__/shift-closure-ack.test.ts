@@ -8,10 +8,28 @@ const { PushWorker } = workerModule;
 const branch = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const otherBranch = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const row = { id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", store_id: branch,
-  status: "CLOSED", state: "CLOSED", closed_at: "2026-10-30T12:00:00Z", row_version: 2 };
+  status: "CLOSED", state: "CLOSED", closed_at: "2026-10-30T12:00:00Z", row_version: 2,
+  counted_cash: 100, final_counted_cash: 100, closing_float: 100, expected_cash: 100,
+  counted_card: null, counted_digital: null, expected_card: 0, expected_digital: 0,
+  variance_cash: 0, variance_card: null, variance_digital: null, variance_total: 0, variance_status: "NO_VARIANCE" };
 const table = { cloudTable: "shifts", sqlServerTable: "shifts", dependencyOrder: 1,
   scope: "branch", columns: [{ cloudColumn: "id", primaryKey: true }, { cloudColumn: "store_id" }] };
 const operation = { table: "shifts", rows: [row] };
+const graphTables = [table, ...["shift_cash_counts", "shift_reconciliations", "shift_close_events",
+  "shift_notifications", "shift_variance_alerts"].map((name, index) => ({ ...table, cloudTable: name,
+  sqlServerTable: name, dependencyOrder: index + 2 }))];
+// A coherent saved graph from the same local shift; acknowledgement tests keep
+// their original proof/denial assertions while the reader now supplies children.
+const localGraph = () => {
+  const count = { id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", store_id: branch, shift_id: row.id,
+    counted_cash: 100, counted_card: null, counted_digital: null };
+  return graphTables.map(metadata => ({ table: metadata.cloudTable, rows: metadata.cloudTable === "shifts" ? [{ ...row }]
+    : metadata.cloudTable === "shift_cash_counts" ? [count]
+    : metadata.cloudTable === "shift_reconciliations" ? [{ ...count, id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", count_id: count.id,
+      expected_cash: 100, expected_card: 0, expected_digital: 0, variance_cash: 0,
+      variance_card: null, variance_digital: null, variance_total: 0, variance_status: "NO_VARIANCE" }]
+    : [] }));
+};
 const proof = (revision: number | string = 2) => ({ ok: true, applied_count: 0,
   shift_closure_ack_version: 2,
   shift_closures: [{ id: row.id, store_id: branch, row_version: revision, requested_row_version: 2 }] });
@@ -24,12 +42,13 @@ function fixture(result: unknown = { ok: true }) {
     pendingAggregates: vi.fn(async (_branch: string, _limit: number, excluded: string[]) =>
       pending && !excluded.includes("closure") ? [{ aggregateId: "closure", changes: [change] }] : []),
     rows: vi.fn(async () => [row]),
+    closedShiftGraphs: vi.fn(async () => localGraph()),
     acknowledgeAggregate: vi.fn(async () => { pending = false; }),
     failAggregate: vi.fn(),
   };
   const cloud = { pushAggregate: vi.fn().mockResolvedValue(result) };
   return { reader, cloud, pending: () => pending,
-    worker: new PushWorker({ reader, cloud, registry: { tables: [table] } }) };
+    worker: new PushWorker({ reader, cloud, registry: { tables: graphTables } }) };
 }
 
 describe("authoritative shift closure acknowledgements", () => {
@@ -121,12 +140,13 @@ describe("authoritative shift closure acknowledgements", () => {
       save: vi.fn(async (_b: string, _t: string, _d: string, value: { change_tracking_version: number }) => {
         checkpoint = value.change_tracking_version;
       }) };
-    const cloud = { pushBatch: vi.fn().mockResolvedValueOnce({ ok: true }).mockResolvedValue(proof()) };
+    const upload = vi.fn().mockResolvedValueOnce({ ok: true }).mockResolvedValue(proof());
+    const cloud = { pushBatch: upload, pushAggregate: upload };
     const reader = { pendingAggregates: vi.fn(async () => []),
-      changedIds: vi.fn(async (_t: unknown, version: number) => version ? []
+      changedIds: vi.fn(async (metadata: { cloudTable: string }, version: number) => metadata.cloudTable !== "shifts" || version ? []
         : [{ operation: "U", version: 17, key: { id: row.id } }]),
-      rows: vi.fn(async () => [row]) };
-    const worker = new PushWorker({ reader, cloud, checkpoints, registry: { tables: [table] } });
+      rows: vi.fn(async () => [row]), closedShiftGraphs: vi.fn(async () => localGraph()) };
+    const worker = new PushWorker({ reader, cloud, checkpoints, registry: { tables: graphTables } });
     await expect(worker.run({ branchId: branch })).rejects.toMatchObject({ code: "ESHIFT_CLOSURE_UNCONFIRMED" });
     expect(checkpoint).toBe(0);
     expect(checkpoints.save).not.toHaveBeenCalled();

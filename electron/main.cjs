@@ -40,6 +40,7 @@ const { CloudClient } = require("./sync/cloud-client.cjs");
 const closeWriteBarrier = new (require("./sync/write-barrier.cjs").WriteBarrier)();
 const { createTelemetry } = require("./telemetry.cjs");
 const { OperationsRepository } = require("./db/repositories/operations.cjs");
+const { ShiftSyncJournal } = require("./db/shift-sync-journal.cjs");
 const { readAnalytics } = require("./db/repositories/analytics.cjs");
 const { aggregatePolicy } = require("./db/write-policy.cjs");
 const { AggregateRepository } = require("./db/repositories/aggregates.cjs");
@@ -80,6 +81,7 @@ const localDataLifecycle = new LocalDataLifecycle({ connectionManager:databaseMa
 const managementReplica = new (require("./sync/management-replica.cjs").ManagementReplica)({ cloud:syncCloud, databaseService, connectionManager:databaseManager, lifecycle:localDataLifecycle, jobs:jobRepository, coordinator:syncCoordinator });
 const mainTelemetry = createTelemetry({ databaseService,syncCoordinator,jobRepository,configStore,terminalStore,app });
 const operationsRepository = new OperationsRepository(databaseManager, syncRegistry);
+const shiftSyncJournal = new ShiftSyncJournal(operationsRepository);
 const aggregateRepository = new AggregateRepository(databaseManager, operationsRepository);
 const receiptRepository = new ReceiptRepository(databaseManager, syncCloud);
 const authorizationRulesRepository = new AuthorizationRulesRepository(databaseManager);
@@ -1416,7 +1418,7 @@ async function commitLocalShiftCashCount(raw) {
     });
   }
   try {
-    await operationsRepository.apply("Closing shift cash count", operations, { branchId, terminalId });
+    await shiftSyncJournal.apply("Closing shift cash count", operations, { branchId, terminalId });
   } catch (error) {
     if (![2601, 2627].includes(Number(error?.number ?? error?.originalError?.info?.number))) throw error;
     const current = await operationsRepository.query(branchId, "shifts", { match: { id: shiftId }, limit: 1 });
@@ -1468,7 +1470,7 @@ async function commitLocalShiftRecount(raw) {
   const countId = randomUUID();
   const now = new Date().toISOString();
   try {
-    await operationsRepository.apply("Saving shift recount", [
+    await shiftSyncJournal.apply("Saving shift recount", [
       { kind: "insert", table: "shift_cash_counts", rows: [{
         id: countId, shift_id: shiftId, store_id: branchId, terminal_id: terminalId,
         kind: "RECOUNT", counted_cash: countedCash, counted_card: countedCard,
@@ -1527,7 +1529,7 @@ async function approveLocalShiftVariance(raw) {
   const terminal = terminalStore.read() ?? {};
   const terminalId = String(shift.terminal_id ?? terminal.tokenId ?? terminal.terminalId ?? "").trim() || null;
   const now = new Date().toISOString();
-  await operationsRepository.apply("Approving shift variance", [
+  await shiftSyncJournal.apply("Approving shift variance", [
     { kind: "update", table: "shifts", match: { id: shiftId }, values: {
       store_id: branchId, state: "CLOSED", status: "CLOSED", closed_at: shift.closed_at ?? now,
       closed_by_name: actor, updated_at: now,
