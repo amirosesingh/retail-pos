@@ -191,3 +191,53 @@ Rollback requires a reviewed replacement of only these routine definitions from
 the saved preflight; restoring missing context recreates the upload failure.
 Never roll back business rows, clear pending journals or replay the full schema
 to reverse a routine change.
+
+## 1 November — trusted Windows closing journal (SHIFT-28)
+
+Status: source correction implemented; isolated regression checks passed. Existing affected
+business records have not been repaired. This section does not supersede the
+existing cloud acknowledgement or access controls above.
+
+The ROSEGILL cloud contains two distinct STR1/Gardong production1.4.79 shifts:
+31October `1a349429-cea1-4f45-8d2b-36678d37ad27` and1November
+`acbc1ed1-2fc1-44c7-9c71-c338da7fda2f`, both OPEN/ACTIVE revision1 without a close
+timestamp or closing child records. The phone is displaying persisted state.
+Do not hide the old row, impose an automatic date closure or discard either ID.
+
+An isolated reproduction using the actual production/current PushWorker proves
+the structural problem: a new opening's journal uploads, then an expired earlier
+`change_history` checkpoint aborts the pass before the old closing's CT-only rows.
+Pending/failed counters cover the journal and can report zero in that situation.
+The affected PC's exact saved closure/checkpoints/error remain unverified pending
+the owner's read-only UltraViewer handoff. Development-PC logs are not evidence
+about that production PC.
+
+The targeted client correction preserves Main's existing permission/branch gates,
+blind-count calculations and return values. Internal function hooks add the upload
+journal/receipt in the same SQL transaction as final count/recount/approval writes.
+Receipt and parent prelocks precede child writes; existing business statement
+order is preserved. Failure rolls back the entire transaction. No callback/trust
+flag is accepted from a renderer or new IPC channel.
+
+The owner separately approved a necessary shared-sync dependency: journal entries
+hold keys, so an offline recount can supersede the parent before an older packet
+is sent. Reader/worker capture the current closed parent and its full saved graph
+together before payload hashing/upload. Pending original queue entries remain
+until exact v2 acknowledgement; the graph retains original IDs, nullable tenders,
+historical original counts/summary and authorized same-branch handovers. No new
+drawer maths or permission grants are introduced.
+
+Read-only deployed routine/trigger captures and disposable PostgreSQL fixtures
+test the current backend; these do not authorize applying the held notification
+acknowledgement upgrade. All production records, settings, queues and checkpoints
+remain untouched by investigation/tests. Final revision, executed checks and
+remaining fixture/device limitations are recorded in TASK_TRACKER.md and the PR.
+
+An already-stuck closure needs an exact, separately approved plan based on its
+existing registered profile, local CLOSED row/revision/close time, complete saved
+count/reconciliation graph and cloud comparison. Queue-only replay cannot force a
+local revision less than or equal to a conflicting cloud OPEN revision. Do not
+stage all historical closed shifts when CT is expired/advanced, fabricate a newer
+revision or silently switch the production PC to a beta profile. A later actual
+replication can create the original cloud closing rows and trigger existing
+notifications; that effect must be part of the repair approval.

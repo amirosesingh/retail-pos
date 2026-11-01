@@ -224,15 +224,32 @@ try {
     await seed(openRow({ row_version: 4 }));
     const pending = new Set(["closure"]); let calls = 0; const failures = [];
     const localRow = row({ row_version: 8 });
+    // This older fixture isolates the parent acknowledgement contract. Supply
+    // the reader's now-required complete graph, then project its synthetic
+    // children out of this shift-only PostgreSQL schema. The companion native
+    // graph integration script exercises the real child DDL/functions/FKs.
+    const countId = randomUUID(), reconciliationId = randomUUID();
+    const graph = [
+      { table: "shifts", rows: [localRow] },
+      { table: "shift_cash_counts", rows: [{ id: countId, store_id: "a", shift_id: id }] },
+      { table: "shift_reconciliations", rows: [{ id: reconciliationId, store_id: "a", shift_id: id, count_id: countId }] },
+      ...["shift_close_events", "shift_notifications", "shift_variance_alerts"].map(table => ({ table, rows: [] })),
+    ];
     const shiftTable = { cloudTable: "shifts", sqlServerTable: "shifts", dependencyOrder: 0,
       columns: [{ cloudColumn: "id", sqlServerColumn: "id", primaryKey: true },{ cloudColumn: "store_id", sqlServerColumn: "store_id" }] };
-    const worker = new PushWorker({ registry: { tables: [shiftTable] }, reader: {
+    const childTables = graph.slice(1, 3).map(({ table }) => ({ cloudTable: table, sqlServerTable: table, dependencyOrder: 1 }));
+    const worker = new PushWorker({ registry: { tables: [shiftTable, ...childTables] }, reader: {
       pendingAggregates: async (_branch,_limit,deferred = []) => pending.has("closure") && !deferred.includes("closure")
         ? [{ aggregateId: "closure", changes: [{ entity_type: "shifts", entity_id: JSON.stringify({ id }), key: { id }, operation: "update" }] }] : [],
       rows: async () => [localRow], acknowledgeAggregate: async key => pending.delete(key),
+      closedShiftGraphs: async (branch, ids) => {
+        assert.equal(branch, "a"); assert.deepEqual(ids, [id]);
+        return structuredClone(graph);
+      },
       failAggregate: async (_key,error) => failures.push(error.code),
     }, cloud: { terminalId: () => "t-a", pushAggregate: async value => {
-      const response = (await aggregate(value.operations, value.batchId)).rows[0].result;
+      assert.deepEqual(value.operations.map(op => op.table).sort(), ["shift_cash_counts", "shift_reconciliations", "shifts"]);
+      const response = (await aggregate(value.operations.filter(op => op.table === "shifts"), value.batchId)).rows[0].result;
       if (++calls === 1) throw Object.assign(new Error("Response lost after commit"),{ code: "ETIMEDOUT" });
       return response;
     } } });

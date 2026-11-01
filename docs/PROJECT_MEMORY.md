@@ -1,6 +1,6 @@
 # POS project memory
 
-Last reconciled: **2026-10-31, Asia/Brunei**. This is approved architecture and
+Last reconciled: **2026-11-01, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
 
 The owner's latest inventory UI refinement (DEC-25) combines adjacent Products
@@ -34,6 +34,30 @@ the controls needed to create the first transaction.
 Read [../AGENTS.md](../AGENTS.md) and [TASK_TRACKER.md](TASK_TRACKER.md) first.
 The tracker records defects, unfinished work, verification and approvals.
 Technical detail remains in the existing references linked below.
+
+1November: the owner confirms terminal registration works in the latest published
+beta1.4.81-beta.2; no further terminal change is requested. Shift synchronization
+is the priority. Actual production cloud rows for the STR1/Gardong PC retain both
+31October and1November shifts OPEN, with no uploaded closing counts/events.
+Source/isolated-worker reproduction confirms that protected Windows closing used
+only Change Tracking, while opening used the durable journal; an earlier history
+gap can therefore upload a new opening while leaving the previous closure local.
+The same structural defect exists in production1.4.79 and the published beta.
+
+SHIFT-28 correction is implemented and isolated regressions passed: journal
+protected final closing operations
+atomically under their existing Main authorization/calculations. The owner also
+explicitly approved reader/worker capture of the complete current closing graph
+before upload, so an offline recount cannot leave its count records behind.
+Preserve cloud v2 acknowledgement, source attribution, handover permissions and
+default checkout/renderer restrictions. Membership stays on hold. No live schema,
+grant or business-row change follows from this code approval.
+
+Existing stuck closures require their exact saved PC records and separate repair
+evidence/approval; never infer counts/time, auto-close cloud rows, hide history,
+reset checkpoints or clear queues. Use the existing registered production profile
+for any approved recovery; a separate beta installation is not that profile.
+The earlier broad history-recovery investigation remains deferred.
 
 31October SQL-08 verification: a new native build must receive a compatible,
 server-verified terminal descriptor before adopting local POS authority. An older

@@ -1,6 +1,6 @@
 # POS task tracker
 
-Last reconciled: **2026-10-31, Asia/Brunei**.
+Last reconciled: **2026-11-01, Asia/Brunei**.
 Read [../AGENTS.md](../AGENTS.md) and [PROJECT_MEMORY.md](PROJECT_MEMORY.md).
 This is the single current task ledger. Existing audit/checkpoint documents remain
 supporting evidence, not competing completion lists. Batch 0 authorized documentation
@@ -34,6 +34,7 @@ only; the owner's subsequent Batch 1 approval below authorizes its bounded fixes
 | 21 | TRF-16 merged into beta / approved guard and exact repair applied | PR350/c15fdd21 includes the new fulfilment-ID correction; shared checkout IDs unchanged. Guard history20261031083126 and one audited request-line restoration verified; request-integrity read returns true. Full592 suites/3987 tests and exact-head platform/security checks passed; beta website deployment passed. Physical-device acceptance remains separate. |
 | 22 | SQL-08 implemented / isolated and signed-in local Settings verified | Separate approved typed adoption/read-error correction preserves terminal binding and cashier authority. Full595 suites/4091 tests, TypeScript and full lint pass. Owner-approved HTTPS beta backend plus original native origin43117 permits normal verified sign-in and seals the recovered existing proof; Approvals and Settings open with STR1/local SQL ready. Other devices/offline real-sale acceptance, commit and beta PR remain separate. |
 | 23 | SQL-09 active read-only investigation / correction not approved | Separate expired change_history Change Tracking and HTTP503 bootstrap warnings remain after SQL-08 sign-in recovery. UI reports local SQL ready and queue0/errors0, but this is not proof of successful bootstrap. Identify exact failed table/stage from existing jobs/logs without resetting cursors, resyncing, changing Membership dependencies or touching pending/business data. |
+| 24 | SHIFT-28A committed / draft beta PR #353 / isolated regressions verified; SHIFT-28B awaits affected-PC evidence | Owner approved atomic trusted closing journals and the shared current-graph upload correction. Full 600 suites/4,193 tests, TypeScript/lint and 68 PostgreSQL scenarios passed. Preserve checkout, receipts, branch/actor identity and v2 acknowledgement. Existing stuck shifts are not repaired; read-only UltraViewer handoff and an exact separately approved recovery remain pending. TERM-29 is owner-verified in the latest beta. |
 
 Membership is **ON HOLD** throughout. Each future batch requires a recoverable
 baseline, specific files/dependencies, expected behavior, risks, regression tests,
@@ -2154,3 +2155,186 @@ new beta PR/exact-head platform checks, merge beta and owner-requested beta
 publication from the checked merge SHA. No production promotion. Existing iOS
 key presence/match verified without printing private material; signed OTA is a
 separate release artifact and is not implied by an unsigned IPA build.
+
+Latest owner steering after SQL-11 verification: 'skip this recovery' and
+'first publish the beta version'. Further recovery investigation/probes are
+DEFERRED. Preserve the reviewed changes and already approved/applied routine;
+do not undo them, reset checkpoints, clear queues or force-close POS. New local
+automatic attempt11:09:24UTC still reported history/download/gap_recovery
+non-JSON503 before the new server code merged/deployed. Recovery is NOT verified
+or marked fixed. Prioritize checked beta release, no production promotion.
+PR352 now records this boundary and formal scan e40b9bdc-fc21-44ad-85d9-213285d159da:
+zero reportable findings/all19paths/no deferred coverage, immutable f4fc2207→
+dd4331b0. Source remains frozen; this tracker follow-up is documentation-only and
+will be committed separately from the selected release source.
+
+## 2026-11-01 — Shift sync first; native registration follow-up
+
+REL-20261031 verified: beta1.4.81-beta.2 published31October11:25:11UTC,
+workflow41196132262 success, source dd4331b03bd87aaaca34ef345cce8eaf8f102fe8,
+merge273c685c identicaltree341d9bc. Public5metadatafeeds and3packageHEADs200,
+version/source identities correct; Windows144295620B/Android29508656B/unsigned
+IPA10682282B. No signediOSOTA or main/stable promotion. PR352 complete; recovery
+investigation remained deferred at owner's request, not marked fixed.
+
+SHIFT-28 ACTIVE (priority1): production Windows cashier closes a shift locally,
+but the production phone/cloud still shows yesterday's shift open and today's new
+shift open simultaneously. Trace local close transaction/journal/CT, upload order,
+backend branch/actor checks, actual cloud persistence/acknowledgement and phone
+refresh/cache. Compare production1.4.79 against published beta1.4.81-beta.2;
+do not assume an existing migration or test proves this affected device works.
+Identify exact affected records before any data repair. User authorizes targeted
+fix/isolated regressions; preserve cashier checkout, grants, branch binding,
+existing amounts/counts and pending work. Live routine/schema/data changes need
+separate exact-project approval. Do not manually close/create replacement shifts,
+clear queues or reset checkpoints. This request reopens shift-specific sync
+investigation only; broader history recovery and held audit-scope/GLOBAL policy
+remain deferred unless a confirmed dependency needs a separately explained fix.
+
+TERM-29 PENDING (priority2, owner explicitly says after shift issue): Electron
+and Android older beta show registered branch yet cashier screen says terminal
+not registered/staff list blocked; admin login returns to PIN/setup screen.
+Compare released fixes and actual trusted activation/proof/backend compatibility,
+not the display label alone. Preserve sealed config, terminal identity, branch
+restrictions, online/offline PIN and permissions. Do not investigate/implement
+this follow-up before SHIFT-28 resolves or owner changes priority. Membership
+and its shared dependencies remain ON HOLD/unchanged.
+
+Baseline273c685c/current beta, isolated branchcodex/terminal-shift-verification-beta.
+Prior worktrees and uncommitted routeTree stat-only change preserved. Recovery
+plan: revert only a reviewed future fix commit; retain business records and queues.
+
+Owner update1November: TERM-29 is resolved in latest beta according to their
+verification; no registration follow-up/code change needed. Keep status as
+owner-verified, not a new agent physical-device certification. SHIFT-28 remains
+active: latest shift selection works, but previous locally-closed shift stays
+OPEN in cloud/history. Do not solve by hiding historical rows/dateauto-close.
+
+ReadonlyROSEGILL evidence: ACTIVE_HEALTHY targetposqhrufhtbeguxydenzfey,
+orgbjxgimekljzlnwejuawj. ActualSTR1/Gardong production1.4.79 token
+2a9be656-3830-4f1c-9ede-3e9c379f3d13 has Oct31shift
+1a349429-cea1-4f45-8d2b-36678d37ad27 and Nov1shift
+acbc1ed1-2fc1-44c7-9c71-c338da7fda2f bothOPEN/ACTIVE/closed_atNULL/revision1.
+Both havezero cash-count/close-event/reconciliation/notification rows. Thus
+phone is showing persisted records, not just stalecache. LastsyncOct29;
+recentPCtelemetry reportsidle/pending0/failed0/SQLenabled_validating/offline;
+thosecounters exclude CT-only writes and are not proof of successfulsync.
+
+Agent source+actualPushWorker fixture reproduces on production79 andcurrentbeta:
+openingjournaluploads, trustedclosingdirectOps.apply is CT-only, an earlier
+change_history ECHANGEGAP prevents reaching shiftsCT. PendingSummary counts
+journalonly. Currentcloud13capturedroutines/7triggers plus2Main-shaped nullable
+closurecases persist/ackCLOSED2/4→OPEN1 in isolatedPG (40cases total); no newDB
+migration justified by currentevidence. Three supporthelpers remain canonical
+fixture definitions; do not claimfull deployedworkflowcertified. Actualaffected
+PCclosefacts/CTerror stillneeded tobindstructuralbug toincident. Useroffered
+UltraViewer; read-onlyReady confirmation requested andawaited after priorEscape.
+No cloud/localbusinessdata orconfig/queue/checkpointchange performed.
+
+SHIFT-28A targeted code plan under owner's explicit shift-fix request: keep
+existing Main permission/branch/blinded-calculation gates; add an internal-only
+nonserializable transaction callback in OperationsRepository.apply and a fixed
+trusted shift-journal helper, then wire only final close-count/recount/variance
+approval. Ordinary renderer aggregate/write paths retain all existing policies;
+no trusted flag/channel exposed. Business mutations+journal+receipt atomic;
+post-write actual versions/branch/shift graph validated, rollback if journal fails.
+Counts/events remain grouped and cloud v2 authoritative ack required beforeclear.
+Add allowed/denied branch, callback failure rollback, replay/concurrentstate and
+actual PushWorker oldclose+newopen+historygap regressions. No checkout/receipt
+writers changed. Baseline273c685c; reviewedsource rollback via scopedcommit.
+
+SHIFT-28B legacy pending-closure recovery remains PREPARATION/diagnosis only
+untilactualPCevidence. Safe proposal uses validshiftsCTcheckpoint tostageonly
+verifiedsamebranch/terminalchangedCLOSEDrows+exactgraph, no historicalblanketseed;
+invalid/alreadyadvancedcheckpoint requiresstop/preservelocalfacts andseparate
+incident-specific approval. Do notimplementautomaticrepair/queueexistinglocal
+records withoutreviewed plan/actualevidence. No newliveDBmigration justified by
+40captured-cloudfixturecases. Broadhistoryrecovery remains deferred.
+
+SHIFT-28A review found a necessary extra upload dependency before this fix can
+ship: actualPushWorker reproduction .cache/shift28-independent-original-recount.cjs
+shows ORIGINALjournalgroup readslatestRECOUNTparent110 butonlyoldC1/R1count100;
+validparentv2proofcanackthatfirstpacketwhilelatestcountgraphabsent ifnextpacket
+fails. Currentcloudackcomparesparentfacts only. Thisis confirmed isolatedcode
+behavior, not a claimaboutincident's actualamounts. Never ship commit-timejournal
+alone withthisknownintegritygap. Proposed expansion: change-reader + push-worker
+capture exactCLOSEDparent/fullsavedcountgraph in one SERIALIZABLE read transaction
+justbefore request preparation; bind stable requestID tothat capturedgraph, retain
+originaljournalIDs pendinguntilproof, leave unrelatedtransactionpathsunchanged.
+Shared-sync expansion needs separate ownerapproval underAGENTS scope rule; no
+edits tothose2files untilreceived. No liveDBrecord/grant/setting/legacyrepair.
+
+Owner explicitlyapprovedsharedshift-uploadcorrection+isolatedtests1November:
+change-reader.cjs +push-worker.cjs nowauthorizedfortheexactread-timegraphbinding
+plan. No liveDBchanges/automaticlegacyrepair. CaptureoneCLOSEDparent+fullsaved
+graphinoneSERIALIZABLEreadtransactionbeforestablepayloadID; eachpacketmustremain
+immutable/consistentduringHTTPandretainsoriginalqueueIDsuntilv2ack. Usecurrent
+savedmatchingcount/recon, notolderjournal'spinnedcountIDs; preservehistoric
+originalcounts/summary and allroworigins. Broaderhistoryrecoverystilldeferred.
+
+SHIFT28A/B necessarycompatibilityreview: uploadreadtakesparentlockbeforechildren;
+writer musttake sameparentUPDLOCK/HOLDLOCK beforechildwrites toavoida reader/writer
+lock-ordercycle. Add second INTERNALFUNCTIONhook(beforeWrite5tharg) insideOps
+transactiontry/beforebusinessops, keepbeforeCommit4tharg andall3argIPCunchanged.
+Preserveexistingbusinesswriteorder/customtriggercontract, no renderertrustflags.
+Tests mustproveprelockorder/rollback/defaultpaths. This is source-analysisrisk,
+not a claimedactualSQLdeadlockreproduction. Historicalcount_id/reconciliation_id
+nullableONDELETESETNULL linksremainallowed; finalselectedmatchingcount/reconmust
+becomplete, neveracceptnullhistoricalrecordasproof. No new businessmath.
+
+PinnedNode22.22.2 setuponlyinprivateNPMtoolcache (no package/lock/machineconfig
+change); finalchecks useit ratherthanhostNode24.21. ActualPCread-onlyReady remains
+awaited; no remotecontrolattempt/authentication/settings/datamutation performed.
+
+### SHIFT-28A integration checkpoint — 1 November 2026
+
+The owner-approved writer and shared-upload changes are implemented on
+`codex/terminal-shift-verification-beta`, based on current beta `273c685c`.
+The refreshed destination remains at that revision. Source changes are limited to
+OperationsRepository's two internal transaction hooks, the new trusted shift
+journal, three final-closing Main calls, and closing-graph capture/binding in
+ChangeReader/PushWorker. No renderer trust flag or IPC channel was added.
+
+Independent reviews found no actionable defect in these paths. Required test
+mock updates also cover the existing offline scope assertion and the old
+shift-only PostgreSQL replay fixture; their branch checks and expected outcomes
+are retained. The full graph fixture now invokes both transaction hooks in their
+actual order. It uses real extracted Main functions, the journal helper, reader,
+PushWorker and disposable PostgreSQL routines/triggers/FKs, with transactional
+in-memory local persistence. It does not establish physical SQL Server locking,
+HTTP/JWT gateway behavior, installed-device acceptance or delivery under nonempty
+notification rules.
+
+Root independently passed 82 Node sync/startup/event/database/shutdown cases,
+38 isolated closure cases, 15 canonical full-graph cases and 15 cases using all
+three captured deployed-definition sets. SQL Server/schema and sync registry
+checks each verified 70 tables/decisions. Four focused suites passed 87 tests.
+Full lint passed. The first full Vitest run completed with one outdated source
+assertion; that assertion was updated for the three approved writer substitutions
+and passed in the focused run. The final full run passed all 600 suites/4,193
+tests in 122.25 seconds using pinned Node 22.22.2, threads pool and two workers.
+Final TypeScript and changed-file lint checks passed after all test changes.
+No runtime configuration was changed for the initially buffered test output.
+
+Read-only cloud recheck at 11:22 Asia/Brunei confirms ROSEGILL pos remains healthy
+and both identified STR1 shifts remain OPEN revision 1, without closing children.
+No business records, local/cloud queues, checkpoints, settings or grants have
+been changed. SHIFT-28B still needs the affected production PC's actual saved
+closure graph and CT metadata; no automatic historical replay is authorized.
+Broad history recovery, audit/GLOBAL scope changes and Membership stay deferred.
+
+Rollback: revert only the reviewed source/test commit and rebuild the matching
+client; retain existing saved business rows, journal entries and receipts. No
+database migration or data rollback accompanies this patch. The older client
+does not gain the new closing-journal protection. Beta merge, installer release
+and a separate explicitly approved production promotion remain distinct steps.
+
+Delivery: source/test correction committed as `1c867a43` and pushed to the
+isolated branch. Draft [beta PR #353](https://github.com/amirosesingh/retail-pos/pull/353)
+targets `beta` and carries the `beta` label. The 15-file diff contains only this
+approved correction, necessary tests/CI and project records. The destination was
+refreshed before commit; no conflict or source replacement was introduced.
+Automatic exact-head checks are pending. No merge, release tag, installer/OTA
+publication, production promotion or live database change has been performed.
+The owner's read-only affected-PC handoff remains pending; do not infer that
+published beta or this draft has recovered the existing production closure.

@@ -118,15 +118,15 @@ describe("offline terminal operations", () => {
 
   it("passes the sealed branch and terminal scope to trusted shift and drawer writes", () => {
     const main = readFileSync("electron/main.cjs", "utf8");
-    for (const context of [
-      "Starting shift close",
-      "Closing shift cash count",
-      "Saving shift recount",
-      "Approving shift variance",
-      "Recording cash drawer request",
-      "Recording cash drawer result",
+    for (const [writer, context] of [
+      ["operationsRepository", "Starting shift close"],
+      ["shiftSyncJournal", "Closing shift cash count"],
+      ["shiftSyncJournal", "Saving shift recount"],
+      ["shiftSyncJournal", "Approving shift variance"],
+      ["operationsRepository", "Recording cash drawer request"],
+      ["operationsRepository", "Recording cash drawer result"],
     ]) {
-      const start = main.indexOf(`operationsRepository.apply("${context}"`);
+      const start = main.indexOf(`${writer}.apply("${context}"`);
       expect(start, context).toBeGreaterThan(-1);
       expect(main.slice(start, start + 4_000), context).toContain("{ branchId, terminalId }");
     }
