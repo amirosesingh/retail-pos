@@ -19,6 +19,14 @@ independently reviewed status correction), root passed all602 suites/4,249tests
 in96.50s, including the24 canonical-schema cases. The migration digest is
 unchanged. Exact updated-head remote CI remains a separate gate.
 
+The next CI run passed the full permission/route suite and later guard tests,
+then exposed the same dependency omission in the notification generator's
+temporary checkout. The required eighth, test-only file now copies this migration
+into that fixture. Expected/actual SQL are both normalized to LF for Windows
+portability while retaining exact equality. Root independently passed all23
+notification-upgrade scenarios; no notification routine, grant, rule or runtime
+behavior changed. The migration digest remains unchanged.
+
 ## Confirmed defect and bounded change
 
 The existing native upload routine accepts a higher-revision full OPEN snapshot
