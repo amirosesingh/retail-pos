@@ -1,6 +1,6 @@
 import { Table } from "@/components/ui/table";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -9,8 +9,9 @@ import { DatabaseHealthCard } from "./DatabaseHealthCard";
 import { DatabaseJobProgress, type DatabaseJob } from "./DatabaseJobProgress";
 import { mirrorTerminalConfigToDesktop } from "@/core/activation/terminal-tokens";
 import { OPEN_LOCAL_DATABASE_SETTINGS_EVENT } from "./LocalDatabaseWizard";
+import { isNativeDatabaseSnapshot, nativeSyncSummary } from "@/lib/sync-status-summary";
 
-type DatabaseState = { state?: string; enabled?: boolean; connected?: boolean; profile?: { database?: string } | null };
+type DatabaseState = { state?: string; enabled?: boolean; connected?: boolean; tradingReady?: boolean; profile?: { database?: string } | null };
 type TableStatus = { table: string; local: string; cloud: string; status: "SYNCED" | "VERIFIED" | "DIFFERENT"; verified?: boolean; comparedAt?: string | null };
 type SyncState = { phase?: string; running?: boolean; paused?: boolean; pending?: number; failed?: number; conflicts?: number; membershipDeferred?: boolean; membershipMirrored?: number; lastPushAt?: string | null; lastPullAt?: string | null; lastComparedAt?: string | null; lastVerifiedAt?: string | null; tables?: TableStatus[]; pushed?: number; merged?: number; currentTable?: string | null; lastError?: string | null; queuedTables?: { table: string; pending: number; failed: number; error?: string | null }[]; recentTables?: { table: string; direction: "push" | "pull"; rows: number; at: string }[] };
 type FailureRow = { job_id?: string; job_type?: string; status?: string; phase?: string; current_table?: string | null; error_code?: string | null; error_message?: string | null; updated_at?: string | null };
@@ -44,6 +45,21 @@ export function LocalDatabaseOperations() {
   const [schema, setSchema] = useState<Result>({});
   const [job, setJob] = useState<DatabaseJob | null>(null);
   const [sync, setSync] = useState<SyncState & { lastProgressAt?: string; startedAt?: string }>({});
+  const [syncReadFailed, setSyncReadFailed] = useState(false);
+  const [databaseReadFailed, setDatabaseReadFailed] = useState(false);
+  const syncReadSequence = useRef(0);
+  const databaseReadSequence = useRef(0);
+  const invalidateStatusReads = useCallback(() => { syncReadSequence.current++; databaseReadSequence.current++; }, []);
+  const applyDatabase = useCallback((next: DatabaseState) => {
+    databaseReadSequence.current++;
+    if (isNativeDatabaseSnapshot(next)) { setState(next); setDatabaseReadFailed(false); }
+    else setDatabaseReadFailed(true);
+  }, []);
+  const applySync = useCallback((next: SyncState) => {
+    syncReadSequence.current++;
+    setSync(next);
+    setSyncReadFailed(false);
+  }, []);
   const [failures, setFailures] = useState<Failures>({});
   const [file, setFile] = useState("");
   const [message, setMessage] = useState<string | null>(null);
@@ -54,24 +70,32 @@ export function LocalDatabaseOperations() {
 
   const refresh = useCallback(async () => {
     const api = shell();
+    const syncRequest = ++syncReadSequence.current;
+    const databaseRequest = ++databaseReadSequence.current;
     const requests = await Promise.allSettled([
       api.database?.getState(), api.database?.health(), api.database?.schemaStatus(),
       api.jobs?.getActive(), api.sync?.getStatus(), api.sync?.getFailures(),
     ]);
-    if (requests[0].status === "fulfilled" && requests[0].value) setState(requests[0].value as DatabaseState);
+    if (databaseRequest === databaseReadSequence.current) {
+      if (requests[0].status === "fulfilled" && isNativeDatabaseSnapshot(requests[0].value)) applyDatabase(requests[0].value as DatabaseState);
+      else setDatabaseReadFailed(true);
+    }
     if (requests[1].status === "fulfilled" && requests[1].value) setHealth(requests[1].value as Result);
     if (requests[2].status === "fulfilled" && requests[2].value) setSchema(requests[2].value as Result);
     if (requests[3].status === "fulfilled") setJob((requests[3].value as DatabaseJob | null | undefined) ?? null);
-    if (requests[4].status === "fulfilled" && requests[4].value) setSync(requests[4].value as SyncState);
+    if (syncRequest === syncReadSequence.current) {
+      if (requests[4].status === "fulfilled" && requests[4].value) applySync(requests[4].value as SyncState);
+      else setSyncReadFailed(true);
+    }
     if (requests[5].status === "fulfilled" && requests[5].value) setFailures(requests[5].value as Failures);
-  }, []);
+  }, [applySync, applyDatabase]);
 
   useEffect(() => {
     void refresh();
     const api = shell();
-    const unsubscribe = [api.database?.subscribe?.(setState), api.jobs?.subscribe?.(setJob), api.sync?.subscribe?.(setSync)].filter(Boolean) as Array<() => void>;
-    return () => unsubscribe.forEach((stop) => stop());
-  }, [refresh]);
+    const unsubscribe = [api.database?.subscribe?.(applyDatabase), api.jobs?.subscribe?.(setJob), api.sync?.subscribe?.(applySync)].filter(Boolean) as Array<() => void>;
+    return () => { invalidateStatusReads(); unsubscribe.forEach((stop) => stop()); };
+  }, [refresh, applySync, applyDatabase, invalidateStatusReads]);
 
   const run = async (success: string, work: () => Promise<Result>) => {
     if (busy) return;
@@ -94,6 +118,7 @@ export function LocalDatabaseOperations() {
   const conflictCount = Number(failures.conflicts ?? failures.conflictRows?.length ?? sync.conflicts ?? 0);
   const tableDifferences = (sync.tables ?? []).filter((table) => table.status === "DIFFERENT");
   const activeTable = sync.running ? sync.currentTable : null;
+  const syncSummary = nativeSyncSummary(sync, state, syncReadFailed || databaseReadFailed);
   const queuedTables = (sync.queuedTables ?? []).filter((row) =>
     (row.pending > 0 || row.failed > 0) && row.table !== activeTable);
   const direction = sync.phase === "pulling" ? "Download" : sync.phase === "pushing" ? "Upload" : "Processing";
@@ -104,17 +129,19 @@ export function LocalDatabaseOperations() {
         <section className="space-y-3 border-t border-border pt-4" aria-label="Database jobs and synchronization">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
             <h3 className="font-semibold text-foreground">Saving to central database</h3>
-            <span role="status" className="text-muted-foreground">{sync.paused ? "Paused" : sync.running ? label(sync.phase) : sync.pending ? "Waiting to upload" : "Up to date"}</span>
-            <span className="text-muted-foreground">{Number(sync.pending ?? 0).toLocaleString()} pending</span>
+            <span role="status" className={syncSummary.state === "degraded" ? "text-destructive" : "text-muted-foreground"}>{syncSummary.label}</span>
+            <span className="text-muted-foreground">{syncSummary.pending === null ? "Pending count not confirmed" : `${syncSummary.pending.toLocaleString()} journal changes pending`}</span>
           </div>
           <div className="overflow-x-auto rounded-md border"><Table tableId="platforms/windows/components/LocalDatabaseOperations.native#1" clientDataControls={false} className="w-full text-left text-xs"><thead className="bg-muted/40"><tr><th className="px-3 py-2">Table</th><th className="px-3 py-2">Activity</th><th className="px-3 py-2">Rows</th><th className="px-3 py-2">Updated</th></tr></thead><tbody>
             {activeTable ? <tr className="border-t"><td className="px-3 py-2 font-medium">{activeTable}</td><td className="px-3 py-2">{direction} now</td><td className="px-3 py-2">—</td><td className="px-3 py-2">{when(sync.lastProgressAt ?? sync.startedAt)}</td></tr> : null}
             {queuedTables.slice(0, 5).map((row) => <tr key={row.table} className="border-t"><td className="px-3 py-2">{row.table}</td><td className="px-3 py-2">{row.failed ? "Needs attention" : "Queued to upload"}</td><td className="px-3 py-2">{row.pending}</td><td className="px-3 py-2">—</td></tr>)}
           </tbody></Table>
-            {!activeTable && !queuedTables.length ? <p className="px-3 py-2 text-xs text-muted-foreground">No active or pending table transfers.</p> : null}
+            {!activeTable && !queuedTables.length ? <p className="px-3 py-2 text-xs text-muted-foreground">{syncReadFailed || databaseReadFailed ? "Table upload status could not be confirmed." : "No journaled table uploads are listed."}</p> : null}
             {queuedTables.length > 5 ? <p className="border-t px-3 py-2 text-xs text-muted-foreground">+{queuedTables.length - 5} more pending tables in More settings</p> : null}
           </div>
           {sync.lastError ? <p role="alert" className="text-xs text-destructive">{sync.lastError}</p> : null}
+          {syncReadFailed ? <p role="alert" className="text-xs text-destructive">Synchronization status could not be read. Refresh to check again; no data was changed.</p> : null}
+          {databaseReadFailed ? <p role="alert" className="text-xs text-destructive">Local database status could not be read. Refresh to check again; no data was changed.</p> : null}
           <details className="group rounded-md border border-border">
             <summary className="cursor-pointer px-3 py-2 text-xs font-medium">More settings</summary>
             <div className="space-y-4 border-t border-border p-3">

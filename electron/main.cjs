@@ -40,6 +40,7 @@ const { CloudClient } = require("./sync/cloud-client.cjs");
 const closeWriteBarrier = new (require("./sync/write-barrier.cjs").WriteBarrier)();
 const { createTelemetry } = require("./telemetry.cjs");
 const { OperationsRepository } = require("./db/repositories/operations.cjs");
+const { ShiftSyncJournal } = require("./db/shift-sync-journal.cjs");
 const { readAnalytics } = require("./db/repositories/analytics.cjs");
 const { aggregatePolicy } = require("./db/write-policy.cjs");
 const { AggregateRepository } = require("./db/repositories/aggregates.cjs");
@@ -80,6 +81,7 @@ const localDataLifecycle = new LocalDataLifecycle({ connectionManager:databaseMa
 const managementReplica = new (require("./sync/management-replica.cjs").ManagementReplica)({ cloud:syncCloud, databaseService, connectionManager:databaseManager, lifecycle:localDataLifecycle, jobs:jobRepository, coordinator:syncCoordinator });
 const mainTelemetry = createTelemetry({ databaseService,syncCoordinator,jobRepository,configStore,terminalStore,app });
 const operationsRepository = new OperationsRepository(databaseManager, syncRegistry);
+const shiftSyncJournal = new ShiftSyncJournal(operationsRepository);
 const aggregateRepository = new AggregateRepository(databaseManager, operationsRepository);
 const receiptRepository = new ReceiptRepository(databaseManager, syncCloud);
 const authorizationRulesRepository = new AuthorizationRulesRepository(databaseManager);
@@ -239,7 +241,7 @@ function prepareLocalData({force=false}={}){
       // synchronization status; it must not describe the healthy local database
       // as degraded or disable offline trading.
       databaseService.markReady({phase:"sync_pending",syncReady:false,code:error?.code??"EBOOTSTRAP",error:String(error?.message??error),differences:error?.differences});
-      diagnostics.logConnection("synchronization.bootstrap.failed", { category:"synchronization", stage:"bootstrap", code:error?.code??"EBOOTSTRAP", message:String(error?.message??error) });
+      diagnostics.logConnection("synchronization.bootstrap.failed", { category:"synchronization", stage:"bootstrap", code:error?.code??"EBOOTSTRAP", message:String(error?.message??error), ...diagnostics.bootstrapDiagnostic(error,syncRegistry.tables.map(table=>table.cloudTable)) });
       throw error;
     }
   })().finally(()=>{localDataPreparePromise=null;});
@@ -1416,7 +1418,7 @@ async function commitLocalShiftCashCount(raw) {
     });
   }
   try {
-    await operationsRepository.apply("Closing shift cash count", operations, { branchId, terminalId });
+    await shiftSyncJournal.apply("Closing shift cash count", operations, { branchId, terminalId });
   } catch (error) {
     if (![2601, 2627].includes(Number(error?.number ?? error?.originalError?.info?.number))) throw error;
     const current = await operationsRepository.query(branchId, "shifts", { match: { id: shiftId }, limit: 1 });
@@ -1468,7 +1470,7 @@ async function commitLocalShiftRecount(raw) {
   const countId = randomUUID();
   const now = new Date().toISOString();
   try {
-    await operationsRepository.apply("Saving shift recount", [
+    await shiftSyncJournal.apply("Saving shift recount", [
       { kind: "insert", table: "shift_cash_counts", rows: [{
         id: countId, shift_id: shiftId, store_id: branchId, terminal_id: terminalId,
         kind: "RECOUNT", counted_cash: countedCash, counted_card: countedCard,
@@ -1527,7 +1529,7 @@ async function approveLocalShiftVariance(raw) {
   const terminal = terminalStore.read() ?? {};
   const terminalId = String(shift.terminal_id ?? terminal.tokenId ?? terminal.terminalId ?? "").trim() || null;
   const now = new Date().toISOString();
-  await operationsRepository.apply("Approving shift variance", [
+  await shiftSyncJournal.apply("Approving shift variance", [
     { kind: "update", table: "shifts", match: { id: shiftId }, values: {
       store_id: branchId, state: "CLOSED", status: "CLOSED", closed_at: shift.closed_at ?? now,
       closed_by_name: actor, updated_at: now,
@@ -1720,37 +1722,66 @@ function registerIpc() {
     return { ok: true };
   });
   ipcMain.handle("admin:adopt-session", async (_e, value, rawTerminal) => guard.guarded(async () => {
+    // A transport or backend-protocol failure is not a staff permission denial.
+    // Return only fixed operational guidance; upstream details may be private.
+    const failed=(code,status)=>({ok:false,code,status,stage:"authorize",error:{
+      EBACKEND_UPGRADE_REQUIRED:"The configured POS backend must be updated before this terminal registration can be verified. Ask an administrator to review the backend version; saved settings have not been changed.",
+      EACTIVATION_BINDING:"The verified registration does not match this computer's saved terminal. Ask an administrator to review its registration; do not change the branch to bypass this check.",
+      EAUTH_DENIED:"The signed-in user or terminal could not be authorized. Sign in again or ask an administrator to review access.",
+      EAUTH_UNAVAILABLE:"The POS authorization service could not be reached or did not answer correctly. Reconnect and retry; saved registration and permissions have not been changed.",
+      EACTIVATION_STORE:"This computer could not save the verified registration in its secure store. Retry after checking Windows secure storage.",
+    }[code]??"The signed-in POS session could not be verified."});
+    try {
     const revision = ++sessionAdoptionRevision;
     const initialIdentity = adminSession.identity();
+    const current=()=>revision===sessionAdoptionRevision&&JSON.stringify(initialIdentity)===JSON.stringify(adminSession.identity());
     const supplied=guard.credentialProof(typeof value==="string"?{accessToken:value}:value);
     const sealed=terminalStore.read();
     const candidate=rawTerminal==null?sealed:guard.terminalConfig(rawTerminal);
     if(sealed&&candidate)activationBoundary.assertUnchanged(sealed,candidate);
     const proof={...supplied,...(sealed?.tokenId?{terminalToken:sealed.tokenId,deviceBindingProof:sealed.deviceBindingProof||supplied.deviceBindingProof}: {})};
-    if(!proof.accessToken&&!proof.sessionToken&&!proof.cashierToken)return{ok:false,error:"A verified signed-in user is required."};
+    if(!proof.accessToken&&!proof.sessionToken&&!proof.cashierToken)return failed("EAUTH_DENIED",401);
     const authorizationUrl=authorizationServerUrl();
-    if(!authorizationUrl)return{ok:false,error:"Configure the hosted POS backend address before connecting the local database."};
+    if(!authorizationUrl)return failed("EAUTH_UNAVAILABLE",503);
     const response=await fetch(`${authorizationUrl}/api/v1/pos/ipc-adopt`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(proof),signal:AbortSignal.timeout(8_000)});
-    const result=await response.json().catch(()=>({ok:false,error:"Authorization failed."}));
-    if(!response.ok||!result.ok)return{ok:false,error:result.error??"Authorization failed."};
-    const currentIdentity = adminSession.identity();
-    if (revision !== sessionAdoptionRevision || initialIdentity?.subject !== currentIdentity?.subject || initialIdentity?.source !== currentIdentity?.source)
-      return {ok:false,error:"The signed-in user changed while permissions were refreshing."};
+    const result=await response.json().catch(()=>null);
+    if(!response.ok||result?.ok!==true){
+      if(response.status===401||response.status===403)return failed("EAUTH_DENIED",response.status);
+      if(response.status===426||result?.code==="EBACKEND_UPGRADE_REQUIRED")return failed("EBACKEND_UPGRADE_REQUIRED",426);
+      if(result?.code==="EAUTH_DENIED"&&response.status<500)return failed("EAUTH_DENIED",403);
+      return failed("EAUTH_UNAVAILABLE",503);
+    }
+    if(!["admin","supervisor","staff"].includes(result.level)||typeof result.subject!=="string"||!result.subject.trim()||
+       !result.permissions||typeof result.permissions!=="object"||Array.isArray(result.permissions)||
+       Object.values(result.permissions).some(flag=>typeof flag!=="boolean")||
+       (result.branchId!==null&&typeof result.branchId!=="string"))return failed("EBACKEND_UPGRADE_REQUIRED",426);
+    if(!current())return failed("EAUTH_DENIED",401);
     if(candidate){
       const currentTerminal=terminalStore.read();
       if(Boolean(sealed)!==Boolean(currentTerminal)||(sealed&&!activationBoundary.sameBinding(activationBoundary.binding(sealed),activationBoundary.binding(currentTerminal))))
-        return {ok:false,code:"EACTIVATION_BINDING",error:"The terminal registration changed while permissions were refreshing."};
+        return failed("EACTIVATION_BINDING",403);
       const terminal=activationBoundary.canonicalConfig({...candidate,deviceBindingProof:proof.deviceBindingProof},result.terminal,sealed);
       if(!sealed)await assertSafeRegistrationChange(terminal);
       if(result.branchId&&terminal.deviceUse==="operations")activationBoundary.authorizedBranch(terminal,result.branchId);
+      // Registration safety checks may await SQL; do not adopt an earlier
+      // user's or activation's response after that asynchronous boundary.
+      if(!current())return failed("EAUTH_DENIED",401);
+      const latestTerminal=terminalStore.read();
+      if(Boolean(sealed)!==Boolean(latestTerminal)||(sealed&&!activationBoundary.sameBinding(activationBoundary.binding(sealed),activationBoundary.binding(latestTerminal))))return failed("EACTIVATION_BINDING",403);
       const previous=terminalStore.lastBinding();
       const mirrored=terminalStore.write(terminal);
-      if(mirrored?.ok===false)return{ok:false,code:"EACTIVATION_STORE",error:mirrored.error};
+      if(mirrored?.ok===false)return failed("EACTIVATION_STORE",503);
       recordRegistrationChange(previous,terminal);
     }
     adminSession.grant(result.level,result.subject,result.permissions,"pos",result.branchId);
     syncCloud.setAuthorizationProof(proof);
     rememberVerifiedBranch(result.branchId);return{ok:true,level:result.level};
+    }catch(error){
+      if(error?.name==="BadArg")throw error;
+      if(error?.code==="EBACKEND_UPGRADE_REQUIRED")return failed("EBACKEND_UPGRADE_REQUIRED",426);
+      if(error?.code==="EACTIVATION_BINDING")return failed("EACTIVATION_BINDING",403);
+      return failed("EAUTH_UNAVAILABLE",503);
+    }
   }));
   ipcMain.handle("admin:unlock", async (_e, username, pin) => guard.guarded(async () => {
     const user = guard.text(username, { name: "username", max: 160 });
@@ -2090,7 +2121,9 @@ function registerIpc() {
       return { ok: false, status: 503, code: "no_server", error: "The hosted POS backend is not configured." };
     const terminal = terminalStore.read() ?? {};
     const abort = new AbortController();
-    const timer = setTimeout(() => abort.abort(), 6_000);
+    // Match the browser PIN request budget: verification also prepares Auth
+    // and the device session. Six seconds abandoned valid slow sign-ins.
+    const timer = setTimeout(() => abort.abort(), 30_000);
     let response;
     let result;
     try {
@@ -2307,7 +2340,10 @@ function registerIpc() {
   ipcMain.handle("net:head", (_e, url) => netHttp.head(String(url)));
   ipcMain.handle("net:get-binary", (_e, url) => netHttp.getBinary(String(url)));
 
-  ipcMain.handle("terminal:read", () => ({ ok: true, config: terminalStore.read() }));
+  ipcMain.handle("terminal:read", () => {
+    try { return { ok: true, config: terminalStore.read({ strict: true }) }; }
+    catch { return { ok: false, code: "EACTIVATION_STORE", error: "Could not restore the saved terminal registration. Your registration has not been removed. Retry opening the app." }; }
+  });
   ipcMain.handle("terminal:write", async (_e, raw) => {
     try {
       const before=terminalStore.read();

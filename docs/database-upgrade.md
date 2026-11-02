@@ -27,6 +27,42 @@ Closing Electron first saves buffered activity, drains accepted local writes and
 
 ## Local SQL Server setup or upgrade
 
+### Catalogue loading comparison correction — 31 October 2026
+
+SQL-07 fixes an Electron query expression, not the database schema. OPENJSON's
+key column uses a binary collation while the affected POS_Local text columns use
+SQL_Latin1_General_CP1_CI_AS. The catalogue predicate compared those implicit
+collations and raised SQL Server468, preventing the business snapshot from loading
+even after SQL connection/schema readiness succeeded. The existing comparison
+helper now explicitly uses DATABASE_DEFAULT on both already-normalized operands.
+Cluster/privacy/posted-transfer eligibility, write scope, projection and old-registry
+fallback are unchanged. See Microsoft's [OPENJSON](https://learn.microsoft.com/en-us/sql/t-sql/functions/openjson-transact-sql?view=sql-server-ver17)
+and [COLLATE](https://learn.microsoft.com/en-us/sql/t-sql/statements/collations?view=sql-server-ver17)
+references for expression collation behavior.
+
+No SQL update file, database/column collation change, new migration, record repair
+or permission grant is needed for this correction. Install the updated Electron
+code and restart normally, preserving pending journals and operator configuration;
+renderer HMR alone cannot replace an already-required Main-process module.
+
+Verification includes the exact generated read compiled against POS_Local with
+TOP(0): old predicate fails468, fixed full predicate plus unchanged projection
+compiles without reading product records. The temporary-fixture harness
+`node scripts/test-sqlserver-catalogue-collation.cjs --server LOCALHOST\\INSTANCE`
+uses Windows authentication and only session-scoped tables in tempdb. It checks
+actual snapshot/catalogue/locked-checkout-read SQL and allowed/denied catalogue
+cases with both normal and binary column collations. Its database default remains
+SQL_Latin1_General_CP1_CI_AS, matching the affected database; a separately configured
+binary-default database was not tested. Full live checkout writes were not run.
+
+Connection readiness and successful query compilation do not certify other
+runtime gates. After local Electron restart, an independent store-settings read
+failure remained visible; the collation error did not recur in the observed new
+session. Investigate that settings/authorization failure separately, retaining
+saved settings and grants rather than substituting defaults or bypassing a gate.
+
+### Standard local database installation and upgrades
+
 For an **existing local database**, close the POS application, take a backup, select your configured POS database in SSMS, and run the whole `database/sqlserver/retail-pos-local-update.sql`. This generated file uses the same wrapper as Settings downloads. It never switches databases, rejects system and unrelated populated databases, skips recorded migrations, and stops on the first error with rollback of the failing batch. Earlier successful batches remain applied and the update can be rerun. No business rows are deleted. Width repairs reject oversized values instead of truncating them. Archive flags are intentionally repaired according to the automatic archive setting.
 
 For a **fresh POS_Local installation**, run the whole `database/sqlserver/retail-pos-local-database.sql` in SSMS with an account allowed to create a database and modify its schema. Keep the `GO` batch separators.

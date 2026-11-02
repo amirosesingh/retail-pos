@@ -9,6 +9,7 @@ import type { Plugin } from "vite";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { shellAliases, enforceShellBoundary } from "./scripts/platform-build-boundaries";
+import { popupRuntimeAliases } from "./scripts/popup-runtime-aliases.mjs";
 import webOnlyEnv from "./scripts/web-only-env-names.json" with { type: "json" };
 
 // Managed checkouts can resolve dependencies from a parent node_modules.
@@ -117,7 +118,7 @@ export default defineConfig({
   css: { transformer: "lightningcss" },
   resolve: {
     // Native approval UI/Keystore enrollment never enter website client chunks.
-    alias: [{ find: /^zod$/, replacement: resolve("src/lib/csp-zod.ts") }, ...(isDesktop ? [{ find: "@/platform-config/approval-token-store", replacement: resolve("src/platforms/windows/approval-token-store.ts") }] : []),...(isIos ? [{ find: "@/platform-config/ios-ota", replacement: resolve("src/platforms/ios/ui.tsx") }] : []), ...shellAliases(buildPlatform), ...(!isTerminalBuild ? [
+    alias: [...popupRuntimeAliases(), { find: /^zod$/, replacement: resolve("src/lib/csp-zod.ts") }, ...(isDesktop ? [{ find: "@/platform-config/approval-token-store", replacement: resolve("src/platforms/windows/approval-token-store.ts") }] : []),...(isIos ? [{ find: "@/platform-config/ios-ota", replacement: resolve("src/platforms/ios/ui.tsx") }] : []), ...shellAliases(buildPlatform), ...(!isTerminalBuild ? [
       { find: /^\.\/routeTree\.gen(?:\.tsx?)?$/, replacement: resolve("src/routeTree.web.gen.ts") },
     ] : [
       { find: "@/platform-config/update-settings", replacement: resolve("src/platform-config/native-update-settings.tsx") },

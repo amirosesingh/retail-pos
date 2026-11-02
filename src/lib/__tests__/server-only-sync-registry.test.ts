@@ -31,6 +31,7 @@ it("keeps online-only ledgers out of the generated desktop replication schema", 
     "notification_deliveries",
     "sponsorship_issues",
     "sponsorship_direct_issue_policy",
+    "missed_bill_entries",
   ]) {
     expect(new RegExp(`CREATE TABLE (?:IF NOT EXISTS )?public\\.${table}\\b`, "i").test(cloudSchema)).toBe(true);
     expect(names).not.toContain(table);

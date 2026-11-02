@@ -59,27 +59,30 @@ export async function handleUsernameLogin(request: Request): Promise<Response> {
   );
 
   const { throttleStatus, throttleFail, throttleReset } = await import("@/lib/pin-throttle.server");
+  // Bound the complete downstream lookup/Auth/throttle work below the client
+  // transport budget. Never change other consumers of the shared relay.
+  const signal = AbortSignal.timeout(25_000);
   const userKey = `staff-password:${parsed.data.username.trim().toLowerCase()}`;
   // X-Forwarded-For is caller controlled when no trusted proxy overwrites it.
   const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
   const ipKey = `staff-password-ip:${ip}`;
   try {
     for (const key of [userKey, ipKey]) {
-      if ((await throttleStatus(key)).locked) return Response.json(
+      if ((await throttleStatus(key, signal)).locked) return Response.json(
         { ok: false, code: "locked", error: "Too many attempts. Try again later." },
         { status: 429, headers: noStore },
       );
     }
     const { staffUsernameLogin } = await import("@/lib/staff-username-login.server");
-    const result = await staffUsernameLogin(parsed.data.username, parsed.data.password);
+    const result = await staffUsernameLogin(parsed.data.username, parsed.data.password, signal);
     if (result.ok) {
       // A successful password for one account must not clear address-wide
       // failures accumulated while guessing other accounts.
-      await throttleReset(userKey);
+      await throttleReset(userKey, signal);
       return Response.json(result, { headers: noStore });
     }
     if (result.code === "invalid_credentials") {
-      await Promise.all([throttleFail(userKey), throttleFail(ipKey)]);
+      await Promise.all([throttleFail(userKey, 5, signal), throttleFail(ipKey, 5, signal)]);
       return invalid();
     }
   } catch {

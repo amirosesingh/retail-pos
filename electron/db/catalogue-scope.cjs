@@ -9,7 +9,10 @@ function catalogueReadPredicate(registry, alias = "source") {
   };
   const owner = `${alias}.[owner_store_id]`;
   const product = `${alias}.[id]`;
-  const same = (left, right) => `LOWER(CONVERT(nvarchar(450),${left}))=LOWER(CONVERT(nvarchar(450),${right}))`;
+  // OPENJSON keys use BIN2 independently of the database's branch text. Resolve
+  // that comparison conflict without changing the configured case/accent rules
+  // or the existing operand normalization and catalogue eligibility clauses.
+  const same = (left, right) => `LOWER(CONVERT(nvarchar(450),${left})) COLLATE DATABASE_DEFAULT=LOWER(CONVERT(nvarchar(450),${right})) COLLATE DATABASE_DEFAULT`;
   // An incomplete old registry cannot safely prove a catalogue relationship.
   // Do not turn a missing cluster/provenance schema into a company-wide read.
   if (!has("stores", ["id", "group_id", "private_catalogue"]) || !has("products", ["id", "owner_store_id", "stock_by_store"]))

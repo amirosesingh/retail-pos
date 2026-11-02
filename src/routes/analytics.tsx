@@ -116,6 +116,7 @@ function LiveBoard() {
       ],
     },
     ...PAGE_DATA_CACHE,
+    refetchOnWindowFocus: false, refetchOnReconnect: false,
   });
 
   const filter = useMemo(

@@ -45,6 +45,21 @@ test('canonical installer matches the current generated schema and every migrati
   assert.match(sections.schema,/\[is_verified\] bit/);
 });
 
+test('new-product publication default quotes dynamic DDL before EXEC',()=>{
+  const migration=installerSections().migrations.find(m=>m.version===20);
+  assert.ok(migration);
+  const sql=migration.sql;
+  // SQL Server EXEC accepts a string/variable concatenation, not a function
+  // call within that concatenation. Evaluate QUOTENAME before executing DDL.
+  assert.match(sql,/DECLARE @commerceDropSql nvarchar\(max\)/);
+  assert.match(sql,/SET @commerceDropSql=N'ALTER TABLE dbo\.products DROP CONSTRAINT '\+QUOTENAME\(@commerceDefault\)/);
+  assert.match(sql,/EXEC\(@commerceDropSql\)/);
+  assert.doesNotMatch(sql,/EXEC\([^;]*QUOTENAME\(/);
+  assert.match(sql,/DEFAULT \(0\) FOR ecom_visible/);
+  assert.ok(sql.indexOf('INSERT dbo.pos_schema_migrations')>sql.indexOf('DEFAULT (0)'));
+  assert.doesNotMatch(sql,/\b(?:UPDATE|DELETE|TRUNCATE)\s+(?:TABLE\s+)?dbo\.products\b/i);
+});
+
 test('purchase order width repair guards data before rebuilding scoped indexes',()=>{
   const sections=installerSections();
   const repair=sections.migrations.find(m=>m.version===14);

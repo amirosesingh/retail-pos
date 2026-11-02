@@ -48,7 +48,9 @@ import { useVisibility } from "@/lib/ui-visibility";
 import { createCatalogueVisibility } from "@/lib/branch-policy";
 import { clusterAvailableStockLocations } from "@/lib/all-shops-stock";
 import { branchInventoryArchived, branchInventoryCounts } from "@/lib/inventory-branch-view";
-import { inventoryColumnsMatch } from "@/lib/inventory-column-filter";
+import { currentBranchStockColumnQuantity, inventoryColumnsMatch } from "@/lib/inventory-column-filter";
+import { negativeStockProducts } from "@/lib/inventory-negative-stock";
+import { displayedStockQuantity } from "@/lib/stock-quantity-display";
 import { companyStoreScope } from "@/lib/company-store-scope";
 import { sameBranchId } from "@/lib/branch-id";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
@@ -188,7 +190,10 @@ function Inventory() {
   const [deleting, setDeleting] = useState<string[]>([]);
   const [bulkSaving, setBulkSaving] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  const [negativeReviewOpen, setNegativeReviewOpen] = useState(false);
+  useEffect(() => { setNegativeReviewOpen(false); }, [currentStore.id]);
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
+  const [tableFilterVersion, setTableFilterVersion] = useState(0);
   const [catFilter, setCatFilter] = useState("all");
   const [groupFilter, setGroupFilter] = useState("all");
   const [subFilter, setSubFilter] = useState("all");
@@ -250,11 +255,12 @@ function Inventory() {
   // A big catalogue must not be re-scanned on every keystroke or re-render:
   // the search text settles first, then one pass produces the visible rows.
   const settledQuery = useDebounced(query, 200);
+  const currentStockColumnQuantity = currentBranchStockColumnQuantity(columnFilters, currentStore.code);
   const rows = useMemo(() => {
     const needle = settledQuery.trim().toLowerCase();
     return state.products.filter((p) => {
       if (!catalogueVisible(p, state.currentStoreId)) return false;
-      if (branchInventoryArchived(p, state.currentStoreId) !== showArchived) return false;
+      if (currentStockColumnQuantity === null && branchInventoryArchived(p, state.currentStoreId) !== showArchived) return false;
       if (catFilter !== "all" && p.category !== catFilter) return false;
       if (groupFilter !== "all" && (p.group ?? "") !== groupFilter) return false;
       if (subFilter !== "all" && (p.subCategory ?? "") !== subFilter) return false;
@@ -276,7 +282,10 @@ function Inventory() {
         [`Stock · ${currentStore.code}`]: `${branchStock} in stock${branchStock < 0 ? " Negative stock" : ""}`,
         "Other stores": sources.length ? `Other Sources: ${sources.length} Total Available: ${sources.reduce((sum, store) => sum + stockAt(p, store.id), 0)} ${p.unit ?? "pcs"} ${sources.map(store => `${store.name} ${store.code} ${stockAt(p, store.id)}`).join(" ")}` : "No available sources",
       };
-      if (!inventoryColumnsMatch(columnValues, columnFilters)) return false;
+      if (!inventoryColumnsMatch(columnValues, columnFilters, {
+        [`Stock · ${currentStore.code}`]: branchStock,
+        "Other stores": displayedStockQuantity(sources.reduce((sum, store) => sum + stockAt(p, store.id), 0)),
+      })) return false;
       }
       if (stockFilter === "in" && branchStock <= 0) return false;
       if (stockFilter === "out" && branchStock !== 0) return false;
@@ -301,6 +310,7 @@ function Inventory() {
     catalogueVisible,
     state.currentStoreId,
     showArchived,
+    currentStockColumnQuantity,
     columnFilters,
     currentStore.code,
     currentStore.id,
@@ -356,6 +366,10 @@ function Inventory() {
   );
   const costReviewCount = catalogProducts.filter(product => branchInventoryArchived(product, currentStore.id) === showArchived && needsCostReview(product.cost)).length;
   const branchCounts = useMemo(() => branchInventoryCounts(catalogProducts, currentStore.id), [catalogProducts, currentStore.id]);
+  const lowStockCount = useMemo(() => catalogProducts.filter(product => isLowStock(stockAt(product, currentStore.id), product.reorderLevel)).length, [catalogProducts, currentStore.id]);
+  const negativeProducts = useMemo(() => negativeStockProducts(catalogProducts, currentStore.id, catalogueVisible), [catalogProducts, currentStore.id, catalogueVisible]);
+  const negativePager = usePagination(negativeProducts, 10);
+  const negativeWarningCount = currentStockColumnQuantity !== null ? (currentStockColumnQuantity < 0 ? rows.length : 0) : (showArchived ? branchCounts.negative : 0);
   const metrics = useMemo(
     () => inventoryMetrics(catalogProducts, currentStore.id),
     [catalogProducts, currentStore.id],
@@ -411,8 +425,8 @@ function Inventory() {
                 <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1/2 size-8 -translate-y-1/2" aria-label="Advanced product filters" title="Advanced filters" onClick={() => setAdvanced(true)}><SlidersHorizontal className="size-4" /></Button>
               </div>
             </div>
-            <Button variant="outline" size="sm" onClick={() => { setShowArchived(value => !value); setSelected([]); }}>
-              <Archive className="size-4" /> {showArchived ? "Show active" : "Show archived"}
+            <Button variant="outline" size="sm" disabled={currentStockColumnQuantity !== null} title={currentStockColumnQuantity !== null ? "Clear the current branch Stock column filter to switch Active or Archive view" : undefined} onClick={() => { setShowArchived(value => !value); setSelected([]); }}>
+              <Archive className="size-4" /> {currentStockColumnQuantity !== null ? "Active + Archive" : showArchived ? "Show active" : "Show archived"}
             </Button>
             <div ref={setColumnControlsTarget} className="flex items-center [&>button]:w-full sm:[&>button]:w-auto" />
             <DropdownMenu>
@@ -941,9 +955,27 @@ function Inventory() {
         </header>
         {showMoney && costReviewOnly && <p role="status" className="rounded-xl border px-4 py-3 text-sm text-muted-foreground">Showing items with missing, zero or invalid cost. Open an item to review it using your existing edit permissions. Zero may be intentional for a free item; no costs are changed automatically.</p>}
 
-        <p className="text-xs text-muted-foreground">{showArchived ? "Archive: zero or negative stock" : "Active: positive stock"} at {currentStore.name}. This view does not change the shared product status.</p>
-        {showArchived && branchCounts.negative > 0 && <p role="status" className="rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive">Warning: {branchCounts.negative} products have negative stock at this branch. Review purchases, transfers or authorized stock corrections.</p>}
-        <InventorySummaryCards metrics={{ ...metrics, products: branchCounts.active, negativeStock: branchCounts.negative }} ready={inventoryReady} loadPhase={loadPhase} showStockValue={showStockValue} totalUnitCostValue={totalUnitCostValue} productLabel="Active products at this branch" />
+        <p className="text-xs text-muted-foreground">{currentStockColumnQuantity !== null ? `Exact stock ${currentStockColumnQuantity}: searching Active and Archive at ${currentStore.name}. Clear the Stock column filter to return to the ${showArchived ? "Archive" : "Active"} view. Other filters still apply.` : `${showArchived ? "Archive: zero or negative stock" : "Active: positive stock"} at ${currentStore.name}.`} This view does not change the shared product status.</p>
+        {negativeWarningCount > 0 && <p role="status" className="rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive">Warning: {negativeWarningCount} products have negative stock {currentStockColumnQuantity !== null ? "in these results" : "at this branch"}. Review purchases, transfers or authorized stock corrections.</p>}
+        <InventorySummaryCards metrics={{ ...metrics, products: branchCounts.active, lowStock: lowStockCount, negativeStock: branchCounts.negative }} ready={inventoryReady} loadPhase={loadPhase} showStockValue={showStockValue} totalUnitCostValue={totalUnitCostValue} productLabel="Active products at this branch" onReviewNegativeStock={() => setNegativeReviewOpen(true)} onReviewLowStock={() => {
+          setShowArchived(false); setStockFilter("low"); setSelected([]);
+          setQuery(""); setSkuFilter(""); setCatFilter("all"); setGroupFilter("all"); setSubFilter("all");
+          setMinPrice(""); setMaxPrice(""); setMinMargin(""); setCostReviewOnly(false); setColumnFilters({});
+          setTableFilterVersion(value => value + 1);
+        }} />
+        <Dialog open={negativeReviewOpen} onOpenChange={setNegativeReviewOpen}>
+          <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
+            <DialogHeader><DialogTitle>Negative stock · {currentStore.name}</DialogTitle></DialogHeader>
+            <p className="text-sm text-muted-foreground">Review these {negativeProducts.length} products at this branch. Count the physical stock before posting a correction; no quantity changes here.</p>
+            <Table clientDataControls={false}>
+              <TableHeader><TableRow><TableHead>Product</TableHead><TableHead className="text-right">Current stock</TableHead></TableRow></TableHeader>
+              <TableBody>{negativePager.pageItems.map(product => <TableRow key={product.id}><TableCell>{product.name}<span className="block text-xs text-muted-foreground">{product.sku}</span></TableCell><TableCell className="text-right text-destructive">{stockAt(product, currentStore.id)}</TableCell></TableRow>)}</TableBody>
+            </Table>
+            <TablePagination {...negativePager} onPage={negativePager.setPage} onPageSize={negativePager.setPageSize} label="negative-stock products" />
+            {!canAdjustStock && <p className="text-sm text-muted-foreground">Stock corrections require the Adjust / recount stock permission. Ask an authorized user to review the physical count.</p>}
+            <DialogFooter><Button variant="outline" onClick={() => setNegativeReviewOpen(false)}>Close</Button><Button disabled={!canAdjustStock || !negativeProducts.length} onClick={() => { setNegativeReviewOpen(false); void navigate({ to: "/stock-operations", search: { review: "negative", branch: currentStore.id } }); }}>Start stock count</Button></DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <Dialog open={advanced} onOpenChange={setAdvanced}>
           <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
@@ -1160,8 +1192,8 @@ function Inventory() {
           </div>
         )}
 
-        <div className="rounded-lg border border-border bg-card">
-          <Table tableId="routes/inventory#1" className="inventory-products" columnControls layoutControls controlsTarget={columnControlsTarget} onColumnFiltersChange={setColumnFilters}>
+        <div className="rounded-lg border border-border bg-card" style={{ marginTop: "1.75rem" }}>
+          <Table key={tableFilterVersion} tableId="routes/inventory#1" className="inventory-products" columnControls layoutControls controlsTarget={columnControlsTarget} onColumnFiltersChange={setColumnFilters}>
             <TableHeader>
               <TableRow>
                 <TableHead className="w-10">

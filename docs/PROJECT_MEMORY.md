@@ -1,7 +1,30 @@
 # POS project memory
 
-Last reconciled: **2026-10-29, Asia/Brunei**. This is approved architecture and
+Last reconciled: **2026-11-02, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
+
+Earlier update, 2 November 2026: the owner approved a narrow server CPU
+correction in `sync-download-redaction.ts` and isolated tests. Production
+Cloudflare `/api/v1/pos/sync` failures have outcome `exceededCpu` / HTTP 503;
+Supabase's sampled bootstrap RPCs succeeded. This locates the hosting failure,
+but does not establish how much CPU each helper consumed. Preserve exact privacy
+output, rows, cursors, permissions, settings, shifts and operator configuration.
+No live deployment, promotion or data/schema repair follows from that code-only
+approval. The owner's later request on 2 November authorizes the reviewed CPU and
+native fixes (PR #360/#361) to merge into beta and production preparation if ready.
+PR #360 is merged as `cdc7bbed`; final native beta integration/CI is in REL-30.
+Main promotion, beta installer publication and live repair remain separately
+gated. Preserve existing features through scoped PRs and exact combined checks.
+
+The separate historical STR1 recovery in draft PR #359 is **HOLD**: its old
+cloud-OPEN premise was superseded by the owner's deliberate web closure.
+Complete private PC/cloud evidence now exists. The owner selects the original
+cashier facts as authoritative while preserving the web history. A new exact
+reconciliation plan and approval are required; never stage the old eight-key
+replay. Preserve all unfinished tasks; Membership remains on hold. The owner
+reconfirms that the existing multiple-shifts setting must control a shared
+one-shift-per-till policy versus permitted multiple shifts. Do not invent a new
+mode or change that setting's enforcement in this CPU-only batch.
 
 The owner's latest inventory UI refinement (DEC-25) combines adjacent Products
 and Categories metrics into one compact card, hides loaded zero inventory
@@ -22,9 +45,169 @@ DEC-30 extends the same behavior to Windows/desktop when available container spa
 would otherwise make cards wrap. Use responsive fit detection, not a phone-only
 platform check; keep the ordinary layout when all cards fit on one row.
 
+On30October the owner reconfirmed loaded-zero summary visibility and requested
+smooth appearance/reflow when a card gains data (UI-15). Animate presentation
+only; do not fetch again or reset operational state to animate. Preserve real
+loading/errors, meaningful negative balances, permission-hidden reflow and
+reduced-motion accessibility. The owner explicitly reconfirmed that All Shops
+continues showing every shop even when its totals are zero. Preserve required
+operational actions and chart behavior; a zero summary is not a reason to hide
+the controls needed to create the first transaction.
+
 Read [../AGENTS.md](../AGENTS.md) and [TASK_TRACKER.md](TASK_TRACKER.md) first.
 The tracker records defects, unfinished work, verification and approvals.
 Technical detail remains in the existing references linked below.
+
+1November: the owner confirms terminal registration works in the latest published
+beta1.4.81-beta.2; no further terminal change is requested. Shift synchronization
+is the priority. Actual production cloud rows for the STR1/Gardong PC retain both
+31October and1November shifts OPEN, with no uploaded closing counts/events.
+Source/isolated-worker reproduction confirms that protected Windows closing used
+only Change Tracking, while opening used the durable journal; an earlier history
+gap can therefore upload a new opening while leaving the previous closure local.
+The same structural defect exists in production1.4.79 and the published beta.
+
+SHIFT-28 correction is implemented and isolated regressions passed: journal
+protected final closing operations
+atomically under their existing Main authorization/calculations. The owner also
+explicitly approved reader/worker capture of the complete current closing graph
+before upload, so an offline recount cannot leave its count records behind.
+Preserve cloud v2 acknowledgement, source attribution, handover permissions and
+default checkout/renderer restrictions. Membership stays on hold. No live schema,
+grant or business-row change follows from this code approval.
+
+Existing stuck closures require their exact saved PC records and separate repair
+evidence/approval; never infer counts/time, auto-close cloud rows, hide history,
+reset checkpoints or clear queues. Use the existing registered production profile
+for any approved recovery; a separate beta installation is not that profile.
+The earlier broad history-recovery investigation remains deferred.
+
+The owner selected original saved-closing recovery first on 1 November. Preserve
+its actual closing timestamp as well as counts/IDs; a cloud activity report is
+supporting evidence, not a substitute for the complete saved local graph. The
+closed-shift count correction currently does not edit time or close an OPEN row.
+Any administrator-only fallback for one selected unresolved shift requires a
+separate audited workflow; do not remove the existing closed-only recount guard
+or change ordinary manager/cashier closing permissions to implement it. The
+primary current-shift card is singular; complete history must offer clear
+status/filter/identity controls without changing checkout's selected shift.
+
+Source correction PR #353 is now merged into beta as b31c74e4 after exact-head
+checks and Codex code review. That does not update an installed production
+Electron Main process or recover its existing queue. Production preparation is
+separate draft PR #354; main merge can automatically initiate stable publication,
+so the owner's approval of that exact promotion remains mandatory.
+
+SHIFT-31 history visibility is subsequently merged as beta423950b4 / PR #355;
+its merge tree equals the reviewed source. SHIFT-33 status-only PR #356 is now
+merged as betaead66f30, with the reviewed tree preserved. SHIFT-32 draft guard
+PR #357 remains preparation only. A native journal count must never be
+presented as proof that all Change Tracking history reached cloud. Durable
+browser counts include backed-off work; status reads must neither create storage
+nor modify queues/retries. Current error/unknown state and newer subscription
+events take precedence over delayed diagnostic reads.
+
+The 1 November read-only evidence found the original 31 October closing saved
+locally with its exact timestamp and matching reconciliation while cloud was
+OPEN. On 2 November, complete capture confirmed those original PC facts, but
+cloud was CLOSED after a later deliberate web correction with different children.
+The owner confirmed that web action. Stable 1.4.79's CT-only closing and expired
+earlier history checkpoint establish a blocking path; normal pull also waits for
+successful history recovery, whose hosted snapshot requests can fail with 503.
+The complete original delivery/acknowledgement sequence remains unverified.
+Recovery must preserve the original
+graph/time/profile, verify its full facts, obtain exact repair approval, and
+verify central parent/children afterwards. A notification, generic ok response,
+opening acknowledgement or zero journal is insufficient proof. No original
+closing is to be fabricated or changed into today's closing.
+
+31October SQL-08 verification: a new native build must receive a compatible,
+server-verified terminal descriptor before adopting local POS authority. An older
+backend without that descriptor is an upgrade requirement, not a reason to trust
+renderer identity or widen permissions. Temporary verification failures remain
+distinct from genuine denials. The owner separately approved changing only this
+development profile to the HTTPS beta backend; do not switch other devices or
+production configuration automatically. HTTP local transport is not an exception
+to the synchronization HTTPS requirement.
+
+Electron's legacy device HMAC key is origin-local. Preserve the existing native
+renderer origin/session during development and test upgrades; restoring a sealed
+activation alone does not restore a missing renderer key at another origin.
+On this PC, normal sign-in at the existing native origin43117 verified the proof
+and saved it in the sealed activation; STR1 binding stayed unchanged. Never copy
+a central claim proof, reset a claim or unpair a terminal to bypass a mismatch.
+Local Settings/Approvals now load; separate Change Tracking/bootstrap503 warnings
+remain unfinished in SQL-09. This is not full installed-device or sync verification.
+
+31October SQL-09/11 follow-up: automatic diagnostics identify a non-JSON503 while
+downloading change_history during expired-history recovery. One-page100-row reads
+succeeded; this does not prove the entire recovery completed or identify the
+upstream503 cause. The owner requested a narrow download reliability/performance
+fix and beta release preparation. Preserve all records and cursor/checkpoint
+integrity; do not skip history, force a new baseline or clear pending work.
+Audit-history branch/GLOBAL access-rule corrections remain explicitly PENDING.
+The new request does not reactivate those policy changes. Any prepared database
+read optimization still requires separate exact-project approval before live use.
+The owner subsequently approved SQL-11's exact UUID history-read optimization;
+unchanged source89388522…DA3C1FE was applied to ROSEGILL pos with live history
+20261031110429. Post-apply definition matches only the reviewed CASE-tail delta;
+all function metadata and service-only grants are unchanged. This does not resolve
+the held audit-scope/GLOBAL policy or certify full affected-PC recovery.
+
+Latest30October decisions: SHIFT-14 correction code/isolated tests are approved;
+the exact shift-sync migration was subsequently approved and applied at23:59:38
+Brunei (livehistory20261030155938). Future live changes still need separate
+exact-project approval. Never treat
+a client/local closure notification or aggregate applied count as proof that the
+central shift closed. Same-branch, same-shift authoritative acknowledgement and
+idempotent replay are required; no existing shift/count repair is authorized.
+See [prepared correction review](database/shift-closure-sync-review.md).
+
+31October follow-up: the owner explicitly approved the corrective version2
+shift-proof helper. The unchanged reviewed20261030164829 source was applied to
+the exact ROSEGILL pos target; live history20261030234442 confirms it. Pre/post
+checks retain service-only SECURITY INVOKER access and exact closing/branch
+facts. Live read-only validation returns cloud revision4/requested revision9;
+no business rows were rewritten. Installed-terminal acceptance remains separate.
+The owner also approved shared-popup reconnect correction plus isolated browser
+tests, and notification acknowledgement correction preparation/isolated tests
+only. No live notification migration approval is inferred.
+
+The owner also approved compact Low/Negative stock alerts with clickable numbers
+and a review→existing stock-count workflow. Physical counts begin blank, require
+explicit review (0 when actually counted), permission and audited posting. Never
+silently zero live stock. Numeric current-branch Stock column searches explicitly
+include both Active and Archive; clear UI scope must distinguish this from the
+ordinary selected-view filter. Preserve branch/cluster boundaries and global SKU.
+
+Manage locations keeps All Shops/Live Dashboard buttons. Catalogue and quantity
+scope are distinct: same-cluster products, per-location quantities, permitted
+same-cluster availability and authorized management views. A saved privateStock
+preference currently has no independent runtime consumer; explanatory text must
+not claim that switch alone enforces privacy. Do not silently invent a new rule.
+
+## Native slow-network scope — 2 November 2026
+
+NET-02A/B approval permits bounded/coalesced telemetry and correct timeout
+classification through CloudClient.request response-body reads, in the two named
+runtime modules and focused tests. Preserve trading, identity, authorization,
+queues, operator configuration and Membership dependencies. No pool/database
+changes or deployment follows from this approval. The request-only fix leaves
+health/readiness semantics unchanged; cancellation propagation, obsolete
+catalogue work and sync-pass budgeting remain separately scoped pending work.
+
+Supabase service pools and terminal sessions are different resources. Native
+paths use HTTPS APIs; their local Microsoft SQL Server pool is separate from
+PostgreSQL. Evaluate active/idle transactions, waits and measured request load
+before proposing pool changes; do not tune connections to equal terminal count.
+Critical writes must await authoritative storage acknowledgement and preserve
+stable retry identity. Making a CPU-bound helper async does not move its work
+off the event loop or establish successful persistence.
+
+The separate CPU fix remains draft PR #360; original STR1 recovery remains HOLD
+in draft PR #359 after the later deliberate web closure. Original cashier facts
+are selected, but a new exact reconciliation design and execution approval must
+preserve the web history. Never stage the superseded metadata replay.
 
 ## Authority and current work boundary
 
@@ -101,6 +284,16 @@ stock and other clusters even for a product available through a completed
 transfer; this does not narrow authorized management's separate All Shops cards.
 
 ## Membership: ON HOLD
+
+DEC-57 approved Add missed bill implementation (supersedes FIN-13 design-only
+status). Administrator-only historical, already-paid entry uses a separate atomic
+online service and requires an explicit stock-handling choice. Record original
+sale/payment time and cashier; keep operational shift IDs NULL and original shift
+as audit metadata, preserving current drawer and issued shift snapshots. No
+provider charge/drawer pulse/auto print. Web/mobile/Electron use hosted online
+transport; offline historical creation is deferred. Migration application is
+separately approved, never inferred from code approval. See
+[implementation/migration review](database/add-missed-bill-review.md).
 
 DEC-52 selected-branch Inventory classification: Active means quantity>0, Archive
 means quantity<=0 with explicit negative warning. It is a read-only catalogue
@@ -418,3 +611,165 @@ AUTH findings for missing cases. Use isolated data and installed IPC integration
 - [Beta releases](beta-releases.md), [iOS OTA](ios-ota.md),
   [stable revisions](stable-release-revisions.md),
   [PR template](../.github/PULL_REQUEST_TEMPLATE.md).
+
+## 30 October 2026 — login and loading recovery
+The owner approved fixing administrator/password and cashier/PIN login, Auth resume, Realtime refresh duplication and confirmed service-delay classification. Preserve real credential lockouts, branch/device binding and user permissions; unavailable verification must not consume incorrect-credential attempts or grant a new session. Scope downstream timeouts to login callers, preserving shared checkout defaults.
+The owner explicitly declined the proposed Membership shared-loader correction and repeated: ignore Membership for now. Membership workflows AND bootstrap dependencies remain unchanged, even though the audit recorded that a denied Membership read can block the shared snapshot. Do not silently mark that dependency resolved or remove its reads in a later session.
+Catalogue read-policy optimization remains approved for pos qhrufhtbeguxydenzfey but last confirmed helper is absent. Supabase migration-history initialization repeatedly times out. Product/barcode UUID pagination and typed PIN verifier are applied. Recheck exact catalog state before any retry; do not infer application from a source commit or successful isolated test.
+
+## Loading readiness boundary — 30 October 2026
+A verified location directory or SQL connection is not a complete POS business snapshot. Initial data readiness must match the current authenticated person, backend mode and branch. Retire superseded reads synchronously on retry/branch changes and recheck deferred state updates; expose recovery on stalled/failed startup rather than showing default/empty data as healthy. Preserve prior matching confirmed data during failed refreshes. These guards do not change Membership dependencies or authorize skipping permission checks.
+Live catalogue policy fallback was submitted through SQL editor query 36802140-949a-47b1-bb5a-cccd02f34360, but execution/readback remained unconfirmed. Supersedes earlier "definitely not applied" as a statement of current state: last successful catalog showed absence, later attempt has unknown outcome. Check catalog/pending execution before any retry; do not infer migration history or successful deployment. Database CPU/memory/IO warnings remain a separate operational blocker.
+
+## CPU incident checkpoint — 30 October 2026
+The previously approved catalogue read policy is now verified active (18:26/18:27 Brunei), superseding the earlier unknown deployment state. No history entry is inferred. New20261030102943 branch-sync migration is prepared/tested only and requires separate live approval. CPU summary values lack current ten-minute samples; schema-cache PGRST002/57014 is the confirmed direct Data API outage, with expensive PostgREST14.5 timezone metadata work observed. Preserve distinctions between host pressure, SQL query cost, cached metrics and authorization. Owner approved one project restart; browser control was lost before submission, agent has not performed it. Do not duplicate if owner restarts. Membership remains unchanged.
+
+## Owner restart and Authentication-first scope — 30 October 2026
+The owner performed the approved restart; PostgreSQL start is verified at 18:48:29 Asia/Brunei. Do not issue another restart under the consumed approval. Authentication is now the first live incident priority; preserve other pending tasks. Auth role/login/expiry, required grants, listening addresses and sampled connection capacity are valid. Internal connection/lookup timeouts persist; do not treat them as wrong passwords, PINs or missing staff permissions. No credential/grant/TLS change was made. Prepared sync migration remains unapplied and Membership dependencies remain unchanged. Current recovery code is independently reviewed and regression-tested, but hosted Auth/Data API recovery and fresh CPU usage are not certified.
+
+## Latest source and deployment boundary — 31 October 2026
+
+PR342's pushed source ec4e3e7e includes reviewed initial report/scoped-settings
+readiness and restored-session landing corrections in8b840192. Confirm current
+person/session generation, mode and branch/cluster/terminal before declaring
+settings ready. Keep confirmed same-scope data during background failure; bounded
+loading status does not cancel/restart the underlying read. Retry must preserve a
+real trailing change hint and avoid overlapping composite reads. No permission,
+formula, operator configuration or Membership dependency changed.
+
+Shift proof v1 was applied with exact approval, but its first fixture omitted the
+actual revision trigger. Local and cloud revision clocks are independent: valid
+local CLOSEDv8/cloud OPENv4 can become cloud CLOSEDv5. Source correction v2 binds
+requested_row_version separately while preserving exact closing facts and branch
+checks. All seven actual triggers are now tested. The owner's31October approval
+was followed by live v2 application (history20261030234442); see the exact-target
+application evidence above and shift-closure-sync-review.md. Do not silently
+alter the global revision trigger/business rows. A stale high-version
+OPEN upload can also reopen a closed shift on the pre-change baseline; this is a
+separate unresolved lifecycle defect requiring a controlled correction plan.
+
+The reconnect retained-content/portal experiment and notification acknowledgement
+correction are in newly approved preparation, not the last pushed HEAD. Actual
+earlier browser tests found portal escape/modal-lock problems; isolated notification
+tests found a foreign-branch event-ID acknowledgement mutation. Preserve both
+findings until independently verified corrections are committed. The notification
+approval permits preparation/isolated tests only, not live application.
+Do not apply the old personal-clear migration unchanged or claim either fixed.
+Keep beta merge, live migration, website deployment and installer/OTA publication
+as separate states. Membership remains ON HOLD.
+
+## Public PIN response boundary — 31 October 2026
+
+AUTH-12 was approved by the owner's “Check and fix” instruction. Keep typed PIN
+diagnostics private through server accounting, then use the shared public response
+serializer in every exposed login transport. Unknown/wrong, inactive, unavailable
+verifier, lock and private input-validation results must not disclose account
+state through body or status, including repeated attempts and aliases. Validate
+blank public usernames before lock checks. Public failures use neutral guidance;
+actual server lock enforcement/counters, successful permissions and device/branch
+checks remain unchanged. Preserve independent offline messages and safe fallback
+only for existing infrastructure failures. Never turn a missing verifier into a
+wrong-PIN attempt or grant a stale local session after authoritative denial.
+
+## Terminal restore and repair navigation — 31 October2026
+
+TERM-13 confirms native login setup links must reach the existing protected
+recovery flow, not authenticated PC token administration. Search/section hints
+are presentation only; retain EmergencyPinGate and web's no-native-registration
+redirect. Await shared profile hydration before deciding registration/connection
+is missing, preserve unreadable stored activation for retry, and subscribe to
+configuration changes with stale-result fences. An unavailable staff roster does
+not invalidate proven registration. Never overwrite/clear unreadable sealed or
+legacy activation, fall through from a failed sealed read to editable plaintext,
+or broaden a user's branch scope to make setup/login succeed. Saved registration
+details are local evidence, not proof of online authorization. Default bundled
+Android/iOS/Electron sources are tested; actual installed-device acceptance and
+the optional remote-hosted Android artifact remain distinct verification limits.
+
+NOTIF-22 preparation verified31October: additive20261030234813 checks existing
+event ownership at conflict time against verified transaction-local terminal/
+branch context before unioning personal acknowledgements. Preserve immutable
+content, service-only access, existing global-event handling and legitimate
+retries. Canonical/generator parity,23 isolated SQL cases and6 actual two-session
+races pass independently. This migration is not applied live; preparation
+approval does not authorize application, notification-rule activation or messages.
+
+TERM-13 Admin view retention: preserve chosen sign-in method, visible failure
+and in-flight request ownership across existing shell readiness/connection
+returns. Keep this presentation state instance-local and credential-free; reset
+on verified identity adoption/logout and reject stale request completions.
+Do not bypass a startup/branch/device gate to retain the form. Preserve web
+password-only access, native PIN default and the explicit blank-password PIN
+shortcut. An online registry heartbeat does not establish that a legacy client's
+staff-list/login request supplies the required terminal proof. The last published
+beta1.4.81-beta.1 is an ancestor of the current source and omits device proof
+from roster requests; current source sends the existing saved proof. Test the
+updated installed app before attributing that phone's exact failure to one path.
+
+31October delivery clarification: the owner requires targeted commits/diffs to
+the existing beta code and preservation of unrelated features, rather than a
+particular Git merge method. Never replace the checkout, stage all local files,
+or copy older code over current beta. A new reviewed beta PR is authorized after
+verification; production promotion and installer/OTA publication remain separate.
+
+Popup recovery preserves same-scope loaded browser presentation only, always
+inert while disconnected. Initial/unconfirmed, revoked, permission/configuration
+and changed-scope states remain gated. Owned portals must pause document effects
+without discarding drafts, complete delayed focus cleanup before restoring
+parents/children in order, and keep Retry accessible. Shared Radix focus/layer
+runtime identity is required across builds; do not deduplicate blindly to an
+older incompatible module or suppress global browser errors. Final isolated
+browser/unit evidence is in TASK_TRACKER.md; it does not certify physical devices.
+
+SHIFT-15 deployed-context correction is applied after separate exact-project
+approval: ROSEGILL pos live history20261031032545. Validated native aggregate
+and batch establish transaction-local branch context after terminal validation,
+as the shift ownership guard requires. Preserve it during regeneration/upgrades.
+No cashier grant change/data repair was needed. Source-only fixtures can miss
+deployed-definition drift; test captured installed definitions as well as fresh
+generated installs. Owner confirmation and central readback show the original
+31October STR1 OPEN shift uploaded successfully after correction. This does not
+certify all queues, live checkout or the separate stale-OPEN acknowledgement gap.
+
+Permanent delivery rule: beta and production PRs must contain only approved
+feature/fix diffs and necessary reviewed dependencies, preserving other behavior.
+No repository/check-out replacement or blanket staging. Check the latest target
+diff, dependent workflow regressions and exact reviewed-head CI before merging;
+retain a recoverable baseline/targeted rollback and report unverified behavior.
+Merge method alone is not a correctness guarantee. Production promotion still
+needs separate explicit owner approval. See AGENTS.md for mandatory enforcement.
+
+SQL-07 is an approved query-only local SQL correction. Keep existing normalized
+catalogue ID comparisons explicit about collation when OPENJSON keys meet stored
+text, preserving current database semantics and all cluster/privacy/transfer guards.
+No schema/data/global-collation/configuration repair or grant change is authorized
+or required by it. Actual SQL compile and isolated fixture success do not establish
+all Electron readiness/settings/auth gates or real checkout success; tracker
+SQL-08 retains the separate settings-read blocker observed after restart.
+
+TRF-15 correction code/isolated tests and its exact ROSEGILL live migration were
+separately approved. The reviewed migration was applied on 31 October at 15:47
+(Asia/Brunei) as
+live history20261031074715; future live changes still require separate approval.
+Preserve existing shortage checks and partial/
+zero close-without-remainder behavior. Stock picking and linked-request completion
+must commit together; retry requires immutable dispatch intent plus current
+authorization and must not deduct twice. Native identity/terminal binding comes
+only from the verified server session, never renderer labels. Do not set goods
+verification fields to attribute request paperwork. Preserve current notification
+channels and fresh-event behavior; lost-response delivery remains best effort.
+Historical dispatched rows without proof and changed document facts stay review-only.
+See database/transfer-dispatch-recovery-review.md for the exact migration and limits.
+
+TRF-16 confirms shared child-ID formatting must not be nested for request and
+fulfilment records in the same child table: its replaced UUID suffix can steal
+the original row. New fulfilment headers use a full-request-derived,
+domain-separated UUID while checkout/draft identities and legacy children remain
+preserved. Request approval reconciles central authority, not local/cache absence;
+pending local children deny replacement until synchronization. The owner
+separately approved the parent guard and one exact historical request-line repair:
+applied on 31 October at16:31Brunei, guard history20261031083126 and an append-only
+maintenance audit. Existing stock/SKU/prices, child/header states, approval grants
+and shortage checks stay preserved. Future live repairs require their own evidence
+and exact-project approval; never infer missing original quantities from a child.
+Physical-device and fresh-installer limits remain tracked separately.

@@ -2,19 +2,26 @@ import * as React from "react";
 import * as AlertDialogPrimitive from "@radix-ui/react-alert-dialog";
 
 import { cn } from "@/lib/utils";
+import { createOfflineGateContent, createOfflineGatePortal } from "@/lib/offline-gate-snapshot-context";
+
+const GateAlertDialogContent = createOfflineGateContent(AlertDialogPrimitive.Content, ["onEscapeKeyDown", "onCloseAutoFocus"]);
+const GateAlertDialogOverlay = createOfflineGateContent(AlertDialogPrimitive.Overlay, []);
 import { buttonVariants } from "@/components/ui/button";
 
 const AlertDialog = AlertDialogPrimitive.Root;
 
 const AlertDialogTrigger = AlertDialogPrimitive.Trigger;
 
-const AlertDialogPortal = AlertDialogPrimitive.Portal;
+const ScopedAlertDialogPortal = createOfflineGatePortal(AlertDialogPrimitive.Portal);
+function AlertDialogPortal(props: React.ComponentProps<typeof AlertDialogPrimitive.Portal>) {
+  return <ScopedAlertDialogPortal {...props} />;
+}
 
 const AlertDialogOverlay = React.forwardRef<
   React.ElementRef<typeof AlertDialogPrimitive.Overlay>,
   React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Overlay>
 >(({ className, ...props }, ref) => (
-  <AlertDialogPrimitive.Overlay
+  <GateAlertDialogOverlay
     className={cn(
       "ui-overlay-motion fixed inset-0 z-50 bg-black/45 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
       className,
@@ -31,7 +38,7 @@ const AlertDialogContent = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <AlertDialogPortal>
     <AlertDialogOverlay />
-    <AlertDialogPrimitive.Content
+    <GateAlertDialogContent
       ref={ref}
       className={cn(
         "pos-dialog-content pos-popup-surface ui-surface-motion fixed left-1/2 top-1/2 z-50 grid max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto overscroll-contain rounded-2xl border border-border bg-popover p-5 shadow-xl sm:p-6 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",

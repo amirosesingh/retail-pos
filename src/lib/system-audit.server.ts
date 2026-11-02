@@ -51,10 +51,11 @@ export async function writeSystemAuditReport(
   });
 }
 
-export async function writeSystemAudit(entry: SystemAuditEntry): Promise<void> {
+export async function writeSystemAudit(entry: SystemAuditEntry, options: { signal?: AbortSignal } = {}): Promise<void> {
   try {
     await serviceRest("system_audit_logs", {
       method: "POST",
+      ...(options.signal ? { signal: options.signal } : {}),
       headers: { Prefer: "return=minimal" },
       body: JSON.stringify({
         actor_id: entry.actorId ?? null,

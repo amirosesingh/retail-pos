@@ -10,9 +10,9 @@ import { serviceRest } from "@/core/api/pos-relay.server";
 
 export type ThrottleState = { locked: boolean; lockedUntil: string | null; attempts: number };
 
-async function rpc(name: string, body: Record<string, unknown>): Promise<unknown> {
+async function rpc(name: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
   try {
-    const res = await serviceRest(`rpc/${name}`, { method: "POST", body: JSON.stringify(body) });
+    const res = await serviceRest(`rpc/${name}`, { method: "POST", body: JSON.stringify(body), ...(signal ? { signal } : {}) });
     if (!res.ok) return null;
     return (await res.json()) as unknown;
   } catch {
@@ -38,18 +38,18 @@ export function minutesLeft(state: ThrottleState): number {
 }
 
 /** True when this key is currently locked out. */
-export async function throttleStatus(key: string): Promise<ThrottleState> {
-  return read(await rpc("pin_throttle_status", { _key: key }));
+export async function throttleStatus(key: string, signal?: AbortSignal): Promise<ThrottleState> {
+  return read(await rpc("pin_throttle_status", { _key: key }, signal));
 }
 
 /** Record a wrong PIN and return the state after it. */
-export async function throttleFail(key: string, limit = 5): Promise<ThrottleState> {
+export async function throttleFail(key: string, limit = 5, signal?: AbortSignal): Promise<ThrottleState> {
   return read(
-    await rpc("pin_throttle_fail", { _key: key, _limit: limit, _window_secs: 900, _lock_secs: 300 }),
+    await rpc("pin_throttle_fail", { _key: key, _limit: limit, _window_secs: 900, _lock_secs: 300 }, signal),
   );
 }
 
 /** Clear the counter after a correct PIN. */
-export async function throttleReset(key: string): Promise<void> {
-  await rpc("pin_throttle_reset", { _key: key });
+export async function throttleReset(key: string, signal?: AbortSignal): Promise<void> {
+  await rpc("pin_throttle_reset", { _key: key }, signal);
 }

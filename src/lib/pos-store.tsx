@@ -1,9 +1,12 @@
 import { preserveSessionDrafts } from "./session-draft";
-import { branchReadApplies, latestOpenShiftForBranch, shiftIsOpenForBranch } from "./branch-shift-state";
+import { branchReadApplies, latestOpenShiftForBranch, reconcileActiveShiftRows, shiftIsOpenForBranch } from "./branch-shift-state";
 import { BranchOperationGate } from "./branch-operation-gate";
 import { formatMoney, setPosCurrency } from "./currency";
 import { subscribeDatabaseMode } from "@/core/local-db/db-mode";
 import { subscribeSettingsRefresh } from "./settings-refresh";
+import { createSettingsStartupRefresh } from "./settings-startup-refresh";
+import { createScopedSettingsReader, scopedSettingsReadKey, type ScopedSettingsReadStatus } from "./scoped-settings-read";
+import { sessionEpoch } from "./session-epoch";
 import { createRefreshQueue, requestBackgroundRefresh, subscribeBackgroundRefresh } from "./background-refresh";
 import { stockCountChanges } from "./stock-count-plan";
 import { retainUnchangedFields, applyLiveRowChanges } from "./live-state";
@@ -12,6 +15,7 @@ import { isLegacyExchange } from "@/lib/legacy-exchange";
 import { redeemedPoints } from "./points-redemption";
 import { CUSTOMER_REFUNDS_ALLOWED, NO_REFUND_MESSAGE, exchangePolicyError } from "./returns-policy";
 import { uniqueSales, sameRecordId } from "./sale-identity";
+import { stockRequestFulfilmentId } from "./stock-request-identity";
 import { staffSettingsTarget } from "./settings-edit-policy";
 import { isCompanyIdentityPath } from "./company-identity";
 import { readBranding, writeBranding } from "./branding";
@@ -84,7 +88,7 @@ import { notifyError } from "./notify";
 import type { CloudSlice, CommitTarget } from "@/core/api/pos-db";
 import { effectiveDatabaseMode } from "@/core/local-db/db-mode";
 import { platformName } from "@/platform-config/platform";
-import { APP_RESUME_EVENT, CONNECTIVITY_RESTORED_EVENT } from "@/core/activation/connection-health";
+import { APP_RESUME_EVENT, CONNECTIVITY_RESTORED_EVENT, subscribeHealth } from "@/core/activation/connection-health";
 import { useAuth } from "@/lib/pos-auth";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
 import { reserveBillNumber } from "./bill-number";
@@ -110,16 +114,17 @@ import {
   approveTransferInDb,
   dispatchTransferInDb,
   receiveTransferInDb,
-  closeRequestInDb,
   scopeBetween,
   verifyTransferInDb,
   saveTransfer,
   loadTransfer,
+  loadRequestApprovalState,
   loadTransfers,
   setTransferStatus,
   type LineQty,
   type RpcResult,
 } from "./stock-transfers";
+import { reconcileDispatchProducts } from "./transfer-dispatch-result";
 import { computeTax } from "@/core/pricing/tax";
 import { commitBooking, deleteBookingRow, loadBookings } from "./bookings-db";
 import { trackTransition } from "./status-history";
@@ -158,7 +163,8 @@ import {
 import { localDb } from "@/core/local-db/local-db";
 import { businessReadsReady, transferReadAllowed, transferReadsReady } from "./business-readiness";
 import { hasCentralAuthSession, subscribeCentralAuthSession } from "./session-presence";
-import { retryDataRead } from "./read-retry";
+import { retryDataRead, withReadDeadline } from "./read-retry";
+import { beginDataReadAttempt, createBootstrapRecovery, createReconnectUrgency, createScopedReadFlight, dataReadIdentity, dataSnapshotReady, needsBootstrapBranchResolution, snapshotRefreshReady } from "./data-read-attempt";
 import {
   batches,
   DEFAULT_BATCH_SIZE,
@@ -441,6 +447,8 @@ type Ctx = {
   /** The cluster, branch and selected terminal ids used for configuration. */
   scopeIds: ScopeIds;
   settingsScopeLoading: boolean;
+  settingsScopeError: string | null;
+  retrySettingsScope: () => void;
   settingsTerminalId: string;
   setSettingsTerminalId: (id: string) => void;
   /** Start (or stop) overriding one block at one tier. */
@@ -599,13 +607,21 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const [storesLoaded, setStoresLoaded] = useState(false);
   const [locationLoadError, setLocationLoadError] = useState<string | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
-  const retryLoad = useCallback(() => {
+  const bootstrapGeneration = useRef(0);
+  const bootstrapRecovery = useRef(createBootstrapRecovery());
+  const retryBootstrap = useCallback(() => {
+    // Invalidate the previous attempt synchronously, before React runs cleanup.
+    bootstrapGeneration.current++;
     setStoresLoaded(false);
     setLocationLoadError(null);
     setLoadPhase("loading");
     setSettingsSnapshotLoaded(false);
     setReloadTick((v) => v + 1);
   }, []);
+  const retryLoad = useCallback(() => {
+    bootstrapRecovery.current.reset();
+    retryBootstrap();
+  }, [retryBootstrap]);
   const { authUserId, terminalUser, user, can, isAdmin, canSwitchStores, ready: authReady } = useAuth();
   const canReadTransfers = transferReadAllowed(can);
   // Nothing is fetched from the cloud until a cashier or supervisor session
@@ -616,7 +632,21 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const readsReady = businessReadsReady(authReady, signedIn, databaseMode === "local", authUserId, cloudSessionReady);
   const requiresCloudReauthentication = databaseMode === "online" && authReady && Boolean(terminalUser) && !authUserId && !cloudSessionReady;
   const personIdentity = terminalUser?.userCode ?? authUserId;
-  const readIdentity = personIdentity ? `${personIdentity}|${databaseMode}` : null;
+  const bootstrapBranch = activeBranchId(state.currentStoreId) ?? state.currentStoreId;
+  const readIdentity = dataReadIdentity(personIdentity, databaseMode, bootstrapBranch);
+  const primaryReadFlights = useRef(createScopedReadFlight<CloudSlice>());
+  const deferredPrimaryRefresh = useRef({ identity: readIdentity, dirty: false });
+  if (deferredPrimaryRefresh.current.identity !== readIdentity)
+    deferredPrimaryRefresh.current = { identity: readIdentity, dirty: false };
+  const recoveryIdentity = useRef(readIdentity);
+  if (recoveryIdentity.current !== readIdentity) {
+    recoveryIdentity.current = readIdentity;
+    bootstrapRecovery.current.reset();
+  }
+  const refreshPrimarySnapshot = useCallback((branch: string | null) => {
+    const key = JSON.stringify([readIdentity, bootstrapGeneration.current, canonicalBranchId(branch ?? "")]);
+    return primaryReadFlights.current.read(key, () => withReadDeadline(() => loadPrimaryState(branch), 60_000));
+  }, [readIdentity]);
   useEffect(() => {
     const name = state.settings.receipt.companyName?.trim();
     if (name && readBranding().company !== name) writeBranding({ company: name });
@@ -658,37 +688,52 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const saveConfiguredSettings = () => settingsWrites.current.flush();
   const [settingsTerminalId, setSettingsTerminalId] = useState("");
   const loadedScopeKey = useRef("");
+  const scopedSettingsFlights = useRef(createScopedReadFlight<BranchSettingsState>());
   const [confirmedScopeKey, setConfirmedScopeKey] = useState("");
+  const confirmedScopeKeyRef = useRef(confirmedScopeKey);
+  confirmedScopeKeyRef.current = confirmedScopeKey;
+  const [scopeReadStatus, setScopeReadStatus] = useState<(ScopedSettingsReadStatus & { key: string }) | null>(null);
+  const scopeRetry = useRef<{ key: string; retry: () => void } | null>(null);
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
-  // Which cluster, branch and terminal the settings editor is resolving.
-  const scopeIds = useMemo<ScopeIds>(() => {
-    const store = state.stores.find((s) => s.id === state.currentStoreId);
-    return {
-      CLUSTER: store?.groupId ?? "",
-      BRANCH: state.currentStoreId ?? "",
-      TERMINAL: settingsTerminalId || readTerminalConfig()?.tokenId || "",
-    };
-  }, [state.stores, state.currentStoreId, settingsTerminalId]);
+  // Equivalent directory rows must not restart the same initial scope read.
+  const scopeClusterId = state.stores.find((s) => s.id === state.currentStoreId)?.groupId ?? "";
+  const scopeBranchId = state.currentStoreId ?? "";
+  const scopeTerminalId = settingsTerminalId || readTerminalConfig()?.tokenId || "";
+  const scopeIds = useMemo<ScopeIds>(() => ({
+    CLUSTER: scopeClusterId,
+    BRANCH: scopeBranchId,
+    TERMINAL: scopeTerminalId,
+  }), [scopeClusterId, scopeBranchId, scopeTerminalId]);
   const scopeIdsRef = useRef<ScopeIds>(emptyScopeIds);
   scopeIdsRef.current = scopeIds;
+  const scopeReadEpoch = sessionEpoch();
+  const scopeReadKey = scopedSettingsReadKey(readIdentity, scopeIds, scopeReadEpoch);
+  const scopeReadKeyRef = useRef(scopeReadKey);
+  scopeReadKeyRef.current = scopeReadKey;
+  const scopeReadsEnabled = useRef(false);
+  scopeReadsEnabled.current = readsReady && storesLoaded;
+  const retrySettingsScope = useCallback(() => {
+    if (scopeReadsEnabled.current && scopeRetry.current?.key === scopeReadKeyRef.current)
+      scopeRetry.current.retry();
+  }, []);
   const whoRef = useRef("Manager");
   whoRef.current = actorRef.current;
   // Lets earlier callbacks reach the settings writer defined further down.
   const updateSettingsRef = useRef<((patch: Partial<AppSettings>) => void) | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
+    const attempt = beginDataReadAttempt(bootstrapGeneration);
     // A read that is taking too long is reported as exactly that. It is never
     // turned into "the data arrived", which would show an empty, healthy-looking
     // shop built out of nothing.
     const watchdog = window.setTimeout(() => {
-      if (!cancelled) setLoadPhase((p) => (p === "loading" ? "stalled" : p));
+      if (attempt.current()) setLoadPhase((p) => (p === "loading" ? "stalled" : p));
     }, 15000);
-    void (async () => {
+    void withReadDeadline(async () => {
       // Anonymous visitors get nothing: no products, members or sales.
       if (!signedIn) {
-        if (authReady && !cancelled) {
+        if (authReady && attempt.current()) {
           setSnapshotIdentity(null);
           setReady(true);
           setLoadPhase("ready");
@@ -696,7 +741,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         return;
       }
       if (!readsReady) {
-        if (!cancelled) {
+        if (attempt.current()) {
           if (requiresCloudReauthentication) {
             setReady(true); setLoadPhase("failed");
             setLocationLoadError("The local SQL connection is unavailable. Sign in again while online to verify this cashier before reading central data.");
@@ -709,7 +754,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         !navigator.onLine &&
         effectiveDatabaseMode() === "online"
       ) {
-        if (!cancelled) {
+        if (attempt.current()) {
           setReady(true);
           setLoadPhase("ready");
         }
@@ -734,35 +779,47 @@ export function PosProvider({ children }: { children: ReactNode }) {
             const directory = await loadLocationDirectory();
             if (!directory.ok) throw directory.error;
             return directory;
-          }, () => !cancelled).catch(error => ({ ok: false as const, error: error instanceof Error ? error : new Error(String(error)) }))
+          }, () => attempt.current()).catch(error => ({ ok: false as const, error: error instanceof Error ? error : new Error(String(error)) }))
           : null;
+        // An unscoped cold read would be thrown away when directory discovery
+        // selects the first authorized branch. Resolve that scope before
+        // starting the expensive catalogue, sales and settings snapshot.
+        if (locationTask && needsBootstrapBranchResolution(effectiveDatabaseMode(), bootstrapBranch, true)) {
+          const directory = await locationTask;
+          if (!attempt.current()) return;
+          if (!directory.ok) throw directory.error;
+          const resolved = applyLocationDirectory(stateRef.current, directory.stores);
+          if (resolved.currentStoreId) {
+            setState(current => attempt.current() ? applyLocationDirectory(current, directory.stores) : current);
+            setStoresLoaded(true);
+            markStartupStage("location");
+            return;
+          }
+        }
         let fullSnapshotApplied = false;
         const settingsRevision = settingsWrites.current.revision;
-        const loadSnapshot = () => loadPrimaryState(undefined, locationTask ?? undefined, (name) => {
-          if (cancelled || fullSnapshotApplied || settingsWrites.current.pending ||
+        const loadSnapshot = () => loadPrimaryState(bootstrapBranch || undefined, locationTask ?? undefined, (name) => {
+          if (!attempt.current() || fullSnapshotApplied || settingsWrites.current.pending ||
               settingsWrites.current.revision !== settingsRevision) return;
-          setState((current) => ({ ...current, settings: {
+          setState((current) => !attempt.current() ? current : ({ ...current, settings: {
             ...current.settings,
             receipt: { ...current.settings.receipt, companyName: name },
           } }));
         }, true);
         const cloudTask = effectiveDatabaseMode() === "online"
-          ? retryDataRead(loadSnapshot, () => !cancelled) : loadSnapshot();
+          ? retryDataRead(loadSnapshot, () => attempt.current()) : loadSnapshot();
         // Observe a fast SQL failure immediately while cloud discovery is pending.
         void cloudTask.catch(() => undefined);
         const directory = locationTask ? await locationTask : null;
-        if (!cancelled) setLocationLoadError(directory && !directory.ok ? directory.error.message : null);
-        if (cancelled) return;
+        if (attempt.current()) setLocationLoadError(directory && !directory.ok ? directory.error.message : null);
+        if (!attempt.current()) return;
         if (directory?.ok) {
           markStartupStage("location");
-          setState((s) => applyLocationDirectory(s, directory.stores));
+          setState((s) => attempt.current() ? applyLocationDirectory(s, directory.stores) : s);
           setStoresLoaded(true);
-          setReady(true);
-          setLoadPhase("ready");
-          markStartupStage("essential-pos-ready");
         }
         const loaded = await cloudTask;
-        if (cancelled) return;
+        if (!attempt.current()) return;
         const terminal = readTerminalConfig();
         const verifiedLocations = verifyTerminalLocation(
           {ok: true, stores: loaded.stores, source: "local"},
@@ -784,9 +841,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
           throw directory.error;
         const cloud = directory?.ok ? { ...loaded, stores: directory.stores } : loaded;
         fullSnapshotApplied = true;
-        setState((s) => applyCloud(s, cloud, pendingSalesRef.current));
-        setSnapshotIdentity(readIdentity ?? null);
-        setSettingsSnapshotLoaded(true);
+        setState((s) => attempt.current() ? applyCloud(s, cloud, pendingSalesRef.current) : s);
+        setSnapshotIdentity((current) => attempt.current() ? readIdentity ?? null : current);
+        setSettingsSnapshotLoaded((current) => attempt.current() ? true : current);
+        markStartupStage("essential-pos-ready");
         markStartupStage("remaining-data-ready");
         // The locations question now has a real answer, empty or not.
         setStoresLoaded(true);
@@ -797,8 +855,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
         // without them, so they arrive after the first screen is up.
         void loadBookings()
           .then((cloudBookings) => {
-            if (cancelled || !cloudBookings.length) return;
+            if (!attempt.current() || !cloudBookings.length) return;
             setState((s: PosState) => {
+              if (!attempt.current()) return s;
               const seen = new Set(cloudBookings.map((b) => b.id));
               const bookings = [...cloudBookings, ...s.bookings.filter((b) => !seen.has(b.id))];
               return hasSameValue(s.bookings, bookings) ? s : { ...s, bookings };
@@ -808,33 +867,45 @@ export function PosProvider({ children }: { children: ReactNode }) {
             /* offline or not permitted — the local list still works */
           });
       } catch (e) {
-        if (cancelled) return;
+        if (!attempt.current()) return;
         void localDb()?.logConnection?.("renderer.bootstrap.failed", {
           scope: "initial-data",
           code: String((e as { code?: unknown })?.code ?? "ELOAD"),
           message: e instanceof Error ? e.message : String(e),
         });
         dbError("Loading data", e);
-        if (!cancelled) setLoadPhase("failed");
+        setLoadPhase("failed");
+        setReady(true);
+        attempt.invalidate();
+        bootstrapRecovery.current.failed(e, bootstrapGeneration.current);
       } finally {
-        if (!cancelled) setReady(true);
+        if (attempt.current()) setReady(true);
       }
-    })();
+    }, 60_000).catch(error => {
+      if (!attempt.current()) return;
+      attempt.invalidate();
+      setLocationLoadError(error instanceof Error ? error.message : 'The data service did not respond in time. Please retry.');
+      setLoadPhase('failed');
+      setReady(true);
+      bootstrapRecovery.current.failed(error, bootstrapGeneration.current);
+    });
 
     return () => {
-      cancelled = true;
+      attempt.cancel();
       window.clearTimeout(watchdog);
     };
-  }, [signedIn, authReady, readsReady, readIdentity, reloadTick, requiresCloudReauthentication]);
+  }, [signedIn, authReady, readsReady, readIdentity, bootstrapBranch, reloadTick, requiresCloudReauthentication]);
 
-  // Retry a failed initial read when the connection recovers. Do not restart
-  // an active catalogue download or discard a successfully loaded snapshot.
+  // A brief outage may never change the retained "online" category. A fresh
+  // successful heartbeat can therefore recover a transient failed bootstrap
+  // without waiting for a connectivity transition. It never retries denials,
+  // loops on a merely healthy public probe, or unlocks an absent snapshot.
   useEffect(() => {
     if (!signedIn || loadPhase !== "failed") return;
-    const recover = () => retryLoad();
-    window.addEventListener(CONNECTIVITY_RESTORED_EVENT, recover);
-    return () => window.removeEventListener(CONNECTIVITY_RESTORED_EVENT, recover);
-  }, [signedIn, loadPhase, retryLoad]);
+    return subscribeHealth(report => {
+      if (bootstrapRecovery.current.healthy(report, bootstrapGeneration.current)) retryBootstrap();
+    });
+  }, [signedIn, loadPhase, readIdentity, retryBootstrap]);
 
   // Transfers are not part of the register's small startup snapshot. Restore
   // their persisted headers and lines separately so a reload does not turn a
@@ -935,41 +1006,42 @@ export function PosProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // Global locks and empty override sets still need confirmation before
     // editing global settings, even before the first branch is created.
-    if (!readsReady) return;
-    let cancelled = false;
-    const scopeKey = JSON.stringify(scopeIds);
+    if (!readsReady || !storesLoaded) return;
+    const scopeKey = scopeReadKey;
     if (loadedScopeKey.current !== scopeKey) {
       loadedScopeKey.current = scopeKey;
       setConfirmedScopeKey("");
       setScope(emptyBranchSettings);
     }
-    let running = false;
-    const refreshScope = async () => {
-      if (running || settingsWrites.current.pending) return;
-      running = true;
-      const revision = settingsWrites.current.revision;
-      try {
-        const next = await loadBranchSettings(scopeIds, true);
-        if (
-          !cancelled &&
-          !settingsWrites.current.pending &&
-          revision === settingsWrites.current.revision
-        ) {
-          setScope((current) => (hasSameValue(current, next) ? current : next));
-          setConfirmedScopeKey(scopeKey);
-        }
-      } catch {
-        /* Preserve confirmed scope on a failed refresh. */
-      } finally {
-        running = false;
-      }
-    };
-    const off = subscribeSettingsRefresh(refreshScope, undefined, { initial: true });
+    const reader = createScopedSettingsReader({
+      // Scope observers share the raw composite read, including a slow locks
+      // query; a UI deadline must not start another overrides/locks batch.
+      read: () => scopedSettingsFlights.current.read(
+        JSON.stringify([scopeKey, settingsWrites.current.revision]),
+        () => loadBranchSettings(scopeIds, true),
+      ),
+      writes: settingsWrites.current,
+      epoch: scopeReadEpoch,
+      isCurrent: () => scopeReadsEnabled.current && scopeReadKeyRef.current === scopeKey,
+      confirmed: confirmedScopeKeyRef.current === scopeKey,
+      accept: next => {
+        setScope(current => hasSameValue(current, next) ? current : next);
+        setConfirmedScopeKey(scopeKey);
+      },
+      status: next => setScopeReadStatus({ ...next, key: scopeKey }),
+    });
+    const off = subscribeSettingsRefresh(reader.refresh, undefined, { initial: true });
+    const retry = { key: scopeKey, retry: () => {
+      reader.retryStatus();
+      void off.retry();
+    } };
+    scopeRetry.current = retry;
     return () => {
-      cancelled = true;
+      if (scopeRetry.current === retry) scopeRetry.current = null;
+      reader.stop();
       off();
     };
-  }, [readsReady, readIdentity, state.currentStoreId, scopeIds]);
+  }, [readsReady, readIdentity, storesLoaded, scopeIds, scopeReadKey, scopeReadEpoch]);
 
   // The directory may not have loaded yet (a cashier signs in with a PIN and
   // has no central-database account of their own). The terminal's own
@@ -1045,6 +1117,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // Falls back to the cached list when the terminal is offline. Purely
   // status-driven: a shift opened days ago stays active until it is closed.
   const [dbShift, setDbShift] = useState<Shift | null>(null);
+  const dbShiftRef = useRef(dbShift);
+  dbShiftRef.current = dbShift;
   const [shiftChecked, setShiftChecked] = useState(false);
   const [shiftReadError, setShiftReadError] = useState<string | null>(null);
   // A shift opened on this till a moment ago is trusted even if the next read
@@ -1052,13 +1126,23 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const justOpenedRef = useRef<{ shift: Shift; at: number } | null>(null);
 
   const shiftReadSequence = useRef(0);
+  const shiftMutationSequence = useRef(0);
+  const shiftReadIdentity = useRef({ identity: readIdentity, enabled: readsReady && signedIn });
+  if (shiftReadIdentity.current.identity !== readIdentity || shiftReadIdentity.current.enabled !== (readsReady && signedIn)) {
+    shiftReadIdentity.current = { identity: readIdentity, enabled: readsReady && signedIn };
+    shiftReadSequence.current++;
+    shiftMutationSequence.current++;
+  }
   const refreshActiveShift = useCallback(async () => {
     // The terminal's registered branch wins, so the read always matches the
     // branch the shift was opened against.
     const storeId =
       activeBranchId(stateRef.current.currentStoreId) ?? stateRef.current.currentStoreId;
     const request = ++shiftReadSequence.current;
-    const isCurrentRead = () => branchReadApplies(storeId,
+    const identity = shiftReadIdentity.current;
+    const generation = bootstrapGeneration.current;
+    const isCurrentRead = () => identity.enabled && identity === shiftReadIdentity.current &&
+      generation === bootstrapGeneration.current && branchReadApplies(storeId,
       activeBranchId(stateRef.current.currentStoreId) ?? stateRef.current.currentStoreId,
       request, shiftReadSequence.current);
     try {
@@ -1066,22 +1150,37 @@ export function PosProvider({ children }: { children: ReactNode }) {
       if (!isCurrentRead()) return;
       const found = shiftIsOpenForBranch(read, storeId) ? read : null;
       const fresh = justOpenedRef.current;
-      // A shift opened on this till stays open until it is closed here. A read
-      // that cannot see it yet (replica lag, offline queue) must never re-lock
-      // the register, however long ago it was opened.
-      if (!found && fresh && shiftIsOpenForBranch(fresh.shift, storeId)) {
+      let confirmed: Shift | undefined;
+      const cached = shiftIsOpenForBranch(dbShiftRef.current, storeId) ? dbShiftRef.current : fresh?.shift;
+      if (!found && shiftIsOpenForBranch(cached, storeId)) {
+        // An empty active lookup may be replica lag. Verify this exact cached
+        // row before ending a trading shift, including after a missed row hint.
+        const rows = await loadShiftsByIds([cached.id]);
+        if (!isCurrentRead()) return;
+        confirmed = rows.find(row => sameRecordId(row.id, cached.id) && sameBranchId(row.storeId, storeId));
+        if (confirmed && sameRecordId(justOpenedRef.current?.shift.id ?? "", confirmed.id) &&
+          !shiftIsOpenForBranch(confirmed, storeId)) justOpenedRef.current = null;
+      }
+      // A local open remains trusted until an explicit close is confirmed. A
+      // missing row (replica lag, offline queue) must never re-lock the register.
+      if (!found && !confirmed && fresh && shiftIsOpenForBranch(fresh.shift, storeId)) {
         setShiftReadError(null);
         setDbShift(fresh.shift);
         return;
       }
       setShiftReadError(null);
-      setDbShift(previous => hasSameValue(previous, found) ? previous : found);
+      setDbShift(previous => {
+        if (!isCurrentRead()) return previous;
+        const next = found ?? reconcileActiveShiftRows(previous, confirmed ? [confirmed] : [], storeId);
+        return hasSameValue(previous, next) ? previous : next;
+      });
       // Only a real close ends a shift. An empty read never rewrites the
       // cached shift to CLOSED — the database row stays OPEN, and marking it
       // closed locally is what used to lock a trading till after a sign-out.
-      if (found) {
-        const row = found;
+      if (found || confirmed) {
+        const row = found ?? confirmed!;
         setState((s) => {
+          if (!isCurrentRead()) return s;
           const shifts = s.shifts.some((x) => x.id === row.id)
             ? s.shifts.map((x) => (x.id === row.id ? row : x))
             : [row, ...s.shifts];
@@ -1094,7 +1193,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       // "locked" — keep the last known open shift and say we are reconnecting.
       setShiftReadError((e as Error).message || "Could not reach the central database");
       setDbShift(
-        (prev) =>
+        (prev) => !isCurrentRead() ? prev :
           (shiftIsOpenForBranch(prev, storeId) ? prev : null) ??
           (shiftIsOpenForBranch(justOpenedRef.current?.shift, storeId) ? justOpenedRef.current!.shift : null) ??
           latestOpenShiftForBranch(stateRef.current.shifts, storeId),
@@ -1131,27 +1230,32 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // Reconnect or a stale foreground snapshot gets a bounded primary refresh;
   // ordinary focus must not repeatedly download unrelated history.
   useEffect(() => {
-    if (effectiveDatabaseMode() !== "online" || !readsReady) return;
+    if (effectiveDatabaseMode() !== "online" || !snapshotRefreshReady(readsReady, loadPhase, readIdentity, snapshotIdentity)) return;
     let cancelled = false;
+    const generation = bootstrapGeneration.current;
+    const currentRead = () => !cancelled && generation === bootstrapGeneration.current;
     let loading = false;
     let resumeTimer: number | undefined;
+    const urgency = createReconnectUrgency();
     let lastResumeStarted = Date.now();
     const resume = (event?: Event) => {
       if (document.visibilityState !== "visible" || !navigator.onLine) return;
+      urgency.note(event?.type === "online" || event?.type === CONNECTIVITY_RESTORED_EVENT);
       // Focus, visibility and the native app-state event often arrive together.
       // One foreground transition needs one snapshot, not three full reads.
       if (resumeTimer) window.clearTimeout(resumeTimer);
       resumeTimer = window.setTimeout(() => {
         resumeTimer = undefined;
+        const reconnect = urgency.take();
         // Focus, visibility and native resume can arrive in separate bursts.
         // A recent or running snapshot already covers that foreground return.
-        if (loading || cancelled || Date.now() - lastResumeStarted < (event?.type === "online" || event?.type === CONNECTIVITY_RESTORED_EVENT ? 5_000 : 300_000)) return;
+        if (loading || !currentRead() || Date.now() - lastResumeStarted < (reconnect ? 5_000 : 300_000)) return;
         lastResumeStarted = Date.now();
         loading = true;
         const branch = activeBranchId(stateRef.current.currentStoreId) ?? stateRef.current.currentStoreId;
-        void loadPrimaryState(branch)
+        void refreshPrimarySnapshot(branch)
           .then((cloud) => {
-            if (!cancelled) setState((s) => applyCloud(s, cloud, pendingSalesRef.current));
+            if (currentRead()) setState((s) => currentRead() ? applyCloud(s, cloud, pendingSalesRef.current) : s);
           })
           .catch(() => {
             /* the offline gate takes over if the connection is gone */
@@ -1193,65 +1297,116 @@ export function PosProvider({ children }: { children: ReactNode }) {
       window.removeEventListener(APP_RESUME_EVENT, resume);
       if (removeNative) void removeNative();
     };
-  }, [readsReady, readIdentity, state.currentStoreId, refreshActiveShift]);
+  }, [readsReady, readIdentity, state.currentStoreId, refreshActiveShift, refreshPrimarySnapshot, loadPhase, snapshotIdentity]);
 
   // Sparse reconciliation also covers relayed/PIN sessions and missed row hints.
   // Never reset readiness: mounted tables, dialogs and checkout drafts stay intact.
   useEffect(() => {
     if (!readsReady) return;
+    const snapshotCurrent = snapshotRefreshReady(readsReady, loadPhase, readIdentity, snapshotIdentity);
     let cancelled = false;
+    const generation = bootstrapGeneration.current;
+    const currentRead = () => !cancelled && generation === bootstrapGeneration.current;
     let revision = 0;
     const refresh = createRefreshQueue(async () => {
       const started = revision;
       const branch = activeBranchId(stateRef.current.currentStoreId) ?? stateRef.current.currentStoreId;
-      const cloud = await loadPrimaryState(branch);
-      if (cancelled) return;
+      if (!snapshotCurrent || !currentRead()) return;
+      const cloud = await refreshPrimarySnapshot(branch);
+      if (!currentRead()) return;
       if (started !== revision) { void refresh.refresh(); return; }
-      setState(current => applyCloud(current, cloud, pendingSalesRef.current));
+      setState(current => currentRead() ? applyCloud(current, cloud, pendingSalesRef.current) : current);
     });
     const wake = async () => {
+      if (!snapshotCurrent || !currentRead()) return;
       // Keep the existing native worker wake; reads still come from SQL Server.
       if (effectiveDatabaseMode() !== "online")
         await Promise.resolve(localDb()?.sync?.auto?.()).catch(() => undefined);
-      if (!cancelled) void refresh.refresh();
+      if (currentRead()) void refresh.refresh();
     };
     const offCatchup = subscribeBackgroundRefresh(() => void wake(), 300_000, effectiveDatabaseMode() !== "online", effectiveDatabaseMode() !== "online");
     let timer: ReturnType<typeof setTimeout> | undefined;
     const offData = subscribeDataChange(change => {
+      if (!currentRead()) return;
       if (change.storeId && state.currentStoreId && !sameBranchId(change.storeId, state.currentStoreId)) return;
       if (!primarySnapshotReadsTable(change.table)) return;
       revision += 1;
       if (change.entityId && !["product_barcodes", "stores"].includes(change.table)) return;
       if (!["products", "product_barcodes", "members", "promotions", "shifts", "stores"].includes(change.table)) return;
+      if (!snapshotCurrent) {
+        if (deferredPrimaryRefresh.current.identity === readIdentity) deferredPrimaryRefresh.current.dirty = true;
+        return;
+      }
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => { timer = undefined; void refresh.refresh(); }, 200);
     });
+    if (snapshotCurrent && deferredPrimaryRefresh.current.identity === readIdentity && deferredPrimaryRefresh.current.dirty) {
+      deferredPrimaryRefresh.current.dirty = false;
+      void refresh.refresh();
+    }
     return () => { cancelled = true; refresh.stop(); offCatchup(); offData(); if (timer) clearTimeout(timer); };
-  }, [readsReady, readIdentity, state.currentStoreId]);
+  }, [readsReady, readIdentity, state.currentStoreId, loadPhase, snapshotIdentity, refreshPrimarySnapshot]);
 
   useEffect(() => {
     if (!readsReady) return;
     let active = true;
+    const identity = shiftReadIdentity.current;
+    const branch = activeBranchId(stateRef.current.currentStoreId) ?? stateRef.current.currentStoreId;
+    let revision = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const ids = new Set<string>();
     const off = subscribeDataChange(change => {
       if (change.table !== "shifts" || !change.entityId) return;
       ids.add(change.entityId);
+      // Retire a response as soon as a newer hint arrives, before debounce.
+      const request = ++revision;
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
-        const changed = new Set(ids); ids.clear();
+        // Retain IDs until the latest response applies: a second hint during a
+        // slow read must not discard the first shift's closure.
+        const changed = new Set(ids);
+        const mutation = shiftMutationSequence.current;
+        const generation = bootstrapGeneration.current;
+        const currentRead = () => active && identity.enabled && identity === shiftReadIdentity.current &&
+          generation === bootstrapGeneration.current && mutation === shiftMutationSequence.current && branchReadApplies(branch,
+            activeBranchId(stateRef.current.currentStoreId) ?? stateRef.current.currentStoreId,
+            request, revision);
         void loadShiftsByIds([...changed]).then(rows => {
-          if (!active) return;
+          if (!currentRead()) return;
+          for (const id of changed) ids.delete(id);
+          const opened = justOpenedRef.current?.shift;
+          const cached = dbShiftRef.current ?? opened;
+          const confirmedClose = cached && rows.some(row => sameRecordId(row.id, cached.id) &&
+            sameBranchId(row.storeId, branch) && !shiftIsOpenForBranch(row, branch));
+          if (confirmedClose) {
+            // A terminal shift never reopens after a confirmed close. Retire an
+            // older active lookup, but unrelated/OPEN hints must not cancel it.
+            shiftReadSequence.current++;
+            setShiftChecked(true);
+          }
+          if (opened && rows.some(row => sameRecordId(row.id, opened.id) &&
+            sameBranchId(row.storeId, branch) && !shiftIsOpenForBranch(row, branch)))
+            justOpenedRef.current = null;
+          setDbShift(previous => {
+            if (!currentRead()) return previous;
+            // If a shift just closed locally, an older OPEN response must not
+            // resurrect it. New remote openings use the fresh active lookup.
+            const next = shiftIsOpenForBranch(previous, branch) ? reconcileActiveShiftRows(previous, rows, branch) : previous;
+            return hasSameValue(previous, next) ? previous : next;
+          });
           setState(current => {
+            if (!currentRead()) return current;
             const byId = new Map(rows.map(row => [row.id,row]));
             const known = new Set(current.shifts.map(row=>row.id));
             return {...current,shifts:[...current.shifts.filter(row=>!changed.has(row.id)||byId.has(row.id)).map(row=>byId.get(row.id)??row),...rows.filter(row=>!known.has(row.id))]};
           });
-        }).catch(cause => { if (active) dbError("Refreshing shifts",cause); });
+          if (!shiftIsOpenForBranch(cached, branch) && rows.some(row => shiftIsOpenForBranch(row, branch)))
+            void refreshActiveShift();
+        }).catch(cause => { if (currentRead()) dbError("Refreshing shifts",cause); });
       },200);
     });
     return () => { active = false; off(); if (timer) clearTimeout(timer); };
-  }, [readsReady, readIdentity, state.currentStoreId]);
+  }, [readsReady, readIdentity, state.currentStoreId, refreshActiveShift]);
 
   // Reload only changed bookings; local payments also wake their parent balances.
   useEffect(() => {
@@ -1477,24 +1632,30 @@ export function PosProvider({ children }: { children: ReactNode }) {
 
   // Refresh shared settings after remote edits and reconnects, with polling
   // when Realtime is unavailable. Never overwrite an edit with an older read.
+  const sharedSettingsReady = snapshotRefreshReady(readsReady, loadPhase, readIdentity, snapshotIdentity);
+  const sharedSettingsReadyRef = useRef(sharedSettingsReady);
+  sharedSettingsReadyRef.current = sharedSettingsReady;
+  const sharedSettingsReader = useRef<ReturnType<typeof createSettingsStartupRefresh> | null>(null);
   useEffect(() => {
     if (!signedIn) return;
     let cancelled = false;
-    let running = false;
-    let queued = false;
-    const refresh = async () => {
-      if (running) { queued = true; return; }
+    const reader = createSettingsStartupRefresh(async canApply => {
       if (settingsWrites.current.pending) return;
-      running = true;
       const revision = settingsWrites.current.revision;
+      const generation = bootstrapGeneration.current;
       try {
         const settings = await loadCloudSettings();
         if (
           !cancelled &&
+          canApply() &&
+          sharedSettingsReadyRef.current &&
+          generation === bootstrapGeneration.current &&
           !settingsWrites.current.pending &&
           revision === settingsWrites.current.revision
         )
           setState((current) => {
+            if (!canApply() || !sharedSettingsReadyRef.current || generation !== bootstrapGeneration.current ||
+                settingsWrites.current.pending || revision !== settingsWrites.current.revision) return current;
             const next = mergeCloudSettings(settings);
             return hasSameValue(current.settings, next)
               ? current
@@ -1502,20 +1663,26 @@ export function PosProvider({ children }: { children: ReactNode }) {
           });
       } catch {
         /* Keep the last confirmed settings until a later refresh. */
-      } finally {
-        running = false;
-        if (queued && !cancelled) { queued = false; void refresh(); }
       }
-    };
-    const unsubscribe = subscribeSettingsRefresh(refresh, (change) =>
+    });
+    sharedSettingsReader.current = reader;
+    void reader.setReady(sharedSettingsReadyRef.current);
+    // Subscribe before readiness so real edits/reconnects during bootstrap are
+    // retained. A ready bootstrap alone already contains the global settings.
+    const unsubscribe = subscribeSettingsRefresh(reader.refresh, (change) =>
       ["pos_settings","pos_store_settings","settings_scoped","settings_overrides","settings_locks"].includes(change.table) ||
       ["desktop:pull-complete", "reconnect", "realtime:subscribed"].includes(change.reason),
     );
     return () => {
       cancelled = true;
+      reader.stop();
+      if (sharedSettingsReader.current === reader) sharedSettingsReader.current = null;
       unsubscribe();
     };
-  }, [signedIn]);
+  }, [signedIn, readIdentity]);
+  useEffect(() => {
+    void sharedSettingsReader.current?.setReady(sharedSettingsReady);
+  }, [sharedSettingsReady]);
 
   const activeShift = useMemo(() => {
     const branch = activeBranchId(currentStore.id) ?? currentStore.id;
@@ -1597,6 +1764,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
       try {
         // Preserve an open ticket under its original branch before changing view.
         await preserveSessionDrafts();
+        // Retire old-branch results before the binding or React view changes.
+        bootstrapGeneration.current++;
+        setSettingsSnapshotLoaded(false);
         if (!registeredBranchId) bindTerminalBranch(selectedId, location.name);
         shiftReadSequence.current += 1;
         setShiftChecked(false);
@@ -1770,6 +1940,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
       });
       setState((s) => ({ ...s, shifts: [shift, ...s.shifts] }));
       justOpenedRef.current = { shift, at: Date.now() };
+      shiftReadSequence.current++;
+      shiftMutationSequence.current++;
       setShiftReadError(null);
       setDbShift(shift);
       setShiftChecked(true);
@@ -1817,6 +1989,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
         shifts: s.shifts.map((x) => (x.id === closed.id ? closed : x)),
       }));
       justOpenedRef.current = null;
+      shiftReadSequence.current++;
+      shiftMutationSequence.current++;
       setDbShift(null);
       setShiftChecked(true);
       const transitionWritten = trackTransition({
@@ -3532,7 +3706,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
    */
   const updateSettings = useCallback(
     (patch: Partial<AppSettings>) => {
-      if (confirmedScopeKey !== JSON.stringify(scopeIdsRef.current)) {
+      if (confirmedScopeKey !== scopeReadKeyRef.current) {
         toast.error("Settings are still loading. Please wait before editing.");
         return false;
       }
@@ -3807,23 +3981,43 @@ export function PosProvider({ children }: { children: ReactNode }) {
    * because nothing has been picked yet.
    */
   const approveTransfer = useCallback(async (id: string, lines?: LineQty[]): Promise<RpcResult> => {
-    const before = stateRef.current.transfers.find((x) => x.id === id);
-    const existingFulfilment = stateRef.current.transfers.find((x) => x.sourceRequestId === id);
-    if (existingFulfilment) {
-      // A fulfilment proves a previous approval reached durable storage, but
-      // this till may still hold an awaiting snapshot. Reconcile the request
-      // before treating the retry as complete.
-      const durableRequest = await loadTransfer(id);
-      if (!durableRequest)
-        return {
-          success: false,
-          error: "The saved transfer request could not be verified. Refresh transfers and retry.",
-        };
-      setState((s) => ({
+    const epoch = sessionEpoch(), generation = bootstrapGeneration.current;
+    const operatingStoreId = stateRef.current.currentStoreId;
+    const mayContinue = () => sessionEpoch() === epoch && bootstrapGeneration.current === generation && sameBranchId(stateRef.current.currentStoreId, operatingStoreId);
+    const changedSession = (): RpcResult => ({ success: false, code: "SESSION_CHANGED", error: "The session or branch changed. Refresh the request before continuing; an approval already sent may have been saved." });
+    let before = stateRef.current.transfers.find((x) => sameRecordId(x.id, id));
+    if (!before) return { success: false, error: "Transfer is not awaiting approval." };
+    const requestedId = before.id;
+    let existingFulfilment: Transfer | undefined;
+    if (before.kind === "request") {
+      let durableRequest: Transfer | null;
+      try {
+        const central = await loadRequestApprovalState(before.id);
+        existingFulfilment = central.fulfilment ?? undefined;
+        durableRequest = central.request;
+      } catch {
+        return { success: false, error: "The saved request and fulfilment could not be verified. Refresh both records before approving it." };
+      }
+      if (!mayContinue()) return changedSession();
+      if (stateRef.current.transfers.some(row => sameRecordId(row.sourceRequestId ?? "", requestedId) &&
+          (!existingFulfilment || !sameRecordId(row.id, existingFulfilment.id))))
+        return { success: false, error: "A saved local fulfilment has not been confirmed centrally. Synchronize or refresh both records before approving this request." };
+      if (!durableRequest || durableRequest.kind !== "request" || !sameRecordId(durableRequest.id, before.id) ||
+          !sameBranchId(durableRequest.fromStoreId, before.fromStoreId) || !sameBranchId(durableRequest.toStoreId, before.toStoreId) ||
+          existingFulfilment && (existingFulfilment.kind !== "transfer" || !sameRecordId(existingFulfilment.sourceRequestId ?? "", durableRequest.id) ||
+            !sameBranchId(existingFulfilment.fromStoreId, durableRequest.fromStoreId) || !sameBranchId(existingFulfilment.toStoreId, durableRequest.toStoreId)))
+        return { success: false, error: "The saved request or fulfilment has changed. Review its branches and approval before continuing." };
+      // Lost acknowledgements and upgrades adopt durable approval/legacy IDs;
+      // they never invent another approval or override its saved quantities.
+      const savedFulfilment = existingFulfilment, savedRequest = durableRequest;
+      setState((s) => !mayContinue() || !sameBranchId(s.currentStoreId, operatingStoreId) ? s : ({
         ...s,
-        transfers: s.transfers.map((row) => (row.id === id ? durableRequest : row)),
+        transfers: [...(savedFulfilment ? [savedFulfilment] : []), ...s.transfers.filter(row => !sameRecordId(row.sourceRequestId ?? "", savedRequest.id))]
+          .map((row) => (sameRecordId(row.id, id) ? savedRequest : row)),
       }));
-      if (durableRequest.status === "approved") return { success: true };
+      before = durableRequest;
+      if (existingFulfilment) return durableRequest.status === "approved" ? { success: true } :
+        { success: false, error: "This request already has a saved fulfilment. Review both records before changing its approval." };
     }
     const repairingRequest =
       before?.kind === "request" && before.status === "approved" && !existingFulfilment;
@@ -3835,16 +4029,28 @@ export function PosProvider({ children }: { children: ReactNode }) {
           qty: item.approvedQty ?? item.qty,
         }))
       : linesFor(before, lines, (i) => i.qty);
+    // Prepare the identity before approval writes. Preserve any legacy child
+    // already linked to this request rather than creating a replacement ID.
+    let fulfilmentId: string | undefined;
+    if (before.kind === "request" && allowed.some(line => line.qty > 0)) {
+      try {
+        fulfilmentId = existingFulfilment?.id ?? await stockRequestFulfilmentId(before.id);
+      } catch {
+        return { success: false, error: "The stock-transfer identity could not be prepared. Reopen the app and refresh this request before approving it." };
+      }
+      if (!mayContinue()) return changedSession();
+    }
     if (!repairingRequest) {
       const persisted = await approveTransferInDb(id, actorRef.current, allowed);
       if (!persisted.success) return persisted;
+      if (!mayContinue()) return changedSession();
     }
 
     if (!repairingRequest)
-      setState((s) => ({
+      setState((s) => !mayContinue() || !sameBranchId(s.currentStoreId, operatingStoreId) ? s : ({
         ...s,
         transfers: s.transfers.map((x) =>
-          x.id === id
+          sameRecordId(x.id, id)
             ? {
                 ...x,
                 status: "approved",
@@ -3875,17 +4081,17 @@ export function PosProvider({ children }: { children: ReactNode }) {
           createdBy: actorRef.current,
           sourceRequestId: before.id,
           needsApproval: false,
-          forcedId: stableChildId(before.id, "8", 0),
+          forcedId: fulfilmentId,
         });
     }
-    logger.log("inventory", "Stock transfer approved", "transfers", {
+    if (!repairingRequest) logger.log("inventory", "Stock transfer approved", "transfers", {
       transferId: id,
       ref: before.ref,
       fromStoreId: before.fromStoreId,
       toStoreId: before.toStoreId,
       quantity: allowed.reduce((a, l) => a + l.qty, 0),
     });
-    trackTransition({
+    if (!repairingRequest) trackTransition({
       entity: "stock_transfer",
       entityId: id,
       from: "awaiting_approval",
@@ -3904,94 +4110,95 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const dispatchTransfer = useCallback(
     async (id: string, lines?: LineQty[]): Promise<RpcResult> => {
       const s0 = stateRef.current;
+      const epoch = sessionEpoch();
+      const generation = bootstrapGeneration.current;
       const before = s0.transfers.find((x) => x.id === id);
       if (!before || before.status !== "approved")
         return { success: false, error: "Transfer is not approved." };
       const sent = linesFor(before, lines, (i) => i.approvedQty ?? i.qty);
-      const moving = sent.filter((l) => l.qty > 0);
-      const asked = before.items.reduce((a, i) => a + i.qty, 0);
       const total = sent.reduce((a, l) => a + l.qty, 0);
-      const fulfilment: Transfer["fulfilment"] =
-        total === 0 ? "none" : total >= asked ? "full" : "partial";
-      const now = new Date().toISOString();
 
-      const persisted = await dispatchTransferInDb(id, actorRef.current, sent);
+      const persisted = await dispatchTransferInDb(id, actorRef.current, sent, before);
       if (!persisted.success) return persisted;
+      const proof = persisted.dispatch;
+      if (!proof) return { success: false, code: "TRANSFER_DISPATCH_UNCONFIRMED", error: "Refresh the transfer before retrying; dispatch was not confirmed." };
+      const mayApply = (storeId: string) => sessionEpoch() === epoch && bootstrapGeneration.current === generation && sameBranchId(storeId, s0.currentStoreId);
+      if (!mayApply(stateRef.current.currentStoreId)) return persisted;
+      const now = proof.dispatched_at;
+      const fulfilment = proof.fulfilment;
 
-      setState((s) => ({
+      setState((s) => !mayApply(s.currentStoreId) ? s : ({
         ...s,
-        products: bumpItems(
-          s.products,
-          moving,
-          before.fromStoreId,
-          -1,
-          s.settings.integrations.autoArchiveZeroStock !== false,
-        ),
+        // Only this source-root bucket is in the proof. Warehouse buckets
+        // continue to refresh through authorized sync; never subtract twice.
+        products: reconcileDispatchProducts(s.products, s0.products, proof, s.settings.integrations.autoArchiveZeroStock !== false),
         transfers: s.transfers.map((x) =>
-          x.id === id
+          x.id === id && sameBranchId(x.fromStoreId, proof.from_store_id) && sameBranchId(x.toStoreId, proof.to_store_id) && !["rejected", "cancelled"].includes(x.status)
             ? {
                 ...x,
-                status: "dispatched",
-                dispatchedBy: actorRef.current,
+                status: ["received", "completed", "completed_with_discrepancy"].includes(x.status) ? x.status : proof.status === "verified" ? "completed" : proof.status,
+                dispatchedBy: proof.dispatched_by ?? undefined,
                 dispatchedAt: now,
-                closedAt: now,
+                closedAt: x.closedAt ?? now,
                 fulfilment,
                 items: x.items.map((i) => ({
                   ...i,
-                  dispatchedQty: sent.find((l) => l.productId === i.productId)?.qty ?? 0,
+                  dispatchedQty: proof.lines.find((l) => sameRecordId(l.product_id, i.productId))?.qty ?? 0,
                 })),
-                updatedAt: now,
+                updatedAt: Date.parse(x.updatedAt) > Date.parse(now) ? x.updatedAt : now,
               }
             : x,
         ),
       }));
 
       // The request behind this transfer closes on what was actually sent.
-      if (before.sourceRequestId) {
-        const requestId = before.sourceRequestId;
-        const request = s0.transfers.find((x) => x.id === requestId);
-        const requested = request?.items.reduce((a, i) => a + i.qty, 0) ?? asked;
-        const requestFulfilment: Transfer["fulfilment"] =
-          total === 0 ? "none" : total >= requested ? "full" : "partial";
-        setState((s) => ({
+      if (proof.source_request_id && proof.request_closed) {
+        const requestId = proof.source_request_id;
+        setState((s) => !mayApply(s.currentStoreId) ? s : ({
           ...s,
           transfers: s.transfers.map((x) =>
-            x.id === requestId
+            sameRecordId(x.id, requestId) && sameBranchId(x.fromStoreId, proof.from_store_id) && sameBranchId(x.toStoreId, proof.to_store_id)
               ? {
                   ...x,
                   status: "completed",
-                  closedAt: now,
-                  fulfilment: requestFulfilment,
-                  updatedAt: now,
+                  closedAt: proof.request_closed_at ?? now,
+                  fulfilment: proof.request_fulfilment ?? "partial",
+                  updatedAt: proof.request_closed_at ?? now,
                 }
               : x,
           ),
         }));
-        await closeRequestInDb(requestId, requestFulfilment ?? "partial");
       }
-      logger.log("inventory", "Stock transfer dispatched", "transfers", {
+      if (proof.replayed) return persisted;
+      const observe = (work: () => unknown) => {
+        try { void Promise.resolve(work()).catch(() => undefined); }
+        catch { /* The database proof remains authoritative after an observer failure. */ }
+      };
+      observe(() => logger.log("inventory", "Stock transfer dispatched", "transfers", {
         transferId: id,
         ref: before.ref,
         fromStoreId: before.fromStoreId,
         toStoreId: before.toStoreId,
         quantity: total,
         fulfilment,
-      });
-      trackTransition({
+      }));
+      observe(() => trackTransition({
         entity: "stock_transfer",
         entityId: id,
         from: "approved",
         to: "dispatched",
-        actorName: actorRef.current,
+        actorName: proof.dispatched_by ?? actorRef.current,
         storeId: before.fromStoreId,
         metadata: { ref: before.ref, toStoreId: before.toStoreId, fulfilment, lines: sent },
-      });
+      }));
+      // Preserve the existing rules/legacy notification pipeline on a fresh
+      // confirmation. Replays must not send a second notification.
       const source = s0.stores.find((x) => x.id === before.fromStoreId)?.name;
-      recordActivity({
+      observe(() => recordActivity({
         type: "transfer_sent",
         title: `Transfer ${before.ref} is on its way`,
         message: `${source || "The sending branch"} dispatched ${total} unit(s) to this branch.`,
-        actorName: actorRef.current,
+        actorName: proof.dispatched_by ?? actorRef.current,
         storeId: before.toStoreId,
         entityType: "stock_transfer",
         entityId: before.id,
@@ -4001,8 +4208,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
           audience_roles: ["admin", "manager", "supervisor", "warehouse", "cashier"],
           sender_store_id: before.fromStoreId,
         },
-      });
-      return { success: true };
+      }));
+      return persisted;
     },
     [],
   );
@@ -4242,7 +4449,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
   );
 
   const value: Ctx = {
-    ready,
+    ready: dataSnapshotReady(ready, signedIn, readIdentity, snapshotIdentity),
     loadPhase,
     storesLoaded,
     locationLoadError,
@@ -4251,7 +4458,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
     settingsScope: scope,
     configuredGlobalSettings: state.settings,
     scopeIds,
-    settingsScopeLoading: !settingsSnapshotLoaded || confirmedScopeKey !== JSON.stringify(scopeIds),
+    settingsScopeLoading: !settingsSnapshotLoaded || confirmedScopeKey !== scopeReadKey,
+    settingsScopeError: scopeReadStatus?.key === scopeReadKey ? scopeReadStatus.error : null,
+    retrySettingsScope,
     settingsTerminalId,
     setSettingsTerminalId,
     sourceOfPath,

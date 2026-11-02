@@ -51,6 +51,9 @@ import { CameraScanner } from "@/platforms/web/components/pos/CameraScanner";
 import { isNativeApp } from "@/platforms/mobile/camera";
 import { nextStockRef, saveStockDraftReference } from "@/lib/stock-ref";
 import { saveRecordEditHistory, type EditGrant } from "@/lib/record-edit-flow";
+import { negativeStockCountAllowed, reviewedPhysicalCounts } from "@/lib/inventory-negative-stock";
+import { createCatalogueVisibility } from "@/lib/branch-policy";
+import { recordId } from "@/lib/sale-identity";
 import {
   STOCK_ADJUSTMENT_REASONS,
   type StockAdjustmentReason,
@@ -189,6 +192,7 @@ export function StockCountDialog({
   onChanged,
   onDiscard,
   editGrant,
+  initialProductIds = [],
 }: {
   open: boolean;
   /** A draft being resumed, or null for a fresh count. */
@@ -197,15 +201,17 @@ export function StockCountDialog({
   targetStore: Store;
   /** Set when a *posted* record was reopened under authorisation. */
   editGrant?: EditGrant | null;
+  /** Review-only suggestions. Physical counts start blank and never auto-post. */
+  initialProductIds?: readonly string[];
   onOpenChange: (open: boolean) => void;
   /** Fires whenever the record list should be refreshed. */
   onChanged: () => void;
   /** Ask the page to confirm discarding this draft. */
   onDiscard: (id: string) => void;
 }) {
-  const { state, applyStockCount } = usePos();
+  const { state, currentStore, applyStockCount } = usePos();
   const { chooseWorksheet, worksheetDialog } = useImportWorksheet(open);
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const products = state.products;
   const numbering = useMemo(
     () => state.settings.integrations.stockNumbering ?? {},
@@ -219,6 +225,14 @@ export function StockCountDialog({
   const [cameraOpen, setCameraOpen] = useState(false);
   const [scanFeedback, setScanFeedback] = useState("");
   const [rows, setRows] = useState<CountRow[]>([]);
+  const [suggestedIds, setSuggestedIds] = useState<string[]>([]);
+  const [physicalCounts, setPhysicalCounts] = useState<Record<string, string>>({});
+  const suggestedProducts = useMemo(() => {
+    const visible = createCatalogueVisibility(state.settings, state.stores, state.transfers);
+    const ids = new Set(suggestedIds.map(recordId));
+    return products.filter(product => ids.has(recordId(product.id)) && visible(product, targetStore.id));
+  }, [suggestedIds, products, state.settings, state.stores, state.transfers, targetStore.id]);
+  const suggestedPager = usePagination(suggestedProducts, 10);
   const [reason, setReason] = useState<StockAdjustmentReason | "">("");
   const [note, setNote] = useState("");
   const [errors, setErrors] = useState<string[]>([]);
@@ -269,6 +283,8 @@ export function StockCountDialog({
     setErrors([]);
     setTab("count");
     setDirty(false);
+    setSuggestedIds(draft ? [] : [...new Set(initialProductIds)]);
+    setPhysicalCounts({});
     postingAttemptRef.current =
       draft?.status === "posted" ? (editGrant?.requestId ?? crypto.randomUUID()) : null;
     if (draft) {
@@ -483,6 +499,10 @@ export function StockCountDialog({
 
   const post = async () => {
     if (postingRef.current) return;
+    if (suggestedIds.length) {
+      toast.warning("Review and enter the physical count for every suggested product first.");
+      return;
+    }
     if (!reason) {
       toast.warning("Choose a reason before posting this count.");
       return;
@@ -622,9 +642,33 @@ export function StockCountDialog({
           </DialogDescription>
         </DialogHeader>
 
+        {suggestedIds.length > 0 && <section className="space-y-3 rounded-lg border border-warning/40 p-3" aria-label="Review negative-stock physical counts">
+          <p className="text-sm font-medium">Enter the actual physical count for each product</p>
+          <p className="text-xs text-muted-foreground">These items came from {targetStore.name}'s negative-stock review. Leave no count blank. Enter 0 only if no units are physically present. Reviewing this list does not change stock.</p>
+          {suggestedProducts.length !== suggestedIds.length && <p role="alert" className="text-sm text-destructive">Some products are no longer available in this branch's catalogue. Close and restart the review before posting.</p>}
+          <Table clientDataControls={false}>
+            <TableHeader><TableRow><TableHead>Product</TableHead><TableHead className="text-right">System stock</TableHead><TableHead>Physical count</TableHead></TableRow></TableHeader>
+            <TableBody>{suggestedPager.pageItems.map(product => <TableRow key={product.id}>
+              <TableCell>{product.name}<span className="block text-xs text-muted-foreground">{product.sku}</span></TableCell>
+              <TableCell className="text-right">{stockAt(product, targetStore.id)}</TableCell>
+              <TableCell><Input type="number" min="0" step="1" inputMode="numeric" className="w-28 max-w-full" aria-label={`Physical count for ${product.name}`} value={physicalCounts[product.id] ?? ""} onChange={event => setPhysicalCounts(previous => ({ ...previous, [product.id]: event.target.value }))} /></TableCell>
+            </TableRow>)}</TableBody>
+          </Table>
+          <TablePagination {...suggestedPager} onPage={suggestedPager.setPage} onPageSize={suggestedPager.setPageSize} label="products to count" />
+          <Button type="button" disabled={suggestedProducts.length !== suggestedIds.length || !negativeStockCountAllowed(targetStore.id, currentStore.id, can("can_adjust_stock"))} onClick={() => {
+            try {
+              const entries = reviewedPhysicalCounts(suggestedProducts.map(product => product.id), physicalCounts);
+              const byId = new Map(suggestedProducts.map(product => [product.id, product]));
+              setRows(previous => mergeStockCountRows(previous, entries.map(entry => countedRow(byId.get(entry.productId)!, entry.counted))));
+              setSuggestedIds([]);
+            } catch (error) { toast.warning((error as Error).message); }
+          }}>Use reviewed counts</Button>
+          {!negativeStockCountAllowed(targetStore.id, currentStore.id, can("can_adjust_stock")) && <p role="alert" className="text-sm text-destructive">Return to this count's branch with Adjust / recount stock permission to continue.</p>}
+        </section>}
+
         {importing && <p role="status" className="rounded-lg border bg-muted/30 p-3 text-sm">Reading and validating the selected worksheet…</p>}
         {posting && <div className="space-y-2 rounded-lg border p-3"><p role="status">Posting {rows.length.toLocaleString()} counted lines. Waiting for the database to confirm the stock movements…</p><DataProgress variant="panel" labels={["Saving stock adjustment","Saving stock count draft"]} /></div>}
-        <Tabs value={tab} onValueChange={value => {if (!posting) setTab(value);}} className="space-y-4">
+        <Tabs value={tab} onValueChange={value => {if (!posting) setTab(value);}} className={suggestedIds.length ? "hidden" : "space-y-4"}>
           <TabsList>
             <TabsTrigger value="count">
               <ScanBarcode className="mr-2 size-4" /> Physical count

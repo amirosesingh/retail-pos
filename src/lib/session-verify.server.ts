@@ -25,11 +25,19 @@ export type VerifyResult = {
 };
 
 /** True when the branch exists in the central database. */
+async function readBranchExists(storeId: string): Promise<boolean | null> {
+  try {
+    const res = await serviceRest(`stores?id=eq.${encodeURIComponent(storeId)}&select=id&limit=1`, { signal: AbortSignal.timeout(8_000) });
+    if (!res.ok) return null;
+    const rows = await res.json() as unknown;
+    return Array.isArray(rows) ? rows.length > 0 : null;
+  } catch { return null; }
+}
+
 export async function branchExists(storeId: string): Promise<boolean> {
-  const res = await serviceRest(`stores?id=eq.${encodeURIComponent(storeId)}&select=id&limit=1`);
-  if (!res.ok) return true; // a read failure is a connectivity problem, not a deletion
-  const rows = (await res.json()) as unknown[];
-  return rows.length > 0;
+  // Preserve the sync caller's existing deletion contract: a failed read is
+  // never evidence that a branch was deleted. Login checks use the tri-state.
+  return (await readBranchExists(storeId)) ?? true;
 }
 
 type StaffTokenCheck =
@@ -59,24 +67,31 @@ async function verifyAccountStatus(identity: { authUserId?: string | null; staff
 async function verifyStaffAccessToken(accessToken: string): Promise<StaffTokenCheck> {
   const { supabaseConfig } = await import("./external-supabase-config");
   const config = supabaseConfig();
-  let response: Response;
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 8_000);
+  let authUserId: string;
   try {
-    response = await fetch(`${config.url}/auth/v1/user`, {
+    const response = await fetch(`${config.url}/auth/v1/user`, {
+      signal: abort.signal,
       headers: {
         apikey: config.key,
         Authorization: `Bearer ${accessToken}`,
       },
     });
+    if (!response.ok) {
+      return response.status >= 500 || response.status === 429 || response.status === 408
+        ? { state: "unavailable" }
+        : { state: "revoked" };
+    }
+    const user = await response.json() as { id?: string } | null;
+    if (!user || typeof user.id !== "string" || !user.id) return { state: "unavailable" };
+    authUserId = user.id;
   } catch {
     return { state: "unavailable" };
+  } finally {
+    clearTimeout(timer);
   }
-  if (!response.ok) {
-    return response.status >= 500 || response.status === 429
-      ? { state: "unavailable" }
-      : { state: "revoked" };
-  }
-  const user = await response.json() as { id?: string };
-  return verifyAccountStatus({ authUserId: user.id });
+  return verifyAccountStatus({ authUserId });
 }
 
 export async function verifySessionServer(input: VerifyInput): Promise<VerifyResult> {
@@ -113,8 +128,11 @@ export async function verifySessionServer(input: VerifyInput): Promise<VerifyRes
         reason: checked.state === "unavailable" ? "unavailable" : "revoked",
       };
     const storeId = input.storeId?.trim() || checked.storeId || null;
-    if (storeId && !(await branchExists(storeId)))
-      return { ok: false, reason: "branch_missing", kind: "staff", storeId };
+    if (storeId) {
+      const exists = await readBranchExists(storeId);
+      if (exists === null) return { ok: false, reason: "unavailable" };
+      if (!exists) return { ok: false, reason: "branch_missing", kind: "staff", storeId };
+    }
     return { ok: true, kind: "staff", storeId };
   }
 
@@ -132,8 +150,11 @@ export async function verifySessionServer(input: VerifyInput): Promise<VerifyRes
   }
 
   const storeId = input.storeId?.trim() || caller.storeId || null;
-  if (storeId && !(await branchExists(storeId)))
-    return { ok: false, reason: "branch_missing", kind: caller.kind, storeId };
+  if (storeId) {
+    const exists = await readBranchExists(storeId);
+    if (exists === null) return { ok: false, reason: "unavailable" };
+    if (!exists) return { ok: false, reason: "branch_missing", kind: caller.kind, storeId };
+  }
 
   return { ok: true, kind: caller.kind, storeId };
 }

@@ -102,6 +102,11 @@ async function verifySyncedPin(pool, username, pin, branchId, purpose, options =
     return { ok: false, reason: "locked", lockedUntil: new Date(lockUntil).toISOString() };
   }
   const hash = String(row.pin_hash ?? "");
+  // A roster can arrive before its independent terminal-PIN verifier. There
+  // was no credential comparison in that case, so do not consume a wrong-PIN
+  // attempt. Keep an existing lock authoritative and leave approval unchanged.
+  if (purpose === "terminal" && !hash.trim())
+    return { ok: false, reason: "missing", error: "This account's sign-in PIN is not available in local SQL yet. Connect and sync the account before signing in offline." };
   const switches = permissions(row.permissions);
   if (purpose === "approval" && switches["approval_scope:configured"] === true &&
       switches["approval_scope:all"] !== true && !Object.entries(switches).some(([key,allowed]) =>

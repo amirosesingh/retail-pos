@@ -161,7 +161,12 @@ class OperationsRepository {
       }
     }
   }
-  async apply(context, operations, scope = {}) {
+  async apply(context, operations, scope = {}, beforeCommit, beforeWrite) {
+    // This callback stays inside Main; IPC handlers pass three arguments and
+    // never accept a renderer-controlled trust flag or transaction callback.
+    if ((beforeCommit !== undefined && typeof beforeCommit !== "function") ||
+        (beforeWrite !== undefined && typeof beforeWrite !== "function"))
+      throw new Error("The transaction callback must be an internal function.");
     const ops = this.validate(operations);
     this.assertWriteScope(ops, scope);
     const sql = this.connectionManager.sql();
@@ -169,7 +174,9 @@ class OperationsRepository {
     await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
     let affected = 0;
     try {
+      if (beforeWrite) await beforeWrite(transaction, ops);
       for (const op of ops) affected += await this.applyOperation(transaction, op, scope);
+      if (beforeCommit) await beforeCommit(transaction, ops);
       await transaction.commit();
       return { ok: true, context: String(context ?? "").slice(0, 160), affected };
     } catch (error) {

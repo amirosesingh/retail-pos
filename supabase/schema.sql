@@ -13813,18 +13813,44 @@ CREATE TRIGGER sync_feed_change AFTER INSERT OR UPDATE OR DELETE ON public."issu
 
 REVOKE ALL ON FUNCTION public.sync_feed_issued_vouchers() FROM PUBLIC, anon, authenticated;
 
-CREATE OR REPLACE FUNCTION public.sync_apply_activity_events(p_rows jsonb) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
-DECLARE v_count integer; v_row jsonb;
+CREATE OR REPLACE FUNCTION public.sync_apply_activity_events(p_rows jsonb)
+RETURNS integer LANGUAGE plpgsql SECURITY INVOKER
+SET search_path = public, pg_temp AS $fn$
+DECLARE v_count integer; v_branch text := current_setting('pos.sync_branch',true);
 BEGIN
-
-
-  INSERT INTO public."activity_events" ("id","event_type","severity","title","message","actor_id","actor_name","actor_role","terminal_id","terminal_name","store_id","entity_type","entity_id","amount","meta","whatsapp_status","whatsapp_error","client_event_id","created_at","previous_state","new_state","cleared_by","branch_id")
-  SELECT "id","event_type","severity","title","message","actor_id","actor_name","actor_role","terminal_id","terminal_name","store_id","entity_type","entity_id","amount","meta","whatsapp_status","whatsapp_error","client_event_id","created_at","previous_state","new_state","cleared_by","branch_id" FROM jsonb_populate_recordset(NULL::public."activity_events", COALESCE(p_rows,'[]'::jsonb))
-  ON CONFLICT ("id") DO UPDATE SET "cleared_by"=EXCLUDED."cleared_by";
+  -- The verified native batch owns this context. Raw rows cannot select a
+  -- branch, and management/unregistered/revoked terminals gain no new path.
+  PERFORM public.pos_sync_validate_scope('default',v_branch,current_setting('pos.sync_terminal',true));
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r
+    WHERE r->>'store_id' IS DISTINCT FROM v_branch) THEN
+    RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN';
+  END IF;
+  INSERT INTO public.activity_events (
+    id,event_type,severity,title,message,actor_id,actor_name,actor_role,
+    terminal_id,terminal_name,store_id,entity_type,entity_id,amount,meta,
+    whatsapp_status,whatsapp_error,client_event_id,created_at,
+    previous_state,new_state,cleared_by,branch_id
+  )
+  SELECT id,event_type,severity,title,message,actor_id,actor_name,actor_role,
+    terminal_id,terminal_name,store_id,entity_type,entity_id,amount,meta,
+    whatsapp_status,whatsapp_error,client_event_id,created_at,
+    previous_state,new_state,cleared_by,branch_id
+  FROM jsonb_populate_recordset(NULL::public.activity_events,COALESCE(p_rows,'[]'::jsonb))
+  ON CONFLICT (id) DO UPDATE SET cleared_by=ARRAY(
+    SELECT DISTINCT value FROM unnest(COALESCE(public.activity_events.cleared_by,'{}'::text[]) ||
+      COALESCE(EXCLUDED.cleared_by,'{}'::text[])) AS acknowledged(value)
+  )
+  -- ON CONFLICT locks and checks the actual row, including a concurrent insert.
+  -- Unowned/global events keep their existing shared acknowledgement behavior;
+  -- their immutable branch and contents are never assigned to the uploader.
+  WHERE NULLIF(btrim(public.activity_events.store_id),'') IS NULL
+     OR lower(btrim(public.activity_events.store_id))=lower(btrim(v_branch));
   GET DIAGNOSTICS v_count=ROW_COUNT;
-
-
-
+  -- A filtered conflict is a refusal, not a successful partial acknowledgement.
+  -- Raising here rolls back every row, trigger side effect and batch receipt.
+  IF v_count <> jsonb_array_length(COALESCE(p_rows,'[]'::jsonb)) THEN
+    RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN';
+  END IF;
   RETURN v_count;
 END $fn$;
 
@@ -16219,7 +16245,7 @@ BEGIN PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_ter
     WHEN 'entity_status_history' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."entity_status_history" x WHERE (x.store_id::text=p_branch_id)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'nav_pins' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."nav_pins" x WHERE (true)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
     WHEN 'store_groups' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."store_groups" x WHERE (true)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page;
-    WHEN 'change_history' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."change_history" x WHERE (true)  AND (p_after_cursor IS NULL OR jsonb_build_object('id',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object('id',x."id")::text LIMIT LEAST(GREATEST(p_limit,100),2000)) page; ELSE RAISE EXCEPTION 'SYNC_TABLE_FORBIDDEN'; END CASE;
+    WHEN 'change_history' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."change_history" x WHERE (true)  AND (p_after_cursor IS NULL OR x."id">((p_after_cursor::jsonb)->>'id')::uuid) ORDER BY x."id" LIMIT LEAST(GREATEST(p_limit,100),2000)) page; ELSE RAISE EXCEPTION 'SYNC_TABLE_FORBIDDEN'; END CASE;
  RETURN jsonb_build_object('rows',v_rows,'cursor',CASE WHEN jsonb_array_length(v_rows)>=LEAST(GREATEST(p_limit,100),2000) THEN v_cursor ELSE NULL END);
 END $fn$;
 
@@ -17894,6 +17920,44 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public','pg_temp' AS $$
  AND (coalesce(trim(p_store_id),'')='' OR coalesce(a.store_id,'') IN ('',trim(p_store_id)))
  ORDER BY a.full_name
 $$;
+
+-- TRF16_LINE_PARENT_BEGIN
+-- A transfer line belongs to its original document. Older clients used
+-- colliding request/fulfilment IDs; reject reassignment instead of stealing
+-- the request's approval evidence. No existing rows or quantities are changed.
+DO $collision_guard$
+DECLARE existing_function oid := to_regprocedure('public.stock_transfer_items_preserve_parent()');
+BEGIN
+  IF existing_function IS NOT NULL AND
+     obj_description(existing_function,'pg_proc') IS DISTINCT FROM 'Retail POS TRF16 immutable transfer line parent v1' THEN
+    RAISE EXCEPTION 'Unexpected transfer line parent guard function already exists';
+  END IF;
+  IF EXISTS(SELECT 1 FROM pg_trigger t
+      WHERE t.tgrelid='public.stock_transfer_items'::regclass
+        AND t.tgname='stock_transfer_items_00_parent_identity'
+        AND (t.tgfoid IS DISTINCT FROM existing_function OR t.tgtype<>19
+          OR t.tgattr::text IS DISTINCT FROM (SELECT a.attnum::text FROM pg_attribute a
+            WHERE a.attrelid=t.tgrelid AND a.attname='transfer_id' AND NOT a.attisdropped))) THEN
+    RAISE EXCEPTION 'Unexpected transfer line parent guard trigger already exists';
+  END IF;
+END $collision_guard$;
+
+CREATE OR REPLACE FUNCTION public.stock_transfer_items_preserve_parent()
+RETURNS trigger LANGUAGE plpgsql SET search_path = '' AS $fn$
+BEGIN
+  IF NEW.transfer_id IS DISTINCT FROM OLD.transfer_id THEN
+    RAISE EXCEPTION 'TRANSFER_LINE_PARENT_IMMUTABLE' USING ERRCODE='check_violation';
+  END IF;
+  RETURN NEW;
+END $fn$;
+COMMENT ON FUNCTION public.stock_transfer_items_preserve_parent() IS 'Retail POS TRF16 immutable transfer line parent v1';
+REVOKE ALL ON FUNCTION public.stock_transfer_items_preserve_parent() FROM PUBLIC,anon,authenticated,service_role;
+
+CREATE OR REPLACE TRIGGER stock_transfer_items_00_parent_identity
+  BEFORE UPDATE OF transfer_id ON public.stock_transfer_items
+  FOR EACH ROW EXECUTE FUNCTION public.stock_transfer_items_preserve_parent();
+
+-- TRF16_LINE_PARENT_END
 
 -- Final public-schema privilege hardening
 -- This must remain after every routine definition in this canonical installer.
@@ -21499,14 +21563,21 @@ WHERE s.id=1 AND jsonb_typeof(s.notification_settings->'rules')='array'
 NOTIFY pgrst, 'reload schema';
 
 
--- supabase/migrations/20261025141638_personal_notification_acknowledgements.sql
+-- supabase/migrations/20261030234813_guard_activity_acknowledgement_branch_ownership.sql
 -- Acknowledgements are monotonic per recipient. A stale or offline snapshot
 -- must never erase another recipient's clear; event contents remain immutable.
 CREATE OR REPLACE FUNCTION public.sync_apply_activity_events(p_rows jsonb)
 RETURNS integer LANGUAGE plpgsql SECURITY INVOKER
 SET search_path = public, pg_temp AS $fn$
-DECLARE v_count integer;
+DECLARE v_count integer; v_branch text := current_setting('pos.sync_branch',true);
 BEGIN
+  -- The verified native batch owns this context. Raw rows cannot select a
+  -- branch, and management/unregistered/revoked terminals gain no new path.
+  PERFORM public.pos_sync_validate_scope('default',v_branch,current_setting('pos.sync_terminal',true));
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r
+    WHERE r->>'store_id' IS DISTINCT FROM v_branch) THEN
+    RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN';
+  END IF;
   INSERT INTO public.activity_events (
     id,event_type,severity,title,message,actor_id,actor_name,actor_role,
     terminal_id,terminal_name,store_id,entity_type,entity_id,amount,meta,
@@ -21521,8 +21592,18 @@ BEGIN
   ON CONFLICT (id) DO UPDATE SET cleared_by=ARRAY(
     SELECT DISTINCT value FROM unnest(COALESCE(public.activity_events.cleared_by,'{}'::text[]) ||
       COALESCE(EXCLUDED.cleared_by,'{}'::text[])) AS acknowledged(value)
-  );
+  )
+  -- ON CONFLICT locks and checks the actual row, including a concurrent insert.
+  -- Unowned/global events keep their existing shared acknowledgement behavior;
+  -- their immutable branch and contents are never assigned to the uploader.
+  WHERE NULLIF(btrim(public.activity_events.store_id),'') IS NULL
+     OR lower(btrim(public.activity_events.store_id))=lower(btrim(v_branch));
   GET DIAGNOSTICS v_count=ROW_COUNT;
+  -- A filtered conflict is a refusal, not a successful partial acknowledgement.
+  -- Raising here rolls back every row, trigger side effect and batch receipt.
+  IF v_count <> jsonb_array_length(COALESCE(p_rows,'[]'::jsonb)) THEN
+    RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN';
+  END IF;
   RETURN v_count;
 END $fn$;
 REVOKE ALL ON FUNCTION public.sync_apply_activity_events(jsonb) FROM PUBLIC,anon,authenticated;
@@ -22018,6 +22099,1004 @@ $fn$;
 REVOKE ALL ON FUNCTION public.shift_page_secure(text,timestamptz,timestamptz,timestamptz,uuid,integer) FROM PUBLIC,anon;
 GRANT EXECUTE ON FUNCTION public.shift_page_secure(text,timestamptz,timestamptz,timestamptz,uuid,integer) TO authenticated,service_role;
 COMMIT;
+
+-- supabase/migrations/20261029073121_add_missed_bill_historical_entry.sql
+-- Historical, already-paid sales are entered through a dedicated admin service.
+-- Do not attach them to today's drawer or bypass normal checkout/shift guards.
+BEGIN;
+CREATE TABLE IF NOT EXISTS public.missed_bill_entries (
+  id uuid PRIMARY KEY,
+  sale_id uuid NOT NULL UNIQUE REFERENCES public.sales(id),
+  store_id text NOT NULL REFERENCES public.stores(id),
+  original_reference text NOT NULL DEFAULT '',
+  occurred_at timestamptz NOT NULL,
+  original_cashier_id text NOT NULL,
+  original_shift_id uuid REFERENCES public.shifts(id),
+  stock_handling text NOT NULL CHECK(stock_handling IN ('deduct','already_corrected')),
+  stock_reason text NOT NULL,
+  reason text NOT NULL,
+  actor_id text NOT NULL,
+  terminal_id text,
+  request_value jsonb NOT NULL,
+  entered_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS missed_bill_original_reference_idx ON public.missed_bill_entries(store_id,lower(original_reference)) WHERE original_reference<>'';
+ALTER TABLE public.missed_bill_entries ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.missed_bill_entries FROM PUBLIC,anon,authenticated,service_role;
+GRANT SELECT,INSERT ON TABLE public.missed_bill_entries TO service_role;
+COMMENT ON TABLE public.missed_bill_entries IS 'Append-only historical sale provenance; original shift is attribution only, never a current drawer posting.';
+
+CREATE OR REPLACE FUNCTION public.pos_admin_add_missed_bill(p_entry jsonb,p_actor_id text,p_terminal text DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+DECLARE
+  key uuid; target text; occurred timestamptz; original_shift uuid; original_ref text;
+  actor public.app_users%ROWTYPE; cashier public.app_users%ROWTYPE; branch public.stores%ROWTYPE;
+  prior public.missed_bill_entries%ROWTYPE; receipt text; request_value jsonb;
+  item jsonb; tender jsonb; product public.products%ROWTYPE; position integer := 0;
+  qty integer; price numeric; cost numeric; reduction numeric; line_tax numeric;
+  subtotal numeric := 0; discount numeric := 0; tax numeric := 0; total numeric; received numeric := 0;
+  payments jsonb := '[]'::jsonb; payment_method text; stock_mode text; prevent_negative boolean;
+  movement_id uuid; delta_map jsonb := '{}'::jsonb; saved public.sales%ROWTYPE;
+BEGIN
+  IF current_user NOT IN ('service_role','postgres') THEN RAISE EXCEPTION 'Administrator server authorization required' USING ERRCODE='42501'; END IF;
+  SELECT * INTO actor FROM public.app_users WHERE user_id=p_actor_id AND is_active FOR SHARE;
+  IF NOT FOUND OR (actor.role::text<>'admin' AND COALESCE(actor.role_slug,'')<>'admin') THEN RAISE EXCEPTION 'Only an active administrator can add a missed bill' USING ERRCODE='42501'; END IF;
+  key := (p_entry->>'clientKey')::uuid; target := btrim(p_entry->>'storeId'); occurred := (p_entry->>'occurredAt')::timestamptz;
+  original_shift := NULLIF(p_entry->>'originalShiftId','')::uuid;
+  original_ref := btrim(COALESCE(p_entry->>'originalReference','')); stock_mode := p_entry->>'stockHandling';
+  IF key IS NULL OR NULLIF(target,'') IS NULL OR occurred IS NULL OR occurred>now()+interval '1 minute' THEN RAISE EXCEPTION 'A past sale date, branch and retry key are required'; END IF;
+  IF length(original_ref)>128 OR length(btrim(COALESCE(p_entry->>'reason','')))<3 OR length(p_entry->>'reason')>500
+    OR stock_mode NOT IN ('deduct','already_corrected') OR stock_mode IS NULL
+    OR length(btrim(COALESCE(p_entry->>'stockReason','')))<3 OR length(p_entry->>'stockReason')>500 THEN RAISE EXCEPTION 'Enter the reason and required stock-handling choice'; END IF;
+  IF NULLIF(actor.store_id,'') IS NOT NULL AND lower(actor.store_id)<>lower(target) THEN RAISE EXCEPTION 'Administrator account is assigned to another branch' USING ERRCODE='42501'; END IF;
+  IF p_terminal IS NOT NULL THEN
+    IF NOT EXISTS(SELECT 1 FROM public.terminal_tokens t WHERE t.id::text=p_terminal AND t.status IN ('active','used') AND t.revoked_at IS NULL
+      AND (t.location_id IS NULL OR lower(t.location_id)=lower(target))) THEN RAISE EXCEPTION 'Terminal branch mismatch or inactive registration' USING ERRCODE='42501'; END IF;
+  END IF;
+  SELECT * INTO branch FROM public.stores WHERE id=target AND deleted_at IS NULL AND is_active FOR SHARE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Select an active branch'; END IF;
+  request_value := jsonb_build_object('entry',p_entry,'actor',p_actor_id);
+  PERFORM pg_advisory_xact_lock(hashtextextended('missed-bill:'||key::text,0));
+  SELECT * INTO prior FROM public.missed_bill_entries WHERE id=key;
+  IF FOUND THEN
+    IF prior.request_value IS DISTINCT FROM request_value THEN RAISE EXCEPTION 'This retry key belongs to a different historical entry'; END IF;
+    SELECT * INTO saved FROM public.sales WHERE id=prior.sale_id;
+    RETURN jsonb_build_object('saleId',saved.id,'receiptNo',saved.bill_number,'sale',to_jsonb(saved),'items',
+      (SELECT COALESCE(jsonb_agg(to_jsonb(si) ORDER BY si.id),'[]'::jsonb) FROM public.sale_items si WHERE si.sale_id=saved.id));
+  END IF;
+  SELECT * INTO cashier FROM public.app_users WHERE user_id=p_entry->>'cashierId' AND is_active
+    AND (NULLIF(store_id,'') IS NULL OR lower(store_id)=lower(target)) FOR SHARE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Select an active cashier assigned to this branch or all branches'; END IF;
+  IF original_shift IS NOT NULL AND NOT EXISTS(SELECT 1 FROM public.shifts WHERE id=original_shift AND store_id=target
+    AND opened_at<=occurred AND (closed_at IS NULL OR closed_at>=occurred)) THEN RAISE EXCEPTION 'Original shift does not match the branch and sale time'; END IF;
+  IF original_ref<>'' THEN
+    PERFORM pg_advisory_xact_lock(hashtextextended('missed-reference:'||target||':'||lower(original_ref),0));
+    IF EXISTS(SELECT 1 FROM public.sales WHERE store_id=target AND lower(bill_number)=lower(original_ref))
+      OR EXISTS(SELECT 1 FROM public.missed_bill_entries WHERE store_id=target AND lower(original_reference)=lower(original_ref))
+    THEN RAISE EXCEPTION 'A bill with this original reference is already recorded; review history before adding it'; END IF;
+  END IF;
+  IF jsonb_typeof(p_entry->'items') IS DISTINCT FROM 'array' OR jsonb_array_length(p_entry->'items') NOT BETWEEN 1 AND 500
+    OR jsonb_typeof(p_entry->'payments') IS DISTINCT FROM 'array' OR jsonb_array_length(p_entry->'payments') NOT BETWEEN 1 AND 20 THEN RAISE EXCEPTION 'Add valid items and already-received payments'; END IF;
+  IF (SELECT count(*) FROM jsonb_array_elements(p_entry->'items'))<>(SELECT count(DISTINCT (value->>'productId')::uuid) FROM jsonb_array_elements(p_entry->'items')) THEN RAISE EXCEPTION 'Combine duplicate product lines'; END IF;
+  -- Lock in product order for safe simultaneous stock adjustments.
+  PERFORM 1 FROM public.products p JOIN jsonb_array_elements(p_entry->'items') x ON p.id=(x->>'productId')::uuid ORDER BY p.id FOR UPDATE OF p;
+  SELECT COALESCE((SELECT prevent_negative_stock_sale FROM public.pos_store_settings WHERE store_id=target),
+    (SELECT prevent_negative_stock_sale FROM public.pos_store_settings WHERE store_id=''),false) INTO prevent_negative;
+  FOR item IN SELECT value FROM jsonb_array_elements(p_entry->'items') LOOP
+    IF EXISTS(SELECT 1 FROM (VALUES ('quantity'),('unitPrice'),('unitCost'),('discountAmount'),('taxAmount')) f(name)
+      WHERE jsonb_typeof(item->f.name) IS DISTINCT FROM 'number' OR (item->>f.name)!~'^[0-9]+([.][0-9]+)?$') THEN RAISE EXCEPTION 'Item quantities and amounts must be finite nonnegative numbers'; END IF;
+    qty := (item->>'quantity')::integer; price := (item->>'unitPrice')::numeric; cost := (item->>'unitCost')::numeric;
+    reduction := (item->>'discountAmount')::numeric; line_tax := (item->>'taxAmount')::numeric;
+    IF qty NOT BETWEEN 1 AND 100000 OR qty::numeric<>(item->>'quantity')::numeric OR price>100000000 OR cost>100000000
+      OR reduction>price*qty OR reduction>100000000 OR line_tax>100000000
+      OR price<>round(price,2) OR cost<>round(cost,2) OR reduction<>round(reduction,2) OR line_tax<>round(line_tax,2)
+      OR (price*qty-reduction=0 AND line_tax>0)
+      THEN RAISE EXCEPTION 'Check historical quantities, prices, discount and tax'; END IF;
+    SELECT * INTO product FROM public.products WHERE id=(item->>'productId')::uuid AND deleted_at IS NULL;
+    IF NOT FOUND OR NOT public.product_available_in_catalogue(product.id,target) THEN RAISE EXCEPTION 'Product is not in this branch cluster catalogue'; END IF;
+    IF stock_mode='deduct' AND prevent_negative AND COALESCE((product.stock_by_store->>target)::numeric,0)<qty THEN RAISE EXCEPTION 'Insufficient branch stock; negative stock prevention is enabled'; END IF;
+    subtotal := subtotal+price*qty; discount := discount+reduction; tax := tax+line_tax;
+  END LOOP;
+  total := round(subtotal-discount+tax,2);
+  IF total<=0 OR total>100000000 THEN RAISE EXCEPTION 'Historical bill total must be positive and within the supported limit'; END IF;
+  FOR tender IN SELECT value FROM jsonb_array_elements(p_entry->'payments') LOOP
+    IF tender->>'method' NOT IN ('cash','card','bank_transfer','wallet') OR tender->>'method' IS NULL OR jsonb_typeof(tender->'amount') IS DISTINCT FROM 'number'
+      OR tender->>'amount'!~'^[0-9]+([.][0-9]+)?$' OR (tender->>'amount')::numeric<=0 OR (tender->>'amount')::numeric>100000000
+      OR (tender->>'amount')::numeric<>round((tender->>'amount')::numeric,2) THEN RAISE EXCEPTION 'Enter valid already-received payments'; END IF;
+    received := received+(tender->>'amount')::numeric;
+    payments := payments||jsonb_build_array(jsonb_build_object('method',tender->>'method','amount',(tender->>'amount')::numeric));
+  END LOOP;
+  IF round(received,2)<>total THEN RAISE EXCEPTION 'Already-received payments must equal the historical bill total'; END IF;
+  payment_method := CASE WHEN jsonb_array_length(payments)=1 THEN payments->0->>'method' ELSE 'split' END;
+  receipt := 'MB-'||key::text;
+  INSERT INTO public.sales(id,bill_number,store_id,cashier_id,cashier_name,subtotal_amount,discount_amount,tax_amount,total_amount,
+    paid_amount,change_amount,payment_type,payments,created_at,shift_id,client_transaction_id,created_by,updated_by,store_name_snapshot,store_address_snapshot)
+    VALUES(key,receipt,target,cashier.user_id,cashier.full_name,subtotal,discount,tax,total,total,0,payment_method,payments,occurred,NULL,
+      'missed:'||key::text,p_actor_id,p_actor_id,branch.name,branch.address) RETURNING * INTO saved;
+  FOR item IN SELECT value FROM jsonb_array_elements(p_entry->'items') LOOP
+    position := position+1; qty := (item->>'quantity')::integer; price := (item->>'unitPrice')::numeric;
+    reduction := (item->>'discountAmount')::numeric; line_tax := (item->>'taxAmount')::numeric;
+    SELECT * INTO product FROM public.products WHERE id=(item->>'productId')::uuid;
+    INSERT INTO public.sale_items(id,sale_id,branch_id,product_id,product_name,unit_price,unit_cost,quantity,discount_amount,tax_rate,created_at)
+      VALUES(md5(key::text||':item:'||position)::uuid,key,target,product.id,product.name,price,(item->>'unitCost')::numeric,qty,reduction/qty,
+        CASE WHEN price*qty-reduction>0 THEN line_tax/(price*qty-reduction) ELSE 0 END,occurred);
+    IF stock_mode='deduct' THEN
+      movement_id := md5(key::text||':stock:'||product.id::text)::uuid;
+      PERFORM public.stock_apply_delta(movement_id,product.id,target,-qty);
+      INSERT INTO public.item_activity_logs(id,product_id,store_id,activity_type,reference,quantity_delta,staff_name,note)
+        VALUES(movement_id,product.id,target,'adjustment',receipt,-qty,actor.full_name,'Historical missed bill: '||(p_entry->>'stockReason'));
+      delta_map := delta_map||jsonb_build_object(product.id::text,-qty);
+    END IF;
+  END LOOP;
+  position := 0;
+  FOR tender IN SELECT value FROM jsonb_array_elements(payments) LOOP
+    position := position+1;
+    INSERT INTO public.payment_transactions(id,source_type,sale_id,store_id,shift_id,terminal_id,amount,method,kind,reference,
+      cashier_id,cashier_name,note,paid_at,created_at,status,client_transaction_id,metadata)
+      VALUES(md5(key::text||':payment:'||position)::uuid,'sale',key,target,NULL,p_terminal,(tender->>'amount')::numeric,tender->>'method','payment',original_ref,
+        cashier.user_id,cashier.full_name,'Historical payment already received; no drawer collection',occurred,occurred,'completed','missed:'||key::text||':'||position,
+        jsonb_build_object('historicalEntry',true,'originalShiftId',original_shift,'enteredAt',now()));
+  END LOOP;
+  INSERT INTO public.missed_bill_entries(id,sale_id,store_id,original_reference,occurred_at,original_cashier_id,original_shift_id,
+    stock_handling,stock_reason,reason,actor_id,terminal_id,request_value)
+    VALUES(key,key,target,original_ref,occurred,cashier.user_id,original_shift,stock_mode,p_entry->>'stockReason',p_entry->>'reason',p_actor_id,p_terminal,request_value);
+  INSERT INTO public.record_edits(id,record_type,record_id,reference,store_id,terminal_id,action_key,edited_by,edited_by_name,
+    authorized_by,authorized_by_name,mode_used,before_value,after_value,stock_deltas,note)
+    VALUES(key,'sale',key::text,receipt,target,p_terminal,'MISSED_BILL_ADDED',p_actor_id,actor.full_name,p_actor_id,actor.full_name,'admin','{}'::jsonb,
+      jsonb_build_object('sale',to_jsonb(saved),'historicalEntry',p_entry,'enteredAt',now()),delta_map,p_entry->>'reason');
+  RETURN jsonb_build_object('saleId',saved.id,'receiptNo',saved.bill_number,'sale',to_jsonb(saved),'items',
+    (SELECT COALESCE(jsonb_agg(to_jsonb(si) ORDER BY si.id),'[]'::jsonb) FROM public.sale_items si WHERE si.sale_id=saved.id));
+END $fn$;
+REVOKE ALL ON FUNCTION public.pos_admin_add_missed_bill(jsonb,text,text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.pos_admin_add_missed_bill(jsonb,text,text) TO service_role;
+NOTIFY pgrst,'reload schema';
+COMMIT;
+
+-- Additive, service-only sign-in result contract. Existing PIN RPCs remain intact.
+-- No credentials, permissions, transactions or stock records are rewritten.
+BEGIN;
+
+CREATE OR REPLACE FUNCTION public.verify_terminal_pin_result(p_user_id text, p_pin text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'public', 'extensions', 'pg_temp'
+AS $$
+DECLARE
+  account public.app_users%rowtype;
+  terminal public.cashiers%rowtype;
+  attempt_key text;
+  state jsonb;
+  terminal_hash text;
+BEGIN
+  IF p_user_id IS NULL OR btrim(p_user_id) = '' OR p_pin IS NULL
+     OR length(p_pin) < 4 OR length(p_pin) > 32 THEN
+    RETURN jsonb_build_object('status', 'invalid_input');
+  END IF;
+  SELECT * INTO account FROM public.app_users a
+    WHERE lower(a.user_id) = lower(btrim(p_user_id))
+       OR lower(a.login_username) = lower(btrim(p_user_id))
+       OR lower(a.email) = lower(btrim(p_user_id))
+    ORDER BY (lower(a.user_id) = lower(btrim(p_user_id))) DESC, a.id LIMIT 1;
+  attempt_key := 'terminal-pin:' || lower(coalesce(account.user_id, btrim(p_user_id)));
+  PERFORM pg_advisory_xact_lock(hashtextextended(attempt_key, 0));
+  state := public.pin_throttle_status(attempt_key);
+  IF coalesce((state->>'locked')::boolean, true) THEN
+    RETURN jsonb_build_object('status', 'locked', 'locked_until', state->'locked_until');
+  END IF;
+  -- Unknown identifiers still consume the durable guessing budget. The hosted
+  -- endpoint must not expose account existence from these private statuses.
+  IF account.id IS NULL THEN
+    state := public.pin_throttle_fail(attempt_key, 5, 900, 300);
+    RETURN jsonb_build_object('status', 'invalid');
+  END IF;
+  IF account.is_active IS NOT TRUE THEN
+    RETURN jsonb_build_object('status', 'account_inactive');
+  END IF;
+  -- Same independent sign-in credential source as the local SQL verifier.
+  -- Never fall back to app_users.pin_hash, which belongs to action approval.
+  IF account.email LIKE '%@%' AND lower(account.email) NOT LIKE '%@pos-internal.local'
+     AND lower(account.email) NOT LIKE '%@pos.local' THEN
+    terminal_hash := account.offline_login_pin_hash;
+  ELSE
+    SELECT * INTO terminal FROM public.cashiers c
+      WHERE lower(c.username) = lower(account.user_id) AND c.is_active IS TRUE
+      ORDER BY c.updated_at DESC, c.id DESC LIMIT 1;
+    terminal_hash := terminal.pin_hash;
+  END IF;
+  -- pgcrypto's bf provisioner emits $2a$. Unsupported formats have not judged
+  -- this PIN and must not consume the guessing budget as an incorrect match.
+  IF coalesce(terminal_hash, '') !~ '^[$]2a[$][0-9]{2}[$][./A-Za-z0-9]{53}$' THEN
+    RETURN jsonb_build_object('status', 'credential_unavailable');
+  END IF;
+  IF terminal_hash IS DISTINCT FROM extensions.crypt(p_pin, terminal_hash) THEN
+    state := public.pin_throttle_fail(attempt_key, 5, 900, 300);
+    RETURN jsonb_build_object('status', 'invalid');
+  END IF;
+  PERFORM public.pin_throttle_reset(attempt_key);
+  UPDATE public.app_users SET last_login_at = now() WHERE id = account.id;
+  IF terminal.id IS NOT NULL THEN
+    UPDATE public.cashiers SET last_login_at = now() WHERE id = terminal.id;
+  END IF;
+  RETURN jsonb_build_object('status', 'verified', 'account', jsonb_build_object(
+    'user_id', account.user_id, 'full_name', account.full_name, 'role', account.role,
+    'store_id', account.store_id, 'email', account.email));
+END;
+$$;
+REVOKE ALL ON FUNCTION public.verify_terminal_pin_result(text,text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.verify_terminal_pin_result(text,text) TO service_role;
+NOTIFY pgrst, 'reload schema';
+COMMIT;
+
+-- Read-only performance correction for two UUID-keyed bootstrap cases only.
+-- Preserve catalogue predicates, returned JSON cursors, grants and page limits.
+-- The live minimum is 10; legacy fresh-install definitions may still use 100.
+BEGIN;
+DO $product_uuid_keyset$
+DECLARE
+  signature text := 'public.pos_sync_bootstrap_scoped(text,text,text,text,text,integer,integer)';
+  definition text;
+  original_definition text;
+  table_name text;
+  start_at integer;
+  end_at integer;
+  old_case text;
+  new_case text;
+  old_tail text := 'AND (p_after_cursor IS NULL OR jsonb_build_object(''id'',x."id")::text>p_after_cursor) ORDER BY jsonb_build_object(''id'',x."id")::text LIMIT ';
+  new_tail text := 'AND (p_after_cursor IS NULL OR x."id">((p_after_cursor::jsonb)->>''id'')::uuid) ORDER BY x."id" LIMIT ';
+BEGIN
+  SELECT pg_get_functiondef(signature::regprocedure) INTO definition;
+  original_definition := definition;
+  FOREACH table_name IN ARRAY ARRAY['products','product_barcodes'] LOOP
+    start_at := strpos(definition, format('WHEN %L THEN',table_name));
+    IF start_at = 0 THEN RAISE EXCEPTION 'Missing inspected bootstrap case: %',table_name; END IF;
+    end_at := strpos(substring(definition FROM start_at),';');
+    IF end_at = 0 THEN RAISE EXCEPTION 'Incomplete bootstrap case: %',table_name; END IF;
+    old_case := substring(definition FROM start_at FOR end_at);
+    IF strpos(old_case,format('FROM public."%s" x',table_name)) = 0
+      OR strpos(old_case,'jsonb_build_object(''id'',x."id")::text cursor') = 0
+      OR strpos(old_case,'public.product_available_in_catalogue(') = 0
+      OR (strpos(old_case,'LIMIT LEAST(GREATEST(p_limit,100),2000)') = 0
+          AND strpos(old_case,'LIMIT LEAST(GREATEST(p_limit,10),2000)') = 0)
+    THEN RAISE EXCEPTION 'Unrecognized bootstrap read contract: %',table_name; END IF;
+    IF strpos(old_case,old_tail)>0 THEN
+      new_case := replace(old_case,old_tail,new_tail);
+      definition := overlay(definition PLACING new_case FROM start_at FOR end_at);
+    ELSIF strpos(old_case,new_tail)=0 THEN
+      RAISE EXCEPTION 'Unrecognized bootstrap keyset contract: %',table_name;
+    END IF;
+  END LOOP;
+  IF definition <> original_definition THEN EXECUTE definition; END IF;
+END $product_uuid_keyset$;
+NOTIFY pgrst, 'reload schema';
+COMMIT;
+
+-- Read-policy optimization only. Preserve the existing catalogue availability
+-- predicates and all checkout, transfer, mutation and ownership helpers.
+BEGIN;
+
+CREATE OR REPLACE FUNCTION public.readable_catalogue_product_ids()
+RETURNS SETOF uuid LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $fn$
+ WITH authorized_branches AS MATERIALIZED (
+  SELECT s.id,s.group_id FROM public.stores s
+  WHERE public.user_has_store_access(s.id)
+ ), branch_privacy AS MATERIALIZED (
+  -- Resolve the legacy and scoped JSON settings once per branch, not once
+  -- per product/branch pair. Reuse the exact existing precedence semantics.
+  SELECT s.id,public.branch_catalogue_is_private(s.id) AS private
+  FROM public.stores s
+ ), cluster_count AS MATERIALIZED (
+  SELECT count(DISTINCT NULLIF(btrim(s.group_id),'')) AS total FROM public.stores s
+ ), received_catalogue AS MATERIALIZED (
+  SELECT DISTINCT i.product_id,destination.id,destination.group_id
+  FROM public.stock_transfer_items i
+  JOIN public.stock_transfers t ON t.id=i.transfer_id
+  JOIN public.stores destination ON destination.id=t.to_store_id
+  WHERE t.posted_at IS NOT NULL AND t.status IN ('completed','completed_with_discrepancy')
+    AND COALESCE(i.quantity_verified,i.quantity_received,0)>0
+ )
+ SELECT p.id FROM public.products p
+ LEFT JOIN public.stores owner ON owner.id=p.owner_store_id
+ WHERE (SELECT public.is_staff_now()) AND EXISTS (
+  SELECT 1 FROM authorized_branches target
+  WHERE p.owner_store_id=target.id
+   OR (NULLIF(btrim(owner.group_id),'') IS NOT NULL AND btrim(owner.group_id)=btrim(target.group_id))
+   OR (owner.id IS NOT NULL AND NULLIF(btrim(owner.group_id),'') IS NULL AND NULLIF(btrim(target.group_id),'') IS NULL
+       AND NOT (SELECT privacy.private FROM branch_privacy privacy WHERE privacy.id=owner.id)
+       AND NOT (SELECT privacy.private FROM branch_privacy privacy WHERE privacy.id=target.id))
+   OR EXISTS (
+    SELECT 1 FROM received_catalogue received WHERE received.product_id=p.id
+      AND (received.id=target.id OR (NULLIF(btrim(target.group_id),'') IS NOT NULL AND btrim(received.group_id)=btrim(target.group_id)))
+   )
+   OR (NULLIF(btrim(p.owner_store_id),'') IS NULL AND (
+    EXISTS (
+     SELECT 1 FROM jsonb_each_text(COALESCE(p.stock_by_store,'{}'::jsonb)) stock
+     JOIN public.stores evidence ON lower(evidence.id)=lower(stock.key)
+     WHERE (evidence.id=target.id OR (NULLIF(btrim(target.group_id),'') IS NOT NULL AND btrim(evidence.group_id)=btrim(target.group_id)))
+       AND CASE WHEN stock.value ~ '^-?[0-9]+([.][0-9]+)?$' THEN stock.value::numeric<>0 ELSE false END
+    )
+    OR (NOT (SELECT privacy.private FROM branch_privacy privacy WHERE privacy.id=target.id)
+        AND (SELECT total FROM cluster_count)<=1)
+   ))
+ )
+$fn$;
+REVOKE ALL ON FUNCTION public.readable_catalogue_product_ids() FROM PUBLIC,anon;
+GRANT EXECUTE ON FUNCTION public.readable_catalogue_product_ids() TO authenticated,service_role;
+
+-- The uncorrelated set is computed once per SELECT statement; the former
+-- product-specific function repeated the same branch/settings work per row.
+DROP POLICY IF EXISTS "Staff can read products" ON public.products;
+CREATE POLICY "Staff can read products" ON public.products FOR SELECT TO authenticated
+ USING (id IN (SELECT public.readable_catalogue_product_ids()));
+NOTIFY pgrst,'reload schema';
+COMMIT;
+
+-- Owner-approved preparation and isolated tests only; not approved for live apply.
+-- Read-only service sync optimization. Explicit branch scope is distinct from
+-- the authenticated browser's union of authorized catalogue branches.
+BEGIN;
+CREATE OR REPLACE FUNCTION public.catalogue_product_ids_for_branch(p_branch text)
+RETURNS SETOF uuid LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $fn$
+ WITH target AS MATERIALIZED (
+  SELECT s.id,s.group_id,public.branch_catalogue_is_private(s.id) AS private
+  FROM public.stores s WHERE s.id=p_branch
+ ), branch_privacy AS MATERIALIZED (
+  SELECT s.id,public.branch_catalogue_is_private(s.id) AS private FROM public.stores s
+ ), cluster_count AS MATERIALIZED (
+  SELECT count(DISTINCT NULLIF(btrim(s.group_id),'')) AS total FROM public.stores s
+ ), received_catalogue AS MATERIALIZED (
+  SELECT DISTINCT i.product_id FROM public.stock_transfer_items i
+  JOIN public.stock_transfers t ON t.id=i.transfer_id
+  JOIN public.stores destination ON destination.id=t.to_store_id
+  JOIN target ON destination.id=target.id
+    OR (NULLIF(btrim(target.group_id),'') IS NOT NULL AND btrim(destination.group_id)=btrim(target.group_id))
+  WHERE t.posted_at IS NOT NULL AND t.status IN ('completed','completed_with_discrepancy')
+    AND COALESCE(i.quantity_verified,i.quantity_received,0)>0
+ )
+ SELECT p.id FROM public.products p
+ LEFT JOIN public.stores owner ON owner.id=p.owner_store_id
+ CROSS JOIN target
+ WHERE p.owner_store_id=target.id
+  OR (NULLIF(btrim(owner.group_id),'') IS NOT NULL AND btrim(owner.group_id)=btrim(target.group_id))
+  OR (owner.id IS NOT NULL AND NULLIF(btrim(owner.group_id),'') IS NULL AND NULLIF(btrim(target.group_id),'') IS NULL
+      AND NOT (SELECT privacy.private FROM branch_privacy privacy WHERE privacy.id=owner.id)
+      AND NOT target.private)
+  OR EXISTS (SELECT 1 FROM received_catalogue received WHERE received.product_id=p.id)
+  OR (NULLIF(btrim(p.owner_store_id),'') IS NULL AND (
+   EXISTS (
+    SELECT 1 FROM jsonb_each_text(COALESCE(p.stock_by_store,'{}'::jsonb)) stock
+    JOIN public.stores evidence ON lower(evidence.id)=lower(stock.key)
+    WHERE (evidence.id=target.id OR (NULLIF(btrim(target.group_id),'') IS NOT NULL AND btrim(evidence.group_id)=btrim(target.group_id)))
+      AND CASE WHEN stock.value ~ '^-?[0-9]+([.][0-9]+)?$' THEN stock.value::numeric<>0 ELSE false END
+   )
+   OR (NOT target.private AND (SELECT total FROM cluster_count)<=1)
+  ))
+$fn$;
+REVOKE ALL ON FUNCTION public.catalogue_product_ids_for_branch(text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.catalogue_product_ids_for_branch(text) TO service_role;
+
+DO $branch_catalogue_sync_reads$
+DECLARE
+ signature text;
+ definition text;
+ before_patch text;
+ table_name text;
+ marker text;
+ start_at integer;
+ end_at integer;
+ read_case text;
+ old_predicate text;
+ new_predicate text;
+ patched_case text;
+BEGIN
+ FOREACH signature IN ARRAY ARRAY[
+  'public.pos_sync_bootstrap_scoped(text,text,text,text,text,integer,integer)',
+  'public.pos_sync_counts_scoped(text,text,text,integer)'
+ ] LOOP
+  SELECT pg_get_functiondef(signature::regprocedure) INTO definition;
+  before_patch:=definition;
+  IF strpos(definition,'public.pos_sync_validate_read_scope(')=0 THEN
+   RAISE EXCEPTION 'Expected validated read scope absent from %',signature;
+  END IF;
+  FOREACH table_name IN ARRAY ARRAY['products','product_barcodes'] LOOP
+   IF signature LIKE '%bootstrap%' THEN
+    marker:=format('WHEN %L THEN',table_name);
+   ELSE
+    marker:=format('SELECT %L::text table_name,',table_name);
+   END IF;
+   start_at:=strpos(definition,marker);
+   IF start_at=0 THEN RAISE EXCEPTION 'Missing inspected sync table % in %',table_name,signature; END IF;
+   IF signature LIKE '%bootstrap%' THEN
+    end_at:=strpos(substring(definition FROM start_at),';');
+   ELSE
+    end_at:=strpos(substring(definition FROM start_at),' UNION ALL ')-1;
+   END IF;
+   IF end_at<=0 THEN RAISE EXCEPTION 'Unknown sync table boundary % in %',table_name,signature; END IF;
+   read_case:=substring(definition FROM start_at FOR end_at);
+   IF table_name='products' THEN
+    old_predicate:='public.product_available_in_catalogue(x.id,p_branch_id)';
+    new_predicate:='x.id IN (SELECT public.catalogue_product_ids_for_branch(p_branch_id))';
+   ELSE
+    old_predicate:='EXISTS(SELECT 1 FROM public."products" p WHERE p."id"::text=x."product_id"::text AND public.product_available_in_catalogue(p.id,p_branch_id))';
+    new_predicate:='x.product_id IN (SELECT public.catalogue_product_ids_for_branch(p_branch_id))';
+   END IF;
+   IF strpos(read_case,old_predicate)>0 THEN
+    patched_case:=replace(read_case,old_predicate,new_predicate);
+    definition:=overlay(definition PLACING patched_case FROM start_at FOR end_at);
+   ELSIF strpos(read_case,new_predicate)=0 THEN
+    RAISE EXCEPTION 'Unrecognized catalogue predicate % in %',table_name,signature;
+   END IF;
+  END LOOP;
+  IF definition<>before_patch THEN EXECUTE definition; END IF;
+ END LOOP;
+END $branch_catalogue_sync_reads$;
+NOTIFY pgrst,'reload schema';
+COMMIT;
+
+-- Prepared SHIFT-14 closure acknowledgement contract
+-- SHIFT-14: acknowledge a closed shift only after its closing facts persisted.
+-- Preparation only. Applying this migration changes routines, not business rows.
+BEGIN;
+
+-- SHIFT_CLOSURE_SYNC_HELPERS_BEGIN
+CREATE OR REPLACE FUNCTION public.pos_sync_assert_shift_ownership(p_rows jsonb,p_branch_id text)
+RETURNS void LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+BEGIN
+  IF NULLIF(btrim(p_branch_id),'') IS NULL OR EXISTS (
+    SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) incoming
+    WHERE NULLIF(btrim(incoming->>'store_id'),'') IS NULL
+       OR lower(btrim(incoming->>'store_id'))<>lower(btrim(p_branch_id))
+  ) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;
+  -- A globally unique id does not authorize moving an existing shift between shops.
+  IF EXISTS (
+    SELECT 1 FROM jsonb_populate_recordset(NULL::public.shifts,COALESCE(p_rows,'[]'::jsonb)) incoming
+    JOIN public.shifts existing ON existing.id=incoming.id
+    WHERE existing.store_id IS DISTINCT FROM p_branch_id
+  ) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;
+END $fn$;
+
+CREATE OR REPLACE FUNCTION public.pos_sync_shift_closure_ack(p_rows jsonb,p_branch_id text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+DECLARE incoming public.shifts%ROWTYPE; persisted public.shifts%ROWTYPE; confirmed jsonb:='[]'::jsonb;
+BEGIN
+  -- Match the established request-boundary canonicalization, including replay.
+  SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(row_value->>'store_id'),'') IS NULL
+    OR lower(btrim(row_value->>'store_id'))=lower(btrim(p_branch_id))
+    THEN row_value||jsonb_build_object('store_id',p_branch_id) ELSE row_value END),'[]'::jsonb)
+  INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) row_value;
+  PERFORM public.pos_sync_assert_shift_ownership(p_rows,p_branch_id);
+  FOR incoming IN
+    SELECT * FROM jsonb_populate_recordset(NULL::public.shifts,COALESCE(p_rows,'[]'::jsonb)) candidate
+    WHERE upper(COALESCE(candidate.status,''))='CLOSED'
+       OR upper(COALESCE(candidate.state,''))='CLOSED' OR candidate.closed_at IS NOT NULL
+  LOOP
+    SELECT * INTO persisted FROM public.shifts WHERE id=incoming.id FOR SHARE;
+    IF NOT FOUND OR persisted.store_id IS DISTINCT FROM p_branch_id
+       OR incoming.status IS DISTINCT FROM 'CLOSED' OR incoming.state IS DISTINCT FROM 'CLOSED'
+       OR incoming.closed_at IS NULL OR incoming.row_version IS NULL OR incoming.row_version<1
+       OR persisted.status IS DISTINCT FROM 'CLOSED' OR persisted.state IS DISTINCT FROM 'CLOSED'
+       OR persisted.row_version<incoming.row_version
+       OR ROW(persisted.closed_at,persisted.closed_by_name,persisted.closed_by_staff_id,persisted.closed_by_role,
+              persisted.counted_cash,persisted.counted_card,persisted.counted_digital,
+              persisted.expected_cash,persisted.expected_card,persisted.expected_digital,
+              persisted.closing_float,persisted.variance_cash,persisted.variance_card,persisted.variance_digital,
+              persisted.variance_total,persisted.close_reason,persisted.closing_started_at,
+              persisted.closing_started_by,persisted.final_counted_cash,persisted.variance_status)
+          IS DISTINCT FROM
+          ROW(incoming.closed_at,incoming.closed_by_name,incoming.closed_by_staff_id,incoming.closed_by_role,
+              incoming.counted_cash,incoming.counted_card,incoming.counted_digital,
+              incoming.expected_cash,incoming.expected_card,incoming.expected_digital,
+              incoming.closing_float,incoming.variance_cash,incoming.variance_card,incoming.variance_digital,
+              incoming.variance_total,incoming.close_reason,incoming.closing_started_at,
+              incoming.closing_started_by,incoming.final_counted_cash,incoming.variance_status)
+    THEN RAISE EXCEPTION 'SYNC_SHIFT_CLOSURE_CONFLICT'; END IF;
+    IF EXISTS(SELECT 1 FROM jsonb_array_elements(confirmed) previous WHERE previous->>'id'=incoming.id::text)
+    THEN RAISE EXCEPTION 'SYNC_SHIFT_CLOSURE_DUPLICATE'; END IF;
+    confirmed:=confirmed||jsonb_build_array(jsonb_build_object(
+      'id',persisted.id,'store_id',persisted.store_id,'row_version',persisted.row_version));
+  END LOOP;
+  RETURN jsonb_build_object('shift_closure_ack_version',1,'shift_closures',confirmed);
+END $fn$;
+
+CREATE OR REPLACE FUNCTION public.pos_sync_aggregate_shift_closure_ack(p_operations jsonb,p_branch_id text)
+RETURNS jsonb LANGUAGE sql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+  SELECT public.pos_sync_shift_closure_ack(COALESCE(jsonb_agg(
+    CASE WHEN NULLIF(btrim(incoming->>'store_id'),'') IS NULL
+           OR lower(btrim(incoming->>'store_id'))=lower(btrim(p_branch_id))
+      THEN incoming||jsonb_build_object('store_id',p_branch_id) ELSE incoming END),'[]'::jsonb),p_branch_id)
+  FROM jsonb_array_elements(COALESCE(p_operations,'[]'::jsonb)) operation
+  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(operation->'rows','[]'::jsonb)) incoming
+  WHERE operation->>'table'='shifts'
+$fn$;
+
+REVOKE ALL ON FUNCTION public.pos_sync_assert_shift_ownership(jsonb,text) FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON FUNCTION public.pos_sync_shift_closure_ack(jsonb,text) FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON FUNCTION public.pos_sync_aggregate_shift_closure_ack(jsonb,text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.pos_sync_assert_shift_ownership(jsonb,text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.pos_sync_shift_closure_ack(jsonb,text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.pos_sync_aggregate_shift_closure_ack(jsonb,text) TO service_role;
+-- SHIFT_CLOSURE_SYNC_HELPERS_END
+
+-- Patch only the existing functions' closure checks/acknowledgements. Preserve
+-- current scope validation, privacy, product ownership and other table behavior.
+DO $migration$
+DECLARE definition text; updated text; signature regprocedure; receipt_return text;
+        acknowledgement text; routine text;
+BEGIN
+  signature:='public.sync_apply_shifts(jsonb)'::regprocedure;
+  definition:=replace(pg_get_functiondef(signature),E'\r\n',E'\n');
+  IF position('pos_sync_shift_closure_ack' in definition)=0 THEN
+    updated:=replace(definition,E'\nBEGIN\n',E'\nBEGIN\n  PERFORM public.pos_sync_assert_shift_ownership(p_rows,current_setting(''pos.sync_branch'',true));\n');
+    updated:=replace(updated,'RETURN v_count;',
+      'PERFORM public.pos_sync_shift_closure_ack(p_rows,current_setting(''pos.sync_branch'',true)); RETURN v_count;');
+    updated:=replace(updated,'WHERE EXCLUDED."row_version">public."shifts"."row_version"',
+      'WHERE EXCLUDED."row_version">public."shifts"."row_version" AND EXCLUDED."store_id"=public."shifts"."store_id"');
+    IF updated=definition OR position('pos_sync_assert_shift_ownership' in updated)=0
+       OR position('pos_sync_shift_closure_ack' in updated)=0
+       OR position('AND EXCLUDED."store_id"=public."shifts"."store_id"' in updated)=0
+    THEN RAISE EXCEPTION 'Could not install shift closure postcondition'; END IF;
+    EXECUTE updated;
+  END IF;
+
+  FOREACH routine IN ARRAY ARRAY['pos_sync_push_batch','pos_sync_push_aggregate'] LOOP
+    signature:=CASE routine WHEN 'pos_sync_push_batch'
+      THEN 'public.pos_sync_push_batch(uuid,text,text,text,text,jsonb,jsonb)'::regprocedure
+      ELSE 'public.pos_sync_push_aggregate(uuid,text,text,text,jsonb)'::regprocedure END;
+    definition:=replace(pg_get_functiondef(signature),E'\r\n',E'\n');
+    CONTINUE WHEN position('shift_closure_ack' in definition)>0;
+    acknowledgement:=CASE routine WHEN 'pos_sync_push_batch'
+      THEN 'CASE WHEN p_table=''shifts'' THEN public.pos_sync_shift_closure_ack(p_rows,p_branch_id) ELSE ''{}''::jsonb END'
+      ELSE 'public.pos_sync_aggregate_shift_closure_ack(p_operations,p_branch_id)' END;
+    receipt_return:='RETURN jsonb_build_object(''ok'',true,''replayed'',true,''batch_id'',p_batch_id);';
+    updated:=replace(definition,receipt_return,
+      'RETURN jsonb_build_object(''ok'',true,''replayed'',true,''batch_id'',p_batch_id)||'||acknowledgement||';');
+    IF updated=definition THEN RAISE EXCEPTION 'Could not guard replay acknowledgement in %',routine; END IF;
+    definition:=updated;
+    updated:=replace(definition,
+      CASE routine WHEN 'pos_sync_push_batch' THEN 'RETURN jsonb_build_object(''ok'',true,''applied'',v_count,''batch_id'',p_batch_id);'
+      ELSE 'RETURN jsonb_build_object(''ok'',true,''applied'',v_total,''batch_id'',p_batch_id);' END,
+      CASE routine WHEN 'pos_sync_push_batch' THEN 'RETURN jsonb_build_object(''ok'',true,''applied'',v_count,''batch_id'',p_batch_id)||'
+      ELSE 'RETURN jsonb_build_object(''ok'',true,''applied'',v_total,''batch_id'',p_batch_id)||' END||acknowledgement||';');
+    IF updated=definition THEN RAISE EXCEPTION 'Could not guard new acknowledgement in %',routine; END IF;
+    EXECUTE updated;
+  END LOOP;
+END $migration$;
+
+COMMIT;
+
+-- Shift closure proof v2 — independent local/cloud revisions
+-- Shift closure proof v2: PostgreSQL revision triggers advance OLD+1, while a
+-- disconnected till can accumulate several local revisions. Keep these clocks
+-- separate and bind the proof to the exact requested snapshot instead.
+-- This changes one service-only read/validation helper; no stored rows or global
+-- row-version triggers are rewritten. Exact closing facts remain mandatory.
+BEGIN;
+-- SHIFT_CLOSURE_SYNC_PROOF_V2_BEGIN
+CREATE OR REPLACE FUNCTION public.pos_sync_shift_closure_ack(p_rows jsonb,p_branch_id text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+DECLARE incoming public.shifts%ROWTYPE; persisted public.shifts%ROWTYPE; confirmed jsonb:='[]'::jsonb;
+BEGIN
+  -- Match the established request-boundary canonicalization, including replay.
+  SELECT COALESCE(jsonb_agg(CASE WHEN NULLIF(btrim(row_value->>'store_id'),'') IS NULL
+    OR lower(btrim(row_value->>'store_id'))=lower(btrim(p_branch_id))
+    THEN row_value||jsonb_build_object('store_id',p_branch_id) ELSE row_value END),'[]'::jsonb)
+  INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) row_value;
+  PERFORM public.pos_sync_assert_shift_ownership(p_rows,p_branch_id);
+  FOR incoming IN
+    SELECT * FROM jsonb_populate_recordset(NULL::public.shifts,COALESCE(p_rows,'[]'::jsonb)) candidate
+    WHERE upper(COALESCE(candidate.status,''))='CLOSED'
+       OR upper(COALESCE(candidate.state,''))='CLOSED' OR candidate.closed_at IS NOT NULL
+  LOOP
+    SELECT * INTO persisted FROM public.shifts WHERE id=incoming.id FOR SHARE;
+    IF NOT FOUND OR persisted.store_id IS DISTINCT FROM p_branch_id
+       OR incoming.status IS DISTINCT FROM 'CLOSED' OR incoming.state IS DISTINCT FROM 'CLOSED'
+       OR incoming.closed_at IS NULL OR incoming.row_version IS NULL OR incoming.row_version<1
+       OR persisted.status IS DISTINCT FROM 'CLOSED' OR persisted.state IS DISTINCT FROM 'CLOSED'
+       OR persisted.row_version IS NULL OR persisted.row_version<1
+       OR ROW(persisted.closed_at,persisted.closed_by_name,persisted.closed_by_staff_id,persisted.closed_by_role,
+              persisted.counted_cash,persisted.counted_card,persisted.counted_digital,
+              persisted.expected_cash,persisted.expected_card,persisted.expected_digital,
+              persisted.closing_float,persisted.variance_cash,persisted.variance_card,persisted.variance_digital,
+              persisted.variance_total,persisted.close_reason,persisted.closing_started_at,
+              persisted.closing_started_by,persisted.final_counted_cash,persisted.variance_status)
+          IS DISTINCT FROM
+          ROW(incoming.closed_at,incoming.closed_by_name,incoming.closed_by_staff_id,incoming.closed_by_role,
+              incoming.counted_cash,incoming.counted_card,incoming.counted_digital,
+              incoming.expected_cash,incoming.expected_card,incoming.expected_digital,
+              incoming.closing_float,incoming.variance_cash,incoming.variance_card,incoming.variance_digital,
+              incoming.variance_total,incoming.close_reason,incoming.closing_started_at,
+              incoming.closing_started_by,incoming.final_counted_cash,incoming.variance_status)
+    THEN RAISE EXCEPTION 'SYNC_SHIFT_CLOSURE_CONFLICT'; END IF;
+    IF EXISTS(SELECT 1 FROM jsonb_array_elements(confirmed) previous WHERE previous->>'id'=incoming.id::text)
+    THEN RAISE EXCEPTION 'SYNC_SHIFT_CLOSURE_DUPLICATE'; END IF;
+    confirmed:=confirmed||jsonb_build_array(jsonb_build_object(
+      'id',persisted.id,'store_id',persisted.store_id,'row_version',persisted.row_version,'requested_row_version',incoming.row_version));
+  END LOOP;
+  RETURN jsonb_build_object('shift_closure_ack_version',2,'shift_closures',confirmed);
+END $fn$;
+-- SHIFT_CLOSURE_SYNC_PROOF_V2_END
+REVOKE ALL ON FUNCTION public.pos_sync_shift_closure_ack(jsonb,text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.pos_sync_shift_closure_ack(jsonb,text) TO service_role;
+COMMIT;
+
+-- TRF15_ATOMIC_DISPATCH_BEGIN
+-- Preparation only: applying this migration requires separate exact-project approval.
+-- Preserve the installed warehouse picker; add atomic request completion and a
+-- service-only verified native actor, without changing JWT permission helpers.
+DO $line_parent_constraint$
+BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint k
+   WHERE k.conrelid='public.stock_transfer_items'::regclass AND k.confrelid='public.stock_transfers'::regclass
+     AND k.contype='f' AND k.convalidated AND NOT k.condeferrable
+     AND k.conkey=ARRAY[(SELECT attnum FROM pg_attribute WHERE attrelid=k.conrelid AND attname='transfer_id')]::smallint[]
+     AND k.confkey=ARRAY[(SELECT attnum FROM pg_attribute WHERE attrelid=k.confrelid AND attname='id')]::smallint[]) THEN
+   RAISE EXCEPTION 'Validated transfer line parent constraint required';
+ END IF;
+END $line_parent_constraint$;
+
+-- Existing sync_idempotency_receipts belongs to table-upload batches, not
+-- transfer RPC intent. Keep this minimal proof private and outside replication.
+DO $receipt_shape$
+DECLARE object_id oid := to_regclass('private.transfer_dispatch_receipts');
+BEGIN
+ IF object_id IS NOT NULL AND (
+   NOT EXISTS(SELECT 1 FROM pg_class WHERE oid=object_id AND relkind='r' AND relowner=(SELECT oid FROM pg_roles WHERE rolname=current_user))
+   OR obj_description(object_id,'pg_class') IS DISTINCT FROM 'Retail POS TRF15 dispatch intent v1'
+   OR (SELECT count(*) FROM pg_attribute WHERE attrelid=object_id AND attnum>0 AND NOT attisdropped)<>6
+   OR EXISTS(SELECT 1 FROM (VALUES('transfer_id','uuid'),('intent','jsonb'),('actor_id','uuid'),
+     ('actor_name','text'),('dispatched_at','timestamp with time zone'),('created_at','timestamp with time zone')) expected(name,type)
+     LEFT JOIN pg_attribute a ON a.attrelid=object_id AND a.attname=expected.name AND a.attnum>0 AND NOT a.attisdropped
+     WHERE a.attname IS NULL OR NOT a.attnotnull OR format_type(a.atttypid,a.atttypmod)<>expected.type)
+   OR NOT EXISTS(SELECT 1 FROM pg_attrdef d JOIN pg_attribute a ON a.attrelid=d.adrelid AND a.attnum=d.adnum
+      WHERE d.adrelid=object_id AND a.attname='created_at' AND pg_get_expr(d.adbin,d.adrelid)='now()')
+   OR NOT EXISTS(SELECT 1 FROM pg_constraint k WHERE k.conrelid=object_id AND k.contype='p'
+     AND k.conkey=ARRAY[(SELECT attnum FROM pg_attribute WHERE attrelid=object_id AND attname='transfer_id')]::smallint[])
+ ) THEN RAISE EXCEPTION 'Unrecognized existing dispatch proof table'; END IF;
+END $receipt_shape$;
+CREATE TABLE IF NOT EXISTS private.transfer_dispatch_receipts(
+ transfer_id uuid PRIMARY KEY,
+ intent jsonb NOT NULL,
+ actor_id uuid NOT NULL,
+ actor_name text NOT NULL,
+ dispatched_at timestamptz NOT NULL,
+ created_at timestamptz NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE private.transfer_dispatch_receipts IS 'Retail POS TRF15 dispatch intent v1';
+ALTER TABLE private.transfer_dispatch_receipts ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON private.transfer_dispatch_receipts FROM PUBLIC,anon,authenticated,service_role;
+CREATE OR REPLACE FUNCTION private.transfer_dispatch_receipt_immutable()
+RETURNS trigger LANGUAGE plpgsql SET search_path = '' AS $fn$
+BEGIN RAISE EXCEPTION 'Dispatch receipts are append-only' USING ERRCODE='insufficient_privilege'; END $fn$;
+REVOKE ALL ON FUNCTION private.transfer_dispatch_receipt_immutable() FROM PUBLIC,anon,authenticated,service_role;
+DROP TRIGGER IF EXISTS transfer_dispatch_receipt_immutable ON private.transfer_dispatch_receipts;
+CREATE TRIGGER transfer_dispatch_receipt_immutable BEFORE UPDATE OR DELETE ON private.transfer_dispatch_receipts
+ FOR EACH ROW EXECUTE FUNCTION private.transfer_dispatch_receipt_immutable();
+
+CREATE OR REPLACE FUNCTION private.transfer_dispatch_intent(p_transfer_id uuid)
+RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $fn$
+ SELECT jsonb_build_object('transfer_id',c.id,'kind',c.kind,'from_store_id',c.from_store_id,'to_store_id',c.to_store_id,
+   'source_request_id',c.source_request_id,'approved_by',c.approved_by,'approved_at',c.approved_at,
+   'dispatched_by',c.dispatched_by,'dispatched_at',c.dispatched_at,
+   'lines',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',i.id,'product_id',i.product_id,'quantity',i.quantity,
+     'quantity_approved',i.quantity_approved,'quantity_dispatched',i.quantity_dispatched) ORDER BY i.id)
+     FROM public.stock_transfer_items i WHERE i.transfer_id=c.id),'[]'::jsonb),
+   'request',CASE WHEN r.id IS NULL THEN NULL ELSE jsonb_build_object('id',r.id,'kind',r.kind,
+     'from_store_id',r.from_store_id,'to_store_id',r.to_store_id,
+     'lines',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',i.id,'product_id',i.product_id,'quantity',i.quantity,
+       'quantity_approved',i.quantity_approved) ORDER BY i.id)
+       FROM public.stock_transfer_items i WHERE i.transfer_id=r.id),'[]'::jsonb)) END)
+ FROM public.stock_transfers c LEFT JOIN public.stock_transfers r ON r.id=c.source_request_id WHERE c.id=p_transfer_id
+$fn$;
+REVOKE ALL ON FUNCTION private.transfer_dispatch_intent(uuid) FROM PUBLIC,anon,authenticated,service_role;
+
+CREATE OR REPLACE FUNCTION private.native_transfer_dispatcher(p_transfer_id uuid)
+RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $fn$
+ SELECT a.id FROM public.app_users a
+ WHERE auth.role()='service_role'
+   AND current_setting('pos.native_dispatch_transfer',true)=p_transfer_id::text
+   AND a.user_id=current_setting('pos.native_dispatch_staff',true)
+   AND a.is_active
+   AND (a.role::text='admin' OR COALESCE(a.role_slug,'')='admin'
+        OR (a.permissions->'can_create_transfer'='true'::jsonb
+          AND EXISTS(SELECT 1 FROM unnest(ARRAY['requests','transfers','approvals','verifications']) page
+            WHERE a.permissions->('page:'||page) IS DISTINCT FROM 'false'::jsonb)))
+ LIMIT 1
+$fn$;
+REVOKE ALL ON FUNCTION private.native_transfer_dispatcher(uuid) FROM PUBLIC,anon,authenticated,service_role;
+
+-- Copy rather than rewrite the existing picking transaction. Abort on an
+-- unrecognized installed implementation; never silently replace later changes.
+DO $preserve_picker$
+DECLARE definition text;
+ guard text := 'IF NOT public.is_staff(auth.uid()) THEN RAISE EXCEPTION ''Only staff can dispatch a transfer''; END IF;';
+ replacement text := 'IF NOT public.is_staff(auth.uid()) AND private.native_transfer_dispatcher(p_transfer_id) IS NULL THEN RAISE EXCEPTION ''Only staff can dispatch a transfer''; END IF;';
+BEGIN
+ IF to_regprocedure('private.stock_transfer_dispatch_stock_only(uuid,text,jsonb)') IS NULL THEN
+   SELECT pg_get_functiondef('private.stock_transfer_dispatch(uuid,text,jsonb)'::regprocedure) INTO definition;
+   IF position(guard IN definition)=0
+      OR position('Short by % of % at the sending warehouse' IN definition)=0
+      OR position('quantity_dispatched=v_qty' IN definition)=0
+      OR position('stock_quantity=GREATEST(stock_quantity-v_qty,0)' IN definition)=0 THEN
+     RAISE EXCEPTION 'Expected installed warehouse dispatch implementation not found';
+   END IF;
+   definition := replace(definition,'FUNCTION private.stock_transfer_dispatch(', 'FUNCTION private.stock_transfer_dispatch_stock_only(');
+   EXECUTE replace(definition,guard,replacement);
+ ELSE
+   SELECT pg_get_functiondef('private.stock_transfer_dispatch_stock_only(uuid,text,jsonb)'::regprocedure) INTO definition;
+   IF position(replacement IN definition)=0 THEN RAISE EXCEPTION 'Unexpected preserved warehouse picker'; END IF;
+ END IF;
+END $preserve_picker$;
+REVOKE ALL ON FUNCTION private.stock_transfer_dispatch_stock_only(uuid,text,jsonb) FROM PUBLIC,anon,authenticated,service_role;
+
+-- Validate the existing one-request/one-fulfilment document relationship. The
+-- request retains original quantities; partial and zero sends close it as before.
+CREATE OR REPLACE FUNCTION private.transfer_dispatch_request_valid(p_child uuid,p_request uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $fn$
+ SELECT EXISTS(
+   SELECT 1 FROM public.stock_transfers c JOIN public.stock_transfers r ON r.id=c.source_request_id
+   WHERE c.id=p_child AND r.id=p_request AND c.id<>r.id
+     AND c.kind='transfer' AND r.kind='request'
+     AND c.from_store_id=r.from_store_id AND c.to_store_id=r.to_store_id
+     AND NOT EXISTS(
+       SELECT 1 FROM (SELECT i.product_id,SUM(i.quantity) quantity
+         FROM public.stock_transfer_items i WHERE i.transfer_id=c.id GROUP BY i.product_id) ci
+       LEFT JOIN (SELECT i.product_id,SUM(COALESCE(i.quantity_approved,i.quantity)) quantity
+         FROM public.stock_transfer_items i WHERE i.transfer_id=r.id GROUP BY i.product_id) ri
+         ON ri.product_id=ci.product_id
+       WHERE ri.product_id IS NULL OR ci.quantity>ri.quantity OR ci.quantity<0)
+     AND EXISTS(SELECT 1 FROM public.stock_transfer_items WHERE transfer_id=c.id)
+     AND NOT EXISTS(SELECT 1 FROM public.stock_transfers other
+       WHERE other.source_request_id=r.id AND other.id<>c.id AND other.dispatched_at IS NOT NULL
+         AND other.status NOT IN('cancelled','rejected'))
+ )
+$fn$;
+REVOKE ALL ON FUNCTION private.transfer_dispatch_request_valid(uuid,uuid) FROM PUBLIC,anon,authenticated,service_role;
+
+-- This exception is bound to a proven, already dispatched child in this exact
+-- transaction. It does not allow arbitrary approved documents to complete.
+CREATE OR REPLACE FUNCTION private.transfer_dispatch_completes_request(p_old public.stock_transfers,p_new public.stock_transfers)
+RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $fn$
+DECLARE c public.stock_transfers; asked bigint; sent bigint; expected text;
+BEGIN
+ IF p_old.kind<>'request' OR p_new.kind<>'request' OR p_old.status<>'approved' OR p_new.status<>'completed'
+    OR p_old.id IS DISTINCT FROM p_new.id
+    OR current_setting('pos.dispatch_request',true) IS DISTINCT FROM p_old.id::text
+    OR NULLIF(current_setting('pos.dispatch_child',true),'') IS NULL
+    OR (to_jsonb(p_new)-ARRAY['status','closed_at','fulfilment','updated_at','row_version'])
+       IS DISTINCT FROM (to_jsonb(p_old)-ARRAY['status','closed_at','fulfilment','updated_at','row_version']) THEN
+   RETURN false;
+ END IF;
+ SELECT * INTO c FROM public.stock_transfers WHERE id::text=current_setting('pos.dispatch_child',true);
+ IF NOT FOUND OR c.status NOT IN('dispatched','received','verified','completed','completed_with_discrepancy')
+    OR c.dispatched_at IS NULL OR p_new.closed_at IS DISTINCT FROM c.dispatched_at
+    OR NOT private.transfer_dispatch_request_valid(c.id,p_old.id)
+    OR NOT ((public.has_perm('can_create_transfer') AND public.user_has_store_access(c.from_store_id))
+            OR private.native_transfer_dispatcher(c.id) IS NOT NULL) THEN RETURN false; END IF;
+ SELECT COALESCE(SUM(quantity),0) INTO asked FROM public.stock_transfer_items WHERE transfer_id=p_old.id;
+ SELECT COALESCE(SUM(COALESCE(quantity_dispatched,0)),0) INTO sent FROM public.stock_transfer_items WHERE transfer_id=c.id;
+ expected := CASE WHEN sent=0 THEN 'none' WHEN sent>=asked THEN 'full' ELSE 'partial' END;
+ RETURN p_new.fulfilment IS NOT DISTINCT FROM expected;
+END $fn$;
+REVOKE ALL ON FUNCTION private.transfer_dispatch_completes_request(public.stock_transfers,public.stock_transfers) FROM PUBLIC,anon,authenticated,service_role;
+
+DO $request_lifecycle$
+DECLARE definition text; anchor text := '  IF OLD.status = NEW.status THEN RETURN NEW; END IF;';
+ addition text := '
+  IF private.transfer_dispatch_completes_request(OLD,NEW) THEN RETURN NEW; END IF;
+';
+BEGIN
+ SELECT pg_get_functiondef('public.stock_transfers_enforce_lifecycle()'::regprocedure) INTO definition;
+ IF position('private.transfer_dispatch_completes_request(OLD,NEW)' IN definition)=0 THEN
+   IF position(anchor IN definition)=0 THEN
+     anchor := '  IF OLD.status = NEW.status THEN
+    RETURN NEW;
+  END IF;';
+   END IF;
+   IF position(anchor IN definition)=0 THEN RAISE EXCEPTION 'Expected transfer lifecycle guard not found'; END IF;
+   EXECUTE replace(definition,anchor,addition||anchor);
+ END IF;
+END $request_lifecycle$;
+
+-- Attribute only this proven paperwork completion to the saved dispatcher.
+-- It is not physical goods verification; verified_by remains untouched.
+DO $request_history$
+DECLARE definition text; anchor text := 'WHEN ''completed'' THEN NEW.verified_by';
+ replacement text := 'WHEN ''completed'' THEN CASE WHEN TG_OP=''UPDATE'' AND NEW.kind=''request''
+   AND private.transfer_dispatch_completes_request(OLD,NEW) THEN
+     (SELECT child.dispatched_by FROM public.stock_transfers child
+      WHERE child.id::text=current_setting(''pos.dispatch_child'',true))
+   ELSE NEW.verified_by END';
+BEGIN
+ SELECT pg_get_functiondef('public.record_stock_transfer_status_history()'::regprocedure) INTO definition;
+ IF position('private.transfer_dispatch_completes_request(OLD,NEW)' IN definition)=0 THEN
+   IF position(anchor IN definition)=0 THEN RAISE EXCEPTION 'Expected transfer history attribution not found'; END IF;
+   EXECUTE replace(definition,anchor,replacement);
+ END IF;
+END $request_history$;
+
+CREATE OR REPLACE FUNCTION private.stock_transfer_dispatch_atomic_core(p_transfer_id uuid,p_dispatched_by text,p_lines jsonb,p_strict_lines boolean DEFAULT false)
+RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $fn$
+DECLARE c public.stock_transfers; r public.stock_transfers; request_id uuid; actor text; actor_id uuid;
+ receipt private.transfer_dispatch_receipts;
+ replayed boolean; asked bigint; sent bigint; expected text;
+ previous_request text := current_setting('pos.dispatch_request',true);
+ previous_child text := current_setting('pos.dispatch_child',true);
+BEGIN
+ IF NOT public.is_staff(auth.uid()) AND private.native_transfer_dispatcher(p_transfer_id) IS NULL THEN
+   RAISE EXCEPTION 'Active dispatch staff required' USING ERRCODE='insufficient_privilege';
+ END IF;
+ -- Parent first serializes competing fulfilments without locking every sibling.
+ SELECT source_request_id INTO request_id FROM public.stock_transfers WHERE id=p_transfer_id;
+ IF NOT FOUND THEN RAISE EXCEPTION 'TRANSFER_NOT_FOUND_OR_UNAVAILABLE'; END IF;
+ IF request_id IS NOT NULL THEN
+   SELECT * INTO r FROM public.stock_transfers WHERE id=request_id FOR UPDATE;
+   IF NOT FOUND THEN RAISE EXCEPTION 'TRANSFER_REQUEST_INVALID' USING ERRCODE='check_violation'; END IF;
+ END IF;
+ SELECT * INTO c FROM public.stock_transfers WHERE id=p_transfer_id FOR UPDATE;
+ IF NOT FOUND OR c.kind<>'transfer' OR c.source_request_id IS DISTINCT FROM request_id THEN
+   RAISE EXCEPTION 'TRANSFER_REQUEST_INVALID' USING ERRCODE='check_violation';
+ END IF;
+ PERFORM i.id FROM public.stock_transfer_items i
+   WHERE i.transfer_id=c.id OR i.transfer_id=request_id
+   ORDER BY i.transfer_id,i.product_id,i.id FOR UPDATE;
+ IF private.native_transfer_dispatcher(c.id) IS NOT NULL THEN
+   IF current_setting('pos.native_dispatch_branch',true) IS DISTINCT FROM c.from_store_id THEN
+     RAISE EXCEPTION 'You cannot dispatch transfers for this sending location' USING ERRCODE='insufficient_privilege';
+   END IF;
+ ELSIF NOT public.has_perm('can_create_transfer') OR NOT public.user_has_store_access(c.from_store_id) THEN
+   RAISE EXCEPTION 'You cannot dispatch transfers for this sending location' USING ERRCODE='insufficient_privilege';
+ END IF;
+ IF request_id IS NOT NULL AND NOT private.transfer_dispatch_request_valid(c.id,r.id) THEN
+   RAISE EXCEPTION 'TRANSFER_REQUEST_INVALID' USING ERRCODE='check_violation';
+ END IF;
+ IF p_strict_lines AND jsonb_typeof(p_lines)='array' THEN
+   SELECT COALESCE(jsonb_agg(l||jsonb_build_object('product_id',lower(l->>'product_id'))),'[]'::jsonb)
+    INTO p_lines FROM jsonb_array_elements(p_lines) l;
+ END IF;
+ IF EXISTS(SELECT 1 FROM public.stock_transfer_items WHERE transfer_id=c.id GROUP BY product_id HAVING COUNT(*)>1)
+    OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_lines,'[]'::jsonb)) l GROUP BY l->>'product_id' HAVING COUNT(*)>1) THEN
+   RAISE EXCEPTION 'TRANSFER_DISPATCH_CONFLICT' USING ERRCODE='check_violation';
+ END IF;
+ IF p_strict_lines AND (
+   jsonb_typeof(p_lines) IS DISTINCT FROM 'array'
+   OR jsonb_array_length(p_lines)<>(SELECT COUNT(*) FROM public.stock_transfer_items WHERE transfer_id=c.id)
+   OR EXISTS(SELECT 1 FROM public.stock_transfer_items i WHERE i.transfer_id=c.id AND NOT EXISTS(
+     SELECT 1 FROM jsonb_array_elements(p_lines) l WHERE l->>'product_id'=i.product_id::text
+       AND jsonb_typeof(l->'qty')='number' AND (l->>'qty')::numeric=trunc((l->>'qty')::numeric)
+       AND (l->>'qty')::numeric BETWEEN 0 AND COALESCE(i.quantity_approved,i.quantity)))
+ ) THEN RAISE EXCEPTION 'TRANSFER_DISPATCH_CONFLICT' USING ERRCODE='check_violation'; END IF;
+ SELECT * INTO receipt FROM private.transfer_dispatch_receipts WHERE transfer_id=c.id;
+ replayed := c.dispatched_at IS NOT NULL;
+ IF replayed THEN
+   IF receipt.transfer_id IS NULL OR receipt.intent IS DISTINCT FROM private.transfer_dispatch_intent(c.id) THEN
+     RAISE EXCEPTION 'TRANSFER_DISPATCH_CONFLICT' USING ERRCODE='check_violation';
+   END IF;
+   IF c.status NOT IN('dispatched','received','verified','completed','completed_with_discrepancy') OR EXISTS(
+     SELECT 1 FROM public.stock_transfer_items i WHERE i.transfer_id=c.id
+       AND i.quantity_dispatched IS DISTINCT FROM GREATEST(LEAST(COALESCE(
+         (SELECT (l->>'qty')::int FROM jsonb_array_elements(COALESCE(p_lines,'[]'::jsonb)) l WHERE l->>'product_id'=i.product_id::text LIMIT 1),
+         i.quantity_approved,i.quantity),COALESCE(i.quantity_approved,i.quantity)),0)) THEN
+     RAISE EXCEPTION 'TRANSFER_DISPATCH_CONFLICT' USING ERRCODE='check_violation';
+   END IF;
+ ELSE
+   IF receipt.transfer_id IS NOT NULL OR c.status<>'approved' THEN RAISE EXCEPTION 'TRANSFER_DISPATCH_CONFLICT' USING ERRCODE='check_violation'; END IF;
+   IF request_id IS NOT NULL AND r.status<>'approved' THEN
+     RAISE EXCEPTION 'TRANSFER_REQUEST_INVALID' USING ERRCODE='check_violation';
+   END IF;
+   SELECT a.id,COALESCE(NULLIF(btrim(a.full_name),''),a.user_id) INTO actor_id,actor FROM public.app_users a
+    WHERE a.id=COALESCE(private.native_transfer_dispatcher(c.id),(SELECT u.id FROM public.current_app_user() u LIMIT 1));
+   IF actor IS NULL THEN RAISE EXCEPTION 'Active dispatch staff required' USING ERRCODE='insufficient_privilege'; END IF;
+   PERFORM private.stock_transfer_dispatch_stock_only(c.id,actor,p_lines);
+   SELECT * INTO c FROM public.stock_transfers WHERE id=c.id;
+ END IF;
+ IF request_id IS NOT NULL THEN
+   SELECT COALESCE(SUM(quantity),0) INTO asked FROM public.stock_transfer_items WHERE transfer_id=r.id;
+   SELECT COALESCE(SUM(COALESCE(quantity_dispatched,0)),0) INTO sent FROM public.stock_transfer_items WHERE transfer_id=c.id;
+   expected := CASE WHEN sent=0 THEN 'none' WHEN sent>=asked THEN 'full' ELSE 'partial' END;
+   IF r.status='approved' THEN
+     PERFORM set_config('pos.dispatch_request',r.id::text,true);
+     PERFORM set_config('pos.dispatch_child',c.id::text,true);
+     UPDATE public.stock_transfers SET status='completed',closed_at=c.dispatched_at,fulfilment=expected WHERE id=r.id;
+     IF NOT FOUND THEN RAISE EXCEPTION 'TRANSFER_REQUEST_INVALID' USING ERRCODE='check_violation'; END IF;
+     SELECT * INTO r FROM public.stock_transfers WHERE id=r.id;
+     IF r.status<>'completed' OR r.fulfilment IS DISTINCT FROM expected THEN
+       RAISE EXCEPTION 'TRANSFER_REQUEST_INVALID' USING ERRCODE='check_violation';
+     END IF;
+   ELSIF r.status<>'completed' OR r.fulfilment IS DISTINCT FROM expected THEN
+     RAISE EXCEPTION 'TRANSFER_REQUEST_INVALID' USING ERRCODE='check_violation';
+   END IF;
+ END IF;
+ IF NOT replayed THEN
+   INSERT INTO private.transfer_dispatch_receipts(transfer_id,intent,actor_id,actor_name,dispatched_at)
+    VALUES(c.id,private.transfer_dispatch_intent(c.id),actor_id,actor,c.dispatched_at::timestamptz);
+ END IF;
+ PERFORM set_config('pos.dispatch_request',COALESCE(previous_request,''),true);
+ PERFORM set_config('pos.dispatch_child',COALESCE(previous_child,''),true);
+ RETURN replayed;
+EXCEPTION WHEN OTHERS THEN
+ PERFORM set_config('pos.dispatch_request',COALESCE(previous_request,''),true);
+ PERFORM set_config('pos.dispatch_child',COALESCE(previous_child,''),true);
+ RAISE;
+END $fn$;
+REVOKE ALL ON FUNCTION private.stock_transfer_dispatch_atomic_core(uuid,text,jsonb,boolean) FROM PUBLIC,anon,authenticated,service_role;
+
+-- Keep the old void contract and its existing public permission/scope wrapper.
+CREATE OR REPLACE FUNCTION private.stock_transfer_dispatch(p_transfer_id uuid,p_dispatched_by text DEFAULT NULL,p_lines jsonb DEFAULT NULL)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $fn$
+BEGIN PERFORM private.stock_transfer_dispatch_atomic_core(p_transfer_id,p_dispatched_by,p_lines); END $fn$;
+
+CREATE OR REPLACE FUNCTION private.transfer_dispatch_proof(p_transfer_id uuid,p_replayed boolean)
+RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $fn$
+ SELECT jsonb_build_object('version',1,'transfer_id',c.id,'from_store_id',c.from_store_id,'to_store_id',c.to_store_id,
+   'status',c.status,'dispatched_at',c.dispatched_at::timestamptz,'dispatched_by',c.dispatched_by,'source_request_id',c.source_request_id,
+   'request_closed',COALESCE(r.status='completed',false),'request_closed_at',r.closed_at::timestamptz,'fulfilment',c.fulfilment,'request_fulfilment',r.fulfilment,
+   'replayed',p_replayed,'lines',COALESCE((SELECT jsonb_agg(jsonb_build_object('product_id',i.product_id,
+     'qty',COALESCE(i.quantity_dispatched,0),'source_stock',COALESCE((p.stock_by_store->>c.from_store_id)::numeric,0)) ORDER BY i.id)
+     FROM public.stock_transfer_items i LEFT JOIN public.products p ON p.id=i.product_id WHERE i.transfer_id=c.id),'[]'::jsonb))
+ FROM public.stock_transfers c LEFT JOIN public.stock_transfers r ON r.id=c.source_request_id WHERE c.id=p_transfer_id
+$fn$;
+REVOKE ALL ON FUNCTION private.transfer_dispatch_proof(uuid,boolean) FROM PUBLIC,anon,authenticated,service_role;
+
+-- New clients require this proof-bearing contract rather than assuming that
+-- an older void RPC also completed the linked request.
+CREATE OR REPLACE FUNCTION public.stock_transfer_dispatch_atomic(p_transfer_id uuid,p_dispatched_by text DEFAULT NULL,p_lines jsonb DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $fn$
+DECLARE c public.stock_transfers; replayed boolean;
+BEGIN
+ SELECT * INTO c FROM public.stock_transfers WHERE id=p_transfer_id;
+ IF NOT FOUND THEN RAISE EXCEPTION 'TRANSFER_NOT_FOUND_OR_UNAVAILABLE'; END IF;
+ IF NOT public.has_perm('can_create_transfer') OR NOT public.user_has_store_access(c.from_store_id) THEN
+   RAISE EXCEPTION 'You cannot dispatch transfers for this sending location' USING ERRCODE='insufficient_privilege';
+ END IF;
+ replayed := private.stock_transfer_dispatch_atomic_core(p_transfer_id,p_dispatched_by,p_lines,true);
+ RETURN private.transfer_dispatch_proof(p_transfer_id,replayed);
+END $fn$;
+REVOKE ALL ON FUNCTION public.stock_transfer_dispatch_atomic(uuid,text,jsonb) FROM PUBLIC,anon,service_role;
+GRANT EXECUTE ON FUNCTION public.stock_transfer_dispatch_atomic(uuid,text,jsonb) TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.stock_transfer_dispatch_atomic_for_staff(p_transfer_id uuid,p_staff_user_id text,p_bound_store_id text DEFAULT NULL,p_lines jsonb DEFAULT NULL,p_strict_lines boolean DEFAULT true)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $fn$
+DECLARE a public.app_users; c public.stock_transfers; actor text; replayed boolean;
+ previous_staff text := current_setting('pos.native_dispatch_staff',true);
+ previous_transfer text := current_setting('pos.native_dispatch_transfer',true);
+ previous_branch text := current_setting('pos.native_dispatch_branch',true);
+BEGIN
+ IF auth.role() IS DISTINCT FROM 'service_role' THEN
+   RAISE EXCEPTION 'Verified native staff session required' USING ERRCODE='insufficient_privilege';
+ END IF;
+ SELECT * INTO a FROM public.app_users WHERE user_id=p_staff_user_id FOR SHARE;
+ IF a.id IS NULL OR NOT a.is_active THEN
+   RAISE EXCEPTION 'Active transfer dispatch permission required' USING ERRCODE='insufficient_privilege';
+ END IF;
+ SELECT * INTO c FROM public.stock_transfers WHERE id=p_transfer_id;
+ IF NOT FOUND THEN RAISE EXCEPTION 'TRANSFER_NOT_FOUND_OR_UNAVAILABLE'; END IF;
+ IF (NULLIF(p_bound_store_id,'') IS NOT NULL AND p_bound_store_id<>c.from_store_id)
+    OR (a.store_id IS NOT NULL AND a.store_id<>c.from_store_id)
+    OR (NULLIF(p_bound_store_id,'') IS NULL AND a.store_id IS NULL
+      AND a.role::text NOT IN('admin','manager') AND COALESCE(a.role_slug,'') NOT IN('admin','supervisor')) THEN
+   RAISE EXCEPTION 'You cannot dispatch transfers for this sending location' USING ERRCODE='insufficient_privilege';
+ END IF;
+ actor := COALESCE(NULLIF(btrim(a.full_name),''),a.user_id);
+ PERFORM set_config('pos.native_dispatch_staff',a.user_id,true);
+ PERFORM set_config('pos.native_dispatch_transfer',c.id::text,true);
+ PERFORM set_config('pos.native_dispatch_branch',c.from_store_id,true);
+ IF private.native_transfer_dispatcher(c.id) IS NULL THEN
+   RAISE EXCEPTION 'Active transfer dispatch permission required' USING ERRCODE='insufficient_privilege';
+ END IF;
+ replayed := private.stock_transfer_dispatch_atomic_core(c.id,actor,p_lines,COALESCE(p_strict_lines,true));
+ PERFORM set_config('pos.native_dispatch_staff',COALESCE(previous_staff,''),true);
+ PERFORM set_config('pos.native_dispatch_transfer',COALESCE(previous_transfer,''),true);
+ PERFORM set_config('pos.native_dispatch_branch',COALESCE(previous_branch,''),true);
+ RETURN private.transfer_dispatch_proof(c.id,replayed);
+EXCEPTION WHEN OTHERS THEN
+ PERFORM set_config('pos.native_dispatch_staff',COALESCE(previous_staff,''),true);
+ PERFORM set_config('pos.native_dispatch_transfer',COALESCE(previous_transfer,''),true);
+ PERFORM set_config('pos.native_dispatch_branch',COALESCE(previous_branch,''),true);
+ RAISE;
+END $fn$;
+REVOKE ALL ON FUNCTION public.stock_transfer_dispatch_atomic_for_staff(uuid,text,text,jsonb,boolean) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.stock_transfer_dispatch_atomic_for_staff(uuid,text,text,jsonb,boolean) TO service_role;
+
+NOTIFY pgrst,'reload schema';
+-- TRF15_ATOMIC_DISPATCH_END
 
 -- Final public-schema privilege hardening after notification rule definitions.
 DO $notification_hardening$

@@ -96,6 +96,7 @@ export function ManagerGateProvider({
     meta: { tables: ["authorization_actions", "pos_store_settings"] },
     staleTime: Infinity,
     refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     queryFn: async () => {
       const caller = await getPosCallerAuth();
       const res = await getAuthorizationRules({ data: { ...caller, storeId: storeId ?? "" } });

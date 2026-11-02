@@ -23,6 +23,7 @@ import { retryDataRead } from "@/lib/read-retry";
 import { sessionEpoch } from "@/lib/session-epoch";
 import { localDb } from "@/core/local-db/local-db";
 import { effectiveDatabaseMode } from "@/core/local-db/db-mode";
+import { desktopAuthorityError, desktopAuthorityFailure } from "@/lib/desktop-authority-error";
 
 import type { Row } from "@/lib/sync-outbox";
 
@@ -108,7 +109,7 @@ async function runQuery(
     if (typeof window !== "undefined" && window.sqlAdmin?.adoptSession) {
       const { ensureDesktopPosSession } = await import("@/lib/desktop-pos-session");
       const authority = await ensureDesktopPosSession();
-      if (!authority.ok) throw Object.assign(new Error(authority.error ?? "The signed-in account could not be verified on this PC."), { code: "EPRIVILEGE" });
+      if (!authority.ok) throw desktopAuthorityError(authority);
     }
     // Never grow renderer memory with the size of a table. Callers page large
     // views explicitly; point lookups and configuration reads remain bounded.
@@ -116,7 +117,10 @@ async function runQuery(
       ...options,
       limit: Math.min(options.limit ?? 1000, 2000),
     });
-    if (!result.ok) throw Object.assign(new Error(result.error ?? "The local SQL Server read failed."), { code: (result as { code?: string }).code });
+    if (!result.ok) {
+      if (desktopAuthorityFailure(result)) throw desktopAuthorityError(result);
+      throw Object.assign(new Error(result.error ?? "The local SQL Server read failed."), { code: (result as { code?: string }).code });
+    }
     const rows = normalizeUuidFields((result.rows ?? []) as Row[]);
     noteVersions(table, rows);
     return { rows, source: "local" };

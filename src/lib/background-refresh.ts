@@ -18,7 +18,10 @@ export function createRefreshQueue(read: () => Promise<unknown>, onError: (error
     } while (queued && !stopped);
     running = false;
   };
-  return { refresh, stop: () => { stopped = true; queued = false; } };
+  // Manual Retry joins an active pass without manufacturing another dirty
+  // hint. A real hint already queued during that pass must remain queued.
+  const retry = () => running ? Promise.resolve() : refresh();
+  return { refresh, retry, stop: () => { stopped = true; queued = false; } };
 }
 
 /** Payload-free hints only: readers retain their own SQL/RLS/branch predicates. */

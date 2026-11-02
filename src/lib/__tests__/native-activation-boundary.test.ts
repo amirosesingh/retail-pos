@@ -95,7 +95,7 @@ it('installed adoption handler cannot replace Operations A with B even with vali
  new Function('ipcMain','guard','adminSession','terminalStore','activationBoundary','fetch',`let sessionAdoptionRevision=0;${source.slice(from,to)}`)(ipc,guard,session,{read:()=>a,write},policy,fetch);
  try{
   session.grant('staff','cashier',{can_process_sale:true},'pos','A');
-  await expect(handlers.get('admin:adopt-session')!({}, {cashierToken:'valid-session'}, {...a,locationId:'B'})).rejects.toThrow('explicit unpairing');
+  await expect(handlers.get('admin:adopt-session')!({}, {cashierToken:'valid-session'}, {...a,locationId:'B'})).resolves.toMatchObject({ok:false,code:'EACTIVATION_BINDING',status:403});
   expect(fetch).not.toHaveBeenCalled();expect(write).not.toHaveBeenCalled();
  }finally{session.clear();}
 });

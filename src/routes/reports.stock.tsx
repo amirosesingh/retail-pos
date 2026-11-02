@@ -73,7 +73,7 @@ function StockReport() {
     queryFn: () => loadStockAdjustmentReport(storeIds, from, to,reportZone),
     enabled:ready&&!!user&&storeIds.length>0&&(!from||!to||from<=to),
     ...PAGE_DATA_CACHE,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false, refetchOnReconnect: false,
   });
   const all = useMemo(() => history.data ?? [], [history.data]);
   const rows = useMemo(

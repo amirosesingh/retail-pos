@@ -17,19 +17,19 @@ function callerIp(request?: Request): string | null {
 }
 
 /** One address bucket shared by every public PIN entry point. */
-export async function beginPinRequest(request?: Request): Promise<{
+export async function beginPinRequest(request?: Request, signal?: AbortSignal): Promise<{
   key: string | null;
   locked: boolean;
 }> {
   const ip = callerIp(request);
   if (!ip) return { key: null, locked: false };
   const key = `cashier-ip:${ip}`;
-  return { key, locked: (await throttleStatus(key)).locked };
+  return { key, locked: (await (signal ? throttleStatus(key,signal) : throttleStatus(key))).locked };
 }
 
-export async function finishPinRequest(key: string | null, valid: boolean): Promise<void> {
+export async function finishPinRequest(key: string | null, valid: boolean, signal?: AbortSignal): Promise<void> {
   // A valid PIN on another account must not erase this address's failed guesses.
   // The address bucket tolerates normal shared-shop mistakes; each account
   // still has its own five-attempt lockout.
-  if (key && !valid) await throttleFail(key, 20);
+  if (key && !valid) await (signal ? throttleFail(key,20,signal) : throttleFail(key,20));
 }

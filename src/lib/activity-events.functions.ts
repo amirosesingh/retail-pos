@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { shiftClosureStatusMessage, unconfirmedShiftClosureActivity } from "../../electron/shift-closure-activity.mjs";
 
 const eventInput = z.object({
   type: z.string().min(1).max(60),
@@ -33,7 +34,7 @@ export const pushActivityEvent = createServerFn({ method: "POST" })
     // The feed is an audit trail: an unattested caller must not be able to
     // invent sign-ins, refunds or branch activity in it.
     const { verifyRelayCaller } = await import("@/core/api/pos-relay.server");
-    const { resolveRelayScope } = await import("@/core/api/relay-policy.server");
+    const { resolveRelayScope, canCrossBranches } = await import("@/core/api/relay-policy.server");
     let scope: Awaited<ReturnType<typeof resolveRelayScope>>;
     try {
       const caller = await verifyRelayCaller({
@@ -50,17 +51,42 @@ export const pushActivityEvent = createServerFn({ method: "POST" })
     }
     // Only a supervisor may file an event against another branch; everyone
     // else is stamped with the branch their proof belongs to.
-    const storeId = scope.isSupervisor
+    // Closing reports from a branch-locked terminal keep that branch even if
+    // a management-role user signs in. Broader event behavior stays unchanged.
+    const maySelectStore = data.type === "shift_close" ? canCrossBranches(scope) : scope.isSupervisor;
+    const storeId = maySelectStore
       ? (data.storeId ?? scope.storeId ?? null)
       : (scope.storeId ?? null);
     const { writeActivityEvent } = await import("./activity-events.server");
     const safeMeta = Object.fromEntries(Object.entries(data.meta ?? {}).filter(([key]) =>
       !key.startsWith("notification_") && !key.startsWith("audience") && key !== "in_app_disabled"));
+    let report = unconfirmedShiftClosureActivity({ ...data, meta: safeMeta });
+    if (data.type === "shift_close" && storeId && data.entityType === "shift" &&
+        typeof data.entityId === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(data.entityId)) {
+      try {
+        const { serviceRest } = await import("@/core/api/pos-relay.server");
+        const response = await serviceRest(`shifts?id=eq.${encodeURIComponent(data.entityId)}&store_id=eq.${encodeURIComponent(storeId)}&select=id,store_id,status,state,closed_at&limit=1`, { signal: AbortSignal.timeout(2_000) });
+        if (response.ok) {
+          const rows: unknown = await response.json();
+          const row = Array.isArray(rows) && rows.length === 1 ? rows[0] as Record<string, unknown> : null;
+          if (row && row.id === data.entityId && row.store_id === storeId &&
+              row.status === "CLOSED" && row.state === "CLOSED" &&
+              typeof row.closed_at === "string" && Number.isFinite(Date.parse(row.closed_at))) {
+            report = { ...report, title: "Shift closure confirmed",
+              message: shiftClosureStatusMessage(data.message, "Central record confirmed closed."),
+              meta: { ...report.meta, shift_closure_status: "central_confirmed", shift_closure_closed_at: row.closed_at } };
+          }
+        }
+      } catch {
+        // The durable report still records the event if central verification
+        // times out or fails; it explicitly does not claim confirmed closure.
+      }
+    }
     const res = await writeActivityEvent({
       event_type: data.type,
       severity: data.severity,
-      title: `Reported activity: ${data.title}`,
-      message: data.message ?? "",
+      title: data.type === "shift_close" ? report.title : `Reported activity: ${data.title}`,
+      message: report.message ?? "",
       actor_id: scope.staffUserId ?? null,
       actor_name: scope.actorName ?? null,
       actor_role: scope.roleSlug ?? scope.role,
@@ -70,7 +96,7 @@ export const pushActivityEvent = createServerFn({ method: "POST" })
       entity_type: data.entityType ?? null,
       entity_id: data.entityId ?? null,
       amount: data.amount ?? null,
-      meta: { ...safeMeta, client_reported: true } as Record<string, unknown>,
+      meta: { ...report.meta, client_reported: true } as Record<string, unknown>,
       client_event_id: data.clientEventId ?? null,
       created_at: data.createdAt ?? new Date().toISOString(),
     });

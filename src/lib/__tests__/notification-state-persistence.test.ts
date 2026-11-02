@@ -248,14 +248,24 @@ describe("per-user notification state", () => {
 
   it("mirrors local SQL clear updates through the sync contract", () => {
     const generator = readFileSync("scripts/generate-supabase-sync-contract.cjs", "utf8");
+    const correctionName = "20261030234813_guard_activity_acknowledgement_branch_ownership.sql";
+    const correction = readFileSync(`supabase/migrations/${correctionName}`, "utf8");
+    const contract = correction.split("-- ACTIVITY_ACK_OWNERSHIP_BEGIN")[1]?.split("-- ACTIVITY_ACK_OWNERSHIP_END")[0]?.trim();
     const migration = readFileSync(
       "supabase/migrations/20260928183500_sync_activity_notification_preferences.sql",
       "utf8",
     );
     const bell = readFileSync("src/platforms/web/components/pos/ActivityBell.tsx", "utf8");
 
-    expect(generator).toContain('COALESCE(public."activity_events"."cleared_by"');
-    expect(generator).toContain('COALESCE(EXCLUDED."cleared_by"');
+    expect(generator).toContain(correctionName);
+    expect(generator).toContain("out.push(activityAckOwnership)");
+    expect(contract).toBeTruthy();
+    expect(contract).toContain("COALESCE(public.activity_events.cleared_by");
+    expect(contract).toContain("COALESCE(EXCLUDED.cleared_by");
+    expect(contract).toContain("public.pos_sync_validate_scope('default',v_branch");
+    expect(contract).toContain("lower(btrim(public.activity_events.store_id))=lower(btrim(v_branch))");
+    expect(contract).toContain("RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'");
+    expect(readFileSync("supabase/schema.sql", "utf8").replaceAll("\r\n", "\n")).toContain(contract!.replaceAll("\r\n", "\n"));
     expect(migration).toContain("ON CONFLICT (id) DO UPDATE");
     expect(migration).toContain("SET cleared_by = EXCLUDED.cleared_by");
     expect(bell).toContain("...row.clearedBy, meKey");

@@ -41,6 +41,8 @@ import { recordSignIn } from "@/lib/shift-attendance";
 import { endShiftSessions } from "@/lib/shift-sessions";
 import { notifySessionExpired, onSessionExpired } from "@/lib/session-expiry";
 import { validateStoredAuthSession } from "@/lib/auth-session-guard";
+import { resumedAuthProof } from "@/lib/resumed-auth-proof";
+import { usernamePasswordFailure } from "@/lib/username-password-failure";
 import { setCentralAuthSessionPresent as publishCentralAuthSessionPresent, setSessionStartupPending } from "@/lib/session-presence";
 import { APP_RESUME_EVENT } from "@/core/activation/connection-health";
 import {
@@ -60,6 +62,7 @@ import { isWindowsShell } from "@/platform-config/features";
 import { recordDiagnostic, reasonCode } from "@/lib/diagnostics";
 import {
   failureFromAuthError,
+  failureFromLoginProfileError,
   failureFromReadiness,
   loginFailureMessage,
   type LoginFailure,
@@ -89,7 +92,9 @@ async function validateCentralAuthSession(online: boolean) {
   if (centralSessionCheck?.epoch === epoch && centralSessionCheck.online === online) return centralSessionCheck.promise;
   const promise = validateStoredAuthSession(supabase.auth, {
     online,
-    ...(isWindowsShell() ? { timeoutMs: 8000 } : {}),
+    // Auth and account checks are bounded server-side too. Keep browser/phone
+    // startup from waiting forever while preserving the shorter desktop gate.
+    timeoutMs: isWindowsShell() ? 8000 : 20_000,
     verifySession: async (current) => {
       const { verifySession } = await import("@/lib/session-verify-client");
       const checked = await verifySession({
@@ -635,7 +640,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             body: JSON.stringify({ username: email.trim(), password }),
           });
           if (!response.ok) {
-            const code = response.status === 401 ? "invalid-credentials" as const : "cloud-unreachable" as const;
+            const payload = await response.json().catch(() => null) as { code?: string } | null;
+            const code = usernamePasswordFailure(response.status, payload);
             return { ok: false, code, error: response.status === 429 ? "Too many attempts. Try again later." : loginFailureMessage(code) };
           }
           const verified = await response.json() as {
@@ -668,17 +674,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       markStartupStage("authentication");
       // The account must resolve to a profile with a role before it is let in.
       try {
-        const { data: profileRows, error: profileError } = await supabase.rpc("current_app_user");
+        const { data: profileRows, error: profileError } = await supabase.rpc("current_app_user")
+          .abortSignal(AbortSignal.timeout(15_000));
         const profile = (Array.isArray(profileRows) ? profileRows[0] : null) as Record<
           string,
           unknown
         > | null;
         if (profileError || !profile) {
           await supabase.auth.signOut({ scope: "local" });
+          const code = profileError ? failureFromLoginProfileError(profileError) : "permission-denied" as const;
           return {
             ok: false,
-            code: "permission-denied" as const,
-            error: loginFailureMessage("permission-denied"),
+            code,
+            error: loginFailureMessage(code),
           };
         }
         if (profile["is_active"] === false) {
@@ -689,12 +697,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             error: loginFailureMessage("account-inactive"),
           };
         }
-      } catch {
+      } catch (failure) {
         await supabase.auth.signOut({ scope: "local" });
+        const code = failureFromLoginProfileError(failure as Error);
         return {
           ok: false,
-          code: "permission-denied" as const,
-          error: loginFailureMessage("permission-denied"),
+          code,
+          error: loginFailureMessage(code),
         };
       }
 
@@ -1454,18 +1463,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // or server failure leaves the user's work and session untouched.
         const authCheck = await validateCentralAuthSession(true);
         if (!alive || !isCurrentEpoch(startedAt)) return;
-        if (authCheck.state === "verified" && matchesOperatorIdentity(authCheck.session?.user, operatorAuthId.current)) {
-          centralSessionVerifiedRef.current = true;
-        } else if (authCheck.state === "rejected" || !matchesOperatorIdentity(authCheck.session?.user, operatorAuthId.current)) {
-          // A definite refusal (or an absent local session) invalidates the
-          // previous proof. An unavailable server with the same stored
-          // session does not: connectivity loss must not sign out a till.
-          centralSessionVerifiedRef.current = false;
+        const resumedProof = resumedAuthProof(authCheck, centralSessionVerifiedRef.current, operatorAuthId.current);
+        if (resumedProof) {
+          centralSessionVerifiedRef.current = resumedProof.verified;
+          setCentralSessionVerified(resumedProof.verified, resumedProof.accessToken);
         }
-        setCentralSessionVerified(
-          centralSessionVerifiedRef.current,
-          authCheck.session?.access_token,
-        );
         if (authCheck.state === "rejected") {
           // Remove a rejected secondary Auth session even when a separate POS
           // person session remains valid. Otherwise every resume retries the

@@ -1,9 +1,9 @@
 /**
- * Per-branch isolation and sync switches.
+ * Per-branch catalogue, stock preferences and synchronization switches.
  *
- * Some branches (a standalone shop, a warehouse) keep their own inventory and
- * may be cut off from the group entirely. The switches live in the shared
- * integration settings so every terminal of that branch agrees on them.
+ * The switches live in shared integration settings. Catalogue visibility and
+ * stock-access scope are distinct; a saved private-stock preference does not
+ * itself change the terminal/account authorization applied by stock readers.
  */
 import { defaultBranchPolicy, type AppSettings, type BranchPolicy, type Product, type Store, type Transfer } from "@/core/types/pos-types";
 import { canonicalBranchId, canonicalStockMap, sameBranchId } from "./branch-id";
@@ -16,16 +16,16 @@ export const BRANCH_POLICY_COPY: Record<
 > = {
   privateStock: {
     label: "Private stock",
-    hint: "Keep stock separate by branch. Same-cluster terminals may view available stock; other clusters stay hidden. Authorized management retains its permitted access.",
+    hint: "Saved preference only: this switch does not add stock-access restrictions. Normal terminals operate in their own branch and may view permitted same-cluster availability; management keeps its authorized branch views.",
     onWarning:
-      "Keep stock ownership separate while allowing read-only availability within this cluster. Sales and stock changes stay on the terminal's registered branch.",
-    offWarning: "Turn off this branch's private-stock preference. This does not grant another cluster access or allow a normal terminal to change its operating branch.",
+      "Save the private-stock preference. It does not add privacy restrictions or change the permitted same-cluster availability and management views. Sales and stock changes remain branch-restricted.",
+    offWarning: "Remove this saved preference. This does not grant another branch or cluster access or let a normal terminal change its operating branch.",
   },
   privateCatalogue: {
     label: "Private catalogue",
-    hint: "Keep this catalogue separate from other clusters. Branches in the same cluster share its products; stock privacy is controlled separately. Completed incoming transfers remain available.",
+    hint: "Branches in one cluster share products. Other clusters stay separate even with this switch off; completed incoming transfers remain available. For locations without a cluster, this switch restricts the legacy shared catalogue.",
     onWarning: "Unassigned legacy products without stock or transfer evidence will be hidden. This does not separate branches in the same cluster.",
-    offWarning: "Allow the legacy shared catalogue where no separate cluster is assigned. Other clusters remain separate until products are transferred.",
+    offWarning: "Allow the legacy shared catalogue where no cluster is assigned. This does not merge clusters or share their stock. Other clusters remain separate until products are transferred.",
   },
   allowTransfers: {
     label: "Allow stock transfers",
@@ -64,7 +64,7 @@ export function branchOwnsNewCatalogue(settings: AppSettings, storeId: string, s
   return !!stores.find(store => sameBranchId(store.id, storeId))?.groupId?.trim() || branchPolicy(settings, storeId, stores).privateCatalogue;
 }
 
-/** Store ids that hide their stock from everyone else. */
+/** Saved private-stock preferences; this extractor is not an access guard. */
 export function privateStockStores(settings: AppSettings): Set<string> {
   const map = settings.integrations.branches ?? {};
   return new Set(Object.entries(map).filter(([, p]) => p?.privateStock).map(([id]) => id));

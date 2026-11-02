@@ -63,9 +63,11 @@ export async function staffLastSignIns(ids: string[], confirmations = new Map<st
 export async function createVerifiedPinSignInToken(
   email: string,
   expectedAuthUserId: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   const response = await adminFetch("admin/generate_link", {
     method: "POST",
+    ...(signal ? { signal } : {}),
     body: JSON.stringify({ type: "magiclink", email: email.trim().toLowerCase() }),
   });
   if (!response.ok) {

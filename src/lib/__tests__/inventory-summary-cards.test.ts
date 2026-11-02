@@ -48,12 +48,24 @@ describe("inventory summary cards", () => {
 
   it("reveals changed warnings and signed stock values without empty slots", () => {
     const html = render({ products: 3, categories: 1, units: -0.25, lowStock: 2, negativeStock: 1, retailValue: -5 }, { showStockValue: true });
-    expect(html.match(/class="summary-card/g)).toHaveLength(5);
+    expect(html.match(/class="summary-card/g)).toHaveLength(4);
     expect(html).toContain("Low stock");
     expect(html).toContain("Negative stock");
     expect(html).toContain('data-animated-value="-0.25"');
     expect(html).toContain('data-animated-value="-5"');
     expect(html).not.toContain("Purchase cost value");
+  });
+
+  it("combines stock alerts and makes only their numbers actionable when handlers are supplied", () => {
+    const html = render({ lowStock: 2, negativeStock: 1 }, { onReviewLowStock: () => undefined, onReviewNegativeStock: () => undefined });
+    expect(html.match(/class="summary-card/g)).toHaveLength(1);
+    expect(html).toContain('aria-label="Stock alerts"');
+    expect(html).toContain('aria-label="Review 2 low stock products"');
+    expect(html).toContain('aria-label="Review 1 negative stock products"');
+    expect(html.match(/<button/g)).toHaveLength(2);
+    const zero = render({ lowStock: 0, negativeStock: 1 }, { onReviewNegativeStock: () => undefined });
+    expect(zero).not.toContain(">Low stock</dt>");
+    expect(zero.match(/<button/g)).toHaveLength(1);
   });
 
   it("retains cost visibility and unavailable configured-cost state", () => {

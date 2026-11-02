@@ -28,7 +28,7 @@ class LocalDataLifecycle {
     // Change Tracking baseline; never advance the checkpoint first.
     const version=await this.connectionManager.pool.request().query("SELECT CHANGE_TRACKING_CURRENT_VERSION() current_version;");
     const currentVersion=Number(version.recordset?.[0]?.current_version??0);
-    const refreshed=await refreshTable({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName:table.cloudTable});
+    const refreshed=await refreshTable({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName:table.cloudTable,diagnosticOrigin:"gap_recovery"});
     await this.checkpoints.save(branchId,table.sqlServerTable,"push",{change_tracking_version:currentVersion});
     return{table:table.sqlServerTable,completed:refreshed.completed,currentVersion};
   }
@@ -59,7 +59,7 @@ class LocalDataLifecycle {
     // delays bootstrap. Also repairs installations with old bootstrap markers.
     // refreshTable preserves rows with unacknowledged local edits.
     for(const tableName of ["pos_settings","settings_scoped"]){
-      const refreshed=await refreshTable({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName});
+      const refreshed=await refreshTable({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName,diagnosticOrigin:"prefetch"});
       if(refreshed.completed)this.publish({kind:"general",branchId,source:"cloud",tables:[tableName]});
     }
     await this.resume(branchId,historyDays);

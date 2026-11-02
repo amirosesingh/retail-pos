@@ -8,7 +8,7 @@ import { normalizeUuidFields } from "@/lib/uuid-fields";
 import { isLegacyExchange } from "@/lib/legacy-exchange";
 import { redeemedPoints } from "@/lib/points-redemption";
 import { recordId } from "@/lib/sale-identity";
-import { readLocalLocationDirectory, resolveLocationDirectory, type LocationDirectoryResult } from "./location-directory";
+import { locationReadError, readLocalLocationDirectory, resolveLocationDirectory, type LocationDirectoryResult } from "./location-directory";
 export type { LocationDirectoryResult } from "./location-directory";
 import { beginDataTask, withDataTask } from "@/lib/data-progress";
 import { isManagementDevice } from "@/lib/management-device";
@@ -1295,7 +1295,7 @@ async function loadCloudLocationDirectory(): Promise<LocationDirectoryResult> {
     }
     const relayFallback = await relayed();
     if (relayFallback) return relayFallback;
-    return { ok: false, error: new Error(direct.error.message || "Could not load locations") };
+    return { ok: false, error: locationReadError(direct.error) };
   } catch (error) {
     const relayFallback = await relayed().catch(() => null);
     if (relayFallback) return relayFallback;

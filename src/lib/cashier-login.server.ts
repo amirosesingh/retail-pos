@@ -10,6 +10,7 @@ import { serviceRest } from "@/core/api/pos-relay.server";
 import { startSession } from "./session-guard.server";
 import { writeSystemAudit } from "./system-audit.server";
 
+/** Private diagnostics drive counters; HTTP callers must use publicCashierLoginResponse. */
 export type CashierLoginResult =
   | {
       ok: true;
@@ -39,6 +40,9 @@ export type CashierLoginResult =
         | "session_prepare_failed"
         | "activation_denied"
         | "identity_mismatch"
+        | "credential_unavailable"
+        | "account_inactive"
+        | "invalid_input"
         | "central_unavailable";
     };
 
@@ -50,18 +54,19 @@ async function cashierLoginCore(input: {
   deviceBindingProof?: string;
   /** Branch this till is set to; used when the account works at all branches. */
   branchId?: string | null;
-}): Promise<CashierLoginResult> {
+}, signal?: AbortSignal): Promise<CashierLoginResult> {
   const username = input.username.trim().toLowerCase();
-  if (!username) return { ok: false, error: "Enter your username" };
+  if (!username) return { ok: false, code: "invalid_input", error: "Enter your username" };
   // Accounts are provisioned with a 4-32 character credential, so the login
   // must accept the same range — a longer or alphanumeric passcode is valid.
   const secret = input.pin;
   if (secret.length < 4 || secret.length > 32) {
-    return { ok: false, error: "Enter your PIN or passcode" };
+    return { ok: false, code: "invalid_input", error: "Enter your PIN or passcode" };
   }
 
-  const res = await serviceRest("rpc/verify_terminal_pin", {
+  const res = await serviceRest("rpc/verify_terminal_pin_result", {
     method: "POST",
+    signal,
     body: JSON.stringify({ p_user_id: username, p_pin: secret }),
   });
   if (!res.ok)
@@ -71,15 +76,18 @@ async function cashierLoginCore(input: {
       error: "Could not reach the central database",
     };
 
-  const rows = (await res.json()) as
-    | {
-        user_id: string;
-        full_name: string;
-        store_id: string | null;
-      }[]
-    | null;
-  const row = Array.isArray(rows) ? rows[0] : null;
-  if (!row) {
+  const result = await res.json() as { status?: string; account?: { user_id?: string; store_id?: string | null } } | null;
+  if (result?.status === "locked")
+    return { ok: false, code: "locked", error: "Too many wrong PINs. Please wait before trying again." };
+  if (result?.status === "credential_unavailable")
+    return { ok: false, code: "credential_unavailable", error: "PIN sign-in is not ready for this account. Ask an administrator to review its sign-in PIN." };
+  if (result?.status === "account_inactive")
+    return { ok: false, code: "account_inactive", error: "Account deactivated" };
+  if (result?.status === "invalid_input")
+    return { ok: false, code: "invalid_input", error: "Enter your username and PIN or passcode." };
+  if (result?.status !== "invalid" && (result?.status !== "verified" || typeof result.account?.user_id !== "string" || !result.account.user_id))
+    return { ok: false, code: "central_unavailable", error: "The central database did not complete the PIN check" };
+  if (result.status === "invalid") {
     // A failed sign-in is recorded too — repeated failures are the signal.
     await writeSystemAudit({
       actorId: username,
@@ -90,12 +98,14 @@ async function cashierLoginCore(input: {
       entityId: username,
       terminalId: input.terminalId ?? null,
       note: "Invalid username or PIN",
-    });
+    }, { signal });
     return { ok: false, code: "invalid_credentials", error: "Invalid username or PIN" };
   }
+  const row = result.account!;
 
   const profileResponse = await serviceRest(
-    `app_users?user_id=eq.${encodeURIComponent(row.user_id)}&select=id,user_id,full_name,email,store_id,role,role_slug,permissions,is_active,auth_user_id&limit=1`,
+    `app_users?user_id=eq.${encodeURIComponent(row.user_id!)}&select=id,user_id,full_name,email,store_id,role,role_slug,permissions,is_active,auth_user_id&limit=1`,
+    { signal },
   );
   if (!profileResponse.ok)
     return { ok: false, code: "central_unavailable", error: "Could not load this staff account" };
@@ -111,13 +121,15 @@ async function cashierLoginCore(input: {
     is_active: boolean;
     auth_user_id: string | null;
   }[];
-  const profile = profiles[0];
-  if (!profile?.is_active) return { ok: false, error: "Account deactivated" };
+  const profile = Array.isArray(profiles) ? profiles[0] : null;
+  if (!profile || typeof profile.is_active !== "boolean")
+    return { ok: false, code: "central_unavailable", error: "The staff profile could not be loaded completely. Please retry." };
+  if (!profile.is_active) return { ok: false, error: "Account deactivated" };
   let terminal:import("./terminal-binding.server").VerifiedTerminalDescriptor|undefined;
   if(input.terminalId){
     try{
       const {readVerifiedTerminal}=await import("./terminal-binding.server");
-      terminal=await readVerifiedTerminal(input.terminalId,input.deviceBindingProof,true);
+      terminal=await readVerifiedTerminal(input.terminalId,input.deviceBindingProof,true,signal);
       if(profile.store_id && terminal.branchId && profile.store_id.toLowerCase()!==terminal.branchId.toLowerCase())
         return {ok:false,error:"This account is assigned to a different branch"};
       if(terminal.mode==="management"){
@@ -141,8 +153,9 @@ async function cashierLoginCore(input: {
   const { createVerifiedPinSignInToken } = await import("./staff-admin.server");
   let authTokenHash: string;
   try {
-    authTokenHash = await createVerifiedPinSignInToken(authEmail, profile.auth_user_id);
+    authTokenHash = await createVerifiedPinSignInToken(authEmail, profile.auth_user_id,signal);
   } catch (error) {
+    signal?.throwIfAborted();
     const mismatch = (error as Error).message.includes("does not match");
     return {
       ok: false,
@@ -161,6 +174,7 @@ async function cashierLoginCore(input: {
   if (!terminal && !ownBranch && claimed) {
     const storeRes = await serviceRest(
       `stores?id=eq.${encodeURIComponent(claimed)}&select=id&limit=1`,
+      { signal },
     );
     if (storeRes.ok) {
       const found = (await storeRes.json()) as { id: string }[];
@@ -178,6 +192,7 @@ async function cashierLoginCore(input: {
     permissions: profile.permissions ?? {},
   };
 
+  signal?.throwIfAborted();
   const session = await startSession({
     kind: "cashier",
     label: cashier.full_name,
@@ -186,7 +201,7 @@ async function cashierLoginCore(input: {
     branchId: cashier.store_id,
     terminalId: terminal?.id ?? null,
     platform: input.platform ?? null,
-  });
+  }, { signal });
 
   await writeSystemAudit({
     actorId: cashier.username,
@@ -198,8 +213,9 @@ async function cashierLoginCore(input: {
     terminalId: input.terminalId ?? null,
     storeId: cashier.store_id,
     note: input.platform ?? null,
-  });
+  }, { signal });
 
+  signal?.throwIfAborted();
   return {
     ok: true,
     cashierToken: signCashierSession({
@@ -218,18 +234,35 @@ async function cashierLoginCore(input: {
 /** Share the address throttle with the other public PIN verification paths. */
 export async function cashierLoginServer(input: Parameters<typeof cashierLoginCore>[0] & {
   request?: Request;
-}): Promise<CashierLoginResult> {
+}, options: { signal?: AbortSignal } = {}): Promise<CashierLoginResult> {
   const { beginPinRequest, finishPinRequest } = await import("./pin-request-throttle.server");
+  const requestAbort = new AbortController();
+  const requestTimer = setTimeout(() => requestAbort.abort(),25_000);
+  const requestSignal = options.signal ? AbortSignal.any([options.signal,requestAbort.signal]) : requestAbort.signal;
+  let coreTimer: ReturnType<typeof setTimeout> | undefined;
+  const coreAbort = new AbortController();
+  try {
   let attempt: Awaited<ReturnType<typeof beginPinRequest>>;
   try {
-    attempt = await beginPinRequest(input.request);
+    attempt = await beginPinRequest(input.request,requestSignal);
   } catch {
     return { ok: false, code: "central_unavailable", error: "Central PIN protection is unavailable" };
   }
   if (attempt.locked)
     return { ok: false, code: "locked", error: "Too many wrong PINs. Try again later." };
-  const result = await cashierLoginCore(input);
-  if (result.ok || result.code === "invalid_credentials")
-    await finishPinRequest(attempt.key, result.ok);
-  return result;
+  // Keep the shared checkout relay unchanged. Only this sign-in request's
+  // database, Auth, device-session and awaited audit work shares this budget.
+  coreTimer = setTimeout(() => coreAbort.abort(),20_000);
+  const signal = AbortSignal.any([requestSignal,coreAbort.signal]);
+  try {
+    const result = await cashierLoginCore(input,signal);
+    if (result.ok || result.code === "invalid_credentials")
+      await finishPinRequest(attempt.key, result.ok,requestSignal);
+    requestSignal.throwIfAborted();
+    return result;
+  } catch (error) {
+    if (!signal.aborted) throw error;
+    return {ok:false,code:"central_unavailable",error:"The sign-in service did not complete in time. Your PIN has not been rejected."};
+  }
+  } finally { clearTimeout(coreTimer); clearTimeout(requestTimer); }
 }

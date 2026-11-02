@@ -1,6 +1,8 @@
 const { toCloudRow } = require("./row-codec.cjs");
 const { branchPredicate, rendererReadBranchPredicate } = require("../db/branch-scope.cjs");
 const { ACTIVITY_TABLES } = require("./event-policy.cjs");
+const { recordId } = require("./uuid-fields.cjs");
+const { ShiftSyncJournal } = require("../db/shift-sync-journal.cjs");
 
 class ChangeReader {
   constructor(connectionManager, registry = null) {
@@ -56,6 +58,47 @@ class ChangeReader {
     if (scope) request.input("branch", String(branchId));
     const result = await request.query(`SELECT * FROM dbo.[${table.sqlServerTable}] source WHERE (${clauses.join(" OR ")})${scope ? ` AND (${scope})` : ""};`);
     return (result.recordset ?? []).map((row) => toCloudRow(table, row));
+  }
+  /** Capture current closing facts together; journal entries contain keys, not
+   * frozen rows. An offline recount may have superseded an older queued close. */
+  async closedShiftGraphs(branchId, shiftIds) {
+    const branch = recordId(String(branchId ?? "").trim());
+    const ids = [...new Set((shiftIds ?? []).map(value => recordId(String(value ?? "").trim())))].sort();
+    const refuse = () => { throw Object.assign(new Error("The current closed shift graph could not be captured safely."), {
+      code: "ESHIFT_CLOSURE_SNAPSHOT", table: "shifts",
+    }); };
+    if (!branch || branch.length > 128 || !ids.length || ids.length > 2000 ||
+        ids.some(id => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id))) refuse();
+    const sql = this.connectionManager.sql();
+    const transaction = new sql.Transaction(this.connectionManager.pool);
+    await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
+    try {
+      const journal = new ShiftSyncJournal({ connectionManager: this.connectionManager, tables: this.tables });
+      const captured = new Map();
+      let total = 0;
+      // Lock the complete sorted parent set before touching child ranges. The
+      // trusted writer takes its parent lock before inserting closing children.
+      for (const id of ids) {
+        const locked = await new sql.Request(transaction).input("shift", id).input("branch", branch)
+          .query("SELECT id FROM dbo.[shifts] WITH (UPDLOCK,HOLDLOCK) WHERE id=@shift AND store_id=@branch;");
+        if (locked.recordset?.length !== 1 || recordId(locked.recordset[0].id) !== id) refuse();
+      }
+      for (const id of ids) {
+        const graph = await journal.snapshot(transaction, branch, id, []);
+        for (const [table, rows] of graph) {
+          const existing = captured.get(table) ?? [];
+          if (rows.some(row => existing.some(prior => recordId(prior.id) === recordId(row.id)))) refuse();
+          captured.set(table, [...existing, ...rows]);
+          total += rows.length;
+        }
+        if (total > 2000 || Buffer.byteLength(JSON.stringify([...captured]), "utf8") > 6 * 1024 * 1024) refuse();
+      }
+      await transaction.commit();
+      return [...captured].map(([table, rows]) => ({ table, rows }));
+    } catch (error) {
+      await Promise.resolve(transaction.rollback()).catch(() => undefined);
+      throw error;
+    }
   }
   async ticketCompletionParents(tickets, branchId) {
     const results = [];

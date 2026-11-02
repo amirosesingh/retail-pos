@@ -96,8 +96,8 @@ export function useReportSales(
   const rangeKey = JSON.stringify([pageDataScope(user), storeKey, from, to, reportZone, source, managementReplica]);
   const cachedRows = enabled ? queryClient.getQueryData<Sale[]>(["report-sales", rangeKey]) : undefined;
   const [loaded, setLoaded] = useState<{ key: string; rows: Sale[] } | null>(cachedRows ? { key: rangeKey, rows: cachedRows } : null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [readState, setReadState] = useState<{ key: string; loading: boolean; error: string } | null>(null);
+  const loadedRows = loaded?.key === rangeKey ? loaded.rows : cachedRows;
 
   useEffect(() => {
     let cancelled = false;
@@ -108,8 +108,7 @@ export function useReportSales(
     const end = dayEnd(to);
     const work = { running: true, queued: false };
     refreshState.current = work;
-    setLoading(true);
-    setError("");
+    setReadState({ key: rangeKey, loading: true, error: "" });
 
     void (async () => {
       try {
@@ -170,11 +169,12 @@ export function useReportSales(
         }
       } catch (reason) {
         if (!cancelled)
-          setError((reason as Error).message || "Could not load the full report history");
+          setReadState({ key: rangeKey, loading: false, error: (reason as Error).message || "Could not load the full report history" });
       } finally {
         if (!cancelled) {
           work.running = false;
-          setLoading(false);
+          setReadState(current => current?.key === rangeKey && current.loading
+            ? { ...current, loading: false } : current);
           if (work.queued) setRevision(value => value + 1);
         }
       }
@@ -187,12 +187,19 @@ export function useReportSales(
 
   const sales = useMemo(() => {
     // Live committed state wins over an older page snapshot (for example a refund).
-    const rows = loaded?.key === rangeKey ? loaded.rows : [];
+    const rows = loadedRows ?? [];
     return uniqueSales([...rows, ...seedRows]).sort((a, b) =>
       b.createdAt.localeCompare(a.createdAt),
     );
-  }, [seedRows, loaded, rangeKey]);
+  }, [seedRows, loadedRows]);
 
-  const sameScope = loaded?.key === rangeKey;
+  const sameScope = loadedRows !== undefined;
+  const currentRead = readState?.key === rangeKey ? readState : null;
+  // Effects start after the first paint. An uncached scope has not answered
+  // yet even before that effect runs; recent register seeds are not complete
+  // historical totals. A failed current read stops loading and exposes its
+  // own error, while a confirmed cached scope remains usable during refresh.
+  const loading = currentRead?.loading ?? !sameScope;
+  const error = currentRead?.error ?? "";
   return { sales: enabled ? sales : [], loading: enabled && loading && !sameScope, refreshing: enabled && loading && sameScope, error: enabled ? error : "" };
 }

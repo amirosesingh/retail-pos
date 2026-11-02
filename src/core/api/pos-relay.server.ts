@@ -1,6 +1,9 @@
 import { canCrossBranches } from "./relay-policy.server";
-import { recordId } from "@/lib/sale-identity";
+import { recordId, sameRecordId } from "@/lib/sale-identity";
 import { sameBranchId } from "@/lib/branch-id";
+import { dispatchFailure } from "@/lib/transfer-dispatch-result";
+import { DesktopAdoptionUnavailableError } from "@/lib/desktop-adoption-availability.server";
+import { STOCK_REQUEST_HEAD_COLUMNS, STOCK_REQUEST_ITEM_COLUMNS, STOCK_REQUEST_PAGE_SIZE, checkedStockRequestApprovalState, completeStockRequestRows, projectStockRequestRows, stockRequestItemPage, validateStockRequestHead } from "@/lib/stock-request-contract";
 /**
  * Server-side write relay for the POS database.
  *
@@ -38,6 +41,7 @@ export type RelayRpc = { kind: "rpc"; table: string; fn: string; args: Record<st
 
 /** Read requests the relay may answer for a proven till. */
 export type RelayRead =
+  | { kind: "transferRequestApprovalState"; requestId: string }
   | { kind: "health" }
   | { kind: "activeShift"; storeId: string }
   | { kind: "stores" }
@@ -165,14 +169,55 @@ export function hasServiceKey(): boolean {
  * Answer a read for a proven till. This keeps offline/compatibility sessions
  * working when no live backend Auth session is available.
  */
-export async function runRelayRead(read: RelayRead): Promise<{
+export async function runRelayRead(read: RelayRead, scope?: RelayScope): Promise<{
   ok: boolean;
   row?: Record<string, unknown> | null;
   rows?: Record<string, unknown>[];
   error?: string;
+  code?: string;
+  status?: number;
   inventoryMode?: "deep" | "legacy";
   inventoryWarning?: string;
 }> {
+  if (read.kind === "transferRequestApprovalState") {
+    if (!scope || scope.managementReplica || scope.kind === "terminal" || scope.stale || !scope.staffUserId ||
+        (scope.role !== "admin" && scope.roleSlug !== "admin" && scope.permissions.can_approve_transfer !== true))
+      return { ok: false, status: 403, code: "PERMISSION_DENIED", error: "An active transfer approver session is required." };
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(read.requestId))
+      return { ok: false, status: 400, code: "SCOPE_MISSING", error: "The stock request identity is invalid." };
+    try {
+      const response = await serviceRest(`stock_transfers?id=eq.${encodeURIComponent(recordId(read.requestId))}&select=${STOCK_REQUEST_HEAD_COLUMNS}&limit=1`);
+      if (!response.ok) throw new Error("Request read failed");
+      const request = projectStockRequestRows(await response.json(), STOCK_REQUEST_HEAD_COLUMNS)[0];
+      if (!request || request.kind !== "request" || !sameRecordId(String(request.id), read.requestId))
+        return { ok: false, status: 404, code: "SCOPE_MISSING", error: "The stock request is no longer available." };
+      validateStockRequestHead(request, "request");
+      if (scope.storeId ? !sameBranchId(request.from_store_id, scope.storeId) : !canCrossBranches(scope))
+        return { ok: false, status: 403, code: "STORE_FORBIDDEN", error: "You can only approve stock requests for your sending branch." };
+      const count = (res: Response) => { const total = res.headers.get("content-range")?.match(/\/(\d+)$/)?.[1]; return total === undefined ? null : Number(total); };
+      const childResponse = await serviceRest(`stock_transfers?source_request_id=eq.${encodeURIComponent(String(request.id))}&select=${STOCK_REQUEST_HEAD_COLUMNS}&order=id&limit=2`, { prefer: "count=exact" });
+      if (!childResponse.ok) throw new Error("Fulfilment read failed");
+      const children = completeStockRequestRows(await childResponse.json(), count(childResponse), STOCK_REQUEST_HEAD_COLUMNS, 1);
+      const fulfilment = children[0] ?? null;
+      if (fulfilment && (fulfilment.kind !== "transfer" || !sameRecordId(String(fulfilment.source_request_id), String(request.id)) ||
+          !sameBranchId(fulfilment.from_store_id, request.from_store_id) || !sameBranchId(fulfilment.to_store_id, request.to_store_id)))
+        throw new Error("Inconsistent fulfilment");
+      const lines = async (id: unknown) => {
+        const rows: Record<string, unknown>[] = []; let total: number | null = null;
+        do {
+          const res = await serviceRest(`stock_transfer_items?transfer_id=eq.${encodeURIComponent(String(id))}&select=${STOCK_REQUEST_ITEM_COLUMNS}&order=id&limit=${STOCK_REQUEST_PAGE_SIZE}&offset=${rows.length}`, { prefer: "count=exact" });
+          if (!res.ok) throw new Error("Request line read failed");
+          const page = stockRequestItemPage(await res.json(), count(res), total, rows.length);
+          rows.push(...page.rows); total = page.count;
+        } while (rows.length < total);
+        return rows;
+      };
+      const [requestItems, fulfilmentItems] = await Promise.all([lines(request.id), fulfilment ? lines(fulfilment.id) : Promise.resolve([])]);
+      return { ok: true, row: checkedStockRequestApprovalState({ request, fulfilment, requestItems, fulfilmentItems }) };
+    } catch {
+      return { ok: false, status: 503, code: "TRANSFER_REQUEST_UNAVAILABLE", error: "The central request and fulfilment could not be read completely. Refresh them before approval." };
+    }
+  }
   // The endpoint has already verified the caller and resolved its branch.
   // A health check must never attempt a write with a fabricated record ID.
   if (read.kind === "health") return { ok: true };
@@ -366,6 +411,12 @@ const RELAY_RPCS: Record<
     idArg: "p_transfer_id",
     storeColumn: "from_store_id",
   },
+  stock_transfer_dispatch_atomic: {
+    permission: "can_create_transfer",
+    ownerTable: "stock_transfers",
+    idArg: "p_transfer_id",
+    storeColumn: "from_store_id",
+  },
   stock_transfer_receive: {
     permission: "can_receive_transfer",
     ownerTable: "stock_transfers",
@@ -380,6 +431,25 @@ const RELAY_RPCS: Record<
   },
 };
 
+/** Native dispatch responses expose operational guidance, never database text. */
+async function nativeDispatchFailure(response: Response): Promise<{ ok: false; error: string; code?: string; status: number }> {
+  const body: unknown = await response.json().catch(() => null);
+  const fields = body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : {};
+  const safe = dispatchFailure({ ...fields, status: response.status });
+  const upstreamCode = typeof fields.code === "string" ? fields.code : "";
+  const sqlDenial = /^[0-9A-Z]{5}$/.test(upstreamCode);
+  // Only a bounded diagnostic code/status stays server-side. Messages, hints,
+  // details and gateway response bodies can contain private database context.
+  const diagnosticCode = sqlDenial || /^PGRST\d{3}$/.test(upstreamCode) ? upstreamCode : "UNKNOWN";
+  console.warn("[transfer-dispatch] Backend rejection", { code: diagnosticCode, status: response.status });
+  // A genuine gateway/transport failure may have committed before the response
+  // was lost. Keep its HTTP status and omit a definitive business-error code so
+  // the client can make its single identical, receipt-backed reconciliation.
+  const ambiguous = !sqlDenial && safe.code === "TRANSFER_DISPATCH_UNCONFIRMED" &&
+    (response.status >= 500 || response.status === 408);
+  return { ok: false, error: safe.error, status: response.status, ...(!ambiguous ? { code: safe.code } : {}) };
+}
+
 /**
  * Run one allow-listed routine on the caller's behalf.
  *
@@ -390,7 +460,7 @@ const RELAY_RPCS: Record<
 export async function runRelayRpc(
   op: RelayRpc,
   scope: RelayScope,
-): Promise<{ ok: boolean; error?: string; code?: string }> {
+): Promise<{ ok: boolean; error?: string; code?: string; status?: number; data?: unknown }> {
   if (op.fn === "pos_sale_commit") {
     if (
       scope.role !== "admin" &&
@@ -472,6 +542,7 @@ export async function runRelayRpc(
   }
 
   const spec = RELAY_RPCS[op.fn];
+  const nativeDispatch = op.fn === "stock_transfer_dispatch" || op.fn === "stock_transfer_dispatch_atomic";
   if (!spec) return { ok: false, code: "TABLE_FORBIDDEN", error: `"${op.fn}" cannot be run` };
   if (
     scope.role !== "admin" &&
@@ -491,7 +562,7 @@ export async function runRelayRpc(
   const lookup = await serviceRest(
     `${spec.ownerTable}?id=eq.${encodeURIComponent(id)}&select=${spec.storeColumn}&limit=1`,
   );
-  if (!lookup.ok) return { ok: false, error: (await lookup.text()).slice(0, 300) };
+  if (!lookup.ok) return nativeDispatch ? nativeDispatchFailure(lookup) : { ok: false, error: (await lookup.text()).slice(0, 300) };
   const rows = (await lookup.json()) as Record<string, unknown>[];
   const owner = rows[0];
   if (!owner) return { ok: false, code: "SCOPE_MISSING", error: "That record no longer exists." };
@@ -522,20 +593,22 @@ export async function runRelayRpc(
   const args = actorField ? { ...op.args, [actorField]: actor } : op.args;
   // Only the account resolved from the verified session may become the native
   // database actor. Renderer attribution/actor parameters are never forwarded.
-  if (op.fn === "stock_transfer_approve" && (!scope.staffUserId || scope.stale || scope.kind === "terminal"))
-    return { ok: false, code: "PERMISSION_DENIED", error: "An active staff session is required to approve transfers." };
   const nativeApproval = op.fn === "stock_transfer_approve";
-  const rpcArgs = nativeApproval ? {
+  if ((nativeApproval || nativeDispatch) && (!scope.staffUserId || scope.stale || scope.kind === "terminal"))
+    return { ok: false, code: "PERMISSION_DENIED", error: "An active staff session is required to act on transfers." };
+  const rpcArgs = nativeApproval || nativeDispatch ? {
     p_transfer_id: id,
     p_staff_user_id: scope.staffUserId,
     p_bound_store_id: canCrossBranches(scope) ? null : scope.storeId,
     p_lines: op.args.p_lines ?? null,
+    ...(nativeDispatch ? { p_strict_lines: op.fn === "stock_transfer_dispatch_atomic" } : {}),
   } : args;
-  const res = await serviceRest(`rpc/${nativeApproval ? "stock_transfer_approve_for_staff" : op.fn}`, {
+  const res = await serviceRest(`rpc/${nativeApproval ? "stock_transfer_approve_for_staff" : nativeDispatch ? "stock_transfer_dispatch_atomic_for_staff" : op.fn}`, {
     method: "POST",
     body: JSON.stringify(rpcArgs),
   });
-  if (res.ok) return { ok: true };
+  if (res.ok) return op.fn === "stock_transfer_dispatch_atomic" ? { ok: true, data: await res.json() } : { ok: true };
+  if (nativeDispatch) return nativeDispatchFailure(res);
   return { ok: false, error: (await res.text()).slice(0, 400) };
 }
 
@@ -700,7 +773,7 @@ export async function verifyRelayCaller(input: {
   terminalToken?: string;
   accessToken?: string;
   deviceBindingProof?: string;
-}): Promise<RelayCaller> {
+}, options: { strictAvailability?: boolean } = {}): Promise<RelayCaller> {
   let identity: RelayCaller | null = null;
   let terminalStore: string | null = null;
   let terminalId: string | null = null;
@@ -714,7 +787,14 @@ export async function verifyRelayCaller(input: {
   // centrally and expires when the till has been left idle.
   if (input.sessionToken) {
     const { touchSession } = await import("@/lib/session-guard.server");
-    const check = await touchSession(input.sessionToken);
+    let check: Awaited<ReturnType<typeof touchSession>>;
+    try { check = await touchSession(input.sessionToken); }
+    catch (error) {
+      if (options.strictAvailability) throw new DesktopAdoptionUnavailableError();
+      throw error;
+    }
+    if (options.strictAvailability && !check.ok && check.reason === "unavailable")
+      throw new DesktopAdoptionUnavailableError();
     if (check.ok) {
       const s = check.session;
       storedTerminalId=s.terminal_id??null;
@@ -736,8 +816,11 @@ export async function verifyRelayCaller(input: {
     const { verifyCashierSession } = await import("@/lib/pos-session.server");
     const session = await (async () => {
       try {
-        return await verifyCashierSession(input.cashierToken!);
+        return options.strictAvailability
+          ? await verifyCashierSession(input.cashierToken!, { strictAvailability: true })
+          : await verifyCashierSession(input.cashierToken!);
       } catch {
+        if (options.strictAvailability) throw new DesktopAdoptionUnavailableError();
         return null;
       }
     })();
@@ -783,14 +866,39 @@ export async function verifyRelayCaller(input: {
       identity.kind === "terminal" ||
       (identity.kind === "staff" && !identity.staffUserId))
   ) {
-    const res = await fetch(`${supabaseConfig().url}/auth/v1/user`, {
-      headers: {
-        apikey: supabaseConfig().key,
-        Authorization: `Bearer ${input.accessToken}`,
-      },
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${supabaseConfig().url}/auth/v1/user`, {
+        headers: {
+          apikey: supabaseConfig().key,
+          Authorization: `Bearer ${input.accessToken}`,
+        },
+      });
+    } catch (error) {
+      if (options.strictAvailability) {
+        throw new DesktopAdoptionUnavailableError();
+      }
+      throw error;
+    }
+    if (options.strictAvailability && !res.ok) {
+      if (res.status === 400 || res.status === 401 || res.status === 403)
+        throw new RelayAuthenticationError("Your sign-in could not be verified.");
+      throw new DesktopAdoptionUnavailableError();
+    }
     if (res.ok) {
-      const user = (await res.json()) as { id?: string; email?: string };
+      let user: { id?: string; email?: string };
+      if (options.strictAvailability) {
+        try {
+          const value: unknown = await res.json();
+          if (!value || typeof value !== "object" || Array.isArray(value) ||
+              typeof (value as { id?: unknown }).id !== "string" || !(value as { id: string }).id.trim() ||
+              ((value as { email?: unknown }).email != null && typeof (value as { email?: unknown }).email !== "string"))
+            throw new Error("Invalid verification response");
+          user = value as { id: string; email?: string };
+        } catch {
+          throw new DesktopAdoptionUnavailableError();
+        }
+      } else user = (await res.json()) as { id?: string; email?: string };
       if (user.id) {
         // The token is proven; only now are its claims worth reading.
         const { claimsFromJwt, claimsFromPayload } = await import("@/core/api/relay-claims.server");

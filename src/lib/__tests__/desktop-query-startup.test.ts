@@ -30,7 +30,9 @@ it("holds the first transfer read until native session verification finishes", a
 });
 
 it("does not send a report query when native session verification is rejected", async () => {
-  mocks.verify.mockResolvedValue({ ok: false, error: "Session revoked" });
-  await expect(routedQuery("sales", { limit: 50 })).rejects.toMatchObject({ code: "EPRIVILEGE", message: "Session revoked" });
+  mocks.verify.mockResolvedValue({ ok: false, error: "Session revoked: private server detail" });
+  const pending = routedQuery("sales", { limit: 50 });
+  await expect(pending).rejects.toMatchObject({ code: "EPRIVILEGE", message: "The signed-in account could not be verified on this PC." });
+  await expect(pending).rejects.toHaveProperty("message", expect.not.stringContaining("private server detail"));
   expect(mocks.query).not.toHaveBeenCalled();
 });

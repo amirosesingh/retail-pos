@@ -28,6 +28,7 @@ vi.mock("@/core/activation/terminal-tokens", () => ({
 
 vi.mock("@/lib/external-supabase-config", () => ({
   hasSupabaseConfig: () => true,
+  supabaseConfig: () => ({ url: "https://operator-project.test", key: "sb_publishable_test" }),
 }));
 
 vi.mock("@/lib/session-expiry", () => ({
@@ -36,14 +37,7 @@ vi.mock("@/lib/session-expiry", () => ({
 
 vi.mock("@/integrations/supabase/external-client", () => ({
   supabaseExternal: {
-    from: () => ({
-      select: () => ({
-        limit: () => {
-          order.push("query");
-          return queryImpl();
-        },
-      }),
-    }),
+    from: () => { throw new Error("Public startup probes must not consult the staff Auth client"); },
   },
 }));
 
@@ -54,6 +48,18 @@ describe("start-up connection check", () => {
     hydrateProfile.mockClear();
     queryImpl = async () => ({ error: null });
     stopMonitor = undefined;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://operator-project.test/rest/v1/public_flags?select=key&limit=1");
+      expect(new Headers(init?.headers).get("apikey")).toBe("sb_publishable_test");
+      expect(new Headers(init?.headers).has("Authorization")).toBe(false);
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+      order.push("query");
+      const { error } = await queryImpl();
+      if (error && /network error|failed to fetch/i.test(error.message)) throw new TypeError(error.message);
+      return error
+        ? Response.json(error, { status: /invalid api key/i.test(error.message) ? 401 : 503 })
+        : Response.json([]);
+    }));
   });
 
   afterEach(() => {

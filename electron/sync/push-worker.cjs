@@ -2,6 +2,7 @@ const { recordId } = require("./uuid-fields.cjs");
 const { retryDelay } = require("./retry.cjs");
 const { stableUuid } = require("../db/repositories/aggregates.cjs");
 const { ACTIVITY_TABLES } = require("./event-policy.cjs");
+const { assertShiftClosureAcknowledgement } = require("./shift-closure-ack.cjs");
 
 function groupBy(values, key) {
   const groups = new Map();
@@ -13,11 +14,73 @@ function groupBy(values, key) {
   return groups;
 }
 
+async function uploadRows(table, rows) {
+  if (table !== "activity_events") return rows;
+  const { unconfirmedShiftClosureActivityRow } = await import("../shift-closure-activity.mjs");
+  // A local audit event can upload independently of its shift transaction.
+  // Never turn that report into proof that the central closure was saved.
+  return rows.map(unconfirmedShiftClosureActivityRow);
+}
+
 function collapseChanges(changes) {
   const latest = new Map();
   for (const change of changes)
     latest.set(`${change.entity_type}\u0000${change.entity_id}`, change);
   return [...latest.values()];
+}
+
+const SHIFT_GRAPH_TABLES = new Set(["shifts", "shift_cash_counts", "shift_reconciliations",
+  "shift_close_events", "shift_notifications", "shift_variance_alerts"]);
+
+/** Bind each CLOSED parent to the current count graph before hashing/sending.
+ * Older journal groups must not pair a later recount parent with original-only
+ * children. Only their queue IDs are acknowledged, even when rows are enriched. */
+async function includeClosedShiftGraphs(operations, reader, registry, branchId) {
+  const closed = operations.flatMap(operation => operation.table === "shifts" && !operation.deletePhase
+    ? (operation.rows ?? []).filter(row => String(row.status ?? "").toUpperCase() === "CLOSED" ||
+      String(row.state ?? "").toUpperCase() === "CLOSED" ||
+      (row.closed_at !== null && row.closed_at !== undefined && row.closed_at !== "")) : []);
+  if (!closed.length) return false;
+  const branch = recordId(branchId);
+  const ids = new Set(closed.map(row => recordId(row.id)));
+  const fail = () => { throw Object.assign(new Error("The current shift closure graph is unavailable; its upload remains pending."), {
+    code: "ESHIFT_CLOSURE_SNAPSHOT", table: "shifts",
+  }); };
+  if (ids.size !== closed.length || closed.some(row => !row.id || recordId(row.store_id) !== branch) ||
+      typeof reader.closedShiftGraphs !== "function") fail();
+  const graphs = await reader.closedShiftGraphs(branch, [...ids]);
+  if (!Array.isArray(graphs)) fail();
+  const captured = new Map();
+  for (const graph of graphs) {
+    if (!SHIFT_GRAPH_TABLES.has(graph?.table) || captured.has(graph.table) || !Array.isArray(graph.rows)) fail();
+    const seen = new Set();
+    for (const row of graph.rows) {
+      const key = recordId(row?.id);
+      if (!key || seen.has(key) || recordId(row.store_id) !== branch ||
+          !ids.has(recordId(graph.table === "shifts" ? row.id : row.shift_id))) fail();
+      seen.add(key);
+    }
+    captured.set(graph.table, graph.rows);
+  }
+  if ([...SHIFT_GRAPH_TABLES].some(table => !captured.has(table))) fail();
+  const parents = captured.get("shifts");
+  if (parents.length !== ids.size || parents.some(row => row.status !== "CLOSED" || row.state !== "CLOSED" ||
+      !row.closed_at || !Number.isSafeInteger(Number(row.row_version)) || Number(row.row_version) < 1)) fail();
+  for (const id of ids) {
+    const counts = new Set(captured.get("shift_cash_counts").filter(row => recordId(row.shift_id) === id).map(row => recordId(row.id)));
+    if (!counts.size || !captured.get("shift_reconciliations").some(row => recordId(row.shift_id) === id && counts.has(recordId(row.count_id)))) fail();
+  }
+  for (const [table, rows] of captured) {
+    const existing = operations.find(operation => operation.table === table && !operation.deletePhase);
+    if (existing) existing.rows = [...(existing.rows ?? []).filter(row =>
+      !ids.has(recordId(table === "shifts" ? row.id : row.shift_id))), ...rows];
+    else if (rows.length) {
+      const metadata = registry.tables.find(item => item.cloudTable === table);
+      if (!metadata) fail();
+      operations.push({ table, rows, deletePhase: false, changes: [], dependencyOrder: metadata.dependencyOrder });
+    }
+  }
+  return true;
 }
 
 // Batch only independent log writes. Sales, payments and mixed transactions
@@ -179,6 +242,10 @@ class PushWorker {
         // Leave it to the durable scheduler rather than block this pass for
         // another four deadlines and keep login/focus callers waiting.
         if (error?.code === "ETIMEDOUT" || ["TimeoutError","AbortError"].includes(error?.name)) throw error;
+        // A semantic closing conflict needs review, not five immediate retries
+        // of the same immutable facts (even if a gateway reports it as 500).
+        if ([error?.code, error?.message].some(value =>
+          /^SYNC_SHIFT_CLOSURE_(CONFLICT|DUPLICATE)$/.test(String(value ?? "")))) throw error;
         const status = Number(error?.status ?? 0);
         const retryable = status === 408 || status === 429 || status >= 500 ||
           ["ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "TimeoutError", "AbortError"].includes(error?.code ?? error?.name) ||
@@ -235,11 +302,11 @@ class PushWorker {
             dependencyOrder: table.dependencyOrder,
             deletePhase: false,
             changes: live,
-            rows: rowsForBranch(
+            rows: await uploadRows(table.cloudTable, rowsForBranch(
               table,
               await this.reader.rows(table, live, { branchId }),
               branchId,
-            ),
+            )),
           });
         if (removed.length)
           operations.push({
@@ -252,6 +319,7 @@ class PushWorker {
       }
       try {
         await includeMissingParents(operations, this.reader, this.registry, branchId);
+        await includeClosedShiftGraphs(operations, this.reader, this.registry, branchId);
       } catch (error) {
         throw error;
       }
@@ -286,6 +354,7 @@ class PushWorker {
         );
         if (!acknowledged?.ok)
           throw new Error(acknowledged?.error ?? "Cloud did not acknowledge the aggregate.");
+        assertShiftClosureAcknowledgement(acknowledged, operations, branchId);
         for (const id of originalIds) await this.reader.acknowledgeAggregate(id);
         pushed += aggregate.changes.length;
         onProgress({ direction: "push", table: operations.map(op => op.table).join(", "), completed: aggregate.changes.length });
@@ -389,11 +458,11 @@ class PushWorker {
           deferredTables.add(table.cloudTable); break;
         }
         let live = changes.filter((change) => change.operation !== "D");
-        let rows = rowsForBranch(
+        let rows = await uploadRows(table.cloudTable, rowsForBranch(
           table,
           await this.reader.rows(table, live, { branchId }),
           branchId,
-        );
+        ));
         while (Buffer.byteLength(JSON.stringify({ changes, rows }), "utf8") > 6 * 1024 * 1024) {
           const versions = [...new Set(changes.map((change) => Number(change.version)))];
           if (versions.length <= 1)
@@ -404,23 +473,12 @@ class PushWorker {
           const last = versions.at(-1);
           changes = changes.filter((change) => Number(change.version) !== last);
           live = changes.filter((change) => change.operation !== "D");
-          rows = rowsForBranch(
+          rows = await uploadRows(table.cloudTable, rowsForBranch(
             table,
             await this.reader.rows(table, live, { branchId }),
             branchId,
-          );
+          ));
         }
-        const batchId = stableUuid({
-          branchId,
-          table: table.cloudTable,
-          from: Number(checkpoint?.change_tracking_version ?? 0),
-          rows,
-          changes: changes.map((change) => ({
-            version: change.version,
-            operation: change.operation,
-            key: change.key,
-          })),
-        });
         // Change-tracking recovery also runs for transactions created by older
         // builds. Carry dependent rows and their saved parents in one request,
         // just as the durable transaction journal does. Otherwise a completed
@@ -428,6 +486,7 @@ class PushWorker {
         const operations = [{ table: table.cloudTable, dependencyOrder: table.dependencyOrder,
           deletePhase: false, rows, changes: changes.filter(change => change.operation !== "D") }];
         await includeMissingParents(operations, this.reader, this.registry, branchId);
+        const closedGraph = await includeClosedShiftGraphs(operations, this.reader, this.registry, branchId);
         const withParents = operations.length > 1;
         if (withParents) {
           operations.sort((a, b) => a.dependencyOrder - b.dependencyOrder);
@@ -437,6 +496,17 @@ class PushWorker {
           if (Buffer.byteLength(JSON.stringify(operations), "utf8") > 6 * 1024 * 1024)
             throw Object.assign(new Error("One recovery transaction exceeds the 6 MiB sync limit."), { code: "EOVERSIZED" });
         }
+        const batchId = stableUuid({
+          branchId,
+          table: table.cloudTable,
+          from: Number(checkpoint?.change_tracking_version ?? 0),
+          ...(closedGraph ? { operations } : { rows }),
+          changes: changes.map((change) => ({
+            version: change.version,
+            operation: change.operation,
+            key: change.key,
+          })),
+        });
         let acknowledged;
         try {
           acknowledged = await this.retry(() =>
@@ -451,6 +521,7 @@ class PushWorker {
         }
         if (!acknowledged?.ok)
           throw new Error(acknowledged?.error ?? "Cloud did not acknowledge the batch.");
+        assertShiftClosureAcknowledgement(acknowledged, operations, branchId);
         const version = Math.max(...changes.map((row) => Number(row.version)));
         await this.checkpoints.save(branchId, table.sqlServerTable, "push", {
           change_tracking_version: version,

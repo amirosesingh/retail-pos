@@ -18,7 +18,12 @@ function assertUnchanged(existing,candidate) {
 }
 function canonicalConfig(candidate,descriptor,existing=null) {
   const requested=assertUnchanged(existing,candidate);
-  if(!descriptor||descriptor.platform!=='pc'||!sameBinding(requested,descriptor)) refuse('The activation does not match the verified computer registration.');
+  if(!descriptor||typeof descriptor!=='object'||Array.isArray(descriptor)||
+     typeof descriptor.id!=='string'||!descriptor.id.trim()||!['pc','mobile'].includes(descriptor.platform)||
+     !['operations','management'].includes(descriptor.mode)||
+     (descriptor.mode==='operations'?(typeof descriptor.branchId!=='string'||!descriptor.branchId.trim()):descriptor.branchId!==null))
+    throw Object.assign(new Error('The POS backend must be updated to verify this terminal registration.'),{code:'EBACKEND_UPGRADE_REQUIRED',status:426});
+  if(descriptor.platform!=='pc'||!sameBinding(requested,descriptor)) refuse('The activation does not match the verified computer registration.');
   // Ordinary adoption cannot replace operator-managed connection settings or
   // replica secrets. A missing legacy claim proof may be filled only here,
   // after the backend has verified that proof and returned this descriptor.

@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { publicCashierLoginResponse } from "@/lib/cashier-login-response.server";
 
 export const Route = createFileRoute("/api/v1/pos/ipc-authorize")({
   server: {
@@ -24,9 +25,9 @@ export const Route = createFileRoute("/api/v1/pos/ipc-authorize")({
           terminalId: typeof input?.terminalId === "string" ? input.terminalId : null,
           branchId: typeof input?.branchId === "string" ? input.branchId : null,
         });
-        if (!result.ok) return Response.json(result, {
-          status: result.code === "locked" ? 429 : result.code === "central_unavailable" ? 503 : 401,
-        });
+        if (!result.ok) return publicCashierLoginResponse(result,
+          result.code === "locked" ? 429 : result.code === "central_unavailable" ? 503 : 401,
+        );
         const { databaseAuthority } = await import("@/lib/desktop-database-authority.server");
         const authority = await databaseAuthority({ userId: result.cashier.username });
         if (!authority?.permissions.can_manage_sync_backup)

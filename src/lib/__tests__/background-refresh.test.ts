@@ -42,6 +42,23 @@ describe("background refresh", () => {
     await queue.refresh(); await queue.refresh();
     expect(error).toHaveBeenCalledTimes(1); expect(read).toHaveBeenCalledTimes(2);
   });
+  it("manual retry joins a running read without adding work or losing a real trailing hint", async () => {
+    let finish!: () => void;
+    const read = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));
+    const queue = createRefreshQueue(read);
+    const initial = queue.refresh();
+    await queue.retry(); await queue.retry();
+    expect(read).toHaveBeenCalledTimes(1);
+    void queue.refresh(); await queue.retry();
+    finish(); await Promise.resolve();
+    expect(read).toHaveBeenCalledTimes(2);
+    finish(); await initial;
+    const afterIdle = queue.retry();
+    expect(read).toHaveBeenCalledTimes(3);
+    finish(); await afterIdle;
+    queue.stop(); await queue.retry();
+    expect(read).toHaveBeenCalledTimes(3);
+  });
   it("refreshes on a hint, resume and timer, but stays quiet when hidden, offline or signed out", () => {
     vi.useFakeTimers(); signedIn = true;
     const win = new EventTarget(); const doc = Object.assign(new EventTarget(), { visibilityState: "visible" });

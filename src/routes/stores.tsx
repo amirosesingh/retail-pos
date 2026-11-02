@@ -319,8 +319,8 @@ function Locations() {
           </div>
           <div>
             <p className="text-sm text-muted-foreground page-description">
-              <span className="numeric">{roots.length}</span> stores and warehouses · every new
-              location gets its own stock bucket on all {state.products.length} products.
+              <span className="numeric">{roots.length}</span> stores and warehouses · product
+              catalogues follow clusters; stock is tracked separately for each location.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
@@ -638,7 +638,7 @@ function Locations() {
                 {draft.id && (
                   <div className="space-y-2 rounded-md border border-border/70 bg-muted/30 p-3">
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                      Branch independence
+                      Catalogue, stock &amp; synchronization
                     </p>
                     {(
                       [

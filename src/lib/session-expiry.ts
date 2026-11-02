@@ -77,7 +77,7 @@ export function noteConnectivityIssue(detail?: string): void {
     toast.warning("Connection trouble", {
       id: "pos-connectivity",
       description:
-        detail ?? "The server did not answer. The till keeps working and will retry shortly.",
+        detail ?? "The server did not respond in time. Some data or actions may be unavailable until the connection recovers.",
     });
   });
 }
@@ -91,7 +91,7 @@ export async function inspectResponse(res: Response, hadBearer: boolean, started
     if (!isCurrentEpoch(startedAt)) return;
     if (res.status >= 500) {
       noteConnectivityIssue(
-        "The server is temporarily unavailable. The till will retry automatically.",
+        "The server is temporarily unavailable. Some data or actions may be unavailable until the connection recovers.",
       );
       return;
     }

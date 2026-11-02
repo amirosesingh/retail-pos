@@ -6,6 +6,10 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { createOfflineGateContent, createOfflineGatePortal } from "@/lib/offline-gate-snapshot-context";
+
+const GateSheetContent = createOfflineGateContent(SheetPrimitive.Content);
+const GateSheetOverlay = createOfflineGateContent(SheetPrimitive.Overlay, []);
 
 const Sheet = SheetPrimitive.Root;
 
@@ -13,13 +17,16 @@ const SheetTrigger = SheetPrimitive.Trigger;
 
 const SheetClose = SheetPrimitive.Close;
 
-const SheetPortal = SheetPrimitive.Portal;
+const ScopedSheetPortal = createOfflineGatePortal(SheetPrimitive.Portal);
+function SheetPortal(props: React.ComponentProps<typeof SheetPrimitive.Portal>) {
+  return <ScopedSheetPortal {...props} />;
+}
 
 const SheetOverlay = React.forwardRef<
   React.ElementRef<typeof SheetPrimitive.Overlay>,
   React.ComponentPropsWithoutRef<typeof SheetPrimitive.Overlay>
 >(({ className, ...props }, ref) => (
-  <SheetPrimitive.Overlay
+  <GateSheetOverlay
     className={cn(
       "ui-overlay-motion fixed inset-0 z-40 bg-black/80 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
       className,
@@ -60,13 +67,13 @@ const SheetContent = React.forwardRef<
 >(({ side = "right", className, children, ...props }, ref) => (
   <SheetPortal>
     <SheetOverlay />
-    <SheetPrimitive.Content ref={ref} className={cn(sheetVariants({ side }), className)} {...props}>
+    <GateSheetContent ref={ref} className={cn(sheetVariants({ side }), className)} {...props}>
       <SheetPrimitive.Close className="absolute right-3 top-3 flex size-8 items-center justify-center rounded-full opacity-70 ring-offset-background cursor-pointer transition-[color,background-color,opacity] duration-[var(--motion-fast)] hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-secondary">
         <X className="h-4 w-4" />
         <span className="sr-only">Close</span>
       </SheetPrimitive.Close>
       {children}
-    </SheetPrimitive.Content>
+    </GateSheetContent>
   </SheetPortal>
 ));
 SheetContent.displayName = SheetPrimitive.Content.displayName;

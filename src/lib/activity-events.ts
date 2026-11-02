@@ -19,6 +19,7 @@ import { platformName } from "@/platform-config/platform";
 import { localDb } from "@/core/local-db/local-db";
 import { hasStaffSession } from "@/core/api/sync-relay";
 import { activeBranchId } from "./active-branch";
+import { unconfirmedShiftClosureActivity } from "../../electron/shift-closure-activity.mjs";
 import { activityAudienceIdentity, activityVisibleTo } from "./activity-audience";
 import { notificationAcknowledgedBy } from "./notification-visibility";
 import {
@@ -165,7 +166,7 @@ async function send(entry: Queued): Promise<boolean> {
     // travels with every one. Before sign-in the event simply waits in the
     // local queue and is flushed once there is a session.
     const credentials = await readCredentials();
-    const res = await pushActivityEvent({ data: { ...entry, ...credentials } });
+    const res = await pushActivityEvent({ data: { ...unconfirmedShiftClosureActivity(entry), ...credentials } });
     return res.ok;
   } catch {
     return false;
@@ -218,7 +219,7 @@ export async function flushActivityQueue(): Promise<void> {
 /** Raise an event. Never throws; callers may await durable storage when required. */
 export async function recordActivity(input: ActivityEventInput): Promise<void> {
   const entry: Queued = {
-    ...input,
+    ...unconfirmedShiftClosureActivity(input),
     severity: input.severity ?? "info",
     clientEventId: isBrowser() && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}`,
     createdAt: new Date().toISOString(),
