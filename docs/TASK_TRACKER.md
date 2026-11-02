@@ -1,6 +1,7 @@
 # POS task tracker
 
-Last reconciled: **2026-11-01, Asia/Brunei**.
+Last reconciled: **2026-11-02, Asia/Brunei**.
+
 Read [../AGENTS.md](../AGENTS.md) and [PROJECT_MEMORY.md](PROJECT_MEMORY.md).
 This is the single current task ledger. Existing audit/checkpoint documents remain
 supporting evidence, not competing completion lists. Batch 0 authorized documentation
@@ -44,6 +45,71 @@ Membership is **ON HOLD** throughout. Each future batch requires a recoverable
 baseline, specific files/dependencies, expected behavior, risks, regression tests,
 recovery plan and owner approval. This roadmap does not grant implementation,
 database, merge, release or production-promotion approval.
+
+## NET-02A/B — approved native slow-network correction, 2 November 2026
+
+**Implemented and locally verified; beta PR/CI and installed-device acceptance
+remain separate.** The owner explicitly approved code and isolated tests for
+`electron/telemetry.cjs`, `electron/sync/cloud-client.cjs` and focused tests only.
+Branch `codex/native-slow-network-beta` starts from current beta
+`fd41a37fc63613931aae58e11bd833c8634618e4`. Root owns the existing tracker/memory;
+separate agents authored each runtime module and independently reviewed both.
+
+Telemetry now shares one complete active beat across local status reads and HTTP,
+keeps the latest presence, absorbs duplicate timer/presence calls, and bounds
+transport/body cleanup to 30 seconds. Stop aborts transport and fences subsequent
+HTTP/trailing work; restart waits for already-running local reads without
+overlapping SQL. Existing local query timeouts remain unchanged. A stuck stream
+cancellation promise cannot retain ownership forever; its late rejection remains
+observed. Payload and the 60-second cadence are preserved. Telemetry remains
+best-effort and never blocks trading on remote acknowledgement.
+
+CloudClient.request now preserves successful-status body timeout/abort failures
+as ETIMEDOUT, as for header timeouts, and retains unrelated body-stream failures.
+A known HTTP refusal remains authoritative. Malformed JSON is still failure;
+real non-JSON 503 diagnostics retain their existing bounded recovery. Complete
+JSON acknowledgement is required before pending uploads can be acknowledged.
+No retry policy, queue, cursor, permission, branch or checkout file was changed.
+
+Pinned Node 22.22.2 verification on this Windows development PC:
+
+- Root: all **604 suites / 4,294 tests** passed with `vitest run --maxWorkers=4`
+  in 86.43s; native sync/startup/event/shutdown **63 tests** passed.
+- Root: `tsc --noEmit`, scoped ESLint, both CJS syntax checks and diff checks passed.
+- Independent reviewer: four focused suites / **84 tests** passed, including
+  actual CloudClient/page-policy backoff and PushWorker pending/replay integration.
+  The uncooperative body-cleanup hang was reproduced, corrected and independently
+  retested. Extra probes found zero retained application abort listeners, no
+  deadline timer after completion/stop and only the expected interval on restart.
+- No live HTTP, SQL, profile or business-data operation was used for these tests.
+  This is not full physical-device, slow-network or hosted acceptance. Exact-head
+  CI/builds remain gates; no merge, manual deployment or publication was performed.
+
+Frozen SHA256, matched by root and independent reviewer:
+
+| File | SHA256 |
+| --- | --- |
+| electron/telemetry.cjs | 4D405400CD1F66D7CD4C76F903E8536319D2B036B50E40020E591BE5CEE0BB41 |
+| electron/sync/cloud-client.cjs | B19B4F3074FDF4DF38E060CF291CFEA60F454803F9E5AB691F71EF99202071FE |
+| native-telemetry-lifecycle.test.ts | F9EB38DEC3D0B368EFC9051832FAB8743CC6878F17504C18F3DE6441CE56E5B2 |
+| native-cloud-response-timeout.test.ts | DF6DE29E4A9B10C92E4B612327CC006C8672978BE62E2D1EBB0A8137C6502949 |
+
+Prior read-only audit evidence remains in draft PR #359: 14 idle client
+connections at 12:11 Brunei, no idle transactions/lock waits; 91 focused web
+tests and four synthetic native checks passed. Pools are not one-per-terminal.
+NET-02C/D request cancellation and obsolete catalogue work, NET-02E sync-pass
+budget risk, and health()'s older body-failure labeling remain separate pending
+paths. The request-only fix does not change health/readiness semantics. Preserve
+Membership and its dependencies on hold; no database/pool/settings/grant changes.
+
+Separate CPU draft PR #360 head `651348bb` passed Android, Windows renderer,
+iOS, security and hosting build checks; CodeRabbit skipped. It remains unmerged
+and is not production deployment approval. Original STR1 repair remains HOLD:
+the owner confirmed a later web closure, selected original cashier facts and
+requires both histories preserved. Never stage the old replay; a new exact
+reconciliation plan and execution approval remain necessary. Preserve all other
+unfinished tasks. Rollback for NET-02A/B is a targeted source revert, retaining
+subsequent unrelated changes; no live data rollback is needed.
 
 ## How to maintain this file
 

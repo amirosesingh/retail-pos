@@ -1,6 +1,6 @@
 # POS project memory
 
-Last reconciled: **2026-11-01, Asia/Brunei**. This is approved architecture and
+Last reconciled: **2026-11-02, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
 
 The owner's latest inventory UI refinement (DEC-25) combines adjacent Products
@@ -84,11 +84,14 @@ browser counts include backed-off work; status reads must neither create storage
 nor modify queues/retries. Current error/unknown state and newer subscription
 events take precedence over delayed diagnostic reads.
 
-Read-only affected-PC evidence confirms the original31October closing remains
-saved locally with its exact timestamp and matching reconciliation, while the
-cloud parent remains OPEN. Stable1.4.79's CT-only closing and expired earlier
-history checkpoint establish a blocking path; the exact original CT entry and
-delivery/checkpoint/acknowledgement sequence still require investigation.
+The 1 November read-only evidence found the original 31 October closing saved
+locally with its exact timestamp and matching reconciliation while cloud was
+OPEN. On 2 November, complete capture confirmed those original PC facts, but
+cloud was CLOSED after a later deliberate web correction with different children.
+The owner confirmed that web action. Stable 1.4.79's CT-only closing and expired
+earlier history checkpoint establish a blocking path; normal pull also waits for
+successful history recovery, whose hosted snapshot requests can fail with 503.
+The complete original delivery/acknowledgement sequence remains unverified.
 Recovery must preserve the original
 graph/time/profile, verify its full facts, obtain exact repair approval, and
 verify central parent/children afterwards. A notification, generic ok response,
@@ -159,6 +162,29 @@ scope are distinct: same-cluster products, per-location quantities, permitted
 same-cluster availability and authorized management views. A saved privateStock
 preference currently has no independent runtime consumer; explanatory text must
 not claim that switch alone enforces privacy. Do not silently invent a new rule.
+
+## Native slow-network scope — 2 November 2026
+
+NET-02A/B approval permits bounded/coalesced telemetry and correct timeout
+classification through CloudClient.request response-body reads, in the two named
+runtime modules and focused tests. Preserve trading, identity, authorization,
+queues, operator configuration and Membership dependencies. No pool/database
+changes or deployment follows from this approval. The request-only fix leaves
+health/readiness semantics unchanged; cancellation propagation, obsolete
+catalogue work and sync-pass budgeting remain separately scoped pending work.
+
+Supabase service pools and terminal sessions are different resources. Native
+paths use HTTPS APIs; their local Microsoft SQL Server pool is separate from
+PostgreSQL. Evaluate active/idle transactions, waits and measured request load
+before proposing pool changes; do not tune connections to equal terminal count.
+Critical writes must await authoritative storage acknowledgement and preserve
+stable retry identity. Making a CPU-bound helper async does not move its work
+off the event loop or establish successful persistence.
+
+The separate CPU fix remains draft PR #360; original STR1 recovery remains HOLD
+in draft PR #359 after the later deliberate web closure. Original cashier facts
+are selected, but a new exact reconciliation design and execution approval must
+preserve the web history. Never stage the superseded metadata replay.
 
 ## Authority and current work boundary
 
