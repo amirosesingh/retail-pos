@@ -65,6 +65,19 @@ do not claim native convergence complete from safe deferral alone.
 
 ### SHIFT-36 — owner-approved protocol preparation and isolated tests
 
+Resume verification: full suite including enrollment foundation and both boundary
+fixes passed 609 suites / 4,485 tests with one migration-inventory failure (missing
+registry filename), not a runtime failure. Separately approved web audit-event
+correction 533663b3 is integrated as 2d3d3df0, including that inventory entry.
+Root independently reran all 8 isolated SQL scenarios and 33 canonical/admin
+tests: passed. Original missing-event failure was reproduced before patch; fixed
+real routine retains exact expected amounts, original times, actors/defaults,
+ACL/config/OID and idempotent retries; late failure rolls back the full graph.
+Unknown shape/missing prerequisite abort without data edits. This is tested source
+preparation only; real project application and final complete workflow remain
+pending. Main author wiring, atomic authorization enforcement and independent
+candidate review remain active. Do not mark whole shift sync fully verified.
+
 Owner separately approved the real-workflow-discovered web correction audit fix
 on 2 November: pos_admin_correct_closed_shift omits required activity_events
 event_type, causing transaction rollback against the actual canonical table.
