@@ -803,6 +803,11 @@ describe("native causal closing transfer", () => {
 });
 
 describe("native v3 closing proof/wire binding", () => {
+  it("sends the existing default organization and verified branch in the strict graph-read envelope",async()=>{
+    const client=new CloudClient({}),request=vi.fn(async(_payload:Row)=>({ok:true}));client.request=request;
+    await client.shiftGraph({branchId:branch,shiftId:shift});
+    expect(request).toHaveBeenCalledExactlyOnceWith({sqlServerShiftGraph:{organizationId:"default",branchId:branch,shiftId:shift}});
+  });
   const fixture = () => {
     const operations = graphFixture().tables.map((entry) => ({
       table: entry.table,

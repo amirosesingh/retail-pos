@@ -225,8 +225,8 @@ class CloudClient {
     };
     return batch.shiftIntent ? this.shiftProtocolRequest(payload) : this.request(payload);
   }
-  shiftGraph({branchId,shiftId}) {
-    return this.shiftProtocolRequest({sqlServerShiftGraph:{branchId,shiftId}});
+  shiftGraph({organizationId="default",branchId,shiftId}) {
+    return this.shiftProtocolRequest({sqlServerShiftGraph:{organizationId,branchId,shiftId}});
   }
   async shiftProtocolRequest(payload) {
     try{return await this.request(payload);}
