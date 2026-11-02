@@ -65,6 +65,26 @@ do not claim native convergence complete from safe deferral alone.
 
 ### SHIFT-36 — owner-approved protocol preparation and isolated tests
 
+Necessary offline dependency: capture the **actual OPEN postimage** inside the
+normal AggregateRepository opening commit in local protocol metadata. This is
+within approved local metadata preparation, not permission to invent an OPEN
+from a later CLOSED row. Preserve real OPEN → offline sales → closing/correction
+order; sending a closing first makes the existing closed-shift sale trigger deny
+valid later-uploaded sales. Include prior CT-only financial uploads and ordinary
+opening journals in ordering tests. Unknown pre-upgrade opening facts stay pending
+for explicit review; do not weaken sale/stock/receipt or branch authorization.
+Metadata and ACK/journal acknowledgement must commit atomically, and proven
+accepted CT copies must not globally skip unrelated edits or old history gaps.
+
+Permission evidence must include actual IPC/verified relay paths: graph tokens
+are compare-and-swap preconditions, not authorization. A user without recount/
+variance permission cannot gain it by forging actor fields; an explicitly
+authorized user's offline intent may later upload in the background after a
+different cashier signs in, retaining the real historical actor. Preserve
+existing granted and denied cases rather than hardcoding role names or granting
+new permissions. Complete offline OPEN/sales/close/recounts and in-flight change
+cases need actual source boundaries, not only service-role SQL fixtures.
+
 The owner explicitly approved the protocol preparation and isolated tests on
 2 November, including the original-count save-path retry verification extension.
 Approval covers the API/local metadata/service-routine source contract described
