@@ -240,7 +240,21 @@ BEGIN
     IF op->>'table'='shift_cash_counts' AND (proposed->>'counted_by_staff_id' IS DISTINCT FROM registered.subject OR proposed->>'counted_by_name' IS DISTINCT FROM registered.subject OR
       proposed->>'kind' IS DISTINCT FROM CASE action WHEN 'ORIGINAL' THEN 'ORIGINAL' WHEN 'RECOUNT' THEN 'RECOUNT' ELSE '' END) THEN RAISE EXCEPTION 'SYNC_SHIFT_AUTHOR_ACTOR_MISMATCH'; END IF;
     IF op->>'table'='shift_close_events' AND (proposed->>'actor_staff_id' IS DISTINCT FROM registered.subject OR proposed->>'actor_name' IS DISTINCT FROM registered.subject OR
-      (action='ORIGINAL' AND NOT COALESCE(proposed->>'event'=ANY(ARRAY['cash_count_submitted','reconciled']),false)) OR (action='RECOUNT' AND proposed->>'event' IS DISTINCT FROM 'recount_submitted') OR (action='VARIANCE' AND proposed->>'event' IS DISTINCT FROM 'variance_approved'))
+      (action='ORIGINAL' AND NOT COALESCE(proposed->>'event'=ANY(ARRAY['closing_started','cash_count_submitted','reconciled']),false)) OR (action='RECOUNT' AND proposed->>'event' IS DISTINCT FROM 'recount_submitted') OR (action='VARIANCE' AND proposed->>'event' IS DISTINCT FROM 'variance_approved'))
+    THEN RAISE EXCEPTION 'SYNC_SHIFT_AUTHOR_ACTOR_MISMATCH'; END IF;
+    -- A locally saved start may first reach the server in the signed ORIGINAL
+    -- graph. It must belong to this same author and the exact parent start;
+    -- another person's unuploaded history requires separate proven provenance.
+    IF op->>'table'='shift_close_events' AND proposed->>'event'='closing_started' AND (
+      proposed->>'from_state' IS DISTINCT FROM 'ACTIVE' OR proposed->>'to_state' IS DISTINCT FROM 'CASH_COUNT_REQUIRED' OR
+      proposed->>'shift_id' IS DISTINCT FROM v_shift::text OR proposed->>'store_id' IS DISTINCT FROM p_branch_id OR
+      proposed->>'terminal_id' IS DISTINCT FROM p_terminal_id OR proposed->>'created_at' IS NULL OR
+      NOT EXISTS(SELECT 1 FROM jsonb_array_elements(intent->'operations') parent_op,
+        LATERAL jsonb_array_elements(parent_op->'rows') parent
+        WHERE parent_op->>'table'='shifts' AND parent->>'id'=v_shift::text AND parent->>'store_id'=p_branch_id AND parent->>'terminal_id'=p_terminal_id
+          AND parent->>'closing_started_by'=registered.subject
+          AND (parent->>'closing_started_at')::timestamptz=(proposed->>'created_at')::timestamptz
+          AND parent->>'close_reason'=proposed->'detail'->>'reason'))
     THEN RAISE EXCEPTION 'SYNC_SHIFT_AUTHOR_ACTOR_MISMATCH'; END IF;
    END LOOP;
   END IF;

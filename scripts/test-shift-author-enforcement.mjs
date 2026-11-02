@@ -68,6 +68,43 @@ try{
   await assert.rejects(scalar("SELECT pos_sync_push_aggregate($1::uuid,'default','a','t-a',$2::jsonb)",[first.intentId,JSON.stringify(JSON.parse(first.wire.payloadJson).operations)]),/AUTHOR_REQUIRED/);
   assert.equal(await scalar('SELECT count(*)::int FROM pos_sync_private.shift_author_receipts'),2);
  });
+ async function withStart(ops){
+  Object.assign(ops[0].rows[0],{closing_started_at:opened,closing_started_by:'cashier',close_reason:'End of shift'});
+  ops[3].rows.unshift(await typed('shift_close_events',{id:randomUUID(),shift_id:shiftId,store_id:'a',terminal_id:'t-a',event:'closing_started',from_state:'ACTIVE',to_state:'CASH_COUNT_REQUIRED',detail:{reason:'End of shift',forced:false},actor_name:'cashier',actor_staff_id:'cashier',created_at:opened}));
+  return ops;
+ }
+ await test('same-author saved closing start uploads with ORIGINAL and survives a later different-author recount',async()=>{
+  const cashier=await enroll(),ops=await withStart(await closing());await push(intent(ops,cashier));
+  const saved=await graph(),start=saved.tables[3].rows.find(row=>row.event==='closing_started');
+  assert.equal(start.actor_staff_id,'cashier');
+  const manager=await enroll(adminId,'manager');await push(intent(await closing(110,saved,'manager'),manager,{kind:'RECOUNT',baseToken:saved.graphToken}));
+  const after=await graph();assert.deepEqual(after.tables[3].rows.find(row=>row.id===start.id),start);
+  assert.equal(Number(after.tables[1].rows.find(row=>row.kind==='ORIGINAL').counted_cash),100);
+ });
+ await test('a different person unuploaded start remains unproven and is not retagged by the ORIGINAL signer',async()=>{
+  const key=await enroll(),ops=await withStart(await closing());
+  ops[0].rows[0].closing_started_by='manager';
+  Object.assign(ops[3].rows[0],{actor_name:'manager',actor_staff_id:'manager'});
+  const pending=structuredClone(ops);
+  await assert.rejects(push(intent(ops,key)),/ACTOR_MISMATCH/);
+  assert.deepEqual(ops,pending);
+  assert.equal(await scalar('SELECT count(*)::int FROM shift_cash_counts'),0);
+  assert.equal(await scalar('SELECT count(*)::int FROM pos_sync_private.shift_author_receipts'),0);
+ });
+ await test('new closing start rejects forged author, transition, parent identity, timestamp and reason without retagging history',async()=>{
+  const key=await enroll();
+  for(const patch of [{actor_name:'manager'},{actor_staff_id:'manager'},{from_state:'CLOSED'},{to_state:'CLOSED'},
+   {shift_id:randomUUID()},{store_id:'b'},{terminal_id:'other-a'},{created_at:closed},{detail:{reason:'Invented'}}]){
+   const ops=await withStart(await closing());Object.assign(ops[3].rows[0],patch);
+   await assert.rejects(push(intent(ops,key)),/ACTOR_MISMATCH/);
+  }
+  for(const patch of [{closing_started_by:'manager'},{closing_started_at:null},{close_reason:'Other'}]){
+   const ops=await withStart(await closing());Object.assign(ops[0].rows[0],patch);
+   await assert.rejects(push(intent(ops,key)),/ACTOR_MISMATCH/);
+  }
+  assert.equal(await scalar('SELECT count(*)::int FROM shift_close_events'),0);
+  assert.equal(await scalar('SELECT count(*)::int FROM pos_sync_private.shift_author_receipts'),0);
+ });
  await test('current SQL grant/page/profile state defeats a stale allowed API decision before NEW writes',async()=>{
   const key=await enroll(),value=intent(await closing(),key);
   for(const permissions of [{}, {...allFlags,'page:shifts':false}]){await db.query('UPDATE app_users SET permissions=$1::jsonb',[JSON.stringify(permissions)]);await assert.rejects(push(value),/PERMISSION_REVOKED/);}

@@ -274,6 +274,7 @@ describe("installed Main shift IPC authority",()=>{
     nativeAdminSession.bindVerifiedAuthor(originalId,"cashier");
     await expect(f.call("business:shift-close-count",{shiftId,cash:100,clientKey:"cashier-original",terminalId:terminal})).resolves.toMatchObject({ok:true,state:"CLOSED"});
     expect(f.data.shift_cash_counts[0].counted_by_staff_id).toBe("cashier");
+    expect(f.data.shifts[0]).toMatchObject({closed_by_name:"cashier",closed_by_staff_id:"cashier"});
   });
   it.each(["business:shift-recount","business:shift-variance-approve"])("denies cashier %s despite a token and fake administrator fields",async channel=>{
     const f=bridge(),before=copy(f.data);nativeAdminSession.grant("staff","cashier",{can_shift_cash_count:true,can_close_shift:true},"pos",branch);

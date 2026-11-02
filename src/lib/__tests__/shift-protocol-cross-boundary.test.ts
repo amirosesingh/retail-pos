@@ -3,23 +3,27 @@ import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 
 // Opt-in Windows engine test. This runs real LocalDB and PGlite, but is NOT an
-// installed Electron/IPC, physical device, live Supabase or author-signature test.
+// installed Electron/IPC, physical device, live Supabase or OS-vault test.
 // All HTTP goes through the real sync API in-process; only the transport,
-// device-registry identity and feed-page selection are isolated adapters.
+// device/Auth identity, encrypted test vault and feed-page selection are isolated
+// adapters. Key generation/signing, enrollment HTTP handler, registry SQL and
+// signed-intent admission are production implementations on synthetic identities.
 vi.mock("../external-supabase-config", () => ({ runtimeEnvValue: () => "synthetic-service", supabaseConfig: () => ({ url: "https://cloud.invalid", key: "synthetic-public" }) }));
+vi.mock("@tanstack/react-router", () => ({ createFileRoute: () => (options: unknown) => ({ options }) }));
 vi.mock("../commerce-sync-readiness.server", () => ({ commerceSyncIsolationReady: async () => true }));
+import { Route } from "@/routes/api/v1/pos/shift-author-enroll";
 import { handleSyncRequest } from "../sync-endpoint.server";
 
 const require = createRequire(import.meta.url);
 const enabled = process.env.CODEX_SHIFT36_LOCALDB === "1";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic CJS and SQL engine fixture boundary
 type Row = Record<string, any>;
-let local: Row | undefined, db: Row | undefined;
-afterAll(async () => { vi.unstubAllGlobals(); try { await db?.close(); } finally { await local?.close(); } }, 60000);
+let local: Row | undefined, db: Row | undefined, vault: Row | undefined;
+afterAll(async () => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); try { await db?.close(); } finally { try { await local?.close(); } finally { vault?.close(); } } }, 60000);
 
 describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClient → API → isolated PostgreSQL", () => {
   it("preserves an offline opening/sale/three-intent chain across a lost reply, cashier switch and child-only web download", async () => {
-    const { createCloud, createLocal, mainCalls, graphNames } = require("../../../scripts/lib/shift-protocol-integration-fixture.cjs");
+    const { createCloud, createLocal, mainCalls, graphNames, createAuthorKeys } = require("../../../scripts/lib/shift-protocol-integration-fixture.cjs");
     const branch = randomUUID(), terminal = randomUUID(), shift = randomUUID(), sale = randomUUID(), proof = "a".repeat(64);
     db = await createCloud(branch, terminal); local = await createLocal(branch);
     const { manager, registry, repository } = local!;
@@ -30,10 +34,21 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
     const { PushWorker } = require("../../../electron/sync/push-worker.cjs");
     const { PullWorker } = require("../../../electron/sync/pull-worker.cjs");
     const { CloudClient } = require("../../../electron/sync/cloud-client.cjs");
-    const aggregates = new AggregateRepository(manager, repository), writer = new ShiftSyncJournal(repository);
+    const aggregates = new AggregateRepository(manager, repository), writer = new ShiftSyncJournal(repository, { authorRequired: true });
     const reader = new ChangeReader(manager, registry), checkpoints = new CheckpointRepository(manager);
-    let identity = { subject: "original-cashier" };
-    const calls = mainCalls(repository, writer, branch, terminal, () => identity);
+    const cashierId = randomUUID(), adminId = randomUUID();
+    const permissions = { can_process_sale: true, can_close_shift: true, can_shift_cash_count: true, can_shift_cash_recount: true };
+    for (const [id, subject] of [[cashierId, "original-cashier"], [adminId, "authorized-admin"]])
+      await db!.query("INSERT INTO app_users(id,user_id,auth_user_id,role,role_slug,permissions,is_active,store_id) VALUES($1,$2,$1,'staff','cashier',$3::jsonb,true,$4)", [id, subject, JSON.stringify(permissions), branch]);
+    const person = (authorId: string, subject: string) => ({ source: "pos", authorId, canonicalSubject: subject, subject, branchId: branch });
+    let identity = person(cashierId, "original-cashier"), epoch = 1;
+    const session = { identity: () => identity, epoch: () => epoch, hasLevel: () => true, hasPermission: (key: string) => permissions[key as keyof typeof permissions] === true };
+    const terminalConfig = { tokenId: terminal, locationId: branch, deviceUse: "operations", deviceBindingProof: proof, deviceClaimProof: proof };
+    vault = createAuthorKeys();
+    const { ShiftAuthorAuthority } = require("../../../electron/shift-authority.cjs");
+    const authority = new ShiftAuthorAuthority({ keys: vault!.keys, session, connectionManager: manager, terminal: () => terminalConfig,
+      project: () => "https://cloud.invalid", branch: () => branch, backendUrl: () => "https://pos.invalid", fetcher: (...args: Parameters<typeof fetch>) => fetch(...args) });
+    const calls = mainCalls(repository, writer, branch, terminal, session, authority);
     const scalar = async (query: string, args: unknown[] = []) => Object.values((await db!.query(query, args)).rows[0])[0] as Row;
     const sqlRows = async (query: string) => (await manager.pool.request().query(query)).recordset;
     const outbound: Row[] = [], rpcCalls: Row[] = [], feed: Row[] = [];
@@ -42,7 +57,7 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
       rpcCalls.push({ name, args: structuredClone(args) });
       const specs: Record<string, [string, string][]> = {
         pos_sync_push_aggregate: [["p_batch_id", "uuid"], ["p_organization_id", "text"], ["p_branch_id", "text"], ["p_terminal_id", "text"], ["p_operations", "jsonb"]],
-        pos_sync_push_shift_intent: [["p_batch_id", "uuid"], ["p_organization_id", "text"], ["p_branch_id", "text"], ["p_terminal_id", "text"], ["p_operations", "jsonb"], ["p_shift_intent", "jsonb"]],
+        pos_sync_push_author_shift_intent: [["p_batch_id", "uuid"], ["p_organization_id", "text"], ["p_branch_id", "text"], ["p_terminal_id", "text"], ["p_operations", "jsonb"], ["p_shift_intent", "jsonb"], ["p_shift_author", "jsonb"], ["p_author_authority", "jsonb"]],
         pos_sync_push_batch: [["p_batch_id", "uuid"], ["p_organization_id", "text"], ["p_branch_id", "text"], ["p_terminal_id", "text"], ["p_table", "text"], ["p_rows", "jsonb"], ["p_changes", "jsonb"]],
         pos_sync_shift_graph: [["p_organization_id", "text"], ["p_branch_id", "text"], ["p_terminal_id", "text"], ["p_shift_id", "uuid"]],
       };
@@ -50,6 +65,8 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
         expect(args.p_branch_id).toBe(branch); expect(args.p_terminal_id).toBe(terminal);
         return feed.filter(row => row.cursor > args.p_after_cursor).slice(0, args.p_limit);
       }
+      if (name === "pos_shift_author_enroll") return scalar("SELECT public.pos_shift_author_enroll($1::jsonb,$2)", [JSON.stringify(args.p_enrollment), args.p_subject]);
+      if (name === "pos_shift_author_key") return scalar("SELECT public.pos_shift_author_key($1,$2,$3::uuid,$4::uuid)", [args.p_project_origin, args.p_terminal_id, args.p_author_id, args.p_key_id]);
       const spec = specs[name]; expect(spec, `Unexpected synthetic RPC ${name}`).toBeDefined();
       // Verify the ACTUAL serialized PostgREST named-argument set, including
       // explicit NULL operations for v3. The adapter never silently fills it.
@@ -59,6 +76,16 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
     };
     vi.stubGlobal("fetch", vi.fn(async (value: string | URL | Request, options?: RequestInit) => {
       const url = String(value);
+      if (url === "https://pos.invalid/api/v1/pos/shift-author-enroll") {
+        const handler = (Route as unknown as { options: { server: { handlers: { POST: (input: { request: Request }) => Promise<Response> } } } }).options.server.handlers.POST;
+        return handler({ request: new Request(url, options) });
+      }
+      if (url === "https://cloud.invalid/auth/v1/user") return Response.json({ id: identity.authorId });
+      if (url.startsWith("https://cloud.invalid/rest/v1/app_users?")) {
+        const parsed = new URL(url), field = ["id", "user_id", "auth_user_id"].find(key => parsed.searchParams.has(key));
+        if (!field) throw new Error("Fixture requires an explicit account selector");
+        return Response.json((await db!.query(`SELECT * FROM app_users WHERE ${field}::text=$1`, [parsed.searchParams.get(field)!.slice(3)])).rows);
+      }
       if (url === "https://pos.invalid/api/v1/pos/sync") {
         const body = JSON.parse(String(options?.body)); outbound.push(structuredClone(body));
         const response = await handleSyncRequest(new Request(url, options));
@@ -80,8 +107,9 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
       throw new Error(`External/unexpected network is blocked: ${url}`);
     }));
     const cloud = new CloudClient({ connectionManager: manager, configStore: { get: () => "https://pos.invalid" },
-      terminalStore: { read: () => ({ tokenId: terminal, locationId: branch, deviceUse: "operations", deviceBindingProof: proof, deviceClaimProof: proof }) } });
-    const worker = new PushWorker({ reader, cloud, checkpoints, registry });
+      terminalStore: { read: () => terminalConfig } });
+    const worker = new PushWorker({ reader, cloud, checkpoints, registry, validateAuthor: (value: Row) => authority.validatePending(value) });
+    expect(await authority.enrollOnline({ accessToken: "synthetic-author-access" })).toEqual({ ok: true });
 
     const openedAt = "2026-11-02T01:00:00.000Z";
     const opening = await aggregates.commit("shift", { branchId: branch, terminalId: terminal, permissions: { can_open_shift: true }, operations: [{ kind: "upsert", table: "shifts", rows: [{
@@ -96,7 +124,8 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
     }] }] });
     await calls.startLocalShiftClose({ shiftId: shift, reason: "End of day", terminalId: terminal });
     await expect(calls.commitLocalShiftCashCount({ shiftId: shift, cash: 100, clientKey: "original-1", terminalId: terminal })).resolves.toMatchObject({ ok: true, state: "CLOSED" });
-    identity = { subject: "authorized-admin" };
+    identity = person(adminId, "authorized-admin"); epoch++;
+    expect(await authority.enrollOnline({ accessToken: "synthetic-admin-access" })).toEqual({ ok: true });
     await calls.commitLocalShiftRecount({ shiftId: shift, cash: 110, reason: "First recount", clientKey: "recount-1", terminalId: terminal });
     await calls.commitLocalShiftRecount({ shiftId: shift, cash: 120, reason: "Second recount", clientKey: "recount-2", terminalId: terminal });
     const savedIntents = await sqlRows("SELECT * FROM dbo.pos_sync_shift_intents ORDER BY intent_sequence;");
@@ -106,9 +135,22 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
     expect(frozen[1].predecessorIntentId).toBe(frozen[0].intentId); expect(frozen[2].predecessorIntentId).toBe(frozen[1].intentId);
     expect(frozen.map((value: Row) => value.operations.find((op: Row) => op.table === "shift_cash_counts").rows.length)).toEqual([1, 2, 3]);
     expect(await reader.frozenOpeningRows(opening.operationId, branch)).toEqual(frozenOpen);
-    identity = { subject: "different-current-cashier" };
+    identity = person(randomUUID(), "different-current-cashier"); epoch++;
     const queued = await reader.pendingAggregates(branch, 500);
     expect(queued.filter((entry: Row) => entry.aggregateId.toLowerCase() === frozen[0].intentId)).toHaveLength(1);
+    const signed = await reader.protectedIntent(savedIntents[0].intent_id, branch);
+    expect(signed.shiftAuthor).toMatchObject({ authorId: cashierId, subject: "original-cashier", action: "ORIGINAL" });
+    expect(authority.validatePending(signed.shiftAuthor)).toEqual(signed.shiftAuthor);
+    expect(() => authority.validatePending({ ...signed.shiftAuthor, keyId: randomUUID() })).toThrow();
+    const wire = signed;
+    // Send only the protocol's declared wire fields, exactly as PushWorker does.
+    const shiftIntent = Object.fromEntries(["version", "intentId", "shiftId", "kind", "baseToken", "predecessorIntentId", "predecessorIntentHash", "payloadJson"].map(key => [key, wire[key]]));
+    const receiptsBeforeDenial = Number(await scalar("SELECT count(*) FROM pos_sync_private.shift_author_receipts"));
+    for (const altered of [{ ...signed.shiftAuthor, signature: "A".repeat(86) }, { ...signed.shiftAuthor, authorId: adminId }])
+      await expect(cloud.pushAggregate({ batchId: signed.intentId, branchId: branch, shiftIntent, shiftAuthor: altered })).rejects.toMatchObject({ code: "ESHIFT_AUTHOR_INVALID" });
+    expect(Number(await scalar("SELECT count(*) FROM pos_sync_private.shift_author_receipts"))).toBe(receiptsBeforeDenial);
+    expect(await sqlRows("SELECT * FROM dbo.pos_sync_shift_intents ORDER BY intent_sequence;")).toEqual(savedIntents);
+    outbound.length = 0; // Subsequent assertions count the actual worker attempts only.
     // Keep the actual driver's UUID casing; do not normalize the reader or
     // fixture to hide a worker identity-comparison regression.
 
@@ -145,7 +187,7 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
     expect((await sqlRows("SELECT * FROM dbo.pos_sync_shift_baselines;")).length).toBe(0); // ACK never installs baseline.
 
     // Actual existing web correction SQL, with its authenticated web wrapper
-    // outside this fixture. No new author-signature/financial-admission claim.
+    // outside this fixture. This does not claim web-route authentication coverage.
     await scalar("SELECT public.pos_admin_correct_closed_shift($1::uuid,130,NULL,NULL,'Synthetic web recount','web-admin','Web Admin',$2,$3)", [shift, terminal, randomUUID()]);
     const remote = await cloud.shiftGraph({ branchId: branch, shiftId: shift });
     expect(remote.closedAtRaw).toBe(closedAtRaw);

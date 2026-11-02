@@ -65,6 +65,39 @@ do not claim native convergence complete from safe deferral alone.
 
 ### SHIFT-36 — owner-approved protocol preparation and isolated tests
 
+Author candidate verification completed for the current scope: fresh independent
+review confirmed two actual native/server compatibility defects (missing original
+parent closing author and rejected saved closing_started). Both were reproduced
+and corrected; the real signed workflow passes. Final broad suite excluding only
+the separately executed opt-in engine test: 611 suites / 4,549 tests passed.
+Actual signed Main/key/enrollment/API/SQL workflow: 1 comprehensive scenario
+passed; isolated SQL authority scenarios: 15 passed; actual LocalDB: 28 passed;
+TypeScript/diff checks passed. Exact changed-file lint: zero errors, 12 test-only
+typing warnings. No additional formal review cycle or full-system security claim.
+Signed-path denials cover forged actor/scope/signature and stale/revoked new writes;
+accepted exact history remains no-write acknowledgement. Existing unsigned legacy
+compatibility is explicitly unretired, not claimed fixed for all old terminals.
+
+Still pending: owner decision on a separate signed closing-start proof so one
+person may start offline and another finish without inventing prior authorship;
+authoritative expected-amount/offline refund as-of policy; final reviewed-head CI,
+safe reviewed migration rollout with exact-project approval, installed-device
+acceptance and release. A question for closing-start preparation is pending;
+elapsed time is not approval. No new extension, live migration or real enrollment
+has been executed. #359 historical repair and Membership remain HOLD.
+
+Latest continuation: completed native author commit a0f18cbf and atomic server
+enforcement eda1802c are integrated as 8f98b5d1/7ffd0e96. Parent reran 92 focused
+author/API tests and 12 isolated SQL security scenarios: passed; TypeScript
+passed. Disposable real LocalDB checks: 28 scenarios passed, including local023
+shape/index preservation, stored signatures, epoch-change rollback and original
+offline/pending-edit contracts. A fresh independent read-only candidate review
+is active. The cross-boundary fixture owner is updating only its two test files
+to exercise actual author signing/enrollment/verified signed RPC; the earlier
+unsigned-protocol success must not be called signed workflow verification.
+Broad regression excludes that actively edited opt-in test and is running.
+No installed SQL, real enrollment, business record or live schema changes.
+
 Cross-boundary engine harness is integrated at 796b7f41; root independently ran
 the opt-in actual LocalDB → worker → CloudClient → sync API → in-memory PostgreSQL
 scenario: passed in 9.79 seconds. Named SQL arguments are additionally verified

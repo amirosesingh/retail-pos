@@ -1,9 +1,10 @@
 // Test infrastructure only: random owned LocalDB + in-memory PostgreSQL.
 // No saved POS profile, connection URL, device credential or existing DB is read.
 const assert = require('node:assert/strict');
-const { readFileSync } = require('node:fs');
+const { readFileSync, mkdtempSync, rmSync } = require('node:fs');
 const { execFileSync } = require('node:child_process');
-const { randomUUID } = require('node:crypto');
+const { randomUUID, randomBytes, createCipheriv, createDecipheriv } = require('node:crypto');
+const { tmpdir } = require('node:os');
 const { resolve } = require('node:path');
 const { createRequire } = require('node:module');
 const { runInNewContext } = require('node:vm');
@@ -34,8 +35,8 @@ async function createCloud(branch, terminal) {
     await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role; CREATE SCHEMA auth;
       CREATE FUNCTION auth.role() RETURNS text LANGUAGE sql AS $$ SELECT current_setting('test.auth_role',true) $$;
       CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql AS $$ SELECT NULL::uuid $$;
-      CREATE TABLE app_users(id text,auth_user_id uuid,role text,permissions jsonb,is_active boolean,store_id text);
-      CREATE TABLE terminal_tokens(id text PRIMARY KEY,location_id text,status text,revoked_at timestamptz);
+      CREATE TABLE app_users(id uuid PRIMARY KEY,user_id text,auth_user_id uuid,role text,role_slug text,permissions jsonb,is_active boolean,store_id text);
+      CREATE TABLE terminal_tokens(id text PRIMARY KEY,location_id text,status text,revoked_at timestamptz,platform text DEFAULT 'pc',is_claimed boolean DEFAULT true);
       CREATE TABLE stores(id text PRIMARY KEY,name text); CREATE TABLE pos_settings(id int,notification_settings jsonb);
       CREATE TABLE authorization_requests(id uuid PRIMARY KEY,store_id text,status text,consumed_at timestamptz);
       CREATE TABLE audit_logs(id uuid PRIMARY KEY,store_id text); CREATE TABLE held_orders(store_id text,shift_id text,status text);
@@ -71,10 +72,10 @@ async function createCloud(branch, terminal) {
       CREATE TRIGGER sales_block_closing_shift BEFORE INSERT ON sales FOR EACH ROW EXECUTE FUNCTION sales_block_closing_shift();
       ${['shift_cash_counts','shift_reconciliations','shift_close_events'].map(name => `CREATE TRIGGER immutable BEFORE UPDATE OR DELETE ON ${name} FOR EACH ROW EXECUTE FUNCTION shift_records_immutable();`).join('\n')}
       SELECT set_config('test.auth_role','service_role',false);`);
-    await db.query("INSERT INTO terminal_tokens VALUES($1,$2,'active',NULL)", [terminal, branch]);
+    await db.query("INSERT INTO terminal_tokens(id,location_id,status,revoked_at) VALUES($1,$2,'active',NULL)", [terminal, branch]);
     for (const name of ['20261030153259_confirm_shift_closure_sync_acknowledgement', '20261030164829_bind_shift_closure_proof_to_requested_revision',
       '20261031031945_preserve_validated_branch_context_for_shift_sync', '20261101052452_prevent_closed_shift_reopening_during_sync',
-      '20261102082439_shift_closing_causal_intents', '20261102104005_fix_closed_shift_correction_activity_type']) await db.exec(read(`supabase/migrations/${name}.sql`));
+      '20261102082439_shift_closing_causal_intents', '20261102104005_fix_closed_shift_correction_activity_type', '20261102101610_shift_author_key_registry', '20261102103716_enforce_shift_author_uploads']) await db.exec(read(`supabase/migrations/${name}.sql`));
     return db;
   } catch (error) { await db.close(); throw error; }
 }
@@ -121,6 +122,7 @@ async function createLocal(branch) {
       CREATE TABLE dbo.sync_checkpoints(organization_id nvarchar(128) NOT NULL DEFAULT(N'default'),branch_id nvarchar(128),entity_type nvarchar(128),direction nvarchar(10),change_tracking_version bigint,committed_cursor nvarchar(400),updated_at datetimeoffset);
       INSERT dbo.pos_settings(id,integration_settings) VALUES(1,N'{}');`);
     await pool.request().batch(read('database/sqlserver/migrations/022_shift_causal_intents.sql'));
+    await pool.request().batch(read('database/sqlserver/migrations/023_shift_author_attestations.sql'));
     const manager = { pool, sql: () => sql };
     const { OperationsRepository } = require(resolve(root, 'electron/db/repositories/operations.cjs'));
     const repository = new OperationsRepository(manager, registry);
@@ -140,17 +142,38 @@ async function createLocal(branch) {
     return { manager, registry, repository, insert, close };
   } catch (error) { await close(); throw error; }
 }
-function mainCalls(repository, writer, branch, terminal, currentIdentity) {
+function mainCalls(repository, writer, branch, terminal, session, shiftAuthority) {
   const source = read('electron/main.cjs'), start = source.indexOf('async function startLocalShiftClose('), end = source.indexOf('\nfunction redactShiftRow(', start);
   assert(start >= 0 && end > start);
   const mainRequire = createRequire(resolve(root, 'electron/main.cjs'));
   const context = { require: mainRequire, localBranchId: () => branch, operationsRepository: repository, shiftSyncJournal: writer,
     guard: mainRequire('./ipc-guard.cjs'), recordId: mainRequire('./sync/uuid-fields.cjs').recordId, randomUUID, Date,
     shiftMoney: value => Math.round(Number(value ?? 0) * 100) / 100,
-    adminSession: { identity: currentIdentity, hasLevel: level => level === 'admin', hasPermission: () => true },
+    adminSession: session, shiftAuthority,
     terminalStore: { read: () => ({ tokenId: terminal }) }, pendingShiftCloseSync: new Set(),
     publishBusinessChange() {}, scheduleAutomaticSync() {} };
   runInNewContext(source.slice(start, end) + '\nthis.calls={startLocalShiftClose,commitLocalShiftCashCount,commitLocalShiftRecount};', context);
   return context.calls;
 }
-module.exports = { createCloud, createLocal, mainCalls, graphNames };
+// Only this randomly owned fixture directory is used. Encryption is a test
+// adapter, not Electron safeStorage/DPAPI or a claim about installed vault access.
+function createAuthorKeys() {
+  const directory = mkdtempSync(resolve(tmpdir(), 'codex-shift-protocol-'));
+  const secret = randomBytes(32);
+  const safeStorage = {
+    isEncryptionAvailable: () => true,
+    encryptString(value) {
+      const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', secret, iv);
+      const ciphertext = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
+      return Buffer.concat([iv, cipher.getAuthTag(), ciphertext]);
+    },
+    decryptString(value) {
+      const cipher = createDecipheriv('aes-256-gcm', secret, value.subarray(0, 12));
+      cipher.setAuthTag(value.subarray(12, 28));
+      return Buffer.concat([cipher.update(value.subarray(28)), cipher.final()]).toString('utf8');
+    },
+  };
+  return { keys: require(resolve(root, 'electron/security/shift-author-key.cjs')).createShiftAuthorKeys({ safeStorage, directory: () => directory }),
+    close() { rmSync(directory, { recursive: true, force: true }); secret.fill(0); } };
+}
+module.exports = { createCloud, createLocal, mainCalls, graphNames, createAuthorKeys };

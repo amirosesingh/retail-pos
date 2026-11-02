@@ -1369,7 +1369,8 @@ async function commitLocalShiftCashCount(raw) {
     ] },
     { kind: "update", table: "shifts", match: { id: shiftId }, values: {
       store_id: branchId, state: "CLOSED", status: "CLOSED",
-      closed_at: shift.closed_at ?? now, final_counted_cash: countedCash,
+      closed_at: shift.closed_at ?? now, closed_by_name: actor, closed_by_staff_id: actor,
+      final_counted_cash: countedCash,
       counted_cash: countedCash, closing_float: countedCash, counted_card: countedCard,
       counted_digital: countedDigital, expected_cash: expectedCash, expected_card: expectedCard,
       expected_digital: expectedDigital, variance_cash: varianceCash,
