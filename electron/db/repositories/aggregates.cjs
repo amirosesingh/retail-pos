@@ -125,6 +125,7 @@ class AggregateRepository {
           throw Object.assign(new Error("This shift is closing or closed. Refresh the shift status before recording a sale."), { code: "ESHIFT_CLOSED" });
       }
       let affected = 0;
+      const newOpenings = new Set();
       for (const operation of operations) {
         stage = "business rows";
         tableName = operation.table;
@@ -132,6 +133,11 @@ class AggregateRepository {
           throw new Error(`${operation.table} is centrally managed and cannot be changed by the local database.`);
         const table = this.operationsRepository.tables.get(operation.table);
         const records = operation.rows?.length ? operation.rows : [operation.values ?? operation.match];
+        if(operation.table==="shifts" && ["insert","upsert"].includes(operation.kind))for(const record of records){
+          const saved=await new sql.Request(transaction).input("shift",record.id)
+            .query("SELECT id FROM dbo.[shifts] WITH(UPDLOCK,HOLDLOCK) WHERE id=@shift;");
+          if(!saved.recordset?.length)newOpenings.add(record.id);
+        }
         // Deletes must be checked while their owner row still exists. Inserts
         // and updates are checked after application so child ownership can be
         // resolved through a parent written earlier in the same aggregate.
@@ -179,6 +185,11 @@ class AggregateRepository {
         }
       }
       stage = "operation receipt";
+      if(newOpenings.size){
+        const {ShiftIntentStore}=require("../shift-intents.cjs");
+        const store=new ShiftIntentStore(this.connectionManager,this.operationsRepository.registry);
+        for(const shiftId of newOpenings)await store.freezeOpening(transaction,operationId,aggregate.branchId,shiftId);
+      }
       tableName = "local_operation_receipts";
       await new sql.Request(transaction)
         .input("operation_id", sql.UniqueIdentifier, operationId)

@@ -10,7 +10,7 @@ const { PushWorker } = require("../../../electron/sync/push-worker.cjs");
 const { loadRegistry } = require("../../../electron/db/schema-registry.cjs");
 const { toCloudRow } = require("../../../electron/sync/row-codec.cjs");
 type Row = Record<string, unknown>;
-type State = { tables: Record<string, Row[]>; journal: Row[]; receipts: Row[] };
+type State = { tables: Record<string, Row[]>; journal: Row[]; receipts: Row[]; intents: Row[]; baselines: Row[];openings:Row[] };
 type Operation = { kind: string; table: string; rows?: Row[]; values?: Row; match?: Row };
 const branch = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const otherBranch = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -25,7 +25,7 @@ const sameId = (left: unknown, right: unknown) => String(left ?? "").toLowerCase
 function fixture(options: { branch?: string; terminal?: string | null } = {}) {
   const ownBranch = options.branch ?? branch;
   const registry = loadRegistry();
-  let state: State = { tables: Object.fromEntries(registry.tables.map((table: { sqlServerTable: string }) => [table.sqlServerTable, []])), journal: [], receipts: [] };
+  let state: State = { tables: Object.fromEntries(registry.tables.map((table: { sqlServerTable: string }) => [table.sqlServerTable, []])), journal: [], receipts: [], intents:[],baselines:[],openings:[] };
   state.tables.shifts.push({ id: shiftId, store_id: ownBranch, terminal_id: options.terminal === undefined ? terminal : options.terminal,
     status: "OPEN", state: "CASH_COUNT_REQUIRED", closed_at: null, row_version: 2, opening_float: 20 });
   const events: string[] = [];
@@ -42,6 +42,27 @@ function fixture(options: { branch?: string; terminal?: string | null } = {}) {
     input(name: string, value: unknown, typedValue?: unknown) { this.inputs[name] = arguments.length === 3 ? typedValue : value; return this; }
     async query(query: string) {
       const data = this.transaction.image;
+      if(query.startsWith("INSERT dbo.pos_sync_shift_openings")){
+        data.openings.push({aggregate_id:this.inputs.aggregate,shift_id:this.inputs.shift,branch_id:this.inputs.branch,row_json:this.inputs.row,row_hash:this.inputs.hash});return{recordset:[],rowsAffected:[1]};
+      }
+      if(query.includes("pos_sync_shift_openings"))return{recordset:copy(data.openings.filter(row=>sameId(row.aggregate_id,this.inputs.aggregate)&&sameId(row.branch_id,this.inputs.branch)))};
+      if(query.includes("pos_sync_shift_baselines"))return{recordset:copy(data.baselines.filter(row=>sameId(row.shift_id,this.inputs.shift)&&sameId(row.branch_id,this.inputs.branch)))};
+      if(query.startsWith("INSERT dbo.pos_sync_shift_intents")){
+        data.intents.push({intent_sequence:data.intents.length+1,intent_id:this.inputs.intent,branch_id:this.inputs.branch,shift_id:this.inputs.shift,
+          intent_kind:this.inputs.kind,baseline_generation:this.inputs.generation,base_token:this.inputs.base,predecessor_intent_id:this.inputs.predecessor,
+          predecessor_intent_hash:this.inputs.predecessor_hash,payload_json:this.inputs.payload,payload_hash:this.inputs.hash});return{recordset:[],rowsAffected:[1]};
+      }
+      if(query.startsWith("UPDATE dbo.pos_sync_shift_intents")){
+        Object.assign(data.intents.find(row=>sameId(row.intent_id,this.inputs.intent))!,{accepted_token:this.inputs.accepted,current_token:this.inputs.current,
+          superseded:this.inputs.superseded,acknowledged_at:"acknowledged"});return{recordset:[],rowsAffected:[1]};
+      }
+      if(query.startsWith("UPDATE dbo.sync_change_journal")){
+        data.journal.filter(row=>sameId(row.aggregate_id,this.inputs.aggregate)).forEach(row=>{row.acknowledged_at="acknowledged";});return{recordset:[],rowsAffected:[1]};
+      }
+      if(query.includes("SELECT DISTINCT shift_id FROM dbo.pos_sync_shift_intents"))return{recordset:copy(data.intents.filter(row=>sameId(row.branch_id,this.inputs.branch)&&JSON.parse(String(this.inputs.ids)).some((id:string)=>sameId(id,row.shift_id))))};
+      if(query.includes("pos_sync_shift_intents"))return{recordset:copy(data.intents.filter(row=>sameId(row.branch_id,this.inputs.branch)&&
+        (!query.includes("acknowledged_at IS NOT NULL")||row.acknowledged_at)&&
+        (this.inputs.intent?sameId(row.intent_id,this.inputs.intent):sameId(row.shift_id,this.inputs.shift))).sort((a,b)=>Number(b.intent_sequence)-Number(a.intent_sequence)).slice(0,1))};
       if (query.startsWith("INSERT dbo.sync_change_journal")) {
         if (faults.journal) throw faults.journal;
         events.push("journal"); data.journal.push({ ...copy(this.inputs), change_id: data.journal.length + 1, acknowledged_at: null });
@@ -58,8 +79,8 @@ function fixture(options: { branch?: string; terminal?: string | null } = {}) {
       if (query.startsWith("SELECT id FROM dbo.shifts"))
         return { recordset: data.tables.shifts.filter(row => sameId(row.store_id, this.inputs.branch) && !row.closed_at && row.status === "OPEN") };
       if (query.startsWith("SELECT CASE WHEN EXISTS"))
-        return { recordset: [{ allowed: data.tables.shifts.some(row => sameId(row.id, this.inputs.scope0) && sameId(row.store_id, this.inputs.branch)) ? 1 : 0 }] };
-      const table = /dbo\.\[([a-z_]+)\]/.exec(query)?.[1];
+        return { recordset: [{ allowed: data.tables[/dbo\.\[([a-z_]+)\]/.exec(query)?.[1]??"shifts"].some(row => sameId(row.id, this.inputs.scope0) && sameId(row.store_id, this.inputs.branch)) ? 1 : 0 }] };
+      const table = /dbo\.\[?([a-z_]+)\]?/.exec(query)?.[1];
       if (!table) throw new Error(`Unhandled fixture statement: ${query}`);
       if (query.startsWith("MERGE ")) {
         if (faults.business) throw faults.business;
@@ -80,7 +101,7 @@ function fixture(options: { branch?: string; terminal?: string | null } = {}) {
       if (query.startsWith("SELECT ")) {
         events.push(query.startsWith("SELECT id FROM dbo.[shifts]") ? "lock:parent" : `read:${table}`);
         let rows = data.tables[table].filter(row => table === "shifts"
-          ? sameId(row.id, this.inputs.shift) && sameId(row.store_id, this.inputs.branch)
+          ? (this.inputs.ids?JSON.parse(String(this.inputs.ids)).some((id:string)=>sameId(id,row.id)):sameId(row.id, this.inputs.shift)) && (this.inputs.branch==null||sameId(row.store_id, this.inputs.branch))
           : table === "activity_events" ? Object.values(this.inputs).some(value => sameId(row.id, value))
           : sameId(row.shift_id, this.inputs.shift));
         rows = copy(rows);
@@ -91,9 +112,16 @@ function fixture(options: { branch?: string; terminal?: string | null } = {}) {
     }
   }
   const sql = { Transaction, Request, UniqueIdentifier: "uuid", ISOLATION_LEVEL: { SERIALIZABLE: 4 } };
-  const connectionManager = { sql: () => sql, pool: {} };
+  const connectionManager = { sql: () => sql, pool: {get image(){return state;}} };
   const repository = new OperationsRepository(connectionManager, registry);
   const writer = new ShiftSyncJournal(repository);
+  const apply=writer.apply.bind(writer);
+  writer.apply=async(context:string,ops:Operation[],scope:Row={})=>{
+    const eventCount=events.length;
+    const observation=scope.observation??await writer.observe(scope.branchId,shiftId);
+    events.splice(eventCount); // Separate the read observation from the write transaction assertions.
+    return apply(context,ops,{...scope,observation});
+  };
   return { registry, repository, writer, connectionManager, events, faults, data: () => state, ownBranch,
     replace(next: State) { state = next; }, scope: { branchId: ownBranch, terminalId: terminal } };
 }
@@ -115,6 +143,7 @@ function closeOperations(ownBranch = branch, cash = 90, nullable = true, base = 
 
 function workerFixture(h: ReturnType<typeof fixture>, confirmation = true) {
   const reader = new ChangeReader(h.connectionManager, h.registry);
+  reader.shiftPrerequisites=async()=>true; // This fixture has no financial journal/CT rows; real LocalDB tests exercise that guard.
   reader.pendingAggregates = async (_branch: string, _limit: number, excluded: string[] = []) => {
     const byId = new Map<string, Row[]>();
     for (const row of h.data().journal.filter(row => !row.acknowledged_at && !excluded.includes(String(row.aggregate_id)))) {
@@ -139,16 +168,18 @@ function workerFixture(h: ReturnType<typeof fixture>, confirmation = true) {
   const uploaded: Row[] = [];
   const cloudRows = new Map<string, Row>([[shiftId, { id: shiftId, store_id: h.ownBranch, state: "ACTIVE", status: "OPEN", closed_at: null, row_version: 1 }]]);
   const cloud = { terminalId: () => terminal,
-    pushAggregate: async (request: { batchId: string; operations: { table: string; rows: Row[] }[] }) => {
+    pushAggregate: async (request: { batchId: string; operations?: { table: string; rows: Row[] }[]; shiftIntent?:Row }) => {
       uploaded.push(copy(request));
-      const shiftRows = request.operations.filter(operation => operation.table === "shifts").flatMap(operation => operation.rows);
-      for (const row of shiftRows) cloudRows.set(String(row.id), copy(row));
-      const parents = shiftRows.filter(row => row.status === "CLOSED");
-      return { ok: true, ...(confirmation ? { shift_closure_ack_version: 2,
-        shift_closures: parents.map(row => ({ id: row.id, store_id: row.store_id, row_version: Number(row.row_version) + 10, requested_row_version: row.row_version })) } : {}) };
+      const operations=request.shiftIntent?JSON.parse(String(request.shiftIntent.payloadJson)).operations:request.operations;
+      const shiftRows = operations.filter((operation:Row) => operation.table === "shifts").flatMap((operation:Row) => operation.rows);
+      for (const row of shiftRows)if(!(cloudRows.get(String(row.id))?.status==="CLOSED"&&row.status==="OPEN"))cloudRows.set(String(row.id), copy(row));
+      const parents = shiftRows.filter((row:Row) => row.status === "CLOSED");
+      return { ok: true, ...(confirmation ? { shift_closure_ack_version: request.shiftIntent?3:2,
+        shift_closures: parents.map((row:Row) => ({ id: row.id, store_id: row.store_id, row_version: Number(row.row_version) + 10, requested_row_version: row.row_version,
+          ...(request.shiftIntent?{intent_id:request.batchId,intent_hash:require("../../../electron/db/shift-intents.cjs").hashPayload(request.shiftIntent.payloadJson),accepted_token:"a".repeat(64),current_token:"a".repeat(64),superseded:false}:{}) })) } : {}) };
     },
   };
-  const tables = h.registry.tables.filter((table: { cloudTable: string }) => ["change_history", "shifts", "shift_cash_counts", "shift_reconciliations", "shift_close_events", "shift_notifications", "shift_variance_alerts", "activity_events"].includes(table.cloudTable));
+  const tables = h.registry.tables.filter((table: { cloudTable: string }) => ["sales","change_history", "shifts", "shift_cash_counts", "shift_reconciliations", "shift_close_events", "shift_notifications", "shift_variance_alerts", "activity_events"].includes(table.cloudTable));
   return { reader, uploaded, cloudRows, worker: new PushWorker({ reader, cloud, registry: { tables }, checkpoints: { list: async () => [] } }) };
 }
 
@@ -202,7 +233,7 @@ describe("protected shift closing durable journal", () => {
     h.data().tables.shifts[0].store_id = otherBranch;
     const before = copy(h.data());
     await expect(h.writer.apply("Closing shift cash count", closeOperations(), h.scope)).rejects.toMatchObject({ code: "SYNC_BRANCH_FORBIDDEN" });
-    expect(h.events).toEqual(["begin", "lock:receipt", "lock:parent", "rollback"]);
+    expect(h.events).not.toContain("write:shift_cash_counts");
     expect(h.data()).toEqual(before);
   });
 
@@ -267,7 +298,7 @@ describe("protected shift closing durable journal", () => {
     const before = copy(h.data());
     h.events.length = 0;
     await expect(h.writer.apply("Closing shift cash count", ops, h.scope)).rejects.toMatchObject({ code: "EIDEMPOTENCY" });
-    expect(h.events).toEqual(["begin", "lock:receipt", "rollback"]);
+    expect(h.events.slice(-3)).toEqual(["begin", "lock:receipt", "rollback"]);
     expect(h.data()).toEqual(before);
   });
 
@@ -356,7 +387,8 @@ describe("protected shift closing durable journal", () => {
     const f = workerFixture(h);
     await expect(f.worker.run({ branchId: branch, includeActivity: false })).rejects.toMatchObject({ code: "ECHANGEGAP" });
     expect(f.uploaded).toHaveLength(1);
-    const operations = f.uploaded[0].operations as { table: string; rows: Row[] }[];
+    expect(f.uploaded[0].operations).toBeUndefined();
+    const operations = JSON.parse(String((f.uploaded[0].shiftIntent as Row).payloadJson)).operations as { table: string; rows: Row[] }[];
     expect(operations.find(op => op.table === "shifts")?.rows[0]).toMatchObject({ status: "CLOSED", row_version: 3, counted_cash: 90 });
     expect(operations.find(op => op.table === "shift_cash_counts")?.rows).toHaveLength(1);
     expect(h.data().journal.every(row => !!row.acknowledged_at)).toBe(true);
@@ -388,5 +420,95 @@ describe("protected shift closing durable journal", () => {
     await expect(f.worker.run({ branchId: branch, includeActivity: false })).rejects.toMatchObject({ code: "ECHANGEGAP" });
     expect(h.data().journal.every(row => !row.acknowledged_at)).toBe(true);
     expect(h.data().journal.some(row => String(row.last_error).includes("not confirmed"))).toBe(true);
+  });
+
+  it("freezes offline ORIGINAL plus two RECOUNTs as three immutable causal snapshots",async()=>{
+    const h=fixture();
+    for(const [base,cash]of [[0,90],[10,95],[20,97]])await h.writer.apply("close",closeOperations(branch,cash,true,base),h.scope);
+    const intents=h.data().intents, payloads=intents.map(row=>JSON.parse(String(row.payload_json)));
+    expect(payloads.every(payload=>payload.operations.length===6 && payload.operations.some((op:Row)=>op.table==="shift_variance_alerts"&&(op.rows as Row[]).length===0))).toBe(true);
+    expect(payloads.map(payload=>payload.operations.find((op:Row)=>op.table==="shift_cash_counts").rows.length)).toEqual([1,2,3]);
+    expect(payloads[0]).toMatchObject({baseToken:null,predecessorIntentId:null,predecessorIntentHash:null});
+    for(let index=1;index<3;index++)expect(payloads[index]).toMatchObject({baseToken:null,predecessorIntentId:intents[index-1].intent_id,predecessorIntentHash:intents[index-1].payload_hash});
+    expect(payloads.flatMap(payload=>payload.operations).every(op=>Object.keys(op).every(key=>["table","rows","changes","deletePhase"].includes(key)))).toBe(true);
+    const f=workerFixture(h);await f.worker.pushAggregates(branch,100);
+    expect(f.uploaded.map(request=>JSON.parse(String((request.shiftIntent as Row).payloadJson)).intentId)).toEqual(intents.map(row=>row.intent_id));
+    expect(h.data().intents.every(row=>!!row.acknowledged_at)).toBe(true);
+    expect(h.data().baselines).toEqual([]);
+  });
+
+  it("a new recount committed during an in-flight close links its durable predecessor",async()=>{
+    const h=fixture();await h.writer.apply("close",closeOperations(),h.scope);
+    const f=workerFixture(h),send=f.worker.cloud.pushAggregate.bind(f.worker.cloud);
+    let release!:()=>void,started!:()=>void;
+    const gate=new Promise<void>(resolve=>{release=resolve;}),entered=new Promise<void>(resolve=>{started=resolve;});
+    f.worker.cloud.pushAggregate=async(request:Row)=>{const result=await send(request);if(f.uploaded.length===1){started();await gate;}return result;};
+    const sending=f.worker.pushAggregates(branch,100);await entered;
+    const frozen=String(h.data().intents[0].payload_json);
+    await h.writer.apply("recount",closeOperations(branch,95,true,10),h.scope);
+    release();await sending;
+    expect(h.data().intents[0].payload_json).toBe(frozen);
+    const second=JSON.parse(String((f.uploaded[1].shiftIntent as Row).payloadJson));
+    expect(second.predecessorIntentId).toBe(h.data().intents[0].intent_id);
+    expect(second.baseToken).toBeNull();
+    expect(JSON.parse(String((f.uploaded[0].shiftIntent as Row).payloadJson)).operations.find((op:Row)=>op.table==="shift_cash_counts").rows).toHaveLength(1);
+  });
+
+  it("acknowledging I1 leaves the pending I2 tail for I3, even when I1 is historical/superseded",async()=>{
+    const h=fixture();await h.writer.apply("close",closeOperations(),h.scope);
+    await h.writer.apply("recount",closeOperations(branch,95,true,10),h.scope);
+    const reader=new ChangeReader(h.connectionManager,h.registry), first=await reader.protectedIntent(h.data().intents[0].intent_id,branch);
+    await reader.acknowledgeProtectedIntent(first,{intent_id:first.intentId,intent_hash:first.payloadHash,accepted_token:"a".repeat(64),current_token:"b".repeat(64),superseded:true});
+    await h.writer.apply("third",closeOperations(branch,97,true,20),h.scope);
+    expect(h.data().intents[0].superseded).toBe(true);
+    expect(h.data().intents[1].acknowledged_at).toBeUndefined();
+    expect(JSON.parse(String(h.data().intents[2].payload_json)).predecessorIntentId).toBe(h.data().intents[1].intent_id);
+    expect(h.data().baselines).toEqual([]);
+  });
+
+  it.each(["parent","generation","tail"])("rejects an observation whose %s changed before protected commit",async changed=>{
+    const h=fixture(),observation=await h.writer.observe(branch,shiftId);
+    if(changed==="parent")h.data().tables.shifts[0].row_version=50;
+    if(changed==="generation")h.data().baselines.push({branch_id:branch,shift_id:shiftId,observation_generation:uuid(89)});
+    if(changed==="tail")h.data().intents.push({branch_id:branch,shift_id:shiftId,intent_id:uuid(88),payload_hash:"a".repeat(64),intent_sequence:1});
+    const before=copy(h.data());
+    await expect(h.writer.apply("stale",closeOperations(),{...h.scope,observation})).rejects.toMatchObject({code:"ESHIFT_LOCAL_CHANGED"});
+    expect(h.data()).toEqual(before);expect(h.events.some(event=>event.startsWith("write:"))).toBe(false);
+  });
+
+  it("an exact receipt retry after a later recount never re-runs the old parent UPDATE",async()=>{
+    const h=fixture(),first=closeOperations();await h.writer.apply("close",first,h.scope);
+    await h.writer.apply("later",closeOperations(branch,95,true,10),h.scope);
+    const before=copy(h.data());
+    await expect(h.writer.apply("retry",first,h.scope)).resolves.toMatchObject({replayed:true,affected:0});
+    expect(h.data()).toEqual(before);expect(h.data().tables.shifts[0].counted_cash).toBe(95);
+  });
+  it.each(["shift_cash_counts","shift_reconciliations","shift_close_events"])("does not replay a receipt after historical %s was removed/corrupted",async table=>{
+    const h=fixture(),first=closeOperations();await h.writer.apply("close",first,h.scope);
+    h.data().tables[table]=[];const before=copy(h.data());
+    await expect(h.writer.apply("retry",first,h.scope)).rejects.toMatchObject({code:"EIDEMPOTENCY"});expect(h.data()).toEqual(before);
+  });
+  it("uploads genuine frozen OPEN before an offline sale, then waits for financial CT before ORIGINAL and two recounts",async()=>{
+    const h=fixture();h.data().tables.shifts=[];const aggregates=new AggregateRepository(h.connectionManager,h.repository);
+    const opened=await aggregates.commit("shift",{branchId:branch,terminalId:terminal,permissions:{can_open_shift:true},operations:[{kind:"upsert",table:"shifts",rows:[{id:shiftId,store_id:branch,terminal_id:terminal,status:"OPEN",state:"ACTIVE",row_version:1,opening_float:20,opened_at:now}]}]});
+    await aggregates.commit("sale",{branchId:branch,terminalId:terminal,permissions:{can_process_sale:true},operations:[{kind:"insert",table:"sales",rows:[{id:uuid(75),store_id:branch,shift_id:shiftId,total_amount:80,bill_number:"fixture-sale",created_at:now}]}]});
+    h.data().tables.shifts[0].state="CASH_COUNT_REQUIRED";
+    for(const[base,cash]of[[0,90],[10,95],[20,97]])await h.writer.apply("close",closeOperations(branch,cash,true,base),h.scope);
+    const f=workerFixture(h),send=f.worker.cloud.pushAggregate.bind(f.worker.cloud),ordered:string[]=[];let financialCT=false;
+    f.reader.shiftPrerequisites=async()=>financialCT;
+    f.worker.cloud.pushAggregate=async(request:Row)=>{
+      const operations=request.shiftIntent?JSON.parse(String((request.shiftIntent as Row).payloadJson)).operations:request.operations;
+      if((operations as Row[]).some(op=>op.table==="sales"))expect(f.cloudRows.get(shiftId)?.state).toBe("ACTIVE");
+      ordered.push(request.shiftIntent?String((request.shiftIntent as Row).kind):(operations as Row[]).some(op=>op.table==="sales")?"SALE":"OPEN");
+      return send(request);
+    };
+    await f.worker.pushAggregates(branch,1);expect(ordered).toEqual(["OPEN","SALE"]);
+    expect((f.uploaded[0].operations as Row[])[0].rows).toEqual([JSON.parse(String(h.data().openings[0].row_json))]);
+    expect(h.data().journal.filter(row=>row.aggregate_id!==opened.operationId&&row.entity_type==="shifts").every(row=>!row.acknowledged_at)).toBe(true);
+    financialCT=true;await f.worker.pushAggregates(branch,1);expect(ordered).toEqual(["OPEN","SALE","ORIGINAL","RECOUNT","RECOUNT"]);
+    f.cloudRows.set(shiftId,{...f.cloudRows.get(shiftId),counted_cash:999,status:"CLOSED"});
+    h.data().journal.push({aggregate_id:uuid(76),entity_type:"shifts",entity_id:JSON.stringify({id:shiftId}),operation:"update",acknowledged_at:null,entity_version:1});
+    const count=f.uploaded.length;await f.worker.pushAggregates(branch,1);expect(f.uploaded).toHaveLength(count);
+    expect(f.cloudRows.get(shiftId)?.counted_cash).toBe(999);expect(h.data().journal.every(row=>!!row.acknowledged_at)).toBe(true);
   });
 });

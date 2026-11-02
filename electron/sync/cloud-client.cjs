@@ -215,14 +215,26 @@ class CloudClient {
     });
   }
   pushAggregate(batch) {
-    return this.request({
+    const payload = {
       sqlServerAggregate: {
         batchId: batch.batchId,
         organizationId: batch.organizationId ?? "default",
         branchId: batch.branchId,
-        operations: batch.operations,
+        ...(batch.shiftIntent ? {shiftIntent:batch.shiftIntent} : {operations:batch.operations}),
       },
-    });
+    };
+    return batch.shiftIntent ? this.shiftProtocolRequest(payload) : this.request(payload);
+  }
+  shiftGraph({branchId,shiftId}) {
+    return this.shiftProtocolRequest({sqlServerShiftGraph:{branchId,shiftId}});
+  }
+  async shiftProtocolRequest(payload) {
+    try{return await this.request(payload);}
+    catch(error){
+      if(["PGRST202","42883"].includes(error?.code) || Number(error?.status)===404)
+        throw Object.assign(new Error("The configured backend has not installed the closing-convergence protocol. Saved local work remains pending; ask an administrator to review the matching backend upgrade."),{code:"ESHIFT_PROTOCOL_UNAVAILABLE",table:"shifts",cause:error});
+      throw error;
+    }
   }
   pullBatch({ organizationId = "default", branchId, cursor, limit }) {
     return this.request({
@@ -278,6 +290,7 @@ class CloudClient {
     const protectedGraph = SHIFT_GRAPH_TABLES.has(table.cloudTable);
     const result = { applied: 0, alreadyMatching: 0, deferred: 0, conflicts: 0, outcomes: [] };
     const outcome = (change, status, reason, localVersion) => {
+      if (!protectedGraph) return;
       result[status === "already_matching" ? "alreadyMatching" : status === "conflict" ? "conflicts" : status]++;
       result.outcomes.push({ entityId: change.entity_id ?? JSON.stringify(this.parseKey(table, change)), status,
         ...(reason ? { reason } : {}), localVersion: localVersion ?? null, remoteVersion: change.row_data?.row_version ?? null });
@@ -433,7 +446,7 @@ class CloudClient {
         }
       }
     }
-    return result;
+    return protectedGraph ? result : undefined;
   }
   async applyLocalBatchToPool(connectionManager, table, rows, { branchId } = {}) {
     this.connectionManager = connectionManager;

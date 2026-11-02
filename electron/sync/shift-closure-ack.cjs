@@ -1,4 +1,5 @@
 const { recordId } = require("./uuid-fields.cjs");
+const {TOKEN,hashPayload} = require("../db/shift-intents.cjs");
 
 function closedShiftRows(operations) {
   return operations.flatMap(operation => operation.table === "shifts" && !operation.deletePhase
@@ -19,7 +20,7 @@ function revision(value) {
 // servers can return ok even when their version predicate ignored that row.
 // Require the atomic SQL postcondition's proof on new uploads AND receipt replay.
 // Other table uploads retain their existing acknowledgement contract.
-function assertShiftClosureAcknowledgement(acknowledgement, operations, branchId) {
+function assertShiftClosureAcknowledgement(acknowledgement, operations, branchId, intent=null) {
   const rows = closedShiftRows(operations);
   if (!rows.length) return;
   const fail = () => {
@@ -28,7 +29,7 @@ function assertShiftClosureAcknowledgement(acknowledgement, operations, branchId
     ), { code: "ESHIFT_CLOSURE_UNCONFIRMED", table: "shifts" });
   };
   const branch = recordId(branchId);
-  if (!branch || acknowledgement?.shift_closure_ack_version !== 2 ||
+  if (!branch || acknowledgement?.shift_closure_ack_version !== (intent?3:2) ||
       !Array.isArray(acknowledgement.shift_closures)) return fail();
   const expected = new Map();
   for (const row of rows) {
@@ -43,8 +44,13 @@ function assertShiftClosureAcknowledgement(acknowledgement, operations, branchId
     const requestedVersion = revision(proof?.requested_row_version);
     if (!expected.has(id) || seen.has(id) || recordId(proof?.store_id) !== branch ||
         rowVersion === null || requestedVersion !== expected.get(id)) return fail();
+    if(intent && (expected.size!==1 || id!==intent.shiftId || recordId(proof.intent_id)!==intent.intentId ||
+      proof.intent_hash!==intent.payloadHash || hashPayload(intent.payloadJson)!==intent.payloadHash ||
+      !TOKEN.test(proof.accepted_token??"") || !TOKEN.test(proof.current_token??"") || typeof proof.superseded!=="boolean" ||
+      proof.superseded!==(proof.accepted_token!==proof.current_token))) return fail();
     seen.add(id);
   }
+  return intent ? acknowledgement.shift_closures[0] : undefined;
 }
 
 module.exports = { assertShiftClosureAcknowledgement };

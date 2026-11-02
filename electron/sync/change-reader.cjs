@@ -3,6 +3,7 @@ const { branchPredicate, rendererReadBranchPredicate } = require("../db/branch-s
 const { ACTIVITY_TABLES } = require("./event-policy.cjs");
 const { recordId } = require("./uuid-fields.cjs");
 const { ShiftSyncJournal } = require("../db/shift-sync-journal.cjs");
+const {ShiftIntentStore} = require("../db/shift-intents.cjs");
 const SHIFT_GRAPH_TABLES = ["shifts", "shift_cash_counts", "shift_reconciliations", "shift_close_events",
   "shift_notifications", "shift_variance_alerts"];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -13,6 +14,7 @@ class ChangeReader {
     this.registry = registry ?? { tables: [] };
     this.tables = new Map((registry?.tables ?? []).map((table) => [table.sqlServerTable, table]));
     this.pendingGraphChecks = new WeakMap();
+    this.intents = new ShiftIntentStore(connectionManager,registry);
   }
   table(value) {
     const table = typeof value === "string" ? this.tables.get(value) : value;
@@ -152,6 +154,59 @@ class ChangeReader {
     }
     return [...byAggregate.entries()].map(([aggregateId, changes]) => ({ aggregateId, changes }));
   }
+  protectedIntent(aggregateId,branchId) { return this.intents.get(aggregateId,branchId); }
+  frozenOpeningRows(aggregateId,branchId) { return this.intents.openingRows(aggregateId,branchId); }
+  protectedShiftIds(shiftIds,branchId) { return this.intents.hasIntents(shiftIds,branchId); }
+  async predecessorAccepted(intent){
+    if(!intent.predecessorIntentId)return true;
+    const prior=await this.intents.get(intent.predecessorIntentId,intent.branchId);
+    if(!prior || prior.payloadHash!==intent.predecessorIntentHash || prior.shiftId!==intent.shiftId)
+      throw Object.assign(new Error("The saved closing predecessor has missing or changed facts."),{code:"EIDEMPOTENCY",table:"shifts"});
+    return prior.acknowledged;
+  }
+  async shiftPrerequisites(intent){
+    const initial=!intent.baseToken&&!intent.predecessorIntentId;
+    for(const name of ["sales","sale_items","bookings","booking_items","booking_payments","payment_transactions","held_orders"]){
+      const table=this.tables.get(name);if(!table)continue;
+      const columns=new Set(table.columns.map(column=>column.sqlServerColumn));
+      const parentScope=[columns.has("sale_id")?"EXISTS(SELECT 1 FROM dbo.sales parent WHERE parent.id=source.sale_id AND parent.store_id=@branch AND TRY_CONVERT(uniqueidentifier,parent.shift_id)=@shift)":null,
+        columns.has("booking_id")?"EXISTS(SELECT 1 FROM dbo.bookings parent WHERE parent.id=source.booking_id AND parent.store_id=@branch AND TRY_CONVERT(uniqueidentifier,parent.shift_id)=@shift)":null].filter(Boolean).join(" OR ");
+      const scope=["sales","bookings","held_orders"].includes(name)
+        ? `source.store_id=@branch AND (TRY_CONVERT(uniqueidentifier,source.shift_id)=@shift${name==="held_orders"&&initial?" OR source.shift_id IS NULL":""})`
+        : columns.has("shift_id")&&columns.has("store_id")
+          ? `source.store_id=@branch AND (TRY_CONVERT(uniqueidentifier,source.shift_id)=@shift${parentScope?` OR (source.shift_id IS NULL AND (${parentScope}))`:""})`
+          : parentScope;
+      if(!scope)continue;
+      const request=()=>this.connectionManager.pool.request().input("branch",intent.branchId).input("shift",intent.shiftId).input("entity",name);
+      const pending=await request().query(`SELECT TOP(1) journal.change_id FROM dbo.sync_change_journal journal WHERE journal.branch_id=@branch AND journal.entity_type=@entity AND journal.acknowledged_at IS NULL
+        AND (EXISTS(SELECT 1 FROM dbo.[${name}] source WHERE source.id=TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(journal.entity_id)=1 THEN journal.entity_id ELSE N'{}' END,'$.id')) AND (${scope}))
+          OR NOT EXISTS(SELECT 1 FROM dbo.[${name}] known WHERE known.id=TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(journal.entity_id)=1 THEN journal.entity_id ELSE N'{}' END,'$.id'))));`);
+      if(pending.recordset?.length)return false;
+      const bounds=(await request().input("object",`dbo.${name}`).query(`SELECT (SELECT TOP(1) change_tracking_version FROM dbo.sync_checkpoints WHERE branch_id=@branch AND entity_type=@entity AND direction='push') checkpoint_version,
+        CHANGE_TRACKING_MIN_VALID_VERSION(OBJECT_ID(@object)) min_version,CHANGE_TRACKING_CURRENT_VERSION() current_version,
+        CASE WHEN EXISTS(SELECT 1 FROM dbo.[${name}] source WHERE ${scope}) THEN 1 ELSE 0 END has_rows;`)).recordset?.[0];
+      const since=Number(bounds?.checkpoint_version),valid=bounds?.checkpoint_version!=null&&bounds?.min_version!=null&&bounds?.current_version!=null&&Number.isSafeInteger(since)&&since>=Number(bounds.min_version)&&since<=Number(bounds.current_version);
+      if(!valid){if(bounds?.has_rows)return false;continue;}
+      const tracked=await request().input("since",since).query(`SELECT TOP(1) CT.id FROM CHANGETABLE(CHANGES dbo.[${name}],@since) CT LEFT JOIN dbo.[${name}] source ON source.id=CT.id
+        WHERE (CT.SYS_CHANGE_CONTEXT IS NULL OR CT.SYS_CHANGE_CONTEXT<>0x434C4F5544) AND (CT.SYS_CHANGE_OPERATION='D' OR (${scope}));`);
+      if(tracked.recordset?.length)return false;
+    }
+    return true;
+  }
+  acceptedShiftChanges(table,changes,branchId) { return this.intents.coveredChanges(table,changes,branchId); }
+  async acknowledgeProtectedIntent(intent,proof) {
+    const sql=this.connectionManager.sql(),transaction=new sql.Transaction(this.connectionManager.pool);
+    await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
+    try {
+      // Use the same parent-first ownership as protected commits/downloads.
+      await new sql.Request(transaction).input("shift",intent.shiftId).input("branch",intent.branchId)
+        .query("SELECT id FROM dbo.[shifts] WITH(UPDLOCK,HOLDLOCK) WHERE id=@shift AND store_id=@branch;");
+      await this.intents.acknowledge(transaction,intent,proof);
+      await new sql.Request(transaction).input("aggregate",intent.intentId).input("branch",intent.branchId)
+        .query("UPDATE dbo.sync_change_journal SET acknowledged_at=SYSDATETIMEOFFSET(),last_error=NULL WHERE aggregate_id=@aggregate AND branch_id=@branch AND acknowledged_at IS NULL;");
+      await transaction.commit();
+    }catch(error){await Promise.resolve(transaction.rollback()).catch(()=>undefined);throw error;}
+  }
   async acknowledgeAggregate(aggregateId) {
     await this.connectionManager.pool.request().input("aggregate", aggregateId).query("UPDATE dbo.sync_change_journal SET acknowledged_at=SYSDATETIMEOFFSET(),last_error=NULL WHERE aggregate_id=@aggregate AND acknowledged_at IS NULL;");
   }
@@ -259,7 +314,9 @@ class ChangeReader {
         WHERE (CT.SYS_CHANGE_CONTEXT IS NULL OR CT.SYS_CHANGE_CONTEXT<>0x434C4F5544)
         AND (CT.id IN (SELECT TRY_CONVERT(uniqueidentifier,[value]) FROM OPENJSON(@ids)) OR CT.SYS_CHANGE_OPERATION='D');`,
       { since, ids: JSON.stringify([...keys]) });
-      if (tracked.recordset?.length) throw Object.assign(new Error("A local closing Change Tracking edit is still beyond its upload checkpoint. Upload or resolve it before retrying this cloud page."),
+      const trackedRows=tracked.recordset??[];
+      const covered=trackedRows.length<=2000 ? await this.intents.coveredChanges(this.tables.get(name),trackedRows,branch,transaction) : new Set();
+      if (trackedRows.some(row=>!covered.has(recordId(String(row.id))))) throw Object.assign(new Error("A local closing Change Tracking edit is still beyond its upload checkpoint. Upload or resolve it before retrying this cloud page."),
         { code: "ELOCAL_CT_PENDING", table: name });
     }
     if (shiftIds.length) this.pendingGraphChecks.set(transaction, { branch, shifts: new Set([
