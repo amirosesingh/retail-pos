@@ -20,7 +20,10 @@ const open = (version = 99) => ({ id: shift, store_id: branch, status: "OPEN", s
 const closed = (version = 5, cash = 100) => ({ ...open(version), status: "CLOSED", state: "CLOSED", closed_at: "2026-11-02T01:00:00.000Z", counted_cash: cash });
 
 /** Actual production modules, isolated in-memory SQL/transport only. The SQL
- * double models row policy and rollback, not physical SQL Server lock behavior. */
+ * double models row policy and rollback, not physical SQL Server lock behavior.
+ * These SHIFT35 cases deliberately exercise the guarded legacy row path after
+ * a validated, nonclosed atomic response. Complete CLOSED graph adoption has
+ * separate SHIFT36 coverage; this fixture must not fabricate a CLOSED token. */
 function fixture(parent: Row | null = open()) {
   const registry = loadRegistry();
   const data: Record<string, Row[]> = Object.fromEntries(registry.tables.map((table: Row) => [table.cloudTable, []]));
@@ -55,6 +58,15 @@ function fixture(parent: Row | null = open()) {
         return { recordset: journal.filter(row => row.table === this.inputs.entity && [branch, "global"].includes(row.branch) &&
           (ids.includes(row.id) || !rows[row.table].some(saved => saved.id === row.id))).slice(0, 1) };
       }
+      if (text.includes("FROM dbo.pos_sync_shift_intents") && text.includes("ack_coverage_json IS NOT NULL")) {
+        expect(text).toContain("intent_sequence<CONVERT(bigint,@before) ORDER BY intent_sequence DESC");
+        expect(this.inputs.branch).toBe(branch);
+        expect(this.inputs.shift).toMatch(/^[0-9a-f-]{36}$/);
+        // This legacy fixture has no protected intents or historical receipts.
+        // A local CT edit must therefore remain pending, rather than being
+        // treated as covered by an invented acknowledgement.
+        return { recordset: [] };
+      }
       if (text.includes("FROM dbo.held_orders")) return { recordset: [] };
       const name = /(?:FROM|MERGE) dbo\.\[([^\]]+)\]/.exec(text)?.[1];
       if (!name) throw new Error(`Unexpected isolated SQL: ${text}`);
@@ -84,6 +96,10 @@ function fixture(parent: Row | null = open()) {
   const reader = new ChangeReader(manager, registry);
   const cloud = new CloudClient({ configStore: {}, terminalStore: { read: () => ({}) }, connectionManager: manager });
   const pages: Row[] = [];
+  cloud.shiftGraph = vi.fn(async ({ branchId, shiftId }: Row) => ({
+    ok: true, shiftGraphVersion: 1, branchId, shiftId, graphToken: null, closedAtRaw: null,
+    tables: graphNames.map(table => ({ table, rows: table === "shifts" ? [{ ...open(1), id: shiftId, store_id: branchId }] : [] })),
+  }));
   cloud.pullBatch = vi.fn(async () => clone(pages.shift() ?? { rows: [], tombstones: [], cursor: committedCursor, count: 0 }));
   const checkpoints = { get: vi.fn(async () => ({ committed_cursor: committedCursor })), save: vi.fn(async (_branch: string, _table: string, _direction: string, patch: Row, tx?: Transaction) => { if (tx) tx.cursor = patch.committed_cursor; }) };
   const conflicts = { reconcileAcknowledged: vi.fn(), record: vi.fn() }, publish = vi.fn();
@@ -103,6 +119,15 @@ function fixture(parent: Row | null = open()) {
 }
 
 describe("truthful native closing adoption", () => {
+  it("keeps the legacy row-policy fixture behind the explicit nonclosed atomic contract", async () => {
+    const f = fixture(open(1)); f.page(change("shifts", { ...open(2), opening_float: 100 }));
+    await expect(f.pull()).resolves.toMatchObject({ merged: 1 });
+    expect(f.cloud.shiftGraph).toHaveBeenCalledExactlyOnceWith({ branchId: branch, shiftId: shift });
+    const graph = await f.cloud.shiftGraph.mock.results[0].value;
+    expect(graph).toMatchObject({ graphToken: null, closedAtRaw: null });
+    expect(graph.tables.map((entry: Row) => entry.table)).toEqual(graphNames);
+    expect(graph.tables[0].rows[0]).toMatchObject({ status: "OPEN", state: "ACTIVE", closed_at: null });
+  });
   it("retains OPEN99/CLOSED5 and its complete feed page, without publishing or fabricating application", async () => {
     const f = fixture(); f.page(change("shifts", closed()));
     f.page(change("shift_cash_counts", { id: count, shift_id: shift, store_id: branch, kind: "ORIGINAL", counted_cash: 100 }, 2));
