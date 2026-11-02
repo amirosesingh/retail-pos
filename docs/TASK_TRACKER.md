@@ -65,6 +65,37 @@ do not claim native convergence complete from safe deferral alone.
 
 ### SHIFT-36 — owner-approved protocol preparation and isolated tests
 
+2 November continuation checkpoint (isolated coordination source 69fd5769):
+server draft 907ba546 and native coverage draft 61fef763 are integrated, retaining
+the non-shift settings-notification correction. Shared sealed-key/public proof
+foundation ce7ab218 is integrated without runtime enrollment or key creation on
+real devices. Combined five focused suites: 168 tests passed; isolated protocol
+PostgreSQL: 24 scenarios passed; existing native/company/event/key CJS checks:
+56 passed; TypeScript passed. Full regression: 606 suites passed, two suites
+failed (4,428 tests passed / 32 failed). Thirty-one failures are an older
+adoption fixture invoking the new graph HTTP path with an incomplete config
+stub/missing historical-proof SQL handling; a separate agent owns fixture
+adaptation while preserving all branch/pending/rollback assertions. The remaining
+old exact-call assertion omitted the newly required observation argument;
+assertion updated to require branch, terminal AND observation for journal writes,
+and its 12-test suite passes. Full suite is not green; rerun after fixture repair.
+These are source/isolated results, not installed-device or live verification.
+
+AUTH-37 server identity/enrollment foundation and native Main/session-epoch hooks
+are being prepared in separate owned worktrees. New outer aggregate shiftAuthor
+attestation must leave frozen payload bytes/hash unchanged. Canonical user_id
+audit labels remain distinct from stable app_users.id; aliases/renames cannot
+retag pending signatures. Key/subject mismatch remains explicit review-only.
+
+Financial validation design has an additional source-confirmed constraint:
+sale/refund journals upload the current row, so an offline sale followed by a
+closing, refund and recount can deliver a refunded sale before the older closing.
+Do not claim current-total comparison proves historical as-of totals. Existing
+shift locks do not serialize every sale INSERT/UPDATE/DELETE alias. No global
+sales lock, checkout/refund trigger, immutable financial snapshot or formula
+change is approved/implemented here. Preserve this separate correction-plan gate;
+do not weaken validation, invent financial history or rewrite frozen amounts.
+
 2 November reconciliation: PR #359's CPU-failure/shift-conflict commit titles
 record diagnostic evidence, not runtime CPU corrections. Its five-file diff is
 memory/tracker, the historical recovery review, superseded one-shift replay and
