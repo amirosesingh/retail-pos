@@ -73,4 +73,21 @@ function intentMessage(input) {
   const value = unsignedIntent(input);
   return JSON.stringify(['retail-pos.shift-author.intent.v1', value.algorithm, value.projectOrigin, value.terminalId, value.authorId, value.keyId, value.subject, value.branchId, value.shiftId, value.intentId, value.action, value.payloadHash]);
 }
-module.exports = { normalizeBinding, normalizeEnrollment, normalizeAttestation, enrollmentMessage, intentMessage };
+const CLOSING_START_KEYS = ['version', 'algorithm', 'keyId', ...BINDING_KEYS, 'subject', 'branchId', 'shiftId', 'eventId', 'payloadHash', 'payloadJson'];
+function unsignedClosingStart(input) {
+  const value = objectWithKeys(input, CLOSING_START_KEYS), result = common(value);
+  if (typeof value.payloadHash !== 'string' || !/^[a-f0-9]{64}$/.test(value.payloadHash)) invalid();
+  if (typeof value.payloadJson !== 'string' || !value.payloadJson || new TextEncoder().encode(value.payloadJson).length > 16384) invalid();
+  return { ...result, subject: label(value.subject), branchId: label(value.branchId), shiftId: uuid(value.shiftId), eventId: uuid(value.eventId), payloadHash: value.payloadHash, payloadJson: value.payloadJson };
+}
+function normalizeClosingStart(input) {
+  const value = objectWithKeys(input, [...CLOSING_START_KEYS, 'signature']);
+  base64url(value.signature, 64);
+  const { signature, ...unsigned } = value;
+  return { ...unsignedClosingStart(unsigned), signature };
+}
+function closingStartMessage(input) {
+  const value = unsignedClosingStart(input);
+  return JSON.stringify(['retail-pos.shift-author.closing-start.v1', value.algorithm, value.projectOrigin, value.terminalId, value.authorId, value.keyId, value.subject, value.branchId, value.shiftId, value.eventId, value.payloadHash]);
+}
+module.exports = { normalizeClosingStart, closingStartMessage, normalizeBinding, normalizeEnrollment, normalizeAttestation, enrollmentMessage, intentMessage };
