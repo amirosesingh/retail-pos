@@ -80,6 +80,25 @@ ISOLATED TESTS ONLY: no live enrollment, installed SQL/cloud schema application,
 business data repair, production merge or installer publication. Financial
 expected-amount/as-of policy and Membership hold remain unchanged.
 
+Reviewed start contract: use optional singular OUTER shiftClosingStart beside
+shiftAuthor, preserving existing frozen closing JSON/hash and causal headers.
+Separate closing-start.v1 signature binds author/key/project/terminal/branch/
+shift/event and exact raw start payload SHA256. Strict payload max16KiB contains
+the actual saved business event (only revision/update clocks excluded) plus
+original parent identity and closing-start time/by/reason; never money formulas.
+Native saves proof atomically with actual start and freezes its exact association
+with ORIGINAL metadata. Server checks A's signature/current start permission and
+B's existing count permission before new writes. A distinct service-only RPC
+uses a bounded private validated-start context to admit only that earlier event;
+an immutable receipt binds proof to accepted intent. Existing RPC replay cannot
+omit/change an accepted start proof. Historical exact replay retains no-write
+semantics, current terminal scope/signatures and original authors. Same-author
+legacy compatibility stays bounded; unproved different-author rows stay pending.
+Use typed native/PG timestamp representation checks, not arbitrary clock priority.
+The independent fresh read-only contract investigation is complete; candidate
+review follows implementation/focused tests. Native/server work remains isolated
+with shared public protocol owned by native author; root owns this ledger.
+
 Author candidate verification completed for the current scope: fresh independent
 review confirmed two actual native/server compatibility defects (missing original
 parent closing author and rejected saved closing_started). Both were reproduced
