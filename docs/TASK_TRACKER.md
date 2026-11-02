@@ -2,6 +2,59 @@
 
 Last reconciled: **2026-11-03, Asia/Brunei**.
 
+## 3 November — parallel production preparation and CI follow-up
+
+Owner asks to prepare/update the existing production PR alongside beta fixes.
+PR #354's obsolete authority-plan and SHIFT-34/35 status was reconciled with
+actual beta 41463049 and candidate #363 at 3acb0900. #354 remains draft,
+unmerged; #363 is not yet beta content. Main remains v1.4.79 / 2f404e6f.
+Preserve beta-first integration, exact-head checks and separate ready-promotion
+approval. Historical #359 and Membership/dependencies remain HOLD.
+
+Confirmed CI blocker: the standalone trusted Windows closing-graph fixture
+does not initialize the new shift authority. Agent correction uses the real
+v3 authority/journal path rather than a permissive stub. Exercising it also
+reproduces a candidate compatibility regression: the signed start RPC equates
+the original opening terminal with the actual closing terminal. Preserve the
+existing authorized same-branch cross-terminal close success and independently
+validate original-parent identity; do not turn it into an expected denial.
+Source correction and regression verification are in progress, not merged or
+applied live. No checkout, permission grants or real shift records changed.
+
+Follow-up candidate correction completed in source: start-proof migration and
+matching canonical block distinguish immutable opening-terminal attribution from
+the registered executing terminal. Both are compared to trusted respective
+contexts; only ORIGINAL with validated start proof admits this compatibility.
+No earlier migration, permission grant or real record is rewritten. Root reran
+the exact failing native graph command: **23/23 passed**; independent read-only
+review found no actionable scoped defect and confirmed exact schema/migration
+parity and unchanged final privilege hardening. Agent final checks: **28 author
+SQL cases, 157 focused Vitest cases**, lint and diff checks passed. Source
+preparation is implemented/isolated-verified, not live-applied; remote exact-head
+CI, beta integration, physical-device/checkout acceptance and release gates remain.
+
+Read-only Cloudflare inspection confirms production deployment a70a936e maps
+to main 2f404e6f. Last-24-hour logs include CPU-limit 503s for both sync and
+public cashier login; one login reports 15 ms CPU / 1,462 ms elapsed. Beta's
+redaction improvement is not yet deployed to production and does not explain
+the separate login failure. Hosting execution budget and exact CPU attribution
+were initially unverified; no billing, CPU-limit, database or production setting changed.
+
+Subsequent read-only Workers plans inspection confirms **Free / Current plan**
+for the same Cloudflare account and **10 ms CPU per request**. The observed
+15 ms failed login exceeds that budget, establishing a hosting-limit mismatch
+for this invocation. Source merging alone cannot guarantee recovery; retain
+an owner-authorized execution-plan/budget decision and post-deployment checks
+as a production gate. No Upgrade button was used and no billing changed.
+PR #354 was updated with this evidence, remaining draft/unmerged.
+
+Owner decision: **Keep Free; investigate further optimization**. Do not upgrade
+billing or change hosting CPU limits. Continue bounded source/isolated CPU
+investigation for login and sync, preserving authentication, branch/privacy,
+wrong-attempt handling and complete pagination. Do not claim the Free budget
+is met without measured hosted acceptance; report feasibility limits honestly.
+
+
 ## Latest checkpoint — signed shift handover verification
 
 On 2 November beta PR #362 merged as

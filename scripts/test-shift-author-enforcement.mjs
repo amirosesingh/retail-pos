@@ -6,6 +6,8 @@ import assert from 'node:assert/strict';
 import { enrollmentMessage, intentMessage, closingStartMessage } from '../electron/security/shift-author-protocol.cjs';
 const read=path=>readFile(new URL('../'+path,import.meta.url),'utf8');
 const schema=(await read('supabase/schema.sql')).replaceAll('\r\n','\n');
+const startMigration=(await read('supabase/migrations/20261102153013_bind_signed_closing_start_evidence.sql')).replaceAll('\r\n','\n').trim();
+assert.equal(schema.split('-- SHIFT_CLOSING_START_CONTRACT_BEGIN\n')[1]?.split('\n-- SHIFT_CLOSING_START_CONTRACT_END')[0],startMigration,'The canonical start contract must exactly match its reviewed migration');
 const names=['shifts','shift_cash_counts','shift_reconciliations','shift_close_events','shift_notifications','shift_variance_alerts'];
 function fn(name){const start=schema.indexOf(`CREATE OR REPLACE FUNCTION public.${name}(`);assert(start>=0,name);const tail=schema.slice(start),delimiter=tail.match(/\bAS\s+(\$[\w]*\$)/i)[1],begin=tail.indexOf(delimiter);return tail.slice(0,tail.indexOf(delimiter+';',begin+delimiter.length)+delimiter.length+1);}
 function table(name){const start=schema.indexOf(`CREATE TABLE IF NOT EXISTS public.${name} (`);assert(start>=0,name);return schema.slice(start,schema.indexOf('\n);',start)+3);}
@@ -85,6 +87,48 @@ try{
   const a=await enroll(),b=await enroll(adminId,'manager'),ops=await withStart(await closing(100,null,'manager'));
   return {a,b,ops,value:intent(ops,b),proof:startProof(ops,a)};
  }
+ for(const openingTerminal of ['other-a',null])for(const differentAuthor of [false,true])await test('signed handover retains '+String(openingTerminal)+' opening terminal with '+(differentAuthor?'separate':'same')+' start/count authors',async()=>{
+  const a=await enroll(),b=differentAuthor?await enroll(adminId,'manager'):a;
+  await db.exec("SET pos.shift_fn='on'");await db.query('UPDATE shifts SET terminal_id=$2 WHERE id=$1',[shiftId,openingTerminal]);await db.exec("SET pos.shift_fn=''");
+  const ops=await withStart(await closing(100,null,b.subject));ops[0].rows[0].terminal_id=openingTerminal;
+  const value=intent(ops,b),proof=startProof(ops,a),frozen=value.wire.payloadJson;
+  // This compatibility is available only with the outer verified start proof.
+  await assert.rejects(push(value),/ACTOR_MISMATCH/);
+  await pushStart(value,proof);const saved=await graph();
+  assert.equal(saved.tables[0].rows[0].terminal_id,openingTerminal);
+  assert.equal(saved.tables[1].rows[0].terminal_id,'t-a');assert.equal(saved.tables[1].rows[0].counted_by_staff_id,b.subject);
+  assert.equal(saved.tables[3].rows.find(row=>row.event==='closing_started').terminal_id,'t-a');
+  assert.equal(saved.tables[0].rows[0].closing_started_by,'cashier');assert.equal(saved.tables[0].rows[0].closed_by_staff_id,b.subject);
+  assert.equal(value.wire.payloadJson,frozen);assert.equal((await pushStart(value,proof)).replayed,true);assert.deepEqual(await graph(),saved);
+  await assert.rejects(push(value),/START_HISTORY_UNPROVEN/);assert.equal(await scalar('SELECT count(*)::int FROM pos_sync_private.shift_closing_start_receipts'),1);
+ });
+ await test('signed handover rejects altered or stale opening-terminal attribution against locked cloud and final parent',async()=>{
+  const {a,b,ops,proof}=await separateStart();
+  for(const falseTerminal of ['other-a',null]){
+   const forged=structuredClone(ops);forged[0].rows[0].terminal_id=falseTerminal;
+   // Both signatures cover the forged historical identity; locked cloud wins.
+   await assert.rejects(pushStart(intent(forged,b),startProof(forged,a)),/START_INVALID/);
+   // Neither final-parent-only nor start-parent-only substitution is admitted.
+   await assert.rejects(pushStart(intent(forged,b),proof),/START_INVALID/);
+   const altered=structuredClone(ops);altered[0].rows[0].terminal_id=falseTerminal;
+   await assert.rejects(pushStart(intent(ops,b),startProof(altered,a)),/START_INVALID/);
+  }
+  await db.exec("SET pos.shift_fn='on'");await db.query('UPDATE shifts SET terminal_id=$2 WHERE id=$1',[shiftId,'other-a']);await db.exec("SET pos.shift_fn=''");
+  await assert.rejects(pushStart(intent(ops,b),proof),/START_INVALID/);
+  assert.equal(await scalar('SELECT count(*)::int FROM shift_cash_counts'),0);assert.equal(await scalar('SELECT count(*)::int FROM pos_sync_private.shift_closing_start_receipts'),0);
+ });
+ await test('signed cross-terminal handover retains current registration, event, proof and key terminal checks',async()=>{
+  const {a,b,ops}=await separateStart();ops[0].rows[0].terminal_id='other-a';
+  await db.exec("SET pos.shift_fn='on'");await db.query('UPDATE shifts SET terminal_id=$2 WHERE id=$1',[shiftId,'other-a']);await db.exec("SET pos.shift_fn=''");
+  const value=intent(ops,b),proof=startProof(ops,a);
+  for(const patch of [{terminalId:'other-a'},{terminalId:'t-b'},{keyId:b.enrollment.keyId},{branchId:'b'}])await assert.rejects(pushStart(value,{...proof,...patch}),/START_INVALID/);
+  const falseEvent=structuredClone(ops);falseEvent[3].rows.find(row=>row.event==='closing_started').terminal_id='other-a';
+  await assert.rejects(pushStart(intent(falseEvent,b),startProof(falseEvent,a)),/START_INVALID/);
+  const falseCounter=structuredClone(value);falseCounter.author.terminalId='other-a';await assert.rejects(pushStart(falseCounter,proof),/AUTHOR_INVALID/);
+  await db.exec("UPDATE terminal_tokens SET location_id='b' WHERE id='t-a'");await assert.rejects(pushStart(value,proof),/BRANCH_FORBIDDEN|TERMINAL_SCOPE_FORBIDDEN/);
+  await db.exec("UPDATE terminal_tokens SET location_id='a',status='revoked' WHERE id='t-a'");await assert.rejects(pushStart(value,proof),/TERMINAL_SCOPE_FORBIDDEN/);
+  assert.equal(await scalar('SELECT count(*)::int FROM shift_cash_counts'),0);assert.equal(await scalar('SELECT count(*)::int FROM pos_sync_private.shift_closing_start_receipts'),0);
+ });
  await test('A starts and B counts atomically with both immutable author proofs; restart-style exact retry after revocation is no-write',async()=>{
   const {value,proof,ops,b}=await separateStart();const originalBytes=value.wire.payloadJson;await pushStart(value,proof);
   const saved=await graph();assert.equal(saved.tables[3].rows.find(row=>row.event==='closing_started').actor_staff_id,'cashier');assert.equal(saved.tables[0].rows[0].closed_by_staff_id,'manager');

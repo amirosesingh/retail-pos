@@ -27,7 +27,7 @@ LANGUAGE sql STABLE SECURITY INVOKER SET search_path=pg_catalog AS $fn$
 $fn$;
 REVOKE ALL ON FUNCTION pos_sync_private.proven_closing_start(uuid,jsonb) FROM PUBLIC,anon,authenticated,service_role;
 
--- Extend only the two start-specific AUTH37 conditions. All other event actors,
+-- Extend only the start-specific AUTH37 conditions. All other event actors,
 -- count actors, financial checks, accepted receipts and causal checks are retained.
 DO $bounded_extension$
 DECLARE definition text; anchor text; replacement text;
@@ -40,6 +40,13 @@ BEGIN
  anchor:='AND parent->>''closing_started_by''=registered.subject';
  replacement:='AND parent->>''closing_started_by''=CASE WHEN pos_sync_private.proven_closing_start(p_batch_id,proposed) THEN proposed->>''actor_staff_id'' ELSE registered.subject END';
  IF (length(definition)-length(replace(definition,anchor,'')))/length(anchor)<>1 THEN RAISE EXCEPTION 'SHIFT_START_UNKNOWN_AUTHOR_PARENT_CHECK'; END IF;
+ definition:=replace(definition,anchor,replacement);
+ -- The opening terminal is immutable attribution, not the registered terminal
+ -- of the authorized closer. Only the outer RPC's validated start context can
+ -- admit that distinction; ordinary eight-argument authors retain their guard.
+ anchor:='AND parent->>''terminal_id''=p_terminal_id';
+ replacement:='AND (parent->>''terminal_id''=p_terminal_id OR (action=''ORIGINAL'' AND pos_sync_private.proven_closing_start(p_batch_id,proposed)))';
+ IF (length(definition)-length(replace(definition,anchor,'')))/length(anchor)<>1 THEN RAISE EXCEPTION 'SHIFT_START_UNKNOWN_AUTHOR_TERMINAL_CHECK'; END IF;
  definition:=replace(definition,anchor,replacement);
  -- Omission must fail even on the old eight-argument accepted-replay endpoint.
  anchor:='SELECT * INTO receipt FROM pos_sync_private.shift_intent_receipts WHERE intent_id=p_batch_id;';
@@ -83,7 +90,7 @@ BEGIN
     event_row->>'created_at' IS NULL OR parent->>'closing_started_by' IS DISTINCT FROM p_closing_start->>'subject' OR
     (parent->>'closing_started_at')::timestamptz IS DISTINCT FROM (event_row->>'created_at')::timestamptz OR
     parent->>'close_reason' IS DISTINCT FROM event_row->'detail'->>'reason' OR (parent->>'id')::uuid IS DISTINCT FROM v_shift OR
-    lower(btrim(parent->>'store_id')) IS DISTINCT FROM lower(btrim(p_branch_id)) OR parent->>'terminal_id' IS DISTINCT FROM p_terminal_id
+    lower(btrim(parent->>'store_id')) IS DISTINCT FROM lower(btrim(p_branch_id))
  THEN RAISE EXCEPTION 'SYNC_SHIFT_START_INVALID'; END IF;
  -- Locks share the existing financial writer order. Proof is not a predecessor.
  PERFORM pg_advisory_xact_lock(hashtextextended('pos-sync-batch:'||p_batch_id::text,0));
@@ -125,7 +132,11 @@ BEGIN
   THEN RAISE EXCEPTION 'SYNC_SHIFT_START_INVALID'; END IF;
  END LOOP;
  SELECT * INTO cloud_parent FROM public.shifts WHERE id=v_shift FOR SHARE;
- IF NOT FOUND OR date_trunc('milliseconds',cloud_parent.opened_at) IS DISTINCT FROM date_trunc('milliseconds',(parent->>'opened_at')::timestamptz) OR
+ -- Preserve the original opening terminal, including historical NULL, against
+ -- the locked cloud record and the already-compared final signed parent. The
+ -- actual starter/event/key and counter remain bound to p_terminal_id above.
+ IF NOT FOUND OR cloud_parent.store_id IS DISTINCT FROM p_branch_id OR cloud_parent.terminal_id IS DISTINCT FROM parent->>'terminal_id' OR
+    date_trunc('milliseconds',cloud_parent.opened_at) IS DISTINCT FROM date_trunc('milliseconds',(parent->>'opened_at')::timestamptz) OR
     cloud_parent.opened_by_staff_id IS DISTINCT FROM parent->>'opened_by_staff_id' OR cloud_parent.opened_by_name IS DISTINCT FROM parent->>'opened_by_name'
  THEN RAISE EXCEPTION 'SYNC_SHIFT_START_INVALID'; END IF;
  previous_context:=current_setting('pos.shift_closing_start',true);
