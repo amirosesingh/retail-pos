@@ -196,6 +196,40 @@ device, hosted CPU/recovery, exact database dependencies, lifecycle/convergence
 and unresolved critical audit gates. Preserve all pending work and Membership
 hold; never clear queues or restore an older database as release rollback.
 
+## REL-31 — remaining beta/chore upgrade reconciliation, 2 November 2026
+
+The owner requests checking the other beta PRs and version/core/chore bumps,
+keeping beta consistent and moving validated upgrades through beta to production.
+Continue the latest request; the earlier interruption did not cancel pending
+tasks. Current beta is `0bc58a16`; production remains `2f404e6f` / v1.4.79.
+Review dependency PRs #343–#347 and prepared #357/#359 individually; do not
+equate an open PR or old green checks with current compatibility. #343 currently
+has failed checks; #359's repair premise remains superseded/HOLD. Live database
+application still requires its exact-project approval; source merging is not
+repair execution. Membership and dependencies remain on hold.
+
+Isolated integration branch `codex/beta-upgrade-integration-20261102` starts from
+current beta `0bc58a16be9398ec14eecb636e8d3e1aac2b36e3`. Do not install or rebuild
+dependencies in the shared node_modules junction used by active previews. Use
+separate dependencies, preserve lockfile integrity, inspect direct/transitive
+changes and verify React/renderer agreement, popup module ownership and native
+compatibility. Preserve all source fixes already merged in #360/#361.
+
+Record per-PR disposition, exact reviewed heads, tests, beta integration and
+production gates before promotion. Do not silently include an obsolete data
+repair, widen grants, rewrite existing worktrees, rotate signing keys, change
+operator configuration or declare full installed-device acceptance from CI.
+The production promotion's version/readiness constraints remain in PR #354 and
+the existing go-live checklist; no publication tag/dispatch has been created.
+
+The owner clarified that this means the pending beta PRs, including the prepared
+lifecycle guard and chore/dependency bumps, and selected Retail **1.4.81** for
+production metadata. Source-only #357 integration is in scope after fresh checks;
+applying its SQL to ROSEGILL still needs separate exact-project approval. #359's
+obsolete recovery is not a valid data correction and stays HOLD. Prepare a
+reviewable version-metadata update; preserve the next-beta calculation and do not
+create installer/publication tags without the separate publication request.
+
 ## How to maintain this file
 
 - Capture each new instruction/correction before dependent implementation; add or
