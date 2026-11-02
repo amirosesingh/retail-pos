@@ -65,6 +65,45 @@ do not claim native convergence complete from safe deferral alone.
 
 ### SHIFT-36 — owner-approved protocol preparation and isolated tests
 
+2 November reconciliation: PR #359's CPU-failure/shift-conflict commit titles
+record diagnostic evidence, not runtime CPU corrections. Its five-file diff is
+memory/tracker, the historical recovery review, superseded one-shift replay and
+isolated recovery test. CPU #360 and slow-network #361 are already beta ancestors;
+do not merge #359 to obtain those fixes. Its original cashier-closing target and
+obsolete-replay HOLD remain unchanged.
+
+AUTH-37 pre-patch independent investigation is complete. The selected boundary
+is a dedicated Ed25519 Main-only author key, with separate enrollment and intent
+signature domains binding configured project, registered terminal, stable
+app_users.id, key and exact frozen action/payload. Enrollment derives the author
+from verified signed cashierToken.id or verified Auth identity, never an editable
+username/email or a terminal transport proof. Username-only legacy session
+adoption/checkout remains intact but cannot enroll a protected author key. Both
+Operations and authorized Management Electron bindings are supported; enrollment
+itself grants no action or branch access. No existing approval/session/iOS key is
+reused. Private local material is OS sealed and never exported through IPC;
+missing/mismatched key material cannot automatically replace pending signatures.
+Current effective permission gates NEW writes; exact accepted history is a
+no-write acknowledgement. Revocation never silently discards a pending intent.
+Necessary stable-profile fields in existing verified identity responses are part
+of this approved source preparation. No live enrollment, device key generation,
+database application or legacy compatibility cutoff is performed.
+
+The independent sink trace disproved the provisional raw-shift REST financial
+bypass: shifts_guard_client_writes protects lifecycle/count/expected fields and
+normal relay shift rows omit those fields. Preserve legitimate opening,
+housekeeping and attendance operations; tests must exercise the actual trigger.
+Do not add a blanket key requirement to typed personal web/mobile workflows.
+
+Separate confirmed trust gap: draft graph checks establish internal consistency
+but do not compare expected amounts to saved transactions. Signatures establish
+the author, not correctness of a caller-chosen financial graph. A narrow proposal
+must use the existing authoritative formula and account for concurrent sale/
+refund admission before claiming this closed. No financial-formula, checkout
+trigger, booking-attribution or live-record change is authorized by recording
+this finding. Keep this validation/approval gate explicit while independent
+author/protocol preparation continues.
+
 **Confirmed authority blocker; keep protocol/release draft.** Native audit
 found `terminal:read` classified OPEN in ipc-privilege and returning the complete
 sealed terminal-store configuration from Main, including deviceBindingProof.
