@@ -1,7 +1,25 @@
 # POS project memory
 
-Last reconciled: **2026-11-01, Asia/Brunei**. This is approved architecture and
+Last reconciled: **2026-11-02, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
+
+Controlling update, 2 November 2026: the owner approved a narrow server CPU
+correction in `sync-download-redaction.ts` and isolated tests. Production
+Cloudflare `/api/v1/pos/sync` failures have outcome `exceededCpu` / HTTP 503;
+Supabase's sampled bootstrap RPCs succeeded. This locates the hosting failure,
+but does not establish how much CPU each helper consumed. Preserve exact privacy
+output, rows, cursors, permissions, settings, shifts and operator configuration.
+No live deployment, promotion or data/schema repair follows from this approval.
+
+The separate historical STR1 recovery in draft PR #359 is **HOLD**: its old
+cloud-OPEN premise was superseded by the owner's deliberate web closure.
+Complete private PC/cloud evidence now exists. The owner selects the original
+cashier facts as authoritative while preserving the web history. A new exact
+reconciliation plan and approval are required; never stage the old eight-key
+replay. Preserve all unfinished tasks; Membership remains on hold. The owner
+reconfirms that the existing multiple-shifts setting must control a shared
+one-shift-per-till policy versus permitted multiple shifts. Do not invent a new
+mode or change that setting's enforcement in this CPU-only batch.
 
 The owner's latest inventory UI refinement (DEC-25) combines adjacent Products
 and Categories metrics into one compact card, hides loaded zero inventory
@@ -84,11 +102,14 @@ browser counts include backed-off work; status reads must neither create storage
 nor modify queues/retries. Current error/unknown state and newer subscription
 events take precedence over delayed diagnostic reads.
 
-Read-only affected-PC evidence confirms the original31October closing remains
-saved locally with its exact timestamp and matching reconciliation, while the
-cloud parent remains OPEN. Stable1.4.79's CT-only closing and expired earlier
-history checkpoint establish a blocking path; the exact original CT entry and
-delivery/checkpoint/acknowledgement sequence still require investigation.
+The 1 November read-only evidence found the original 31 October closing saved
+locally with its exact timestamp and matching reconciliation while cloud was
+OPEN. On 2 November, complete capture confirmed those original PC facts, but
+cloud was CLOSED after a later deliberate web correction with different children.
+The owner confirmed that web action. Stable 1.4.79's CT-only closing and expired
+earlier history checkpoint establish a blocking path; normal pull also waits for
+successful history recovery, whose hosted snapshot requests can fail with 503.
+The complete original delivery/acknowledgement sequence remains unverified.
 Recovery must preserve the original
 graph/time/profile, verify its full facts, obtain exact repair approval, and
 verify central parent/children afterwards. A notification, generic ok response,

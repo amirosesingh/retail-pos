@@ -1,6 +1,37 @@
 # POS task tracker
 
-Last reconciled: **2026-11-01, Asia/Brunei**.
+Last reconciled: **2026-11-02, Asia/Brunei**.
+
+Latest controlling update, 2 November 2026 — **SYNC-CPU-01 implemented; local verification**,
+owner-approved code and isolated tests only. Branch `codex/sync-response-cpu-beta`
+starts from beta `fd41a37fc63613931aae58e11bd833c8634618e4`. Runtime scope is
+`src/lib/sync-download-redaction.ts` plus focused tests; root owns this existing
+memory/ledger update. Independent agents own implementation and read-only review.
+Production Cloudflare `retail-pos`, deployment `a70a936e`, recorded
+`/api/v1/pos/sync` HTTP 503 with outcome `exceededCpu`, 141 ms CPU and 4,026 ms
+wall time at 2 November 11:23:28.055 Brunei. Supabase's sampled
+02:06:58–03:06:58 UTC window showed 304 bootstrap RPCs returning 200 (maximum
+3,651 ms upstream), no logged API status >=400 and no PostgreSQL error. These
+windows do not establish request-by-request correlation or helper CPU attribution.
+Local `ECHANGEGAP` blocks pull and snapshot failure prevents baseline recovery;
+the warning must not be hidden or its checkpoint reset.
+
+CPU acceptance: preserve byte-equivalent masking for normal/management callers,
+deep table context, secret/e-commerce handling, property order, nulls/arrays and
+prototype safety; do not mutate input or lose any row/ID/cursor. Measure complete
+synthetic parse/redact/serialize work; local timings do not prove hosted CPU-limit
+acceptance. Require focused regressions, independent review and exact-head CI.
+No database, grants, device settings, schema, pagination or shift-mode changes;
+publication and production promotion need their separate approval. Rollback is a
+targeted source revert before deployment; no live records changed by this batch.
+
+Preserve separate pending tasks and newer evidence tracked in draft PR #359. Its
+metadata-only old STR1 repair is HOLD after the confirmed deliberate web closure;
+both full private graphs are captured and original cashier facts selected, but
+reconciliation needs a new audited plan and separate execution approval. Existing
+multiple-shift setting enforcement, native recount replay/uniqueness, web-to-PC
+independent-counter convergence and legacy CT protection are separate findings,
+not authorized runtime scope for SYNC-CPU-01. Membership remains ON HOLD.
 Read [../AGENTS.md](../AGENTS.md) and [PROJECT_MEMORY.md](PROJECT_MEMORY.md).
 This is the single current task ledger. Existing audit/checkpoint documents remain
 supporting evidence, not competing completion lists. Batch 0 authorized documentation
@@ -39,6 +70,8 @@ only; the owner's subsequent Batch 1 approval below authorizes its bounded fixes
 | 26 | SHIFT-32 prepared / independently verified / draft beta PR #357 | Two existing service-only routines prevent stale reopening and validate existing-receipt replay.71 canonical/captured SQL scenarios,16 real concurrency cases,19+19 full graphs and94 focused tests passed. Updated head a5d31e67 includes required test inventory registration and beta ead66f30; integrated602 suites/4,249tests passed. Remote CI rerun pending. No live application or historical recovery approved; native convergence remains separate. |
 | 27 | REL-29 cumulative production draft PR #354 / not signed off | Separate beta-to-main draft labelled production/awaiting-owner-approval. Explicit version proposal, installed Windows acceptance, exact live dependencies and unresolved critical risks remain gates. No exact promotion/main merge/release approved. |
 | 28 | SHIFT-33 merged beta ead66f30 / scoped-verified / PR #356 | Five approved files; current native errors defeat zero-queue green claims. Root full602 suites/4,249tests, TypeScript, scoped lint and independent desktop/phone/IDB checks passed. Exact-head CI and Codex review passed; merge tree equals tested a3945e5f. No polling/retry/queue/schema/data/permission changes. Installed-device acceptance remains separate. |
+| 29 | SYNC-CPU-01 implemented / local regressions and build passed / beta PR checks pending | Approved response-copy optimization only; root full 602 suites / 4,260 tests, 54 native tests, TypeScript, scoped lint and build passed; 43 focused tests and 420 independent parity cases also passed. Common synthetic nested 500-row pages use about 30–33% less local CPU; wide stock maps show no material improvement. Hosted acceptance is separate. No merge, deployment or publication performed. |
+| 30 | SHIFT-28B fresh evidence captured / old replay HOLD / draft PR #359 | Complete original PC manifest and current cloud graph captured privately; digest independently verified. Owner confirmed a later deliberate web closure and selected original cashier facts while retaining web history. Never stage the superseded replay; propose and obtain approval for a new exact reconciliation. Current drawer, queues, checkpoints and business data remain untouched. |
 
 Membership is **ON HOLD** throughout. Each future batch requires a recoverable
 baseline, specific files/dependencies, expected behavior, risks, regression tests,
@@ -2655,3 +2688,65 @@ both features, and all602 suites/4,249tests passed in96.50s; changed-test lint a
 diff checks passed. Commit a5d31e67dbae904c7f8662c3939f8cdb786f3034 was pushed
 to draft PR #357. Migration SHA256 remains unchanged. Exact updated-head CI is
 rerunning; do not present the earlier failed run or draft as merge/live approval.
+
+### SYNC-CPU-01 implementation and verification — 2 November 2026
+
+Owner approval covers the response-redaction helper and isolated tests only.
+Replace the per-object filter/map/fromEntries allocations with one projection
+loop. Keep the eager Object.entries snapshot, fresh plain output, inherited table
+context, existing price-settings preclone behavior and identical masking. Safe
+own-property creation preserves `__proto__` and inherited setter/readonly cases.
+No endpoint, pagination, authorization, shift, queue or database code changed.
+
+Frozen SHA256 (root and independent reviewer matched):
+
+- Helper: `C8E0D759195602777BCDD43709926B52C6EC9646A4EAE2DA1A0A99D0D173C814`.
+- Parity test: `922D87F4AA429D1407A1F79294C569A21D91BC83582784D9257615379182629E`.
+
+Pinned Node 22 verification on this Windows development PC:
+
+- Author: three focused suites / 43 tests passed.
+- Independent reviewer: 420 frozen-input, privacy, context, prototype and fuzz
+  parity cases passed against beta `fd41a37f`; no remaining scoped finding.
+- Root: `vitest run --maxWorkers=4` passed all 602 suites / 4,260 tests in 88.78s.
+  The initial default-concurrency run passed 4,258 tests and hit two unchanged
+  20s import timeouts (Azure/SQL module loading and settings navigation). Both
+  passed individually with one worker, then the complete bounded run passed.
+  No assertion, timeout, test or application behavior was weakened to pass.
+- Root: 54 native sync/startup/event tests, `tsc --noEmit`, scoped ESLint,
+  `git diff --check` and `vite build` passed. Existing dependency directive and
+  Wrangler-main override warnings remain; no deployment was run. The build's
+  generated logic-health report was excluded from this patch after preserving
+  its output privately. Its two informational numeric-input findings in
+  NotificationRulesPage are unverified, separate settings-audit follow-up, not
+  confirmed CPU causes or permission changes. Exact-head beta PR checks remain
+  pending.
+
+Independent synthetic full `JSON.parse → redact → JSON.stringify` measurement,
+nine alternating amortized samples per case, median milliseconds:
+
+| Fixture / mode | CPU before → after | Wall before → after |
+| --- | --- | --- |
+| History 100 / normal | 17.263 → 14.000 | 13.794 → 12.918 |
+| History 100 / management | 15.632 → 13.158 | 13.918 → 13.122 |
+| History 500 / normal | 93.500 → 62.500 | 69.453 → 61.440 |
+| History 500 / management | 89.750 → 62.500 | 71.341 → 63.591 |
+| Wide stock 500 / normal | 130.333 → 125.000 | 110.476 → 110.071 |
+| Wide stock 500 / management | 130.000 → 135.667 | 116.901 → 113.673 |
+| String-heavy 100 / normal | 24.000 → 18.077 | 18.554 → 16.813 |
+| String-heavy 100 / management | 17.786 → 16.714 | 17.467 → 16.845 |
+
+This is local Node/V8 evidence, not complete-handler, Cloudflare, authenticated
+device, installed checkout or live recovery acceptance. Common nested history
+pages improve; wide stock maps show no material CPU gain. Do not promise every
+payload now fits the hosting budget. Large-payload bounds or endpoint changes
+require a separate plan and approval. Keep existing rows and cursor semantics;
+never truncate a response after its cursor was calculated.
+
+Before merge/deployment, require exact-head CI and the separately authorized
+release process. Then verify hosted CPU outcomes and full registered-device
+recovery without resetting checkpoints or dropping pending data. Historical STR1
+reconciliation, stale-upload guard application and multiple-shift setting
+enforcement remain separate; Membership stays on hold. Rollback is a targeted
+revert of this CPU patch, preserving later unrelated changes. No live data was
+changed by this batch, so it requires no database rollback.
