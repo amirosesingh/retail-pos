@@ -40,6 +40,27 @@ to delete histories or execute the obsolete #359 replay. A new exact audited
 plan still precedes any data repair; #359 remains HOLD. Membership/dependencies
 stay on hold and all other unfinished tasks remain preserved below.
 
+Later owner clarification: subsequent authorized administrator corrections made
+on **web or terminal** must persist and synchronize in both directions; a PC
+that is off receives accepted changes on startup/reconnect. Retain one effective
+closing and immutable correction history. An older queued opening/closing must
+not undo an accepted correction; pending offline changes must not be discarded.
+The original-cashier choice above is this historical reconciliation target, not
+a permanent rule that cashier facts override future administrator corrections.
+Concurrent/conflicting unacknowledged edits need explicit safe conflict handling,
+not client-clock guessing or unconditional cloud wins.
+
+SHIFT-35 design refinement: exact outcomes/pending protection necessarily includes
+the existing bootstrap caller, which otherwise filters pending rows while
+advancing its baseline. Root includes that caller in the approved correction's
+necessary dependencies; no new business module, endpoint or schema is authorized.
+Reliable lower-counter closing adoption also needs a complete graph consistency
+contract: the feed can split parent/children across pages. Do not advance past an
+unapplied closing, erase pending work, or wait forever for later children behind
+a blocked parent page. Inspect existing read/proof contracts first. If a new
+server/API/schema contract is required, present it separately before expansion;
+do not claim native convergence complete from safe deferral alone.
+
 Latest controlling update, 2 November 2026 — **REL-31 pending beta PR integration**.
 PR #360 is merged as `cdc7bbed`; PR #361 is merged as `0bc58a16`, and its final
 platform/security/hosting checks passed. The owner now also requests the pending

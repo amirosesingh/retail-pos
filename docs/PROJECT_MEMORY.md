@@ -15,6 +15,14 @@ For the historic STR1 shift the owner reconfirmed one effective closing using
 the original 31 October cashier facts; retain the later web action as audit
 history. #359's superseded replay remains HOLD pending a new exact plan.
 
+The owner further clarifies that later authorized administrator corrections on
+web **or terminal** must be retained and synchronized to the other side, including
+when a powered-off terminal restarts/reconnects. One effective closing retains
+its audit history. The historical original-cashier selection does not override
+future accepted administrator changes. Protect pending offline work, reject
+stale reopen/closing overwrite and surface conflicts without using independent
+client counters/timestamps as proof of correction authority.
+
 Earlier update, 2 November 2026: the owner approved a narrow server CPU
 correction in `sync-download-redaction.ts` and isolated tests. Production
 Cloudflare `/api/v1/pos/sync` failures have outcome `exceededCpu` / HTTP 503;
