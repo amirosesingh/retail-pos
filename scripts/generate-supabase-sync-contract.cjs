@@ -22,7 +22,17 @@ if (!legacyShiftClosureHelpers || !shiftClosureProof) throw new Error("The shift
 const legacyProofStart = legacyShiftClosureHelpers.indexOf("CREATE OR REPLACE FUNCTION public.pos_sync_shift_closure_ack(");
 const legacyProofEnd = legacyShiftClosureHelpers.indexOf("END $fn$;",legacyProofStart)+"END $fn$;".length;
 if (legacyProofStart<0 || legacyProofEnd<=legacyProofStart) throw new Error("The legacy closure proof boundary is missing.");
-const shiftClosureHelpers = legacyShiftClosureHelpers.slice(0,legacyProofStart)+shiftClosureProof+legacyShiftClosureHelpers.slice(legacyProofEnd);
+const shiftLifecycleMigration = fs.readFileSync(path.join(root, "supabase", "migrations",
+  "20261101052452_prevent_closed_shift_reopening_during_sync.sql"), "utf8");
+const shiftLifecyclePredicate = shiftLifecycleMigration.split("-- SHIFT_CLOSED_SYNC_PREDICATE_BEGIN")[1]
+  ?.split("-- SHIFT_CLOSED_SYNC_PREDICATE_END")[0]?.trim();
+const shiftLifecycleValidation = shiftLifecycleMigration.split("-- SHIFT_CLOSED_SYNC_VALIDATION_BEGIN")[1]
+  ?.split("-- SHIFT_CLOSED_SYNC_VALIDATION_END")[0]?.trim();
+if (!shiftLifecyclePredicate || !shiftLifecycleValidation) throw new Error("The closed-shift lifecycle contract is missing.");
+const shiftOwnershipAnchor = "PERFORM public.pos_sync_assert_shift_ownership(p_rows,p_branch_id);";
+if (shiftClosureProof.split(shiftOwnershipAnchor).length !== 2) throw new Error("The shift proof ownership anchor is ambiguous.");
+const guardedShiftClosureProof = shiftClosureProof.replace(shiftOwnershipAnchor, shiftOwnershipAnchor + "\n\n" + shiftLifecycleValidation);
+const shiftClosureHelpers = legacyShiftClosureHelpers.slice(0,legacyProofStart)+guardedShiftClosureProof+legacyShiftClosureHelpers.slice(legacyProofEnd);
 const activityAckMigration = fs.readFileSync(path.join(root, "supabase", "migrations",
   "20261030234813_guard_activity_acknowledgement_branch_ownership.sql"), "utf8");
 const activityAckOwnership = activityAckMigration.split("-- ACTIVITY_ACK_OWNERSHIP_BEGIN")[1]
@@ -255,7 +265,7 @@ for (const table of tables) {
       ? `"owner_store_id"=COALESCE(NULLIF(btrim(EXCLUDED."owner_store_id"),''),public."products"."owner_store_id")`
       : `${q(column.cloudColumn)}=EXCLUDED.${q(column.cloudColumn)}`);
   const versionWhere = columnNames(table).has("row_version")
-    ? ` WHERE EXCLUDED."row_version">public.${q(table.cloudTable)}."row_version"${table.cloudTable === "shifts" ? ' AND EXCLUDED."store_id"=public."shifts"."store_id"' : ""}`
+    ? ` WHERE EXCLUDED."row_version">public.${q(table.cloudTable)}."row_version"${table.cloudTable === "shifts" ? ` AND EXCLUDED."store_id"=public."shifts"."store_id" ${shiftLifecyclePredicate}` : ""}`
     : "";
   const immutable =
     table.conflictRule === "immutable_reversal" || table.conflictRule === "movement_delta";

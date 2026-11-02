@@ -12,9 +12,19 @@ output, rows, cursors, permissions, settings, shifts and operator configuration.
 No live deployment, promotion or data/schema repair follows from that code-only
 approval. The owner's later request on 2 November authorizes the reviewed CPU and
 native fixes (PR #360/#361) to merge into beta and production preparation if ready.
-PR #360 is merged as `cdc7bbed`; final native beta integration/CI is in REL-30.
+PR #360 is merged as `cdc7bbed`; PR #361 is merged as `0bc58a16` and final CI passed.
 Main promotion, beta installer publication and live repair remain separately
 gated. Preserve existing features through scoped PRs and exact combined checks.
+
+Later on 2 November, the owner explicitly includes pending dependency/chore PRs
+#343–#347 and prepared lifecycle source PR #357 in the beta-first integration,
+and selects Retail **1.4.81** for production metadata (REL-31). This supersedes
+the earlier source exclusions for those PRs, after fresh combined validation.
+Keep original PR ancestry and all existing features. Source integration grants
+no authority to apply the lifecycle SQL live. Historical recovery #359 remains
+HOLD; production readiness and exact promotion remain separately reviewable.
+Preparing source 1.4.81 changes the next computed beta to 1.4.82-beta.1; it does
+not authorize publishing installers. Membership and its dependencies stay on hold.
 
 The separate historical STR1 recovery in draft PR #359 is **HOLD**: its old
 cloud-OPEN premise was superseded by the owner's deliberate web closure.

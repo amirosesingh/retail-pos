@@ -2,8 +2,13 @@
 
 Last reconciled: **2026-11-02, Asia/Brunei**.
 
-Latest controlling update, 2 November 2026 — **REL-30 beta integration authorized**.
-PR #360 is merged as `cdc7bbed`; PR #361 is being checked against that exact beta.
+Latest controlling update, 2 November 2026 — **REL-31 pending beta PR integration**.
+PR #360 is merged as `cdc7bbed`; PR #361 is merged as `0bc58a16`, and its final
+platform/security/hosting checks passed. The owner now also requests the pending
+dependency bumps and prepared lifecycle source through beta before production,
+with Retail 1.4.81 metadata. REL-31 supersedes the earlier REL-30 exclusions for
+those reviewed source changes only. Superseded recovery PR #359 remains HOLD;
+no live migration, recovery, production merge or installer publication has run.
 The owner's later release request expands the earlier code/test-only approval to
 these two beta merges and production preparation; installer publication, main
 promotion and live repairs retain their separate gates. CPU source branch
@@ -195,6 +200,86 @@ beta identity to `1.4.82-beta.1`. Production draft PR #354 must retain installed
 device, hosted CPU/recovery, exact database dependencies, lifecycle/convergence
 and unresolved critical audit gates. Preserve all pending work and Membership
 hold; never clear queues or restore an older database as release rollback.
+
+## REL-31 — remaining beta/chore upgrade reconciliation, 2 November 2026
+
+The owner requests checking the other beta PRs and version/core/chore bumps,
+keeping beta consistent and moving validated upgrades through beta to production.
+Continue the latest request; the earlier interruption did not cancel pending
+tasks. Current beta is `0bc58a16`; production remains `2f404e6f` / v1.4.79.
+Review dependency PRs #343–#347 and prepared #357/#359 individually; do not
+equate an open PR or old green checks with current compatibility. #343 currently
+has failed checks; #359's repair premise remains superseded/HOLD. Live database
+application still requires its exact-project approval; source merging is not
+repair execution. Membership and dependencies remain on hold.
+
+Isolated integration branch `codex/beta-upgrade-integration-20261102` starts from
+current beta `0bc58a16be9398ec14eecb636e8d3e1aac2b36e3`. Do not install or rebuild
+dependencies in the shared node_modules junction used by active previews. Use
+separate dependencies, preserve lockfile integrity, inspect direct/transitive
+changes and verify React/renderer agreement, popup module ownership and native
+compatibility. Preserve all source fixes already merged in #360/#361.
+
+Record per-PR disposition, exact reviewed heads, tests, beta integration and
+production gates before promotion. Do not silently include an obsolete data
+repair, widen grants, rewrite existing worktrees, rotate signing keys, change
+operator configuration or declare full installed-device acceptance from CI.
+The production promotion's version/readiness constraints remain in PR #354 and
+the existing go-live checklist; no publication tag/dispatch has been created.
+
+The owner clarified that this means the pending beta PRs, including the prepared
+lifecycle guard and chore/dependency bumps, and selected Retail **1.4.81** for
+production metadata. Source-only #357 integration is in scope after fresh checks;
+applying its SQL to ROSEGILL still needs separate exact-project approval. #359's
+obsolete recovery is not a valid data correction and stays HOLD. Prepare a
+reviewable version-metadata update; preserve the next-beta calculation and do not
+create installer/publication tags without the separate publication request.
+
+REL-31 integration evidence: candidate `5bb6c488` preserves all six original
+PR heads (#343–#347 and #357) as ancestors of one combined branch, starting from
+beta `0bc58a16`. Tabs/Toggle had only adjacent manifest conflicts; both requested
+upgrades were retained. React PR #343 originally failed because React DOM still
+resolved to 19.3.0. Corrective head `f250d9e9` pairs both at 19.3.1; its exact
+security, Android, Windows-renderer, iOS and hosting checks passed. No existing
+dependency is removed or downgraded; popup runtime aliases remain unchanged.
+
+A fresh, separate dependency directory was installed with pinned Node 22 and
+npm 11.4.2 (`npm ci --ignore-scripts --no-audit --no-fund --prefer-offline`).
+Root verification on the combined dependency/source candidate passed all
+604 suites / 4,305 tests, full TypeScript and full ESLint. Native/release tests
+passed 79 cases. Independent real-browser synthetic fixtures passed 46 popup
+and 10 terminal-login cases with no external requests or browser errors.
+Independent isolated SQL checks passed 137 closure/full-graph/notification/
+canonical scenarios; they did not read or change live data. A first guard run
+failed because the Windows checkout converted the reviewed SQL artifact to
+CRLF; restoring the exact reviewed LF Git bytes made the unchanged assertions
+pass. This is an artifact limitation, not a portability fix. Optional fresh real
+concurrency/captured-live runs and physical devices remain unverified this cycle.
+
+The owner-selected 1.4.81 preparation changes only the five existing generated
+version sources; the two SQL files change version text only, with no new local
+migration. Next calculated beta is consequently 1.4.82-beta.1; do not force the
+older beta identity or publish installers without the explicit publication
+request. Final platform builds, immutable-head CI and independent diff review
+remain required before the combined beta merge. Use a merge commit to preserve
+original PR ancestry, then verify each original PR's actual merged state; do not
+mark a merely closed PR as merged. No old recovery script is included.
+
+Production PR #354 remains a separate cumulative promotion. Existing local
+recount uniqueness/false-replay, independent-clock convergence, hosted/device
+acceptance and exact live-migration dependencies remain explicit gates. This
+dependency/source integration does not correct them or authorize applying #357
+to ROSEGILL. Preserve original STR1 and web closing histories; do not execute
+the superseded #359 replay. Rollback is a reviewed targeted revert of this
+integration, preserving subsequent work; no business-data restore is involved.
+
+Version-prepared web and Windows-renderer builds passed. Web approval boundary
+verification passed for 360 JavaScript files; SQL Server registry verification
+passed for 70 tables. All 56 focused version/beta-publication/database/sync tests
+passed unchanged outside the sandbox: the first run's two failures were Git Bash
+MSYS namespace permission failures before assertions. The build-generated
+logic-health report is excluded after private preservation; its same two
+informational notification numeric-input notes remain separate/unverified.
 
 ## How to maintain this file
 

@@ -13737,7 +13737,11 @@ BEGIN
   PERFORM set_config('pos.shift_fn','on',true);
   INSERT INTO public."shifts" ("id","store_id","terminal_id","terminal_name","opened_by_name","opened_by_staff_id","opened_by_role","closed_by_name","closed_by_staff_id","closed_by_role","opened_at","closed_at","opening_float","counted_cash","expected_cash","note","overdue","created_at","updated_at","status","closing_float","user_id","row_version","counted_card","counted_digital","expected_card","expected_digital","variance_cash","variance_card","variance_digital","variance_total","state","close_reason","closing_started_at","closing_started_by","final_counted_cash","variance_status")
   SELECT "id","store_id","terminal_id","terminal_name","opened_by_name","opened_by_staff_id","opened_by_role","closed_by_name","closed_by_staff_id","closed_by_role","opened_at","closed_at","opening_float","counted_cash","expected_cash","note","overdue","created_at","updated_at","status","closing_float","user_id","row_version","counted_card","counted_digital","expected_card","expected_digital","variance_cash","variance_card","variance_digital","variance_total","state","close_reason","closing_started_at","closing_started_by","final_counted_cash","variance_status" FROM jsonb_populate_recordset(NULL::public."shifts", COALESCE(p_rows,'[]'::jsonb))
-  ON CONFLICT ("id") DO UPDATE SET "store_id"=EXCLUDED."store_id","terminal_id"=EXCLUDED."terminal_id","terminal_name"=EXCLUDED."terminal_name","opened_by_name"=EXCLUDED."opened_by_name","opened_by_staff_id"=EXCLUDED."opened_by_staff_id","opened_by_role"=EXCLUDED."opened_by_role","closed_by_name"=EXCLUDED."closed_by_name","closed_by_staff_id"=EXCLUDED."closed_by_staff_id","closed_by_role"=EXCLUDED."closed_by_role","opened_at"=EXCLUDED."opened_at","closed_at"=EXCLUDED."closed_at","opening_float"=EXCLUDED."opening_float","counted_cash"=EXCLUDED."counted_cash","expected_cash"=EXCLUDED."expected_cash","note"=EXCLUDED."note","overdue"=EXCLUDED."overdue","created_at"=EXCLUDED."created_at","updated_at"=EXCLUDED."updated_at","status"=EXCLUDED."status","closing_float"=EXCLUDED."closing_float","user_id"=EXCLUDED."user_id","row_version"=EXCLUDED."row_version","counted_card"=EXCLUDED."counted_card","counted_digital"=EXCLUDED."counted_digital","expected_card"=EXCLUDED."expected_card","expected_digital"=EXCLUDED."expected_digital","variance_cash"=EXCLUDED."variance_cash","variance_card"=EXCLUDED."variance_card","variance_digital"=EXCLUDED."variance_digital","variance_total"=EXCLUDED."variance_total","state"=EXCLUDED."state","close_reason"=EXCLUDED."close_reason","closing_started_at"=EXCLUDED."closing_started_at","closing_started_by"=EXCLUDED."closing_started_by","final_counted_cash"=EXCLUDED."final_counted_cash","variance_status"=EXCLUDED."variance_status" WHERE EXCLUDED."row_version">public."shifts"."row_version";
+  ON CONFLICT ("id") DO UPDATE SET "store_id"=EXCLUDED."store_id","terminal_id"=EXCLUDED."terminal_id","terminal_name"=EXCLUDED."terminal_name","opened_by_name"=EXCLUDED."opened_by_name","opened_by_staff_id"=EXCLUDED."opened_by_staff_id","opened_by_role"=EXCLUDED."opened_by_role","closed_by_name"=EXCLUDED."closed_by_name","closed_by_staff_id"=EXCLUDED."closed_by_staff_id","closed_by_role"=EXCLUDED."closed_by_role","opened_at"=EXCLUDED."opened_at","closed_at"=EXCLUDED."closed_at","opening_float"=EXCLUDED."opening_float","counted_cash"=EXCLUDED."counted_cash","expected_cash"=EXCLUDED."expected_cash","note"=EXCLUDED."note","overdue"=EXCLUDED."overdue","created_at"=EXCLUDED."created_at","updated_at"=EXCLUDED."updated_at","status"=EXCLUDED."status","closing_float"=EXCLUDED."closing_float","user_id"=EXCLUDED."user_id","row_version"=EXCLUDED."row_version","counted_card"=EXCLUDED."counted_card","counted_digital"=EXCLUDED."counted_digital","expected_card"=EXCLUDED."expected_card","expected_digital"=EXCLUDED."expected_digital","variance_cash"=EXCLUDED."variance_cash","variance_card"=EXCLUDED."variance_card","variance_digital"=EXCLUDED."variance_digital","variance_total"=EXCLUDED."variance_total","state"=EXCLUDED."state","close_reason"=EXCLUDED."close_reason","closing_started_at"=EXCLUDED."closing_started_at","closing_started_by"=EXCLUDED."closing_started_by","final_counted_cash"=EXCLUDED."final_counted_cash","variance_status"=EXCLUDED."variance_status" WHERE EXCLUDED."row_version">public."shifts"."row_version" AND (NOT (upper(COALESCE(public."shifts"."status",''))='CLOSED'
+       OR upper(COALESCE(public."shifts"."state",''))='CLOSED'
+       OR public."shifts"."closed_at" IS NOT NULL)
+     OR (EXCLUDED."status"='CLOSED' AND EXCLUDED."state"='CLOSED'
+         AND EXCLUDED."closed_at" IS NOT NULL));
   GET DIAGNOSTICS v_count=ROW_COUNT;
 
   PERFORM set_config('pos.shift_fn','',true);
@@ -22680,6 +22684,63 @@ BEGIN
     THEN row_value||jsonb_build_object('store_id',p_branch_id) ELSE row_value END),'[]'::jsonb)
   INTO p_rows FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) row_value;
   PERFORM public.pos_sync_assert_shift_ownership(p_rows,p_branch_id);
+
+-- Only a clean, otherwise identical opening can be acknowledged as obsolete.
+-- Different notes/opening facts or submitted counts remain pending for review.
+-- Receipt replay skips the upsert: validate nonfinal rows against a stable
+-- parent without waiting behind a multi-parent writer in another lock order.
+-- A busy parent is transient, never an acknowledgement. Pure CLOSED proof
+-- requests retain their existing lock path.
+IF EXISTS (
+  SELECT 1 FROM jsonb_populate_recordset(NULL::public.shifts,COALESCE(p_rows,'[]'::jsonb)) candidate
+  WHERE NOT (COALESCE(candidate.status,'')='CLOSED' AND COALESCE(candidate.state,'')='CLOSED'
+             AND candidate.closed_at IS NOT NULL)
+) THEN
+  BEGIN
+    PERFORM locked_row.id
+    FROM public.shifts locked_row
+    JOIN jsonb_populate_recordset(NULL::public.shifts,COALESCE(p_rows,'[]'::jsonb)) input_scope
+      ON input_scope.id=locked_row.id
+    WHERE locked_row.store_id=p_branch_id
+    ORDER BY locked_row.id FOR SHARE OF locked_row NOWAIT;
+  EXCEPTION WHEN lock_not_available THEN
+    RAISE EXCEPTION USING ERRCODE='55P03', MESSAGE='SYNC_SHIFT_CLOSURE_BUSY';
+  END;
+END IF;
+IF EXISTS (
+  SELECT 1
+  FROM jsonb_populate_recordset(NULL::public.shifts,COALESCE(p_rows,'[]'::jsonb)) opening_row
+  JOIN public.shifts closed_row ON closed_row.id=opening_row.id
+  WHERE closed_row.store_id=p_branch_id
+    AND (upper(COALESCE(closed_row.status,''))='CLOSED'
+         OR upper(COALESCE(closed_row.state,''))='CLOSED' OR closed_row.closed_at IS NOT NULL)
+    AND NOT (COALESCE(opening_row.status,'')='CLOSED' AND COALESCE(opening_row.state,'')='CLOSED'
+             AND opening_row.closed_at IS NOT NULL)
+    AND NOT (
+      COALESCE(opening_row.status,'OPEN')='OPEN' AND COALESCE(opening_row.state,'ACTIVE')='ACTIVE'
+      AND opening_row.closed_at IS NULL
+      AND opening_row.closed_by_name IS NULL AND opening_row.closed_by_staff_id IS NULL
+      AND opening_row.closed_by_role IS NULL AND opening_row.counted_cash IS NULL
+      AND opening_row.counted_card IS NULL AND opening_row.counted_digital IS NULL
+      AND opening_row.closing_float IS NULL AND opening_row.final_counted_cash IS NULL
+      AND opening_row.variance_cash IS NULL AND opening_row.variance_card IS NULL
+      AND opening_row.variance_digital IS NULL AND opening_row.variance_total IS NULL
+      AND opening_row.variance_status IS NULL AND opening_row.close_reason IS NULL
+      AND opening_row.closing_started_at IS NULL AND opening_row.closing_started_by IS NULL
+      AND (to_jsonb(opening_row) - ARRAY[
+        'status','state','closed_at','closed_by_name','closed_by_staff_id','closed_by_role',
+        'counted_cash','counted_card','counted_digital','expected_cash','expected_card','expected_digital',
+        'closing_float','final_counted_cash','variance_cash','variance_card','variance_digital',
+        'variance_total','variance_status','close_reason','closing_started_at','closing_started_by',
+        'row_version','updated_at']::text[])
+        = (to_jsonb(closed_row) - ARRAY[
+        'status','state','closed_at','closed_by_name','closed_by_staff_id','closed_by_role',
+        'counted_cash','counted_card','counted_digital','expected_cash','expected_card','expected_digital',
+        'closing_float','final_counted_cash','variance_cash','variance_card','variance_digital',
+        'variance_total','variance_status','close_reason','closing_started_at','closing_started_by',
+        'row_version','updated_at']::text[])
+    )
+) THEN RAISE EXCEPTION 'SYNC_SHIFT_CLOSURE_CONFLICT'; END IF;
   FOR incoming IN
     SELECT * FROM jsonb_populate_recordset(NULL::public.shifts,COALESCE(p_rows,'[]'::jsonb)) candidate
     WHERE upper(COALESCE(candidate.status,''))='CLOSED'

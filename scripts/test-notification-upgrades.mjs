@@ -338,7 +338,7 @@ try {
   });
   await test("migration, every canonical definition and real generator output keep the same ownership contract", async () => {
     const pattern = /CREATE OR REPLACE FUNCTION public\.sync_apply_activity_events\(p_rows jsonb\)[\s\S]*?END \$fn\$;/g;
-    const expected = correction.match(pattern)?.[0]; assert(expected);
+    const expected = correction.match(pattern)?.[0]?.replaceAll("\r\n", "\n"); assert(expected);
     for (const definition of schema.match(pattern) ?? []) assert.equal(definition.replaceAll("\r\n", "\n"), expected);
     const fixture = await mkdtemp(join(tmpdir(), "pos-notification-parity-"));
     const root = fileURLToPath(new URL("../", import.meta.url));
@@ -346,7 +346,8 @@ try {
       for (const path of ["scripts/generate-supabase-sync-contract.cjs", "scripts/sqlserver-sync-policy.cjs",
         "database/sqlserver/schema-registry.json", "supabase/schema.sql", `supabase/migrations/${correctionName}`,
         "supabase/migrations/20261030153259_confirm_shift_closure_sync_acknowledgement.sql",
-        "supabase/migrations/20261030164829_bind_shift_closure_proof_to_requested_revision.sql"]) {
+        "supabase/migrations/20261030164829_bind_shift_closure_proof_to_requested_revision.sql",
+        "supabase/migrations/20261101052452_prevent_closed_shift_reopening_during_sync.sql"]) {
         await mkdir(dirname(join(fixture, path)), { recursive: true });
         await copyFile(join(root, path), join(fixture, path));
       }
