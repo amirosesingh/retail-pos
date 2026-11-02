@@ -1,6 +1,6 @@
 # POS task tracker
 
-Last reconciled: **2026-11-01, Asia/Brunei**.
+Last reconciled: **2026-11-02, Asia/Brunei**.
 Read [../AGENTS.md](../AGENTS.md) and [PROJECT_MEMORY.md](PROJECT_MEMORY.md).
 This is the single current task ledger. Existing audit/checkpoint documents remain
 supporting evidence, not competing completion lists. Batch 0 authorized documentation
@@ -34,11 +34,15 @@ only; the owner's subsequent Batch 1 approval below authorizes its bounded fixes
 | 21 | TRF-16 merged into beta / approved guard and exact repair applied | PR350/c15fdd21 includes the new fulfilment-ID correction; shared checkout IDs unchanged. Guard history20261031083126 and one audited request-line restoration verified; request-integrity read returns true. Full592 suites/3987 tests and exact-head platform/security checks passed; beta website deployment passed. Physical-device acceptance remains separate. |
 | 22 | SQL-08 implemented / isolated and signed-in local Settings verified | Separate approved typed adoption/read-error correction preserves terminal binding and cashier authority. Full595 suites/4091 tests, TypeScript and full lint pass. Owner-approved HTTPS beta backend plus original native origin43117 permits normal verified sign-in and seals the recovered existing proof; Approvals and Settings open with STR1/local SQL ready. Other devices/offline real-sale acceptance, commit and beta PR remain separate. |
 | 23 | SQL-09 active read-only investigation / correction not approved | Separate expired change_history Change Tracking and HTTP503 bootstrap warnings remain after SQL-08 sign-in recovery. UI reports local SQL ready and queue0/errors0, but this is not proof of successful bootstrap. Identify exact failed table/stage from existing jobs/logs without resetting cursors, resyncing, changing Membership dependencies or touching pending/business data. |
-| 24 | SHIFT-28A merged beta b31c74e4 / PR #353; SHIFT-28B independently verified preparation / draft PR #359 | New-closing code: full 600 suites/4,193 tests, TypeScript/lint, 68 PostgreSQL scenarios and exact-head checks passed. Original-closing recovery: 58 isolated real SQL Server/current-reader-worker scenarios passed independently; actual manifest capture, exact staging/transport approval and cloud readback remain pending. No old shift has been repaired. TERM-29 is owner-verified in latest beta. |
+| 24 | SHIFT-28A merged beta b31c74e4 / PR #353; SHIFT-28B old replay HOLD / draft PR #359 | Historical preparation passed58 isolated SQL/reader-worker scenarios. Complete actual PC manifest/digest and cloud graph now captured privately. Owner selects original cashier facts as authoritative, retaining deliberate web closure as audit history. Different ORIGINAL/summary IDs invalidate old eight-key replay; new exact reconciliation design/preparation and live approval remain required. No live repair made. TERM-29 owner-verified in latest beta. |
 | 25 | SHIFT-31 merged beta 423950b4 / PR #355 | Complete-history All/Open/Closed and permitted column filters before paging, clear retained filters, precise row/dialog identity. Full 601 suites/4,204 tests, TypeScript/lint, independent review and desktop/390px synthetic browser interactions passed. Exact-head platform/security/deployment checks and Codex code review passed. Merge tree equals reviewed e334fc52; installed-device acceptance remains separate. |
 | 26 | SHIFT-32 prepared / independently verified / draft beta PR #357 | Two existing service-only routines prevent stale reopening and validate existing-receipt replay.71 canonical/captured SQL scenarios,16 real concurrency cases,19+19 full graphs and94 focused tests passed. Final head a3a00352 includes required schema/generator fixture registration; all exact-head checks passed, CodeRabbit skipped. Integrated602 suites/4,249tests passed. No live application or historical recovery approved; native convergence remains separate. |
 | 27 | REL-29 cumulative production draft PR #354 / not signed off | Separate beta-to-main draft labelled production/awaiting-owner-approval. Explicit version proposal, installed Windows acceptance, exact live dependencies and unresolved critical risks remain gates. No exact promotion/main merge/release approved. |
 | 28 | SHIFT-33 merged beta ead66f30 / scoped-verified / PR #356 | Five approved files; current native errors defeat zero-queue green claims. Root full602 suites/4,249tests, TypeScript, scoped lint and independent desktop/phone/IDB checks passed. Exact-head CI and Codex review passed; merge tree equals tested a3945e5f. No polling/retry/queue/schema/data/permission changes. Installed-device acceptance remains separate. |
+| 29 | SHIFT-34 read-only correction audit / implementation pending approval | Preserve authorized audited corrections. Canonical local count uniqueness differs from cloud RECOUNT support; installed index check pending. Local recount duplicate-key catch can falsely report replay. Existing admin recount cannot restore exact historic time/snapshot. Prepare separate bounded correction batches only after approval. |
+| 30 | SHIFT-35 read-only web-to-PC convergence audit / implementation pending approval | Independent-counter comparison, journal-only pending protection and page-level graph limits require explicit conflict/outcome rules. Preserve unsent journal and legacy CT, exact branch identity, current drawer and checkout. No generic cloud-wins/revision bump/cursor skipping. |
+| 31 | SHIFT-36 existing setting enforcement audit / separate implementation pending approval | Owner reconfirms allow_multiple_shifts_per_terminal: OFF one shared day shift per registered shop PC for all authorized staff; ON permits intended multiple shifts. Existing consumers ignore the flag and admit branch-wide. Preserve the existing setting; no new mode or auto-midnight closing. Separate from immediate CT/CPU sync repair. |
+| 32 | SYNC-CPU-01 owner-approved helper correction and isolated tests / ACTIVE in separate beta worktree | Production Worker confirms exceededCpu/HTTP503 on sync. Approved only server redaction helper plus focused tests and necessary project docs; preserve exact privacy/rows/cursors/grants/config. Root recorded approval before implementation at current beta fd41a37f. No live deployment/promotion, pagination/schema/data change or old-shift replay authorized. |
 
 Membership is **ON HOLD** throughout. Each future batch requires a recoverable
 baseline, specific files/dependencies, expected behavior, risks, regression tests,
@@ -2722,3 +2726,128 @@ Its five-file diff contains only the maintenance artifact, isolated harness and
 existing project documentation. Initial exact-head CI is running; CodeRabbit
 skipped the beta target. No merge or live execution has occurred. This ledger
 follow-up records delivery only; the three reviewed artifact hashes are unchanged.
+
+SHIFT-28B resumed2November2026: owner reports the affected PC is powered on,
+UltraViewer connected and SQL query editor open. Continue read-only capture of
+the exact original STR1 closing and present the exact repair BEFORE any live
+application. The previous power-off/lock is a past observation, not current proof.
+No STAGE, retry, queue/checkpoint change, cloud write, settings change, installer
+publication or production promotion is approved. Independent capture review is
+read-only; retain all previous pending tasks and Membership hold.
+
+SHIFT-28B fresh read-only2November2026: ROSEGILL pos qhrufhtbeguxydenzfey
+now has the exact original shift CLOSED/CLOSED revision5, closed at
+2026-11-01T13:38:37.207159Z. This differs from the previously verified PC closing
+2026-10-31T13:08:56.837Z. Cloud count e4de3b43-5667-48e6-b493-e8622f7a026e
+ORIGINAL uses terminal pc-c2dc1ec7; reconciliation fb96ca0c-f5bf-4af1-a941-079e7f9787e1
+and three event IDs/summary are different from the PC's original saved graph;
+cloud variance rows0. The former OPEN/no-child snapshot is superseded. Do not
+execute/retry the prepared eight-key recovery against this changed cloud state.
+First compare complete current local evidence, original count/links and later
+cloud closure provenance; exact repair must be redesigned/reviewed if conflict
+is confirmed. No cloud/PC business record has been changed by this inspection.
+
+Remote SSMS had to recover existing query buffers after its previous shutdown;
+no SQL was executed from them. Its existing Windows-auth connection dialog is
+open, awaiting the owner's Connect action. Do not automate authentication or
+change connection settings. Existing app error view confirms ECHANGEGAP on
+change_history and repeated HTTP503 for bootstrap/database state; no retry,
+checkpoint reset, history removal or repair action was taken.
+
+Owner confirms2November: the newer cloud closing was deliberately made on the
+web. Preserve that administrative action/count/audit; do not overwrite it with
+the older eight-key recovery. Owner also confirms the saved SQL connection is
+connected and blank query ready. Continue read-only original/current comparison;
+no live correction is authorized. Fresh terminal metadata still reports1.4.79.
+Cloud currently has31October and1November shifts CLOSED, with only today's
+2November shift69a57f40-4ae2-42a6-994f-c4c78e220cc2 OPEN. Earlier current drawer
+acbc1ed1…da2f is now closed and must not be treated as today's active drawer.
+
+Owner2November rules request: mistakes by cashiers must remain correctable through
+authorized audited correction workflows; one shift should be enabled; accepted
+web corrections must sync back to applicable PCs. Scope clarification requested:
+one OPEN shift per registered terminal versus one for entire branch. Do not
+silently impose a global/branch-wide limit or widen correction permissions.
+Read-only audit must separate terminal/branch/current operating selection from
+historic cloudOPEN states, validate both upload and correction download, preserve
+cashier checkout and prohibit stale queued data undoing accepted corrections.
+Record the proper rules and exact pending correction batches before implementation.
+The owner selected original cashier closing as authoritative for this incident;
+that is a business decision, NOT permission to execute live repair or bypass
+immutable/count uniqueness rules. Preserve deliberate web closure as audit history.
+
+SHIFT-28B full actual CAPTURE succeeded2November on DESKTOP-VIB2MIL\LCRPOS /
+POS_Local, using the independently reviewed241-line capture-only derivation,
+SHA25601BD55E6D3D12823542C8DB3C22DCA4B59107FE12432091D6EC0F15AA19052AE.
+Result explicitly CAPTURE ONLY / NOT STAGED / NOT RECOVERED; transaction rolled
+back. Actual databaseGUID F4B03BDB-DE91-4582-B68E-186442172E95. All8411 manifest
+characters were copied via the UI and independently hashed from the private file;
+UTF16LE SHA25674A53F91A9489C4211004F62F1068EB1AC4A67A67DF770C0BEBF0A77CD8B5756.
+Eight saved graph rows, one baseline journal, one baseline receipt and seven saved
+checkpoints are complete. Actual full cloud graph is also privately preserved.
+Raw financial/operator payloads are ignored node_modules/.cache evidence only,
+not Git/PR material. No persistent PC/cloud writes, staging or retry occurred.
+
+Owner selected the original cashier closing as authoritative; the deliberately
+later web closure/count/audit remains protected. Differences include closing
+date/time, counted/expected money, variance and immutable record IDs. Ordinary
+recount cannot restore the exact original time/snapshot. Existing eight-key
+metadata-only staging is HOLD even though its historical58 tests passed.
+
+New source findings from independent read-only agents, not fixes or full live
+reproductions:
+- SQLServer canonical schema.sql9431 UNIQUE shift_cash_counts(shift_id) covers
+  every count; cloud has filtered one-ORIGINAL uniqueness and permits RECOUNTs.
+  Existing CloudWriter merges by ID, so different ORIGINAL IDs remain an explicit
+  conflict even after schema parity. Actual installed index metadata still needs
+  a SELECT-only check; do not present canonical structure as installed proof.
+- electron/main.cjs commitLocalShiftRecount catches any2601/2627 as replay success
+  without proving the intended saved client-key operation. A genuine recount can
+  therefore be reported as successful after an unrelated uniqueness failure.
+- cloud-client.cjs highest_version merge compares independent revision counters.
+  Source scenario localOPEN99/cloudCLOSED5 can ignore an authoritative correction
+  while pull-worker still commits the page cursor. This is NOT the observed
+  incident's revision, which remains local3/cloud5.
+- Journal-only pending checks omit retained legacy CT-only work. Unconditional
+  cloud-wins would risk losing legitimate saved observations. Require explicit
+  applied/already-matching/deferred/conflict outcomes and safe cursor behavior.
+- Complete shift graph may span multiple feed pages; per-page transaction alone
+  is not proof of coherent full-graph correction.
+- Web/native current open admission is branch-wide, but independent offline PCs
+  and generic sync admission do not prove equivalent cross-PC single-open policy.
+  Owner branch-versus-terminal scope question is pending. Never auto-close/drop.
+
+Current corrector src/lib/shift-corrections.functions.ts calls service-only
+pos_admin_correct_closed_shift after existing administrator/branch admission.
+It appends RECOUNT/reconciliation/record_edits/activity and updates parent money,
+but recalculates expected totals now and does not restore closed_at/original IDs.
+Immutable guards and unique ORIGINAL/summary constraints must remain effective.
+No ordinary correction RPC was called. Any exact historic reconciliation needs
+approved preparation/tests and a separate precise live repair approval.
+
+2November owner reconfirms EXISTING allow_multiple_shifts_per_terminal setting,
+not a new shift mode: OFF one shared whole-day shift on the registered shop PC,
+used by all authorized staff; ON permits the intended multiple shifts. Do not
+auto-close at midnight. Source shows the setting has no operational admission
+consumer and existing admission is branch-wide; keep that separate from sync.
+
+Confirmed hosting root of current503: Cloudflare production retail-pos version
+a70a936e-6211-420e-8417-e8ecfef52da0, POST /api/v1/pos/sync at11:23:28.055GMT+8,
+response503/outcome exceededCpu,141ms CPU/4026ms wall, with repeated similar
+errors. The local warning itself is a real retained-history condition; current
+and stable coordinator rethrow ECHANGEGAP BEFORE pull. Recovery snapshot failure
+therefore also prevents web corrections downloading. Provider02:06:58–03:06:58Z
+logs showed304bootstrap200 (max3651ms), zero logged API>=400/PGerrors; project
+ACTIVE_HEALTHY. Hosting CPU hotspot function is being measured, not assumed from
+provider health alone. Existing change_history UUID-keyset optimization remains
+active with minimum10 and unchanged scope; no new SQL change is needed to begin
+the approved helper optimization.
+
+Owner approved SYNC-CPU-01 code+isolatedtests after reviewing hosting evidence.
+New codex/sync-response-cpu-beta worktree baselinefd41a37f; implementation agent
+owns ONLY sync-download-redaction.ts and existing redaction-parity test. Root
+owns docs; independent agent owns read-only security/output/performance review.
+The proposed helper optimization removes avoidable per-object arrays/copies but
+must preserve exact behavior and prototype safety. No implementation expansion,
+database/index repair, checkpoint/queue reset, multiple-shift change, deployment
+or production promotion follows. Actual old-shift reconciliation remains HOLD.

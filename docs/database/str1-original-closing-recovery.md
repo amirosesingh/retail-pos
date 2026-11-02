@@ -5,6 +5,15 @@ and isolated tests, not execution on the affected PC, synchronization retries,
 cloud writes, lifecycle-guard application, publication or production promotion.
 Membership remains on hold. No application runtime code is changed.
 
+**HOLD — 2 November fresh evidence supersedes the original execution premise.**
+The cloud parent is now CLOSED revision5 at2026-11-01T13:38:37.207159Z, with a
+different count, reconciliation, events and summary. The owner confirms closing
+it deliberately on the web. Do not stage or retry the eight-row aggregate below,
+even if local CAPTURE succeeds. Preserve both histories and compare complete
+before-images; a correction requires a newly reviewed exact plan and approval.
+The historical preparation/tests below do not authorize replacing this newer
+closure or bypassing existing acknowledgement and uniqueness checks.
+
 ## Exact incident and evidence
 
 | Context | Verified read-only fact |
@@ -18,15 +27,20 @@ Membership remains on hold. No application runtime code is changed.
 | Original count | `dd2b330a-bcfc-44f6-9949-8d912cdbca80`, kind ORIGINAL |
 | Reconciliation | `7a49fc63-da14-41c6-b7d7-c1ddda5871fa` |
 | Saved graph | One parent, one count, one reconciliation, three closing events, one summary (`shift_notifications`), one variance alert |
-| Cloud at last read | Original and current shifts OPEN revision 1; no closing children |
+| Cloud at 1 November baseline | Original and then-current shifts OPEN revision 1; no closing children. Superseded by the 2 November HOLD above. |
 | Retained target CT | Version 35061, context NULL, beyond shifts push checkpoint 29281 |
 | Earlier blocking history | `change_history` push checkpoint 22619 below its retained minimum; other checkpoint values are evidence at their recorded read time |
 
 Separate reads matched branch/terminal ownership, original close/count/reconciliation
 time, counted tenders and parent/reconciliation financial fields. They are not a
-transactionally frozen whole-row manifest. Unknown child IDs, complete row contents,
-linked journal/receipt state and database GUID still need capture and review.
-No actual values or fingerprint have been fabricated to fill these gaps.
+transactionally frozen whole-row manifest at that stage. On 2 November the
+reviewed CAPTURE-only query succeeded on the affected PC and returned the complete
+eight-row graph, baseline journal/receipt, seven checkpoints and database GUID.
+The 8,411-character manifest's UTF-16LE SHA256 independently matched the SQL
+result: `74A53F91A9489C4211004F62F1068EB1AC4A67A67DF770C0BEBF0A77CD8B5756`.
+Complete PC and cloud payloads remain in ignored private evidence, not this PR.
+No actual values or fingerprint were fabricated. The changed cloud graph means
+this successful read does not authorize the original metadata-only stage.
 
 Stable 1.4.79 saved protected closes through direct OperationsRepository writes,
 without a durable closing aggregate. Its journal uploads run before CT. The
