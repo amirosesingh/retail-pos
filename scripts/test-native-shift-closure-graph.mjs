@@ -402,7 +402,7 @@ try {
     assert.equal((await cloudRows('shift_cash_counts')).length,2);
     assert.equal(Number((await cloudRows('shifts'))[0].counted_cash),110);
   });
-  await test('known boundary: server acknowledgement does not establish higher-revision local OPEN convergence',async()=>{
+  await test('known boundary: higher-revision local OPEN retains an explicit deferred download',async()=>{
     const f=localFixture(),opening={...clone(f.model.get('shifts')[0]),row_version:99};
     await close(f,105);await f.worker.pushAggregates('a',100,true);
     for(const cash of [106,107,108]) {
@@ -412,13 +412,18 @@ try {
     await verifyGraph(f);const remote=(await cloudRows('shifts'))[0];assert.equal(Number(remote.row_version),5);
     const acknowledged=await f.upload({batchId:randomUUID(),branchId:'a',operations:[{table:'shifts',rows:[opening],changes:[]}]});
     assert.equal(acknowledged.ok,true);assert.equal(acknowledged.applied,0);assert.equal((await cloudRows('shifts'))[0].status,'CLOSED');
-    for(const initial of [clone(f.model.get('shifts')[0]),opening]) {
+    for(const [initial,expectedOutcome] of [
+      [clone(f.model.get('shifts')[0]),'deferred'],
+      [{...clone(remote),row_version:99},'alreadyMatching'],
+      [opening,'deferred'],
+    ]) {
       let local=clone(initial);const statements=[];
       class Request {
         values={};
         input(name,value){this.values[name]=value;return this;}
         async query(sql){
           statements.push(sql);
+          if(sql.startsWith('SELECT TOP (1)'))return {recordset:[clone(local)]};
           // Characterize the actual writer's SQL with a deliberately thin
           // version-gate model. This is not physical SQL Server verification.
           assert(sql.includes('WHEN MATCHED AND source.[row_version]>=target.[row_version]'));
@@ -428,10 +433,12 @@ try {
         }
       }
       const client=new CloudClient({connectionManager:{sql:()=>({Request})}});
-      await client.applyLocalBatch({},tableMap.get('shifts'),{rows:[{row_data:remote}],tombstones:[]});
+      const result=await client.applyLocalBatch({},tableMap.get('shifts'),{branchId:'a',rows:[{row_data:remote}],tombstones:[]});
       assert.equal(statements.length,1);assert.equal(local.status,initial.status);assert.equal(local.row_version,initial.row_version);
-      if(initial.status==='CLOSED')assert.equal(new Date(local.closed_at).toISOString(),new Date(remote.closed_at).toISOString());
-      else {assert.equal(local.status,'OPEN');assert.equal(local.row_version,99);}
+      assert.equal(result.applied,0);assert.equal(result[expectedOutcome],1);
+      if(initial.status==='CLOSED'){
+        assert.equal(new Date(local.closed_at).toISOString(),new Date(remote.closed_at).toISOString());
+      }else {assert.equal(local.status,'OPEN');assert.equal(local.row_version,99);assert.equal(result.deferred,1);}
     }
   });
   console.log(`${passed} native Main / full closure graph scenarios passed (${captures.length ? 'captured deployed routines' : 'canonical routines'}).`);

@@ -75,6 +75,19 @@ async function main() {
       assert.equal((await pool.request().query("SELECT COUNT(*) n FROM dbo.shift_cash_counts;")).recordset[0].n, 3);
     });
     await test("actual cloud client downloads another recount under local index parity", async () => {
+      // Exercise the real pending-work guard introduced by SHIFT-35. The
+      // fixture baseline is explicit, after its synthetic saved rows; no guard
+      // is mocked or bypassed and no existing POS database is opened.
+      const graphNames = ["shifts","shift_cash_counts","shift_reconciliations","shift_close_events","shift_notifications","shift_variance_alerts"];
+      await pool.request().batch(`ALTER DATABASE [${database}] SET CHANGE_TRACKING=ON (CHANGE_RETENTION=2 DAYS,AUTO_CLEANUP=ON);`);
+      for (const name of graphNames.filter(name=>name!=="shift_cash_counts")) {
+        const metadata=registry.tables.find(table=>table.cloudTable===name);
+        await pool.request().batch(`CREATE TABLE dbo.[${name}](${metadata.columns.map(column=>`[${column.sqlServerColumn}] ${column.sqlServerType} ${column.sqlServerColumn==="id"?"NOT NULL":"NULL"}`).join(",")},PRIMARY KEY(id));`);
+      }
+      await pool.request().input("shift",sql.UniqueIdentifier,shift).query("INSERT dbo.shifts(id,store_id,status,state) VALUES(@shift,N'fixture',N'CLOSED',N'CLOSED');");
+      for (const name of graphNames) await pool.request().batch(`ALTER TABLE dbo.[${name}] ENABLE CHANGE_TRACKING;`);
+      await pool.request().batch("CREATE TABLE dbo.sync_change_journal(entity_type nvarchar(128),entity_id nvarchar(1000),branch_id nvarchar(128),acknowledged_at datetimeoffset); CREATE TABLE dbo.sync_checkpoints(branch_id nvarchar(128),entity_type nvarchar(128),direction nvarchar(16),change_tracking_version bigint);");
+      for (const name of graphNames) await pool.request().input("entity",name).query("INSERT dbo.sync_checkpoints(branch_id,entity_type,direction,change_tracking_version) VALUES(N'fixture',@entity,N'push',CHANGE_TRACKING_CURRENT_VERSION());");
       const client = new CloudClient({});
       class FixturePool extends sql.ConnectionPool {
         constructor(config) {
@@ -98,6 +111,8 @@ async function main() {
         } }], {branchId:"fixture"});
       } finally { await manager.close(); }
       assert.equal((await pool.request().query("SELECT COUNT(*) n FROM dbo.shift_cash_counts;")).recordset[0].n, 4);
+      for (const name of [...graphNames.filter(name=>name!=="shift_cash_counts"),"sync_change_journal","sync_checkpoints"])
+        await pool.request().batch(`DROP TABLE dbo.[${name}];`);
     });
     await test("a duplicate original rolls back the preceding recount in the same transaction", async () => {
       const before = await image(); const tx = new sql.Transaction(pool); await tx.begin();

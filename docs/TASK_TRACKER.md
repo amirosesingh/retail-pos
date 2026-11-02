@@ -72,6 +72,27 @@ below and isolated databases only. It does not authorize applying any migration
 to ROSEGILL or an installed POS_Local, historical repair, production deployment
 or publication. Continue from current beta 41463049 plus the reviewed SHIFT-34/35
 source dependencies; keep their original commits and scoped regression evidence.
+Necessary protocol metadata is included in that approved source/isolated scope:
+private append-only server intent receipts bind immutable payload, verified
+branch/terminal/shift, frozen base/predecessor and accepted result token/proof;
+local baseline and frozen-intent metadata support atomic adoption/offline chains.
+No cloud business columns/history are changed, no client Data API table access
+is granted and nothing is applied live. Existing project/business identity must
+be used; Supabase organization ID must not be invented as an application tenant.
+Historical superseded receipt replay can acknowledge its immutable intent but
+cannot rewrite effective money or regress a device's accepted baseline.
+The agreed contract keeps existing organizationId literal `default` under the
+current project database boundary; no invented organizational tenant column.
+Atomic read returns six graph tables plus an opaque digest/raw close timestamp.
+Protected requests send frozen UTF-8 payloadJson once (no duplicate outer ops),
+with base token OR immutable predecessor intent ID/hash; per-shift v3 proof
+binds intent/hash, accepted/current token and superseded status. Server pins
+existing identity/times for recounts. ACK only marks its accepted intent; only
+pending-aware atomic graph adoption installs an observed baseline/generation.
+Durable generation/tail order includes in-flight and already-ACKed local intents
+to support offline chains; never replace a frozen base at send time. Preserve
+legacy first closes and exact historical replay and reconcile only proven CT
+copies, without globally advancing unrelated checkpoints.
 Root owns the shared contract, existing tracker/memory and integration. Agents
 must agree request/proof/receipt and offline ordering before editing shared
 dependencies; one writer per file. Do not silently drop superseded/pending tasks.
@@ -127,6 +148,35 @@ review state is valid); verify the original saved reconciliation/event and
 preserve later recount money. Do not reuse the CLOSED-only recount validator
 unchanged or alter initial counting/variance permission rules. Prepare its exact
 scope and tests for separate approval with the protocol extension.
+
+### SHIFT-34/35 combined preparation checkpoint
+
+Source components: native recount `e15ec1fd11c613909563e02de3088668976a71c2`
+and safeguards `ccbd338d53efe76832398144f1191ef0bb4ecc28`; isolated integration
+`0a670f58` plus subsequent approval/documentation and fixture adaptations.
+Root pinned-Node22 full run passed **606 suites / 4,362 tests** in 80.61s.
+The first sandbox run failed generated SSR temporary-module imports; unchanged
+unsandboxed rerun exposed one outdated exact-call fixture, updated to assert
+the verified branch and complete changes argument. No behavior assertion was
+removed. Final full run passed. Types passed; full lint has zero errors and two
+explicit-any warnings confined to the new SQL fixture Row aliases.
+
+Root reran **24 actual disposable LocalDB scenarios** with the combined guarded
+CloudClient: the harness now creates real synthetic journal/checkpoint/CT tables
+and an explicit fixture baseline instead of bypassing pending checks. It touches
+only a random owned LocalDB instance/database, which is cleaned afterward.
+Root isolated PostgreSQL closure **71 cases** passed; native Main/full-graph
+**19 cases** passed after adapting the thin download fixture to matching/deferred
+outcomes and verifying the retained OPEN99 boundary. The exact reviewed LF #357
+artifact was used; no migration content or assertion was weakened. Existing
+known lower-counter convergence stays unimplemented in these safeguards.
+
+Independent review separately passed 50 recount/journal and 37 safeguard cases
+and identified two index guard gaps, corrected and retested on the real fixture
+engine. Unknown filtered/composite/operator-configured indexes now stop before
+DDL and preserve rows/configuration. No installed POS_Local or cloud data was
+accessed. New protocol work remains source preparation in separate native/server
+branches, not production readiness, live migration approval or historical repair.
 
 Latest controlling update, 2 November 2026 — **REL-31 pending beta PR integration**.
 PR #360 is merged as `cdc7bbed`; PR #361 is merged as `0bc58a16`, and its final

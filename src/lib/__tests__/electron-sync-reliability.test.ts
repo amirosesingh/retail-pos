@@ -242,6 +242,13 @@ describe("shared database reliability", () => {
       table,
       ['{"id":"local"}', '{"id":"remote"}'],
       expect.any(Transaction),
+      {
+        branchId: "B1",
+        changes: [
+          { entity_id: '{"id":"local"}', row_data: { id: "local" }, tombstone: false },
+          { entity_id: '{"id":"remote"}', row_data: { id: "remote" }, tombstone: false },
+        ],
+      },
     );
     expect(cloud.applyLocalBatch).toHaveBeenCalledWith(expect.any(Transaction), table, {
       rows: [{ entity_id: '{"id":"remote"}', row_data: { id: "remote" }, tombstone: false }],
