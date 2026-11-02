@@ -2,6 +2,44 @@
 
 Last reconciled: **2026-11-02, Asia/Brunei**.
 
+## Latest checkpoint — REL-31 merged; SHIFT-34/35 preparation approved
+
+On 2 November beta PR #362 merged as
+`41463049eb4d025398cfb273e85046f15c45817c`, tree
+`1cf69ced0cb138085e2862f8045f09f67d4e9159`, exactly equal to independently
+reviewed head `e80bff567a11c46085b9613027cc55c008f848ba`. GitHub confirms original
+PRs #343, #344, #345, #346, #347 and #357 are **MERGED**, with all original
+heads retained as ancestors. Android, Windows-renderer, iOS, security and
+Cloudflare build checks passed on the reviewed head; CodeRabbit skipped.
+Final beta-push CI remains a separate check. Metadata is 1.4.81; calculated
+next installer beta is 1.4.82-beta.1. No installer was published and main
+remains 2f404e6f / v1.4.79. No lifecycle SQL was applied live.
+
+The owner then explicitly approved **both separate correction batches and
+isolated tests** before production, after confirmation of source defects below.
+Each branch starts from clean, recoverable beta 41463049. Approval covers
+preparation/code and isolated tests only, not live PC/cloud schema application,
+historical reconciliation, permission changes or production promotion.
+
+| ID / state | Confirmed defect and approved correction | Scope, risk and acceptance |
+| --- | --- | --- |
+| SHIFT-34 / active preparation | Packaged SQL emits unconditional count uniqueness by shift, unlike cloud ORIGINAL-only uniqueness; native recount duplicate catches can report success without verifying saved facts. Prepare ORIGINAL-only local index parity and truthful recount replay. | Native recount handler and internal graph/replay helper; narrowly scoped SQL Server generator, additive local upgrade and regenerated existing schema/registry/installers; focused tests. Preserve all rows, exact counts, IDs, actor/branch, grants and current drawer. Verify original then multiple recounts, exact and mismatched replay, unrelated uniqueness errors, rollback, concurrency, branch/permission denial and cloud recount download. Unknown index shapes/data conflicts must abort before DDL. No real POS_Local access. |
+| SHIFT-35 / active preparation | Independent cloud/local counters can suppress web CLOSED updates while advancing pull cursor; pending protection only checks the journal and misses legacy CT edits. Prepare truthful adoption outcomes and pending-aware convergence. | Shift-specific behavior in cloud-client, pull-worker and change-reader, necessary existing bootstrap caller integration and focused tests, subject to final bounded design. Preserve other tables, branch restrictions, pending journal/CT changes and closing graph dependencies. No unconditional cloud-wins, invented revisions, cursor reset/skip or dropping rows. Test OPEN99/CLOSED5, equal facts, pending journal/CT, complete graph/page boundaries, interrupted retry and branch denial. Any new API/schema/business rule needs separate approval. |
+
+Root owns this existing ledger/memory and coordination branch. Separate agents
+own each implementation branch and may not edit each other's files. Reconcile
+both immutable diffs, perform independent review and combined regression checks
+before beta PRs/merges. Live database changes require exact-project approval;
+the lifecycle guard source merge does not authorize its application.
+
+The owner reconfirmed **one effective closing** for old STR1 shift
+1a349429-cea1-4f45-8d2b-36678d37ad27: use the original cashier closing
+(31 October 21:08:56, cash 687), with the later deliberate web action retained
+only as audit history. This clarifies the reconciliation target, not permission
+to delete histories or execute the obsolete #359 replay. A new exact audited
+plan still precedes any data repair; #359 remains HOLD. Membership/dependencies
+stay on hold and all other unfinished tasks remain preserved below.
+
 Latest controlling update, 2 November 2026 — **REL-31 pending beta PR integration**.
 PR #360 is merged as `cdc7bbed`; PR #361 is merged as `0bc58a16`, and its final
 platform/security/hosting checks passed. The owner now also requests the pending

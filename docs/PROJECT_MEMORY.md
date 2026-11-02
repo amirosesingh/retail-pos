@@ -3,6 +3,18 @@
 Last reconciled: **2026-11-02, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
 
+Latest 2 November checkpoint: pending dependency PRs #343–#347 and prepared
+lifecycle source #357 are confirmed merged through beta PR #362, merge
+41463049; reviewed and merged trees match. Source metadata is 1.4.81; no
+installer publication, main promotion or live lifecycle migration followed.
+The owner approved separate SHIFT-34/35 correction preparation and isolated
+tests for native recount parity/truthful replay and pending-aware web-to-PC
+shift adoption. Preserve current drawer, original facts, branch/actor authority,
+all pending journal/CT edits and other tables; no live PC/cloud changes.
+For the historic STR1 shift the owner reconfirmed one effective closing using
+the original 31 October cashier facts; retain the later web action as audit
+history. #359's superseded replay remains HOLD pending a new exact plan.
+
 Earlier update, 2 November 2026: the owner approved a narrow server CPU
 correction in `sync-download-redaction.ts` and isolated tests. Production
 Cloudflare `/api/v1/pos/sync` failures have outcome `exceededCpu` / HTTP 503;
