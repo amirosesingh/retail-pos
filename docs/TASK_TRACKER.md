@@ -2,6 +2,58 @@
 
 Last reconciled: **2026-11-02, Asia/Brunei**.
 
+Latest REL-31 checkpoint: pending dependency PRs #343–#347 and lifecycle source
+#357 are confirmed MERGED through beta #362 / 41463049. The merge tree equals
+reviewed e80bff56 and final beta checks passed. Source metadata is 1.4.81; next
+calculated beta is 1.4.82-beta.1. No new installer publication, main promotion or
+live migration/repair occurred. Production #354 remains draft; owner subsequently
+approved separate SHIFT-34/35 correction preparation and isolated tests for
+truthful native recount/index parity and pending-aware shift convergence. Current
+scope/evidence is recorded in the coordination branch's existing project tracker.
+
+This historical recovery branch remains HOLD. Owner reconfirmed one effective
+closing using original cashier facts (31 October 21:08:56, cash 687), with later
+web action retained only in audit history. Do not execute the superseded replay.
+A new exact audited reconciliation plan and execution approval are required.
+Future administrator corrections on WEB OR TERMINAL must persist and synchronize
+after reconnect/startup; older queued data must not undo accepted corrections,
+and pending offline work/history must remain safe. That future rule is distinct
+from this one historical reconciliation choice. Membership stays on hold.
+
+Latest release checkpoint — REL-30, 2 November: the owner authorized integrating
+the completed fixes into beta and preparing production if ready. PR #360 merged
+as `cdc7bbeda87d4ccfef9b3fb313cdcf5de5c76d63`; PR #361 merged as
+`0bc58a16be9398ec14eecb636e8d3e1aac2b36e3`. Both actual trees equal their reviewed
+heads, and final beta's runtime/tests equal the combined `efe5b6c2` candidate.
+No repository replacement, forced history rewrite, unrelated dependency upgrade
+or held guard/recovery merge occurred. These completed beta source tasks
+supersede the older NET-02A/B proposal-only state below; NET-02C/D/E and health
+labeling remain separate pending work.
+
+Combined pinned-Node-22 verification passed 604 suites / 4,305 tests, 79 native/
+release safeguards, TypeScript, scoped lint and web build. Independent privacy,
+native lifecycle/acknowledgement and immutable patch-risk reviews passed; optional
+CodeRabbit skipped. Final exact-beta checks subsequently passed. The beta hosting
+build succeeded; one public config-presence endpoint answered 200, which proves
+availability/configuration only, not actual database recovery or CPU acceptance.
+
+Next installer identity is `1.4.81-beta.3`, from unchanged `1.4.80` metadata;
+no beta publication tag/dispatch or generated version commit was created.
+Publication awaits the exact "Publish beta now" request. Production draft #354
+is updated at final beta, still draft/awaiting-owner-approval with auto-merge
+disabled. Main remains `2f404e6f` / v1.4.79. Proposed stable 1.4.81 still requires
+reviewed metadata and the existing installed-device, hosted, dependency and
+critical-finding gates. Its cumulative comparison is 580 files, +35,148/-2,940,
+108 beta-only commits; the recent beta fix is only a scoped subset.
+
+Original STR1 reconciliation remains HOLD after the deliberate later web close.
+Source merges do not repair the original PC/cloud graph or authorize replay,
+queue/checkpoint reset, schema changes or data correction. Preserve both
+histories, the owner's choice of original cashier facts and separate exact-plan/
+execution approval. Membership and dependencies stay on hold; all other pending
+instructions remain recorded. Full facts and current release gates remain in
+the linked beta PRs, production draft and existing go-live checklist.
+
 Latest request — NET-02, read-only connection and asynchronous-work audit:
 the owner reports 19/60 Supabase connections for only a few terminals and asks
 whether commands proceed without awaiting backend responses during slow internet.
