@@ -1,6 +1,92 @@
 # POS task tracker
 
 Last reconciled: **2026-11-02, Asia/Brunei**.
+
+Latest request — NET-02, read-only connection and asynchronous-work audit:
+the owner reports 19/60 Supabase connections for only a few terminals and asks
+whether commands proceed without awaiting backend responses during slow internet.
+Investigate before changing application code, pool settings, database data or
+permissions. Preserve CPU-fix draft PR #360, the historical-repair HOLD and all
+other unfinished work; Membership and its dependencies remain unchanged.
+
+Read-only target reverified: ROSEGILL connector, organization
+`bjxgimekljzlnwejuawj`, project `pos` / `qhrufhtbeguxydenzfey`,
+`https://qhrufhtbeguxydenzfey.supabase.co`, status ACTIVE_HEALTHY.
+At 2 November 12:11:49 Brunei, pg_stat_activity showed 14 client backends
+excluding the diagnostic: four PostgREST, six Realtime, one Storage, and three
+pooling/monitoring/administration. All 14 were idle; zero active client queries,
+idle transactions or client lock waits. A separate ongoing Realtime WAL sender
+is replication, not a stuck ordinary query. max_connections is 60, with three
+superuser-reserved slots. This single snapshot is not a peak/capacity test or
+proof that leaks can never occur. A terminal uses HTTPS REST/Auth/sync and
+Realtime; there is no one-terminal-to-one-PostgreSQL-connection contract.
+Official reference: https://supabase.com/docs/guides/database/connection-management.
+
+The 11:56:49–12:11:49 Brunei logs contain 702 edge requests, all HTTP 200/204;
+six PostgreSQL LOG/00000 entries; Auth/Realtime info entries and one Storage 200.
+No API/PG/Auth/Realtime error was observed in that bounded window. This does not
+disprove separately captured Cloudflare hosting CPU failures. No pool resize,
+idle-session termination, reset, restart or live write was performed.
+
+Two independent bounded source audits at CPU branch head `651348bb` found:
+
+- NET-02A confirmed: Electron telemetry has no request deadline/in-flight guard
+  (`electron/telemetry.cjs:11,44,85`). Presence changes and the timer can overlap
+  HTTP and local status reads. Actual-module synthetic test: three simultaneous
+  deferred HTTP calls, no cancellation signals. Root independently reproduced it
+  with pinned Node 22 and zero network requests.
+- NET-02B confirmed: `electron/sync/cloud-client.cjs:136–161` normalizes header
+  timeouts but catches body timeout/abort as malformed content. A timed-out HTTP
+  200 body becomes HTTP_200, obscuring the cause and disabling existing smaller-
+  page timeout recovery. Actual-module reproduction distinguishes ETIMEDOUT for
+  headers from HTTP_200 for the same body TimeoutError. It returns failure, not
+  a fabricated acknowledgement.
+- NET-02C confirmed: `src/lib/desktop-supabase-fetch.ts:18–27` rejects the caller
+  on abort, but the native IPC path has no cancellation identity; Main's request
+  in `electron/supabase-http.cjs:23` continues under a separate 30s deadline.
+  Synthetic actual-wrapper/native-adapter test: caller rejected, native signal
+  remained un-aborted, and retry started a second native request. Any correction
+  must preserve sender scope, destination restrictions and uncertain-write
+  idempotency; cancellation cannot prove that a server write was rolled back.
+- NET-02D confirmed: `withReadDeadline` (`src/lib/read-retry.ts:37–47`) races a
+  timer without cancelling the read. Bootstrap cleanup invalidates publication
+  (`src/lib/pos-store.tsx:893–896`), but catalogue walkers continue pages
+  (`src/core/api/pos-db.ts:1319–1331`, `src/lib/catalogue-read.ts:14–31`).
+  Synthetic current-helper test timed out at page two and still started four
+  more pages. Generation fences prevent stale UI publication; obsolete network
+  work can still overlap replacement/retry. Membership dependencies stay on hold.
+- NET-02E risk, not premature acknowledgement: intentional per-record/table
+  fault isolation can spend repeated 30s transport deadlines in one serialized
+  sync pass, then try pull. Actual PushWorker/Coordinator fixture produced three
+  timed-out disjoint uploads, three failure marks, zero acknowledgements and one
+  pull. Any pass-budget correction must retain pending work and useful isolated
+  validation behavior; no change is approved by this investigation.
+
+The checked checkout path already awaits draft persistence, recordSale and the
+atomic cloud/local commit before clearing the cart or showing sale success
+(`use-checkout.ts:438–446,587–642,684–718`, `pos-store.tsx:2154–2173`,
+`src/core/api/pos-db.ts:2952–2973`). Stable transaction IDs and uncertain-result
+lookup exist. Settings Save awaits its serialized write queue. Post-commit
+printing/communications and independent read concurrency are intentional;
+making every helper async is not a performance or correctness fix. Existing
+realm-wide client ownership and Realtime cleanup were found, with no ordinary
+per-request staff-client leak demonstrated.
+
+Verification: nine focused web suites / 91 tests passed on Node 22.22.2 with
+threads/two workers after sandbox fork-temp ENOENT; assertions unchanged. Four
+native actual-module synthetic checks were repeated on pinned Node 22.22.2
+after an initial Node 24 run, with no network/DB/file changes. This is a bounded
+critical-path audit, not full-program or physical-device certification.
+
+Proposed first correction batch (NOT YET APPROVED): NET-02A/B only, changing
+`electron/telemetry.cjs`, `electron/sync/cloud-client.cjs` and focused tests.
+Coalesce heartbeat work, bound/clean up its transport and preserve the latest
+presence; keep timeout/abort classification through response-body consumption.
+Preserve checkout, pending/ack semantics, branch rules, credentials, settings,
+grants and all unrelated paths. No database or live deployment is proposed.
+NET-02C/D require separately scoped cancellation plans; NET-02E remains a reviewed
+budget proposal. Obtain approval under AGENTS.md before any implementation.
+
 Read [../AGENTS.md](../AGENTS.md) and [PROJECT_MEMORY.md](PROJECT_MEMORY.md).
 This is the single current task ledger. Existing audit/checkpoint documents remain
 supporting evidence, not competing completion lists. Batch 0 authorized documentation
