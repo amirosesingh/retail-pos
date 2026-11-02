@@ -2,6 +2,132 @@
 
 Last reconciled: **2026-11-02, Asia/Brunei**.
 
+## Latest checkpoint — REL-31 merged; SHIFT-34/35 preparation approved
+
+On 2 November beta PR #362 merged as
+`41463049eb4d025398cfb273e85046f15c45817c`, tree
+`1cf69ced0cb138085e2862f8045f09f67d4e9159`, exactly equal to independently
+reviewed head `e80bff567a11c46085b9613027cc55c008f848ba`. GitHub confirms original
+PRs #343, #344, #345, #346, #347 and #357 are **MERGED**, with all original
+heads retained as ancestors. Android, Windows-renderer, iOS, security and
+Cloudflare build checks passed on the reviewed head; CodeRabbit skipped.
+Final beta-push and production-PR checks on 41463049 also passed: security
+(push and PR), Android/Windows renderer and beta hosting; CodeRabbit skipped.
+Metadata is 1.4.81; calculated
+next installer beta is 1.4.82-beta.1. No installer was published and main
+remains 2f404e6f / v1.4.79. No lifecycle SQL was applied live.
+
+The owner then explicitly approved **both separate correction batches and
+isolated tests** before production, after confirmation of source defects below.
+Each branch starts from clean, recoverable beta 41463049. Approval covers
+preparation/code and isolated tests only, not live PC/cloud schema application,
+historical reconciliation, permission changes or production promotion.
+
+| ID / state | Confirmed defect and approved correction | Scope, risk and acceptance |
+| --- | --- | --- |
+| SHIFT-34 / active preparation | Packaged SQL emits unconditional count uniqueness by shift, unlike cloud ORIGINAL-only uniqueness; native recount duplicate catches can report success without verifying saved facts. Prepare ORIGINAL-only local index parity and truthful recount replay. | Native recount handler and internal graph/replay helper; narrowly scoped SQL Server generator, additive local upgrade and regenerated existing schema/registry/installers; focused tests. Preserve all rows, exact counts, IDs, actor/branch, grants and current drawer. Verify original then multiple recounts, exact and mismatched replay, unrelated uniqueness errors, rollback, concurrency, branch/permission denial and cloud recount download. Unknown index shapes/data conflicts must abort before DDL. No real POS_Local access. |
+| SHIFT-35 / active preparation | Independent cloud/local counters can suppress web CLOSED updates while advancing pull cursor; pending protection only checks the journal and misses legacy CT edits. Prepare truthful adoption outcomes and pending-aware convergence. | Shift-specific behavior in cloud-client, pull-worker and change-reader, necessary existing bootstrap caller integration and focused tests, subject to final bounded design. Preserve other tables, branch restrictions, pending journal/CT changes and closing graph dependencies. No unconditional cloud-wins, invented revisions, cursor reset/skip or dropping rows. Test OPEN99/CLOSED5, equal facts, pending journal/CT, complete graph/page boundaries, interrupted retry and branch denial. Any new API/schema/business rule needs separate approval. |
+
+Root owns this existing ledger/memory and coordination branch. Separate agents
+own each implementation branch and may not edit each other's files. Reconcile
+both immutable diffs, perform independent review and combined regression checks
+before beta PRs/merges. Live database changes require exact-project approval;
+the lifecycle guard source merge does not authorize its application.
+
+The owner reconfirmed **one effective closing** for old STR1 shift
+1a349429-cea1-4f45-8d2b-36678d37ad27: use the original cashier closing
+(31 October 21:08:56, cash 687), with the later deliberate web action retained
+only as audit history. This clarifies the reconciliation target, not permission
+to delete histories or execute the obsolete #359 replay. A new exact audited
+plan still precedes any data repair; #359 remains HOLD. Membership/dependencies
+stay on hold and all other unfinished tasks remain preserved below.
+
+Later owner clarification: subsequent authorized administrator corrections made
+on **web or terminal** must persist and synchronize in both directions; a PC
+that is off receives accepted changes on startup/reconnect. Retain one effective
+closing and immutable correction history. An older queued opening/closing must
+not undo an accepted correction; pending offline changes must not be discarded.
+The original-cashier choice above is this historical reconciliation target, not
+a permanent rule that cashier facts override future administrator corrections.
+Concurrent/conflicting unacknowledged edits need explicit safe conflict handling,
+not client-clock guessing or unconditional cloud wins.
+
+SHIFT-35 design refinement: exact outcomes/pending protection necessarily includes
+the existing bootstrap caller, which otherwise filters pending rows while
+advancing its baseline. Root includes that caller in the approved correction's
+necessary dependencies; no new business module, endpoint or schema is authorized.
+Reliable lower-counter closing adoption also needs a complete graph consistency
+contract: the feed can split parent/children across pages. Do not advance past an
+unapplied closing, erase pending work, or wait forever for later children behind
+a blocked parent page. Inspect existing read/proof contracts first. If a new
+server/API/schema contract is required, present it separately before expansion;
+do not claim native convergence complete from safe deferral alone.
+
+### SHIFT-36 — owner-approved protocol preparation and isolated tests
+
+The owner explicitly approved the protocol preparation and isolated tests on
+2 November, including the original-count save-path retry verification extension.
+Approval covers the API/local metadata/service-routine source contract described
+below and isolated databases only. It does not authorize applying any migration
+to ROSEGILL or an installed POS_Local, historical repair, production deployment
+or publication. Continue from current beta 41463049 plus the reviewed SHIFT-34/35
+source dependencies; keep their original commits and scoped regression evidence.
+Root owns the shared contract, existing tracker/memory and integration. Agents
+must agree request/proof/receipt and offline ordering before editing shared
+dependencies; one writer per file. Do not silently drop superseded/pending tasks.
+
+Independent source review confirms that a read-side revision fix alone cannot
+preserve later administrator corrections: queued CLOSED99 can replace accepted
+web CLOSED5/6 before the existing v2 acknowledgement inspects it. Comparing graph
+membership only at send time is also insufficient because PushWorker enriches
+old intents with the current local graph. No existing journal field proves which
+effective server closing was known when the correction was made.
+
+Approved bounded preparation:
+
+- Add one service-only, branch-scoped atomic closing-graph read to the existing
+  verified sync API. Return parent, complete count/reconciliation/event/summary/
+  alert graph and opaque server digest over authoritative effective facts. Keep
+  native branch/actor validation and management scope unchanged.
+- Persist the accepted digest in separate local metadata, atomically with whole-
+  graph adoption; never derive it from local row_version or round PostgreSQL
+  microsecond timestamps through JavaScript. Freeze the accepted baseline in the
+  protected correction intent/journal at commit, not in send-time enrichment.
+- Send that frozen precondition through the existing aggregate endpoint; lock
+  and compare it before **any** parent/child write in aggregate/batch/replay
+  paths. No new cloud business table/column is inherently required; new service
+  read/preflight routines, local metadata/upgrade and request contract are needed.
+- Preserve first legacy OPEN-to-CLOSED upload and identical confirmed history
+  replay. A different legacy CLOSED with no proven baseline must remain pending
+  as a visible conflict; never accept all old closures or reject all production
+  first closes. Do not attach today's baseline to yesterday's queued correction.
+
+Likely source boundary: existing sync-endpoint.server.ts; reviewed additive
+Supabase migration plus schema/generator parity and service-only helpers in
+push/proof/replay routines; existing native cloud/pull/push/change-reader and
+bootstrap modules; protected shift journal plus a narrow local baseline
+repository/migration/generated artifacts; focused native and isolated database
+tests. No live application, credentials, grants, device configuration, historic
+STR1 repair or Membership work is included. A precise final file list and
+recoverable baseline precede implementation.
+
+Required evidence: stale CLOSED99 versus accepted web5/6; offline admin correction
+made before an unseen web change conflicts without losing the queue; correction
+made after atomic adoption succeeds despite independent counters; superseded
+receipts cannot undo later changes; legacy 1.4.79 first close works; page-split
+graphs adopt atomically; simultaneous admins serialize; branch denial; timeouts
+roll back and retain baselines/journals/cursors. Preserve configured shift modes
+and one effective closing with immutable audit history. SHIFT-34/35 preparation
+alone must not be described as completing this convergence protocol.
+
+Related narrow pending extension: the original cash-count path has the same
+broad duplicate-key success shortcut as recounts. Generalize saved-intent replay
+verification to ORIGINAL without requiring a CLOSED parent (its initial variance
+review state is valid); verify the original saved reconciliation/event and
+preserve later recount money. Do not reuse the CLOSED-only recount validator
+unchanged or alter initial counting/variance permission rules. Prepare its exact
+scope and tests for separate approval with the protocol extension.
+
 Latest controlling update, 2 November 2026 — **REL-31 pending beta PR integration**.
 PR #360 is merged as `cdc7bbed`; PR #361 is merged as `0bc58a16`, and its final
 platform/security/hosting checks passed. The owner now also requests the pending

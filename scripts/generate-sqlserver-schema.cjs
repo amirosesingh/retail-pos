@@ -164,6 +164,8 @@ const tables = report.tables.map((table, tableIndex) => ({
           : null,
       unique,
       uniqueGroup: uniqueGroup >= 0 ? `UQ_${table.name}_${uniqueGroup}` : null,
+      ...(table.name === "shift_cash_counts" && column.name === "shift_id"
+        ? { uniqueFilter: "[kind]=N'ORIGINAL'" } : {}),
     };
   }),
 }));
@@ -267,7 +269,13 @@ END;`);
       );
     }
   }
-  for (const column of table.columns.filter((item) => item.unique)) {
+  if (table.cloudTable === "shift_cash_counts") {
+    // The portable report records the key but not PostgreSQL's partial-index
+    // predicate. Keep this one reviewed translation scoped to shift counts.
+    lines.push(fs.readFileSync(path.join(outputDir,"migrations","021_shift_count_original_uniqueness.sql"),"utf8")
+      .split("-- SHIFT34_HISTORY_BEGIN")[0]);
+  }
+  for (const column of table.columns.filter((item) => item.unique && !item.uniqueFilter)) {
     const filter = column.nullable ? ` WHERE [${column.sqlServerColumn}] IS NOT NULL` : "";
     lines.push(
       `IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.${table.sqlServerTable}') AND name=N'UX_${table.sqlServerTable}_${column.sqlServerColumn}') CREATE UNIQUE INDEX [UX_${table.sqlServerTable}_${column.sqlServerColumn}] ON dbo.[${table.sqlServerTable}]([${column.sqlServerColumn}])${filter};`,
