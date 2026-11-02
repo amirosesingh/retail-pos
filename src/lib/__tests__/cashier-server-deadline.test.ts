@@ -62,3 +62,12 @@ it("bounds recording a real wrong-PIN outcome without automatically repeating it
   expect(h.rest).toHaveBeenCalledOnce();expect(h.finish).toHaveBeenCalledOnce();
   expect(vi.getTimerCount()).toBe(0);
 });
+it.each(["203.0.113.9",null])("retains the explicit trusted Worker address context %j across the shared login adapter",async trustedWorkerIp=>{
+ expect(await cashierLoginServer(input,{trustedWorkerIp})).toMatchObject({ok:true});
+ expect(h.begin).toHaveBeenCalledWith(undefined,expect.any(AbortSignal),{trustedWorkerIp});
+ expect(h.rest).toHaveBeenCalled();expect(vi.getTimerCount()).toBe(0);
+});
+it("retains framework transport lookup for existing callers without private Worker context",async()=>{
+ expect(await cashierLoginServer(input)).toMatchObject({ok:true});
+ expect(h.begin).toHaveBeenCalledWith(undefined,expect.any(AbortSignal),undefined);
+});

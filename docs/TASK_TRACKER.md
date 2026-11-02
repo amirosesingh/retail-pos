@@ -4,6 +4,56 @@ Last reconciled: **2026-11-03, Asia/Brunei**.
 
 ## 3 November — parallel production preparation and CI follow-up
 
+Owner approved a separate **login CPU correction and isolated tests** after
+choosing to keep Cloudflare Free. Recoverable baseline: clean ef2ef784 on
+codex/shift-integrity-coordination-beta. Approved runtime scope: src/server.ts,
+new cashier-login-endpoint.server.ts, public cashier-login route,
+pin-request-throttle.server.ts and cashier-login.server.ts, plus focused tests.
+Dispatch only exact POST/OPTIONS public cashier login before framework router
+loading; preserve existing validation, CORS/security headers, errors, throttles,
+trusted client address, real wrong attempts, terminal/branch permissions, Auth
+proof/session/audit and all unrelated routes. Agents implement/review bounded
+files with one writer per file. No database, billing, deployment or Membership
+changes. Require first/warm isolated build evidence, response/guard parity and
+exact-head CI; local timings alone cannot certify the hosted 10 ms budget.
+State: active implementation. Rollback: targeted source revert retaining other
+beta fixes; no data or queue restoration is involved.
+
+Login correction source and focused verification completed: exact CF-metadata
+POST dispatch skips the UI router; non-CF POST retains framework request scope
+and original client-address lookup. Shared endpoint keeps route delegation,
+CORS/security, PIN/attempt/branch/session/audit behavior. Review caught the
+initial non-CF scope regression before commit; it was corrected and covered.
+Agent focused checks: **148 tests across nine files**, TypeScript and scoped
+lint passed; independent read-only review found no actionable scoped defect.
+Root built the final Cloudflare bundle successfully. Actual shipped index
+was tested with synthetic bindings and entirely stubbed network: login
+200/wrong-PIN 401/preflight 204; 28/27/12 modules loaded respectively, without
+router/UI/TanStack. Unrelated-route control loads 189 modules and the framework.
+Median warm local Node CPU was about 1.55 ms/login; fresh process CPU was
+125–141 ms including filesystem imports/instrumentation. These are **not hosted
+Cloudflare CPU measurements or Free-budget certification**. Zod remains about
+661 KB. No live requests, credentials, database/billing/deployment changes.
+Full-suite and final pushed-head CI remain required before beta integration.
+
+Final source verification: full pinned Node22 suite **613 files / 4,627 tests
+passed**, one opt-in file/test skipped (106.72 seconds, two workers); TypeScript
+passed. The opt-in actual-engine handover was separately verified earlier and
+was not rerun for this login-only batch. Root's first full run exposed a Windows
+LF/CRLF mismatch in transfer test setup, not transfer logic: normalized only its
+fixture inputs and asserted exact preservation of the lifecycle definition
+except the reviewed completion guard. All five original transfer tests and the
+final complete rerun pass. Notifications 23/23 and 70-table schema/sync registry
+plus installation-order checks pass. Preserve final exact-head remote CI,
+live CPU measurement and existing production/migration/acceptance gates.
+
+Exact-head CI on ef2ef784 passed native closing graph, transfer/request and
+history scenarios, then failed notification generator parity because its
+temporary fixture omitted the five newly required migration source files.
+Root added only those fixture inputs; **23/23 notification SQL scenarios pass**
+without changing notification logic, generator behavior or live data. Other
+existing CI gates still require a complete run on the final corrected head.
+
 Owner asks to prepare/update the existing production PR alongside beta fixes.
 PR #354's obsolete authority-plan and SHIFT-34/35 status was reconciled with
 actual beta 41463049 and candidate #363 at 3acb0900. #354 remains draft,

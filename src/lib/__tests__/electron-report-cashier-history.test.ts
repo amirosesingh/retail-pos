@@ -54,7 +54,7 @@ describe("cashier secure-session handoff", () => {
   });
 
   it("counts only wrong credentials as a failed PIN attempt", () => {
-    const route = read("src/routes/api/public/cashier-login.ts");
+    const route = read("src/lib/cashier-login-endpoint.server.ts");
     expect(route).toContain('result.code === "invalid_credentials"');
     expect(route).toContain('result.code === "session_prepare_failed"');
     expect(route).toContain("? 503");

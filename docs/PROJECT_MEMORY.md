@@ -3,6 +3,16 @@
 Last reconciled: **2026-11-03, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
 
+3 November hosting decision: keep Cloudflare Workers **Free**; no billing or
+CPU-limit change is authorized. The owner approved a separate five-runtime-file
+login loading correction and isolated tests. Only exact public cashier-login
+POST requests with Cloudflare runtime metadata may bypass UI-router loading;
+other runtimes retain framework request scope and address-throttle behavior.
+Existing PIN/account/address protections, terminal/branch permissions, sessions,
+audit, CORS and security headers remain mandatory. Source/build measurements
+are not hosted Free-budget acceptance or deployment approval. Keep production
+PR #354 prepared separately from beta integration and exact live schema gates.
+
 Signed closing handover decision: the person starting closing and the person
 counting may differ. Preserve each verified author through offline storage,
 restart, retries and later uploads by another cashier. A separate domain-bound
