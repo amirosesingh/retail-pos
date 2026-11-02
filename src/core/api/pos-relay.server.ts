@@ -631,6 +631,14 @@ export async function runRelayOp(
   const decision = await safeAuthorizeRelayOp(op, scope, batchIds);
   if (!decision.ok) return { ok: false, error: decision.error, code: decision.code };
   const safeOp = decision.op;
+  if (safeOp.table === "shift_notifications" || (safeOp.table === "shifts" && safeOp.kind === "delete")) {
+    // Preserve the existing relay policy first. The narrow SQL route then checks
+    // enrolled graph admission and performs this exact mutation atomically.
+    const result = await serviceRest("rpc/pos_sync_shift_author_raw_write", { method: "POST", body: JSON.stringify({
+      p_operation: safeOp, p_terminal_id: scope.terminalId ?? "",
+    }) });
+    return result.ok ? { ok: true } : { ok: false, code: "SHIFT_WRITE_PENDING", error: (await result.text()).slice(0, 400) };
+  }
   // Receipt graphs are immutable on replay, matching the native SQL writer.
   // A permission check followed by merge-duplicates would still race another
   // checkout inserting the same ID. Corrections have dedicated transactions.

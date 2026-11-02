@@ -208,10 +208,12 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
   // till can act on instead of a blank failure.
   const { resolveRelayScope } = await import("@/core/api/relay-policy.server");
   let scope: Awaited<ReturnType<typeof resolveRelayScope>>;
+  let verifiedTerminal: import("./terminal-binding.server").VerifiedTerminalDescriptor | undefined;
   try {
     const { managementReplicaScope } = await import("./management-replica.server");
     const replicaScope = await managementReplicaScope(body);
     const caller = replicaScope ? null : await verifyRelayCaller(body);
+    verifiedTerminal = caller?.terminal;
     if (caller?.storeId) {
       const { branchExists } = await import("./session-verify.server");
       if (!(await branchExists(caller.storeId))) {
@@ -226,7 +228,11 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       }
     }
     scope = replicaScope ?? await resolveRelayScope(caller!);
+    // Signed fields retain their exact spelling. Only the existing transport and
+    // derived operations may resolve SQL-equivalent scope aliases.
+    const signedAuthor = body.sqlServerAggregate?.shiftAuthor;
     body = alignVerifiedScopeIds(body, scope);
+    if (signedAuthor && body.sqlServerAggregate) body.sqlServerAggregate.shiftAuthor = signedAuthor;
   } catch (e) {
     if ((e as { status?: number }).status === 503)
       return Response.json({ ok: false, code: "SERVICE_UNAVAILABLE", error: "Registration verification is temporarily unavailable." }, { status: 503 });
@@ -495,6 +501,26 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
         );
     }
     const { serviceRest } = await import("@/core/api/pos-relay.server");
+    let authorState: Awaited<ReturnType<typeof import("./shift-author-verification.server").readShiftAuthorAuthority>> | undefined;
+    if (body.sqlServerAggregate?.shiftIntent) {
+      const { verifyShiftAuthorAttestation, readShiftAuthorAuthority, ShiftAuthorError } = await import("./shift-author-verification.server");
+      try {
+        if (!verifiedTerminal) throw new ShiftAuthorError("ESHIFT_AUTHOR_INVALID", "A verified terminal is required.");
+        const aggregate = body.sqlServerAggregate;
+        aggregate.shiftAuthor = await verifyShiftAuthorAttestation({ attestation: aggregate.shiftAuthor, payloadJson: aggregate.shiftIntent!.payloadJson,
+          terminal: verifiedTerminal, branchId, shiftId: aggregate.shiftIntent!.shiftId, intentId: aggregate.batchId, action: aggregate.shiftIntent!.kind });
+        try { authorState = await readShiftAuthorAuthority(aggregate.shiftAuthor); }
+        catch (error) {
+          if (error && typeof error === "object" && "status" in error && error.status === 503)
+            authorState = { allowed: false, code: "ESHIFT_AUTHOR_UNAVAILABLE" };
+          else throw error;
+        }
+      } catch (error) {
+        const unavailable = error && typeof error === "object" && "status" in error && error.status === 503;
+        return Response.json({ ok: false, code: unavailable ? "ESHIFT_AUTHOR_UNAVAILABLE" : "ESHIFT_AUTHOR_INVALID",
+          error: unavailable ? "Author verification is temporarily unavailable; saved work remains pending." : "The protected shift author could not be verified." }, { status: unavailable ? 503 : 403 });
+      }
+    }
     const governanceBatch =
       body.sqlServerBatch && governanceRpcTables.has(body.sqlServerBatch.table);
     const rpc = governanceBatch
@@ -523,14 +549,15 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
           ] as const)
         : body.sqlServerAggregate
           ? ([
-              body.sqlServerAggregate.shiftIntent ? "pos_sync_push_shift_intent" : "pos_sync_push_aggregate",
+              body.sqlServerAggregate.shiftIntent ? "pos_sync_push_author_shift_intent" : "pos_sync_push_aggregate",
               {
                 p_batch_id: body.sqlServerAggregate.batchId,
                 p_organization_id: body.sqlServerAggregate.organizationId,
                 p_branch_id: branchId,
                 p_operations: body.sqlServerAggregate.shiftIntent ? null : body.sqlServerAggregate.operations,
                 p_terminal_id: scope.terminalId ?? "",
-                ...(body.sqlServerAggregate.shiftIntent ? { p_shift_intent: body.sqlServerAggregate.shiftIntent } : {}),
+                ...(body.sqlServerAggregate.shiftIntent ? { p_shift_intent: body.sqlServerAggregate.shiftIntent,
+                  p_shift_author: body.sqlServerAggregate.shiftAuthor, p_author_authority: authorState } : {}),
               },
             ] as const)
           : body.sqlServerShiftGraph

@@ -636,9 +636,23 @@ if (causalStart >= 0) {
   if (causalFinish < causalStart) throw new Error("Incomplete canonical shift causal contract");
   schema = schema.slice(0, causalStart) + schema.slice(causalFinish + causalEnd.length);
 }
+const authorRegistry = fs.readFileSync(path.join(root, "supabase", "migrations", "20261102101610_shift_author_key_registry.sql"), "utf8");
+const authorEnforcement = fs.readFileSync(path.join(root, "supabase", "migrations", "20261102103716_enforce_shift_author_uploads.sql"), "utf8");
+const authorHelperGuards = authorEnforcement.split("-- SHIFT_AUTHOR_HELPER_GUARDS_BEGIN")[1]?.split("-- SHIFT_AUTHOR_HELPER_GUARDS_END")[0];
+if (!authorHelperGuards) throw new Error("Missing reviewed author helper guards");
+const authorBegin = "-- SHIFT_AUTHOR_CONTRACT_BEGIN", authorEnd = "-- SHIFT_AUTHOR_CONTRACT_END";
+const correctionBegin = "-- SHIFT_CORRECTION_ACTIVITY_TYPE_BEGIN", correctionEnd = "-- SHIFT_CORRECTION_ACTIVITY_TYPE_END";
+for (const [blockBegin, blockEnd] of [[authorBegin, authorEnd], [correctionBegin, correctionEnd]]) {
+  const blockStart = schema.indexOf(blockBegin), blockFinish = schema.indexOf(blockEnd);
+  if (blockStart >= 0) {
+    if (blockFinish < blockStart) throw new Error("Incomplete final shift authority contract");
+    schema = schema.slice(0, blockStart) + schema.slice(blockFinish + blockEnd.length);
+  }
+}
+const correctionMigration = fs.readFileSync(path.join(root, "supabase", "migrations", "20261102104005_fix_closed_shift_correction_activity_type.sql"), "utf8");
 const finalHardening = schema.lastIndexOf("-- Final public-schema privilege hardening after notification rule definitions.");
 if (finalHardening < 0) throw new Error("Missing final privilege hardening boundary");
-schema = `${schema.slice(0, finalHardening).trimEnd()}\n\n${causalBegin}\n${causalMigration.trim()}\n${causalEnd}\n\n${schema.slice(finalHardening).trim()}\n`;
+schema = `${schema.slice(0, finalHardening).trimEnd()}\n\n${causalBegin}\n${causalMigration.trim()}\n${causalEnd}\n\n${authorBegin}\n${authorRegistry.trim()}\n${authorEnforcement.trim()}\n${authorEnd}\n\n${correctionBegin}\n${correctionMigration.trim()}\n${correctionEnd}\n\n${schema.slice(finalHardening).trim()}\n`;
 fs.writeFileSync(schemaPath, schema);
 console.log(`Supabase sync contract generated for ${tables.length} keyed tables`);
 
@@ -684,7 +698,10 @@ DROP TRIGGER IF EXISTS settings_scoped_bump_row_version ON public.settings_scope
 CREATE TRIGGER settings_scoped_bump_row_version BEFORE UPDATE ON public.settings_scoped FOR EACH ROW EXECUTE FUNCTION public.preserve_or_bump_row_version();
 
 `;
-  fs.writeFileSync(migrationPath, preamble + schema.slice(hardeningStart, contractEnd));
+  const authorPrerequisite = `DO $author_prerequisite$ BEGIN
+ IF to_regprocedure('public.pos_sync_shift_author_guard(text,jsonb,jsonb,text,text)') IS NULL THEN RAISE EXCEPTION 'Reviewed AUTH37 prerequisite is required before regenerating graph helpers'; END IF;
+END $author_prerequisite$;\n`;
+  fs.writeFileSync(migrationPath, "BEGIN;\n" + authorPrerequisite + preamble + schema.slice(hardeningStart, contractEnd) + "\n" + authorHelperGuards + "\nCOMMIT;\n");
   console.log(`Migration sync contract written to ${path.relative(root, migrationPath)}`);
 }
 
@@ -733,12 +750,15 @@ if (pushMigrationIndex >= 0) {
 BEGIN;
 DO $shift_causal_prerequisite$ BEGIN
  IF to_regprocedure('public.pos_sync_shift_preflight(jsonb,text)') IS NULL OR
-    to_regprocedure('public.pos_sync_push_shift_intent(uuid,text,text,text,jsonb,jsonb)') IS NULL
+    to_regprocedure('public.pos_sync_push_shift_intent(uuid,text,text,text,jsonb,jsonb)') IS NULL OR
+    to_regprocedure('public.pos_sync_shift_author_guard(text,jsonb,jsonb,text,text)') IS NULL
  THEN RAISE EXCEPTION 'Reviewed SHIFT36 prerequisite is required before regenerating push routines'; END IF;
 END $shift_causal_prerequisite$;
 ${functionSql("pos_sync_push_batch")}
 
 ${functionSql("pos_sync_push_aggregate")}
+
+${authorHelperGuards}
 
 REVOKE ALL ON FUNCTION public.pos_sync_push_batch(uuid,text,text,text,text,jsonb,jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.pos_sync_push_aggregate(uuid,text,text,text,jsonb) FROM PUBLIC, anon, authenticated;
