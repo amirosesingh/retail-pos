@@ -178,6 +178,7 @@ function fixture() {
           if (!latest.has(row.shift_id)) latest.set(row.shift_id, row);
         return { recordset: copy([...latest.values()]) };
       }
+      if (statement.includes("FROM dbo.pos_sync_shift_closing_starts") || statement.includes("FROM dbo.pos_sync_shift_intent_starts")) return {recordset:[]};
       if (statement.includes("FROM dbo.pos_sync_shift_authors"))return{recordset:[]};
       if (statement.includes("FROM dbo.pos_sync_shift_intents"))
         return {
@@ -300,9 +301,9 @@ describe("native causal closing transfer", () => {
       );
     const sections = require("../../../electron/db/installer-source.cjs").installerSections();
     expect(sections.migrations.map((entry: Row) => entry.version)).toEqual(
-      Array.from({ length: 22 }, (_, index) => index + 2),
+      Array.from({ length: 23 }, (_, index) => index + 2),
     );
-    expect(sections.migrations.at(-1).name).toBe("023_shift_author_attestations.sql");
+    expect(sections.migrations.at(-1).name).toBe("024_shift_closing_start_proofs.sql");
     expect(sections.validation).toContain("WHERE version = 22");
     expect(sections.validation).toContain("WHERE version = 23");
     expect(source).not.toMatch(
@@ -936,4 +937,48 @@ describe("native v3 closing proof/wire binding", () => {
       expect(request).toHaveBeenCalledOnce();
     },
   );
+});
+
+
+
+describe('separate immutable closing-start metadata',()=>{
+  function startFixture(){
+    const graph=new Map(graphFixture().tables.map(entry=>[entry.table,entry.rows]));
+    const event={id:recon,shift_id:shift,store_id:branch,event:'closing_started',actor_name:'starter-a',actor_staff_id:'starter-a',created_at:raw};
+    graph.set('shift_close_events',[event]);
+    const parent=graph.get('shifts')![0] as Row;
+    parent.closing_started_by='starter-a';parent.closing_started_at=raw;parent.close_reason='End of day';
+    const fields=['id','store_id','terminal_id','opened_at','opened_by_staff_id','opened_by_name','closing_started_at','closing_started_by','close_reason'];
+    const payloadJson=JSON.stringify({version:1,branchId:branch,shiftId:shift,eventId:recon,event,parent:Object.fromEntries(fields.map(key=>[key,parent[key]??null]))});
+    const proof={version:1,algorithm:'Ed25519',keyId:count,authorId:count,subject:'starter-a',projectOrigin:'https://fixture.invalid',terminalId:'terminal',branchId:branch,shiftId:shift,eventId:recon,payloadJson,payloadHash:hashPayload(payloadJson),signature:Buffer.alloc(64).toString('base64url')};
+    return {graph,proof};
+  }
+  it('snapshots the exact separate proof without changing the frozen intent hash/bytes',async()=>{
+    const f=startFixture(),store=new ShiftIntentStore({},registry);let saved:Row|undefined,frozenProof:string|undefined;
+    const query=vi.fn(async(_tx:unknown,statement:string,p:Row)=>{
+      if(statement.startsWith('INSERT dbo.pos_sync_shift_intents')){saved={payload_json:p.payload,payload_hash:p.hash};return {recordset:[]};}
+      if(statement.includes('FROM dbo.pos_sync_shift_closing_starts'))return{recordset:[{proof_json:JSON.stringify(f.proof)}]};
+      if(statement.startsWith('INSERT dbo.pos_sync_shift_intent_starts')){frozenProof=p.proof;return{recordset:[]};}
+      if(statement.includes('FROM dbo.pos_sync_shift_intents'))return{recordset:[saved]};
+      if(statement.includes('FROM dbo.pos_sync_shift_intent_starts'))return{recordset:frozenProof?[{proof_json:frozenProof}]:[]};
+      if(statement.includes('FROM dbo.pos_sync_shift_authors'))return{recordset:[]};
+      throw new Error('Unexpected fixture query '+statement);
+    });
+    store.query=query;
+    const frozen=await store.freeze({},intentId,'ORIGINAL',f.graph,{branchId:branch,shiftId:shift,baseline:null,tail:null});
+    expect(frozenProof).toBe(JSON.stringify(f.proof));expect(frozen.payloadHash).toBe(hashPayload(frozen.payloadJson));expect(JSON.parse(frozen.payloadJson)).not.toHaveProperty('shiftClosingStart');
+    f.proof.subject='later.person';
+    const reread=await store.get(intentId,branch);expect(reread.shiftClosingStart.subject).toBe('starter-a');expect(reread.payloadJson).toBe(frozen.payloadJson);
+    expect(query.mock.calls.find(call=>call[1].startsWith('INSERT dbo.pos_sync_shift_intent_starts'))?.[0]).toEqual({});
+  });
+  it('rejects changed actual start facts rather than attaching another actor to old history',async()=>{
+    const f=startFixture();(f.graph.get('shift_close_events')![0] as Row).actor_name='counter-b';
+    expect(()=>require('../../../electron/db/shift-closing-start.cjs').assertGraph(f.proof,f.graph)).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_INVALID'}));
+  });
+  it('ships 024 identically in generated installers and never changes business rows',()=>{
+    const source=readFileSync('database/sqlserver/migrations/024_shift_closing_start_proofs.sql','utf8').replaceAll('\r\n','\n');
+    for(const file of ['schema.sql','migrations/001_initial.sql','retail-pos-local-database.sql'])expect(readFileSync('database/sqlserver/'+file,'utf8').replaceAll('\r\n','\n')).toContain(source.split('-- AUTH37_START_HISTORY_BEGIN')[0]);
+    expect(source).not.toMatch(/\b(?:DELETE|UPDATE|TRUNCATE)\s+(?:FROM\s+)?dbo\.\[?(?:shifts|shift_cash_counts|sync_checkpoints)\b/i);
+    expect(require('../../../electron/db/installer-source.cjs').installerSections().validation).toContain('WHERE version = 24');
+  });
 });

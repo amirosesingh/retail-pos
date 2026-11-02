@@ -222,6 +222,7 @@ class CloudClient {
         branchId: batch.branchId,
         ...(batch.shiftIntent ? {shiftIntent:batch.shiftIntent} : {operations:batch.operations}),
         ...(batch.shiftAuthor ? {shiftAuthor:batch.shiftAuthor} : {}),
+        ...(batch.shiftClosingStart ? {shiftClosingStart:batch.shiftClosingStart} : {}),
       },
     };
     return batch.shiftIntent ? this.shiftProtocolRequest(payload) : this.request(payload);

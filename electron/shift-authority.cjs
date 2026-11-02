@@ -2,6 +2,7 @@ const crypto = require("node:crypto");
 const protocol = require("./security/shift-author-protocol.cjs");
 const { recordId } = require("./sync/uuid-fields.cjs");
 const permissions = {
+  START_CLOSE: ["can_close_shift"],
   ORIGINAL: ["can_shift_cash_count", "can_close_shift"],
   RECOUNT: ["can_shift_cash_recount"],
   VARIANCE: ["can_shift_variance_approve"],
@@ -153,8 +154,8 @@ class ShiftAuthorAuthority {
         (
           await this.query(
             transaction,
-            "SELECT DISTINCT TOP(2) key_id FROM dbo.pos_sync_shift_authors WITH(UPDLOCK,HOLDLOCK) WHERE scope_hash=@scope;",
-            { scope: hash },
+            "SELECT DISTINCT TOP(2) key_id FROM (SELECT key_id FROM dbo.pos_sync_shift_authors WITH(UPDLOCK,HOLDLOCK) WHERE scope_hash=@scope UNION ALL SELECT CONVERT(uniqueidentifier,JSON_VALUE(proof_json,'$.keyId')) key_id FROM dbo.pos_sync_shift_closing_starts WITH(UPDLOCK,HOLDLOCK) WHERE JSON_VALUE(proof_json,'$.projectOrigin')=@project AND JSON_VALUE(proof_json,'$.terminalId')=@terminal AND JSON_VALUE(proof_json,'$.authorId')=@author) proofs;",
+            { scope: hash, project: capture.binding.projectOrigin, terminal: capture.binding.terminalId, author: capture.binding.authorId },
           )
         ).recordset ?? [];
       if (
@@ -219,6 +220,14 @@ class ShiftAuthorAuthority {
           capture.assertCurrent();
           return attestation;
         },
+        signClosingStart: ({ branchId, shiftId, eventId, payloadJson }) => {
+          capture.assertCurrent();
+          if (capture.action !== 'START_CLOSE' || branchId !== capture.branchId) fail('ESYNC_SHIFT_AUTHOR_INVALID');
+          const proof = this.keys.signClosingStart(capture.binding, { expectedKeyId: info.keyId, subject: capture.subject,
+            branchId, shiftId, eventId, payloadJson, payloadHash: crypto.createHash('sha256').update(payloadJson, 'utf8').digest('hex') });
+          capture.assertCurrent();
+          return proof;
+        },
         save: async (transaction, attestation) => {
           capture.assertCurrent();
           await this.query(
@@ -267,6 +276,16 @@ class ShiftAuthorAuthority {
     )
       fail("ESYNC_SHIFT_AUTHOR_INVALID");
     return attestation;
+  }
+  validatePendingClosingStart(value) {
+    const proof = protocol.normalizeClosingStart(value), binding = this.binding(proof.authorId);
+    if (binding.projectOrigin !== proof.projectOrigin || binding.terminalId !== proof.terminalId) fail('ESYNC_SHIFT_AUTHOR_BINDING_MISMATCH');
+    const info = this.keys.prepare(binding, { expectedKeyId: proof.keyId });
+    if (!info.enrolled) fail('ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING');
+    const { signature, ...unsigned } = proof;
+    if (crypto.createHash('sha256').update(proof.payloadJson, 'utf8').digest('hex') !== proof.payloadHash ||
+      !crypto.verify(null, Buffer.from(protocol.closingStartMessage(unsigned)), crypto.createPublicKey({key:Buffer.from(info.publicKey,'base64url'),format:'der',type:'spki'}), Buffer.from(signature,'base64url'))) fail('ESYNC_SHIFT_AUTHOR_INVALID');
+    return proof;
   }
   async enrollOnline(proof) {
     try {

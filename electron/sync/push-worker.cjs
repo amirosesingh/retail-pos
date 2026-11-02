@@ -227,8 +227,9 @@ function terminalWritableChanges(tableName, changes, { branchId = "", terminalId
 }
 
 class PushWorker {
-  constructor({ reader, cloud, checkpoints, registry, validateAuthor }) {
+  constructor({ reader, cloud, checkpoints, registry, validateAuthor, validateClosingStart }) {
     this.validateAuthor = validateAuthor;
+    this.validateClosingStart = validateClosingStart;
     this.reader = reader;
     this.cloud = cloud;
     this.checkpoints = checkpoints;
@@ -290,7 +291,8 @@ class PushWorker {
         const shiftIntent={version:intent.version,intentId:intent.intentId,shiftId:intent.shiftId,kind:intent.kind,
           baseToken:intent.baseToken,predecessorIntentId:intent.predecessorIntentId,predecessorIntentHash:intent.predecessorIntentHash,payloadJson:intent.payloadJson};
         const shiftAuthor=this.validateAuthor?this.validateAuthor(intent.shiftAuthor):intent.shiftAuthor;
-        const acknowledgement=await this.retry(()=>this.cloud.pushAggregate({batchId:intent.intentId,branchId,shiftIntent,...(shiftAuthor?{shiftAuthor}:{})}));
+        const shiftClosingStart=intent.shiftClosingStart && (this.validateClosingStart?this.validateClosingStart(intent.shiftClosingStart):intent.shiftClosingStart);
+        const acknowledgement=await this.retry(()=>this.cloud.pushAggregate({batchId:intent.intentId,branchId,shiftIntent,...(shiftAuthor?{shiftAuthor}:{}),...(shiftClosingStart?{shiftClosingStart}:{})}));
         if(!acknowledgement?.ok)throw new Error(acknowledgement?.error??"Cloud did not acknowledge the closing intent.");
         const proof=assertShiftClosureAcknowledgement(acknowledgement,intent.operations,branchId,intent,this.registry);
         await this.reader.acknowledgeProtectedIntent(intent,proof);

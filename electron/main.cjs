@@ -79,7 +79,7 @@ const shiftAuthority = new (require("./shift-authority.cjs").ShiftAuthorAuthorit
 const changeReader = new ChangeReader(databaseManager, syncRegistry);
 const conflictRepository = new ConflictRepository(databaseManager);
 const syncCoordinator = new SyncCoordinator({
-  pushWorker: new PushWorker({ reader:changeReader,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,validateAuthor:proof=>shiftAuthority.validatePending(proof) }),
+  pushWorker: new PushWorker({ reader:changeReader,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,validateAuthor:proof=>shiftAuthority.validatePending(proof),validateClosingStart:proof=>shiftAuthority.validatePendingClosingStart(proof) }),
   pullWorker: new PullWorker({ connectionManager:databaseManager,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,reader:changeReader,conflicts:conflictRepository,publish:publishBusinessChange }),
   publish: (state) => { for (const win of BrowserWindow.getAllWindows()) win.webContents.send("sync:state",state); },
 });
@@ -1238,6 +1238,7 @@ async function printRaw(bytes, options = {}) {
 const shiftMoney = (value) => Math.round(Number(value ?? 0) * 100) / 100;
 
 async function startLocalShiftClose(raw) {
+  const authorCapture = shiftAuthority.capture("START_CLOSE");
   const branchId = localBranchId();
   if (!branchId) throw Object.assign(new Error("The terminal branch is not configured."), { code: "EBRANCH" });
   const shiftId = guard.uuid(raw.shiftId, { name: "shift id" });
@@ -1245,14 +1246,15 @@ async function startLocalShiftClose(raw) {
   if (!reason) throw new Error("A reason for closing this shift is required.");
   const result = await operationsRepository.query(branchId, "shifts", { match: { id: shiftId }, limit: 1 });
   const shift = result.rows?.[0];
+  authorCapture.assertCurrent();
   if (!shift) throw new Error("That shift no longer exists on this terminal.");
   const state = String(shift.state ?? (shift.closed_at ? "CLOSED" : "ACTIVE"));
   if (state !== "ACTIVE") {
     pendingShiftCloseSync.add(shiftId);
     return { ok: true, state, replayed: true };
   }
-  const identity = adminSession.identity();
-  const actor = identity?.subject ?? String(shift.opened_by_name ?? "");
+  authorCapture.assertCurrent();
+  const actor = authorCapture.subject;
   const terminalId = String(raw.terminalId ?? shift.terminal_id ?? "").trim() || null;
   const differentOperator = Boolean(shift.opened_by_staff_id && actor && recordId(String(shift.opened_by_staff_id)) !== recordId(actor));
   const differentTerminal = Boolean(shift.terminal_id && recordId(String(shift.terminal_id)) !== recordId(terminalId));
@@ -1264,13 +1266,15 @@ async function startLocalShiftClose(raw) {
   if (!mayCloseShift({differentOperator,differentTerminal,isAdmin:adminSession.hasLevel("admin"),canManageOthers:adminSession.hasPermission("can_manage_other_shifts"),canClose:adminSession.hasPermission("can_close_shift"),allowHandover:policy?.allowAnyStaffCloseShift === true}))
     throw Object.assign(new Error("You do not have permission to close another employee or terminal shift."), { code: "EFORBIDDEN" });
   const now = new Date().toISOString();
+  const author = await shiftAuthority.prepare(authorCapture);
+  const eventId = randomUUID();
   await operationsRepository.apply("Starting shift close", [
     { kind: "update", table: "shifts", match: { id: shiftId }, values: {
       store_id: branchId, state: "CASH_COUNT_REQUIRED", close_reason: reason,
       closing_started_at: now, closing_started_by: actor, updated_at: now,
     } },
     { kind: "insert", table: "shift_close_events", rows: [{
-      id: randomUUID(), shift_id: shiftId, store_id: branchId, terminal_id: terminalId,
+      id: eventId, shift_id: shiftId, store_id: branchId, terminal_id: terminalId,
       event: "closing_started", from_state: "ACTIVE", to_state: "CASH_COUNT_REQUIRED",
       detail: {
         reason, forced,
@@ -1279,7 +1283,13 @@ async function startLocalShiftClose(raw) {
       },
       actor_name: actor, actor_staff_id: actor, created_at: now,
     }] },
-  ], { branchId, terminalId });
+  ], { branchId, terminalId }, transaction => require('./db/shift-closing-start.cjs').save(operationsRepository, transaction, author, {branchId,shiftId,eventId}), async transaction => {
+    author.assertCurrent();
+    const request = new (operationsRepository.connectionManager.sql().Request)(transaction);
+    const current = (await request.input('shift',shiftId).input('branch',branchId).query('SELECT * FROM dbo.[shifts] WITH(UPDLOCK,HOLDLOCK) WHERE id=@shift AND store_id=@branch;')).recordset?.[0];
+    if (!current || String(current.state ?? (current.closed_at ? 'CLOSED' : 'ACTIVE')) !== 'ACTIVE' ||
+      JSON.stringify(require('./sync/row-codec.cjs').toRendererRow(operationsRepository.tables.get('shifts'),current)) !== JSON.stringify(shift)) throw Object.assign(new Error('The shift changed while closing was being prepared. Reload and retry.'),{code:'ESHIFT_LOCAL_CHANGED'});
+  }, () => author.assertCurrent());
   publishBusinessChange({ kind: "shift", branchId, operationId: shiftId });
   pendingShiftCloseSync.add(shiftId);
   scheduleAutomaticSync(250);

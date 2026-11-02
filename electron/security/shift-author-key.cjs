@@ -77,6 +77,19 @@ function createShiftAuthorKeys({ safeStorage, directory }) {
     unsigned.keyId = saved.keyId;
     return protocol.normalizeAttestation({ ...unsigned, signature: crypto.sign(null, Buffer.from(protocol.intentMessage(unsigned)), saved.privateKey).toString('base64url') });
   }
+  function signClosingStart(binding, input) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw failure('ESYNC_SHIFT_AUTHOR_INVALID');
+    const { expectedKeyId, ...facts } = input;
+    const factKeys = ['subject', 'branchId', 'shiftId', 'eventId', 'payloadHash', 'payloadJson'];
+    if (Object.keys(facts).length !== factKeys.length || Object.keys(facts).some(key => !factKeys.includes(key))) throw failure('ESYNC_SHIFT_AUTHOR_INVALID');
+    const parsedBinding = protocol.normalizeBinding(binding);
+    const unsigned = { version: 1, algorithm: 'Ed25519', keyId: '00000000-0000-0000-0000-000000000000', ...parsedBinding, ...facts };
+    protocol.closingStartMessage(unsigned);
+    if (crypto.createHash('sha256').update(unsigned.payloadJson, 'utf8').digest('hex') !== unsigned.payloadHash) throw failure('ESYNC_SHIFT_AUTHOR_INVALID');
+    const saved = load(parsedBinding, { expectedKeyId });
+    unsigned.keyId = saved.keyId;
+    return protocol.normalizeClosingStart({ ...unsigned, signature: crypto.sign(null, Buffer.from(protocol.closingStartMessage(unsigned)), saved.privateKey).toString('base64url') });
+  }
   function markEnrolled(binding, response) {
     if (!response || typeof response !== 'object' || Object.keys(response).length !== 2 || !Object.hasOwn(response, 'keyId') || !Object.hasOwn(response, 'publicKey')) throw failure('ESYNC_SHIFT_AUTHOR_INVALID');
     protocol.normalizeEnrollment({ version: 1, algorithm: 'Ed25519', ...protocol.normalizeBinding(binding), keyId: response.keyId, publicKey: response.publicKey });
@@ -93,6 +106,6 @@ function createShiftAuthorKeys({ safeStorage, directory }) {
     }
     return publicInfo(saved);
   }
-  return { prepare, enrollment, signIntent, markEnrolled };
+  return { prepare, enrollment, signIntent, signClosingStart, markEnrolled };
 }
 module.exports = { createShiftAuthorKeys };

@@ -45,7 +45,7 @@ function fixture() {
     input(name: string, ...values: unknown[]) { this.inputs[name] = values.at(-1); return this; }
     async query(sql: string) {
       calls.push(sql);
-      if(sql.includes("dbo.pos_sync_shift_author_keys")||sql.includes("dbo.pos_sync_shift_authors"))return{recordset:[]};
+      if(sql.includes("dbo.pos_sync_shift_closing_starts")||sql.includes("dbo.pos_sync_shift_intent_starts")||sql.includes("dbo.pos_sync_shift_author_keys")||sql.includes("dbo.pos_sync_shift_authors"))return{recordset:[]};
       const table = /FROM dbo\.\[?(\w+)\]?/.exec(sql)?.[1];
       if (!table || !this.transaction.image[table]) throw new Error("Unexpected fixture SQL: " + sql);
       return { recordset: copy(this.transaction.image[table].filter(row => table === "shifts"

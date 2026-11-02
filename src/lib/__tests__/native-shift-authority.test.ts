@@ -103,9 +103,10 @@ function fixture() {
         return {
           recordset: [
             ...new Set(
-              data.authors
-                .filter((row) => row.scope_hash === this.inputs.scope)
-                .map((row) => row.key_id),
+              [
+                ...data.authors.filter((row) => row.scope_hash === this.inputs.scope).map((row) => row.key_id),
+                ...((data as Row).starts??[]).map((row:Row)=>JSON.parse(row.proof_json)).filter((proof:Row)=>proof.projectOrigin===this.inputs.project&&proof.terminalId===this.inputs.terminal&&proof.authorId===this.inputs.author).map((proof:Row)=>proof.keyId),
+              ],
             ),
           ].map((key_id) => ({ key_id })),
         };
@@ -785,4 +786,153 @@ describe("Main asynchronous session adoption", () => {
       expect(current()).toBe(false);
     },
   );
+});
+
+
+describe('protected closing-start author proof', () => {
+  const eventId='40000000-0000-4000-8000-000000000001';
+  const payloadJson=JSON.stringify({version:1,branchId:branch,shiftId,eventId,event:{id:eventId,event:'closing_started',actor_name:subject},parent:{id:shiftId,closing_started_by:subject}});
+  it('requires can_close_shift rather than cash-count or administrator identity alone', () => {
+    const f=fixture();login();
+    expect(()=>f.authority.capture('START_CLOSE')).toThrowError(expect.objectContaining({code:'PERMISSION_DENIED'}));
+    login(authorId,subject,{can_close_shift:true});expect(f.authority.capture('START_CLOSE').subject).toBe(subject);
+    f.context.management=true;expect(()=>f.authority.capture('START_CLOSE')).toThrow();
+  });
+  it('reuses the same exact sealed key and validates A proof after B signs in',async()=>{
+    const f=fixture();login(authorId,subject,{can_close_shift:true});
+    const author=await f.authority.prepare(f.authority.capture('START_CLOSE'));
+    const proof=author.signClosingStart({branchId:branch,shiftId,eventId,payloadJson});
+    const info=f.keys.prepare(author.binding,{expectedKeyId:author.keyId});
+    expect(proof.keyId).toBe(author.keyId);expect(f.state.keys).toHaveLength(1);
+    expect(()=>f.authority.validatePendingClosingStart(proof)).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING'}));
+    f.keys.markEnrolled(author.binding,{keyId:info.keyId,publicKey:info.publicKey});
+    login(otherId,'next.person');expect(f.authority.validatePendingClosingStart(proof)).toEqual(proof);
+    expect(()=>f.authority.validatePendingClosingStart({...proof,subject:'next.person'})).toThrow();
+    expect(()=>f.authority.validatePendingClosingStart({...proof,payloadJson:payloadJson+' '})).toThrow();
+    expect(()=>f.authority.validatePendingClosingStart({...proof,eventId:intentId})).toThrow();
+    expect(()=>f.authority.validatePendingClosingStart({...proof,projectOrigin:'https://different.invalid'})).toThrow();
+    expect(()=>f.authority.validatePending(proof)).toThrow();
+    expect(readdirSync(f.directory)).toHaveLength(1);
+  });
+  it('rejects a supplied hash mismatch and binding override before touching key material',()=>{
+    const f=fixture(),binding=f.authority.binding(authorId),input={subject,branchId:branch,shiftId,eventId,payloadJson,payloadHash:'a'.repeat(64)};
+    expect(()=>f.keys.signClosingStart(binding,input)).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_INVALID'}));
+    expect(()=>f.keys.signClosingStart(binding,{...input,authorId:otherId})).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_INVALID'}));
+    expect(readdirSync(f.directory)).toEqual([]);
+  });
+  it('rejects a switched session before start signing and never changes the prior author',async()=>{
+    const f=fixture();login(authorId,subject,{can_close_shift:true});
+    const author=await f.authority.prepare(f.authority.capture('START_CLOSE'));
+    login(otherId,'next.person',{can_close_shift:true});
+    expect(()=>author.signClosingStart({branchId:branch,shiftId,eventId,payloadJson})).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_CHANGED'}));
+    expect(f.state.keys).toHaveLength(1);expect(f.state.keys[0].author_id).toBe(authorId);
+  });
+  it('strictly separates the public domain and bounds UTF8 bytes',()=>{
+    const unsigned={version:1,algorithm:'Ed25519',keyId:intentId,authorId,subject,projectOrigin:'https://fixture.invalid',terminalId:'terminal',branchId:branch,shiftId,eventId,payloadHash:'a'.repeat(64),payloadJson};
+    expect(protocol.closingStartMessage(unsigned)).toContain('retail-pos.shift-author.closing-start.v1');
+    expect(()=>protocol.closingStartMessage({...unsigned,payloadJson:'é'.repeat(8193)})).toThrow();
+    expect(()=>protocol.normalizeClosingStart({...unsigned,signature:'A'.repeat(86),action:'START_CLOSE'})).toThrow();
+  });
+});
+
+
+describe('installed Main closing-start transaction',()=>{
+  function installedStart(){
+    const f=fixture(),state=f.state as Row;
+    state.shifts=[{id:shiftId,store_id:branch,terminal_id:'fixture-terminal',opened_at:'2026-11-02T01:00:00.000Z',opened_by_staff_id:subject,opened_by_name:subject,state:'ACTIVE',status:'OPEN',row_version:1}];
+    state.shift_close_events=[];state.starts=[];
+    const Base=f.manager.sql().Request;
+    const faults:{beforeSave?:()=>void;saveError?:boolean;beforeFinalize?:()=>void}={};
+    class Request extends Base{
+      async query(sql:string){
+        const image=this.owner instanceof f.Transaction?this.owner.image: f.state as Row;
+        if(sql.includes('FROM dbo.[shifts]'))return {recordset:structuredClone((image as Row).shifts.filter((row:Row)=>row.id===this.inputs.shift&&row.store_id===this.inputs.branch))};
+        if(sql.includes('FROM dbo.[shift_close_events]'))return {recordset:structuredClone((image as Row).shift_close_events.filter((row:Row)=>row.id===this.inputs.event&&row.shift_id===this.inputs.shift&&row.store_id===this.inputs.branch))};
+        if(sql.startsWith('INSERT dbo.pos_sync_shift_closing_starts')){
+          faults.beforeSave?.();if(faults.saveError)throw new Error('Synthetic proof insert failure');
+          (image as Row).starts.push({shift_id:this.inputs.shift,branch_id:this.inputs.branch,event_id:this.inputs.event,proof_json:this.inputs.proof});return {recordset:[]};
+        }
+        return super.query(sql);
+      }
+    }
+    const originalSql=f.manager.sql;f.manager.sql=()=>({...originalSql(),Request});
+    const repository=new OperationsRepository(f.manager);
+    repository.query=async(_branch:string,table:string)=>({rows:structuredClone(table==='pos_settings'?[{integration_settings:{allowAnyStaffCloseShift:true}}]:(f.state as Row)[table]??[])});
+    repository.applyOperation=async(tx:Row,op:Row)=>{
+      if(op.kind==='update'){Object.assign(tx.image[op.table][0],structuredClone(op.values));tx.image[op.table][0].row_version++;}
+      else tx.image[op.table].push(...structuredClone(op.rows));
+      return 1;
+    };
+    const handlers=new Map<string,(...args:any[])=>any>(),ipcMain={handle:(name:string,fn:(...args:any[])=>any)=>handlers.set(name,fn)};
+    require('../../../electron/ipc-privilege.cjs').install(ipcMain,{isFirstRun:()=>false,writeBarrier:new(require('../../../electron/sync/write-barrier.cjs').WriteBarrier)()});
+    const main=readFileSync('electron/main.cjs','utf8'),start=main.indexOf('async function startLocalShiftClose('),end=main.indexOf('async function commitLocalShiftCashCount(',start);
+    const context:Row={require:createRequire(join(process.cwd(),'electron/main.cjs')),shiftAuthority:f.authority,localBranchId:()=>branch,guard:require('../../../electron/ipc-guard.cjs'),operationsRepository:repository,adminSession:session,recordId:require('../../../electron/sync/uuid-fields.cjs').recordId,randomUUID:()=>intentId,publishBusinessChange:vi.fn(),pendingShiftCloseSync:new Set(),scheduleAutomaticSync:vi.fn()};
+    runInNewContext(main.slice(start,end),context);
+    const channel='business:shift-close-start';
+    ipcMain.handle(channel,(_event:unknown,value:Row)=>context.startLocalShiftClose(value));
+    const realApply=repository.apply.bind(repository);
+    repository.apply=(...args:any[])=>{
+      const finalize=args[5];args[5]=()=>{faults.beforeFinalize?.();return finalize?.();};return realApply(...args);
+    };
+    return {...f,get state(){return f.state;},repository,faults,context,call:async()=>handlers.get(channel)!({}, {shiftId,reason:'End of day',terminalId:'fixture-terminal'})};
+  }
+  it('atomically saves the actual parent/event evidence and preserves it across replay',async()=>{
+    const f=installedStart();login(authorId,subject,{can_close_shift:true});
+    await expect(f.call()).resolves.toMatchObject({ok:true,state:'CASH_COUNT_REQUIRED'});
+    const state=f.state as Row;expect(state.starts).toHaveLength(1);expect(state.shift_close_events).toHaveLength(1);
+    const proof=JSON.parse(state.starts[0].proof_json),payload=JSON.parse(proof.payloadJson);
+    expect(payload.parent).toMatchObject({id:shiftId,store_id:branch,closing_started_by:subject,close_reason:'End of day'});
+    expect(payload.parent).toHaveProperty('opened_at','2026-11-02T01:00:00.000Z');
+    expect(payload.event).toMatchObject({id:intentId,actor_name:subject,actor_staff_id:subject,event:'closing_started'});
+    expect(payload.event).not.toHaveProperty('row_version');expect(payload.event).not.toHaveProperty('updated_at');
+    const before=state.starts[0].proof_json;login(otherId,'next.person',{can_close_shift:true});
+    await expect(f.call()).resolves.toMatchObject({ok:true,replayed:true});expect((f.state as Row).starts[0].proof_json).toBe(before);
+  });
+  it('never generates a replacement when only an immutable start proof still references the lost key',async()=>{
+    const f=installedStart();login(authorId,subject,{can_close_shift:true});await f.call();
+    const proof=JSON.parse((f.state as Row).starts[0].proof_json);f.state.keys.splice(0);
+    unlinkSync(join(f.directory,readdirSync(f.directory)[0]));
+    await expect(f.authority.prepare(f.authority.capture('START_CLOSE'))).rejects.toMatchObject({code:'ESYNC_SHIFT_AUTHOR_KEY_MISSING'});
+    expect(readdirSync(f.directory)).toEqual([]);expect((f.state as Row).starts[0].proof_json).toBe(JSON.stringify(proof));
+  });
+  it('the installed wrapper denies a cashier or administrator without can_close_shift before any writes',async()=>{
+    const f=installedStart();login(authorId,subject,{can_shift_cash_count:true});
+    await expect(f.call()).resolves.toMatchObject({ok:false});
+    session.grant('admin',subject,{can_shift_cash_count:true},'pos',branch);session.bindVerifiedAuthor(authorId,subject);
+    await expect(f.call()).resolves.toMatchObject({ok:false});expect((f.state as Row).starts).toEqual([]);expect((f.state as Row).shifts[0].state).toBe('ACTIVE');
+  });
+  it.each(['proof insert','session switch while saving','session switch before commit'])('rolls back start row/event/proof on %s',async(fault)=>{
+    const f=installedStart();login(authorId,subject,{can_close_shift:true});
+    if(fault==='proof insert')f.faults.saveError=true;
+    else if(fault==='session switch while saving')f.faults.beforeSave=()=>login(otherId,'next.person',{can_close_shift:true});
+    else f.faults.beforeFinalize=()=>login(otherId,'next.person',{can_close_shift:true});
+    await expect(f.call()).rejects.toThrow();expect((f.state as Row).starts).toEqual([]);expect((f.state as Row).shift_close_events).toEqual([]);expect((f.state as Row).shifts[0].state).toBe('ACTIVE');
+  });
+});
+
+
+describe('background start/count handover transport',()=>{
+  it.each([true,false])('validates enrolled A and independent B without current A login (A enrolled=%s)',async(enrolled)=>{
+    const f=fixture();login(authorId,subject,{can_close_shift:true});
+    const starter=await f.authority.prepare(f.authority.capture('START_CLOSE'));
+    const startProof=starter.signClosingStart({branchId:branch,shiftId,eventId:intentId,payloadJson:'{}'});
+    const aInfo=f.keys.prepare(starter.binding,{expectedKeyId:starter.keyId});
+    if(enrolled)f.keys.markEnrolled(starter.binding,{keyId:aInfo.keyId,publicKey:aInfo.publicKey});
+    login(otherId,'counter-b',{can_shift_cash_count:true});
+    const counter=await f.authority.prepare(f.authority.capture('ORIGINAL'));
+    const countProof=counter.sign({...facts,action:'ORIGINAL'});
+    const bInfo=f.keys.prepare(counter.binding,{expectedKeyId:counter.keyId});
+    f.keys.markEnrolled(counter.binding,{keyId:bInfo.keyId,publicKey:bInfo.publicKey});
+    const intent={version:1,intentId,shiftId,kind:'ORIGINAL',payloadJson:'{}',baseToken:null,predecessorIntentId:null,predecessorIntentHash:null,operations:[],shiftAuthor:countProof,shiftClosingStart:startProof};
+    const failAggregate=vi.fn(),cloud={pushAggregate:vi.fn(async()=>{throw Object.assign(new Error('Synthetic transport stop after serialization'),{status:403,code:'FIXTURE_STOP'});})};
+    const worker=new(require('../../../electron/sync/push-worker.cjs').PushWorker)({reader:{pendingAggregates:async()=>[{aggregateId:intentId,changes:[{entity_type:'shifts'}]}],protectedIntent:async()=>intent,failAggregate},cloud,registry:loadRegistry(),validateAuthor:(value:Row)=>f.authority.validatePending(value),validateClosingStart:(value:Row)=>f.authority.validatePendingClosingStart(value)});
+    await expect(worker.pushAggregates(branch,100)).rejects.toMatchObject({code:enrolled?'FIXTURE_STOP':'ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING'});
+    expect(failAggregate).toHaveBeenCalledTimes(1);
+    if(enrolled){expect(cloud.pushAggregate).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({shiftAuthor:countProof,shiftClosingStart:startProof}));expect(session.identity().authorId).toBe(otherId);}
+    else expect(cloud.pushAggregate).not.toHaveBeenCalled();
+    const client=new CloudClient({}),wire:Row[]=[];client.shiftProtocolRequest=async(value:Row)=>{wire.push(value);return {ok:true};};
+    await client.pushAggregate({batchId:intentId,branchId:branch,shiftIntent:{payloadJson:'exact immutable intent'},shiftAuthor:countProof,shiftClosingStart:startProof});
+    expect(wire[0].sqlServerAggregate).toMatchObject({shiftClosingStart:startProof,shiftAuthor:countProof,shiftIntent:{payloadJson:'exact immutable intent'}});
+    expect(startProof.authorId).toBe(authorId);expect(countProof.authorId).toBe(otherId);expect(startProof.keyId).not.toBe(countProof.keyId);
+  });
 });
