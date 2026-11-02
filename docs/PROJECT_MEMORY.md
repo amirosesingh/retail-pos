@@ -23,6 +23,14 @@ future accepted administrator changes. Protect pending offline work, reject
 stale reopen/closing overwrite and surface conflicts without using independent
 client counters/timestamps as proof of correction authority.
 
+The owner subsequently approved SHIFT-36 protocol preparation and isolated tests:
+an atomic complete closing-graph read, separately stored accepted cloud baseline,
+pre-write causal checks for queued corrections, and original-count retry proof.
+This is source/isolated-test authorization only; exact live project/local schema
+application, historical repair and release remain separate. Preserve legacy
+first closures, real exact replay, offline pending work, configured shift modes,
+cashier permissions and immutable history; do not guess a baseline for old work.
+
 Earlier update, 2 November 2026: the owner approved a narrow server CPU
 correction in `sync-download-redaction.ts` and isolated tests. Production
 Cloudflare `/api/v1/pos/sync` failures have outcome `exceededCpu` / HTTP 503;

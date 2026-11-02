@@ -63,7 +63,18 @@ a blocked parent page. Inspect existing read/proof contracts first. If a new
 server/API/schema contract is required, present it separately before expansion;
 do not claim native convergence complete from safe deferral alone.
 
-### SHIFT-36 — proposed convergence contract; not approved for implementation
+### SHIFT-36 — owner-approved protocol preparation and isolated tests
+
+The owner explicitly approved the protocol preparation and isolated tests on
+2 November, including the original-count save-path retry verification extension.
+Approval covers the API/local metadata/service-routine source contract described
+below and isolated databases only. It does not authorize applying any migration
+to ROSEGILL or an installed POS_Local, historical repair, production deployment
+or publication. Continue from current beta 41463049 plus the reviewed SHIFT-34/35
+source dependencies; keep their original commits and scoped regression evidence.
+Root owns the shared contract, existing tracker/memory and integration. Agents
+must agree request/proof/receipt and offline ordering before editing shared
+dependencies; one writer per file. Do not silently drop superseded/pending tasks.
 
 Independent source review confirms that a read-side revision fix alone cannot
 preserve later administrator corrections: queued CLOSED99 can replace accepted
@@ -72,7 +83,7 @@ membership only at send time is also insufficient because PushWorker enriches
 old intents with the current local graph. No existing journal field proves which
 effective server closing was known when the correction was made.
 
-Proposed bounded extension (separate approval required):
+Approved bounded preparation:
 
 - Add one service-only, branch-scoped atomic closing-graph read to the existing
   verified sync API. Return parent, complete count/reconciliation/event/summary/
