@@ -1,7 +1,6 @@
 # POS task tracker
 
-Last reconciled: **2026-11-02, Asia/Brunei**.
-
+Last reconciled: **2026-11-01, Asia/Brunei**.
 Read [../AGENTS.md](../AGENTS.md) and [PROJECT_MEMORY.md](PROJECT_MEMORY.md).
 This is the single current task ledger. Existing audit/checkpoint documents remain
 supporting evidence, not competing completion lists. Batch 0 authorized documentation
