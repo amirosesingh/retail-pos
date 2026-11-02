@@ -141,13 +141,13 @@ roll back and retain baselines/journals/cursors. Preserve configured shift modes
 and one effective closing with immutable audit history. SHIFT-34/35 preparation
 alone must not be described as completing this convergence protocol.
 
-Related narrow pending extension: the original cash-count path has the same
+Related approved extension: the original cash-count path has the same
 broad duplicate-key success shortcut as recounts. Generalize saved-intent replay
 verification to ORIGINAL without requiring a CLOSED parent (its initial variance
 review state is valid); verify the original saved reconciliation/event and
 preserve later recount money. Do not reuse the CLOSED-only recount validator
-unchanged or alter initial counting/variance permission rules. Prepare its exact
-scope and tests for separate approval with the protocol extension.
+unchanged or alter initial counting/variance permission rules. The owner included
+this extension in the later protocol preparation/test approval above.
 
 ### SHIFT-34/35 combined preparation checkpoint
 
@@ -177,6 +177,15 @@ engine. Unknown filtered/composite/operator-configured indexes now stop before
 DDL and preserve rows/configuration. No installed POS_Local or cloud data was
 accessed. New protocol work remains source preparation in separate native/server
 branches, not production readiness, live migration approval or historical repair.
+
+Draft beta PR #363 head d903342b exposed a genuine non-shift regression in CI:
+the new outcome return could suppress initial settings-loaded notifications.
+Root restores the original void/result handling for non-shift writers/bootstrap,
+keeping exact outcome checks limited to the six closing tables. All **80 native
+CI scenarios**, including the unchanged shared-identity announcement test, pass;
+the complete **606 suites / 4,362 tests** pass again (85.23s). This correction
+preserves existing settings behavior; no assertion or runtime guard was relaxed.
+Native protocol author is required to retain it in subsequent integration.
 
 Latest controlling update, 2 November 2026 — **REL-31 pending beta PR integration**.
 PR #360 is merged as `cdc7bbed`; PR #361 is merged as `0bc58a16`, and its final

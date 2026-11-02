@@ -14,7 +14,9 @@ async function applySnapshot(cloud, transaction, table, rows, reader, branchId) 
   if (protectedGraph && (!result || result.deferred || result.conflicts || result.applied+result.alreadyMatching!==safe.length))
     throw Object.assign(new Error(result?.outcomes?.find(item=>["deferred","conflict"].includes(item.status))?.reason ?? "The closing snapshot was not confirmed locally; its page remains pending."),
       {code:result?.conflicts?"ESYNC_APPLY_CONFLICT":"ESYNC_APPLY_DEFERRED",table:table.cloudTable,outcomes:result?.outcomes});
-  return result ?? {applied:safe.length,alreadyMatching:0};
+  // Non-shift callers historically receive selected safe-row progress even
+  // when their writer returns no result; retain settings-ready notifications.
+  return protectedGraph ? result : {applied:safe.length,alreadyMatching:0};
 }
 const { readPage } = require("../sync/page-policy.cjs");
 function keyFor(table,row){const primary=table.columns.filter(column=>column.primaryKey).map(column=>column.cloudColumn);return JSON.stringify(Object.fromEntries(primary.map(column=>[column,row[column]])));}

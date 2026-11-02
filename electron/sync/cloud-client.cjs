@@ -278,6 +278,7 @@ class CloudClient {
     const protectedGraph = SHIFT_GRAPH_TABLES.has(table.cloudTable);
     const result = { applied: 0, alreadyMatching: 0, deferred: 0, conflicts: 0, outcomes: [] };
     const outcome = (change, status, reason, localVersion) => {
+      if (!protectedGraph) return;
       result[status === "already_matching" ? "alreadyMatching" : status === "conflict" ? "conflicts" : status]++;
       result.outcomes.push({ entityId: change.entity_id ?? JSON.stringify(this.parseKey(table, change)), status,
         ...(reason ? { reason } : {}), localVersion: localVersion ?? null, remoteVersion: change.row_data?.row_version ?? null });
@@ -433,7 +434,7 @@ class CloudClient {
         }
       }
     }
-    return result;
+    return protectedGraph ? result : undefined;
   }
   async applyLocalBatchToPool(connectionManager, table, rows, { branchId } = {}) {
     this.connectionManager = connectionManager;
