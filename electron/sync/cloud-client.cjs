@@ -133,22 +133,33 @@ class CloudClient {
     const personProof = governance ? (this.authorizationProof ?? {}) : {};
     const suffix = operation ? `?operation=${encodeURIComponent(operation)}` : "";
     let response;
+    let data;
+    let bodyReadError;
+    let nonJsonResponse = false;
     try { response = await fetch(`${base}/api/v1/pos/sync${suffix}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ ...normalizeSyncPayload(payload), ...personProof, terminalToken: recordId(terminalToken), deviceBindingProof:terminal.deviceBindingProof, ...(terminal.deviceUse === "management" ? { deviceClaimProof: terminal.deviceClaimProof } : {}) }),
       signal: AbortSignal.timeout(30_000),
-    }); } catch (error) {
+    });
+      try {
+        data = await response.json();
+      } catch (error) {
+        // A body can time out after fetch has delivered successful headers.
+        // Preserve transport failures instead of inventing an HTTP 200 error.
+        // A known HTTP refusal still wins when its body cannot be read.
+        if (response.ok && error?.name !== "SyntaxError") throw error;
+        bodyReadError = error;
+        nonJsonResponse = error?.name === "SyntaxError";
+        data = { ok: false, error: `HTTP ${response.status}` };
+      }
+    } catch (error) {
       if (["TimeoutError","AbortError"].includes(error?.name)) {
         throw Object.assign(new Error("Cloud synchronization timed out. Local changes remain pending; the next sync will safely retry the same upload."),
           {code:"ETIMEDOUT",cause:error});
       }
       throw error;
     }
-    let nonJsonResponse = false;
-    const data = await response
-      .json()
-      .catch(() => { nonJsonResponse = true; return { ok: false, error: `HTTP ${response.status}` }; });
     if (!response.ok || data?.ok === false) {
       // PostgREST reports raised SQL errors in `message`, while the POS relay
       // uses `error`. Preserve both so diagnostics show SYNC_BRANCH_FORBIDDEN
@@ -158,6 +169,7 @@ class CloudClient {
         code: data?.code ?? `HTTP_${response.status}`,
         status: response.status,
         detail: data?.details ?? data?.detail ?? null,
+        ...(bodyReadError ? { cause: bodyReadError } : {}),
       }), { httpStatus: response.status, nonJsonResponse });
     }
     return normalizeSyncPayload(data);

@@ -3,13 +3,18 @@
 Last reconciled: **2026-11-02, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
 
-Controlling update, 2 November 2026: the owner approved a narrow server CPU
+Earlier update, 2 November 2026: the owner approved a narrow server CPU
 correction in `sync-download-redaction.ts` and isolated tests. Production
 Cloudflare `/api/v1/pos/sync` failures have outcome `exceededCpu` / HTTP 503;
 Supabase's sampled bootstrap RPCs succeeded. This locates the hosting failure,
 but does not establish how much CPU each helper consumed. Preserve exact privacy
 output, rows, cursors, permissions, settings, shifts and operator configuration.
-No live deployment, promotion or data/schema repair follows from this approval.
+No live deployment, promotion or data/schema repair follows from that code-only
+approval. The owner's later request on 2 November authorizes the reviewed CPU and
+native fixes (PR #360/#361) to merge into beta and production preparation if ready.
+PR #360 is merged as `cdc7bbed`; final native beta integration/CI is in REL-30.
+Main promotion, beta installer publication and live repair remain separately
+gated. Preserve existing features through scoped PRs and exact combined checks.
 
 The separate historical STR1 recovery in draft PR #359 is **HOLD**: its old
 cloud-OPEN premise was superseded by the owner's deliberate web closure.
@@ -180,6 +185,29 @@ scope are distinct: same-cluster products, per-location quantities, permitted
 same-cluster availability and authorized management views. A saved privateStock
 preference currently has no independent runtime consumer; explanatory text must
 not claim that switch alone enforces privacy. Do not silently invent a new rule.
+
+## Native slow-network scope — 2 November 2026
+
+NET-02A/B approval permits bounded/coalesced telemetry and correct timeout
+classification through CloudClient.request response-body reads, in the two named
+runtime modules and focused tests. Preserve trading, identity, authorization,
+queues, operator configuration and Membership dependencies. No pool/database
+changes or deployment follows from this approval. The request-only fix leaves
+health/readiness semantics unchanged; cancellation propagation, obsolete
+catalogue work and sync-pass budgeting remain separately scoped pending work.
+
+Supabase service pools and terminal sessions are different resources. Native
+paths use HTTPS APIs; their local Microsoft SQL Server pool is separate from
+PostgreSQL. Evaluate active/idle transactions, waits and measured request load
+before proposing pool changes; do not tune connections to equal terminal count.
+Critical writes must await authoritative storage acknowledgement and preserve
+stable retry identity. Making a CPU-bound helper async does not move its work
+off the event loop or establish successful persistence.
+
+The separate CPU fix remains draft PR #360; original STR1 recovery remains HOLD
+in draft PR #359 after the later deliberate web closure. Original cashier facts
+are selected, but a new exact reconciliation design and execution approval must
+preserve the web history. Never stage the superseded metadata replay.
 
 ## Authority and current work boundary
 
