@@ -65,6 +65,30 @@ do not claim native convergence complete from safe deferral alone.
 
 ### SHIFT-36 — owner-approved protocol preparation and isolated tests
 
+**Confirmed authority blocker; keep protocol/release draft.** Native audit
+found `terminal:read` classified OPEN in ipc-privilege and returning the complete
+sealed terminal-store configuration from Main, including deviceBindingProof.
+A cashier-controlled renderer can therefore obtain the transport credential.
+CAS graph tokens, unkeyed payload hashes, or an HMAC using that same readable
+credential do not prove an authorized historical administrator created a recount.
+Service-role SQL tests alone cannot establish per-user authorization. A direct
+API caller with that credential could forge RECOUNT/VARIANCE actor fields in the
+existing trusted-terminal model and the draft protocol. This is source evidence,
+not a live attack or changed account/grant. Do not treat the problem as resolved
+by current-user administrator gating, which would break approved background
+upload of earlier authorized offline work.
+
+Read-only design is required for a protected, server-verifiable historical author
+attestation or rigorously protected credential/request boundary. Inspect existing
+installation-key/activation mechanisms first; a public-key registration must not
+be authorized by the already-readable device proof alone. No signing key creation,
+rotation, provisioning or broad login/setup proxy rewrite is approved by SHIFT-36.
+Do not simply remove the proof from terminal reads without replacing required
+login/setup/configuration consumers. Present a concrete separately scoped plan
+before those changes. Existing operator database credentials and iOS signing keys
+are untouched. Independent protocol/schema/race preparation can continue; no
+merge/deployment or claim of complete permission safety is permitted meanwhile.
+
 Necessary offline dependency: capture the **actual OPEN postimage** inside the
 normal AggregateRepository opening commit in local protocol metadata. This is
 within approved local metadata preparation, not permission to invent an OPEN
