@@ -3,7 +3,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { readFile } from 'node:fs/promises';
 import { randomUUID, createHash, generateKeyPairSync, sign } from 'node:crypto';
 import assert from 'node:assert/strict';
-import { enrollmentMessage, intentMessage } from '../electron/security/shift-author-protocol.cjs';
+import { enrollmentMessage, intentMessage, closingStartMessage } from '../electron/security/shift-author-protocol.cjs';
 const read=path=>readFile(new URL('../'+path,import.meta.url),'utf8');
 const schema=(await read('supabase/schema.sql')).replaceAll('\r\n','\n');
 const names=['shifts','shift_cash_counts','shift_reconciliations','shift_close_events','shift_notifications','shift_variance_alerts'];
@@ -19,7 +19,7 @@ try{
  await db.exec(fixture);
  await db.exec('CREATE TABLE activity_events(id uuid PRIMARY KEY)');
  await db.exec("ALTER TABLE terminal_tokens ADD platform text DEFAULT 'pc',ADD is_claimed boolean DEFAULT true");
- for(const name of ['20261030153259_confirm_shift_closure_sync_acknowledgement','20261030164829_bind_shift_closure_proof_to_requested_revision','20261031031945_preserve_validated_branch_context_for_shift_sync','20261101052452_prevent_closed_shift_reopening_during_sync','20261102082439_shift_closing_causal_intents','20261102101610_shift_author_key_registry','20261102103716_enforce_shift_author_uploads']) await db.exec((await read('supabase/migrations/'+name+'.sql')).replaceAll('\r\n','\n'));
+ for(const name of ['20261030153259_confirm_shift_closure_sync_acknowledgement','20261030164829_bind_shift_closure_proof_to_requested_revision','20261031031945_preserve_validated_branch_context_for_shift_sync','20261101052452_prevent_closed_shift_reopening_during_sync','20261102082439_shift_closing_causal_intents','20261102101610_shift_author_key_registry','20261102103716_enforce_shift_author_uploads','20261102153013_bind_signed_closing_start_evidence']) await db.exec((await read('supabase/migrations/'+name+'.sql')).replaceAll('\r\n','\n'));
  const authorId=randomUUID(),adminId=randomUUID(),shiftId=randomUUID(),opened='2026-10-31T00:00:00.123456Z',closed='2026-10-31T08:00:00.654321Z';
  const hash=text=>createHash('sha256').update(text).digest('hex');
  const scalar=async(sql,args=[])=>Object.values((await db.query(sql,args)).rows[0])[0];
@@ -27,7 +27,7 @@ try{
  const graph=()=>scalar("SELECT pos_sync_shift_graph('default','a','t-a',$1::uuid)",[shiftId]);
  const allFlags={can_shift_cash_count:true,can_close_shift:true,can_shift_cash_recount:true,can_shift_variance_approve:true};
  async function reset(){
-  await db.exec("SET test.auth_role='service_role';SET pos.shift_author='';TRUNCATE pos_sync_private.shift_author_receipts;TRUNCATE pos_sync_private.shift_author_keys CASCADE;TRUNCATE shifts CASCADE;TRUNCATE pos_sync_private.shift_intent_receipts CASCADE;TRUNCATE sync_idempotency_receipts;TRUNCATE app_users CASCADE;UPDATE terminal_tokens SET location_id=CASE id WHEN 't-b' THEN 'b' ELSE 'a' END,status='active',revoked_at=NULL;");
+  await db.exec("SET test.auth_role='service_role';SET pos.shift_author='';TRUNCATE pos_sync_private.shift_closing_start_receipts;TRUNCATE pos_sync_private.shift_author_receipts CASCADE;TRUNCATE pos_sync_private.shift_author_keys CASCADE;TRUNCATE shifts CASCADE;TRUNCATE pos_sync_private.shift_intent_receipts CASCADE;TRUNCATE sync_idempotency_receipts;TRUNCATE app_users CASCADE;UPDATE terminal_tokens SET location_id=CASE id WHEN 't-b' THEN 'b' ELSE 'a' END,status='active',revoked_at=NULL;");
   await db.query("INSERT INTO app_users(id,user_id,role,role_slug,permissions,is_active,store_id) VALUES($1,'cashier','staff','cashier',$3::jsonb,true,'a'),($2,'manager','manager','supervisor',$3::jsonb,true,'a')",[authorId,adminId,JSON.stringify(allFlags)]);
   await db.exec("SET pos.shift_fn='on'");
   await db.query("INSERT INTO shifts(id,store_id,terminal_id,terminal_name,opened_by_name,opened_by_staff_id,opened_by_role,opened_at,opening_float,status,state,row_version,created_at,updated_at) VALUES($1,'a','t-a','Till','cashier','cashier','cashier',$2,10,'OPEN','ACTIVE',99,$2,$2)",[shiftId,opened]);
@@ -73,6 +73,69 @@ try{
   ops[3].rows.unshift(await typed('shift_close_events',{id:randomUUID(),shift_id:shiftId,store_id:'a',terminal_id:'t-a',event:'closing_started',from_state:'ACTIVE',to_state:'CASH_COUNT_REQUIRED',detail:{reason:'End of shift',forced:false},actor_name:'cashier',actor_staff_id:'cashier',created_at:opened}));
   return ops;
  }
+ function startProof(ops,key){
+  const event=structuredClone(ops[3].rows.find(row=>row.event==='closing_started'));delete event.row_version;delete event.updated_at;
+  const parent=Object.fromEntries(['id','store_id','terminal_id','opened_at','opened_by_staff_id','opened_by_name','closing_started_at','closing_started_by','close_reason'].map(field=>[field,ops[0].rows[0][field]??null]));
+  const payloadJson=JSON.stringify({version:1,branchId:'a',shiftId,eventId:event.id,event,parent});
+  const unsigned={version:1,algorithm:'Ed25519',keyId:key.enrollment.keyId,authorId:key.enrollment.authorId,subject:key.subject,projectOrigin:key.enrollment.projectOrigin,terminalId:'t-a',branchId:'a',shiftId,eventId:event.id,payloadHash:hash(payloadJson),payloadJson};
+  return {...unsigned,signature:sign(null,Buffer.from(closingStartMessage(unsigned)),key.pair.privateKey).toString('base64url')};
+ }
+ const pushStart=(value,proof,allowed=true)=>scalar("SELECT pos_sync_push_started_shift_intent($1::uuid,'default','a','t-a',NULL,$2::jsonb,$3::jsonb,$4::jsonb,$5::jsonb,$6::jsonb)",[value.intentId,JSON.stringify(value.wire),JSON.stringify(value.author),JSON.stringify({allowed,authority:{authorId:value.author.authorId}}),JSON.stringify(proof),JSON.stringify({allowed,authority:{authorId:proof.authorId}})]);
+ async function separateStart(){
+  const a=await enroll(),b=await enroll(adminId,'manager'),ops=await withStart(await closing(100,null,'manager'));
+  return {a,b,ops,value:intent(ops,b),proof:startProof(ops,a)};
+ }
+ await test('A starts and B counts atomically with both immutable author proofs; restart-style exact retry after revocation is no-write',async()=>{
+  const {value,proof,ops,b}=await separateStart();const originalBytes=value.wire.payloadJson;await pushStart(value,proof);
+  const saved=await graph();assert.equal(saved.tables[3].rows.find(row=>row.event==='closing_started').actor_staff_id,'cashier');assert.equal(saved.tables[0].rows[0].closed_by_staff_id,'manager');
+  assert.equal(await scalar('SELECT count(*)::int FROM pos_sync_private.shift_closing_start_receipts'),1);assert.equal(value.wire.payloadJson,originalBytes);
+  await assert.rejects(pushStart(intent(ops,b),proof),/START_HISTORY_UNPROVEN/);
+  await assert.rejects(db.exec("UPDATE pos_sync_private.shift_closing_start_receipts SET accepted_at=now()"),/IMMUTABLE/);
+  await assert.rejects(db.exec("DELETE FROM pos_sync_private.shift_closing_start_receipts"),/IMMUTABLE/);
+  await db.exec("UPDATE app_users SET is_active=false,permissions='{}';UPDATE pos_sync_private.shift_author_keys SET revoked_at=now()");
+  assert.equal((await pushStart(value,JSON.parse(JSON.stringify(proof)),false)).replayed,true);assert.deepEqual(await graph(),saved);
+  await assert.rejects(push(value,false),/START_HISTORY_UNPROVEN/);
+  await assert.rejects(pushStart(value,{...proof,payloadJson:proof.payloadJson+' '},false),/START_INVALID|HISTORY_UNPROVEN/);
+  assert.equal(ops[3].rows[0].actor_name,'cashier');
+ });
+ await test('old ORIGINAL exact start replay cannot replace a later accepted correction',async()=>{
+  const {value,proof,b}=await separateStart();await pushStart(value,proof);const saved=await graph();
+  await push(intent(await closing(110,saved,'manager'),b,{kind:'RECOUNT',baseToken:saved.graphToken}));const corrected=await graph();
+  assert.equal((await pushStart(value,proof)).replayed,true);assert.deepEqual(await graph(),corrected);assert.equal(Number(corrected.tables[0].rows[0].counted_cash),110);
+ });
+ await test('new start proof requires A current close permission/page/key/account/branch even when stale API allows it',async()=>{
+  const {value,proof,a}=await separateStart();
+  for(const permission of [{can_shift_cash_count:true},{can_close_shift:true,'page:shifts':false}]){await db.query('UPDATE app_users SET permissions=$2::jsonb WHERE id=$1',[authorId,JSON.stringify(permission)]);await assert.rejects(pushStart(value,proof),/PERMISSION_REVOKED/);}
+  await db.query('UPDATE app_users SET permissions=$2::jsonb,store_id=\'b\' WHERE id=$1',[authorId,JSON.stringify(allFlags)]);await assert.rejects(pushStart(value,proof),/PERMISSION_REVOKED/);
+  await db.query('UPDATE app_users SET store_id=\'a\',is_active=false WHERE id=$1',[authorId]);await assert.rejects(pushStart(value,proof),/PERMISSION_REVOKED/);
+  await db.query('UPDATE app_users SET is_active=true WHERE id=$1',[authorId]);await db.query('UPDATE pos_sync_private.shift_author_keys SET revoked_at=now() WHERE key_id=$1',[a.enrollment.keyId]);await assert.rejects(pushStart(value,proof),/PERMISSION_REVOKED/);
+  assert.equal(await scalar('SELECT count(*)::int FROM shift_cash_counts'),0);
+ });
+ await test('A proof cannot authorize B after B count permission revocation and rolls back no receipt',async()=>{
+  const {value,proof}=await separateStart();await db.query("UPDATE app_users SET permissions='{}' WHERE id=$1",[adminId]);await assert.rejects(pushStart(value,proof),/PERMISSION_REVOKED/);
+  assert.equal(await scalar('SELECT count(*)::int FROM pos_sync_private.shift_closing_start_receipts'),0);assert.equal(await scalar('SELECT count(*)::int FROM shift_close_events'),0);
+ });
+ await test('start proof graph binding rejects foreign event, changed context, extra start and unknown proof fields',async()=>{
+  const {a,ops,value,proof}=await separateStart();
+  for(const mutate of [p=>p.event.actor_name='manager',p=>p.event.detail.reason='Other',p=>p.parent.opened_by_name='Other',p=>p.eventId=randomUUID(),p=>p.parent.closing_started_at=closed,p=>p.event.from_state='CLOSED',p=>p.event.created_at=null]){
+   const payload=JSON.parse(proof.payloadJson);mutate(payload);const raw=JSON.stringify(payload);await assert.rejects(pushStart(value,{...proof,payloadJson:raw,payloadHash:hash(raw)}),/START_INVALID/);
+  }
+  await assert.rejects(pushStart(value,{...proof,invented:true}),/START_INVALID/);
+  const duplicate=structuredClone(ops);duplicate[3].rows.push({...duplicate[3].rows[0],id:randomUUID()});await assert.rejects(pushStart(intent(duplicate,a),proof),/START_INVALID/);
+  assert.equal(await scalar('SELECT count(*)::int FROM shift_cash_counts'),0);
+ });
+ await test('late financial failure rolls back start receipt, parent, children and transaction proof',async()=>{
+  const {ops,b,proof}=await separateStart();ops[0].rows[0].variance_total=999;ops[2].rows[0].variance_total=999;
+  await assert.rejects(pushStart(intent(ops,b),proof),/TARGET_FACTS_INVALID/);assert.equal(await scalar("SELECT COALESCE(current_setting('pos.shift_closing_start',true),'')"),'');
+  assert.equal(await scalar('SELECT count(*)::int FROM pos_sync_private.shift_closing_start_receipts'),0);assert.equal(await scalar('SELECT count(*)::int FROM shift_cash_counts'),0);
+ });
+ await test('typed UUID/timestamp aliases and native millisecond opening context retain exact raw proof',async()=>{
+  const {ops,b,a}=await separateStart();ops[0].rows[0].opened_at='2026-10-31T00:00:00.123Z';
+  // The native store has millisecond precision; the cloud opening retains microseconds.
+  const proof=startProof(ops,a);const payload=JSON.parse(proof.payloadJson);payload.event.id=payload.event.id.toUpperCase();payload.event.created_at='2026-10-31T00:00:00.123456+00:00';
+  const raw=JSON.stringify(payload),altered={...proof,payloadJson:raw,payloadHash:hash(raw)};
+  await pushStart(intent(ops,b),altered);assert.equal(await scalar('SELECT proof->>\'payloadJson\' FROM pos_sync_private.shift_closing_start_receipts'),raw);
+ });
  await test('same-author saved closing start uploads with ORIGINAL and survives a later different-author recount',async()=>{
   const cashier=await enroll(),ops=await withStart(await closing());await push(intent(ops,cashier));
   const saved=await graph(),start=saved.tables[3].rows.find(row=>row.event==='closing_started');
@@ -198,6 +261,10 @@ try{
   assert.equal(await scalar("SELECT has_function_privilege('authenticated','pos_sync_push_author_shift_intent(uuid,text,text,text,jsonb,jsonb,jsonb,jsonb)','EXECUTE')"),false);
   assert.equal(await scalar("SELECT has_table_privilege('service_role','pos_sync_private.shift_author_receipts','SELECT')"),false);
   assert.equal(await scalar("SELECT relrowsecurity FROM pg_class WHERE oid='pos_sync_private.shift_author_receipts'::regclass"),true);
+  for(const role of ['anon','authenticated'])assert.equal(await scalar(`SELECT has_function_privilege('${role}','pos_sync_push_started_shift_intent(uuid,text,text,text,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb)','EXECUTE')`),false);
+  assert.equal(await scalar("SELECT has_table_privilege('service_role','pos_sync_private.shift_closing_start_receipts','SELECT')"),false);
+  assert.equal(await scalar("SELECT has_function_privilege('service_role','pos_sync_private.proven_closing_start(uuid,jsonb)','EXECUTE')"),false);
+  assert.equal(await scalar("SELECT relrowsecurity FROM pg_class WHERE oid='pos_sync_private.shift_closing_start_receipts'::regclass"),true);
  });
  console.log(`${passed} isolated AUTH-37 PostgreSQL scenarios passed.`);
 }catch(error){console.error(error.message);if(error.where)console.error(error.where);process.exitCode=1;}finally{await db.close();}

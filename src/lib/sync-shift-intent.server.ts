@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { normalizeAttestation } from "../../electron/security/shift-author-protocol.cjs";
+import { normalizeAttestation, normalizeClosingStart } from "../../electron/security/shift-author-protocol.cjs";
 
 export const syncOperationSchema = z.object({
   deletePhase: z.boolean().optional(),
@@ -20,10 +20,10 @@ const frozenSchema = z.object({ ...intentFields, branchId: z.string().min(1).max
 
 export const syncAggregateSchema = z.object({
   batchId: z.string().uuid(), organizationId: z.string().min(1).max(128), branchId: z.string().min(1).max(128),
-  operations: z.array(syncOperationSchema).min(1).max(200).optional(), shiftIntent: shiftIntentSchema.optional(), shiftAuthor: z.unknown().optional(),
+  operations: z.array(syncOperationSchema).min(1).max(200).optional(), shiftIntent: shiftIntentSchema.optional(), shiftAuthor: z.unknown().optional(), shiftClosingStart: z.unknown().optional(),
 }).transform((aggregate, ctx) => {
   const invalid = () => { ctx.addIssue({ code: "custom", message: "Invalid frozen shift intent" }); return z.NEVER; };
-  if (!aggregate.shiftIntent) return aggregate.operations && aggregate.shiftAuthor === undefined ? { ...aggregate, operations: aggregate.operations } : invalid();
+  if (!aggregate.shiftIntent) return aggregate.operations && aggregate.shiftAuthor === undefined && aggregate.shiftClosingStart === undefined ? { ...aggregate, operations: aggregate.operations } : invalid();
   if (aggregate.operations !== undefined || aggregate.shiftAuthor === undefined) return invalid();
   const intent = aggregate.shiftIntent;
   if (new TextEncoder().encode(intent.payloadJson).byteLength > 6 * 1024 * 1024 ||
@@ -32,6 +32,8 @@ export const syncAggregateSchema = z.object({
       (intent.baseToken !== null && intent.predecessorIntentId !== null)) return invalid();
   try {
     const shiftAuthor = normalizeAttestation(aggregate.shiftAuthor);
+    const shiftClosingStart = aggregate.shiftClosingStart === undefined ? undefined : normalizeClosingStart(aggregate.shiftClosingStart);
+    if (shiftClosingStart && intent.kind !== "ORIGINAL") return invalid();
     const parsed = frozenSchema.parse(JSON.parse(intent.payloadJson));
     const { operations, branchId, ...fields } = parsed;
     const { payloadJson: _raw, ...headers } = intent;
@@ -41,6 +43,6 @@ export const syncAggregateSchema = z.object({
     if (operations.some(op => !allowed.has(op.table) || op.deletePhase || op.changes.some(change => ["D", "DELETE"].includes(String(change.operation).toUpperCase()))) ||
         required.some(table => !operations.some(op => op.table === table)) ||
         new Set(operations.map(op => op.table)).size !== operations.length) return invalid();
-    return { ...aggregate, shiftAuthor, operations };
+    return { ...aggregate, shiftAuthor, ...(shiftClosingStart ? { shiftClosingStart } : {}), operations };
   } catch { return invalid(); }
 });

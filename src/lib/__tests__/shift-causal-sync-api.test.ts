@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import { intentMessage } from "../../../electron/security/shift-author-protocol.cjs";
+import { intentMessage, closingStartMessage } from "../../../electron/security/shift-author-protocol.cjs";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import { createRequire } from "node:module";
@@ -27,6 +27,12 @@ function aggregate(payload = frozen()) {
     shiftAuthor: { ...unsigned, signature: sign(null, Buffer.from(intentMessage(unsigned)), pair.privateKey).toString("base64url") } };
 }
 const request = (body: unknown) => handleSyncRequest(new Request("https://pos.test/api/v1/pos/sync", { method: "POST", body: JSON.stringify({ terminalToken: terminal, deviceBindingProof: proof, ...(body as object) }) }));
+function startProof() {
+  const payloadJson = '{ "saved": "immutable start fixture" }';
+  const unsigned = { version: 1, algorithm: "Ed25519", keyId, authorId, subject: "fixture-author", projectOrigin: "https://cloud.test", terminalId: terminal,
+    branchId: branch.toUpperCase(), shiftId, eventId: intentId, payloadHash: createHash("sha256").update(payloadJson).digest("hex"), payloadJson };
+  return { ...unsigned, signature: sign(null, Buffer.from(closingStartMessage(unsigned)), pair.privateKey).toString("base64url") };
+}
 const rpc = vi.fn(); let active = true, registryStatus = 200, rpcStatus = 200, authorAllowed = true; let rpcResponse: unknown;
 beforeEach(() => {
   active = true; registryStatus = 200; rpcStatus = 200; authorAllowed = true; rpcResponse = { ok: true }; rpc.mockClear();
@@ -79,6 +85,24 @@ describe("frozen shift intent request contract", () => {
   });
 });
 describe("actual relay authorization and routing", () => {
+  it("retains exact outer start proof and frozen ORIGINAL bytes through both parser passes and scope alias alignment", async () => {
+    const input = { ...aggregate(), shiftClosingStart: startProof() };
+    expect((await request({ sqlServerAggregate: input })).status).toBe(200);
+    expect(rpc).toHaveBeenCalledWith(expect.stringContaining("pos_sync_push_started_shift_intent"), expect.objectContaining({
+      p_closing_start: input.shiftClosingStart, p_shift_intent: input.shiftIntent, p_shift_author: input.shiftAuthor,
+      p_start_authority: { allowed: false, code: "ESHIFT_AUTHOR_PERMISSION_REVOKED" },
+    }));
+  });
+  it("rejects forged start signatures and changed raw bytes before any financial RPC", async () => {
+    for (const patch of [{ signature: "A".repeat(86) }, { payloadJson: startProof().payloadJson + " " }])
+      expect((await request({ sqlServerAggregate: { ...aggregate(), shiftClosingStart: { ...startProof(), ...patch } } })).status).toBe(403);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+  it("rejects start envelopes on legacy aggregates and recounts, and unknown start proof fields", () => {
+    expect(syncAggregateSchema.safeParse({ batchId: intentId, organizationId: "default", branchId: branch, operations, shiftClosingStart: startProof() }).success).toBe(false);
+    expect(syncAggregateSchema.safeParse({ ...aggregate({ ...frozen(), kind: "RECOUNT" }), shiftClosingStart: startProof() }).success).toBe(false);
+    expect(syncAggregateSchema.safeParse({ ...aggregate(), shiftClosingStart: { ...startProof(), invented: true } }).success).toBe(false);
+  });
   it("rejects unsigned v3 and modified signed bytes before invoking the financial RPC", async () => {
     const unsigned = aggregate(); delete (unsigned as Partial<typeof unsigned>).shiftAuthor;
     expect((await request({ sqlServerAggregate: unsigned })).status).toBe(400);

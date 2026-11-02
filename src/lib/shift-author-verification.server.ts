@@ -4,7 +4,7 @@ import { resolveRelayScope } from "@/core/api/relay-policy.server";
 import { databaseAuthority } from "./desktop-database-authority.server";
 import { supabaseConfig } from "./external-supabase-config";
 import type { VerifiedTerminalDescriptor } from "./terminal-binding.server";
-import { normalizeBinding, normalizeEnrollment, normalizeAttestation, enrollmentMessage, intentMessage } from "../../electron/security/shift-author-protocol.cjs";
+import { normalizeBinding, normalizeEnrollment, normalizeAttestation, normalizeClosingStart, enrollmentMessage, intentMessage, closingStartMessage } from "../../electron/security/shift-author-protocol.cjs";
 
 type Attestation = ReturnType<typeof normalizeAttestation>;
 type Enrollment = ReturnType<typeof normalizeEnrollment>;
@@ -28,7 +28,7 @@ const unavailable = (): never => { throw new ShiftAuthorError("ESHIFT_AUTHOR_UNA
 const bytes = (value: string) => Uint8Array.from(atob(value.replace(/-/g, "+").replace(/_/g, "/")), character => character.charCodeAt(0));
 const projectOrigin = () => normalizeBinding({ projectOrigin: supabaseConfig().url, terminalId: "project-check", authorId: "00000000-0000-4000-8000-000000000001" }).projectOrigin;
 const sameId = (left: string, right: string) => left.toLowerCase() === right.toLowerCase();
-const matchingKey = (saved: RegistryKey, attestation: Attestation) => sameId(saved.key_id, attestation.keyId) && sameId(saved.author_id, attestation.authorId) &&
+const matchingKey = (saved: RegistryKey, attestation: Pick<Attestation, "keyId" | "authorId" | "terminalId" | "projectOrigin" | "subject">) => sameId(saved.key_id, attestation.keyId) && sameId(saved.author_id, attestation.authorId) &&
   sameId(saved.terminal_id, attestation.terminalId) && saved.project_origin === attestation.projectOrigin && saved.subject === attestation.subject;
 
 async function validSignature(publicKey: string, signature: string, message: string): Promise<boolean> {
@@ -115,6 +115,31 @@ export async function verifyShiftAuthorAttestation(input: {
 }
 
 export type ShiftAuthorAuthority = { allowed: true; authority: Authority } | { allowed: false; code: string };
+/** The start domain proves only the saved start event, never a count or correction. */
+export async function verifyShiftClosingStart(input: { proof: unknown; terminal: VerifiedTerminalDescriptor; branchId: string; shiftId: string }) {
+  let proof: ReturnType<typeof normalizeClosingStart>;
+  try { proof = normalizeClosingStart(input.proof); } catch { return denied(); }
+  if (input.terminal.platform !== "pc" || !sameId(proof.terminalId, input.terminal.id) || proof.projectOrigin !== projectOrigin() ||
+      !sameId(proof.branchId, input.branchId) || !sameId(proof.shiftId, input.shiftId) ||
+      (input.terminal.mode === "operations" && (!input.terminal.branchId || !sameId(proof.branchId, input.terminal.branchId)))) return denied();
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(proof.payloadJson)));
+  if (proof.payloadHash !== Array.from(digest, byte => byte.toString(16).padStart(2, "0")).join("")) return denied();
+  const saved = (await registry(proof)).key;
+  if (!saved || !matchingKey(saved, proof)) return denied();
+  const { signature, ...unsigned } = proof;
+  if (!await validSignature(saved.public_key, signature, closingStartMessage(unsigned))) return denied();
+  return proof;
+}
+export async function readShiftClosingStartAuthority(value: unknown): Promise<ShiftAuthorAuthority> {
+  let proof: ReturnType<typeof normalizeClosingStart>;
+  try { proof = normalizeClosingStart(value); } catch { return { allowed: false, code: "ESHIFT_AUTHOR_INVALID" }; }
+  const key = (await registry(proof)).key;
+  if (!key || !matchingKey(key, proof) || key.revoked_at !== null) return { allowed: false, code: "ESHIFT_AUTHOR_REVOKED" };
+  const authority = await databaseAuthority({ appUserId: proof.authorId }, { strictAvailability: true });
+  if (!authority?.authorId || authority.authorId !== proof.authorId) return { allowed: false, code: "ESHIFT_AUTHOR_REVOKED" };
+  if (authority.branchId && !sameId(authority.branchId, proof.branchId)) return { allowed: false, code: "ESHIFT_AUTHOR_BRANCH_FORBIDDEN" };
+  return authority.permissions.can_close_shift === true ? { allowed: true, authority } : { allowed: false, code: "ESHIFT_AUTHOR_PERMISSION_REVOKED" };
+}
 /** NEW writes use this result. Exact accepted receipts can acknowledge history first. */
 export async function readShiftAuthorAuthority(value: unknown): Promise<ShiftAuthorAuthority> {
   let attestation: Attestation;

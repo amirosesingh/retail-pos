@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from "vitest";
-import { enrollmentMessage, intentMessage } from "../../../electron/security/shift-author-protocol.cjs";
+import { enrollmentMessage, intentMessage, closingStartMessage } from "../../../electron/security/shift-author-protocol.cjs";
 
 const h = vi.hoisted(() => ({ fetch: vi.fn(), touch: vi.fn() }));
 vi.stubGlobal("fetch", h.fetch);
@@ -7,7 +7,7 @@ vi.mock("@tanstack/react-router", () => ({ createFileRoute: () => (options: unkn
 vi.mock("../external-supabase-config", () => ({ runtimeEnvValue: () => "fixture-service-key", supabaseConfig: () => ({ url: "https://project.fixture", key: "fixture-public" }) }));
 vi.mock("../session-guard.server", () => ({ touchSession: h.touch }));
 import { Route } from "@/routes/api/v1/pos/shift-author-enroll";
-import { enrollShiftAuthor, verifyShiftAuthorAttestation, readShiftAuthorAuthority, requireCurrentShiftAuthorPermission, shiftAuthorTerminalEnrolled } from "../shift-author-verification.server";
+import { enrollShiftAuthor, verifyShiftAuthorAttestation, readShiftAuthorAuthority, requireCurrentShiftAuthorPermission, shiftAuthorTerminalEnrolled, verifyShiftClosingStart, readShiftClosingStartAuthority } from "../shift-author-verification.server";
 import { signCashierSession } from "../pos-session.server";
 
 const authorId = "00000000-0000-4000-8000-000000000001", otherId = "00000000-0000-4000-8000-000000000002";
@@ -29,10 +29,34 @@ async function attestation(action: "ORIGINAL" | "RECOUNT" | "VARIANCE" = "ORIGIN
   return { ...unsigned, signature: await sign(intentMessage(unsigned)) };
 }
 const verify = (value: unknown, extras = {}) => verifyShiftAuthorAttestation({ attestation: value, payloadJson, terminal: descriptor, branchId: "A", shiftId, intentId, action: "ORIGINAL", ...extras });
+async function startProof() {
+  const { action: _action, intentId: _id, signature: _signature, ...fields } = await attestation();
+  const unsigned = { ...fields, eventId: intentId, payloadJson };
+  return { ...unsigned, signature: await sign(closingStartMessage(unsigned)) };
+}
+const verifyStart = (proof: unknown) => verifyShiftClosingStart({ proof, terminal: descriptor, branchId: "A", shiftId });
 const handler = (Route as unknown as { options: { server: { handlers: { POST: (input: { request: Request }) => Promise<Response> } } } }).options.server.handlers.POST;
 beforeAll(async () => {
   pair = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]) as CryptoKeyPair;
   publicKey = encode(await crypto.subtle.exportKey("spki", pair.publicKey));
+});
+describe("separate closing-start signature domain", () => {
+  it("verifies immutable history after revocation but requires the existing close flag for new work", async () => {
+    await enrollShiftAuthor(await request()); const value = await startProof();
+    expect(await verifyStart(value)).toEqual(value);
+    expect(await readShiftClosingStartAuthority(value)).toMatchObject({ allowed: false });
+    person.permissions = { can_close_shift: true };
+    expect(await readShiftClosingStartAuthority(value)).toMatchObject({ allowed: true });
+    saved!.revoked_at = "2026-11-02T00:00:00Z";
+    expect(await verifyStart(value)).toEqual(value);
+    expect(await readShiftClosingStartAuthority(value)).toMatchObject({ allowed: false });
+  });
+  it("rejects intent-domain signatures, changed bytes and foreign actor/scope/event headers", async () => {
+    await enrollShiftAuthor(await request()); const value = await startProof();
+    for (const patch of [{ signature: (await attestation()).signature }, { payloadJson: payloadJson + " " }, { authorId: otherId },
+      { eventId: shiftId }, { branchId: "B" }, { terminalId: otherId }, { projectOrigin: "https://other.fixture" }, { invented: true }])
+      await expect(verifyStart({ ...value, ...patch })).rejects.toMatchObject({ code: "ESHIFT_AUTHOR_INVALID" });
+  });
 });
 beforeEach(() => {
   vi.stubEnv("SETTINGS_ENCRYPTION_KEY", "isolated-author-fixture-only");

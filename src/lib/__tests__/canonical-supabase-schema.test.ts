@@ -18,6 +18,12 @@ function sqlFiles(directory = root): string[] {
 }
 
 describe("canonical Supabase SQL", () => {
+  it("retains the additive closing-start contract byte-for-byte after the author foundation", () => {
+    const schema = read("supabase/schema.sql");
+    const block = schema.split("-- SHIFT_CLOSING_START_CONTRACT_BEGIN\n")[1]?.split("\n-- SHIFT_CLOSING_START_CONTRACT_END")[0];
+    expect(block).toBe(read("supabase/migrations/20261102153013_bind_signed_closing_start_evidence.sql").trim());
+    expect(schema.indexOf("-- SHIFT_CLOSING_START_CONTRACT_BEGIN")).toBeGreaterThan(schema.indexOf("-- SHIFT_AUTHOR_CONTRACT_END"));
+  });
   it("keeps one manual upgrade, its CLI migrations, the installer and deliberate reset", () => {
     expect(sqlFiles().filter((file) => file.startsWith("supabase/"))).toEqual([
       "supabase/membership/migrations/20261002183000_isolated_membership_project.sql",
@@ -234,6 +240,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261102101610_shift_author_key_registry.sql",
       "supabase/migrations/20261102103716_enforce_shift_author_uploads.sql",
       "supabase/migrations/20261102104005_fix_closed_shift_correction_activity_type.sql",
+      "supabase/migrations/20261102153013_bind_signed_closing_start_evidence.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
