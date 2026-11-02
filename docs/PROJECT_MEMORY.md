@@ -1,6 +1,6 @@
 # POS project memory
 
-Last reconciled: **2026-11-01, Asia/Brunei**. This is approved architecture and
+Last reconciled: **2026-11-02, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
 
 The owner's latest inventory UI refinement (DEC-25) combines adjacent Products
@@ -84,16 +84,82 @@ browser counts include backed-off work; status reads must neither create storage
 nor modify queues/retries. Current error/unknown state and newer subscription
 events take precedence over delayed diagnostic reads.
 
-Read-only affected-PC evidence confirms the original31October closing remains
+1November read-only affected-PC evidence confirmed the original31October closing
 saved locally with its exact timestamp and matching reconciliation, while the
-cloud parent remains OPEN. Stable1.4.79's CT-only closing and expired earlier
-history checkpoint establish a blocking path; the exact original CT entry and
-delivery/checkpoint/acknowledgement sequence still require investigation.
-Recovery must preserve the original
+cloud parent was OPEN at that read. The final bounded read found retained local CT35061
+beyond upload checkpoint29281, context NULL, with original count/reconciliation
+scope, timing and financial consistency predicates all passing. The earlier
+expired history gate blocks reaching this eligible closing change; this does
+not globally certify other historic upload sequences. The owner has now approved
+one-shift recovery preparation and isolated tests only. Unknown complete
+manifest/database identity/fingerprint stays an unset release gate; no live
+metadata staging or retry is authorized. Recovery must preserve the original
 graph/time/profile, verify its full facts, obtain exact repair approval, and
 verify central parent/children afterwards. A notification, generic ok response,
 opening acknowledgement or zero journal is insufficient proof. No original
 closing is to be fabricated or changed into today's closing.
+
+SHIFT-28B recovery preparation is now independently verified in disposable local
+SQL Server fixtures:58 cases, including the actual current reader/worker with a
+synthetic cloud adapter. The repository artifact stays CAPTURE-only by default;
+real database GUID, whole-row manifest/digest and approval/transport references
+remain unset. A future separately approved stage would insert only eight exact
+saved-graph journal keys and one receipt, never business rows or checkpoints.
+It cannot prove the installed uploader or cloud delivery. Full actual capture,
+same-profile transport, notification-rule review, exact execution approval and
+authoritative cloud parent/child readback remain gates. See
+[the recovery procedure](database/str1-original-closing-recovery.md).
+
+Controlling2November update: fresh ROSEGILL pos reads show this same cloud shift
+CLOSED revision5 at2026-11-01T13:38:37.207159Z, with a different count/reconciliation
+and summary. The owner confirms deliberately closing it on the web. Preserve
+that administrative action and audit. The old metadata-only recovery premise is
+superseded: do not stage or retry PR359's eight-key aggregate against the newer
+closure, increase revisions or weaken acknowledgement/unique checks. Compare
+complete current PC and cloud records before any new correction proposal.
+Current2November drawer is69a57f40-4ae2-42a6-994f-c4c78e220cc2; both older shifts
+are now cloud CLOSED. The authorized work remains read-only; exact execution
+requires a new reviewed plan and explicit approval.
+
+2November shift-correction rules: cashier mistakes remain correctable under the
+existing authorized correction access, with the operator, reason, complete before/
+after evidence and source branch/terminal preserved. An accepted web correction
+must converge to the applicable PC; older queued data must not silently undo it.
+Independently incremented local/cloud counters or device wall clocks alone do not
+establish which financial observation is authoritative. Genuine unsent local
+journal and legacy CT work must remain protected and conflicts visible. Apply
+the relevant saved parent/count/reconciliation/summary facts consistently; never
+skip a conflicting child and advance its feed checkpoint as though applied.
+Historic corrections must preserve today's separate drawer and cashier checkout.
+Do not widen permissions or rewrite immutable history to make correction pass.
+
+For this incident, the owner explicitly selects the original cashier closing as
+authoritative, while retaining the deliberate later web closing as audit history.
+This is a business decision, not approval for any live data/schema change. The
+complete private PC manifest and current cloud graph are captured; reconciling
+their different ORIGINAL counts and unique summaries requires a new reviewed
+design bound to both before-images. Ordinary recount recalculates current totals
+and does not restore the original closing time, so is not equivalent recovery.
+
+The owner clarified the existing allow_multiple_shifts_per_terminal setting:
+when disabled, the registered shop PC uses one shared day shift; authorized
+staff use that same shift instead of opening one per person. When enabled, keep
+the existing intended multiple-shift capability. No new mode or automatic
+midnight closure is requested. Source audit found admission always branch-wide
+and no operational consumer of this flag; track that separate inconsistency,
+not as the cause of ECHANGEGAP. Preserve terminal/branch isolation and review
+competing disconnected-PC admission before claiming cross-PC uniqueness.
+
+The immediate HTTP503 cause is now confirmed in production Cloudflare logs:
+retail-pos /api/v1/pos/sync invocation at2November11:23:28.055Brunei has outcome
+exceededCpu,141msCPU/4026mswall. Supabase sampled bootstrap calls were200 with
+no logged PGerror in that same earlier hour. Current sync code rethrows a local
+ECHANGEGAP before pull; failed snapshot recovery therefore prevents web changes
+from downloading. The owner approved a separate server-redaction CPU correction
+and isolated tests only, implemented on codex/sync-response-cpu-beta from current
+beta. No live deployment, data repair, cursor reset, permission or setting change
+is authorized by that code approval. Identify the exact measured hot path and
+verify hosted acceptance before claiming recovery is fixed.
 
 31October SQL-08 verification: a new native build must receive a compatible,
 server-verified terminal descriptor before adopting local POS authority. An older
