@@ -3,12 +3,16 @@ const { branchPredicate, rendererReadBranchPredicate } = require("../db/branch-s
 const { ACTIVITY_TABLES } = require("./event-policy.cjs");
 const { recordId } = require("./uuid-fields.cjs");
 const { ShiftSyncJournal } = require("../db/shift-sync-journal.cjs");
+const SHIFT_GRAPH_TABLES = ["shifts", "shift_cash_counts", "shift_reconciliations", "shift_close_events",
+  "shift_notifications", "shift_variance_alerts"];
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 class ChangeReader {
   constructor(connectionManager, registry = null) {
     this.connectionManager = connectionManager;
     this.registry = registry ?? { tables: [] };
     this.tables = new Map((registry?.tables ?? []).map((table) => [table.sqlServerTable, table]));
+    this.pendingGraphChecks = new WeakMap();
   }
   table(value) {
     const table = typeof value === "string" ? this.tables.get(value) : value;
@@ -177,9 +181,97 @@ class ChangeReader {
       GROUP BY aggregate_id ORDER BY MAX(created_at) DESC;`);
     return result.recordset ?? [];
   }
-  async unacknowledged(value, entityIds, transaction) {
+  async pendingShiftGraph(table, entityIds, transaction, { branchId, changes = [] } = {}) {
+    if (!SHIFT_GRAPH_TABLES.includes(table.cloudTable)) return false;
+    const branch = recordId(String(branchId ?? "").trim());
+    if (!transaction || !branch || branch.length > 128)
+      throw Object.assign(new Error("A verified branch and transaction are required to protect local closing changes."), { code: "EBRANCH", table: table.cloudTable });
+    const parseId = key => { try { return recordId(String(JSON.parse(key).id ?? "")); } catch { return ""; } };
+    const ids = [...new Set(entityIds.map(parseId))];
+    if (!ids.length || ids.length > 2000 || ids.some(id => !UUID.test(id)))
+      throw Object.assign(new Error("The closing download has an invalid entity key."), { code: "ESYNC_ENTITY", table: table.cloudTable });
+    const sql = this.connectionManager.sql();
+    const query = (statement, inputs = {}) => {
+      const request = new sql.Request(transaction);
+      for (const [name, data] of Object.entries(inputs)) request.input(name, data);
+      return request.query(statement);
+    };
+    // Discover child parents without retaining a child lock before its parent.
+    // Revalidate after acquiring the whole graph in parent-first order below.
+    const requested = table.cloudTable === "shifts" ? { recordset: [] } : await new sql.Request(this.connectionManager.pool)
+      .input("ids", JSON.stringify(ids)).query(`SELECT id,store_id,shift_id FROM dbo.[${table.sqlServerTable}]
+      WHERE id IN (SELECT TRY_CONVERT(uniqueidentifier,[value]) FROM OPENJSON(@ids));`);
+    const local = requested.recordset ?? [];
+    if (local.some(row => recordId(String(row.store_id ?? "")) !== branch) ||
+        changes.some(change => change.row_data && recordId(String(change.row_data.store_id ?? "")) !== branch))
+      throw Object.assign(new Error("The closing download does not belong to the verified branch."), { code: "SYNC_BRANCH_FORBIDDEN", table: table.cloudTable });
+    const shiftIds = [...new Set(table.cloudTable === "shifts" ? ids :
+      [...local.map(row => row.shift_id), ...changes.map(change => change.row_data?.shift_id)].filter(Boolean).map(id => recordId(String(id))))].sort();
+    // An absent child tombstone cannot reveal its former parent. Do not infer
+    // that an unknown closing history has no pending local work.
+    if (shiftIds.some(id => !UUID.test(id))) return true;
+    const checked = this.pendingGraphChecks.get(transaction);
+    if (shiftIds.length && checked?.branch === branch && shiftIds.every(id => checked.shifts.has(id))) return false;
+    const graph = new Map();
+    let total = 0;
+    for (const name of SHIFT_GRAPH_TABLES) {
+      const rows = (await query(`SELECT TOP (2001) id,store_id${name === "shifts" ? "" : ",shift_id"} FROM dbo.[${name}] WITH (UPDLOCK,HOLDLOCK)
+        WHERE ${name === "shifts" ? "id" : "shift_id"} IN (SELECT TRY_CONVERT(uniqueidentifier,[value]) FROM OPENJSON(@shifts)) ORDER BY id;`,
+      { shifts: JSON.stringify(shiftIds) })).recordset ?? [];
+      total += rows.length;
+      if (total > 2000) return true;
+      if (rows.some(row => recordId(String(row.store_id ?? "")) !== branch))
+        throw Object.assign(new Error("The saved closing graph crosses the verified branch."), { code: "SYNC_BRANCH_FORBIDDEN", table: name });
+      graph.set(name, new Set(rows.map(row => recordId(String(row.id)))));
+    }
+    if (table.cloudTable !== "shifts") {
+      const revalidated = (await query(`SELECT id,store_id,shift_id FROM dbo.[${table.sqlServerTable}] WITH (UPDLOCK,HOLDLOCK)
+        WHERE id IN (SELECT TRY_CONVERT(uniqueidentifier,[value]) FROM OPENJSON(@ids));`, { ids: JSON.stringify(ids) })).recordset ?? [];
+      if (revalidated.some(row => !shiftIds.includes(recordId(String(row.shift_id))) || recordId(String(row.store_id)) !== branch)) return true;
+    }
+    for (const name of SHIFT_GRAPH_TABLES) {
+      const keys = new Set(graph.get(name));
+      if (name === table.cloudTable) ids.forEach(id => keys.add(id));
+      const inputs = { branch, entity: name, ids: JSON.stringify([...keys]) };
+      // Unknown/deleted journal keys cannot safely be attributed to a former
+      // shift from a key-only journal. Keep the queue and defer the download.
+      const journal = await query(`SELECT TOP (1) journal.entity_id FROM dbo.sync_change_journal journal WITH (UPDLOCK,HOLDLOCK)
+        WHERE journal.entity_type=@entity AND journal.branch_id IN (@branch,'global') AND journal.acknowledged_at IS NULL
+        AND (TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(journal.entity_id)=1 THEN journal.entity_id ELSE N'{}' END,'$.id')) IN
+          (SELECT TRY_CONVERT(uniqueidentifier,[value]) FROM OPENJSON(@ids)) OR NOT EXISTS
+          (SELECT 1 FROM dbo.[${name}] saved WHERE saved.id=TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(journal.entity_id)=1 THEN journal.entity_id ELSE N'{}' END,'$.id'))));`, inputs);
+      if (journal.recordset?.length) return true;
+      const bounds = (await query(`SELECT (SELECT TOP (1) change_tracking_version FROM dbo.sync_checkpoints WITH (UPDLOCK,HOLDLOCK)
+        WHERE branch_id=@branch AND entity_type=@entity AND direction='push') AS checkpoint_version,
+        CHANGE_TRACKING_MIN_VALID_VERSION(OBJECT_ID(@object)) AS min_version, CHANGE_TRACKING_CURRENT_VERSION() AS current_version;`,
+      { branch, entity: name, object: `dbo.${name}` })).recordset?.[0];
+      const since = Number(bounds?.checkpoint_version);
+      const valid = bounds?.checkpoint_version != null && bounds?.min_version != null && bounds?.current_version != null &&
+        Number.isSafeInteger(since) && since >= Number(bounds.min_version) && since <= Number(bounds.current_version);
+      // Missing/expired CT evidence is not proof of no local edits. A fresh
+      // empty graph may bootstrap without inventing a checkpoint.
+      if (!valid) {
+        if (graph.get(name).size) throw Object.assign(new Error("Local closing Change Tracking history is missing or expired. Retained local work must be reviewed before this download can advance."),
+          { code: "ELOCAL_PENDING_UNVERIFIED", table: name });
+        continue;
+      }
+      const tracked = await query(`SELECT TOP (2001) CT.id, CT.SYS_CHANGE_OPERATION AS operation FROM CHANGETABLE(CHANGES dbo.[${name}], @since) CT
+        WHERE (CT.SYS_CHANGE_CONTEXT IS NULL OR CT.SYS_CHANGE_CONTEXT<>0x434C4F5544)
+        AND (CT.id IN (SELECT TRY_CONVERT(uniqueidentifier,[value]) FROM OPENJSON(@ids)) OR CT.SYS_CHANGE_OPERATION='D');`,
+      { since, ids: JSON.stringify([...keys]) });
+      if (tracked.recordset?.length) throw Object.assign(new Error("A local closing Change Tracking edit is still beyond its upload checkpoint. Upload or resolve it before retrying this cloud page."),
+        { code: "ELOCAL_CT_PENDING", table: name });
+    }
+    if (shiftIds.length) this.pendingGraphChecks.set(transaction, { branch, shifts: new Set([
+      ...(checked?.branch === branch ? checked.shifts : []), ...shiftIds,
+    ]) });
+    return false;
+  }
+  async unacknowledged(value, entityIds, transaction, options) {
     const { table } = this.table(value);
     if (!entityIds.length) return new Set();
+    if (SHIFT_GRAPH_TABLES.includes(table.cloudTable))
+      return new Set(await this.pendingShiftGraph(table, entityIds, transaction, options) ? entityIds : []);
     const request = transaction ? new (this.connectionManager.sql().Request)(transaction) : this.connectionManager.pool.request();
     request.input("entity", table.sqlServerTable);
     const params = entityIds.map((id, index) => { request.input(`id${index}`, id); return `@id${index}`; });
