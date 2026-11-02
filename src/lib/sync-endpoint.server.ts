@@ -10,6 +10,7 @@ import { alignVerifiedScopeIds } from "./verified-scope-ids";
  * permissions on the server, then commit only what those allow.
  */
 import { z } from "zod";
+import { syncAggregateSchema } from "./sync-shift-intent.server";
 
 const opSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -75,27 +76,10 @@ const bodySchema = z.object({
       changes: z.array(z.record(z.string(), z.unknown())).max(2000),
     })
     .optional(),
-  sqlServerAggregate: z
-    .object({
-      batchId: z.string().uuid(),
-      organizationId: z.string().min(1).max(128),
-      branchId: z.string().min(1).max(128),
-      operations: z
-        .array(
-          z.object({
-            deletePhase: z.boolean().optional(),
-            table: z
-              .string()
-              .regex(/^[a-z_][a-z0-9_]*$/)
-              .max(64),
-            rows: z.array(z.record(z.string(), z.unknown())).max(2000),
-            changes: z.array(z.record(z.string(), z.unknown())).max(2000),
-          }),
-        )
-        .min(1)
-        .max(200),
-    })
-    .optional(),
+  sqlServerAggregate: syncAggregateSchema.optional(),
+  sqlServerShiftGraph: z.object({
+    organizationId: z.string().min(1).max(128), branchId: z.string().min(1).max(128), shiftId: z.string().uuid(),
+  }).strict().optional(),
   sqlServerPull: z
     .object({
       organizationId: z.string().min(1).max(128),
@@ -194,6 +178,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     !body.read &&
     !body.sqlServerBatch &&
     !body.sqlServerAggregate &&
+    !body.sqlServerShiftGraph &&
     !body.sqlServerPull &&
     !body.sqlServerBootstrap &&
     !body.sqlServerCounts &&
@@ -310,6 +295,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
   if (
     body.sqlServerBatch ||
     body.sqlServerAggregate ||
+    body.sqlServerShiftGraph ||
     body.sqlServerPull ||
     body.sqlServerBootstrap ||
     body.sqlServerCounts ||
@@ -318,6 +304,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     const branchId =
       body.sqlServerBatch?.branchId ??
       body.sqlServerAggregate?.branchId ??
+      body.sqlServerShiftGraph?.branchId ??
       body.sqlServerPull?.branchId ??
       body.sqlServerBootstrap?.branchId ??
       body.sqlServerCounts?.branchId ??
@@ -326,6 +313,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     const terminalSync = Boolean(
       body.sqlServerBatch ||
       body.sqlServerAggregate ||
+      body.sqlServerShiftGraph ||
       body.sqlServerPull ||
       body.sqlServerBootstrap ||
       body.sqlServerCounts,
@@ -535,15 +523,21 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
           ] as const)
         : body.sqlServerAggregate
           ? ([
-              "pos_sync_push_aggregate",
+              body.sqlServerAggregate.shiftIntent ? "pos_sync_push_shift_intent" : "pos_sync_push_aggregate",
               {
                 p_batch_id: body.sqlServerAggregate.batchId,
                 p_organization_id: body.sqlServerAggregate.organizationId,
                 p_branch_id: branchId,
-                p_operations: body.sqlServerAggregate.operations,
+                p_operations: body.sqlServerAggregate.shiftIntent ? null : body.sqlServerAggregate.operations,
                 p_terminal_id: scope.terminalId ?? "",
+                ...(body.sqlServerAggregate.shiftIntent ? { p_shift_intent: body.sqlServerAggregate.shiftIntent } : {}),
               },
             ] as const)
+          : body.sqlServerShiftGraph
+            ? (["pos_sync_shift_graph", {
+                p_organization_id: body.sqlServerShiftGraph.organizationId, p_branch_id: branchId,
+                p_terminal_id: scope.terminalId ?? "", p_shift_id: body.sqlServerShiftGraph.shiftId,
+              }] as const)
           : body.sqlServerPull
             ? ([
                 "pos_sync_pull",
@@ -586,13 +580,19 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       method: "POST",
       body: JSON.stringify(rpc[1]),
     });
-    if (response.ok && (body.sqlServerPull || body.sqlServerBootstrap)) {
+    if (response.ok && (body.sqlServerPull || body.sqlServerBootstrap || body.sqlServerShiftGraph)) {
       const { redactSyncDownload } = await import("./sync-download-redaction");
       const management = scope.managementReplica === true || scope.managementDevice === true;
       const { commerceSyncIsolationReady } = await import("./commerce-sync-readiness.server");
       // Activate field exclusion only after its atomic database preservation guard is ready.
       const keepCommerce = management || !(await commerceSyncIsolationReady());
-      return Response.json(redactSyncDownload(await response.json(), body.sqlServerBootstrap?.table ?? "", keepCommerce));
+      const download = await response.json();
+      if (body.sqlServerShiftGraph && download && typeof download === "object" && Array.isArray(download.tables)) {
+        const { tables, ...envelope } = download;
+        return Response.json({ ...(redactSyncDownload(envelope, "", keepCommerce) as Record<string, unknown>),
+          tables: tables.map((part: Record<string, unknown>) => redactSyncDownload(part, typeof part?.table === "string" ? part.table : "", keepCommerce)) });
+      }
+      return Response.json(redactSyncDownload(download, body.sqlServerBootstrap?.table ?? "", keepCommerce));
     }
     return new Response(await response.text(), {
       status: response.status,

@@ -230,6 +230,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261031080149_prevent_transfer_line_reparenting.sql",
       "supabase/migrations/20261031105517_change_history_bootstrap_uuid_keyset.sql",
       "supabase/migrations/20261101052452_prevent_closed_shift_reopening_during_sync.sql",
+      "supabase/migrations/20261102082439_shift_closing_causal_intents.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
