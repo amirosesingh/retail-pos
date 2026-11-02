@@ -2,9 +2,10 @@
 // No POS configuration, saved profile, hosted URL or existing database is read.
 const assert = require("node:assert/strict");
 const { execFileSync } = require("node:child_process");
-const { readFileSync } = require("node:fs");
+const { readFileSync,mkdtempSync,rmSync } = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
-const { randomUUID } = require("node:crypto");
+const { randomUUID,randomBytes,createCipheriv,createDecipheriv } = require("node:crypto");
 const sql = require("mssql/msnodesqlv8");
 const { loadRegistry } = require("../electron/db/schema-registry.cjs");
 const { OperationsRepository } = require("../electron/db/repositories/operations.cjs");
@@ -42,6 +43,7 @@ async function main() {
     created = false,
     master,
     pool,
+    keyDirectory,
     passed = 0;
   const connect = (name) =>
     new sql.ConnectionPool({
@@ -251,6 +253,34 @@ async function main() {
       await pool.request().batch(migration);
       assert.deepEqual(await image(), before);
     });
+    const authorMigration=readFileSync(path.join(__dirname,"../database/sqlserver/migrations/023_shift_author_attestations.sql"),"utf8");
+    const authorImage=async()=>{
+      const result=[];for(const table of ["pos_sync_shift_author_keys","pos_sync_shift_authors"]){
+        result.push((await pool.request().query(`SELECT * FROM dbo.[${table}] ORDER BY 1;`)).recordset);
+        result.push((await pool.request().input("name",table).query("SELECT i.name,i.is_unique,i.is_disabled,i.ignore_dup_key,i.filter_definition FROM sys.indexes i WHERE object_id=OBJECT_ID(N'dbo.'+@name) ORDER BY i.name;")).recordset);
+      }return result;
+    };
+    const authorRefuses=async()=>{
+      const before=await authorImage();const result=await pool.request().input("migration",authorMigration).query("BEGIN TRY EXEC sys.sp_executesql @migration; SELECT 0 n; END TRY BEGIN CATCH SELECT ERROR_NUMBER() n; END CATCH;");
+      assert.equal(result.recordset[0].n,51023);assert.deepEqual(await authorImage(),before);
+    };
+    await test("023 creates only additive private metadata and is idempotent",async()=>{
+      const before=await image();await pool.request().batch(authorMigration);assert.deepEqual(await image(),before);
+      const metadata=await authorImage();await pool.request().batch(authorMigration);assert.deepEqual(await authorImage(),metadata);
+    });
+    await test("023 preserves malformed familiar CHECK rather than silently accepting or changing it",async()=>{
+      await pool.request().query("ALTER TABLE dbo.pos_sync_shift_authors DROP CONSTRAINT CK_pos_sync_shift_authors_json; ALTER TABLE dbo.pos_sync_shift_authors WITH CHECK ADD CONSTRAINT CK_pos_sync_shift_authors_json CHECK(ISJSON(attestation_json)>=0);");
+      await authorRefuses();await pool.request().query("ALTER TABLE dbo.pos_sync_shift_authors DROP CONSTRAINT CK_pos_sync_shift_authors_json; ALTER TABLE dbo.pos_sync_shift_authors WITH CHECK ADD CONSTRAINT CK_pos_sync_shift_authors_json CHECK(ISJSON(attestation_json)=1);");
+    });
+    await test("023 refuses additional operator uniqueness without dropping the constraint",async()=>{
+      await pool.request().query("CREATE UNIQUE INDEX operator_author_scope ON dbo.pos_sync_shift_authors(scope_hash);");await authorRefuses();await pool.request().query("DROP INDEX operator_author_scope ON dbo.pos_sync_shift_authors;");
+    });
+    await test("023 refuses unknown columns without changing rows or normalizing shape",async()=>{
+      await pool.request().query("ALTER TABLE dbo.pos_sync_shift_authors ADD operator_column int NULL;");await authorRefuses();await pool.request().query("ALTER TABLE dbo.pos_sync_shift_authors DROP COLUMN operator_column;");
+    });
+    await test("023 refuses disabled canonical index without re-enabling operator settings",async()=>{
+      await pool.request().query("ALTER INDEX IX_pos_sync_shift_authors_scope ON dbo.pos_sync_shift_authors DISABLE;");await authorRefuses();await pool.request().query("ALTER INDEX IX_pos_sync_shift_authors_scope ON dbo.pos_sync_shift_authors REBUILD;");
+    });
     await test("actual whole-graph adoption accepts CLOSED5 over OPEN99 and preserves opaque raw timestamp", async () => {
       await adopt();
       const parent = (
@@ -340,12 +370,24 @@ async function main() {
         },
       ];
     };
-    const commit = async (cash, index, observation) =>
-      writer.apply("isolated recount", operations(cash, index), {
+    keyDirectory=mkdtempSync(path.join(os.tmpdir(),"CodexAuth37_"));
+    const secret=randomBytes(32),safeStorage={isEncryptionAvailable:()=>true,
+      encryptString(value){const iv=randomBytes(12),cipher=createCipheriv("aes-256-gcm",secret,iv);return Buffer.concat([iv,cipher.update(value,"utf8"),cipher.final(),cipher.getAuthTag()]);},
+      decryptString(value){const cipher=createDecipheriv("aes-256-gcm",secret,value.subarray(0,12));cipher.setAuthTag(value.subarray(-16));return Buffer.concat([cipher.update(value.subarray(12,-16)),cipher.final()]).toString("utf8");}};
+    const keys=require("../electron/security/shift-author-key.cjs").createShiftAuthorKeys({safeStorage,directory:()=>keyDirectory});
+    const authorId=randomUUID();let authorEpoch=1;
+    const authority=new(require("../electron/shift-authority.cjs").ShiftAuthorAuthority)({keys,connectionManager:manager,
+      session:{identity:()=>({source:"pos",authorId,canonicalSubject:"manager",branchId:branch}),epoch:()=>authorEpoch,hasPermission:()=>true},
+      terminal:()=>({tokenId:"terminal",deviceUse:"operations",branchId:branch}),project:()=>"https://fixture.supabase.co",branch:()=>branch});
+    const commit = async (cash, index, observation) => {
+      const author=await authority.prepare(authority.capture("RECOUNT"));
+      return writer.apply("isolated recount", operations(cash, index), {
         branchId: branch,
         terminalId: "terminal",
         observation: observation ?? (await writer.observe(branch, shift)),
+        author,
       });
+    };
     await test("two offline recounts bind baseline then durable predecessor, retaining raw PG history", async () => {
       await commit(110, 1);
       await commit(120, 2);
@@ -375,6 +417,20 @@ async function main() {
           .rows.find((row) => row.kind === "ORIGINAL").created_at,
         raw,
       );
+    });
+    await test("AUTH37 actual SQL commit retains the sealed key reference and binds each signature to frozen bytes",async()=>{
+      const references=(await pool.request().query("SELECT * FROM dbo.pos_sync_shift_author_keys;")).recordset;
+      assert.equal(references.length,1);assert.equal(references[0].author_id.toLowerCase(),authorId);
+      const intents=(await pool.request().query("SELECT intent_id FROM dbo.pos_sync_shift_intents ORDER BY intent_sequence;")).recordset;
+      for(const row of intents){const saved=await reader.protectedIntent(row.intent_id,branch);assert.equal(saved.shiftAuthor.authorId,authorId);assert.equal(saved.shiftAuthor.payloadHash,saved.payloadHash);assert.equal(saved.shiftAuthor.subject,"manager");assert(!saved.payloadJson.includes("shiftAuthor"));}
+      const reloaded=require("../electron/security/shift-author-key.cjs").createShiftAuthorKeys({safeStorage,directory:()=>keyDirectory});
+      assert.equal(reloaded.prepare({projectOrigin:"https://fixture.supabase.co",terminalId:"terminal",authorId},{expectedKeyId:references[0].key_id.toLowerCase()}).keyId,references[0].key_id.toLowerCase());
+    });
+    await test("AUTH37 final epoch change rolls back real SQL graph/journal/intent/signature together",async()=>{
+      const author=await authority.prepare(authority.capture("RECOUNT")),before=await image(),signatures=(await pool.request().query("SELECT * FROM dbo.pos_sync_shift_authors ORDER BY intent_id FOR JSON PATH;")).recordset;
+      const changed={...author,save:async(tx,proof)=>{await author.save(tx,proof);authorEpoch++;}};
+      await assert.rejects(writer.apply("changed author",operations(125,5),{branchId:branch,terminalId:"terminal",observation:await writer.observe(branch,shift),author:changed}),error=>error.code==="ESYNC_SHIFT_AUTHOR_CHANGED");
+      assert.deepEqual(await image(),before);assert.deepEqual((await pool.request().query("SELECT * FROM dbo.pos_sync_shift_authors ORDER BY intent_id FOR JSON PATH;")).recordset,signatures);
     });
     await test("stale local observation aborts before any business/queue/metadata mutation", async () => {
       const stale = await writer.observe(branch, shift);
@@ -1081,6 +1137,7 @@ async function main() {
       `${passed} isolated SHIFT36 LocalDB scenarios passed; no POS database/profile/network used.`,
     );
   } finally {
+    if(keyDirectory){const resolved=path.resolve(keyDirectory),parent=path.resolve(os.tmpdir());assert(path.dirname(resolved)===parent&&/^CodexAuth37_[A-Za-z0-9]+$/.test(path.basename(resolved)));rmSync(resolved,{recursive:true,force:true});}
     if (pool) await pool.close();
     if (created) {
       assert(owned && /^Shift36Fixture_[a-f0-9]{32}$/.test(database));

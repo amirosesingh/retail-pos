@@ -346,11 +346,22 @@ class ShiftIntentStore {
       id(payload.branchId) !== id(branchId)
     )
       fail("The saved closing intent no longer matches its immutable payload.", "EIDEMPOTENCY");
+    const savedAuthor=(await this.query(transaction,
+      "SELECT attestation_json FROM dbo.pos_sync_shift_authors WHERE intent_id=@intent;",
+      {intent:id(intentId)})).recordset?.[0];
+    let shiftAuthor=null;
+    if(savedAuthor){
+      try{shiftAuthor=require("../security/shift-author-protocol.cjs").normalizeAttestation(JSON.parse(savedAuthor.attestation_json));}
+      catch{fail("The saved protected author proof is invalid.","ESYNC_SHIFT_AUTHOR_INVALID");}
+      if(shiftAuthor.intentId!==id(intentId)||shiftAuthor.shiftId!==payload.shiftId||shiftAuthor.branchId!==payload.branchId||shiftAuthor.action!==payload.kind||shiftAuthor.payloadHash!==row.payload_hash)
+        fail("The saved author proof does not match the frozen closing intent.","ESYNC_SHIFT_AUTHOR_INVALID");
+    }
     return {
       ...payload,
       payloadJson: row.payload_json,
       payloadHash: row.payload_hash,
       acknowledged: Boolean(row.acknowledged_at),
+      shiftAuthor,
     };
   }
   async freezeOpening(transaction, aggregateId, branchId, shiftId) {

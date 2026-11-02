@@ -92,7 +92,8 @@ it('installed adoption handler cannot replace Operations A with B even with vali
  const from=source.indexOf('  ipcMain.handle("admin:adopt-session",');
  const to=source.indexOf('  ipcMain.handle("admin:unlock",',from);
  const write=vi.fn();const fetch=vi.fn();
- new Function('ipcMain','guard','adminSession','terminalStore','activationBoundary','fetch',`let sessionAdoptionRevision=0;${source.slice(from,to)}`)(ipc,guard,session,{read:()=>a,write},policy,fetch);
+ const epochGuard=source.slice(source.indexOf('function captureSessionAdoption()'),source.indexOf('\nfunction enrollCurrentShiftAuthor'));
+ new Function('ipcMain','guard','adminSession','terminalStore','activationBoundary','fetch','databaseManager','cloudCredentials','authorizationServerUrl',`let sessionAdoptionRevision=0;${epochGuard}${source.slice(from,to)}`)(ipc,guard,session,{read:()=>a,write},policy,fetch,{pool:{}},{read:()=>({url:'https://fixture.supabase.co'})},()=> 'https://fixture.invalid');
  try{
   session.grant('staff','cashier',{can_process_sale:true},'pos','A');
   await expect(handlers.get('admin:adopt-session')!({}, {cashierToken:'valid-session'}, {...a,locationId:'B'})).resolves.toMatchObject({ok:false,code:'EACTIVATION_BINDING',status:403});
@@ -112,7 +113,8 @@ it('ordinary adoption preserves cashier sale grants and repairs a verified legac
  const to=source.indexOf('  ipcMain.handle("admin:unlock",',from);
  const existing={...a,backendUrl:'https://saved.test',supabaseUrl:'https://saved-cloud.test'};
  const write=vi.fn(()=>({ok:true}));const fetch=vi.fn(async(_url:string,_options:RequestInit)=>Response.json({ok:true,terminal:descriptor,level:'staff',subject:'cashier',branchId:'A',permissions:{can_process_sale:true}}));
- new Function('ipcMain','guard','adminSession','terminalStore','activationBoundary','fetch','authorizationServerUrl','syncCloud','rememberVerifiedBranch','assertSafeRegistrationChange','recordRegistrationChange',`let sessionAdoptionRevision=0;${source.slice(from,to)}`)(ipc,guard,session,{read:()=>existing,write,lastBinding:()=>a},policy,fetch,()=>existing.backendUrl,{setAuthorizationProof:vi.fn()},vi.fn(),vi.fn(),vi.fn());
+ const epochGuard=source.slice(source.indexOf('function captureSessionAdoption()'),source.indexOf('\nfunction enrollCurrentShiftAuthor'));
+ new Function('ipcMain','guard','adminSession','terminalStore','activationBoundary','fetch','authorizationServerUrl','syncCloud','rememberVerifiedBranch','assertSafeRegistrationChange','recordRegistrationChange','databaseManager','cloudCredentials','enrollCurrentShiftAuthor',`let sessionAdoptionRevision=0;${epochGuard}${source.slice(from,to)}`)(ipc,guard,session,{read:()=>existing,write,lastBinding:()=>a},policy,fetch,()=>existing.backendUrl,{setAuthorizationProof:vi.fn()},vi.fn(),vi.fn(),vi.fn(),{pool:{}},{read:()=>({url:'https://fixture.supabase.co'})},vi.fn());
  try{
   session.grant('staff','cashier',{can_process_sale:true},'pos','A');
   expect(await handlers.get('admin:adopt-session')!({}, {cashierToken:'valid-session',deviceBindingProof:'a'.repeat(64)}, {...a,backendUrl:'https://untrusted.test'})).toMatchObject({ok:true});

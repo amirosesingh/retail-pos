@@ -9,6 +9,7 @@ const { install } = require("../../../electron/ipc-privilege.cjs");
 const source = readFileSync(new URL("../../../electron/main.cjs", import.meta.url), "utf8");
 const start = source.indexOf('  ipcMain.handle("admin:adopt-session",');
 const body = source.slice(start, source.indexOf('  ipcMain.handle("admin:unlock",', start));
+const epochGuard=source.slice(source.indexOf("function captureSessionAdoption()"),source.indexOf("\nfunction enrollCurrentShiftAuthor"));
 const registration = { tokenId: "terminal-a", deviceType: "pc", deviceUse: "operations", locationId: "A", backendUrl: "https://operator.test", supabaseUrl: "https://operator-db.test", deviceClaimProof: "fixture-replica-secret" };
 const descriptor = { id: "terminal-a", platform: "pc", mode: "operations", branchId: "A" };
 const success = { ok: true, level: "staff", subject: "cashier", branchId: "A", permissions: { can_process_sale: true }, terminal: descriptor };
@@ -23,8 +24,8 @@ function harness(payload: unknown = success, status = 200, saved: unknown = regi
   const fetch = vi.fn(async () => Response.json(payload, { status }));
   const grant = vi.spyOn(session, "grant");
   const proof = vi.fn(), audit = vi.fn(), safeChange = vi.fn<() => Promise<void>>(async () => {});
-  const invalidate = new Function("ipcMain", "guard", "adminSession", "terminalStore", "activationBoundary", "fetch", "authorizationServerUrl", "syncCloud", "rememberVerifiedBranch", "assertSafeRegistrationChange", "recordRegistrationChange", `let sessionAdoptionRevision=0;${body};return()=>{sessionAdoptionRevision++};`)(
-    ipc, guard, session, { read: () => sealed, write, lastBinding: () => saved }, activation, fetch, () => "https://operator.test", { setAuthorizationProof: proof }, vi.fn(), safeChange, audit,
+  const invalidate = new Function("ipcMain", "guard", "adminSession", "terminalStore", "activationBoundary", "fetch", "authorizationServerUrl", "syncCloud", "rememberVerifiedBranch", "assertSafeRegistrationChange", "recordRegistrationChange","databaseManager","cloudCredentials","enrollCurrentShiftAuthor", `let sessionAdoptionRevision=0;${epochGuard}${body};return()=>{sessionAdoptionRevision++};`)(
+    ipc, guard, session, { read: () => sealed, write, lastBinding: () => saved }, activation, fetch, () => "https://operator.test", { setAuthorizationProof: proof }, vi.fn(), safeChange, audit,{pool:{}},{read:()=>({url:"https://fixture.supabase.co"})},vi.fn(),
   );
   const call = (provided: unknown = { cashierToken: "fixture-session", deviceBindingProof: "a".repeat(64) }, candidate?: unknown) => handlers.get("admin:adopt-session")!({}, provided, candidate);
   return { call, write, fetch, grant, proof, audit, safeChange, invalidate, setSealed: (value: unknown) => { sealed = value; } };

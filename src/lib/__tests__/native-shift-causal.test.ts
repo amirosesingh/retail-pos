@@ -178,6 +178,7 @@ function fixture() {
           if (!latest.has(row.shift_id)) latest.set(row.shift_id, row);
         return { recordset: copy([...latest.values()]) };
       }
+      if (statement.includes("FROM dbo.pos_sync_shift_authors"))return{recordset:[]};
       if (statement.includes("FROM dbo.pos_sync_shift_intents"))
         return {
           recordset: copy(
@@ -299,10 +300,11 @@ describe("native causal closing transfer", () => {
       );
     const sections = require("../../../electron/db/installer-source.cjs").installerSections();
     expect(sections.migrations.map((entry: Row) => entry.version)).toEqual(
-      Array.from({ length: 21 }, (_, index) => index + 2),
+      Array.from({ length: 22 }, (_, index) => index + 2),
     );
-    expect(sections.migrations.at(-1).name).toBe("022_shift_causal_intents.sql");
+    expect(sections.migrations.at(-1).name).toBe("023_shift_author_attestations.sql");
     expect(sections.validation).toContain("WHERE version = 22");
+    expect(sections.validation).toContain("WHERE version = 23");
     expect(source).not.toMatch(
       /\b(?:DELETE|UPDATE|TRUNCATE)\s+(?:FROM\s+)?dbo\.\[?(?:shifts|shift_cash_counts|sync_checkpoints)\b/i,
     );

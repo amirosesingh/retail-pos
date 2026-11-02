@@ -70,10 +70,16 @@ const jobManager = new JobManager(jobRepository, { publish: (job) => { for (cons
 const syncRegistry = loadRegistry();
 const syncCheckpoints = new CheckpointRepository(databaseManager);
 const syncCloud = new CloudClient({ configStore, terminalStore, connectionManager: databaseManager });
+const shiftAuthorKeys = require("./security/shift-author-key.cjs").createShiftAuthorKeys({safeStorage,directory:()=>app.getPath("userData")});
+const shiftAuthority = new (require("./shift-authority.cjs").ShiftAuthorAuthority)({
+  keys:shiftAuthorKeys,session:adminSession,connectionManager:databaseManager,
+  terminal:()=>terminalStore.read(),project:()=>cloudCredentials.read({strict:true})?.url,
+  branch:()=>localBranchId(),isManagementDevice:()=>isManagementDevice(),backendUrl:()=>authorizationServerUrl(),
+});
 const changeReader = new ChangeReader(databaseManager, syncRegistry);
 const conflictRepository = new ConflictRepository(databaseManager);
 const syncCoordinator = new SyncCoordinator({
-  pushWorker: new PushWorker({ reader:changeReader,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry }),
+  pushWorker: new PushWorker({ reader:changeReader,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,validateAuthor:proof=>shiftAuthority.validatePending(proof) }),
   pullWorker: new PullWorker({ connectionManager:databaseManager,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,reader:changeReader,conflicts:conflictRepository,publish:publishBusinessChange }),
   publish: (state) => { for (const win of BrowserWindow.getAllWindows()) win.webContents.send("sync:state",state); },
 });
@@ -81,7 +87,7 @@ const localDataLifecycle = new LocalDataLifecycle({ connectionManager:databaseMa
 const managementReplica = new (require("./sync/management-replica.cjs").ManagementReplica)({ cloud:syncCloud, databaseService, connectionManager:databaseManager, lifecycle:localDataLifecycle, jobs:jobRepository, coordinator:syncCoordinator });
 const mainTelemetry = createTelemetry({ databaseService,syncCoordinator,jobRepository,configStore,terminalStore,app });
 const operationsRepository = new OperationsRepository(databaseManager, syncRegistry);
-const shiftSyncJournal = new ShiftSyncJournal(operationsRepository);
+const shiftSyncJournal = new ShiftSyncJournal(operationsRepository,{authorRequired:true});
 const aggregateRepository = new AggregateRepository(databaseManager, operationsRepository);
 const receiptRepository = new ReceiptRepository(databaseManager, syncCloud);
 const authorizationRulesRepository = new AuthorizationRulesRepository(databaseManager);
@@ -1285,6 +1291,7 @@ async function startLocalShiftClose(raw) {
  * only the resulting workflow state is returned.
  */
 async function commitLocalShiftCashCount(raw) {
+  const authorCapture = shiftAuthority.capture("ORIGINAL");
   const branchId = localBranchId();
   if (!branchId) throw Object.assign(new Error("The terminal branch is not configured."), { code: "EBRANCH" });
   const shiftId = guard.uuid(raw.shiftId, { name: "shift id" });
@@ -1299,13 +1306,14 @@ async function commitLocalShiftCashCount(raw) {
   if (!shift) throw new Error("That shift no longer exists on this terminal.");
   const state = String(shift.state ?? (shift.closed_at ? "CLOSED" : "ACTIVE"));
   if (state === "ACTIVE") throw new Error("Start the closing process before counting the drawer.");
-  const identity = adminSession.identity();
-  const actor = identity?.subject ?? String(shift.opened_by_name ?? "");
+  authorCapture.assertCurrent();
+  const actor = authorCapture.subject;
   const terminalId = String(raw.terminalId ?? shift.terminal_id ?? "").trim() || null;
   const clientKey = String(raw.clientKey ?? `${shiftId}:original`);
   const intent = { branchId, shiftId, clientKey, actor, terminalId,
     cash: shiftMoney(cash), card: card == null ? null : shiftMoney(card), digital: digital == null ? null : shiftMoney(digital) };
   const replay = await shiftSyncJournal.originalReplay(intent);
+  authorCapture.assertCurrent();
   if (replay) {
     pendingShiftCloseSync.add(shiftId);
     return { ok: true, state: replay.state, replayed: true };
@@ -1419,11 +1427,13 @@ async function commitLocalShiftCashCount(raw) {
       }],
     });
   }
+  const author = await shiftAuthority.prepare(authorCapture);
   try {
-    await shiftSyncJournal.apply("Closing shift cash count", operations, { branchId, terminalId, observation });
+    await shiftSyncJournal.apply("Closing shift cash count", operations, { branchId, terminalId, observation, author });
   } catch (error) {
     if (![2601, 2627].includes(Number(error?.number ?? error?.originalError?.info?.number))) throw error;
     const saved = await shiftSyncJournal.originalReplay(intent);
+    authorCapture.assertCurrent();
     if (!saved) throw error;
     pendingShiftCloseSync.add(shiftId);
     return { ok: true, state: saved.state, replayed: true };
@@ -1435,6 +1445,7 @@ async function commitLocalShiftCashCount(raw) {
 }
 
 async function commitLocalShiftRecount(raw) {
+  const authorCapture = shiftAuthority.capture("RECOUNT");
   const branchId = localBranchId();
   if (!branchId) throw Object.assign(new Error("The terminal branch is not configured."), { code: "EBRANCH" });
   const shiftId = guard.uuid(raw.shiftId, { name: "shift id" });
@@ -1453,12 +1464,14 @@ async function commitLocalShiftRecount(raw) {
   if (!["VARIANCE_REVIEW_REQUIRED", "RECONCILIATION", "CLOSED"].includes(state))
     throw new Error("This shift has not been counted yet.");
   const clientKey = String(raw.clientKey ?? `${shiftId}:recount:${cash}:${card ?? ""}:${digital ?? ""}:${reason}`);
-  const identity = adminSession.identity();
-  const actor = identity?.subject ?? String(shift.opened_by_name ?? "");
+  authorCapture.assertCurrent();
+  const actor = authorCapture.subject;
   const terminalId = String(raw.terminalId ?? shift.terminal_id ?? "").trim() || null;
   const intent = { branchId, shiftId, clientKey, reason, actor, terminalId,
     cash: shiftMoney(cash), card: card == null ? null : shiftMoney(card), digital: digital == null ? null : shiftMoney(digital) };
-  if (await shiftSyncJournal.recountReplay(intent)) return { ok: true, state: "CLOSED", replayed: true };
+  const replayed = await shiftSyncJournal.recountReplay(intent);
+  authorCapture.assertCurrent();
+  if (replayed) return { ok: true, state: "CLOSED", replayed: true };
   const expected = await operationsRepository.shiftExpectedTotals(branchId, shiftId);
   const expectedCash = shiftMoney(expected.expected_cash);
   const expectedCard = shiftMoney(expected.expected_card);
@@ -1473,6 +1486,7 @@ async function commitLocalShiftRecount(raw) {
   const varianceStatus = Math.abs(varianceTotal) <= 0.005 ? "NO_VARIANCE" : varianceTotal > 0 ? "OVER" : "SHORT";
   const countId = randomUUID();
   const now = new Date().toISOString();
+  const author = await shiftAuthority.prepare(authorCapture);
   try {
     await shiftSyncJournal.apply("Saving shift recount", [
       { kind: "insert", table: "shift_cash_counts", rows: [{
@@ -1502,10 +1516,11 @@ async function commitLocalShiftRecount(raw) {
         variance_cash: varianceCash, variance_card: varianceCard, variance_digital: varianceDigital,
         variance_total: varianceTotal, variance_status: varianceStatus, updated_at: now,
       } },
-    ], { branchId, terminalId, observation });
+    ], { branchId, terminalId, observation, author });
   } catch (error) {
     if (![2601, 2627].includes(Number(error?.number ?? error?.originalError?.info?.number))) throw error;
     if (!await shiftSyncJournal.recountReplay(intent)) throw error;
+    authorCapture.assertCurrent();
     pendingShiftCloseSync.add(shiftId);
     return { ok: true, state: "CLOSED", replayed: true };
   }
@@ -1516,10 +1531,12 @@ async function commitLocalShiftRecount(raw) {
 }
 
 async function approveLocalShiftVariance(raw) {
+  const authorCapture = shiftAuthority.capture("VARIANCE");
   const branchId = localBranchId();
   if (!branchId) throw Object.assign(new Error("The terminal branch is not configured."), { code: "EBRANCH" });
   const shiftId = guard.uuid(raw.shiftId, { name: "shift id" });
   const observation = await shiftSyncJournal.observe(branchId, shiftId);
+  authorCapture.assertCurrent();
   const shift = observation.parent;
   if (!shift) throw new Error("That shift no longer exists on this terminal.");
   const state = String(shift.state ?? (shift.closed_at ? "CLOSED" : "ACTIVE"));
@@ -1529,11 +1546,11 @@ async function approveLocalShiftVariance(raw) {
   }
   if (!["VARIANCE_REVIEW_REQUIRED", "RECONCILIATION"].includes(state))
     throw new Error("This shift is not waiting for variance approval.");
-  const identity = adminSession.identity();
-  const actor = identity?.subject ?? "";
+  const actor = authorCapture.subject;
   const terminal = terminalStore.read() ?? {};
   const terminalId = String(shift.terminal_id ?? terminal.tokenId ?? terminal.terminalId ?? "").trim() || null;
   const now = new Date().toISOString();
+  const author = await shiftAuthority.prepare(authorCapture);
   await shiftSyncJournal.apply("Approving shift variance", [
     { kind: "update", table: "shifts", match: { id: shiftId }, values: {
       store_id: branchId, state: "CLOSED", status: "CLOSED", closed_at: shift.closed_at ?? now,
@@ -1545,7 +1562,7 @@ async function approveLocalShiftVariance(raw) {
       detail: { note: String(raw.note ?? "").slice(0, 400) }, actor_name: actor,
       actor_staff_id: actor, created_at: now,
     }] },
-  ], { branchId, terminalId, observation });
+  ], { branchId, terminalId, observation, author });
   publishBusinessChange({ kind: "shift", branchId, operationId: shiftId });
   pendingShiftCloseSync.add(shiftId);
   scheduleAutomaticSync(250);
@@ -1602,6 +1619,18 @@ function authorizationServerUrl() {
   // must use its configured hosted backend because its local app server never
   // carries the central database service credential.
   return DEV_URL ? baseUrl : null;
+}
+
+function captureSessionAdoption() {
+  const revision=++sessionAdoptionRevision,epoch=adminSession.epoch(),pool=databaseManager.pool;
+  const terminal=JSON.stringify(terminalStore.read()),project=cloudCredentials.read()?.url,backend=authorizationServerUrl();
+  return ()=>revision===sessionAdoptionRevision&&adminSession.epoch()===epoch&&databaseManager.pool===pool&&
+    terminal===JSON.stringify(terminalStore.read())&&project===cloudCredentials.read()?.url&&backend===authorizationServerUrl();
+}
+
+function enrollCurrentShiftAuthor(proof) {
+  // Enrollment grants no POS authority. Its unavailability cannot fail login.
+  void shiftAuthority.enrollOnline(proof).catch(()=>undefined);
 }
 
 function registerIpc() {
@@ -1737,9 +1766,7 @@ function registerIpc() {
       EACTIVATION_STORE:"This computer could not save the verified registration in its secure store. Retry after checking Windows secure storage.",
     }[code]??"The signed-in POS session could not be verified."});
     try {
-    const revision = ++sessionAdoptionRevision;
-    const initialIdentity = adminSession.identity();
-    const current=()=>revision===sessionAdoptionRevision&&JSON.stringify(initialIdentity)===JSON.stringify(adminSession.identity());
+    const current=captureSessionAdoption();
     const supplied=guard.credentialProof(typeof value==="string"?{accessToken:value}:value);
     const sealed=terminalStore.read();
     const candidate=rawTerminal==null?sealed:guard.terminalConfig(rawTerminal);
@@ -1779,7 +1806,9 @@ function registerIpc() {
       recordRegistrationChange(previous,terminal);
     }
     adminSession.grant(result.level,result.subject,result.permissions,"pos",result.branchId);
+    adminSession.bindVerifiedAuthor(result.authorId,result.subject);
     syncCloud.setAuthorizationProof(proof);
+    enrollCurrentShiftAuthor(proof);
     rememberVerifiedBranch(result.branchId);return{ok:true,level:result.level};
     }catch(error){
       if(error?.name==="BadArg")throw error;
@@ -2064,12 +2093,16 @@ function registerIpc() {
   });
   ipcMain.handle("staff:sign-in", async (_e, username, pin) => {
     try {
+      const current=captureSessionAdoption();
       const result = await verifySyncedStaffPin(databaseManager.pool, username, pin, localBranchId());
+      if(!current())return{ok:false,reason:"unavailable",error:"The sign-in context changed. Sign in again."};
       if (result.ok && result.staff) {
         const staff = result.staff;
         const role = staff.role || staff.role_slug;
         const level = role === "admin" ? "admin" : ["manager", "supervisor"].includes(role) ? "supervisor" : "staff";
         adminSession.grant(level, staff.username, staff.permissions ?? {}, "pos", staff.store_id ?? localBranchId());
+        // verifySyncedStaffPin selects a.user_id, independent of the login alias.
+        adminSession.bindVerifiedAuthor(staff.id,staff.username);
       }
       return result;
     } catch (error) {
@@ -2118,6 +2151,7 @@ function registerIpc() {
     }
   });
   ipcMain.handle("auth:cashier-login", (_e, value) => guard.guarded(async () => {
+    const current=captureSessionAdoption();
     const input = guard.options(value, { name: "cashier sign in", max: 2 });
     const username = guard.text(input.username, { name: "username", max: 120 });
     const pin = guard.text(input.pin, { name: "PIN or passcode", max: 32 });
@@ -2156,16 +2190,19 @@ function registerIpc() {
     // database-maintenance permission here made ordinary cashier checkouts
     // fail with EPRIVILEGE even though can_process_sale was granted.
     if (response.ok && result?.ok && result.cashier) {
+      if(!current())return{ok:false,status:409,code:"EAUTH_CHANGED",error:"The sign-in context changed. Sign in again."};
       const cashier = result.cashier;
       const role = String(cashier.role ?? cashier.role_slug ?? "staff").toLowerCase();
       const level = role === "admin" ? "admin" : role === "manager" || role === "supervisor" ? "supervisor" : "staff";
       const branchId = cashier.store_id ?? localBranchId();
       adminSession.grant(level, cashier.username ?? username, cashier.permissions ?? {}, "pos", branchId);
+      adminSession.bindVerifiedAuthor(cashier.id,cashier.username);
       const proof = {
         ...(typeof result.sessionToken === "string" ? { sessionToken: result.sessionToken } : {}),
         ...(typeof result.cashierToken === "string" ? { cashierToken: result.cashierToken } : {}),
       };
       syncCloud.setAuthorizationProof(proof);
+      enrollCurrentShiftAuthor(proof);
       rememberVerifiedBranch(branchId);
     }
     return { ...result, status: response.status };

@@ -45,6 +45,7 @@ function fixture() {
     input(name: string, ...values: unknown[]) { this.inputs[name] = values.at(-1); return this; }
     async query(sql: string) {
       calls.push(sql);
+      if(sql.includes("dbo.pos_sync_shift_author_keys")||sql.includes("dbo.pos_sync_shift_authors"))return{recordset:[]};
       const table = /FROM dbo\.\[?(\w+)\]?/.exec(sql)?.[1];
       if (!table || !this.transaction.image[table]) throw new Error("Unexpected fixture SQL: " + sql);
       return { recordset: copy(this.transaction.image[table].filter(row => table === "shifts"
@@ -74,6 +75,7 @@ function fixture() {
     return { ok: true };
   });
   const context: Row = { localBranchId: () => branch,
+    shiftAuthority:{capture:()=>({subject:context.adminSession.identity()?.subject??actor,assertCurrent:()=>undefined}),prepare:async()=>({assertCurrent:()=>undefined})},
     operationsRepository: { query: vi.fn(async (_branch, table, options) => ({ rows: (data[table]??[]).filter(row => row.store_id === _branch && Object.entries(options.match).every(([key, value]) => row[key] === value)) })), shiftExpectedTotals: totals },
     shiftSyncJournal: { observe:async()=>{if(data.shifts[0].store_id!==branch)throw Object.assign(new Error("Foreign branch"),{code:"SYNC_BRANCH_FORBIDDEN"});return{parent:copy(data.shifts[0])};},originalReplay:(intent:Row)=>writer.originalReplay(intent),recountReplay: (intent: Row) => writer.recountReplay(intent), apply },
     adminSession: { identity: () => ({ subject: actor }) }, guard: require("../../../electron/ipc-guard.cjs"),
@@ -256,6 +258,11 @@ describe("installed Main shift IPC authority",()=>{
     const ipcMain={handle:(channel:string,listener:(event:unknown,input:Row)=>unknown)=>{handlers.set(channel,listener);}};
     ipcPrivilege.install(ipcMain,{isFirstRun:()=>false,writeBarrier:new WriteBarrier()});
     f.context.ipcMain=ipcMain;f.context.adminSession=nativeAdminSession;
+    f.context.shiftAuthority=new(require("../../../electron/shift-authority.cjs").ShiftAuthorAuthority)({
+      session:nativeAdminSession,connectionManager:f.writer.repository.connectionManager,
+      keys:{prepare:(binding:Row)=>({...binding,keyId:originalId,publicKey:"fixture-public-reference",enrolled:false})},
+      terminal:()=>({tokenId:terminal,deviceUse:"operations",branchId:branch}),project:()=>"https://fixture.supabase.co",branch:()=>branch,
+    });
     const first=main.indexOf('ipcMain.handle("business:shift-close-count"'),last=main.indexOf('ipcMain.handle("business:shift-reconciliation-view"',first);
     runInNewContext(main.slice(first,last),f.context);
     return{...f,call:(channel:string,input:Row)=>handlers.get(channel)!({},input)};
@@ -264,6 +271,7 @@ describe("installed Main shift IPC authority",()=>{
     const f=bridge();for(const table of Object.keys(f.data))if(table!=="shifts")f.data[table]=[];
     Object.assign(f.data.shifts[0],{state:"CASH_COUNT_REQUIRED",status:"OPEN",closed_at:null});
     nativeAdminSession.grant("staff","cashier",{can_shift_cash_count:true,can_close_shift:true},"pos",branch);
+    nativeAdminSession.bindVerifiedAuthor(originalId,"cashier");
     await expect(f.call("business:shift-close-count",{shiftId,cash:100,clientKey:"cashier-original",terminalId:terminal})).resolves.toMatchObject({ok:true,state:"CLOSED"});
     expect(f.data.shift_cash_counts[0].counted_by_staff_id).toBe("cashier");
   });
@@ -274,9 +282,18 @@ describe("installed Main shift IPC authority",()=>{
   });
   it("keeps an authorized recount's historical actor independent of the next signed-in cashier",async()=>{
     const f=bridge();nativeAdminSession.grant("admin","approved-admin",{can_shift_cash_recount:true},"pos",branch);
+    nativeAdminSession.bindVerifiedAuthor(originalId,"approved-admin");
     await expect(f.call("business:shift-recount",f.input)).resolves.toMatchObject({ok:true});
     nativeAdminSession.grant("staff","later-cashier",{can_shift_cash_count:true},"pos",branch);
     expect(f.data.shift_cash_counts[1].counted_by_staff_id).toBe("approved-admin");
     expect(f.data.shift_close_events[0].actor_staff_id).toBe("approved-admin");
+  });
+  it.each(["business:shift-close-count","business:shift-recount","business:shift-variance-approve"])("rejects %s when a different person signs in during the awaited shift read",async channel=>{
+    const f=bridge();nativeAdminSession.grant("staff","author-a",{can_shift_cash_count:true,can_shift_cash_recount:true,can_shift_variance_approve:true},"pos",branch);nativeAdminSession.bindVerifiedAuthor(originalId,"author-a");
+    let release!:(value:Row)=>void;f.context.shiftSyncJournal.observe=()=>new Promise(resolve=>{release=resolve;});
+    const input=channel==="business:shift-variance-approve"?{shiftId}:channel==="business:shift-close-count"?{shiftId,cash:100}:f.input;
+    const before=copy(f.data),pending=f.call(channel,input);await vi.waitFor(()=>expect(release).toBeTypeOf("function"));
+    nativeAdminSession.grant("staff","author-b",{can_shift_cash_count:true,can_shift_cash_recount:true,can_shift_variance_approve:true},"pos",branch);nativeAdminSession.bindVerifiedAuthor(shiftId,"author-b");release({parent:copy(f.data.shifts[0])});
+    await expect(pending).rejects.toMatchObject({code:"ESYNC_SHIFT_AUTHOR_CHANGED"});expect(f.apply).not.toHaveBeenCalled();expect(f.data).toEqual(before);
   });
 });

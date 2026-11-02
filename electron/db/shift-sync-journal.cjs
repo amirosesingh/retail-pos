@@ -27,8 +27,9 @@ const rowsOf = operation => operation.rows ?? (operation.values ? [{ ...operatio
  * This class is not exposed through IPC and accepts no renderer trust flag.
  */
 class ShiftSyncJournal {
-  constructor(operationsRepository) {
+  constructor(operationsRepository, {authorRequired=false} = {}) {
     this.repository = operationsRepository;
+    this.authorRequired = authorRequired;
     this.intents = new ShiftIntentStore(operationsRepository.connectionManager,{tables:[...operationsRepository.tables.values()]});
   }
   observe(branchId,shiftId) { return this.intents.observe(branchId,shiftId); }
@@ -216,6 +217,9 @@ class ShiftSyncJournal {
   }
 
   async apply(context, operations, scope = {}) {
+    if (this.authorRequired && !scope.author)
+      fail("A verified protected author is required.", "ESYNC_SHIFT_AUTHOR_IDENTITY_PENDING");
+    scope.author?.assertCurrent();
     const { branchId, shiftId, ops } = this.validate(operations, scope);
     const receiptPayload = { kind: "protected_shift_close", branchId, shiftId, operations: ops };
     const aggregateId = stableUuid(receiptPayload);
@@ -227,7 +231,11 @@ class ShiftSyncJournal {
       if (priorReceipt) return;
       const kind=ops.some(operation=>operation.table==="shift_cash_counts" && rowsOf(operation).some(row=>row.kind==="RECOUNT"))?"RECOUNT":
         ops.some(operation=>operation.table==="shift_cash_counts")?"ORIGINAL":"VARIANCE";
-      await this.intents.freeze(transaction,aggregateId,kind,graph,causalContext);
+      const frozen=await this.intents.freeze(transaction,aggregateId,kind,graph,causalContext);
+      if(scope.author){
+        const attestation=scope.author.sign({branchId,shiftId,intentId:aggregateId,action:kind,payloadHash:frozen.payloadHash});
+        await scope.author.save(transaction,attestation);
+      }
       for (const [table, rows] of graph) for (const row of rows) {
         await new sql.Request(transaction)
           .input("entity_type", table).input("entity_id", JSON.stringify({ id: id(row.id) }))
@@ -240,6 +248,7 @@ class ShiftSyncJournal {
         .input("operation_type", "protected_shift_close").input("entity_id", shiftId).input("note", payloadHash)
         .query("INSERT dbo.local_operation_receipts(operation_id,operation_type,entity_id,note) VALUES(@operation_id,@operation_type,@entity_id,@note);");
     }, async transaction => {
+      scope.author?.assertCurrent();
       const sql = this.repository.connectionManager.sql();
       // Match the ordinary aggregate writer's receipt→parent lock order. The
       // parent then precedes all child writes, as it does for upload snapshots.
@@ -259,7 +268,7 @@ class ShiftSyncJournal {
         return false;
       }
       causalContext=await this.intents.verify(transaction,scope.observation);
-    });
+    }, () => scope.author?.assertCurrent());
   }
 }
 module.exports = { ShiftSyncJournal };

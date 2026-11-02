@@ -227,7 +227,8 @@ function terminalWritableChanges(tableName, changes, { branchId = "", terminalId
 }
 
 class PushWorker {
-  constructor({ reader, cloud, checkpoints, registry }) {
+  constructor({ reader, cloud, checkpoints, registry, validateAuthor }) {
+    this.validateAuthor = validateAuthor;
     this.reader = reader;
     this.cloud = cloud;
     this.checkpoints = checkpoints;
@@ -242,6 +243,7 @@ class PushWorker {
         // Leave it to the durable scheduler rather than block this pass for
         // another four deadlines and keep login/focus callers waiting.
         if (error?.code === "ETIMEDOUT" || ["TimeoutError","AbortError"].includes(error?.name)) throw error;
+        if (/^(?:ESYNC_SHIFT_AUTHOR_|ESHIFT_AUTHOR_)/.test(String(error?.code??""))) throw error;
         // A semantic closing conflict needs review, not five immediate retries
         // of the same immutable facts (even if a gateway reports it as 500).
         if ([error?.code, error?.message].some(value =>
@@ -287,7 +289,8 @@ class PushWorker {
         }
         const shiftIntent={version:intent.version,intentId:intent.intentId,shiftId:intent.shiftId,kind:intent.kind,
           baseToken:intent.baseToken,predecessorIntentId:intent.predecessorIntentId,predecessorIntentHash:intent.predecessorIntentHash,payloadJson:intent.payloadJson};
-        const acknowledgement=await this.retry(()=>this.cloud.pushAggregate({batchId:intent.intentId,branchId,shiftIntent}));
+        const shiftAuthor=this.validateAuthor?this.validateAuthor(intent.shiftAuthor):intent.shiftAuthor;
+        const acknowledgement=await this.retry(()=>this.cloud.pushAggregate({batchId:intent.intentId,branchId,shiftIntent,...(shiftAuthor?{shiftAuthor}:{})}));
         if(!acknowledgement?.ok)throw new Error(acknowledgement?.error??"Cloud did not acknowledge the closing intent.");
         const proof=assertShiftClosureAcknowledgement(acknowledgement,intent.operations,branchId,intent,this.registry);
         await this.reader.acknowledgeProtectedIntent(intent,proof);

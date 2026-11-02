@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import {generateKeyPairSync,sign} from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
@@ -11,7 +12,7 @@ const { loadRegistry } = require("../../../electron/db/schema-registry.cjs");
 const { toCloudRow } = require("../../../electron/sync/row-codec.cjs");
 const {matchingCoverage}=require("../../../scripts/lib/shift-coverage-fixture.cjs");
 type Row = Record<string, unknown>;
-type State = { tables: Record<string, Row[]>; journal: Row[]; receipts: Row[]; intents: Row[]; baselines: Row[];openings:Row[] };
+type State = { tables: Record<string, Row[]>; journal: Row[]; receipts: Row[]; intents: Row[]; baselines: Row[];openings:Row[];authors:Row[] };
 type Operation = { kind: string; table: string; rows?: Row[]; values?: Row; match?: Row };
 const branch = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const otherBranch = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -26,7 +27,7 @@ const sameId = (left: unknown, right: unknown) => String(left ?? "").toLowerCase
 function fixture(options: { branch?: string; terminal?: string | null } = {}) {
   const ownBranch = options.branch ?? branch;
   const registry = loadRegistry();
-  let state: State = { tables: Object.fromEntries(registry.tables.map((table: { sqlServerTable: string }) => [table.sqlServerTable, []])), journal: [], receipts: [], intents:[],baselines:[],openings:[] };
+  let state: State = { tables: Object.fromEntries(registry.tables.map((table: { sqlServerTable: string }) => [table.sqlServerTable, []])), journal: [], receipts: [], intents:[],baselines:[],openings:[],authors:[] };
   state.tables.shifts.push({ id: shiftId, store_id: ownBranch, terminal_id: options.terminal === undefined ? terminal : options.terminal,
     status: "OPEN", state: "CASH_COUNT_REQUIRED", closed_at: null, row_version: 2, opening_float: 20 });
   const events: string[] = [];
@@ -43,6 +44,8 @@ function fixture(options: { branch?: string; terminal?: string | null } = {}) {
     input(name: string, value: unknown, typedValue?: unknown) { this.inputs[name] = arguments.length === 3 ? typedValue : value; return this; }
     async query(query: string) {
       const data = this.transaction.image;
+      if(query.startsWith("INSERT dbo.pos_sync_shift_authors")){data.authors.push({intent_id:this.inputs.intent,attestation_json:this.inputs.proof});return{recordset:[],rowsAffected:[1]};}
+      if(query.includes("pos_sync_shift_authors"))return{recordset:copy(data.authors.filter(row=>sameId(row.intent_id,this.inputs.intent)))};
       if(query.startsWith("INSERT dbo.pos_sync_shift_openings")){
         data.openings.push({aggregate_id:this.inputs.aggregate,shift_id:this.inputs.shift,branch_id:this.inputs.branch,row_json:this.inputs.row,row_hash:this.inputs.hash});return{recordset:[],rowsAffected:[1]};
       }
@@ -195,6 +198,39 @@ async function commitNextOpening(h: ReturnType<typeof fixture>) {
 }
 
 describe("protected shift closing durable journal", () => {
+  const signingAuthor=(h:ReturnType<typeof fixture>,guard=()=>undefined)=>{
+    const pair=generateKeyPairSync("ed25519"),protocol=require("../../../electron/security/shift-author-protocol.cjs");
+    return{assertCurrent:guard,sign:(facts:Row)=>{
+      guard();const unsigned={version:1,algorithm:"Ed25519",keyId:uuid(90),projectOrigin:"https://fixture.supabase.co",terminalId:terminal,authorId:uuid(91),subject:"verified.author",...facts};
+      return protocol.normalizeAttestation({...unsigned,signature:sign(null,Buffer.from(protocol.intentMessage(unsigned)),pair.privateKey).toString("base64url")});
+    },save:async(transaction:any,proof:Row)=>{guard();await new(h.connectionManager.sql().Request)(transaction).input("intent",proof.intentId).input("proof",JSON.stringify(proof)).query("INSERT dbo.pos_sync_shift_authors(intent_id,attestation_json) VALUES(@intent,@proof);");}};
+  };
+  it("freezes the signature atomically with the domain graph, immutable payload and journal",async()=>{
+    const h=fixture(),author=signingAuthor(h);h.writer.authorRequired=true;
+    await h.writer.apply("signed close",closeOperations(),{...h.scope,author});
+    const intent=await new ChangeReader(h.connectionManager,h.registry).protectedIntent(h.data().intents[0].intent_id,branch);
+    expect(intent.shiftAuthor).toMatchObject({authorId:uuid(91),subject:"verified.author",intentId:intent.intentId,payloadHash:intent.payloadHash,action:"ORIGINAL"});
+    expect(JSON.parse(intent.payloadJson)).not.toHaveProperty("shiftAuthor");expect(h.data().authors).toHaveLength(1);
+    const f=workerFixture(h);f.worker.validateAuthor=(proof:Row)=>proof;await f.worker.pushAggregates(branch,100);
+    expect(f.uploaded[0].shiftAuthor).toEqual(intent.shiftAuthor);expect((f.uploaded[0].shiftIntent as Row).payloadJson).toBe(intent.payloadJson);
+  });
+  it("rolls back the whole signed graph if the author changes after signature persistence",async()=>{
+    const h=fixture(),before=copy(h.data());let current=true;const author=signingAuthor(h,()=>{if(!current)throw Object.assign(new Error("changed"),{code:"ESYNC_SHIFT_AUTHOR_CHANGED"});});
+    const save=author.save;author.save=async(tx,proof)=>{await save(tx,proof);current=false;};
+    await expect(h.writer.apply("changed",closeOperations(),{...h.scope,author})).rejects.toMatchObject({code:"ESYNC_SHIFT_AUTHOR_CHANGED"});expect(h.data()).toEqual(before);expect(h.events.at(-1)).toBe("rollback");
+  });
+  it.each(["ESYNC_SHIFT_AUTHOR_KEY_MISSING","ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING"])("retains the signed intent without an HTTP call or acknowledgement for %s",async code=>{
+    const h=fixture();await h.writer.apply("signed close",closeOperations(),{...h.scope,author:signingAuthor(h)});
+    const f=workerFixture(h),before=copy(h.data().intents);f.worker.validateAuthor=()=>{throw Object.assign(new Error("author pending"),{code});};
+    await expect(f.worker.pushAggregates(branch,100)).rejects.toMatchObject({code});expect(f.uploaded).toEqual([]);expect(h.data().intents).toEqual(before);expect(h.data().journal.every(row=>!row.acknowledged_at)).toBe(true);expect(h.data().baselines).toEqual([]);
+  });
+  it("rejects a missing author in the Main-required writer and corrupt saved proof on reload",async()=>{
+    const h=fixture();h.writer.authorRequired=true;
+    await expect(h.writer.apply("unsigned",closeOperations(),h.scope)).rejects.toMatchObject({code:"ESYNC_SHIFT_AUTHOR_IDENTITY_PENDING"});
+    await h.writer.apply("signed",closeOperations(),{...h.scope,author:signingAuthor(h)});
+    const proof=JSON.parse(String(h.data().authors[0].attestation_json));proof.payloadHash="f".repeat(64);h.data().authors[0].attestation_json=JSON.stringify(proof);
+    await expect(new ChangeReader(h.connectionManager,h.registry).protectedIntent(h.data().intents[0].intent_id,branch)).rejects.toMatchObject({code:"ESYNC_SHIFT_AUTHOR_INVALID"});
+  });
   it.each([true, false])("commits actual postimage/count graph atomically, nullable tenders=%s", async nullable => {
     const h = fixture();
     const result = await h.writer.apply("Closing shift cash count", closeOperations(branch, 90, nullable), h.scope);

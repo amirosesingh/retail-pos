@@ -161,11 +161,12 @@ class OperationsRepository {
       }
     }
   }
-  async apply(context, operations, scope = {}, beforeCommit, beforeWrite) {
+  async apply(context, operations, scope = {}, beforeCommit, beforeWrite, beforeFinalize) {
     // This callback stays inside Main; IPC handlers pass three arguments and
     // never accept a renderer-controlled trust flag or transaction callback.
     if ((beforeCommit !== undefined && typeof beforeCommit !== "function") ||
-        (beforeWrite !== undefined && typeof beforeWrite !== "function"))
+        (beforeWrite !== undefined && typeof beforeWrite !== "function") ||
+        (beforeFinalize !== undefined && typeof beforeFinalize !== "function"))
       throw new Error("The transaction callback must be an internal function.");
     const ops = this.validate(operations);
     this.assertWriteScope(ops, scope);
@@ -173,15 +174,21 @@ class OperationsRepository {
     const transaction = new sql.Transaction(this.pool());
     await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
     let affected = 0;
+    const finalize = () => {
+      // No await may separate this Main-only epoch check from commit().
+      if (beforeFinalize?.()?.then) throw new Error("The final transaction guard must be synchronous.");
+    };
     try {
       if (beforeWrite && await beforeWrite(transaction, ops) === false) {
         // Only Main supplies this callback. A proven protected receipt replay
         // must not re-run an older parent UPDATE over a later recount.
+        finalize();
         await transaction.commit();
         return {ok:true,context:String(context ?? "").slice(0,160),affected:0,replayed:true};
       }
       for (const op of ops) affected += await this.applyOperation(transaction, op, scope);
       if (beforeCommit) await beforeCommit(transaction, ops);
+      finalize();
       await transaction.commit();
       return { ok: true, context: String(context ?? "").slice(0, 160), affected };
     } catch (error) {

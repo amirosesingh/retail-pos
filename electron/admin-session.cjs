@@ -2,15 +2,24 @@ const MAX_IDLE_MS = 10 * 60 * 1000;
 const RECOVERY_IDLE_MS = 5 * 60 * 1000;
 
 let session = null;
+let sessionEpoch = 0;
 let recoveryExpiresAt = 0;
 
-function clear() { session = null; }
+function clear() { session = null; sessionEpoch++; }
 function grant(level, subject, permissions = {}, source = "manual", branchId = null) {
   if (!["admin", "supervisor", "staff"].includes(level)) throw new Error("Invalid privilege level.");
   if (!["pos", "manual"].includes(source)) throw new Error("Invalid privilege source.");
-  session = { level, subject: String(subject ?? ""), permissions: { ...permissions }, source, branchId: branchId ? String(branchId) : null, verifiedAt: Date.now(), expiresAt: Date.now() + MAX_IDLE_MS };
+  sessionEpoch++;
+  session = { level, subject: String(subject ?? ""), permissions: { ...permissions }, source, branchId: branchId ? String(branchId) : null, verifiedAt: Date.now(), expiresAt: Date.now() + MAX_IDLE_MS,authorId:null,canonicalSubject:null };
   return status();
 }
+function bindVerifiedAuthor(authorId,canonicalSubject){
+  const current=active();if(!current||current.source!=="pos")return;
+  const id=typeof authorId==="string"&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(authorId)?authorId.toLowerCase():null;
+  const subject=typeof canonicalSubject==="string"&&canonicalSubject===canonicalSubject.trim()&&canonicalSubject.length>0&&canonicalSubject.length<=200&&!/[\u0000-\u001f\u007f]/u.test(canonicalSubject)?canonicalSubject:null;
+  current.authorId=id;current.canonicalSubject=subject;sessionEpoch++;
+}
+function epoch(){return sessionEpoch;}
 function active() {
   if (session && session.expiresAt <= Date.now()) clear();
   return session;
@@ -56,7 +65,9 @@ function identity() {
     permissions: { ...current.permissions },
     source: current.source,
     branchId: current.branchId,
+    authorId:current.authorId,
+    canonicalSubject:current.canonicalSubject,
   } : null;
 }
 
-module.exports = { clear, grant, hasLevel, hasPermission, hasPosAuthority, branchId, touch, status, identity, grantRecovery, clearRecovery, recoveryActive, recoveryTouch };
+module.exports = { clear, grant, bindVerifiedAuthor,epoch,hasLevel, hasPermission, hasPosAuthority, branchId, touch, status, identity, grantRecovery, clearRecovery, recoveryActive, recoveryTouch };
