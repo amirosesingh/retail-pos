@@ -36,6 +36,7 @@ export const Route = createFileRoute("/api/v1/pos/ipc-adopt")({
           const {resolveRelayScope}=await import("@/core/api/relay-policy.server");
           const scope=await resolveRelayScope(caller, { strictAvailability: true });
           const authority = await databaseAuthority({
+            appUserId: caller.appUserId,
             userId: caller.staffUserId,
             authUserId: caller.authUserId,
             email: caller.email,
@@ -48,6 +49,19 @@ export const Route = createFileRoute("/api/v1/pos/ipc-adopt")({
           // can_manage_sync_backup in electron/ipc-privilege.cjs.
           if (!authority) {
             return denied(403);
+          }
+          // A username-only session remains sufficient for existing POS use.
+          // If this handoff also carries the same person's independently proven
+          // Auth token, expose its stable id for author-key preparation only.
+          if (!authority.authorId && proof.accessToken) {
+            try {
+              const stableCaller = await verifyRelayCaller({ accessToken: proof.accessToken,
+                terminalToken: caller.terminalId ?? proof.terminalToken, deviceBindingProof: proof.deviceBindingProof }, { strictAvailability: true });
+              if (stableCaller.authUserId) {
+                const stableAuthority = await databaseAuthority({ authUserId: stableCaller.authUserId }, { strictAvailability: true });
+                if (stableAuthority?.authorId && stableAuthority.subject === authority.subject) authority.authorId = stableAuthority.authorId;
+              }
+            } catch { /* Stable author setup waits; ordinary verified POS adoption remains usable. */ }
           }
           return Response.json({
             ok: true,

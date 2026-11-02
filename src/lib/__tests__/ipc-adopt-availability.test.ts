@@ -126,6 +126,23 @@ describe("actual IPC adoption verification pipeline", () => {
     const token = signCashierSession({ id: "cashier-id", username: "cashier", storeId: "A", sessionToken: "backing-session" });
     expect((await post({ sessionToken: undefined, cashierToken: token })).status).toBe(200);
   });
+  it("carries stable identity from a signed cashier envelope matching the raw session, never from its username alone", async () => {
+    const id = "00000000-0000-4000-8000-000000000001";
+    h.authority.mockImplementation(() => json([{ ...account, id }]));
+    const token = signCashierSession({ id, username: "cashier", storeId: "A", sessionToken: "session-proof" });
+    expect(await (await post({ cashierToken: token })).json()).toMatchObject({ ok: true, subject: "cashier", authorId: id });
+    expect(await (await post()).json()).not.toHaveProperty("authorId");
+    const unrelated = signCashierSession({ id, username: "cashier", storeId: "A", sessionToken: "other-session" });
+    expect(await (await post({ cashierToken: unrelated })).json()).not.toHaveProperty("authorId");
+  });
+  it("uses an independent matching password proof for stable setup without making extra verification a login dependency", async () => {
+    const id = "00000000-0000-4000-8000-000000000001";
+    h.authority.mockImplementation(() => json([{ ...account, id }]));
+    expect(await (await post({ accessToken: "verified-auth" })).json()).toMatchObject({ ok: true, authorId: id });
+    h.auth.mockImplementation(() => json({}, 503));
+    expect(await (await post({ accessToken: "unavailable-extra-auth" })).json()).toMatchObject({ ok: true, subject: "cashier" });
+    expect(await (await post({ accessToken: "unavailable-extra-auth" })).json()).not.toHaveProperty("authorId");
+  });
   it("treats unavailable signed-verifier infrastructure as temporary without changing default denial", async () => {
     const token = signCashierSession({ id: "cashier-id", username: "cashier", storeId: "A", sessionToken: "backing-session" });
     vi.stubEnv("SETTINGS_ENCRYPTION_KEY", "");
