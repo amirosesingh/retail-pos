@@ -115,7 +115,12 @@ BEGIN
     (to_jsonb(jsonb_populate_record(NULL::public.shift_close_events,event_row))-'row_version'-'updated_at') THEN RAISE EXCEPTION 'SYNC_SHIFT_START_INVALID'; END IF;
  SELECT r INTO final_parent FROM jsonb_array_elements(intent->'operations') op,LATERAL jsonb_array_elements(op->'rows') r WHERE op->>'table'='shifts' AND (r->>'id')::uuid=v_shift;
  IF final_parent IS NULL THEN RAISE EXCEPTION 'SYNC_SHIFT_START_INVALID'; END IF;
- FOREACH field IN ARRAY ARRAY['id','store_id','terminal_id','opened_at','opened_by_staff_id','opened_by_name','closing_started_at','closing_started_by','close_reason'] LOOP
+ -- The freezer can preserve accepted cloud opening microseconds, while Main's
+ -- actual parent postimage has SQL Server millisecond precision. Compare that
+ -- immutable opening identity at native precision without rewriting either JSON.
+ IF date_trunc('milliseconds',(parent->>'opened_at')::timestamptz) IS DISTINCT FROM date_trunc('milliseconds',(final_parent->>'opened_at')::timestamptz)
+ THEN RAISE EXCEPTION 'SYNC_SHIFT_START_INVALID'; END IF;
+ FOREACH field IN ARRAY ARRAY['id','store_id','terminal_id','opened_by_staff_id','opened_by_name','closing_started_at','closing_started_by','close_reason'] LOOP
   IF (to_jsonb(jsonb_populate_record(NULL::public.shifts,parent))->field) IS DISTINCT FROM (to_jsonb(jsonb_populate_record(NULL::public.shifts,final_parent))->field)
   THEN RAISE EXCEPTION 'SYNC_SHIFT_START_INVALID'; END IF;
  END LOOP;

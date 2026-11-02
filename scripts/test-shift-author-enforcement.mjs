@@ -133,6 +133,7 @@ try{
   const {ops,b,a}=await separateStart();ops[0].rows[0].opened_at='2026-10-31T00:00:00.123Z';
   // The native store has millisecond precision; the cloud opening retains microseconds.
   const proof=startProof(ops,a);const payload=JSON.parse(proof.payloadJson);payload.event.id=payload.event.id.toUpperCase();payload.event.created_at='2026-10-31T00:00:00.123456+00:00';
+  ops[0].rows[0].opened_at=opened; // Existing freezer preserves the accepted raw microseconds.
   const raw=JSON.stringify(payload),altered={...proof,payloadJson:raw,payloadHash:hash(raw)};
   await pushStart(intent(ops,b),altered);assert.equal(await scalar('SELECT proof->>\'payloadJson\' FROM pos_sync_private.shift_closing_start_receipts'),raw);
  });
