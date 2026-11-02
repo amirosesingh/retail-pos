@@ -1294,20 +1294,25 @@ async function commitLocalShiftCashCount(raw) {
   if (!Number.isFinite(cash) || cash < 0) throw new Error("Enter the cash counted in the drawer.");
   if (card != null && (!Number.isFinite(card) || card < 0)) throw new Error("The card total counted cannot be negative.");
   if (digital != null && (!Number.isFinite(digital) || digital < 0)) throw new Error("The digital total counted cannot be negative.");
-  const shifts = await operationsRepository.query(branchId, "shifts", { match: { id: shiftId }, limit: 1 });
-  const shift = shifts.rows?.[0];
+  const observation = await shiftSyncJournal.observe(branchId, shiftId);
+  const shift = observation.parent;
   if (!shift) throw new Error("That shift no longer exists on this terminal.");
   const state = String(shift.state ?? (shift.closed_at ? "CLOSED" : "ACTIVE"));
   if (state === "ACTIVE") throw new Error("Start the closing process before counting the drawer.");
+  const identity = adminSession.identity();
+  const actor = identity?.subject ?? String(shift.opened_by_name ?? "");
+  const terminalId = String(raw.terminalId ?? shift.terminal_id ?? "").trim() || null;
+  const clientKey = String(raw.clientKey ?? `${shiftId}:original`);
+  const intent = { branchId, shiftId, clientKey, actor, terminalId,
+    cash: shiftMoney(cash), card: card == null ? null : shiftMoney(card), digital: digital == null ? null : shiftMoney(digital) };
+  const replay = await shiftSyncJournal.originalReplay(intent);
+  if (replay) {
+    pendingShiftCloseSync.add(shiftId);
+    return { ok: true, state: replay.state, replayed: true };
+  }
   if (!["CLOSING_STARTED", "CASH_COUNT_REQUIRED"].includes(state)) {
     pendingShiftCloseSync.add(shiftId);
     return { ok: true, state };
-  }
-  const prior = await operationsRepository.query(branchId, "shift_cash_counts", { match: { shift_id: shiftId, kind: "ORIGINAL" }, limit: 1 });
-  if (prior.rows?.length) {
-    const current = await operationsRepository.query(branchId, "shifts", { match: { id: shiftId }, limit: 1 });
-    pendingShiftCloseSync.add(shiftId);
-    return { ok: true, state: String(current.rows?.[0]?.state ?? "CLOSED"), replayed: true };
   }
   const expected = await operationsRepository.shiftExpectedTotals(branchId, shiftId);
   const storeResult = await operationsRepository.query(branchId, "stores", { match: { id: branchId }, limit: 1 });
@@ -1322,9 +1327,6 @@ async function commitLocalShiftCashCount(raw) {
   const varianceDigital = countedDigital == null ? null : shiftMoney(countedDigital - expectedDigital);
   const varianceTotal = shiftMoney(varianceCash + (varianceCard ?? 0) + (varianceDigital ?? 0));
   const varianceStatus = Math.abs(varianceTotal) <= 0.005 ? "NO_VARIANCE" : varianceTotal > 0 ? "OVER" : "SHORT";
-  const identity = adminSession.identity();
-  const actor = identity?.subject ?? String(shift.opened_by_name ?? "");
-  const terminalId = String(raw.terminalId ?? shift.terminal_id ?? "").trim() || null;
   const countId = randomUUID();
   const reconciliationId = randomUUID();
   const now = new Date().toISOString();
@@ -1339,7 +1341,7 @@ async function commitLocalShiftCashCount(raw) {
       kind: "ORIGINAL", counted_cash: countedCash, counted_card: countedCard,
       counted_digital: countedDigital, reason: shift.close_reason ?? null,
       counted_by_name: actor, counted_by_staff_id: actor,
-      client_key: String(raw.clientKey ?? `${shiftId}:original`), created_at: now,
+      client_key: clientKey, created_at: now,
     }] },
     { kind: "insert", table: "shift_reconciliations", rows: [{
       id: reconciliationId, shift_id: shiftId, store_id: branchId, count_id: countId,
@@ -1418,12 +1420,13 @@ async function commitLocalShiftCashCount(raw) {
     });
   }
   try {
-    await shiftSyncJournal.apply("Closing shift cash count", operations, { branchId, terminalId });
+    await shiftSyncJournal.apply("Closing shift cash count", operations, { branchId, terminalId, observation });
   } catch (error) {
     if (![2601, 2627].includes(Number(error?.number ?? error?.originalError?.info?.number))) throw error;
-    const current = await operationsRepository.query(branchId, "shifts", { match: { id: shiftId }, limit: 1 });
+    const saved = await shiftSyncJournal.originalReplay(intent);
+    if (!saved) throw error;
     pendingShiftCloseSync.add(shiftId);
-    return { ok: true, state: String(current.rows?.[0]?.state ?? "CLOSED"), replayed: true };
+    return { ok: true, state: saved.state, replayed: true };
   }
   publishBusinessChange({ kind: "shift", branchId, operationId: shiftId });
   pendingShiftCloseSync.add(shiftId);
@@ -1443,8 +1446,8 @@ async function commitLocalShiftRecount(raw) {
   if (!Number.isFinite(cash) || cash < 0) throw new Error("Enter the recounted cash amount.");
   if (card != null && (!Number.isFinite(card) || card < 0)) throw new Error("The card total counted cannot be negative.");
   if (digital != null && (!Number.isFinite(digital) || digital < 0)) throw new Error("The digital total counted cannot be negative.");
-  const result = await operationsRepository.query(branchId, "shifts", { match: { id: shiftId }, limit: 1 });
-  const shift = result.rows?.[0];
+  const observation = await shiftSyncJournal.observe(branchId, shiftId);
+  const shift = observation.parent;
   if (!shift) throw new Error("That shift no longer exists on this terminal.");
   const state = String(shift.state ?? (shift.closed_at ? "CLOSED" : "ACTIVE"));
   if (!["VARIANCE_REVIEW_REQUIRED", "RECONCILIATION", "CLOSED"].includes(state))
@@ -1499,7 +1502,7 @@ async function commitLocalShiftRecount(raw) {
         variance_cash: varianceCash, variance_card: varianceCard, variance_digital: varianceDigital,
         variance_total: varianceTotal, variance_status: varianceStatus, updated_at: now,
       } },
-    ], { branchId, terminalId });
+    ], { branchId, terminalId, observation });
   } catch (error) {
     if (![2601, 2627].includes(Number(error?.number ?? error?.originalError?.info?.number))) throw error;
     if (!await shiftSyncJournal.recountReplay(intent)) throw error;
@@ -1516,8 +1519,8 @@ async function approveLocalShiftVariance(raw) {
   const branchId = localBranchId();
   if (!branchId) throw Object.assign(new Error("The terminal branch is not configured."), { code: "EBRANCH" });
   const shiftId = guard.uuid(raw.shiftId, { name: "shift id" });
-  const result = await operationsRepository.query(branchId, "shifts", { match: { id: shiftId }, limit: 1 });
-  const shift = result.rows?.[0];
+  const observation = await shiftSyncJournal.observe(branchId, shiftId);
+  const shift = observation.parent;
   if (!shift) throw new Error("That shift no longer exists on this terminal.");
   const state = String(shift.state ?? (shift.closed_at ? "CLOSED" : "ACTIVE"));
   if (state === "CLOSED") {
@@ -1542,7 +1545,7 @@ async function approveLocalShiftVariance(raw) {
       detail: { note: String(raw.note ?? "").slice(0, 400) }, actor_name: actor,
       actor_staff_id: actor, created_at: now,
     }] },
-  ], { branchId, terminalId });
+  ], { branchId, terminalId, observation });
   publishBusinessChange({ kind: "shift", branchId, operationId: shiftId });
   pendingShiftCloseSync.add(shiftId);
   scheduleAutomaticSync(250);

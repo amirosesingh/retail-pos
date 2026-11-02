@@ -1,6 +1,7 @@
 const { canonicalEntityKey } = require("./entity-key.cjs");
-const { readPage } = require("./page-policy.cjs");
+const { readPage, MAX_PAGE_BYTES } = require("./page-policy.cjs");
 const { refreshTable } = require("../jobs/bootstrap.cjs");
+const {prepareShiftGraphs,applyShiftGraphs} = require("./shift-graph.cjs");
 const SHIFT_GRAPH_TABLES = new Set(["shifts", "shift_cash_counts", "shift_reconciliations",
   "shift_close_events", "shift_notifications", "shift_variance_alerts"]);
 
@@ -111,7 +112,15 @@ class PullWorker {
     let merged = 0; let conflictCount = 0; let membershipMirrored = 0; let membershipDeferred = false; let deferredHeldDeletion = false; let deferredLocalChanges = false;
     let checkpoint = await this.checkpoints.get(branchId, "__feed__", "pull");
     while (true) {
-      const page = await readPage(limit => this.cloud.pullBatch({ branchId, cursor: checkpoint?.committed_cursor ?? null, limit }),batchSize);
+      let prepared;
+      const page = await readPage(async limit => {
+        prepared=null;
+        const downloaded=await this.cloud.pullBatch({ branchId, cursor: checkpoint?.committed_cursor ?? null, limit });
+        if(Buffer.byteLength(JSON.stringify(downloaded),"utf8")>MAX_PAGE_BYTES)
+          throw Object.assign(new Error("Download exceeds the safe page size."),{code:"EOVERSIZED"});
+        prepared=await prepareShiftGraphs({cloud:this.cloud,connectionManager:this.connectionManager,branchId,changes:[...downloaded.rows,...downloaded.tombstones]});
+        return downloaded;
+      },batchSize);
       const batch = page.batch;
       batchSize=Math.min(100,page.nextLimit);
       if (!batch.count) break;
@@ -122,26 +131,28 @@ class PullWorker {
       // Feed pages are ordered by change cursor, not by foreign-key dependency.
       // A store update can arrive before the page containing its new group.
       await this.ensureStoreGroups(batch, branchId);
-      await this.ensureTicketDependencies(batch, branchId);
+      const graphParents=[...prepared.graphs.values()].map(graph=>({table_name:"shifts",row_data:graph.tables.find(entry=>entry.table==="shifts").rows[0]}));
+      await this.ensureTicketDependencies({...batch,rows:[...batch.rows,...graphParents]}, branchId);
       const sql = this.connectionManager.sql();
       const transaction = new sql.Transaction(this.connectionManager.pool);
       await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
       try {
         const ordered = [...this.registry.tables].sort((a, b) => a.dependencyOrder - b.dependencyOrder || a.cloudTable.localeCompare(b.cloudTable));
+        merged+=await applyShiftGraphs({transaction,connectionManager:this.connectionManager,registry:this.registry,reader:this.reader,branchId,prepared});
         const graphPending = new Map();
         // Check the graph before any page writes. Parent discovery uses a short
         // pool read and must never wait on this transaction's own later X locks.
         for (const table of ordered) if (SHIFT_GRAPH_TABLES.has(table.cloudTable)) {
-          const changes = [...batch.rows, ...batch.tombstones].filter(row => row.table_name === table.cloudTable);
+          const changes = [...batch.rows, ...batch.tombstones].filter(row => row.table_name === table.cloudTable && !prepared.covers(row));
           if (changes.length) graphPending.set(table.cloudTable, await this.reader.unacknowledged(table,
             changes.map(change => String(change.entity_id)), transaction, { branchId, changes }));
         }
         for (const table of ordered) {
-          const result = await this.applyTable(transaction, table, batch.rows.filter((row) => row.table_name === table.cloudTable), branchId, graphPending.get(table.cloudTable));
+          const result = await this.applyTable(transaction, table, batch.rows.filter((row) => row.table_name === table.cloudTable && !prepared.covers(row)), branchId, graphPending.get(table.cloudTable));
           merged += result.applied; conflictCount += result.conflicts;
         }
         for (const table of [...ordered].reverse()) {
-          const result = await this.applyTable(transaction, table, batch.tombstones.filter((row) => row.table_name === table.cloudTable), branchId, graphPending.get(table.cloudTable));
+          const result = await this.applyTable(transaction, table, batch.tombstones.filter((row) => row.table_name === table.cloudTable && !prepared.covers(row)), branchId, graphPending.get(table.cloudTable));
           merged += result.applied; conflictCount += result.conflicts;
         }
         await this.checkpoints.save(branchId, "__feed__", "pull", { committed_cursor: batch.cursor }, transaction);

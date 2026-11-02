@@ -174,7 +174,12 @@ class OperationsRepository {
     await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
     let affected = 0;
     try {
-      if (beforeWrite) await beforeWrite(transaction, ops);
+      if (beforeWrite && await beforeWrite(transaction, ops) === false) {
+        // Only Main supplies this callback. A proven protected receipt replay
+        // must not re-run an older parent UPDATE over a later recount.
+        await transaction.commit();
+        return {ok:true,context:String(context ?? "").slice(0,160),affected:0,replayed:true};
+      }
       for (const op of ops) affected += await this.applyOperation(transaction, op, scope);
       if (beforeCommit) await beforeCommit(transaction, ops);
       await transaction.commit();
