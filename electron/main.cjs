@@ -1450,8 +1450,12 @@ async function commitLocalShiftRecount(raw) {
   if (!["VARIANCE_REVIEW_REQUIRED", "RECONCILIATION", "CLOSED"].includes(state))
     throw new Error("This shift has not been counted yet.");
   const clientKey = String(raw.clientKey ?? `${shiftId}:recount:${cash}:${card ?? ""}:${digital ?? ""}:${reason}`);
-  const prior = await operationsRepository.query(branchId, "shift_cash_counts", { match: { client_key: clientKey }, limit: 1 });
-  if (prior.rows?.length) return { ok: true, state: "CLOSED", replayed: true };
+  const identity = adminSession.identity();
+  const actor = identity?.subject ?? String(shift.opened_by_name ?? "");
+  const terminalId = String(raw.terminalId ?? shift.terminal_id ?? "").trim() || null;
+  const intent = { branchId, shiftId, clientKey, reason, actor, terminalId,
+    cash: shiftMoney(cash), card: card == null ? null : shiftMoney(card), digital: digital == null ? null : shiftMoney(digital) };
+  if (await shiftSyncJournal.recountReplay(intent)) return { ok: true, state: "CLOSED", replayed: true };
   const expected = await operationsRepository.shiftExpectedTotals(branchId, shiftId);
   const expectedCash = shiftMoney(expected.expected_cash);
   const expectedCard = shiftMoney(expected.expected_card);
@@ -1464,9 +1468,6 @@ async function commitLocalShiftRecount(raw) {
   const varianceDigital = countedDigital == null ? null : shiftMoney(countedDigital - expectedDigital);
   const varianceTotal = shiftMoney(varianceCash + (varianceCard ?? 0) + (varianceDigital ?? 0));
   const varianceStatus = Math.abs(varianceTotal) <= 0.005 ? "NO_VARIANCE" : varianceTotal > 0 ? "OVER" : "SHORT";
-  const identity = adminSession.identity();
-  const actor = identity?.subject ?? String(shift.opened_by_name ?? "");
-  const terminalId = String(raw.terminalId ?? shift.terminal_id ?? "").trim() || null;
   const countId = randomUUID();
   const now = new Date().toISOString();
   try {
@@ -1501,6 +1502,7 @@ async function commitLocalShiftRecount(raw) {
     ], { branchId, terminalId });
   } catch (error) {
     if (![2601, 2627].includes(Number(error?.number ?? error?.originalError?.info?.number))) throw error;
+    if (!await shiftSyncJournal.recountReplay(intent)) throw error;
     pendingShiftCloseSync.add(shiftId);
     return { ok: true, state: "CLOSED", replayed: true };
   }

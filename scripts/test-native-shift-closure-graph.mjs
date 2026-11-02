@@ -156,7 +156,8 @@ function localFixture() {
       const eventIds=Object.entries(p).filter(([key])=>key.startsWith('event')).map(([,value])=>value);
       return {recordset:clone(model.get(table).filter(row => table==='shifts'
         ? row.id===p.shift && row.store_id===p.branch
-        : table==='activity_events' ? eventIds.includes(row.id) : row.shift_id===p.shift))};
+        : table==='activity_events' ? eventIds.includes(row.id) : row.shift_id===p.shift &&
+          (!Object.hasOwn(p,'client_key') || row.store_id===p.branch && row.client_key===p.client_key)))};
     }
   }
   class Transaction {async begin() {} async commit() {} async rollback() {}}
@@ -198,7 +199,7 @@ function localFixture() {
   assert(start>=0 && end>start);
   const context={require:name=>name.startsWith('./') ? require('../electron/'+name.slice(2)) : require(name),
     localBranchId:()=> 'a',operationsRepository:repository,
-    shiftSyncJournal:{apply:(...args)=>{writerCalls.push(args[0]);return actualWriter.apply(...args);}},
+    shiftSyncJournal:{recountReplay:(...args)=>actualWriter.recountReplay(...args),apply:(...args)=>{writerCalls.push(args[0]);return actualWriter.apply(...args);}},
     guard:require('../electron/ipc-guard.cjs'),recordId,randomUUID,Date,
     shiftMoney:value=>Math.round(Number(value ?? 0)*100)/100,
     adminSession:{identity:()=>({subject:'cashier'}),hasLevel:()=>false,hasPermission:()=>true},

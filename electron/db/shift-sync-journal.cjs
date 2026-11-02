@@ -28,6 +28,64 @@ const rowsOf = operation => operation.rows ?? (operation.values ? [{ ...operatio
 class ShiftSyncJournal {
   constructor(operationsRepository) { this.repository = operationsRepository; }
 
+  async recountReplay(intent) {
+    const branchId = branch(intent.branchId), shiftId = id(intent.shiftId);
+    if (!branchId || !shiftId || !intent.clientKey) fail("The recount replay identity is incomplete.", "EIDEMPOTENCY");
+    const sql = this.repository.connectionManager.sql();
+    const transaction = new sql.Transaction(this.repository.connectionManager.pool);
+    await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
+    try {
+      const parent = await new sql.Request(transaction).input("shift", sql.UniqueIdentifier, shiftId).input("branch", branchId)
+        .query("SELECT id FROM dbo.[shifts] WITH (UPDLOCK,HOLDLOCK) WHERE id=@shift AND store_id=@branch;");
+      if (parent.recordset?.length !== 1) fail("The recount does not belong to this terminal branch.", "SYNC_BRANCH_FORBIDDEN");
+      const found = await new sql.Request(transaction).input("shift", sql.UniqueIdentifier, shiftId).input("branch", branchId)
+        .input("client_key", intent.clientKey)
+        .query("SELECT TOP (2) * FROM dbo.[shift_cash_counts] WITH (UPDLOCK,HOLDLOCK) WHERE shift_id=@shift AND store_id=@branch AND client_key=@client_key;");
+      if (!found.recordset?.length) { await transaction.commit(); return false; }
+      const mismatch = () => fail("This recount key has different or incomplete saved facts. No recount was accepted.", "EIDEMPOTENCY");
+      if (found.recordset.length !== 1) mismatch();
+      const graph = await this.snapshot(transaction, branchId, shiftId, []);
+      const count = graph.get("shift_cash_counts").find(row => id(row.id) === id(found.recordset[0].id));
+      if (!count || count.kind !== "RECOUNT" || count.client_key !== intent.clientKey || count.reason !== intent.reason ||
+          branch(count.terminal_id) !== branch(intent.terminalId) || count.counted_by_name !== intent.actor ||
+          count.counted_by_staff_id !== intent.actor ||
+          !["cash", "card", "digital"].every(tender => sameMoney(count[`counted_${tender}`], intent[tender]))) mismatch();
+      const reconciliations = graph.get("shift_reconciliations").filter(row => id(row.count_id) === id(count.id));
+      const events = graph.get("shift_close_events").filter(row => {
+        let detail = row.detail;
+        if (typeof detail === "string") { try { detail = JSON.parse(detail); } catch { return false; } }
+        return row.event === "recount_submitted" && id(detail?.count_id) === id(count.id);
+      });
+      if (reconciliations.length !== 1 || events.length !== 1) mismatch();
+      const reconciliation = reconciliations[0], event = events[0];
+      let detail = event.detail;
+      if (typeof detail === "string") { try { detail = JSON.parse(detail); } catch { mismatch(); } }
+      // Verify this historical recount, not a newer parent or today's totals.
+      const time = value => value instanceof Date ? value.toISOString() : String(value ?? "");
+      const sameTime = value => time(value) === time(count.created_at);
+      const money = value => Math.round(Number(value) * 100) / 100;
+      const variances = ["cash", "card", "digital"].map(tender => {
+        const counted = count[`counted_${tender}`], expected = reconciliation[`expected_${tender}`];
+        if (!sameMoney(reconciliation[`counted_${tender}`], counted) || !finiteMoney(expected)) mismatch();
+        const variance = counted == null ? null : money(Number(counted) - Number(expected));
+        if (!sameMoney(reconciliation[`variance_${tender}`], variance)) mismatch();
+        return variance ?? 0;
+      });
+      const total = money(variances.reduce((sum, value) => sum + value, 0));
+      const status = Math.abs(total) <= 0.005 ? "NO_VARIANCE" : total > 0 ? "OVER" : "SHORT";
+      if (!count.created_at || !sameTime(reconciliation.created_at) || !sameTime(event.created_at) ||
+          !sameMoney(reconciliation.variance_total, total) || reconciliation.variance_status !== status ||
+          detail?.reason !== intent.reason || event.to_state !== "CLOSED" ||
+          branch(event.terminal_id) !== branch(intent.terminalId) || event.actor_name !== intent.actor ||
+          event.actor_staff_id !== intent.actor) mismatch();
+      await transaction.commit();
+      return true;
+    } catch (error) {
+      await Promise.resolve(transaction.rollback()).catch(() => undefined);
+      throw error;
+    }
+  }
+
   validate(operations, scope) {
     const branchId = branch(scope.branchId);
     if (!branchId || branchId.length > 128) fail("A verified terminal branch is required.", "EBRANCH");
