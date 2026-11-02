@@ -84,6 +84,14 @@ Pinned Node 22.22.2 verification on this Windows development PC:
   This is not full physical-device, slow-network or hosted acceptance. Exact-head
   CI/builds remain gates; no merge, manual deployment or publication was performed.
 
+Root also simulated integration with CPU PR #360 head `651348bb` using
+`git merge-tree --write-tree`, without changing a branch, index or working tree.
+The first simulation found only a task-ledger header conflict; the native scoped
+notes were kept separate from the concurrent global reconciliation header. The
+subsequent simulation was clean and retained both patches' exact runtime/test
+files and dated instructions. This is textual integration evidence, not a merged
+branch, combined-runtime acceptance or deployment authorization.
+
 Frozen SHA256, matched by root and independent reviewer:
 
 | File | SHA256 |
