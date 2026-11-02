@@ -17,6 +17,7 @@ const { OperationsRepository } = require('../electron/db/repositories/operations
 const { ShiftSyncJournal } = require('../electron/db/shift-sync-journal.cjs');
 const { PushWorker } = require('../electron/sync/push-worker.cjs');
 const { ChangeReader } = require('../electron/sync/change-reader.cjs');
+const { CloudClient } = require('../electron/sync/cloud-client.cjs');
 const { recordId } = require('../electron/sync/uuid-fields.cjs');
 const tables = ['shifts','shift_cash_counts','shift_close_events','shift_reconciliations',
   'shift_notifications','shift_variance_alerts','activity_events'];
@@ -41,6 +42,7 @@ const capturedFiles = process.argv.slice(2);
 assert(capturedFiles.length === 0 || capturedFiles.length === 3,
   'Supply all three routine/trigger-capture files or none; never a database connection.');
 const captures = await Promise.all(capturedFiles.map(async file => JSON.parse(await readFile(file,'utf8'))));
+const lifecycleMigration = await read('supabase/migrations/20261101052452_prevent_closed_shift_reopening_during_sync.sql');
 const db = new PGlite();
 await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
  CREATE SCHEMA auth;
@@ -115,6 +117,7 @@ for (const capture of captures) {
     else assert.equal(found.rows[0].definition.replace(/\s+/g,' '),constraint.definition.replace(/\s+/g,' '),constraint.name);
   }
 }
+await db.exec(lifecycleMigration);
 // All captured callbacks execute with legacy/no rules or an empty enabled-rule
 // list. Rule-recipient matching, external delivery and nonempty rule sets are
 // separate workflows; this fixture neither sends notifications nor stubs them.
@@ -369,6 +372,66 @@ try {
     const replay=(await db.query('SELECT pos_sync_push_aggregate($1::uuid,\'default\',\'a\',\'t-a\',$2::jsonb) result',
       [originalGraph.batchId,JSON.stringify(originalGraph.operations)])).rows[0].result;
     assert.equal(replay.replayed,true);assert.equal((await db.query('SELECT count(*)::int n FROM notification_deliveries')).rows[0].n,deliveries.length);
+  });
+  await test('a delayed clean server packet and receipt replay cannot reopen an acknowledged full closing graph',async()=>{
+    const f=localFixture(),opening=clone(f.model.get('shifts')[0]);
+    await close(f,105);await f.worker.pushAggregates('a',100,true);await verifyGraph(f);
+    const before=Object.fromEntries(await Promise.all(tables.map(async table=>[table,await cloudRows(table)])));
+    const payload={batchId:randomUUID(),branchId:'a',operations:[{table:'shifts',rows:[{...opening,row_version:99}],changes:[]}]};
+    const first=await f.upload(payload);assert.equal(first.ok,true);assert.equal(first.applied,0);
+    const replay=await f.upload(payload);assert.equal(replay.replayed,true);
+    for(const table of tables)assert.deepEqual(await cloudRows(table),before[table],table);
+    await verifyGraph(f);
+  });
+  await test('new metadata on a nonfinal opening is retained as a conflict rather than silently lost',async()=>{
+    const f=localFixture(),opening=clone(f.model.get('shifts')[0]);
+    await close(f,105);await f.worker.pushAggregates('a',100,true);await verifyGraph(f);
+    const before=await cloudRows('shifts'),receipts=(await db.query('SELECT count(*)::int n FROM sync_idempotency_receipts')).rows[0].n;
+    await assert.rejects(f.upload({batchId:randomUUID(),branchId:'a',operations:[{table:'shifts',
+      rows:[{...opening,row_version:99,note:'Do not silently discard this correction'}],changes:[]}]}),/SYNC_SHIFT_CLOSURE_CONFLICT/);
+    assert.deepEqual(await cloudRows('shifts'),before);
+    assert.equal((await db.query('SELECT count(*)::int n FROM sync_idempotency_receipts')).rows[0].n,receipts);
+  });
+  await test('a later authorized recount still synchronizes after an obsolete opening was ignored',async()=>{
+    const f=localFixture(),opening=clone(f.model.get('shifts')[0]);
+    await close(f,105);await f.worker.pushAggregates('a',100,true);
+    await f.upload({batchId:randomUUID(),branchId:'a',operations:[{table:'shifts',rows:[{...opening,row_version:99}],changes:[]}]});
+    await f.calls.commitLocalShiftRecount({shiftId:id,cash:110,card:20,digital:0,reason:'A genuine recount',terminalId:'t-a'});
+    await f.worker.pushAggregates('a',100,true);await verifyGraph(f);
+    assert.equal((await cloudRows('shift_cash_counts')).length,2);
+    assert.equal(Number((await cloudRows('shifts'))[0].counted_cash),110);
+  });
+  await test('known boundary: server acknowledgement does not establish higher-revision local OPEN convergence',async()=>{
+    const f=localFixture(),opening={...clone(f.model.get('shifts')[0]),row_version:99};
+    await close(f,105);await f.worker.pushAggregates('a',100,true);
+    for(const cash of [106,107,108]) {
+      await f.calls.commitLocalShiftRecount({shiftId:id,cash,card:20,digital:0,reason:'Fixture recount '+cash,terminalId:'t-a'});
+      await f.worker.pushAggregates('a',100,true);
+    }
+    await verifyGraph(f);const remote=(await cloudRows('shifts'))[0];assert.equal(Number(remote.row_version),5);
+    const acknowledged=await f.upload({batchId:randomUUID(),branchId:'a',operations:[{table:'shifts',rows:[opening],changes:[]}]});
+    assert.equal(acknowledged.ok,true);assert.equal(acknowledged.applied,0);assert.equal((await cloudRows('shifts'))[0].status,'CLOSED');
+    for(const initial of [clone(f.model.get('shifts')[0]),opening]) {
+      let local=clone(initial);const statements=[];
+      class Request {
+        values={};
+        input(name,value){this.values[name]=value;return this;}
+        async query(sql){
+          statements.push(sql);
+          // Characterize the actual writer's SQL with a deliberately thin
+          // version-gate model. This is not physical SQL Server verification.
+          assert(sql.includes('WHEN MATCHED AND source.[row_version]>=target.[row_version]'));
+          const source=Object.fromEntries([...sql.matchAll(/@(v\d+) AS \[([a-z_]+)\]/g)].map(match=>[match[2],this.values[match[1]]]));
+          if(Number(source.row_version)>=Number(local.row_version))local={...local,...source};
+          return {rowsAffected:[0]};
+        }
+      }
+      const client=new CloudClient({connectionManager:{sql:()=>({Request})}});
+      await client.applyLocalBatch({},tableMap.get('shifts'),{rows:[{row_data:remote}],tombstones:[]});
+      assert.equal(statements.length,1);assert.equal(local.status,initial.status);assert.equal(local.row_version,initial.row_version);
+      if(initial.status==='CLOSED')assert.equal(new Date(local.closed_at).toISOString(),new Date(remote.closed_at).toISOString());
+      else {assert.equal(local.status,'OPEN');assert.equal(local.row_version,99);}
+    }
   });
   console.log(`${passed} native Main / full closure graph scenarios passed (${captures.length ? 'captured deployed routines' : 'canonical routines'}).`);
 } finally {await db.close();}
