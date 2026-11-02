@@ -89,8 +89,8 @@ before those changes. Existing operator database credentials and iOS signing key
 are untouched. Independent protocol/schema/race preparation can continue; no
 merge/deployment or claim of complete permission safety is permitted meanwhile.
 
-AUTH-37 refined proposal (owner approval pending; supersedes terminal-manager-only
-key enrollment): bind a separate Main-only signing key to each actual verified
+AUTH-37 refined preparation **approved by the owner on 2 November**, superseding
+the unanswered terminal-manager-only proposal: bind a separate Main-only signing key to each actual verified
 author, terminal and project. Enroll automatically from that same person's first
 successful online PIN/password/session adoption, using existing live permission
 resolution; management authority cannot bind an arbitrary key to another admin.
@@ -116,8 +116,15 @@ For enrolled terminals require signed sensitive shift writes across v3/legacy
 aliases so leaked transport proof cannot bypass author checks. Older un-enrolled
 first-close compatibility remains an explicit rollout/cutoff decision, not proof
 of complete legacy API security. A version string alone cannot authorize bypass.
-No new key, signing/enrollment implementation, live schema or device enrollment
-is authorized until the owner approves this refined security preparation plan.
+The owner approved source preparation and isolated tests, including ephemeral
+fixture keys only. No real device key creation/enrollment, existing key rotation,
+live database edits, deployment or unsigned-legacy rollout cutoff is approved.
+Apply the security fix workflow: a fresh independent read-only boundary and
+compatibility investigation precedes editing; freeze the implementation/DTO;
+after focused checks use one fresh read-only bypass/regression review and ordered
+verification. Report signed-path remediation separately from unretired legacy
+compatibility and physical-device/deployment evidence; do not claim the whole
+system's terminal authorization is fixed merely by adding signatures.
 
 Necessary offline dependency: capture the **actual OPEN postimage** inside the
 normal AggregateRepository opening commit in local protocol metadata. This is

@@ -31,6 +31,16 @@ application, historical repair and release remain separate. Preserve legacy
 first closures, real exact replay, offline pending work, configured shift modes,
 cashier permissions and immutable history; do not guess a baseline for old work.
 
+Later the owner explicitly approved AUTH-37 **author-bound security preparation
+and isolated tests**: separate Main-only keys per actual author/terminal/project,
+automatic enrollment after that same person's verified online login, current
+permission checks before new uploads, pending review on revocation, and no-write
+acknowledgement of already accepted history. Offline sign-in/sales remain usable;
+protected uploads may wait for same-author enrollment. Never cache plaintext
+PIN/password or substitute a terminal manager's claim for the author's identity.
+Do not repurpose existing approval, session or iOS keys. Real enrollment, live
+schema changes, deployment and unsigned legacy retirement remain separate.
+
 Earlier update, 2 November 2026: the owner approved a narrow server CPU
 correction in `sync-download-redaction.ts` and isolated tests. Production
 Cloudflare `/api/v1/pos/sync` failures have outcome `exceededCpu` / HTTP 503;
