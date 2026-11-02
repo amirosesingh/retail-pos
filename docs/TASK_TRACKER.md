@@ -118,6 +118,36 @@ reconciliation plan and execution approval remain necessary. Preserve all other
 unfinished tasks. Rollback for NET-02A/B is a targeted source revert, retaining
 subsequent unrelated changes; no live data rollback is needed.
 
+## REL-30 — owner-approved beta integration and production preparation
+
+On 2 November the owner requested merging the completed fixes into beta,
+updating the beta version and preparing a production release if readiness is
+satisfied. Scope is reviewed CPU PR #360 and native-network PR #361, preserving
+existing features through targeted PR merges. Do not include held preparation
+PR #357, superseded recovery PR #359 or unrelated dependency upgrades. No live
+database repair, main promotion or installer publication is implied; beta
+installers retain the explicit "Publish beta now" gate and main retains approval
+for the exact separate promotion. Current work is merge preparation, not a claim
+that the cumulative production candidate is fully verified.
+
+Combined immutable local candidate `efe5b6c21b1382e1e3e4d9dd752f6f56521f414d`
+from beta `fd41a37f` contains exactly the two reviewed patches: eight changed
+files, identical runtime/test blobs and no migration/workflow/version change.
+Root pinned-Node-22 verification passed 604 suites / 4,305 tests (84.96s),
+79 native/release safeguard tests, TypeScript, scoped lint, diff checks and web
+build. Build-generated report was excluded after private preservation; its two
+informational numeric-input notes remain unverified separate follow-up. Both
+individual PR heads passed platform/security checks; CodeRabbit skipped. Remote
+merge SHAs, final exact-beta CI and actual hosted acceptance remain to be recorded.
+
+Next beta calculation is `1.4.81-beta.3`; committed source remains `1.4.80`.
+Do not commit generated beta version files. Proposed stable `1.4.81` still needs
+a reviewed metadata decision; changing beta's base first would change its next
+beta identity to `1.4.82-beta.1`. Production draft PR #354 must retain installed-
+device, hosted CPU/recovery, exact database dependencies, lifecycle/convergence
+and unresolved critical audit gates. Preserve all pending work and Membership
+hold; never clear queues or restore an older database as release rollback.
+
 ## How to maintain this file
 
 - Capture each new instruction/correction before dependent implementation; add or

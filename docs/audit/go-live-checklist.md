@@ -9,7 +9,50 @@ This is an acceptance checklist, not a record of completed checks. Transaction,
 stock, concurrency and failure tests require isolated/restored fixtures and
 approved test devices; never damage real business data. Membership is on hold.
 
-## 1 November 2026 — cumulative beta promotion preparation
+## 2 November 2026 — beta integration and production preparation
+
+The owner requested merging the reviewed CPU/native fixes into beta and preparing
+production if ready. This authorizes PR #360/#361 beta integration, not held
+PR #357/#359 execution, unrelated dependency upgrades or a main release.
+
+The exact combined candidate `efe5b6c2` passed 604 suites / 4,305 tests,
+79 native/release tests, TypeScript, scoped lint and web build. Independent
+reviews matched the source blobs and found no remaining scoped defect. Individual
+PR heads passed platform/security checks; CodeRabbit skipped. These checks
+protect the changed privacy, timeout, acknowledgement and telemetry paths, not
+the complete installed cumulative release. Record final merge/CI identities in
+the task tracker and [production draft PR #354](https://github.com/amirosesingh/retail-pos/pull/354).
+
+**Production is still not signed off.** The main-to-combined-source comparison
+at that immutable candidate is 580 files, +35,054 / -2,940, and 105 candidate-only
+commits; final remote merge commit totals must be recalculated. Do not mistake
+the eight-file recent-fix delta for the entire production promotion scope.
+
+The original full STR1 PC closing graph was captured and its digest verified.
+Cloud now contains a later owner-confirmed deliberate web closure with different
+children. The owner selects original cashier facts while preserving both audit
+histories. Draft PR #359's old metadata replay is superseded and **HOLD**; require
+a new exact reconciliation plan and separate execution approval. Never clear
+queues, reset checkpoints, auto-close rows or replace the later history.
+
+Current metadata remains `1.4.80`; the calculated next installer beta is
+`1.4.81-beta.3`. Generated beta version output must not be committed. Proposed
+stable `1.4.81` requires an explicit reviewed metadata decision across package,
+lock, version and generated SQL files. Updating beta's base to `1.4.81` first
+changes its next beta to `1.4.82-beta.1`; do not force a mismatched workflow input.
+No stable version or release tag is created by this preparation.
+
+Remaining production gates include final exact-beta checks and destination diff,
+installed Windows upgrade/checkout/receipts/offline/reconnect acknowledgement,
+applicable mobile behavior, hosted CPU/recovery acceptance, exact live dependency
+definitions, unresolved critical tracker findings, all mandatory terminal scope
+scenarios, stale lifecycle/higher-revision convergence and original-closing
+reconciliation. Draft PR #357 remains outside this candidate and unapproved live.
+Other cancellation/pass-budget/health-probe proposals remain separately scoped.
+Membership and its dependencies stay on hold. No database upgrade is authorized
+merely by a code merge or installer release.
+
+## 1 November 2026 — historical cumulative preparation checkpoint
 
 **Production is not signed off.** Prepare one cumulative beta source candidate,
 not a combination of old installers or a replacement checkout. Current production
@@ -44,11 +87,12 @@ Required gates before that promotion:
       independent browser/IDB fixtures. A zero journal must not claim complete
       Change Tracking upload; current errors and unavailable reads must stay
       visible. No retry/queue/data behavior is changed by that patch.
-- [ ] Recover/verify the affected PC's original locally saved closing graph and
-      timestamp, preserving counts, identity, queue and active drawer. Cloud still
-      has both identified STR1 shifts OPEN with no closing children. No automatic
-      historical repair is approved. A separate beta profile cannot stand in for
-      the affected production profile's pending data.
+- [ ] Reconcile the affected PC's original closing graph and timestamp with the
+      later deliberate web closure, preserving both histories, counts, identity,
+      queue and active drawer. Complete private capture succeeded on 2 November;
+      the earlier cloud-OPEN premise is superseded. No automatic historical
+      repair is approved. A separate beta profile cannot stand in for the
+      affected production profile's pending data.
 - [ ] Resolve or explicitly review the known higher-revision stale OPEN upload
       that can reopen a CLOSED row. PR #353 does not correct this older lifecycle
       risk. Draft PR #357 prepares two service-only routine guards;71 captured
