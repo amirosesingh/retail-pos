@@ -14,6 +14,7 @@ const { applyShiftGraphs } = require("../electron/sync/shift-graph.cjs");
 const { GRAPH_TABLES } = require("../electron/db/shift-intents.cjs");
 const { AggregateRepository } = require("../electron/db/repositories/aggregates.cjs");
 const { CheckpointRepository } = require("../electron/sync/checkpoints.cjs");
+const { matchingCoverage } = require("./lib/shift-coverage-fixture.cjs");
 
 async function main() {
   assert.deepEqual(
@@ -235,7 +236,7 @@ async function main() {
           registry,
           reader,
           branchId: branch,
-          prepared: { graphs: new Map([[shift, value]]) },
+          prepared: { graphs: new Map([[value.shiftId, value]]) },
         });
         await tx.commit();
         return result;
@@ -400,6 +401,7 @@ async function main() {
         accepted_token: "b".repeat(64),
         current_token: "c".repeat(64),
         superseded: true,
+        coverage: matchingCoverage(registry, first.operations),
       });
       const saved = (
         await pool
@@ -431,6 +433,7 @@ async function main() {
           accepted_token: "c".repeat(64),
           current_token: "c".repeat(64),
           superseded: false,
+          coverage: matchingCoverage(registry, intent.operations),
         });
       }
       const latest = JSON.parse(intents.at(-1).payload_json);
@@ -748,6 +751,228 @@ async function main() {
         change_tracking_version: await reader.currentVersion(),
       });
       assert.equal(await reader.shiftPrerequisites(scope(laterShift)), true);
+    });
+    let coverageScenario;
+    await test("historical fully-matched alert proof permits its old CT copy, then adopts WEB sent state", async () => {
+      const target = randomUUID(),
+        alert = randomUUID(),
+        aggregate = new AggregateRepository(manager, new OperationsRepository(manager, registry));
+      const opened = await aggregate.commit("shift", {
+        branchId: branch,
+        terminalId: "terminal",
+        permissions: { can_open_shift: true },
+        operations: [
+          {
+            kind: "insert",
+            table: "shifts",
+            rows: [
+              {
+                id: target,
+                store_id: branch,
+                terminal_id: "terminal",
+                status: "OPEN",
+                state: "ACTIVE",
+                row_version: 1,
+                opening_float: 20,
+              },
+            ],
+          },
+        ],
+      });
+      const closing = (cash, index) => {
+        const ops = operations(cash, index);
+        for (const op of ops) {
+          for (const record of op.rows ?? []) if (record.shift_id) record.shift_id = target;
+          if (op.match) op.match.id = target;
+        }
+        ops[0].rows[0].client_key = `coverage-${index}`;
+        return ops;
+      };
+      const first = closing(110, 8),
+        time = first[0].rows[0].created_at;
+      first[0].rows[0].kind = "ORIGINAL";
+      first[3].values.closed_at = time;
+      first[2].rows = [
+        {
+          ...first[2].rows[0],
+          event: "cash_count_submitted",
+          to_state: "CASH_COUNT_SUBMITTED",
+          from_state: "CASH_COUNT_REQUIRED",
+          detail: { count_id: first[0].rows[0].id },
+        },
+        {
+          ...first[2].rows[0],
+          id: randomUUID(),
+          event: "reconciled",
+          from_state: "CASH_COUNT_SUBMITTED",
+          to_state: "CLOSED",
+          detail: { variance_status: "OVER", variance_total: 10 },
+        },
+      ];
+      first.push({
+        kind: "insert",
+        table: "shift_variance_alerts",
+        rows: [
+          {
+            id: alert,
+            shift_id: target,
+            store_id: branch,
+            reconciliation_id: first[1].rows[0].id,
+            variance_total: 10,
+            variance_status: "OVER",
+            severity: "warning",
+            delivery_status: "pending",
+            attempts: 0,
+            created_at: time,
+            updated_at: time,
+          },
+        ],
+      });
+      await writer.apply("coverage original", first, {
+        branchId: branch,
+        terminalId: "terminal",
+        observation: await writer.observe(branch, target),
+      });
+      await reader.acknowledgeAggregate(opened.operationId);
+      const latest = async () => {
+        const saved = (
+          await pool
+            .request()
+            .input("shift", target)
+            .query(
+              "SELECT TOP(1) intent_id FROM dbo.pos_sync_shift_intents WHERE shift_id=@shift ORDER BY intent_sequence DESC;",
+            )
+        ).recordset[0];
+        return reader.protectedIntent(saved.intent_id, branch);
+      };
+      const acknowledge = async (intent, token, omitted = {}) =>
+        reader.acknowledgeProtectedIntent(intent, {
+          intent_id: intent.intentId,
+          intent_hash: intent.payloadHash,
+          accepted_token: token,
+          current_token: token,
+          superseded: false,
+          coverage: matchingCoverage(registry, intent.operations, omitted),
+        });
+      await acknowledge(await latest(), "a".repeat(64));
+      await writer.apply("coverage later recount", closing(120, 9), {
+        branchId: branch,
+        terminalId: "terminal",
+        observation: await writer.observe(branch, target),
+      });
+      const later = await latest();
+      await acknowledge(later, "b".repeat(64), { shift_variance_alerts: [alert] });
+      const alertTable = registry.tables.find(
+        (table) => table.cloudTable === "shift_variance_alerts",
+      );
+      assert.deepEqual(
+        await reader.acceptedShiftChanges(
+          alertTable,
+          [{ key: { id: alert }, operation: "U" }],
+          branch,
+        ),
+        new Set([alert]),
+      );
+      const remote = {
+        ok: true,
+        shiftGraphVersion: 1,
+        branchId: branch,
+        shiftId: target,
+        graphToken: "b".repeat(64),
+        closedAtRaw: later.operations.find((op) => op.table === "shifts").rows[0].closed_at,
+        tables: GRAPH_TABLES.map((table) => ({
+          table,
+          rows: structuredClone(later.operations.find((op) => op.table === table).rows),
+        })),
+      };
+      Object.assign(
+        remote.tables.find((entry) => entry.table === "shift_variance_alerts").rows[0],
+        { delivery_status: "sent", attempts: 1, updated_at: "2026-11-02T06:00:00.000Z" },
+      );
+      await adopt(remote);
+      assert.equal(
+        (
+          await pool
+            .request()
+            .input("alert", alert)
+            .query("SELECT delivery_status FROM dbo.shift_variance_alerts WHERE id=@alert;")
+        ).recordset[0].delivery_status,
+        "sent",
+      );
+      coverageScenario = { target, alert, closing, latest, acknowledge, remote };
+    });
+    await test("unuploaded note and alert retry observed before closing remain pending when omitted by actual-match proof", async () => {
+      const { target, alert, closing, latest, acknowledge, remote } = coverageScenario;
+      await pool
+        .request()
+        .input("shift", target)
+        .input("alert", alert)
+        .query(
+          "UPDATE dbo.shifts SET note=N'unuploaded local note',row_version=row_version+1,updated_at='2026-11-02T07:00:00Z' WHERE id=@shift; UPDATE dbo.shift_variance_alerts SET delivery_status=N'pending',attempts=2,updated_at='2026-11-02T07:00:00Z' WHERE id=@alert;",
+        );
+      await writer.apply("coverage count with unrelated observations", closing(130, 7), {
+        branchId: branch,
+        terminalId: "terminal",
+        observation: await writer.observe(branch, target),
+      });
+      const intent = await latest(),
+        malformed = matchingCoverage(registry, intent.operations),
+        beforeInvalidAck = await image();
+      malformed.tables.find(
+        (entry) => entry.table === "shift_cash_counts",
+      ).rows[0].serverValues.note = "forbidden business override";
+      await assert.rejects(
+        reader.acknowledgeProtectedIntent(intent, {
+          intent_id: intent.intentId,
+          intent_hash: intent.payloadHash,
+          accepted_token: "c".repeat(64),
+          current_token: "c".repeat(64),
+          superseded: false,
+          coverage: malformed,
+        }),
+        (error) => error.code === "ESHIFT_COVERAGE_UNCONFIRMED",
+      );
+      assert.deepEqual(await image(), beforeInvalidAck);
+      await acknowledge(intent, "c".repeat(64), {
+        shifts: [target],
+        shift_variance_alerts: [alert],
+      });
+      for (const [name, id] of [
+        ["shifts", target],
+        ["shift_variance_alerts", alert],
+      ])
+        assert.deepEqual(
+          await reader.acceptedShiftChanges(
+            registry.tables.find((table) => table.cloudTable === name),
+            [{ key: { id }, operation: "U" }],
+            branch,
+          ),
+          new Set(),
+        );
+      const serverGraph = {
+        ...remote,
+        graphToken: "c".repeat(64),
+        tables: GRAPH_TABLES.map((table) => ({
+          table,
+          rows: structuredClone(intent.operations.find((op) => op.table === table).rows),
+        })),
+      };
+      serverGraph.tables.find((entry) => entry.table === "shifts").rows[0].note = null;
+      serverGraph.tables.find((entry) => entry.table === "shift_variance_alerts").rows =
+        structuredClone(
+          remote.tables.find((entry) => entry.table === "shift_variance_alerts").rows,
+        );
+      const before = await image(),
+        checkpoints = (
+          await pool.request().query("SELECT * FROM dbo.sync_checkpoints ORDER BY entity_type;")
+        ).recordset;
+      await assert.rejects(adopt(serverGraph), (error) => error.code === "ELOCAL_CT_PENDING");
+      assert.deepEqual(await image(), before);
+      assert.deepEqual(
+        (await pool.request().query("SELECT * FROM dbo.sync_checkpoints ORDER BY entity_type;"))
+          .recordset,
+        checkpoints,
+      );
     });
     await test("022 refuses unknown metadata shape without rewriting saved rows", async () => {
       await pool

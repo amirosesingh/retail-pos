@@ -289,7 +289,7 @@ class PushWorker {
           baseToken:intent.baseToken,predecessorIntentId:intent.predecessorIntentId,predecessorIntentHash:intent.predecessorIntentHash,payloadJson:intent.payloadJson};
         const acknowledgement=await this.retry(()=>this.cloud.pushAggregate({batchId:intent.intentId,branchId,shiftIntent}));
         if(!acknowledgement?.ok)throw new Error(acknowledgement?.error??"Cloud did not acknowledge the closing intent.");
-        const proof=assertShiftClosureAcknowledgement(acknowledgement,intent.operations,branchId,intent);
+        const proof=assertShiftClosureAcknowledgement(acknowledgement,intent.operations,branchId,intent,this.registry);
         await this.reader.acknowledgeProtectedIntent(intent,proof);
         pushed+=aggregate.changes.length;
         onProgress({direction:"push",table:intent.operations.map(operation=>operation.table).join(", "),completed:aggregate.changes.length});

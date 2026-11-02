@@ -9,6 +9,7 @@ const { ChangeReader } = require("../../../electron/sync/change-reader.cjs");
 const { PushWorker } = require("../../../electron/sync/push-worker.cjs");
 const { loadRegistry } = require("../../../electron/db/schema-registry.cjs");
 const { toCloudRow } = require("../../../electron/sync/row-codec.cjs");
+const {matchingCoverage}=require("../../../scripts/lib/shift-coverage-fixture.cjs");
 type Row = Record<string, unknown>;
 type State = { tables: Record<string, Row[]>; journal: Row[]; receipts: Row[]; intents: Row[]; baselines: Row[];openings:Row[] };
 type Operation = { kind: string; table: string; rows?: Row[]; values?: Row; match?: Row };
@@ -54,7 +55,7 @@ function fixture(options: { branch?: string; terminal?: string | null } = {}) {
       }
       if(query.startsWith("UPDATE dbo.pos_sync_shift_intents")){
         Object.assign(data.intents.find(row=>sameId(row.intent_id,this.inputs.intent))!,{accepted_token:this.inputs.accepted,current_token:this.inputs.current,
-          superseded:this.inputs.superseded,acknowledged_at:"acknowledged"});return{recordset:[],rowsAffected:[1]};
+          superseded:this.inputs.superseded,acknowledged_at:"acknowledged",ack_coverage_json:this.inputs.coverage});return{recordset:[],rowsAffected:[1]};
       }
       if(query.startsWith("UPDATE dbo.sync_change_journal")){
         data.journal.filter(row=>sameId(row.aggregate_id,this.inputs.aggregate)).forEach(row=>{row.acknowledged_at="acknowledged";});return{recordset:[],rowsAffected:[1]};
@@ -62,6 +63,8 @@ function fixture(options: { branch?: string; terminal?: string | null } = {}) {
       if(query.includes("SELECT DISTINCT shift_id FROM dbo.pos_sync_shift_intents"))return{recordset:copy(data.intents.filter(row=>sameId(row.branch_id,this.inputs.branch)&&JSON.parse(String(this.inputs.ids)).some((id:string)=>sameId(id,row.shift_id))))};
       if(query.includes("pos_sync_shift_intents"))return{recordset:copy(data.intents.filter(row=>sameId(row.branch_id,this.inputs.branch)&&
         (!query.includes("acknowledged_at IS NOT NULL")||row.acknowledged_at)&&
+        (!query.includes("ack_coverage_json IS NOT NULL")||row.ack_coverage_json)&&
+        (!this.inputs.before||Number(row.intent_sequence)<Number(this.inputs.before))&&
         (this.inputs.intent?sameId(row.intent_id,this.inputs.intent):sameId(row.shift_id,this.inputs.shift))).sort((a,b)=>Number(b.intent_sequence)-Number(a.intent_sequence)).slice(0,1))};
       if (query.startsWith("INSERT dbo.sync_change_journal")) {
         if (faults.journal) throw faults.journal;
@@ -176,7 +179,7 @@ function workerFixture(h: ReturnType<typeof fixture>, confirmation = true) {
       const parents = shiftRows.filter((row:Row) => row.status === "CLOSED");
       return { ok: true, ...(confirmation ? { shift_closure_ack_version: request.shiftIntent?3:2,
         shift_closures: parents.map((row:Row) => ({ id: row.id, store_id: row.store_id, row_version: Number(row.row_version) + 10, requested_row_version: row.row_version,
-          ...(request.shiftIntent?{intent_id:request.batchId,intent_hash:require("../../../electron/db/shift-intents.cjs").hashPayload(request.shiftIntent.payloadJson),accepted_token:"a".repeat(64),current_token:"a".repeat(64),superseded:false}:{}) })) } : {}) };
+          ...(request.shiftIntent?{intent_id:request.batchId,intent_hash:require("../../../electron/db/shift-intents.cjs").hashPayload(request.shiftIntent.payloadJson),accepted_token:"a".repeat(64),current_token:"a".repeat(64),superseded:false,coverage:matchingCoverage(h.registry,operations)}:{}) })) } : {}) };
     },
   };
   const tables = h.registry.tables.filter((table: { cloudTable: string }) => ["sales","change_history", "shifts", "shift_cash_counts", "shift_reconciliations", "shift_close_events", "shift_notifications", "shift_variance_alerts", "activity_events"].includes(table.cloudTable));
@@ -458,7 +461,7 @@ describe("protected shift closing durable journal", () => {
     const h=fixture();await h.writer.apply("close",closeOperations(),h.scope);
     await h.writer.apply("recount",closeOperations(branch,95,true,10),h.scope);
     const reader=new ChangeReader(h.connectionManager,h.registry), first=await reader.protectedIntent(h.data().intents[0].intent_id,branch);
-    await reader.acknowledgeProtectedIntent(first,{intent_id:first.intentId,intent_hash:first.payloadHash,accepted_token:"a".repeat(64),current_token:"b".repeat(64),superseded:true});
+    await reader.acknowledgeProtectedIntent(first,{intent_id:first.intentId,intent_hash:first.payloadHash,accepted_token:"a".repeat(64),current_token:"b".repeat(64),superseded:true,coverage:matchingCoverage(h.registry,first.operations)});
     await h.writer.apply("third",closeOperations(branch,97,true,20),h.scope);
     expect(h.data().intents[0].superseded).toBe(true);
     expect(h.data().intents[1].acknowledged_at).toBeUndefined();

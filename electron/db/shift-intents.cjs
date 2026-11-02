@@ -2,6 +2,7 @@ const { createHash, randomUUID } = require("node:crypto");
 const { canonical } = require("./repositories/aggregates.cjs");
 const { toCloudRow } = require("../sync/row-codec.cjs");
 const { recordId } = require("../sync/uuid-fields.cjs");
+const { validateCoverage } = require("../sync/shift-coverage.cjs");
 
 const GRAPH_TABLES = [
   "shifts",
@@ -434,10 +435,11 @@ class ShiftIntentStore {
         "The cloud has not bound acknowledgement to this exact closing intent.",
         "ESHIFT_CLOSURE_UNCONFIRMED",
       );
+    validateCoverage(proof.coverage, intent, this.registry);
     await this.query(
       transaction,
       `UPDATE dbo.pos_sync_shift_intents SET accepted_token=@accepted,current_token=@current,superseded=@superseded,
-      acknowledged_at=SYSDATETIMEOFFSET() WHERE intent_id=@intent AND branch_id=@branch AND payload_hash=@hash;`,
+      acknowledged_at=SYSDATETIMEOFFSET(),ack_coverage_json=@coverage WHERE intent_id=@intent AND branch_id=@branch AND payload_hash=@hash;`,
       {
         accepted: proof.accepted_token,
         current: proof.current_token,
@@ -445,6 +447,7 @@ class ShiftIntentStore {
         intent: intent.intentId,
         branch: intent.branchId,
         hash: intent.payloadHash,
+        coverage: JSON.stringify(proof.coverage),
       },
     );
     // A receipt acknowledges history only. It never installs a cloud baseline,
@@ -518,11 +521,18 @@ class ShiftIntentStore {
     if (!live.length) return new Set();
     const keys = live.map((change) => id(change.key?.id ?? change.id));
     if (keys.some((key) => !UUID.test(key)) || keys.length > 2000) return new Set();
+    const projection = table.columns
+      .map((column) =>
+        /^(decimal|numeric|money|smallmoney|bigint)\b/i.test(column.sqlServerType)
+          ? `CONVERT(nvarchar(100),source.[${column.sqlServerColumn}]) AS [${column.sqlServerColumn}]`
+          : `source.[${column.sqlServerColumn}]`,
+      )
+      .join(",");
     const rows =
       (
         await this.query(
           transaction,
-          `SELECT * FROM dbo.[${table.sqlServerTable}] ${transaction ? "WITH(UPDLOCK,HOLDLOCK)" : ""}
+          `SELECT ${projection} FROM dbo.[${table.sqlServerTable}] source ${transaction ? "WITH(UPDLOCK,HOLDLOCK)" : ""}
       WHERE store_id=@branch AND id IN(SELECT TRY_CONVERT(uniqueidentifier,[value]) FROM OPENJSON(@ids));`,
           { branch: id(branchId), ids: JSON.stringify(keys) },
         )
@@ -534,34 +544,64 @@ class ShiftIntentStore {
     // Keep one bounded payload in memory, rather than multiplying a 6 MiB
     // history snapshot by every distinct shift in a CT window.
     for (const shift of shifts) {
-      const receipt = (
-        await this.query(
-          transaction,
-          `SELECT TOP(1) shift_id,payload_json,payload_hash
-        FROM dbo.pos_sync_shift_intents ${transaction ? "WITH(UPDLOCK,HOLDLOCK)" : ""}
-        WHERE branch_id=@branch AND shift_id=@shift AND acknowledged_at IS NOT NULL ORDER BY intent_sequence DESC;`,
-          { branch: id(branchId), shift },
-        )
-      ).recordset?.[0];
-      if (!receipt) continue;
-      if (hashPayload(receipt.payload_json) !== receipt.payload_hash)
-        fail("Accepted closing metadata has different saved facts.", "EIDEMPOTENCY");
-      const payload = JSON.parse(receipt.payload_json);
-      if (id(payload.branchId) !== id(branchId) || id(payload.shiftId) !== id(receipt.shift_id))
-        fail("Accepted closing metadata has another scope.", "EIDEMPOTENCY");
-      const saved = new Map(
-        (payload.operations.find((op) => op.table === table.cloudTable)?.rows ?? []).map((row) => [
-          id(row.id),
-          row,
-        ]),
+      let before = "9223372036854775807",
+        scanned = 0;
+      const candidates = rows.filter(
+        (row) => id(table.cloudTable === "shifts" ? row.id : row.shift_id) === shift,
       );
-      for (const row of rows)
+      while (candidates.some((row) => !covered.has(id(row.id)))) {
+        if (scanned++ >= 2000)
+          fail(
+            "Closing receipt coverage exceeded its bounded history window. Copies remain pending.",
+            "ESHIFT_COVERAGE_UNCONFIRMED",
+          );
+        const receipt = (
+          await this.query(
+            transaction,
+            `SELECT TOP(1) intent_id,intent_sequence,shift_id,payload_json,payload_hash,ack_coverage_json
+        FROM dbo.pos_sync_shift_intents ${transaction ? "WITH(UPDLOCK,HOLDLOCK)" : ""}
+        WHERE branch_id=@branch AND shift_id=@shift AND acknowledged_at IS NOT NULL AND ack_coverage_json IS NOT NULL
+          AND intent_sequence<CONVERT(bigint,@before) ORDER BY intent_sequence DESC;`,
+            { branch: id(branchId), shift, before },
+          )
+        ).recordset?.[0];
+        if (!receipt) break;
+        const sequence = Number(receipt.intent_sequence);
+        if (!Number.isSafeInteger(sequence) || sequence < 1 || BigInt(sequence) >= BigInt(before))
+          fail("Closing receipt sequence could not be proved safely.", "EIDEMPOTENCY");
+        before = String(sequence);
+        if (hashPayload(receipt.payload_json) !== receipt.payload_hash)
+          fail("Accepted closing metadata has different saved facts.", "EIDEMPOTENCY");
+        const payload = JSON.parse(receipt.payload_json);
         if (
-          id(table.cloudTable === "shifts" ? row.id : row.shift_id) === shift &&
-          saved.has(id(row.id)) &&
-          sameRow(table, toCloudRow(table, row), saved.get(id(row.id)))
+          id(payload.branchId) !== id(branchId) ||
+          id(payload.shiftId) !== id(receipt.shift_id) ||
+          id(payload.intentId) !== id(receipt.intent_id)
         )
-          covered.add(id(row.id));
+          fail("Accepted closing metadata has another scope.", "EIDEMPOTENCY");
+        const coverage = validateCoverage(
+          JSON.parse(receipt.ack_coverage_json),
+          payload,
+          this.registry,
+        );
+        const proven = new Set(
+          coverage.tables
+            .find((entry) => entry.table === table.cloudTable)
+            .rows.map((row) => id(row.id)),
+        );
+        const saved = new Map(
+          (payload.operations.find((op) => op.table === table.cloudTable)?.rows ?? []).map(
+            (row) => [id(row.id), row],
+          ),
+        );
+        for (const row of candidates)
+          if (
+            proven.has(id(row.id)) &&
+            saved.has(id(row.id)) &&
+            sameRow(table, toCloudRow(table, row), saved.get(id(row.id)))
+          )
+            covered.add(id(row.id));
+      }
     }
     return covered;
   }

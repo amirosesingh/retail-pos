@@ -18,6 +18,7 @@ const { PullWorker } = require("../../../electron/sync/pull-worker.cjs");
 const { PushWorker } = require("../../../electron/sync/push-worker.cjs");
 const { readPage } = require("../../../electron/sync/page-policy.cjs");
 const { refreshTable } = require("../../../electron/jobs/bootstrap.cjs");
+const { matchingCoverage } = require("../../../scripts/lib/shift-coverage-fixture.cjs");
 type Row = Record<string, any>;
 const registry = loadRegistry(),
   branch = "branch-a",
@@ -161,7 +162,7 @@ function fixture() {
         ];
         return { recordset: [], rowsAffected: [1] };
       }
-      if (statement.includes("SELECT TOP(1) shift_id,payload_json,payload_hash")) {
+      if (statement.includes("intent_sequence<CONVERT(bigint,@before)")) {
         const ids = [this.inputs.shift],
           latest = new Map();
         for (const row of data.intents
@@ -169,6 +170,8 @@ function fixture() {
             (row: Row) =>
               row.branch_id === this.inputs.branch &&
               row.acknowledged_at &&
+              row.ack_coverage_json &&
+              row.intent_sequence < Number(this.inputs.before) &&
               ids.includes(row.shift_id),
           )
           .sort((a: Row, b: Row) => b.intent_sequence - a.intent_sequence))
@@ -200,7 +203,7 @@ function fixture() {
         else data.tables[table].push(row);
         return { recordset: [], rowsAffected: [1] };
       }
-      if (statement.startsWith("SELECT *"))
+      if (statement.startsWith("SELECT *") || statement.includes("FROM OPENJSON(@ids)"))
         return {
           recordset: copy(
             data.tables[table].filter((row: Row) =>
@@ -242,6 +245,38 @@ function fixture() {
     adopt,
     queries,
     data: () => state,
+    assumeReceipt: (graph: Row, sequence: number, omitted: Row = {}) => {
+      const receiptId = `99999999-9999-4999-8999-${String(sequence).padStart(12, "0")}`;
+      const operations = graph.tables.map((entry: Row) => ({
+        table: entry.table,
+        rows: entry.rows,
+        changes: [],
+        deletePhase: false,
+      }));
+      const payload = JSON.stringify({
+        version: 1,
+        intentId: receiptId,
+        branchId: branch,
+        shiftId: shift,
+        kind: "RECOUNT",
+        baseToken: null,
+        predecessorIntentId: null,
+        predecessorIntentHash: null,
+        operations,
+      });
+      const receipt = {
+        intent_id: receiptId,
+        intent_sequence: sequence,
+        branch_id: branch,
+        shift_id: shift,
+        payload_json: payload,
+        payload_hash: hashPayload(payload),
+        acknowledged_at: "accepted",
+        ack_coverage_json: JSON.stringify(matchingCoverage(registry, operations, omitted)),
+      };
+      state.intents.push(receipt);
+      return receipt;
+    },
     setFault: (value: string) => {
       fault = value;
     },
@@ -488,17 +523,20 @@ describe("native causal closing transfer", () => {
     const table = registry.tables.find((table: Row) => table.cloudTable === "shifts"),
       store = new ShiftIntentStore(f.manager, registry);
     const payload = JSON.stringify({
+      intentId,
       branchId: branch,
       shiftId: shift,
       operations: graph.tables.map((entry) => ({ table: entry.table, rows: entry.rows })),
     });
     f.data().intents.push({
+      intent_id: intentId,
       branch_id: branch,
       shift_id: shift,
       intent_sequence: 1,
       payload_json: payload,
       payload_hash: hashPayload(payload),
       acknowledged_at: "accepted",
+      ack_coverage_json: JSON.stringify(matchingCoverage(registry, graph.tables)),
     });
     const changes = [
       { key: { id: shift }, operation: "U" },
@@ -595,17 +633,20 @@ describe("native causal closing transfer", () => {
     const table = registry.tables.find((table: Row) => table.cloudTable === "shifts"),
       store = new ShiftIntentStore(f.manager, registry);
     const payload = JSON.stringify({
+      intentId,
       branchId: branch,
       shiftId: shift,
       operations: graph.tables.map((entry) => ({ table: entry.table, rows: entry.rows })),
     });
     f.data().intents.push({
+      intent_id: intentId,
       branch_id: branch,
       shift_id: shift,
       intent_sequence: 1,
       payload_json: payload,
       payload_hash: hashPayload(payload),
       acknowledged_at: "accepted",
+      ack_coverage_json: JSON.stringify(matchingCoverage(registry, graph.tables)),
     });
     const opening = {
       ...graph.tables[0].rows[0],
@@ -650,6 +691,115 @@ describe("native causal closing transfer", () => {
       sameRow(table, { amount: "999999999999999999.01" }, { amount: "999999999999999999.02" }),
     ).toBe(false);
   });
+  it("does not clear an unuploaded note observed by a closing intent when the server omitted that parent", async () => {
+    const f = fixture(),
+      graph = graphFixture();
+    graph.tables[0].rows[0].note = "server note";
+    await f.adopt(graph);
+    Object.assign(f.data().tables.shifts[0], {
+      note: "unuploaded local note",
+      row_version: 6,
+      updated_at: "2026-11-02T04:00:00.000Z",
+    });
+    const observed = copy(graph);
+    observed.tables[0].rows[0] = copy(f.data().tables.shifts[0]);
+    f.assumeReceipt(observed, 1, { shifts: [shift] });
+    const table = registry.tables.find((table: Row) => table.cloudTable === "shifts"),
+      store = new ShiftIntentStore(f.manager, registry);
+    await expect(
+      store.coveredChanges(table, [{ key: { id: shift }, operation: "U" }], branch),
+    ).resolves.toEqual(new Set());
+    const acknowledged = vi.fn(),
+      save = vi.fn(),
+      pushAggregate = vi.fn(),
+      pushBatch = vi.fn(),
+      group = {
+        aggregateId: count,
+        changes: [
+          { entity_type: "shifts", entity_id: key(shift), key: { id: shift }, operation: "update" },
+        ],
+      };
+    const reader = {
+      pendingAggregates: async (_branch: string, _limit: number, excluded: string[] = []) =>
+        excluded.includes(count) ? [] : [group],
+      protectedIntent: async () => null,
+      frozenOpeningRows: async () => [],
+      protectedShiftIds: async () => new Set([shift]),
+      acceptedShiftChanges: (metadata: Row, changes: Row[], scope: string) =>
+        store.coveredChanges(metadata, changes, scope),
+      rows: async () => copy(f.data().tables.shifts),
+      acknowledgeAggregate: acknowledged,
+      failAggregate: vi.fn(),
+      changedIds: vi
+        .fn()
+        .mockResolvedValueOnce([{ key: { id: shift }, operation: "U", version: 50 }])
+        .mockResolvedValue([]),
+    };
+    const worker = new PushWorker({
+      reader,
+      registry: { tables: [table] },
+      cloud: { pushAggregate, pushBatch },
+      checkpoints: { list: async () => [], save },
+    });
+    await expect(worker.run({ branchId: branch })).resolves.toMatchObject({
+      deferredTables: ["shifts"],
+    });
+    expect(acknowledged).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+    expect(pushAggregate).not.toHaveBeenCalled();
+    expect(pushBatch).not.toHaveBeenCalled();
+    expect(f.data().tables.shifts[0].note).toBe("unuploaded local note");
+    expect(f.data().baselines[0].graph_token).toBe(graph.graphToken);
+  });
+  it.each([false, true])(
+    "uses a historical fully matched alert receipt only when no fresh local metadata edit exists: edited=%s",
+    async (edited) => {
+      const f = fixture(),
+        graph = graphFixture(),
+        alertId = "66666666-6666-4666-8666-666666666666",
+        metadata = registry.tables.find(
+          (table: Row) => table.cloudTable === "shift_variance_alerts",
+        );
+      graph.tables
+        .find((entry) => entry.table === "shift_variance_alerts")!
+        .rows.push(
+          Object.assign(
+            Object.fromEntries(metadata.columns.map((column: Row) => [column.cloudColumn, null])),
+            {
+              id: alertId,
+              shift_id: shift,
+              store_id: branch,
+              reconciliation_id: recon,
+              delivery_status: "pending",
+              attempts: 0,
+              created_at: raw,
+              updated_at: raw,
+            },
+          ),
+        );
+      await f.adopt(graph);
+      f.assumeReceipt(graph, 1);
+      if (edited)
+        Object.assign(f.data().tables.shift_variance_alerts[0], {
+          attempts: 2,
+          updated_at: "2026-11-02T05:00:00.000Z",
+        });
+      const later = copy(graph);
+      later.tables.find((entry) => entry.table === "shift_variance_alerts")!.rows = copy(
+        f.data().tables.shift_variance_alerts,
+      );
+      f.assumeReceipt(later, 2, { shift_variance_alerts: [alertId] }); // WEB sent/changed the alert before the later SQL write; server preserves it.
+      const store = new ShiftIntentStore(f.manager, registry),
+        before = copy(f.data());
+      await expect(
+        store.coveredChanges(metadata, [{ key: { id: alertId }, operation: "U" }], branch),
+      ).resolves.toEqual(new Set(edited ? [] : [alertId]));
+      expect(f.data()).toEqual(before);
+      expect(f.queries.filter((query) => query.includes("intent_sequence<CONVERT"))).toHaveLength(
+        edited ? 3 : 2,
+      );
+    },
+  );
 });
 
 describe("native v3 closing proof/wire binding", () => {
@@ -684,6 +834,7 @@ describe("native v3 closing proof/wire binding", () => {
       accepted_token: "a".repeat(64),
       current_token: "b".repeat(64),
       superseded: true,
+      coverage: matchingCoverage(registry, operations),
     };
     return {
       intent,
@@ -693,9 +844,9 @@ describe("native v3 closing proof/wire binding", () => {
   };
   it("accepts a bound historical/superseded receipt, including an independent lower server counter", () => {
     const f = fixture();
-    expect(assertShiftClosureAcknowledgement(f.ack, f.intent.operations, branch, f.intent)).toBe(
-      f.proof,
-    );
+    expect(
+      assertShiftClosureAcknowledgement(f.ack, f.intent.operations, branch, f.intent, registry),
+    ).toBe(f.proof);
   });
   it.each([
     "intent_id",
@@ -709,14 +860,41 @@ describe("native v3 closing proof/wire binding", () => {
     (f.proof as Row)[field] =
       field === "superseded" ? false : field === "requested_row_version" ? 99 : "wrong";
     expect(() =>
-      assertShiftClosureAcknowledgement(f.ack, f.intent.operations, branch, f.intent),
+      assertShiftClosureAcknowledgement(f.ack, f.intent.operations, branch, f.intent, registry),
     ).toThrow();
   });
   it("never accepts v2 for a frozen v3 intent", () => {
     const f = fixture();
     f.ack.shift_closure_ack_version = 2;
     expect(() =>
-      assertShiftClosureAcknowledgement(f.ack, f.intent.operations, branch, f.intent),
+      assertShiftClosureAcknowledgement(f.ack, f.intent.operations, branch, f.intent, registry),
+    ).toThrow();
+  });
+  it.each([
+    "unknown field",
+    "missing business field",
+    "clock as business override",
+    "duplicate row",
+    "unbound row",
+    "business server value",
+    "missing managed clock",
+    "missing table",
+    "missing coverage",
+  ])("keeps malformed %s coverage pending", (invalid) => {
+    const f = fixture(),
+      entry = f.proof.coverage.tables.find((entry: Row) => entry.table === "shifts");
+    if (invalid === "unknown field") entry.unrecognized = true;
+    if (invalid === "missing business field")
+      entry.fields = entry.fields.filter((field: string) => field !== "note");
+    if (invalid === "clock as business override") entry.serverManagedFields.push("note");
+    if (invalid === "duplicate row") entry.rows.push(copy(entry.rows[0]));
+    if (invalid === "unbound row") entry.rows[0].id = count;
+    if (invalid === "business server value") entry.rows[0].serverValues.note = "forged";
+    if (invalid === "missing managed clock") delete entry.rows[0].serverValues.row_version;
+    if (invalid === "missing table") f.proof.coverage.tables.pop();
+    if (invalid === "missing coverage") delete (f.proof as Row).coverage;
+    expect(() =>
+      assertShiftClosureAcknowledgement(f.ack, f.intent.operations, branch, f.intent, registry),
     ).toThrow();
   });
   it("omits outer operations and preserves exact payloadJson bytes on transport", async () => {

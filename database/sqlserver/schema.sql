@@ -11206,10 +11206,11 @@ BEGIN TRY
    baseline_generation uniqueidentifier NULL,base_token char(64) NULL,
    predecessor_intent_id uniqueidentifier NULL,predecessor_intent_hash char(64) NULL,
    payload_json nvarchar(max) NOT NULL,payload_hash char(64) NOT NULL,
-   accepted_token char(64) NULL,current_token char(64) NULL,superseded bit NULL,acknowledged_at datetimeoffset(7) NULL,
+   accepted_token char(64) NULL,current_token char(64) NULL,superseded bit NULL,acknowledged_at datetimeoffset(7) NULL,ack_coverage_json nvarchar(max) NULL,
    CONSTRAINT PK_pos_sync_shift_intents PRIMARY KEY(intent_id),
    CONSTRAINT UQ_pos_sync_shift_intents_sequence UNIQUE(intent_sequence),
    CONSTRAINT CK_pos_sync_shift_intents_json CHECK(ISJSON(payload_json)=1),
+   CONSTRAINT CK_pos_sync_shift_intents_coverage CHECK(ack_coverage_json IS NULL OR ISJSON(ack_coverage_json)=1),
    CONSTRAINT CK_pos_sync_shift_intents_kind CHECK(intent_kind IN(N'ORIGINAL',N'RECOUNT',N'VARIANCE')),
    CONSTRAINT CK_pos_sync_shift_intents_predecessor CHECK(
     (predecessor_intent_id IS NULL AND predecessor_intent_hash IS NULL) OR
@@ -11233,6 +11234,7 @@ BEGIN TRY
  (N'pos_sync_shift_intents',N'payload_hash',N'char',64,0,0),(N'pos_sync_shift_intents',N'accepted_token',N'char',64,1,0),
  (N'pos_sync_shift_intents',N'current_token',N'char',64,1,0),(N'pos_sync_shift_intents',N'superseded',N'bit',1,1,0),
  (N'pos_sync_shift_intents',N'acknowledged_at',N'datetimeoffset',10,1,0),
+ (N'pos_sync_shift_intents',N'ack_coverage_json',N'nvarchar',-1,1,0),
  (N'pos_sync_shift_openings',N'aggregate_id',N'uniqueidentifier',16,0,0),(N'pos_sync_shift_openings',N'shift_id',N'uniqueidentifier',16,0,0),
  (N'pos_sync_shift_openings',N'branch_id',N'nvarchar',256,0,0),(N'pos_sync_shift_openings',N'row_json',N'nvarchar',-1,0,0),
  (N'pos_sync_shift_openings',N'row_hash',N'char',64,0,0);
@@ -11246,7 +11248,7 @@ BEGIN TRY
    OR NOT EXISTS(SELECT 1 FROM sys.key_constraints WHERE parent_object_id=OBJECT_ID(N'dbo.pos_sync_shift_intents') AND name=N'UQ_pos_sync_shift_intents_sequence' AND type='UQ')
    OR NOT EXISTS(SELECT 1 FROM sys.key_constraints WHERE parent_object_id=OBJECT_ID(N'dbo.pos_sync_shift_openings') AND name=N'PK_pos_sync_shift_openings' AND type='PK')
    OR (SELECT COUNT(*) FROM sys.check_constraints WHERE parent_object_id IN(OBJECT_ID(N'dbo.pos_sync_shift_baselines'),OBJECT_ID(N'dbo.pos_sync_shift_intents'),OBJECT_ID(N'dbo.pos_sync_shift_openings'))
-     AND name IN(N'CK_pos_sync_shift_baselines_json',N'CK_pos_sync_shift_intents_json',N'CK_pos_sync_shift_intents_kind',N'CK_pos_sync_shift_intents_predecessor',N'CK_pos_sync_shift_openings_json') AND is_disabled=0 AND is_not_trusted=0)<>5
+     AND name IN(N'CK_pos_sync_shift_baselines_json',N'CK_pos_sync_shift_intents_json',N'CK_pos_sync_shift_intents_kind',N'CK_pos_sync_shift_intents_predecessor',N'CK_pos_sync_shift_openings_json',N'CK_pos_sync_shift_intents_coverage') AND is_disabled=0 AND is_not_trusted=0)<>6
   THROW 51022,'Unexpected closing protocol constraints; no domain records were changed.',1;
  IF NOT EXISTS(SELECT 1 FROM sys.identity_columns WHERE object_id=OBJECT_ID(N'dbo.pos_sync_shift_intents') AND name=N'intent_sequence'
    AND CONVERT(bigint,seed_value)=1 AND CONVERT(bigint,increment_value)=1
@@ -11256,6 +11258,7 @@ BEGIN TRY
  INSERT @Shift36Checks VALUES
  (N'pos_sync_shift_baselines',N'CK_pos_sync_shift_baselines_json',N'(isjson([graph_json])=(1))'),
  (N'pos_sync_shift_intents',N'CK_pos_sync_shift_intents_json',N'(isjson([payload_json])=(1))'),
+ (N'pos_sync_shift_intents',N'CK_pos_sync_shift_intents_coverage',N'([ack_coverage_json] IS NULL OR isjson([ack_coverage_json])=(1))'),
  (N'pos_sync_shift_intents',N'CK_pos_sync_shift_intents_kind',N'([intent_kind]=N''VARIANCE'' OR [intent_kind]=N''RECOUNT'' OR [intent_kind]=N''ORIGINAL'')'),
  (N'pos_sync_shift_intents',N'CK_pos_sync_shift_intents_predecessor',N'([predecessor_intent_id] IS NULL AND [predecessor_intent_hash] IS NULL OR [predecessor_intent_id] IS NOT NULL AND [predecessor_intent_hash] IS NOT NULL AND [base_token] IS NULL AND [predecessor_intent_id]<>[intent_id])'),
  (N'pos_sync_shift_openings',N'CK_pos_sync_shift_openings_json',N'(isjson([row_json])=(1))');

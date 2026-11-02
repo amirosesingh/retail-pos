@@ -1,5 +1,6 @@
 const { recordId } = require("./uuid-fields.cjs");
 const {TOKEN,hashPayload} = require("../db/shift-intents.cjs");
+const {validateCoverage}=require("./shift-coverage.cjs");
 
 function closedShiftRows(operations) {
   return operations.flatMap(operation => operation.table === "shifts" && !operation.deletePhase
@@ -20,7 +21,7 @@ function revision(value) {
 // servers can return ok even when their version predicate ignored that row.
 // Require the atomic SQL postcondition's proof on new uploads AND receipt replay.
 // Other table uploads retain their existing acknowledgement contract.
-function assertShiftClosureAcknowledgement(acknowledgement, operations, branchId, intent=null) {
+function assertShiftClosureAcknowledgement(acknowledgement, operations, branchId, intent=null,registry=null) {
   const rows = closedShiftRows(operations);
   if (!rows.length) return;
   const fail = () => {
@@ -48,6 +49,7 @@ function assertShiftClosureAcknowledgement(acknowledgement, operations, branchId
       proof.intent_hash!==intent.payloadHash || hashPayload(intent.payloadJson)!==intent.payloadHash ||
       !TOKEN.test(proof.accepted_token??"") || !TOKEN.test(proof.current_token??"") || typeof proof.superseded!=="boolean" ||
       proof.superseded!==(proof.accepted_token!==proof.current_token))) return fail();
+    if(intent)validateCoverage(proof.coverage,intent,registry);
     seen.add(id);
   }
   return intent ? acknowledgement.shift_closures[0] : undefined;
