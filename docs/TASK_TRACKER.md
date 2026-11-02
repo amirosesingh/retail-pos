@@ -11,7 +11,9 @@ reviewed head `e80bff567a11c46085b9613027cc55c008f848ba`. GitHub confirms origin
 PRs #343, #344, #345, #346, #347 and #357 are **MERGED**, with all original
 heads retained as ancestors. Android, Windows-renderer, iOS, security and
 Cloudflare build checks passed on the reviewed head; CodeRabbit skipped.
-Final beta-push CI remains a separate check. Metadata is 1.4.81; calculated
+Final beta-push and production-PR checks on 41463049 also passed: security
+(push and PR), Android/Windows renderer and beta hosting; CodeRabbit skipped.
+Metadata is 1.4.81; calculated
 next installer beta is 1.4.82-beta.1. No installer was published and main
 remains 2f404e6f / v1.4.79. No lifecycle SQL was applied live.
 
