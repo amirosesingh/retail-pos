@@ -1,16 +1,18 @@
 const { canonicalEntityKey } = require("./entity-key.cjs");
 const { readPage } = require("./page-policy.cjs");
 const { refreshTable } = require("../jobs/bootstrap.cjs");
+const SHIFT_GRAPH_TABLES = new Set(["shifts", "shift_cash_counts", "shift_reconciliations",
+  "shift_close_events", "shift_notifications", "shift_variance_alerts"]);
 
 class PullWorker {
   constructor({ connectionManager, cloud, checkpoints, registry, reader, conflicts, publish = () => {} }) {
     this.connectionManager = connectionManager; this.cloud = cloud; this.checkpoints = checkpoints;
     this.registry = registry; this.reader = reader; this.conflicts = conflicts; this.publish = publish;
   }
-  async applyTable(transaction, table, changes, branchId) {
+  async applyTable(transaction, table, changes, branchId, checkedPending) {
     if (!changes.length) return { applied: 0, conflicts: 0 };
     const entityIds = changes.map((change) => String(change.entity_id));
-    const pending = new Set([...(await this.reader.unacknowledged(table, entityIds, transaction))].map(canonicalEntityKey));
+    const pending = new Set([...(checkedPending ?? await this.reader.unacknowledged(table, entityIds, transaction, { branchId, changes }))].map(canonicalEntityKey));
     const safe = [];
     for (const change of changes) {
       if (!pending.has(canonicalEntityKey(change.entity_id))) { safe.push(change); continue; }
@@ -26,11 +28,19 @@ class PullWorker {
         code: "ELOCAL_UPLOAD_PENDING", table: table.cloudTable,
       });
     }
-    if (safe.length) await this.cloud.applyLocalBatch(transaction, table, {
+    const result = safe.length ? await this.cloud.applyLocalBatch(transaction, table, {
       rows: safe.filter((change) => !change.tombstone),
       tombstones: safe.filter((change) => change.tombstone),
-    });
-    return { applied: safe.length, conflicts: 0 };
+      ...(SHIFT_GRAPH_TABLES.has(table.cloudTable) ? { branchId } : {}),
+    }) : null;
+    if (SHIFT_GRAPH_TABLES.has(table.cloudTable) && (!result || result.deferred || result.conflicts ||
+        result.applied + result.alreadyMatching !== safe.length)) {
+      const blocked = result?.outcomes?.filter(item => ["deferred", "conflict"].includes(item.status)) ?? [];
+      throw Object.assign(new Error(blocked[0]?.reason ?? "The cloud closing download was not confirmed locally. Its page remains pending."), {
+        code: result?.conflicts ? "ESYNC_APPLY_CONFLICT" : "ESYNC_APPLY_DEFERRED", table: table.cloudTable, outcomes: blocked,
+      });
+    }
+    return { applied: result?.applied ?? safe.length, alreadyMatching: result?.alreadyMatching ?? 0, conflicts: 0 };
   }
   async ensureStoreGroups(batch, branchId) {
     const groupIds = [...new Set(batch.rows
@@ -118,18 +128,38 @@ class PullWorker {
       await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
       try {
         const ordered = [...this.registry.tables].sort((a, b) => a.dependencyOrder - b.dependencyOrder || a.cloudTable.localeCompare(b.cloudTable));
+        const graphPending = new Map();
+        // Check the graph before any page writes. Parent discovery uses a short
+        // pool read and must never wait on this transaction's own later X locks.
+        for (const table of ordered) if (SHIFT_GRAPH_TABLES.has(table.cloudTable)) {
+          const changes = [...batch.rows, ...batch.tombstones].filter(row => row.table_name === table.cloudTable);
+          if (changes.length) graphPending.set(table.cloudTable, await this.reader.unacknowledged(table,
+            changes.map(change => String(change.entity_id)), transaction, { branchId, changes }));
+        }
         for (const table of ordered) {
-          const result = await this.applyTable(transaction, table, batch.rows.filter((row) => row.table_name === table.cloudTable), branchId);
+          const result = await this.applyTable(transaction, table, batch.rows.filter((row) => row.table_name === table.cloudTable), branchId, graphPending.get(table.cloudTable));
           merged += result.applied; conflictCount += result.conflicts;
         }
         for (const table of [...ordered].reverse()) {
-          const result = await this.applyTable(transaction, table, batch.tombstones.filter((row) => row.table_name === table.cloudTable), branchId);
+          const result = await this.applyTable(transaction, table, batch.tombstones.filter((row) => row.table_name === table.cloudTable), branchId, graphPending.get(table.cloudTable));
           merged += result.applied; conflictCount += result.conflicts;
         }
         await this.checkpoints.save(branchId, "__feed__", "pull", { committed_cursor: batch.cursor }, transaction);
         await transaction.commit();
       } catch (error) {
         await Promise.resolve(transaction.rollback()).catch(() => undefined);
+        if (error?.code === "ESYNC_APPLY_CONFLICT" && this.conflicts?.record) {
+          // The page is rolled back, but keep its actionable conflict outside
+          // that transaction. Repeated retries reuse the repository's stable ID.
+          const conflictTransaction = new sql.Transaction(this.connectionManager.pool);
+          await conflictTransaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
+          try {
+            for (const item of error.outcomes ?? []) if (item.status === "conflict")
+              await this.conflicts.record(conflictTransaction, { entityType: error.table, entityId: item.entityId,
+                branchId, localVersion: item.localVersion, remoteVersion: item.remoteVersion, reason: item.reason });
+            await conflictTransaction.commit();
+          } catch (recordError) { await Promise.resolve(conflictTransaction.rollback()).catch(() => undefined); throw recordError; }
+        }
         if (["EHELD_CLEANUP_PENDING", "ELOCAL_UPLOAD_PENDING"].includes(error?.code)) {
           merged = beforePage; conflictCount = conflictsBeforePage;
           deferredHeldDeletion = error.code === "EHELD_CLEANUP_PENDING";
