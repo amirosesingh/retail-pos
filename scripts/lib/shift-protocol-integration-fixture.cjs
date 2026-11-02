@@ -75,7 +75,7 @@ async function createCloud(branch, terminal) {
     await db.query("INSERT INTO terminal_tokens(id,location_id,status,revoked_at) VALUES($1,$2,'active',NULL)", [terminal, branch]);
     for (const name of ['20261030153259_confirm_shift_closure_sync_acknowledgement', '20261030164829_bind_shift_closure_proof_to_requested_revision',
       '20261031031945_preserve_validated_branch_context_for_shift_sync', '20261101052452_prevent_closed_shift_reopening_during_sync',
-      '20261102082439_shift_closing_causal_intents', '20261102104005_fix_closed_shift_correction_activity_type', '20261102101610_shift_author_key_registry', '20261102103716_enforce_shift_author_uploads']) await db.exec(read(`supabase/migrations/${name}.sql`));
+      '20261102082439_shift_closing_causal_intents', '20261102104005_fix_closed_shift_correction_activity_type', '20261102101610_shift_author_key_registry', '20261102103716_enforce_shift_author_uploads', '20261102153013_bind_signed_closing_start_evidence']) await db.exec(read(`supabase/migrations/${name}.sql`));
     return db;
   } catch (error) { await db.close(); throw error; }
 }
@@ -123,6 +123,7 @@ async function createLocal(branch) {
       INSERT dbo.pos_settings(id,integration_settings) VALUES(1,N'{}');`);
     await pool.request().batch(read('database/sqlserver/migrations/022_shift_causal_intents.sql'));
     await pool.request().batch(read('database/sqlserver/migrations/023_shift_author_attestations.sql'));
+    await pool.request().batch(read('database/sqlserver/migrations/024_shift_closing_start_proofs.sql'));
     const manager = { pool, sql: () => sql };
     const { OperationsRepository } = require(resolve(root, 'electron/db/repositories/operations.cjs'));
     const repository = new OperationsRepository(manager, registry);
@@ -139,7 +140,8 @@ async function createLocal(branch) {
     await insert('stores', { id: branch, name: 'Synthetic branch' });
     await pool.request().input('branch', branch).query(`INSERT dbo.sync_checkpoints(branch_id,entity_type,direction,change_tracking_version)
       SELECT @branch,name,N'push',CHANGE_TRACKING_CURRENT_VERSION() FROM sys.tables WHERE name IN(${registry.tables.map(table => "N'" + table.sqlServerTable + "'").join(',')});`);
-    return { manager, registry, repository, insert, close };
+    return { manager, registry, repository, insert, close,
+      async restart() { await pool.close(); pool = await connect(database); manager.pool = pool; } };
   } catch (error) { await close(); throw error; }
 }
 function mainCalls(repository, writer, branch, terminal, session, shiftAuthority) {
@@ -173,7 +175,8 @@ function createAuthorKeys() {
       return Buffer.concat([cipher.update(value.subarray(28)), cipher.final()]).toString('utf8');
     },
   };
-  return { keys: require(resolve(root, 'electron/security/shift-author-key.cjs')).createShiftAuthorKeys({ safeStorage, directory: () => directory }),
+  const reopen = () => require(resolve(root, 'electron/security/shift-author-key.cjs')).createShiftAuthorKeys({ safeStorage, directory: () => directory });
+  return { keys: reopen(), reopen,
     close() { rmSync(directory, { recursive: true, force: true }); secret.fill(0); } };
 }
 module.exports = { createCloud, createLocal, mainCalls, graphNames, createAuthorKeys };

@@ -1,7 +1,17 @@
 # POS project memory
 
-Last reconciled: **2026-11-02, Asia/Brunei**. This is approved architecture and
+Last reconciled: **2026-11-03, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
+
+Signed closing handover decision: the person starting closing and the person
+counting may differ. Preserve each verified author through offline storage,
+restart, retries and later uploads by another cashier. A separate domain-bound
+start proof accompanies only the ORIGINAL intent, with exact immutable receipt
+association; later RECOUNT/VARIANCE must not carry it. Existing start and count
+permissions remain distinct and current permissions govern new writes. Never
+manufacture proof for unsigned historical starts, retag earlier actors or drop
+pending work. Preparation and isolated tests were approved; live migration,
+enrollment, legacy retirement and publication remain separate approvals.
 
 Latest 2 November checkpoint: pending dependency PRs #343–#347 and prepared
 lifecycle source #357 are confirmed merged through beta PR #362, merge

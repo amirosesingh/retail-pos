@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import {generateKeyPairSync,sign} from "node:crypto";
+import {generateKeyPairSync,sign,createHash} from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
@@ -12,7 +12,7 @@ const { loadRegistry } = require("../../../electron/db/schema-registry.cjs");
 const { toCloudRow } = require("../../../electron/sync/row-codec.cjs");
 const {matchingCoverage}=require("../../../scripts/lib/shift-coverage-fixture.cjs");
 type Row = Record<string, unknown>;
-type State = { tables: Record<string, Row[]>; journal: Row[]; receipts: Row[]; intents: Row[]; baselines: Row[];openings:Row[];authors:Row[] };
+type State = { tables: Record<string, Row[]>; journal: Row[]; receipts: Row[]; intents: Row[]; baselines: Row[];openings:Row[];authors:Row[]; closingStarts:Row[]; intentStarts:Row[] };
 type Operation = { kind: string; table: string; rows?: Row[]; values?: Row; match?: Row };
 const branch = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const otherBranch = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -27,7 +27,7 @@ const sameId = (left: unknown, right: unknown) => String(left ?? "").toLowerCase
 function fixture(options: { branch?: string; terminal?: string | null } = {}) {
   const ownBranch = options.branch ?? branch;
   const registry = loadRegistry();
-  let state: State = { tables: Object.fromEntries(registry.tables.map((table: { sqlServerTable: string }) => [table.sqlServerTable, []])), journal: [], receipts: [], intents:[],baselines:[],openings:[],authors:[] };
+  let state: State = { tables: Object.fromEntries(registry.tables.map((table: { sqlServerTable: string }) => [table.sqlServerTable, []])), journal: [], receipts: [], intents:[],baselines:[],openings:[],authors:[],closingStarts:[],intentStarts:[] };
   state.tables.shifts.push({ id: shiftId, store_id: ownBranch, terminal_id: options.terminal === undefined ? terminal : options.terminal,
     status: "OPEN", state: "CASH_COUNT_REQUIRED", closed_at: null, row_version: 2, opening_float: 20 });
   const events: string[] = [];
@@ -44,6 +44,9 @@ function fixture(options: { branch?: string; terminal?: string | null } = {}) {
     input(name: string, value: unknown, typedValue?: unknown) { this.inputs[name] = arguments.length === 3 ? typedValue : value; return this; }
     async query(query: string) {
       const data = this.transaction.image;
+      if(query.startsWith("INSERT dbo.pos_sync_shift_intent_starts")){data.intentStarts.push({intent_id:this.inputs.intent,proof_json:this.inputs.proof});return{recordset:[],rowsAffected:[1]};}
+      if(query.startsWith("SELECT proof_json FROM dbo.pos_sync_shift_intent_starts"))return{recordset:copy(data.intentStarts.filter(row=>sameId(row.intent_id,this.inputs.intent)))};
+      if(query.startsWith("SELECT proof_json FROM dbo.pos_sync_shift_closing_starts"))return{recordset:copy(data.closingStarts.filter(row=>sameId(row.shift_id,this.inputs.shift)&&sameId(row.branch_id,this.inputs.branch)))};
       if(query.startsWith("INSERT dbo.pos_sync_shift_authors")){data.authors.push({intent_id:this.inputs.intent,attestation_json:this.inputs.proof});return{recordset:[],rowsAffected:[1]};}
       if(query.includes("pos_sync_shift_authors"))return{recordset:copy(data.authors.filter(row=>sameId(row.intent_id,this.inputs.intent)))};
       if(query.startsWith("INSERT dbo.pos_sync_shift_openings")){
@@ -205,6 +208,34 @@ describe("protected shift closing durable journal", () => {
       return protocol.normalizeAttestation({...unsigned,signature:sign(null,Buffer.from(protocol.intentMessage(unsigned)),pair.privateKey).toString("base64url")});
     },save:async(transaction:any,proof:Row)=>{guard();await new(h.connectionManager.sql().Request)(transaction).input("intent",proof.intentId).input("proof",JSON.stringify(proof)).query("INSERT dbo.pos_sync_shift_authors(intent_id,attestation_json) VALUES(@intent,@proof);");}};
   };
+  it("associates A's start proof only with ORIGINAL, leaving later RECOUNT and VARIANCE separate", async () => {
+    const h = fixture(), parent = h.data().tables.shifts[0];
+    Object.assign(parent, {closing_started_at:now,closing_started_by:"starter",close_reason:"Handover"});
+    const event = {id:uuid(92),shift_id:shiftId,store_id:branch,terminal_id:terminal,event:"closing_started",from_state:"ACTIVE",to_state:"CASH_COUNT_REQUIRED",actor_name:"starter",actor_staff_id:"starter",created_at:now};
+    h.data().tables.shift_close_events.push(event);
+    const parentFields = ["id","store_id","terminal_id","opened_at","opened_by_staff_id","opened_by_name","closing_started_at","closing_started_by","close_reason"];
+    const payloadJson = JSON.stringify({version:1,branchId:branch,shiftId,eventId:event.id,event,parent:Object.fromEntries(parentFields.map(key=>[key,parent[key]??null]))});
+    const protocol = require("../../../electron/security/shift-author-protocol.cjs"), pair = generateKeyPairSync("ed25519");
+    const unsigned = {version:1,algorithm:"Ed25519",keyId:uuid(93),projectOrigin:"https://fixture.supabase.co",terminalId:terminal,authorId:uuid(94),subject:"starter",branchId:branch,shiftId,eventId:event.id,payloadJson,payloadHash:createHash("sha256").update(payloadJson).digest("hex")};
+    const proof = protocol.normalizeClosingStart({...unsigned,signature:sign(null,Buffer.from(protocol.closingStartMessage(unsigned)),pair.privateKey).toString("base64url")});
+    h.data().closingStarts.push({shift_id:shiftId,branch_id:branch,event_id:event.id,proof_json:JSON.stringify(proof)});
+    await h.writer.apply("B original",closeOperations(),{...h.scope,author:signingAuthor(h)});
+    await h.writer.apply("later recount",closeOperations(branch,95,true,10),h.scope);
+    await h.writer.apply("later variance",[{kind:"update",table:"shifts",match:{id:shiftId},values:{store_id:branch,note:"approved review"}}],h.scope);
+    expect(h.data().intentStarts).toHaveLength(1);
+    const reader = new ChangeReader(h.connectionManager,h.registry), intents = h.data().intents;
+    const original = await reader.protectedIntent(intents[0].intent_id,branch);
+    expect(original.shiftClosingStart).toEqual(proof); expect(original.shiftAuthor.authorId).toBe(uuid(91));
+    for (const row of intents.slice(1)) expect((await reader.protectedIntent(row.intent_id,branch)).shiftClosingStart).toBeNull();
+    expect(intents.map(row=>row.intent_kind)).toEqual(["ORIGINAL","RECOUNT","VARIANCE"]);
+    for (const row of intents.slice(1)) {
+      const foreign = {intent_id:row.intent_id,proof_json:JSON.stringify(proof)};
+      h.data().intentStarts.push(foreign);
+      await expect(reader.protectedIntent(row.intent_id,branch)).rejects.toMatchObject({code:"ESYNC_SHIFT_START_INVALID"});
+      h.data().intentStarts.pop();
+    }
+    expect((await reader.protectedIntent(intents[0].intent_id,branch)).shiftClosingStart).toEqual(proof);
+  });
   it("freezes the signature atomically with the domain graph, immutable payload and journal",async()=>{
     const h=fixture(),author=signingAuthor(h);h.writer.authorRequired=true;
     await h.writer.apply("signed close",closeOperations(),{...h.scope,author});

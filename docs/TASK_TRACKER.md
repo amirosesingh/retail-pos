@@ -1,8 +1,8 @@
 # POS task tracker
 
-Last reconciled: **2026-11-02, Asia/Brunei**.
+Last reconciled: **2026-11-03, Asia/Brunei**.
 
-## Latest checkpoint — REL-31 merged; SHIFT-34/35 preparation approved
+## Latest checkpoint — signed shift handover verification
 
 On 2 November beta PR #362 merged as
 `41463049eb4d025398cfb273e85046f15c45817c`, tree
@@ -64,6 +64,35 @@ server/API/schema contract is required, present it separately before expansion;
 do not claim native convergence complete from safe deferral alone.
 
 ### SHIFT-36 — owner-approved protocol preparation and isolated tests
+
+Final 3 November handover checkpoint: complete suite 611 files passed / one
+opt-in file skipped; 4,572 tests passed / one opt-in skipped (114.29 seconds,
+pinned Node22, two workers). That opt-in actual-engine handover was separately
+executed and passed; it is not an unexecuted coverage gap. TypeScript, diff and
+changed-file lint checks passed (17 test-only typing warnings, zero errors).
+The approved same-registered-terminal A→B source preparation is implemented and
+verified in isolated engines. Cross-device handover/physical-device acceptance
+are not certified by this fixture. Preserve remaining financial-policy, live
+migration, CI and release gates; do not mark the entire POS audit complete.
+
+3 November: native start implementation 3125ede9 and server 6c674ff8/3a169316
+are integrated, preserving the separate domain contract. A fresh independent
+read-only candidate review confirmed one regression: attaching start evidence to
+later recount/variance intents. Root corrected freeze association to ORIGINAL
+only; malformed saved non-original associations stay pending rather than being
+silently rewritten. Actual combined A-start/B-count workflow independently passed
+in 9.92 seconds, including key/connection reconstruction, lost-reply exact retry,
+both authors' signature denial paths, two later ordinary recount RPCs, real web
+correction and child-only adoption with pending-edit protection. Real LocalDB:
+31 cases passed, including 024 idempotence/refusal, atomic A proof/B intent,
+rollback/retry and original-only association. SQL authority: 22 cases passed;
+156 focused API/native tests and TypeScript passed. Changed-file lint has zero
+errors and 17 test typing warnings; diff check passes. Broader suite is rerunning
+after adapting the old journal fixture to model 024 without dropping assertions.
+No physical-device, installed-IPC, OS-vault or full stock-checkout certification
+is inferred from synthetic identity/transport/vault adapters. No live changes.
+Financial expected-amount/as-of policy, exact-head CI and approved migration/
+deployment/release remain separate gates. Membership and #359 remain HOLD.
 
 Owner approved signed closing-start proof preparation and isolated tests on
 2 November, superseding the pending approval below. Preserve the actual person

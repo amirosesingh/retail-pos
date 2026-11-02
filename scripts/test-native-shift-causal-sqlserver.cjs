@@ -281,6 +281,40 @@ async function main() {
     await test("023 refuses disabled canonical index without re-enabling operator settings",async()=>{
       await pool.request().query("ALTER INDEX IX_pos_sync_shift_authors_scope ON dbo.pos_sync_shift_authors DISABLE;");await authorRefuses();await pool.request().query("ALTER INDEX IX_pos_sync_shift_authors_scope ON dbo.pos_sync_shift_authors REBUILD;");
     });
+    const startMigration = readFileSync(path.join(__dirname, "../database/sqlserver/migrations/024_shift_closing_start_proofs.sql"), "utf8");
+    const startImage = async () => {
+      const result = [];
+      for (const table of ["pos_sync_shift_closing_starts", "pos_sync_shift_intent_starts"]) {
+        result.push((await pool.request().query(`SELECT * FROM dbo.[${table}] ORDER BY 1;`)).recordset);
+        result.push((await pool.request().input("name", table).query(`SELECT c.name,TYPE_NAME(c.user_type_id) type_name,c.max_length,c.is_nullable FROM sys.columns c WHERE object_id=OBJECT_ID(N'dbo.'+@name) ORDER BY c.column_id; SELECT i.name,i.is_unique,i.is_disabled,i.ignore_dup_key,i.filter_definition FROM sys.indexes i WHERE object_id=OBJECT_ID(N'dbo.'+@name) ORDER BY i.name; SELECT name,definition,is_disabled,is_not_trusted FROM sys.check_constraints WHERE parent_object_id=OBJECT_ID(N'dbo.'+@name) ORDER BY name;`)).recordsets);
+      }
+      result.push((await pool.request().query("SELECT * FROM dbo.pos_schema_migrations ORDER BY version;")).recordset);
+      return result;
+    };
+    const startRefuses = async () => {
+      const before = await startImage(), business = await image(), authors = await authorImage();
+      const result = await pool.request().input("migration", startMigration).query("BEGIN TRY EXEC sys.sp_executesql @migration; SELECT 0 n; END TRY BEGIN CATCH SELECT ERROR_NUMBER() n; END CATCH;");
+      assert.equal(result.recordset[0].n, 51024);
+      assert.deepEqual(await startImage(), before);
+      assert.deepEqual(await image(), business);
+      assert.deepEqual(await authorImage(), authors);
+    };
+    await test("024 creates private start metadata additively and preserves seeded evidence on rerun", async () => {
+      const before = await image(), authors = await authorImage();
+      await pool.request().batch(startMigration);
+      assert.deepEqual(await image(), before); assert.deepEqual(await authorImage(), authors);
+      await pool.request().input("shift", randomUUID()).input("event", randomUUID()).input("intent", randomUUID()).query("INSERT dbo.pos_sync_shift_closing_starts VALUES(@shift,N'fixture',@event,N'{\"fixture\":true}'); INSERT dbo.pos_sync_shift_intent_starts VALUES(@intent,N'{\"fixture\":true}');");
+      const saved = await startImage(); await pool.request().batch(startMigration); assert.deepEqual(await startImage(), saved);
+      await pool.request().query("DELETE dbo.pos_sync_shift_closing_starts; DELETE dbo.pos_sync_shift_intent_starts;");
+    });
+    await test("024 preserves unknown columns, extra uniqueness and malformed familiar CHECK", async () => {
+      await pool.request().query("ALTER TABLE dbo.pos_sync_shift_closing_starts ADD operator_column int NULL;");
+      await startRefuses(); await pool.request().query("ALTER TABLE dbo.pos_sync_shift_closing_starts DROP COLUMN operator_column;");
+      await pool.request().query("CREATE UNIQUE INDEX operator_start_branch ON dbo.pos_sync_shift_closing_starts(branch_id);");
+      await startRefuses(); await pool.request().query("DROP INDEX operator_start_branch ON dbo.pos_sync_shift_closing_starts;");
+      await pool.request().query("ALTER TABLE dbo.pos_sync_shift_intent_starts DROP CONSTRAINT CK_pos_sync_shift_intent_starts_json; ALTER TABLE dbo.pos_sync_shift_intent_starts WITH CHECK ADD CONSTRAINT CK_pos_sync_shift_intent_starts_json CHECK(ISJSON(proof_json)>=0);");
+      await startRefuses(); await pool.request().query("ALTER TABLE dbo.pos_sync_shift_intent_starts DROP CONSTRAINT CK_pos_sync_shift_intent_starts_json; ALTER TABLE dbo.pos_sync_shift_intent_starts WITH CHECK ADD CONSTRAINT CK_pos_sync_shift_intent_starts_json CHECK(ISJSON(proof_json)=1);");
+    });
     await test("actual whole-graph adoption accepts CLOSED5 over OPEN99 and preserves opaque raw timestamp", async () => {
       await adopt();
       const parent = (
@@ -1029,6 +1063,56 @@ async function main() {
           .recordset,
         checkpoints,
       );
+    });
+    await test("actual A start save rolls back on epoch change, retries, and B freezes exact separate proof atomically", async () => {
+      const target = randomUUID(), eventId = randomUUID(), starterId = randomUUID(), time = "2026-11-02T08:00:00.000Z";
+      const repository = new OperationsRepository(manager, registry), aggregate = new AggregateRepository(manager, repository);
+      await aggregate.commit("shift", { branchId: branch, terminalId: "terminal", permissions: { can_open_shift: true }, operations: [{ kind: "insert", table: "shifts", rows: [{ id: target, store_id: branch, terminal_id: "terminal", opened_at: raw, opened_by_staff_id: "starter", opened_by_name: "starter", opening_float: 20, status: "OPEN", state: "ACTIVE" }] }] });
+      let starterEpoch = 1;
+      const makeStarter = () => new (require("../electron/shift-authority.cjs").ShiftAuthorAuthority)({ keys, connectionManager: manager,
+        session: { identity: () => ({ source: "pos", authorId: starterId, canonicalSubject: "starter", branchId: branch }), epoch: () => starterEpoch, hasPermission: key => key === "can_close_shift" },
+        terminal: () => ({ tokenId: "terminal", deviceUse: "operations", branchId: branch }), project: () => "https://fixture.supabase.co", branch: () => branch });
+      const starter = makeStarter();
+      let startAuthor = await starter.prepare(starter.capture("START_CLOSE"));
+      const startOperations = [{ kind: "update", table: "shifts", match: { id: target }, values: { store_id: branch, state: "CASH_COUNT_REQUIRED", close_reason: "Handover", closing_started_at: time, closing_started_by: "starter", updated_at: time } },
+        { kind: "insert", table: "shift_close_events", rows: [{ id: eventId, shift_id: target, store_id: branch, terminal_id: "terminal", event: "closing_started", from_state: "ACTIVE", to_state: "CASH_COUNT_REQUIRED", actor_name: "starter", actor_staff_id: "starter", detail: { reason: "Handover" }, created_at: time }] }];
+      const saveStart = async transaction => require("../electron/db/shift-closing-start.cjs").save(repository, transaction, startAuthor, { branchId: branch, shiftId: target, eventId });
+      const beforeStart = await image(), beforeMetadata = await startImage();
+      await assert.rejects(repository.apply("start rollback", startOperations, { branchId: branch, terminalId: "terminal" }, async transaction => { await saveStart(transaction); starterEpoch++; }, undefined, () => startAuthor.assertCurrent()), error => error.code === "ESYNC_SHIFT_AUTHOR_CHANGED");
+      assert.deepEqual(await image(), beforeStart); assert.deepEqual(await startImage(), beforeMetadata);
+      startAuthor = await starter.prepare(starter.capture("START_CLOSE"));
+      await repository.apply("start retry", startOperations, { branchId: branch, terminalId: "terminal" }, saveStart, undefined, () => startAuthor.assertCurrent());
+      const proof = JSON.parse((await pool.request().input("shift", target).query("SELECT proof_json FROM dbo.pos_sync_shift_closing_starts WHERE shift_id=@shift;")).recordset[0].proof_json);
+      assert.equal(proof.authorId, starterId); assert.equal(proof.subject, "starter"); assert.equal(proof.eventId, eventId);
+      assert.throws(() => makeStarter().validatePendingClosingStart(proof), error => error.code === "ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING");
+      const keyReference = (await pool.request().input("author", starterId).query("SELECT key_id,public_key FROM dbo.pos_sync_shift_author_keys WHERE author_id=@author;")).recordset;
+      assert.equal(keyReference.length, 1); assert.equal(keyReference[0].key_id.toLowerCase(), proof.keyId);
+      const crypto = require("node:crypto"), protocol = require("../electron/security/shift-author-protocol.cjs"), { signature, ...unsigned } = proof;
+      assert(crypto.verify(null, Buffer.from(protocol.closingStartMessage(unsigned)), crypto.createPublicKey({ key: Buffer.from(keyReference[0].public_key, "base64url"), format: "der", type: "spki" }), Buffer.from(signature, "base64url")));
+      const finalOperations = operations(100, 6);
+      for (const op of finalOperations) { for (const record of op.rows ?? []) if (record.shift_id) record.shift_id = target; if (op.match) op.match.id = target; }
+      finalOperations[0].rows[0].kind = "ORIGINAL"; finalOperations[0].rows[0].client_key = "handover-original";
+      finalOperations[2].rows = [{ ...finalOperations[2].rows[0], event: "cash_count_submitted", from_state: "CASH_COUNT_REQUIRED", to_state: "CASH_COUNT_SUBMITTED", detail: { count_id: finalOperations[0].rows[0].id } }, { ...finalOperations[2].rows[0], id: randomUUID(), event: "reconciled", from_state: "CASH_COUNT_SUBMITTED", to_state: "CLOSED", detail: { variance_status: "NO_VARIANCE", variance_total: 0 } }];
+      finalOperations[3].values.closed_at = finalOperations[0].rows[0].created_at;
+      const finisher = await authority.prepare(authority.capture("ORIGINAL")), failure = new Error("fixture failure after signature save"), beforeFinal = await image(), metadataBeforeFinal = await startImage(), authorsBeforeFinal = await authorImage();
+      await assert.rejects(writer.apply("B rollback", finalOperations, { branchId: branch, terminalId: "terminal", observation: await writer.observe(branch, target), author: { ...finisher, save: async (tx, attestation) => { await finisher.save(tx, attestation); throw failure; } } }), error => error === failure);
+      assert.deepEqual(await image(), beforeFinal); assert.deepEqual(await startImage(), metadataBeforeFinal); assert.deepEqual(await authorImage(), authorsBeforeFinal);
+      const finalScope = { branchId: branch, terminalId: "terminal", observation: await writer.observe(branch, target), author: finisher };
+      await writer.apply("B retry", finalOperations, finalScope);
+      const saved = (await pool.request().input("shift", target).query("SELECT intent_id FROM dbo.pos_sync_shift_intents WHERE shift_id=@shift;")).recordset;
+      assert.equal(saved.length, 1);
+      const frozen = await reader.protectedIntent(saved[0].intent_id, branch);
+      assert.deepEqual(frozen.shiftClosingStart, proof); assert.equal(frozen.shiftAuthor.authorId, authorId); assert.equal(frozen.shiftAuthor.subject, "manager"); assert.notEqual(frozen.shiftAuthor.keyId, proof.keyId);
+      assert(!frozen.payloadJson.includes("shiftClosingStart")); assert(!frozen.payloadJson.includes("shiftAuthor"));
+      await writer.apply("B exact replay", finalOperations, finalScope);
+      assert.deepEqual(await reader.protectedIntent(saved[0].intent_id, branch), frozen);
+      const recount = operations(110, 4);
+      for (const op of recount) { for (const record of op.rows ?? []) if (record.shift_id) record.shift_id = target; if (op.match) op.match.id = target; }
+      recount[0].rows[0].client_key = "handover-recount";
+      await writer.apply("B later recount", recount, { branchId: branch, terminalId: "terminal", observation: await writer.observe(branch, target), author: await authority.prepare(authority.capture("RECOUNT")) });
+      const laterId = (await pool.request().input("shift", target).query("SELECT TOP(1) intent_id FROM dbo.pos_sync_shift_intents WHERE shift_id=@shift ORDER BY intent_sequence DESC;")).recordset[0].intent_id;
+      assert.equal((await reader.protectedIntent(laterId, branch)).shiftClosingStart, null);
+      assert.deepEqual((await reader.protectedIntent(saved[0].intent_id, branch)).shiftClosingStart, proof);
     });
     await test("022 refuses unknown metadata shape without rewriting saved rows", async () => {
       await pool

@@ -328,7 +328,7 @@ class ShiftIntentStore {
         hash: payloadHash,
       },
     );
-    const start = (await this.query(transaction,'SELECT proof_json FROM dbo.pos_sync_shift_closing_starts WHERE shift_id=@shift AND branch_id=@branch;',{shift:payload.shiftId,branch:payload.branchId})).recordset?.[0];
+    const start = payload.kind === "ORIGINAL" ? (await this.query(transaction,'SELECT proof_json FROM dbo.pos_sync_shift_closing_starts WHERE shift_id=@shift AND branch_id=@branch;',{shift:payload.shiftId,branch:payload.branchId})).recordset?.[0] : null;
     if(start){
       const startStore=require('./shift-closing-start.cjs');
       startStore.assertGraph(startStore.parse(start.proof_json,payload.branchId,payload.shiftId),graph);
@@ -363,6 +363,7 @@ class ShiftIntentStore {
         fail("The saved author proof does not match the frozen closing intent.","ESYNC_SHIFT_AUTHOR_INVALID");
     }
     const savedStart=(await this.query(transaction,'SELECT proof_json FROM dbo.pos_sync_shift_intent_starts WHERE intent_id=@intent;',{intent:id(intentId)})).recordset?.[0];
+    if(savedStart && payload.kind !== "ORIGINAL") fail("The saved start proof belongs only to the original closing; retain this intent for review.","ESYNC_SHIFT_START_INVALID");
     const shiftClosingStart=savedStart?require('./shift-closing-start.cjs').parse(savedStart.proof_json,payload.branchId,payload.shiftId):null;
     return {
       ...payload,

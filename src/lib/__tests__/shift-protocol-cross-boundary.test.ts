@@ -22,7 +22,7 @@ let local: Row | undefined, db: Row | undefined, vault: Row | undefined;
 afterAll(async () => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); try { await db?.close(); } finally { try { await local?.close(); } finally { vault?.close(); } } }, 60000);
 
 describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClient → API → isolated PostgreSQL", () => {
-  it("preserves an offline opening/sale/three-intent chain across a lost reply, cashier switch and child-only web download", async () => {
+  it("preserves separately signed starter/count authors through restart, lost reply, recounts and protected web adoption", async () => {
     const { createCloud, createLocal, mainCalls, graphNames, createAuthorKeys } = require("../../../scripts/lib/shift-protocol-integration-fixture.cjs");
     const branch = randomUUID(), terminal = randomUUID(), shift = randomUUID(), sale = randomUUID(), proof = "a".repeat(64);
     db = await createCloud(branch, terminal); local = await createLocal(branch);
@@ -46,9 +46,9 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
     const terminalConfig = { tokenId: terminal, locationId: branch, deviceUse: "operations", deviceBindingProof: proof, deviceClaimProof: proof };
     vault = createAuthorKeys();
     const { ShiftAuthorAuthority } = require("../../../electron/shift-authority.cjs");
-    const authority = new ShiftAuthorAuthority({ keys: vault!.keys, session, connectionManager: manager, terminal: () => terminalConfig,
+    const newAuthority = () => new ShiftAuthorAuthority({ keys: vault!.keys, session, connectionManager: manager, terminal: () => terminalConfig,
       project: () => "https://cloud.invalid", branch: () => branch, backendUrl: () => "https://pos.invalid", fetcher: (...args: Parameters<typeof fetch>) => fetch(...args) });
-    const calls = mainCalls(repository, writer, branch, terminal, session, authority);
+    let authority = newAuthority(), calls = mainCalls(repository, writer, branch, terminal, session, authority);
     const scalar = async (query: string, args: unknown[] = []) => Object.values((await db!.query(query, args)).rows[0])[0] as Row;
     const sqlRows = async (query: string) => (await manager.pool.request().query(query)).recordset;
     const outbound: Row[] = [], rpcCalls: Row[] = [], feed: Row[] = [];
@@ -58,6 +58,7 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
       const specs: Record<string, [string, string][]> = {
         pos_sync_push_aggregate: [["p_batch_id", "uuid"], ["p_organization_id", "text"], ["p_branch_id", "text"], ["p_terminal_id", "text"], ["p_operations", "jsonb"]],
         pos_sync_push_author_shift_intent: [["p_batch_id", "uuid"], ["p_organization_id", "text"], ["p_branch_id", "text"], ["p_terminal_id", "text"], ["p_operations", "jsonb"], ["p_shift_intent", "jsonb"], ["p_shift_author", "jsonb"], ["p_author_authority", "jsonb"]],
+        pos_sync_push_started_shift_intent: [["p_batch_id", "uuid"], ["p_organization_id", "text"], ["p_branch_id", "text"], ["p_terminal_id", "text"], ["p_operations", "jsonb"], ["p_shift_intent", "jsonb"], ["p_shift_author", "jsonb"], ["p_author_authority", "jsonb"], ["p_closing_start", "jsonb"], ["p_start_authority", "jsonb"]],
         pos_sync_push_batch: [["p_batch_id", "uuid"], ["p_organization_id", "text"], ["p_branch_id", "text"], ["p_terminal_id", "text"], ["p_table", "text"], ["p_rows", "jsonb"], ["p_changes", "jsonb"]],
         pos_sync_shift_graph: [["p_organization_id", "text"], ["p_branch_id", "text"], ["p_terminal_id", "text"], ["p_shift_id", "uuid"]],
       };
@@ -108,7 +109,7 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
     }));
     const cloud = new CloudClient({ connectionManager: manager, configStore: { get: () => "https://pos.invalid" },
       terminalStore: { read: () => terminalConfig } });
-    const worker = new PushWorker({ reader, cloud, checkpoints, registry, validateAuthor: (value: Row) => authority.validatePending(value) });
+    let worker = new PushWorker({ reader, cloud, checkpoints, registry, validateAuthor: (value: Row) => authority.validatePending(value), validateClosingStart: (value: Row) => authority.validatePendingClosingStart(value) });
     expect(await authority.enrollOnline({ accessToken: "synthetic-author-access" })).toEqual({ ok: true });
 
     const openedAt = "2026-11-02T01:00:00.000Z";
@@ -123,9 +124,21 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
       paid_amount: 80, change_amount: 0, exchange_credit: 0, coupon_discount: 0, rounding_adjustment: 0, row_version: 1, created_at: openedAt,
     }] }] });
     await calls.startLocalShiftClose({ shiftId: shift, reason: "End of day", terminalId: terminal });
-    await expect(calls.commitLocalShiftCashCount({ shiftId: shift, cash: 100, clientKey: "original-1", terminalId: terminal })).resolves.toMatchObject({ ok: true, state: "CLOSED" });
+    const savedStarts = await sqlRows("SELECT * FROM dbo.pos_sync_shift_closing_starts;");
+    expect(savedStarts).toHaveLength(1);
+    const startProof = JSON.parse(savedStarts[0].proof_json);
+    expect(startProof).toMatchObject({ authorId: cashierId, subject: "original-cashier" });
+    expect(authority.validatePendingClosingStart(startProof)).toEqual(startProof);
+    // Close/reopen the owned SQL connection and instantiate a new encrypted-key
+    // store and authority. No OS process/device restart is claimed.
+    await local!.restart(); vault!.keys = vault!.reopen();
     identity = person(adminId, "authorized-admin"); epoch++;
+    authority = newAuthority();
+    calls = mainCalls(repository, new ShiftSyncJournal(repository, { authorRequired: true }), branch, terminal, session, authority);
     expect(await authority.enrollOnline({ accessToken: "synthetic-admin-access" })).toEqual({ ok: true });
+    expect(await sqlRows("SELECT * FROM dbo.pos_sync_shift_closing_starts;")).toEqual(savedStarts);
+    expect(authority.validatePendingClosingStart(startProof)).toEqual(startProof);
+    await expect(calls.commitLocalShiftCashCount({ shiftId: shift, cash: 100, clientKey: "original-1", terminalId: terminal })).resolves.toMatchObject({ ok: true, state: "CLOSED" });
     await calls.commitLocalShiftRecount({ shiftId: shift, cash: 110, reason: "First recount", clientKey: "recount-1", terminalId: terminal });
     await calls.commitLocalShiftRecount({ shiftId: shift, cash: 120, reason: "Second recount", clientKey: "recount-2", terminalId: terminal });
     const savedIntents = await sqlRows("SELECT * FROM dbo.pos_sync_shift_intents ORDER BY intent_sequence;");
@@ -139,15 +152,22 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
     const queued = await reader.pendingAggregates(branch, 500);
     expect(queued.filter((entry: Row) => entry.aggregateId.toLowerCase() === frozen[0].intentId)).toHaveLength(1);
     const signed = await reader.protectedIntent(savedIntents[0].intent_id, branch);
-    expect(signed.shiftAuthor).toMatchObject({ authorId: cashierId, subject: "original-cashier", action: "ORIGINAL" });
+    expect(signed.shiftAuthor).toMatchObject({ authorId: adminId, subject: "authorized-admin", action: "ORIGINAL" });
     expect(authority.validatePending(signed.shiftAuthor)).toEqual(signed.shiftAuthor);
     expect(() => authority.validatePending({ ...signed.shiftAuthor, keyId: randomUUID() })).toThrow();
+    expect(signed.shiftClosingStart).toEqual(startProof);
+    for (const intent of savedIntents.slice(1))
+      expect((await reader.protectedIntent(intent.intent_id, branch)).shiftClosingStart).toBeNull();
     const wire = signed;
     // Send only the protocol's declared wire fields, exactly as PushWorker does.
     const shiftIntent = Object.fromEntries(["version", "intentId", "shiftId", "kind", "baseToken", "predecessorIntentId", "predecessorIntentHash", "payloadJson"].map(key => [key, wire[key]]));
     const receiptsBeforeDenial = Number(await scalar("SELECT count(*) FROM pos_sync_private.shift_author_receipts"));
-    for (const altered of [{ ...signed.shiftAuthor, signature: "A".repeat(86) }, { ...signed.shiftAuthor, authorId: adminId }])
-      await expect(cloud.pushAggregate({ batchId: signed.intentId, branchId: branch, shiftIntent, shiftAuthor: altered })).rejects.toMatchObject({ code: "ESHIFT_AUTHOR_INVALID" });
+    for (const altered of [{ ...signed.shiftAuthor, signature: "A".repeat(86) }, { ...signed.shiftAuthor, authorId: cashierId }])
+      await expect(cloud.pushAggregate({ batchId: signed.intentId, branchId: branch, shiftIntent, shiftAuthor: altered, shiftClosingStart: startProof })).rejects.toMatchObject({ code: "ESHIFT_AUTHOR_INVALID" });
+    for (const altered of [{ ...startProof, signature: "A".repeat(86) }, { ...startProof, authorId: adminId }])
+      await expect(cloud.pushAggregate({ batchId: signed.intentId, branchId: branch, shiftIntent,
+        shiftAuthor: signed.shiftAuthor, shiftClosingStart: altered })).rejects.toMatchObject({ code: "ESHIFT_AUTHOR_INVALID" });
+    expect(Number(await scalar("SELECT count(*) FROM pos_sync_private.shift_closing_start_receipts"))).toBe(0);
     expect(Number(await scalar("SELECT count(*) FROM pos_sync_private.shift_author_receipts"))).toBe(receiptsBeforeDenial);
     expect(await sqlRows("SELECT * FROM dbo.pos_sync_shift_intents ORDER BY intent_sequence;")).toEqual(savedIntents);
     outbound.length = 0; // Subsequent assertions count the actual worker attempts only.
@@ -163,6 +183,10 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
         if ((error as Error).message !== "Synthetic committed response lost") throw error;
         expect((error as Row).code).toBe("ETIMEDOUT"); lostRepliesObserved++;
         expect(Number(await scalar("SELECT count(*) FROM pos_sync_private.shift_intent_receipts"))).toBe(1);
+        expect(Number(await scalar("SELECT count(*) FROM pos_sync_private.shift_closing_start_receipts"))).toBe(1);
+        await local!.restart(); vault!.keys = vault!.reopen(); authority = newAuthority();
+        worker = new PushWorker({ reader: new ChangeReader(manager, registry), cloud, checkpoints: new CheckpointRepository(manager), registry,
+          validateAuthor: (value: Row) => authority.validatePending(value), validateClosingStart: (value: Row) => authority.validatePendingClosingStart(value) });
         expect((await sqlRows("SELECT acknowledged_at FROM dbo.pos_sync_shift_intents ORDER BY intent_sequence;"))[0].acknowledged_at).toBeNull();
       }
       if ((await sqlRows("SELECT acknowledged_at FROM dbo.pos_sync_shift_intents;")).every((row: Row) => row.acknowledged_at)) break;
@@ -174,13 +198,28 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
     const graph = await cloud.shiftGraph({ branchId: branch, shiftId: shift });
     const closedAtRaw = graph.closedAtRaw;
     expect(Number(graph.tables[0].rows[0].counted_cash)).toBe(120);
-    expect(graph.tables.find((part: Row) => part.table === "shift_cash_counts").rows.map((row: Row) => row.counted_by_staff_id).sort()).toEqual(["authorized-admin", "authorized-admin", "original-cashier"].sort());
+    expect(graph.tables.find((part: Row) => part.table === "shift_cash_counts").rows.map((row: Row) => row.counted_by_staff_id).sort()).toEqual(["authorized-admin", "authorized-admin", "authorized-admin"].sort());
+    expect(graph.tables[0].rows[0].closing_started_by).toBe("original-cashier");
+    const startEvents = graph.tables.find((part: Row) => part.table === "shift_close_events").rows.filter((row: Row) => row.event === "closing_started");
+    expect(startEvents).toHaveLength(1);
+    expect(startEvents[0]).toMatchObject({ actor_staff_id: "original-cashier", actor_name: "original-cashier" });
     expect(Number(await scalar("SELECT count(*) FROM public.sales"))).toBe(1);
     expect(Number(await scalar("SELECT count(*) FROM pos_sync_private.shift_intent_receipts"))).toBe(3);
     const sentIntents = outbound.filter(body => body.sqlServerAggregate?.shiftIntent);
     expect(sentIntents.filter(body => body.sqlServerAggregate.shiftIntent.intentId === frozen[0].intentId)).toHaveLength(2);
     expect(sentIntents.every(body => !("operations" in body.sqlServerAggregate))).toBe(true);
     expect(sentIntents.filter(body => body.sqlServerAggregate.shiftIntent.intentId === frozen[0].intentId).map(body => body.sqlServerAggregate.shiftIntent.payloadJson)).toEqual([savedIntents[0].payload_json, savedIntents[0].payload_json]);
+    expect(sentIntents.filter(body => body.sqlServerAggregate.shiftIntent.intentId === frozen[0].intentId).every(body =>
+      JSON.stringify(body.sqlServerAggregate.shiftClosingStart) === JSON.stringify(startProof))).toBe(true);
+    expect(rpcCalls.filter(call => call.name === "pos_sync_push_started_shift_intent")).toHaveLength(2);
+    expect(rpcCalls.filter(call => call.name === "pos_sync_push_started_shift_intent").every(call =>
+      call.args.p_closing_start.authorId === cashierId && call.args.p_shift_author.authorId === adminId)).toBe(true);
+    const recountRequests = sentIntents.filter(body => body.sqlServerAggregate.shiftIntent.kind === "RECOUNT");
+    expect(recountRequests).toHaveLength(2);
+    expect(recountRequests.every(body => !("shiftClosingStart" in body.sqlServerAggregate))).toBe(true);
+    expect(rpcCalls.filter(call => call.name === "pos_sync_push_author_shift_intent")).toHaveLength(2);
+    const registeredAuthors = rpcCalls.filter(call => call.name === "pos_shift_author_key").map(call => call.args.p_author_id);
+    expect(registeredAuthors).toContain(cashierId); expect(registeredAuthors).toContain(adminId);
     const firstIntentIndex = outbound.findIndex(body => body.sqlServerAggregate?.shiftIntent);
     expect(outbound.slice(0, firstIntentIndex).some(body => body.sqlServerAggregate?.operations?.some((op: Row) => op.table === "sales" && op.rows.some((row: Row) => row.id === sale)))).toBe(true);
     expect(outbound.find(body => body.sqlServerAggregate?.operations?.some((op: Row) => op.table === "shifts"))?.sqlServerAggregate.operations.find((op: Row) => op.table === "shifts").rows[0]).toMatchObject({ status: "OPEN", state: "ACTIVE", closed_at: null });
