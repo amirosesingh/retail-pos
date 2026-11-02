@@ -3,6 +3,24 @@
 Last reconciled: **2026-11-02, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
 
+Controlling update, 2 November 2026: the owner approved a narrow server CPU
+correction in `sync-download-redaction.ts` and isolated tests. Production
+Cloudflare `/api/v1/pos/sync` failures have outcome `exceededCpu` / HTTP 503;
+Supabase's sampled bootstrap RPCs succeeded. This locates the hosting failure,
+but does not establish how much CPU each helper consumed. Preserve exact privacy
+output, rows, cursors, permissions, settings, shifts and operator configuration.
+No live deployment, promotion or data/schema repair follows from this approval.
+
+The separate historical STR1 recovery in draft PR #359 is **HOLD**: its old
+cloud-OPEN premise was superseded by the owner's deliberate web closure.
+Complete private PC/cloud evidence now exists. The owner selects the original
+cashier facts as authoritative while preserving the web history. A new exact
+reconciliation plan and approval are required; never stage the old eight-key
+replay. Preserve all unfinished tasks; Membership remains on hold. The owner
+reconfirms that the existing multiple-shifts setting must control a shared
+one-shift-per-till policy versus permitted multiple shifts. Do not invent a new
+mode or change that setting's enforcement in this CPU-only batch.
+
 The owner's latest inventory UI refinement (DEC-25) combines adjacent Products
 and Categories metrics into one compact card, hides loaded zero inventory
 indicators, and requires responsive cards to contain large numbers. Retain
