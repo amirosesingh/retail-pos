@@ -2,8 +2,12 @@
 
 Last reconciled: **2026-11-02, Asia/Brunei**.
 
-Latest controlling update, 2 November 2026 — **SYNC-CPU-01 locally verified; draft PR #360**,
-owner-approved code and isolated tests only. Branch `codex/sync-response-cpu-beta`
+Latest controlling update, 2 November 2026 — **REL-30 beta integration authorized**.
+PR #360 is merged as `cdc7bbed`; PR #361 is being checked against that exact beta.
+The owner's later release request expands the earlier code/test-only approval to
+these two beta merges and production preparation; installer publication, main
+promotion and live repairs retain their separate gates. CPU source branch
+`codex/sync-response-cpu-beta`
 starts from beta `fd41a37fc63613931aae58e11bd833c8634618e4`. Runtime scope is
 `src/lib/sync-download-redaction.ts` plus focused tests; root owns this existing
 memory/ledger update. Independent agents own implementation and read-only review.
@@ -70,7 +74,7 @@ only; the owner's subsequent Batch 1 approval below authorizes its bounded fixes
 | 26 | SHIFT-32 prepared / independently verified / draft beta PR #357 | Two existing service-only routines prevent stale reopening and validate existing-receipt replay.71 canonical/captured SQL scenarios,16 real concurrency cases,19+19 full graphs and94 focused tests passed. Updated head a5d31e67 includes required test inventory registration and beta ead66f30; integrated602 suites/4,249tests passed. Remote CI rerun pending. No live application or historical recovery approved; native convergence remains separate. |
 | 27 | REL-29 cumulative production draft PR #354 / not signed off | Separate beta-to-main draft labelled production/awaiting-owner-approval. Explicit version proposal, installed Windows acceptance, exact live dependencies and unresolved critical risks remain gates. No exact promotion/main merge/release approved. |
 | 28 | SHIFT-33 merged beta ead66f30 / scoped-verified / PR #356 | Five approved files; current native errors defeat zero-queue green claims. Root full602 suites/4,249tests, TypeScript, scoped lint and independent desktop/phone/IDB checks passed. Exact-head CI and Codex review passed; merge tree equals tested a3945e5f. No polling/retry/queue/schema/data/permission changes. Installed-device acceptance remains separate. |
-| 29 | SYNC-CPU-01 locally verified / draft beta PR #360 / CI pending | Source commit 889527f2 contains only the approved helper, focused tests and existing memory/tracker. Root full 602 suites / 4,260 tests, 54 native tests, TypeScript, scoped lint and build passed; 43 focused tests and 420 independent parity cases also passed. Common synthetic nested 500-row pages use about 30–33% less local CPU; wide stock maps show no material improvement. Hosted acceptance remains separate. No merge, manual deployment, production promotion or installer publication performed. |
+| 29 | SYNC-CPU-01 merged beta cdc7bbed / PR #360 | Merge tree equals reviewed head 651348bb. Exact-head platform/security/hosting checks passed; CodeRabbit skipped. Combined 604 suites / 4,305 tests, 79 native/release tests, types/lint/build and independent patch-risk review passed. Common synthetic history CPU improved; wide stock maps did not materially improve. Hosted acceptance remains separate. No main promotion or installer publication. |
 | 30 | SHIFT-28B fresh evidence captured / old replay HOLD / draft PR #359 | Complete original PC manifest and current cloud graph captured privately; digest independently verified. Owner confirmed a later deliberate web closure and selected original cashier facts while retaining web history. Never stage the superseded replay; propose and obtain approval for a new exact reconciliation. Current drawer, queues, checkpoints and business data remain untouched. |
 
 Membership is **ON HOLD** throughout. Each future batch requires a recoverable
@@ -172,6 +176,17 @@ build. Build-generated report was excluded after private preservation; its two
 informational numeric-input notes remain unverified separate follow-up. Both
 individual PR heads passed platform/security checks; CodeRabbit skipped. Remote
 merge SHAs, final exact-beta CI and actual hosted acceptance remain to be recorded.
+
+PR #360 merged to beta as `cdc7bbeda87d4ccfef9b3fb313cdcf5de5c76d63`; root verified
+its tree equals reviewed head `651348bb`. That beta was then merged into the
+existing PR #361 branch without conflict, preserving both source patches. Relative
+to the tested combined candidate, only release-tracker/checklist documentation
+changed. Exact new PR #361 head checks are required before its merge. The bound
+eight-file patch-risk assessment was independently schema-validated via stdin:
+recommendation merge / human_review_required; high impact, low likelihood,
+partial rollout protection, managed recovery and moderate confidence. Exact
+patch SHA256 `04c3625f3c1490bea1474411c0bdef2635955763707d3a67824ff1a5bd3b0300`.
+This is not a cumulative production security scan or installed-device acceptance.
 
 Next beta calculation is `1.4.81-beta.3`; committed source remains `1.4.80`.
 Do not commit generated beta version files. Proposed stable `1.4.81` still needs
