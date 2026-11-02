@@ -65,6 +65,35 @@ do not claim native convergence complete from safe deferral alone.
 
 ### SHIFT-36 — owner-approved protocol preparation and isolated tests
 
+2 November owner continuation: complete pending shift sync and author verification
+with agents, preserve checkout/permissions and update existing beta PR #363 with
+completed versus pending evidence. The PR was pushed to cccc052e and its body
+rewritten around actual current preparation and outstanding gates; no beta/main
+merge or publication. Foundation 27b4d387 is integrated as 0e6a8036: private key
+registry, verified personal enrollment, stable identity carry and route. Component
+13 suites / 169 tests, types and lint passed; integrated four suites / 82 tests,
+types and local web build passed. A generated build report was reverted alone;
+no unrelated source changes were retained.
+
+Actual cross-boundary Main/worker/API/isolated SQL testing found two confirmed
+runtime integration defects missed by unit fixtures: real SQL Server uppercase
+aggregate UUID versus lowercase immutable intent failed the single-aggregate
+comparison; CloudClient.shiftGraph omitted required organizationId and the real
+API rejected it with HTTP 400. Targeted fixes f6916fb8 and f989782a are integrated
+as adcccb85/429075c5, preserving single-aggregate/branch checks and strict API
+validation. Component focused suites 42 and 48 tests passed respectively; final
+actual workflow rerun remains pending. No fixture casing/schema relaxation hides
+either failure. The actual harness reached opening → sale → closing → two
+recounts with three local acknowledgements and lost-response replay after the
+first fix; this does not prove author signing/device registration integration.
+
+Pending: Main stable identity/session epoch/signature persistence and background
+queue integration; atomic server signature/current-grant enforcement across
+sensitive aliases; cross-boundary complete rerun; fresh independent candidate
+security review; final exact-head regression/CI. Separate expected-amount/as-of
+financial policy remains unresolved. All new migrations are source-only; no real
+enrollment, key rotation, permissions, financial data or installed SQL changed.
+
 2 November continuation checkpoint (isolated coordination source 69fd5769):
 Final rerun at 80394dd8 after both fixture corrections: **608 suites / 4,461
 tests passed**, pinned Node 22, `vitest run --maxWorkers=2`, 118.39 seconds.
