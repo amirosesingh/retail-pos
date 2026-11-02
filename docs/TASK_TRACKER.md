@@ -89,6 +89,36 @@ before those changes. Existing operator database credentials and iOS signing key
 are untouched. Independent protocol/schema/race preparation can continue; no
 merge/deployment or claim of complete permission safety is permitted meanwhile.
 
+AUTH-37 refined proposal (owner approval pending; supersedes terminal-manager-only
+key enrollment): bind a separate Main-only signing key to each actual verified
+author, terminal and project. Enroll automatically from that same person's first
+successful online PIN/password/session adoption, using existing live permission
+resolution; management authority cannot bind an arbitrary key to another admin.
+Do not repurpose approval OAEP, local-session or iOS keys. No generic signing IPC.
+Sign frozen subject/action/intent only inside the existing permitted Main commit.
+Server checks registered key/signature plus that author's current effective action
+permission before NEW writes. Identity enrollment grants no financial permission;
+new grants apply normally, revoked grants retain new uploads for administrator
+review. Existing accepted identical receipt replay remains no-write historical
+acknowledgement, never baseline regression or effective money replacement.
+
+Offline sign-in and ordinary sales remain available. An author who has never
+verified online must do so once before protected shift uploads can be delivered;
+reconnect alone cannot authenticate them. Keep those signed local intents pending
+without caching plaintext PIN/password, swapping the actor or downgrading to
+unsigned upload. Enrollment timeout must not fail login/checkout; asynchronous
+completion cannot replace the current signed-in session. Late enrollment of the
+same protected author key relies on the trusted installed Main/OS boundary and
+is part of the explicit proposal. Preserve pending signatures on key mismatch;
+replacement/recovery requires an authorized process, never automatic rotation.
+
+For enrolled terminals require signed sensitive shift writes across v3/legacy
+aliases so leaked transport proof cannot bypass author checks. Older un-enrolled
+first-close compatibility remains an explicit rollout/cutoff decision, not proof
+of complete legacy API security. A version string alone cannot authorize bypass.
+No new key, signing/enrollment implementation, live schema or device enrollment
+is authorized until the owner approves this refined security preparation plan.
+
 Necessary offline dependency: capture the **actual OPEN postimage** inside the
 normal AggregateRepository opening commit in local protocol metadata. This is
 within approved local metadata preparation, not permission to invent an OPEN
