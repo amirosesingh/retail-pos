@@ -66,6 +66,12 @@ do not claim native convergence complete from safe deferral alone.
 ### SHIFT-36 — owner-approved protocol preparation and isolated tests
 
 2 November continuation checkpoint (isolated coordination source 69fd5769):
+Final rerun at 80394dd8 after both fixture corrections: **608 suites / 4,461
+tests passed**, pinned Node 22, `vitest run --maxWorkers=2`, 118.39 seconds.
+The former 32 failures below are resolved, with original adoption assertions
+retained and an added explicit nonclosed atomic-read contract test. This is the
+protocol/foundation checkpoint, not acceptance of subsequent AUTH-37 runtime
+wiring, financial admission policy or the combined real-boundary harness.
 server draft 907ba546 and native coverage draft 61fef763 are integrated, retaining
 the non-shift settings-notification correction. Shared sealed-key/public proof
 foundation ce7ab218 is integrated without runtime enrollment or key creation on
