@@ -280,7 +280,7 @@ class PushWorker {
       try {
       const intent=await this.reader.protectedIntent?.(aggregate.aggregateId,branchId);
       if(intent){
-        if(originalIds.length!==1 || originalIds[0]!==intent.intentId)throw Object.assign(new Error("A protected closing intent cannot be combined with another transaction."),{code:"EIDEMPOTENCY",table:"shifts"});
+        if(originalIds.length!==1 || recordId(originalIds[0])!==recordId(intent.intentId))throw Object.assign(new Error("A protected closing intent cannot be combined with another transaction."),{code:"EIDEMPOTENCY",table:"shifts"});
         if((this.reader.predecessorAccepted && !await this.reader.predecessorAccepted(intent)) ||
           (this.reader.shiftPrerequisites && !await this.reader.shiftPrerequisites(intent))){
           deferred.add(aggregate.aggregateId);continue;

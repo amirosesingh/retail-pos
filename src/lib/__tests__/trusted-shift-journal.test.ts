@@ -396,6 +396,14 @@ describe("protected shift closing durable journal", () => {
     expect(operations.find(op => op.table === "shift_cash_counts")?.rows).toHaveLength(1);
     expect(h.data().journal.every(row => !!row.acknowledged_at)).toBe(true);
   });
+  it("accepts one real-driver uppercase aggregate UUID without changing its frozen intent",async()=>{
+    const h=fixture();await h.writer.apply("close",closeOperations(),h.scope);
+    const f=workerFixture(h),read=f.reader.pendingAggregates.bind(f.reader),frozen=String(h.data().intents[0].payload_json);
+    f.reader.pendingAggregates=async(...args:unknown[])=>(await read(...args)).map((aggregate:Row)=>({...aggregate,aggregateId:String(aggregate.aggregateId).toUpperCase()}));
+    await expect(f.worker.pushAggregates(branch,1)).resolves.toBeGreaterThan(0);
+    expect(f.uploaded).toHaveLength(1);expect((f.uploaded[0].shiftIntent as Row).payloadJson).toBe(frozen);
+    expect(f.uploaded[0].batchId).toBe(h.data().intents[0].intent_id);expect(h.data().journal.every(row=>!!row.acknowledged_at)).toBe(true);
+  });
 
   it("reproduces old OPEN + new OPEN with the actual unjournaled writer, then protects the journaled path", async () => {
     const old = fixture();
