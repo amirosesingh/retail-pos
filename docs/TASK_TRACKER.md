@@ -2,7 +2,7 @@
 
 Last reconciled: **2026-11-02, Asia/Brunei**.
 
-Latest controlling update, 2 November 2026 — **SYNC-CPU-01 implemented; local verification**,
+Latest controlling update, 2 November 2026 — **SYNC-CPU-01 locally verified; draft PR #360**,
 owner-approved code and isolated tests only. Branch `codex/sync-response-cpu-beta`
 starts from beta `fd41a37fc63613931aae58e11bd833c8634618e4`. Runtime scope is
 `src/lib/sync-download-redaction.ts` plus focused tests; root owns this existing
@@ -70,7 +70,7 @@ only; the owner's subsequent Batch 1 approval below authorizes its bounded fixes
 | 26 | SHIFT-32 prepared / independently verified / draft beta PR #357 | Two existing service-only routines prevent stale reopening and validate existing-receipt replay.71 canonical/captured SQL scenarios,16 real concurrency cases,19+19 full graphs and94 focused tests passed. Updated head a5d31e67 includes required test inventory registration and beta ead66f30; integrated602 suites/4,249tests passed. Remote CI rerun pending. No live application or historical recovery approved; native convergence remains separate. |
 | 27 | REL-29 cumulative production draft PR #354 / not signed off | Separate beta-to-main draft labelled production/awaiting-owner-approval. Explicit version proposal, installed Windows acceptance, exact live dependencies and unresolved critical risks remain gates. No exact promotion/main merge/release approved. |
 | 28 | SHIFT-33 merged beta ead66f30 / scoped-verified / PR #356 | Five approved files; current native errors defeat zero-queue green claims. Root full602 suites/4,249tests, TypeScript, scoped lint and independent desktop/phone/IDB checks passed. Exact-head CI and Codex review passed; merge tree equals tested a3945e5f. No polling/retry/queue/schema/data/permission changes. Installed-device acceptance remains separate. |
-| 29 | SYNC-CPU-01 implemented / local regressions and build passed / beta PR checks pending | Approved response-copy optimization only; root full 602 suites / 4,260 tests, 54 native tests, TypeScript, scoped lint and build passed; 43 focused tests and 420 independent parity cases also passed. Common synthetic nested 500-row pages use about 30–33% less local CPU; wide stock maps show no material improvement. Hosted acceptance is separate. No merge, deployment or publication performed. |
+| 29 | SYNC-CPU-01 locally verified / draft beta PR #360 / CI pending | Source commit 889527f2 contains only the approved helper, focused tests and existing memory/tracker. Root full 602 suites / 4,260 tests, 54 native tests, TypeScript, scoped lint and build passed; 43 focused tests and 420 independent parity cases also passed. Common synthetic nested 500-row pages use about 30–33% less local CPU; wide stock maps show no material improvement. Hosted acceptance remains separate. No merge, manual deployment, production promotion or installer publication performed. |
 | 30 | SHIFT-28B fresh evidence captured / old replay HOLD / draft PR #359 | Complete original PC manifest and current cloud graph captured privately; digest independently verified. Owner confirmed a later deliberate web closure and selected original cashier facts while retaining web history. Never stage the superseded replay; propose and obtain approval for a new exact reconciliation. Current drawer, queues, checkpoints and business data remain untouched. |
 
 Membership is **ON HOLD** throughout. Each future batch requires a recoverable
@@ -2750,3 +2750,11 @@ reconciliation, stale-upload guard application and multiple-shift setting
 enforcement remain separate; Membership stays on hold. Rollback is a targeted
 revert of this CPU patch, preserving later unrelated changes. No live data was
 changed by this batch, so it requires no database rollback.
+
+Source commit `889527f24aa1fafd6742f4ce27c1340157d9486f` is pushed to draft
+[beta PR #360](https://github.com/amirosesingh/retail-pos/pull/360), labelled beta.
+The latest destination still equals the recorded `fd41a37f` baseline. Only four
+reviewed files are in its diff; no older checkout or unrelated generated report
+was staged. Platform/security/hosting build checks started automatically. Keep
+this draft unmerged until its separate release gates are satisfied; a PR build
+does not establish successful registered-device recovery or production approval.
