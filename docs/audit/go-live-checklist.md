@@ -11,6 +11,20 @@ approved test devices; never damage real business data. Membership is on hold.
 
 ## 2 November 2026 — beta integration and production preparation
 
+Later controlling update (REL-31): PR #360/#361 are merged to beta `0bc58a16`
+and final checks passed. The owner now explicitly includes pending dependency
+PRs #343–#347 and prepared lifecycle **source** #357, and selects stable source
+version **1.4.81**. The earlier exclusions/version proposal below describe the
+previous checkpoint and are superseded for those source changes only. The next
+computed beta becomes **1.4.82-beta.1**; no installer publication is authorized.
+Integration candidate `5bb6c488` with matching React/DOM 19.3.1 passed 604 suites /
+4,305 tests, full types/lint, 79 native/release tests, 137 isolated SQL scenarios
+and 56 real-browser synthetic cases; version-prepared web/Windows builds and
+56 version/database/release tests also passed. Exact integration PR CI and final
+review still precede merge. Preserve original PR ancestry and verify merged state.
+No live SQL was applied; #359 remains HOLD. Existing production/device/data
+gates below remain open and must not be reclassified as passed by these checks.
+
 The owner requested merging the reviewed CPU/native fixes into beta and preparing
 production if ready. This authorizes PR #360/#361 beta integration, not held
 PR #357/#359 execution, unrelated dependency upgrades or a main release.
