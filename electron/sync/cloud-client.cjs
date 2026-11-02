@@ -4,9 +4,36 @@ const { policy } = require("./conflicts.cjs");
 const { toLocalValue } = require("./row-codec.cjs");
 const { tagBootstrapDiagnostic } = require("../diagnostics.cjs");
 
-// A cloud row is authoritative when its version matches a cached terminal
-// row. A genuinely pending terminal edit has already advanced its version and
-// therefore remains untouched until its upload is accepted or rejected.
+// Pending writes are guarded by the reader, not inferred from independent
+// cloud/device counters. Closing graph rows also report the actual SQL outcome.
+const SHIFT_GRAPH_TABLES = new Set(["shifts", "shift_cash_counts", "shift_reconciliations",
+  "shift_close_events", "shift_notifications", "shift_variance_alerts"]);
+function comparable(column, value) {
+  if (value == null) return null;
+  const type = String(column.cloudType ?? "").toLowerCase();
+  if (type === "uuid") return recordId(String(value));
+  if (type === "boolean") return [true, 1, "1"].includes(value) ? true : [false, 0, "0"].includes(value) ? false : value;
+  if (/^(timestamp|date|time)/.test(type)) {
+    if (type === "date") return value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10);
+    const time = value instanceof Date ? value.valueOf() : Date.parse(String(value));
+    return Number.isFinite(time) ? time : String(value);
+  }
+  if (/^(numeric|decimal|smallint|integer|bigint|real|double precision|money)/.test(type)) {
+    const match = /^([+-]?)(\d+)(?:\.(\d*))?(?:e([+-]?\d+))?$/i.exec(String(value).trim());
+    if (match && Math.abs(Number(match[4] ?? 0)) < 1000) {
+      let digits = (match[2] + (match[3] ?? "")).replace(/^0+/, "") || "0";
+      let exponent = Number(match[4] ?? 0) - (match[3]?.length ?? 0);
+      while (digits.endsWith("0") && digits !== "0") { digits = digits.slice(0, -1); exponent++; }
+      return digits === "0" ? "0" : `${match[1] === "-" ? "-" : ""}${digits}e${exponent}`;
+    }
+  }
+  if (type === "jsonb" || type.endsWith("[]")) {
+    const canonical = item => Array.isArray(item) ? item.map(canonical) : item && typeof item === "object"
+      ? Object.fromEntries(Object.keys(item).sort().map(key => [key, canonical(item[key])])) : item;
+    try { return JSON.stringify(canonical(typeof value === "string" ? JSON.parse(value) : value)); } catch { return value; }
+  }
+  return value;
+}
 const DEVICE_COLUMN_ALLOWLIST = {
   app_users: new Set([
     "id", "user_id", "login_username", "full_name", "store_id", "role", "role_slug", "permissions",
@@ -242,11 +269,19 @@ class CloudClient {
   async applyLocalBatch(transaction, table, batch) {
     const sql = this.connectionManager?.sql?.() ?? require("mssql/msnodesqlv8");
     const allowed = new Map((table.columns ?? []).map((column) => [column.cloudColumn, column]));
+    const localColumns = new Map((table.columns ?? []).map(column => [column.sqlServerColumn, column]));
     const primary = table.columns
       .filter((column) => column.primaryKey)
       .map((column) => column.sqlServerColumn);
     if (!primary.length)
       throw new Error(`No primary key is registered for ${table.sqlServerTable}.`);
+    const protectedGraph = SHIFT_GRAPH_TABLES.has(table.cloudTable);
+    const result = { applied: 0, alreadyMatching: 0, deferred: 0, conflicts: 0, outcomes: [] };
+    const outcome = (change, status, reason, localVersion) => {
+      result[status === "already_matching" ? "alreadyMatching" : status === "conflict" ? "conflicts" : status]++;
+      result.outcomes.push({ entityId: change.entity_id ?? JSON.stringify(this.parseKey(table, change)), status,
+        ...(reason ? { reason } : {}), localVersion: localVersion ?? null, remoteVersion: change.row_data?.row_version ?? null });
+    };
     for (const change of [...(batch.rows ?? []), ...(batch.tombstones ?? [])]) {
       const row = change.row_data ?? {};
       const key = this.parseKey(table, change);
@@ -258,9 +293,10 @@ class CloudClient {
             return `[${name}]=@k${index}`;
           })
           .join(" AND ");
-        await request.query(
+        const deleted = await request.query(
           `WITH CHANGE_TRACKING_CONTEXT (0x434C4F5544) DELETE FROM dbo.[${table.sqlServerTable}] WHERE ${where};`,
         );
+        outcome(change, (deleted.rowsAffected?.[0] ?? 0) > 0 ? "applied" : "already_matching");
         continue;
       }
       const deviceColumns = DEVICE_COLUMN_ALLOWLIST[table.cloudTable];
@@ -279,15 +315,19 @@ class CloudClient {
           const column = allowed.get(name);
           return [column.sqlServerColumn, toLocalValue(column, value)];
         });
-      if (!entries.length || primary.some((name) => !entries.some(([column]) => column === name)))
+      if (!entries.length || primary.some((name) => !entries.some(([column]) => column === name))) {
+        outcome(change, "conflict", "The cloud row has no complete registered primary key.");
         continue;
+      }
       // user_roles is uniquely identified by the role assignment itself. Old
       // installs can hold the same (user_id, role) under a different generated
       // UUID; matching only the UUID makes a replay violate UQ_user_roles_0.
       // Pull is authoritative, so update that harmless local UUID to the cloud
       // UUID while preserving one assignment row.
       const mergeKey = table.cloudTable === "user_roles" ? ["user_id", "role"] : primary;
-      if (mergeKey.some((name) => !entries.some(([column]) => column === name))) continue;
+      if (mergeKey.some((name) => !entries.some(([column]) => column === name))) {
+        outcome(change, "conflict", "The cloud row has no complete registered merge key."); continue;
+      }
       const request = new sql.Request(transaction);
       const names = [];
       entries.forEach(([name, value], index) => {
@@ -295,6 +335,35 @@ class CloudClient {
         request.input(parameter, value);
         names.push([name, parameter]);
       });
+      if (protectedGraph) {
+        const branch = recordId(String(batch.branchId ?? "").trim());
+        const scope = recordId(String(deviceRow.store_id ?? "").trim());
+        if (!branch || scope !== branch) {
+          outcome(change, "conflict", "The closing row does not match the verified download branch."); continue;
+        }
+        const where = primary.map(name => `[${name}]=@${names.find(([column]) => column === name)[1]}`).join(" AND ");
+        const prior = await request.query(`SELECT TOP (1) * FROM dbo.[${table.sqlServerTable}] WITH (UPDLOCK,HOLDLOCK) WHERE ${where};`);
+        const saved = prior.recordset?.[0];
+        if (saved) {
+          if (recordId(String(saved.store_id ?? "")) !== branch || (table.cloudTable !== "shifts" &&
+              recordId(String(saved.shift_id ?? "")) !== recordId(String(deviceRow.shift_id ?? "")))) {
+            outcome(change, "conflict", "The saved closing row belongs to another branch or shift.", saved.row_version); continue;
+          }
+          const matching = entries.every(([name, value]) => name === "row_version" ||
+            comparable(localColumns.get(name), saved[name]) === comparable(localColumns.get(name), value));
+          if (matching) { outcome(change, "already_matching", null, saved.row_version); continue; }
+          const closed = value => value.status === "CLOSED" || value.state === "CLOSED" || value.closed_at != null;
+          if ((table.cloudTable !== "shifts" && (table.conflictRule ?? policy(table.cloudTable)) === "immutable_reversal") ||
+              (table.cloudTable === "shifts" && closed(saved) && !closed(deviceRow))) {
+            outcome(change, "conflict", table.cloudTable === "shifts"
+              ? "A cloud opening cannot replace a saved closing. Resolve the accepted closing revision before retrying."
+              : "Saved closing history differs from the cloud row. Resolve the immutable record before retrying.", saved.row_version); continue;
+          }
+          if (Number(saved.row_version) > Number(deviceRow.row_version)) {
+            outcome(change, "deferred", "The cloud closing/update was not applied: independent revisions require an authoritative graph and correction revision.", saved.row_version); continue;
+          }
+        }
+      }
       const on = mergeKey.map((name) => `target.[${name}]=source.[${name}]`).join(" AND ");
       const updates = names
         .filter(([name]) => !mergeKey.includes(name))
@@ -335,9 +404,21 @@ class CloudClient {
           ? `WHEN MATCHED${authorizationOrder} THEN UPDATE SET ${updates.join(",")}`
           : "";
       const source = names.map(([name, parameter]) => `@${parameter} AS [${name}]`).join(",");
-      await request.query(
-        `WITH CHANGE_TRACKING_CONTEXT (0x434C4F5544) MERGE dbo.[${table.sqlServerTable}] WITH(HOLDLOCK) AS target USING(SELECT ${source}) AS source ON ${on} ${matched} WHEN NOT MATCHED THEN INSERT(${names.map(([name]) => `[${name}]`).join(",")}) VALUES(${names.map(([name]) => `source.[${name}]`).join(",")});`,
+      // OUTPUT INTO also works when an installed schema has DML triggers.
+      const capture = protectedGraph ? "DECLARE @sync_actions TABLE(sync_action nvarchar(10)); " : "";
+      const output = protectedGraph ? " OUTPUT $action INTO @sync_actions; SELECT sync_action FROM @sync_actions;" : ";";
+      const merged = await request.query(
+        `${capture}WITH CHANGE_TRACKING_CONTEXT (0x434C4F5544) MERGE dbo.[${table.sqlServerTable}] WITH(HOLDLOCK) AS target USING(SELECT ${source}) AS source ON ${on} ${matched} WHEN NOT MATCHED THEN INSERT(${names.map(([name]) => `[${name}]`).join(",")}) VALUES(${names.map(([name]) => `source.[${name}]`).join(",")})${output}`,
       );
+      const applied = (merged.recordset?.length ?? merged.rowsAffected?.[0] ?? 0) > 0;
+      let confirmed = true;
+      if (protectedGraph) {
+        const where = primary.map(name => `[${name}]=@${names.find(([column]) => column === name)[1]}`).join(" AND ");
+        const saved = (await request.query(`SELECT TOP (1) * FROM dbo.[${table.sqlServerTable}] WITH (UPDLOCK,HOLDLOCK) WHERE ${where};`)).recordset?.[0];
+        confirmed = saved && entries.every(([name, value]) => name === "row_version" ||
+          comparable(localColumns.get(name), saved[name]) === comparable(localColumns.get(name), value));
+      }
+      outcome(change, applied && confirmed ? "applied" : "deferred", applied && confirmed ? null : "The registered merge policy did not confirm this cloud row locally.");
       // A newer default-row timestamp must not mask cloud company identity.
       // Repair only empty fields; genuine pending edits are protected by the
       // snapshot/pull journal guard before this merge is called.
@@ -352,15 +433,28 @@ class CloudClient {
         }
       }
     }
+    return result;
   }
-  async applyLocalBatchToPool(connectionManager, table, rows) {
+  async applyLocalBatchToPool(connectionManager, table, rows, { branchId } = {}) {
     this.connectionManager = connectionManager;
     const sql = connectionManager.sql();
     const transaction = new sql.Transaction(connectionManager.pool);
     await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
     try {
-      await this.applyLocalBatch(transaction, table, { rows, tombstones: [] });
+      if (SHIFT_GRAPH_TABLES.has(table.cloudTable)) {
+        const { ChangeReader } = require("./change-reader.cjs");
+        const { loadRegistry } = require("../db/schema-registry.cjs");
+        const reader = new ChangeReader(connectionManager, loadRegistry());
+        const pending = await reader.unacknowledged(table, rows.map(row => row.entity_id ?? JSON.stringify(this.parseKey(table, row))), transaction, { branchId, changes: rows });
+        if (pending.size) throw Object.assign(new Error("Cloud download is waiting for pending or unverified local closing changes."), { code: "ELOCAL_UPLOAD_PENDING", table: table.cloudTable });
+      }
+      const result = await this.applyLocalBatch(transaction, table, { rows, tombstones: [], branchId });
+      if (SHIFT_GRAPH_TABLES.has(table.cloudTable) && (result.deferred || result.conflicts))
+        throw Object.assign(new Error(result.outcomes.find(item => ["deferred", "conflict"].includes(item.status))?.reason), {
+          code: result.conflicts ? "ESYNC_APPLY_CONFLICT" : "ESYNC_APPLY_DEFERRED", table: table.cloudTable, outcomes: result.outcomes,
+        });
       await transaction.commit();
+      return result;
     } catch (error) {
       await Promise.resolve(transaction.rollback()).catch(() => undefined);
       throw error;
