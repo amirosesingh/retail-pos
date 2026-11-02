@@ -55,7 +55,7 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
       // explicit NULL operations for v3. The adapter never silently fills it.
       expect(Object.keys(args).sort()).toEqual(spec.map(([key]) => key).sort());
       const values = spec.map(([key, type]) => type === "jsonb" && args[key] !== null ? JSON.stringify(args[key]) : args[key]);
-      return scalar(`SELECT public.${name}(${spec.map(([, type], index) => `$${index + 1}::${type}`).join(",")}) AS result`, values);
+      return scalar(`SELECT public.${name}(${spec.map(([key, type], index) => `${key}=>$${index + 1}::${type}`).join(",")}) AS result`, values);
     };
     vi.stubGlobal("fetch", vi.fn(async (value: string | URL | Request, options?: RequestInit) => {
       const url = String(value);

@@ -65,6 +65,25 @@ do not claim native convergence complete from safe deferral alone.
 
 ### SHIFT-36 — owner-approved protocol preparation and isolated tests
 
+Cross-boundary engine harness is integrated at 796b7f41; root independently ran
+the opt-in actual LocalDB → worker → CloudClient → sync API → in-memory PostgreSQL
+scenario: passed in 9.79 seconds. Named SQL arguments are additionally verified
+against actual routine parameter names (final component 677eb946 delta). It
+exercises actual corrected web SQL and child-only adoption, exact lost-response
+replay, retained author labels and pending-note rollback. Identity/transport/feed
+adapters remain synthetic, Main functions are source-loaded rather than installed
+IPC, and the sale header is not a stock checkout acceptance test. AUTH-37 remains
+unverified until signing/enforcement integration and fresh candidate review.
+
+AUTH-37 necessary alias closure: source trace confirmed runRelayOp can mutate
+shift_notifications through raw REST outside the 12 graph helper guards. The
+root includes a narrowly constrained service-only atomic mutation RPC and the
+necessary existing pos-relay.server.ts caller change in the approved author
+boundary. Keep safeAuthorizeRelayOp first, exact legitimate upsert/filter/delete
+semantics, personal web/mobile flows, OPEN/housekeeping/delivery acknowledgements
+and existing grants. No generic proxy, broad graph trigger, new role grant or
+financial rule is authorized; test denied sensitive aliases and allowed controls.
+
 Resume verification: full suite including enrollment foundation and both boundary
 fixes passed 609 suites / 4,485 tests with one migration-inventory failure (missing
 registry filename), not a runtime failure. Separately approved web audit-event
