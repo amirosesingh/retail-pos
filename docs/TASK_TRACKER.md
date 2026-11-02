@@ -65,6 +65,21 @@ do not claim native convergence complete from safe deferral alone.
 
 ### SHIFT-36 — owner-approved protocol preparation and isolated tests
 
+Owner approved signed closing-start proof preparation and isolated tests on
+2 November, superseding the pending approval below. Preserve the actual person
+who starts closing and the different permitted person who finishes offline.
+Prepare separate domain-bound, immutable start evidence captured by trusted Main
+under the existing start-close permission/session/terminal guard. The final
+closing must not retag that earlier author; server verification must bind the
+saved start event/shift/branch/project/terminal and enforce existing access without
+granting new permissions or permitting unsigned invented history. Cover restart,
+different users, forged/replayed proofs, revocation, rollback and retry. Reuse
+existing author keys/metadata/contracts where compatible; inspect the concrete
+protocol before edits and keep one owner per file. Approval is SOURCE AND
+ISOLATED TESTS ONLY: no live enrollment, installed SQL/cloud schema application,
+business data repair, production merge or installer publication. Financial
+expected-amount/as-of policy and Membership hold remain unchanged.
+
 Author candidate verification completed for the current scope: fresh independent
 review confirmed two actual native/server compatibility defects (missing original
 parent closing author and rejected saved closing_started). Both were reproduced
