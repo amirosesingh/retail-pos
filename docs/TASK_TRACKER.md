@@ -65,6 +65,18 @@ do not claim native convergence complete from safe deferral alone.
 
 ### SHIFT-36 — owner-approved protocol preparation and isolated tests
 
+Owner separately approved the real-workflow-discovered web correction audit fix
+on 2 November: pos_admin_correct_closed_shift omits required activity_events
+event_type, causing transaction rollback against the actual canonical table.
+Prepare an additive migration and matching schema source adding only
+event_type='shift_close_corrected', preserving calculations, administrator/branch
+checks, saved audit facts and retry semantics, with isolated SQL tests. Existing
+migrations remain immutable. No live application is authorized. The cross-boundary
+test must use the actual corrected routine before claiming web correction works;
+do not drop the NOT NULL constraint or substitute a synthetic successful action.
+web_async_audit owns this separate batch; coordinate shared generator edits with
+the author-enforcement agent. All earlier unfinished tasks remain active.
+
 2 November owner continuation: complete pending shift sync and author verification
 with agents, preserve checkout/permissions and update existing beta PR #363 with
 completed versus pending evidence. The PR was pushed to cccc052e and its body
