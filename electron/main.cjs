@@ -790,6 +790,10 @@ async function startAppServer(preferredPort = null) {
 
 let cloudServerRestartTimer = null;
 function scheduleCloudServerRestart() {
+  // Vite is owned by the developer, not by this Electron process. Native
+  // requests read the vault directly and the renderer applies its saved
+  // override; only our packaged server needs a new environment after a save.
+  if (DEV_URL) return;
   if (cloudServerRestartTimer) clearTimeout(cloudServerRestartTimer);
   cloudServerRestartTimer = setTimeout(async () => {
     cloudServerRestartTimer = null;

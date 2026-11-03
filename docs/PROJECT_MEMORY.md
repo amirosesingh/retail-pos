@@ -3,6 +3,13 @@
 Last reconciled: **2026-11-03, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
 
+DEV-41: development Electron owns its native vault/renderer override, but not
+the external Vite server. Saving cloud credentials must not start a packaged
+dist-desktop server while DEV_URL is active. Preserve real packaged restart,
+failure recovery and credential activation; external SSR hosting environment
+remains developer-managed. Owner approved the focused correction and365/366
+beta integration on3November. No production, database or installer approval.
+
 3 November HOST-40: confirmed beta Worker sync503 is CPU exhaustion, not grounds
 for SQL repair. Matching11:58:26.967Brunei event reports exceededCpu/12ms; failed
 scoped history snapshot preserves its old CT checkpoint, so ECHANGEGAP repeats.
