@@ -12,6 +12,18 @@ not authorization to relax signature checks or modify database data. READ-35
 subsequently merged into beta3dbc0f4d with all final checks passing; production
 acceptance is still separate.
 
+REG-39 approved decision: native request proofs must use Windows Main's existing
+sealed proof when renderer and Main token/platform/branch/mode match; stale
+renderer proof is not a reason to re-register a valid terminal. Reject changed
+identity or unreadable native storage, preserve mobile/legacy behavior, and keep
+backend verification mandatory. Actual local roster changed401→200 without any
+registration or database rewrite. Proof values must never enter diagnostics.
+3 November HOST-40: beta sync/adoption/enrollment can still exceed Workers Free
+CPU budget. Confirmed11:58:26 sync event:503/exceededCpu/12ms. This blocks scoped
+history bootstrap and causes repeated ECHANGEGAP; it is not evidence to reset
+checkpoints or rebuild the database. Further shared-entry optimization requires
+separate preparation approval; production acceptance remains incomplete.
+
 Latest beta is 575092c7 after verified merge #363; merged and reviewed trees match
 and all beta-push checks passed. Six approved cloud upgrades are installed;
 production #354 is updated but not yet accepted. The new Management closing-graph
