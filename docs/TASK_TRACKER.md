@@ -103,6 +103,53 @@ pos qhrufhtbeguxydenzfey, database postgres,
 https://qhrufhtbeguxydenzfey.supabase.co. This is target identification only:
 no live application is approved by preparation. Exact gateway serialization and
 compression must pass before hosted acceptance; mismatched protocol fails closed.
+Actual SQL Server acceptance now supersedes the earlier LocalDB-unavailable
+note. On SQL Server 2025 LocalDB 17.0.1145.4 / ODBC18 / existing msnodesqlv8,
+`node scripts/test-history-resume-sqlserver.cjs --run` passes four acceptance
+groups: monotonic checkpoint/cursor preservation, committed-page network resume
+with original baseline and atomic finalization, page+cursor rollback before
+retry, and concurrent writer exclusion (SQL1222). Root independently reran all
+four groups successfully. Each run creates a uniquely named disposable database
+and removes only its owned database/instance. Agent cleanup inventory showed
+only MSSQLLocalDB afterward. No POS_Local/profile/operator configuration used.
+The bigint assertion was corrected to account for the driver's text result;
+no application code was changed for this acceptance step. Installed Electron
+IPC/UI acceptance remains separate from the actual SQL runtime evidence.
+
+## RESUME45 — approved durable history recovery preparation
+
+Owner approved preparation and isolated tests on 3 November. Baseline is current
+beta a13739a5, branch codex/history-resume-preparation-beta. Preserve existing
+local job/checkpoint schema; persist each committed page cursor atomically with
+its applied rows, retain the original CT baseline across restarts, and advance
+CT only after complete snapshot success. Pending edits, scope identity and newer
+checkpoints must remain protected. Resume must load committed state rather than
+mutated in-memory state after rollback. No live repairs, queue resets, schema,
+permissions, checkout or deployment changes. Membership remains on hold.
+Agent owns native resume files/tests; root owns project records; independent
+review and full isolated regressions required. Any unmet scope or stale-baseline
+state must fail clearly without silently discarding prior work. Rollback is a
+targeted code revert preserving durable jobs and original pending transactions.
+
+Separate STREAM46 preparation is approved for a service-only protected,
+byte-bounded history RPC and guarded Worker streaming; no live migration or
+deployment is authorized by either preparation approval. CPU remains unresolved
+for large history records despite successful small-page samples.
+
+Prepared source verification (3 November): independent review and 16 native
+transaction-model scenarios pass. Full Vitest rerun: 624 files / 4,804 tests pass,
+two opt-in tests skipped; TypeScript noEmit passes. The initial full run exposed
+an outdated diagnostic fixture, updated to the actual durable job interface;
+its original failed-download/no-checkpoint assertions are preserved. A UI
+timeout did not reproduce in focused or final full reruns. No actual SQL Server
+locking/transaction execution verified: the disposable LocalDB helper returned
+no private pipe. The opt-in isolated SQL harness is retained, not reported as
+passing. Installed recovery, fresh administrator login and hosted CPU acceptance
+remain pending. No live configuration, queue, checkpoint or business data was
+changed. Final focused fixture/bridge checks, TypeScript and scoped ESLint pass
+without warnings. The CI-discovered Vitest bridge executes all 16 native model
+cases with a bounded timeout; it never runs the opt-in SQL harness. No live
+application, beta merge or deployment has been performed under this approval.
 
 ## HOST44 — bounded history response CPU / active
 
