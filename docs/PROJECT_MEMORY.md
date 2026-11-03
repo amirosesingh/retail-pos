@@ -3,6 +3,16 @@
 Last reconciled: **2026-11-03, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
 
+Latest beta is 575092c7 after verified merge #363; merged and reviewed trees match
+and all beta-push checks passed. Six approved cloud upgrades are installed;
+production #354 is updated but not yet accepted. The new Management closing-graph
+read has two confirmed compatibility defects (HTTP replica-read recognition and
+SQL admission using the write validator). Existing management pull/bootstrap/
+counts use a separate read validator; do not confuse its purpose with write
+authorization or broadly allow NULL-location devices. A bounded additive fix is
+proposed, not approved/implemented. Preserve installed migration history and
+normal terminal branch locking. See READ-35 in the tracker.
+
 Live schema evidence: public.app_users.role is enum public.app_role, not text.
 Keep explicit role::text at existing text-helper boundaries; do not change role
 or grant rules to solve type resolution. The captured-schema six-upgrade test

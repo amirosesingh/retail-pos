@@ -2,6 +2,46 @@
 
 Last reconciled: **2026-11-03, Asia/Brunei**.
 
+## Current checkpoint — beta merged; Management graph-read correction proposed
+
+PR #363 merged into beta as **575092c7b4593ca519cb328ed8e74d0767f7932b** after
+all exact-head checks passed on 4d839cc0. Merge tree 7fdc6911 matches the reviewed
+tree exactly and retains prior beta 41463049 plus reviewed head as parents.
+All beta-push/promotion checks and beta-domain build subsequently passed;
+CodeRabbit skipped. Public beta smoke checks: home 200 with security headers,
+configuration-presence endpoint 200 with POS URL/service-key flags true, invalid
+login payload 400 before PIN verification. These are not valid-login CPU or
+transaction acceptance. Production PR #354 now includes all merged beta changes
+(633-file comparison) and remains draft under its existing acceptance gates.
+No beta installers or production release were published.
+
+READ-35 / confirmed High, pending batch approval: latest unpublished Management
+client calls the new closing-graph download during bootstrap/pull, but
+managementReplicaScope does not recognize sqlServerShiftGraph as a replica read.
+Independent source-handler reproduction with identical valid device proofs:
+old pull returns 200, graph read returns 403 STORE_FORBIDDEN without calling SQL.
+Separately, isolated PostgreSQL with captured validators accepts the existing
+Management read scope but rejects the new graph RPC because it uses the write
+validator. These are two new-path defects; existing deployed pull/bootstrap/
+counts use their separate read validator and are not an all-Management outage.
+
+Proposed bounded next batch (no application changes yet): recognize the typed
+graph read in src/lib/management-replica.server.ts while preserving mixed-write,
+receipt, telemetry and ordinary-read denial; prepare an additive migration to
+change only pos_sync_shift_graph admission to existing validate_read_scope;
+mirror it in canonical SQL and preserve generator ordering. Keep original six
+installed migration files immutable, write validators and all grants unchanged.
+Test actual Management allow, Operations A/B denial, unclaimed/revoked/disabled/
+wrong-proof devices, mixed uploads, SQL branch/graph validation and rollback.
+Scope: shared read recognizer, generator, new migration, canonical SQL and
+focused tests. Source/isolated implementation approval is pending; applying a
+new live migration would require separate exact-project approval. Existing
+arbitrary Management subset/replication scope modeling remains separately held
+for audit; do not invent broader entitlement while fixing this recognized read.
+Recoverable baseline: beta575092c7. Preparation branch:
+codex/management-closing-read-beta. No code, schema or business data changed by
+this documentation proposal. Membership and historical #359 remain HOLD.
+
 ## Owner instruction — verify and merge PR #363 into beta
 
 ### Completed cloud rollout — supersedes pending statuses below
