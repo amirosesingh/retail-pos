@@ -3,6 +3,19 @@
 Last reconciled: **2026-11-03, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
 
+3 November SHIFT49 verified outcome: the separately approved future-write
+routine correction and exact seven-shift historical repair are applied to
+ROSEGILL pos `qhrufhtbeguxydenzfey`. Seven graphs pass strict validation; their
+counted amounts, closing times, children and unrelated parent fields are intact.
+Seven maintenance audits and fourteen normal sync-feed entries were verified.
+PR375 merged into beta `8ab8e387`. All other26 STR1 graphs validate, but the held
+31 October shift `1a349429-cea1-4f45-8d2b-36678d37ad27` is unchanged and remains
+unresolved. Its original cashier PC is unavailable. Do not claim complete sync,
+adopt the later web closing as authoritative, reset checkpoints or bypass graph
+validation. The tracker records exact approval hashes, the safely aborted first
+attempt, corrected raw-trigger-byte tests, readback and local verification limits.
+No production promotion, installer publication or Membership work was performed.
+
 3 November acceptance update: owner authorizes beta integration after checks and
 separately approved the exact STREAM46 migration SHA256
 54A39A26FEDDE4E3CCD6E1DDAA03F4B604742CFEDD56BB70B1A70465C8BC4E91

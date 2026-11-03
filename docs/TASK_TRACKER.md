@@ -2,7 +2,46 @@
 
 Last reconciled: **2026-11-03, Asia/Brunei**.
 
-## SHIFT49 — future-write fix applied; historical repair prepared
+## SHIFT49 — seven repaired and verified; eighth blocked
+
+Latest verified outcome: corrected SHA256
+95F35B0C2467301326CF2980533EAE3466AA6903338D1955401C77EB45679B83
+was applied to the exact approved ROSEGILL pos qhrufhtbeguxydenzfey target after
+all required CI passed on b8b7be605aa590b55a97f9bc433748e54590bcc7. Seven
+closed shift graphs now pass strict live validation. Independent SELECT readback
+confirmed exact before/after audit pairs, version+1, only five summary fields
+plus normal updated_at/version changes, unchanged child graphs and other parent
+facts. Seven audit entries and seven shift/seven audit sync-feed entries exist.
+Feed entity_id is a JSON identity object, not a bare UUID; readback must match
+jsonb_build_object identities. No repeat repair was needed.
+Held shift 1a349429-cea1-4f45-8d2b-36678d37ad27 full graph fingerprint remains
+fd55a0dbab4401786c7f801407330bb4, with no repair audit. All other26 branch
+graphs pass strict validation. The eighth original-cashier-PC authority/adoption
+work remains blocked because that PC is unavailable; do not claim full recovery.
+PR375 merged to beta8ab8e3871de9dab71d07a069f7c69c69748441c8. No production
+promotion or installer publication. Local Electron is open, but returned to
+sign-in during post-repair inspection; owner login requested. Do not treat its
+old warning or zero journal count as current end-to-end sync completion.
+The earlier preparation/abort records below are historical evidence, superseded
+by this verified seven-row outcome; they do not describe current execution status.
+
+Local post-repair verification: SQLCMD SELECT-only checks confirmed
+LAPTOP-N0QBONGL\LCRPOS / POS_Local, completed history recovery20799 rows and
+bootstrap17432 rows; history checkpoint11569 remains above minimum2916.
+Shifts checkpoint2881 remains below minimum2916; no checkpoint was reset.
+Electron first showed sign-in, then Opening your workspace with central and
+local SQL connected. The latest available automatic-failure logs predate the
+repair, so do not claim a fresh successful recovery cycle or that local replicas
+have adopted all seven repairs. The remaining held graph would still fail the
+strict download validator. Owner login/status inspection was requested; existing
+pause state, queues, registration and SQL settings were not changed.
+
+Owner renewed exact approval for corrected SHA256
+95F35B0C2467301326CF2980533EAE3466AA6903338D1955401C77EB45679B83
+on ROSEGILL pos qhrufhtbeguxydenzfey after final CI and preflight. The owner
+also requested checked beta integration and local Electron verification.
+Immediate read-only preflight: all seven parent/graph fingerprints match,
+repair audits zero, all ten exact trigger pins match. No historical write yet.
 
 Exact F202 execution attempt aborted at the trigger fingerprint guard before
 any updates; root verified zero repair audits. Captured trigger body_md5 was
