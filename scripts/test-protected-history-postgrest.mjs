@@ -10,6 +10,8 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 
 assert.equal(process.argv[2], '--run', 'Opt in explicitly with --run');
+assert(process.argv.length===3||process.argv.length===4&&process.argv[3]==='--raw-stress');
+const rawStress=process.argv[3]==='--raw-stress';
 const executable = process.env.POSTGREST_TEST_EXE;
 const socketModule = process.env.PGLITE_SOCKET_TEST_MODULE;
 const postgresBin=process.env.POSTGRES_TEST_BIN;
@@ -19,6 +21,7 @@ assert.equal(version, 'PostgREST 16.5');
 const PGLiteSocketServer=socketModule?(await import(pathToFileURL(socketModule).href)).PGLiteSocketServer:null;
 const root = fileURLToPath(new URL('../', import.meta.url));
 const migration = await readFile(new URL('../supabase/migrations/20261103074926_protected_byte_bounded_history_download.sql',import.meta.url),'utf8');
+const projectionUpgrade=await readFile(new URL('../supabase/migrations/20261103091907_optimize_protected_history_projection.sql',import.meta.url),'utf8');
 const schema = await readFile(new URL('../supabase/schema.sql',import.meta.url),'utf8');
 const prologue=migration.split('scoped_prefix text := $scoped$')[1].split('$scoped$;')[0];
 const auditCase=schema.match(/WHEN 'change_history' THEN SELECT COALESCE\(jsonb_agg[\s\S]*?;/)[0].replaceAll('GREATEST(p_limit,100)','GREATEST(p_limit,10)');
@@ -54,6 +57,8 @@ try {
     GRANT USAGE ON SCHEMA public,auth TO anon,authenticated,service_role;
     GRANT SELECT ON public.change_history,public.app_users TO service_role;`);
   await db.exec(migration);
+  await db.exec(projectionUpgrade);
+  if(postgresBin)await db.exec("ALTER ROLE postgres SET statement_timeout='8s'");
   const records = [
     {id:'00000000-0000-4000-8000-000000000001',new_value:{note:'雪😀',table_name:'terminal_tokens',claim_proof:'fixture-secret',safe:1}},
     {id:'00000000-0000-4000-8000-000000000002',new_value:{table_name:'products',ecom_price:99,price:5}},
@@ -97,6 +102,16 @@ try {
   const second=await inspect(await call({p_after_cursor:first.cursor}));assert.equal(second.rows.length,1);assert.equal(second.cursor,null);assert.equal(second.rows[0].id,records[1].id);passed++;
   await db.exec('TRUNCATE public.change_history');
   const empty=await inspect(await call());assert.deepEqual(empty,{rows:[],cursor:null});passed++;
+  await db.exec(`WITH wide AS (SELECT jsonb_object_agg(lpad(n::text,5,'0'),CASE WHEN n<=3 THEN to_jsonb(n%2=0) ELSE to_jsonb('v'::text) END) value FROM generate_series(1,57899) n)
+    INSERT INTO public.change_history SELECT ('00000000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,
+    CASE WHEN n<=2 OR ${rawStress} THEN jsonb_build_object('old_value',value,'new_value',value) ELSE jsonb_build_object('fixture',n) END
+    FROM wide CROSS JOIN generate_series(1,10) n;`);
+  const structured=await inspect(await call());assert.equal(structured.rows.length,1);assert(structured.cursor);
+  assert.equal(Object.keys(structured.rows[0].new_value.old_value).length,57899);passed++;
+  if(!rawStress){
+    const remaining=await inspect(await call({p_after_cursor:structured.cursor}));assert.equal(remaining.rows.length,9);assert.equal(remaining.cursor,null);
+    const ids=[...structured.rows,...remaining.rows].map(row=>row.id);assert.equal(new Set(ids).size,10);
+  }
   // Actual deny-response formatting is outside this wire fixture: PGlite's
   // multiplexing socket maps PostgreSQL errors to a disconnected client (503).
   // SQL-role/scope denials remain tested by the separate 994-scenario harness.
@@ -104,7 +119,7 @@ try {
     const anonymous=await call({},false);assert.equal(anonymous.status,401,await anonymous.text());passed++;
     const foreign=await call({p_branch_id:'B'});assert.equal(foreign.status,400,await foreign.text());passed++;
   }
-  console.log(`PASS ${passed} actual PostgREST16.5 wire / privacy / wide-row / cursor scenarios (${postgresBin?'isolated native PostgreSQL':'isolated PGlite socket'})`);
+  console.log(`PASS ${passed} actual PostgREST16.5 wire / privacy / wide-row / cursor scenarios (${postgresBin?'isolated native PostgreSQL':'isolated PGlite socket'}; structured page=${rawStress?'10 giant rows':'two giant plus8 small rows'})`);
 } finally {
   if(worker&&worker.exitCode===null){worker.kill();await Promise.race([new Promise(resolve=>worker.once('exit',resolve)),sleep(3000)]);}
   if(socket)await socket.stop();

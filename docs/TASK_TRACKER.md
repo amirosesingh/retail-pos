@@ -2,6 +2,73 @@
 
 Last reconciled: **2026-11-03, Asia/Brunei**.
 
+## PROJ47 — confirmed post-deployment history projection timeout
+
+PR371 and PR372 are merged on beta0be4da49. Owner approved and root applied
+exact STREAM46 migration SHA25654A39A26...8BC4E91 to ROSEGILL pos
+qhrufhtbeguxydenzfey; service-only/invoker/source-pin readback passed and existing
+bootstrap fingerprints were unchanged. This is not full sync acceptance.
+
+Local Electron is open at8081, existing profile preserved. SQL is ready and
+journal pending dropped3 to0, without cloud-row readback. History download fails.
+Correlated native17:04:24Brunei and exactWorker5a2b6549 event show HTTP500,
+CPU6ms/wall9365ms, PostgreSQL57014. Read-only unified logs09:03–09:09UTC confirm
+14 failed protected-page RPCs, each timing out in recursive projection line44
+then page line35. The newly introduced per-key JSONB concatenation is the
+confirmed hot path; previous large-string tests missed structured width.
+
+Metadata-only shape inspection (no business values returned) found old/new each
+824670JSONbytes, root9keys, noarrays, nested widestobject57899keys. Prepare a
+targeted replacement of projection construction using set aggregation and safe
+scalar fast paths. Preserve exact privacy/overflow behavior, page/cursor rules,
+permissions, grants, timeout limits, stock, checkout and every history row.
+Baseline0be4da49, branchcodex/history-projection-performance-beta. SQL agent owns
+new corrective migration/canonical/test files; independent agent reviews parity
+and actual native-PostgreSQL structured benchmarks. Root owns records/approval.
+Require the existing994 cases plus matching-width old/new synthetic records,
+structured arrays and real PostgREST tests under the existing deadline. Never
+raise timeout or omit history to pass. No corrective live DDL is approved yet:
+present the exact new migration/hash/target separately before applying it.
+No Membership, operator setting, queue/checkpoint reset or production promotion.
+
+Temporary containment: the existing local app runtime Pause was applied at
+17:22:35Brunei and verified17:22:51. Only future automatic synchronization in
+this development instance is paused; SQL connected/schema ready9ms, journal0.
+No persistent configuration, SQL data, queue or checkpoint changed. Keep app
+open and explicitly Resume only after corrective SQL readback/acceptance.
+Metadata-only scalar types in the wide object are57896strings+3booleans.
+The first set-aggregate candidate passed small parity cases but still failed a
+ten-wide-row actual PostgREST request under8s. It is rejected, not a live fix.
+Continue testing safe leaf-container fast paths plus full-page deadline and
+numeric/privacy parity. No live timeout/compatibility flag increase is allowed.
+
+Final reviewed candidate replaces only the privacy helper implementation using
+typed scalar/container handling, safe leaf fast paths and one merge of changed
+children. It reuses unchanged nested objects instead of rebuilding parents.
+Normalized new body MD5a5be97695f3e105ebde271e2f017ddee; prerequisite old body
+e43c47701fcda3776828f3759361d386. Unknown body/attributes abort; owner, OID, ACL,
+strict/immutable/invoker/search_path attributes are preserved. Original approved
+base migration Git blob SHA54A... remains unchanged.
+
+Independent native PostgreSQL18.6 reproduction: original fails8s with matching
+line44 stack; final matching1.62MB old/new pair passes113ms. All994 existing
+privacy/access/cursor scenarios pass independently;13 upgrade guard cases pass.
+Actual PostgREST16.5/native PG under8s passes10 scenarios including two matching
+giants+eight small rows, one-row prefix/cursor followed by nine rows, all retained.
+Metadata-only stored-size windows currently find at most two >200000-byte
+stored records per10UUIDs; compressed sizes do not bound arbitrary expanded JSON.
+Ten synthetic giant rows can still time out BEFORE projection in the inherited
+raw bootstrap aggregation. Keep this separate risk pending; it is not fixed or
+authorization to alter the old selector/visibility in this helper-only batch.
+
+Corrective migration20261103091907_optimize_protected_history_projection.sql,
+committed LF artifact SHA256C822AD9C78842D81B5F79307DD17145AF1FBB6247004B5AFBC09D76D884FFD77.
+The temporary Windows working copy used mixed line endings; deployment and
+approval must use the immutable committed LF blob, not its checkout byte hash.
+Source/generator/fixture parity and standalone tests pass. Exact live application
+still needs owner approval and final CI. No correction has run live yet. Resume
+the temporary local runtime pause only after approved application and readback.
+
 ## RESUME45 / STREAM46 — remaining acceptance and conditional beta integration
 
 Owner now authorizes completing actual isolated SQL Server, PostgREST and CPU
