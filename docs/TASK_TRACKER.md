@@ -2,6 +2,31 @@
 
 Last reconciled: **2026-11-03, Asia/Brunei**.
 
+## RESUME45 / STREAM46 — remaining acceptance and conditional beta integration
+
+Owner now authorizes completing actual isolated SQL Server, PostgREST and CPU
+checks using agents, then beta integration only when required checks pass.
+Report the exact target, migration and changes before any live application;
+this instruction does not supply exact-project live migration approval.
+Preserve checkout, permissions, registered scope and all existing records.
+Baseline origin/beta remains a13739a5 (refreshed); prepared commits are
+2ce731e7 (resume) and d4aed867 (stream). Agents separately own disposable SQL
+runtime, gateway wire acceptance and CPU harnesses. No production promotion,
+installer publication, live queue repair or Membership change is authorized.
+
+Actual SQL Server acceptance now supersedes the earlier LocalDB-unavailable
+note. On SQL Server 2025 LocalDB 17.0.1145.4 / ODBC18 / existing msnodesqlv8,
+`node scripts/test-history-resume-sqlserver.cjs --run` passes four acceptance
+groups: monotonic checkpoint/cursor preservation, committed-page network resume
+with original baseline and atomic finalization, page+cursor rollback before
+retry, and concurrent writer exclusion (SQL1222). Root independently reran all
+four groups successfully. Each run creates a uniquely named disposable database
+and removes only its owned database/instance. Agent cleanup inventory showed
+only MSSQLLocalDB afterward. No POS_Local/profile/operator configuration used.
+The bigint assertion was corrected to account for the driver's text result;
+no application code was changed for this acceptance step. Installed Electron
+IPC/UI acceptance remains separate from the actual SQL runtime evidence.
+
 ## RESUME45 — approved durable history recovery preparation
 
 Owner approved preparation and isolated tests on 3 November. Baseline is current
