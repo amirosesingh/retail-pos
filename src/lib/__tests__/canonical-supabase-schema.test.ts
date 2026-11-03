@@ -254,6 +254,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261103023417_management_closing_graph_read_scope.sql",
       "supabase/migrations/20261103074926_protected_byte_bounded_history_download.sql",
       "supabase/migrations/20261103091907_optimize_protected_history_projection.sql",
+      "supabase/migrations/20261103105157_preserve_shift_reconciliation_parent_summaries.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

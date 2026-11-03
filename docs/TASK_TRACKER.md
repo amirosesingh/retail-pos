@@ -2,6 +2,50 @@
 
 Last reconciled: **2026-11-03, Asia/Brunei**.
 
+## SHIFT49 — approved reconciliation-summary preparation, no live changes
+
+Preparation verified: 89 isolated SQL scenarios and 27 focused Vitest tests
+passed; scoped ESLint and `tsc --noEmit` passed. Guarded migration
+`20261103105157_preserve_shift_reconciliation_parent_summaries.sql` changes
+only seven already-computed parent assignments. Live application is NOT approved
+or performed; current shifts recovery remains blocked. Historical proposal is
+[the read-only seven-row plan](database/shift-reconciliation-summaries-repair-plan.md),
+explicitly excluding the eighth held STR1 authority repair. No historical
+mutation script is prepared. Synthetic tests do not verify live recovery.
+
+Owner explicitly approved preparing and isolate-testing a separate correction
+after read-only diagnosis of the new shifts gap. Baseline beta290ef2c5; branch
+codex/shift-reconciliation-summaries-beta. Native SQL agent owns migration/source/
+tests; independent agent reviews; root owns records and live approval boundary.
+
+History recovery completed20799rows18:32:51Brunei. Local shift checkpoint2881
+is older than SQL minimum2916. Scoped shift recovery currently fails server
+SYNC_SHIFT_GRAPH_CONFLICT (validate_graph line38), before local apply. Cloud
+branch27shifts/25closed;8 have valid closed headers and one consistent ORIGINAL
+count/reconciliation each, but five parent derived fields areNULL. Existing
+shift_reconcile_now inserts the reconciliation and omits expected_cash/card/
+digital plus variance_cash/total in parent UPDATE, so future closes can repeat it.
+Counts/linkage/finite/nonnegative/2dp/variance math flags all validated read-only.
+
+Prepare only atomic persistence of all seven already-calculated derived fields:
+expected_cash/card/digital and variance_cash/card/digital/total. The five NULL
+fields explain the observed eight failures; the same omitted card/digital variance
+assignments must also be preserved for applicable counts. Keep
+all calculations, cashier/admin authorization, counted facts, dates, stock,
+checkout, graph validation and author protections unchanged. Use reviewed guarded
+additive migration and canonical parity plus allow/deny/retry/rollback tests.
+Any live routine change requires separate exact-project/file/hash approval.
+
+Prepare historical repair PLAN only. All8 IDs/facts are read-only evidence;
+the held31OctoberSTR1 shift1a349429-cea1-4f45-8d2b-36678d37ad27 is among them.
+Its original cashier authority (#359) is still HOLD and cannot be overwritten,
+normalized implicitly or made authoritative from the later web closing. This
+development SQL has no row for that held shift; original copy was another PC.
+No historical shift repair, checkpoint reset, closing change or stock edit is
+approved. Present exact proposed affected rows/fields and authority separately.
+Startup48 remains a separately approved native readiness correction; it must
+not bypass this operational graph conflict to clear a loading screen.
+
 ## PROJ47 — confirmed post-deployment history projection timeout
 
 PR371 and PR372 are merged on beta0be4da49. Owner approved and root applied

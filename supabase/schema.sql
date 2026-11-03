@@ -10142,6 +10142,13 @@ BEGIN
          closing_float = p_cash,
          counted_card = p_card,
          counted_digital = p_digital,
+         expected_cash = e.expected_cash,
+         expected_card = e.expected_card,
+         expected_digital = e.expected_digital,
+         variance_cash = v_var_cash,
+         variance_card = v_var_card,
+         variance_digital = v_var_digital,
+         variance_total = v_total,
          variance_status = v_status,
          updated_at = now()
    WHERE id = p_shift;
