@@ -60,6 +60,9 @@ const databaseService = new DatabaseService({
   manager: databaseManager,
   migrate: (profile) => applyMigrations(databaseManager, profile),
   log: diagnostics.logConnection,
+  startupPaused:()=>syncCoordinator.paused,
+  startupIdentity:()=>{const terminal=terminalStore.read();return [authorizationServerUrl(),cloudCredentials.read()?.url??"",terminal?[terminal.tokenId,terminal.deviceUse,terminal.locationId,terminal.storeId,terminal.branchId]:null];},
+  publishStartupActivity:(activity)=>{if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send("database:startup-activity",activity);},
   publish: (state) => {
     for (const win of BrowserWindow.getAllWindows()) win.webContents.send("database:state", state);
   },
@@ -236,12 +239,15 @@ function prepareLocalData({force=false}={}){
   if(localDataPreparePromise)return localDataPreparePromise;
   const profile=databaseConfig.profile()??{};
   localDataPreparePromise=(async()=>{
+    const activity=databaseService.beginStartupActivity?.()??{report:()=>{},finish:()=>{}};
+    let preparationError;
     try{
-      const result=await localDataLifecycle.ensure({branchId:localBranchId(),historyDays:Number(profile.retentionDays)||90,force});
+      const result=await localDataLifecycle.ensure({branchId:localBranchId(),historyDays:Number(profile.retentionDays)||90,force,onActivity:activity.report});
       diagnostics.logConnection("synchronization.bootstrap.succeeded", { category:"synchronization", stage:"bootstrap", state:"ready" });
       return result;
     }
     catch(error){
+      preparationError=error;
       // A healthy SQL connection is not proof of a complete local snapshot.
       // Preserve offline access only if this run already qualified that cache;
       // first/incomplete bootstrap failures keep the gate without disconnecting SQL.
@@ -250,7 +256,7 @@ function prepareLocalData({force=false}={}){
       else databaseService.transition("enabled_bootstrapping",detail);
       diagnostics.logConnection("synchronization.bootstrap.failed", { category:"synchronization", stage:"bootstrap", code:error?.code??"EBOOTSTRAP", message:String(error?.message??error), ...diagnostics.bootstrapDiagnostic(error,syncRegistry.tables.map(table=>table.cloudTable)) });
       throw error;
-    }
+    }finally{activity.finish(preparationError);}
   })().finally(()=>{localDataPreparePromise=null;});
   return localDataPreparePromise;
 }

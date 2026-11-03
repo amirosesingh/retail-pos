@@ -5,6 +5,7 @@ const { localTableCounts } = require("../sync/reconciliation.cjs");
 const { verifyTables } = require("../sync/verifier.cjs");
 const { recordId } = require("../sync/uuid-fields.cjs");
 const { binding } = require("../verified-activation.cjs");
+const { reportActivity } = require("../db/startup-activity.cjs");
 
 class LocalDataLifecycle {
   constructor({connectionManager,databaseService,jobManager,jobRepository,registry,cloud,syncCoordinator,checkpoints,reader,publish=()=>{}}){
@@ -73,27 +74,28 @@ class LocalDataLifecycle {
   async releaseHistoryCache(branchId,historyDays,job){
     if(await this.cachedSnapshotReady(branchId,historyDays,job))this.databaseService.markReady({phase:"history_recovery",syncReady:false,branchId,historyDays});
   }
-  async bootstrap(branchId,historyDays,existing=null){return this.jobManager.run(this.bootstrapType(historyDays),context=>runBootstrap({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,checkpoints:this.checkpoints,branchId,historyDays,context}),existing,{branchId});}
+  async bootstrap(branchId,historyDays,existing=null,onActivity=()=>{}){return this.jobManager.run(this.bootstrapType(historyDays),context=>runBootstrap({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,checkpoints:this.checkpoints,branchId,historyDays,context,onActivity}),existing,{branchId});}
   async retain(branchId,historyDays,existing=null){if(historyDays===7300)return{status:"completed",skipped:true};return this.jobManager.run("retention",context=>runRetention({connectionManager:this.connectionManager,days:historyDays,context}),existing,{branchId});}
-  async resume(branchId,historyDays){const active=await this.jobRepository.active();if(!active||String(active.branch_id??"")!==String(branchId))return null;if(String(active.job_type).startsWith("bootstrap_"))return this.bootstrap(branchId,Number(String(active.job_type).slice(10))||historyDays,active);if(active.job_type==="retention")return this.retain(branchId,historyDays,active);return null;}
-  async recoverChangeTrackingGap(branchId,historyDays,tableName){
+  async resume(branchId,historyDays,onActivity=()=>{}){const active=await this.jobRepository.active();if(!active||String(active.branch_id??"")!==String(branchId))return null;if(String(active.job_type).startsWith("bootstrap_"))return this.bootstrap(branchId,Number(String(active.job_type).slice(10))||historyDays,active,onActivity);if(active.job_type==="retention")return this.retain(branchId,historyDays,active);return null;}
+  async recoverChangeTrackingGap(branchId,historyDays,tableName,onActivity=()=>{}){
     const table=this.registry.tables.find(candidate=>candidate.sqlServerTable===tableName);
     if(!table)throw Object.assign(new Error(`The expired Change Tracking table ${tableName} is not registered.`),{code:"ESCHEMA_REGISTRY"});
-    if(table.sqlServerTable==="change_history"&&table.cloudTable==="change_history")return historyRecovery.recover(this,branchId,historyDays,refreshTable);
+    if(table.sqlServerTable==="change_history"&&table.cloudTable==="change_history")return historyRecovery.recover(this,branchId,historyDays,refreshTable,onActivity);
     // The failed push has already uploaded durable aggregate-journal work. Pull
     // an authoritative branch-scoped snapshot before establishing a new SQL
     // Change Tracking baseline; never advance the checkpoint first.
     const version=await this.connectionManager.pool.request().query("SELECT CHANGE_TRACKING_CURRENT_VERSION() current_version;");
     const currentVersion=Number(version.recordset?.[0]?.current_version??0);
-    const refreshed=await refreshTable({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName:table.cloudTable,diagnosticOrigin:"gap_recovery"});
+    const refreshed=await refreshTable({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName:table.cloudTable,diagnosticOrigin:"gap_recovery",onActivity});
     await this.checkpoints.save(branchId,table.sqlServerTable,"push",{change_tracking_version:currentVersion});
     return{table:table.sqlServerTable,completed:refreshed.completed,currentVersion};
   }
-  async pushWithGapRecovery(branchId,historyDays){
+  async pushWithGapRecovery(branchId,historyDays,onActivity=()=>{}){
     const recovered=new Set();
     while(true){
       try{
-        const result=await this.syncCoordinator.runPush({branchId,batchSize:500});
+        reportActivity(onActivity,{phase:"uploading"});
+        const result=await this.syncCoordinator.runPush({branchId,batchSize:500,onProgress:progress=>reportActivity(onActivity,{phase:"uploading",table:progress.table})});
         if(this.jobRepository?.recovery&&this.cloud.terminalId?.())await historyRecovery.cleanup(this,branchId,historyDays);
         return{result,recovered:[...recovered]};
       }catch(error){
@@ -103,12 +105,12 @@ class LocalDataLifecycle {
         // means the recovery did not establish a usable baseline, so surface
         // the original failure instead of looping forever.
         if(recovered.has(tableName))throw error;
-        await this.recoverChangeTrackingGap(branchId,historyDays,tableName);
+        await this.recoverChangeTrackingGap(branchId,historyDays,tableName,onActivity);
         recovered.add(tableName);
       }
     }
   }
-  async ensure({branchId,historyDays=90,force=false}){
+  async ensure({branchId,historyDays=90,force=false,onActivity=()=>{}}){
     this.cachedReadyProof=null;
     if(!branchId)throw Object.assign(new Error("This terminal needs a branch before local data can be prepared."),{code:"EBRANCH"});
     const cachedReady=!force&&await this.cachedSnapshotReady(branchId,historyDays);
@@ -118,29 +120,32 @@ class LocalDataLifecycle {
     // delays bootstrap. Also repairs installations with old bootstrap markers.
     // refreshTable preserves rows with unacknowledged local edits.
     for(const tableName of ["pos_settings","settings_scoped"]){
-      const refreshed=await refreshTable({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName,diagnosticOrigin:"prefetch"});
+      const refreshed=await refreshTable({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName,diagnosticOrigin:"prefetch",onActivity});
       if(refreshed.completed)this.publish({kind:"general",branchId,source:"cloud",tables:[tableName]});
     }
-    await this.resume(branchId,historyDays);
+    await this.resume(branchId,historyDays,onActivity);
     const completed=await this.jobRepository.completed(this.bootstrapType(historyDays),branchId);
     // Upload local changes before refreshing shared reference rows. Older
     // databases may have a completed bootstrap from before store_groups was
     // part of the registry, leaving stores.group_id without its local parent.
-    const initialPush=await this.pushWithGapRecovery(branchId,historyDays);
+    const initialPush=await this.pushWithGapRecovery(branchId,historyDays,onActivity);
     const recoveredGap=initialPush.recovered.length>0;
     if((force&&!recoveredGap)||!completed){
       // A reused till database can contain completed offline sales before it
       // has a bootstrap checkpoint. Upload every locally tracked transaction
       // first; otherwise bootstrap could establish a new baseline over work
       // that head office has never acknowledged.
-      await this.bootstrap(branchId,historyDays);
+      await this.bootstrap(branchId,historyDays,null,onActivity);
     }
     // Always repair this small parent table, including databases whose old
     // completed bootstrap marker would otherwise skip newly-added tables.
-    await refreshTable({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName:"store_groups"});
+    await refreshTable({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName:"store_groups",onActivity});
+    reportActivity(onActivity,{phase:"checking"});
     const synced=await this.syncCoordinator.runNow({branchId,batchSize:10});
     if(!synced.ok)throw Object.assign(new Error(synced.error??"Final synchronization failed."),{code:"ESYNC"});
+    reportActivity(onActivity,{phase:"retaining"});
     await this.retain(branchId,historyDays);
+    reportActivity(onActivity,{phase:"checking"});
     const differences=await this.reconcile(branchId,historyDays);
     if(differences.length)throw Object.assign(new Error(`Final reconciliation found ${differences.length} table differences.`),{code:"ERECONCILE",differences});
     this.databaseService.markReady({phase:"ready",branchId,historyDays});

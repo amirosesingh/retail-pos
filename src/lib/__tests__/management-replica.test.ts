@@ -62,7 +62,7 @@ function fixture() {
  const push = vi.fn(); const pull = vi.fn().mockResolvedValue({});
  const coordinator = new SyncCoordinator({ pushWorker: { run: push }, pullWorker: { run: pull } });
  const cloud = { managementBranches: vi.fn().mockResolvedValue({ ok: true, branches: [{ id: "a" }, { id: "b" }] }) };
- const databaseService = { snapshot: () => ({ enabled: true, configured: true }), restore: vi.fn() };
+ const databaseService = { snapshot: () => ({ enabled: true, configured: true }), restore: vi.fn(), beginStartupActivity: undefined as undefined | (() => { report: (value: unknown) => void; finish: (error?: unknown, options?: {complete?: boolean; paused?: boolean}) => void }) };
  const jobs = { active: vi.fn().mockResolvedValue(null), completed: vi.fn().mockResolvedValue(null) };
  const lifecycle = { bootstrapType: () => "bootstrap_7300", bootstrap: vi.fn() };
  return { push, pull, cloud, jobs, lifecycle, replica: new ManagementReplica({ cloud, databaseService, jobs, lifecycle, coordinator, connectionManager: { isConnected: () => true } }) };
@@ -100,4 +100,38 @@ it("stops rejected identity requests until registration or explicit repair chang
  expect(f.cloud.managementBranches).toHaveBeenCalledOnce();
  f.replica.resetRetry(); f.cloud.managementBranches.mockResolvedValue({ ok: true, branches: [] });
  expect(await f.replica.run()).toMatchObject({ ok: true });
+});
+
+it("reports queued Management work once, preserving singleflight and permanent retry backoff",async()=>{
+ const f=fixture();let release!:()=>void;
+ let entered!:()=>void;const started=new Promise<void>(r=>entered=r);
+ const lease=f.replica.coordinator.withExclusive(()=>{entered();return new Promise<void>(r=>release=r);});
+ await started;
+ const {StartupActivity}=require("../../../electron/db/startup-activity.cjs");
+ const activity=new StartupActivity();const begin=vi.fn(()=>activity.begin());
+ f.replica.databaseService.beginStartupActivity=begin;
+ const run=f.replica.run();expect(f.replica.run()).toBe(run);
+ expect(activity.snapshot()).toMatchObject({active:true,phase:"preparing"});
+ expect(f.cloud.managementBranches).not.toHaveBeenCalled();release();await lease;await run;
+ expect(activity.snapshot()).toMatchObject({active:false,phase:"complete"});
+ f.cloud.managementBranches.mockRejectedValue(Object.assign(new Error("denied"),{status:403}));
+ await expect(f.replica.run()).rejects.toThrow("denied");const calls=begin.mock.calls.length;
+ expect(await f.replica.run()).toMatchObject({deferred:true});expect(begin).toHaveBeenCalledTimes(calls);
+ expect(activity.snapshot()).toMatchObject({active:false,failure:"blocked"});
+});
+it("does not clear an unresolved blocker after a paused Management no-op",async()=>{
+ const f=fixture();const {StartupActivity}=require("../../../electron/db/startup-activity.cjs");const activity=new StartupActivity();
+ f.replica.databaseService.beginStartupActivity=()=>activity.begin();
+ activity.begin().finish(new Error("SYNC_SHIFT_GRAPH_CONFLICT"));f.replica.coordinator.pause();
+ expect(await f.replica.run()).toMatchObject({paused:true});
+ expect(activity.snapshot()).toMatchObject({active:false,failure:"blocked",reason:"shift-data"});
+ expect(f.cloud.managementBranches).not.toHaveBeenCalled();
+});
+
+it("reports a pause between Management branches without clearing the previous failure",async()=>{
+ const f=fixture();const {StartupActivity}=require("../../../electron/db/startup-activity.cjs");const activity=new StartupActivity();
+ f.replica.databaseService.beginStartupActivity=()=>activity.begin();activity.begin().finish(Object.assign(new Error("timeout"),{status:503}));
+ f.lifecycle.bootstrap.mockImplementationOnce(async()=>{f.replica.coordinator.pause();});
+ expect(await f.replica.run()).toMatchObject({paused:true});
+ expect(activity.snapshot()).toMatchObject({active:false,paused:true,failure:"temporary"});
 });
