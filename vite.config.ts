@@ -10,6 +10,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { shellAliases, enforceShellBoundary } from "./scripts/platform-build-boundaries";
 import { popupRuntimeAliases } from "./scripts/popup-runtime-aliases.mjs";
+import { shiftProtocolDevInterop } from "./scripts/shift-protocol-dev-interop.mjs";
 import webOnlyEnv from "./scripts/web-only-env-names.json" with { type: "json" };
 
 // Managed checkouts can resolve dependencies from a parent node_modules.
@@ -142,6 +143,7 @@ export default defineConfig({
     ],
   },
   plugins: [
+    shiftProtocolDevInterop(),
     {
       name: "refresh-bundled-logic-report",
       apply: "build",
