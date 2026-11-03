@@ -2,6 +2,31 @@
 
 Last reconciled: **2026-11-03, Asia/Brunei**.
 
+## STATUS50 — approved retry-status stability correction
+
+Owner explicitly approved this separate code/test batch on 3 November after
+read-only reproduction: SyncCoordinator clears lastError at each retry start,
+making the unresolved shifts ECHANGEGAP warning disappear and reappear. Preserve
+unresolved warnings while displaying retry progress; clear only after a relevant
+successful pass. An unrelated branch/direction or activity-excluding success must
+not imply recovery of an earlier failure. Pause/offline behavior remains truthful.
+Baseline origin/beta290ef2c5; branch codex/retry-status-stability-beta. Scope is
+coordinator status, existing summary presentation and focused isolated tests.
+No requests, retry schedules, queues/checkpoints, auth, checkout, operator settings,
+database records or Membership behavior may change. Owner subsequently approved
+PR376 CI corrections, beta merge after checks, local Electron reload and runtime
+flicker verification. Production, installers and live database repair stay separate.
+Implemented in coordinator error bookkeeping and existing summary presentation;
+no worker request or result semantics changed. Passed108 focused/dependency tests
+across7 suites, scoped ESLint, TypeScript and diff checks. Independent review
+reran56 tests and reproduced then cleared dual-failure and auth-warning issues.
+Tests cover failed retry stability, matching direction/branch success, runFinal,
+activity/deferred scope, pause/offline and preserved authorization warnings.
+Actual installed UI, CI, beta integration and runtime reload remain unverified.
+Rollback: revert this scoped commit; no data/configuration rollback is required.
+Actual shifts CT/graph conflict recovery is separate and unresolved.
+
+
 ## STARTUP48 — approved cached-snapshot startup correction
 
 Owner reports Electron stuck on Preparing local store data despite8081 HTTP200
