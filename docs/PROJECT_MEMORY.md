@@ -6,8 +6,13 @@ decision memory, not a claim that all implementation conforms to it.
 Live schema evidence: public.app_users.role is enum public.app_role, not text.
 Keep explicit role::text at existing text-helper boundaries; do not change role
 or grant rules to solve type resolution. The captured-schema six-upgrade test
-caught this before any live DDL. Two corrected, pinned migration files require
-renewed approval; the four unchanged files retain their prior approval.
+caught this before any live DDL. The owner renewed approval for the two
+corrected hashes; all six current pinned upgrades are now applied to POS
+qhrufhtbeguxydenzfey. Live readback matches 70 isolated routine-body hashes and
+preserves all 48 existing routine authority attributes. New metadata tables
+remain empty; no actual key enrollment, historical repair or local SQL upgrade
+was performed. The missing guarded raw-write RPC now exists; retain remaining
+management-scope, financial-policy, installed-device and hosted-CPU acceptance.
 
 3 November hosting decision: keep Cloudflare Workers **Free**; no billing or
 CPU-limit change is authorized. The owner approved a separate five-runtime-file

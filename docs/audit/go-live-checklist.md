@@ -11,6 +11,18 @@ approved test devices; never damage real business data. Membership is on hold.
 
 ## 3 November — exact database dependency proposal for PR #363
 
+**Applied after renewed approval.** All six current hashes in the table below
+were applied to the identified POS project, in order. Versions:
+20261103013712 / 20261103013757 / 20261103013803 / 20261103013905 /
+20261103013911 / 20261103013918. Live SELECT-only verification matches **70
+normalized function-body hashes** from the isolated rollout and preserves all
+48 captured preexisting function authority attributes. All four new metadata
+tables are empty, RLS-protected and inaccessible directly by API roles; required
+RPCs are service-only. Stale/revision/audit/cast guards pass. No actual enrollment,
+business DML, local SQL upgrade, historical repair or installer publication was
+performed. This supersedes the pending-application statements in the historical
+proposal below; remaining production/hardware/CPU/business-policy gates remain.
+
 Source head `1e419bed93e763458dc823dab9cf8a2cc82ff5c1` passed all Actions.
 The owner requests beta merge and subsequent stable production promotion through
 #354, preserving features. This is not live database approval or completed
@@ -21,14 +33,14 @@ Read-only verification: **ROSEGILL POS**, currently accessible through connector
 link nickname `beta`, project **pos** (`qhrufhtbeguxydenzfey`), organization
 `bjxgimekljzlnwejuawj` (previously identified as rosegill0011@gmail.com's Org),
 database **postgres**, URL **https://qhrufhtbeguxydenzfey.supabase.co**.
-The raw author-write RPC, author-key lookup and private author registry are
-absent. Existing relay notification writes now depend on the raw-write RPC;
-deploying without it can stop summary publication. Do not remove the atomic
+Before application, the raw author-write RPC, author-key lookup and private
+author registry were absent. Existing relay notification writes depend on the
+raw-write RPC; deploying without it could stop summary publication. Do not remove the atomic
 guard or use an error/inventory-based REST fallback: a concurrent enrollment
 can invalidate a pre-read. The primary checkout and PIN paths retain their
 existing dependencies.
 
-Proposed exact cloud upgrades, in order, from this reviewed source:
+Approved and applied exact cloud upgrades, in order, from this reviewed source:
 
 | Migration | SHA256 | Effect |
 | --- | --- | --- |
@@ -42,10 +54,10 @@ Proposed exact cloud upgrades, in order, from this reviewed source:
 The owner approved the previous six-file set. Captured-schema verification then
 found app_users.role is app_role enum, while two new helper calls expected text.
 Only person.role::text was added at the two call sites above (enforcement/start),
-with identical canonical copies and real-enum regression coverage. **The two
-new hashes above await renewed exact approval**; four other files are unchanged.
-No live DDL has occurred. Do not apply the superseded SQL or silently use the
-earlier approval for these changed bytes.
+with identical canonical copies and real-enum regression coverage. The owner
+then renewed exact approval for the two corrected hashes above; four other
+files stayed unchanged. All six are now applied. Do not apply superseded SQL
+or rerun the installed files blindly.
 
 Verification of this corrected set: 32 isolated captured-schema workflow cases,
 30 enduring author SQL scenarios, 23 native full-graph and 25 canonical-schema

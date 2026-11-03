@@ -4,6 +4,39 @@ Last reconciled: **2026-11-03, Asia/Brunei**.
 
 ## Owner instruction — verify and merge PR #363 into beta
 
+### Completed cloud rollout — supersedes pending statuses below
+
+After renewed exact approval, all six current pinned upgrades applied to
+ROSEGILL / pos qhrufhtbeguxydenzfey / postgres. Before application, all 48
+captured routine definitions/authority metadata remained unchanged and four
+protocol tables were absent. Each separate application returned success.
+Recorded live versions, in order: 20261103013712, 20261103013757,
+20261103013803, 20261103013905, 20261103013911, 20261103013918.
+
+Live SELECT-only readback: **70 normalized function-body hashes exactly match
+the isolated approved rollout**; all 48 existing owners/ACL/config/security modes
+remain unchanged. Required public RPCs have service-only execution, four private
+metadata tables have RLS and no direct anon/authenticated/service-role grants.
+All four new tables contain zero records: no keys, receipts or historical intents
+were enrolled/replayed. Stale-reopen, requested-revision, audit-type and role-cast
+checks pass. This removes the missing-raw-RPC beta deployment blocker. No local
+SQL upgrade, historic repair, installer publication or real business operation
+was performed. Owned scratch artifacts preserve readback/history/body hashes.
+
+All Actions passed on 56a3a47f before this documentation reconciliation and
+trailing-blank-line cleanup. Final checked head and beta integration follow;
+do not infer completed main promotion or whole-system/device/Free-CPU acceptance.
+Existing management NULL-scope, financial-as-of and installed-device gates remain.
+
+Owner renewed exact approval for the corrected enforcement SHA256
+992E2300C30A71A1DA5B23B9181B17A2BE2E8AED521E2DA942E503EBB18233C6
+and start-proof SHA256
+A0C99E3FF5EFDFAE80794FCDAAD69A84034789378D40E85739924AC766D23BE4.
+All six current pinned files are now approved for the identified cloud project,
+after metadata drift check and completed captured-schema isolation. Apply in
+order and stop on unexpected state; no local upgrades, real enrollment/testing,
+installer publication or historical repair. State: authorized rollout starting.
+
 Owner subsequently **approved the six exact cloud upgrades** pinned in the
 go-live checklist for ROSEGILL / pos qhrufhtbeguxydenzfey / postgres. Approval
 requires captured-definition checks and isolated verification before applying

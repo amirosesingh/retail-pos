@@ -99,4 +99,3 @@ export async function handleCashierLogin(request: Request, transport?: CashierLo
   }
   } finally { clearTimeout(timer); }
 }
-
