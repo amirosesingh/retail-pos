@@ -33,10 +33,10 @@ async function snapshotPage({cloud,connectionManager,table,branchId,historyDays,
   },size,{table:table.cloudTable});
   return{...page,prepared,selected};
 }
-async function refreshTable({registry,cloud,connectionManager,branchId,historyDays=90,tableName,rowFilter=()=>true,reader,diagnosticOrigin="refresh"}){
+async function refreshTable({registry,cloud,connectionManager,branchId,historyDays=90,tableName,rowFilter=()=>true,reader,diagnosticOrigin="refresh",progress=null}){
   const table=(registry.tables??[]).find(candidate=>candidate.cloudTable===tableName);
   if(!table)return{completed:0,skipped:true};
-  let completed=0;let cursor=null;let size=100;
+  let completed=progress?.completed??0;let cursor=progress?.cursor??null;let size=100;
   let diagnosticPhase="download";
   try{do{
     diagnosticPhase="download";
@@ -46,9 +46,15 @@ async function refreshTable({registry,cloud,connectionManager,branchId,historyDa
     const {selected,prepared}=page;
     const sql=connectionManager.sql();const transaction=new sql.Transaction(connectionManager.pool);await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
     try{
+      await progress?.beforeApply(transaction);
       const graphCount=await applyShiftGraphs({transaction,connectionManager,registry,reader,branchId,prepared});
       const result=await applySnapshot(cloud,transaction,table,selected.filter(row=>!prepared.covers({table_name:table.cloudTable,entity_id:keyFor(table,row),row_data:row})),reader,branchId);
-      await transaction.commit();completed+=result.applied+graphCount;cursor=batch.cursor??null;
+      const nextCursor=batch.cursor??null;
+      if(progress&&nextCursor!==null&&nextCursor===cursor)throw Object.assign(new Error("History download cursor did not advance."),{code:"EHISTORY_PROGRESS"});
+      const nextCompleted=completed+result.applied+graphCount;
+      await progress?.save(transaction,{cursor:nextCursor,completed:nextCompleted});
+      await transaction.commit();completed=nextCompleted;cursor=nextCursor;
+      await progress?.committed();
     }catch(error){await Promise.resolve(transaction.rollback()).catch(()=>undefined);throw error;}
     rows.length=0;
   }while(cursor);}catch(error){throw tagBootstrapDiagnostic(error,{table:table.cloudTable,phase:diagnosticPhase,origin:diagnosticOrigin});}

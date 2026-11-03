@@ -18,6 +18,15 @@ class JobRepository {
     for (const [key, value] of entries) request.input(key, value ?? null);
     await request.query(`UPDATE dbo.pos_jobs SET ${entries.map(([key]) => `[${key}]=@${key}`).join(",")}, updated_at=SYSDATETIMEOFFSET() WHERE job_id=@job_id;`);
   }
+  async recovery(type, branchId, terminalId) {
+    const result=await this.pool().request().input("type",type).input("branch",branchId).input("terminal",terminalId)
+      .query("SELECT TOP (1) * FROM dbo.pos_jobs WHERE job_type=@type AND branch_id=@branch AND terminal_id=@terminal ORDER BY started_at DESC,job_id DESC;");
+    return result.recordset?.[0]??null;
+  }
+  async get(jobId, transaction=null) {
+    const result=await this.request(transaction).input("job",jobId).query(`SELECT * FROM dbo.pos_jobs ${transaction?"WITH (UPDLOCK,HOLDLOCK)":""} WHERE job_id=@job;`);
+    return result.recordset?.[0]??null;
+  }
   async active() {
     const result = await this.pool().request().query("SELECT TOP (1) * FROM dbo.pos_jobs WHERE status IN ('queued','starting','running','paused','retrying','interrupted') ORDER BY updated_at DESC;");
     return result.recordset?.[0] ?? null;

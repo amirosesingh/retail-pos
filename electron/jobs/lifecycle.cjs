@@ -1,3 +1,4 @@
+const historyRecovery = require("../sync/history-recovery.cjs");
 const { runBootstrap, refreshTable } = require("./bootstrap.cjs");
 const { runRetention } = require("./retention.cjs");
 const { localTableCounts } = require("../sync/reconciliation.cjs");
@@ -23,6 +24,7 @@ class LocalDataLifecycle {
   async recoverChangeTrackingGap(branchId,historyDays,tableName){
     const table=this.registry.tables.find(candidate=>candidate.sqlServerTable===tableName);
     if(!table)throw Object.assign(new Error(`The expired Change Tracking table ${tableName} is not registered.`),{code:"ESCHEMA_REGISTRY"});
+    if(table.sqlServerTable==="change_history"&&table.cloudTable==="change_history")return historyRecovery.recover(this,branchId,historyDays,refreshTable);
     // The failed push has already uploaded durable aggregate-journal work. Pull
     // an authoritative branch-scoped snapshot before establishing a new SQL
     // Change Tracking baseline; never advance the checkpoint first.
@@ -37,6 +39,7 @@ class LocalDataLifecycle {
     while(true){
       try{
         const result=await this.syncCoordinator.runPush({branchId,batchSize:500});
+        if(this.jobRepository?.recovery&&this.cloud.terminalId?.())await historyRecovery.cleanup(this,branchId,historyDays);
         return{result,recovered:[...recovered]};
       }catch(error){
         if(error?.code!=="ECHANGEGAP"||!error?.table)throw error;

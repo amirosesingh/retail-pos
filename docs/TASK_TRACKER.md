@@ -2,6 +2,41 @@
 
 Last reconciled: **2026-11-03, Asia/Brunei**.
 
+## RESUME45 — approved durable history recovery preparation
+
+Owner approved preparation and isolated tests on 3 November. Baseline is current
+beta a13739a5, branch codex/history-resume-preparation-beta. Preserve existing
+local job/checkpoint schema; persist each committed page cursor atomically with
+its applied rows, retain the original CT baseline across restarts, and advance
+CT only after complete snapshot success. Pending edits, scope identity and newer
+checkpoints must remain protected. Resume must load committed state rather than
+mutated in-memory state after rollback. No live repairs, queue resets, schema,
+permissions, checkout or deployment changes. Membership remains on hold.
+Agent owns native resume files/tests; root owns project records; independent
+review and full isolated regressions required. Any unmet scope or stale-baseline
+state must fail clearly without silently discarding prior work. Rollback is a
+targeted code revert preserving durable jobs and original pending transactions.
+
+Separate STREAM46 preparation is approved for a service-only protected,
+byte-bounded history RPC and guarded Worker streaming; no live migration or
+deployment is authorized by either preparation approval. CPU remains unresolved
+for large history records despite successful small-page samples.
+
+Prepared source verification (3 November): independent review and 16 native
+transaction-model scenarios pass. Full Vitest rerun: 624 files / 4,804 tests pass,
+two opt-in tests skipped; TypeScript noEmit passes. The initial full run exposed
+an outdated diagnostic fixture, updated to the actual durable job interface;
+its original failed-download/no-checkpoint assertions are preserved. A UI
+timeout did not reproduce in focused or final full reruns. No actual SQL Server
+locking/transaction execution verified: the disposable LocalDB helper returned
+no private pipe. The opt-in isolated SQL harness is retained, not reported as
+passing. Installed recovery, fresh administrator login and hosted CPU acceptance
+remain pending. No live configuration, queue, checkpoint or business data was
+changed. Final focused fixture/bridge checks, TypeScript and scoped ESLint pass
+without warnings. The CI-discovered Vitest bridge executes all 16 native model
+cases with a bounded timeout; it never runs the opt-in SQL harness. No live
+application, beta merge or deployment has been performed under this approval.
+
 ## HOST44 — bounded history response CPU / active
 
 Owner explicitly requests fixing actual Workers CPU below10ms with every
