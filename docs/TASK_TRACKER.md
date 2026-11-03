@@ -2,6 +2,54 @@
 
 Last reconciled: **2026-11-03, Asia/Brunei**.
 
+## STARTUP48 — approved cached-snapshot startup correction
+
+Owner reports Electron stuck on Preparing local store data despite8081 HTTP200
+in110ms/22ms and connected SQL. Owner explicitly approved focused native startup
+correction and isolated tests (about6 runtime/status files plus tests), preserving
+checkout/auth/permissions and first/incomplete/restore/scope-mismatch gates.
+No database/configuration changes are authorized. Membership remains untouched.
+Baseline origin/beta290ef2c5; branchcodex/startup-cache-readiness-beta. Author owns
+runtime/tests; independent agent reviews; root owns records and any live action.
+
+Confirmed source: schema-only tradingReady is not complete-data proof; NativeBoot
+correctly waits while enabled_bootstrapping. Any active job blocks cached readiness,
+including a non-operational history recovery. Previous Main catch unconditionally
+marked ready on preparation failure, so failed recovery appeared faster than a
+successful long recovery. Do not reuse that fail-open path or reorder schema-ready
+ahead of the gate.
+
+Proof must require validated connected current pool/profile, a completed scoped
+bootstrap marker, local branch row, valid current history job identity/depth/backend
+and no other active or newer unresolved destructive bootstrap/restore. Inspect all
+jobs rather than TOP1. A new history-only exemption also needs read-only operational
+CT validity checks so another expired operational table is not hidden. Apply that
+extra preflight only to the NEW exemption; preserve ordinary completed-cache offline
+opening behavior. Main failure handling must not invent readiness from schema or
+malformed/foreign-scope failed history. Include restore/readiness invalidation if
+needed within approved native startup/status scope; no frontend/auth bypass.
+
+Actual read-only SQL metadata now verifies completed bootstrap_7300 for current
+brancha611a328-2217-4d77-944a-5f6a637d123b,17432rows,9Oct2026. History recovery on
+samebranch/depth7300 completed20799rows at18:32:51Brunei, hr:final:9429. Current
+failure advanced to shifts ECHANGEGAP: HTTP400/P0001 SYNC_SHIFT_GRAPH_CONFLICT,
+server validate_graph line38. This requires separate read-only graph diagnosis;
+do not reset checkpoint, bypass protection, close/correct shifts or execute held
+STR1/#359 repair. Startup patch must not falsely promise to resolve that conflict.
+
+Acceptance: allowed complete same-scope history-only background case; denied first
+bootstrap/force-full/restore/incomplete/malformed/foreign backend/terminal/branch/depth;
+multiple active jobs and newer failed destructive jobs; profile/pool race; other
+operational CT gap denies NEW exemption; ordinary cached offline use preserved.
+Test actual lifecycle/boot error boundaries and relevant checkout/permission paths.
+Implementation prepared in four native runtime files, with focused regressions.
+Full-suite run: 4873 passed, 2 skipped; one wrapper asserted 16 native cases after
+the harness gained its 17th case. Updating that assertion passed the focused test.
+Additional acceptance: 96 focused tests, 20 native tests, six disposable SQL groups,
+TypeScript and independent review passed. No live data, configuration or Main
+restart has occurred for this patch; actual startup and the separate shift graph
+recovery remain unverified. Exact-head CI and scoped integration remain pending.
+
 ## PROJ47 — confirmed post-deployment history projection timeout
 
 PR371 and PR372 are merged on beta0be4da49. Owner approved and root applied

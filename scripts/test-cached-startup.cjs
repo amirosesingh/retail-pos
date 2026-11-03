@@ -5,8 +5,9 @@ function setup({connected=true,validated=true,completed=true,active=null,hasStor
   const events=[];
   const request={input(name,value){events.push([name,value]);return this;},async query(sql){assert.match(sql,/WHERE id=@branch/);return{recordset:hasStore?[{id:'A'}]:[]};}};
   const lifecycle=new LocalDataLifecycle({
-    databaseService:{snapshot:()=>({connected,tradingReady:validated}),markReady:state=>events.push(state),transition:state=>events.push(state)},
-    jobRepository:{completed:async(type,branch)=>{assert.equal(type,'bootstrap_90');assert.equal(branch,'A');return completed?{}:null;},active:async()=>active},
+    databaseService:{snapshot:()=>({enabled:true,configured:true,connected,tradingReady:validated}),markReady:state=>events.push(state),transition:state=>events.push(state)},
+    jobRepository:{startupSnapshot:async(type,branch)=>{assert.equal(type,'bootstrap_90');assert.equal(branch,'A');return completed?{}:null;},hasOtherActiveJobs:async()=>Boolean(active)},
+    cloud:{terminalId:()=> 'T',backendUrl:()=> 'https://fixture.test'},
     connectionManager:{pool:{request:()=>request}},registry:{tables:[]},syncCoordinator:{},
   });
   return{lifecycle,events};

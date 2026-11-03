@@ -3,20 +3,75 @@ const { runBootstrap, refreshTable } = require("./bootstrap.cjs");
 const { runRetention } = require("./retention.cjs");
 const { localTableCounts } = require("../sync/reconciliation.cjs");
 const { verifyTables } = require("../sync/verifier.cjs");
+const { recordId } = require("../sync/uuid-fields.cjs");
+const { binding } = require("../verified-activation.cjs");
 
 class LocalDataLifecycle {
   constructor({connectionManager,databaseService,jobManager,jobRepository,registry,cloud,syncCoordinator,checkpoints,reader,publish=()=>{}}){
     Object.assign(this,{connectionManager,databaseService,jobManager,jobRepository,registry,cloud,syncCoordinator,checkpoints,reader,publish});
   }
   bootstrapType(historyDays){return `bootstrap_${historyDays}`;}
-  async cachedSnapshotReady(branchId,historyDays){
-    const state=this.databaseService.snapshot?.();
-    if(!state?.connected||!state.tradingReady)return false;
-    const completed=await this.jobRepository.completed(this.bootstrapType(historyDays),branchId);
-    if(!completed||await this.jobRepository.active())return false;
-    const result=await this.connectionManager.pool.request().input("branch",String(branchId))
+  cacheIdentity(branchId,historyDays){
+    const state=this.databaseService?.snapshot?.();
+    if(!state?.enabled||!state.configured||!state.connected||!state.tradingReady||!this.connectionManager.pool)return null;
+    const terminal=this.cloud.terminalStore?.read?.();
+    if(terminal){
+      const registered=binding(terminal);
+      // This shortcut belongs only to Operations startup. Management is routed
+      // by Main to ManagementReplica and its server-authorized branch scope;
+      // a NULL Management branch must neither become an Operations lock nor
+      // grant an arbitrary caller-selected branch a cached readiness proof.
+      if(registered?.mode!=="operations"||registered.branchId!==recordId(String(branchId)))return null;
+    }
+    return {pool:this.connectionManager.pool,profile:JSON.stringify(state.profile),registration:JSON.stringify(terminal?[terminal.deviceUse,terminal.locationId,terminal.storeId,terminal.branchId]:null),scope:JSON.stringify(historyRecovery.scope(this.cloud,branchId,historyDays))};
+  }
+  sameCacheIdentity(proof,branchId,historyDays){
+    try{const current=this.cacheIdentity(branchId,historyDays);return Boolean(current&&proof&&current.pool===proof.pool&&current.profile===proof.profile&&current.registration===proof.registration&&current.scope===proof.scope);}catch{return false;}
+  }
+  async cachedSnapshotReady(branchId,historyDays,historyJob=null){
+    const identity=this.cacheIdentity(branchId,historyDays);
+    if(!identity)return false;
+    const completed=await this.jobRepository.startupSnapshot(this.bootstrapType(historyDays),branchId,historyJob?.job_id??null);
+    if(!completed||await this.jobRepository.hasOtherActiveJobs(historyJob?.job_id??null))return false;
+    const result=await identity.pool.request().input("branch",String(branchId))
       .query("SELECT TOP (1) id FROM dbo.stores WHERE id=@branch;");
-    return Boolean(result.recordset?.length);
+    if(!result.recordset?.length)return false;
+    if(historyJob){
+      const expected=historyRecovery.scope(this.cloud,branchId,historyDays);
+      historyRecovery.decode(await this.jobRepository.get(historyJob.job_id),expected);
+      const tables=this.registry.tables.filter(table=>table.direction!=="pull"&&table.sqlServerTable!=="change_history"&&table.columns.some(column=>column.primaryKey));
+      // This exemption is for audit history only. Operational tables must not
+      // require their own recovery before an existing snapshot can be exposed.
+      const bounds=await identity.pool.request().input("tables",JSON.stringify(tables.map(table=>table.sqlServerTable))).input("branch",String(branchId)).query(`
+        SELECT names.[value] table_name, CHANGE_TRACKING_MIN_VALID_VERSION(OBJECT_ID(QUOTENAME('dbo')+'.'+QUOTENAME(names.[value]))) minimum_version,
+          CHANGE_TRACKING_CURRENT_VERSION() current_version, checkpoints.change_tracking_version checkpoint_version
+        FROM OPENJSON(@tables) names LEFT JOIN dbo.sync_checkpoints checkpoints
+          ON checkpoints.entity_type=names.[value] AND checkpoints.branch_id=@branch AND checkpoints.direction='push';`);
+      const rows=bounds.recordset??[];
+      if(rows.length!==tables.length)return false;
+      const seen=new Set();
+      for(const row of rows){
+        if(seen.has(row.table_name)||!tables.some(table=>table.sqlServerTable===row.table_name))return false;
+        seen.add(row.table_name);
+        const minimum=BigInt(historyRecovery.version(row.minimum_version)),current=BigInt(historyRecovery.version(row.current_version));
+        const since=BigInt(historyRecovery.version(row.checkpoint_version??0));
+        if(minimum>current||since>current||since>0n&&minimum>since)return false;
+      }
+      // Recheck scope and baseline after metadata reads; a profile change while
+      // awaiting SQL must not publish readiness from an obsolete connection.
+      historyRecovery.decode(await this.jobRepository.get(historyJob.job_id),expected);
+      await historyRecovery.retained(this.connectionManager,null,historyRecovery.decode(historyJob,expected).baseline);
+    }
+    if(!this.sameCacheIdentity(identity,branchId,historyDays))return false;
+    this.cachedReadyProof={...identity,branchId,historyDays};
+    return true;
+  }
+  preserveCachedReady(){
+    const proof=this.cachedReadyProof;
+    return Boolean(proof&&this.sameCacheIdentity(proof,proof.branchId,proof.historyDays));
+  }
+  async releaseHistoryCache(branchId,historyDays,job){
+    if(await this.cachedSnapshotReady(branchId,historyDays,job))this.databaseService.markReady({phase:"history_recovery",syncReady:false,branchId,historyDays});
   }
   async bootstrap(branchId,historyDays,existing=null){return this.jobManager.run(this.bootstrapType(historyDays),context=>runBootstrap({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,checkpoints:this.checkpoints,branchId,historyDays,context}),existing,{branchId});}
   async retain(branchId,historyDays,existing=null){if(historyDays===7300)return{status:"completed",skipped:true};return this.jobManager.run("retention",context=>runRetention({connectionManager:this.connectionManager,days:historyDays,context}),existing,{branchId});}
@@ -54,6 +109,7 @@ class LocalDataLifecycle {
     }
   }
   async ensure({branchId,historyDays=90,force=false}){
+    this.cachedReadyProof=null;
     if(!branchId)throw Object.assign(new Error("This terminal needs a branch before local data can be prepared."),{code:"EBRANCH"});
     const cachedReady=!force&&await this.cachedSnapshotReady(branchId,historyDays);
     if(cachedReady)this.databaseService.markReady({phase:"background_sync",syncReady:false,branchId,historyDays});
