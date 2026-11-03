@@ -62,7 +62,9 @@ raw bootstrap aggregation. Keep this separate risk pending; it is not fixed or
 authorization to alter the old selector/visibility in this helper-only batch.
 
 Corrective migration20261103091907_optimize_protected_history_projection.sql,
-reviewed SHA25642CCDBB6C3905991CADB39FEE5571C519E921D128FDC26375BA445D99C4F0EB7.
+committed LF artifact SHA256C822AD9C78842D81B5F79307DD17145AF1FBB6247004B5AFBC09D76D884FFD77.
+The temporary Windows working copy used mixed line endings; deployment and
+approval must use the immutable committed LF blob, not its checkout byte hash.
 Source/generator/fixture parity and standalone tests pass. Exact live application
 still needs owner approval and final CI. No correction has run live yet. Resume
 the temporary local runtime pause only after approved application and readback.
