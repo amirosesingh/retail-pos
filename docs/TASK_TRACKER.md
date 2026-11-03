@@ -2,6 +2,34 @@
 
 Last reconciled: **2026-11-03, Asia/Brunei**.
 
+## Active owner approval — 3 November connection recovery and beta integration
+
+Owner approves checking and merging PR365/366 to beta, fixing the connection
+settings crash with agents, and verifying administrator login/sync while
+preserving checkout, permissions and existing data. PR367 is merged at
+f002d194 and its beta deployment succeeded. One native sync request returned200
+at7msCPU; later bootstrap503s confirm recovery is NOT complete. No checkpoints
+or queues may be reset. No production, installers, live schema or data repair.
+
+DEV-41 / confirmed High / active: local development Electron cloud:set schedules
+the packaged server restart even when DEV_URL owns the external Vite process.
+At13:17:46Brunei this required nonexistent dist-desktop/server/index.mjs and
+entered recovery. Test-only connection probes are read-only; the captured
+failure proves a save/reconfiguration path, not that Test alone caused it.
+Baseline f002d194, branch codex/connection-restart-dev-beta. Scope main scheduler
+plus focused save/propagation/restart tests. Preserve native vault and renderer
+configuration propagation and packaged restart/failure semantics. External
+Vite server-side environment remains separately configured. Revert only the
+focused source/test patch to roll back; no data rollback is needed.
+
+DEV41 implemented, isolated verified: four-line DEV_URL guard leaves external
+Vite untouched. Three focused suites/35 tests, TypeScript, scoped ESLint and
+diff check passed. Independent review reran2suites/30tests (overlapping) and
+found no blocker. Tests execute actual scheduler/IPC and real connection-profile
+save orchestration: unchanged/changed vault pair and renderer override/reset,
+read-only Test, rejected persistence, packaged restart ordering/routes/debounce,
+quitting/safeMode and error recovery. Real UI/admin/sync verification pending.
+
 ## Latest owner decision — PR365/366 beta integration and connection crash
 
 3 November owner approves merging365/366 after checks and fixing the connection

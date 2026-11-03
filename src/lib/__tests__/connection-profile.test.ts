@@ -56,7 +56,7 @@ vi.mock("capacitor-secure-storage-plugin", () => ({
 }));
 
 vi.mock("@/integrations/supabase/external-client", () => ({
-  resetExternalClient: () => {},
+  resetExternalClient: vi.fn(),
   createTenantClient: () => ({
     from: () => ({
       select: () => ({
@@ -68,7 +68,7 @@ vi.mock("@/integrations/supabase/external-client", () => ({
 }));
 
 vi.mock("@/lib/external-supabase-config", () => ({
-  setTerminalSupabaseOverride: () => {},
+  setTerminalSupabaseOverride: vi.fn(() => true),
   clearTerminalSupabaseOverride: () => {},
   hasTerminalSupabaseOverride: () => secure.has("pos.cloud.url"),
   hasSupabaseConfig: () => false,
@@ -87,7 +87,9 @@ vi.mock("@/lib/sync-engine", () => ({
 }));
 
 import { backendUrl, saveBackendUrl } from "../backend-config";
-import { saveConnectionProfile, connectionProfile, cloudKeyStatus } from "../secure-cloud-config";
+import { saveConnectionProfile, connectionProfile, cloudKeyStatus, testConnectionProfile } from "../secure-cloud-config";
+import { setTerminalSupabaseOverride } from "../external-supabase-config";
+import { resetExternalClient } from "@/integrations/supabase/external-client";
 import { hasRequiredPlatformConfig, platformConfigReadySync } from "../platform-config-ready";
 import { __resetProfileHydrationForTests } from "../connection-profile";
 
@@ -156,6 +158,7 @@ function mockFetch() {
 
 describe("connection profile", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     installWindow();
     secure.clear();
     vault.dropKey = false;
@@ -235,6 +238,37 @@ describe("connection profile", () => {
     expect(electronStore.backendUrl).toBe("https://pws.mycompanywebsite.com");
     expect(await backendUrl()).toBe("https://pws.mycompanywebsite.com");
     expect((await connectionProfile()).backendUrl).toBe("https://pws.mycompanywebsite.com");
+  });
+
+  it("applies changed Windows vault credentials without relying on an app-server restart", async () => {
+    shell.mobile = false;
+    shell.windows = true;
+    const first = { supabaseUrl: "https://tenant-a.example.co", supabaseKey: KEY_A, backendUrl: "https://pos.example.com" };
+    const second = { ...first, supabaseUrl: "https://tenant-b.example.co", supabaseKey: "test-publishable-key-b" };
+    expect((await saveConnectionProfile(first)).ok).toBe(true);
+    expect((await saveConnectionProfile(second)).ok).toBe(true);
+    expect(electronStore.cloudUrl).toBe(second.supabaseUrl);
+    expect(electronStore.cloudKey).toBe(second.supabaseKey);
+    expect(setTerminalSupabaseOverride).toHaveBeenLastCalledWith(second.supabaseUrl, second.supabaseKey);
+    expect(resetExternalClient).toHaveBeenCalledTimes(2);
+    expect(syncRuns).toEqual(["credentials-saved", "credentials-saved"]);
+    expect((await connectionProfile()).supabaseUrl).toBe(second.supabaseUrl);
+  });
+
+  it("only probes a Windows candidate without writing its vault or activating it", async () => {
+    shell.mobile = false;
+    shell.windows = true;
+    const saved = { supabaseUrl: "https://tenant-a.example.co", supabaseKey: KEY_A, backendUrl: "https://pos.example.com" };
+    await saveConnectionProfile(saved);
+    vi.clearAllMocks();
+    const writes = vi.spyOn(window.pos!, "setCloudCredentials");
+    const beforeSync = [...syncRuns];
+    expect((await testConnectionProfile({ ...saved, supabaseUrl: "https://candidate.example.co" })).ok).toBe(true);
+    expect(writes).not.toHaveBeenCalled();
+    expect(setTerminalSupabaseOverride).not.toHaveBeenCalled();
+    expect(resetExternalClient).not.toHaveBeenCalled();
+    expect(electronStore.cloudUrl).toBe(saved.supabaseUrl);
+    expect(syncRuns).toEqual(beforeSync);
   });
 
   it("rejects an explicitly insecure HTTP backend address", async () => {
