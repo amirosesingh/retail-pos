@@ -2,6 +2,102 @@
 
 Last reconciled: **2026-11-03, Asia/Brunei**.
 
+## SHIFT49 — future-write fix applied; historical repair prepared
+
+Exact F202 execution attempt aborted at the trigger fingerprint guard before
+any updates; root verified zero repair audits. Captured trigger body_md5 was
+normalized while the guard compared raw prosrc bytes. Prepare exact raw-byte
+pins and tests without weakening the guard. Changed artifact requires renewed
+exact approval; no repeat live attempt is authorized by the old hash.
+
+Corrected raw-pin artifact SHA256
+95F35B0C2467301326CF2980533EAE3466AA6903338D1955401C77EB45679B83:
+seven trigger source fingerprints changed to exact raw captured CRLF bytes;
+three audit fingerprints unchanged. No guard normalization or runtime behavior
+change. Previous 47-scenario native harness substituted fixture-computed pins,
+so it did not prove production pin parity; that acceptance claim is superseded.
+Normal cases now retain the production trigger list verbatim, preserve exact
+source bytes through server-side escapes, and test source/hash consistency,
+normalized-pin rejection and changed-raw-body rejection. Final 68 PGlite and
+69 native scenarios passed; Vitest bridge 2/2, ESLint and diff checks passed.
+Native owned-LQk5me stopped/removed. Root SELECT-only live parity confirmed all
+ten exact raw hashes/definitions/enabled flags true, and all eight original
+parent/graph fingerprints unchanged with zero repair audits after abort. New
+historical execution remains pending renewed exact approval and CI.
+
+Owner separately approved exact seven-row artifact SHA256
+F202F0D99EBF1BE668A4255B7207F94D47477E24E3E211C7D6943D13DD3B4557
+on ROSEGILL pos qhrufhtbeguxydenzfey ONLY after final CI and unchanged live
+preflight. Historical execution has not occurred. Eighth STR1 remains excluded.
+Windows launcher normalization preserves CRLF marker extraction; both LF/CRLF
+copies passed46 scenarios. This test-only correction does not change SQL bytes.
+
+Historical preparation extension: owner requests the underlying recovery error
+resolved. Prepare an exact seven-row, five-NULL-summary repair and isolated
+tests; execution still requires separate exact approval. Root refreshes live
+fingerprints first. Preserve all existing facts, normal triggers and graph
+guards, append before/after maintenance audit, roll back on any mismatch or
+invalid full graph. Held eighth STR1 original-authority repair remains excluded;
+its original private evidence must be recovered or recaptured. This supersedes
+the earlier plan-only/no-executable-preparation boundary, not live approval.
+
+Future-write live correction separately approved and applied by root: immutable
+FF8FC4BBA96CB68274E973557107F6F13809A4D825308613AD59CE6750B24056 migration;
+readback body de87d75592ce3fe5872de90b4be9a466, OID22248 and existing owner,
+ACL, arguments and flags preserved. This did not modify historical rows.
+Prepared seven-row maintenance artifact now passes 46 PGlite scenarios and
+47 actual disposable PostgreSQL scenarios, including real two-session NOWAIT
+contention, whole-batch audit/late-graph rollback, legitimate replay and forged
+valid-graph replay denial. All ten captured real triggers remain enabled:
+seven parent versions increment once; updated_at changes normally; seven audit
+rows plus fourteen normal feed entries (seven shifts/seven audit). No activity
+notification, count, timing, stock, sale or held-eighth change. Native fixture
+owned-GDpLtG stopped and removed. Live historical execution remains unapproved;
+affected original PC is unavailable, so complete eight-graph recovery is blocked.
+
+Preparation verified: 89 isolated SQL scenarios and 27 focused Vitest tests
+passed; scoped ESLint and `tsc --noEmit` passed. Guarded migration
+`20261103105157_preserve_shift_reconciliation_parent_summaries.sql` changes
+only seven already-computed parent assignments. This future-write migration was
+subsequently separately approved/applied as recorded above; current historical
+shifts recovery remains blocked. Historical proposal is
+[the guarded seven-row repair plan](database/shift-reconciliation-summaries-repair-plan.md),
+explicitly excluding the eighth held STR1 authority repair. Historical mutation
+is prepared only, not applied. Synthetic tests do not verify live recovery.
+
+Owner explicitly approved preparing and isolate-testing a separate correction
+after read-only diagnosis of the new shifts gap. Baseline beta290ef2c5; branch
+codex/shift-reconciliation-summaries-beta. Native SQL agent owns migration/source/
+tests; independent agent reviews; root owns records and live approval boundary.
+
+History recovery completed20799rows18:32:51Brunei. Local shift checkpoint2881
+is older than SQL minimum2916. Scoped shift recovery currently fails server
+SYNC_SHIFT_GRAPH_CONFLICT (validate_graph line38), before local apply. Cloud
+branch27shifts/25closed;8 have valid closed headers and one consistent ORIGINAL
+count/reconciliation each, but five parent derived fields areNULL. Existing
+shift_reconcile_now inserts the reconciliation and omits expected_cash/card/
+digital plus variance_cash/total in parent UPDATE, so future closes can repeat it.
+Counts/linkage/finite/nonnegative/2dp/variance math flags all validated read-only.
+
+Prepare only atomic persistence of all seven already-calculated derived fields:
+expected_cash/card/digital and variance_cash/card/digital/total. The five NULL
+fields explain the observed eight failures; the same omitted card/digital variance
+assignments must also be preserved for applicable counts. Keep
+all calculations, cashier/admin authorization, counted facts, dates, stock,
+checkout, graph validation and author protections unchanged. Use reviewed guarded
+additive migration and canonical parity plus allow/deny/retry/rollback tests.
+Any live routine change requires separate exact-project/file/hash approval.
+
+Prepare historical repair PLAN only. All8 IDs/facts are read-only evidence;
+the held31OctoberSTR1 shift1a349429-cea1-4f45-8d2b-36678d37ad27 is among them.
+Its original cashier authority (#359) is still HOLD and cannot be overwritten,
+normalized implicitly or made authoritative from the later web closing. This
+development SQL has no row for that held shift; original copy was another PC.
+No historical shift repair, checkpoint reset, closing change or stock edit is
+approved. Present exact proposed affected rows/fields and authority separately.
+Startup48 remains a separately approved native readiness correction; it must
+not bypass this operational graph conflict to clear a loading screen.
+
 ## STATUS50 — approved retry-status stability correction
 
 Live acceptance follow-up: PR376 merged into beta59f218ba after all required
