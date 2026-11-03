@@ -79,6 +79,24 @@ not bypass this operational graph conflict to clear a loading screen.
 
 ## STATUS50 — approved retry-status stability correction
 
+Live acceptance follow-up: PR376 merged into beta59f218ba after all required
+checks passed. Owner approved restarting only verified development PID24800
+after normal shutdown hit ECHANGEGAP; reopened PID29296 with the same profile.
+Owner signed in; local SQL/schema remain Ready and central is Reachable.
+Actual alert now retains the error but repeats identical text for two unresolved
+work scopes. Within the approved status correction, deduplicate presentation
+only, retaining every scope and credential flag until matching success. Add a
+regression proving one scope's success cannot hide the other's shared message.
+Branch codex/retry-warning-display-beta starts from beta59f218ba. No database,
+checkpoint, request, retry timing, checkout, permission or Membership changes.
+Underlying SHIFT49 graph conflict remains unresolved; do not claim full recovery.
+Follow-up passed57 retry/summary tests independently and exact one-line runtime
+review. UI observations retained the same alert through automatic retry failures
+at19:35:43 and19:36:55Brunei; no disappearance observed in sampled states.
+This is sampled installed UI evidence, not every-frame recording or successful
+recovery. Normal SQL/schema stay Ready, central Reachable. No shift data repair.
+Deduplicated text still requires CI/beta integration and a new native reload.
+
 Owner explicitly approved this separate code/test batch on 3 November after
 read-only reproduction: SyncCoordinator clears lastError at each retry start,
 making the unresolved shifts ECHANGEGAP warning disappear and reappear. Preserve

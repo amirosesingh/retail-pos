@@ -9,6 +9,18 @@ function fixture(){
   return {coordinator,push,pull,events};
 }
 describe("truthful native retry status",()=>{
+  it("displays identical failures once while retaining each unresolved work scope",async()=>{
+    const h=fixture();
+    h.push.mockRejectedValueOnce(gap()).mockRejectedValueOnce(gap());
+    await h.coordinator.runNow({branchId:"A",includeActivity:true});
+    await h.coordinator.runNow({branchId:"A",includeActivity:false});
+    const message="Change Tracking history for shifts has expired";
+    expect(h.coordinator.snapshot().lastError).toBe(message);
+    await h.coordinator.runNow({branchId:"A",includeActivity:false});
+    expect(h.coordinator.snapshot().lastError).toBe(message);
+    await h.coordinator.runNow({branchId:"A",includeActivity:true});
+    expect(h.coordinator.snapshot().lastError).toBeNull();
+  });
   it("keeps the warning through a failed retry and clears it only after successful matching work",async()=>{
     const h=fixture();h.push.mockRejectedValueOnce(gap()).mockRejectedValueOnce(gap());
     await h.coordinator.runNow({branchId:"A"});h.events.length=0;
