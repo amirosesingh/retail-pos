@@ -3,6 +3,19 @@
 Last reconciled: **2026-11-03, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
 
+3 November HOST-40: confirmed beta Worker sync503 is CPU exhaustion, not grounds
+for SQL repair. Matching11:58:26.967Brunei event reports exceededCpu/12ms; failed
+scoped history snapshot preserves its old CT checkpoint, so ECHANGEGAP repeats.
+Owner keeps Workers Free and approved five-runtime-file direct native API entry
+preparation/isolated tests only. Reuse unchanged guarded sync/adoption/enrollment
+handlers with exact CF-only dispatch; retain nonCF framework context, named
+operation routing, per-route CORS and all authority/signature checks. Do not
+reset checkpoints/queues, change audit visibility or weaken guards. Source/build
+verification is not deployment or hosted CPU acceptance. DEV-38 and REG-39 are
+tracked separately in PR365/366; native proof correction restores staff roster
+without registration rewrite. Production354 and historical359 remain pending;
+Membership/dependencies remain on hold.
+
 Latest beta is 575092c7 after verified merge #363; merged and reviewed trees match
 and all beta-push checks passed. Six approved cloud upgrades are installed;
 production #354 is updated but not yet accepted. The new Management closing-graph

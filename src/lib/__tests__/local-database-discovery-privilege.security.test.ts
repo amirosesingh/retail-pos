@@ -171,7 +171,8 @@ describe("local SQL Server discovery privilege", () => {
       "utf8",
     );
     const main = readFileSync("electron/main.cjs", "utf8");
-    const adoptRoute = readFileSync("src/routes/api/v1/pos/ipc-adopt.ts", "utf8");
+    const adoptRoute = readFileSync("src/lib/ipc-adopt-endpoint.server.ts", "utf8");
+    expect(readFileSync("src/routes/api/v1/pos/ipc-adopt.ts", "utf8")).toContain("handleIpcAdopt(request)");
 
     expect(gate).toContain("ensureDesktopPosSession(true)");
     const handoff = readFileSync("src/lib/desktop-pos-session.ts", "utf8");
