@@ -7,7 +7,7 @@ class SyncCoordinator {
   unresolved() { return this.unresolvedFailures??=new Map(); }
   publishFailureStatus(branchId) {
     const failures=[...this.unresolved().values()].filter(failure=>failure.branchId===String(branchId??""));
-    this.status.lastError=failures.length?failures.map(failure=>failure.error).join(" "):null;
+    this.status.lastError=failures.length?[...new Set(failures.map(failure=>failure.error))].join(" "):null;
     this.status.credentialsInvalid=failures.some(failure=>failure.credentialsInvalid);
   }
   rememberFailure(error,options,direction) {
