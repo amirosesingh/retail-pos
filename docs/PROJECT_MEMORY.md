@@ -3,6 +3,15 @@
 Last reconciled: **2026-11-03, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
 
+3 November DEV-38: owner approved a narrow local module-loading correction.
+Vite development SSR does not wrap the local CommonJS shift protocol, although
+Vitest and production builds handle it. Keep the canonical Electron wire module
+unchanged; an exact-file serve-only export transform supports the dev evaluator.
+Real Vite failure/fix and signed-message byte parity tests are required. This is
+not authorization to relax signature checks or modify database data. READ-35
+subsequently merged into beta3dbc0f4d with all final checks passing; production
+acceptance is still separate.
+
 Latest beta is 575092c7 after verified merge #363; merged and reviewed trees match
 and all beta-push checks passed. Six approved cloud upgrades are installed;
 production #354 is updated but not yet accepted. The new Management closing-graph
