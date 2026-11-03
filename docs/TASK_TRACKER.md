@@ -30,6 +30,38 @@ save orchestration: unchanged/changed vault pair and renderer override/reset,
 read-only Test, rejected persistence, packaged restart ordering/routes/debounce,
 quitting/safeMode and error recovery. Real UI/admin/sync verification pending.
 
+## Current checkpoint — local development module-loading correction approved
+
+DEV-38 / confirmed High / active: local Vite development page fails before
+database access with `ReferenceError: module is not defined` at the canonical
+Electron shift-author protocol's CommonJS export. Two server modules import
+that file; production bundling and Vitest did not exercise this dev evaluator.
+Owner approved the separate module-loading correction and regression tests.
+Baseline beta3dbc0f4d; branch codex/shift-protocol-dev-loading-beta. Root owns
+Vite integration and ledger; agent owns a narrowly scoped serve-only interop
+helper and tests. Preserve canonical CJS, message domains/bytes, all author,
+checkout and branch guards. No database edit or deployment is authorized.
+Acceptance: real Vite SSR reproduction/fix, CJS/ESM protocol parity and invalid
+input denial, page read smoke, existing author tests and Cloudflare build.
+Rollback: revert only this helper/integration/test delta; no data recovery.
+
+DEV-38 implemented and isolated-verified: serve-only exact-file interop replaces
+only the reviewed export footer; canonical CJS and production build remain
+unchanged. Real Vite SSR test reproduces failure without plugin and succeeds
+with it; seven exports, all three signed message byte domains and invalid-input
+rejection match native CJS. Root Node22 adjacent suite116 tests passed;
+independent review83 passed and real Vite config confirms build exclusion.
+TypeScript, scoped lint and Cloudflare build pass. Restarted local server home
+returns HTTP200 without error fallback. No authenticated business workflow or
+isolated database target has yet been verified. Production stays blocked on its
+existing device/CPU/financial acceptance gates. No database edit or deployment.
+
+READ-35 completed: PR364 merged beta3dbc0f4d after all final a57fc422 Actions
+passed. Both parent histories are retained and merge tree equals tested head.
+Production354 includes it but remains draft pending acceptance. New actual
+local page failure DEV-38 blocks device workflow checks; isolated environment
+was reported ready but no transactions have been run or target verified yet.
+
 ## Current checkpoint — HOST-40 hosted CPU correction approved
 
 3 November owner approved a separate five-runtime-file correction and isolated

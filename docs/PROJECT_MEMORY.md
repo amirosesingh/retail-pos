@@ -10,6 +10,15 @@ failure recovery and credential activation; external SSR hosting environment
 remains developer-managed. Owner approved the focused correction and365/366
 beta integration on3November. No production, database or installer approval.
 
+3 November DEV-38: owner approved a narrow local module-loading correction.
+Vite development SSR does not wrap the local CommonJS shift protocol, although
+Vitest and production builds handle it. Keep the canonical Electron wire module
+unchanged; an exact-file serve-only export transform supports the dev evaluator.
+Real Vite failure/fix and signed-message byte parity tests are required. This is
+not authorization to relax signature checks or modify database data. READ-35
+subsequently merged into beta3dbc0f4d with all final checks passing; production
+acceptance is still separate.
+
 3 November HOST-40: confirmed beta Worker sync503 is CPU exhaustion, not grounds
 for SQL repair. Matching11:58:26.967Brunei event reports exceededCpu/12ms; failed
 scoped history snapshot preserves its old CT checkpoint, so ECHANGEGAP repeats.
