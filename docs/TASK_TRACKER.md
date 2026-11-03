@@ -35,7 +35,98 @@ both merge trees equal tested source heads. Crash correction PR368 full source
 suite4763passed; real admin/sync acceptance remains incomplete. Actual native
 profile is production-connected; no real transactions were used for testing.
 
+## Latest owner decision — PR365/366 beta integration and connection crash
+
+3 November owner approves merging365/366 after checks and fixing the connection
+settings crash using agents. Earlier preparation-only text below is historical;
+no production promotion, installer publication, database edits or data recovery
+is included. Both PRs required documentation-only conflict reconciliation with
+beta f002d194 (PR367). Preserve DEV38, REG39 and HOST40 records and runtime fixes.
+Full sync recovery is NOT verified: later history/pos_settings503s persisted.
+Do not reset checkpoints/queues or change audit visibility. DEV41 captures the
+separate external-development-server restart defect; correction is prepared in
+its own current-beta branch. Checkout/permissions/branch restrictions remain.
+
 ## Current checkpoint — local development module-loading correction approved
+
+REG-39 / investigation / pending administrator unlock: owner reports registered
+Electron displays "registration needs review" instead of its staff roster.
+Observed login shows saved STR1 branch but roster denial. That wording maps to
+401/403 (or missing renderer token); it does not prove revocation or bad PIN.
+Exact backend verdict and renderer/Main proof consistency remain unverified.
+Do not clear activation, derive replacement identity or fall back around denial.
+Independent review identified stale renderer proof and early hydration as
+suspected paths only. Actual review navigation was blank because Electron was
+served by web-mode Vite, which aliases native recovery components to null.
+Corrected local launch configuration only: Windows-mode preview8080, web8082.
+Electron recovery now renders its administrator unlock correctly. No persistent
+settings/registration changes or test transactions performed. The safe-close
+guard also reported activity logs could not save to local SQL; kept application
+open, no forced termination or queue clearing. Await user-entered recovery unlock
+to inspect the actual saved registration/backend before proposing any fix.
+
+Owner unlocked recovery. Observed renderer registration ammy/STR1, token
+d7f3debf-9571-4d95-b547-77a24845d66f, saved activation backend production POS,
+cloud qhrufhtbeguxydenzfey. This is production-connected, not an isolated test
+target: do not create test sales/stock. Read-only registry confirms used/claimed,
+pc/electron, branch assigned, not revoked, both stored proof formats valid and
+matching. Direct read-only production roster request returns200 with2 staff;
+no names/credentials logged. Preview still shows denial after native-mode fix.
+Actual runtime backend may differ from saved activation's historic address.
+Owner approved development-only diagnostics and tests: only backend origin,
+HTTP status and Boolean outgoing/native identity+proof comparison; no request,
+authorization, registration or database changes. Root owns DEV invocation in
+staff-admin.ts; agent owns pure allowlist helper/tests. Branch
+codex/terminal-roster-diagnostics-beta retains reviewed DEV-38 prerequisite.
+Owner also reports administrator sign-in fails: include that in the same
+read-only handoff investigation; no credentials or PIN attempts automated.
+
+REG-39 runtime diagnosis confirmed twice on 3 November: actual renderer backend
+is HTTPS beta-pos (saved activation summary's production URL is historical).
+Outgoing/native terminal IDs match; both have proofs, but valid 64-hex proofs
+differ even after case normalization. Roster returns401. No proof values logged.
+Owner resumed after physical Escape stop. Proposed separate correction: fresh
+Windows sealed proof only when same token/branch identity, fail closed on native
+read/identity failure; preserve mobile/legacy paths and server verification.
+Await explicit implementation approval; diagnostic approval alone is not a
+registration change. Separate compatibility evidence: production2f404e6 lacks
+the terminal descriptor required by latest native adoption; that would affect
+production-configured clients, but current renderer uses beta, so it is not a
+confirmed cause of this current administrator failure. Keep that distinction.
+
+REG-39 correction explicitly approved after diagnostics: shared native proof
+helper will prefer the existing Windows Main-sealed proof only for matching
+terminal/branch identity; reject mismatched identity or unreadable native store.
+Preserve mobile/legacy behavior and all server verification. No registration,
+database or production-deployment change. Root owns denial classification and
+integration tests; agent owns helper/its tests. Recheck staff list first, then
+administrator login by user-entered credentials; no credentials automated.
+
+REG-39 implemented/verified for roster: fresh Main proof with matching token,
+platform/branch/mode is used without rewriting either registration. Delayed
+binding changes and unreadable/mismatched native data fail closed; typed binding
+denials do not become offline-roster fallback. Root observed repeated safe
+proof-match=true plus HTTP200 and two staff visible. Final stable full suite:
+618 files passed /4709 tests passed, one opt-in skipped (Node22,134.33s).
+Types/scoped lint/production build pass; DEV diagnostic markers absent from
+release output. Initial in-progress suite mixed pre/post platform edits and had
+four failures; final stable-source rerun is the valid result. Independent final
+review33 focused tests passed. No sales, stock, grants or registration rewrite.
+
+HOST-40 / confirmed High / investigation only: user reports ECHANGEGAP and
+bootstrap503 at11:58 Brunei. Native safe logs confirm non-JSON HTTP503 on
+change_history, pos_settings and settings_scoped. Cloudflare beta Worker event
+11:58:26.967 has status503/outcome exceededCpu/cpu12ms/wall5938ms, version
+605fc32a-c07f-4f3b-ae39-9416b26b8e3b. Other visible CPU failures include
+ipc-adopt11:58:44/56 and shift-author-enroll11:58:47. The failed history snapshot
+leaves its expired CT baseline intact, causing repeated ECHANGEGAP. Do not reset
+checkpoints, clear queues, skip history or infer database corruption. Owner keeps
+Workers Free; no billing/limit changes authorized. Administrator connection error
+remains unverified end-to-end and hosted CPU failure is a confirmed blocker.
+Propose separate lightweight guarded native API dispatch preparation/tests,
+preserving existing handlers/authorization/CORS/request-context requirements.
+No new HOST-40 code or schema changes approved yet. Historical audit/GLOBAL
+visibility correction remains pending and Membership remains on hold.
 
 DEV-38 / confirmed High / active: local Vite development page fails before
 database access with `ReferenceError: module is not defined` at the canonical
