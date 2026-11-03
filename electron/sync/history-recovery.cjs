@@ -45,6 +45,7 @@ async function recover(lifecycle,branchId,historyDays,refreshTable){
     await jobRepository.create(job);
   }
   await retained(connectionManager,null,state.baseline);
+  if(lifecycle.releaseHistoryCache)await lifecycle.releaseHistoryCache(branchId,historyDays,job);
   const jobId=job.job_id;
   await jobManager.run(TYPE,async context=>{
     // Always reload committed storage, never JobManager's mutable checkpoint object.

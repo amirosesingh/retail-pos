@@ -8,7 +8,7 @@ it("runs the native history-resume transaction and crash-boundary regressions", 
   const result = await promisify(execFile)(process.execPath, ["--test", "scripts/test-history-resume.cjs"], {
     cwd: process.cwd(), timeout: 20_000, windowsHide: true,
   });
-  expect(result.stdout).toMatch(/# tests 16\b/);
-  expect(result.stdout).toMatch(/# pass 16\b/);
+  expect(result.stdout).toMatch(/# tests 17\b/);
+  expect(result.stdout).toMatch(/# pass 17\b/);
   expect(result.stdout).toMatch(/# fail 0\b/);
 }, 25_000);

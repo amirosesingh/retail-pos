@@ -148,7 +148,7 @@ describe("safe actual Main → diagnostic log boundary", () => {
     const failure = await refresh(h).then(() => { throw Error("Expected failure"); }, (error: unknown) => error);
     const logs = logHarness(), markReady = vi.fn();
     const source = readFileSync("electron/main.cjs", "utf8"), start = source.indexOf("function prepareLocalData("), end = source.indexOf("\nlet localDatabaseRecoveryPromise", start);
-    const context = { diagnostics: logs.diagnostics, syncRegistry: registry, databaseService: { markReady }, databaseConfig: { profile: () => ({ retentionDays: 90 }) }, localBranchId: () => "branch-fixture", isManagementDevice: () => false, localDataLifecycle: { ensure: vi.fn().mockRejectedValue(failure) }, prepare: undefined as undefined | (() => Promise<unknown>) };
+    const context = { diagnostics: logs.diagnostics, syncRegistry: registry, databaseService: { markReady }, databaseConfig: { profile: () => ({ retentionDays: 90 }) }, localBranchId: () => "branch-fixture", isManagementDevice: () => false, localDataLifecycle: { ensure: vi.fn().mockRejectedValue(failure), preserveCachedReady: () => true }, prepare: undefined as undefined | (() => Promise<unknown>) };
     runInNewContext(`let localDataPreparePromise=null;${source.slice(start,end)};globalThis.prepare=prepareLocalData;`, context);
     await expect(context.prepare!()).rejects.toBe(failure);
     expect(markReady).toHaveBeenCalledExactlyOnceWith({ phase: "sync_pending", syncReady: false, code: "HTTP_503", error: "HTTP 503", differences: undefined });
