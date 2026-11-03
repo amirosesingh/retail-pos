@@ -242,11 +242,12 @@ function prepareLocalData({force=false}={}){
       return result;
     }
     catch(error){
-      // Reaching this function means SQL Server already passed validation and is
-      // connected. A cloud, activation or reconciliation problem belongs to the
-      // synchronization status; it must not describe the healthy local database
-      // as degraded or disable offline trading.
-      databaseService.markReady({phase:"sync_pending",syncReady:false,code:error?.code??"EBOOTSTRAP",error:String(error?.message??error),differences:error?.differences});
+      // A healthy SQL connection is not proof of a complete local snapshot.
+      // Preserve offline access only if this run already qualified that cache;
+      // first/incomplete bootstrap failures keep the gate without disconnecting SQL.
+      const detail={phase:"sync_pending",syncReady:false,code:error?.code??"EBOOTSTRAP",error:String(error?.message??error),differences:error?.differences};
+      if(localDataLifecycle.preserveCachedReady?.())databaseService.markReady(detail);
+      else databaseService.transition("enabled_bootstrapping",detail);
       diagnostics.logConnection("synchronization.bootstrap.failed", { category:"synchronization", stage:"bootstrap", code:error?.code??"EBOOTSTRAP", message:String(error?.message??error), ...diagnostics.bootstrapDiagnostic(error,syncRegistry.tables.map(table=>table.cloudTable)) });
       throw error;
     }

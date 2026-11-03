@@ -57,7 +57,7 @@ export function nativeSyncSummary(
   const error = typeof snapshot.lastError === "string" ? snapshot.lastError.trim() : "";
   if (error || failed || conflicts) return {
     state: "degraded", label: "Needs attention", pending,
-    detail: [error, failed ? `${failed} failed journal upload${failed === 1 ? "" : "s"}.` : "",
+    detail: [error, snapshot.running ? "Retrying synchronization; the previous failure is not yet resolved." : "", failed ? `${failed} failed journal upload${failed === 1 ? "" : "s"}.` : "",
       conflicts ? `${conflicts} unresolved conflict${conflicts === 1 ? "" : "s"}.` : "",
       "A zero queue count does not confirm that every local record uploaded."].filter(Boolean).join(" "),
   };

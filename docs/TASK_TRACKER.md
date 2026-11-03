@@ -2,7 +2,7 @@
 
 Last reconciled: **2026-11-03, Asia/Brunei**.
 
-## SHIFT49 — approved reconciliation-summary preparation, no live changes
+## SHIFT49 — future-write fix applied; historical repair prepared
 
 Historical preparation extension: owner requests the underlying recovery error
 resolved. Prepare an exact seven-row, five-NULL-summary repair and isolated
@@ -33,7 +33,7 @@ passed; scoped ESLint and `tsc --noEmit` passed. Guarded migration
 only seven already-computed parent assignments. This future-write migration was
 subsequently separately approved/applied as recorded above; current historical
 shifts recovery remains blocked. Historical proposal is
-[the read-only seven-row plan](database/shift-reconciliation-summaries-repair-plan.md),
+[the guarded seven-row repair plan](database/shift-reconciliation-summaries-repair-plan.md),
 explicitly excluding the eighth held STR1 authority repair. Historical mutation
 is prepared only, not applied. Synthetic tests do not verify live recovery.
 
@@ -69,6 +69,79 @@ No historical shift repair, checkpoint reset, closing change or stock edit is
 approved. Present exact proposed affected rows/fields and authority separately.
 Startup48 remains a separately approved native readiness correction; it must
 not bypass this operational graph conflict to clear a loading screen.
+
+## STATUS50 — approved retry-status stability correction
+
+Owner explicitly approved this separate code/test batch on 3 November after
+read-only reproduction: SyncCoordinator clears lastError at each retry start,
+making the unresolved shifts ECHANGEGAP warning disappear and reappear. Preserve
+unresolved warnings while displaying retry progress; clear only after a relevant
+successful pass. An unrelated branch/direction or activity-excluding success must
+not imply recovery of an earlier failure. Pause/offline behavior remains truthful.
+Baseline origin/beta290ef2c5; branch codex/retry-status-stability-beta. Scope is
+coordinator status, existing summary presentation and focused isolated tests.
+No requests, retry schedules, queues/checkpoints, auth, checkout, operator settings,
+database records or Membership behavior may change. Owner subsequently approved
+PR376 CI corrections, beta merge after checks, local Electron reload and runtime
+flicker verification. Production, installers and live database repair stay separate.
+Implemented in coordinator error bookkeeping and existing summary presentation;
+no worker request or result semantics changed. Passed108 focused/dependency tests
+across7 suites, scoped ESLint, TypeScript and diff checks. Independent review
+reran56 tests and reproduced then cleared dual-failure and auth-warning issues.
+Tests cover failed retry stability, matching direction/branch success, runFinal,
+activity/deferred scope, pause/offline and preserved authorization warnings.
+Actual installed UI, CI, beta integration and runtime reload remain unverified.
+Rollback: revert this scoped commit; no data/configuration rollback is required.
+Actual shifts CT/graph conflict recovery is separate and unresolved.
+
+
+## STARTUP48 — approved cached-snapshot startup correction
+
+Owner reports Electron stuck on Preparing local store data despite8081 HTTP200
+in110ms/22ms and connected SQL. Owner explicitly approved focused native startup
+correction and isolated tests (about6 runtime/status files plus tests), preserving
+checkout/auth/permissions and first/incomplete/restore/scope-mismatch gates.
+No database/configuration changes are authorized. Membership remains untouched.
+Baseline origin/beta290ef2c5; branchcodex/startup-cache-readiness-beta. Author owns
+runtime/tests; independent agent reviews; root owns records and any live action.
+
+Confirmed source: schema-only tradingReady is not complete-data proof; NativeBoot
+correctly waits while enabled_bootstrapping. Any active job blocks cached readiness,
+including a non-operational history recovery. Previous Main catch unconditionally
+marked ready on preparation failure, so failed recovery appeared faster than a
+successful long recovery. Do not reuse that fail-open path or reorder schema-ready
+ahead of the gate.
+
+Proof must require validated connected current pool/profile, a completed scoped
+bootstrap marker, local branch row, valid current history job identity/depth/backend
+and no other active or newer unresolved destructive bootstrap/restore. Inspect all
+jobs rather than TOP1. A new history-only exemption also needs read-only operational
+CT validity checks so another expired operational table is not hidden. Apply that
+extra preflight only to the NEW exemption; preserve ordinary completed-cache offline
+opening behavior. Main failure handling must not invent readiness from schema or
+malformed/foreign-scope failed history. Include restore/readiness invalidation if
+needed within approved native startup/status scope; no frontend/auth bypass.
+
+Actual read-only SQL metadata now verifies completed bootstrap_7300 for current
+brancha611a328-2217-4d77-944a-5f6a637d123b,17432rows,9Oct2026. History recovery on
+samebranch/depth7300 completed20799rows at18:32:51Brunei, hr:final:9429. Current
+failure advanced to shifts ECHANGEGAP: HTTP400/P0001 SYNC_SHIFT_GRAPH_CONFLICT,
+server validate_graph line38. This requires separate read-only graph diagnosis;
+do not reset checkpoint, bypass protection, close/correct shifts or execute held
+STR1/#359 repair. Startup patch must not falsely promise to resolve that conflict.
+
+Acceptance: allowed complete same-scope history-only background case; denied first
+bootstrap/force-full/restore/incomplete/malformed/foreign backend/terminal/branch/depth;
+multiple active jobs and newer failed destructive jobs; profile/pool race; other
+operational CT gap denies NEW exemption; ordinary cached offline use preserved.
+Test actual lifecycle/boot error boundaries and relevant checkout/permission paths.
+Implementation prepared in four native runtime files, with focused regressions.
+Full-suite run: 4873 passed, 2 skipped; one wrapper asserted 16 native cases after
+the harness gained its 17th case. Updating that assertion passed the focused test.
+Additional acceptance: 96 focused tests, 20 native tests, six disposable SQL groups,
+TypeScript and independent review passed. No live data, configuration or Main
+restart has occurred for this patch; actual startup and the separate shift graph
+recovery remain unverified. Exact-head CI and scoped integration remain pending.
 
 ## PROJ47 — confirmed post-deployment history projection timeout
 
