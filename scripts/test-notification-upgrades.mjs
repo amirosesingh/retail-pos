@@ -354,7 +354,8 @@ try {
         "supabase/migrations/20261102104005_fix_closed_shift_correction_activity_type.sql",
         "supabase/migrations/20261102153013_bind_signed_closing_start_evidence.sql",
         "supabase/migrations/20261103023417_management_closing_graph_read_scope.sql",
-        "supabase/migrations/20261103074926_protected_byte_bounded_history_download.sql"]) {
+        "supabase/migrations/20261103074926_protected_byte_bounded_history_download.sql",
+        "supabase/migrations/20261103091907_optimize_protected_history_projection.sql"]) {
         await mkdir(dirname(join(fixture, path)), { recursive: true });
         await copyFile(join(root, path), join(fixture, path));
       }

@@ -14,10 +14,12 @@ const exports = {};
 runInNewContext(reference,{exports,Object,Set,Array});
 const normalized = value => JSON.parse(JSON.stringify(value));
 const db = new PGlite();
+const projectionUpgrade = await read('supabase/migrations/20261103091907_optimize_protected_history_projection.sql');
+const installMigration = async () => { await db.exec(migration); await db.exec(projectionUpgrade); };
 let passed = 0;
 try {
   await db.exec('CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;');
-  await db.exec(migration);
+  await installMigration();
   const fixtures = [null,true,false,0,1.5,'雪😀',[],{},
     JSON.parse('{"__proto__":{"ecommerceEnabled":true},"constructor":{"name":"safe"}}'),
     {table_name:'terminal_tokens',claim_secret_hash:'secret',claim_proof:'secret',claimed_proof_hash:'secret',child:{claim_proof:'secret',keep:1}},
@@ -77,7 +79,7 @@ try {
   for(const minimum of [100,10]) {
     await db.exec(stub(minimum));
     const original = await db.query("SELECT oid::regprocedure::text AS identity,to_jsonb(p) AS metadata FROM pg_proc p WHERE oid IN ('public.pos_sync_bootstrap(text,text,text,text,text,integer,integer)'::regprocedure,'public.pos_sync_bootstrap_scoped(text,text,text,text,text,integer,integer)'::regprocedure) ORDER BY 1");
-    await db.exec(migration);
+    await installMigration();
     const after = await db.query("SELECT oid::regprocedure::text AS identity,to_jsonb(p) AS metadata FROM pg_proc p WHERE oid IN ('public.pos_sync_bootstrap(text,text,text,text,text,integer,integer)'::regprocedure,'public.pos_sync_bootstrap_scoped(text,text,text,text,text,integer,integer)'::regprocedure) ORDER BY 1");
     assert.deepEqual(after.rows,original.rows,'Original selector metadata/grants/source unchanged');
     await db.exec("SELECT set_config('test.raw_called','no',false)");
@@ -131,13 +133,13 @@ try {
   await db.exec("SELECT set_config('test.raw_called','no',false)");
   await assert.rejects(page(),/UNSUPPORTED_SOURCE/);
   assert.equal((await db.query("SELECT current_setting('test.raw_called') AS value")).rows[0].value,'no'); passed++;
-  await db.exec(migration);
+  await installMigration();
   await assert.rejects(page(),/UNSUPPORTED_SOURCE/);
   assert.equal((await db.query("SELECT current_setting('test.raw_called') AS value")).rows[0].value,'no'); passed++;
   await db.exec(stub(10));
   const wrapperDefinition=(await db.query("SELECT pg_get_functiondef('public.pos_sync_bootstrap(text,text,text,text,text,integer,integer)'::regprocedure) AS value")).rows[0].value;
   await db.exec(wrapperDefinition.replace(',p_history_days,p_limit);',',p_history_days,100);'));
-  await db.exec(migration);
+  await installMigration();
   await db.exec("SELECT set_config('test.raw_called','no',false)");
   await assert.rejects(page(),/UNSUPPORTED_SOURCE/);
   assert.equal((await db.query("SELECT current_setting('test.raw_called') AS value")).rows[0].value,'no'); passed++;
