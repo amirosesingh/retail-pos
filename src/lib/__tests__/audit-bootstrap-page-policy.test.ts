@@ -5,6 +5,7 @@ const require = createRequire(import.meta.url);
 const { CloudClient } = require("../../../electron/sync/cloud-client.cjs");
 const { readPage } = require("../../../electron/sync/page-policy.cjs");
 const { refreshTable, runBootstrap } = require("../../../electron/jobs/bootstrap.cjs");
+const { JobManager } = require("../../../electron/jobs/manager.cjs");
 const { LocalDataLifecycle } = require("../../../electron/jobs/lifecycle.cjs");
 const { tagBootstrapDiagnostic } = require("../../../electron/diagnostics.cjs");
 type PageInput = { table: string; branchId: string; historyDays: number; cursor: string | null; limit: number };
@@ -31,11 +32,16 @@ function harness(name = "change_history", response?: (input: PageInput, attempt:
   cloud.bootstrapPage = async (input: PageInput) => { try { return await originalPage(input); } catch (error) { failures.push(error);throw error; } };
   const begin = vi.fn(async () => { events.push("begin"); }), commit = vi.fn(async () => { events.push("commit"); }), rollback = vi.fn(async () => { events.push("rollback"); });
   class Transaction { begin = begin; commit = commit; rollback = rollback; }
-  const connectionManager = { sql: () => ({ Transaction, ISOLATION_LEVEL: { SERIALIZABLE: 4 } }), pool: { request: () => ({ query: vi.fn(async () => ({ recordset: [{ current_version: 99 }] })) }) } };
+  class Request { async query() { return { recordset: [{ current_version: 99, min_valid_version: 0 }] }; } }
+  const connectionManager = { sql: () => ({ Transaction, Request, ISOLATION_LEVEL: { SERIALIZABLE: 4 } }), pool: { request: () => new Request() } };
   cloud.applyLocalBatch = vi.fn(async (_transaction: unknown, _table: unknown, batch: { rows: Array<{ row_data: { id: string } }> }) => { events.push("apply");applied.push(...batch.rows.map(change => change.row_data.id)); });
-  const checkpoints = { save: vi.fn(async () => { events.push("baseline"); }) };
+  const checkpoints = { save: vi.fn(async () => { events.push("baseline"); }), advanceRecovery: vi.fn(async () => { events.push("baseline"); }) };
+  const jobs = new Map<string, { job_id: string; [key: string]: unknown }>();
+  const jobRepository = { recovery: async () => [...jobs.values()].at(-1) ?? null, create: async (value: { job_id: string; [key: string]: unknown }) => { jobs.set(value.job_id, structuredClone(value)); }, get: async (id: string) => structuredClone(jobs.get(id)), checkpoint: async (id: string, patch: object) => { const saved = jobs.get(id); if (!saved) throw new Error("Missing fixture job"); Object.assign(saved, structuredClone(patch)); } };
+  const jobManager = new JobManager(jobRepository);
+  const reader = { unacknowledged: async () => [] };
   const registry = { tables: [table(name)] };
-  const lifecycle = new LocalDataLifecycle({ registry, cloud, connectionManager, checkpoints, syncCoordinator: {} });
+  const lifecycle = new LocalDataLifecycle({ registry, cloud, connectionManager, checkpoints, jobRepository, jobManager, reader, syncCoordinator: {} });
   const context = { job: { dependency_index: 0, last_committed_cursor: null as string | null, completed_rows: 0, batch_number: 0 }, waitWhilePaused: vi.fn(), checkpoint: vi.fn(async (patch: object, _transaction?: unknown) => { events.push("checkpoint");Object.assign(context.job, patch); }) };
   return { cloud, connectionManager, checkpoints, registry, lifecycle, context, requests, inputs, failures, fetch, begin, commit, rollback, applied, events };
 }
@@ -50,8 +56,8 @@ describe("audit-only bounded bootstrap downloads", () => {
     expect(h.inputs.map(input => input.limit)).toEqual([100, 100, 100]);
     expect(h.inputs.map(input => input.cursor)).toEqual([null, JSON.stringify({ id: rows[99].id }), JSON.stringify({ id: rows[199].id })]);
     expect(h.applied).toEqual(rows.map(row => row.id));expect(new Set(h.applied).size).toBe(253);
-    expect(h.begin).toHaveBeenCalledTimes(3);expect(h.commit).toHaveBeenCalledTimes(3);expect(h.rollback).not.toHaveBeenCalled();
-    expect(h.checkpoints.save).toHaveBeenCalledExactlyOnceWith("branch-fixture", "change_history", "push", { change_tracking_version: 99 });expect(h.events.at(-1)).toBe("baseline");
+    expect(h.begin).toHaveBeenCalledTimes(4);expect(h.commit).toHaveBeenCalledTimes(4);expect(h.rollback).not.toHaveBeenCalled();
+    expect(h.checkpoints.advanceRecovery).toHaveBeenCalledExactlyOnceWith("branch-fixture", "change_history", "99", expect.anything());expect(h.events.at(-1)).toBe("commit");
     for (const body of h.requests) {
       expect(Object.keys(body).sort()).toEqual(["deviceBindingProof", "sqlServerBootstrap", "terminalToken"]);
       expect(body).toMatchObject({ terminalToken: "terminal-fixture", deviceBindingProof: proof, sqlServerBootstrap: { organizationId: "default", table: "change_history", branchId: "branch-fixture", historyDays: 90 } });
@@ -72,7 +78,7 @@ describe("audit-only bounded bootstrap downloads", () => {
     await vi.advanceTimersByTimeAsync(499);expect(h.fetch).toHaveBeenCalledTimes(2);await vi.advanceTimersByTimeAsync(1);
     expect(await pending).toMatchObject({ completed: 253 });expect(h.inputs.slice(0, 3).map(input => [input.limit, input.cursor])).toEqual([[100, null], [50, null], [25, null]]);
     expect(h.inputs.every(input => input.limit <= 100)).toBe(true);expect(h.inputs.slice(2).every(input => input.limit === 25)).toBe(true);
-    expect(h.applied).toEqual(rows.map(row => row.id));expect(new Set(h.applied).size).toBe(253);expect(h.cloud.applyLocalBatch).toHaveBeenCalledTimes(11);expect(h.checkpoints.save).toHaveBeenCalledTimes(1);
+    expect(h.applied).toEqual(rows.map(row => row.id));expect(new Set(h.applied).size).toBe(253);expect(h.cloud.applyLocalBatch).toHaveBeenCalledTimes(11);expect(h.checkpoints.advanceRecovery).toHaveBeenCalledTimes(1);
   });
   it("exhausts exactly two smaller-page503 retries and preserves the last error with no transaction/baseline", async () => {
     vi.useFakeTimers();const h = harness("change_history", () => new Response("<html>unavailable</html>", { status: 503 }));

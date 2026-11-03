@@ -3,6 +3,17 @@
 Last reconciled: **2026-11-03, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
 
+3 November RESUME45 / STREAM46: owner approved preparation and isolated tests
+only for durable history recovery and a protected byte-bounded history-download
+protocol. Save each applied page and its opaque cursor in one local transaction;
+retain the original Change Tracking baseline and advance it only after the full
+snapshot succeeds. Preserve pending edits and terminal/backend/branch scope.
+The protected RPC must retain existing visibility and privacy, never omit a
+large record, and fall back only to the existing guarded/redacted path when the
+capability is unavailable. These approvals authorize no live migration, repair,
+deployment, production promotion or installer publication. Actual installed SQL
+transactions, hosted wire behavior and CPU budget remain separate verification.
+
 HOST44 performance decision: bound only audit-history bootstrap at the RPC
 request before SQL generates rows and cursor; never truncate returned pages or
 advance SQL Change Tracking before the complete snapshot applies. ROSEGILL pos
