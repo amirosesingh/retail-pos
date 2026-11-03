@@ -42,15 +42,22 @@ try {
   await asCashier(db,()=>db.query(`SELECT public.shift_cash_count_submit('${id}',103,NULL,NULL,'fixture-${id}','fixture-terminal')`),'can_close_shift,can_shift_cash_recount',branch);
  }
  for(const t of capturedTriggers) {
-  await db.exec(`CREATE OR REPLACE FUNCTION public.${t.function} RETURNS trigger LANGUAGE plpgsql AS $captured$${t.source}$captured$; ${t.definition};`);
+  check(md5(t.source),t.body_md5);
+  if(t.table==='shifts'){assert.notEqual(md5(t.source),md5(t.source.replaceAll('\r\n','\n')));passed++;}
+  const escaped=t.source.replaceAll('\\','\\\\').replaceAll("'","''").replaceAll('\r','\\r').replaceAll('\n','\\n');
+  // Server-side escapes preserve exact captured bytes even through Windows
+  // psql text transport, which otherwise canonicalizes physical line endings.
+  await db.exec(`CREATE OR REPLACE FUNCTION public.${t.function} RETURNS trigger LANGUAGE plpgsql AS E'${escaped}'; ${t.definition};`);
  }
  const actualTriggers=await rows(db,`SELECT t.tgname AS name,c.relname AS "table",pg_get_triggerdef(t.oid) AS definition,md5(p.prosrc) AS body_md5 FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_proc p ON p.oid=t.tgfoid WHERE c.relname IN('shifts','audit_logs') AND NOT t.tgisinternal ORDER BY c.relname,t.tgname`);
+ const productionTriggers=JSON.parse(maintenance.match(/\$triggers\$([\s\S]*?)\$triggers\$/)[1]);
+ check(actualTriggers,productionTriggers);
  const fixtureEvidence=[];
  for(const id of ids) {
   const item=(await rows(db,`SELECT s.id AS shift_id,s.store_id,s.row_version,md5(to_jsonb(s)::text) AS parent_fingerprint,md5(pos_sync_private.shift_graph(s.id)::text) AS entire_graph_fingerprint,r.id AS reconciliation_id,r.count_id,md5(to_jsonb(r)::text) AS reconciliation_fingerprint,md5(jsonb_build_array(to_jsonb(c))::text) AS counts_fingerprint,false AS authority_repair_on_hold FROM shifts s JOIN shift_reconciliations r ON r.shift_id=s.id JOIN shift_cash_counts c ON c.id=r.count_id WHERE s.id='${id}'`))[0];
   fixtureEvidence.push(item);
  }
- sql=maintenance.replace(/\$evidence\$[\s\S]*?\$evidence\$/,`$evidence$${JSON.stringify(fixtureEvidence)}$evidence$`).replace(/\$triggers\$[\s\S]*?\$triggers\$/,`$triggers$${JSON.stringify(actualTriggers)}$triggers$`);
+ sql=maintenance.replace(/\$evidence\$[\s\S]*?\$evidence\$/,`$evidence$${JSON.stringify(fixtureEvidence)}$evidence$`);
  // Preserve guard/body identity; only disposable database name differs.
  sql=sql.replace("current_database()<>'postgres'",`current_database()<>current_database()`);
  const before=await allSnapshot();
@@ -83,6 +90,12 @@ try {
  await rejectsUnchanged(sql.replace(fixtureEvidence[0].entire_graph_fingerprint,'00000000000000000000000000000000'),/before-image/);
  await rejectsUnchanged(sql.replace(ids[0],heldId),/invalid exact repair scope/);
  await rejectsUnchanged(sql.replace(actualTriggers[0].body_md5,'00000000000000000000000000000000'),/trigger definition/);
+ const crlfTrigger=capturedTriggers.find(t=>t.table==='shifts');
+ await rejectsUnchanged(sql.replace(crlfTrigger.body_md5,md5(crlfTrigger.source.replaceAll('\r\n','\n'))),/trigger definition/);
+ const installRaw=async source=>{const escaped=source.replaceAll('\\','\\\\').replaceAll("'","''").replaceAll('\r','\\r').replaceAll('\n','\\n');await db.exec(`CREATE OR REPLACE FUNCTION public.${crlfTrigger.function} RETURNS trigger LANGUAGE plpgsql AS E'${escaped}';`);};
+ await installRaw(crlfTrigger.source.replaceAll('\r\n','\n'));
+ await rejectsUnchanged(sql,/trigger definition/);
+ await installRaw(crlfTrigger.source);
  await db.exec(`CREATE FUNCTION fixture_audit_fail() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'fixture audit failure'; END$$; CREATE TRIGGER fixture_audit_fail BEFORE INSERT ON audit_logs FOR EACH ROW EXECUTE FUNCTION fixture_audit_fail();`);
  await rejectsUnchanged(sql,/trigger set changed/);
  // Include an injected existing trigger in disposable expected metadata so

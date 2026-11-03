@@ -147,3 +147,18 @@ used by those tests. The future-write migration was separately approved and
 applied with verified readback; historical seven-row execution has not occurred.
 The original cashier PC is currently unavailable, so the eighth repair remains
 blocked and complete branch recovery must not be claimed.
+
+The owner-approved F202 artifact later aborted before any historical updates:
+its trigger list contained normalized source hashes but the guard correctly
+compared raw bytes. Root confirmed zero repair audits and all eight graphs
+unchanged. The previous native 47-scenario harness substituted fixture-generated
+pins, masking that mismatch; that pin-parity evidence is superseded. Corrected
+artifact SHA256 is
+`95F35B0C2467301326CF2980533EAE3466AA6903338D1955401C77EB45679B83`.
+It pins exact captured raw CRLF source bytes, with the same strict guard.
+Normal test cases now keep the production trigger list unchanged; server-side
+escapes preserve raw function bodies through Windows psql transport. All 68
+PGlite and 69 native cases passed, including raw-versus-normalized rejection;
+native fixture `owned-LQk5me` was stopped/removed. Root's SELECT-only live parity
+check confirmed all ten raw pins, definitions and enabled flags. A renewed exact
+approval is required before any attempt with these changed bytes.

@@ -4,6 +4,27 @@ Last reconciled: **2026-11-03, Asia/Brunei**.
 
 ## SHIFT49 — future-write fix applied; historical repair prepared
 
+Exact F202 execution attempt aborted at the trigger fingerprint guard before
+any updates; root verified zero repair audits. Captured trigger body_md5 was
+normalized while the guard compared raw prosrc bytes. Prepare exact raw-byte
+pins and tests without weakening the guard. Changed artifact requires renewed
+exact approval; no repeat live attempt is authorized by the old hash.
+
+Corrected raw-pin artifact SHA256
+95F35B0C2467301326CF2980533EAE3466AA6903338D1955401C77EB45679B83:
+seven trigger source fingerprints changed to exact raw captured CRLF bytes;
+three audit fingerprints unchanged. No guard normalization or runtime behavior
+change. Previous 47-scenario native harness substituted fixture-computed pins,
+so it did not prove production pin parity; that acceptance claim is superseded.
+Normal cases now retain the production trigger list verbatim, preserve exact
+source bytes through server-side escapes, and test source/hash consistency,
+normalized-pin rejection and changed-raw-body rejection. Final 68 PGlite and
+69 native scenarios passed; Vitest bridge 2/2, ESLint and diff checks passed.
+Native owned-LQk5me stopped/removed. Root SELECT-only live parity confirmed all
+ten exact raw hashes/definitions/enabled flags true, and all eight original
+parent/graph fingerprints unchanged with zero repair audits after abort. New
+historical execution remains pending renewed exact approval and CI.
+
 Owner separately approved exact seven-row artifact SHA256
 F202F0D99EBF1BE668A4255B7207F94D47477E24E3E211C7D6943D13DD3B4557
 on ROSEGILL pos qhrufhtbeguxydenzfey ONLY after final CI and unchanged live
