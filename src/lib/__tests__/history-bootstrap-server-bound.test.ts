@@ -49,6 +49,7 @@ function harness(mode: Mode = "current-operations", count = 53, dbMinimum = 10, 
   let pendingId: string | null = null;
   let interruptProtected=false;
   const protectedInputs: Array<Record<string, unknown>> = [];
+  const protectedSignals: Array<AbortSignal | null | undefined> = [];
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (url.startsWith("https://pos.test/")) { outgoing.push(JSON.parse(String(init?.body))); return handleSyncRequest(new Request(url, init)); }
     if (url.includes("/terminal_tokens?")) return Response.json([{ id: terminal, platform: "pc", status: "used", location_id: management ? null : branch,
@@ -57,6 +58,7 @@ function harness(mode: Mode = "current-operations", count = 53, dbMinimum = 10, 
     if (url.includes("/stores?")) return Response.json([{ id: branch }]);
     if (url.includes("/rpc/")) {
       if (url.includes("/pos_sync_history_page_v1")) {
+        protectedSignals.push(init?.signal);
         const args=JSON.parse(String(init?.body)); protectedInputs.push(args);
         if (!protectedPages) return Response.json({ code: "PGRST202", message: "Could not find the function public.pos_sync_history_page_v1 in the schema cache" }, { status: 404 });
         const last=args.p_after_cursor ? JSON.parse(args.p_after_cursor).id : null;
@@ -105,7 +107,7 @@ function harness(mode: Mode = "current-operations", count = 53, dbMinimum = 10, 
   const reader = { unacknowledged: vi.fn(async () => pendingId ? [JSON.stringify({ id: pendingId })] : []) };
   const boot = mode === "1.4.79-management" ? legacyBoot : currentBoot;
   const verifier = mode === "1.4.79-management" ? legacyVerifier : currentVerifier;
-  return { cloud, rows, rpcInputs, protectedInputs, outgoing, returned, events, local, checkpoints, reader, context, connectionManager, boot, verifier,
+  return { cloud, rows, rpcInputs, protectedInputs, protectedSignals, outgoing, returned, events, local, checkpoints, reader, context, connectionManager, boot, verifier,
     registry: { tables: [table] },
     failDownloadAfterFirstPage() { failAtCursor = JSON.stringify({ id: rows[9].id }); },
     clearDownloadFailure() { failAtCursor = null; },
@@ -115,6 +117,16 @@ function harness(mode: Mode = "current-operations", count = 53, dbMinimum = 10, 
   };
 }
 afterEach(() => { vi.unstubAllGlobals();vi.restoreAllMocks(); });
+
+it("forwards the verified endpoint request's cancellation signal to protected history", async () => {
+  const h = harness("current-operations", 1, 10, true);
+  const controller = new AbortController();
+  const request = new Request("https://pos.test/api/public/sync", { method: "POST", signal: controller.signal,
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ terminalToken: terminal, deviceBindingProof: proof,
+      sqlServerBootstrap: { organizationId: "default", branchId: branch, table: "change_history", cursor: null, historyDays: 90, limit: 100 } }) });
+  expect((await handleSyncRequest(request)).status).toBe(200);
+  expect(h.protectedSignals).toEqual([request.signal]);
+});
 
 it.each(modes)("follows protected short-page cursors through real %s clients", async mode => {
   const h=harness(mode,13,10,true);

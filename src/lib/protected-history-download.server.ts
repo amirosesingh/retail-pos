@@ -47,12 +47,13 @@ async function invalid(response: Response): Promise<Response> {
 
 export async function protectedHistoryDownload(args: {
   organizationId: string; branchId: string; terminalId: string;
-  cursor: string | null; historyDays: number; keepCommerce: boolean;
+  cursor: string | null; historyDays: number; keepCommerce: boolean; signal?: AbortSignal;
 }): Promise<Response | null> {
   const project = supabaseConfig().url.replace(/\/+$/, "");
   if ((unavailableUntil.get(project) ?? 0) > Date.now()) return null;
   const response = await serviceRest(`rpc/${RPC}`, {
     method: "POST", headers: { "Accept-Encoding": "identity" },
+    ...(args.signal ? { signal: args.signal } : {}),
     body: JSON.stringify({ p_organization_id: args.organizationId, p_branch_id: args.branchId,
       p_terminal_id: args.terminalId, p_after_cursor: args.cursor, p_history_days: args.historyDays,
       p_keep_commerce: args.keepCommerce, p_max_bytes: 2 * 1024 * 1024 }),
@@ -79,14 +80,34 @@ export async function protectedHistoryDownload(args: {
     || !/^application\/json(?:\s*;|$)/i.test(response.headers.get("Content-Type") ?? "")
     || (length !== null && (!/^\d+$/.test(length) || Number(length) !== bytes))) return invalid(response);
   let received = 0;
-  const body = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
-    transform(chunk, controller) {
-      received += chunk.byteLength;
-      if (received > bytes || received > HARD_BYTES) throw new Error("EHISTORY_PROTOCOL");
-      controller.enqueue(chunk);
-    },
-    flush() { if (received !== bytes) throw new Error("EHISTORY_PROTOCOL"); },
-  }));
-  // Never forward compression or Content-Length across the streamed boundary.
-  return new Response(body, { headers: { "content-type": "application/json", "cache-control": "no-store" } });
+  const NativeFixedLengthStream = (globalThis as typeof globalThis & {
+    FixedLengthStream?: new (length: number) => ReadableWritablePair<Uint8Array, Uint8Array>;
+  }).FixedLengthStream;
+  try {
+    let buffer: ArrayBuffer;
+    if (typeof NativeFixedLengthStream === "function") {
+      const bounded = new NativeFixedLengthStream(bytes);
+      // Await both consumption and EOF: a known-length HTTP response alone
+      // can appear complete before a later excess upstream chunk arrives.
+      [buffer] = await Promise.all([
+        new Response(bounded.readable).arrayBuffer(),
+        response.body.pipeTo(bounded.writable),
+      ]);
+    } else {
+      const bounded = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, controller) {
+          received += chunk.byteLength;
+          if (received > bytes || received > HARD_BYTES) throw new Error("EHISTORY_PROTOCOL");
+          controller.enqueue(chunk);
+        },
+        flush() { if (received !== bytes) throw new Error("EHISTORY_PROTOCOL"); },
+      }));
+      buffer = await new Response(bounded).arrayBuffer();
+    }
+    // At most HARD_BYTES are buffered. No JSON parsing or serialization occurs.
+    // Never copy upstream compression or Content-Length headers.
+    return new Response(buffer, { headers: { "content-type": "application/json", "cache-control": "no-store" } });
+  } catch {
+    return invalid(response);
+  }
 }

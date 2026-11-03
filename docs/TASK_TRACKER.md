@@ -2,6 +2,48 @@
 
 Last reconciled: **2026-11-03, Asia/Brunei**.
 
+## RESUME45 / STREAM46 — remaining acceptance and conditional beta integration
+
+Owner now authorizes completing actual isolated SQL Server, PostgREST and CPU
+checks using agents, then beta integration only when required checks pass.
+Report the exact target, migration and changes before any live application;
+The owner subsequently approved applying the exact migration below after final
+checks pass. This does not authorize any other live migration or configuration.
+Preserve checkout, permissions, registered scope and all existing records.
+Baseline origin/beta remains a13739a5 (refreshed); prepared commits are
+2ce731e7 (resume) and d4aed867 (stream). Agents separately own disposable SQL
+runtime, gateway wire acceptance and CPU harnesses. No production promotion,
+installer publication, live queue repair or Membership change is authorized.
+
+RESUME45 independently passed actual disposable SQL Server acceptance and all
+exact-head CI on 01791798. PR371 merged to beta as
+18fb220e58cb264244e4bbfa90514cc211666684 on 3 November. No installer published.
+STREAM46 now uses a bounded binary buffer, not immediate HTTP passthrough.
+Local workerd exposed expensive JavaScript byte checks; direct FixedLengthStream
+was rejected because a valid JSON prefix could complete before delayed excess.
+The corrected helper waits for both native bounded consumption and upstream EOF
+before HTTP success, with a checked generic fallback and explicit abort signal.
+Normal page target is 2MiB, one-row hard cap 5MiB; this bounds response payload,
+not total isolate memory. Concurrent buffers/runtime copies add memory. Complete
+upstream EOF adds response latency but no Worker JSON parse/serialization.
+Independent review passes three suites / 57 tests, including actual workerd CI
+regressions for short/overlong/delayed-extra bodies and explicit in-flight aborts.
+Local process CPU means over 50 warmed requests: large page 3.75ms, structured
+page 2.5ms, small page 2.1875ms. These are not Cloudflare billed CPU measurements.
+Physical client-disconnect cancellation is unverified in this local topology,
+including an isolated flag trial; no hosting compatibility flag was changed.
+Hosted version/CPU acceptance and exact-head CI remain required before completion.
+
+Actual PostgREST16.5 / native PostgreSQL18.6 disposable-cluster acceptance passes
+nine cases: exact byte/header correspondence, Unicode/privacy, commerce fields,
+1.65MB row, identity/gzip request, byte-prefix cursor, empty page, anonymous and
+foreign-branch denial. Root independent rerun passed all nine and exited zero
+after cleanup. Live read-only preflight finds
+all source compatibility predicates true and protected RPC absent; wrapper md5
+2a0564a108930ffdaa326e3e9cf41de4, scoped md5 b4306345e37e638c610e8484a479c510.
+No live routine/table/policy/data change has been made. Migration hash remains
+54A39A26FEDDE4E3CCD6E1DDAA03F4B604742CFEDD56BB70B1A70465C8BC4E91.
+
 ## STREAM46 — approved protected byte-bounded history preparation
 
 Owner approved preparation and isolated tests on 3 November for ROSEGILL pos

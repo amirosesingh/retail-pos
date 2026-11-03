@@ -13,7 +13,23 @@ beforeEach(async () => {
   vi.resetModules(); state.rest.mockReset(); state.project = "https://one.test";
   download = (await import("../protected-history-download.server")).protectedHistoryDownload;
 });
-afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+it("uses native exact-length enforcement without a JavaScript transform when available", async () => {
+  const OriginalTransformStream = TransformStream;
+  const native = vi.fn(() => new OriginalTransformStream<Uint8Array, Uint8Array>());
+  vi.stubGlobal("FixedLengthStream", function () { return native(); });
+  vi.stubGlobal("TransformStream", vi.fn(() => { throw new Error("must use native bounded pipe"); }));
+  state.rest.mockResolvedValue(attested());
+  const result = await download(args);
+  expect(await result!.text()).toBe(content);
+  expect(native).toHaveBeenCalledOnce();
+});
+it("passes the caller's cancellation signal to the protected upstream request", async () => {
+  const controller = new AbortController();
+  state.rest.mockResolvedValue(attested());
+  expect((await download({ ...args, signal: controller.signal }))!.status).toBe(200);
+  expect(state.rest.mock.calls[0][1].signal).toBe(controller.signal);
+});
 it("streams protected bytes without parsing or serializing success JSON", async () => {
   const source = attested();
   const json = vi.spyOn(source,"json").mockRejectedValue(new Error("must not parse"));
@@ -43,9 +59,10 @@ it("rejects absent protocol headers and never streams an old raw response", asyn
   state.rest.mockResolvedValue(Response.json({rows:[{claim_proof:"secret"}],cursor:null}));
   const result=await download(args); expect(result!.status).toBe(502); expect(await result!.text()).not.toContain("secret");
 });
-it("enforces declared byte count during stream consumption", async () => {
+it("rejects a short body before returning success", async () => {
   state.rest.mockResolvedValue(attested(content,{"X-POS-History-Bytes":String(new TextEncoder().encode(content).length+1)}));
-  const result=await download(args); await expect(result!.text()).rejects.toThrow("EHISTORY_PROTOCOL");
+  const result=await download(args); expect(result!.status).toBe(502);
+  expect(await result!.json()).toMatchObject({code:"EHISTORY_PROTOCOL"});
 });
 it.each([
   [404,{code:"PGRST202",message:"Could not find the function public.pos_sync_history_page_v1 in the schema cache"}],

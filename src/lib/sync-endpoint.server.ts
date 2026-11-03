@@ -627,7 +627,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       const { protectedHistoryDownload } = await import("./protected-history-download.server");
       const protectedResponse = await protectedHistoryDownload({ organizationId: body.sqlServerBootstrap.organizationId,
         branchId, terminalId: scope.terminalId ?? "", cursor: body.sqlServerBootstrap.cursor,
-        historyDays: body.sqlServerBootstrap.historyDays, keepCommerce: protectedKeepCommerce });
+        historyDays: body.sqlServerBootstrap.historyDays, keepCommerce: protectedKeepCommerce, signal: request.signal });
       if (protectedResponse) return protectedResponse;
     }
     const response = await serviceRest(`rpc/${rpc[0]}`, {
