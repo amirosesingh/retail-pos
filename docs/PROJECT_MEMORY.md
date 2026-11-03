@@ -18,6 +18,13 @@ do not skip history, reset checkpoints or widen audit/branch access. Local
 synthetic speedups never establish Cloudflare Free10ms success. No deployment,
 database/billing changes or production promotion is included in this approval.
 
+DEV-41: development Electron owns its native vault/renderer override, but not
+the external Vite server. Saving cloud credentials must not start a packaged
+dist-desktop server while DEV_URL is active. Preserve real packaged restart,
+failure recovery and credential activation; external SSR hosting environment
+remains developer-managed. Owner approved the focused correction and365/366
+beta integration on3November. No production, database or installer approval.
+
 3 November DEV-38: owner approved a narrow local module-loading correction.
 Vite development SSR does not wrap the local CommonJS shift protocol, although
 Vitest and production builds handle it. Keep the canonical Electron wire module

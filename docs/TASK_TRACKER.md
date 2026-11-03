@@ -4,6 +4,15 @@ Last reconciled: **2026-11-03, Asia/Brunei**.
 
 ## HOST-42 — remaining sync CPU, preparation only approved
 
+Owner further requests fixing actual Worker CPU below10ms without reducing
+security, required dependencies or data. Audit proven redundant queries first;
+do not cache away revocation/branch checks or claim fixed from synthetic timings.
+LOADING43 / audit pending: owner requests sorted demand-driven visible-page
+loading rather than bulk fetches. Preserve complete authorized offline SQL
+replication separately, transactional snapshots and stable cursor ordering;
+do not truncate bootstrap or silently drop rows. Inventory existing loaders and
+propose bounded changes after evidence, without delaying reviewed beta fixes.
+
 Owner explicitly requested making prompt incremental beta integration a
 permanent rule. AGENTS.md and PROJECT_MEMORY.md now record the requirement,
 preserving exact-head checks, scoped diffs, deployed beta acceptance and separate
@@ -47,6 +56,34 @@ PR365 merged cb0f4b55 and PR366 merged fbb6fe42 after all exact-head checks;
 both merge trees equal tested source heads. Crash correction PR368 full source
 suite4763passed; real admin/sync acceptance remains incomplete. Actual native
 profile is production-connected; no real transactions were used for testing.
+
+## Active owner approval — 3 November connection recovery and beta integration
+
+Owner approves checking and merging PR365/366 to beta, fixing the connection
+settings crash with agents, and verifying administrator login/sync while
+preserving checkout, permissions and existing data. PR367 is merged at
+f002d194 and its beta deployment succeeded. One native sync request returned200
+at7msCPU; later bootstrap503s confirm recovery is NOT complete. No checkpoints
+or queues may be reset. No production, installers, live schema or data repair.
+
+DEV-41 / confirmed High / active: local development Electron cloud:set schedules
+the packaged server restart even when DEV_URL owns the external Vite process.
+At13:17:46Brunei this required nonexistent dist-desktop/server/index.mjs and
+entered recovery. Test-only connection probes are read-only; the captured
+failure proves a save/reconfiguration path, not that Test alone caused it.
+Baseline f002d194, branch codex/connection-restart-dev-beta. Scope main scheduler
+plus focused save/propagation/restart tests. Preserve native vault and renderer
+configuration propagation and packaged restart/failure semantics. External
+Vite server-side environment remains separately configured. Revert only the
+focused source/test patch to roll back; no data rollback is needed.
+
+DEV41 implemented, isolated verified: four-line DEV_URL guard leaves external
+Vite untouched. Three focused suites/35 tests, TypeScript, scoped ESLint and
+diff check passed. Independent review reran2suites/30tests (overlapping) and
+found no blocker. Tests execute actual scheduler/IPC and real connection-profile
+save orchestration: unchanged/changed vault pair and renderer override/reset,
+read-only Test, rejected persistence, packaged restart ordering/routes/debounce,
+quitting/safeMode and error recovery. Real UI/admin/sync verification pending.
 
 ## Latest owner decision — PR365/366 beta integration and connection crash
 
