@@ -35,9 +35,26 @@ Proposed exact cloud upgrades, in order, from this reviewed source:
 | 20261101052452_prevent_closed_shift_reopening_during_sync.sql | 032CF56FF5BB377AEFC67576B2CC41027D6A5331C3E43D0F4A3D2659236026A1 | Guard stale reopen and receipt replay in existing shift helpers. |
 | 20261102082439_shift_closing_causal_intents.sql | 88ECB943E304E076B8494A74128C287D0BDA400267608AF7D17126D0C61034BD | Private immutable intent receipts, atomic graph/causal helpers and service-only routines. |
 | 20261102101610_shift_author_key_registry.sql | A9FD5FD63D917F54E1CFC0EED1B670909F3069E3E471C957E7EE1EA0E1523D54 | Private public-key registry/immutability and service-only lookup/enrollment functions. |
-| 20261102103716_enforce_shift_author_uploads.sql | 6DE37423364C1D4B57336A52B9718B64EA406AF32404B39194AFD0EC0EABBBE7 | Author receipts, atomic guarded raw writes and signed uploads with current permission/enrollment admission. |
+| 20261102103716_enforce_shift_author_uploads.sql | 992E2300C30A71A1DA5B23B9181B17A2BE2E8AED521E2DA942E503EBB18233C6 | Author receipts, atomic guarded raw writes and signed uploads with current permission/enrollment admission. |
 | 20261102104005_fix_closed_shift_correction_activity_type.sql | E9B1C707C6EC471A3395DDC54FD03BA08E69E1CECB6CFAEFA98912F771F20ADC | Required audit event classification for administrator corrections. |
-| 20261102153013_bind_signed_closing_start_evidence.sql | 96F50601E2EB3C17414AC3BF3F989A7485E2A4E845539DD63CB0A43796F60CF9 | Separate start proof/receipt, with preserved historical opening terminal and verified executing terminal. |
+| 20261102153013_bind_signed_closing_start_evidence.sql | A0C99E3FF5EFDFAE80794FCDAAD69A84034789378D40E85739924AC766D23BE4 | Separate start proof/receipt, with preserved historical opening terminal and verified executing terminal. |
+
+The owner approved the previous six-file set. Captured-schema verification then
+found app_users.role is app_role enum, while two new helper calls expected text.
+Only person.role::text was added at the two call sites above (enforcement/start),
+with identical canonical copies and real-enum regression coverage. **The two
+new hashes above await renewed exact approval**; four other files are unchanged.
+No live DDL has occurred. Do not apply the superseded SQL or silently use the
+earlier approval for these changed bytes.
+
+Verification of this corrected set: 32 isolated captured-schema workflow cases,
+30 enduring author SQL scenarios, 23 native full-graph and 25 canonical-schema
+tests passed. The capture contains 48 actual routines, 446 columns, 57 constraints,
+90 indexes and 21 shift/activity triggers (all seven shift triggers). Synthetic
+preexisting business rows/public receipts and captured routine owner/ACL/config/
+security were preserved through all six upgrades. No real keys were enrolled.
+The actual NULL-location management scope restriction remains unchanged and
+needs separate workflow review. This is not complete system/production acceptance.
 
 Before application, capture exact routine definitions, owners/ACL/configuration,
 relevant triggers and migration history; validate recognized lifecycle/receipt

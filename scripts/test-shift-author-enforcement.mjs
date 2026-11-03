@@ -15,7 +15,7 @@ const source=await read('scripts/test-shift-causal-intents.mjs');
 const fixtureTemplate=source.slice(source.indexOf('const fixtureSql=')+'const fixtureSql='.length,source.indexOf('await db.exec(fixtureSql);'));
 let fixture=new Function('fn','table','names',`return ${fixtureTemplate}`)(fn,table,names);
 fixture=fixture.replace('CREATE TABLE app_users(id text,auth_user_id uuid,role text,permissions jsonb,is_active boolean,store_id text);',
- 'CREATE TABLE app_users(id uuid PRIMARY KEY,user_id text,auth_user_id uuid,role text,role_slug text,permissions jsonb,is_active boolean,store_id text);');
+ "CREATE TYPE public.app_role AS ENUM('admin','manager','staff');CREATE TABLE app_users(id uuid PRIMARY KEY,user_id text,auth_user_id uuid,role public.app_role,role_slug text,permissions jsonb,is_active boolean,store_id text);");
 const db=new PGlite();let passed=0;
 try{
  await db.exec(fixture);
@@ -61,6 +61,23 @@ try{
  }
  const push=(value,allowed=true,terminal='t-a',branch='a')=>scalar("SELECT pos_sync_push_author_shift_intent($1::uuid,'default',$2,$3,NULL,$4::jsonb,$5::jsonb,$6::jsonb)",[value.intentId,branch,terminal,JSON.stringify(value.wire),JSON.stringify(value.author),JSON.stringify({allowed,authority:{authorId:value.author.authorId}})]);
  async function test(name,work){await reset();await work();passed++;console.log('PASS '+name);}
+ await test('actual app_role enum retains ordinary and management grant decisions',async()=>{
+  assert.equal(await scalar('SELECT pg_typeof(role)::text FROM app_users LIMIT 1'),'app_role');
+  for(const [role,slug,flags,expected]of [['staff','cashier',{},false],['staff','cashier',{can_use_management_pc:true},true],['staff','cashier',{can_use_management_pc:false},false],['manager','supervisor',{},true],['manager','supervisor',{can_use_management_pc:false},false],['manager','supervisor',{can_use_management_pc:true},true],['admin','admin',{can_use_management_pc:false},true]]){
+   await db.query('UPDATE app_users SET role=$2::app_role,role_slug=$3,permissions=$4::jsonb WHERE id=$1',[authorId,role,slug,JSON.stringify(flags)]);
+   assert.equal(await scalar('SELECT pos_sync_private.shift_author_management_allowed(role::text,role_slug,permissions) FROM app_users WHERE id=$1',[authorId]),expected,role+':'+JSON.stringify(flags));
+  }
+ });
+ await test('actual enum admin manager and staff retain current action permission checks on a registered branch',async()=>{
+  for(const role of ['admin','manager','staff']){
+   await reset();await db.query('UPDATE app_users SET role=$2::app_role,role_slug=$3 WHERE id=$1',[authorId,role,role==='manager'?'supervisor':role==='admin'?'admin':'cashier']);
+   const key=await enroll(),value=intent(await closing(),key);
+   await db.query("UPDATE app_users SET permissions='{}' WHERE id=$1",[authorId]);
+   await assert.rejects(push(value),/PERMISSION_REVOKED/);assert.equal(await scalar('SELECT count(*)::int FROM shift_cash_counts'),0);
+   await db.query('UPDATE app_users SET permissions=$2::jsonb WHERE id=$1',[authorId,JSON.stringify(allFlags)]);
+   await push(value);assert.equal(await scalar('SELECT count(*)::int FROM shift_cash_counts'),1);
+  }
+ });
  await test('signed ORIGINAL plus historical-author RECOUNT, no-write replay after key/profile/grant revocation',async()=>{
   const cashier=await enroll(),first=intent(await closing(),cashier);await push(first);
   const manager=await enroll(adminId,'manager'),view=await graph(),second=intent(await closing(110,view,'manager'),manager,{kind:'RECOUNT',baseToken:view.graphToken});await push(second);

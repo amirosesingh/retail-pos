@@ -222,7 +222,7 @@ BEGIN
    (person.store_id IS NOT NULL AND lower(btrim(person.store_id)) IS DISTINCT FROM lower(btrim(p_branch_id)))
  THEN RAISE EXCEPTION 'SYNC_SHIFT_AUTHOR_PERMISSION_REVOKED'; END IF;
  IF EXISTS(SELECT 1 FROM public.terminal_tokens WHERE id::text=p_terminal_id AND location_id IS NULL) AND
-   NOT pos_sync_private.shift_author_management_allowed(person.role,person.role_slug,person.permissions)
+   NOT pos_sync_private.shift_author_management_allowed(person.role::text,person.role_slug,person.permissions)
  THEN RAISE EXCEPTION 'SYNC_SHIFT_AUTHOR_PERMISSION_REVOKED'; END IF;
  authorized:=CASE action WHEN 'ORIGINAL' THEN pos_sync_private.shift_author_flag(person.permissions,'can_shift_cash_count') OR pos_sync_private.shift_author_flag(person.permissions,'can_close_shift')
   WHEN 'RECOUNT' THEN pos_sync_private.shift_author_flag(person.permissions,'can_shift_cash_recount')

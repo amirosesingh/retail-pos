@@ -111,7 +111,7 @@ BEGIN
   IF NOT FOUND OR person.is_active IS DISTINCT FROM true OR person.user_id IS DISTINCT FROM registered.subject OR
      (person.store_id IS NOT NULL AND lower(btrim(person.store_id)) IS DISTINCT FROM lower(btrim(p_branch_id))) OR
      NOT pos_sync_private.shift_author_flag(person.permissions,'can_close_shift') OR
-     (EXISTS(SELECT 1 FROM public.terminal_tokens WHERE id::text=p_terminal_id AND location_id IS NULL) AND NOT pos_sync_private.shift_author_management_allowed(person.role,person.role_slug,person.permissions))
+     (EXISTS(SELECT 1 FROM public.terminal_tokens WHERE id::text=p_terminal_id AND location_id IS NULL) AND NOT pos_sync_private.shift_author_management_allowed(person.role::text,person.role_slug,person.permissions))
   THEN RAISE EXCEPTION 'SYNC_SHIFT_AUTHOR_PERMISSION_REVOKED'; END IF;
  END IF;
  SELECT count(*) INTO event_count FROM jsonb_array_elements(intent->'operations') op,LATERAL jsonb_array_elements(op->'rows') r

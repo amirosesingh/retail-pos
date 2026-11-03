@@ -4,6 +4,48 @@ Last reconciled: **2026-11-03, Asia/Brunei**.
 
 ## Owner instruction — verify and merge PR #363 into beta
 
+Owner subsequently **approved the six exact cloud upgrades** pinned in the
+go-live checklist for ROSEGILL / pos qhrufhtbeguxydenzfey / postgres. Approval
+requires captured-definition checks and isolated verification before applying
+the ordered files, stopping on unexpected state, live readback, then beta merge
+only after final checks. No local upgrade, real enrollment during verification,
+installer publication or #359 repair. Current state: metadata captured in the
+owned rollout scratch directory; independent prerequisites/hashes pass; isolated
+captured-definition rollout is running. No live DDL has occurred yet.
+
+Captured-schema isolation caught a real type mismatch before any live write:
+app_users.role is enum app_role, while two management-author helper calls expect
+text. Existing synthetic fixtures used text. The exact six files create cleanly
+in isolation, but first signed upload fails resolution before writes. Prepare
+only explicit person.role::text at the two existing call sites, matching canonical
+blocks and enum regression fixtures; do not change role/grant logic or overloads.
+This is a necessary correction under the owner's PR-failure instruction.
+It changes two SQL hashes: the previous approval cannot authorize those changed
+bytes. Keep all live application stopped pending final captured-schema tests and
+renewed exact approval for the two corrected files. Four unchanged approvals
+remain recorded. No live migrations, keys or business records were changed.
+
+Corrected source verification complete: root independently reran all **32
+captured-schema workflow scenarios** and **30 enduring author SQL scenarios**;
+all passed. Agent also verified 23 native full-graph and 25 canonical cases,
+lint and diff checks. Independent review confirms only the two runtime casts
+and matching canonical copies change, with no signature/grant/policy change.
+CI now runs the enduring real-enum author suite. Updated exact hashes are
+992E2300C30A71A1DA5B23B9181B17A2BE2E8AED521E2DA942E503EBB18233C6
+(enforcement) and
+A0C99E3FF5EFDFAE80794FCDAAD69A84034789378D40E85739924AC766D23BE4
+(start proof). Await renewed approval for those two files before the full
+ordered live upgrade; all six remain unapplied. Root metadata snapshot and
+isolated report are in the owned shift-rollout-approval-20261103 scratch folder,
+outside this Git worktree; they contain schema definitions, not business rows.
+
+Separate pending scope audit: captured pos_sync_validate_scope requires token
+location_id = requested branch, so a NULL-location management token fails this
+SQL helper. This is existing deployed behavior, not changed by these six files.
+Its complete management-client impact still needs tracing. Preserve the actual
+validator in isolated tests and never substitute a permissive management shim
+or widen scope silently. Keep this finding separate from the enum-only fix.
+
 Owner explicitly requests CI investigation/corrections and beta merge after
 passing checks, with production PR #354 updated. Preserve checkout, permissions
 and existing features. Verify the exact head/destination diff and existing-client

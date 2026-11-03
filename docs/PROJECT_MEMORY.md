@@ -3,6 +3,12 @@
 Last reconciled: **2026-11-03, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
 
+Live schema evidence: public.app_users.role is enum public.app_role, not text.
+Keep explicit role::text at existing text-helper boundaries; do not change role
+or grant rules to solve type resolution. The captured-schema six-upgrade test
+caught this before any live DDL. Two corrected, pinned migration files require
+renewed approval; the four unchanged files retain their prior approval.
+
 3 November hosting decision: keep Cloudflare Workers **Free**; no billing or
 CPU-limit change is authorized. The owner approved a separate five-runtime-file
 login loading correction and isolated tests. Only exact public cashier-login
