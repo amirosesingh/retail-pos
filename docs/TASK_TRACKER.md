@@ -51,7 +51,9 @@ remaining confirmed preparation blocker. Actual gateway/installed/CPU gates
 below remain open; this is not live end-to-end acceptance.
 
 Prepared migration: 20261103074926_protected_byte_bounded_history_download.sql,
-SHA256 1F2FAE03E9EE7DED55C72743C4AEDDFF54B09F45C9A60A17B5F8B1E70F1AC878.
+SHA256 54A39A26FEDDE4E3CCD6E1DDAA03F4B604742CFEDD56BB70B1A70465C8BC4E91.
+Final staged inspection removed two trailing blank lines only; the 994 SQL cases
+were rerun successfully after that whitespace cleanup and hash recalculation.
 It adds service-only projection/page functions and matching canonical source;
 it does not rewrite history, products, stock, prices, grants or checkpoints.
 ROSEGILL target remains rosegill0011@gmail.com's Org bjxgimekljzlnwejuawj,

@@ -169,4 +169,3 @@ END;
 $install_history_page$;
 REVOKE ALL ON FUNCTION public.pos_sync_history_page_v1(text,text,text,text,integer,boolean,integer) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.pos_sync_history_page_v1(text,text,text,text,integer,boolean,integer) TO service_role;
-

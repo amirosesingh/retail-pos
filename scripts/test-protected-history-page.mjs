@@ -145,4 +145,3 @@ try {
   assert.equal(canonical.trim(),migration.trim(),'Canonical protected contract must match additive migration'); passed++;
   console.log(`PASS ${passed} projection parity / denied-access scenarios`);
 } finally { await db.close(); }
-
