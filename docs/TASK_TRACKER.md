@@ -34,6 +34,67 @@ Production354 includes it but remains draft pending acceptance. New actual
 local page failure DEV-38 blocks device workflow checks; isolated environment
 was reported ready but no transactions have been run or target verified yet.
 
+## Current checkpoint — HOST-40 hosted CPU correction approved
+
+3 November owner approved a separate five-runtime-file correction and isolated
+tests for confirmed hosted CPU exhaustion. Baseline current beta3dbc0f4d;
+branch codex/native-api-cpu-beta in separate worktree native-api-cpu-beta.
+Actual beta Cloudflare event11:58:26.967Brunei: /api/v1/pos/sync POST503,
+outcome exceededCpu, cpu12ms/wall5938ms, script605fc32a-c07f-4f3b-ae39-9416b26b8e3b.
+Other visible CPU failures: ipc-adopt11:58:44/56, author-enroll11:58:47.
+Native logs confirm non-JSON503 during change_history/pos_settings/scoped settings
+bootstrap. Failed history download preserves expired CT baseline, so ECHANGEGAP
+repeats. This does not authorize checkpoint resets, lost pending work, audit
+visibility changes, SQL repair, account changes or billing/limit changes.
+
+Approved implementation: Cloudflare-metadata-only exact ordinary sync POST and
+existing sync preflight can avoid UI router. Every operation query stays on the
+framework path. Extract existing guarded IPC-adopt/enrollment POST handlers into
+standalone modules and retain route wrappers; direct CF POST dispatch reuses
+those handlers. Preserve their existing absence of CORS/preflight, and preserve
+sync CORS, security headers, env initialization, error handling and nonCF paths.
+Five runtime files; focused parity/import/build tests plus existing allowed and
+denied authorization/branch/signature/replay tests. Root owns server/tests/docs;
+agent owns endpoint extractions/tests, independent agent reviews read-only.
+No deployment or database change is approved. Local structural/CPU measurements
+do not prove hosted success under Free10ms; real hosted acceptance remains.
+Rollback: scoped source revert preserving data, registration and queued work.
+
+Other current work: READ-35 PR364 merged beta3dbc0f4d after all final checks,
+and its exact cloud read migration is installed. DEV-38 local module-loading
+correction is PR365. REG-39 proof correction/diagnostics is PR366 and includes
+365 prerequisite: actual stale renderer vs Main proof mismatch was fixed without
+rewriting activation; staff roster401→200 and names visible. Final stable suite
+4709 tests passed, types/lint/build pass. Administrator attempt still reports
+connection failure; hosted CPU is confirmed as a separate blocker. Production
+PR354 remains draft; Membership/dependencies and historical359 remain HOLD.
+Current Electron profile is connected to real POS, not isolated: no test sales
+or stock mutations. Existing audit/GLOBAL visibility scope work remains pending.
+
+HOST-40 implemented and isolated-verified on the five approved runtime files.
+Both extracted handler statement bodies are byte-identical after indentation
+normalization. Direct entry retains CF-only exact routes, ordinary sync CORS,
+all operation-parameter fallthrough (including empty values), nonCF fallback,
+env initialization, security headers and catastrophic-response normalization.
+Root focused routing/import/endpoint/Management80 tests pass; independent
+endpoint/adoption/author93 tests pass (overlapping coverage, not summed).
+Final full suite617 files/4695 tests passed, one opt-in skipped, pinnedNode22,
+127.84s. Production build passes. Independent final review found no actionable
+defect; source security assertion now follows extracted handler and confirms
+route delegation. Type/lint final check and emitted import measurement follow.
+No hosted deployment, enrollment, business operation or database edit performed.
+Real hosted CPU/recovery/administrator acceptance remains pending after separate
+deployment approval. Do not claim Free10ms or whole-system acceptance from tests.
+
+Final TypeScript/scoped lint pass. Actual emitted dist/server/index.mjs tested
+in fresh Node22 subprocesses with synthetic bindings, fixture-only fetch and
+network blocking: guarded bootstrap200 loads25 modules; native adoption200 and
+real fixture Ed25519 enrollment200 load22 each. All three exclude UI router,
+React, framework server and TanStack libraries. Named app_function400 and
+unrelated404 controls load191 modules including framework/UI, proving preserved
+fallback. Node cold78-140ms vs516-594ms controls and coarse warm0-1.6ms are local
+measurements only, not Cloudflare Free acceptance. No real enrollment occurred.
+
 ## READ-35 prior checkpoint and rollout evidence
 
 Owner **approved live READ-35 migration and beta integration** for exact file
