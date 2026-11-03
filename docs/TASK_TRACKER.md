@@ -4,6 +4,13 @@ Last reconciled: **2026-11-03, Asia/Brunei**.
 
 ## SHIFT49 — future-write fix applied; historical repair prepared
 
+Owner separately approved exact seven-row artifact SHA256
+F202F0D99EBF1BE668A4255B7207F94D47477E24E3E211C7D6943D13DD3B4557
+on ROSEGILL pos qhrufhtbeguxydenzfey ONLY after final CI and unchanged live
+preflight. Historical execution has not occurred. Eighth STR1 remains excluded.
+Windows launcher normalization preserves CRLF marker extraction; both LF/CRLF
+copies passed46 scenarios. This test-only correction does not change SQL bytes.
+
 Historical preparation extension: owner requests the underlying recovery error
 resolved. Prepare an exact seven-row, five-NULL-summary repair and isolated
 tests; execution still requires separate exact approval. Root refreshes live

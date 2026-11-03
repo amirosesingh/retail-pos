@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 const repository = fileURLToPath(new URL('../', import.meta.url));
 const fixtureSource = readFileSync(new URL('./test-shift-reconciliation-summaries.mjs', import.meta.url),'utf8').replaceAll('\r\n','\n');
 const prefix = fixtureSource.slice(0,fixtureSource.indexOf('const db = await fixture();')).replace("new URL('../', import.meta.url)","new URL('./', import.meta.url)");
-const self = readFileSync(new URL(import.meta.url),'utf8');
+const self = readFileSync(new URL(import.meta.url),'utf8').replaceAll('\r\n','\n');
 const native=process.argv.includes('--native');
 if(process.argv.slice(2).some(arg=>arg!=='--native')) throw new Error('Only --native is supported; never pass database URLs');
 const nativePrelude=native?readFileSync(new URL('./test-seven-shift-summary-native.fixture.mjs',import.meta.url),'utf8'):'';
