@@ -2,6 +2,64 @@
 
 Last reconciled: **2026-11-03, Asia/Brunei**.
 
+## STREAM46 — approved protected byte-bounded history preparation
+
+Owner approved preparation and isolated tests on 3 November for ROSEGILL pos
+qhrufhtbeguxydenzfey. Baseline current beta a13739a5; branch
+codex/history-stream-preparation-beta. Prepare an additive service-only history
+RPC applying the exact existing privacy projection and bounded pages/cursors,
+plus guarded Worker body streaming. Keep fresh terminal/branch/permission checks;
+never stream old raw RPC results or omit oversized records silently. Preserve
+existing audit visibility, authorization and Membership dependencies. Test SQL
+projection parity, allowed/denied scopes, byte limits and old/current clients.
+No live migration, data repair, enrollment, billing, deployment or publication.
+Present exact migration/hash and target separately before live application.
+SQL agent owns migration/canonical SQL/tests; root owns Worker integration and
+records; independent review required. Rollback code before removing additive
+RPCs; preserve all business records and cursor/checkpoint history.
+
+Separate RESUME45 durable page progress preparation is also approved. Both
+batches preserve checkout and protected pending data and remain separate from
+production promotion and installed-device verification.
+
+Current evidence supersedes older HOST44 pending-CI notes below: PR370 merged
+on beta a13739a5 after exact checks and 4,804 full-suite tests. Deployed Worker
+64769214-253d-47bf-ae03-733d92226734 returned small requests in 3–4ms but still
+failed history requests with exceededCpu / HTTP503 at 10ms (14:36:42.571 Brunei).
+No end-to-end CPU/recovery acceptance is claimed. Read-only size metadata found
+individual history values around 1.65MB; the exact failing row is unconfirmed.
+STREAM46 moves identical projection to the service-only database function and
+streams a byte-bounded prefix, preserving opaque cursors and all history rows.
+Runtime unsupported definitions fail before raw aggregation; legacy guarded
+redaction remains the compatibility path. SQL wrapper/scoped fingerprints and
+reviewed source admission intentionally reject unknown definitions. A future
+compatible schema change can therefore disable streaming until reviewed.
+Independent isolated SQL rerun: 994 scenarios pass. Actual PostgREST wire bytes,
+headers and hosted CPU remain unverified. Ten synthetic wide rows still require
+database-side aggregation; no database performance improvement is asserted.
+
+Prepared final checks: full Vitest with two workers passes 626 files / 4,836
+tests, two opt-in tests skipped. Focused five-suite run passes 91 tests, including
+the CI bridge executing 994 isolated PostgreSQL cases. Current Operations,
+Management and captured 1.4.79 clients apply a complete 1.65MB record; interrupted
+bodies apply no rows and save no baseline. TypeScript noEmit, scoped ESLint and
+diff check pass. Initial migration-list and legacy-fallback fixtures were updated
+without removing their assertions; host-load timeouts did not recur in the final
+bounded-worker run. Final independent rerun passes three suites / 54 tests,
+including the 994-scenario SQL bridge. Independent source review found no
+remaining confirmed preparation blocker. Actual gateway/installed/CPU gates
+below remain open; this is not live end-to-end acceptance.
+
+Prepared migration: 20261103074926_protected_byte_bounded_history_download.sql,
+SHA256 1F2FAE03E9EE7DED55C72743C4AEDDFF54B09F45C9A60A17B5F8B1E70F1AC878.
+It adds service-only projection/page functions and matching canonical source;
+it does not rewrite history, products, stock, prices, grants or checkpoints.
+ROSEGILL target remains rosegill0011@gmail.com's Org bjxgimekljzlnwejuawj,
+pos qhrufhtbeguxydenzfey, database postgres,
+https://qhrufhtbeguxydenzfey.supabase.co. This is target identification only:
+no live application is approved by preparation. Exact gateway serialization and
+compression must pass before hosted acceptance; mismatched protocol fails closed.
+
 ## HOST44 — bounded history response CPU / active
 
 Owner explicitly requests fixing actual Workers CPU below10ms with every

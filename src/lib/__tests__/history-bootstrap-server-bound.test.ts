@@ -39,7 +39,7 @@ const table = { cloudTable: "change_history", sqlServerTable: "change_history", 
   columns: [{ cloudColumn: "id", sqlServerColumn: "id", primaryKey: true, cloudType: "uuid" },
     { cloudColumn: "old_value", sqlServerColumn: "old_value", cloudType: "jsonb" }, { cloudColumn: "new_value", sqlServerColumn: "new_value", cloudType: "jsonb" }] };
 
-function harness(mode: Mode = "current-operations", count = 53, dbMinimum = 10) {
+function harness(mode: Mode = "current-operations", count = 53, dbMinimum = 10, protectedPages = false) {
   const management = mode !== "current-operations";
   const rows = Array.from({ length: count }, (_, index) => ({ id: `00000000-0000-4000-8000-${(index + 1).toString(16).padStart(12, "0")}`, old_value: { quantity: 0 }, new_value: { quantity: index } }));
   const rpcInputs: Array<Record<string, unknown>> = [], outgoing: Array<Record<string, unknown>> = [], returned: string[] = [], events: string[] = [];
@@ -47,6 +47,8 @@ function harness(mode: Mode = "current-operations", count = 53, dbMinimum = 10) 
   let failAtCursor: string | null = null;
   let mutationFailure = false;
   let pendingId: string | null = null;
+  let interruptProtected=false;
+  const protectedInputs: Array<Record<string, unknown>> = [];
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (url.startsWith("https://pos.test/")) { outgoing.push(JSON.parse(String(init?.body))); return handleSyncRequest(new Request(url, init)); }
     if (url.includes("/terminal_tokens?")) return Response.json([{ id: terminal, platform: "pc", status: "used", location_id: management ? null : branch,
@@ -54,6 +56,18 @@ function harness(mode: Mode = "current-operations", count = 53, dbMinimum = 10) 
       management_sync_proof_hash: createHash("sha256").update(claim).digest("hex") }]);
     if (url.includes("/stores?")) return Response.json([{ id: branch }]);
     if (url.includes("/rpc/")) {
+      if (url.includes("/pos_sync_history_page_v1")) {
+        const args=JSON.parse(String(init?.body)); protectedInputs.push(args);
+        if (!protectedPages) return Response.json({ code: "PGRST202", message: "Could not find the function public.pos_sync_history_page_v1 in the schema cache" }, { status: 404 });
+        const last=args.p_after_cursor ? JSON.parse(args.p_after_cursor).id : null;
+        const start=last ? rows.findIndex(row=>row.id===last)+1 : 0;
+        const page=rows.slice(start,start+3); returned.push(...page.map(row=>row.id));
+        const text=JSON.stringify({rows:page,cursor:page.length===3 ? JSON.stringify({id:page.at(-1)!.id}) : null});
+        const bytes=new TextEncoder().encode(text);
+        const stream=interruptProtected ? new ReadableStream<Uint8Array>({start(controller){controller.enqueue(bytes.slice(0,100));controller.close();}}) : text;
+        return new Response(stream,{headers:{"Content-Type":"application/json","X-POS-History-Projection":"1",
+          "X-POS-History-Bytes":String(new TextEncoder().encode(text).length),"X-POS-History-Rows":String(page.length)}});
+      }
       const args = JSON.parse(String(init?.body)); rpcInputs.push({ rpc: url.split("/rpc/")[1], ...args });
       if (!url.includes("/pos_sync_bootstrap")) return Response.json({ rows: [], cursor: null, ok: true, count: count });
       if (failAtCursor && args.p_after_cursor === failAtCursor) return Response.json({ error: "isolated download unavailable" }, { status: 503 });
@@ -91,15 +105,38 @@ function harness(mode: Mode = "current-operations", count = 53, dbMinimum = 10) 
   const reader = { unacknowledged: vi.fn(async () => pendingId ? [JSON.stringify({ id: pendingId })] : []) };
   const boot = mode === "1.4.79-management" ? legacyBoot : currentBoot;
   const verifier = mode === "1.4.79-management" ? legacyVerifier : currentVerifier;
-  return { cloud, rows, rpcInputs, outgoing, returned, events, local, checkpoints, reader, context, connectionManager, boot, verifier,
+  return { cloud, rows, rpcInputs, protectedInputs, outgoing, returned, events, local, checkpoints, reader, context, connectionManager, boot, verifier,
     registry: { tables: [table] },
     failDownloadAfterFirstPage() { failAtCursor = JSON.stringify({ id: rows[9].id }); },
     clearDownloadFailure() { failAtCursor = null; },
     failLocalAfterFirstPage() { mutationFailure = true; },
     protect(id: string) { pendingId = id; },
+    interruptProtectedStream() {interruptProtected=true;},
   };
 }
 afterEach(() => { vi.unstubAllGlobals();vi.restoreAllMocks(); });
+
+it.each(modes)("follows protected short-page cursors through real %s clients", async mode => {
+  const h=harness(mode,13,10,true);
+  expect(await h.boot.runBootstrap({...h,branchId:branch,historyDays:90})).toMatchObject({completed:13});
+  expect(h.returned).toEqual(h.rows.map(row=>row.id)); expect(h.rpcInputs).toHaveLength(0);
+  expect(h.protectedInputs).toHaveLength(5);
+  expect(h.protectedInputs.every(input=>input.p_keep_commerce===(mode!=="current-operations"))).toBe(true);
+  expect(h.checkpoints.save).toHaveBeenCalledOnce();
+});
+it.each(modes)("applies a complete1.65MB protected record through real %s client",async mode=>{
+  const h=harness(mode,1,10,true);
+  Object.assign(h.rows[0].new_value,{note:"x".repeat(1_649_340)});
+  expect(await h.boot.runBootstrap({...h,branchId:branch,historyDays:90})).toMatchObject({completed:1});
+  expect(h.local.get(h.rows[0].id)).toEqual(h.rows[0]);
+  expect(h.protectedInputs).toHaveLength(1); expect(h.checkpoints.save).toHaveBeenCalledOnce();
+});
+it.each(modes)("does not apply or acknowledge an interrupted protected body for %s",async mode=>{
+  const h=harness(mode,1,10,true); h.interruptProtectedStream();
+  await expect(h.boot.runBootstrap({...h,branchId:branch,historyDays:90})).rejects.toThrow();
+  expect(h.local.size).toBe(0); expect(h.context.job.last_committed_cursor).toBeNull();
+  expect(h.checkpoints.save).not.toHaveBeenCalled();
+});
 
 it.each([10, 25, 100, 500])("bounds only history SQL paging before RPC for incoming limit%s", async limit => {
   const h = harness();
@@ -202,6 +239,7 @@ it("retains branch denial before the history RPC", async () => {
   const h = harness();
   await expect(h.cloud.bootstrapPage({ branchId: foreign, table: "change_history", historyDays: 90, cursor: null, limit: 100 })).rejects.toMatchObject({ status: 403 });
   expect(h.rpcInputs).toHaveLength(0);
+  expect(h.protectedInputs).toHaveLength(0);
 });
 
 it("retains invalid device-proof denial before the history RPC", async () => {
@@ -212,4 +250,5 @@ it("retains invalid device-proof denial before the history RPC", async () => {
   }) }));
   expect(response.status).toBe(401);
   expect(h.rpcInputs).toHaveLength(0);
+  expect(h.protectedInputs).toHaveLength(0);
 });

@@ -620,6 +620,16 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
                     "pos_old_receipt_lookup",
                     { p_lookup: body.oldReceipt!.lookup, p_branch_id: branchId },
                   ] as const);
+    let protectedKeepCommerce: boolean | undefined;
+    if (body.sqlServerBootstrap?.table === "change_history") {
+      const { commerceSyncIsolationReady } = await import("./commerce-sync-readiness.server");
+      protectedKeepCommerce = scope.managementReplica === true || scope.managementDevice === true || !(await commerceSyncIsolationReady());
+      const { protectedHistoryDownload } = await import("./protected-history-download.server");
+      const protectedResponse = await protectedHistoryDownload({ organizationId: body.sqlServerBootstrap.organizationId,
+        branchId, terminalId: scope.terminalId ?? "", cursor: body.sqlServerBootstrap.cursor,
+        historyDays: body.sqlServerBootstrap.historyDays, keepCommerce: protectedKeepCommerce });
+      if (protectedResponse) return protectedResponse;
+    }
     const response = await serviceRest(`rpc/${rpc[0]}`, {
       method: "POST",
       body: JSON.stringify(rpc[1]),
@@ -629,7 +639,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       const management = scope.managementReplica === true || scope.managementDevice === true;
       const { commerceSyncIsolationReady } = await import("./commerce-sync-readiness.server");
       // Activate field exclusion only after its atomic database preservation guard is ready.
-      const keepCommerce = management || !(await commerceSyncIsolationReady());
+      const keepCommerce = protectedKeepCommerce ?? (management || !(await commerceSyncIsolationReady()));
       const download = await response.json();
       if (body.sqlServerShiftGraph && download && typeof download === "object" && Array.isArray(download.tables)) {
         const { tables, ...envelope } = download;
