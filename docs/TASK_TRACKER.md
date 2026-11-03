@@ -34,6 +34,18 @@ Physical client-disconnect cancellation is unverified in this local topology,
 including an isolated flag trial; no hosting compatibility flag was changed.
 Hosted version/CPU acceptance and exact-head CI remain required before completion.
 
+Combined current-beta local full suite passes 628 files / 4,841 tests, two opt-in
+tests skipped. First PR372 CI reached notification parity and found its disposable
+generator fixture omitted the new migration dependency. The fixture now copies
+that one required file; all 23 standalone notification scenarios pass with every
+assertion retained. Required CI must rerun on the corrected head before the
+approved live application. No business logic change was needed for this failure.
+Owner additionally approved restarting only the headless local development
+Electron process. Latest Main runs from this branch at DEV_URL8081 using the
+existing profile, preserving registration, SQL configuration and queues; the
+updated Windows-target preview returns HTTP200. This is not a test database or
+permission to create real transactions during inspection.
+
 Actual PostgREST16.5 / native PostgreSQL18.6 disposable-cluster acceptance passes
 nine cases: exact byte/header correspondence, Unicode/privacy, commerce fields,
 1.65MB row, identity/gzip request, byte-prefix cursor, empty page, anonymous and
