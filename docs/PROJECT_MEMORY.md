@@ -3,6 +3,21 @@
 Last reconciled: **2026-11-03, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
 
+Permanent owner rule3November: integrate each approved, reviewed fix promptly
+into beta after exact-head CI/regressions; do not accumulate finished PRs until
+they become stale. Preserve only scoped feature changes and required reviewed
+dependencies. Verify merged/deployed beta workflows, maintain production PR
+readiness and promote after beta acceptance plus specific production approval.
+Existing database, billing and installer approvals remain separate. AGENTS.md
+contains the controlling session rule; unfinished tasks must remain tracked.
+
+3November HOST42 approval covers CPU preparation and isolated tests only.
+Keep pure redaction for arbitrary/shared callers. An owned parsed-JSON response
+optimization must preserve exact privacy, fields/order, rows/cursors and guards;
+do not skip history, reset checkpoints or widen audit/branch access. Local
+synthetic speedups never establish Cloudflare Free10ms success. No deployment,
+database/billing changes or production promotion is included in this approval.
+
 DEV-41: development Electron owns its native vault/renderer override, but not
 the external Vite server. Saving cloud credentials must not start a packaged
 dist-desktop server while DEV_URL is active. Preserve real packaged restart,

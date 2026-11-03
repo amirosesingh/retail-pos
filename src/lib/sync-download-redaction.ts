@@ -32,3 +32,46 @@ export function redactSyncDownload(value: unknown, table = "", management = fals
   }
   return copy;
 }
+
+/**
+ * Redact a privately owned result of JSON.parse/Response.json without cloning
+ * its entire graph. Never use on shared, frozen or arbitrary caller objects:
+ * the pure redactSyncDownload API above retains that contract. Parsed JSON has
+ * only own data properties, no aliases, getters, custom prototypes or toJSON.
+ */
+export function redactOwnedParsedSyncDownload(value: unknown, table = "", management = false): unknown {
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index++) {
+      const child = value[index];
+      if (child && typeof child === "object") value[index] = redactOwnedParsedSyncDownload(child, table, management);
+    }
+    return value;
+  }
+  if (!value || typeof value !== "object") return value;
+  const row = value as Record<string, unknown>;
+  if (!management && (table === "settings_scoped" || row.table_name === "settings_scoped") && typeof row.key === "string" && row.key.startsWith("product_price:") && row.value && typeof row.value === "object") {
+    // Preserve the existing projection's unusual array-to-object behavior.
+    row.value = priceSettingsValue(row.value as Record<string, unknown>);
+  }
+  const context = typeof row.table_name === "string" ? row.table_name : table;
+  const keys = Object.keys(row);
+  let result = row;
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index];
+    if ((context === "terminal_tokens" && TERMINAL_SECRET_FIELDS.has(key)) || (!management && ((context === "products" && ECOMMERCE_FIELDS.has(key)) || key === "ecommerceEnabled"))) {
+      // Deleting a property can force V8's slow dictionary representation and
+      // make final JSON serialization more expensive than the saved clone.
+      // Only rows that actually lose a field need a replacement object.
+      if (result === row) {
+        result = {};
+        for (let previous = 0; previous < index; previous++) setOwn(result, keys[previous], row[keys[previous]]);
+      }
+      continue;
+    }
+    const child = row[key];
+    const redacted = child && typeof child === "object" ? redactOwnedParsedSyncDownload(child, context, management) : child;
+    if (result !== row) setOwn(result, key, redacted);
+    else if (redacted !== child) row[key] = redacted;
+  }
+  return result;
+}

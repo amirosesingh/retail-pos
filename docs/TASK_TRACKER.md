@@ -2,6 +2,61 @@
 
 Last reconciled: **2026-11-03, Asia/Brunei**.
 
+## HOST-42 — remaining sync CPU, preparation only approved
+
+Owner further requests fixing actual Worker CPU below10ms without reducing
+security, required dependencies or data. Audit proven redundant queries first;
+do not cache away revocation/branch checks or claim fixed from synthetic timings.
+LOADING43 / audit pending: owner requests sorted demand-driven visible-page
+loading rather than bulk fetches. Preserve complete authorized offline SQL
+replication separately, transactional snapshots and stable cursor ordering;
+do not truncate bootstrap or silently drop rows. Inventory existing loaders and
+propose bounded changes after evidence, without delaying reviewed beta fixes.
+
+Owner explicitly requested making prompt incremental beta integration a
+permanent rule. AGENTS.md and PROJECT_MEMORY.md now record the requirement,
+preserving exact-head checks, scoped diffs, deployed beta acceptance and separate
+specific production/database/billing/installer approvals.
+
+Latest owner steering supersedes preparation-only for finalized current fixes:
+merge reviewed, passing corrections promptly to beta instead of accumulating
+stale PRs; promote only after beta works correctly. HOST42 may therefore proceed
+through beta CI/integration after final review/tests. This is no permission to
+skip checks, assert hostedCPU acceptance, alter SQL/billing or publish installers.
+Production354 still requires complete beta/device/financial acceptance and the
+applicable specific-promotion approval; no such acceptance is asserted here.
+
+3November owner approves separate sync-response CPU preparation and isolated
+tests only. Actual betaWorker2feb971c request13:29:48.315Brunei returned503,
+outcome exceededCpu, CPU10ms/wall943ms after PR367. Sync remains unverified.
+Bounded plan: retain pure redaction reference API; add fresh-parsed-JSON-only
+in-place redaction and use only on owned successful RPC response.json data in
+sync-endpoint.server.ts. Exact privacy, field order, context, settings array
+compatibility, rows/cursors and authorization must match. Differential/fuzz
+tests and complete parse/redact/serialize measurements, endpoint allow/deny,
+types/build and independent review required. No deployment, live SQL, data,
+billing, page limits, checkpoint/queue reset or access changes. Root owns docs;
+agent owns two runtime files and focused tests. Rollback targeted source revert.
+
+Prepared HOST42 keeps the pure shared helper unchanged and uses owned parsed
+containers only after successful authorized sync RPC responses. Objects losing
+fields are selectively copied; unredacted owned containers are reused, avoiding
+V8 delete/dictionary-mode slowdown. Rows, cursors, key order, terminal secrets,
+commerce readiness and Management scopes retain exact output parity. Ten
+focused suites/170 tests passed; one benchmark opt-in skipped. The standalone
+9-test benchmark passed, seven alternating amortized samples/32 repetitions:
+history500 wall4.880→3.853ms ordinary/5.318→3.968ms Management, CPU4.875→3.906ms/
+5.375→3.906ms; wide500stock wall5.046→3.700ms/5.136→3.535ms. Smaller history100
+and single wide settings cases improved wall, small CPU values are quantized.
+These are synthetic Node22 parse/redact/serialize measurements, not complete
+Cloudflare/authentication/cold-start CPU acceptance. Types, scoped lint/diff
+pass. Independent final-algorithm review and combined full suite remain pending.
+
+PR365 merged cb0f4b55 and PR366 merged fbb6fe42 after all exact-head checks;
+both merge trees equal tested source heads. Crash correction PR368 full source
+suite4763passed; real admin/sync acceptance remains incomplete. Actual native
+profile is production-connected; no real transactions were used for testing.
+
 ## Active owner approval — 3 November connection recovery and beta integration
 
 Owner approves checking and merging PR365/366 to beta, fixing the connection
