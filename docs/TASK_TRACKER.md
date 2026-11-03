@@ -4,6 +4,30 @@ Last reconciled: **2026-11-03, Asia/Brunei**.
 
 ## Current checkpoint — beta merged; Management graph-read correction proposed
 
+Owner **approved live READ-35 migration and beta integration** for exact file
+20261103023417_management_closing_graph_read_scope.sql / SHA256
+386B7023556863224252775FFD19EB2A8FEDBA43324E857989BD8092EC133696,
+ROSEGILL / org bjxgimekljzlnwejuawj / pos qhrufhtbeguxydenzfey / postgres.
+Apply after current-definition/hash verification, read back unchanged authority
+and validators, then merge PR #364 only after final checks. This does not include
+installer publication, production promotion, enrollment or business writes.
+State: approved rollout starting; earlier preparation-only status is superseded.
+
+READ-35 live rollout completed after exact approval. Migration history version
+**20261103025854** records management_closing_graph_read_scope on the identified
+POS project. Before application, current graph/read/write validator definitions
+matched the reviewed hashes. SELECT-only readback proves the graph body changed
+by exactly one admission-call substitution; all pg_proc attributes on all three
+routines and both validators' bodies are unchanged. Graph body SHA256 is
+9a3dfe5f0f52a3e3b7aa540f4f81b318d42c7e1d755dcbd321ef1bd889fc4a7a.
+Owned artifact: shift-rollout-approval-20261103/read35-live-readback.json.
+No enrollment, data operation, local SQL upgrade or publication was performed.
+
+All Actions passed on logic head89acb152; exact committed-head local suite also
+passed615files/4652tests, one opt-in skipped (115.61s). The final documentation
+reconciliation must pass its exact-head checks before authorized PR364 beta
+merge. Production PR354 still retains its separate acceptance/release gates.
+
 READ-35 preparation is implemented and isolated-verified after explicit approval.
 The shared recognizer now accepts graph downloads with the existing device
 proofs; write/mixed-request checks, normal branch locks and redaction are intact.

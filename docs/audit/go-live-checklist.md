@@ -11,7 +11,7 @@ approved test devices; never damage real business data. Membership is on hold.
 
 ## 3 November — exact database dependency proposal for PR #363
 
-### READ-35 follow-up — prepared, not applied
+### READ-35 follow-up — approved and applied
 
 The owner approved source preparation and isolated tests for Management graph
 downloads. New file:
@@ -24,11 +24,14 @@ business rows. Unknown function bodies abort; exact repeat is a no-op. LF and
 CRLF SQL inputs are tested. The existing Management proof/registration checks
 remain required by the paired HTTP recognizer correction; mixed writes fail.
 
-The six upgrades below are already installed and remain immutable. This is a
-seventh, additive proposal for the same ROSEGILL / pos project; it has **not**
-been applied. Exact live-project approval, definition drift check and readback
-are required before application/hosting activation. Isolated SQL19 plus final
-API/canonical69 tests pass; full suite and final-head CI are recorded in tracker.
+The six upgrades below remain immutable. After exact approval, this seventh
+additive upgrade applied to the same ROSEGILL / pos project as version
+**20261103025854**. Definition drift check passed. Live SELECT-only readback
+proves exactly one graph admission-call change and preserves all attributes of
+the graph/read/write validators, with both validator bodies unchanged. No
+business operation or enrollment was performed. Isolated SQL19, final
+API/canonical69 and exact-head full4652 tests pass. Logic-head89acb152 Actions
+passed; final documentation-head checks and beta integration remain tracked.
 No arbitrary branch-subset model, new grants or Management write access is added.
 
 **Applied after renewed approval.** All six current hashes in the table below

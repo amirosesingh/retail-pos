@@ -11,8 +11,11 @@ SQL admission using the write validator). Existing management pull/bootstrap/
 counts use a separate read validator; do not confuse its purpose with write
 authorization or broadly allow NULL-location devices. The owner approved a
 bounded additive correction and isolated tests; source preparation now passes
-allowed/denied and raw Windows/Unix newline cases. Live application remains
-unapproved. Preserve installed migration history and
+allowed/denied and raw Windows/Unix newline cases. The owner then approved the
+exact live migration and beta integration. READ-35 is installed as
+20261103025854; readback proves only the graph admission call changed, with all
+three routine attributes and both validator bodies unchanged. Beta PR364 awaits
+final integration checks; production acceptance remains separate. Preserve installed migration history and
 normal terminal branch locking. See READ-35 in the tracker.
 
 Live schema evidence: public.app_users.role is enum public.app_role, not text.
