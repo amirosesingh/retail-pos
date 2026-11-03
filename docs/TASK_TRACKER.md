@@ -4,6 +4,28 @@ Last reconciled: **2026-11-03, Asia/Brunei**.
 
 ## Current checkpoint — beta merged; Management graph-read correction proposed
 
+READ-35 preparation is implemented and isolated-verified after explicit approval.
+The shared recognizer now accepts graph downloads with the existing device
+proofs; write/mixed-request checks, normal branch locks and redaction are intact.
+New additive migration 20261103023417_management_closing_graph_read_scope.sql
+changes only the graph RPC's admission call to the existing read validator and
+preserves the complete function metadata/body apart from that exact call. It
+rejects unknown/mixed bodies, preserves idempotence and handles raw LF/CRLF
+migration input. Generator ordering and canonical parity are verified; all six
+installed migration files remain unchanged. No live application is authorized.
+
+Evidence: root full-suite baseline passed 615 files / 4,652 tests, one opt-in
+skipped (126.39s, two workers). Root's final review found the raw-CRLF reference
+literal mismatch before any live change; fixed normalization and independently
+passed all 19 SQL scenarios and 69 final API/canonical/SQL-wrapper tests.
+TypeScript, scoped lint, notifications23, closure71 and bootstrap32 checks pass.
+Independent scoped and incremental review found no actionable defect. Final
+full-suite/pushed-head CI remain tracked separately. New migration SHA256:
+386B7023556863224252775FFD19EB2A8FEDBA43324E857989BD8092EC133696.
+Preparing a separate beta PR; live application requires exact-project approval.
+No real keys, business records, local SQL, installer or production deployment
+changed. Earlier proposed/pending-preparation entries below are historical.
+
 PR #363 merged into beta as **575092c7b4593ca519cb328ed8e74d0767f7932b** after
 all exact-head checks passed on 4d839cc0. Merge tree 7fdc6911 matches the reviewed
 tree exactly and retains prior beta 41463049 plus reviewed head as parents.
@@ -41,6 +63,14 @@ for audit; do not invent broader entitlement while fixing this recognized read.
 Recoverable baseline: beta575092c7. Preparation branch:
 codex/management-closing-read-beta. No code, schema or business data changed by
 this documentation proposal. Membership and historical #359 remain HOLD.
+
+Owner **approved READ-35 preparation and isolated tests**. State: active source
+implementation on codex/management-closing-read-beta, clean baseline15377938
+from beta575092c7. Agents have separate API/SQL/test ownership; root owns this
+ledger and tooling. Preserve every existing write/branch/device guard and all
+grants. No live schema application, real enrollment, installer publication or
+main promotion is included. The additive migration must be presented separately
+before live application. Earlier pending-approval status above is superseded.
 
 ## Owner instruction — verify and merge PR #363 into beta
 

@@ -9,8 +9,10 @@ production #354 is updated but not yet accepted. The new Management closing-grap
 read has two confirmed compatibility defects (HTTP replica-read recognition and
 SQL admission using the write validator). Existing management pull/bootstrap/
 counts use a separate read validator; do not confuse its purpose with write
-authorization or broadly allow NULL-location devices. A bounded additive fix is
-proposed, not approved/implemented. Preserve installed migration history and
+authorization or broadly allow NULL-location devices. The owner approved a
+bounded additive correction and isolated tests; source preparation now passes
+allowed/denied and raw Windows/Unix newline cases. Live application remains
+unapproved. Preserve installed migration history and
 normal terminal branch locking. See READ-35 in the tracker.
 
 Live schema evidence: public.app_users.role is enum public.app_role, not text.

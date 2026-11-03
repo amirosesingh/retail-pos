@@ -18,6 +18,16 @@ function sqlFiles(directory = root): string[] {
 }
 
 describe("canonical Supabase SQL", () => {
+  it("retains the additive graph-read admission after all original shift authority contracts", () => {
+    const schema = read("supabase/schema.sql");
+    const begin = "-- SHIFT_GRAPH_READ_SCOPE_BEGIN", end = "-- SHIFT_GRAPH_READ_SCOPE_END";
+    expect(schema.split(begin + "\n")[1]?.split("\n" + end)[0])
+      .toBe(read("supabase/migrations/20261103023417_management_closing_graph_read_scope.sql").trim());
+    expect(schema.indexOf(begin)).toBeGreaterThan(schema.indexOf("-- SHIFT_CLOSING_START_CONTRACT_END"));
+    expect(schema.indexOf(begin)).toBeGreaterThan(schema.indexOf("-- SHIFT_AUTHOR_CONTRACT_END"));
+    expect(schema.indexOf(begin)).toBeGreaterThan(schema.indexOf("-- SHIFT_CAUSAL_CONTRACT_END"));
+    expect(schema.split(begin)).toHaveLength(2);
+  });
   it("retains the additive closing-start contract byte-for-byte after the author foundation", () => {
     const schema = read("supabase/schema.sql");
     const block = schema.split("-- SHIFT_CLOSING_START_CONTRACT_BEGIN\n")[1]?.split("\n-- SHIFT_CLOSING_START_CONTRACT_END")[0];
@@ -241,6 +251,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261102103716_enforce_shift_author_uploads.sql",
       "supabase/migrations/20261102104005_fix_closed_shift_correction_activity_type.sql",
       "supabase/migrations/20261102153013_bind_signed_closing_start_evidence.sql",
+      "supabase/migrations/20261103023417_management_closing_graph_read_scope.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

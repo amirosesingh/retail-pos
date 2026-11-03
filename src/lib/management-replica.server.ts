@@ -6,11 +6,11 @@ import type { RelayScope } from "@/core/api/relay-policy.server";
 export async function managementReplicaScope(body: {
   terminalToken?: string; deviceClaimProof?: string; managementSyncBranches?: boolean;
   deviceBindingProof?: string;
-  sqlServerPull?: unknown; sqlServerBootstrap?: unknown; sqlServerCounts?: unknown;
+  sqlServerPull?: unknown; sqlServerBootstrap?: unknown; sqlServerCounts?: unknown; sqlServerShiftGraph?: unknown;
   ops?: unknown[]; sqlServerBatch?: unknown; sqlServerAggregate?: unknown;
   read?: unknown; oldReceipt?: unknown; sqlServerTelemetry?: unknown;
 }): Promise<RelayScope | null> {
-  const reads = body.managementSyncBranches || body.sqlServerPull || body.sqlServerBootstrap || body.sqlServerCounts;
+  const reads = body.managementSyncBranches || body.sqlServerPull || body.sqlServerBootstrap || body.sqlServerCounts || body.sqlServerShiftGraph;
   if (!body.deviceClaimProof || !reads) return null;
   if (body.ops?.length || body.sqlServerBatch || body.sqlServerAggregate || body.read || body.oldReceipt || body.sqlServerTelemetry)
     throw new Error("Management replication accepts downloads only");
