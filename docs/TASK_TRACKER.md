@@ -2,6 +2,18 @@
 
 Last reconciled: **2026-11-03, Asia/Brunei**.
 
+## Latest owner decision — PR365/366 beta integration and connection crash
+
+3 November owner approves merging365/366 after checks and fixing the connection
+settings crash using agents. Earlier preparation-only text below is historical;
+no production promotion, installer publication, database edits or data recovery
+is included. Both PRs required documentation-only conflict reconciliation with
+beta f002d194 (PR367). Preserve DEV38, REG39 and HOST40 records and runtime fixes.
+Full sync recovery is NOT verified: later history/pos_settings503s persisted.
+Do not reset checkpoints/queues or change audit visibility. DEV41 captures the
+separate external-development-server restart defect; correction is prepared in
+its own current-beta branch. Checkout/permissions/branch restrictions remain.
+
 ## Current checkpoint — local development module-loading correction approved
 
 REG-39 / investigation / pending administrator unlock: owner reports registered
