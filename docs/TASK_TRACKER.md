@@ -7,13 +7,114 @@ Last reconciled: **2026-11-03, Asia/Brunei**.
 Owner now authorizes completing actual isolated SQL Server, PostgREST and CPU
 checks using agents, then beta integration only when required checks pass.
 Report the exact target, migration and changes before any live application;
-this instruction does not supply exact-project live migration approval.
+The owner subsequently approved applying the exact migration below after final
+checks pass. This does not authorize any other live migration or configuration.
 Preserve checkout, permissions, registered scope and all existing records.
 Baseline origin/beta remains a13739a5 (refreshed); prepared commits are
 2ce731e7 (resume) and d4aed867 (stream). Agents separately own disposable SQL
 runtime, gateway wire acceptance and CPU harnesses. No production promotion,
 installer publication, live queue repair or Membership change is authorized.
 
+RESUME45 independently passed actual disposable SQL Server acceptance and all
+exact-head CI on 01791798. PR371 merged to beta as
+18fb220e58cb264244e4bbfa90514cc211666684 on 3 November. No installer published.
+STREAM46 now uses a bounded binary buffer, not immediate HTTP passthrough.
+Local workerd exposed expensive JavaScript byte checks; direct FixedLengthStream
+was rejected because a valid JSON prefix could complete before delayed excess.
+The corrected helper waits for both native bounded consumption and upstream EOF
+before HTTP success, with a checked generic fallback and explicit abort signal.
+Normal page target is 2MiB, one-row hard cap 5MiB; this bounds response payload,
+not total isolate memory. Concurrent buffers/runtime copies add memory. Complete
+upstream EOF adds response latency but no Worker JSON parse/serialization.
+Independent review passes three suites / 57 tests, including actual workerd CI
+regressions for short/overlong/delayed-extra bodies and explicit in-flight aborts.
+Local process CPU means over 50 warmed requests: large page 3.75ms, structured
+page 2.5ms, small page 2.1875ms. These are not Cloudflare billed CPU measurements.
+Physical client-disconnect cancellation is unverified in this local topology,
+including an isolated flag trial; no hosting compatibility flag was changed.
+Hosted version/CPU acceptance and exact-head CI remain required before completion.
+
+Combined current-beta local full suite passes 628 files / 4,841 tests, two opt-in
+tests skipped. First PR372 CI reached notification parity and found its disposable
+generator fixture omitted the new migration dependency. The fixture now copies
+that one required file; all 23 standalone notification scenarios pass with every
+assertion retained. Required CI must rerun on the corrected head before the
+approved live application. No business logic change was needed for this failure.
+Owner additionally approved restarting only the headless local development
+Electron process. Latest Main runs from this branch at DEV_URL8081 using the
+existing profile, preserving registration, SQL configuration and queues; the
+updated Windows-target preview returns HTTP200. This is not a test database or
+permission to create real transactions during inspection.
+
+Actual PostgREST16.5 / native PostgreSQL18.6 disposable-cluster acceptance passes
+nine cases: exact byte/header correspondence, Unicode/privacy, commerce fields,
+1.65MB row, identity/gzip request, byte-prefix cursor, empty page, anonymous and
+foreign-branch denial. Root independent rerun passed all nine and exited zero
+after cleanup. Live read-only preflight finds
+all source compatibility predicates true and protected RPC absent; wrapper md5
+2a0564a108930ffdaa326e3e9cf41de4, scoped md5 b4306345e37e638c610e8484a479c510.
+No live routine/table/policy/data change has been made. Migration hash remains
+54A39A26FEDDE4E3CCD6E1DDAA03F4B604742CFEDD56BB70B1A70465C8BC4E91.
+
+## STREAM46 — approved protected byte-bounded history preparation
+
+Owner approved preparation and isolated tests on 3 November for ROSEGILL pos
+qhrufhtbeguxydenzfey. Baseline current beta a13739a5; branch
+codex/history-stream-preparation-beta. Prepare an additive service-only history
+RPC applying the exact existing privacy projection and bounded pages/cursors,
+plus guarded Worker body streaming. Keep fresh terminal/branch/permission checks;
+never stream old raw RPC results or omit oversized records silently. Preserve
+existing audit visibility, authorization and Membership dependencies. Test SQL
+projection parity, allowed/denied scopes, byte limits and old/current clients.
+No live migration, data repair, enrollment, billing, deployment or publication.
+Present exact migration/hash and target separately before live application.
+SQL agent owns migration/canonical SQL/tests; root owns Worker integration and
+records; independent review required. Rollback code before removing additive
+RPCs; preserve all business records and cursor/checkpoint history.
+
+Separate RESUME45 durable page progress preparation is also approved. Both
+batches preserve checkout and protected pending data and remain separate from
+production promotion and installed-device verification.
+
+Current evidence supersedes older HOST44 pending-CI notes below: PR370 merged
+on beta a13739a5 after exact checks and 4,804 full-suite tests. Deployed Worker
+64769214-253d-47bf-ae03-733d92226734 returned small requests in 3–4ms but still
+failed history requests with exceededCpu / HTTP503 at 10ms (14:36:42.571 Brunei).
+No end-to-end CPU/recovery acceptance is claimed. Read-only size metadata found
+individual history values around 1.65MB; the exact failing row is unconfirmed.
+STREAM46 moves identical projection to the service-only database function and
+streams a byte-bounded prefix, preserving opaque cursors and all history rows.
+Runtime unsupported definitions fail before raw aggregation; legacy guarded
+redaction remains the compatibility path. SQL wrapper/scoped fingerprints and
+reviewed source admission intentionally reject unknown definitions. A future
+compatible schema change can therefore disable streaming until reviewed.
+Independent isolated SQL rerun: 994 scenarios pass. Actual PostgREST wire bytes,
+headers and hosted CPU remain unverified. Ten synthetic wide rows still require
+database-side aggregation; no database performance improvement is asserted.
+
+Prepared final checks: full Vitest with two workers passes 626 files / 4,836
+tests, two opt-in tests skipped. Focused five-suite run passes 91 tests, including
+the CI bridge executing 994 isolated PostgreSQL cases. Current Operations,
+Management and captured 1.4.79 clients apply a complete 1.65MB record; interrupted
+bodies apply no rows and save no baseline. TypeScript noEmit, scoped ESLint and
+diff check pass. Initial migration-list and legacy-fallback fixtures were updated
+without removing their assertions; host-load timeouts did not recur in the final
+bounded-worker run. Final independent rerun passes three suites / 54 tests,
+including the 994-scenario SQL bridge. Independent source review found no
+remaining confirmed preparation blocker. Actual gateway/installed/CPU gates
+below remain open; this is not live end-to-end acceptance.
+
+Prepared migration: 20261103074926_protected_byte_bounded_history_download.sql,
+SHA256 54A39A26FEDDE4E3CCD6E1DDAA03F4B604742CFEDD56BB70B1A70465C8BC4E91.
+Final staged inspection removed two trailing blank lines only; the 994 SQL cases
+were rerun successfully after that whitespace cleanup and hash recalculation.
+It adds service-only projection/page functions and matching canonical source;
+it does not rewrite history, products, stock, prices, grants or checkpoints.
+ROSEGILL target remains rosegill0011@gmail.com's Org bjxgimekljzlnwejuawj,
+pos qhrufhtbeguxydenzfey, database postgres,
+https://qhrufhtbeguxydenzfey.supabase.co. This is target identification only:
+no live application is approved by preparation. Exact gateway serialization and
+compression must pass before hosted acceptance; mismatched protocol fails closed.
 Actual SQL Server acceptance now supersedes the earlier LocalDB-unavailable
 note. On SQL Server 2025 LocalDB 17.0.1145.4 / ODBC18 / existing msnodesqlv8,
 `node scripts/test-history-resume-sqlserver.cjs --run` passes four acceptance

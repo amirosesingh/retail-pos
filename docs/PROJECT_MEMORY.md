@@ -3,6 +3,17 @@
 Last reconciled: **2026-11-03, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
 
+3 November acceptance update: owner authorizes beta integration after checks and
+separately approved the exact STREAM46 migration SHA256
+54A39A26FEDDE4E3CCD6E1DDAA03F4B604742CFEDD56BB70B1A70465C8BC4E91
+on ROSEGILL pos qhrufhtbeguxydenzfey after final checks. No other live migration,
+hosting flag, production promotion or installer release is included. The Worker
+uses bounded binary buffering and awaits EOF before HTTP success, preserving
+privacy and complete-body validation without JSON parsing. Immediate native
+passthrough failed a delayed-extra-byte case and must not be reinstated merely
+for speed. Local workerd CPU means do not prove hosted per-request acceptance;
+physical-disconnect behavior remains separately unverified.
+
 3 November RESUME45 / STREAM46: owner approved preparation and isolated tests
 only for durable history recovery and a protected byte-bounded history-download
 protocol. Save each applied page and its opaque cursor in one local transaction;

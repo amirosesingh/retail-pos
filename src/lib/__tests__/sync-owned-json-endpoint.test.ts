@@ -22,6 +22,7 @@ beforeEach(() => {
       status: "used", is_claimed: true, claim_proof: binding, claimed_proof_hash: binding,
       management_sync_enabled: management, management_sync_proof_hash: createHash("sha256").update(claim).digest("hex"), revoked_at: null }]);
     if (url.includes("/stores?")) return Response.json([{ id: branch }]);
+    if (url.includes("/rpc/pos_sync_history_page_v1")) return Response.json({code:"PGRST202",message:"Could not find the function public.pos_sync_history_page_v1 in the schema cache"},{status:404});
     if (url.includes("/rpc/")) { rpc(url, JSON.parse(String(init?.body))); return Response.json(payload); }
     throw new Error("Unexpected isolated request");
   }));
