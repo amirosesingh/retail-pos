@@ -88,6 +88,28 @@ export default {
           return secure(await normalizeCatastrophicSsrResponse(response));
         }
       }
+      // Native API requests retain their existing guards but do not need the
+      // UI router. Runtime metadata cannot be supplied in a client header/body.
+      const cf = (request as Request & { cf?: unknown }).cf;
+      if (cf !== null && typeof cf === "object") {
+        const url = new URL(request.url);
+        if (url.pathname === "/api/v1/pos/sync" && !url.searchParams.has("operation")) {
+          if (request.method === "OPTIONS") return secure(corsPreflight(request));
+          if (request.method === "POST") {
+            const { handleSyncRequest } = await import("./lib/sync-endpoint.server");
+            const response = withCors(await handleSyncRequest(request), request);
+            return secure(await normalizeCatastrophicSsrResponse(response));
+          }
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/pos/ipc-adopt") {
+          const { handleIpcAdopt } = await import("./lib/ipc-adopt-endpoint.server");
+          return secure(await normalizeCatastrophicSsrResponse(await handleIpcAdopt(request)));
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/pos/shift-author-enroll") {
+          const { handleShiftAuthorEnroll } = await import("./lib/shift-author-enroll-endpoint.server");
+          return secure(await normalizeCatastrophicSsrResponse(await handleShiftAuthorEnroll(request)));
+        }
+      }
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
       return secure(await normalizeCatastrophicSsrResponse(response));
