@@ -599,7 +599,11 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
                     p_table: body.sqlServerBootstrap.table,
                     p_after_cursor: body.sqlServerBootstrap.cursor,
                     p_history_days: body.sqlServerBootstrap.historyDays,
-                    p_limit: body.sqlServerBootstrap.limit,
+                    // Bound audit JSON work before SQL generates its page and
+                    // cursor. Older native clients already follow that cursor;
+                    // never truncate an RPC response after it was calculated.
+                    p_limit: body.sqlServerBootstrap.table === "change_history"
+                      ? 10 : body.sqlServerBootstrap.limit,
                   },
                 ] as const)
               : body.sqlServerCounts

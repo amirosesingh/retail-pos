@@ -3,6 +3,14 @@
 Last reconciled: **2026-11-03, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
 
+HOST44 performance decision: bound only audit-history bootstrap at the RPC
+request before SQL generates rows and cursor; never truncate returned pages or
+advance SQL Change Tracking before the complete snapshot applies. ROSEGILL pos
+qhrufhtbeguxydenzfey live metadata was read-only verified with minimum10 and
+matching completion threshold. Current and1.4.79 clients follow opaque cursors.
+Other operator databases with minimum100 remain lossless but their10-row/CPU
+bound is not certified. No change to visibility, grants, retention or records.
+
 Permanent owner rule3November: integrate each approved, reviewed fix promptly
 into beta after exact-head CI/regressions; do not accumulate finished PRs until
 they become stale. Preserve only scoped feature changes and required reviewed

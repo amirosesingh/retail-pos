@@ -46,7 +46,7 @@ it.each(["products", "settings_scoped", "terminal_tokens", "change_history", "po
     expect(response.status).toBe(200);
     expect(await response.text()).toBe(JSON.stringify(redactSyncDownload(JSON.parse(original), table, mode || !ready)));
     expect(JSON.stringify(payload)).toBe(original);
-    expect(rpc).toHaveBeenCalledWith(expect.stringContaining("/pos_sync_bootstrap"), expect.objectContaining({ p_after_cursor: "unchanged-cursor", p_limit: 100, p_branch_id: branch }));
+    expect(rpc).toHaveBeenCalledWith(expect.stringContaining("/pos_sync_bootstrap"), expect.objectContaining({ p_after_cursor: "unchanged-cursor", p_limit: table === "change_history" ? 10 : 100, p_branch_id: branch }));
   }
 });
 
