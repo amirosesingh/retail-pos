@@ -2,6 +2,37 @@
 
 Last reconciled: **2026-11-03, Asia/Brunei**.
 
+## HOST44 — bounded history response CPU / active
+
+Owner explicitly requests fixing actual Workers CPU below10ms with every
+security check/required dependency/data preserved, and sorted demand-driven
+reads. PR365/366/368/369 merged after exact checks; permanent integration rule
+is now on beta8d9a1231. Full combined suite4782passed. Worker e5c14ace still
+failed ordinary POST sync13:54:54.871Brunei at10ms/exceededCpu/503, wall2082ms;
+an earlier200 used23ms, so successful status is NOT proof of budget acceptance.
+
+Read-only ROSEGILL pos qhrufhtbeguxydenzfey RPC metadata confirms change_history
+uses LEAST(GREATEST(p_limit,10),2000), UUID keyset ordering, and the same bound
+for final cursor threshold. Current and v1.4.79 bootstrap/refresh/verifier use
+opaque cursor completion, not requested-row-count completion. Proposed bounded
+correction: cap only change_history bootstrap RPC p_limit to10 BEFORE SQL
+generates rows/cursor, retaining every page, guards, scopes and all other RPCs.
+One runtime file sync-endpoint.server.ts plus lossless endpoint/current/legacy
+pagination tests. No SQL/schema/data edits, cursor reset, visibility changes,
+credentials, billing or installer publication. Root owns docs; agent runtime
+and tests; independent review required. Live under10 and complete recovery
+remain acceptance gates. Rollback targeted source revert only.
+
+Implemented HOST44 isolated tests:5focused suites/74tests passed; initial
+independent review5suites/81overlappingtests passed and SHA-compared all three
+captured1.4.79 sources to2f404e6f. Actual guarded endpoint feeds current Operations,
+current Management and captured production bootstrap/refresh/verifier loops.
+Cases cover53/253rows, minimum100 compatibility, failed-page resume preserving
+pending edits, rollback with no premature CT baseline, wrong proof/foreign branch
+denial. Added exact20row case verifies final empty RPC and baseline only after
+completion. No live business reads/writes used. Final type/full-suite/CI and
+deployed CPU/native completion remain pending; do not claim fixed from tests.
+
 ## HOST-42 — remaining sync CPU, preparation only approved
 
 Owner further requests fixing actual Worker CPU below10ms without reducing
