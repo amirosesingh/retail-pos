@@ -4,6 +4,14 @@ Last reconciled: **2026-11-03, Asia/Brunei**.
 
 ## HOST-42 — remaining sync CPU, preparation only approved
 
+Latest owner steering supersedes preparation-only for finalized current fixes:
+merge reviewed, passing corrections promptly to beta instead of accumulating
+stale PRs; promote only after beta works correctly. HOST42 may therefore proceed
+through beta CI/integration after final review/tests. This is no permission to
+skip checks, assert hostedCPU acceptance, alter SQL/billing or publish installers.
+Production354 still requires complete beta/device/financial acceptance and the
+applicable specific-promotion approval; no such acceptance is asserted here.
+
 3November owner approves separate sync-response CPU preparation and isolated
 tests only. Actual betaWorker2feb971c request13:29:48.315Brunei returned503,
 outcome exceededCpu, CPU10ms/wall943ms after PR367. Sync remains unverified.
