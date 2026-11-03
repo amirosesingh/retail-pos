@@ -11,6 +11,29 @@ approved test devices; never damage real business data. Membership is on hold.
 
 ## 3 November — exact database dependency proposal for PR #363
 
+### READ-35 follow-up — approved and applied
+
+The owner approved source preparation and isolated tests for Management graph
+downloads. New file:
+`20261103023417_management_closing_graph_read_scope.sql`, SHA256
+`386B7023556863224252775FFD19EB2A8FEDBA43324E857989BD8092EC133696`.
+It replaces exactly the graph RPC's branch-only write-validator admission with
+the existing replica read validator, preserving service-only execution, all
+function attributes/grants, graph branch validation, all write validators and
+business rows. Unknown function bodies abort; exact repeat is a no-op. LF and
+CRLF SQL inputs are tested. The existing Management proof/registration checks
+remain required by the paired HTTP recognizer correction; mixed writes fail.
+
+The six upgrades below remain immutable. After exact approval, this seventh
+additive upgrade applied to the same ROSEGILL / pos project as version
+**20261103025854**. Definition drift check passed. Live SELECT-only readback
+proves exactly one graph admission-call change and preserves all attributes of
+the graph/read/write validators, with both validator bodies unchanged. No
+business operation or enrollment was performed. Isolated SQL19, final
+API/canonical69 and exact-head full4652 tests pass. Logic-head89acb152 Actions
+passed; final documentation-head checks and beta integration remain tracked.
+No arbitrary branch-subset model, new grants or Management write access is added.
+
 **Applied after renewed approval.** All six current hashes in the table below
 were applied to the identified POS project, in order. Versions:
 20261103013712 / 20261103013757 / 20261103013803 / 20261103013905 /

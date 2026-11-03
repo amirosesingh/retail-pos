@@ -2,6 +2,100 @@
 
 Last reconciled: **2026-11-03, Asia/Brunei**.
 
+## Current checkpoint — beta merged; Management graph-read correction proposed
+
+Owner **approved live READ-35 migration and beta integration** for exact file
+20261103023417_management_closing_graph_read_scope.sql / SHA256
+386B7023556863224252775FFD19EB2A8FEDBA43324E857989BD8092EC133696,
+ROSEGILL / org bjxgimekljzlnwejuawj / pos qhrufhtbeguxydenzfey / postgres.
+Apply after current-definition/hash verification, read back unchanged authority
+and validators, then merge PR #364 only after final checks. This does not include
+installer publication, production promotion, enrollment or business writes.
+State: approved rollout starting; earlier preparation-only status is superseded.
+
+READ-35 live rollout completed after exact approval. Migration history version
+**20261103025854** records management_closing_graph_read_scope on the identified
+POS project. Before application, current graph/read/write validator definitions
+matched the reviewed hashes. SELECT-only readback proves the graph body changed
+by exactly one admission-call substitution; all pg_proc attributes on all three
+routines and both validators' bodies are unchanged. Graph body SHA256 is
+9a3dfe5f0f52a3e3b7aa540f4f81b318d42c7e1d755dcbd321ef1bd889fc4a7a.
+Owned artifact: shift-rollout-approval-20261103/read35-live-readback.json.
+No enrollment, data operation, local SQL upgrade or publication was performed.
+
+All Actions passed on logic head89acb152; exact committed-head local suite also
+passed615files/4652tests, one opt-in skipped (115.61s). The final documentation
+reconciliation must pass its exact-head checks before authorized PR364 beta
+merge. Production PR354 still retains its separate acceptance/release gates.
+
+READ-35 preparation is implemented and isolated-verified after explicit approval.
+The shared recognizer now accepts graph downloads with the existing device
+proofs; write/mixed-request checks, normal branch locks and redaction are intact.
+New additive migration 20261103023417_management_closing_graph_read_scope.sql
+changes only the graph RPC's admission call to the existing read validator and
+preserves the complete function metadata/body apart from that exact call. It
+rejects unknown/mixed bodies, preserves idempotence and handles raw LF/CRLF
+migration input. Generator ordering and canonical parity are verified; all six
+installed migration files remain unchanged. No live application is authorized.
+
+Evidence: root full-suite baseline passed 615 files / 4,652 tests, one opt-in
+skipped (126.39s, two workers). Root's final review found the raw-CRLF reference
+literal mismatch before any live change; fixed normalization and independently
+passed all 19 SQL scenarios and 69 final API/canonical/SQL-wrapper tests.
+TypeScript, scoped lint, notifications23, closure71 and bootstrap32 checks pass.
+Independent scoped and incremental review found no actionable defect. Final
+full-suite/pushed-head CI remain tracked separately. New migration SHA256:
+386B7023556863224252775FFD19EB2A8FEDBA43324E857989BD8092EC133696.
+Preparing a separate beta PR; live application requires exact-project approval.
+No real keys, business records, local SQL, installer or production deployment
+changed. Earlier proposed/pending-preparation entries below are historical.
+
+PR #363 merged into beta as **575092c7b4593ca519cb328ed8e74d0767f7932b** after
+all exact-head checks passed on 4d839cc0. Merge tree 7fdc6911 matches the reviewed
+tree exactly and retains prior beta 41463049 plus reviewed head as parents.
+All beta-push/promotion checks and beta-domain build subsequently passed;
+CodeRabbit skipped. Public beta smoke checks: home 200 with security headers,
+configuration-presence endpoint 200 with POS URL/service-key flags true, invalid
+login payload 400 before PIN verification. These are not valid-login CPU or
+transaction acceptance. Production PR #354 now includes all merged beta changes
+(633-file comparison) and remains draft under its existing acceptance gates.
+No beta installers or production release were published.
+
+READ-35 / confirmed High, pending batch approval: latest unpublished Management
+client calls the new closing-graph download during bootstrap/pull, but
+managementReplicaScope does not recognize sqlServerShiftGraph as a replica read.
+Independent source-handler reproduction with identical valid device proofs:
+old pull returns 200, graph read returns 403 STORE_FORBIDDEN without calling SQL.
+Separately, isolated PostgreSQL with captured validators accepts the existing
+Management read scope but rejects the new graph RPC because it uses the write
+validator. These are two new-path defects; existing deployed pull/bootstrap/
+counts use their separate read validator and are not an all-Management outage.
+
+Proposed bounded next batch (no application changes yet): recognize the typed
+graph read in src/lib/management-replica.server.ts while preserving mixed-write,
+receipt, telemetry and ordinary-read denial; prepare an additive migration to
+change only pos_sync_shift_graph admission to existing validate_read_scope;
+mirror it in canonical SQL and preserve generator ordering. Keep original six
+installed migration files immutable, write validators and all grants unchanged.
+Test actual Management allow, Operations A/B denial, unclaimed/revoked/disabled/
+wrong-proof devices, mixed uploads, SQL branch/graph validation and rollback.
+Scope: shared read recognizer, generator, new migration, canonical SQL and
+focused tests. Source/isolated implementation approval is pending; applying a
+new live migration would require separate exact-project approval. Existing
+arbitrary Management subset/replication scope modeling remains separately held
+for audit; do not invent broader entitlement while fixing this recognized read.
+Recoverable baseline: beta575092c7. Preparation branch:
+codex/management-closing-read-beta. No code, schema or business data changed by
+this documentation proposal. Membership and historical #359 remain HOLD.
+
+Owner **approved READ-35 preparation and isolated tests**. State: active source
+implementation on codex/management-closing-read-beta, clean baseline15377938
+from beta575092c7. Agents have separate API/SQL/test ownership; root owns this
+ledger and tooling. Preserve every existing write/branch/device guard and all
+grants. No live schema application, real enrollment, installer publication or
+main promotion is included. The additive migration must be presented separately
+before live application. Earlier pending-approval status above is superseded.
+
 ## Owner instruction — verify and merge PR #363 into beta
 
 ### Completed cloud rollout — supersedes pending statuses below

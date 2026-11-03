@@ -1,0 +1,12 @@
+[
+  {
+    "signature": "pos_sync_validate_scope(text,text,text)",
+    "definition": "CREATE OR REPLACE FUNCTION public.pos_sync_validate_scope(p_organization_id text, p_branch_id text, p_terminal_id text)\n RETURNS void\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'public', 'pg_temp'\nAS $function$\r\nBEGIN\r\n IF p_organization_id IS DISTINCT FROM 'default' THEN RAISE EXCEPTION 'SYNC_ORGANIZATION_FORBIDDEN'; END IF;\r\n IF NULLIF(btrim(p_branch_id),'') IS NULL OR NULLIF(btrim(p_terminal_id),'') IS NULL THEN RAISE EXCEPTION 'SYNC_TERMINAL_REQUIRED'; END IF;\r\n IF NOT EXISTS(SELECT 1 FROM public.terminal_tokens t WHERE t.id::text=p_terminal_id AND t.location_id=p_branch_id AND t.status IN ('active','used') AND t.revoked_at IS NULL) THEN RAISE EXCEPTION 'SYNC_TERMINAL_SCOPE_FORBIDDEN'; END IF;\r\nEND $function$\n",
+    "sha256": "9a775dee9aeb7df569a2cba00b2758404f871f7459e9e41170adf92df50e1966"
+  },
+  {
+    "signature": "pos_sync_validate_read_scope(text,text,text)",
+    "definition": "CREATE OR REPLACE FUNCTION public.pos_sync_validate_read_scope(p_organization_id text, p_branch_id text, p_terminal_id text)\n RETURNS void\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'public', 'pg_temp'\nAS $function$\nBEGIN\n IF auth.role()='service_role' AND p_organization_id='default'\n AND EXISTS(SELECT 1 FROM public.stores WHERE id=p_branch_id)\n AND EXISTS(SELECT 1 FROM public.terminal_tokens WHERE id::text=p_terminal_id\n   AND platform='pc' AND location_id IS NULL AND management_sync_enabled\n   AND is_claimed AND status IN ('active','used') AND revoked_at IS NULL) THEN RETURN; END IF;\n PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id);\nEND $function$\n",
+    "sha256": "33b7093da2c16427297142c358104f15535383aa4a9042072165d2dece090b4b"
+  }
+]

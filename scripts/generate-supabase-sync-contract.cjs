@@ -643,7 +643,8 @@ if (!authorHelperGuards) throw new Error("Missing reviewed author helper guards"
 const authorBegin = "-- SHIFT_AUTHOR_CONTRACT_BEGIN", authorEnd = "-- SHIFT_AUTHOR_CONTRACT_END";
 const correctionBegin = "-- SHIFT_CORRECTION_ACTIVITY_TYPE_BEGIN", correctionEnd = "-- SHIFT_CORRECTION_ACTIVITY_TYPE_END";
 const startBegin = "-- SHIFT_CLOSING_START_CONTRACT_BEGIN", startEnd = "-- SHIFT_CLOSING_START_CONTRACT_END";
-for (const [blockBegin, blockEnd] of [[authorBegin, authorEnd], [correctionBegin, correctionEnd], [startBegin, startEnd]]) {
+const graphReadBegin = "-- SHIFT_GRAPH_READ_SCOPE_BEGIN", graphReadEnd = "-- SHIFT_GRAPH_READ_SCOPE_END";
+for (const [blockBegin, blockEnd] of [[authorBegin, authorEnd], [correctionBegin, correctionEnd], [startBegin, startEnd], [graphReadBegin, graphReadEnd]]) {
   const blockStart = schema.indexOf(blockBegin), blockFinish = schema.indexOf(blockEnd);
   if (blockStart >= 0) {
     if (blockFinish < blockStart) throw new Error("Incomplete final shift authority contract");
@@ -652,9 +653,10 @@ for (const [blockBegin, blockEnd] of [[authorBegin, authorEnd], [correctionBegin
 }
 const correctionMigration = fs.readFileSync(path.join(root, "supabase", "migrations", "20261102104005_fix_closed_shift_correction_activity_type.sql"), "utf8");
 const startMigration = fs.readFileSync(path.join(root, "supabase", "migrations", "20261102153013_bind_signed_closing_start_evidence.sql"), "utf8");
+const graphReadMigration = fs.readFileSync(path.join(root, "supabase", "migrations", "20261103023417_management_closing_graph_read_scope.sql"), "utf8");
 const finalHardening = schema.lastIndexOf("-- Final public-schema privilege hardening after notification rule definitions.");
 if (finalHardening < 0) throw new Error("Missing final privilege hardening boundary");
-schema = `${schema.slice(0, finalHardening).trimEnd()}\n\n${causalBegin}\n${causalMigration.trim()}\n${causalEnd}\n\n${authorBegin}\n${authorRegistry.trim()}\n${authorEnforcement.trim()}\n${authorEnd}\n\n${correctionBegin}\n${correctionMigration.trim()}\n${correctionEnd}\n\n${startBegin}\n${startMigration.trim()}\n${startEnd}\n\n${schema.slice(finalHardening).trim()}\n`;
+schema = `${schema.slice(0, finalHardening).trimEnd()}\n\n${causalBegin}\n${causalMigration.trim()}\n${causalEnd}\n\n${authorBegin}\n${authorRegistry.trim()}\n${authorEnforcement.trim()}\n${authorEnd}\n\n${correctionBegin}\n${correctionMigration.trim()}\n${correctionEnd}\n\n${startBegin}\n${startMigration.trim()}\n${startEnd}\n\n${graphReadBegin}\n${graphReadMigration.trim()}\n${graphReadEnd}\n\n${schema.slice(finalHardening).trim()}\n`;
 fs.writeFileSync(schemaPath, schema);
 console.log(`Supabase sync contract generated for ${tables.length} keyed tables`);
 

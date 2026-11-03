@@ -22,8 +22,23 @@ it("cannot combine the device read capability with a write", async () => {
  await expect(managementReplicaScope({ terminalToken: "terminal", deviceClaimProof: proof, deviceBindingProof: proof, sqlServerPull: {}, sqlServerBatch: {} })).rejects.toThrow("downloads only");
  expect(mocks.rest).not.toHaveBeenCalled();
 });
+it("recognizes a closing graph as a device-only download without granting staff authority", async () => {
+ const result = await managementReplicaScope({ terminalToken: "terminal", deviceClaimProof: proof, deviceBindingProof: proof,
+  sqlServerShiftGraph: { organizationId: "default", branchId: "shop", shiftId: "shift" } });
+ expect(result).toMatchObject({ terminalId: "terminal", managementReplica: true, storeId: null, isSupervisor: false, permissions: {} });
+});
+it.each([
+ { ops: [{ kind: "delete", table: "shifts", match: { id: "shift" } }] },
+ { sqlServerBatch: {} }, { sqlServerAggregate: {} }, { read: { kind: "health" } },
+ { oldReceipt: {} }, { sqlServerTelemetry: {} },
+])("rejects graph reads mixed with another capability before looking up registration: %j", async mixed => {
+ await expect(managementReplicaScope({ terminalToken: "terminal", deviceClaimProof: proof, deviceBindingProof: proof,
+  sqlServerShiftGraph: {}, managementSyncBranches: true, ...mixed })).rejects.toThrow("downloads only");
+ expect(mocks.rest).not.toHaveBeenCalled();
+});
 it("does not grant a replica scope to a token id alone", async () => {
  expect(await managementReplicaScope({ terminalToken: "terminal", managementSyncBranches: true })).toBeNull();
+ expect(await managementReplicaScope({ terminalToken: "terminal", sqlServerShiftGraph: {} })).toBeNull();
 });
 it("rejects the public hash from a pairing QR as a download secret", async () => {
  await expect(managementReplicaScope({ terminalToken: "terminal", deviceClaimProof: token.management_sync_proof_hash, deviceBindingProof: proof, managementSyncBranches: true })).rejects.toThrow("invalid");
