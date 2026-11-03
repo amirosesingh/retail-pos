@@ -4,6 +4,11 @@ Last reconciled: **2026-11-03, Asia/Brunei**.
 
 ## HOST-42 — remaining sync CPU, preparation only approved
 
+Owner explicitly requested making prompt incremental beta integration a
+permanent rule. AGENTS.md and PROJECT_MEMORY.md now record the requirement,
+preserving exact-head checks, scoped diffs, deployed beta acceptance and separate
+specific production/database/billing/installer approvals.
+
 Latest owner steering supersedes preparation-only for finalized current fixes:
 merge reviewed, passing corrections promptly to beta instead of accumulating
 stale PRs; promote only after beta works correctly. HOST42 may therefore proceed

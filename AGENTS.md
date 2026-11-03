@@ -18,6 +18,23 @@
   operator-managed database configuration. PR labels do not grant access or
   authorize production deployment.
 
+## Prompt incremental beta integration and verified promotion
+
+- Integrate each approved, independently reviewable fix into `beta` promptly
+  once its exact reviewed head passes required CI and relevant regression
+  checks. Do not accumulate finished PRs solely to wait for an unrelated batch.
+  Refresh the destination branch, reconcile conflicts without losing either
+  intended behavior, inspect the scoped diff and verify the merged result.
+- Merge only the changed feature and necessary reviewed dependencies; never
+  replace the repository or overwrite newer features with an older checkout.
+  Keep each unfinished or failed item tracked separately, with a next step.
+- Verify the deployed beta's affected end-to-end workflows before promotion;
+  passing CI, a visible page or one successful request is insufficient. Keep
+  production promotion ready as beta progresses rather than letting it drift.
+  Promote through a separate `beta` to `main` PR after required beta acceptance
+  and the owner's explicit approval for that specific promotion. This rule
+  does not waive production, database, billing or installer-release approvals.
+
 ## Scoped PR changes and regression protection — beta and production
 
 - Creating, updating or merging a PR must preserve existing features. Include
