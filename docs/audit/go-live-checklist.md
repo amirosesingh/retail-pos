@@ -9,6 +9,61 @@ This is an acceptance checklist, not a record of completed checks. Transaction,
 stock, concurrency and failure tests require isolated/restored fixtures and
 approved test devices; never damage real business data. Membership is on hold.
 
+## 3 November — exact database dependency proposal for PR #363
+
+Source head `1e419bed93e763458dc823dab9cf8a2cc82ff5c1` passed all Actions.
+The owner requests beta merge and subsequent stable production promotion through
+#354, preserving features. This is not live database approval or completed
+physical-device/hosted-CPU acceptance. Normal beta pushes automatically update
+beta hosting, so schema compatibility must precede merge.
+
+Read-only verification: **ROSEGILL POS**, currently accessible through connector
+link nickname `beta`, project **pos** (`qhrufhtbeguxydenzfey`), organization
+`bjxgimekljzlnwejuawj` (previously identified as rosegill0011@gmail.com's Org),
+database **postgres**, URL **https://qhrufhtbeguxydenzfey.supabase.co**.
+The raw author-write RPC, author-key lookup and private author registry are
+absent. Existing relay notification writes now depend on the raw-write RPC;
+deploying without it can stop summary publication. Do not remove the atomic
+guard or use an error/inventory-based REST fallback: a concurrent enrollment
+can invalidate a pre-read. The primary checkout and PIN paths retain their
+existing dependencies.
+
+Proposed exact cloud upgrades, in order, from this reviewed source:
+
+| Migration | SHA256 | Effect |
+| --- | --- | --- |
+| 20261101052452_prevent_closed_shift_reopening_during_sync.sql | 032CF56FF5BB377AEFC67576B2CC41027D6A5331C3E43D0F4A3D2659236026A1 | Guard stale reopen and receipt replay in existing shift helpers. |
+| 20261102082439_shift_closing_causal_intents.sql | 88ECB943E304E076B8494A74128C287D0BDA400267608AF7D17126D0C61034BD | Private immutable intent receipts, atomic graph/causal helpers and service-only routines. |
+| 20261102101610_shift_author_key_registry.sql | A9FD5FD63D917F54E1CFC0EED1B670909F3069E3E471C957E7EE1EA0E1523D54 | Private public-key registry/immutability and service-only lookup/enrollment functions. |
+| 20261102103716_enforce_shift_author_uploads.sql | 6DE37423364C1D4B57336A52B9718B64EA406AF32404B39194AFD0EC0EABBBE7 | Author receipts, atomic guarded raw writes and signed uploads with current permission/enrollment admission. |
+| 20261102104005_fix_closed_shift_correction_activity_type.sql | E9B1C707C6EC471A3395DDC54FD03BA08E69E1CECB6CFAEFA98912F771F20ADC | Required audit event classification for administrator corrections. |
+| 20261102153013_bind_signed_closing_start_evidence.sql | 96F50601E2EB3C17414AC3BF3F989A7485E2A4E845539DD63CB0A43796F60CF9 | Separate start proof/receipt, with preserved historical opening terminal and verified executing terminal. |
+
+Before application, capture exact routine definitions, owners/ACL/configuration,
+relevant triggers and migration history; validate recognized lifecycle/receipt
+anchors, twelve graph apply/delete helpers, scope validator, correction audit
+shape, expected tables/identity columns and absence of unexpected partial
+installation. Reproduce against captured definitions in isolation. An unknown
+shape aborts; do not rewrite or normalize operator data/configuration.
+
+These files do not repair historical business rows or enroll keys, but change
+future write behavior and add protected metadata. Each has its own BEGIN/COMMIT:
+**six separately atomic migrations, not an atomic six-file rollout**. Stop on
+failure and inspect before continuing. Most new object creations are not safely
+rerunnable. Do not blindly retry, drop metadata or restore an older database.
+An all-six transaction would need a separately reviewed execution envelope.
+
+After separately approved application, read back definitions/grants and verify
+old-client summary/aggregate compatibility plus enrolled/denied/retry behavior
+in isolated fixtures. Then merge only the exact checked beta head under the
+owner's instruction and verify beta hosting before production. No local SQL
+upgrade, real key enrollment, installer publication, legacy-client retirement,
+historical #359 repair or production merge is performed by applying these files.
+Keep financial expected-total/as-of policy, installed hardware, hosted Free CPU
+and remaining security acceptance gaps explicit. Source/CI passing is not full
+system acceptance. Rollback needs a targeted compatibility review preserving
+all accepted receipts, histories, queues, grants and business records.
+
 ## 2 November 2026 — beta integration and production preparation
 
 Later controlling update (REL-31): PR #360/#361 are merged to beta `0bc58a16`

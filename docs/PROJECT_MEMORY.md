@@ -13,6 +13,13 @@ audit, CORS and security headers remain mandatory. Source/build measurements
 are not hosted Free-budget acceptance or deployment approval. Keep production
 PR #354 prepared separately from beta integration and exact live schema gates.
 
+The owner subsequently requests merging verified PR #363 into beta and promoting
+the completed work through production PR #354 after stability checks. This is
+conditional release intent for the current work, not approval for live schema
+changes or an assertion that unresolved acceptance gates have passed. Current
+source CI passes, but existing relay summary writes need a new missing database
+RPC; preserve atomic author admission rather than falling back to unguarded REST.
+
 Signed closing handover decision: the person starting closing and the person
 counting may differ. Preserve each verified author through offline storage,
 restart, retries and later uploads by another cashier. A separate domain-bound

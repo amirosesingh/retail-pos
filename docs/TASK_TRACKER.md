@@ -2,6 +2,40 @@
 
 Last reconciled: **2026-11-03, Asia/Brunei**.
 
+## Owner instruction — verify and merge PR #363 into beta
+
+Owner explicitly requests CI investigation/corrections and beta merge after
+passing checks, with production PR #354 updated. Preserve checkout, permissions
+and existing features. Verify the exact head/destination diff and existing-client
+hosting compatibility before merge; no live database migration, installer
+publication or main promotion is included. Keep #359 and Membership on hold.
+Current inspected head: 1e419bed; destination beta 41463049. State: CI and
+beta rollout compatibility review active. Separate exact-project schema and
+specific production-promotion approval requirements remain in force.
+
+Owner then requests production promotion of this completed beta work, conditional
+on stability and preservation of existing features. Record this current
+beta-to-production intent for PR #354; do not treat it as live schema approval,
+installer publication or permission to ignore unresolved acceptance gates.
+
+All Actions on source head **1e419bed** passed: Security checks (including full
+suite, SQL workflows, lint, type/build and dependency audit), Android compile,
+iPhone build without publication and destination labels. Independent rollout
+review nevertheless confirmed a compatibility blocker: runRelayOp routes
+shift_notifications mutations/shifts deletion to the new service-only raw-write
+RPC. A SELECT-only check in exact POS project qhrufhtbeguxydenzfey / org
+bjxgimekljzlnwejuawj confirms that RPC, author lookup and registry are absent.
+Existing summary publication can therefore fail after automatic beta hosting
+deployment. Checkout/PIN and old aggregate routes have no new dependency found.
+Do not merge this incompatible state merely because CI passed.
+
+Read-only schema inventory or missing-RPC fallback cannot safely bypass this:
+enrollment can race the pre-read and direct REST mutation lacks an atomic author
+guard. Keep the guarded path intact. Exact six-upgrade proposal is recorded in
+the existing go-live checklist; live application needs separate exact-project
+approval, captured-definition/precondition checks and isolated verification.
+No schema/data/keys were changed. Beta and production merges remain pending.
+
 ## 3 November — parallel production preparation and CI follow-up
 
 Owner approved a separate **login CPU correction and isolated tests** after
