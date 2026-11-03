@@ -3,6 +3,13 @@
 Last reconciled: **2026-11-03, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
 
+3November HOST42 approval covers CPU preparation and isolated tests only.
+Keep pure redaction for arbitrary/shared callers. An owned parsed-JSON response
+optimization must preserve exact privacy, fields/order, rows/cursors and guards;
+do not skip history, reset checkpoints or widen audit/branch access. Local
+synthetic speedups never establish Cloudflare Free10ms success. No deployment,
+database/billing changes or production promotion is included in this approval.
+
 3 November DEV-38: owner approved a narrow local module-loading correction.
 Vite development SSR does not wrap the local CommonJS shift protocol, although
 Vitest and production builds handle it. Keep the canonical Electron wire module

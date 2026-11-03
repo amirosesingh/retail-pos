@@ -621,7 +621,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       body: JSON.stringify(rpc[1]),
     });
     if (response.ok && (body.sqlServerPull || body.sqlServerBootstrap || body.sqlServerShiftGraph)) {
-      const { redactSyncDownload } = await import("./sync-download-redaction");
+      const { redactOwnedParsedSyncDownload } = await import("./sync-download-redaction");
       const management = scope.managementReplica === true || scope.managementDevice === true;
       const { commerceSyncIsolationReady } = await import("./commerce-sync-readiness.server");
       // Activate field exclusion only after its atomic database preservation guard is ready.
@@ -629,10 +629,10 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       const download = await response.json();
       if (body.sqlServerShiftGraph && download && typeof download === "object" && Array.isArray(download.tables)) {
         const { tables, ...envelope } = download;
-        return Response.json({ ...(redactSyncDownload(envelope, "", keepCommerce) as Record<string, unknown>),
-          tables: tables.map((part: Record<string, unknown>) => redactSyncDownload(part, typeof part?.table === "string" ? part.table : "", keepCommerce)) });
+        return Response.json({ ...(redactOwnedParsedSyncDownload(envelope, "", keepCommerce) as Record<string, unknown>),
+          tables: tables.map((part: Record<string, unknown>) => redactOwnedParsedSyncDownload(part, typeof part?.table === "string" ? part.table : "", keepCommerce)) });
       }
-      return Response.json(redactSyncDownload(download, body.sqlServerBootstrap?.table ?? "", keepCommerce));
+      return Response.json(redactOwnedParsedSyncDownload(download, body.sqlServerBootstrap?.table ?? "", keepCommerce));
     }
     return new Response(await response.text(), {
       status: response.status,
