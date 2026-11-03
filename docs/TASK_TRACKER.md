@@ -4,14 +4,38 @@ Last reconciled: **2026-11-03, Asia/Brunei**.
 
 ## SHIFT49 — approved reconciliation-summary preparation, no live changes
 
+Historical preparation extension: owner requests the underlying recovery error
+resolved. Prepare an exact seven-row, five-NULL-summary repair and isolated
+tests; execution still requires separate exact approval. Root refreshes live
+fingerprints first. Preserve all existing facts, normal triggers and graph
+guards, append before/after maintenance audit, roll back on any mismatch or
+invalid full graph. Held eighth STR1 original-authority repair remains excluded;
+its original private evidence must be recovered or recaptured. This supersedes
+the earlier plan-only/no-executable-preparation boundary, not live approval.
+
+Future-write live correction separately approved and applied by root: immutable
+FF8FC4BBA96CB68274E973557107F6F13809A4D825308613AD59CE6750B24056 migration;
+readback body de87d75592ce3fe5872de90b4be9a466, OID22248 and existing owner,
+ACL, arguments and flags preserved. This did not modify historical rows.
+Prepared seven-row maintenance artifact now passes 46 PGlite scenarios and
+47 actual disposable PostgreSQL scenarios, including real two-session NOWAIT
+contention, whole-batch audit/late-graph rollback, legitimate replay and forged
+valid-graph replay denial. All ten captured real triggers remain enabled:
+seven parent versions increment once; updated_at changes normally; seven audit
+rows plus fourteen normal feed entries (seven shifts/seven audit). No activity
+notification, count, timing, stock, sale or held-eighth change. Native fixture
+owned-GDpLtG stopped and removed. Live historical execution remains unapproved;
+affected original PC is unavailable, so complete eight-graph recovery is blocked.
+
 Preparation verified: 89 isolated SQL scenarios and 27 focused Vitest tests
 passed; scoped ESLint and `tsc --noEmit` passed. Guarded migration
 `20261103105157_preserve_shift_reconciliation_parent_summaries.sql` changes
-only seven already-computed parent assignments. Live application is NOT approved
-or performed; current shifts recovery remains blocked. Historical proposal is
+only seven already-computed parent assignments. This future-write migration was
+subsequently separately approved/applied as recorded above; current historical
+shifts recovery remains blocked. Historical proposal is
 [the read-only seven-row plan](database/shift-reconciliation-summaries-repair-plan.md),
-explicitly excluding the eighth held STR1 authority repair. No historical
-mutation script is prepared. Synthetic tests do not verify live recovery.
+explicitly excluding the eighth held STR1 authority repair. Historical mutation
+is prepared only, not applied. Synthetic tests do not verify live recovery.
 
 Owner explicitly approved preparing and isolate-testing a separate correction
 after read-only diagnosis of the new shifts gap. Baseline beta290ef2c5; branch
