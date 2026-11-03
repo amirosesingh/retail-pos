@@ -10,6 +10,7 @@ import { alignVerifiedScopeIds } from "./verified-scope-ids";
  * permissions on the server, then commit only what those allow.
  */
 import { z } from "zod";
+import { syncAggregateSchema } from "./sync-shift-intent.server";
 
 const opSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -75,27 +76,10 @@ const bodySchema = z.object({
       changes: z.array(z.record(z.string(), z.unknown())).max(2000),
     })
     .optional(),
-  sqlServerAggregate: z
-    .object({
-      batchId: z.string().uuid(),
-      organizationId: z.string().min(1).max(128),
-      branchId: z.string().min(1).max(128),
-      operations: z
-        .array(
-          z.object({
-            deletePhase: z.boolean().optional(),
-            table: z
-              .string()
-              .regex(/^[a-z_][a-z0-9_]*$/)
-              .max(64),
-            rows: z.array(z.record(z.string(), z.unknown())).max(2000),
-            changes: z.array(z.record(z.string(), z.unknown())).max(2000),
-          }),
-        )
-        .min(1)
-        .max(200),
-    })
-    .optional(),
+  sqlServerAggregate: syncAggregateSchema.optional(),
+  sqlServerShiftGraph: z.object({
+    organizationId: z.string().min(1).max(128), branchId: z.string().min(1).max(128), shiftId: z.string().uuid(),
+  }).strict().optional(),
   sqlServerPull: z
     .object({
       organizationId: z.string().min(1).max(128),
@@ -194,6 +178,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     !body.read &&
     !body.sqlServerBatch &&
     !body.sqlServerAggregate &&
+    !body.sqlServerShiftGraph &&
     !body.sqlServerPull &&
     !body.sqlServerBootstrap &&
     !body.sqlServerCounts &&
@@ -223,10 +208,12 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
   // till can act on instead of a blank failure.
   const { resolveRelayScope } = await import("@/core/api/relay-policy.server");
   let scope: Awaited<ReturnType<typeof resolveRelayScope>>;
+  let verifiedTerminal: import("./terminal-binding.server").VerifiedTerminalDescriptor | undefined;
   try {
     const { managementReplicaScope } = await import("./management-replica.server");
     const replicaScope = await managementReplicaScope(body);
     const caller = replicaScope ? null : await verifyRelayCaller(body);
+    verifiedTerminal = caller?.terminal;
     if (caller?.storeId) {
       const { branchExists } = await import("./session-verify.server");
       if (!(await branchExists(caller.storeId))) {
@@ -241,7 +228,13 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       }
     }
     scope = replicaScope ?? await resolveRelayScope(caller!);
+    // Signed fields retain their exact spelling. Only the existing transport and
+    // derived operations may resolve SQL-equivalent scope aliases.
+    const signedAuthor = body.sqlServerAggregate?.shiftAuthor;
+    const signedStart = body.sqlServerAggregate?.shiftClosingStart;
     body = alignVerifiedScopeIds(body, scope);
+    if (signedAuthor && body.sqlServerAggregate) body.sqlServerAggregate.shiftAuthor = signedAuthor;
+    if (signedStart && body.sqlServerAggregate) body.sqlServerAggregate.shiftClosingStart = signedStart;
   } catch (e) {
     if ((e as { status?: number }).status === 503)
       return Response.json({ ok: false, code: "SERVICE_UNAVAILABLE", error: "Registration verification is temporarily unavailable." }, { status: 503 });
@@ -310,6 +303,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
   if (
     body.sqlServerBatch ||
     body.sqlServerAggregate ||
+    body.sqlServerShiftGraph ||
     body.sqlServerPull ||
     body.sqlServerBootstrap ||
     body.sqlServerCounts ||
@@ -318,6 +312,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     const branchId =
       body.sqlServerBatch?.branchId ??
       body.sqlServerAggregate?.branchId ??
+      body.sqlServerShiftGraph?.branchId ??
       body.sqlServerPull?.branchId ??
       body.sqlServerBootstrap?.branchId ??
       body.sqlServerCounts?.branchId ??
@@ -326,6 +321,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     const terminalSync = Boolean(
       body.sqlServerBatch ||
       body.sqlServerAggregate ||
+      body.sqlServerShiftGraph ||
       body.sqlServerPull ||
       body.sqlServerBootstrap ||
       body.sqlServerCounts,
@@ -507,6 +503,36 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
         );
     }
     const { serviceRest } = await import("@/core/api/pos-relay.server");
+    let authorState: Awaited<ReturnType<typeof import("./shift-author-verification.server").readShiftAuthorAuthority>> | undefined;
+    let startAuthorState: typeof authorState;
+    if (body.sqlServerAggregate?.shiftIntent) {
+      const { verifyShiftAuthorAttestation, readShiftAuthorAuthority, verifyShiftClosingStart, readShiftClosingStartAuthority, ShiftAuthorError } = await import("./shift-author-verification.server");
+      try {
+        if (!verifiedTerminal) throw new ShiftAuthorError("ESHIFT_AUTHOR_INVALID", "A verified terminal is required.");
+        const aggregate = body.sqlServerAggregate;
+        aggregate.shiftAuthor = await verifyShiftAuthorAttestation({ attestation: aggregate.shiftAuthor, payloadJson: aggregate.shiftIntent!.payloadJson,
+          terminal: verifiedTerminal, branchId, shiftId: aggregate.shiftIntent!.shiftId, intentId: aggregate.batchId, action: aggregate.shiftIntent!.kind });
+        if (aggregate.shiftClosingStart) {
+          aggregate.shiftClosingStart = await verifyShiftClosingStart({ proof: aggregate.shiftClosingStart, terminal: verifiedTerminal, branchId, shiftId: aggregate.shiftIntent!.shiftId });
+          try { startAuthorState = await readShiftClosingStartAuthority(aggregate.shiftClosingStart); }
+          catch (error) {
+            if (error && typeof error === "object" && "status" in error && error.status === 503)
+              startAuthorState = { allowed: false, code: "ESHIFT_AUTHOR_UNAVAILABLE" };
+            else throw error;
+          }
+        }
+        try { authorState = await readShiftAuthorAuthority(aggregate.shiftAuthor); }
+        catch (error) {
+          if (error && typeof error === "object" && "status" in error && error.status === 503)
+            authorState = { allowed: false, code: "ESHIFT_AUTHOR_UNAVAILABLE" };
+          else throw error;
+        }
+      } catch (error) {
+        const unavailable = error && typeof error === "object" && "status" in error && error.status === 503;
+        return Response.json({ ok: false, code: unavailable ? "ESHIFT_AUTHOR_UNAVAILABLE" : "ESHIFT_AUTHOR_INVALID",
+          error: unavailable ? "Author verification is temporarily unavailable; saved work remains pending." : "The protected shift author could not be verified." }, { status: unavailable ? 503 : 403 });
+      }
+    }
     const governanceBatch =
       body.sqlServerBatch && governanceRpcTables.has(body.sqlServerBatch.table);
     const rpc = governanceBatch
@@ -535,15 +561,23 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
           ] as const)
         : body.sqlServerAggregate
           ? ([
-              "pos_sync_push_aggregate",
+              body.sqlServerAggregate.shiftIntent ? (body.sqlServerAggregate.shiftClosingStart ? "pos_sync_push_started_shift_intent" : "pos_sync_push_author_shift_intent") : "pos_sync_push_aggregate",
               {
                 p_batch_id: body.sqlServerAggregate.batchId,
                 p_organization_id: body.sqlServerAggregate.organizationId,
                 p_branch_id: branchId,
-                p_operations: body.sqlServerAggregate.operations,
+                p_operations: body.sqlServerAggregate.shiftIntent ? null : body.sqlServerAggregate.operations,
                 p_terminal_id: scope.terminalId ?? "",
+                ...(body.sqlServerAggregate.shiftIntent ? { p_shift_intent: body.sqlServerAggregate.shiftIntent,
+                  p_shift_author: body.sqlServerAggregate.shiftAuthor, p_author_authority: authorState } : {}),
+                ...(body.sqlServerAggregate.shiftClosingStart ? { p_closing_start: body.sqlServerAggregate.shiftClosingStart, p_start_authority: startAuthorState } : {}),
               },
             ] as const)
+          : body.sqlServerShiftGraph
+            ? (["pos_sync_shift_graph", {
+                p_organization_id: body.sqlServerShiftGraph.organizationId, p_branch_id: branchId,
+                p_terminal_id: scope.terminalId ?? "", p_shift_id: body.sqlServerShiftGraph.shiftId,
+              }] as const)
           : body.sqlServerPull
             ? ([
                 "pos_sync_pull",
@@ -586,13 +620,19 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       method: "POST",
       body: JSON.stringify(rpc[1]),
     });
-    if (response.ok && (body.sqlServerPull || body.sqlServerBootstrap)) {
+    if (response.ok && (body.sqlServerPull || body.sqlServerBootstrap || body.sqlServerShiftGraph)) {
       const { redactSyncDownload } = await import("./sync-download-redaction");
       const management = scope.managementReplica === true || scope.managementDevice === true;
       const { commerceSyncIsolationReady } = await import("./commerce-sync-readiness.server");
       // Activate field exclusion only after its atomic database preservation guard is ready.
       const keepCommerce = management || !(await commerceSyncIsolationReady());
-      return Response.json(redactSyncDownload(await response.json(), body.sqlServerBootstrap?.table ?? "", keepCommerce));
+      const download = await response.json();
+      if (body.sqlServerShiftGraph && download && typeof download === "object" && Array.isArray(download.tables)) {
+        const { tables, ...envelope } = download;
+        return Response.json({ ...(redactSyncDownload(envelope, "", keepCommerce) as Record<string, unknown>),
+          tables: tables.map((part: Record<string, unknown>) => redactSyncDownload(part, typeof part?.table === "string" ? part.table : "", keepCommerce)) });
+      }
+      return Response.json(redactSyncDownload(download, body.sqlServerBootstrap?.table ?? "", keepCommerce));
     }
     return new Response(await response.text(), {
       status: response.status,

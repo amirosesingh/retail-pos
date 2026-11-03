@@ -1,6 +1,729 @@
 # POS task tracker
 
-Last reconciled: **2026-11-02, Asia/Brunei**.
+Last reconciled: **2026-11-03, Asia/Brunei**.
+
+## Owner instruction — verify and merge PR #363 into beta
+
+### Completed cloud rollout — supersedes pending statuses below
+
+After renewed exact approval, all six current pinned upgrades applied to
+ROSEGILL / pos qhrufhtbeguxydenzfey / postgres. Before application, all 48
+captured routine definitions/authority metadata remained unchanged and four
+protocol tables were absent. Each separate application returned success.
+Recorded live versions, in order: 20261103013712, 20261103013757,
+20261103013803, 20261103013905, 20261103013911, 20261103013918.
+
+Live SELECT-only readback: **70 normalized function-body hashes exactly match
+the isolated approved rollout**; all 48 existing owners/ACL/config/security modes
+remain unchanged. Required public RPCs have service-only execution, four private
+metadata tables have RLS and no direct anon/authenticated/service-role grants.
+All four new tables contain zero records: no keys, receipts or historical intents
+were enrolled/replayed. Stale-reopen, requested-revision, audit-type and role-cast
+checks pass. This removes the missing-raw-RPC beta deployment blocker. No local
+SQL upgrade, historic repair, installer publication or real business operation
+was performed. Owned scratch artifacts preserve readback/history/body hashes.
+
+All Actions passed on 56a3a47f before this documentation reconciliation and
+trailing-blank-line cleanup. Final checked head and beta integration follow;
+do not infer completed main promotion or whole-system/device/Free-CPU acceptance.
+Existing management NULL-scope, financial-as-of and installed-device gates remain.
+
+Owner renewed exact approval for the corrected enforcement SHA256
+992E2300C30A71A1DA5B23B9181B17A2BE2E8AED521E2DA942E503EBB18233C6
+and start-proof SHA256
+A0C99E3FF5EFDFAE80794FCDAAD69A84034789378D40E85739924AC766D23BE4.
+All six current pinned files are now approved for the identified cloud project,
+after metadata drift check and completed captured-schema isolation. Apply in
+order and stop on unexpected state; no local upgrades, real enrollment/testing,
+installer publication or historical repair. State: authorized rollout starting.
+
+Owner subsequently **approved the six exact cloud upgrades** pinned in the
+go-live checklist for ROSEGILL / pos qhrufhtbeguxydenzfey / postgres. Approval
+requires captured-definition checks and isolated verification before applying
+the ordered files, stopping on unexpected state, live readback, then beta merge
+only after final checks. No local upgrade, real enrollment during verification,
+installer publication or #359 repair. Current state: metadata captured in the
+owned rollout scratch directory; independent prerequisites/hashes pass; isolated
+captured-definition rollout is running. No live DDL has occurred yet.
+
+Captured-schema isolation caught a real type mismatch before any live write:
+app_users.role is enum app_role, while two management-author helper calls expect
+text. Existing synthetic fixtures used text. The exact six files create cleanly
+in isolation, but first signed upload fails resolution before writes. Prepare
+only explicit person.role::text at the two existing call sites, matching canonical
+blocks and enum regression fixtures; do not change role/grant logic or overloads.
+This is a necessary correction under the owner's PR-failure instruction.
+It changes two SQL hashes: the previous approval cannot authorize those changed
+bytes. Keep all live application stopped pending final captured-schema tests and
+renewed exact approval for the two corrected files. Four unchanged approvals
+remain recorded. No live migrations, keys or business records were changed.
+
+Corrected source verification complete: root independently reran all **32
+captured-schema workflow scenarios** and **30 enduring author SQL scenarios**;
+all passed. Agent also verified 23 native full-graph and 25 canonical cases,
+lint and diff checks. Independent review confirms only the two runtime casts
+and matching canonical copies change, with no signature/grant/policy change.
+CI now runs the enduring real-enum author suite. Updated exact hashes are
+992E2300C30A71A1DA5B23B9181B17A2BE2E8AED521E2DA942E503EBB18233C6
+(enforcement) and
+A0C99E3FF5EFDFAE80794FCDAAD69A84034789378D40E85739924AC766D23BE4
+(start proof). Await renewed approval for those two files before the full
+ordered live upgrade; all six remain unapplied. Root metadata snapshot and
+isolated report are in the owned shift-rollout-approval-20261103 scratch folder,
+outside this Git worktree; they contain schema definitions, not business rows.
+
+Separate pending scope audit: captured pos_sync_validate_scope requires token
+location_id = requested branch, so a NULL-location management token fails this
+SQL helper. This is existing deployed behavior, not changed by these six files.
+Its complete management-client impact still needs tracing. Preserve the actual
+validator in isolated tests and never substitute a permissive management shim
+or widen scope silently. Keep this finding separate from the enum-only fix.
+
+Owner explicitly requests CI investigation/corrections and beta merge after
+passing checks, with production PR #354 updated. Preserve checkout, permissions
+and existing features. Verify the exact head/destination diff and existing-client
+hosting compatibility before merge; no live database migration, installer
+publication or main promotion is included. Keep #359 and Membership on hold.
+Current inspected head: 1e419bed; destination beta 41463049. State: CI and
+beta rollout compatibility review active. Separate exact-project schema and
+specific production-promotion approval requirements remain in force.
+
+Owner then requests production promotion of this completed beta work, conditional
+on stability and preservation of existing features. Record this current
+beta-to-production intent for PR #354; do not treat it as live schema approval,
+installer publication or permission to ignore unresolved acceptance gates.
+
+All Actions on source head **1e419bed** passed: Security checks (including full
+suite, SQL workflows, lint, type/build and dependency audit), Android compile,
+iPhone build without publication and destination labels. Independent rollout
+review nevertheless confirmed a compatibility blocker: runRelayOp routes
+shift_notifications mutations/shifts deletion to the new service-only raw-write
+RPC. A SELECT-only check in exact POS project qhrufhtbeguxydenzfey / org
+bjxgimekljzlnwejuawj confirms that RPC, author lookup and registry are absent.
+Existing summary publication can therefore fail after automatic beta hosting
+deployment. Checkout/PIN and old aggregate routes have no new dependency found.
+Do not merge this incompatible state merely because CI passed.
+
+Read-only schema inventory or missing-RPC fallback cannot safely bypass this:
+enrollment can race the pre-read and direct REST mutation lacks an atomic author
+guard. Keep the guarded path intact. Exact six-upgrade proposal is recorded in
+the existing go-live checklist; live application needs separate exact-project
+approval, captured-definition/precondition checks and isolated verification.
+No schema/data/keys were changed. Beta and production merges remain pending.
+
+## 3 November — parallel production preparation and CI follow-up
+
+Owner approved a separate **login CPU correction and isolated tests** after
+choosing to keep Cloudflare Free. Recoverable baseline: clean ef2ef784 on
+codex/shift-integrity-coordination-beta. Approved runtime scope: src/server.ts,
+new cashier-login-endpoint.server.ts, public cashier-login route,
+pin-request-throttle.server.ts and cashier-login.server.ts, plus focused tests.
+Dispatch only exact POST/OPTIONS public cashier login before framework router
+loading; preserve existing validation, CORS/security headers, errors, throttles,
+trusted client address, real wrong attempts, terminal/branch permissions, Auth
+proof/session/audit and all unrelated routes. Agents implement/review bounded
+files with one writer per file. No database, billing, deployment or Membership
+changes. Require first/warm isolated build evidence, response/guard parity and
+exact-head CI; local timings alone cannot certify the hosted 10 ms budget.
+State: active implementation. Rollback: targeted source revert retaining other
+beta fixes; no data or queue restoration is involved.
+
+Login correction source and focused verification completed: exact CF-metadata
+POST dispatch skips the UI router; non-CF POST retains framework request scope
+and original client-address lookup. Shared endpoint keeps route delegation,
+CORS/security, PIN/attempt/branch/session/audit behavior. Review caught the
+initial non-CF scope regression before commit; it was corrected and covered.
+Agent focused checks: **148 tests across nine files**, TypeScript and scoped
+lint passed; independent read-only review found no actionable scoped defect.
+Root built the final Cloudflare bundle successfully. Actual shipped index
+was tested with synthetic bindings and entirely stubbed network: login
+200/wrong-PIN 401/preflight 204; 28/27/12 modules loaded respectively, without
+router/UI/TanStack. Unrelated-route control loads 189 modules and the framework.
+Median warm local Node CPU was about 1.55 ms/login; fresh process CPU was
+125–141 ms including filesystem imports/instrumentation. These are **not hosted
+Cloudflare CPU measurements or Free-budget certification**. Zod remains about
+661 KB. No live requests, credentials, database/billing/deployment changes.
+Full-suite and final pushed-head CI remain required before beta integration.
+
+Final source verification: full pinned Node22 suite **613 files / 4,627 tests
+passed**, one opt-in file/test skipped (106.72 seconds, two workers); TypeScript
+passed. The opt-in actual-engine handover was separately verified earlier and
+was not rerun for this login-only batch. Root's first full run exposed a Windows
+LF/CRLF mismatch in transfer test setup, not transfer logic: normalized only its
+fixture inputs and asserted exact preservation of the lifecycle definition
+except the reviewed completion guard. All five original transfer tests and the
+final complete rerun pass. Notifications 23/23 and 70-table schema/sync registry
+plus installation-order checks pass. Preserve final exact-head remote CI,
+live CPU measurement and existing production/migration/acceptance gates.
+
+Exact-head CI on ef2ef784 passed native closing graph, transfer/request and
+history scenarios, then failed notification generator parity because its
+temporary fixture omitted the five newly required migration source files.
+Root added only those fixture inputs; **23/23 notification SQL scenarios pass**
+without changing notification logic, generator behavior or live data. Other
+existing CI gates still require a complete run on the final corrected head.
+
+Owner asks to prepare/update the existing production PR alongside beta fixes.
+PR #354's obsolete authority-plan and SHIFT-34/35 status was reconciled with
+actual beta 41463049 and candidate #363 at 3acb0900. #354 remains draft,
+unmerged; #363 is not yet beta content. Main remains v1.4.79 / 2f404e6f.
+Preserve beta-first integration, exact-head checks and separate ready-promotion
+approval. Historical #359 and Membership/dependencies remain HOLD.
+
+Confirmed CI blocker: the standalone trusted Windows closing-graph fixture
+does not initialize the new shift authority. Agent correction uses the real
+v3 authority/journal path rather than a permissive stub. Exercising it also
+reproduces a candidate compatibility regression: the signed start RPC equates
+the original opening terminal with the actual closing terminal. Preserve the
+existing authorized same-branch cross-terminal close success and independently
+validate original-parent identity; do not turn it into an expected denial.
+Source correction and regression verification are in progress, not merged or
+applied live. No checkout, permission grants or real shift records changed.
+
+Follow-up candidate correction completed in source: start-proof migration and
+matching canonical block distinguish immutable opening-terminal attribution from
+the registered executing terminal. Both are compared to trusted respective
+contexts; only ORIGINAL with validated start proof admits this compatibility.
+No earlier migration, permission grant or real record is rewritten. Root reran
+the exact failing native graph command: **23/23 passed**; independent read-only
+review found no actionable scoped defect and confirmed exact schema/migration
+parity and unchanged final privilege hardening. Agent final checks: **28 author
+SQL cases, 157 focused Vitest cases**, lint and diff checks passed. Source
+preparation is implemented/isolated-verified, not live-applied; remote exact-head
+CI, beta integration, physical-device/checkout acceptance and release gates remain.
+
+Read-only Cloudflare inspection confirms production deployment a70a936e maps
+to main 2f404e6f. Last-24-hour logs include CPU-limit 503s for both sync and
+public cashier login; one login reports 15 ms CPU / 1,462 ms elapsed. Beta's
+redaction improvement is not yet deployed to production and does not explain
+the separate login failure. Hosting execution budget and exact CPU attribution
+were initially unverified; no billing, CPU-limit, database or production setting changed.
+
+Subsequent read-only Workers plans inspection confirms **Free / Current plan**
+for the same Cloudflare account and **10 ms CPU per request**. The observed
+15 ms failed login exceeds that budget, establishing a hosting-limit mismatch
+for this invocation. Source merging alone cannot guarantee recovery; retain
+an owner-authorized execution-plan/budget decision and post-deployment checks
+as a production gate. No Upgrade button was used and no billing changed.
+PR #354 was updated with this evidence, remaining draft/unmerged.
+
+Owner decision: **Keep Free; investigate further optimization**. Do not upgrade
+billing or change hosting CPU limits. Continue bounded source/isolated CPU
+investigation for login and sync, preserving authentication, branch/privacy,
+wrong-attempt handling and complete pagination. Do not claim the Free budget
+is met without measured hosted acceptance; report feasibility limits honestly.
+
+
+## Latest checkpoint — signed shift handover verification
+
+On 2 November beta PR #362 merged as
+`41463049eb4d025398cfb273e85046f15c45817c`, tree
+`1cf69ced0cb138085e2862f8045f09f67d4e9159`, exactly equal to independently
+reviewed head `e80bff567a11c46085b9613027cc55c008f848ba`. GitHub confirms original
+PRs #343, #344, #345, #346, #347 and #357 are **MERGED**, with all original
+heads retained as ancestors. Android, Windows-renderer, iOS, security and
+Cloudflare build checks passed on the reviewed head; CodeRabbit skipped.
+Final beta-push and production-PR checks on 41463049 also passed: security
+(push and PR), Android/Windows renderer and beta hosting; CodeRabbit skipped.
+Metadata is 1.4.81; calculated
+next installer beta is 1.4.82-beta.1. No installer was published and main
+remains 2f404e6f / v1.4.79. No lifecycle SQL was applied live.
+
+The owner then explicitly approved **both separate correction batches and
+isolated tests** before production, after confirmation of source defects below.
+Each branch starts from clean, recoverable beta 41463049. Approval covers
+preparation/code and isolated tests only, not live PC/cloud schema application,
+historical reconciliation, permission changes or production promotion.
+
+| ID / state | Confirmed defect and approved correction | Scope, risk and acceptance |
+| --- | --- | --- |
+| SHIFT-34 / active preparation | Packaged SQL emits unconditional count uniqueness by shift, unlike cloud ORIGINAL-only uniqueness; native recount duplicate catches can report success without verifying saved facts. Prepare ORIGINAL-only local index parity and truthful recount replay. | Native recount handler and internal graph/replay helper; narrowly scoped SQL Server generator, additive local upgrade and regenerated existing schema/registry/installers; focused tests. Preserve all rows, exact counts, IDs, actor/branch, grants and current drawer. Verify original then multiple recounts, exact and mismatched replay, unrelated uniqueness errors, rollback, concurrency, branch/permission denial and cloud recount download. Unknown index shapes/data conflicts must abort before DDL. No real POS_Local access. |
+| SHIFT-35 / active preparation | Independent cloud/local counters can suppress web CLOSED updates while advancing pull cursor; pending protection only checks the journal and misses legacy CT edits. Prepare truthful adoption outcomes and pending-aware convergence. | Shift-specific behavior in cloud-client, pull-worker and change-reader, necessary existing bootstrap caller integration and focused tests, subject to final bounded design. Preserve other tables, branch restrictions, pending journal/CT changes and closing graph dependencies. No unconditional cloud-wins, invented revisions, cursor reset/skip or dropping rows. Test OPEN99/CLOSED5, equal facts, pending journal/CT, complete graph/page boundaries, interrupted retry and branch denial. Any new API/schema/business rule needs separate approval. |
+
+Root owns this existing ledger/memory and coordination branch. Separate agents
+own each implementation branch and may not edit each other's files. Reconcile
+both immutable diffs, perform independent review and combined regression checks
+before beta PRs/merges. Live database changes require exact-project approval;
+the lifecycle guard source merge does not authorize its application.
+
+The owner reconfirmed **one effective closing** for old STR1 shift
+1a349429-cea1-4f45-8d2b-36678d37ad27: use the original cashier closing
+(31 October 21:08:56, cash 687), with the later deliberate web action retained
+only as audit history. This clarifies the reconciliation target, not permission
+to delete histories or execute the obsolete #359 replay. A new exact audited
+plan still precedes any data repair; #359 remains HOLD. Membership/dependencies
+stay on hold and all other unfinished tasks remain preserved below.
+
+Later owner clarification: subsequent authorized administrator corrections made
+on **web or terminal** must persist and synchronize in both directions; a PC
+that is off receives accepted changes on startup/reconnect. Retain one effective
+closing and immutable correction history. An older queued opening/closing must
+not undo an accepted correction; pending offline changes must not be discarded.
+The original-cashier choice above is this historical reconciliation target, not
+a permanent rule that cashier facts override future administrator corrections.
+Concurrent/conflicting unacknowledged edits need explicit safe conflict handling,
+not client-clock guessing or unconditional cloud wins.
+
+SHIFT-35 design refinement: exact outcomes/pending protection necessarily includes
+the existing bootstrap caller, which otherwise filters pending rows while
+advancing its baseline. Root includes that caller in the approved correction's
+necessary dependencies; no new business module, endpoint or schema is authorized.
+Reliable lower-counter closing adoption also needs a complete graph consistency
+contract: the feed can split parent/children across pages. Do not advance past an
+unapplied closing, erase pending work, or wait forever for later children behind
+a blocked parent page. Inspect existing read/proof contracts first. If a new
+server/API/schema contract is required, present it separately before expansion;
+do not claim native convergence complete from safe deferral alone.
+
+### SHIFT-36 — owner-approved protocol preparation and isolated tests
+
+Final 3 November handover checkpoint: complete suite 611 files passed / one
+opt-in file skipped; 4,572 tests passed / one opt-in skipped (114.29 seconds,
+pinned Node22, two workers). That opt-in actual-engine handover was separately
+executed and passed; it is not an unexecuted coverage gap. TypeScript, diff and
+changed-file lint checks passed (17 test-only typing warnings, zero errors).
+The approved same-registered-terminal A→B source preparation is implemented and
+verified in isolated engines. Cross-device handover/physical-device acceptance
+are not certified by this fixture. Preserve remaining financial-policy, live
+migration, CI and release gates; do not mark the entire POS audit complete.
+
+3 November: native start implementation 3125ede9 and server 6c674ff8/3a169316
+are integrated, preserving the separate domain contract. A fresh independent
+read-only candidate review confirmed one regression: attaching start evidence to
+later recount/variance intents. Root corrected freeze association to ORIGINAL
+only; malformed saved non-original associations stay pending rather than being
+silently rewritten. Actual combined A-start/B-count workflow independently passed
+in 9.92 seconds, including key/connection reconstruction, lost-reply exact retry,
+both authors' signature denial paths, two later ordinary recount RPCs, real web
+correction and child-only adoption with pending-edit protection. Real LocalDB:
+31 cases passed, including 024 idempotence/refusal, atomic A proof/B intent,
+rollback/retry and original-only association. SQL authority: 22 cases passed;
+156 focused API/native tests and TypeScript passed. Changed-file lint has zero
+errors and 17 test typing warnings; diff check passes. Broader suite is rerunning
+after adapting the old journal fixture to model 024 without dropping assertions.
+No physical-device, installed-IPC, OS-vault or full stock-checkout certification
+is inferred from synthetic identity/transport/vault adapters. No live changes.
+Financial expected-amount/as-of policy, exact-head CI and approved migration/
+deployment/release remain separate gates. Membership and #359 remain HOLD.
+
+Owner approved signed closing-start proof preparation and isolated tests on
+2 November, superseding the pending approval below. Preserve the actual person
+who starts closing and the different permitted person who finishes offline.
+Prepare separate domain-bound, immutable start evidence captured by trusted Main
+under the existing start-close permission/session/terminal guard. The final
+closing must not retag that earlier author; server verification must bind the
+saved start event/shift/branch/project/terminal and enforce existing access without
+granting new permissions or permitting unsigned invented history. Cover restart,
+different users, forged/replayed proofs, revocation, rollback and retry. Reuse
+existing author keys/metadata/contracts where compatible; inspect the concrete
+protocol before edits and keep one owner per file. Approval is SOURCE AND
+ISOLATED TESTS ONLY: no live enrollment, installed SQL/cloud schema application,
+business data repair, production merge or installer publication. Financial
+expected-amount/as-of policy and Membership hold remain unchanged.
+
+Reviewed start contract: use optional singular OUTER shiftClosingStart beside
+shiftAuthor, preserving existing frozen closing JSON/hash and causal headers.
+Separate closing-start.v1 signature binds author/key/project/terminal/branch/
+shift/event and exact raw start payload SHA256. Strict payload max16KiB contains
+the actual saved business event (only revision/update clocks excluded) plus
+original parent identity and closing-start time/by/reason; never money formulas.
+Native saves proof atomically with actual start and freezes its exact association
+with ORIGINAL metadata. Server checks A's signature/current start permission and
+B's existing count permission before new writes. A distinct service-only RPC
+uses a bounded private validated-start context to admit only that earlier event;
+an immutable receipt binds proof to accepted intent. Existing RPC replay cannot
+omit/change an accepted start proof. Historical exact replay retains no-write
+semantics, current terminal scope/signatures and original authors. Same-author
+legacy compatibility stays bounded; unproved different-author rows stay pending.
+Use typed native/PG timestamp representation checks, not arbitrary clock priority.
+The independent fresh read-only contract investigation is complete; candidate
+review follows implementation/focused tests. Native/server work remains isolated
+with shared public protocol owned by native author; root owns this ledger.
+
+Author candidate verification completed for the current scope: fresh independent
+review confirmed two actual native/server compatibility defects (missing original
+parent closing author and rejected saved closing_started). Both were reproduced
+and corrected; the real signed workflow passes. Final broad suite excluding only
+the separately executed opt-in engine test: 611 suites / 4,549 tests passed.
+Actual signed Main/key/enrollment/API/SQL workflow: 1 comprehensive scenario
+passed; isolated SQL authority scenarios: 15 passed; actual LocalDB: 28 passed;
+TypeScript/diff checks passed. Exact changed-file lint: zero errors, 12 test-only
+typing warnings. No additional formal review cycle or full-system security claim.
+Signed-path denials cover forged actor/scope/signature and stale/revoked new writes;
+accepted exact history remains no-write acknowledgement. Existing unsigned legacy
+compatibility is explicitly unretired, not claimed fixed for all old terminals.
+
+Still pending: owner decision on a separate signed closing-start proof so one
+person may start offline and another finish without inventing prior authorship;
+authoritative expected-amount/offline refund as-of policy; final reviewed-head CI,
+safe reviewed migration rollout with exact-project approval, installed-device
+acceptance and release. A question for closing-start preparation is pending;
+elapsed time is not approval. No new extension, live migration or real enrollment
+has been executed. #359 historical repair and Membership remain HOLD.
+
+Latest continuation: completed native author commit a0f18cbf and atomic server
+enforcement eda1802c are integrated as 8f98b5d1/7ffd0e96. Parent reran 92 focused
+author/API tests and 12 isolated SQL security scenarios: passed; TypeScript
+passed. Disposable real LocalDB checks: 28 scenarios passed, including local023
+shape/index preservation, stored signatures, epoch-change rollback and original
+offline/pending-edit contracts. A fresh independent read-only candidate review
+is active. The cross-boundary fixture owner is updating only its two test files
+to exercise actual author signing/enrollment/verified signed RPC; the earlier
+unsigned-protocol success must not be called signed workflow verification.
+Broad regression excludes that actively edited opt-in test and is running.
+No installed SQL, real enrollment, business record or live schema changes.
+
+Cross-boundary engine harness is integrated at 796b7f41; root independently ran
+the opt-in actual LocalDB → worker → CloudClient → sync API → in-memory PostgreSQL
+scenario: passed in 9.79 seconds. Named SQL arguments are additionally verified
+against actual routine parameter names (final component 677eb946 delta). It
+exercises actual corrected web SQL and child-only adoption, exact lost-response
+replay, retained author labels and pending-note rollback. Identity/transport/feed
+adapters remain synthetic, Main functions are source-loaded rather than installed
+IPC, and the sale header is not a stock checkout acceptance test. AUTH-37 remains
+unverified until signing/enforcement integration and fresh candidate review.
+
+AUTH-37 necessary alias closure: source trace confirmed runRelayOp can mutate
+shift_notifications through raw REST outside the 12 graph helper guards. The
+root includes a narrowly constrained service-only atomic mutation RPC and the
+necessary existing pos-relay.server.ts caller change in the approved author
+boundary. Keep safeAuthorizeRelayOp first, exact legitimate upsert/filter/delete
+semantics, personal web/mobile flows, OPEN/housekeeping/delivery acknowledgements
+and existing grants. No generic proxy, broad graph trigger, new role grant or
+financial rule is authorized; test denied sensitive aliases and allowed controls.
+
+Resume verification: full suite including enrollment foundation and both boundary
+fixes passed 609 suites / 4,485 tests with one migration-inventory failure (missing
+registry filename), not a runtime failure. Separately approved web audit-event
+correction 533663b3 is integrated as 2d3d3df0, including that inventory entry.
+Root independently reran all 8 isolated SQL scenarios and 33 canonical/admin
+tests: passed. Original missing-event failure was reproduced before patch; fixed
+real routine retains exact expected amounts, original times, actors/defaults,
+ACL/config/OID and idempotent retries; late failure rolls back the full graph.
+Unknown shape/missing prerequisite abort without data edits. This is tested source
+preparation only; real project application and final complete workflow remain
+pending. Main author wiring, atomic authorization enforcement and independent
+candidate review remain active. Do not mark whole shift sync fully verified.
+
+Owner separately approved the real-workflow-discovered web correction audit fix
+on 2 November: pos_admin_correct_closed_shift omits required activity_events
+event_type, causing transaction rollback against the actual canonical table.
+Prepare an additive migration and matching schema source adding only
+event_type='shift_close_corrected', preserving calculations, administrator/branch
+checks, saved audit facts and retry semantics, with isolated SQL tests. Existing
+migrations remain immutable. No live application is authorized. The cross-boundary
+test must use the actual corrected routine before claiming web correction works;
+do not drop the NOT NULL constraint or substitute a synthetic successful action.
+web_async_audit owns this separate batch; coordinate shared generator edits with
+the author-enforcement agent. All earlier unfinished tasks remain active.
+
+2 November owner continuation: complete pending shift sync and author verification
+with agents, preserve checkout/permissions and update existing beta PR #363 with
+completed versus pending evidence. The PR was pushed to cccc052e and its body
+rewritten around actual current preparation and outstanding gates; no beta/main
+merge or publication. Foundation 27b4d387 is integrated as 0e6a8036: private key
+registry, verified personal enrollment, stable identity carry and route. Component
+13 suites / 169 tests, types and lint passed; integrated four suites / 82 tests,
+types and local web build passed. A generated build report was reverted alone;
+no unrelated source changes were retained.
+
+Actual cross-boundary Main/worker/API/isolated SQL testing found two confirmed
+runtime integration defects missed by unit fixtures: real SQL Server uppercase
+aggregate UUID versus lowercase immutable intent failed the single-aggregate
+comparison; CloudClient.shiftGraph omitted required organizationId and the real
+API rejected it with HTTP 400. Targeted fixes f6916fb8 and f989782a are integrated
+as adcccb85/429075c5, preserving single-aggregate/branch checks and strict API
+validation. Component focused suites 42 and 48 tests passed respectively; final
+actual workflow rerun remains pending. No fixture casing/schema relaxation hides
+either failure. The actual harness reached opening → sale → closing → two
+recounts with three local acknowledgements and lost-response replay after the
+first fix; this does not prove author signing/device registration integration.
+
+Pending: Main stable identity/session epoch/signature persistence and background
+queue integration; atomic server signature/current-grant enforcement across
+sensitive aliases; cross-boundary complete rerun; fresh independent candidate
+security review; final exact-head regression/CI. Separate expected-amount/as-of
+financial policy remains unresolved. All new migrations are source-only; no real
+enrollment, key rotation, permissions, financial data or installed SQL changed.
+
+2 November continuation checkpoint (isolated coordination source 69fd5769):
+Final rerun at 80394dd8 after both fixture corrections: **608 suites / 4,461
+tests passed**, pinned Node 22, `vitest run --maxWorkers=2`, 118.39 seconds.
+The former 32 failures below are resolved, with original adoption assertions
+retained and an added explicit nonclosed atomic-read contract test. This is the
+protocol/foundation checkpoint, not acceptance of subsequent AUTH-37 runtime
+wiring, financial admission policy or the combined real-boundary harness.
+server draft 907ba546 and native coverage draft 61fef763 are integrated, retaining
+the non-shift settings-notification correction. Shared sealed-key/public proof
+foundation ce7ab218 is integrated without runtime enrollment or key creation on
+real devices. Combined five focused suites: 168 tests passed; isolated protocol
+PostgreSQL: 24 scenarios passed; existing native/company/event/key CJS checks:
+56 passed; TypeScript passed. Full regression: 606 suites passed, two suites
+failed (4,428 tests passed / 32 failed). Thirty-one failures are an older
+adoption fixture invoking the new graph HTTP path with an incomplete config
+stub/missing historical-proof SQL handling; a separate agent owns fixture
+adaptation while preserving all branch/pending/rollback assertions. The remaining
+old exact-call assertion omitted the newly required observation argument;
+assertion updated to require branch, terminal AND observation for journal writes,
+and its 12-test suite passes. Full suite is not green; rerun after fixture repair.
+These are source/isolated results, not installed-device or live verification.
+
+AUTH-37 server identity/enrollment foundation and native Main/session-epoch hooks
+are being prepared in separate owned worktrees. New outer aggregate shiftAuthor
+attestation must leave frozen payload bytes/hash unchanged. Canonical user_id
+audit labels remain distinct from stable app_users.id; aliases/renames cannot
+retag pending signatures. Key/subject mismatch remains explicit review-only.
+
+Financial validation design has an additional source-confirmed constraint:
+sale/refund journals upload the current row, so an offline sale followed by a
+closing, refund and recount can deliver a refunded sale before the older closing.
+Do not claim current-total comparison proves historical as-of totals. Existing
+shift locks do not serialize every sale INSERT/UPDATE/DELETE alias. No global
+sales lock, checkout/refund trigger, immutable financial snapshot or formula
+change is approved/implemented here. Preserve this separate correction-plan gate;
+do not weaken validation, invent financial history or rewrite frozen amounts.
+
+2 November reconciliation: PR #359's CPU-failure/shift-conflict commit titles
+record diagnostic evidence, not runtime CPU corrections. Its five-file diff is
+memory/tracker, the historical recovery review, superseded one-shift replay and
+isolated recovery test. CPU #360 and slow-network #361 are already beta ancestors;
+do not merge #359 to obtain those fixes. Its original cashier-closing target and
+obsolete-replay HOLD remain unchanged.
+
+AUTH-37 pre-patch independent investigation is complete. The selected boundary
+is a dedicated Ed25519 Main-only author key, with separate enrollment and intent
+signature domains binding configured project, registered terminal, stable
+app_users.id, key and exact frozen action/payload. Enrollment derives the author
+from verified signed cashierToken.id or verified Auth identity, never an editable
+username/email or a terminal transport proof. Username-only legacy session
+adoption/checkout remains intact but cannot enroll a protected author key. Both
+Operations and authorized Management Electron bindings are supported; enrollment
+itself grants no action or branch access. No existing approval/session/iOS key is
+reused. Private local material is OS sealed and never exported through IPC;
+missing/mismatched key material cannot automatically replace pending signatures.
+Current effective permission gates NEW writes; exact accepted history is a
+no-write acknowledgement. Revocation never silently discards a pending intent.
+Necessary stable-profile fields in existing verified identity responses are part
+of this approved source preparation. No live enrollment, device key generation,
+database application or legacy compatibility cutoff is performed.
+
+The independent sink trace disproved the provisional raw-shift REST financial
+bypass: shifts_guard_client_writes protects lifecycle/count/expected fields and
+normal relay shift rows omit those fields. Preserve legitimate opening,
+housekeeping and attendance operations; tests must exercise the actual trigger.
+Do not add a blanket key requirement to typed personal web/mobile workflows.
+
+Separate confirmed trust gap: draft graph checks establish internal consistency
+but do not compare expected amounts to saved transactions. Signatures establish
+the author, not correctness of a caller-chosen financial graph. A narrow proposal
+must use the existing authoritative formula and account for concurrent sale/
+refund admission before claiming this closed. No financial-formula, checkout
+trigger, booking-attribution or live-record change is authorized by recording
+this finding. Keep this validation/approval gate explicit while independent
+author/protocol preparation continues.
+
+**Confirmed authority blocker; keep protocol/release draft.** Native audit
+found `terminal:read` classified OPEN in ipc-privilege and returning the complete
+sealed terminal-store configuration from Main, including deviceBindingProof.
+A cashier-controlled renderer can therefore obtain the transport credential.
+CAS graph tokens, unkeyed payload hashes, or an HMAC using that same readable
+credential do not prove an authorized historical administrator created a recount.
+Service-role SQL tests alone cannot establish per-user authorization. A direct
+API caller with that credential could forge RECOUNT/VARIANCE actor fields in the
+existing trusted-terminal model and the draft protocol. This is source evidence,
+not a live attack or changed account/grant. Do not treat the problem as resolved
+by current-user administrator gating, which would break approved background
+upload of earlier authorized offline work.
+
+Read-only design is required for a protected, server-verifiable historical author
+attestation or rigorously protected credential/request boundary. Inspect existing
+installation-key/activation mechanisms first; a public-key registration must not
+be authorized by the already-readable device proof alone. No signing key creation,
+rotation, provisioning or broad login/setup proxy rewrite is approved by SHIFT-36.
+Do not simply remove the proof from terminal reads without replacing required
+login/setup/configuration consumers. Present a concrete separately scoped plan
+before those changes. Existing operator database credentials and iOS signing keys
+are untouched. Independent protocol/schema/race preparation can continue; no
+merge/deployment or claim of complete permission safety is permitted meanwhile.
+
+AUTH-37 refined preparation **approved by the owner on 2 November**, superseding
+the unanswered terminal-manager-only proposal: bind a separate Main-only signing key to each actual verified
+author, terminal and project. Enroll automatically from that same person's first
+successful online PIN/password/session adoption, using existing live permission
+resolution; management authority cannot bind an arbitrary key to another admin.
+Do not repurpose approval OAEP, local-session or iOS keys. No generic signing IPC.
+Sign frozen subject/action/intent only inside the existing permitted Main commit.
+Server checks registered key/signature plus that author's current effective action
+permission before NEW writes. Identity enrollment grants no financial permission;
+new grants apply normally, revoked grants retain new uploads for administrator
+review. Existing accepted identical receipt replay remains no-write historical
+acknowledgement, never baseline regression or effective money replacement.
+
+Offline sign-in and ordinary sales remain available. An author who has never
+verified online must do so once before protected shift uploads can be delivered;
+reconnect alone cannot authenticate them. Keep those signed local intents pending
+without caching plaintext PIN/password, swapping the actor or downgrading to
+unsigned upload. Enrollment timeout must not fail login/checkout; asynchronous
+completion cannot replace the current signed-in session. Late enrollment of the
+same protected author key relies on the trusted installed Main/OS boundary and
+is part of the explicit proposal. Preserve pending signatures on key mismatch;
+replacement/recovery requires an authorized process, never automatic rotation.
+
+For enrolled terminals require signed sensitive shift writes across v3/legacy
+aliases so leaked transport proof cannot bypass author checks. Older un-enrolled
+first-close compatibility remains an explicit rollout/cutoff decision, not proof
+of complete legacy API security. A version string alone cannot authorize bypass.
+The owner approved source preparation and isolated tests, including ephemeral
+fixture keys only. No real device key creation/enrollment, existing key rotation,
+live database edits, deployment or unsigned-legacy rollout cutoff is approved.
+Apply the security fix workflow: a fresh independent read-only boundary and
+compatibility investigation precedes editing; freeze the implementation/DTO;
+after focused checks use one fresh read-only bypass/regression review and ordered
+verification. Report signed-path remediation separately from unretired legacy
+compatibility and physical-device/deployment evidence; do not claim the whole
+system's terminal authorization is fixed merely by adding signatures.
+
+Necessary offline dependency: capture the **actual OPEN postimage** inside the
+normal AggregateRepository opening commit in local protocol metadata. This is
+within approved local metadata preparation, not permission to invent an OPEN
+from a later CLOSED row. Preserve real OPEN → offline sales → closing/correction
+order; sending a closing first makes the existing closed-shift sale trigger deny
+valid later-uploaded sales. Include prior CT-only financial uploads and ordinary
+opening journals in ordering tests. Unknown pre-upgrade opening facts stay pending
+for explicit review; do not weaken sale/stock/receipt or branch authorization.
+Metadata and ACK/journal acknowledgement must commit atomically, and proven
+accepted CT copies must not globally skip unrelated edits or old history gaps.
+
+Permission evidence must include actual IPC/verified relay paths: graph tokens
+are compare-and-swap preconditions, not authorization. A user without recount/
+variance permission cannot gain it by forging actor fields; an explicitly
+authorized user's offline intent may later upload in the background after a
+different cashier signs in, retaining the real historical actor. Preserve
+existing granted and denied cases rather than hardcoding role names or granting
+new permissions. Complete offline OPEN/sales/close/recounts and in-flight change
+cases need actual source boundaries, not only service-role SQL fixtures.
+
+The owner explicitly approved the protocol preparation and isolated tests on
+2 November, including the original-count save-path retry verification extension.
+Approval covers the API/local metadata/service-routine source contract described
+below and isolated databases only. It does not authorize applying any migration
+to ROSEGILL or an installed POS_Local, historical repair, production deployment
+or publication. Continue from current beta 41463049 plus the reviewed SHIFT-34/35
+source dependencies; keep their original commits and scoped regression evidence.
+Necessary protocol metadata is included in that approved source/isolated scope:
+private append-only server intent receipts bind immutable payload, verified
+branch/terminal/shift, frozen base/predecessor and accepted result token/proof;
+local baseline and frozen-intent metadata support atomic adoption/offline chains.
+No cloud business columns/history are changed, no client Data API table access
+is granted and nothing is applied live. Existing project/business identity must
+be used; Supabase organization ID must not be invented as an application tenant.
+Historical superseded receipt replay can acknowledge its immutable intent but
+cannot rewrite effective money or regress a device's accepted baseline.
+The agreed contract keeps existing organizationId literal `default` under the
+current project database boundary; no invented organizational tenant column.
+Atomic read returns six graph tables plus an opaque digest/raw close timestamp.
+Protected requests send frozen UTF-8 payloadJson once (no duplicate outer ops),
+with base token OR immutable predecessor intent ID/hash; per-shift v3 proof
+binds intent/hash, accepted/current token and superseded status. Server pins
+existing identity/times for recounts. ACK only marks its accepted intent; only
+pending-aware atomic graph adoption installs an observed baseline/generation.
+Durable generation/tail order includes in-flight and already-ACKed local intents
+to support offline chains; never replace a frozen base at send time. Preserve
+legacy first closes and exact historical replay and reconcile only proven CT
+copies, without globally advancing unrelated checkpoints.
+Root owns the shared contract, existing tracker/memory and integration. Agents
+must agree request/proof/receipt and offline ordering before editing shared
+dependencies; one writer per file. Do not silently drop superseded/pending tasks.
+
+Independent source review confirms that a read-side revision fix alone cannot
+preserve later administrator corrections: queued CLOSED99 can replace accepted
+web CLOSED5/6 before the existing v2 acknowledgement inspects it. Comparing graph
+membership only at send time is also insufficient because PushWorker enriches
+old intents with the current local graph. No existing journal field proves which
+effective server closing was known when the correction was made.
+
+Approved bounded preparation:
+
+- Add one service-only, branch-scoped atomic closing-graph read to the existing
+  verified sync API. Return parent, complete count/reconciliation/event/summary/
+  alert graph and opaque server digest over authoritative effective facts. Keep
+  native branch/actor validation and management scope unchanged.
+- Persist the accepted digest in separate local metadata, atomically with whole-
+  graph adoption; never derive it from local row_version or round PostgreSQL
+  microsecond timestamps through JavaScript. Freeze the accepted baseline in the
+  protected correction intent/journal at commit, not in send-time enrichment.
+- Send that frozen precondition through the existing aggregate endpoint; lock
+  and compare it before **any** parent/child write in aggregate/batch/replay
+  paths. No new cloud business table/column is inherently required; new service
+  read/preflight routines, local metadata/upgrade and request contract are needed.
+- Preserve first legacy OPEN-to-CLOSED upload and identical confirmed history
+  replay. A different legacy CLOSED with no proven baseline must remain pending
+  as a visible conflict; never accept all old closures or reject all production
+  first closes. Do not attach today's baseline to yesterday's queued correction.
+
+Likely source boundary: existing sync-endpoint.server.ts; reviewed additive
+Supabase migration plus schema/generator parity and service-only helpers in
+push/proof/replay routines; existing native cloud/pull/push/change-reader and
+bootstrap modules; protected shift journal plus a narrow local baseline
+repository/migration/generated artifacts; focused native and isolated database
+tests. No live application, credentials, grants, device configuration, historic
+STR1 repair or Membership work is included. A precise final file list and
+recoverable baseline precede implementation.
+
+Required evidence: stale CLOSED99 versus accepted web5/6; offline admin correction
+made before an unseen web change conflicts without losing the queue; correction
+made after atomic adoption succeeds despite independent counters; superseded
+receipts cannot undo later changes; legacy 1.4.79 first close works; page-split
+graphs adopt atomically; simultaneous admins serialize; branch denial; timeouts
+roll back and retain baselines/journals/cursors. Preserve configured shift modes
+and one effective closing with immutable audit history. SHIFT-34/35 preparation
+alone must not be described as completing this convergence protocol.
+
+Related approved extension: the original cash-count path has the same
+broad duplicate-key success shortcut as recounts. Generalize saved-intent replay
+verification to ORIGINAL without requiring a CLOSED parent (its initial variance
+review state is valid); verify the original saved reconciliation/event and
+preserve later recount money. Do not reuse the CLOSED-only recount validator
+unchanged or alter initial counting/variance permission rules. The owner included
+this extension in the later protocol preparation/test approval above.
+
+### SHIFT-34/35 combined preparation checkpoint
+
+Source components: native recount `e15ec1fd11c613909563e02de3088668976a71c2`
+and safeguards `ccbd338d53efe76832398144f1191ef0bb4ecc28`; isolated integration
+`0a670f58` plus subsequent approval/documentation and fixture adaptations.
+Root pinned-Node22 full run passed **606 suites / 4,362 tests** in 80.61s.
+The first sandbox run failed generated SSR temporary-module imports; unchanged
+unsandboxed rerun exposed one outdated exact-call fixture, updated to assert
+the verified branch and complete changes argument. No behavior assertion was
+removed. Final full run passed. Types passed; full lint has zero errors and two
+explicit-any warnings confined to the new SQL fixture Row aliases.
+
+Root reran **24 actual disposable LocalDB scenarios** with the combined guarded
+CloudClient: the harness now creates real synthetic journal/checkpoint/CT tables
+and an explicit fixture baseline instead of bypassing pending checks. It touches
+only a random owned LocalDB instance/database, which is cleaned afterward.
+Root isolated PostgreSQL closure **71 cases** passed; native Main/full-graph
+**19 cases** passed after adapting the thin download fixture to matching/deferred
+outcomes and verifying the retained OPEN99 boundary. The exact reviewed LF #357
+artifact was used; no migration content or assertion was weakened. Existing
+known lower-counter convergence stays unimplemented in these safeguards.
+
+Independent review separately passed 50 recount/journal and 37 safeguard cases
+and identified two index guard gaps, corrected and retested on the real fixture
+engine. Unknown filtered/composite/operator-configured indexes now stop before
+DDL and preserve rows/configuration. No installed POS_Local or cloud data was
+accessed. New protocol work remains source preparation in separate native/server
+branches, not production readiness, live migration approval or historical repair.
+
+Draft beta PR #363 head d903342b exposed a genuine non-shift regression in CI:
+the new outcome return could suppress initial settings-loaded notifications.
+Root restores the original void/result handling for non-shift writers/bootstrap,
+keeping exact outcome checks limited to the six closing tables. All **80 native
+CI scenarios**, including the unchanged shared-identity announcement test, pass;
+the complete **606 suites / 4,362 tests** pass again (85.23s). This correction
+preserves existing settings behavior; no assertion or runtime guard was relaxed.
+Native protocol author is required to retain it in subsequent integration.
 
 Latest controlling update, 2 November 2026 — **REL-31 pending beta PR integration**.
 PR #360 is merged as `cdc7bbed`; PR #361 is merged as `0bc58a16`, and its final

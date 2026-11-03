@@ -17,7 +17,7 @@ const schema = await readFile(new URL("../supabase/schema.sql", import.meta.url)
 const firstMigration = await readFile(new URL("../supabase/migrations/20261030153259_confirm_shift_closure_sync_acknowledgement.sql", import.meta.url), "utf8");
 const migration = await readFile(new URL("../supabase/migrations/20261030164829_bind_shift_closure_proof_to_requested_revision.sql", import.meta.url), "utf8");
 const contextMigration = await readFile(new URL("../supabase/migrations/20261031031945_preserve_validated_branch_context_for_shift_sync.sql", import.meta.url), "utf8");
-const lifecycleMigration = await readFile(new URL("../supabase/migrations/20261101052452_prevent_closed_shift_reopening_during_sync.sql", import.meta.url), "utf8");
+const lifecycleMigration = (await readFile(new URL("../supabase/migrations/20261101052452_prevent_closed_shift_reopening_during_sync.sql", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
 const lifecyclePart = part => lifecycleMigration.split(`-- SHIFT_CLOSED_SYNC_${part}_BEGIN`)[1]
   .split(`-- SHIFT_CLOSED_SYNC_${part}_END`)[0].trim();
 const lifecyclePredicate = lifecyclePart("PREDICATE"), lifecycleValidation = lifecyclePart("VALIDATION");

@@ -57,4 +57,48 @@ describe("PIN request address throttle", () => {
     mocks.status.mockRejectedValue(new Error("database unavailable"));
     await expect(beginPinRequest()).rejects.toThrow("database unavailable");
   });
+
+  it("uses trusted Worker context without reading the framework or forwarding headers", async () => {
+    mocks.ip.mockReturnValue("192.0.2.99");
+    const request = new Request("https://pos.test", { headers: {
+      "cf-connecting-ip": "198.51.100.4", "x-forwarded-for": "198.51.100.5", forwarded: "for=198.51.100.6",
+    } });
+    const signal = new AbortController().signal;
+    expect(await beginPinRequest(request, signal, { trustedWorkerIp: " 2001:DB8::1 " }))
+      .toEqual({ key: "cashier-ip:2001:db8::1", locked: false });
+    expect(mocks.status).toHaveBeenCalledWith("cashier-ip:2001:db8::1", signal);
+    expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.ip).not.toHaveBeenCalled();
+  });
+
+  it.each([null, "", "unknown", "203.0.113.1, 198.51.100.1", "for=203.0.113.1"])(
+    "never falls back from an absent or malformed trusted Worker address %j", async trustedWorkerIp => {
+      mocks.ip.mockReturnValue("192.0.2.99");
+      const request = new Request("https://pos.test", { headers: { "cf-connecting-ip": "198.51.100.4" } });
+      expect(await beginPinRequest(request, undefined, { trustedWorkerIp })).toEqual({ key: null, locked: false });
+      expect(mocks.status).not.toHaveBeenCalled(); expect(mocks.ip).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps the framework transport address ahead of request headers for existing callers", async () => {
+    mocks.ip.mockReturnValue("192.0.2.99");
+    const request = new Request("https://pos.test", { headers: {
+      "cf-connecting-ip": "198.51.100.4", "x-forwarded-for": "198.51.100.5",
+    } });
+    expect(await beginPinRequest(request)).toEqual({ key: "cashier-ip:192.0.2.99", locked: false });
+    expect(mocks.ip).toHaveBeenCalledOnce(); expect(mocks.request).not.toHaveBeenCalled();
+  });
+
+  it("retains the existing Cloudflare-header fallback for framework callers without an address", async () => {
+    mocks.ip.mockReturnValue(undefined);
+    const request = new Request("https://pos.test", { headers: { "cf-connecting-ip": "203.0.113.8" } });
+    expect(await beginPinRequest(request)).toEqual({ key: "cashier-ip:203.0.113.8", locked: false });
+    expect(mocks.ip).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed on the trusted Worker path when the central address bucket cannot be checked", async () => {
+    mocks.status.mockRejectedValue(new Error("address protection unavailable"));
+    await expect(beginPinRequest(undefined, undefined, { trustedWorkerIp: "203.0.113.8" }))
+      .rejects.toThrow("address protection unavailable");
+    expect(mocks.ip).not.toHaveBeenCalled();
+  });
 });

@@ -227,7 +227,9 @@ function terminalWritableChanges(tableName, changes, { branchId = "", terminalId
 }
 
 class PushWorker {
-  constructor({ reader, cloud, checkpoints, registry }) {
+  constructor({ reader, cloud, checkpoints, registry, validateAuthor, validateClosingStart }) {
+    this.validateAuthor = validateAuthor;
+    this.validateClosingStart = validateClosingStart;
     this.reader = reader;
     this.cloud = cloud;
     this.checkpoints = checkpoints;
@@ -242,6 +244,7 @@ class PushWorker {
         // Leave it to the durable scheduler rather than block this pass for
         // another four deadlines and keep login/focus callers waiting.
         if (error?.code === "ETIMEDOUT" || ["TimeoutError","AbortError"].includes(error?.name)) throw error;
+        if (/^(?:ESYNC_SHIFT_AUTHOR_|ESHIFT_AUTHOR_)/.test(String(error?.code??""))) throw error;
         // A semantic closing conflict needs review, not five immediate retries
         // of the same immutable facts (even if a gateway reports it as 500).
         if ([error?.code, error?.message].some(value =>
@@ -278,6 +281,25 @@ class PushWorker {
         originalIds.forEach(id => deferred.add(id)); continue;
       }
       try {
+      const intent=await this.reader.protectedIntent?.(aggregate.aggregateId,branchId);
+      if(intent){
+        if(originalIds.length!==1 || recordId(originalIds[0])!==recordId(intent.intentId))throw Object.assign(new Error("A protected closing intent cannot be combined with another transaction."),{code:"EIDEMPOTENCY",table:"shifts"});
+        if((this.reader.predecessorAccepted && !await this.reader.predecessorAccepted(intent)) ||
+          (this.reader.shiftPrerequisites && !await this.reader.shiftPrerequisites(intent))){
+          deferred.add(aggregate.aggregateId);continue;
+        }
+        const shiftIntent={version:intent.version,intentId:intent.intentId,shiftId:intent.shiftId,kind:intent.kind,
+          baseToken:intent.baseToken,predecessorIntentId:intent.predecessorIntentId,predecessorIntentHash:intent.predecessorIntentHash,payloadJson:intent.payloadJson};
+        const shiftAuthor=this.validateAuthor?this.validateAuthor(intent.shiftAuthor):intent.shiftAuthor;
+        const shiftClosingStart=intent.shiftClosingStart && (this.validateClosingStart?this.validateClosingStart(intent.shiftClosingStart):intent.shiftClosingStart);
+        const acknowledgement=await this.retry(()=>this.cloud.pushAggregate({batchId:intent.intentId,branchId,shiftIntent,...(shiftAuthor?{shiftAuthor}:{}),...(shiftClosingStart?{shiftClosingStart}:{})}));
+        if(!acknowledgement?.ok)throw new Error(acknowledgement?.error??"Cloud did not acknowledge the closing intent.");
+        const proof=assertShiftClosureAcknowledgement(acknowledgement,intent.operations,branchId,intent,this.registry);
+        await this.reader.acknowledgeProtectedIntent(intent,proof);
+        pushed+=aggregate.changes.length;
+        onProgress({direction:"push",table:intent.operations.map(operation=>operation.table).join(", "),completed:aggregate.changes.length});
+        continue;
+      }
       const requiresSettingsProof = aggregate.changes.some((change) =>
         protectedSettings.has(change.entity_type) ||
         (change.entity_type === "settings_scoped" && isSharedPosFieldChange(change)));
@@ -286,6 +308,10 @@ class PushWorker {
         continue;
       }
       const operations = [];
+      const openingRows=aggregate.changes.some(change=>change.entity_type==="shifts")
+        ? await this.reader.frozenOpeningRows?.(aggregate.aggregateId,branchId)??[]:[];
+      const openings=new Map(openingRows.map(row=>[recordId(row.id),row]));
+      let coveredLegacy=0,waitingForIntent=false;
       const finalChanges = collapseChanges(aggregate.changes);
       for (const [tableName, changes] of groupBy(finalChanges, (change) => change.entity_type)) {
         const table = this.registry.tables.find((item) => item.sqlServerTable === tableName);
@@ -304,7 +330,7 @@ class PushWorker {
             changes: live,
             rows: await uploadRows(table.cloudTable, rowsForBranch(
               table,
-              await this.reader.rows(table, live, { branchId }),
+              (await this.reader.rows(table, live, { branchId })).map(row=>table.cloudTable==="shifts" ? openings.get(recordId(row.id))??row:row),
               branchId,
             )),
           });
@@ -317,6 +343,21 @@ class PushWorker {
             rows: [],
           });
       }
+      for(const operation of operations){
+        if(!SHIFT_GRAPH_TABLES.has(operation.table) || operation.deletePhase)continue;
+        const table=this.registry.tables.find(table=>table.cloudTable===operation.table);
+        const candidates=operation.rows.filter(row=>!(operation.table==="shifts"&&openings.has(recordId(row.id))));
+        const managed=await this.reader.protectedShiftIds?.(candidates.map(row=>recordId(operation.table==="shifts"?row.id:row.shift_id)),branchId)??new Set();
+        const rows=candidates.filter(row=>managed.has(recordId(operation.table==="shifts"?row.id:row.shift_id)));
+        if(!rows.length)continue;
+        const covered=await this.reader.acceptedShiftChanges?.(table,rows.map(row=>({key:{id:row.id},operation:"U"})),branchId)??new Set();
+        if(rows.some(row=>!covered.has(recordId(row.id))))waitingForIntent=true;
+        coveredLegacy+=covered.size;
+        operation.rows=operation.rows.filter(row=>!covered.has(recordId(row.id)));
+        operation.changes=operation.changes.filter(change=>!covered.has(recordId(changeKey(change).id)));
+      }
+      if(waitingForIntent){originalIds.forEach(id=>deferred.add(id));continue;}
+      for(let index=operations.length-1;index>=0;index--)if(!operations[index].rows.length&&!operations[index].changes.length)operations.splice(index,1);
       try {
         await includeMissingParents(operations, this.reader, this.registry, branchId);
         await includeClosedShiftGraphs(operations, this.reader, this.registry, branchId);
@@ -324,7 +365,7 @@ class PushWorker {
         throw error;
       }
       if (!operations.length) {
-        if (finalChanges.some((change) => !["settings_overrides", "settings_scoped"].includes(change.entity_type) ||
+        if (!coveredLegacy && finalChanges.some((change) => !["settings_overrides", "settings_scoped"].includes(change.entity_type) ||
           !["global", "cluster"].includes(String(changeKey(change).scope ?? "").toLowerCase())))
           throw new Error("The aggregate has no writable rows and cannot be acknowledged safely.");
         await this.reader.acknowledgeAggregate(aggregate.aggregateId);
@@ -444,6 +485,11 @@ class PushWorker {
           window.filter((change) => !change.remote),
           { branchId, terminalId },
         );
+        // A v3 receipt proves only the exact frozen saved facts. A stale CT
+        // copy of those facts must not be enriched/re-uploaded as a new close
+        // after a later web correction. Different edits and deletes stay queued.
+        const covered=await this.reader.acceptedShiftChanges?.(table,changes,branchId)??new Set();
+        changes=changes.filter(change=>!covered.has(recordId(String(change.key?.id??""))));
         if (!changes.length) {
           const version = Math.max(...window.map((row) => Number(row.version)));
           await this.checkpoints.save(branchId, table.sqlServerTable, "push", {
@@ -463,6 +509,12 @@ class PushWorker {
           await this.reader.rows(table, live, { branchId }),
           branchId,
         ));
+        if(SHIFT_GRAPH_TABLES.has(table.cloudTable)){
+          const managed=await this.reader.protectedShiftIds?.(rows.map(row=>recordId(table.cloudTable==="shifts"?row.id:row.shift_id)),branchId)??new Set();
+          if(rows.some(row=>managed.has(recordId(table.cloudTable==="shifts"?row.id:row.shift_id)))){
+            deferredTables.add(table.cloudTable);break;
+          }
+        }
         while (Buffer.byteLength(JSON.stringify({ changes, rows }), "utf8") > 6 * 1024 * 1024) {
           const versions = [...new Set(changes.map((change) => Number(change.version)))];
           if (versions.length <= 1)

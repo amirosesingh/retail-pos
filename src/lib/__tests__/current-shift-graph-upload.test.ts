@@ -64,6 +64,12 @@ function fixture() {
   }
   const manager = { sql: () => ({ Transaction, Request, ISOLATION_LEVEL: { SERIALIZABLE: 4 } }), pool: {} };
   const reader = new ChangeReader(manager, registry);
+  // These cases deliberately model pre-protocol journals/CT, without any
+  // installed frozen-intent/opening/accepted-receipt metadata.
+  reader.protectedIntent=async()=>null;
+  reader.frozenOpeningRows=async()=>[];
+  reader.protectedShiftIds=async()=>new Set();
+  reader.acceptedShiftChanges=async()=>new Set();
   reader.rows = vi.fn(async (table: { cloudTable: string }, changes: Change[]) => clone(data[table.cloudTable].filter(row => changes.some(item => sameId(item.key.id, row.id)))));
   const groups = [{ aggregateId: "original", changes: [change("shifts", shiftId), change("shift_cash_counts", countId), change("shift_reconciliations", reconciliationId)] }];
   const acknowledged: string[] = [], failed: { id: string; error: Error }[] = [];

@@ -631,6 +631,14 @@ export async function runRelayOp(
   const decision = await safeAuthorizeRelayOp(op, scope, batchIds);
   if (!decision.ok) return { ok: false, error: decision.error, code: decision.code };
   const safeOp = decision.op;
+  if (safeOp.table === "shift_notifications" || (safeOp.table === "shifts" && safeOp.kind === "delete")) {
+    // Preserve the existing relay policy first. The narrow SQL route then checks
+    // enrolled graph admission and performs this exact mutation atomically.
+    const result = await serviceRest("rpc/pos_sync_shift_author_raw_write", { method: "POST", body: JSON.stringify({
+      p_operation: safeOp, p_terminal_id: scope.terminalId ?? "",
+    }) });
+    return result.ok ? { ok: true } : { ok: false, code: "SHIFT_WRITE_PENDING", error: (await result.text()).slice(0, 400) };
+  }
   // Receipt graphs are immutable on replay, matching the native SQL writer.
   // A permission check followed by merge-duplicates would still race another
   // checkout inserting the same ID. Corrections have dedicated transactions.
@@ -742,6 +750,8 @@ export type RelayCaller = {
   storeId?: string | null;
   /** app_users.user_id, when the proof carries it. */
   staffUserId?: string | null;
+  /** Stable app_users.id, only when carried by an independently verified cashier proof. */
+  appUserId?: string | null;
   /** A cashier proof's independently verified, revocable login. */
   sessionToken?: string;
   /** Sign-in email, when the proof carries one. Used to find the staff record. */
@@ -766,6 +776,8 @@ export type RelayCaller = {
  * the person who signed in with a PIN.
  */
 export class RelayAuthenticationError extends Error {}
+const stableAppUserId = (value: unknown): string | null => typeof value === "string" &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) ? value.toLowerCase() : null;
 
 export async function verifyRelayCaller(input: {
   sessionToken?: string;
@@ -775,6 +787,7 @@ export async function verifyRelayCaller(input: {
   deviceBindingProof?: string;
 }, options: { strictAvailability?: boolean } = {}): Promise<RelayCaller> {
   let identity: RelayCaller | null = null;
+  let verifiedRawSession: string | null = null;
   let terminalStore: string | null = null;
   let terminalId: string | null = null;
   let managementDevice = false;
@@ -796,6 +809,7 @@ export async function verifyRelayCaller(input: {
     if (options.strictAvailability && !check.ok && check.reason === "unavailable")
       throw new DesktopAdoptionUnavailableError();
     if (check.ok) {
+      verifiedRawSession = input.sessionToken;
       const s = check.session;
       storedTerminalId=s.terminal_id??null;
       storedBranch=s.branch_id??null;
@@ -831,10 +845,21 @@ export async function verifyRelayCaller(input: {
         kind: "cashier",
         label: session.username,
         staffUserId: session.username,
+        ...(stableAppUserId(session.id) ? { appUserId: stableAppUserId(session.id) } : {}),
         storeId: session.storeId,
         sessionToken: session.sessionToken,
       };
     }
+  }
+
+  // A normal PIN handoff includes both the raw revocable session and its signed
+  // cashier envelope. Preserve the stable profile id only when they identify the
+  // same login. Username-only legacy sessions still work, but cannot enroll keys.
+  if (identity?.kind === "cashier" && verifiedRawSession && input.cashierToken) {
+    const { verifyCashierSession } = await import("@/lib/pos-session.server");
+    const stable = await verifyCashierSession(input.cashierToken).catch(() => null);
+    if (stable && stable.sessionToken === verifiedRawSession && stable.username === identity.staffUserId &&
+        (stable.storeId || null) === (identity.storeId || null) && stableAppUserId(stable.id)) identity.appUserId = stableAppUserId(stable.id);
   }
 
   if(storedTerminalId && input.terminalToken && recordId(storedTerminalId)!==recordId(input.terminalToken))

@@ -347,7 +347,12 @@ try {
         "database/sqlserver/schema-registry.json", "supabase/schema.sql", `supabase/migrations/${correctionName}`,
         "supabase/migrations/20261030153259_confirm_shift_closure_sync_acknowledgement.sql",
         "supabase/migrations/20261030164829_bind_shift_closure_proof_to_requested_revision.sql",
-        "supabase/migrations/20261101052452_prevent_closed_shift_reopening_during_sync.sql"]) {
+        "supabase/migrations/20261101052452_prevent_closed_shift_reopening_during_sync.sql",
+        "supabase/migrations/20261102082439_shift_closing_causal_intents.sql",
+        "supabase/migrations/20261102101610_shift_author_key_registry.sql",
+        "supabase/migrations/20261102103716_enforce_shift_author_uploads.sql",
+        "supabase/migrations/20261102104005_fix_closed_shift_correction_activity_type.sql",
+        "supabase/migrations/20261102153013_bind_signed_closing_start_evidence.sql"]) {
         await mkdir(dirname(join(fixture, path)), { recursive: true });
         await copyFile(join(root, path), join(fixture, path));
       }

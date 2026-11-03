@@ -11,7 +11,21 @@ const fixture = await import(fixtureUrl) as {
   dispatchSql: (quantity: number, child: string, native: boolean) => string;
 };
 const db = new PGlite();
-beforeAll(async () => { await db.exec(fixture.fixtureSql); await db.exec(fixture.migration); });
+beforeAll(async () => {
+  // Git stores LF; Windows may check out this older migration as CRLF while
+  // the current canonical schema is LF. Compile both fixture inputs with the
+  // same newlines so the reviewed migration's exact definition anchor matches.
+  await db.exec(fixture.fixtureSql.replaceAll("\r\n", "\n"));
+  const lifecycle = async () => (await db.query<{ definition: string }>(
+    "SELECT pg_get_functiondef('public.stock_transfers_enforce_lifecycle()'::regprocedure) definition",
+  )).rows[0].definition;
+  const before = await lifecycle();
+  await db.exec(fixture.migration.replaceAll("\r\n", "\n"));
+  const after = await lifecycle();
+  const extension = "\n  IF private.transfer_dispatch_completes_request(OLD,NEW) THEN RETURN NEW; END IF;\n";
+  expect(after).toContain(extension);
+  expect(after.replace(extension, "")).toBe(before);
+});
 afterAll(async () => { await db.close(); });
 
 describe("real PostgreSQL dispatch proof consumed by the client", () => {

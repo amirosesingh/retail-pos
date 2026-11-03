@@ -128,7 +128,9 @@ describe("offline terminal operations", () => {
     ]) {
       const start = main.indexOf(`${writer}.apply("${context}"`);
       expect(start, context).toBeGreaterThan(-1);
-      expect(main.slice(start, start + 4_000), context).toContain("{ branchId, terminalId }");
+      expect(main.slice(start, start + 4_000), context).toContain(
+        writer === "shiftSyncJournal" ? "{ branchId, terminalId, observation, author }" : "{ branchId, terminalId }",
+      );
     }
   });
 

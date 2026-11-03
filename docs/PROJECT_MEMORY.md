@@ -1,7 +1,83 @@
 # POS project memory
 
-Last reconciled: **2026-11-02, Asia/Brunei**. This is approved architecture and
+Last reconciled: **2026-11-03, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
+
+Live schema evidence: public.app_users.role is enum public.app_role, not text.
+Keep explicit role::text at existing text-helper boundaries; do not change role
+or grant rules to solve type resolution. The captured-schema six-upgrade test
+caught this before any live DDL. The owner renewed approval for the two
+corrected hashes; all six current pinned upgrades are now applied to POS
+qhrufhtbeguxydenzfey. Live readback matches 70 isolated routine-body hashes and
+preserves all 48 existing routine authority attributes. New metadata tables
+remain empty; no actual key enrollment, historical repair or local SQL upgrade
+was performed. The missing guarded raw-write RPC now exists; retain remaining
+management-scope, financial-policy, installed-device and hosted-CPU acceptance.
+
+3 November hosting decision: keep Cloudflare Workers **Free**; no billing or
+CPU-limit change is authorized. The owner approved a separate five-runtime-file
+login loading correction and isolated tests. Only exact public cashier-login
+POST requests with Cloudflare runtime metadata may bypass UI-router loading;
+other runtimes retain framework request scope and address-throttle behavior.
+Existing PIN/account/address protections, terminal/branch permissions, sessions,
+audit, CORS and security headers remain mandatory. Source/build measurements
+are not hosted Free-budget acceptance or deployment approval. Keep production
+PR #354 prepared separately from beta integration and exact live schema gates.
+
+The owner subsequently requests merging verified PR #363 into beta and promoting
+the completed work through production PR #354 after stability checks. This is
+conditional release intent for the current work, not approval for live schema
+changes or an assertion that unresolved acceptance gates have passed. Current
+source CI passes, but existing relay summary writes need a new missing database
+RPC; preserve atomic author admission rather than falling back to unguarded REST.
+
+Signed closing handover decision: the person starting closing and the person
+counting may differ. Preserve each verified author through offline storage,
+restart, retries and later uploads by another cashier. A separate domain-bound
+start proof accompanies only the ORIGINAL intent, with exact immutable receipt
+association; later RECOUNT/VARIANCE must not carry it. Existing start and count
+permissions remain distinct and current permissions govern new writes. Never
+manufacture proof for unsigned historical starts, retag earlier actors or drop
+pending work. Preparation and isolated tests were approved; live migration,
+enrollment, legacy retirement and publication remain separate approvals.
+
+Latest 2 November checkpoint: pending dependency PRs #343–#347 and prepared
+lifecycle source #357 are confirmed merged through beta PR #362, merge
+41463049; reviewed and merged trees match. Source metadata is 1.4.81; no
+installer publication, main promotion or live lifecycle migration followed.
+The owner approved separate SHIFT-34/35 correction preparation and isolated
+tests for native recount parity/truthful replay and pending-aware web-to-PC
+shift adoption. Preserve current drawer, original facts, branch/actor authority,
+all pending journal/CT edits and other tables; no live PC/cloud changes.
+For the historic STR1 shift the owner reconfirmed one effective closing using
+the original 31 October cashier facts; retain the later web action as audit
+history. #359's superseded replay remains HOLD pending a new exact plan.
+
+The owner further clarifies that later authorized administrator corrections on
+web **or terminal** must be retained and synchronized to the other side, including
+when a powered-off terminal restarts/reconnects. One effective closing retains
+its audit history. The historical original-cashier selection does not override
+future accepted administrator changes. Protect pending offline work, reject
+stale reopen/closing overwrite and surface conflicts without using independent
+client counters/timestamps as proof of correction authority.
+
+The owner subsequently approved SHIFT-36 protocol preparation and isolated tests:
+an atomic complete closing-graph read, separately stored accepted cloud baseline,
+pre-write causal checks for queued corrections, and original-count retry proof.
+This is source/isolated-test authorization only; exact live project/local schema
+application, historical repair and release remain separate. Preserve legacy
+first closures, real exact replay, offline pending work, configured shift modes,
+cashier permissions and immutable history; do not guess a baseline for old work.
+
+Later the owner explicitly approved AUTH-37 **author-bound security preparation
+and isolated tests**: separate Main-only keys per actual author/terminal/project,
+automatic enrollment after that same person's verified online login, current
+permission checks before new uploads, pending review on revocation, and no-write
+acknowledgement of already accepted history. Offline sign-in/sales remain usable;
+protected uploads may wait for same-author enrollment. Never cache plaintext
+PIN/password or substitute a terminal manager's claim for the author's identity.
+Do not repurpose existing approval, session or iOS keys. Real enrollment, live
+schema changes, deployment and unsigned legacy retirement remain separate.
 
 Earlier update, 2 November 2026: the owner approved a narrow server CPU
 correction in `sync-download-redaction.ts` and isolated tests. Production

@@ -5,6 +5,7 @@ import { renderErrorPage } from "./lib/error-page";
 import { setRuntimeEnv, supabaseConfig } from "./lib/external-supabase-config";
 import { withWebSecurityHeaders } from "./lib/web-security-headers";
 import { appleAppAssociation } from "./lib/apple-app-association";
+import { corsPreflight, withCors } from "./lib/public-cors";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -72,6 +73,21 @@ export default {
       setRuntimeEnv(env);
       const association = appleAppAssociation(request, env);
       if (association) return secure(association);
+      // This credential-verified endpoint does not need the application's UI
+      // router. Keep its exact methods/path and the same response protections.
+      if (new URL(request.url).pathname === "/api/public/cashier-login") {
+        if (request.method === "OPTIONS") return secure(corsPreflight(request));
+        // cf is runtime metadata, never a field in the submitted JSON or a
+        // forwarding header. Other runtimes need the original framework scope
+        // to resolve their transport address, so their POSTs fall through.
+        const cf = (request as Request & { cf?: unknown }).cf;
+        if (request.method === "POST" && cf !== null && typeof cf === "object") {
+          const { handleCashierLogin } = await import("./lib/cashier-login-endpoint.server");
+          const transport = { trustedWorkerIp: request.headers.get("cf-connecting-ip") };
+          const response = withCors(await handleCashierLogin(request, transport), request);
+          return secure(await normalizeCatastrophicSsrResponse(response));
+        }
+      }
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
       return secure(await normalizeCatastrophicSsrResponse(response));

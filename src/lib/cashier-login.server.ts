@@ -234,7 +234,7 @@ async function cashierLoginCore(input: {
 /** Share the address throttle with the other public PIN verification paths. */
 export async function cashierLoginServer(input: Parameters<typeof cashierLoginCore>[0] & {
   request?: Request;
-}, options: { signal?: AbortSignal } = {}): Promise<CashierLoginResult> {
+}, options: { signal?: AbortSignal; trustedWorkerIp?: string | null } = {}): Promise<CashierLoginResult> {
   const { beginPinRequest, finishPinRequest } = await import("./pin-request-throttle.server");
   const requestAbort = new AbortController();
   const requestTimer = setTimeout(() => requestAbort.abort(),25_000);
@@ -244,7 +244,10 @@ export async function cashierLoginServer(input: Parameters<typeof cashierLoginCo
   try {
   let attempt: Awaited<ReturnType<typeof beginPinRequest>>;
   try {
-    attempt = await beginPinRequest(input.request,requestSignal);
+    attempt = await beginPinRequest(input.request,requestSignal,
+      Object.prototype.hasOwnProperty.call(options, "trustedWorkerIp")
+        ? { trustedWorkerIp: options.trustedWorkerIp ?? null }
+        : undefined);
   } catch {
     return { ok: false, code: "central_unavailable", error: "Central PIN protection is unavailable" };
   }

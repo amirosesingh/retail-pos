@@ -14955,7 +14955,8 @@
             "column": "id"
           },
           "unique": true,
-          "uniqueGroup": "UQ_shift_cash_counts_0"
+          "uniqueGroup": "UQ_shift_cash_counts_0",
+          "uniqueFilter": "[kind]=N'ORIGINAL'"
         },
         {
           "cloudColumn": "store_id",

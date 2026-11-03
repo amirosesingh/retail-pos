@@ -2,6 +2,7 @@ const { createHash } = require("node:crypto");
 const { stableUuid, canonical } = require("./repositories/aggregates.cjs");
 const { recordId } = require("../sync/uuid-fields.cjs");
 const { toCloudRow } = require("../sync/row-codec.cjs");
+const { ShiftIntentStore } = require("./shift-intents.cjs");
 
 const GRAPH_TABLES = ["shift_cash_counts", "shift_reconciliations", "shift_close_events",
   "shift_notifications", "shift_variance_alerts"];
@@ -26,7 +27,87 @@ const rowsOf = operation => operation.rows ?? (operation.values ? [{ ...operatio
  * This class is not exposed through IPC and accepts no renderer trust flag.
  */
 class ShiftSyncJournal {
-  constructor(operationsRepository) { this.repository = operationsRepository; }
+  constructor(operationsRepository, {authorRequired=false} = {}) {
+    this.repository = operationsRepository;
+    this.authorRequired = authorRequired;
+    this.intents = new ShiftIntentStore(operationsRepository.connectionManager,{tables:[...operationsRepository.tables.values()]});
+  }
+  observe(branchId,shiftId) { return this.intents.observe(branchId,shiftId); }
+
+  async recountReplay(intent) { return Boolean(await this.countReplay("RECOUNT",intent)); }
+  originalReplay(intent) { return this.countReplay("ORIGINAL",intent); }
+  async countReplay(kind,intent) {
+    const label = kind === "ORIGINAL" ? "original count" : "recount";
+    const branchId = branch(intent.branchId), shiftId = id(intent.shiftId);
+    if (!branchId || !shiftId || !intent.clientKey) fail(`The ${label} replay identity is incomplete.`, "EIDEMPOTENCY");
+    const sql = this.repository.connectionManager.sql();
+    const transaction = new sql.Transaction(this.repository.connectionManager.pool);
+    await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
+    try {
+      const parent = await new sql.Request(transaction).input("shift", sql.UniqueIdentifier, shiftId).input("branch", branchId)
+        .query("SELECT id FROM dbo.[shifts] WITH (UPDLOCK,HOLDLOCK) WHERE id=@shift AND store_id=@branch;");
+      if (parent.recordset?.length !== 1) fail(`The ${label} does not belong to this terminal branch.`, "SYNC_BRANCH_FORBIDDEN");
+      const found = await new sql.Request(transaction).input("shift", sql.UniqueIdentifier, shiftId).input("branch", branchId)
+        .input("client_key", intent.clientKey)
+        .input("kind",kind)
+        .query("SELECT TOP (2) * FROM dbo.[shift_cash_counts] WITH (UPDLOCK,HOLDLOCK) WHERE shift_id=@shift AND store_id=@branch AND (client_key=@client_key OR (@kind=N'ORIGINAL' AND kind=N'ORIGINAL'));");
+      if (!found.recordset?.length) {
+        if(await this.intents.missingSavedCount(transaction,kind,intent))
+          fail(`The saved ${label} is missing from its immutable history. No retry was accepted.`,"EIDEMPOTENCY");
+        await transaction.commit(); return false;
+      }
+      const mismatch = () => fail(`This ${label} key has different or incomplete saved facts. No ${label} was accepted.`, "EIDEMPOTENCY");
+      if (found.recordset.length !== 1) mismatch();
+      const graph = await this.snapshot(transaction, branchId, shiftId, [], {allowUnclosed:kind==="ORIGINAL"});
+      const count = graph.get("shift_cash_counts").find(row => id(row.id) === id(found.recordset[0].id));
+      if (!count || count.kind !== kind || count.client_key !== intent.clientKey || (kind==="RECOUNT" && count.reason !== intent.reason) ||
+          branch(count.terminal_id) !== branch(intent.terminalId) || count.counted_by_name !== intent.actor ||
+          count.counted_by_staff_id !== intent.actor ||
+          !["cash", "card", "digital"].every(tender => sameMoney(count[`counted_${tender}`], intent[tender]))) mismatch();
+      const reconciliations = graph.get("shift_reconciliations").filter(row => id(row.count_id) === id(count.id));
+      const events = graph.get("shift_close_events").filter(row => {
+        let detail = row.detail;
+        if (typeof detail === "string") { try { detail = JSON.parse(detail); } catch { return false; } }
+        return row.event === (kind==="ORIGINAL"?"cash_count_submitted":"recount_submitted") && id(detail?.count_id) === id(count.id);
+      });
+      if (reconciliations.length !== 1 || events.length !== 1) mismatch();
+      const reconciliation = reconciliations[0], event = events[0];
+      let detail = event.detail;
+      if (typeof detail === "string") { try { detail = JSON.parse(detail); } catch { mismatch(); } }
+      // Verify this historical recount, not a newer parent or today's totals.
+      const time = value => value instanceof Date ? value.toISOString() : String(value ?? "");
+      const sameTime = value => time(value) === time(count.created_at);
+      const money = value => Math.round(Number(value) * 100) / 100;
+      const variances = ["cash", "card", "digital"].map(tender => {
+        const counted = count[`counted_${tender}`], expected = reconciliation[`expected_${tender}`];
+        if (!sameMoney(reconciliation[`counted_${tender}`], counted) || !finiteMoney(expected)) mismatch();
+        const variance = counted == null ? null : money(Number(counted) - Number(expected));
+        if (!sameMoney(reconciliation[`variance_${tender}`], variance)) mismatch();
+        return variance ?? 0;
+      });
+      const total = money(variances.reduce((sum, value) => sum + value, 0));
+      const status = Math.abs(total) <= 0.005 ? "NO_VARIANCE" : total > 0 ? "OVER" : "SHORT";
+      if (!count.created_at || !sameTime(reconciliation.created_at) || !sameTime(event.created_at) ||
+          !sameMoney(reconciliation.variance_total, total) || reconciliation.variance_status !== status ||
+          (kind==="RECOUNT" && detail?.reason !== intent.reason) || event.to_state !== (kind==="ORIGINAL"?"CASH_COUNT_SUBMITTED":"CLOSED") ||
+          branch(event.terminal_id) !== branch(intent.terminalId) || event.actor_name !== intent.actor ||
+          event.actor_staff_id !== intent.actor) mismatch();
+      if (kind==="ORIGINAL") {
+        const reconciled=graph.get("shift_close_events").filter(row=>row.event==="reconciled" && sameTime(row.created_at));
+        let facts=reconciled[0]?.detail;
+        if(typeof facts==="string"){try{facts=JSON.parse(facts);}catch{mismatch();}}
+        if(reconciled.length!==1 || !["CLOSED","VARIANCE_REVIEW_REQUIRED","RECONCILIATION"].includes(reconciled[0].to_state) ||
+          reconciled[0].from_state!=="CASH_COUNT_SUBMITTED" || reconciled[0].actor_name!==intent.actor ||
+          reconciled[0].actor_staff_id!==intent.actor || branch(reconciled[0].terminal_id)!==branch(intent.terminalId) ||
+          facts?.variance_status!==status || !sameMoney(facts?.variance_total,total)) mismatch();
+      }
+      await transaction.commit();
+      return {state:graph.get("shifts")[0].state};
+    } catch (error) {
+      await Promise.resolve(transaction.rollback()).catch(() => undefined);
+      throw error;
+    }
+  }
 
   validate(operations, scope) {
     const branchId = branch(scope.branchId);
@@ -55,7 +136,7 @@ class ShiftSyncJournal {
     return { branchId, shiftId, ops };
   }
 
-  async snapshot(transaction, branchId, shiftId, ops) {
+  async snapshot(transaction, branchId, shiftId, ops, {allowUnclosed=false}={}) {
     const sql = this.repository.connectionManager.sql();
     const select = async (table, statement, inputs) => {
       const request = new sql.Request(transaction);
@@ -69,8 +150,8 @@ class ShiftSyncJournal {
       "SELECT * FROM dbo.[shifts] WITH (UPDLOCK,HOLDLOCK) WHERE id=@shift AND store_id=@branch;",
       { shift: shiftId, branch: branchId });
     const parent = parents[0];
-    if (parents.length !== 1 || parent.status !== "CLOSED" || parent.state !== "CLOSED" ||
-        !parent.closed_at || !Number.isFinite(Date.parse(parent.closed_at)) ||
+    const closed=parent?.status==="CLOSED" && parent?.state==="CLOSED" && parent?.closed_at && Number.isFinite(Date.parse(parent.closed_at));
+    if (parents.length !== 1 || (!closed && !(allowUnclosed && ["CASH_COUNT_SUBMITTED","VARIANCE_REVIEW_REQUIRED","RECONCILIATION"].includes(parent?.state))) ||
         !Number.isSafeInteger(Number(parent.row_version)) || Number(parent.row_version) < 1)
       fail("The local database did not confirm the closed shift and its revision.");
     const graph = new Map([["shifts", parents]]);
@@ -136,15 +217,25 @@ class ShiftSyncJournal {
   }
 
   async apply(context, operations, scope = {}) {
+    if (this.authorRequired && !scope.author)
+      fail("A verified protected author is required.", "ESYNC_SHIFT_AUTHOR_IDENTITY_PENDING");
+    scope.author?.assertCurrent();
     const { branchId, shiftId, ops } = this.validate(operations, scope);
     const receiptPayload = { kind: "protected_shift_close", branchId, shiftId, operations: ops };
     const aggregateId = stableUuid(receiptPayload);
     const payloadHash = createHash("sha256").update(JSON.stringify(canonical(receiptPayload))).digest("hex");
-    let priorReceipt = null;
+    let priorReceipt = null, causalContext;
     return this.repository.apply(context, ops, scope, async (transaction, validatedOps) => {
       const graph = await this.snapshot(transaction, branchId, shiftId, validatedOps);
       const sql = this.repository.connectionManager.sql();
       if (priorReceipt) return;
+      const kind=ops.some(operation=>operation.table==="shift_cash_counts" && rowsOf(operation).some(row=>row.kind==="RECOUNT"))?"RECOUNT":
+        ops.some(operation=>operation.table==="shift_cash_counts")?"ORIGINAL":"VARIANCE";
+      const frozen=await this.intents.freeze(transaction,aggregateId,kind,graph,causalContext);
+      if(scope.author){
+        const attestation=scope.author.sign({branchId,shiftId,intentId:aggregateId,action:kind,payloadHash:frozen.payloadHash});
+        await scope.author.save(transaction,attestation);
+      }
       for (const [table, rows] of graph) for (const row of rows) {
         await new sql.Request(transaction)
           .input("entity_type", table).input("entity_id", JSON.stringify({ id: id(row.id) }))
@@ -157,6 +248,7 @@ class ShiftSyncJournal {
         .input("operation_type", "protected_shift_close").input("entity_id", shiftId).input("note", payloadHash)
         .query("INSERT dbo.local_operation_receipts(operation_id,operation_type,entity_id,note) VALUES(@operation_id,@operation_type,@entity_id,@note);");
     }, async transaction => {
+      scope.author?.assertCurrent();
       const sql = this.repository.connectionManager.sql();
       // Match the ordinary aggregate writer's receipt→parent lock order. The
       // parent then precedes all child writes, as it does for upload snapshots.
@@ -169,7 +261,14 @@ class ShiftSyncJournal {
         .query("SELECT id FROM dbo.[shifts] WITH (UPDLOCK,HOLDLOCK) WHERE id=@shift AND store_id=@branch;");
       if (parent.recordset?.length !== 1)
         fail("The protected shift does not belong to this terminal branch.", "SYNC_BRANCH_FORBIDDEN");
-    });
+      if(priorReceipt){
+        const frozen=await this.intents.get(aggregateId,branchId,transaction);
+        if(!frozen)fail("The saved closing receipt has no immutable intent.","EIDEMPOTENCY");
+        await this.intents.verifySavedHistory(transaction,frozen);
+        return false;
+      }
+      causalContext=await this.intents.verify(transaction,scope.observation);
+    }, () => scope.author?.assertCurrent());
   }
 }
 module.exports = { ShiftSyncJournal };

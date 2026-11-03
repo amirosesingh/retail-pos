@@ -1,5 +1,6 @@
 const { AsyncLocalStorage } = require("node:async_hooks");
 const syncLease = new AsyncLocalStorage();
+const authorHold = error => /^(?:ESYNC_SHIFT_AUTHOR_|ESHIFT_AUTHOR_)/.test(String(error?.code??""));
 class SyncCoordinator {
   constructor({ pushWorker, pullWorker, publish = () => {} }) { this.pushWorker=pushWorker; this.pullWorker=pullWorker; this.publish=publish; this.running=false; this.activeRun=null; this.activeOptions=null; this.paused=false; this.status={ phase:"idle", pending:0, failed:0, conflicts:0, lastPushAt:null, lastPullAt:null, lastError:null, lastComparedAt:null, lastVerifiedAt:null, tables:[], recentTables:[], credentialsInvalid:false, membershipDeferred:false, membershipMirrored:0 }; }
   snapshot() { return { ...this.status, running:this.running, paused:this.paused }; }
@@ -85,7 +86,7 @@ class SyncCoordinator {
       let pushError = null; let pushed = {};
       try { if (!options.pullOnly) { pushed=await this.pushWorker.run(workerOptions); this.status.lastPushAt=new Date().toISOString(); } }
       catch(error) { pushError=error; }
-      if (pushError && (pushError.code === "ECHANGEGAP" || [401,403].includes(Number(pushError.status)))) throw pushError;
+      if (pushError && (pushError.code === "ECHANGEGAP" || (!authorHold(pushError)&&[401,403].includes(Number(pushError.status))))) throw pushError;
       let pulled = {};
       if (!options.pushOnly) {
         this.status.phase="pulling"; this.status.currentTable=null; this.publish(this.snapshot());
@@ -101,7 +102,7 @@ class SyncCoordinator {
       this.status.phase="idle"; this.status.lastError=failedTable&&!rawMessage.includes(failedTable)?`${rawMessage} (table: ${failedTable})`:rawMessage;
       const code=String(error?.code??"ESYNC");
       const status=Number(error?.status??error?.statusCode??0);
-      this.status.credentialsInvalid=status===401||status===403||code==="HTTP_401"||code==="HTTP_403";
+      this.status.credentialsInvalid=!authorHold(error)&&(status===401||status===403||code==="HTTP_401"||code==="HTTP_403");
       result={ ok:false,code,error:this.status.lastError,table:failedTable||null };
     } finally {
       this.running=false;

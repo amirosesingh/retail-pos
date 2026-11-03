@@ -34,6 +34,8 @@ jobs:
         run: node scripts/test-shift-closure-sync.mjs
       - name: Trusted Windows closing graph and cloud acknowledgement
         run: node scripts/test-native-shift-closure-graph.mjs
+      - name: Shift author permissions with deployed role enum
+        run: node scripts/test-shift-author-enforcement.mjs
       - name: Atomic transfer dispatch, authorization and retry tests
         run: node scripts/test-transfer-dispatch-atomic.mjs
       - name: Stock request creation, legacy retry and item ownership tests

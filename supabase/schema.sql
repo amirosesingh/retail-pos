@@ -23159,6 +23159,1144 @@ GRANT EXECUTE ON FUNCTION public.stock_transfer_dispatch_atomic_for_staff(uuid,t
 NOTIFY pgrst,'reload schema';
 -- TRF15_ATOMIC_DISPATCH_END
 
+-- SHIFT_CAUSAL_CONTRACT_BEGIN
+-- SHIFT-36 source preparation only. No business rows/history are rewritten.
+-- DRAFT: this state/order contract is not administrator authorization. Do not
+-- deploy or promote it until the separately reviewed historical-author boundary
+-- is enforced; an exposed terminal transport proof is insufficient authority.
+-- Expected amounts are presently checked for internal consistency only. The
+-- separately reviewed receipt-derived expected-total policy is not implemented.
+BEGIN;
+DO $prerequisite$
+DECLARE apply_definition text; proof_definition text;
+BEGIN
+ SELECT pg_get_functiondef(to_regprocedure('public.sync_apply_shifts(jsonb)')) INTO apply_definition;
+ SELECT pg_get_functiondef(to_regprocedure('public.pos_sync_shift_closure_ack(jsonb,text)')) INTO proof_definition;
+ IF apply_definition IS NULL OR proof_definition IS NULL OR position('public."shifts"."closed_at" IS NOT NULL' IN apply_definition)=0 OR
+   position('Only a clean, otherwise identical opening' IN proof_definition)=0 OR position('requested_row_version' IN proof_definition)=0
+ THEN RAISE EXCEPTION 'SHIFT36_REQUIRES_REVIEWED_SHIFT32_PREREQUISITE'; END IF;
+ IF EXISTS(SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='pos_sync_private'
+   AND format('%I.%I(%s)',n.nspname,p.proname,replace(oidvectortypes(p.proargtypes),' ',''))<>ALL(ARRAY[
+    'pos_sync_private.receipt_immutable()','pos_sync_private.shift_graph(uuid)','pos_sync_private.graph_token(jsonb)',
+    'pos_sync_private.download_projection(jsonb,text,boolean)','pos_sync_private.validate_graph(jsonb,text,uuid,boolean)',
+    'pos_sync_private.validate_target(jsonb,jsonb)','pos_sync_private.canonical_facts(jsonb)','pos_sync_private.request_coverage(jsonb,jsonb)'])) OR
+   EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='pos_sync_private' AND c.relkind IN ('r','p','v','m','S','f') AND c.relname<>'shift_intent_receipts')
+ THEN RAISE EXCEPTION 'UNEXPECTED_SHIFT_CAUSAL_PRIVATE_SCHEMA'; END IF;
+ IF to_regclass('pos_sync_private.shift_intent_receipts') IS NOT NULL AND
+  (SELECT jsonb_object_agg(a.attname,jsonb_build_array(format_type(a.atttypid,a.atttypmod),a.attnotnull)) FROM pg_attribute a
+   WHERE a.attrelid=to_regclass('pos_sync_private.shift_intent_receipts') AND a.attnum>0 AND NOT a.attisdropped)
+   IS DISTINCT FROM '{"intent_id":["uuid",true],"branch_id":["text",true],"terminal_id":["text",true],"shift_id":["uuid",true],"payload_hash":["text",true],"base_token":["text",false],"predecessor_intent_id":["uuid",false],"predecessor_intent_hash":["text",false],"accepted_token":["text",true],"acknowledgement":["jsonb",true],"created_at":["timestamp with time zone",true]}'::jsonb
+ THEN RAISE EXCEPTION 'UNEXPECTED_SHIFT_INTENT_RECEIPT_SHAPE'; END IF;
+ IF to_regclass('pos_sync_private.shift_intent_receipts') IS NOT NULL AND (NOT EXISTS
+  (SELECT 1 FROM pg_constraint c JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attname='intent_id'
+   WHERE c.conrelid=to_regclass('pos_sync_private.shift_intent_receipts') AND c.contype='p' AND c.conkey=ARRAY[a.attnum]) OR EXISTS
+  (SELECT 1 FROM pg_index i WHERE i.indrelid=to_regclass('pos_sync_private.shift_intent_receipts') AND i.indisunique AND NOT i.indisprimary))
+ THEN RAISE EXCEPTION 'UNEXPECTED_SHIFT_INTENT_RECEIPT_INDEX'; END IF;
+END $prerequisite$;
+-- SHIFT_CAUSAL_HELPERS_BEGIN
+CREATE SCHEMA IF NOT EXISTS pos_sync_private;
+REVOKE ALL ON SCHEMA pos_sync_private FROM PUBLIC,anon,authenticated;
+CREATE TABLE IF NOT EXISTS pos_sync_private.shift_intent_receipts (
+ intent_id uuid PRIMARY KEY, branch_id text NOT NULL, terminal_id text NOT NULL, shift_id uuid NOT NULL,
+ payload_hash text NOT NULL CHECK(payload_hash ~ '^[a-f0-9]{64}$'),
+ base_token text, predecessor_intent_id uuid, predecessor_intent_hash text,
+ accepted_token text NOT NULL CHECK(accepted_token ~ '^[a-f0-9]{64}$'),
+ acknowledgement jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
+ CHECK ((predecessor_intent_id IS NULL)=(predecessor_intent_hash IS NULL)),
+ CHECK (predecessor_intent_id IS DISTINCT FROM intent_id),
+ CHECK (base_token IS NULL OR predecessor_intent_id IS NULL)
+);
+ALTER TABLE pos_sync_private.shift_intent_receipts ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE pos_sync_private.shift_intent_receipts FROM PUBLIC,anon,authenticated,service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA pos_sync_private REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES IN SCHEMA pos_sync_private REVOKE ALL ON TABLES FROM PUBLIC,anon,authenticated;
+CREATE OR REPLACE FUNCTION pos_sync_private.receipt_immutable() RETURNS trigger
+LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog AS $fn$
+BEGIN RAISE EXCEPTION 'SYNC_SHIFT_INTENT_RECEIPT_IMMUTABLE'; END $fn$;
+REVOKE ALL ON FUNCTION pos_sync_private.receipt_immutable() FROM PUBLIC,anon,authenticated,service_role;
+DROP TRIGGER IF EXISTS shift_intent_receipt_immutable ON pos_sync_private.shift_intent_receipts;
+CREATE TRIGGER shift_intent_receipt_immutable BEFORE UPDATE OR DELETE ON pos_sync_private.shift_intent_receipts
+ FOR EACH ROW EXECUTE FUNCTION pos_sync_private.receipt_immutable();
+
+-- One SQL statement, hence one MVCC snapshot for parent and every child table.
+-- UTC is function-local; never change database/operator timezone settings.
+CREATE OR REPLACE FUNCTION pos_sync_private.shift_graph(p_id uuid) RETURNS jsonb
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path=public,pg_temp SET timezone='UTC' AS $fn$
+ SELECT jsonb_build_array(
+  jsonb_build_object('table','shifts','rows',jsonb_build_array(to_jsonb(s))),
+  jsonb_build_object('table','shift_cash_counts','rows',(SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.id),'[]'::jsonb) FROM (SELECT * FROM public.shift_cash_counts WHERE shift_id=s.id ORDER BY id LIMIT 2001) x)),
+  jsonb_build_object('table','shift_reconciliations','rows',(SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.id),'[]'::jsonb) FROM (SELECT * FROM public.shift_reconciliations WHERE shift_id=s.id ORDER BY id LIMIT 2001) x)),
+  jsonb_build_object('table','shift_close_events','rows',(SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.id),'[]'::jsonb) FROM (SELECT * FROM public.shift_close_events WHERE shift_id=s.id ORDER BY id LIMIT 2001) x)),
+  jsonb_build_object('table','shift_notifications','rows',(SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.id),'[]'::jsonb) FROM (SELECT * FROM public.shift_notifications WHERE shift_id=s.id ORDER BY id LIMIT 2001) x)),
+  jsonb_build_object('table','shift_variance_alerts','rows',(SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.id),'[]'::jsonb) FROM (SELECT * FROM public.shift_variance_alerts WHERE shift_id=s.id ORDER BY id LIMIT 2001) x)))
+ FROM public.shifts s WHERE s.id=p_id
+$fn$;
+CREATE OR REPLACE FUNCTION pos_sync_private.canonical_facts(p_value jsonb) RETURNS jsonb
+LANGUAGE plpgsql IMMUTABLE SECURITY INVOKER SET search_path=pg_catalog AS $fn$
+DECLARE result jsonb;
+BEGIN
+ IF jsonb_typeof(p_value)='number' THEN RETURN to_jsonb(trim_scale((p_value#>>'{}')::numeric)); END IF;
+ IF jsonb_typeof(p_value)='array' THEN SELECT COALESCE(jsonb_agg(pos_sync_private.canonical_facts(value) ORDER BY ordinal),'[]'::jsonb) INTO result FROM jsonb_array_elements(p_value) WITH ORDINALITY AS items(value,ordinal); RETURN result; END IF;
+ IF jsonb_typeof(p_value)='object' THEN SELECT COALESCE(jsonb_object_agg(key,pos_sync_private.canonical_facts(value)),'{}'::jsonb) INTO result FROM jsonb_each(p_value); RETURN result; END IF;
+ RETURN p_value;
+END $fn$;
+CREATE OR REPLACE FUNCTION pos_sync_private.graph_token(p_graph jsonb) RETURNS text
+LANGUAGE sql IMMUTABLE SECURITY INVOKER SET search_path=pg_catalog AS $fn$
+ SELECT CASE WHEN p_graph IS NULL THEN NULL ELSE encode(sha256(convert_to(pos_sync_private.canonical_facts(jsonb_build_object(
+  'parent',(p_graph->0->'rows'->0)-ARRAY['row_version','updated_at','overdue','note']::text[],
+  'counts',p_graph->1->'rows','reconciliations',p_graph->2->'rows','events',p_graph->3->'rows'))::text,'UTF8')),'hex') END
+$fn$;
+-- Mirror only the existing download policy when recognizing previously
+-- observed history. Existing immutable rows are preserved, never rewritten
+-- from a masked terminal projection. No generic secret-name rules are added.
+CREATE OR REPLACE FUNCTION pos_sync_private.download_projection(p_value jsonb,p_table text,p_management boolean) RETURNS jsonb
+LANGUAGE plpgsql IMMUTABLE SECURITY INVOKER SET search_path=pg_catalog AS $fn$
+DECLARE context text:=p_table; result jsonb; k text; child jsonb;
+BEGIN
+ IF jsonb_typeof(p_value)='array' THEN
+  SELECT COALESCE(jsonb_agg(pos_sync_private.download_projection(value,p_table,p_management) ORDER BY ordinal),'[]'::jsonb)
+   INTO result FROM jsonb_array_elements(p_value) WITH ORDINALITY AS items(value,ordinal); RETURN result;
+ ELSIF jsonb_typeof(p_value) IS DISTINCT FROM 'object' THEN RETURN p_value; END IF;
+ IF jsonb_typeof(p_value->'table_name')='string' THEN context:=p_value->>'table_name'; END IF;
+ IF NOT p_management AND (p_table='settings_scoped' OR p_value->>'table_name'='settings_scoped') AND p_value->>'key' LIKE 'product_price:%' AND jsonb_typeof(p_value->'value')='object'
+ THEN p_value:=jsonb_set(p_value,'{value}',(p_value->'value')-'ecom_price'); END IF;
+ result:='{}'::jsonb;
+ FOR k,child IN SELECT key,value FROM jsonb_each(p_value) LOOP
+  IF (context='terminal_tokens' AND k=ANY(ARRAY['claim_secret_hash','claim_proof','claimed_proof_hash'])) OR
+   (NOT p_management AND ((context='products' AND k=ANY(ARRAY['ecom_price','ecom_visible','ecom_enabled','is_published'])) OR k='ecommerceEnabled')) THEN CONTINUE; END IF;
+  result:=result||jsonb_build_object(k,pos_sync_private.download_projection(child,context,p_management));
+ END LOOP;
+ RETURN result;
+END $fn$;
+
+CREATE OR REPLACE FUNCTION pos_sync_private.validate_target(p_count jsonb,p_reconciliation jsonb) RETURNS void
+LANGUAGE plpgsql IMMUTABLE SECURITY INVOKER SET search_path=public,pg_temp AS $fn$
+DECLARE cash public.shift_cash_counts%ROWTYPE; recon public.shift_reconciliations%ROWTYPE; vc numeric; vcard numeric; vd numeric; total numeric;
+BEGIN
+ cash:=jsonb_populate_record(NULL::public.shift_cash_counts,p_count); recon:=jsonb_populate_record(NULL::public.shift_reconciliations,p_reconciliation);
+ IF cash.id IS NULL OR recon.id IS NULL OR recon.count_id IS DISTINCT FROM cash.id OR cash.counted_cash IS NULL OR cash.counted_cash<0 OR cash.counted_card<0 OR cash.counted_digital<0 OR
+  recon.expected_cash IS NULL OR recon.expected_card IS NULL OR recon.expected_digital IS NULL OR EXISTS
+  (SELECT 1 FROM unnest(ARRAY[cash.counted_cash,cash.counted_card,cash.counted_digital,recon.expected_cash,recon.expected_card,recon.expected_digital,
+    recon.variance_cash,recon.variance_card,recon.variance_digital,recon.variance_total]) amount WHERE amount::text IN ('NaN','Infinity','-Infinity') OR round(amount,2) IS DISTINCT FROM amount)
+ THEN RAISE EXCEPTION 'SYNC_SHIFT_TARGET_FACTS_INVALID'; END IF;
+ vc:=round(cash.counted_cash-recon.expected_cash,2); vcard:=round(cash.counted_card-recon.expected_card,2); vd:=round(cash.counted_digital-recon.expected_digital,2);
+ total:=round(vc+COALESCE(vcard,0)+COALESCE(vd,0),2);
+ IF ROW(recon.counted_cash,recon.counted_card,recon.counted_digital,recon.variance_cash,recon.variance_card,recon.variance_digital,recon.variance_total,recon.variance_status)
+  IS DISTINCT FROM ROW(cash.counted_cash,cash.counted_card,cash.counted_digital,vc,vcard,vd,total,CASE WHEN abs(total)<=0.005 THEN 'NO_VARIANCE' WHEN total>0 THEN 'OVER' ELSE 'SHORT' END)
+ THEN RAISE EXCEPTION 'SYNC_SHIFT_TARGET_FACTS_INVALID'; END IF;
+END $fn$;
+CREATE OR REPLACE FUNCTION pos_sync_private.validate_graph(p_graph jsonb,p_branch text,p_id uuid,p_closed boolean DEFAULT false) RETURNS void
+LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp SET timezone='UTC' AS $fn$
+DECLARE part jsonb; r jsonb; parent public.shifts%ROWTYPE; recon public.shift_reconciliations%ROWTYPE; count_row public.shift_cash_counts%ROWTYPE; matches boolean:=false; total integer:=0; ordinal integer:=0;
+BEGIN
+ IF p_graph IS NULL OR jsonb_array_length(p_graph)<>6 OR jsonb_array_length(p_graph->0->'rows')<>1
+ THEN RAISE EXCEPTION 'SYNC_SHIFT_GRAPH_MISSING'; END IF;
+ parent:=jsonb_populate_record(NULL::public.shifts,p_graph->0->'rows'->0);
+ IF parent.id IS DISTINCT FROM p_id OR parent.store_id IS DISTINCT FROM p_branch THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;
+ IF parent.final_counted_cash IS NOT NULL AND parent.counted_cash IS DISTINCT FROM parent.final_counted_cash
+ THEN RAISE EXCEPTION 'SYNC_SHIFT_GRAPH_CONFLICT'; END IF;
+ FOR part IN SELECT value FROM jsonb_array_elements(p_graph) LOOP
+  ordinal:=ordinal+1;
+  IF part->>'table' IS DISTINCT FROM (ARRAY['shifts','shift_cash_counts','shift_reconciliations','shift_close_events','shift_notifications','shift_variance_alerts'])[ordinal]
+    OR jsonb_typeof(part->'rows') IS DISTINCT FROM 'array' THEN RAISE EXCEPTION 'SYNC_SHIFT_GRAPH_CONFLICT'; END IF;
+  total:=total+jsonb_array_length(part->'rows');
+  IF (SELECT count(*)<>count(DISTINCT value->>'id') FROM jsonb_array_elements(part->'rows')) THEN RAISE EXCEPTION 'SYNC_SHIFT_GRAPH_DUPLICATE'; END IF;
+  FOR r IN SELECT value FROM jsonb_array_elements(part->'rows') LOOP
+   IF r->>'store_id' IS DISTINCT FROM p_branch OR (part->>'table'<>'shifts' AND r->>'shift_id' IS DISTINCT FROM p_id::text)
+   THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;
+  END LOOP;
+ END LOOP;
+ IF total>2000 OR octet_length(convert_to(p_graph::text,'UTF8'))>6*1024*1024 THEN RAISE EXCEPTION 'SYNC_SHIFT_GRAPH_TOO_LARGE'; END IF;
+ FOR recon IN SELECT * FROM jsonb_populate_recordset(NULL::public.shift_reconciliations,p_graph->2->'rows') LOOP
+  IF recon.count_id IS NULL THEN
+   IF EXISTS(SELECT 1 FROM public.shift_reconciliations historical WHERE historical.id=recon.id AND historical.shift_id=p_id AND historical.store_id=p_branch AND historical.count_id IS NULL)
+   THEN CONTINUE; ELSE RAISE EXCEPTION 'SYNC_SHIFT_GRAPH_CONFLICT'; END IF;
+  END IF;
+  SELECT * INTO count_row FROM jsonb_populate_recordset(NULL::public.shift_cash_counts,p_graph->1->'rows') c WHERE c.id=recon.count_id;
+  IF NOT FOUND OR ROW(count_row.counted_cash,count_row.counted_card,count_row.counted_digital) IS DISTINCT FROM ROW(recon.counted_cash,recon.counted_card,recon.counted_digital)
+  THEN RAISE EXCEPTION 'SYNC_SHIFT_GRAPH_CONFLICT'; END IF;
+  IF ROW(recon.counted_cash,recon.counted_card,recon.counted_digital,recon.expected_cash,recon.expected_card,recon.expected_digital,
+      recon.variance_cash,recon.variance_card,recon.variance_digital,recon.variance_total,recon.variance_status)
+   IS NOT DISTINCT FROM ROW(COALESCE(parent.final_counted_cash,parent.counted_cash),parent.counted_card,parent.counted_digital,
+      parent.expected_cash,parent.expected_card,parent.expected_digital,parent.variance_cash,parent.variance_card,parent.variance_digital,parent.variance_total,parent.variance_status)
+  THEN matches:=true; END IF;
+ END LOOP;
+ IF (p_closed OR parent.status='CLOSED' OR parent.state='CLOSED' OR parent.closed_at IS NOT NULL) AND
+   (parent.status IS DISTINCT FROM 'CLOSED' OR parent.state IS DISTINCT FROM 'CLOSED' OR parent.closed_at IS NULL OR NOT matches)
+ THEN RAISE EXCEPTION 'SYNC_SHIFT_GRAPH_CONFLICT'; END IF;
+ IF EXISTS(SELECT 1 FROM jsonb_array_elements(p_graph->5->'rows') a WHERE a->>'reconciliation_id' IS NOT NULL AND NOT EXISTS
+   (SELECT 1 FROM jsonb_array_elements(p_graph->2->'rows') linked_recon WHERE linked_recon->>'id'=a->>'reconciliation_id')) THEN RAISE EXCEPTION 'SYNC_SHIFT_GRAPH_CONFLICT'; END IF;
+END $fn$;
+
+CREATE OR REPLACE FUNCTION public.pos_sync_shift_graph(p_organization_id text,p_branch_id text,p_terminal_id text,p_shift_id uuid) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp SET timezone='UTC' AS $fn$
+DECLARE graph jsonb;
+BEGIN
+ IF auth.role() IS DISTINCT FROM 'service_role' THEN RAISE EXCEPTION 'SYNC_FORBIDDEN'; END IF;
+ PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id);
+ graph:=pos_sync_private.shift_graph(p_shift_id);
+ PERFORM pos_sync_private.validate_graph(graph,p_branch_id,p_shift_id,false);
+ RETURN jsonb_build_object('ok',true,'shiftGraphVersion',1,'branchId',p_branch_id,'shiftId',p_shift_id,
+  'graphToken',CASE WHEN graph->0->'rows'->0->>'status'='CLOSED' AND graph->0->'rows'->0->>'state'='CLOSED'
+    THEN pos_sync_private.graph_token(graph) ELSE NULL END,'closedAtRaw',graph->0->'rows'->0->'closed_at','tables',graph);
+END $fn$;
+
+-- Compact proof of actual accepted business projections, not an inference from
+-- the request hash. Only two database-generated clocks may be transformed.
+CREATE OR REPLACE FUNCTION pos_sync_private.request_coverage(p_operations jsonb,p_graph jsonb) RETURNS jsonb
+LANGUAGE plpgsql STABLE SECURITY INVOKER SET search_path=public,pg_temp SET timezone='UTC' AS $fn$
+DECLARE table_name text; requested jsonb; requested_rows jsonb; actual_rows jsonb; actual_index jsonb; actual jsonb;
+ business_fields text[]; managed_fields text[]; matched jsonb; server_values jsonb; tables jsonb:='[]'; result jsonb; count integer:=0;
+BEGIN
+ FOREACH table_name IN ARRAY ARRAY['shifts','shift_cash_counts','shift_reconciliations','shift_close_events','shift_notifications','shift_variance_alerts'] LOOP
+  SELECT value->'rows' INTO requested_rows FROM jsonb_array_elements(p_operations) WHERE value->>'table'=table_name;
+  SELECT value->'rows' INTO actual_rows FROM jsonb_array_elements(p_graph) WHERE value->>'table'=table_name;
+  SELECT COALESCE(jsonb_object_agg(value->>'id',value),'{}'::jsonb) INTO actual_index FROM jsonb_array_elements(actual_rows);
+  SELECT COALESCE(array_agg(a.attname::text ORDER BY a.attname) FILTER(WHERE a.attname<>ALL(ARRAY['row_version','updated_at'])),'{}'),
+    COALESCE(array_agg(a.attname::text ORDER BY a.attname) FILTER(WHERE a.attname=ANY(ARRAY['row_version','updated_at'])),'{}')
+   INTO business_fields,managed_fields FROM pg_attribute a WHERE a.attrelid=to_regclass(format('public.%I',table_name)) AND a.attnum>0 AND NOT a.attisdropped;
+  matched:='[]';
+  FOR requested IN SELECT value FROM jsonb_array_elements(requested_rows) ORDER BY value->>'id' LOOP
+   actual:=actual_index->(requested->>'id');
+   IF actual IS NULL THEN CONTINUE; END IF;
+   IF (requested-managed_fields) IS DISTINCT FROM (actual-managed_fields) AND
+     (requested-managed_fields) IS DISTINCT FROM (pos_sync_private.download_projection(actual,table_name,false)-managed_fields) AND
+     (requested-managed_fields) IS DISTINCT FROM (pos_sync_private.download_projection(actual,table_name,true)-managed_fields)
+   THEN CONTINUE; END IF;
+   SELECT COALESCE(jsonb_object_agg(name,actual->name),'{}'::jsonb) INTO server_values FROM unnest(managed_fields) name;
+   matched:=matched||jsonb_build_array(jsonb_build_object('id',requested->>'id','serverValues',server_values)); count:=count+1;
+  END LOOP;
+  tables:=tables||jsonb_build_array(jsonb_build_object('table',table_name,'fields',to_jsonb(business_fields),'serverManagedFields',to_jsonb(managed_fields),'rows',matched));
+ END LOOP;
+ result:=jsonb_build_object('version',1,'mode','matched_request_rows','tables',tables);
+ IF count>2000 OR octet_length(convert_to(result::text,'UTF8'))>512*1024 THEN RAISE EXCEPTION 'SYNC_SHIFT_COVERAGE_TOO_LARGE'; END IF;
+ RETURN result;
+END $fn$;
+
+-- Common fresh/replay guard. Lock every affected parent before the caller can
+-- write even its first child. Existing legacy OPEN->CLOSED remains supported.
+CREATE OR REPLACE FUNCTION public.pos_sync_shift_preflight(p_operations jsonb,p_branch_id text) RETURNS void
+LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp SET timezone='UTC' AS $fn$
+DECLARE op jsonb; r jsonb; saved jsonb; owner public.shifts%ROWTYPE; ids uuid[]:='{}'; id uuid; candidate jsonb; allowed boolean; initial_child boolean;
+ count_candidate public.shift_cash_counts%ROWTYPE; recon_candidate public.shift_reconciliations%ROWTYPE; summary_candidate public.shift_notifications%ROWTYPE;
+BEGIN
+ FOR op IN SELECT value FROM jsonb_array_elements(COALESCE(p_operations,'[]'::jsonb)) LOOP
+  IF op->>'table'=ANY(ARRAY['shifts','shift_cash_counts','shift_reconciliations','shift_close_events','shift_notifications','shift_variance_alerts']) THEN
+   FOR r IN SELECT value FROM jsonb_array_elements(COALESCE(op->'rows','[]'::jsonb)) LOOP
+    IF r->>'store_id' IS NOT NULL AND lower(btrim(r->>'store_id'))<>lower(btrim(p_branch_id)) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;
+    id:=CASE WHEN op->>'table'='shifts' THEN (r->>'id')::uuid ELSE (r->>'shift_id')::uuid END;
+    IF id IS NULL THEN RAISE EXCEPTION 'SYNC_SHIFT_GRAPH_CONFLICT'; END IF; ids:=array_append(ids,id);
+    IF op->>'table'<>'shifts' THEN
+     EXECUTE format('SELECT to_jsonb(t) FROM public.%I t WHERE id=$1',op->>'table') INTO saved USING (r->>'id')::uuid;
+     IF saved IS NOT NULL AND (saved->>'shift_id' IS DISTINCT FROM id::text OR saved->>'store_id' IS DISTINCT FROM p_branch_id)
+     THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;
+    END IF;
+   END LOOP;
+   FOR r IN SELECT value FROM jsonb_array_elements(COALESCE(op->'changes','[]'::jsonb)) WHERE upper(COALESCE(value->>'operation','')) IN ('D','DELETE') LOOP
+    candidate:=COALESCE(r->'key',(r->>'entityId')::jsonb,(r->>'entity_id')::jsonb);
+    IF op->>'table'='shifts' THEN id:=(candidate->>'id')::uuid;
+    ELSE EXECUTE format('SELECT shift_id FROM public.%I WHERE id=$1',op->>'table') INTO id USING (candidate->>'id')::uuid; END IF;
+    IF id IS NOT NULL THEN ids:=array_append(ids,id); END IF;
+   END LOOP;
+  END IF;
+ END LOOP;
+ FOR id IN SELECT DISTINCT value FROM unnest(ids) value ORDER BY value LOOP
+  PERFORM pg_advisory_xact_lock(hashtextextended('pos-sync-shift:'||id::text,0));
+ END LOOP;
+ FOR owner IN SELECT * FROM public.shifts WHERE shifts.id=ANY(ids) ORDER BY shifts.id FOR UPDATE NOWAIT LOOP
+  IF owner.store_id IS DISTINCT FROM p_branch_id THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;
+  allowed:=auth.role()='service_role' AND current_setting('pos.sync_causal_shift',true)=owner.id::text;
+  IF owner.status='CLOSED' OR owner.state='CLOSED' OR owner.closed_at IS NOT NULL THEN
+   FOR op IN SELECT value FROM jsonb_array_elements(p_operations) LOOP
+    IF op->>'table'='shifts' THEN
+     FOR r IN SELECT value FROM jsonb_array_elements(COALESCE(op->'rows','[]'::jsonb)) WHERE value->>'id'=owner.id::text LOOP
+      IF NOT COALESCE(allowed,false) THEN PERFORM public.pos_sync_shift_closure_ack(jsonb_build_array(r),p_branch_id); END IF;
+     END LOOP;
+    ELSIF op->>'table'=ANY(ARRAY['shift_cash_counts','shift_reconciliations','shift_close_events','shift_notifications','shift_variance_alerts']) THEN
+     FOR r IN SELECT value FROM jsonb_array_elements(COALESCE(op->'rows','[]'::jsonb)) WHERE value->>'shift_id'=owner.id::text LOOP
+      EXECUTE format('SELECT to_jsonb(t) FROM public.%I t WHERE id=$1',op->>'table') INTO saved USING (r->>'id')::uuid;
+      IF saved IS NOT NULL THEN
+       IF saved->>'store_id' IS DISTINCT FROM p_branch_id OR saved->>'shift_id' IS DISTINCT FROM owner.id::text THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;
+       IF op->>'table'=ANY(ARRAY['shift_cash_counts','shift_reconciliations','shift_close_events']) THEN
+        EXECUTE format('SELECT to_jsonb(jsonb_populate_record(NULL::public.%I,$1))',op->>'table') INTO candidate USING r;
+        IF candidate IS DISTINCT FROM saved THEN RAISE EXCEPTION 'SYNC_SHIFT_HISTORY_CONFLICT'; END IF;
+       END IF;
+      ELSIF NOT COALESCE(allowed,false) AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(p_operations) p CROSS JOIN LATERAL jsonb_array_elements(COALESCE(p->'rows','[]'::jsonb)) parent
+        WHERE p->>'table'='shifts' AND parent->>'id'=owner.id::text AND parent->>'status'='CLOSED' AND parent->>'state'='CLOSED')
+      THEN
+       -- Legacy first-close table uploads may deliver the parent before its
+       -- ORIGINAL graph. Permit only history consistent with that saved close;
+       -- an unconditioned RECOUNT can never replace its effective facts.
+       initial_child:=false;
+       IF op->>'table'='shift_cash_counts' THEN
+        count_candidate:=jsonb_populate_record(NULL::public.shift_cash_counts,r);
+        initial_child:=count_candidate.kind='ORIGINAL' AND ROW(count_candidate.counted_cash,count_candidate.counted_card,count_candidate.counted_digital)
+          IS NOT DISTINCT FROM ROW(COALESCE(owner.final_counted_cash,owner.counted_cash),owner.counted_card,owner.counted_digital);
+       ELSIF op->>'table'='shift_reconciliations' THEN
+        recon_candidate:=jsonb_populate_record(NULL::public.shift_reconciliations,r);
+        initial_child:=EXISTS(SELECT 1 FROM public.shift_cash_counts c WHERE c.id=recon_candidate.count_id AND c.shift_id=owner.id AND c.store_id=p_branch_id AND c.kind='ORIGINAL'
+          AND ROW(c.counted_cash,c.counted_card,c.counted_digital) IS NOT DISTINCT FROM ROW(recon_candidate.counted_cash,recon_candidate.counted_card,recon_candidate.counted_digital))
+          AND ROW(recon_candidate.counted_cash,recon_candidate.counted_card,recon_candidate.counted_digital,recon_candidate.expected_cash,recon_candidate.expected_card,recon_candidate.expected_digital,
+            recon_candidate.variance_cash,recon_candidate.variance_card,recon_candidate.variance_digital,recon_candidate.variance_total,recon_candidate.variance_status)
+          IS NOT DISTINCT FROM ROW(COALESCE(owner.final_counted_cash,owner.counted_cash),owner.counted_card,owner.counted_digital,owner.expected_cash,owner.expected_card,owner.expected_digital,
+            owner.variance_cash,owner.variance_card,owner.variance_digital,owner.variance_total,owner.variance_status);
+       ELSIF op->>'table'='shift_close_events' THEN initial_child:=r->>'event'=ANY(ARRAY['closing_started','cash_count_submitted','reconciled','variance_approved']);
+       ELSIF op->>'table'='shift_notifications' THEN
+        summary_candidate:=jsonb_populate_record(NULL::public.shift_notifications,r);
+        initial_child:=ROW(summary_candidate.opened_at,summary_candidate.closed_at,summary_candidate.counted_cash,summary_candidate.expected_cash)
+          IS NOT DISTINCT FROM ROW(owner.opened_at,owner.closed_at,COALESCE(owner.final_counted_cash,owner.counted_cash),owner.expected_cash);
+       ELSIF op->>'table'='shift_variance_alerts' THEN
+        initial_child:=EXISTS(SELECT 1 FROM public.shift_reconciliations linked WHERE linked.id=(r->>'reconciliation_id')::uuid AND linked.shift_id=owner.id AND linked.store_id=p_branch_id
+          AND ROW(linked.variance_total,linked.variance_status) IS NOT DISTINCT FROM ROW((r->>'variance_total')::numeric,r->>'variance_status'));
+       END IF;
+       IF NOT COALESCE(initial_child,false) THEN RAISE EXCEPTION 'SYNC_SHIFT_BASELINE_REQUIRED'; END IF;
+      END IF;
+     END LOOP;
+    END IF;
+    IF op->>'table'=ANY(ARRAY['shifts','shift_cash_counts','shift_reconciliations','shift_close_events']) THEN
+     FOR r IN SELECT value FROM jsonb_array_elements(COALESCE(op->'changes','[]'::jsonb)) WHERE upper(COALESCE(value->>'operation','')) IN ('D','DELETE') LOOP
+      candidate:=COALESCE(r->'key',(r->>'entityId')::jsonb,(r->>'entity_id')::jsonb);
+      IF op->>'table'='shifts' THEN
+       IF (candidate->>'id')::uuid=owner.id THEN RAISE EXCEPTION 'SYNC_SHIFT_HISTORY_CONFLICT'; END IF;
+      ELSE
+       EXECUTE format('SELECT to_jsonb(t) FROM public.%I t WHERE id=$1',op->>'table') INTO saved USING (candidate->>'id')::uuid;
+       IF (saved->>'shift_id')::uuid=owner.id THEN RAISE EXCEPTION 'SYNC_SHIFT_HISTORY_CONFLICT'; END IF;
+      END IF;
+     END LOOP;
+    END IF;
+   END LOOP;
+  END IF;
+ END LOOP;
+END $fn$;
+
+-- Separate internal RPC avoids overload ambiguity; HTTP aggregate DTO is shared.
+CREATE OR REPLACE FUNCTION public.pos_sync_push_shift_intent(p_batch_id uuid,p_organization_id text,p_branch_id text,p_terminal_id text,p_operations jsonb,p_shift_intent jsonb)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp SET timezone='UTC' AS $fn$
+DECLARE raw text; payload jsonb; hash text; v_shift_id uuid; predecessor uuid; parent public.shifts%ROWTYPE; incoming public.shifts%ROWTYPE;
+ receipt pos_sync_private.shift_intent_receipts%ROWTYPE; prior pos_sync_private.shift_intent_receipts%ROWTYPE;
+ graph jsonb; token text; expected text; op jsonb; rows jsonb; normalized jsonb:='[]'; ack jsonb; proof jsonb; original_revision bigint; kind text; submitted jsonb; saved_history jsonb; typed_history jsonb; target_count jsonb; target_recon jsonb; canonical_operations jsonb:='[]'; requested_operations jsonb;
+BEGIN
+ IF auth.role() IS DISTINCT FROM 'service_role' THEN RAISE EXCEPTION 'SYNC_FORBIDDEN'; END IF;
+ PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id);
+ raw:=p_shift_intent->>'payloadJson';
+ IF raw IS NULL OR octet_length(convert_to(raw,'UTF8'))>6*1024*1024 THEN RAISE EXCEPTION 'SYNC_SHIFT_INTENT_INVALID'; END IF;
+ payload:=raw::jsonb; hash:=encode(sha256(convert_to(raw,'UTF8')),'hex');
+ IF payload-'operations'-'branchId' IS DISTINCT FROM p_shift_intent-'payloadJson' OR lower(btrim(payload->>'branchId')) IS DISTINCT FROM lower(btrim(p_branch_id)) OR
+   (p_operations IS NOT NULL AND payload->'operations' IS DISTINCT FROM p_operations) OR payload->>'version' IS DISTINCT FROM '1' OR (payload->>'intentId')::uuid IS DISTINCT FROM p_batch_id OR
+   jsonb_typeof(payload->'operations') IS DISTINCT FROM 'array' OR jsonb_array_length(payload->'operations') NOT BETWEEN 6 AND 7
+ THEN RAISE EXCEPTION 'SYNC_SHIFT_INTENT_INVALID'; END IF;
+ p_operations:=payload->'operations';
+ v_shift_id:=(payload->>'shiftId')::uuid; predecessor:=(payload->>'predecessorIntentId')::uuid; kind:=payload->>'kind';
+ IF v_shift_id IS NULL OR kind NOT IN ('ORIGINAL','RECOUNT','VARIANCE') OR predecessor=p_batch_id OR
+   (predecessor IS NULL)<>(payload->>'predecessorIntentHash' IS NULL) OR
+   (predecessor IS NOT NULL AND payload->>'baseToken' IS NOT NULL) OR
+   (payload->>'baseToken' IS NOT NULL AND payload->>'baseToken' !~ '^[a-f0-9]{64}$') OR
+   (payload->>'predecessorIntentHash' IS NOT NULL AND payload->>'predecessorIntentHash' !~ '^[a-f0-9]{64}$')
+ THEN RAISE EXCEPTION 'SYNC_SHIFT_INTENT_INVALID'; END IF;
+ -- Match legacy order even when a legacy request reuses this batch UUID.
+ PERFORM pg_advisory_xact_lock(hashtextextended('pos-sync-batch:'||p_batch_id::text,0));
+ PERFORM pg_advisory_xact_lock(hashtextextended('pos-sync-intent:'||p_batch_id::text,0));
+ PERFORM pg_advisory_xact_lock(hashtextextended('pos-sync-shift:'||v_shift_id::text,0));
+ SELECT * INTO parent FROM public.shifts WHERE shifts.id=v_shift_id FOR UPDATE NOWAIT;
+ IF FOUND AND parent.store_id IS DISTINCT FROM p_branch_id THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;
+ graph:=pos_sync_private.shift_graph(v_shift_id); token:=pos_sync_private.graph_token(graph);
+ SELECT * INTO receipt FROM pos_sync_private.shift_intent_receipts WHERE intent_id=p_batch_id;
+ IF FOUND THEN
+  IF ROW(receipt.branch_id,receipt.terminal_id,receipt.shift_id,receipt.payload_hash) IS DISTINCT FROM ROW(p_branch_id,p_terminal_id,v_shift_id,hash)
+  THEN RAISE EXCEPTION 'SYNC_SHIFT_INTENT_MISMATCH'; END IF;
+  proof:=receipt.acknowledgement||jsonb_build_object('current_token',token,'superseded',token IS DISTINCT FROM receipt.accepted_token);
+  RETURN jsonb_build_object('ok',true,'replayed',true,'batch_id',p_batch_id,'shift_closure_ack_version',3,'shift_closures',jsonb_build_array(proof));
+ END IF;
+ IF predecessor IS NOT NULL THEN
+  SELECT * INTO prior FROM pos_sync_private.shift_intent_receipts WHERE intent_id=predecessor;
+  IF NOT FOUND OR ROW(prior.branch_id,prior.terminal_id,prior.shift_id,prior.payload_hash) IS DISTINCT FROM ROW(p_branch_id,p_terminal_id,v_shift_id,payload->>'predecessorIntentHash')
+  THEN RAISE EXCEPTION 'SYNC_SHIFT_PREDECESSOR_REQUIRED'; END IF;
+  expected:=prior.accepted_token;
+ ELSE expected:=payload->>'baseToken'; END IF;
+ IF expected IS NOT NULL THEN
+  IF token IS DISTINCT FROM expected THEN RAISE EXCEPTION 'SYNC_SHIFT_BASELINE_CONFLICT'; END IF;
+ ELSIF parent.status='CLOSED' OR parent.state='CLOSED' OR parent.closed_at IS NOT NULL THEN RAISE EXCEPTION 'SYNC_SHIFT_BASELINE_REQUIRED'; END IF;
+ -- Require one complete frozen graph, never a sender-enriched future graph.
+ IF (SELECT count(DISTINCT value->>'table') FROM jsonb_array_elements(p_operations))<>jsonb_array_length(p_operations) OR
+   EXISTS(SELECT 1 FROM jsonb_array_elements(p_operations) x WHERE x->>'table'<>ALL(ARRAY['shifts','shift_cash_counts','shift_reconciliations','shift_close_events','shift_notifications','shift_variance_alerts','activity_events']) OR COALESCE((x->>'deletePhase')::boolean,false))
+ THEN RAISE EXCEPTION 'SYNC_SHIFT_INTENT_INVALID'; END IF;
+ -- Match established SQL-equivalent identity aliases without rewriting the
+ -- frozen bytes/hash or treating a different branch as an alias.
+ FOR op IN SELECT value FROM jsonb_array_elements(p_operations) LOOP
+  rows:='[]'::jsonb;
+  FOR submitted IN SELECT value FROM jsonb_array_elements(op->'rows') LOOP
+   IF lower(btrim(submitted->>'store_id')) IS DISTINCT FROM lower(btrim(p_branch_id)) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;
+   submitted:=submitted||jsonb_build_object('store_id',p_branch_id);
+   IF submitted ? 'branch_id' THEN
+    IF lower(btrim(submitted->>'branch_id')) IS DISTINCT FROM lower(btrim(p_branch_id)) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;
+    submitted:=submitted||jsonb_build_object('branch_id',p_branch_id);
+   END IF;
+   IF lower(btrim(submitted->>'terminal_id'))=lower(btrim(p_terminal_id)) THEN submitted:=submitted||jsonb_build_object('terminal_id',p_terminal_id); END IF;
+   IF EXISTS(SELECT 1 FROM jsonb_object_keys(submitted) attribute WHERE NOT EXISTS
+      (SELECT 1 FROM pg_attribute a WHERE a.attrelid=to_regclass(format('public.%I',op->>'table')) AND a.attnum>0 AND NOT a.attisdropped AND a.attname=attribute))
+   THEN RAISE EXCEPTION 'SYNC_SHIFT_INTENT_COLUMN_UNSUPPORTED'; END IF;
+   EXECUTE format('SELECT to_jsonb(jsonb_populate_record(NULL::public.%I,$1))',op->>'table') INTO typed_history USING submitted;
+   rows:=rows||jsonb_build_array(typed_history);
+  END LOOP;
+  canonical_operations:=canonical_operations||jsonb_build_array(jsonb_set(op,'{rows}',rows));
+ END LOOP;
+ p_operations:=canonical_operations;
+ requested_operations:=p_operations;
+ SELECT jsonb_agg(jsonb_build_object('table',name,'rows',(SELECT value->'rows' FROM jsonb_array_elements(p_operations) WHERE value->>'table'=name)) ORDER BY ordinal)
+ INTO graph FROM unnest(ARRAY['shifts','shift_cash_counts','shift_reconciliations','shift_close_events','shift_notifications','shift_variance_alerts']) WITH ORDINALITY AS names(name,ordinal);
+ PERFORM pos_sync_private.validate_graph(graph,p_branch_id,v_shift_id,true);
+ incoming:=jsonb_populate_record(NULL::public.shifts,graph->0->'rows'->0); original_revision:=incoming.row_version;
+ IF original_revision IS NULL OR original_revision<1 THEN RAISE EXCEPTION 'SYNC_SHIFT_INTENT_INVALID'; END IF;
+ IF (SELECT count(*) FROM jsonb_array_elements(graph->1->'rows') c WHERE c->>'kind'='ORIGINAL')<>1
+ THEN RAISE EXCEPTION 'SYNC_SHIFT_GRAPH_CONFLICT'; END IF;
+ IF kind='ORIGINAL' AND EXISTS(SELECT 1 FROM jsonb_array_elements(graph->1->'rows') c WHERE c->>'kind'='RECOUNT' AND NOT EXISTS(SELECT 1 FROM public.shift_cash_counts saved WHERE saved.id=(c->>'id')::uuid))
+ THEN RAISE EXCEPTION 'SYNC_SHIFT_GRAPH_CONFLICT'; END IF;
+ IF kind='ORIGINAL' AND (parent.status='CLOSED' OR parent.state='CLOSED' OR parent.closed_at IS NOT NULL)
+ THEN PERFORM public.pos_sync_shift_closure_ack(jsonb_build_array(to_jsonb(incoming)),p_branch_id); END IF;
+ IF kind='ORIGINAL' THEN
+  SELECT c INTO target_count FROM jsonb_array_elements(graph->1->'rows') c WHERE c->>'kind'='ORIGINAL' AND NOT EXISTS(SELECT 1 FROM public.shift_cash_counts saved WHERE saved.id=(c->>'id')::uuid);
+  SELECT r INTO target_recon FROM jsonb_array_elements(graph->2->'rows') r WHERE r->>'count_id'=target_count->>'id' AND NOT EXISTS(SELECT 1 FROM public.shift_reconciliations saved WHERE saved.id=(r->>'id')::uuid) LIMIT 1;
+  IF target_count IS NULL OR target_recon IS NULL OR NOT EXISTS(SELECT 1 FROM jsonb_array_elements(graph->3->'rows') e WHERE e->>'event'='cash_count_submitted' AND e->'detail'->>'count_id'=target_count->>'id' AND NOT EXISTS(SELECT 1 FROM public.shift_close_events saved WHERE saved.id=(e->>'id')::uuid)) OR
+    NOT EXISTS(SELECT 1 FROM jsonb_array_elements(graph->3->'rows') e WHERE e->>'event'='reconciled' AND NOT EXISTS(SELECT 1 FROM public.shift_close_events saved WHERE saved.id=(e->>'id')::uuid))
+  THEN RAISE EXCEPTION 'SYNC_SHIFT_GRAPH_CONFLICT'; END IF;
+  PERFORM pos_sync_private.validate_target(target_count,target_recon);
+ END IF;
+ IF kind='RECOUNT' AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(graph->1->'rows') c
+  JOIN LATERAL jsonb_populate_recordset(NULL::public.shift_reconciliations,graph->2->'rows') proposed ON proposed.count_id=(c->>'id')::uuid
+  WHERE c->>'kind'='RECOUNT' AND NOT EXISTS(SELECT 1 FROM public.shift_cash_counts saved WHERE saved.id=(c->>'id')::uuid)
+   AND NOT EXISTS(SELECT 1 FROM public.shift_reconciliations saved WHERE saved.id=proposed.id)
+   AND ROW(proposed.counted_cash,proposed.counted_card,proposed.counted_digital,proposed.expected_cash,proposed.expected_card,proposed.expected_digital,
+      proposed.variance_cash,proposed.variance_card,proposed.variance_digital,proposed.variance_total,proposed.variance_status)
+    IS NOT DISTINCT FROM ROW(COALESCE(incoming.final_counted_cash,incoming.counted_cash),incoming.counted_card,incoming.counted_digital,
+      incoming.expected_cash,incoming.expected_card,incoming.expected_digital,incoming.variance_cash,incoming.variance_card,incoming.variance_digital,incoming.variance_total,incoming.variance_status)
+   AND EXISTS(SELECT 1 FROM jsonb_array_elements(graph->3->'rows') e WHERE e->>'event'='recount_submitted' AND e->'detail'->>'count_id'=c->>'id'
+     AND NOT EXISTS(SELECT 1 FROM public.shift_close_events saved WHERE saved.id=(e->>'id')::uuid)))
+ THEN RAISE EXCEPTION 'SYNC_SHIFT_GRAPH_CONFLICT'; END IF;
+ IF kind='RECOUNT' THEN
+  IF (SELECT count(*) FROM jsonb_array_elements(graph->1->'rows') c WHERE c->>'kind'='RECOUNT' AND NOT EXISTS(SELECT 1 FROM public.shift_cash_counts saved WHERE saved.id=(c->>'id')::uuid))<>1
+  THEN RAISE EXCEPTION 'SYNC_SHIFT_GRAPH_CONFLICT'; END IF;
+  SELECT c INTO target_count FROM jsonb_array_elements(graph->1->'rows') c WHERE c->>'kind'='RECOUNT' AND NOT EXISTS(SELECT 1 FROM public.shift_cash_counts saved WHERE saved.id=(c->>'id')::uuid) LIMIT 1;
+  SELECT r INTO target_recon FROM jsonb_array_elements(graph->2->'rows') r WHERE r->>'count_id'=target_count->>'id' AND NOT EXISTS(SELECT 1 FROM public.shift_reconciliations saved WHERE saved.id=(r->>'id')::uuid) LIMIT 1;
+  PERFORM pos_sync_private.validate_target(target_count,target_recon);
+ END IF;
+ IF kind='VARIANCE' AND (NOT EXISTS(SELECT 1 FROM jsonb_array_elements(graph->3->'rows') e WHERE e->>'event'='variance_approved' AND NOT EXISTS(SELECT 1 FROM public.shift_close_events saved WHERE saved.id=(e->>'id')::uuid)) OR
+   EXISTS(SELECT 1 FROM jsonb_array_elements(graph->1->'rows') c WHERE c->>'kind'='RECOUNT' AND NOT EXISTS(SELECT 1 FROM public.shift_cash_counts saved WHERE saved.id=(c->>'id')::uuid)))
+ THEN RAISE EXCEPTION 'SYNC_SHIFT_GRAPH_CONFLICT'; END IF;
+ IF kind='VARIANCE' AND (parent.id IS NULL OR parent.state<>ALL(ARRAY['VARIANCE_REVIEW_REQUIRED','RECONCILIATION']) OR
+    ROW(incoming.counted_cash,incoming.counted_card,incoming.counted_digital,incoming.expected_cash,incoming.expected_card,incoming.expected_digital,
+      incoming.closing_float,incoming.final_counted_cash,incoming.variance_cash,incoming.variance_card,incoming.variance_digital,incoming.variance_total,incoming.variance_status)
+    IS DISTINCT FROM ROW(parent.counted_cash,parent.counted_card,parent.counted_digital,parent.expected_cash,parent.expected_card,parent.expected_digital,
+      parent.closing_float,parent.final_counted_cash,parent.variance_cash,parent.variance_card,parent.variance_digital,parent.variance_total,parent.variance_status) OR
+    EXISTS(SELECT 1 FROM jsonb_array_elements(graph->1->'rows') c WHERE NOT EXISTS(SELECT 1 FROM public.shift_cash_counts saved WHERE saved.id=(c->>'id')::uuid)) OR
+    EXISTS(SELECT 1 FROM jsonb_array_elements(graph->2->'rows') r WHERE NOT EXISTS(SELECT 1 FROM public.shift_reconciliations saved WHERE saved.id=(r->>'id')::uuid)))
+ THEN RAISE EXCEPTION 'SYNC_SHIFT_GRAPH_CONFLICT'; END IF;
+ FOR op IN SELECT value FROM jsonb_array_elements(p_operations) LOOP
+  IF jsonb_typeof(op->'rows') IS DISTINCT FROM 'array' OR jsonb_typeof(op->'changes') IS DISTINCT FROM 'array' OR
+    EXISTS(SELECT 1 FROM jsonb_array_elements(op->'changes') c WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE')) THEN RAISE EXCEPTION 'SYNC_SHIFT_INTENT_INVALID'; END IF;
+  IF op->>'table'='activity_events' AND EXISTS(SELECT 1 FROM jsonb_array_elements(op->'rows') e WHERE e->>'store_id' IS DISTINCT FROM p_branch_id OR e->>'branch_id' IS DISTINCT FROM p_branch_id OR e->>'entity_type' IS DISTINCT FROM 'shift' OR e->>'entity_id' IS DISTINCT FROM v_shift_id::text OR e->>'event_type' IS DISTINCT FROM 'shift_cash_variance')
+  THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;
+  IF op->>'table'='shifts' AND parent.id IS NOT NULL THEN
+   -- Assign the next actual SERVER revision under its parent lock. Do not use
+   -- independent native counters to authorize a previously validated correction.
+   rows:=jsonb_build_array((op->'rows'->0)||jsonb_build_object('row_version',parent.row_version+1,
+    'id',parent.id,'store_id',parent.store_id,'terminal_id',parent.terminal_id,'terminal_name',parent.terminal_name,
+    'opened_at',parent.opened_at,'opened_by_name',parent.opened_by_name,'opened_by_staff_id',parent.opened_by_staff_id,
+    'opened_by_role',parent.opened_by_role,'opening_float',parent.opening_float,'created_at',parent.created_at,'user_id',parent.user_id,
+    'note',parent.note,'overdue',parent.overdue)||
+    CASE WHEN parent.closed_at IS NOT NULL THEN jsonb_build_object('closed_at',parent.closed_at,'closed_by_name',parent.closed_by_name,
+      'closed_by_staff_id',parent.closed_by_staff_id,'closed_by_role',parent.closed_by_role,'closing_started_at',parent.closing_started_at,
+      'closing_started_by',parent.closing_started_by,'close_reason',parent.close_reason) ELSE '{}'::jsonb END);
+   op:=jsonb_set(op,'{rows}',rows);
+  END IF;
+  IF op->>'table'=ANY(ARRAY['shift_cash_counts','shift_reconciliations','shift_close_events','shift_notifications','shift_variance_alerts']) THEN
+   rows:='[]'::jsonb;
+   FOR submitted IN SELECT value FROM jsonb_array_elements(op->'rows') LOOP
+    EXECUTE format('SELECT to_jsonb(t) FROM public.%I t WHERE id=$1',op->>'table') INTO saved_history USING (submitted->>'id')::uuid;
+    IF saved_history IS NULL THEN
+     IF op->>'table'='shift_variance_alerts' AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(graph->2->'rows') linked WHERE linked->>'id'=submitted->>'reconciliation_id'
+       AND ROW((linked->>'variance_total')::numeric,linked->>'variance_status') IS NOT DISTINCT FROM ROW((submitted->>'variance_total')::numeric,submitted->>'variance_status'))
+     THEN RAISE EXCEPTION 'SYNC_SHIFT_GRAPH_CONFLICT'; END IF;
+     rows:=rows||jsonb_build_array(submitted); CONTINUE;
+    END IF;
+    IF saved_history->>'store_id' IS DISTINCT FROM p_branch_id OR saved_history->>'shift_id' IS DISTINCT FROM v_shift_id::text
+    THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;
+    IF op->>'table'='shift_variance_alerts' THEN
+     IF saved_history->>'reconciliation_id' IS DISTINCT FROM submitted->>'reconciliation_id' THEN RAISE EXCEPTION 'SYNC_SHIFT_HISTORY_CONFLICT'; END IF;
+     -- Delivery/acknowledgement belongs to its current cloud workflow. An
+     -- observed stale copy is not a protected mutation target or a full match.
+     CONTINUE;
+    END IF;
+    EXECUTE format('SELECT to_jsonb(jsonb_populate_record(NULL::public.%I,$1))',op->>'table') INTO typed_history USING submitted;
+    IF typed_history IS DISTINCT FROM saved_history AND
+       typed_history IS DISTINCT FROM pos_sync_private.download_projection(saved_history,op->>'table',false) AND
+       typed_history IS DISTINCT FROM pos_sync_private.download_projection(saved_history,op->>'table',true)
+    THEN RAISE EXCEPTION 'SYNC_SHIFT_HISTORY_CONFLICT'; END IF;
+    -- Identity and money must match; only the authenticated existing view may
+    -- differ by download masking. Preserve every authoritative hidden field.
+   END LOOP;
+   op:=jsonb_set(op,'{rows}',rows);
+  END IF;
+  normalized:=normalized||jsonb_build_array(op);
+ END LOOP;
+ PERFORM set_config('pos.sync_causal_shift',v_shift_id::text,true);
+ -- The existing RPC preserves every unrelated policy, audit and receipt path.
+ ack:=public.pos_sync_push_aggregate(p_batch_id,p_organization_id,p_branch_id,p_terminal_id,normalized);
+ PERFORM set_config('pos.sync_causal_shift','',true);
+ graph:=pos_sync_private.shift_graph(v_shift_id); PERFORM pos_sync_private.validate_graph(graph,p_branch_id,v_shift_id,true);
+ token:=pos_sync_private.graph_token(graph); parent:=jsonb_populate_record(NULL::public.shifts,graph->0->'rows'->0);
+ proof:=jsonb_build_object('id',v_shift_id,'store_id',p_branch_id,'row_version',parent.row_version,'requested_row_version',original_revision,
+  'intent_id',p_batch_id,'intent_hash',hash,'accepted_token',token,'current_token',token,'superseded',false,'closed_at_raw',graph->0->'rows'->0->'closed_at',
+  'coverage',pos_sync_private.request_coverage(requested_operations,graph));
+ INSERT INTO pos_sync_private.shift_intent_receipts(intent_id,branch_id,terminal_id,shift_id,payload_hash,base_token,predecessor_intent_id,predecessor_intent_hash,accepted_token,acknowledgement)
+ VALUES(p_batch_id,p_branch_id,p_terminal_id,v_shift_id,hash,payload->>'baseToken',predecessor,payload->>'predecessorIntentHash',token,proof);
+ RETURN ack||jsonb_build_object('shift_closure_ack_version',3,'shift_closures',jsonb_build_array(proof));
+END $fn$;
+REVOKE ALL ON FUNCTION pos_sync_private.receipt_immutable(),pos_sync_private.shift_graph(uuid),pos_sync_private.graph_token(jsonb),
+ pos_sync_private.download_projection(jsonb,text,boolean),pos_sync_private.validate_graph(jsonb,text,uuid,boolean),pos_sync_private.validate_target(jsonb,jsonb),pos_sync_private.canonical_facts(jsonb),pos_sync_private.request_coverage(jsonb,jsonb) FROM PUBLIC,anon,authenticated,service_role;
+REVOKE ALL ON FUNCTION public.pos_sync_shift_graph(text,text,text,uuid) FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON FUNCTION public.pos_sync_shift_preflight(jsonb,text) FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON FUNCTION public.pos_sync_push_shift_intent(uuid,text,text,text,jsonb,jsonb) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.pos_sync_shift_graph(text,text,text,uuid) TO service_role;
+GRANT EXECUTE ON FUNCTION public.pos_sync_shift_preflight(jsonb,text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.pos_sync_push_shift_intent(uuid,text,text,text,jsonb,jsonb) TO service_role;
+-- SHIFT_CAUSAL_HELPERS_END
+
+-- Patch only the two existing fresh/replay entry points, with exact anchors.
+DO $patch$
+DECLARE signature regprocedure; definition text; anchor text:=' SELECT payload_hash INTO v_prior FROM public.sync_idempotency_receipts WHERE batch_id=p_batch_id;'; addition text;
+BEGIN
+ FOREACH signature IN ARRAY ARRAY['public.pos_sync_push_batch(uuid,text,text,text,text,jsonb,jsonb)'::regprocedure,'public.pos_sync_push_aggregate(uuid,text,text,text,jsonb)'::regprocedure] LOOP
+  definition:=pg_get_functiondef(signature);
+  addition:=CASE WHEN signature='public.pos_sync_push_batch(uuid,text,text,text,text,jsonb,jsonb)'::regprocedure
+   THEN E' PERFORM public.pos_sync_shift_preflight(jsonb_build_array(jsonb_build_object(\'table\',p_table,\'rows\',p_rows,\'changes\',p_changes)),p_branch_id);\n'
+   ELSE E' PERFORM public.pos_sync_shift_preflight(p_operations,p_branch_id);\n' END;
+  IF position(addition IN definition)=0 THEN
+   IF (length(definition)-length(replace(definition,anchor,'')))/length(anchor)<>1 THEN RAISE EXCEPTION 'Unexpected sync preflight anchor'; END IF;
+   EXECUTE replace(definition,anchor,addition||anchor);
+  END IF;
+ END LOOP;
+END $patch$;
+DO $direct_helper$
+DECLARE definition text; anchor text:='INSERT INTO public."shifts" (';
+ addition text:=E'PERFORM public.pos_sync_shift_preflight(jsonb_build_array(jsonb_build_object(\'table\',\'shifts\',\'rows\',p_rows,\'changes\',\'[]\'::jsonb)),current_setting(\'pos.sync_branch\',true));\n  ';
+BEGIN
+ SELECT pg_get_functiondef('public.sync_apply_shifts(jsonb)'::regprocedure) INTO definition;
+ IF position(addition IN definition)=0 THEN
+  IF (length(definition)-length(replace(definition,anchor,'')))/length(anchor)<>1 THEN RAISE EXCEPTION 'Unexpected direct shift apply anchor'; END IF;
+  EXECUTE replace(definition,anchor,addition||anchor);
+ END IF;
+END $direct_helper$;
+NOTIFY pgrst,'reload schema';
+COMMIT;
+-- SHIFT_CAUSAL_CONTRACT_END
+
+-- SHIFT_AUTHOR_CONTRACT_BEGIN
+-- AUTH-37 foundation only. Source/isolated fixtures approved; no live enrollment
+-- or application. This stores public author keys, never signing credentials.
+BEGIN;
+CREATE SCHEMA IF NOT EXISTS pos_sync_private;
+CREATE TABLE pos_sync_private.shift_author_keys (
+ key_id uuid PRIMARY KEY,
+ author_id uuid NOT NULL REFERENCES public.app_users(id) ON DELETE RESTRICT,
+ terminal_id text NOT NULL,
+ project_origin text NOT NULL CHECK(project_origin ~ '^https://[^/?#@]+$'),
+ subject text NOT NULL CHECK(length(subject) BETWEEN 1 AND 200 AND subject !~ '[[:cntrl:]]'),
+ public_key text NOT NULL UNIQUE CHECK(public_key ~ '^[A-Za-z0-9_-]{59}$'),
+ enrolled_at timestamptz NOT NULL DEFAULT now(),
+ revoked_at timestamptz,
+ UNIQUE(project_origin,terminal_id,author_id)
+);
+ALTER TABLE pos_sync_private.shift_author_keys ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE pos_sync_private.shift_author_keys FROM PUBLIC,anon,authenticated,service_role;
+
+CREATE FUNCTION pos_sync_private.shift_author_key_immutable() RETURNS trigger
+LANGUAGE plpgsql SECURITY INVOKER SET search_path='' AS $fn$
+BEGIN
+ IF TG_OP='DELETE' OR ROW(NEW.key_id,NEW.author_id,NEW.terminal_id,NEW.project_origin,NEW.subject,NEW.public_key,NEW.enrolled_at)
+   IS DISTINCT FROM ROW(OLD.key_id,OLD.author_id,OLD.terminal_id,OLD.project_origin,OLD.subject,OLD.public_key,OLD.enrolled_at) OR
+   (OLD.revoked_at IS NOT NULL AND NEW.revoked_at IS DISTINCT FROM OLD.revoked_at)
+ THEN RAISE EXCEPTION 'SHIFT_AUTHOR_KEY_IMMUTABLE'; END IF;
+ RETURN NEW;
+END $fn$;
+REVOKE ALL ON FUNCTION pos_sync_private.shift_author_key_immutable() FROM PUBLIC,anon,authenticated,service_role;
+CREATE TRIGGER shift_author_key_immutable BEFORE UPDATE OR DELETE ON pos_sync_private.shift_author_keys
+ FOR EACH ROW EXECUTE FUNCTION pos_sync_private.shift_author_key_immutable();
+
+-- Only the hosted verified-person endpoint can call this routine. Possession and
+-- the exact personal identity are checked there before reaching this service API.
+CREATE FUNCTION public.pos_shift_author_enroll(p_enrollment jsonb,p_subject text) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $fn$
+DECLARE saved pos_sync_private.shift_author_keys%ROWTYPE; person public.app_users%ROWTYPE;
+ v_author uuid; v_key uuid; v_terminal text; v_project text; v_public text;
+BEGIN
+ IF auth.role() IS DISTINCT FROM 'service_role' THEN RAISE EXCEPTION 'SHIFT_AUTHOR_DENIED'; END IF;
+ IF jsonb_typeof(p_enrollment) IS DISTINCT FROM 'object' OR p_enrollment->>'version' IS DISTINCT FROM '1' OR
+   p_enrollment->>'algorithm' IS DISTINCT FROM 'Ed25519' OR
+   (SELECT array_agg(k ORDER BY k) FROM jsonb_object_keys(p_enrollment) k) IS DISTINCT FROM
+   ARRAY['algorithm','authorId','keyId','projectOrigin','publicKey','terminalId','version']::text[]
+ THEN RAISE EXCEPTION 'SHIFT_AUTHOR_DENIED'; END IF;
+ v_author:=(p_enrollment->>'authorId')::uuid; v_key:=(p_enrollment->>'keyId')::uuid;
+ v_terminal:=p_enrollment->>'terminalId'; v_project:=p_enrollment->>'projectOrigin'; v_public:=p_enrollment->>'publicKey';
+ IF v_author IS NULL OR v_key IS NULL OR v_terminal IS NULL OR v_project IS NULL OR v_public IS NULL OR
+   v_terminal='' OR length(v_terminal)>200 OR v_terminal<>btrim(v_terminal) OR v_terminal ~ '[[:cntrl:]]' OR
+   v_project !~ '^https://[^/?#@]+$' OR v_public !~ '^[A-Za-z0-9_-]{59}$'
+ THEN RAISE EXCEPTION 'SHIFT_AUTHOR_DENIED'; END IF;
+ SELECT * INTO person FROM public.app_users WHERE id=v_author FOR SHARE;
+ IF NOT FOUND OR person.is_active IS DISTINCT FROM true OR person.user_id IS DISTINCT FROM p_subject
+ THEN RAISE EXCEPTION 'SHIFT_AUTHOR_DENIED'; END IF;
+ IF NOT EXISTS(SELECT 1 FROM public.terminal_tokens WHERE id::text=v_terminal AND platform='pc' AND
+   status IN ('active','used') AND is_claimed=true AND revoked_at IS NULL)
+ THEN RAISE EXCEPTION 'SHIFT_AUTHOR_DENIED'; END IF;
+ PERFORM pg_advisory_xact_lock(hashtextextended('shift-author:'||v_project||':'||v_terminal||':'||v_author::text,0));
+ SELECT * INTO saved FROM pos_sync_private.shift_author_keys
+  WHERE project_origin=v_project AND terminal_id=v_terminal AND author_id=v_author FOR UPDATE;
+ IF FOUND THEN
+  IF saved.key_id IS DISTINCT FROM v_key OR saved.public_key IS DISTINCT FROM v_public OR saved.subject IS DISTINCT FROM p_subject OR saved.revoked_at IS NOT NULL
+  THEN RAISE EXCEPTION 'SHIFT_AUTHOR_KEY_MISMATCH'; END IF;
+  RETURN jsonb_build_object('ok',true,'replayed',true);
+ END IF;
+ IF EXISTS(SELECT 1 FROM pos_sync_private.shift_author_keys WHERE key_id=v_key OR public_key=v_public)
+ THEN RAISE EXCEPTION 'SHIFT_AUTHOR_KEY_MISMATCH'; END IF;
+ INSERT INTO pos_sync_private.shift_author_keys(key_id,author_id,terminal_id,project_origin,subject,public_key)
+ VALUES(v_key,v_author,v_terminal,v_project,p_subject,v_public);
+ RETURN jsonb_build_object('ok',true,'replayed',false);
+END $fn$;
+REVOKE ALL ON FUNCTION public.pos_shift_author_enroll(jsonb,text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.pos_shift_author_enroll(jsonb,text) TO service_role;
+
+-- Revoked keys remain available for exact accepted-history verification. No key
+-- or account state in this read grants permission for a new financial write.
+CREATE FUNCTION public.pos_shift_author_key(p_project_origin text,p_terminal_id text,p_author_id uuid DEFAULT NULL,p_key_id uuid DEFAULT NULL) RETURNS jsonb
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $fn$
+DECLARE saved jsonb;
+BEGIN
+ IF auth.role() IS DISTINCT FROM 'service_role' THEN RAISE EXCEPTION 'SHIFT_AUTHOR_DENIED'; END IF;
+ SELECT to_jsonb(k) INTO saved FROM pos_sync_private.shift_author_keys k
+ WHERE k.project_origin=p_project_origin AND k.terminal_id=p_terminal_id AND k.author_id=p_author_id AND k.key_id=p_key_id;
+ RETURN jsonb_build_object('terminal_enrolled',EXISTS(SELECT 1 FROM pos_sync_private.shift_author_keys
+  WHERE project_origin=p_project_origin AND terminal_id=p_terminal_id),'key',saved);
+END $fn$;
+REVOKE ALL ON FUNCTION public.pos_shift_author_key(text,text,uuid,uuid) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.pos_shift_author_key(text,text,uuid,uuid) TO service_role;
+NOTIFY pgrst,'reload schema';
+COMMIT;
+-- AUTH-37 source and isolated-test preparation only. Expected amounts retain
+-- their existing consistency-only contract; this does not prove Main key origin.
+BEGIN;
+DO $prerequisite$ BEGIN
+ IF to_regclass('pos_sync_private.shift_author_keys') IS NULL OR
+    to_regclass('pos_sync_private.shift_intent_receipts') IS NULL OR
+    to_regprocedure('public.pos_sync_push_shift_intent(uuid,text,text,text,jsonb,jsonb)') IS NULL OR
+    position('public."shifts"."closed_at" IS NOT NULL' IN pg_get_functiondef('public.sync_apply_shifts(jsonb)'::regprocedure))=0
+ THEN RAISE EXCEPTION 'AUTH37_REQUIRES_REVIEWED_AUTHOR_AND_CAUSAL_FOUNDATIONS'; END IF;
+END $prerequisite$;
+
+CREATE TABLE pos_sync_private.shift_author_receipts (
+ intent_id uuid PRIMARY KEY REFERENCES pos_sync_private.shift_intent_receipts(intent_id) ON DELETE RESTRICT,
+ shift_id uuid NOT NULL, terminal_id text NOT NULL, branch_id text NOT NULL,
+ key_id uuid NOT NULL REFERENCES pos_sync_private.shift_author_keys(key_id) ON DELETE RESTRICT,
+ author_id uuid NOT NULL, attestation jsonb NOT NULL,
+ accepted_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE pos_sync_private.shift_author_receipts ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE pos_sync_private.shift_author_receipts FROM PUBLIC,anon,authenticated,service_role;
+CREATE TRIGGER shift_author_receipt_immutable BEFORE UPDATE OR DELETE ON pos_sync_private.shift_author_receipts
+ FOR EACH ROW EXECUTE FUNCTION pos_sync_private.receipt_immutable();
+
+-- The four existing Main action keys and their current page associations. An
+-- enabled alternative page remains sufficient; a role title never grants them.
+CREATE FUNCTION pos_sync_private.shift_author_flag(p_permissions jsonb,p_flag text) RETURNS boolean
+LANGUAGE sql IMMUTABLE SECURITY INVOKER SET search_path=pg_catalog AS $fn$
+ SELECT COALESCE(p_permissions->p_flag='true'::jsonb,false) AND EXISTS(
+  SELECT 1 FROM jsonb_array_elements_text(
+   '{"can_shift_cash_count":["shifts"],"can_close_shift":["shifts"],"can_shift_cash_recount":["shifts"],"can_shift_variance_approve":["shifts"]}'::jsonb->p_flag) page
+  WHERE p_permissions->('page:'||page) IS DISTINCT FROM 'false'::jsonb)
+$fn$;
+REVOKE ALL ON FUNCTION pos_sync_private.shift_author_flag(jsonb,text) FROM PUBLIC,anon,authenticated,service_role;
+CREATE FUNCTION pos_sync_private.shift_author_management_allowed(p_role text,p_slug text,p_permissions jsonb) RETURNS boolean
+LANGUAGE sql IMMUTABLE SECURITY INVOKER SET search_path=pg_catalog AS $fn$
+ SELECT COALESCE(p_role='admin' OR p_slug='admin',false) OR COALESCE(CASE WHEN COALESCE(p_permissions,'{}'::jsonb) ? 'can_use_management_pc'
+  THEN p_permissions->'can_use_management_pc'='true'::jsonb ELSE p_role='manager' OR p_slug='supervisor' END,false)
+$fn$;
+REVOKE ALL ON FUNCTION pos_sync_private.shift_author_management_allowed(text,text,jsonb) FROM PUBLIC,anon,authenticated,service_role;
+
+-- Every graph helper calls this before enabling the existing financial writer.
+-- Normal OPEN postimages, unchanged history and delivery/acknowledgement metadata
+-- retain their existing semantics. No enrolled identity can downgrade to legacy.
+CREATE FUNCTION public.pos_sync_shift_author_guard(p_table text,p_rows jsonb,p_changes jsonb,p_branch text,p_terminal text) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $fn$
+DECLARE submitted jsonb; candidate jsonb; saved jsonb; parent public.shifts%ROWTYPE; v_shift_id uuid; change jsonb; row_key jsonb;
+ enrolled boolean; proof jsonb; safe text[]; financial text[]; clean_open boolean; lock_terminal text; old_terminal text; terminal_branch text;
+BEGIN
+ IF auth.role() IS DISTINCT FROM 'service_role' THEN RAISE EXCEPTION 'SYNC_FORBIDDEN'; END IF;
+ IF p_table<>ALL(ARRAY['shifts','shift_cash_counts','shift_reconciliations','shift_close_events','shift_notifications','shift_variance_alerts']) THEN RETURN; END IF;
+ IF NULLIF(p_terminal,'') IS NOT NULL THEN
+  PERFORM pg_advisory_xact_lock_shared(hashtextextended('shift-author-terminal:'||p_terminal,0));
+  SELECT location_id INTO terminal_branch FROM public.terminal_tokens WHERE id::text=p_terminal AND status IN ('active','used') AND revoked_at IS NULL FOR SHARE;
+  IF NOT FOUND OR (terminal_branch IS NOT NULL AND terminal_branch IS DISTINCT FROM p_branch) THEN RAISE EXCEPTION 'SYNC_TERMINAL_SCOPE_FORBIDDEN'; END IF;
+ END IF;
+ enrolled:=EXISTS(SELECT 1 FROM pos_sync_private.shift_author_keys WHERE terminal_id=p_terminal);
+ FOR change IN SELECT value FROM jsonb_array_elements(COALESCE(p_changes,'[]')) c WHERE upper(COALESCE(c->>'operation','')) IN ('D','DELETE') LOOP
+  IF enrolled OR (NULLIF(p_terminal,'') IS NULL AND current_setting('pos.shift_author_raw',true) IS DISTINCT FROM 'on' AND EXISTS(SELECT 1 FROM pos_sync_private.shift_author_keys)) THEN RAISE EXCEPTION 'SYNC_SHIFT_AUTHOR_REQUIRED'; END IF;
+  row_key:=COALESCE(change->'key',(change->>'entityId')::jsonb,(change->>'entity_id')::jsonb);
+  EXECUTE format('SELECT to_jsonb(t) FROM public.%I t WHERE id=$1',p_table) INTO saved USING (row_key->>'id')::uuid;
+  v_shift_id:=CASE WHEN p_table='shifts' THEN (saved->>'id')::uuid ELSE (saved->>'shift_id')::uuid END;
+  SELECT * INTO parent FROM public.shifts WHERE id=v_shift_id FOR SHARE;
+  IF parent.terminal_id IS NOT NULL THEN PERFORM pg_advisory_xact_lock_shared(hashtextextended('shift-author-terminal:'||parent.terminal_id,0)); END IF;
+  IF EXISTS(SELECT 1 FROM pos_sync_private.shift_author_keys WHERE terminal_id=parent.terminal_id) OR
+    EXISTS(SELECT 1 FROM pos_sync_private.shift_author_receipts r WHERE r.shift_id=v_shift_id) THEN RAISE EXCEPTION 'SYNC_SHIFT_AUTHOR_REQUIRED'; END IF;
+ END LOOP;
+ proof:=NULLIF(current_setting('pos.shift_author',true),'')::jsonb;
+ FOR submitted IN SELECT value FROM jsonb_array_elements(COALESCE(p_rows,'[]')) LOOP
+  v_shift_id:=CASE WHEN p_table='shifts' THEN (submitted->>'id')::uuid ELSE (submitted->>'shift_id')::uuid END;
+  SELECT * INTO parent FROM public.shifts WHERE id=v_shift_id FOR SHARE;
+  EXECUTE format('SELECT to_jsonb(t) FROM public.%I t WHERE id=$1',p_table) INTO saved USING (submitted->>'id')::uuid;
+  SELECT terminal_id INTO old_terminal FROM public.shifts WHERE id=CASE WHEN p_table='shifts' THEN (saved->>'id')::uuid ELSE (saved->>'shift_id')::uuid END;
+  FOR lock_terminal IN SELECT DISTINCT value FROM unnest(ARRAY[parent.terminal_id,old_terminal,submitted->>'terminal_id']) value WHERE value IS NOT NULL ORDER BY value LOOP
+   PERFORM pg_advisory_xact_lock_shared(hashtextextended('shift-author-terminal:'||lock_terminal,0));
+  END LOOP;
+  enrolled:=EXISTS(SELECT 1 FROM pos_sync_private.shift_author_keys WHERE terminal_id=p_terminal OR terminal_id=parent.terminal_id OR terminal_id=old_terminal OR terminal_id=submitted->>'terminal_id') OR
+    EXISTS(SELECT 1 FROM pos_sync_private.shift_author_receipts r WHERE r.shift_id=v_shift_id OR r.shift_id=(saved->>'shift_id')::uuid) OR
+    (NULLIF(p_terminal,'') IS NULL AND current_setting('pos.shift_author_raw',true) IS DISTINCT FROM 'on' AND EXISTS(SELECT 1 FROM pos_sync_private.shift_author_keys));
+  IF NOT enrolled THEN CONTINUE; END IF;
+  IF proof IS NOT NULL AND proof->>'terminalId'=p_terminal AND lower(btrim(proof->>'branchId'))=lower(btrim(p_branch)) AND (proof->>'shiftId')::uuid=v_shift_id THEN CONTINUE; END IF;
+  EXECUTE format('SELECT to_jsonb(jsonb_populate_record(NULL::public.%I,$1))',p_table) INTO candidate USING submitted;
+  safe:=CASE p_table WHEN 'shifts' THEN ARRAY['note','overdue','updated_at','row_version']
+    WHEN 'shift_notifications' THEN ARRAY['channels','updated_at','row_version']
+    WHEN 'shift_variance_alerts' THEN ARRAY['delivery_status','attempts','last_error','last_attempt_at','acknowledged_at','acknowledged_by','updated_at','row_version']
+    ELSE ARRAY[]::text[] END;
+  IF saved IS NOT NULL AND candidate-safe IS NOT DISTINCT FROM saved-safe THEN CONTINUE; END IF;
+  IF saved IS NOT NULL AND p_table=ANY(ARRAY['shift_cash_counts','shift_reconciliations','shift_close_events']) AND
+   (candidate IS NOT DISTINCT FROM pos_sync_private.download_projection(saved,p_table,false) OR candidate IS NOT DISTINCT FROM pos_sync_private.download_projection(saved,p_table,true)) THEN CONTINUE; END IF;
+  IF p_table='shifts' THEN
+   financial:=ARRAY['status','state','closed_at','closed_by_name','closed_by_staff_id','closed_by_role','counted_cash','counted_card','counted_digital',
+    'expected_cash','expected_card','expected_digital','closing_float','final_counted_cash','variance_cash','variance_card','variance_digital','variance_total','variance_status','close_reason','closing_started_at','closing_started_by'];
+   clean_open:=COALESCE(candidate->>'status','OPEN')='OPEN' AND COALESCE(candidate->>'state','ACTIVE')='ACTIVE' AND NOT EXISTS(
+    SELECT 1 FROM unnest(financial) field WHERE field<>ALL(ARRAY['status','state']) AND candidate->>field IS NOT NULL);
+   IF clean_open AND (saved IS NULL OR candidate-safe-financial IS NOT DISTINCT FROM saved-safe-financial) THEN CONTINUE; END IF;
+  END IF;
+  RAISE EXCEPTION 'SYNC_SHIFT_AUTHOR_REQUIRED';
+ END LOOP;
+END $fn$;
+REVOKE ALL ON FUNCTION public.pos_sync_shift_author_guard(text,jsonb,jsonb,text,text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.pos_sync_shift_author_guard(text,jsonb,jsonb,text,text) TO service_role;
+CREATE FUNCTION public.pos_sync_shift_author_receipt_guard(p_batch_id uuid,p_terminal_id text) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
+DECLARE accepted pos_sync_private.shift_author_receipts%ROWTYPE; proof jsonb;
+BEGIN
+ IF auth.role() IS DISTINCT FROM 'service_role' THEN RAISE EXCEPTION 'SYNC_FORBIDDEN'; END IF;
+ SELECT * INTO accepted FROM pos_sync_private.shift_author_receipts WHERE intent_id=p_batch_id;
+ IF NOT FOUND THEN RETURN; END IF;
+ proof:=NULLIF(current_setting('pos.shift_author',true),'')::jsonb;
+ IF proof IS DISTINCT FROM accepted.attestation OR accepted.terminal_id IS DISTINCT FROM p_terminal_id THEN RAISE EXCEPTION 'SYNC_SHIFT_AUTHOR_REQUIRED'; END IF;
+END $fn$;
+REVOKE ALL ON FUNCTION public.pos_sync_shift_author_receipt_guard(uuid,text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.pos_sync_shift_author_receipt_guard(uuid,text) TO service_role;
+
+-- Only the existing relay-authorized notification mutations and shift deletion
+-- enter this constrained RPC. Admission and DML share one transaction/row lock.
+CREATE FUNCTION public.pos_sync_shift_author_raw_write(p_operation jsonb,p_terminal_id text) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $fn$
+DECLARE table_name text:=p_operation->>'table'; kind text:=p_operation->>'kind'; submitted jsonb; saved jsonb; effective jsonb; matched record;
+ fields text[]; columns_sql text; updates_sql text; where_sql text; statement text; previous_raw text; keyed boolean; target_ids uuid[];
+BEGIN
+ IF auth.role() IS DISTINCT FROM 'service_role' THEN RAISE EXCEPTION 'SYNC_FORBIDDEN'; END IF;
+ IF NOT (table_name='shift_notifications' AND kind=ANY(ARRAY['insert','upsert','update','delete']) OR table_name='shifts' AND kind='delete') THEN RAISE EXCEPTION 'SYNC_SHIFT_RAW_OPERATION_FORBIDDEN'; END IF;
+ IF NULLIF(p_terminal_id,'') IS NOT NULL AND NOT EXISTS(SELECT 1 FROM public.terminal_tokens WHERE id::text=p_terminal_id AND status IN ('active','used') AND revoked_at IS NULL FOR SHARE)
+ THEN RAISE EXCEPTION 'SYNC_TERMINAL_SCOPE_FORBIDDEN'; END IF;
+ previous_raw:=current_setting('pos.shift_author_raw',true);PERFORM set_config('pos.shift_author_raw','on',true);
+ IF kind=ANY(ARRAY['insert','upsert']) THEN
+  keyed:=NOT EXISTS(SELECT 1 FROM jsonb_array_elements(p_operation->'rows') row WHERE jsonb_typeof(row->'id') IS DISTINCT FROM 'string' OR row->>'id'='');
+  FOR submitted IN SELECT value FROM jsonb_array_elements(p_operation->'rows') LOOP
+   SELECT array_agg(key ORDER BY key) INTO fields FROM jsonb_object_keys(submitted) key;
+   IF fields IS NULL OR EXISTS(SELECT 1 FROM unnest(fields) field WHERE NOT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='public.shift_notifications'::regclass AND attname=field AND attnum>0 AND NOT attisdropped)) THEN RAISE EXCEPTION 'SYNC_SHIFT_RAW_OPERATION_FORBIDDEN'; END IF;
+   PERFORM id FROM public.shifts WHERE id=(submitted->>'shift_id')::uuid FOR SHARE;
+   SELECT to_jsonb(row) INTO saved FROM public.shift_notifications row WHERE shift_id=(submitted->>'shift_id')::uuid FOR UPDATE;
+   effective:=COALESCE(saved,'{}'::jsonb)||submitted;
+   PERFORM public.pos_sync_shift_author_guard(table_name,jsonb_build_array(effective),'[]',effective->>'store_id',p_terminal_id);
+   SELECT string_agg(quote_ident(field),','),string_agg(format('%I=EXCLUDED.%I',field,field),',') INTO columns_sql,updates_sql FROM unnest(fields) field;
+   statement:=format('INSERT INTO public.shift_notifications(%s) SELECT %s FROM jsonb_populate_record(NULL::public.shift_notifications,$1)',columns_sql,columns_sql);
+   IF kind='upsert' OR keyed THEN statement:=statement||' ON CONFLICT(shift_id) DO UPDATE SET '||updates_sql; END IF;
+   EXECUTE statement USING submitted;
+  END LOOP;
+ ELSE
+  SELECT array_agg(key ORDER BY key) INTO fields FROM jsonb_object_keys(p_operation->'match') key;
+  IF fields IS NULL OR EXISTS(SELECT 1 FROM unnest(fields) field WHERE NOT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('public.'||table_name) AND attname=field AND attnum>0 AND NOT attisdropped)) THEN RAISE EXCEPTION 'SYNC_SHIFT_RAW_OPERATION_FORBIDDEN'; END IF;
+  IF EXISTS(SELECT 1 FROM jsonb_each(p_operation->'match') field WHERE jsonb_typeof(field.value)=ANY(ARRAY['array','object'])) THEN RAISE EXCEPTION 'SYNC_SHIFT_RAW_OPERATION_FORBIDDEN'; END IF;
+  SELECT string_agg(format('x.%I=(jsonb_populate_record(NULL::public.%I,$1)).%I',field,table_name,field),' AND ') INTO where_sql FROM unnest(fields) field;
+  IF kind='update' THEN
+   SELECT array_agg(key ORDER BY key) INTO fields FROM jsonb_object_keys(p_operation->'values') key;
+   IF fields IS NULL THEN PERFORM set_config('pos.shift_author_raw',COALESCE(previous_raw,''),true);RETURN jsonb_build_object('ok',true); END IF;
+   IF EXISTS(SELECT 1 FROM unnest(fields) field WHERE NOT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='public.shift_notifications'::regclass AND attname=field AND attnum>0 AND NOT attisdropped)) THEN RAISE EXCEPTION 'SYNC_SHIFT_RAW_OPERATION_FORBIDDEN'; END IF;
+   PERFORM jsonb_populate_record(NULL::public.shift_notifications,p_operation->'values');
+   SELECT string_agg(format('%I=(jsonb_populate_record(NULL::public.shift_notifications,$2)).%I',field,field),',') INTO updates_sql FROM unnest(fields) field;
+  END IF;
+  EXECUTE format('SELECT array_agg(x.id) FROM public.%I x WHERE %s',table_name,where_sql) INTO target_ids USING p_operation->'match';
+  -- Follow the closing writer's parent-before-child order. The fixed id set
+  -- also excludes rows inserted after the checked filter snapshot.
+  IF table_name='shifts' THEN PERFORM id FROM public.shifts WHERE id=ANY(target_ids) ORDER BY id FOR SHARE;
+  ELSE
+   PERFORM sh.id FROM public.shifts sh WHERE sh.id IN(SELECT shift_id FROM public.shift_notifications WHERE id=ANY(target_ids)) ORDER BY sh.id FOR SHARE;
+   IF kind='update' AND p_operation->'values' ? 'shift_id' THEN PERFORM id FROM public.shifts WHERE id=(p_operation->'values'->>'shift_id')::uuid FOR SHARE; END IF;
+  END IF;
+  FOR matched IN EXECUTE format('SELECT to_jsonb(x) saved FROM public.%I x WHERE %s AND x.id=ANY($2) ORDER BY id FOR UPDATE',table_name,where_sql) USING p_operation->'match',target_ids LOOP
+   saved:=matched.saved;
+   IF kind='delete' THEN
+    PERFORM public.pos_sync_shift_author_guard(table_name,'[]',jsonb_build_array(jsonb_build_object('operation','DELETE','key',jsonb_build_object('id',saved->'id'))),saved->>'store_id',p_terminal_id);
+    EXECUTE format('DELETE FROM public.%I WHERE id=$1::uuid',table_name) USING saved->>'id';
+   ELSE
+    effective:=saved||(p_operation->'values');
+    PERFORM public.pos_sync_shift_author_guard(table_name,jsonb_build_array(effective),'[]',effective->>'store_id',p_terminal_id);
+    -- Mutate only the rows that were actually locked and checked. A later
+    -- concurrent insert matching a broad filter must not evade admission.
+    EXECUTE format('UPDATE public.shift_notifications SET %s WHERE id=$1::uuid',updates_sql) USING saved->>'id',p_operation->'values';
+   END IF;
+  END LOOP;
+ END IF;
+ PERFORM set_config('pos.shift_author_raw',COALESCE(previous_raw,''),true);
+ RETURN jsonb_build_object('ok',true);
+END $fn$;
+REVOKE ALL ON FUNCTION public.pos_sync_shift_author_raw_write(jsonb,text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.pos_sync_shift_author_raw_write(jsonb,text) TO service_role;
+
+-- The hosted endpoint verifies Ed25519 before calling this service-only API.
+-- It forwards the current-author decision, including denial, rather than doing
+-- a racy API read to decide whether this is an accepted receipt replay.
+CREATE FUNCTION public.pos_sync_push_author_shift_intent(p_batch_id uuid,p_organization_id text,p_branch_id text,p_terminal_id text,p_operations jsonb,p_shift_intent jsonb,p_shift_author jsonb,p_author_authority jsonb)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp SET timezone='UTC' AS $fn$
+DECLARE intent jsonb; receipt pos_sync_private.shift_intent_receipts%ROWTYPE; historical pos_sync_private.shift_author_receipts%ROWTYPE;
+ registered pos_sync_private.shift_author_keys%ROWTYPE; person public.app_users%ROWTYPE;
+ hash text; v_shift uuid; action text; result jsonb; op jsonb; proposed jsonb; old jsonb; authorized boolean; previous_proof text;
+BEGIN
+ IF auth.role() IS DISTINCT FROM 'service_role' THEN RAISE EXCEPTION 'SYNC_FORBIDDEN'; END IF;
+ PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id);
+ IF p_shift_intent->>'payloadJson' IS NULL OR octet_length(convert_to(p_shift_intent->>'payloadJson','UTF8'))>6*1024*1024 THEN RAISE EXCEPTION 'SYNC_SHIFT_AUTHOR_INVALID'; END IF;
+ intent:=(p_shift_intent->>'payloadJson')::jsonb; hash:=encode(sha256(convert_to(p_shift_intent->>'payloadJson','UTF8')),'hex');
+ v_shift:=(intent->>'shiftId')::uuid; action:=intent->>'kind';
+ IF p_shift_author->'version' IS DISTINCT FROM '1'::jsonb OR p_shift_author->>'algorithm' IS DISTINCT FROM 'Ed25519' OR
+   p_shift_author->>'terminalId' IS DISTINCT FROM p_terminal_id OR lower(btrim(p_shift_author->>'branchId')) IS DISTINCT FROM lower(btrim(p_branch_id)) OR
+   (p_shift_author->>'shiftId')::uuid IS DISTINCT FROM v_shift OR (p_shift_author->>'intentId')::uuid IS DISTINCT FROM p_batch_id OR
+   p_shift_author->>'action' IS DISTINCT FROM action OR p_shift_author->>'payloadHash' IS DISTINCT FROM hash
+ THEN RAISE EXCEPTION 'SYNC_SHIFT_AUTHOR_INVALID'; END IF;
+ SELECT * INTO registered FROM pos_sync_private.shift_author_keys WHERE key_id=(p_shift_author->>'keyId')::uuid AND author_id=(p_shift_author->>'authorId')::uuid
+  AND terminal_id=p_terminal_id AND project_origin=p_shift_author->>'projectOrigin' AND subject=p_shift_author->>'subject' FOR SHARE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'SYNC_SHIFT_AUTHOR_INVALID'; END IF;
+ PERFORM pg_advisory_xact_lock(hashtextextended('pos-sync-batch:'||p_batch_id::text,0));
+ PERFORM pg_advisory_xact_lock(hashtextextended('pos-sync-intent:'||p_batch_id::text,0));
+ PERFORM pg_advisory_xact_lock(hashtextextended('pos-sync-shift:'||v_shift::text,0));
+ SELECT * INTO receipt FROM pos_sync_private.shift_intent_receipts WHERE intent_id=p_batch_id;
+ IF FOUND THEN
+  SELECT * INTO historical FROM pos_sync_private.shift_author_receipts WHERE intent_id=p_batch_id;
+  IF NOT FOUND OR historical.attestation IS DISTINCT FROM p_shift_author OR
+    ROW(receipt.branch_id,receipt.terminal_id,receipt.shift_id,receipt.payload_hash) IS DISTINCT FROM ROW(p_branch_id,p_terminal_id,v_shift,hash)
+  THEN RAISE EXCEPTION 'SYNC_SHIFT_AUTHOR_HISTORY_UNPROVEN'; END IF;
+  previous_proof:=current_setting('pos.shift_author',true);PERFORM set_config('pos.shift_author',p_shift_author::text,true);
+  result:=public.pos_sync_push_shift_intent(p_batch_id,p_organization_id,p_branch_id,p_terminal_id,p_operations,p_shift_intent);
+  PERFORM set_config('pos.shift_author',COALESCE(previous_proof,''),true);
+  RETURN result;
+ END IF;
+ -- Only NEW writes reach this point. Row locks make a concurrent key/account/
+ -- permission revocation wait for this transaction, without locking sales.
+ IF p_author_authority->'allowed' IS DISTINCT FROM 'true'::jsonb OR p_author_authority->'authority'->>'authorId' IS DISTINCT FROM registered.author_id::text OR registered.revoked_at IS NOT NULL
+ THEN RAISE EXCEPTION 'SYNC_SHIFT_AUTHOR_PERMISSION_REVOKED'; END IF;
+ SELECT * INTO person FROM public.app_users WHERE id=registered.author_id FOR SHARE;
+ IF NOT FOUND OR person.is_active IS DISTINCT FROM true OR person.user_id IS DISTINCT FROM registered.subject OR
+   (person.store_id IS NOT NULL AND lower(btrim(person.store_id)) IS DISTINCT FROM lower(btrim(p_branch_id)))
+ THEN RAISE EXCEPTION 'SYNC_SHIFT_AUTHOR_PERMISSION_REVOKED'; END IF;
+ IF EXISTS(SELECT 1 FROM public.terminal_tokens WHERE id::text=p_terminal_id AND location_id IS NULL) AND
+   NOT pos_sync_private.shift_author_management_allowed(person.role::text,person.role_slug,person.permissions)
+ THEN RAISE EXCEPTION 'SYNC_SHIFT_AUTHOR_PERMISSION_REVOKED'; END IF;
+ authorized:=CASE action WHEN 'ORIGINAL' THEN pos_sync_private.shift_author_flag(person.permissions,'can_shift_cash_count') OR pos_sync_private.shift_author_flag(person.permissions,'can_close_shift')
+  WHEN 'RECOUNT' THEN pos_sync_private.shift_author_flag(person.permissions,'can_shift_cash_recount')
+  WHEN 'VARIANCE' THEN pos_sync_private.shift_author_flag(person.permissions,'can_shift_variance_approve') ELSE false END;
+ IF NOT COALESCE(authorized,false) THEN RAISE EXCEPTION 'SYNC_SHIFT_AUTHOR_PERMISSION_REVOKED'; END IF;
+ FOR op IN SELECT value FROM jsonb_array_elements(intent->'operations') LOOP
+  IF action='ORIGINAL' AND op->>'table'='shifts' AND EXISTS(SELECT 1 FROM jsonb_array_elements(op->'rows') p WHERE p->>'closed_by_staff_id' IS DISTINCT FROM registered.subject OR p->>'closed_by_name' IS DISTINCT FROM registered.subject)
+  THEN RAISE EXCEPTION 'SYNC_SHIFT_AUTHOR_ACTOR_MISMATCH'; END IF;
+  IF op->>'table'='activity_events' AND EXISTS(SELECT 1 FROM jsonb_array_elements(op->'rows') p WHERE p->>'actor_name' IS DISTINCT FROM registered.subject AND NOT EXISTS(SELECT 1 FROM public.activity_events a WHERE a.id=(p->>'id')::uuid))
+  THEN RAISE EXCEPTION 'SYNC_SHIFT_AUTHOR_ACTOR_MISMATCH'; END IF;
+  IF op->>'table'=ANY(ARRAY['shift_cash_counts','shift_close_events']) THEN
+   FOR proposed IN SELECT value FROM jsonb_array_elements(op->'rows') LOOP
+    EXECUTE format('SELECT to_jsonb(t) FROM public.%I t WHERE id=$1',op->>'table') INTO old USING (proposed->>'id')::uuid;
+    IF old IS NOT NULL THEN CONTINUE; END IF;
+    IF op->>'table'='shift_cash_counts' AND (proposed->>'counted_by_staff_id' IS DISTINCT FROM registered.subject OR proposed->>'counted_by_name' IS DISTINCT FROM registered.subject OR
+      proposed->>'kind' IS DISTINCT FROM CASE action WHEN 'ORIGINAL' THEN 'ORIGINAL' WHEN 'RECOUNT' THEN 'RECOUNT' ELSE '' END) THEN RAISE EXCEPTION 'SYNC_SHIFT_AUTHOR_ACTOR_MISMATCH'; END IF;
+    IF op->>'table'='shift_close_events' AND (proposed->>'actor_staff_id' IS DISTINCT FROM registered.subject OR proposed->>'actor_name' IS DISTINCT FROM registered.subject OR
+      (action='ORIGINAL' AND NOT COALESCE(proposed->>'event'=ANY(ARRAY['closing_started','cash_count_submitted','reconciled']),false)) OR (action='RECOUNT' AND proposed->>'event' IS DISTINCT FROM 'recount_submitted') OR (action='VARIANCE' AND proposed->>'event' IS DISTINCT FROM 'variance_approved'))
+    THEN RAISE EXCEPTION 'SYNC_SHIFT_AUTHOR_ACTOR_MISMATCH'; END IF;
+    -- A locally saved start may first reach the server in the signed ORIGINAL
+    -- graph. It must belong to this same author and the exact parent start;
+    -- another person's unuploaded history requires separate proven provenance.
+    IF op->>'table'='shift_close_events' AND proposed->>'event'='closing_started' AND (
+      proposed->>'from_state' IS DISTINCT FROM 'ACTIVE' OR proposed->>'to_state' IS DISTINCT FROM 'CASH_COUNT_REQUIRED' OR
+      proposed->>'shift_id' IS DISTINCT FROM v_shift::text OR proposed->>'store_id' IS DISTINCT FROM p_branch_id OR
+      proposed->>'terminal_id' IS DISTINCT FROM p_terminal_id OR proposed->>'created_at' IS NULL OR
+      NOT EXISTS(SELECT 1 FROM jsonb_array_elements(intent->'operations') parent_op,
+        LATERAL jsonb_array_elements(parent_op->'rows') parent
+        WHERE parent_op->>'table'='shifts' AND parent->>'id'=v_shift::text AND parent->>'store_id'=p_branch_id AND parent->>'terminal_id'=p_terminal_id
+          AND parent->>'closing_started_by'=registered.subject
+          AND (parent->>'closing_started_at')::timestamptz=(proposed->>'created_at')::timestamptz
+          AND parent->>'close_reason'=proposed->'detail'->>'reason'))
+    THEN RAISE EXCEPTION 'SYNC_SHIFT_AUTHOR_ACTOR_MISMATCH'; END IF;
+   END LOOP;
+  END IF;
+ END LOOP;
+ previous_proof:=current_setting('pos.shift_author',true);
+ PERFORM set_config('pos.shift_author',p_shift_author::text,true);
+ result:=public.pos_sync_push_shift_intent(p_batch_id,p_organization_id,p_branch_id,p_terminal_id,p_operations,p_shift_intent);
+ PERFORM set_config('pos.shift_author',COALESCE(previous_proof,''),true);
+ INSERT INTO pos_sync_private.shift_author_receipts(intent_id,shift_id,terminal_id,branch_id,key_id,author_id,attestation)
+ VALUES(p_batch_id,v_shift,p_terminal_id,p_branch_id,registered.key_id,registered.author_id,p_shift_author);
+ RETURN result;
+END $fn$;
+REVOKE ALL ON FUNCTION public.pos_sync_push_author_shift_intent(uuid,text,text,text,jsonb,jsonb,jsonb,jsonb) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.pos_sync_push_author_shift_intent(uuid,text,text,text,jsonb,jsonb,jsonb,jsonb) TO service_role;
+
+-- Guard the complete helper family, so a child-only batch cannot omit its
+-- parent to bypass admission. Existing typed personal functions do not use
+-- these terminal transport helpers and retain their own authorization.
+-- SHIFT_AUTHOR_HELPER_GUARDS_BEGIN
+DO $helper_guards$
+DECLARE table_name text; operation text; signature regprocedure; definition text; addition text; position integer;
+BEGIN
+ FOREACH table_name IN ARRAY ARRAY['shifts','shift_cash_counts','shift_reconciliations','shift_close_events','shift_notifications','shift_variance_alerts'] LOOP
+  FOREACH operation IN ARRAY ARRAY['apply','delete'] LOOP
+   signature:=to_regprocedure(format('public.sync_%s_%s(%s)',operation,table_name,CASE operation WHEN 'apply' THEN 'jsonb' ELSE 'jsonb,text,text' END));
+   IF signature IS NULL THEN RAISE EXCEPTION 'AUTH37_MISSING_GRAPH_HELPER'; END IF;
+   definition:=pg_get_functiondef(signature);
+   addition:=CASE operation WHEN 'apply' THEN format(E'PERFORM public.pos_sync_shift_author_guard(%L,p_rows,\'[]\'::jsonb,current_setting(\'pos.sync_branch\',true),current_setting(\'pos.sync_terminal\',true));\n',table_name)
+    ELSE format(E'PERFORM public.pos_sync_shift_author_guard(%L,\'[]\'::jsonb,p_changes,p_branch_id,p_terminal_id);\n',table_name) END;
+   IF strpos(definition,addition)=0 THEN
+    position:=strpos(definition,'BEGIN');
+    IF position=0 THEN RAISE EXCEPTION 'AUTH37_UNEXPECTED_GRAPH_HELPER'; END IF;
+    EXECUTE overlay(definition placing E'BEGIN\n '||addition from position for 5);
+   END IF;
+  END LOOP;
+ END LOOP;
+END $helper_guards$;
+DO $receipt_guards$
+DECLARE signature regprocedure; definition text;
+ anchor text;
+ addition text:='PERFORM public.pos_sync_shift_author_receipt_guard(p_batch_id,p_terminal_id);';
+BEGIN
+ FOREACH signature IN ARRAY ARRAY['public.pos_sync_push_batch(uuid,text,text,text,text,jsonb,jsonb)'::regprocedure,
+  'public.pos_sync_push_aggregate(uuid,text,text,text,jsonb)'::regprocedure,'public.pos_sync_push_shift_intent(uuid,text,text,text,jsonb,jsonb)'::regprocedure] LOOP
+  definition:=pg_get_functiondef(signature);
+  anchor:=CASE WHEN signature='public.pos_sync_push_shift_intent(uuid,text,text,text,jsonb,jsonb)'::regprocedure
+   THEN 'PERFORM pg_advisory_xact_lock(hashtextextended(''pos-sync-batch:''||p_batch_id::text,0));'
+   ELSE 'PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(''pos-sync-batch:'' || p_batch_id::text, 0));' END;
+  IF strpos(definition,addition)=0 THEN
+   IF (length(definition)-length(replace(definition,anchor,'')))/length(anchor)<>1 THEN RAISE EXCEPTION 'AUTH37_UNEXPECTED_RECEIPT_LOCK'; END IF;
+   EXECUTE replace(definition,anchor,anchor||E'\n '||addition);
+  END IF;
+ END LOOP;
+END $receipt_guards$;
+-- SHIFT_AUTHOR_HELPER_GUARDS_END
+DO $enrollment_lock$
+DECLARE definition text; anchor text:='PERFORM pg_advisory_xact_lock(hashtextextended(''shift-author:''';
+ addition text:='PERFORM pg_advisory_xact_lock(hashtextextended(''shift-author-terminal:''||v_terminal,0));';
+BEGIN
+ definition:=pg_get_functiondef('public.pos_shift_author_enroll(jsonb,text)'::regprocedure);
+ IF strpos(definition,addition)=0 THEN
+  IF (length(definition)-length(replace(definition,anchor,'')))/length(anchor)<>1 THEN RAISE EXCEPTION 'AUTH37_UNEXPECTED_ENROLLMENT_LOCK'; END IF;
+  EXECUTE replace(definition,anchor,addition||E'\n '||anchor);
+ END IF;
+END $enrollment_lock$;
+NOTIFY pgrst,'reload schema';
+COMMIT;
+-- SHIFT_AUTHOR_CONTRACT_END
+
+-- SHIFT_CORRECTION_ACTIVITY_TYPE_BEGIN
+-- Supply the required audit classification only. Preserve the reviewed
+-- administrator correction, calculations, replay keys and function authority.
+BEGIN;
+DO $closed_shift_activity_type$
+DECLARE
+ signature oid := to_regprocedure('public.pos_admin_correct_closed_shift(uuid,numeric,numeric,numeric,text,text,text,text,text)');
+ definition text; original_owner oid; original_acl aclitem[]; original_config text[];
+ old_columns text := E'INSERT INTO public.activity_events\n    (severity, title, message, actor_id, actor_name, actor_role, terminal_id, store_id,';
+ new_columns text := E'INSERT INTO public.activity_events\n    (event_type, severity, title, message, actor_id, actor_name, actor_role, terminal_id, store_id,';
+ old_values text := E'VALUES\n    (\'warning\', \'Closed shift corrected\',';
+ new_values text := E'VALUES\n    (\'shift_close_corrected\', \'warning\', \'Closed shift corrected\',';
+BEGIN
+ IF signature IS NULL THEN RAISE EXCEPTION 'SHIFT_CORRECTION_ACTIVITY_REQUIRES_REVIEWED_ROUTINE'; END IF;
+ SELECT replace(pg_get_functiondef(p.oid),E'\r\n',E'\n'),p.proowner,p.proacl,p.proconfig
+ INTO definition,original_owner,original_acl,original_config FROM pg_proc p WHERE p.oid=signature;
+ IF (length(definition)-length(replace(definition,new_columns,'')))/length(new_columns)=1 AND
+    (length(definition)-length(replace(definition,new_values,'')))/length(new_values)=1 AND
+    position(old_columns IN definition)=0 AND position(old_values IN definition)=0 THEN RETURN; END IF;
+ IF (length(definition)-length(replace(definition,old_columns,'')))/length(old_columns)<>1 OR
+    (length(definition)-length(replace(definition,old_values,'')))/length(old_values)<>1 OR
+    position(new_columns IN definition)>0 OR position(new_values IN definition)>0 THEN
+  RAISE EXCEPTION 'SHIFT_CORRECTION_ACTIVITY_UNRECOGNIZED_ROUTINE';
+ END IF;
+ EXECUTE replace(replace(definition,old_columns,new_columns),old_values,new_values);
+ IF EXISTS(SELECT 1 FROM pg_proc p WHERE p.oid=signature AND
+   (p.proowner IS DISTINCT FROM original_owner OR p.proacl IS DISTINCT FROM original_acl OR p.proconfig IS DISTINCT FROM original_config)) THEN
+  RAISE EXCEPTION 'SHIFT_CORRECTION_ACTIVITY_AUTHORITY_CHANGED';
+ END IF;
+END $closed_shift_activity_type$;
+NOTIFY pgrst,'reload schema';
+COMMIT;
+-- SHIFT_CORRECTION_ACTIVITY_TYPE_END
+
+-- SHIFT_CLOSING_START_CONTRACT_BEGIN
+-- Source preparation only. The hosted endpoint verifies both Ed25519 domains.
+BEGIN;
+DO $prerequisite$ BEGIN
+ IF to_regclass('pos_sync_private.shift_author_receipts') IS NULL OR
+    to_regprocedure('public.pos_sync_push_author_shift_intent(uuid,text,text,text,jsonb,jsonb,jsonb,jsonb)') IS NULL OR
+    to_regclass('pos_sync_private.shift_closing_start_receipts') IS NOT NULL
+ THEN RAISE EXCEPTION 'SHIFT_START_REQUIRES_REVIEWED_AUTH37'; END IF;
+END $prerequisite$;
+CREATE TABLE pos_sync_private.shift_closing_start_receipts (
+ intent_id uuid PRIMARY KEY REFERENCES pos_sync_private.shift_author_receipts(intent_id) ON DELETE RESTRICT,
+ event_id uuid NOT NULL UNIQUE, key_id uuid NOT NULL REFERENCES pos_sync_private.shift_author_keys(key_id) ON DELETE RESTRICT,
+ author_id uuid NOT NULL, proof jsonb NOT NULL, accepted_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE pos_sync_private.shift_closing_start_receipts ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE pos_sync_private.shift_closing_start_receipts FROM PUBLIC,anon,authenticated,service_role;
+CREATE TRIGGER shift_closing_start_receipt_immutable BEFORE UPDATE OR DELETE ON pos_sync_private.shift_closing_start_receipts
+ FOR EACH ROW EXECUTE FUNCTION pos_sync_private.receipt_immutable();
+
+-- Only the extended service RPC sets this transaction-local validated context.
+-- Compare typed persisted facts, retaining the original signed JSON bytes.
+CREATE FUNCTION pos_sync_private.proven_closing_start(p_intent uuid,p_event jsonb) RETURNS boolean
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path=pg_catalog AS $fn$
+ SELECT COALESCE((context->>'intentId')::uuid=p_intent AND (context->'proof'->>'eventId')::uuid=(p_event->>'id')::uuid AND
+   (to_jsonb(jsonb_populate_record(NULL::public.shift_close_events,(context->'proof'->>'payloadJson')::jsonb->'event'))-'row_version'-'updated_at')=
+   (to_jsonb(jsonb_populate_record(NULL::public.shift_close_events,p_event))-'row_version'-'updated_at'),false)
+ FROM (SELECT NULLIF(current_setting('pos.shift_closing_start',true),'')::jsonb context) x
+$fn$;
+REVOKE ALL ON FUNCTION pos_sync_private.proven_closing_start(uuid,jsonb) FROM PUBLIC,anon,authenticated,service_role;
+
+-- Extend only the start-specific AUTH37 conditions. All other event actors,
+-- count actors, financial checks, accepted receipts and causal checks are retained.
+DO $bounded_extension$
+DECLARE definition text; anchor text; replacement text;
+BEGIN
+ definition:=pg_get_functiondef('public.pos_sync_push_author_shift_intent(uuid,text,text,text,jsonb,jsonb,jsonb,jsonb)'::regprocedure);
+ anchor:='IF op->>''table''=''shift_close_events'' AND (proposed->>''actor_staff_id'' IS DISTINCT FROM registered.subject OR proposed->>''actor_name'' IS DISTINCT FROM registered.subject OR';
+ replacement:='IF op->>''table''=''shift_close_events'' AND ((NOT (action=''ORIGINAL'' AND proposed->>''event''=''closing_started'' AND pos_sync_private.proven_closing_start(p_batch_id,proposed)) AND (proposed->>''actor_staff_id'' IS DISTINCT FROM registered.subject OR proposed->>''actor_name'' IS DISTINCT FROM registered.subject)) OR';
+ IF (length(definition)-length(replace(definition,anchor,'')))/length(anchor)<>1 THEN RAISE EXCEPTION 'SHIFT_START_UNKNOWN_AUTHOR_EVENT_CHECK'; END IF;
+ definition:=replace(definition,anchor,replacement);
+ anchor:='AND parent->>''closing_started_by''=registered.subject';
+ replacement:='AND parent->>''closing_started_by''=CASE WHEN pos_sync_private.proven_closing_start(p_batch_id,proposed) THEN proposed->>''actor_staff_id'' ELSE registered.subject END';
+ IF (length(definition)-length(replace(definition,anchor,'')))/length(anchor)<>1 THEN RAISE EXCEPTION 'SHIFT_START_UNKNOWN_AUTHOR_PARENT_CHECK'; END IF;
+ definition:=replace(definition,anchor,replacement);
+ -- The opening terminal is immutable attribution, not the registered terminal
+ -- of the authorized closer. Only the outer RPC's validated start context can
+ -- admit that distinction; ordinary eight-argument authors retain their guard.
+ anchor:='AND parent->>''terminal_id''=p_terminal_id';
+ replacement:='AND (parent->>''terminal_id''=p_terminal_id OR (action=''ORIGINAL'' AND pos_sync_private.proven_closing_start(p_batch_id,proposed)))';
+ IF (length(definition)-length(replace(definition,anchor,'')))/length(anchor)<>1 THEN RAISE EXCEPTION 'SHIFT_START_UNKNOWN_AUTHOR_TERMINAL_CHECK'; END IF;
+ definition:=replace(definition,anchor,replacement);
+ -- Omission must fail even on the old eight-argument accepted-replay endpoint.
+ anchor:='SELECT * INTO receipt FROM pos_sync_private.shift_intent_receipts WHERE intent_id=p_batch_id;';
+ replacement:=E'IF EXISTS(SELECT 1 FROM pos_sync_private.shift_closing_start_receipts s WHERE s.intent_id=p_batch_id AND s.proof IS DISTINCT FROM NULLIF(current_setting(\'pos.shift_closing_start\',true),\'\')::jsonb->\'proof\') THEN RAISE EXCEPTION \'SYNC_SHIFT_START_HISTORY_UNPROVEN\'; END IF;\n '||anchor;
+ IF (length(definition)-length(replace(definition,anchor,'')))/length(anchor)<>1 THEN RAISE EXCEPTION 'SHIFT_START_UNKNOWN_AUTHOR_RECEIPT_CHECK'; END IF;
+ EXECUTE replace(definition,anchor,replacement);
+END $bounded_extension$;
+
+CREATE FUNCTION public.pos_sync_push_started_shift_intent(p_batch_id uuid,p_organization_id text,p_branch_id text,p_terminal_id text,p_operations jsonb,p_shift_intent jsonb,p_shift_author jsonb,p_author_authority jsonb,p_closing_start jsonb,p_start_authority jsonb)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp SET timezone='UTC' AS $fn$
+DECLARE raw text; payload jsonb; intent jsonb; parent jsonb; event_row jsonb; final_parent jsonb; old_event jsonb;
+ registered pos_sync_private.shift_author_keys%ROWTYPE; person public.app_users%ROWTYPE; existing pos_sync_private.shift_closing_start_receipts%ROWTYPE;
+ cloud_parent public.shifts%ROWTYPE; previous_context text; result jsonb; field text; v_shift uuid; event_count integer;
+BEGIN
+ IF auth.role() IS DISTINCT FROM 'service_role' THEN RAISE EXCEPTION 'SYNC_FORBIDDEN'; END IF;
+ PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id);
+ IF jsonb_typeof(p_closing_start) IS DISTINCT FROM 'object' OR
+    (SELECT array_agg(key ORDER BY key) FROM jsonb_object_keys(p_closing_start) key) IS DISTINCT FROM
+    ARRAY['algorithm','authorId','branchId','eventId','keyId','payloadHash','payloadJson','projectOrigin','shiftId','signature','subject','terminalId','version']::text[]
+ THEN RAISE EXCEPTION 'SYNC_SHIFT_START_INVALID'; END IF;
+ raw:=p_closing_start->>'payloadJson';
+ IF raw IS NULL OR octet_length(convert_to(raw,'UTF8'))>16384 OR p_closing_start->'version' IS DISTINCT FROM '1'::jsonb OR
+    p_closing_start->>'algorithm' IS DISTINCT FROM 'Ed25519' OR p_closing_start->>'signature' !~ '^[A-Za-z0-9_-]{86}$' OR
+    p_closing_start->>'payloadHash' IS DISTINCT FROM encode(sha256(convert_to(raw,'UTF8')),'hex')
+ THEN RAISE EXCEPTION 'SYNC_SHIFT_START_INVALID'; END IF;
+ payload:=raw::jsonb; parent:=payload->'parent'; event_row:=payload->'event'; intent:=(p_shift_intent->>'payloadJson')::jsonb; v_shift:=(intent->>'shiftId')::uuid;
+ IF (SELECT array_agg(key ORDER BY key) FROM jsonb_object_keys(payload) key) IS DISTINCT FROM ARRAY['branchId','event','eventId','parent','shiftId','version']::text[] OR
+    (SELECT array_agg(key ORDER BY key) FROM jsonb_object_keys(parent) key) IS DISTINCT FROM ARRAY['close_reason','closing_started_at','closing_started_by','id','opened_at','opened_by_name','opened_by_staff_id','store_id','terminal_id']::text[] OR
+    payload->'version' IS DISTINCT FROM '1'::jsonb OR intent->>'kind' IS DISTINCT FROM 'ORIGINAL' OR
+    p_closing_start->>'projectOrigin' IS DISTINCT FROM p_shift_author->>'projectOrigin' OR p_closing_start->>'terminalId' IS DISTINCT FROM p_terminal_id OR
+    lower(btrim(p_closing_start->>'branchId')) IS DISTINCT FROM lower(btrim(p_branch_id)) OR
+    payload->>'branchId' IS DISTINCT FROM p_closing_start->>'branchId' OR (payload->>'shiftId')::uuid IS DISTINCT FROM v_shift OR
+    (p_closing_start->>'shiftId')::uuid IS DISTINCT FROM v_shift OR (payload->>'eventId')::uuid IS DISTINCT FROM (p_closing_start->>'eventId')::uuid
+ THEN RAISE EXCEPTION 'SYNC_SHIFT_START_INVALID'; END IF;
+ IF jsonb_typeof(event_row) IS DISTINCT FROM 'object' OR event_row ?| ARRAY['row_version','updated_at'] OR
+    EXISTS(SELECT 1 FROM jsonb_object_keys(event_row) key WHERE NOT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='public.shift_close_events'::regclass AND attname=key AND attnum>0 AND NOT attisdropped)) OR
+    (event_row->>'id')::uuid IS DISTINCT FROM (payload->>'eventId')::uuid OR (event_row->>'shift_id')::uuid IS DISTINCT FROM v_shift OR
+    lower(btrim(event_row->>'store_id')) IS DISTINCT FROM lower(btrim(p_branch_id)) OR event_row->>'terminal_id' IS DISTINCT FROM p_terminal_id OR
+    event_row->>'event' IS DISTINCT FROM 'closing_started' OR event_row->>'from_state' IS DISTINCT FROM 'ACTIVE' OR event_row->>'to_state' IS DISTINCT FROM 'CASH_COUNT_REQUIRED' OR
+    event_row->>'actor_staff_id' IS DISTINCT FROM p_closing_start->>'subject' OR event_row->>'actor_name' IS DISTINCT FROM p_closing_start->>'subject' OR
+    event_row->>'created_at' IS NULL OR parent->>'closing_started_by' IS DISTINCT FROM p_closing_start->>'subject' OR
+    (parent->>'closing_started_at')::timestamptz IS DISTINCT FROM (event_row->>'created_at')::timestamptz OR
+    parent->>'close_reason' IS DISTINCT FROM event_row->'detail'->>'reason' OR (parent->>'id')::uuid IS DISTINCT FROM v_shift OR
+    lower(btrim(parent->>'store_id')) IS DISTINCT FROM lower(btrim(p_branch_id))
+ THEN RAISE EXCEPTION 'SYNC_SHIFT_START_INVALID'; END IF;
+ -- Locks share the existing financial writer order. Proof is not a predecessor.
+ PERFORM pg_advisory_xact_lock(hashtextextended('pos-sync-batch:'||p_batch_id::text,0));
+ PERFORM pg_advisory_xact_lock(hashtextextended('pos-sync-intent:'||p_batch_id::text,0));
+ PERFORM pg_advisory_xact_lock(hashtextextended('pos-sync-shift:'||v_shift::text,0));
+ SELECT * INTO registered FROM pos_sync_private.shift_author_keys WHERE key_id=(p_closing_start->>'keyId')::uuid AND author_id=(p_closing_start->>'authorId')::uuid
+   AND terminal_id=p_terminal_id AND project_origin=p_closing_start->>'projectOrigin' AND subject=p_closing_start->>'subject' FOR SHARE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'SYNC_SHIFT_START_INVALID'; END IF;
+ SELECT * INTO existing FROM pos_sync_private.shift_closing_start_receipts WHERE intent_id=p_batch_id;
+ IF FOUND THEN
+  IF existing.proof IS DISTINCT FROM p_closing_start THEN RAISE EXCEPTION 'SYNC_SHIFT_START_HISTORY_UNPROVEN'; END IF;
+ ELSE
+  IF EXISTS(SELECT 1 FROM pos_sync_private.shift_author_receipts WHERE intent_id=p_batch_id) OR EXISTS(SELECT 1 FROM pos_sync_private.shift_closing_start_receipts WHERE event_id=(p_closing_start->>'eventId')::uuid)
+  THEN RAISE EXCEPTION 'SYNC_SHIFT_START_HISTORY_UNPROVEN'; END IF;
+  IF p_start_authority->'allowed' IS DISTINCT FROM 'true'::jsonb OR p_start_authority->'authority'->>'authorId' IS DISTINCT FROM registered.author_id::text OR registered.revoked_at IS NOT NULL
+  THEN RAISE EXCEPTION 'SYNC_SHIFT_AUTHOR_PERMISSION_REVOKED'; END IF;
+  SELECT * INTO person FROM public.app_users WHERE id=registered.author_id FOR SHARE;
+  IF NOT FOUND OR person.is_active IS DISTINCT FROM true OR person.user_id IS DISTINCT FROM registered.subject OR
+     (person.store_id IS NOT NULL AND lower(btrim(person.store_id)) IS DISTINCT FROM lower(btrim(p_branch_id))) OR
+     NOT pos_sync_private.shift_author_flag(person.permissions,'can_close_shift') OR
+     (EXISTS(SELECT 1 FROM public.terminal_tokens WHERE id::text=p_terminal_id AND location_id IS NULL) AND NOT pos_sync_private.shift_author_management_allowed(person.role::text,person.role_slug,person.permissions))
+  THEN RAISE EXCEPTION 'SYNC_SHIFT_AUTHOR_PERMISSION_REVOKED'; END IF;
+ END IF;
+ SELECT count(*) INTO event_count FROM jsonb_array_elements(intent->'operations') op,LATERAL jsonb_array_elements(op->'rows') r
+  WHERE op->>'table'='shift_close_events' AND r->>'event'='closing_started';
+ IF event_count<>1 THEN RAISE EXCEPTION 'SYNC_SHIFT_START_INVALID'; END IF;
+ SELECT r INTO old_event FROM jsonb_array_elements(intent->'operations') op,LATERAL jsonb_array_elements(op->'rows') r WHERE op->>'table'='shift_close_events' AND r->>'event'='closing_started';
+ IF (to_jsonb(jsonb_populate_record(NULL::public.shift_close_events,old_event))-'row_version'-'updated_at') IS DISTINCT FROM
+    (to_jsonb(jsonb_populate_record(NULL::public.shift_close_events,event_row))-'row_version'-'updated_at') THEN RAISE EXCEPTION 'SYNC_SHIFT_START_INVALID'; END IF;
+ SELECT r INTO final_parent FROM jsonb_array_elements(intent->'operations') op,LATERAL jsonb_array_elements(op->'rows') r WHERE op->>'table'='shifts' AND (r->>'id')::uuid=v_shift;
+ IF final_parent IS NULL THEN RAISE EXCEPTION 'SYNC_SHIFT_START_INVALID'; END IF;
+ -- The freezer can preserve accepted cloud opening microseconds, while Main's
+ -- actual parent postimage has SQL Server millisecond precision. Compare that
+ -- immutable opening identity at native precision without rewriting either JSON.
+ IF date_trunc('milliseconds',(parent->>'opened_at')::timestamptz) IS DISTINCT FROM date_trunc('milliseconds',(final_parent->>'opened_at')::timestamptz)
+ THEN RAISE EXCEPTION 'SYNC_SHIFT_START_INVALID'; END IF;
+ FOREACH field IN ARRAY ARRAY['id','store_id','terminal_id','opened_by_staff_id','opened_by_name','closing_started_at','closing_started_by','close_reason'] LOOP
+  IF (to_jsonb(jsonb_populate_record(NULL::public.shifts,parent))->field) IS DISTINCT FROM (to_jsonb(jsonb_populate_record(NULL::public.shifts,final_parent))->field)
+  THEN RAISE EXCEPTION 'SYNC_SHIFT_START_INVALID'; END IF;
+ END LOOP;
+ SELECT * INTO cloud_parent FROM public.shifts WHERE id=v_shift FOR SHARE;
+ -- Preserve the original opening terminal, including historical NULL, against
+ -- the locked cloud record and the already-compared final signed parent. The
+ -- actual starter/event/key and counter remain bound to p_terminal_id above.
+ IF NOT FOUND OR cloud_parent.store_id IS DISTINCT FROM p_branch_id OR cloud_parent.terminal_id IS DISTINCT FROM parent->>'terminal_id' OR
+    date_trunc('milliseconds',cloud_parent.opened_at) IS DISTINCT FROM date_trunc('milliseconds',(parent->>'opened_at')::timestamptz) OR
+    cloud_parent.opened_by_staff_id IS DISTINCT FROM parent->>'opened_by_staff_id' OR cloud_parent.opened_by_name IS DISTINCT FROM parent->>'opened_by_name'
+ THEN RAISE EXCEPTION 'SYNC_SHIFT_START_INVALID'; END IF;
+ previous_context:=current_setting('pos.shift_closing_start',true);
+ PERFORM set_config('pos.shift_closing_start',jsonb_build_object('intentId',p_batch_id,'proof',p_closing_start)::text,true);
+ result:=public.pos_sync_push_author_shift_intent(p_batch_id,p_organization_id,p_branch_id,p_terminal_id,p_operations,p_shift_intent,p_shift_author,p_author_authority);
+ IF existing.intent_id IS NULL THEN
+  INSERT INTO pos_sync_private.shift_closing_start_receipts(intent_id,event_id,key_id,author_id,proof) VALUES(p_batch_id,(p_closing_start->>'eventId')::uuid,registered.key_id,registered.author_id,p_closing_start);
+ END IF;
+ PERFORM set_config('pos.shift_closing_start',COALESCE(previous_context,''),true);
+ RETURN result;
+END $fn$;
+REVOKE ALL ON FUNCTION public.pos_sync_push_started_shift_intent(uuid,text,text,text,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.pos_sync_push_started_shift_intent(uuid,text,text,text,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb) TO service_role;
+NOTIFY pgrst,'reload schema';
+COMMIT;
+-- SHIFT_CLOSING_START_CONTRACT_END
+
 -- Final public-schema privilege hardening after notification rule definitions.
 DO $notification_hardening$
 DECLARE routine record;

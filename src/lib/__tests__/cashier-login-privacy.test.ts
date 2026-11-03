@@ -34,6 +34,10 @@ const alias = (AliasRoute as unknown as TestRoute).options.server.handlers.POST;
 const ipc = (IpcRoute as unknown as TestRoute).options.server.handlers.POST;
 const endpoints = [
   { name: "public cashier login", run: handleCashierLogin, usernameBucket: true, ipc: false },
+  { name: "direct Worker cashier login", run: async (request: Request) => {
+    Object.defineProperty(request, "cf", { value: { colo: "SYN" } });
+    return (await import("../../server")).default.fetch(request, {}, {});
+  }, usernameBucket: true, ipc: false },
   { name: "short login alias", run: (request: Request) => alias({ request }), usernameBucket: true, ipc: false },
   { name: "IPC authorization", run: (request: Request) => ipc({ request }), usernameBucket: false, ipc: true },
 ];
@@ -61,6 +65,16 @@ beforeEach(() => {
   h.mint.mockResolvedValue("auth-proof"); h.start.mockResolvedValue({ token: "session-proof", idleMinutes: 30 });
   h.sign.mockReturnValue("cashier-proof");
   h.authority.mockResolvedValue({ permissions: { can_manage_sync_backup: true } });
+});
+
+it("keeps private Worker transport context out of the public credential payload", async () => {
+  const input = request({ trustedWorkerIp: "198.51.100.8", cf: { colo: "spoofed" } });
+  input.headers.set("cf-connecting-ip", "203.0.113.9");
+  Object.defineProperty(input, "cf", { value: { colo: "SYN" } });
+  await (await import("../../server")).default.fetch(input, {}, {});
+  expect(h.begin).toHaveBeenCalledWith(input, expect.any(AbortSignal), { trustedWorkerIp: "203.0.113.9" });
+  const verifier = JSON.parse(h.rest.mock.calls[0][1].body);
+  expect(verifier).toEqual({ p_user_id: "cashier.alias", p_pin: "test-only-pin" });
 });
 
 describe.each(endpoints)("PIN response privacy: $name", endpoint => {
