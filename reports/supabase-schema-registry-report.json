@@ -2,7 +2,7 @@
   "source": "supabase/schema.sql",
   "generatedAt": "2026-10-26T23:17:35.708Z",
   "tableCount": 70,
-  "columnCount": 1196,
+  "columnCount": 1197,
   "tables": [
     {
       "name": "coupon_campaigns",
@@ -6217,6 +6217,12 @@
         },
         {
           "name": "allow_multiple_shifts_per_terminal",
+          "declaration": "boolean",
+          "nullable": true,
+          "hasDefault": false
+        },
+        {
+          "name": "allow_branch_shift_sharing",
           "declaration": "boolean",
           "nullable": true,
           "hasDefault": false

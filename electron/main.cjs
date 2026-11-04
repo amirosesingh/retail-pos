@@ -1985,6 +1985,7 @@ function registerIpc() {
         operations,
         branchId,
         terminalId:terminal.tokenId??terminal.terminalId??null,
+        managementDevice:isManagementDevice(),
         permissions:adminSession.identity()?.permissions??{},
         ...aggregatePolicy(aggregate.kind,operations,adminSession.identity()),
         // Automatic sale/payment accrual is governed by the aggregate itself.

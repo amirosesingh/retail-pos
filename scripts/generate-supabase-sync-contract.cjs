@@ -9,6 +9,9 @@ const registry = JSON.parse(
 );
 const begin = "-- SQLSERVER_SYNC_CONTRACT_BEGIN";
 const end = "-- SQLSERVER_SYNC_CONTRACT_END";
+const sharingUpgrade = fs.readFileSync(path.join(root, 'scripts/preparation/shift-branch-sharing.sql'), 'utf8').replaceAll('\r\n', '\n');
+const sharingPreserve = sharingUpgrade.split('preserve text:=$preserve$')[1]?.split('$preserve$;')[0];
+if (!sharingPreserve?.includes('-- SHIFT63_PRESERVE_ABSENT_RULE')) throw new Error('The reviewed shift-sharing settings compatibility hook is missing.');
 // Keep newly generated sync routines aligned with the reviewed incremental fix.
 const shiftClosureMigration = fs.readFileSync(path.join(root, "supabase", "migrations",
   "20261030153259_confirm_shift_closure_sync_acknowledgement.sql"), "utf8");
@@ -368,6 +371,7 @@ BEGIN FOR v_row IN SELECT value FROM jsonb_array_elements(COALESCE(p_rows,'[]'::
     out.push(`CREATE OR REPLACE FUNCTION public.sync_apply_${table.cloudTable}(p_rows jsonb) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER AS $fn$
 DECLARE v_count integer; v_row jsonb;
 BEGIN
+  ${table.cloudTable === "pos_store_settings" ? sharingPreserve : ""}
   ${table.cloudTable === "stores" ? "IF NULLIF(current_setting('pos.sync_branch',true),'') IS NULL OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'id' IS DISTINCT FROM current_setting('pos.sync_branch',true)) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;" : ""}
   ${refundOn}
   ${shiftGuardOn}

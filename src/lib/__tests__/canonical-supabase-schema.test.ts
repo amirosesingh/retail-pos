@@ -256,12 +256,19 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261103091907_optimize_protected_history_projection.sql",
       "supabase/migrations/20261103105157_preserve_shift_reconciliation_parent_summaries.sql",
       "supabase/migrations/20261104040251_protected_byte_bounded_feed_download.sql",
+      "supabase/migrations/20261105090100_branch_shift_sharing.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
       "supabase/sql/trigger_sync_upgrade.sql",
       "supabase/sql/verify_purchase_order_uuid_sync.sql",
     ]);
+  });
+
+  it('retains the reviewed shift-sharing upgrade exactly in canonical SQL', () => {
+    const migration = read('supabase/migrations/20261105090100_branch_shift_sharing.sql').trim();
+    expect(read('supabase/schema.sql').split('-- SHIFT63_BRANCH_SHARING_BEGIN\n')[1]?.split('\n-- SHIFT63_BRANCH_SHARING_END')[0].trim()).toBe(migration);
+    expect(read('scripts/preparation/shift-branch-sharing.sql').trim()).toBe(migration);
   });
 
   it("retains the service-only bounded feed RPC exactly in canonical installation SQL", () => {
