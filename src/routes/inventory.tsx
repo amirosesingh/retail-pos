@@ -1192,6 +1192,7 @@ function Inventory() {
           </div>
         )}
 
+        <InventoryCatalogueStatus ready={inventoryReady} loadPhase={loadPhase} activeCount={branchCounts.active} archivedCount={archivedCount} />
         <div className="rounded-lg border border-border bg-card" style={{ marginTop: "1.75rem" }}>
           <Table key={tableFilterVersion} tableId="routes/inventory#1" className="inventory-products" columnControls layoutControls controlsTarget={columnControlsTarget} onColumnFiltersChange={setColumnFilters}>
             <TableHeader>
@@ -1380,7 +1381,6 @@ function Inventory() {
             onPageSize={pager.setPageSize}
           />
         </div>
-        <InventoryCatalogueStatus ready={inventoryReady} loadPhase={loadPhase} activeCount={branchCounts.active} archivedCount={archivedCount} />
       </div>
       {canBulk && <BulkImportDialog open={importOpen} onOpenChange={setImportOpen} />}
       {canMerge && (

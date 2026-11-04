@@ -7,7 +7,7 @@ export function InventoryCatalogueStatus({ ready, loadPhase, activeCount, archiv
   activeCount: number;
   archivedCount: number;
 }) {
-  return <footer aria-label="Catalogue totals" aria-busy={!ready} className="min-w-0 border-t border-border pt-3 text-sm">
+  return <section aria-label="Catalogue totals" aria-busy={!ready} className="min-w-0 border-t border-border pt-3 text-sm">
     {!ready ? <p role={loadPhase === "failed" ? "alert" : "status"} className="text-muted-foreground">
       {loadPhase === "failed" ? "Catalogue unavailable. Reconnect to verify product counts." : loadPhase === "stalled" ? "Catalogue is taking longer to load…" : "Loading catalogue…"}
     </p> : <dl className="flex min-w-0 flex-wrap items-baseline gap-x-5 gap-y-1">
@@ -15,5 +15,5 @@ export function InventoryCatalogueStatus({ ready, loadPhase, activeCount, archiv
         <dt className="text-muted-foreground">{label}</dt><dd className="min-w-0 font-medium tabular-nums [overflow-wrap:anywhere]"><AnimatedMetric value={count} /></dd>
       </div>)}
     </dl>}
-  </footer>;
+  </section>;
 }
