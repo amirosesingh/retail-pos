@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 
@@ -19,10 +19,10 @@ const enabled = process.env.CODEX_SHIFT36_LOCALDB === "1";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic CJS and SQL engine fixture boundary
 type Row = Record<string, any>;
 let local: Row | undefined, db: Row | undefined, vault: Row | undefined;
-afterAll(async () => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); try { await db?.close(); } finally { try { await local?.close(); } finally { vault?.close(); } } }, 60000);
+afterEach(async () => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); try { await db?.close(); } finally { try { await local?.close(); } finally { vault?.close(); local=undefined;db=undefined;vault=undefined; } } }, 60000);
 
 describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClient → API → isolated PostgreSQL", () => {
-  it("preserves separately signed starter/count authors through restart, lost reply, recounts and protected web adoption", async () => {
+  async function exerciseClosingProtocol(openingAlreadyAcknowledged: boolean) {
     const { createCloud, createLocal, mainCalls, graphNames, createAuthorKeys } = require("../../../scripts/lib/shift-protocol-integration-fixture.cjs");
     const branch = randomUUID(), terminal = randomUUID(), shift = randomUUID(), sale = randomUUID(), proof = "a".repeat(64);
     db = await createCloud(branch, terminal); local = await createLocal(branch);
@@ -118,6 +118,18 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
       opened_at: openedAt, opening_float: 20, note: "", overdue: false, created_at: openedAt, updated_at: openedAt, status: "OPEN", state: "ACTIVE", row_version: 1,
     }] }] });
     const frozenOpen = await reader.frozenOpeningRows(opening.operationId, branch);
+    if (openingAlreadyAcknowledged) {
+      // This is the reported ordering: cloud has already acknowledged OPEN
+      // before the cashier saves any closing facts on the offline PC.
+      await worker.run({branchId:branch,includeActivity:false});
+      expect(await scalar("SELECT status FROM public.shifts WHERE id=$1",[shift])).toBe("OPEN");
+      expect(await scalar("SELECT closed_at FROM public.shifts WHERE id=$1",[shift])).toBeNull();
+      const openingJournal=await sqlRows("SELECT acknowledged_at FROM dbo.sync_change_journal;");
+      expect(openingJournal.length).toBeGreaterThan(0);
+      expect(openingJournal.every((row:Row)=>row.acknowledged_at!==null)).toBe(true);
+      expect(Number(await scalar("SELECT count(*) FROM public.shift_cash_counts"))).toBe(0);
+    }
+
     await aggregates.commit("sale", { branchId: branch, terminalId: terminal, permissions: { can_process_sale: true }, operations: [{ kind: "insert", table: "sales", rows: [{
       id: sale, bill_number: "SYNTHETIC-OFFLINE-1", store_id: branch, shift_id: shift, cashier_name: "original-cashier", subtotal_amount: 80, total_amount: 80,
       discount_amount: 0, tax_amount: 0, payment_type: "cash", payments: [], points_earned: 0, points_redeemed: 0, is_exchange: false, is_refunded: false,
@@ -143,6 +155,13 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
     await calls.commitLocalShiftRecount({ shiftId: shift, cash: 120, reason: "Second recount", clientKey: "recount-2", terminalId: terminal });
     const savedIntents = await sqlRows("SELECT * FROM dbo.pos_sync_shift_intents ORDER BY intent_sequence;");
     expect(savedIntents).toHaveLength(3);
+    if(openingAlreadyAcknowledged){
+      expect((await sqlRows("SELECT status FROM dbo.shifts;"))[0].status).toBe("CLOSED");
+      expect(await scalar("SELECT status FROM public.shifts WHERE id=$1",[shift])).toBe("OPEN");
+      expect(savedIntents.every((row:Row)=>row.acknowledged_at===null)).toBe(true);
+      expect((await sqlRows("SELECT COUNT(*) pending FROM dbo.sync_change_journal WHERE acknowledged_at IS NULL;"))[0].pending).toBeGreaterThan(0);
+    }
+
     const frozen = savedIntents.map((row: Row) => JSON.parse(row.payload_json));
     expect(frozen.map((value: Row) => value.kind)).toEqual(["ORIGINAL", "RECOUNT", "RECOUNT"]);
     expect(frozen[1].predecessorIntentId).toBe(frozen[0].intentId); expect(frozen[2].predecessorIntentId).toBe(frozen[1].intentId);
@@ -183,6 +202,9 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
         if ((error as Error).message !== "Synthetic committed response lost") throw error;
         expect((error as Row).code).toBe("ETIMEDOUT"); lostRepliesObserved++;
         expect(Number(await scalar("SELECT count(*) FROM pos_sync_private.shift_intent_receipts"))).toBe(1);
+        if(openingAlreadyAcknowledged)
+          expect(await scalar("SELECT status FROM public.shifts WHERE id=$1",[shift])).toBe("CLOSED");
+
         expect(Number(await scalar("SELECT count(*) FROM pos_sync_private.shift_closing_start_receipts"))).toBe(1);
         await local!.restart(); vault!.keys = vault!.reopen(); authority = newAuthority();
         worker = new PushWorker({ reader: new ChangeReader(manager, registry), cloud, checkpoints: new CheckpointRepository(manager), registry,
@@ -222,7 +244,9 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
     expect(registeredAuthors).toContain(cashierId); expect(registeredAuthors).toContain(adminId);
     const firstIntentIndex = outbound.findIndex(body => body.sqlServerAggregate?.shiftIntent);
     expect(outbound.slice(0, firstIntentIndex).some(body => body.sqlServerAggregate?.operations?.some((op: Row) => op.table === "sales" && op.rows.some((row: Row) => row.id === sale)))).toBe(true);
-    expect(outbound.find(body => body.sqlServerAggregate?.operations?.some((op: Row) => op.table === "shifts"))?.sqlServerAggregate.operations.find((op: Row) => op.table === "shifts").rows[0]).toMatchObject({ status: "OPEN", state: "ACTIVE", closed_at: null });
+    const openingRetry=outbound.find(body => body.sqlServerAggregate?.operations?.some((op: Row) => op.table === "shifts"));
+    if(openingAlreadyAcknowledged)expect(openingRetry).toBeUndefined();
+    else expect(openingRetry?.sqlServerAggregate.operations.find((op: Row) => op.table === "shifts").rows[0]).toMatchObject({ status: "OPEN", state: "ACTIVE", closed_at: null });
     expect((await sqlRows("SELECT * FROM dbo.pos_sync_shift_baselines;")).length).toBe(0); // ACK never installs baseline.
 
     // Actual existing web correction SQL, with its authenticated web wrapper
@@ -259,5 +283,7 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
     expect(await sqlRows("SELECT * FROM dbo.sync_checkpoints WHERE direction=N'push' ORDER BY entity_type;")).toEqual(pushCheckpoints);
     expect(publish).toHaveBeenCalledTimes(1);
     expect(rpcCalls.some(call => call.name === "pos_sync_shift_graph")).toBe(true);
-  }, 180000);
+  }
+  it("preserves separately signed starter/count authors through restart, lost reply, recounts and protected web adoption",()=>exerciseClosingProtocol(false),180000);
+  it("uploads an offline closing after OPEN was already acknowledged, retaining complete signed work through a lost reply and retry",()=>exerciseClosingProtocol(true),180000);
 });
