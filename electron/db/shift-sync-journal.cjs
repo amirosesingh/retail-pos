@@ -268,6 +268,30 @@ class ShiftSyncJournal {
         return false;
       }
       causalContext=await this.intents.verify(transaction,scope.observation);
+      // Main's earlier calculation is only a draft. Re-read the financial
+      // inputs under this SERIALIZABLE transaction before any business writes
+      // or signing, so a concurrent refund/sale cannot make it stale. Accepted
+      // immutable replays above deliberately retain their historical basis.
+      const newCounts = ops.filter(operation => operation.table === "shift_cash_counts").flatMap(rowsOf);
+      const reconciliations = ops.filter(operation => operation.table === "shift_reconciliations").flatMap(rowsOf);
+      if ((newCounts.length || reconciliations.length) &&
+          (newCounts.length !== 1 || reconciliations.length !== 1 ||
+           !["ORIGINAL", "RECOUNT"].includes(newCounts[0].kind) ||
+           id(reconciliations[0].count_id) !== id(newCounts[0].id)))
+        fail("The closed shift has no matching saved cash count and reconciliation.");
+      if (newCounts.length) {
+        const expected = await this.repository.shiftExpectedTotals(branchId, shiftId, transaction);
+        const money = value => Math.round(Number(value) * 100) / 100;
+        for (const count of newCounts) {
+          const targets = reconciliations.filter(row => id(row.count_id) === id(count.id));
+          if (targets.length !== 1)
+            fail("The closed shift has no matching saved cash count and reconciliation.");
+          if (!["cash", "card", "digital"].every(tender =>
+            finiteMoney(expected[`expected_${tender}`]) &&
+            sameMoney(targets[0][`expected_${tender}`], money(expected[`expected_${tender}`]))))
+            fail("Shift payment totals changed before this count was saved. Review the count and try again.", "ESHIFT_FINANCIAL_CONFLICT");
+        }
+      }
     }, () => scope.author?.assertCurrent());
   }
 }
