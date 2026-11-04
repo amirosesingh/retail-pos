@@ -156,6 +156,73 @@ rejected open shifts; it was not evidence of another bad closed shift. No rows
 were written by these SELECT checks. These are candidate validation results,
 not executed repair, successful download or native adoption proof.
 
+## STARTUP51 — approved truthful startup progress and native-owned retry display
+
+Implementation and isolated verification: native activity reports preparation,
+download, committed local rows, upload and validation without starting additional
+work. Author validation passed168 tests across12 suites; independent review
+passed96 tests across5 suites. Root rendered the actual Windows NativeBoot and
+TillLoader with an isolated fake bridge (no POS API/data) at1280px and390px:
+phase/count changes, temporary wait, permanent shift blocker and manual pause
+display correctly; no premature Try again appears during sustained active work.
+At390px document and viewport widths both equal390 (no horizontal overflow).
+Ready workspace stays open when later progress arrives. The fixture recorded
+one initial database status read, zero sync status reads and zero job reads
+through all activity changes. This proves component/subscription behavior,
+not live SQL recovery or installed-device acceptance. Final lint cleanup,
+exact-head CI, beta integration and actual Electron relaunch remain separate.
+No database/configuration changes, queue clearing or process restart occurred.
+Rollback is a targeted revert of this progress-only patch, preserving later
+unrelated changes. The unresolved original STR1 closing remains separately held.
+
+Final local validation: scoped ESLint0 warnings/errors, TypeScript and diff check
+pass. Full Node22 Vitest run passed633 suites /4,904 tests (1suite and2tests
+skipped),92.28s with maxWorkers4. Owner then requested reopening latest Electron:
+old development process29296 exited through normal shutdown; no forced stop.
+Latest worktree Windows Vite is running at127.0.0.1:8083 and native Main PID34328
+uses this source. Actual window Register — Retail renders that URL, saved STR1
+branch and cashier list. No login/checkout transaction was automated. This
+verifies launch/registration display, not a fresh administrator login or complete
+shift recovery. Existing profile, SQL settings and checkpoints were preserved.
+Exact-head CI and beta merge still require separate recorded results.
+
+Read-only design refinement: progress-only notifications must use a dedicated
+native activity event (optional preload subscription), not ordinary database
+state broadcasts. Existing public-flags listeners retry reads on database events
+when flags have not loaded; do not modify those Membership/shared dependencies
+or multiply their queries. Initial getState may include sanitized activity;
+ordinary database transitions/logs remain unchanged. Prefer Main-window-only
+activity delivery and test no generic database publish or remote reload occurs.
+
+Owner requests actual downloading/uploading/loading status while the workspace
+opens, with automatic retry rather than a premature Try again/reload button.
+Baseline beta16db48d7; branch codex/startup-live-progress-beta. Agents audited the
+Windows gate and shared TillLoader: an unconditional12-second fallback appears
+during active work and defaults to renderer reload. Existing Main retry loops
+already own Operations retry/single-flight and Management backoff; do not create
+a second renderer retry loop or auto-call manual retryStartup (which resets
+Management retryAt and repeats schema work).
+
+Implement a small sanitized read-only native activity signal, actual preparation/
+download/local-apply boundaries, and existing job/sync progress observation with
+stale-initial-read protection. Windows gate opts into controlled loader states:
+no generic timeout retry while native work runs; show actual phase/table and
+committed records where available, indeterminate progress when totals unknown.
+Keep temporary retry display tied to existing native scheduling. Respect manual
+pause, offline/authentication conditions and permanent data/schema/proof errors.
+Show confirmed SYNC_SHIFT_GRAPH_CONFLICT as blocked, not endless fake loading.
+
+Preserve desktopStorageRoute/sticky readiness, scope/cache proofs, Management
+authorized scope/backoff, checkout, permissions and Membership/shared dependencies.
+Do not change retry delays, API requests, queries, transactions, schemas, saved
+configuration, queues/checkpoints or terminal identity. Other TillLoader callers
+retain their existing defaults. Tests: real rendered active>12s, phase/count
+updates, stale IPC/events, no duplicate retry, pause/permanent blocks, cleanup,
+readiness/checkout and Management boundaries. Use isolated fixtures, no real sale
+or stock actions. Root owns tracker/integration; one agent owns runtime/tests and
+another independently reviews. Existing eighth STR1 repair remains blocked by
+unavailable original PC; do not silently adopt the later cloud web closing.
+
 ## SHIFT49 — seven repaired and verified; eighth blocked
 
 Latest verified outcome: corrected SHA256

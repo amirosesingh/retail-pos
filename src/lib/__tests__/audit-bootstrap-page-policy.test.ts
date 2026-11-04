@@ -133,3 +133,14 @@ describe("audit-only bounded bootstrap downloads", () => {
     const unchanged = vi.fn(async (_limit: number) => ({ rows: [record(1)] }));expect(await readPage(unchanged, 500)).toMatchObject({ limit: 500, nextLimit: 500 });
   });
 });
+
+it("startup progress counts only committed page rows and cannot interrupt commits",async()=>{
+ const h=harness();const reports:Array<{phase:string;processedRows:number;commits:number}>=[];
+ await refreshTable({...h,branchId:"branch-fixture",historyDays:90,tableName:"change_history",onActivity:(value:{phase:string;processedRows:number})=>{
+  reports.push({...value,commits:h.commit.mock.calls.length});if(value.processedRows>0)throw Error("subscriber failed");
+ }});
+ expect(reports[0]).toMatchObject({phase:"downloading",processedRows:0,commits:0});
+ expect(reports.find(value=>value.processedRows===100)).toMatchObject({phase:"applying",commits:1});
+ expect(reports.at(-1)).toMatchObject({phase:"applying",processedRows:253,commits:3});
+ expect(h.applied).toHaveLength(253);expect(h.rollback).not.toHaveBeenCalled();
+});

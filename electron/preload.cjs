@@ -90,6 +90,11 @@ contextBridge.exposeInMainWorld("pos", {
       ipcRenderer.on("database:state", handler);
       return () => ipcRenderer.removeListener("database:state", handler);
     },
+    onStartupActivity: (cb) => {
+      const handler = (_event, activity) => cb(activity);
+      ipcRenderer.on("database:startup-activity", handler);
+      return () => ipcRenderer.removeListener("database:startup-activity", handler);
+    },
   },
   jobs: {
     getActive: () => invoke("jobs:get-active"),

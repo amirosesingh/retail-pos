@@ -1,6 +1,7 @@
 const { canonicalEntityKey } = require("../sync/entity-key.cjs");
 const { tagBootstrapDiagnostic } = require("../diagnostics.cjs");
 const {prepareShiftGraphs,applyShiftGraphs} = require("../sync/shift-graph.cjs");
+const {reportActivity} = require("../db/startup-activity.cjs");
 const SHIFT_GRAPH_TABLES = new Set(["shifts", "shift_cash_counts", "shift_reconciliations",
   "shift_close_events", "shift_notifications", "shift_variance_alerts"]);
 async function applySnapshot(cloud, transaction, table, rows, reader, branchId) {
@@ -33,15 +34,17 @@ async function snapshotPage({cloud,connectionManager,table,branchId,historyDays,
   },size,{table:table.cloudTable});
   return{...page,prepared,selected};
 }
-async function refreshTable({registry,cloud,connectionManager,branchId,historyDays=90,tableName,rowFilter=()=>true,reader,diagnosticOrigin="refresh",progress=null,recovery=null}){
+async function refreshTable({registry,cloud,connectionManager,branchId,historyDays=90,tableName,rowFilter=()=>true,reader,diagnosticOrigin="refresh",progress=null,recovery=null,onActivity=()=>{}}){
   const table=(registry.tables??[]).find(candidate=>candidate.cloudTable===tableName);
   if(!table)return{completed:0,skipped:true};
   let completed=progress?.completed??0;let cursor=progress?.cursor??null;let size=100;
   let diagnosticPhase="download";
   try{do{
     diagnosticPhase="download";
+    reportActivity(onActivity,{phase:"downloading",table:table.cloudTable,processedRows:completed});
     const page=await snapshotPage({cloud,connectionManager,table,branchId,historyDays,cursor,size,rowFilter});const batch=page.batch;size=page.nextLimit;
     diagnosticPhase="local_apply";
+    reportActivity(onActivity,{phase:"applying",table:table.cloudTable,processedRows:completed});
     const rows=batch.rows??[];
     const {selected,prepared}=page;
     const sql=connectionManager.sql();const transaction=new sql.Transaction(connectionManager.pool);await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
@@ -56,13 +59,14 @@ async function refreshTable({registry,cloud,connectionManager,branchId,historyDa
       await progress?.save(transaction,{cursor:nextCursor,completed:nextCompleted});
       await transaction.commit();completed=nextCompleted;cursor=nextCursor;
       recovery?.committed(transaction);
+      reportActivity(onActivity,{phase:"applying",table:table.cloudTable,processedRows:completed});
       await progress?.committed();
     }catch(error){await Promise.resolve(transaction.rollback()).catch(()=>undefined);throw error;}
     rows.length=0;
   }while(cursor);}catch(error){throw tagBootstrapDiagnostic(error,{table:table.cloudTable,phase:diagnosticPhase,origin:diagnosticOrigin});}
   return{completed};
 }
-async function runBootstrap({registry,cloud,connectionManager,checkpoints,branchId,historyDays=90,context,reader}){
+async function runBootstrap({registry,cloud,connectionManager,checkpoints,branchId,historyDays=90,context,reader,onActivity=()=>{}}){
   let completed=Number(context.job.completed_rows??0);
   const startIndex=Math.max(0,Number(context.job.dependency_index??0));
   const tables=[...registry.tables].sort((a,b)=>a.dependencyOrder-b.dependencyOrder||a.cloudTable.localeCompare(b.cloudTable));
@@ -77,8 +81,10 @@ async function runBootstrap({registry,cloud,connectionManager,checkpoints,branch
     do{
       await context.waitWhilePaused();
       diagnosticPhase="download";
+      reportActivity(onActivity,{phase:"downloading",table:table.cloudTable,processedRows:completed});
       const page=await snapshotPage({cloud,connectionManager,table,branchId,historyDays,cursor,size});const batch=page.batch;size=page.nextLimit;
       diagnosticPhase="local_apply";
+      reportActivity(onActivity,{phase:"applying",table:table.cloudTable,processedRows:completed});
       const rows=batch.rows??[];
       const {prepared}=page;
       const sql=connectionManager.sql(); const transaction=new sql.Transaction(connectionManager.pool); await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
@@ -88,6 +94,7 @@ async function runBootstrap({registry,cloud,connectionManager,checkpoints,branch
         completed+=result.applied+graphCount; cursor=batch.cursor??null;
         await context.checkpoint({status:"running",phase:"bootstrap",current_table:table.sqlServerTable,dependency_index:index,last_committed_cursor:cursor,completed_rows:completed,batch_number:Number(context.job.batch_number??0)+1},transaction);
         await transaction.commit();
+        reportActivity(onActivity,{phase:"applying",table:table.cloudTable,processedRows:completed});
       }catch(error){await Promise.resolve(transaction.rollback()).catch(()=>undefined);throw error;}
       rows.length=0;
     }while(cursor);
