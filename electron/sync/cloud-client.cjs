@@ -4,6 +4,29 @@ const { policy } = require("./conflicts.cjs");
 const { toLocalValue } = require("./row-codec.cjs");
 const { tagBootstrapDiagnostic } = require("../diagnostics.cjs");
 const {boundedText,rememberGraph} = require("./shift-recovery-exact.cjs");
+// Compare effective persisted assignments, not SQL's case/space-insensitive text
+// equality or row versions alone. Unknown registry types retain the old update.
+function changedAssignments(assignments, columns) {
+  const source = [], target = [], failed = [];
+  for (const assignment of assignments) {
+    const match = /^target\.\[([^\]]+)\]=(.*)$/.exec(assignment);
+    const type = String(columns.get(match?.[1])?.sqlServerType ?? "").toLowerCase();
+    if (!match || !/^(?:nvarchar\((?:max|[1-9]\d*)\)|decimal\(\d+,\d+\)|datetimeoffset\([0-7]\)|date|bigint|int|smallint|bit|uniqueidentifier)$/.test(type)) return "";
+    // Do not truncate bounded strings in the comparison: an oversized value
+    // must still reach the existing assignment and fail rather than be hidden.
+    const textual = /^nvarchar\(/.test(type);
+    const effective = textual
+      ? `CONVERT(nvarchar(max),${match[2]})` : `TRY_CONVERT(${type},${match[2]})`;
+    // A failed conversion must attempt the original authorized assignment and
+    // raise its normal error; it must never masquerade as an unchanged NULL.
+    if (!textual) failed.push(`(${match[2]} IS NOT NULL AND ${effective} IS NULL)`);
+    // Binary comparisons can pad trailing zero bytes. Length is part of the
+    // identity too, including Unicode NUL characters and SQL NULL values.
+    source.push(`DATALENGTH(${effective})`, `CONVERT(varbinary(max),${effective})`);
+    target.push(`DATALENGTH(target.[${match[1]}])`, `CONVERT(varbinary(max),target.[${match[1]}])`);
+  }
+  return source.length ? ` AND (${[...failed, `EXISTS(SELECT ${source.join(",")} EXCEPT SELECT ${target.join(",")})`].join(" OR ")})` : "";
+}
 // Main-private transport evidence: body flags cannot authorize partial feed pages.
 const feedContinuation = new WeakMap();
 
@@ -456,16 +479,19 @@ class CloudClient {
       // Terminal uploads still obey the immutable sale/refund contract.
       const correctedReceipt = correction && versioned && names.some(([name]) => name === "corrected_at") && deviceRow.corrected_at;
       const correctionAllowed = `source.[corrected_at] IS NOT NULL AND source.[row_version]>target.[row_version] AND ${table.cloudTable === "sales" ? "COALESCE(target.[is_refunded],0)=0 AND COALESCE(source.[is_refunded],0)=0" : "COALESCE(target.[refunded_qty],0)=0 AND COALESCE(source.[refunded_qty],0)=0"}`;
-      const correctedUpdates = correctedReceipt ? names.filter(([name]) => !mergeKey.includes(name)).map(([name]) => {
+      const correctedAssignments = correctedReceipt ? names.filter(([name]) => !mergeKey.includes(name)).map(([name]) => {
         const fallback = name === "row_version" ? "CASE WHEN source.[row_version]>target.[row_version] THEN source.[row_version] ELSE target.[row_version] END"
           : name === "is_refunded" ? "CASE WHEN target.[is_refunded]=1 OR source.[is_refunded]=1 THEN 1 ELSE 0 END"
           : name === "refunded_qty" ? "CASE WHEN source.[refunded_qty]>target.[refunded_qty] THEN source.[refunded_qty] ELSE target.[refunded_qty] END" : `target.[${name}]`;
         return `target.[${name}]=CASE WHEN ${correctionAllowed} THEN source.[${name}] ELSE ${fallback} END`;
-      }).join(",") : null;
+      }) : null;
+      const correctedUpdates = correctedAssignments?.join(",") ?? null;
+      const effectiveAssignments = correctedAssignments ?? (correction ? correction.split(",") : updates);
+      const changed = protectedGraph ? "" : changedAssignments(effectiveAssignments, localColumns);
       const matched = correction
-        ? `WHEN MATCHED THEN UPDATE SET ${correctedUpdates ?? correction}`
+        ? `WHEN MATCHED${changed} THEN UPDATE SET ${correctedUpdates ?? correction}`
         : mayUpdate
-          ? `WHEN MATCHED${authorizationOrder} THEN UPDATE SET ${updates.join(",")}`
+          ? `WHEN MATCHED${authorizationOrder}${changed} THEN UPDATE SET ${updates.join(",")}`
           : "";
       const source = names.map(([name, parameter]) => `@${parameter} AS [${name}]`).join(",");
       // OUTPUT INTO also works when an installed schema has DML triggers.
