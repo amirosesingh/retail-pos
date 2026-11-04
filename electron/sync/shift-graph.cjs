@@ -7,6 +7,7 @@ const {
 } = require("../db/shift-intents.cjs");
 const { recordId } = require("./uuid-fields.cjs");
 const { toLocalValue, toCloudRow } = require("./row-codec.cjs");
+const {witnessBytes,exactGraph}=require("./shift-recovery-exact.cjs");
 const id = (value) => recordId(String(value ?? "").trim());
 const refuse = (message, code = "ESYNC_GRAPH") => {
   throw Object.assign(new Error(message), { code, table: "shifts" });
@@ -54,13 +55,13 @@ async function prepareShiftGraphs({
     if (!UUID.test(shift)) refuse("The closing download has no verified shift.");
     shifts.add(shift);
   }
-  const graphs = new Map();
+  const graphs = new Map(),exactNoops=new Set();
   let graphBytes = 0;
   for (const shiftId of [...shifts].sort()) {
     const graph = await cloud.shiftGraph({ branchId: branch, shiftId });
     validateGraph(graph, branch, shiftId, { allowUnclosed: true });
-    if (graph.graphToken !== null) {
-      graphBytes += Buffer.byteLength(JSON.stringify(graph), "utf8");
+    if (graph.graphToken !== null || exactGraph(graph,branch,shiftId)) {
+      graphBytes += Buffer.byteLength(JSON.stringify(graph), "utf8")+witnessBytes(graph);
       if (graphBytes > byteBudget)
         refuse(
           "Closing snapshots exceed this page's memory budget; retry a smaller page.",
@@ -71,6 +72,7 @@ async function prepareShiftGraphs({
   }
   return {
     graphs,
+    exactNoops,
     covers(change) {
       if (!GRAPH_TABLES.includes(change.table_name)) return false;
       let key;
@@ -82,7 +84,7 @@ async function prepareShiftGraphs({
       const shift = change.table_name === "shifts" ? id(key.id) : id(change.row_data?.shift_id);
       // An absent tombstone is never silently swallowed. Whole-graph validation
       // below also preserves all saved audit rows rather than deleting history.
-      return !change.tombstone && graphs.has(shift);
+      return !change.tombstone && graphs.has(shift) && (graphs.get(shift).graphToken!==null || exactNoops.has(shift));
     },
   };
 }
@@ -94,6 +96,7 @@ async function applyShiftGraphs({
   reader,
   branchId,
   prepared,
+  recovery,
 }) {
   if (!prepared?.graphs.size) return 0;
   if (!reader) refuse("The local closing-change guard is required.", "ELOCAL_PENDING_UNVERIFIED");
@@ -106,7 +109,7 @@ async function applyShiftGraphs({
   };
   let applied = 0;
   for (const [shiftId, graph] of prepared.graphs) {
-    const tables = validateGraph(graph, branchId, shiftId);
+    const tables = validateGraph(graph, branchId, shiftId,{allowUnclosed:true});
     const parentTable = registry.tables.find((table) => table.cloudTable === "shifts");
     const parentChange = {
       entity_id: JSON.stringify({ id: shiftId }),
@@ -118,6 +121,8 @@ async function applyShiftGraphs({
         await reader.unacknowledged(parentTable, [parentChange.entity_id], transaction, {
           branchId,
           changes: [parentChange],
+          incomingGraph: graph,
+          requireExact: Boolean(recovery?.requiresExact(shiftId)),
         })
       ).size
     )
@@ -131,6 +136,13 @@ async function applyShiftGraphs({
     );
     if (unaccepted.recordset?.length)
       refuse("A protected closing intent remains pending.", "ELOCAL_UPLOAD_PENDING");
+    if(reader.exactShiftGraphNoop?.(transaction,branchId,graph)){
+      // Exact expired-CT proof permits no business writes, clocks or baseline
+      // adoption. It is a read-only match, not an acknowledgement of old edits.
+      recovery?.note(transaction,shiftId,graph);prepared.exactNoops?.add(shiftId);continue;
+    }
+    if(recovery?.requiresExact(shiftId))refuse("Retained closing history did not receive an exact no-op proof.","ELOCAL_PENDING_UNVERIFIED");
+    if(graph.graphToken===null)continue;
     const ordered = registry.tables
       .filter((table) => GRAPH_TABLES.includes(table.cloudTable))
       .sort((a, b) => a.dependencyOrder - b.dependencyOrder);

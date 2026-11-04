@@ -640,12 +640,11 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       const { commerceSyncIsolationReady } = await import("./commerce-sync-readiness.server");
       // Activate field exclusion only after its atomic database preservation guard is ready.
       const keepCommerce = protectedKeepCommerce ?? (management || !(await commerceSyncIsolationReady()));
-      const download = await response.json();
-      if (body.sqlServerShiftGraph && download && typeof download === "object" && Array.isArray(download.tables)) {
-        const { tables, ...envelope } = download;
-        return Response.json({ ...(redactOwnedParsedSyncDownload(envelope, "", keepCommerce) as Record<string, unknown>),
-          tables: tables.map((part: Record<string, unknown>) => redactOwnedParsedSyncDownload(part, typeof part?.table === "string" ? part.table : "", keepCommerce)) });
+      if (body.sqlServerShiftGraph) {
+        const { exactShiftGraphDownload } = await import("./shift-graph-exact-download.server");
+        return exactShiftGraphDownload(response, keepCommerce);
       }
+      const download = await response.json();
       return Response.json(redactOwnedParsedSyncDownload(download, body.sqlServerBootstrap?.table ?? "", keepCommerce));
     }
     return new Response(await response.text(), {

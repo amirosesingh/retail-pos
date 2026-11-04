@@ -4,6 +4,8 @@ import { readFile } from 'node:fs/promises';
 import { randomUUID, createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import ts from 'typescript';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -15,7 +17,9 @@ const schema=await read('supabase/schema.sql');
 const migration=await read('supabase/migrations/20261102082439_shift_closing_causal_intents.sql');
 const names=['shifts','shift_cash_counts','shift_reconciliations','shift_close_events','shift_notifications','shift_variance_alerts'];
 const redactor=ts.transpileModule(await read('src/lib/sync-download-redaction.ts'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
-const {redactSyncDownload}=await import('data:text/javascript;base64,'+Buffer.from(redactor).toString('base64'));
+const redactorRequire=createRequire(new URL('../src/lib/sync-download-redaction.ts',import.meta.url));
+const resolvedRedactor=redactor.replace(/from (["'])([^"']+)\1/g,(_match,_quote,specifier)=>'from '+JSON.stringify(pathToFileURL(redactorRequire.resolve(specifier)).href));
+const {redactSyncDownload}=await import('data:text/javascript;base64,'+Buffer.from(resolvedRedactor).toString('base64'));
 function fn(name){const start=schema.lastIndexOf(`CREATE OR REPLACE FUNCTION public.${name}(`);assert(start>=0,name);const tail=schema.slice(start),delimiter=tail.match(/\bAS\s+(\$[\w]*\$)/i)[1];const begin=tail.indexOf(delimiter);return tail.slice(0,tail.indexOf(delimiter+';',begin+delimiter.length)+delimiter.length+1);}
 function table(name){const start=schema.indexOf(`CREATE TABLE IF NOT EXISTS public.${name} (`);assert(start>=0,name);return schema.slice(start,schema.indexOf('\n);',start)+3);}
 const db=new PGlite();

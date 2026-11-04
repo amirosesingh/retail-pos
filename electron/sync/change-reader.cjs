@@ -4,6 +4,8 @@ const { ACTIVITY_TABLES } = require("./event-policy.cjs");
 const { recordId } = require("./uuid-fields.cjs");
 const { ShiftSyncJournal } = require("../db/shift-sync-journal.cjs");
 const {ShiftIntentStore} = require("../db/shift-intents.cjs");
+const {exactGraph,exactRows,projection}=require("./shift-recovery-exact.cjs");
+const {createHash}=require("node:crypto");
 const SHIFT_GRAPH_TABLES = ["shifts", "shift_cash_counts", "shift_reconciliations", "shift_close_events",
   "shift_notifications", "shift_variance_alerts"];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -14,6 +16,7 @@ class ChangeReader {
     this.registry = registry ?? { tables: [] };
     this.tables = new Map((registry?.tables ?? []).map((table) => [table.sqlServerTable, table]));
     this.pendingGraphChecks = new WeakMap();
+    this.exactGraphChecks = new WeakMap();
     this.intents = new ShiftIntentStore(connectionManager,registry);
   }
   table(value) {
@@ -236,7 +239,30 @@ class ChangeReader {
       GROUP BY aggregate_id ORDER BY MAX(created_at) DESC;`);
     return result.recordset ?? [];
   }
-  async pendingShiftGraph(table, entityIds, transaction, { branchId, changes = [] } = {}) {
+  exactShiftGraphNoop(transaction,branchId,graph){
+    return this.exactGraphChecks.get(transaction)?.get(recordId(String(branchId))+":"+recordId(graph?.shiftId))?.graph===graph && Boolean(exactGraph(graph,branchId,graph?.shiftId));
+  }
+  exactShiftFingerprint(transaction,branchId,graph){
+    return this.exactShiftGraphNoop(transaction,branchId,graph)?this.exactGraphChecks.get(transaction).get(recordId(String(branchId))+":"+recordId(graph.shiftId)).fingerprint:null;
+  }
+  async proveExactShiftGraph(query,branch,shift,incomingGraph){
+    const remote=exactGraph(incomingGraph,branch,shift);
+    if(!remote||!Array.isArray(remote.tables)||remote.tables.length!==SHIFT_GRAPH_TABLES.length)return false;
+    const seen=new Set(),collected=[];let total=0;
+    for(const name of SHIFT_GRAPH_TABLES){
+      const parts=remote.tables.filter(part=>part.table===name);
+      if(parts.length!==1||!Array.isArray(parts[0].rows))return false;
+      const table=this.tables.get(name);if(!table)return false;
+      const local=(await query(`SELECT TOP(2001) ${projection(table)} FROM dbo.[${name}] source WITH(UPDLOCK,HOLDLOCK)
+        WHERE ${name==='shifts'?'id':'shift_id'}=@shift ORDER BY id;`,{shift})).recordset??[];
+      total+=local.length;if(total>2000)return false;
+      if(local.some(row=>recordId(String(row.store_id))!==branch)||parts[0].rows.some(row=>recordId(row.store_id)!==branch||recordId(name==='shifts'?row.id:row.shift_id)!==shift))return false;
+      if(!exactRows(table,local,parts[0].rows))return false;seen.add(name);collected.push({table:name,rows:local});
+    }
+    const unaccepted=await query('SELECT TOP(1) intent_id FROM dbo.pos_sync_shift_intents WITH(UPDLOCK,HOLDLOCK) WHERE branch_id=@branch AND shift_id=@shift AND acknowledged_at IS NULL;',{branch,shift});
+    return seen.size===SHIFT_GRAPH_TABLES.length&&!unaccepted.recordset?.length?createHash('sha256').update(JSON.stringify(collected)).digest('hex'):false;
+  }
+  async pendingShiftGraph(table, entityIds, transaction, { branchId, changes = [], incomingGraph, requireExact = false } = {}) {
     if (!SHIFT_GRAPH_TABLES.includes(table.cloudTable)) return false;
     const branch = recordId(String(branchId ?? "").trim());
     if (!transaction || !branch || branch.length > 128)
@@ -266,8 +292,9 @@ class ChangeReader {
     // that an unknown closing history has no pending local work.
     if (shiftIds.some(id => !UUID.test(id))) return true;
     const checked = this.pendingGraphChecks.get(transaction);
-    if (shiftIds.length && checked?.branch === branch && shiftIds.every(id => checked.shifts.has(id))) return false;
+    if (!requireExact && !incomingGraph && shiftIds.length && checked?.branch === branch && shiftIds.every(id => checked.shifts.has(id))) return false;
     const graph = new Map();
+    let matchedExpired=false;
     let total = 0;
     for (const name of SHIFT_GRAPH_TABLES) {
       const rows = (await query(`SELECT TOP (2001) id,store_id${name === "shifts" ? "" : ",shift_id"} FROM dbo.[${name}] WITH (UPDLOCK,HOLDLOCK)
@@ -306,8 +333,11 @@ class ChangeReader {
       // Missing/expired CT evidence is not proof of no local edits. A fresh
       // empty graph may bootstrap without inventing a checkpoint.
       if (!valid) {
-        if (graph.get(name).size) throw Object.assign(new Error("Local closing Change Tracking history is missing or expired. Retained local work must be reviewed before this download can advance."),
-          { code: "ELOCAL_PENDING_UNVERIFIED", table: name });
+        if (graph.get(name).size) {
+          if(!matchedExpired && shiftIds.length===1 && incomingGraph)matchedExpired=await this.proveExactShiftGraph(query,branch,shiftIds[0],incomingGraph);
+          if(!matchedExpired)throw Object.assign(new Error("Local closing Change Tracking history is missing or expired. Retained local work must be reviewed before this download can advance."),
+            { code: "ELOCAL_PENDING_UNVERIFIED", table: name });
+        }
         continue;
       }
       const tracked = await query(`SELECT TOP (2001) CT.id, CT.SYS_CHANGE_OPERATION AS operation FROM CHANGETABLE(CHANGES dbo.[${name}], @since) CT
@@ -319,9 +349,14 @@ class ChangeReader {
       if (trackedRows.some(row=>!covered.has(recordId(String(row.id))))) throw Object.assign(new Error("A local closing Change Tracking edit is still beyond its upload checkpoint. Upload or resolve it before retrying this cloud page."),
         { code: "ELOCAL_CT_PENDING", table: name });
     }
-    if (shiftIds.length) this.pendingGraphChecks.set(transaction, { branch, shifts: new Set([
+    if(requireExact&&!matchedExpired){
+      if(shiftIds.length===1&&incomingGraph)matchedExpired=await this.proveExactShiftGraph(query,branch,shiftIds[0],incomingGraph);
+      if(!matchedExpired)throw Object.assign(new Error("A retained closing graph no longer exactly matches the verified cloud snapshot."),{code:"ELOCAL_PENDING_UNVERIFIED",table:table.cloudTable});
+    }
+    if (!matchedExpired && shiftIds.length) this.pendingGraphChecks.set(transaction, { branch, shifts: new Set([
       ...(checked?.branch === branch ? checked.shifts : []), ...shiftIds,
     ]) });
+    if(matchedExpired){let proofs=this.exactGraphChecks.get(transaction);if(!proofs){proofs=new Map();this.exactGraphChecks.set(transaction,proofs);}proofs.set(branch+":"+shiftIds[0],{graph:incomingGraph,fingerprint:matchedExpired});}
     return false;
   }
   async unacknowledged(value, entityIds, transaction, options) {

@@ -2,6 +2,110 @@
 
 Last reconciled: **2026-11-04, Asia/Brunei**.
 
+4 November integration status: STARTUP51 (PR379) and verified cloud-repair documentation (PR381) are merged into beta. RECOVERY53 has 4,977 passing full-suite tests plus 16 real SQL Server recovery groups; both real SQL Server/API/isolated-PostgreSQL closing workflows pass, including OPEN acknowledged before offline closing. The owner-requested local restart loaded the integrated source at port8084 with saved STR1 registration and cashier list. Hosted RECOVERY53 deployment and historical local repairs are not yet complete. LOCAL54 now has three closed-summary repair preparations and a separately approved fourth stale-OPEN adoption plan; no live local repair has run. The historical preparation/status paragraphs below remain evidence for their recorded stage, not current completion claims.
+
+## RECOVERY53 — approved local retained-shift recovery preparation/tests
+
+Owner subsequently requested restarting local Electron after code changes. This
+authorizes a tested local-development relaunch with the existing profile, not a
+live data repair, forced process stop, hosted deployment or installer release.
+Preserve the already approved startup-progress UI from PR379 when integrating
+native recovery; do not launch older renderer behavior from a beta-only checkout.
+Require normal shutdown and preserve registration, SQL settings, queues and all
+checkpoints. If normal exit is blocked, obtain approval for the exact dev process.
+
+Prepared and independently reviewed; NOT applied to the running app or database.
+Root verification: final full suite passed 639 suites / 4,961 tests (one suite
+and three tests skipped), TypeScript passed, scoped ESLint had zero warnings,
+and 83 additional native startup/sync/shutdown regression tests passed. Actual
+isolated SQL Server acceptance passed 16 groups with fixture cleanup. Workerd
+wire/privacy/authorization tests, actual Vite SSR, and Electron 44.9.1 ASAR/Main
+helper loading passed. Cloudflare and Windows production builds passed locally;
+existing Vite config/directive/Wrangler warnings remain. Build-generated route
+and logic-report changes are excluded. Initial broad testing found one older
+VM fixture import failure; three affected fixtures now load the real shared
+helper and preserve assertions. The final full suite passed after correction.
+
+Exact proof is optional and limited to complete responses up to 32 KiB. Larger
+graphs keep complete ordinary privacy-filtered downloads without the proof
+header; nonfinite numbers/negative zero also preserve legacy ordinary behavior.
+No rows are omitted. Local workerd process CPU averages were about 2–5 ms for
+small fixtures and 14–16 ms for a 2,000-row ordinary fallback. These are not
+hosted billed CPU/cold-start acceptance; maximum-request Free-plan performance
+remains unverified. Do not advertise unrestricted automatic recovery or a 10 ms
+hosting guarantee.
+
+The live app remains on the earlier source. At 10:05 Brunei its retries still
+pass download and fail local apply with ELOCAL_PENDING_UNVERIFIED. Preparation
+alone does not change that loop. Three known differing local graphs stay held;
+an exact local reconciliation and deployment need separate review/approval.
+No live SQL repair, manual checkpoint reset, queue clear, installer publication,
+Membership change or production promotion was performed in this batch.
+
+Integration follow-up: PR379's startup-progress source is still separate and now
+has documentation conflicts with newer beta; preserve both intended changes
+when reconciling. PR381 records the verified SHIFT52 outcome. Do not overwrite
+those newer records with the historical preparation notes below.
+
+Owner separately APPROVED graph-only server/client precision extension and
+isolated tests4November. Read-only investigation proves two JSON rounding sites:
+hosted sync-endpoint parses PostgREST then serializes redacted graph; native
+cloud-client parses again. Actual6table money columns are unbounded numeric;
+even648.00000000000000000001 can become648, so safe-integer checks alone do not
+prove equality. Scope now includes sync-endpoint.server.ts, cloud-client.cjs,
+necessary shared losslessJSON/helper/redaction compatibility and focused tests.
+Preserve ordinary parsed values/requests/auth/error behavior and exact existing
+privacy traversal; add only graph-local bounded lossless serialization and Main-
+private comparison witness. NoRPC/schema/dependency/permission/live-data change,
+checkpoint reset or deployment. Test duplicatekeys/rawstringlookalikes, large/
+fractionalnumbers, timestamps, malformed/oversized/deepJSON, privacyparity and
+actualhostedruntime capability/CPU. Fail closed on unsupported precisionproof;
+never forward raw unredacted graph or use collision-prone string replacement.
+
+Compatibility requirement: older hosted builds round numerics before sending,
+so exact native parsing alone cannot prove original precision. Only a successful
+new graph-only lossless response may advertise an explicit capability header;
+native proof must require the known header version from the fresh authenticated
+response. Missing/unknown header preserves ordinary graph behavior but cannot
+enable expiredCT proof. Body/request flags are not authority. Bind private raw
+witness to unmodified parsedgraph/token/scope; no capability on errors/other
+downloads. Verify actual devSSR, bundledWorker and Electron module loading;
+prefer a selfcontained ESM sharedhelper over widening global build interop.
+
+4November owner approved shared native shift-download guard correction and
+isolated tests only. No live localSQL repair, manual checkpoint reset, queue
+clearing, permissions or deployment. Baseline currentbeta4590d63b; branch
+codex/local-shift-recovery-beta. Root owns docs/integration; writer assigned
+runtime/tests after independent design; second agent reviews.
+
+Cloud SHIFT52 is applied/verified and all27STR1graphs validate. Local apply now
+holds ELOCAL_PENDING_UNVERIFIED: all6graph checkpoints2881<minimum2916,
+18retainedshifts(17closed/1open),zero pendinggraphjournal/intents,zero durable
+graphbaselines/anyshiftintents;3closedlocals have missing summaries. These are
+read-only observations, not permission to trust queues or overwrite divergence.
+
+Approved conservative design: use fresh authenticated/strict validated complete
+cloud graph plus transaction-locked full6-table local graph. ExpiredCT exception
+only for exact no-op match of ALL facts/rowsets, scoped branch+shift+token, after
+pending/orphan/deleted journal and unacknowledged-intent denial. Lossless numeric
+and timestamp comparison; global sameRow precision must not be weakened. Do not
+trust local baseline/receipt metadata alone or add renderer force/ignore flags.
+Existing validCT and empty-new-graph paths stay intact; no business writes for
+this exception. Existing postapply exactreadback/adoption/immutablehistoryguards
+remain. Any divergence/missingorlocalonlyhistory/unknown deletion stays held.
+
+Wholebranch coverage is mandatory before normal completion checkpoint advance:
+capture retained graph identities and a valid V0; prove every retained graph,
+including localonly/orphan rows, and revalidate membership/concurrent edits under
+finaltransaction with validCTsinceV0. Never mark whole table recovered from a
+subset of matching cloudpages. Files may include change-reader,shift-graph,
+small lossless proofhelper,lifecycle/bootstrap and focused tests. Preserve all
+author,checkout,branch,offline,queryprivacy and Membership boundaries. No live
+execution. Isolated nativeSQLServer tests must use only uniquely owned fixture
+databases, never POS_Local. Matching proof may not resolve this PC's3divergent
+summaries; document holds and prepare a separate exact local repair only after
+review, not implicit approval under this batch.
+
 4 November beta refresh: preserve both STARTUP51 and newer SHIFT52 records.
 The exact approved SHIFT52 cloud repair has since been applied and verified:
 one audit, two feed entries, unchanged saved web closing/counts/children, and all

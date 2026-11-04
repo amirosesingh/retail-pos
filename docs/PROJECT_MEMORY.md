@@ -3,6 +3,32 @@
 Last reconciled: **2026-11-03, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
 
+4 November integration status: STARTUP51 (PR379) and verified cloud-repair documentation (PR381) are merged into beta. RECOVERY53 has 4,977 passing full-suite tests plus 16 real SQL Server recovery groups; both real SQL Server/API/isolated-PostgreSQL closing workflows pass, including OPEN acknowledged before offline closing. The owner-requested local restart loaded the integrated source at port8084 with saved STR1 registration and cashier list. Hosted RECOVERY53 deployment and historical local repairs are not yet complete. LOCAL54 now has three closed-summary repair preparations and a separately approved fourth stale-OPEN adoption plan; no live local repair has run. The historical preparation/status paragraphs below remain evidence for their recorded stage, not current completion claims.
+
+RECOVERY53 source preparation passed full regression (4,961 tests), 16 actual
+isolated SQL Server recovery groups, scoped lint/typecheck, web/Windows builds,
+workerd privacy/wire tests and isolated Electron ASAR loading. It has not been
+deployed or applied to the running POS. Only fresh, complete, exact local/cloud
+graphs can bypass ambiguity as no-op evidence; all retained graphs and V0/concurrent
+work must be covered before ordinary checkpoint completion. Proof is optional
+for responses up to 32 KiB; larger or nonfinite/-0 cases retain full ordinary
+privacy-filtered downloads with no proof header. Unknown or differing history
+stays held. The three known local summary differences need separate reconciliation.
+Large-request Cloudflare Free CPU and installed end-to-end recovery are not
+verified. Never equate prepared code, zero queues or successful download with
+completed recovery, and never manually reset checkpoints to hide the guard.
+
+Owner approved RECOVERY53 preparation and isolated tests only: fresh verified
+cloud-vs-lockedlocal exact complete-graph proof, no-op adoption for proven equal
+graphs, complete retainedbranch coverage/concurrency protection before ordinary
+recovery completion. Preserve unknown/divergent/pending work. No liveSQLrepair,
+manual checkpoint reset, queue clearing, permissions or deployment. Empty queues,
+locally editable baseline metadata or acknowledged_at alone are not proof.
+This PC has18retainedshifts,zero savedbaselines/anyshiftintents,and3closedlocals
+stillmissing summaries (d252a275,2e735bd8,85902cc1; allcloudpreviouslyrepaired).
+Do not silently fill those differences or claim a comparison-only correction
+resolves them. Exact local data repair needs separate reviewed approval.
+
 4November SHIFT52 verified cloud repair: exact owner-approved SHA
 3745EE19DCBA22F34B8ECA5395201F35CE2D88A8C736984F1745CB4BCED94650
 applied after passingCI/freshpreflight. Saved1November web closing remains

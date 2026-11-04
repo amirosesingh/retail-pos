@@ -5,6 +5,7 @@ const { localTableCounts } = require("../sync/reconciliation.cjs");
 const { verifyTables } = require("../sync/verifier.cjs");
 const { recordId } = require("../sync/uuid-fields.cjs");
 const { binding } = require("../verified-activation.cjs");
+const {ShiftGapRecovery,TABLES:SHIFT_GRAPH_TABLES}=require('../sync/shift-gap-recovery.cjs');
 const { reportActivity } = require("../db/startup-activity.cjs");
 
 class LocalDataLifecycle {
@@ -81,6 +82,12 @@ class LocalDataLifecycle {
     const table=this.registry.tables.find(candidate=>candidate.sqlServerTable===tableName);
     if(!table)throw Object.assign(new Error(`The expired Change Tracking table ${tableName} is not registered.`),{code:"ESCHEMA_REGISTRY"});
     if(table.sqlServerTable==="change_history"&&table.cloudTable==="change_history")return historyRecovery.recover(this,branchId,historyDays,refreshTable,onActivity);
+    if(SHIFT_GRAPH_TABLES.includes(table.sqlServerTable)){
+      const recovery=await new ShiftGapRecovery({connectionManager:this.connectionManager,registry:this.registry,reader:this.reader,checkpoints:this.checkpoints,branchId,tableName:table.sqlServerTable,cloud:this.cloud,historyDays}).begin();
+      const refreshed=await refreshTable({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName:table.cloudTable,diagnosticOrigin:'gap_recovery',recovery,onActivity});
+      await recovery.proveMissing(this.cloud);
+      const proof=await recovery.finish();return {table:table.sqlServerTable,completed:refreshed.completed,...proof};
+    }
     // The failed push has already uploaded durable aggregate-journal work. Pull
     // an authoritative branch-scoped snapshot before establishing a new SQL
     // Change Tracking baseline; never advance the checkpoint first.
