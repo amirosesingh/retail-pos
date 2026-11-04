@@ -4,6 +4,30 @@ Last reconciled: **2026-11-03, Asia/Brunei**.
 
 ## SHIFT52 — saved web closing selected; one-shift graph repair preparation
 
+VERIFIED CLOUD OUTCOME4November: owner separately approved exact SHA
+3745EE19DCBA22F34B8ECA5395201F35CE2D88A8C736984F1745CB4BCED94650
+afterCI/freshpreflight. AllrequiredCI passed on be7c4d29567903a80de6ac60ceac6786b6ef11dd;
+preflight matched exact parent/graph/count/reconciliation hashes, version5 and
+zero repair audits. Root executed that immutable artifact once on ROSEGILL pos
+qhrufhtbeguxydenzfey. SELECT readback verifies version6, approved five values,
+unchanged opening/closing/counts/children and all other parent facts, exact audit
+before/after and owner-selected web authority, one audit and two normal feed
+entries (shift update6, audit insert1). All27STR1graphs validate. PR380 merged
+to beta4590d63bcff91836975f1d597c4bc8d7c6049c43. This supersedes earlier held
+eighth/original-PC prerequisite; selected saved web closing is authoritative.
+
+LOCAL ACCEPTANCE STILL BLOCKED: next automatic retry01:21:57UTC passes download
+but fails local_apply with ELOCAL_PENDING_UNVERIFIED. This is distinct from the
+resolved cloud P0001. SQL SELECT confirms all6graph push checkpoints2881 below
+minimum2916 (current11855),18retained shifts(17closed/1open),zero pending shift
+journal rows and zero unacknowledged shift intents. No checkpoint reset. Source
+review confirms expired CT plus any retained graph blocks adoption even if rows
+might match cloud; empty queues do not prove no legacy edits. Next proposed
+batch: read-only scoped full-graph/baseline comparison and guarded recovery
+preparation/tests, preserving divergent/pending/unknown work. Obtain scope
+approval before shared-sync implementation. Do not claim complete local recovery,
+original-PC adoption, checkout acceptance, production or installer publication.
+
 Prepared SQL SHA256
 3745EE19DCBA22F34B8ECA5395201F35CE2D88A8C736984F1745CB4BCED94650.
 Root reviewed the scope; independent reviewer passed72 actual native PostgreSQL
