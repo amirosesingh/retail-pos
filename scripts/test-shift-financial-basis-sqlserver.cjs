@@ -5,6 +5,7 @@ const {randomUUID}=require("node:crypto");
 const {execFileSync}=require("node:child_process");
 const sql=require("mssql/msnodesqlv8");
 const {OperationsRepository}=require("../electron/db/repositories/operations.cjs");
+const {calculateKnownTenderTotals}=require("../electron/sync/shift-financial-math.cjs");
 async function main(){
  assert.deepEqual(process.argv.slice(2),["--run"]);
  const suffix=randomUUID().replaceAll("-",""),instance="CodexBasis_"+suffix,database="BasisFixture_"+suffix;
@@ -17,7 +18,7 @@ async function main(){
   await pool.request().batch("CREATE TABLE dbo.shifts(id uniqueidentifier PRIMARY KEY,store_id nvarchar(450),opening_float decimal(38,12));CREATE TABLE dbo.sales(id uniqueidentifier PRIMARY KEY,store_id nvarchar(450),shift_id nvarchar(max),total_amount decimal(38,12),payment_type nvarchar(max),payments nvarchar(max),is_refunded bit,row_version bigint,discount_amount decimal(38,12));CREATE TABLE dbo.saved_basis(label nvarchar(40) PRIMARY KEY,basis_json nvarchar(max));");
   const shift=randomUUID(),other=randomUUID(),branch="A";
   await pool.request().input("shift",shift).input("other",other).query("INSERT dbo.shifts VALUES(@shift,N'A',20),(@other,N'B',500);");
-  const prototype=readFileSync(require.resolve("./preparation/shift-financial-basis-sqlserver.sql"),"utf8");
+  const prototype=readFileSync(require.resolve("../electron/db/shift-financial-basis.sql"),"utf8");
   let queryText;
   class TraceRequest extends sql.Request{async query(text){queryText=text;return super.query(text);}}
   const repository=new OperationsRepository({pool,sql:()=>({...sql,Request:TraceRequest})},{tables:[]});
@@ -36,12 +37,13 @@ async function main(){
    // JSON preserves numeric lexemes that the driver otherwise maps to Number.
    const rows=await new sql.Request(tx).input("branch",branch).input("shift",shift).query(queryText.replace(/;\s*$/,"")+" FOR JSON PATH,INCLUDE_NULL_VALUES;");
    const exact=Object.values(rows.recordset[0])[0];
-   assert.equal(basis.numericScale,12);assert.equal(basis.formula,"sqlserver-current-sales-net-refund-raw-v1");
+   assert.equal(basis.prototypeVersion,2);assert.equal(basis.numericScale,12);assert.equal(basis.formula,"canonical-exact-decimal-v2");
    for(const tender of ["cash","card","digital"]){const match=exact.match(new RegExp('"expected_'+tender+'":(-?\\d+(?:\\.\\d+)?)'));assert(match);assert.equal(normalize(basis.expectedNativeRaw[tender]),normalize(match[1]),tender+" exact native raw repository parity");}
    return{raw,basis};
   };
   const cases=[
    ["empty",[]],["single cash",[{total:"100",method:"cash"}]],["single card",[{total:"100",method:"card"}]],
+   ["canonical half-cent",[{total:"1.005",method:"cash"}]],
    ["split change",[{total:"100",payments:[{method:"cash",amount:50},{method:"card",amount:80}]}]],
    ["change capped to cash",[{total:"50",payments:[{method:"cash",amount:10},{method:"card",amount:80}]}]],
    ["digital aliases",["wallet","bank_transfer","transfer","qr","online","ewallet"].map(method=>({total:"1.005",method}))],
@@ -57,8 +59,10 @@ async function main(){
    ["canonical UUID text ordering",[{id:"00000001-0000-4000-8000-000000000000",total:"1",method:"cash"},{id:"00000000-0000-4000-8000-000000000001",total:"2",method:"cash"}]],
   ];
   for(const[name,inputs]of cases){await pool.request().query("DELETE dbo.sales;");for(const input of inputs)await add(input);await add({branch:"B",total:"9999",method:"cash"});await add({shift:other,total:"8888",method:"cash"});
-   await transaction(async tx=>{const{basis}=await compare(tx);assert.equal(basis.inputs.length,inputs.length);assert(basis.inputs.every(row=>row.branchId===branch&&row.shiftId===shift));
+   await transaction(async tx=>{const{basis,raw}=await compare(tx);assert.equal(basis.inputs.length,inputs.length);assert(basis.inputs.every(row=>row.branchId===branch&&row.shiftId===shift));
     assert.deepEqual(basis.inputs.map(row=>row.id),basis.inputs.map(row=>row.id).sort());
+    if(name==="single cash")assert.deepEqual(calculateKnownTenderTotals(raw).expected,{cash:"120.00",card:"0.00",digital:"0.00"});
+    if(name==="canonical half-cent"){assert.equal(calculateKnownTenderTotals(raw).expected.cash,"21.01");basis.expectedNativeRaw.cash="9999";assert.equal(calculateKnownTenderTotals(JSON.stringify(basis)).expected.cash,"21.01");}
     if(name==="refunded inputs retained")assert.equal(basis.inputs.filter(row=>row.isRefunded).length,1);
     if(name==="exact bigint and decimal"){assert.equal(basis.inputs[0].totalAmount,"9007199254740993.005000000000");assert.equal(basis.inputs[0].rowVersion,"9007199254740993");}
     if(name==="exact embedded payment number")assert.equal(basis.inputs[0].paymentsJson,'[{"method":"card","amount":9007199254740993.005}]');
@@ -76,7 +80,8 @@ async function main(){
   const original=await transaction(async tx=>(await compare(tx)).raw);await pool.request().input("basis",original).query("INSERT dbo.saved_basis VALUES(N'original',@basis);");
   await pool.request().query("UPDATE dbo.sales SET is_refunded=1,row_version=2;");
   const recount=await transaction(async tx=>(await compare(tx)).raw);assert.notEqual(original,recount);assert.equal(normalize(JSON.parse(original).expectedNativeRaw.cash),normalize("120"));assert.equal(normalize(JSON.parse(recount).expectedNativeRaw.cash),normalize("20"));
-  assert.equal((await pool.request().query("SELECT basis_json FROM dbo.saved_basis;")).recordset[0].basis_json,original);passed++;
+  assert.equal((await pool.request().query("SELECT basis_json FROM dbo.saved_basis;")).recordset[0].basis_json,original);
+  assert.equal(calculateKnownTenderTotals(original).expected.cash,"120.00");assert.equal(calculateKnownTenderTotals(recount).expected.cash,"20.00");passed++;
   console.log(passed+" isolated SQL Server financial-basis prototype groups passed; no persistence/admission/authentication claim.");
  }finally{
   await pool?.close();if(created){assert(owned&&/^BasisFixture_[a-f0-9]{32}$/.test(database));await master.request().batch(`ALTER DATABASE [${database}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;DROP DATABASE [${database}];`);}await master?.close();if(owned){control("stop",instance,"-k");control("delete",instance);console.log("Cleaned owned basis fixture "+instance+" / "+database);}

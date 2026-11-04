@@ -232,9 +232,11 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     // derived operations may resolve SQL-equivalent scope aliases.
     const signedAuthor = body.sqlServerAggregate?.shiftAuthor;
     const signedStart = body.sqlServerAggregate?.shiftClosingStart;
+    const signedFinancialBasis=body.sqlServerAggregate?.shiftFinancialBasis;
     body = alignVerifiedScopeIds(body, scope);
     if (signedAuthor && body.sqlServerAggregate) body.sqlServerAggregate.shiftAuthor = signedAuthor;
     if (signedStart && body.sqlServerAggregate) body.sqlServerAggregate.shiftClosingStart = signedStart;
+    if(signedFinancialBasis && body.sqlServerAggregate)body.sqlServerAggregate.shiftFinancialBasis=signedFinancialBasis;
   } catch (e) {
     if ((e as { status?: number }).status === 503)
       return Response.json({ ok: false, code: "SERVICE_UNAVAILABLE", error: "Registration verification is temporarily unavailable." }, { status: 503 });
@@ -506,12 +508,14 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     let authorState: Awaited<ReturnType<typeof import("./shift-author-verification.server").readShiftAuthorAuthority>> | undefined;
     let startAuthorState: typeof authorState;
     if (body.sqlServerAggregate?.shiftIntent) {
-      const { verifyShiftAuthorAttestation, readShiftAuthorAuthority, verifyShiftClosingStart, readShiftClosingStartAuthority, ShiftAuthorError } = await import("./shift-author-verification.server");
+      const { verifyShiftFinancialBasis, verifyShiftAuthorAttestation, readShiftAuthorAuthority, verifyShiftClosingStart, readShiftClosingStartAuthority, ShiftAuthorError } = await import("./shift-author-verification.server");
       try {
         if (!verifiedTerminal) throw new ShiftAuthorError("ESHIFT_AUTHOR_INVALID", "A verified terminal is required.");
         const aggregate = body.sqlServerAggregate;
-        aggregate.shiftAuthor = await verifyShiftAuthorAttestation({ attestation: aggregate.shiftAuthor, payloadJson: aggregate.shiftIntent!.payloadJson,
+        const verifiedAuthor = await verifyShiftAuthorAttestation({ attestation: aggregate.shiftAuthor, payloadJson: aggregate.shiftIntent!.payloadJson,
           terminal: verifiedTerminal, branchId, shiftId: aggregate.shiftIntent!.shiftId, intentId: aggregate.batchId, action: aggregate.shiftIntent!.kind });
+        aggregate.shiftAuthor=verifiedAuthor;
+        if(aggregate.shiftFinancialBasis)aggregate.shiftFinancialBasis=await verifyShiftFinancialBasis({financial:aggregate.shiftFinancialBasis,author:verifiedAuthor});
         if (aggregate.shiftClosingStart) {
           aggregate.shiftClosingStart = await verifyShiftClosingStart({ proof: aggregate.shiftClosingStart, terminal: verifiedTerminal, branchId, shiftId: aggregate.shiftIntent!.shiftId });
           try { startAuthorState = await readShiftClosingStartAuthority(aggregate.shiftClosingStart); }
@@ -561,7 +565,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
           ] as const)
         : body.sqlServerAggregate
           ? ([
-              body.sqlServerAggregate.shiftIntent ? (body.sqlServerAggregate.shiftClosingStart ? "pos_sync_push_started_shift_intent" : "pos_sync_push_author_shift_intent") : "pos_sync_push_aggregate",
+              body.sqlServerAggregate.shiftIntent ? (body.sqlServerAggregate.shiftFinancialBasis ? "pos_sync_push_financial_shift_intent" : body.sqlServerAggregate.shiftClosingStart ? "pos_sync_push_started_shift_intent" : "pos_sync_push_author_shift_intent") : "pos_sync_push_aggregate",
               {
                 p_batch_id: body.sqlServerAggregate.batchId,
                 p_organization_id: body.sqlServerAggregate.organizationId,
@@ -571,6 +575,8 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
                 ...(body.sqlServerAggregate.shiftIntent ? { p_shift_intent: body.sqlServerAggregate.shiftIntent,
                   p_shift_author: body.sqlServerAggregate.shiftAuthor, p_author_authority: authorState } : {}),
                 ...(body.sqlServerAggregate.shiftClosingStart ? { p_closing_start: body.sqlServerAggregate.shiftClosingStart, p_start_authority: startAuthorState } : {}),
+                ...(body.sqlServerAggregate.shiftFinancialBasis ? {p_financial_basis:body.sqlServerAggregate.shiftFinancialBasis,
+                  ...(body.sqlServerAggregate.shiftClosingStart?{}:{p_closing_start:null,p_start_authority:null})}:{}),
               },
             ] as const)
           : body.sqlServerShiftGraph

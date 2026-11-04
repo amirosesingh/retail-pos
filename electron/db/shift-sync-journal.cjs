@@ -27,9 +27,10 @@ const rowsOf = operation => operation.rows ?? (operation.values ? [{ ...operatio
  * This class is not exposed through IPC and accepts no renderer trust flag.
  */
 class ShiftSyncJournal {
-  constructor(operationsRepository, {authorRequired=false} = {}) {
+  constructor(operationsRepository, {authorRequired=false,financialBases=null} = {}) {
     this.repository = operationsRepository;
     this.authorRequired = authorRequired;
+    this.financialBases = financialBases;
     this.intents = new ShiftIntentStore(operationsRepository.connectionManager,{tables:[...operationsRepository.tables.values()]});
   }
   observe(branchId,shiftId) { return this.intents.observe(branchId,shiftId); }
@@ -136,11 +137,21 @@ class ShiftSyncJournal {
     return { branchId, shiftId, ops };
   }
 
-  async snapshot(transaction, branchId, shiftId, ops, {allowUnclosed=false}={}) {
+  async snapshot(transaction, branchId, shiftId, ops, {allowUnclosed=false,exactFinancial=false}={}) {
     const sql = this.repository.connectionManager.sql();
     const select = async (table, statement, inputs) => {
       const request = new sql.Request(transaction);
       for (const [name, value] of Object.entries(inputs)) request.input(name, value);
+      if(exactFinancial && ["shifts","shift_cash_counts","shift_reconciliations"].includes(table)){
+        // Only the opted-in new financial graph uses decimal text. The driver
+        // must not round SQL decimals through a JavaScript Number before signing.
+        const projection=this.repository.tables.get(table).columns.map(column=>{
+          const name=column.sqlServerColumn;
+          return /^(?:decimal|numeric)\b/i.test(column.sqlServerType)
+            ? `CONVERT(nvarchar(80),[${name}]) AS [${name}]` : `[${name}]`;
+        }).join(",");
+        statement=statement.replace(/\* FROM/,projection+" FROM");
+      }
       const result = await request.query(statement);
       const rows = result.recordset ?? [];
       if (rows.length > MAX_GRAPH_ROWS) fail("The saved closing graph exceeds the synchronization limit.");
@@ -224,9 +235,9 @@ class ShiftSyncJournal {
     const receiptPayload = { kind: "protected_shift_close", branchId, shiftId, operations: ops };
     const aggregateId = stableUuid(receiptPayload);
     const payloadHash = createHash("sha256").update(JSON.stringify(canonical(receiptPayload))).digest("hex");
-    let priorReceipt = null, causalContext;
+    let priorReceipt = null, causalContext, financialCapture=null, financialCountId=null;
     return this.repository.apply(context, ops, scope, async (transaction, validatedOps) => {
-      const graph = await this.snapshot(transaction, branchId, shiftId, validatedOps);
+      const graph = await this.snapshot(transaction, branchId, shiftId, validatedOps,{exactFinancial:financialCapture!==null});
       const sql = this.repository.connectionManager.sql();
       if (priorReceipt) return;
       const kind=ops.some(operation=>operation.table==="shift_cash_counts" && rowsOf(operation).some(row=>row.kind==="RECOUNT"))?"RECOUNT":
@@ -236,6 +247,7 @@ class ShiftSyncJournal {
         const attestation=scope.author.sign({branchId,shiftId,intentId:aggregateId,action:kind,payloadHash:frozen.payloadHash});
         await scope.author.save(transaction,attestation);
       }
+      if(financialCapture!==null)await this.financialBases.save(transaction,financialCapture,{intentId:aggregateId,graphPayloadHash:frozen.payloadHash,countId:financialCountId,author:scope.author});
       for (const [table, rows] of graph) for (const row of rows) {
         await new sql.Request(transaction)
           .input("entity_type", table).input("entity_id", JSON.stringify({ id: id(row.id) }))
@@ -279,7 +291,19 @@ class ShiftSyncJournal {
            !["ORIGINAL", "RECOUNT"].includes(newCounts[0].kind) ||
            id(reconciliations[0].count_id) !== id(newCounts[0].id)))
         fail("The closed shift has no matching saved cash count and reconciliation.");
-      if (newCounts.length) {
+      if(newCounts.length && this.financialBases?.enabled===true){
+        if(!scope.author)fail("A verified protected author is required.","ESYNC_SHIFT_AUTHOR_IDENTITY_PENDING");
+        financialCountId=id(newCounts[0].id);
+        financialCapture=await this.financialBases.capture(transaction,{branchId,shiftId,countId:financialCountId});
+        if(!financialCapture)fail("The protected financial basis could not be captured.","EFINANCIAL_CAPTURE_INVALID");
+        const {canonicalExactCents}=require("../sync/shift-financial-math.cjs");
+        for(const tender of["cash","card","digital"]){
+          let actual;try{actual=canonicalExactCents(reconciliations[0][`expected_${tender}`]);}catch{
+            fail("Shift payment totals changed before this count was saved. Review the count and try again.","ESHIFT_FINANCIAL_CONFLICT");
+          }
+          if(actual!==financialCapture.expected[tender])fail("Shift payment totals changed before this count was saved. Review the count and try again.","ESHIFT_FINANCIAL_CONFLICT");
+        }
+      }else if (newCounts.length) {
         const expected = await this.repository.shiftExpectedTotals(branchId, shiftId, transaction);
         const money = value => Math.round(Number(value) * 100) / 100;
         for (const count of newCounts) {

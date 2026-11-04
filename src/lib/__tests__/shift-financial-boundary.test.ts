@@ -73,3 +73,32 @@ describe("local count financial boundary",()=>{
     await repo.shiftExpectedTotals(branch,shift);expect(poolRead).toHaveBeenCalledOnce();
   });
 });
+
+describe('optional financial-basis journal integration',()=>{
+  function financialFixture(kind='ORIGINAL',prior=false){
+    const f=fixture(kind,prior),token={expected:{cash:'100.00',card:'20.00',digital:'10.00'}};
+    const capture=vi.fn(async()=>{f.events.push('private basis capture');return token;});
+    const save=vi.fn(async(_tx:unknown,_capture:unknown,_scope:unknown)=>{f.events.push('private basis save');});
+    f.journal.financialBases={enabled:true,capture,save};
+    if(kind!=='VARIANCE')for(const tender of ['cash','card','digital'])f.operations[2].rows![0]['expected_'+tender]=token.expected[tender as keyof typeof token.expected];
+    const author={assertCurrent:vi.fn(),sign:vi.fn(()=>({proof:'original'})),save:vi.fn(async()=>{f.events.push('original author save');})};
+    return{...f,capture,save,author,token,runFinancial:()=>f.journal.apply('count',f.operations,{branchId:branch,author})};
+  }
+  it.each(['ORIGINAL','RECOUNT'])('captures %s before writes and stores companion after original author',async kind=>{
+    const f=financialFixture(kind);await f.runFinancial();expect(f.repository.shiftExpectedTotals).not.toHaveBeenCalled();expect(f.capture).toHaveBeenCalledOnce();expect(f.save).toHaveBeenCalledOnce();
+    expect(f.events.indexOf('private basis capture')).toBeLessThan(f.events.indexOf('business write'));expect(f.events.indexOf('original author save')).toBeLessThan(f.events.indexOf('private basis save'));expect(f.events.at(-1)).toBe('commit');
+    expect(f.save.mock.calls[0][1]).toBe(f.token);
+  });
+  it('rolls back stale exact draft before writes, signing or companion save',async()=>{
+    const f=financialFixture();f.operations[2].rows![0].expected_cash='99.99';await expect(f.runFinancial()).rejects.toMatchObject({code:'ESHIFT_FINANCIAL_CONFLICT'});expect(f.events).not.toContain('business write');expect(f.author.sign).not.toHaveBeenCalled();expect(f.save).not.toHaveBeenCalled();
+  });
+  it('companion persistence failure rolls back entire save',async()=>{
+    const f=financialFixture();f.save.mockRejectedValue(Object.assign(new Error('failed basis'),{code:'EFINANCIAL_BASIS_TAMPERED'}));await expect(f.runFinancial()).rejects.toMatchObject({code:'EFINANCIAL_BASIS_TAMPERED'});expect(f.events.at(-1)).toBe('rollback');expect(f.events).not.toContain('commit');
+  });
+  it.each([['VARIANCE',false],['ORIGINAL',true]] as const)('does not recapture %s replay=%s',async(kind,prior)=>{
+    const f=financialFixture(kind,prior);await f.runFinancial();expect(f.capture).not.toHaveBeenCalled();expect(f.save).not.toHaveBeenCalled();
+  });
+  it('disabled injected store retains legacy calculation without extra basis work',async()=>{
+    const f=financialFixture();f.journal.financialBases.enabled=false;await f.runFinancial();expect(f.repository.shiftExpectedTotals).toHaveBeenCalledOnce();expect(f.capture).not.toHaveBeenCalled();expect(f.save).not.toHaveBeenCalled();
+  });
+});

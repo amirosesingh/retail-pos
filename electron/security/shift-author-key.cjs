@@ -3,6 +3,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const protocol = require('./shift-author-protocol.cjs');
+const financialProtocol = require('./shift-financial-protocol.cjs');
+const operationProtocol = require('./financial-author-protocol.cjs');
 function failure(code) {
   return Object.assign(new Error('Shift author verification setup is unavailable. Keep the pending correction for review.'), { code });
 }
@@ -90,6 +92,47 @@ function createShiftAuthorKeys({ safeStorage, directory }) {
     unsigned.keyId = saved.keyId;
     return protocol.normalizeClosingStart({ ...unsigned, signature: crypto.sign(null, Buffer.from(protocol.closingStartMessage(unsigned)), saved.privateKey).toString('base64url') });
   }
+  function signFinancialBasis(binding, input) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw failure('ESYNC_SHIFT_AUTHOR_INVALID');
+    const { expectedKeyId, ...facts } = input;
+    const factKeys = ['subject', 'branchId', 'shiftId', 'intentId', 'action', 'graphPayloadHash', 'basisHash', 'serverBasisId', 'formula'];
+    if (Object.keys(facts).length !== factKeys.length || Object.keys(facts).some(key => !factKeys.includes(key))) throw failure('ESYNC_SHIFT_AUTHOR_INVALID');
+    // This companion may reuse only the exact existing captured key. Missing
+    // or unreadable material is never generated/replaced during signing.
+    const requiredKey = expected({ expectedKeyId });
+    if (!requiredKey) throw failure('ESYNC_SHIFT_AUTHOR_INVALID');
+    const parsedBinding = protocol.normalizeBinding(binding);
+    const unsigned = { version: 1, algorithm: 'Ed25519', keyId: requiredKey, ...parsedBinding, ...facts };
+    financialProtocol.financialBasisMessage(unsigned);
+    const saved = load(parsedBinding, { expectedKeyId: requiredKey });
+    return financialProtocol.normalizeFinancialBasisAttestation({ ...unsigned, signature: crypto.sign(null, Buffer.from(financialProtocol.financialBasisMessage(unsigned)), saved.privateKey).toString('base64url') });
+  }
+  function signOpeningFinancialBasis(binding, input) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw failure('ESYNC_SHIFT_AUTHOR_INVALID');
+    const { expectedKeyId, ...facts } = input;
+    const factKeys = ['subject', 'branchId', 'shiftId', 'intentId', 'action', 'graphPayloadHash', 'basisHash', 'openingOrigin', 'formula'];
+    if (Object.keys(facts).length !== factKeys.length || Object.keys(facts).some(key => !factKeys.includes(key))) throw failure('ESYNC_SHIFT_AUTHOR_INVALID');
+    const requiredKey = expected({ expectedKeyId });
+    if (!requiredKey) throw failure('ESYNC_SHIFT_AUTHOR_INVALID');
+    const parsedBinding = protocol.normalizeBinding(binding);
+    const unsigned = { version: 1, algorithm: 'Ed25519', keyId: requiredKey, ...parsedBinding, ...facts };
+    financialProtocol.openingFinancialBasisMessage(unsigned);
+    const saved = load(parsedBinding, { expectedKeyId: requiredKey });
+    return financialProtocol.normalizeOpeningFinancialBasisAttestation({ ...unsigned, signature: crypto.sign(null, Buffer.from(financialProtocol.openingFinancialBasisMessage(unsigned)), saved.privateKey).toString('base64url') });
+  }
+  function signFinancialOperation(binding, input) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw failure('ESYNC_SHIFT_AUTHOR_INVALID');
+    const { expectedKeyId, ...facts } = input;
+    const factKeys = ['subject', 'branchId', 'operationId', 'action', 'payloadHash'];
+    if (Object.keys(facts).length !== factKeys.length || Object.keys(facts).some(key => !factKeys.includes(key))) throw failure('ESYNC_SHIFT_AUTHOR_INVALID');
+    const requiredKey = expected({ expectedKeyId });
+    if (!requiredKey) throw failure('ESYNC_SHIFT_AUTHOR_INVALID');
+    const parsedBinding = protocol.normalizeBinding(binding);
+    const unsigned = { version: 1, algorithm: 'Ed25519', keyId: requiredKey, ...parsedBinding, ...facts };
+    operationProtocol.financialOperationMessage(unsigned);
+    const saved = load(parsedBinding, { expectedKeyId: requiredKey });
+    return operationProtocol.normalizeFinancialAttestation({ ...unsigned, signature: crypto.sign(null, Buffer.from(operationProtocol.financialOperationMessage(unsigned)), saved.privateKey).toString('base64url') });
+  }
   function markEnrolled(binding, response) {
     if (!response || typeof response !== 'object' || Object.keys(response).length !== 2 || !Object.hasOwn(response, 'keyId') || !Object.hasOwn(response, 'publicKey')) throw failure('ESYNC_SHIFT_AUTHOR_INVALID');
     protocol.normalizeEnrollment({ version: 1, algorithm: 'Ed25519', ...protocol.normalizeBinding(binding), keyId: response.keyId, publicKey: response.publicKey });
@@ -106,6 +149,6 @@ function createShiftAuthorKeys({ safeStorage, directory }) {
     }
     return publicInfo(saved);
   }
-  return { prepare, enrollment, signIntent, signClosingStart, markEnrolled };
+  return { prepare, enrollment, signIntent, signClosingStart, signFinancialBasis, signOpeningFinancialBasis, signFinancialOperation, markEnrolled };
 }
 module.exports = { createShiftAuthorKeys };

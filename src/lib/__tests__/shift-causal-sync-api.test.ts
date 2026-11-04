@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { financialBasisMessage,openingFinancialBasisMessage } from "../../../electron/security/shift-financial-protocol.cjs";
 import { intentMessage, closingStartMessage } from "../../../electron/security/shift-author-protocol.cjs";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
@@ -197,5 +198,58 @@ describe("actual relay authorization and routing", () => {
   it("retains temporary authorization failures and enforces the existing envelope byte budget", async () => {
     registryStatus = 503; expect((await request({ sqlServerShiftGraph: { organizationId: "default", branchId: branch, shiftId } })).status).toBe(503);
     expect((await request({ padding: "x".repeat(8 * 1024 * 1024) })).status).toBe(413); expect(rpc).not.toHaveBeenCalled();
+  });
+});
+
+function financiallyBound(input=aggregate()){
+  const basisJson=JSON.stringify({prototypeVersion:2,formula:"canonical-exact-decimal-v2",branchId:branch,shiftId,openingFloat:"0",inputs:[],versionReferences:[]});
+  const author=input.shiftAuthor;
+  const unsigned={version:1,algorithm:"Ed25519",keyId:author.keyId,projectOrigin:author.projectOrigin,terminalId:author.terminalId,authorId:author.authorId,subject:author.subject,branchId:author.branchId,shiftId,intentId,action:author.action,graphPayloadHash:author.payloadHash,basisHash:createHash("sha256").update(basisJson).digest("hex"),serverBasisId:"00000000-0000-4000-8000-000000000009",formula:"canonical-exact-decimal-v2"};
+  return {...input,shiftFinancialBasis:{basisJson,proof:{...unsigned,signature:sign(null,Buffer.from(financialBasisMessage(unsigned)),pair.privateKey).toString("base64url")}}};
+}
+describe("financial companion opt-in relay",()=>{
+  it("verifies an opening-origin proof in its distinct domain without inventing a baseline",async()=>{
+    const base=financiallyBound();
+    const {serverBasisId:_basis,signature:_signature,...fields}=base.shiftFinancialBasis.proof;
+    const unsigned={...fields,openingOrigin:{localAggregateId:"00000000-0000-4000-8000-000000000008",rowHash:"b".repeat(64)}};
+    const proof={...unsigned,signature:sign(null,Buffer.from(openingFinancialBasisMessage(unsigned)),pair.privateKey).toString("base64url")};
+    const input={...base,shiftFinancialBasis:{basisJson:base.shiftFinancialBasis.basisJson,proof}};
+    expect((await request({sqlServerAggregate:input})).status).toBe(200);
+    expect(rpc).toHaveBeenCalledWith(expect.stringContaining("pos_sync_push_financial_shift_intent"),expect.objectContaining({p_financial_basis:input.shiftFinancialBasis}));
+    expect(proof).not.toHaveProperty("serverBasisId");
+    rpc.mockClear();
+    const forged={...input,shiftFinancialBasis:{...input.shiftFinancialBasis,proof:{...proof,openingOrigin:{...proof.openingOrigin,rowHash:"c".repeat(64)}}}};
+    expect((await request({sqlServerAggregate:forged})).status).toBe(403);
+    expect(rpc).not.toHaveBeenCalled();
+    // The HTTP fixture checks authentication only; production admission must
+    // separately resolve the exact immutable OPEN mapping or fail closed.
+  });
+  it("binds unchanged graph/basis bytes and routes only to the financial guard",async()=>{
+    const input=financiallyBound();expect((await request({sqlServerAggregate:input})).status).toBe(200);
+    expect(rpc).toHaveBeenCalledOnce();expect(rpc).toHaveBeenCalledWith(expect.stringContaining("pos_sync_push_financial_shift_intent"),expect.objectContaining({p_financial_basis:input.shiftFinancialBasis,p_shift_author:input.shiftAuthor,p_shift_intent:input.shiftIntent,p_closing_start:null,p_start_authority:null,p_operations:null}));
+    const lookups=vi.mocked(fetch).mock.calls.filter(([url])=>String(url).includes("/rpc/pos_shift_author_key"));expect(lookups).toHaveLength(2); // Existing crypto + fresh current authority, no companion duplicate read.
+  });
+  it("preserves signed branch spelling while aligning transport and does not downgrade on missing RPC",async()=>{
+    const base=aggregate();base.shiftAuthor.branchId=branch.toUpperCase();const {signature:_signature,...author}=base.shiftAuthor;
+    base.shiftAuthor.signature=sign(null,Buffer.from(intentMessage(author)),pair.privateKey).toString("base64url");
+    const input=financiallyBound(base);rpcStatus=503;rpcResponse={message:"financial RPC unavailable"};
+    expect((await request({sqlServerAggregate:input})).status).toBe(503);expect(rpc).toHaveBeenCalledOnce();
+    expect(rpc).toHaveBeenCalledWith(expect.stringContaining("pos_sync_push_financial_shift_intent"),expect.objectContaining({p_financial_basis:input.shiftFinancialBasis}));
+  });
+  it("denies changed financial bytes, graph, author or signature before writes",async()=>{
+    for(const kind of ["bytes","graph","author","signature"]){
+      const input=financiallyBound();if(kind==="bytes")input.shiftFinancialBasis.basisJson+=" ";
+      if(kind==="graph")input.shiftFinancialBasis.proof.graphPayloadHash="b".repeat(64);
+      if(kind==="author")input.shiftFinancialBasis.proof.authorId=intentId;
+      if(kind==="signature")input.shiftFinancialBasis.proof.signature=input.shiftAuthor.signature;
+      expect((await request({sqlServerAggregate:input})).status).toBe(403);
+    }
+    expect(rpc).not.toHaveBeenCalled();
+  });
+  it("rejects companions outside counted intents and preserves denied current-author state for exact replay",async()=>{
+    const input=financiallyBound();expect(syncAggregateSchema.safeParse({...input,shiftIntent:undefined,shiftAuthor:undefined,operations}).success).toBe(false);
+    expect(syncAggregateSchema.safeParse({...input,shiftFinancialBasis:{...input.shiftFinancialBasis,invented:true}}).success).toBe(false);
+    authorAllowed=false;expect((await request({sqlServerAggregate:input})).status).toBe(200);
+    expect(rpc).toHaveBeenCalledWith(expect.stringContaining("pos_sync_push_financial_shift_intent"),expect.objectContaining({p_author_authority:{allowed:false,code:"ESHIFT_AUTHOR_REVOKED"}}));
   });
 });

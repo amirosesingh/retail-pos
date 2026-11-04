@@ -3,6 +3,7 @@ const { retryDelay } = require("./retry.cjs");
 const { stableUuid } = require("../db/repositories/aggregates.cjs");
 const { ACTIVITY_TABLES } = require("./event-policy.cjs");
 const { assertShiftClosureAcknowledgement } = require("./shift-closure-ack.cjs");
+const {prepareShiftFinancialBasis,assertShiftFinancialAcknowledgement}=require("./shift-financial-ack.cjs");
 
 function groupBy(values, key) {
   const groups = new Map();
@@ -227,9 +228,10 @@ function terminalWritableChanges(tableName, changes, { branchId = "", terminalId
 }
 
 class PushWorker {
-  constructor({ reader, cloud, checkpoints, registry, validateAuthor, validateClosingStart }) {
+  constructor({ reader, cloud, checkpoints, registry, validateAuthor, validateClosingStart, validateFinancialBasis }) {
     this.validateAuthor = validateAuthor;
     this.validateClosingStart = validateClosingStart;
+    this.validateFinancialBasis = validateFinancialBasis;
     this.reader = reader;
     this.cloud = cloud;
     this.checkpoints = checkpoints;
@@ -284,6 +286,8 @@ class PushWorker {
       const intent=await this.reader.protectedIntent?.(aggregate.aggregateId,branchId);
       if(intent){
         if(originalIds.length!==1 || recordId(originalIds[0])!==recordId(intent.intentId))throw Object.assign(new Error("A protected closing intent cannot be combined with another transaction."),{code:"EIDEMPOTENCY",table:"shifts"});
+        if(intent.financialRequired===true && (!intent.shiftFinancialBasis || !intent.shiftFinancialBasis.proof))
+          prepareShiftFinancialBasis(intent,branchId);
         if((this.reader.predecessorAccepted && !await this.reader.predecessorAccepted(intent)) ||
           (this.reader.shiftPrerequisites && !await this.reader.shiftPrerequisites(intent))){
           deferred.add(aggregate.aggregateId);continue;
@@ -292,9 +296,15 @@ class PushWorker {
           baseToken:intent.baseToken,predecessorIntentId:intent.predecessorIntentId,predecessorIntentHash:intent.predecessorIntentHash,payloadJson:intent.payloadJson};
         const shiftAuthor=this.validateAuthor?this.validateAuthor(intent.shiftAuthor):intent.shiftAuthor;
         const shiftClosingStart=intent.shiftClosingStart && (this.validateClosingStart?this.validateClosingStart(intent.shiftClosingStart):intent.shiftClosingStart);
-        const acknowledgement=await this.retry(()=>this.cloud.pushAggregate({batchId:intent.intentId,branchId,shiftIntent,...(shiftAuthor?{shiftAuthor}:{}),...(shiftClosingStart?{shiftClosingStart}:{})}));
+        let shiftFinancialBasis=prepareShiftFinancialBasis(intent,branchId,shiftAuthor);
+        if(shiftFinancialBasis && this.validateFinancialBasis){
+          const verified=this.validateFinancialBasis(shiftFinancialBasis.proof);
+          shiftFinancialBasis=prepareShiftFinancialBasis({...intent,shiftFinancialBasis:{basisJson:shiftFinancialBasis.basisJson,proof:verified}},branchId,shiftAuthor);
+        }
+        const acknowledgement=await this.retry(()=>this.cloud.pushAggregate({batchId:intent.intentId,branchId,shiftIntent,...(shiftAuthor?{shiftAuthor}:{}),...(shiftClosingStart?{shiftClosingStart}:{}),...(shiftFinancialBasis?{shiftFinancialBasis}:{})}));
         if(!acknowledgement?.ok)throw new Error(acknowledgement?.error??"Cloud did not acknowledge the closing intent.");
         const proof=assertShiftClosureAcknowledgement(acknowledgement,intent.operations,branchId,intent,this.registry);
+        assertShiftFinancialAcknowledgement(acknowledgement,intent,shiftFinancialBasis);
         await this.reader.acknowledgeProtectedIntent(intent,proof);
         pushed+=aggregate.changes.length;
         onProgress({direction:"push",table:intent.operations.map(operation=>operation.table).join(", "),completed:aggregate.changes.length});

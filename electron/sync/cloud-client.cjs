@@ -277,6 +277,9 @@ class CloudClient {
     });
   }
   pushAggregate(batch) {
+    const missingFinancialProof = batch.financialRequired === true && batch.shiftFinancialBasis == null;
+    if (missingFinancialProof || batch.shiftFinancialBasis === null || (batch.shiftFinancialBasis !== undefined && !batch.shiftIntent))
+      throw Object.assign(new Error("The saved shift financial proof is required before upload."), {code:missingFinancialProof?"ESHIFT_FINANCIAL_PROOF_REQUIRED":"ESHIFT_FINANCIAL_PROOF_INVALID",table:"shifts"});
     const payload = {
       sqlServerAggregate: {
         batchId: batch.batchId,
@@ -285,6 +288,7 @@ class CloudClient {
         ...(batch.shiftIntent ? {shiftIntent:batch.shiftIntent} : {operations:batch.operations}),
         ...(batch.shiftAuthor ? {shiftAuthor:batch.shiftAuthor} : {}),
         ...(batch.shiftClosingStart ? {shiftClosingStart:batch.shiftClosingStart} : {}),
+        ...(batch.shiftFinancialBasis !== undefined ? {shiftFinancialBasis:batch.shiftFinancialBasis} : {}),
       },
     };
     return batch.shiftIntent ? this.shiftProtocolRequest(payload) : this.request(payload);

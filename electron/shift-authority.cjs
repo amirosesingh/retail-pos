@@ -2,6 +2,7 @@ const crypto = require("node:crypto");
 const protocol = require("./security/shift-author-protocol.cjs");
 const { recordId } = require("./sync/uuid-fields.cjs");
 const permissions = {
+  FINANCIAL_OPEN: ["can_open_shift"],
   START_CLOSE: ["can_close_shift"],
   ORIGINAL: ["can_shift_cash_count", "can_close_shift"],
   RECOUNT: ["can_shift_cash_recount"],
@@ -127,6 +128,12 @@ class ShiftAuthorAuthority {
     this.captures.add(capture);
     return Object.freeze(capture);
   }
+  captureFinancial(action) {
+    // Internal capture keys stay distinct from public signed operation actions.
+    // New financial paths must be deliberately added with their real permission.
+    if (action !== 'OPEN') fail('ESYNC_SHIFT_AUTHOR_INVALID');
+    return this.capture('FINANCIAL_OPEN');
+  }
   query(transaction, statement, inputs = {}) {
     const request = new (this.connectionManager.sql().Request)(
       transaction ?? this.connectionManager.pool,
@@ -228,6 +235,49 @@ class ShiftAuthorAuthority {
           capture.assertCurrent();
           return proof;
         },
+        ...(['ORIGINAL', 'RECOUNT'].includes(capture.action) ? {
+          signFinancialBasis: (input) => {
+            capture.assertCurrent();
+            const fields = ['branchId', 'shiftId', 'intentId', 'action', 'graphPayloadHash', 'basisHash', 'serverBasisId', 'formula'];
+            if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length !== fields.length || fields.some(key => !Object.hasOwn(input, key)) ||
+                input.branchId !== capture.branchId || input.action !== capture.action) fail('ESYNC_SHIFT_AUTHOR_INVALID');
+            const proof = this.keys.signFinancialBasis(capture.binding, {
+              expectedKeyId: info.keyId, subject: capture.subject, ...input,
+            });
+            capture.assertCurrent();
+            return proof;
+          },
+          signOpeningFinancialBasis: (input) => {
+            capture.assertCurrent();
+            const fields = ['branchId', 'shiftId', 'intentId', 'action', 'graphPayloadHash', 'basisHash', 'openingOrigin', 'formula'];
+            if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length !== fields.length || fields.some(key => !Object.hasOwn(input, key)) ||
+                input.branchId !== capture.branchId || input.action !== capture.action) fail('ESYNC_SHIFT_AUTHOR_INVALID');
+            const proof = this.keys.signOpeningFinancialBasis(capture.binding, {
+              expectedKeyId: info.keyId, subject: capture.subject, ...input,
+            });
+            capture.assertCurrent();
+            return proof;
+          },
+        } : {}),
+        ...(capture.action === 'FINANCIAL_OPEN' ? {
+          signFinancialOperation: (input) => {
+            capture.assertCurrent();
+            const fields = ['branchId', 'operationId', 'action', 'payloadJson'];
+            if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length !== fields.length || fields.some(key => !Object.hasOwn(input, key)) ||
+                input.branchId !== capture.branchId || input.action !== 'OPEN' || typeof input.payloadJson !== 'string' || !input.payloadJson || Buffer.byteLength(input.payloadJson, 'utf8') > 6 * 1024 * 1024)
+              fail('ESYNC_SHIFT_AUTHOR_INVALID');
+            // The actual writer must supply and validate its immutable opening
+            // payload in the same transaction. This signs bytes, not a claim
+            // that an opening or its downstream financial receipts exist.
+            const proof = this.keys.signFinancialOperation(capture.binding, {
+              expectedKeyId: info.keyId, subject: capture.subject, branchId: input.branchId,
+              operationId: input.operationId, action: input.action,
+              payloadHash: crypto.createHash('sha256').update(input.payloadJson, 'utf8').digest('hex'),
+            });
+            capture.assertCurrent();
+            return proof;
+          },
+        } : {}),
         save: async (transaction, attestation) => {
           capture.assertCurrent();
           await this.query(

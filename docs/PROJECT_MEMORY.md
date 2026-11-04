@@ -1,3 +1,5 @@
+4 November FIN62 monetary decision: owner explicitly approved ONE exact-decimal tender calculation for NEW closings/corrections, with final currency totals rounded to two decimals and half-cent ties away from zero. Preserve all existing saved sales/receipts/closings and accepted history; no backfill/recalculation. Use an explicit new formula/protocol version rather than relabel legacy native/PostgreSQL rounding as equivalent.
+
 4 November FIN62 multi-terminal decision: validate the complete financial snapshot KNOWN to the saving terminal at the action's transaction. Do not wait for all offline terminals or silently certify global completeness. Later unseen uploads do not rewrite the accepted original snapshot; a later authorized correction captures its own known-data snapshot. Preserve branch scope, authoritative baseline/delta validation, audits and pending work.
 
 ## 4 November — action-specific shift financial validation decision
@@ -1034,3 +1036,7 @@ maintenance audit. Existing stock/SKU/prices, child/header states, approval gran
 and shortage checks stay preserved. Future live repairs require their own evidence
 and exact-project approval; never infer missing original quantities from a child.
 Physical-device and fresh-installer limits remain tracked separately.
+
+## FIN62 current continuation — 4 November
+
+Owner reiterated: complete shift totals/refund validation first with agents; update PR391 and prepare PR354; present exact database changes before application. Current published PR391 head d15be0af passed required CI; uncommitted foundations are not covered by that result. Exact-decimal v2 math, cloud snapshot/version lineage and optional authenticated admission are prepared. Local basis persistence passed 14 disposable LocalDB groups, 10 upgrade groups, 21 capture groups and 12 unit tests; TypeScript passed. All metadata remains default-off/preparation-only. Native journal integration, fully offline opening-origin provenance, final regressions and exact final migration manifest remain pending. No new live database writes, main promotion or publication. Booking deposit attribution remains separate; Membership remains on hold.

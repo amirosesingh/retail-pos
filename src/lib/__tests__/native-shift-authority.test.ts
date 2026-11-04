@@ -936,3 +936,161 @@ describe('background start/count handover transport',()=>{
     expect(startProof.authorId).toBe(authorId);expect(countProof.authorId).toBe(otherId);expect(startProof.keyId).not.toBe(countProof.keyId);
   });
 });
+
+// Companion proofs never change the existing frozen intent or persist into its
+// historical author table. Future persistence is a separate metadata protocol.
+describe('Main companion shift financial basis proof',()=>{
+  const financialFacts={branchId:branch,shiftId,intentId,action:'RECOUNT',graphPayloadHash:'a'.repeat(64),basisHash:'b'.repeat(64),serverBasisId:'40000000-0000-4000-8000-000000000001',formula:'canonical-exact-decimal-v2'};
+  const financialProtocol=require('../../../electron/security/shift-financial-protocol.cjs');
+  it.each(['ORIGINAL','RECOUNT'])('reuses the exact sealed key for %s without touching old author records',async action=>{
+    const f=fixture(),author=await f.authority.prepare(f.authority.capture(action));
+    const before=readFileSync(join(f.directory,readdirSync(f.directory)[0]));
+    const proof=author.signFinancialBasis({...financialFacts,action});
+    expect(proof).toMatchObject({...financialFacts,action,subject,keyId:author.keyId,authorId});
+    const info=f.keys.prepare(author.binding,{expectedKeyId:author.keyId});
+    const {signature,...unsigned}=proof;
+    expect(require('node:crypto').verify(null,Buffer.from(financialProtocol.financialBasisMessage(unsigned)),{key:Buffer.from(info.publicKey,'base64url'),format:'der',type:'spki'},Buffer.from(signature,'base64url'))).toBe(true);
+    expect(f.state.keys).toHaveLength(1);expect(f.state.authors).toHaveLength(0);
+    expect(readFileSync(join(f.directory,readdirSync(f.directory)[0]))).toEqual(before);
+    const old=author.sign({...facts,action});expect(old.payloadHash).toBe(facts.payloadHash);expect(old).not.toHaveProperty('basisHash');
+  });
+  it.each(['VARIANCE','START_CLOSE','ENROLL'])('does not expose the new method for %s',async action=>{
+    const f=fixture();login(authorId,subject,{...all,can_close_shift:true});
+    const author=await f.authority.prepare(f.authority.capture(action));expect(author).not.toHaveProperty('signFinancialBasis');
+  });
+  it('requires a captured expected key and never creates/replaces one while signing',()=>{
+    const f=fixture(),binding=f.authority.binding(authorId),input={subject,...financialFacts};
+    expect(()=>f.keys.signFinancialBasis(binding,input)).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_INVALID'}));
+    expect(()=>f.keys.signFinancialBasis(binding,{...input,expectedKeyId:intentId})).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_KEY_MISSING'}));
+    expect(readdirSync(f.directory)).toEqual([]);
+    const info=f.keys.prepare(binding),before=readFileSync(join(f.directory,readdirSync(f.directory)[0]));
+    expect(()=>f.keys.signFinancialBasis(binding,{...input,expectedKeyId:intentId})).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_KEY_MISMATCH'}));
+    expect(readFileSync(join(f.directory,readdirSync(f.directory)[0]))).toEqual(before);
+    expect(()=>f.keys.signFinancialBasis(binding,{...input,expectedKeyId:info.keyId,authorId:otherId})).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_INVALID'}));
+    expect(()=>f.keys.signFinancialBasis(binding,{...input,expectedKeyId:info.keyId,basisHash:'invalid'})).toThrow();
+    expect(readFileSync(join(f.directory,readdirSync(f.directory)[0]))).toEqual(before);
+  });
+  it('rejects foreign branch/action or caller-controlled author/key fields',async()=>{
+    const f=fixture(),author=await f.authority.prepare(f.authority.capture('RECOUNT'));
+    for(const patch of [{branchId:'B'},{action:'ORIGINAL'},{subject:'other'},{authorId:otherId},{expectedKeyId:intentId}])expect(()=>author.signFinancialBasis({...financialFacts,...patch})).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_INVALID'}));
+    expect(f.state.authors).toHaveLength(0);
+  });
+  it.each(['epoch','role','branch','permission','terminal','pool'])('rejects changed %s before signing',async change=>{
+    const f=fixture(),author=await f.authority.prepare(f.authority.capture('RECOUNT'));
+    if(change==='epoch')login(otherId,'next.person');
+    if(change==='role'){session.grant('admin','new.role',all,'pos',branch);session.bindVerifiedAuthor(authorId,subject);}
+    if(change==='branch')f.context.branch='B';
+    if(change==='permission')login(authorId,subject,{...all,can_shift_cash_recount:false});
+    if(change==='terminal')f.context.terminal.tokenId='other-terminal';
+    if(change==='pool')f.manager.pool={};
+    expect(()=>author.signFinancialBasis(financialFacts)).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_CHANGED'}));expect(f.state.authors).toHaveLength(0);
+  });
+  it('checks the epoch again after loading/signing with the captured key',async()=>{
+    const f=fixture(),author=await f.authority.prepare(f.authority.capture('RECOUNT'));
+    const original=f.keys.signFinancialBasis;
+    vi.spyOn(f.keys,'signFinancialBasis').mockImplementation((...args:unknown[])=>{const proof=original(...args);login(otherId,'next.person');return proof;});
+    expect(()=>author.signFinancialBasis(financialFacts)).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_CHANGED'}));expect(f.state.authors).toHaveLength(0);
+  });
+  it('never regenerates a captured key that disappears after preparation',async()=>{
+    const f=fixture(),author=await f.authority.prepare(f.authority.capture('RECOUNT'));
+    unlinkSync(join(f.directory,readdirSync(f.directory)[0]));
+    expect(()=>author.signFinancialBasis(financialFacts)).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_KEY_MISSING'}));expect(readdirSync(f.directory)).toEqual([]);
+  });
+});
+
+// FINANCIAL_OPEN is a Main-only signing foundation. No opening writer, receipt
+// issuer, database migration or cloud capability is activated by these tests.
+describe('Main financial OPEN author foundation',()=>{
+  const operationProtocol=require('../../../electron/security/financial-author-protocol.cjs');
+  const openingRow={id:shiftId,store_id:branch,terminal_id:'fixture-terminal',status:'OPEN',state:'ACTIVE',opening_float:20,closed_at:null};
+  const rowHash=require('node:crypto').createHash('sha256').update(JSON.stringify(openingRow),'utf8').digest('hex');
+  const openingPayload=JSON.stringify({version:1,localAggregateId:intentId,shiftId,openingRowHash:rowHash,row:openingRow});
+  const input={branchId:branch,operationId:intentId,action:'OPEN',payloadJson:openingPayload};
+  it('requires verified can_open_shift and preserves the Operations-only restriction',()=>{
+    const f=fixture();expect(()=>f.authority.captureFinancial('OPEN')).toThrowError(expect.objectContaining({code:'PERMISSION_DENIED'}));
+    session.grant('admin','admin.identity',{can_close_shift:true},'pos',branch);session.bindVerifiedAuthor(authorId,subject);
+    expect(()=>f.authority.captureFinancial('OPEN')).toThrowError(expect.objectContaining({code:'PERMISSION_DENIED'}));
+    login(authorId,subject,{can_open_shift:true});expect(f.authority.captureFinancial('OPEN').action).toBe('FINANCIAL_OPEN');
+    f.context.management=true;expect(()=>f.authority.captureFinancial('OPEN')).toThrowError(expect.objectContaining({code:'PERMISSION_DENIED'}));
+    expect(readdirSync(f.directory)).toEqual([]);
+  });
+  it('never grants other operation kinds through the OPEN capture',()=>{
+    const f=fixture();login(authorId,subject,{can_open_shift:true,...all});
+    for(const action of ['SALE','REFUND','TENDER','VOID','FINANCIAL_OPEN'])expect(()=>f.authority.captureFinancial(action)).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_INVALID'}));
+    expect(readdirSync(f.directory)).toEqual([]);
+  });
+  it('binds exact raw opening bytes, actual stable author and captured key without old-table writes',async()=>{
+    const f=fixture();login(authorId,subject,{can_open_shift:true});
+    const author=await f.authority.prepare(f.authority.captureFinancial('OPEN'));
+    const before=readFileSync(join(f.directory,readdirSync(f.directory)[0]));
+    const proof=author.signFinancialOperation(input),info=f.keys.prepare(author.binding,{expectedKeyId:author.keyId});
+    expect(proof).toMatchObject({authorId,subject,branchId:branch,terminalId:'fixture-terminal',operationId:intentId,action:'OPEN',keyId:author.keyId,payloadHash:require('node:crypto').createHash('sha256').update(openingPayload,'utf8').digest('hex')});
+    const {signature,...unsigned}=proof;
+    expect(require('node:crypto').verify(null,Buffer.from(operationProtocol.financialOperationMessage(unsigned)),{key:Buffer.from(info.publicKey,'base64url'),format:'der',type:'spki'},Buffer.from(signature,'base64url'))).toBe(true);
+    expect(f.state.authors).toEqual([]);expect(f.state.keys).toHaveLength(1);
+    expect(readFileSync(join(f.directory,readdirSync(f.directory)[0]))).toEqual(before);
+    const changed=author.signFinancialOperation({...input,payloadJson:openingPayload+' '});expect(changed.payloadHash).not.toBe(proof.payloadHash);
+    expect(author).not.toHaveProperty('signFinancialBasis');
+  });
+  it.each(['ORIGINAL','RECOUNT','VARIANCE','START_CLOSE','ENROLL'])('does not expose operation signing from %s',async action=>{
+    const f=fixture();login(authorId,subject,{...all,can_open_shift:true,can_close_shift:true});
+    const author=await f.authority.prepare(f.authority.capture(action));expect(author).not.toHaveProperty('signFinancialOperation');
+  });
+  it('rejects caller scope/hash/subject/key overrides, empty bytes and oversized payloads',async()=>{
+    const f=fixture();login(authorId,subject,{can_open_shift:true});
+    const author=await f.authority.prepare(f.authority.captureFinancial('OPEN'));
+    for(const patch of [{branchId:'B'},{action:'SALE'},{subject:'other'},{expectedKeyId:shiftId},{payloadHash:'a'.repeat(64)},{payloadJson:''},{payloadJson:'é'.repeat(3*1024*1024+1)}])expect(()=>author.signFinancialOperation({...input,...patch})).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_INVALID'}));
+    expect(f.state.authors).toEqual([]);
+  });
+  it('requires an expected key and rejects arbitrary binding overrides before key access',()=>{
+    const f=fixture(),binding=f.authority.binding(authorId),facts={subject,branchId:branch,operationId:intentId,action:'OPEN',payloadHash:'a'.repeat(64)};
+    expect(()=>f.keys.signFinancialOperation(binding,facts)).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_INVALID'}));
+    expect(()=>f.keys.signFinancialOperation(binding,{...facts,expectedKeyId:shiftId})).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_KEY_MISSING'}));
+    expect(()=>f.keys.signFinancialOperation(binding,{...facts,expectedKeyId:shiftId,authorId:otherId})).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_INVALID'}));
+    expect(()=>f.keys.signFinancialOperation(binding,{...facts,expectedKeyId:shiftId,payloadHash:'invalid'})).toThrow();
+    expect(readdirSync(f.directory)).toEqual([]);
+  });
+  it.each(['epoch','role','branch','terminal','pool'])('rejects changed %s before OPEN signing',async change=>{
+    const f=fixture();login(authorId,subject,{can_open_shift:true});const author=await f.authority.prepare(f.authority.captureFinancial('OPEN'));
+    if(change==='epoch')login(otherId,'other.person',{can_open_shift:true});
+    if(change==='role'){session.grant('supervisor','role.changed',{can_open_shift:true},'pos',branch);session.bindVerifiedAuthor(authorId,subject);}
+    if(change==='branch')f.context.branch='B';if(change==='terminal')f.context.terminal.tokenId='other';if(change==='pool')f.manager.pool={};
+    expect(()=>author.signFinancialOperation(input)).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_CHANGED'}));expect(f.state.authors).toEqual([]);
+  });
+  it('rechecks the current permission even without a changed session epoch',async()=>{
+    const f=fixture();login(authorId,subject,{can_open_shift:true});const author=await f.authority.prepare(f.authority.captureFinancial('OPEN'));
+    const check=vi.spyOn(session,'hasPermission').mockReturnValue(false);
+    try{expect(()=>author.signFinancialOperation(input)).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_CHANGED'}));}finally{check.mockRestore();}
+  });
+  it('checks session again after signing and never silently recreates a missing captured key',async()=>{
+    const f=fixture();login(authorId,subject,{can_open_shift:true});const author=await f.authority.prepare(f.authority.captureFinancial('OPEN'));
+    const original=f.keys.signFinancialOperation;
+    vi.spyOn(f.keys,'signFinancialOperation').mockImplementation((...args:unknown[])=>{const proof=original(...args);login(otherId,'other.person',{can_open_shift:true});return proof;});
+    expect(()=>author.signFinancialOperation(input)).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_CHANGED'}));
+    const missing=fixture();login(authorId,subject,{can_open_shift:true});const same=await missing.authority.prepare(missing.authority.captureFinancial('OPEN'));
+    unlinkSync(join(missing.directory,readdirSync(missing.directory)[0]));
+    expect(()=>same.signFinancialOperation(input)).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_KEY_MISSING'}));expect(readdirSync(missing.directory)).toEqual([]);
+  });
+});
+
+describe('Main pending opening-origin closing foundation',()=>{
+ const p=require('../../../electron/security/shift-financial-protocol.cjs');
+ const input={branchId:branch,shiftId,intentId,action:'RECOUNT',graphPayloadHash:'a'.repeat(64),basisHash:'b'.repeat(64),openingOrigin:{localAggregateId:intentId,rowHash:'c'.repeat(64)},formula:'canonical-exact-decimal-v2'};
+ it.each(['ORIGINAL','RECOUNT'])('signs %s with the captured closing author and unchanged vault key',async action=>{
+  const f=fixture(),author=await f.authority.prepare(f.authority.capture(action)),before=readFileSync(join(f.directory,readdirSync(f.directory)[0]));
+  const proof=author.signOpeningFinancialBasis({...input,action}),{signature,...unsigned}=proof,info=f.keys.prepare(author.binding,{expectedKeyId:author.keyId});
+  expect(proof).toMatchObject({authorId,subject,openingOrigin:input.openingOrigin});expect(proof).not.toHaveProperty('serverBasisId');
+  expect(require('node:crypto').verify(null,Buffer.from(p.openingFinancialBasisMessage(unsigned)),{key:Buffer.from(info.publicKey,'base64url'),format:'der',type:'spki'},Buffer.from(signature,'base64url'))).toBe(true);
+  expect(f.state.authors).toEqual([]);expect(readFileSync(join(f.directory,readdirSync(f.directory)[0]))).toEqual(before);
+ });
+ it('rejects scope overrides, mixed baseline and missing captured keys',async()=>{
+  const f=fixture(),author=await f.authority.prepare(f.authority.capture('RECOUNT'));
+  for(const patch of [{branchId:'B'},{action:'ORIGINAL'},{serverBasisId:null}])expect(()=>author.signOpeningFinancialBasis({...input,...patch})).toThrow();
+  unlinkSync(join(f.directory,readdirSync(f.directory)[0]));expect(()=>author.signOpeningFinancialBasis(input)).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_KEY_MISSING'}));expect(readdirSync(f.directory)).toEqual([]);
+ });
+ it.each(['epoch','branch','permission'])('holds changed %s instead of signing as a later operator',async change=>{
+  const f=fixture(),author=await f.authority.prepare(f.authority.capture('RECOUNT'));
+  if(change==='epoch')login(otherId,'later');if(change==='branch')f.context.branch='B';if(change==='permission')login(authorId,subject,{...all,can_shift_cash_recount:false});
+  expect(()=>author.signOpeningFinancialBasis(input)).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_CHANGED'}));
+ });
+});
