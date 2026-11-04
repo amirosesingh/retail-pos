@@ -58,7 +58,7 @@ describe("native cloud response completion", () => {
     expect(result.value).toBeUndefined();
     expect(result.error).toMatchObject({ code: "ETIMEDOUT", cause });
     expect(result.error).not.toHaveProperty("status");
-    expect(bootstrapDiagnostic(result.error, [])).toEqual({});
+    expect(bootstrapDiagnostic(result.error, [])).toEqual({transportOperation:"bootstrap",transportStage:"fetch",transportErrorName:name});
     expect(fetch).toHaveBeenCalledOnce();
   });
 
@@ -70,7 +70,7 @@ describe("native cloud response completion", () => {
     expect(result.value).toBeUndefined();
     expect(result.error).toMatchObject({ code: "ETIMEDOUT", cause });
     expect(result.error).not.toHaveProperty("status");
-    expect(bootstrapDiagnostic(result.error, [])).toEqual({});
+    expect(bootstrapDiagnostic(result.error, [])).toEqual({transportOperation:"bootstrap",transportStage:"body",transportErrorName:name});
     expect(fetch).toHaveBeenCalledOnce();
   });
 
@@ -124,7 +124,7 @@ describe("native cloud response completion", () => {
     vi.stubGlobal("fetch", vi.fn(async () => failedBody(200, failure)));
     const result = await outcome(bootstrap());
     expect(result.error).toBe(failure);
-    expect(bootstrapDiagnostic(result.error, [])).toEqual({});
+    expect(bootstrapDiagnostic(result.error, [])).toEqual({transportOperation:"bootstrap",transportStage:"body",transportErrorName:"TypeError",transportCode:"UND_ERR_SOCKET"});
   });
 
   it("rejects malformed JSON on HTTP 200 instead of fabricating an acknowledgement", async () => {

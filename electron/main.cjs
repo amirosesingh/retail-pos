@@ -342,7 +342,7 @@ async function runAutomaticSync() {
   const includeActivity = Date.now() - lastActivityFlush >= ACTIVITY_INTERVAL_MS;
   let result = await syncCoordinator.runNow({ branchId: localBranchId(), batchSize: 500, includeActivity });
   if (result.ok && includeActivity) lastActivityFlush = Date.now();
-  if (!result.ok) diagnostics.logConnection("synchronization.automatic.failed", { category:"synchronization", stage:result.stage??"automatic", code:result.code??"ESYNC", message:result.error??result.message??"Automatic synchronization failed." });
+  if (!result.ok) diagnostics.logConnection("synchronization.automatic.failed", { category:"synchronization", stage:result.stage??"automatic", code:result.code??"ESYNC", message:result.error??result.message??"Automatic synchronization failed.", ...diagnostics.bootstrapDiagnostic(result,syncRegistry.tables.map(table=>table.cloudTable)) });
   if (result.code === "ECHANGEGAP") {
     try {
       await prepareLocalData({ force: true });

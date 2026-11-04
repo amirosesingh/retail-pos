@@ -69,7 +69,8 @@ describe("bootstrap diagnostic-only transport context", () => {
     const failure = new TypeError("fixture network unavailable");vi.stubGlobal("fetch", vi.fn().mockRejectedValue(failure));
     const h = sqlHarness();h.cloud.bootstrapPage.mockImplementation(() => fetchPage(client()));
     await expect(refresh(h)).rejects.toBe(failure);
-    expect(bootstrapDiagnostic(failure, names)).toEqual({ table: "change_history", bootstrapPhase: "download", bootstrapOrigin: "refresh" });
+    expect(bootstrapDiagnostic(failure, names)).toEqual({ table: "change_history", bootstrapPhase: "download", bootstrapOrigin: "refresh",
+      transportOperation: "bootstrap", transportStage: "fetch", transportErrorName: "TypeError" });
     expect(h.begin).not.toHaveBeenCalled();expect(h.checkpoints.save).not.toHaveBeenCalled();
   });
   it("preserves timeout error/cause and the existing smaller-page backoff", async () => {
