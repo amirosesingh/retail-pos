@@ -30,4 +30,3 @@ export async function installFeedFixture(db){
  await db.exec(candidate);
  return {production,candidate,pins};
 }
-

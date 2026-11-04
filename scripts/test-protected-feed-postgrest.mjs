@@ -47,4 +47,3 @@ try{
  if(started)command('pg_ctl',['-D',directory,'-m','fast','-w','stop'],{stdio:'ignore'});
  assert(resolve(directory).startsWith(base+sep));await rm(directory,{recursive:true});console.log('Cleaned owned feed fixture '+directory.split(sep).at(-1));
 }
-

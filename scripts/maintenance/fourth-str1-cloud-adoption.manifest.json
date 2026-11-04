@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "preparedOnly": true,
+  "identity": {
+    "server_name": "LAPTOP-N0QBONGL\\LCRPOS",
+    "database_name": "POS_Local",
+    "database_guid": "CEAFA630-D613-423C-8997-8A31DF70C506"
+  },
+  "branch": "a611a328-2217-4d77-944a-5f6a637d123b",
+  "shift": "f7c9512a-92dc-4f88-b49d-71d55c577670",
+  "sqlArtifact": "scripts/maintenance/adopt-fourth-str1-cloud-closing.sql",
+  "sqlSha256": "9201D1168853154DBCBC008CAF6DCD3383E6ADA8210ECC93770C69C98F4F6837",
+  "privatePackage": "maintenance-private.local/local54-fourth/483622B4967BB4B6CABB8C94C8C78A1C3B5B767430F4E07C77D0D52AA1FFA2A1.json",
+  "privatePackageSha256": "483622B4967BB4B6CABB8C94C8C78A1C3B5B767430F4E07C77D0D52AA1FFA2A1",
+  "packageSqlSha256": "70E129C2E622811731EBDB4C1E1FE2E20069D4C1D4283F63590408D12776A55F",
+  "executionAuthorized": false
+}

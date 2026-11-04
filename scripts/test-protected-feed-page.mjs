@@ -24,5 +24,3 @@ try{
  await db.exec("ALTER FUNCTION public.pos_sync_pull(text,text,text,bigint,integer) SET statement_timeout='1s'");await assert.rejects(call(),/UNSUPPORTED_SOURCE/);passed++;
  console.log(`PASS ${passed} isolated feed SQL contract/privacy/prefix/bigint/access/source-guard scenarios`);
 }catch(error){console.error(error);throw error;}finally{await db.close();}
-
-
