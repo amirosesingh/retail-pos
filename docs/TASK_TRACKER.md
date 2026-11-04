@@ -1,3 +1,11 @@
+## Verified execution — 4 November 2026
+
+Owner approved these exact local repairs and confirmed Electron closed, no unsaved checkout and no concurrent schema maintenance. Both guarded artifacts applied to the pinned POS_Local identity. Readback verified three summary targets and one receipt, plus fourth CLOSED revision 3 with seven existing children and one receipt. Lossless comparison found all 18 retained local graphs equal to the reviewed cloud snapshot under both privacy projections, with no orphans. PR382 merged beta at e6af19de. Electron reopened Ready; automatic recovery is advancing through existing checkpoints. Full recovery completion remains under observation. No stock/sales/permission/configuration edits, queue clearing or manual checkpoint reset. The preparation text below records the approved design, not current execution status. Private package stays ignored; its preparedOnly manifest is an immutable artifact descriptor, not a live authorization registry.
+## LOCAL54 execution update — 4 November 2026
+
+Owner approved fixing both exact local differences and sync recovery, then confirmed Electron closed, no unsaved checkout/cart work and no concurrent database/schema maintenance. Root verified no Electron processes. Fresh four cloud graph texts exactly match reviewed source. PR382 passed all required CI and merged beta at e6af19de01c7abb20b9306fdae7ba9b94e84afa6; no main promotion or installers.
+
+Three-shift exact D5A11AC4C5152677100276EAEFF7412F53579B164834E1A0FF9A48EFEFFBCE90 repair applied to verified POS_Local. Independent readback: three complete targets and one maintenance receipt. Fourth exact 9201D1168853154DBCBC008CAF6DCD3383E6ADA8210ECC93770C69C98F4F6837 independently passed all 20 native groups; application/readback and complete Electron recovery remain pending. No manual checkpoint reset, queue clear or permission change. Membership remains ON HOLD.
 # POS task tracker
 
 Last reconciled: **2026-11-04, Asia/Brunei**.
