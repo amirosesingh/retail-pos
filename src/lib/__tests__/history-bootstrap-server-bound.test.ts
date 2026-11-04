@@ -57,6 +57,7 @@ function harness(mode: Mode = "current-operations", count = 53, dbMinimum = 10, 
       management_sync_proof_hash: createHash("sha256").update(claim).digest("hex") }]);
     if (url.includes("/stores?")) return Response.json([{ id: branch }]);
     if (url.includes("/rpc/")) {
+      if (url.includes("/pos_sync_feed_page_v1")) return Response.json({ code: "PGRST202", message: "Could not find the function public.pos_sync_feed_page_v1 in the schema cache" }, { status: 404 });
       if (url.includes("/pos_sync_history_page_v1")) {
         protectedSignals.push(init?.signal);
         const args=JSON.parse(String(init?.body)); protectedInputs.push(args);

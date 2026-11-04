@@ -4,6 +4,8 @@ const { policy } = require("./conflicts.cjs");
 const { toLocalValue } = require("./row-codec.cjs");
 const { tagBootstrapDiagnostic } = require("../diagnostics.cjs");
 const {boundedText,rememberGraph} = require("./shift-recovery-exact.cjs");
+// Main-private transport evidence: body flags cannot authorize partial feed pages.
+const feedContinuation = new WeakMap();
 
 // Pending writes are guarded by the reader, not inferred from independent
 // cloud/device counters. Closing graph rows also report the actual SQL outcome.
@@ -205,6 +207,16 @@ class CloudClient {
       }), { httpStatus: response.status, nonJsonResponse });
     }
     const normalized=normalizeSyncPayload(data);
+    if (payload?.sqlServerPull) {
+      const projection = response.headers?.get?.("X-POS-Feed-Projection") ?? null;
+      const continuation = response.headers?.get?.("X-POS-Feed-Continue") ?? null;
+      if (projection !== null || continuation !== null) {
+        if (projection !== "1" || !["0", "1"].includes(continuation) || !Array.isArray(normalized) ||
+            (continuation === "1" && normalized.length === 0))
+          throw Object.assign(new Error("The cloud feed continuation response is invalid. Its page remains pending."), {code:"EFEED_PROTOCOL"});
+        feedContinuation.set(normalized, continuation === "1");
+      }
+    }
     return exactGraphBody===undefined?normalized:rememberGraph(normalized,exactGraphBody,response.headers?.get?.("X-POS-Shift-Graph-Exact"));
   }
   managementBranches() { return this.request({ managementSyncBranches: true }); }
@@ -249,11 +261,21 @@ class CloudClient {
       sqlServerPull: { organizationId, branchId, cursor: Number(cursor ?? 0), limit },
     }).then((rows) => {
       const list = Array.isArray(rows) ? rows : [];
+      if (feedContinuation.has(list) && list.length) {
+        let previous = Number(cursor ?? 0);
+        if (!Number.isSafeInteger(previous) || list.some(change => {
+          const next = Number(change.cursor);
+          const invalid = !Number.isSafeInteger(next) || next <= previous;
+          previous = next;
+          return invalid;
+        })) throw Object.assign(new Error("The protected cloud feed cursor did not advance safely. Its page remains pending."), {code:"ESYNC_CURSOR"});
+      }
       return {
         rows: list.filter((row) => !row.tombstone),
         tombstones: list.filter((row) => row.tombstone),
         cursor: list.length ? list.at(-1).cursor : cursor,
         count: list.length,
+        ...(feedContinuation.has(list) ? {continuation:feedContinuation.get(list)} : {}),
       };
     });
   }

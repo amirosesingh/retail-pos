@@ -255,12 +255,20 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261103074926_protected_byte_bounded_history_download.sql",
       "supabase/migrations/20261103091907_optimize_protected_history_projection.sql",
       "supabase/migrations/20261103105157_preserve_shift_reconciliation_parent_summaries.sql",
+      "supabase/migrations/20261104040251_protected_byte_bounded_feed_download.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
       "supabase/sql/trigger_sync_upgrade.sql",
       "supabase/sql/verify_purchase_order_uuid_sync.sql",
     ]);
+  });
+
+  it("retains the service-only bounded feed RPC exactly in canonical installation SQL", () => {
+    const schema = read("supabase/schema.sql");
+    const block = schema.split("-- PROTECTED_FEED_PAGE_BEGIN\n")[1]?.split("\n-- PROTECTED_FEED_PAGE_END")[0];
+    expect(block).toBe(read("supabase/migrations/20261104040251_protected_byte_bounded_feed_download.sql").trim());
+    expect(schema.split("-- PROTECTED_FEED_PAGE_BEGIN")).toHaveLength(2);
   });
 
   it("syncs offline member profile details without exposing the Auth identity", () => {
