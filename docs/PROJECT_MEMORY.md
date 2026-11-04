@@ -3,6 +3,18 @@
 Last reconciled: **2026-11-03, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
 
+4November SHIFT52 decision supersedes the earlier held-shift authority choice:
+owner selected keeping the saved1November web closing for STR1 shift
+1a349429-cea1-4f45-8d2b-36678d37ad27 and authorized preparation/isolated tests
+of a one-shift derived-summary repair. Original-PC access is not a prerequisite
+for this selected cloud repair. Preserve the saved web count/time/children and
+audit evidence; copy only the five missing parent summaries from its existing
+reconciliation. Live exact-project/artifact approval remains required. First
+unblock cloud graph validation/download, then separately verify affected-PC
+pending upload/adoption; never assume powering it on proves sync completion.
+Earlier original-cashier restoration plans/#359 remain historical, not runnable
+authority for overriding this decision. No live single-row repair has run yet.
+
 3 November SHIFT49 verified outcome: the separately approved future-write
 routine correction and exact seven-shift historical repair are applied to
 ROSEGILL pos `qhrufhtbeguxydenzfey`. Seven graphs pass strict validation; their

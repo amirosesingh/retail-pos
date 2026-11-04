@@ -2,6 +2,51 @@
 
 Last reconciled: **2026-11-03, Asia/Brunei**.
 
+## SHIFT52 — saved web closing selected; one-shift graph repair preparation
+
+Prepared SQL SHA256
+3745EE19DCBA22F34B8ECA5395201F35CE2D88A8C736984F1745CB4BCED94650.
+Root reviewed the scope; independent reviewer passed72 actual native PostgreSQL
+scenarios and diff check, with owned disposable fixture stopped/removed. Guards
+cover changed/busy records, forged or altered replay receipts/authority, ignored
+updates, audit rollback and preservation of unrelated shifts/stock/sales. Normal
+effects verified: one row's five summaries, version5→6/updated_at, one maintenance
+audit and two feed entries, unchanged counts/time/children. Exact live approval,
+fresh preflight, execution/readback and actual local recovery remain pending.
+
+4November owner explicitly superseded the earlier original-cashier authority
+choice: keep the saved1November web closing and prepare/test a one-shift repair.
+Priority is graph validation and subsequent download; do not assume original-PC
+pending uploads recover automatically when it powers on. Approval covers
+preparation/isolated tests only; exact live artifact/project approval remains
+required before writes. Baseline beta16db48d7; branch
+codex/web-shift-summary-repair-beta. SQL agent owns artifact/tests/plan,
+independent agent reviews; root owns tracker and project memory.
+
+Target STR1 shift1a349429-cea1-4f45-8d2b-36678d37ad27, row_version5, saved
+closing2026-11-01T13:38:37.207159Z. Existing reconciliation supplies only missing
+parent expected_cash648,expected_card123,expected_digital472,variance_cash0,
+variance_total0. Parent fingerprint996d4f3d74e9d7704fb68403f0818d1b; full graph
+fd55a0dbab4401786c7f801407330bb4. Root SELECT-only in-memory candidate passes
+the existing strict validate_graph helper with children unchanged. Candidate
+graph fingerprint49d753292cc47b33c52c88645dccc3ad before normal trigger versions.
+Preserve counted amounts, time, children, original/web audit evidence, stock,
+sales, author/permission guards and current drawer. Exact before-image guards,
+locking, whole-transaction rollback, replay verification and normal audit/feed
+effects must be tested. No checkpoint reset, old-PC queue reset, forged proof,
+legacy #359 replay, Membership or production promotion. No live mutation yet.
+
+Root fresh read-only parity: all10 actual user triggers match captured exact
+definitions/enabled state/raw body hashes; both graph helper bodies, owners,
+flags and settings match the reviewed baseline. Replacing only the candidate
+held parent fields in query memory makes all27STR1graphs validate using the
+existing validator with p_closed=false (closed records still require consistent
+closed graphs; current open records remain valid). Held candidate separately
+passes p_closed=true. An initial all-branch p_closed=true diagnostic correctly
+rejected open shifts; it was not evidence of another bad closed shift. No rows
+were written by these SELECT checks. These are candidate validation results,
+not executed repair, successful download or native adoption proof.
+
 ## SHIFT49 — seven repaired and verified; eighth blocked
 
 Latest verified outcome: corrected SHA256
