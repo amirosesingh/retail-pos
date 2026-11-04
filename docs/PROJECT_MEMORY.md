@@ -1,3 +1,6 @@
+## 4 November FEED55 rollout evidence
+
+The exact owner-approved service-only bounded feed RPC and PR384 are applied/deployed on beta. Existing selector/privacy grants and businessrecords are preserved; native continuation is bound to authenticated response metadata. Live147request sample all200/ok with no CPU-exceeded; CPU2–114ms/mean9.469 means NO guarantee allrequestsbelow10ms. Electronfeed131613→133184, all6shiftCTvalid; largebacklog stilldraining. Keep implemented/sample-verified status distinct from fullsync completion, production promotion or installerpublication. Supabase migrationtool ledger20261104042158 corresponds to approvedfile20261104040251, SHA83495D696622241ECA2A8D396234E2FD65EE7C7A3050E93E4280638D6530D59B; do not replay based solely on differing timestamps.
 # POS project memory
 
 Last reconciled: **2026-11-03, Asia/Brunei**. This is approved architecture and
