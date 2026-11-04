@@ -11,10 +11,10 @@ const render = (props: Partial<Parameters<typeof InventoryCatalogueStatus>[0]> =
   ready: true, activeCount: 40, archivedCount: 5, ...props,
 }));
 
-describe("inventory catalogue footer totals", () => {
+describe("inventory catalogue table totals", () => {
   it("shows only total, active and archived counts without the removed status box", () => {
     const html = render();
-    expect(html).toContain('<footer aria-label="Catalogue totals"');
+    expect(html).toContain('<section aria-label="Catalogue totals"');
     expect(html).toContain("Total products");
     expect(html).toContain('data-count="45"');
     expect(html).toContain(">Active</dt>");
@@ -38,16 +38,22 @@ describe("inventory catalogue footer totals", () => {
     expect(html).not.toContain("Total products");
   });
 
-  it("wraps large counts in a compact responsive footer", () => {
+  it("wraps large counts in a compact responsive summary", () => {
     const html = render({ activeCount: 123456789, archivedCount: 987654321 });
     expect(html).toContain('data-count="1111111110"');
     expect(html).toContain("flex-wrap");
     expect(html).toContain("[overflow-wrap:anywhere]");
   });
 
-  it("places scoped catalogue totals after pagination and preserves search and mode controls", () => {
+  it("places scoped catalogue totals directly above the table after cards and filters, preserving controls", () => {
     const source = readFileSync("src/routes/inventory.tsx", "utf8");
-    expect(source.indexOf("<TablePagination")).toBeLessThan(source.indexOf("<InventoryCatalogueStatus"));
+    const totals = source.indexOf("<InventoryCatalogueStatus");
+    const table = source.indexOf('<Table key={tableFilterVersion}');
+    expect(source.indexOf("<InventorySummaryCards")).toBeLessThan(totals);
+    expect(source.indexOf('aria-label="Advanced product filters"')).toBeLessThan(totals);
+    expect(totals).toBeLessThan(table);
+    expect(source.slice(totals, table)).not.toContain("<TablePagination");
+    expect(source.match(/<InventoryCatalogueStatus/g)).toHaveLength(1);
     expect(source).toContain("branchInventoryCounts(catalogProducts, currentStore.id)");
     expect(source).toContain("activeCount={branchCounts.active} archivedCount={archivedCount}");
     expect(source).toContain('aria-label="Search products"');
