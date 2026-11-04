@@ -7,6 +7,7 @@
  * actually answered does it turn green (central database connected) or amber
  * (working from this terminal), and only then may it offer a way out.
  */
+import type { StartupPresentation } from "@/lib/desktop-startup-progress";
 import { useEffect, useState } from "react";
 import { ReceiptText, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -48,12 +49,15 @@ export function TillLoader({
   onContinueOffline,
   onRetry,
   compact = false,
+  startup,
 }: {
   message?: string;
   onContinueOffline?: () => void;
   onRetry?: () => void;
   compact?: boolean;
+  startup?: StartupPresentation;
 }) {
+  const controlledStartup = Boolean(startup);
   const [health, setHealth] = useState<HealthReport | null>(lastHealth());
   const [state, setState] = useState<Connectivity>(connectivity());
   const [phase, setPhase] = useState(syncState().phase);
@@ -74,9 +78,10 @@ export function TillLoader({
   // Recovery must remain available even if the first connection check is
   // stalled. Connectivity notifications must not restart this deadline.
   useEffect(() => {
+    if (controlledStartup) return;
     const stall = window.setTimeout(() => setStalled(true), STALL_MS);
     return () => window.clearTimeout(stall);
-  }, []);
+  }, [controlledStartup]);
 
   const tone: StatusTone =
     state === "connecting"
@@ -95,15 +100,17 @@ export function TillLoader({
         <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><ReceiptText className="size-6" aria-hidden /></span>
         <div className="text-left"><p className="text-xl font-semibold tracking-tight">Retail</p><p className="text-xs text-muted-foreground">Opening your workspace</p></div>
       </div>
-      <p role="status" aria-live="polite" className="text-sm font-medium leading-relaxed">{message}</p>
+      <p role="status" aria-live="polite" className="text-sm font-medium leading-relaxed">{startup?.message ?? message}</p>
+      {startup?.detail && <p className="text-xs text-muted-foreground">{startup.detail}</p>}
+      {startup?.notice && <p role="status" className="text-xs text-warning">{startup.notice}</p>}
       <div className="flex max-w-full items-center justify-center gap-2 rounded-full bg-muted/60 px-3 py-2">
         <CloudStateIcon tone={tone} className="size-5" />
         <p className={cn("min-w-0 text-xs leading-snug", style.text)}>{style.label}</p>
       </div>
 
-      <div role="progressbar" aria-label={message} aria-valuemin={0} aria-valuemax={100} className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+      {(!startup || startup.active) && <div role="progressbar" aria-label={startup?.message ?? message} aria-valuemin={0} aria-valuemax={100} className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
         <div className={cn("h-full rounded-full", style.bar, "w-1/2 animate-pulse")} />
-      </div>
+      </div>}
 
       {!isOnlineOnly() && state !== "connecting" && health && (
         <div className="space-y-2 text-center"><p className="text-xs text-muted-foreground">
@@ -111,7 +118,7 @@ export function TillLoader({
         </p>{!health.local && <EmergencyAccessLink />}</div>
       )}
 
-      {stalled && (
+      {!startup && stalled && (
         <div className="flex flex-col items-center gap-3 pt-2">
           <p role="status" className="max-w-xs text-center text-xs text-muted-foreground">
             Still loading. You can retry without clearing your saved connection.

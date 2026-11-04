@@ -27,7 +27,7 @@ async function retained(connectionManager,transaction,baseline=null){
   return current;
 }
 async function transaction(connectionManager,handler){const sql=connectionManager.sql(),tx=new sql.Transaction(connectionManager.pool);await tx.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);try{const value=await handler(tx);await tx.commit();return value;}catch(error){await Promise.resolve(tx.rollback()).catch(()=>undefined);throw error;}}
-async function recover(lifecycle,branchId,historyDays,refreshTable){
+async function recover(lifecycle,branchId,historyDays,refreshTable,onActivity=()=>{}){
   const {cloud,connectionManager,jobRepository,jobManager,checkpoints}=lifecycle;
   if(!lifecycle.reader?.unacknowledged)throw failure("Local pending history verification is unavailable.","ELOCAL_PENDING_UNVERIFIED");
   if(jobManager.running)throw failure("Another local data job is running.","EJOB_BUSY");
@@ -52,7 +52,7 @@ async function recover(lifecycle,branchId,historyDays,refreshTable){
     job=await jobRepository.get(jobId);state=decode(job,expected);
     if(!state.snapshotComplete){
       let serialized=JSON.stringify([job.phase,job.last_committed_cursor,job.completed_rows]),pendingPatch;
-      await refreshTable({registry:lifecycle.registry,reader:lifecycle.reader,cloud,connectionManager,branchId,historyDays,tableName:"change_history",diagnosticOrigin:"gap_recovery",progress:{
+      await refreshTable({registry:lifecycle.registry,reader:lifecycle.reader,cloud,connectionManager,branchId,historyDays,tableName:"change_history",diagnosticOrigin:"gap_recovery",onActivity,progress:{
         cursor:state.cursor,completed:Number(job.completed_rows),
         beforeApply:async tx=>{if(JSON.stringify(scope(cloud,branchId,historyDays))!==JSON.stringify(expected))throw failure("History recovery scope changed.");const saved=await jobRepository.get(jobId,tx);decode(saved,expected);if(JSON.stringify([saved.phase,saved.last_committed_cursor,saved.completed_rows])!==serialized)throw failure("History recovery was advanced by another process.","EHISTORY_CONFLICT");await retained(connectionManager,tx,state.baseline);},
         save:async(tx,page)=>{const next={...state,cursor:page.cursor,snapshotComplete:page.cursor===null};pendingPatch={last_committed_cursor:next.cursor,completed_rows:page.completed,phase:phase(next)};await jobRepository.checkpoint(jobId,pendingPatch,tx);},

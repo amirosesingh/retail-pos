@@ -1,6 +1,7 @@
 const { safeError } = require("./errors.cjs");
 const { listDatabases } = require("./catalog.cjs");
 const { validateDatabase } = require("./health.cjs");
+const { StartupActivity } = require("./startup-activity.cjs");
 
 const profileValidationKey = (profile) => JSON.stringify([
   profile?.host ?? "", profile?.instanceName ?? "", Number(profile?.port) || 0,
@@ -15,21 +16,27 @@ const STATES = new Set([
 ]);
 
 class DatabaseService {
-  constructor({ secureConfig, manager, publish = () => {}, log = () => {}, validator = validateDatabase, migrate = null }) {
+  constructor({ secureConfig, manager, publish = () => {}, log = () => {}, validator = validateDatabase, migrate = null, startupIdentity = () => null, startupPaused = () => false, publishStartupActivity = () => {} }) {
     this.secureConfig = secureConfig; this.manager = manager; this.publish = publish;
+    this.startupPaused = startupPaused;
     this.log = log;
     this.validator = validator; this.migrate = migrate;
     this.validatedProfileKey = null;
     this.connectedSchemaKey = null;
     this.state = secureConfig.enabled() ? (secureConfig.profile() ? "enabled_connecting" : "enabled_unconfigured") : "disabled";
     this.detail = null; this.lastCheckedAt = null; this.validated = false;
+    this.startupActivity = new StartupActivity({
+      identity:()=>[this.manager.pool,JSON.stringify(this.secureConfig.profile()),JSON.stringify(startupIdentity())],
+      publish:()=>publishStartupActivity(this.startupActivity.snapshot()),
+    });
   }
   snapshot() {
     const locallyConnected = this.manager.isConnected?.() ?? Boolean(this.manager.pool);
     return { state: this.state, enabled: this.secureConfig.enabled(), configured: Boolean(this.secureConfig.profile()),
       connected: locallyConnected, tradingReady: locallyConnected && this.validated, profile: this.secureConfig.profile(), detail: this.detail,
-      lastCheckedAt: this.lastCheckedAt };
+      lastCheckedAt: this.lastCheckedAt, startupActivity:this.startupActivity.snapshot(), startupPaused:this.startupPaused() };
   }
+  beginStartupActivity(){return this.startupActivity.begin();}
   transition(state, detail = null) {
     if (!STATES.has(state)) throw new Error(`Unknown database state: ${state}`);
     this.state = state; this.detail = detail;
