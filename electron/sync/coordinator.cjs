@@ -1,4 +1,14 @@
 const { AsyncLocalStorage } = require("node:async_hooks");
+const { bootstrapDiagnostic, tagBootstrapDiagnostic } = require("../diagnostics.cjs");
+function retainDiagnostic(target, source) {
+  const { bootstrapPhase: phase, bootstrapOrigin: origin, ...fields } = bootstrapDiagnostic(source, []);
+  try {
+    const privateFields = Object.getOwnPropertyDescriptor(source, "bootstrapDiagnostic")?.value;
+    const table = Object.getOwnPropertyDescriptor(privateFields, "table")?.value;
+    if (typeof table === "string" && /^[a-z][a-z0-9_]{0,62}$/.test(table)) fields.table = table;
+  } catch { /* Diagnostics never replace the original outcome. */ }
+  return tagBootstrapDiagnostic(target, { ...fields, ...(phase ? { phase } : {}), ...(origin ? { origin } : {}) });
+}
 const syncLease = new AsyncLocalStorage();
 const authorHold = error => /^(?:ESYNC_SHIFT_AUTHOR_|ESHIFT_AUTHOR_)/.test(String(error?.code??""));
 class SyncCoordinator {
@@ -128,14 +138,14 @@ class SyncCoordinator {
       this.status.phase="idle";
       const message=this.rememberFailure(error,options,failedDirection);
       const code=String(error?.code??"ESYNC");
-      result={ ok:false,code,error:message,table:failedTable||null };
+      result=retainDiagnostic({ ok:false,code,error:message,table:failedTable||null },error);
     } finally {
       this.running=false;
       this.status.currentTable=null;
       await this.refresh(options.branchId);
       this.publish(this.snapshot());
     }
-    return { ...result, ...this.snapshot() };
+    return retainDiagnostic({ ...result, ...this.snapshot() }, result);
   }
   pause(){this.paused=true;this.publish(this.snapshot());return this.snapshot();}
   resume(){this.paused=false;this.publish(this.snapshot());return this.snapshot();}

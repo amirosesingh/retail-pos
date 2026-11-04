@@ -7,6 +7,24 @@ const {boundedText,rememberGraph} = require("./shift-recovery-exact.cjs");
 // Main-private transport evidence: body flags cannot authorize partial feed pages.
 const feedContinuation = new WeakMap();
 
+function transportDiagnostic(error, payload, stage) {
+  // Read data descriptors only: foreign errors must not run getters or leak
+  // URL-bearing cause messages into private diagnostic breadcrumbs.
+  const own = (object, key) => {
+    try { return Object.getOwnPropertyDescriptor(object, key)?.value; } catch { return undefined; }
+  };
+  try {
+    return {
+      transportOperation: payload?.sqlServerPull ? "feed" : payload?.sqlServerBootstrap ? "bootstrap"
+        : payload?.sqlServerShiftGraph ? "graph" : payload?.sqlServerCounts ? "count"
+          : payload?.sqlServerBatch || payload?.sqlServerAggregate ? "upload" : "other",
+      transportStage: stage,
+      transportCode: own(error, "code") ?? own(own(error, "cause"), "code"),
+      transportErrorName: own(error, "name") ?? (error instanceof TypeError ? "TypeError" : error instanceof Error ? "Error" : undefined),
+    };
+  } catch { return { transportStage: stage }; }
+}
+
 // Pending writes are guarded by the reader, not inferred from independent
 // cloud/device counters. Closing graph rows also report the actual SQL outcome.
 const SHIFT_GRAPH_TABLES = new Set(["shifts", "shift_cash_counts", "shift_reconciliations",
@@ -167,12 +185,14 @@ class CloudClient {
     let bodyReadError;
     let nonJsonResponse = false;
     let exactGraphBody;
+    let transportStage = "fetch";
     try { response = await fetch(`${base}/api/v1/pos/sync${suffix}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ ...normalizeSyncPayload(payload), ...personProof, terminalToken: recordId(terminalToken), deviceBindingProof:terminal.deviceBindingProof, ...(terminal.deviceUse === "management" ? { deviceClaimProof: terminal.deviceClaimProof } : {}) }),
       signal: AbortSignal.timeout(30_000),
     });
+      transportStage = "body";
       try {
         if(payload?.sqlServerShiftGraph && response.ok && typeof response.text==="function"){
           exactGraphBody=await boundedText(response);
@@ -188,11 +208,12 @@ class CloudClient {
         data = { ok: false, error: `HTTP ${response.status}` };
       }
     } catch (error) {
-      if (["TimeoutError","AbortError"].includes(error?.name)) {
-        throw Object.assign(new Error("Cloud synchronization timed out. Local changes remain pending; the next sync will safely retry the same upload."),
-          {code:"ETIMEDOUT",cause:error});
+      const timeoutName = error?.name;
+      if (["TimeoutError","AbortError"].includes(timeoutName)) {
+        throw tagBootstrapDiagnostic(Object.assign(new Error("Cloud synchronization timed out. Local changes remain pending; the next sync will safely retry the same upload."),
+          {code:"ETIMEDOUT",cause:error}), { ...transportDiagnostic(error, payload, transportStage), transportErrorName: timeoutName });
       }
-      throw error;
+      throw tagBootstrapDiagnostic(error, transportDiagnostic(error, payload, transportStage));
     }
     if (!response.ok || data?.ok === false) {
       // PostgREST reports raised SQL errors in `message`, while the POS relay
