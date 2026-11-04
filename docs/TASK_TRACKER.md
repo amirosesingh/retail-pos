@@ -1,3 +1,5 @@
+4 November OWN61 follow-up: normal local sync verified all22 ownerSTR1/all22cloudzero on exact POS_Local identity; total2169. No forcedlocalrepair/queueclear/checkpointreset. PR390 commits historicalartifact/tests/evidence only; merge does not executeSQL. Installedcheckout remains unverified.
+
 ## OWN61 — exact 22-product ownership repair applied; local adoption pending
 
 4 November owner directed agents complete22productdifference investigation, exactDBchangesBEFOREapply. PrivatefreshSQLproof:22extra localproducts/0missingauthorizedIDs; all22cloudexist/nondeleted/ownerNULL/cloudSTR1stock0, stockmapONLYSTR1 key, all22STR1sales/nootherbranchsales. Local22versionsolder, no pendingproductjournal/nonCLOUDpostcheckpointedits. Capturedcloudavailability removesunownedzero product; pos_sync_pull thenreturnsNULLrow_data; native skipsNULLdata butcommitsfeedcursor, leavingstale localpositive quantities. Isolated actual-module reproduction confirms that failure path. 69tablefreshcountcomparison nowonlyproducts2169local/2147cloud; historicalother2 countnamesnotlogged andnotclaimed repaired.
