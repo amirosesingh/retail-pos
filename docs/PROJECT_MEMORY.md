@@ -3,6 +3,19 @@
 Last reconciled: **2026-11-03, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
 
+4November SHIFT52 verified cloud repair: exact owner-approved SHA
+3745EE19DCBA22F34B8ECA5395201F35CE2D88A8C736984F1745CB4BCED94650
+applied after passingCI/freshpreflight. Saved1November web closing remains
+effective. Five summaries filled from existing reconciliation; audit proves
+unchanged counts/time/children/otherparentfacts, version6,oneaudit/twofeeds.
+All27STR1graphs now validate; PR380 merged to beta4590d63b. Earlier held-eighth
+original-PC requirement is superseded for this selected web repair.
+Local download then reaches a distinct ELOCAL_PENDING_UNVERIFIED apply guard:
+all6localgraphCTcheckpoints expired with18retainedshifts, no pending journal/
+intent rows. Do not infer safe overwrite or reset from empty queues. Local
+recovery/fullcheckout and original-PC adoption remain unverified; scoped
+evidence/guarded-recovery preparation is a separate proposed batch.
+
 4November SHIFT52 decision supersedes the earlier held-shift authority choice:
 owner selected keeping the saved1November web closing for STR1 shift
 1a349429-cea1-4f45-8d2b-36678d37ad27 and authorized preparation/isolated tests
