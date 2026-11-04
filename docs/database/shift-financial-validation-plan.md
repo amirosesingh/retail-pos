@@ -50,7 +50,7 @@ Implementation must distinguish:
 1. A causally complete declared snapshot (baseline plus admitted writer frontiers), which can be validated without pretending it includes later or unseen events.
 2. A globally complete shift cutoff across all eligible writers, which requires verified writer membership and a cutoff acknowledgement from each writer, or an approved exclusive-writer lease. An unavailable writer prevents that stronger certification.
 
-Do not silently adopt an exclusive terminal rule: the app supports multiple terminals/shift settings. Do not let a terminal choose away an eligible stream. If production requires the stronger global assertion, keep cloud acceptance pending until all required evidence arrives; local checkout and an honestly pending saved local close must continue under existing rules. The final product semantics for multi-terminal offline closure need explicit review before claiming this issue solved.
+Do not silently adopt an exclusive terminal rule: the app supports multiple terminals/shift settings. Do not let a terminal choose away an eligible stream. If production requires the stronger global assertion, keep cloud acceptance pending until all required evidence arrives; local checkout and an honestly pending saved local close must continue under existing rules. The owner selected the saved known-data case; global completeness is excluded. Completeness of that declared known snapshot still requires implementation and tests.
 
 ## Save and admission sequence
 
@@ -107,3 +107,9 @@ No proof can reconstruct missing pre-protocol offline intermediate sale/refund s
 ## First local safeguard and isolated prototype
 
 Prepared local transaction guard re-reads unchanged tender totals using the protected save's SERIALIZABLE transaction before writes/signing, rejecting a stale ORIGINAL/RECOUNT draft. Existing accepted replay does not re-read current totals. It requires no schema change and does not establish cloud historical authority. The separate scripts/preparation SQL prototype derives one consistent financial basis and has 17 isolated parity/precision groups. It is not a migration or admission path. The larger historical/capability rollout above remains unresolved and must not be represented as deployed or complete.
+
+## Resolved multi-terminal rule
+
+The owner chose complete SAVED KNOWN-DATA snapshots. FIN62 must not wait for all offline terminals or claim global completeness. At the action, capture the saving terminal's complete trusted known baseline and authorized committed local financial changes. Later other-terminal uploads cannot retroactively change that action. Each later administrator correction captures its own known state. Server-derived baselines plus immutable authorized financial-operation receipts remain necessary to reject unexplained changes or omitted known rows; client hashes alone are not authority. Missing pre-protocol history stays explicitly legacy/unverified, never fabricated.
+
+Native preparation status: scripts/preparation/shift-financial-basis-sqlserver.sql requires SERIALIZABLE input and canonical lowerUUID text order, preserves raw payment JSON, and names its 12-decimal aggregate expectedNativeRaw. Twenty actual isolated SQLServer groups passed. It is NOT the PostgreSQL two-decimal wire total. Shared final monetary canonicalization, evidence binding and admission are still pending. Seven isolated metadata-upgrade groups also passed; candidate025 remains outside automatic migration discovery.

@@ -1,3 +1,5 @@
+4 November FIN62 multi-terminal decision: validate the complete financial snapshot KNOWN to the saving terminal at the action's transaction. Do not wait for all offline terminals or silently certify global completeness. Later unseen uploads do not rewrite the accepted original snapshot; a later authorized correction captures its own known-data snapshot. Preserve branch scope, authoritative baseline/delta validation, audits and pending work.
+
 ## 4 November — action-specific shift financial validation decision
 
 Each ORIGINAL closing and later authorized administrator RECOUNT/correction must validate the financial inputs at that action's saved point. Preserve prior accepted audit/receipts and later legitimate corrections. Do not compare a delayed historical closing to today's mutable refund state. Booking-deposit drawer attribution remains a separate task. FIN62 preparation may not claim complete financial verification from internally consistent graph values or author signatures alone.
