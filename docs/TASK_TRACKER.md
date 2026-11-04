@@ -2,6 +2,8 @@
 
 Last reconciled: **2026-11-04, Asia/Brunei**.
 
+4 November integration status: STARTUP51 (PR379) and verified cloud-repair documentation (PR381) are merged into beta. RECOVERY53 has 4,977 passing full-suite tests plus 16 real SQL Server recovery groups; both real SQL Server/API/isolated-PostgreSQL closing workflows pass, including OPEN acknowledged before offline closing. The owner-requested local restart loaded the integrated source at port8084 with saved STR1 registration and cashier list. Hosted RECOVERY53 deployment and historical local repairs are not yet complete. LOCAL54 now has three closed-summary repair preparations and a separately approved fourth stale-OPEN adoption plan; no live local repair has run. The historical preparation/status paragraphs below remain evidence for their recorded stage, not current completion claims.
+
 ## RECOVERY53 — approved local retained-shift recovery preparation/tests
 
 Owner subsequently requested restarting local Electron after code changes. This
@@ -104,57 +106,14 @@ databases, never POS_Local. Matching proof may not resolve this PC's3divergent
 summaries; document holds and prepare a separate exact local repair only after
 review, not implicit approval under this batch.
 
-## SHIFT52 — saved web closing selected; one-shift graph repair preparation
-
-Current verified outcome supersedes historical preparation notes below: exact
-SHA 3745EE19DCBA22F34B8ECA5395201F35CE2D88A8C736984F1745CB4BCED94650
-was separately approved and applied after CI/preflight. One audit/two feed
-entries and all 27 STR1 graphs validated; saved web counts/time/children remain
-unchanged. PR380 merged to beta4590d63b. The remaining local apply guard is a
-different issue tracked in RECOVERY53, not a still-failing cloud graph repair.
-
-Prepared SQL SHA256
-3745EE19DCBA22F34B8ECA5395201F35CE2D88A8C736984F1745CB4BCED94650.
-Root reviewed the scope; independent reviewer passed72 actual native PostgreSQL
-scenarios and diff check, with owned disposable fixture stopped/removed. Guards
-cover changed/busy records, forged or altered replay receipts/authority, ignored
-updates, audit rollback and preservation of unrelated shifts/stock/sales. Normal
-effects verified: one row's five summaries, version5→6/updated_at, one maintenance
-audit and two feed entries, unchanged counts/time/children. Exact live approval,
-fresh preflight, execution/readback and actual local recovery remain pending.
-
-4November owner explicitly superseded the earlier original-cashier authority
-choice: keep the saved1November web closing and prepare/test a one-shift repair.
-Priority is graph validation and subsequent download; do not assume original-PC
-pending uploads recover automatically when it powers on. Approval covers
-preparation/isolated tests only; exact live artifact/project approval remains
-required before writes. Baseline beta16db48d7; branch
-codex/web-shift-summary-repair-beta. SQL agent owns artifact/tests/plan,
-independent agent reviews; root owns tracker and project memory.
-
-Target STR1 shift1a349429-cea1-4f45-8d2b-36678d37ad27, row_version5, saved
-closing2026-11-01T13:38:37.207159Z. Existing reconciliation supplies only missing
-parent expected_cash648,expected_card123,expected_digital472,variance_cash0,
-variance_total0. Parent fingerprint996d4f3d74e9d7704fb68403f0818d1b; full graph
-fd55a0dbab4401786c7f801407330bb4. Root SELECT-only in-memory candidate passes
-the existing strict validate_graph helper with children unchanged. Candidate
-graph fingerprint49d753292cc47b33c52c88645dccc3ad before normal trigger versions.
-Preserve counted amounts, time, children, original/web audit evidence, stock,
-sales, author/permission guards and current drawer. Exact before-image guards,
-locking, whole-transaction rollback, replay verification and normal audit/feed
-effects must be tested. No checkpoint reset, old-PC queue reset, forged proof,
-legacy #359 replay, Membership or production promotion. No live mutation yet.
-
-Root fresh read-only parity: all10 actual user triggers match captured exact
-definitions/enabled state/raw body hashes; both graph helper bodies, owners,
-flags and settings match the reviewed baseline. Replacing only the candidate
-held parent fields in query memory makes all27STR1graphs validate using the
-existing validator with p_closed=false (closed records still require consistent
-closed graphs; current open records remain valid). Held candidate separately
-passes p_closed=true. An initial all-branch p_closed=true diagnostic correctly
-rejected open shifts; it was not evidence of another bad closed shift. No rows
-were written by these SELECT checks. These are candidate validation results,
-not executed repair, successful download or native adoption proof.
+4 November beta refresh: preserve both STARTUP51 and newer SHIFT52 records.
+The exact approved SHIFT52 cloud repair has since been applied and verified:
+one audit, two feed entries, unchanged saved web closing/counts/children, and all
+then-27 STR1 graphs valid. PR380 merged beta4590d63b. Earlier held-original-PC
+requirements below are historical and superseded for the selected web closing.
+Local retained-history recovery and its separately reviewed data differences
+remain distinct; do not claim startup progress alone repairs them. PR381 records
+the detailed live outcome. This refresh changes no STARTUP51 runtime behavior.
 
 ## STARTUP51 — approved truthful startup progress and native-owned retry display
 
@@ -222,6 +181,75 @@ readiness/checkout and Management boundaries. Use isolated fixtures, no real sal
 or stock actions. Root owns tracker/integration; one agent owns runtime/tests and
 another independently reviews. Existing eighth STR1 repair remains blocked by
 unavailable original PC; do not silently adopt the later cloud web closing.
+
+## SHIFT52 — saved web closing selected; one-shift graph repair preparation
+
+VERIFIED CLOUD OUTCOME4November: owner separately approved exact SHA
+3745EE19DCBA22F34B8ECA5395201F35CE2D88A8C736984F1745CB4BCED94650
+afterCI/freshpreflight. AllrequiredCI passed on be7c4d29567903a80de6ac60ceac6786b6ef11dd;
+preflight matched exact parent/graph/count/reconciliation hashes, version5 and
+zero repair audits. Root executed that immutable artifact once on ROSEGILL pos
+qhrufhtbeguxydenzfey. SELECT readback verifies version6, approved five values,
+unchanged opening/closing/counts/children and all other parent facts, exact audit
+before/after and owner-selected web authority, one audit and two normal feed
+entries (shift update6, audit insert1). All27STR1graphs validate. PR380 merged
+to beta4590d63bcff91836975f1d597c4bc8d7c6049c43. This supersedes earlier held
+eighth/original-PC prerequisite; selected saved web closing is authoritative.
+
+LOCAL ACCEPTANCE STILL BLOCKED: next automatic retry01:21:57UTC passes download
+but fails local_apply with ELOCAL_PENDING_UNVERIFIED. This is distinct from the
+resolved cloud P0001. SQL SELECT confirms all6graph push checkpoints2881 below
+minimum2916 (current11855),18retained shifts(17closed/1open),zero pending shift
+journal rows and zero unacknowledged shift intents. No checkpoint reset. Source
+review confirms expired CT plus any retained graph blocks adoption even if rows
+might match cloud; empty queues do not prove no legacy edits. Next proposed
+batch: read-only scoped full-graph/baseline comparison and guarded recovery
+preparation/tests, preserving divergent/pending/unknown work. Obtain scope
+approval before shared-sync implementation. Do not claim complete local recovery,
+original-PC adoption, checkout acceptance, production or installer publication.
+
+Prepared SQL SHA256
+3745EE19DCBA22F34B8ECA5395201F35CE2D88A8C736984F1745CB4BCED94650.
+Root reviewed the scope; independent reviewer passed72 actual native PostgreSQL
+scenarios and diff check, with owned disposable fixture stopped/removed. Guards
+cover changed/busy records, forged or altered replay receipts/authority, ignored
+updates, audit rollback and preservation of unrelated shifts/stock/sales. Normal
+effects verified: one row's five summaries, version5→6/updated_at, one maintenance
+audit and two feed entries, unchanged counts/time/children. Exact live approval,
+fresh preflight, execution/readback and actual local recovery remain pending.
+
+4November owner explicitly superseded the earlier original-cashier authority
+choice: keep the saved1November web closing and prepare/test a one-shift repair.
+Priority is graph validation and subsequent download; do not assume original-PC
+pending uploads recover automatically when it powers on. Approval covers
+preparation/isolated tests only; exact live artifact/project approval remains
+required before writes. Baseline beta16db48d7; branch
+codex/web-shift-summary-repair-beta. SQL agent owns artifact/tests/plan,
+independent agent reviews; root owns tracker and project memory.
+
+Target STR1 shift1a349429-cea1-4f45-8d2b-36678d37ad27, row_version5, saved
+closing2026-11-01T13:38:37.207159Z. Existing reconciliation supplies only missing
+parent expected_cash648,expected_card123,expected_digital472,variance_cash0,
+variance_total0. Parent fingerprint996d4f3d74e9d7704fb68403f0818d1b; full graph
+fd55a0dbab4401786c7f801407330bb4. Root SELECT-only in-memory candidate passes
+the existing strict validate_graph helper with children unchanged. Candidate
+graph fingerprint49d753292cc47b33c52c88645dccc3ad before normal trigger versions.
+Preserve counted amounts, time, children, original/web audit evidence, stock,
+sales, author/permission guards and current drawer. Exact before-image guards,
+locking, whole-transaction rollback, replay verification and normal audit/feed
+effects must be tested. No checkpoint reset, old-PC queue reset, forged proof,
+legacy #359 replay, Membership or production promotion. No live mutation yet.
+
+Root fresh read-only parity: all10 actual user triggers match captured exact
+definitions/enabled state/raw body hashes; both graph helper bodies, owners,
+flags and settings match the reviewed baseline. Replacing only the candidate
+held parent fields in query memory makes all27STR1graphs validate using the
+existing validator with p_closed=false (closed records still require consistent
+closed graphs; current open records remain valid). Held candidate separately
+passes p_closed=true. An initial all-branch p_closed=true diagnostic correctly
+rejected open shifts; it was not evidence of another bad closed shift. No rows
+were written by these SELECT checks. These are candidate validation results,
+not executed repair, successful download or native adoption proof.
 
 ## SHIFT49 — seven repaired and verified; eighth blocked
 
