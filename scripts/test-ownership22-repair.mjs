@@ -92,7 +92,3 @@ try{
  if(native){const candidate=await fresh();const before=await snapshot();await db.testContention(candidate.replace(/COMMIT;\s*$/,''),manifest[0].id);await db.exec('ROLLBACK');assert.equal(await snapshot(),before);passed++;}
  console.log(`PASS ${passed} isolated ownership22 captured-trigger/schema/audit/feed/replay/visibility scenarios`);
 }catch(error){console.error(error.message);process.exitCode=1;}finally{await db.close();}
-
-
-
-
