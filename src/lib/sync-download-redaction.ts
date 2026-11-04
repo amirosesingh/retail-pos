@@ -1,3 +1,4 @@
+import { isExactNumber } from "../../electron/sync/shift-recovery-exact.mjs";
 const ECOMMERCE_FIELDS: ReadonlySet<string> = new Set(["ecom_price", "ecom_visible", "ecom_enabled", "is_published"]);
 const TERMINAL_SECRET_FIELDS: ReadonlySet<string> = new Set(["claim_secret_hash", "claim_proof", "claimed_proof_hash"]);
 
@@ -40,6 +41,9 @@ export function redactSyncDownload(value: unknown, table = "", management = fals
  * only own data properties, no aliases, getters, custom prototypes or toJSON.
  */
 export function redactOwnedParsedSyncDownload(value: unknown, table = "", management = false): unknown {
+  // Only losslessly parsed private numeric tokens are atomic; caller objects
+  // cannot request a redaction bypass. Ordinary parsed JSON never matches.
+  if (isExactNumber(value)) return value;
   if (Array.isArray(value)) {
     for (let index = 0; index < value.length; index++) {
       const child = value[index];
@@ -49,7 +53,7 @@ export function redactOwnedParsedSyncDownload(value: unknown, table = "", manage
   }
   if (!value || typeof value !== "object") return value;
   const row = value as Record<string, unknown>;
-  if (!management && (table === "settings_scoped" || row.table_name === "settings_scoped") && typeof row.key === "string" && row.key.startsWith("product_price:") && row.value && typeof row.value === "object") {
+  if (!management && (table === "settings_scoped" || row.table_name === "settings_scoped") && typeof row.key === "string" && row.key.startsWith("product_price:") && row.value && typeof row.value === "object" && !isExactNumber(row.value)) {
     // Preserve the existing projection's unusual array-to-object behavior.
     row.value = priceSettingsValue(row.value as Record<string, unknown>);
   }

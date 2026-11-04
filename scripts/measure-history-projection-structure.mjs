@@ -7,6 +7,7 @@ import { readFile, mkdtemp, mkdir } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
+import { createRequire } from 'node:module';
 import ts from 'typescript';
 
 assert.equal(process.argv[2], '--run');
@@ -24,7 +25,7 @@ assert(baseline && candidate, 'Expected the bounded pure projection helper.');
 const reference = {};
 runInNewContext(ts.transpileModule(await readFile(join(root, 'src/lib/sync-download-redaction.ts'), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-}).outputText, { exports: reference, Object, Set, Array });
+}).outputText, { exports: reference, Object, Set, Array, require: createRequire(new URL('../src/lib/sync-download-redaction.ts',import.meta.url)) });
 const base = join(root, '.tmp/projection-structure');
 await mkdir(base, { recursive: true });
 const directory = await mkdtemp(join(base, 'native-'));

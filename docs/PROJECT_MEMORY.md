@@ -1,7 +1,39 @@
 # POS project memory
 
-Last reconciled: **2026-11-03, Asia/Brunei**. This is approved architecture and
+Last reconciled: **2026-11-04, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
+
+RECOVERY53 source preparation passed full regression (4,961 tests), 16 actual
+isolated SQL Server recovery groups, scoped lint/typecheck, web/Windows builds,
+workerd privacy/wire tests and isolated Electron ASAR loading. It has not been
+deployed or applied to the running POS. Only fresh, complete, exact local/cloud
+graphs can bypass ambiguity as no-op evidence; all retained graphs and V0/concurrent
+work must be covered before ordinary checkpoint completion. Proof is optional
+for responses up to 32 KiB; larger or nonfinite/-0 cases retain full ordinary
+privacy-filtered downloads with no proof header. Unknown or differing history
+stays held. The three known local summary differences need separate reconciliation.
+Large-request Cloudflare Free CPU and installed end-to-end recovery are not
+verified. Never equate prepared code, zero queues or successful download with
+completed recovery, and never manually reset checkpoints to hide the guard.
+
+4November current state: exact SHIFT52 one-row cloud repair SHA
+3745EE19DCBA22F34B8ECA5395201F35CE2D88A8C736984F1745CB4BCED94650
+was separately owner-approved and applied afterCI/preflight. Readback confirms
+one audit/two feed entries, preserved saved web closing/counts/children and all
+27STR1graphs valid; PR380 merged beta4590d63b. Earlier held-original-PC repair
+requirement is superseded. Local download now passes but apply hits expired-CT
+retained-history guard ELOCAL_PENDING_UNVERIFIED.
+
+Owner approved RECOVERY53 preparation and isolated tests only: fresh verified
+cloud-vs-lockedlocal exact complete-graph proof, no-op adoption for proven equal
+graphs, complete retainedbranch coverage/concurrency protection before ordinary
+recovery completion. Preserve unknown/divergent/pending work. No liveSQLrepair,
+manual checkpoint reset, queue clearing, permissions or deployment. Empty queues,
+locally editable baseline metadata or acknowledged_at alone are not proof.
+This PC has18retainedshifts,zero savedbaselines/anyshiftintents,and3closedlocals
+stillmissing summaries (d252a275,2e735bd8,85902cc1; allcloudpreviouslyrepaired).
+Do not silently fill those differences or claim a comparison-only correction
+resolves them. Exact local data repair needs separate reviewed approval.
 
 4November SHIFT52 decision supersedes the earlier held-shift authority choice:
 owner selected keeping the saved1November web closing for STR1 shift

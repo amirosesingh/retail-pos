@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
+import { createRequire } from 'node:module';
 import ts from 'typescript';
 import { PGlite } from '@electric-sql/pglite';
 
@@ -11,7 +12,7 @@ const reference = ts.transpileModule(await read('src/lib/sync-download-redaction
   compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022},
 }).outputText;
 const exports = {};
-runInNewContext(reference,{exports,Object,Set,Array});
+runInNewContext(reference,{exports,Object,Set,Array,require:createRequire(new URL('../src/lib/sync-download-redaction.ts',import.meta.url))});
 const normalized = value => JSON.parse(JSON.stringify(value));
 const db = new PGlite();
 const projectionUpgrade = await read('supabase/migrations/20261103091907_optimize_protected_history_projection.sql');

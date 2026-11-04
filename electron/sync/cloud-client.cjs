@@ -3,6 +3,7 @@ const { recordId } = require("./uuid-fields.cjs");
 const { policy } = require("./conflicts.cjs");
 const { toLocalValue } = require("./row-codec.cjs");
 const { tagBootstrapDiagnostic } = require("../diagnostics.cjs");
+const {boundedText,rememberGraph} = require("./shift-recovery-exact.cjs");
 
 // Pending writes are guarded by the reader, not inferred from independent
 // cloud/device counters. Closing graph rows also report the actual SQL outcome.
@@ -163,6 +164,7 @@ class CloudClient {
     let data;
     let bodyReadError;
     let nonJsonResponse = false;
+    let exactGraphBody;
     try { response = await fetch(`${base}/api/v1/pos/sync${suffix}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -170,7 +172,10 @@ class CloudClient {
       signal: AbortSignal.timeout(30_000),
     });
       try {
-        data = await response.json();
+        if(payload?.sqlServerShiftGraph && response.ok && typeof response.text==="function"){
+          exactGraphBody=await boundedText(response);
+          data=JSON.parse(exactGraphBody);
+        }else data = await response.json();
       } catch (error) {
         // A body can time out after fetch has delivered successful headers.
         // Preserve transport failures instead of inventing an HTTP 200 error.
@@ -199,7 +204,8 @@ class CloudClient {
         ...(bodyReadError ? { cause: bodyReadError } : {}),
       }), { httpStatus: response.status, nonJsonResponse });
     }
-    return normalizeSyncPayload(data);
+    const normalized=normalizeSyncPayload(data);
+    return exactGraphBody===undefined?normalized:rememberGraph(normalized,exactGraphBody,response.headers?.get?.("X-POS-Shift-Graph-Exact"));
   }
   managementBranches() { return this.request({ managementSyncBranches: true }); }
   pushBatch(batch) {
