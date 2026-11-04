@@ -22,7 +22,14 @@ beforeEach(()=>{
   }
   if(url.includes("/terminal_tokens?"))return Response.json([{id,platform:"pc",status:active?"used":"revoked",location_id:branch,is_claimed:true,claim_proof:proof}],{status:registryStatus});
   if(url.includes("/stores?"))return Response.json([{id:branch}]);
-  if(url.includes("/rpc/")){rpc(url,JSON.parse(String(options?.body)));return Response.json([]);}
+  if(url.includes("/rpc/")){
+   rpc(url,JSON.parse(String(options?.body)));
+   if(url.endsWith("/rpc/pos_sync_feed_page_v1"))return new Response("[]",{headers:{
+    "content-type":"application/json","X-POS-Feed-Projection":"1","X-POS-Feed-Bytes":"2",
+    "X-POS-Feed-Rows":"0","X-POS-Feed-Continue":"0",
+   }});
+   return Response.json([]);
+  }
   throw new Error(`Unexpected isolated request: ${url}`);
  }));
 });

@@ -116,6 +116,18 @@ class PullWorker {
       const page = await readPage(async limit => {
         prepared=null;
         const downloaded=await this.cloud.pullBatch({ branchId, cursor: checkpoint?.committed_cursor ?? null, limit });
+        if (typeof downloaded.continuation === "boolean" && (downloaded.count || downloaded.continuation)) {
+          let previous = Number(checkpoint?.committed_cursor ?? 0);
+          // An attested page must make strict progress before any local writes.
+          const cursors = [...downloaded.rows, ...downloaded.tombstones]
+            .map(change => Number(change.cursor)).sort((a,b) => a-b);
+          if (!cursors.length || !Number.isSafeInteger(previous) || cursors.some(cursor => {
+            const invalid = !Number.isSafeInteger(cursor) || cursor <= previous;
+            previous = cursor;
+            return invalid;
+          }) || previous !== Number(downloaded.cursor))
+            throw Object.assign(new Error("The protected cloud feed cursor did not advance safely. Its page remains pending."), {code:"ESYNC_CURSOR"});
+        }
         if(Buffer.byteLength(JSON.stringify(downloaded),"utf8")>MAX_PAGE_BYTES)
           throw Object.assign(new Error("Download exceeds the safe page size."),{code:"EOVERSIZED"});
         prepared=await prepareShiftGraphs({cloud:this.cloud,connectionManager:this.connectionManager,branchId,changes:[...downloaded.rows,...downloaded.tombstones]});
@@ -184,7 +196,7 @@ class PullWorker {
       checkpoint = { ...(checkpoint ?? {}), committed_cursor: batch.cursor };
       onProgress({ direction: "pull", table: [...new Set([...batch.rows, ...batch.tombstones].map(row => row.table_name))].join(", "), completed: merged - beforePage });
       batch.rows.length = 0; batch.tombstones.length = 0;
-      if (batch.count < page.limit) break;
+      if (batch.count < page.limit && batch.continuation !== true) break;
     }
     // Management replication is POS-only and has no signed-in membership authority.
     if (skipMembership)

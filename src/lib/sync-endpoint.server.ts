@@ -630,6 +630,14 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
         historyDays: body.sqlServerBootstrap.historyDays, keepCommerce: protectedKeepCommerce, signal: request.signal });
       if (protectedResponse) return protectedResponse;
     }
+    if (body.sqlServerPull) {
+      const { commerceSyncIsolationReady } = await import("./commerce-sync-readiness.server");
+      const keepCommerce = scope.managementReplica === true || scope.managementDevice === true || !(await commerceSyncIsolationReady());
+      const { protectedFeedDownload } = await import("./protected-feed-download.server");
+      const protectedResponse = await protectedFeedDownload({ organizationId: body.sqlServerPull.organizationId, branchId,
+        terminalId: scope.terminalId ?? "", cursor: body.sqlServerPull.cursor, keepCommerce, signal: request.signal });
+      if (protectedResponse) return protectedResponse;
+    }
     const response = await serviceRest(`rpc/${rpc[0]}`, {
       method: "POST",
       body: JSON.stringify(rpc[1]),
