@@ -5296,3 +5296,8 @@ local pass alone.
   acceptance remain pending. The earlier last-unit-only full pass and canceled
   expanded run are not claims about this revised head. Keep PR404 draft until
   final acceptance; no merge/deploy/publication has been performed.
+- Final expanded runtime regression completed: 5,783 passed, 7 skipped, 0 failed
+  of 5,790 tests (two workers). TypeScript/scoped lint pass. Independent review
+  passed all 15 new unit cases and all 53 disposable SQL groups. This replaces
+  the earlier preparation-only verification status; CI/installed acceptance,
+  beta merge and production release remain separate. No live records changed.
