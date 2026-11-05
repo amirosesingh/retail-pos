@@ -15,6 +15,30 @@ FIN62 isolated SQL basis prototype: complete selected-branch/shift inputs and ex
 
 ## FIN62 — owner-approved shift financial/as-of validation correction
 
+## RELEASE71 — incremental production preparation, 5 November
+
+Owner requested preparing production alongside fixes and promoting completed,
+verified features through beta without replacing unrelated code. Retail1.4.81
+already exists as an immutable published release; proposed next patch is1.4.82,
+with no existing remote v1.4.82 tag at preparation. Separate current-beta branch
+codex/release-1-4-82-beta prepares metadata only: existing version generator for
+package/lock/APP_VERSION and SQL artifact labels, matching iOS marketing version
+and incremented native build number. Preserve dependencies, signing credentials,
+OTA key and all application/database behaviour. Inspect generated SQL diffs for
+version text only. No tag, installer workflow, billing, schema execution or
+publication is authorized by preparation. Require metadata/release checks, scoped
+review and beta CI; specific final production promotion/publication remains a
+separate exact reviewed-head decision. Other feature PRs retain their own gates.
+
+RELEASE71 verification: nine dependency-free release/version/iOS publication
+fixture tests and 22 focused release-channel/revision/desktop tests passed.
+Independent review and structural comparisons prove package dependencies, SQL
+semantics and signing configuration unchanged. The initial focused invocation
+could not load absent worktree dependencies; it passed after reusing the existing
+installed dependency tree, without package installation or source changes.
+No actual publication, key access, tag or database execution occurred. Exact-head
+CI and beta integration remain pending; do not call 1.4.82 published.
+
 ## 5 November permanent-rule update and current task index
 
 Owner approved updating AGENTS.md without overwriting existing instructions.
