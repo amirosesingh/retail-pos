@@ -41,10 +41,11 @@ function branchFor(operation, fallback) {
 }
 
 class AggregateRepository {
-  constructor(connectionManager, operationsRepository, {financialOperations=null} = {}) {
+  constructor(connectionManager, operationsRepository, {financialOperations=null,stockHistory=operationsRepository.stockHistory??null} = {}) {
     this.connectionManager = connectionManager;
     this.operationsRepository = operationsRepository;
     this.financialOperations = financialOperations;
+    this.stockHistory = stockHistory;
   }
 
   async assertBranch(transaction, table, record, match, branchId, financialStock = false) {
@@ -194,6 +195,11 @@ class AggregateRepository {
           const token=await financialStore.captureMutation(transaction,{branchId:aggregate.branchId,terminalId:aggregate.terminalId,shiftId:shiftId||null,operationId,action,preparedContext:financialContext,saleIds:[...sales]});financialTokens.push(token);
         }
       }
+      // Keep the existing shift/financial-head lock order before product locks.
+      const stockCapture=this.stockHistory?await this.stockHistory.begin(transaction,operations,{
+        operationId,branchId:aggregate.branchId,terminalId:aggregate.terminalId,
+        actorId:aggregate.activityOperator?.subject,kind,
+      }):null;
       const newOpenings = new Set();
       for (const operation of operations) {
         stage = "business rows";
@@ -268,6 +274,7 @@ class AggregateRepository {
         for(const shiftId of newOpenings){await store.freezeOpening(transaction,operationId,aggregate.branchId,shiftId,{exactFinancial:financialStore!==null});if(financialStore)await financialStore.finalizeOpening(transaction,openingTokens.get(shiftId));}
       }
       for(const token of financialTokens)await financialStore.finalizeMutation(transaction,token);
+      if(this.stockHistory)await this.stockHistory.finish(transaction,stockCapture);
       tableName = "local_operation_receipts";
       await new sql.Request(transaction)
         .input("operation_id", sql.UniqueIdentifier, operationId)

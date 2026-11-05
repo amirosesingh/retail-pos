@@ -1,9 +1,10 @@
 # STOCK68: stock at an exact effective time
 
-Status: quantity kernel and synthetic tests implemented; database, loader, writer
-and UI integration are not implemented or applied. Baseline: beta `a73f24e8`.
-No application routes use the kernel yet. It does not authenticate callers or
-certify that supplied history is complete.
+Status: draft quantity kernel plus storage/capture/authorized-read foundation.
+Current beta `8b1cb17b` is integrated by feature merge `e4f3badb`. Main/IPC,
+complete writer coverage, validated cloud upload, activation and Inventory UI/export
+remain unfinished. No database change has been applied and no baseline established.
+The foundation does not certify complete history or a production-ready report.
 
 ## Approved meaning
 
@@ -129,5 +130,103 @@ receiving corrections, count/merge/import, missed-bill stock choices, duplicate
 and interrupted operations, baseline invalidation, history retention, branch/
 warehouse/cluster denials, revoked permissions and responsive rendered UI.
 
-No proposed ledger, baseline backfill, RPC, schema change, shared writer change,
-current stock correction or production publication has been executed here.
+No proposed ledger, baseline backfill, RPC or schema change has been applied to a
+live database. No current business stock correction or production publication has
+been performed. The following foundation runs only in isolated fixtures.
+
+## STOCK401 foundation checkpoint — 5 November
+
+Owner explicitly approved completing the report, including the necessary additive
+storage, atomic capture, existing sync-lane integration and authorized reads. The
+receiving-time decision is **actual goods arrival**, defaulting to the original
+Main/save physical stock-operation instant unless an authorized explicit arrival
+is supplied. Invoice date is separate. Do not infer arrival from old invoice dates
+or backfill old rows. That arrival-input UI is not implemented in this checkpoint.
+
+The latest urgent release decision defers this entire unfinished draft. Do not
+merge PR401 or include prepared local031 in the urgent production/SQL72 bundle.
+UI/export are unstarted/deferred. The upcoming local upgrade bundle025–030 and
+current production candidate exclude this stock preparation. No live cloud/local
+DDL, activation, historical repair or publication is authorized by this checkpoint.
+
+Prepared files:
+
+- CLI-created `20261105113916_stock_history_effective_ledger.sql` proposes four
+  stock-history tables, exact effective-time ticks/raw instants, immutable claims,
+  RLS/revoked client writes and a service-only bounded-row read RPC. It is marked
+  DRAFT/not applicable yet. Existing colliding objects cause review-required abort;
+  this is not an approved upgrade of an installed history schema.
+- `database/sqlserver/prepared/031_stock_history_effective_ledger.sql` is outside
+  the auto-installer. It creates four optional metadata tables, checks53 exact
+  column definitions and56 constraint/default/index/FK/trigger fingerprints,
+  rejects unknown/partial/registered-but-missing structures and preserves an
+  existing outer transaction. No business rows/openings are inserted. Native-only
+  local commit cursors are separate from cloud ingestion cursors.
+- `electron/db/stock-history*.cjs/json` prepares physical-schema capability,
+  immutable original JSON/hash, stable operation/product/location legs, source
+  activity/adjustment/stock-receipt references and a scoped SQL reader. Capability
+  is bound to the live pool, database GUID and observed schema generation.
+- Optional hooks in OperationsRepository, AggregateRepository, ReceiptRepository
+  and the FIN62 repository factory stay **null by default**. No Main factory or
+  IPC installs/activates the store. The prototype captures existing persisted
+  effects or freezes a pending authorized domain movement in the same transaction
+  and existing journal; it never applies a second stock delta. Capture uses one
+  bounded metadata batch per affected branch instead of one query per item.
+- `stock-history-report`, validation, client/functions/server and hosted-function
+  registration prepare the read contract. Windows requires a future dedicated
+  Main reader; there is no native IPC implementation yet. Web/phone reads reuse
+  current credential/scope helpers and current database actor/terminal/branch
+  checks. Management preserves its existing online path, not a new local replica.
+  No generic ledger write/upload API is exposed.
+
+The actual receiving aggregate revealed an existing deferred-effect path: it
+saves purchase documents/activity locally; cloud stock application occurs later.
+The prototype therefore retains that original physical intent and its source IDs
+as **pending**, without changing existing stock arithmetic. A future server adapter
+must prove the actual accepted effect before accepting/counting the history leg.
+Existing ordinary native sync permits terminal-only background uploads; that is
+not fresh staff authority for original actor/backdated claims. Unknown actor/time
+grades remain incomplete. Do not fabricate author signatures or strengthen this
+into a new authentication protocol without separate reviewed authority.
+
+Verified foundation evidence on frozen runtime source:
+
+-81 focused tests across five suites passed:32 quantity-kernel,19 protocol/schema,
+  15 actual isolated PostgreSQL reader/admission,10 actual server-function/current
+  account-scope composition and5 existing native checkout-stock guard cases.
+-20 actual uniquely owned disposable LocalDB groups passed: exact/idempotent schema,
+  no backfill, atomic product/evidence/journal rollback, unchanged replay, awaited
+  source handover, immutable claims, branch/export denials, zero/archived pagination,
+  100ns cutoff and source-resolved CLOSED shift, late pre-baseline invalidation,
+  actual receiving aggregate/retry and foreign denial, unknown constraint refusal,
+  and caller-owned consolidation transaction. The fixture cleans only its own
+  `CodexStockHistory_*`/`StockHistoryFixture_*` instance/database, never POS_Local.
+-PostgreSQL tests reuse current read/write scope validator definitions and actual
+  mobile Management helper parity. Bare activation/direct anon/authenticated RPC,
+  current permission/page/branch/terminal/capability revocation and export denial
+  are tested. These are isolated/source compositions, not deployed device acceptance.
+-TypeScript, scoped ESLint and diff checks passed. No full-suite, actual PostgREST,
+  hosted CPU, installed report or historical coverage acceptance is claimed.
+
+Resume in this order:
+
+1. Independent foundation review; do not reuse old91e4 CI for the new source.
+2. Finish original-byte/native source identity and actual cloud stock-effect
+   binding; use existing durable lane/receipts. Keep ordinary stock background
+   uploads working and all history pending until a valid matching acknowledgement.
+3. Capture every actual stock writer including refunds/reversals, receiving and
+   correction, each transfer leg, sponsorship/missed-bill modes, import/count,
+   absolute edit/creation/merge. Add verified creation/zero-before-birth evidence;
+   do not silently omit post-opening products. No arbitrary history upsert.
+4. Complete exact cloud/local shape checks, bounded byte responses and optional
+   registry/engine capability integration. Missing all tables preserves old core
+   business sync; unknown/partial history is explicitly unavailable.
+5. Select a proven eligible opening at/before the requested time; newer openings
+   must not erase previously supported dates. Preserve source revision/pagination,
+   late<=opening invalidation, retention, terminal watermarks, pending and clock
+   uncertainty. No real opening/terminal-cohort coverage has been proved yet.
+6. Wire genuine Main POS session/branch/profile/epoch reads/capture and test actual
+   IPC, online/offline/restart/long-outage sync, then Inventory dialog/export.
+7. Run combined full regression, independent review and beta/device acceptance.
+   Present exact cloud/local files/hashes/targets before any application. Only then
+   consider beta integration and separately approved production promotion.

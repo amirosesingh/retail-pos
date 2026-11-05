@@ -49,6 +49,7 @@ const handlers: Record<string, (data: unknown) => Promise<unknown>> = Object.fre
   "store-groups.loadStoreGroupsForCaller": async (data) => (await import("./store-groups.functions")).loadStoreGroupsForCaller({ data: data as never }),
   "store-groups.saveStoreGroupForCaller": async (data) => (await import("./store-groups.functions")).saveStoreGroupForCaller({ data: data as never }),
   "stock-ref.reserveCloudStockReference": async (data) => (await import("./stock-ref.functions")).reserveCloudStockReference({ data: data as never }),
+  "stock-history.page": async (data) => (await import("./stock-history.functions")).loadStockHistoryPageDirect({ data: data as never }),
   "sku.reserveSkuLease": async (data) => (await import("./sku.functions")).reserveSkuLease({ data: data as never }),
   "shift-summary.publishCompleteShiftSummary": async (data) => (await import("./shift-summary.functions")).publishCompleteShiftSummary({ data: data as never }),
   "shift-alert-settings.saveGlobalShiftAlerts": async (data) => (await import("./shift-alert-settings.functions")).saveGlobalShiftAlerts({ data: data as never }),

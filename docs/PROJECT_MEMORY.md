@@ -1297,3 +1297,24 @@ release or authorize database execution. Main promotion can trigger automatic
 platform publication, so require the exact final scope, acceptance evidence and
 owner approval before that promotion. Unfinished recovery and stock-report work
 remain in their separate draft PRs; do not imply they are released.
+
+## STOCK401 — retained unfinished stock-history foundation, 5 November
+
+Owner approved actual goods-arrival time for receiving, default original
+Main/save stock-operation instant unless authorized explicit arrival is supplied;
+invoice date remains separate. Do not relabel old invoice entry dates as proven
+physical time. Effective-time reporting may restate with late offline evidence.
+
+PR401 now retains an optional storage/capture/read prototype and exact quantity
+kernel, with81 focused tests and20 actual disposable LocalDB groups passing,
+including15 isolated PostgreSQL cases. Its capture hooks default to null; Main/IPC,
+complete writers, validated cloud upload, registry integration, opening activation
+and UI/export remain unfinished. Existing receiving defers local stock effect to
+cloud; pending history must retain the original physical intent without applying
+stock again. Terminal-only ordinary sync does not authenticate a claimed original
+staff author/backdated approval; unknown provenance remains incomplete.
+
+Latest urgent release decision keeps this work DRAFT/unmerged and excludes local
+prepared031 from the urgent SQL72 bundle025–030. No stock schema/data/activation
+or real coverage has been applied. Do not claim a deployed report, full-suite or
+device acceptance. See the historical-stock-report plan for exact remaining work.

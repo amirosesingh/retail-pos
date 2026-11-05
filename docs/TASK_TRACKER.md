@@ -5364,3 +5364,42 @@ passed after granting normal temporary-file access. Draft betaPR403 is open
 and labelled beta. Exact-head CI, beta integration and installed acceptance
 remain pending. The separate session-handover race is not fixed by this patch.
 Membership remains ON HOLD.
+
+## STOCK401 — draft foundation checkpoint, 5 November
+
+Owner approved the historical stock implementation/preparation scope and actual
+goods-arrival meaning (default original Main/save instant; authorized explicit
+arrival separate from invoice date). Preserve offline checkout, all existing
+stock arithmetic, permissions and current device configuration. Do not infer
+past balances from current product quantities or arrival/row-version clocks.
+
+Latest owner priority defers this unfinished draft behind urgent completed-fix
+production preparation. PR401 remains DRAFT/unmerged; prepared031 is excluded
+from the urgent local SQL72 bundle025–030. No live stock DDL/data/activation,
+production promotion or publication has run or is authorized here.
+
+Completed preparation: four-table cloud/local contract; exact native physical
+shape/object guards; stable immutable JSON/source-leg protocol; optional atomic
+capture hooks (null by default, no Main wiring); own-branch read prototype,
+current-account/terminal/export admission and exact source CLOSED-shift cutoff;
+typed client/server contract. Receiving prototype freezes a pending physical
+intent where the existing local path defers actual stock application to cloud.
+It does not change that stock arithmetic or claim accepted history prematurely.
+
+Verified:81 focused tests across five suites, including15 actual isolated
+PostgreSQL admission/read cases;20 actual uniquely owned disposable LocalDB groups;
+TypeScript/scoped lint/diff checks. No full regression, real PostgREST/hosted CPU,
+Main/installed workflow, complete historical data or report-UI acceptance claim.
+
+PENDING: actual effect-bound cloud upload/acknowledgement and native source identity;
+every writer/creation/merge path; optional registry/engine integration in the one
+durable lane; exact original actor/backdate authority (terminal-only sync is not
+fresh staff proof); eligible historical openings/cohort watermarks, byte bounds
+and safe new-product coverage; Main/IPC; Inventory UI/export; independent/full/
+beta/device acceptance and exact-target database approval. Unknown provenance is
+incomplete, not an invented provisional quantity. No baseline is established.
+
+Resume details and file scope are in
+`docs/database/historical-stock-report-plan.md`, STOCK401 foundation checkpoint.
+Do not apply the draft cloud migration or prepared031 before final exact-file
+review. Recovery, Membership and urgent production scopes remain separate.

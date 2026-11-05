@@ -69,6 +69,14 @@ export function stockInstant(value: string): bigint {
   }
   return BigInt(milliseconds) * 10_000n - offset * 600_000_000n + BigInt((parts[7] ?? "").padEnd(7, "0"));
 }
+export function canonicalStockInstant(value:string):string{
+  const ticks=stockInstant(value);
+  let seconds=ticks/10_000_000n,fraction=ticks%10_000_000n;
+  if(fraction<0){seconds--;fraction+=10_000_000n;}
+  const date=new Date(Number(seconds*1000n));
+  if(!Number.isFinite(date.getTime())||date.toISOString().slice(0,19).length!==19)fail();
+  return `${date.toISOString().slice(0,19)}.${String(fraction).padStart(7,"0")}Z`;
+}
 
 /** A shift-close shortcut must preserve the actual absolute saved closing instant. */
 export function stockCutoffAtShiftClose(shift: { storeId: string; status: string; closedAt: string | null }, locationId: string): string {

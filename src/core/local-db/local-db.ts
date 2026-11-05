@@ -1,4 +1,5 @@
 import { effectiveDatabaseMode } from "./db-mode";
+import type {StockHistoryRequest,StockHistoryPage} from '@/lib/stock-history-report';
 import { isManagementDevice } from "@/lib/management-device";
 /**
  * Bridge to the Windows desktop shell's local Microsoft SQL Server database.
@@ -664,6 +665,7 @@ export type PosBridge = {
   managementReport?: (options: { kind: "sales" | "totals" | "shifts"; storeIds: string[]; from: string; to: string; zone: string; cursor?: { ts: string; id: string } | null; limit?: number; includeProfit?: boolean; shiftId?: string }) => Promise<{
     ok: boolean; complete?: boolean; source?: string; code?: string; error?: string; rows?: LocalSaleRow[]; storeTotals?: LocalSaleRow[]; hasMore?: boolean; cursor?: { ts: string; id: string } | null;
   }>;
+  stockHistory?: (request:StockHistoryRequest)=>Promise<{ok:boolean;page?:StockHistoryPage;code?:string;error?:string}>;
   onReadProgress?: (cb: (progress: { table: string; completed: number }) => void) => () => void;
   onBusinessChanged?: (
     cb: (change: {
