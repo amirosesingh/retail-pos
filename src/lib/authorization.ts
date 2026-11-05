@@ -1,3 +1,4 @@
+import { canAuthorize as sharedCanAuthorize, approvalAuthority as sharedApprovalAuthority, effectiveApprovalAuthority as sharedEffectiveApprovalAuthority, canAuthorizeAmount as sharedCanAuthorizeAmount, ticketDiscounts as sharedTicketDiscounts, ticketDiscountApprovalPercent as sharedTicketDiscountApprovalPercent } from "../../electron/shared/approval-authority.mjs";
 /**
  * The authorisation framework, in one shared vocabulary.
  *
@@ -484,19 +485,7 @@ export const authorizationRole = (role: string | null | undefined) => {
 };
 
 /** Can this person decide requests for the action, or authorise it by PIN? */
-export function canAuthorize(
-  rule: AuthorizationRule | undefined,
-  who: { userId?: string | null; role?: string | null },
-): boolean {
-  if (!rule) return false;
-  const id = (who.userId ?? "").toLowerCase();
-  if (id && userIsExcluded(rule.allowedUserIds, id)) return false;
-  const role = authorizationRole(who.role);
-  if (role && rule.allowedRoles.map(authorizationRole).includes(role)) return true;
-  return (
-    !!id && includedAuthorizationUserIds(rule.allowedUserIds).some((u) => u.toLowerCase() === id)
-  );
-}
+export const canAuthorize = sharedCanAuthorize;
 
 /** Authentication never implies authority: request and decision rights are separate. */
 export function canRequestApproval(
@@ -515,29 +504,10 @@ export function canRequestApproval(
 }
 
 /** A configured personal limit wins over the role limit; no configured limit is unlimited. */
-function authorityValue(
-  map: Record<string, number>,
-  who: { userId?: string | null; role?: string | null },
-) {
-  const userKey = `user:${(who.userId ?? "").toLowerCase()}`;
-  if (map[userKey] != null) return map[userKey];
-  const exactKey = `role:${(who.role ?? "").trim().toLowerCase()}`;
-  if (map[exactKey] != null) return map[exactKey];
-  const role = authorizationRole(who.role);
-  const limits = Object.entries(map).filter(([key]) => key.startsWith("role:") &&
-    authorizationRole(key.slice(5)) === role).map(([, value]) => value);
-  // Preserve an explicit saved role limit; only fill a missing alias.
-  return limits.length ? Math.min(...limits) : null;
-}
+
 
 /** Legacy absolute authority. Kept unchanged for already-deployed rules. */
-export function approvalAuthority(
-  rule: AuthorizationRule | undefined,
-  who: { userId?: string | null; role?: string | null },
-): number | null {
-  if (!rule) return null;
-  return authorityValue(rule.authorityLimits, who);
-}
+export const approvalAuthority = sharedApprovalAuthority;
 
 export type EffectiveAuthority = {
   mode: "unlimited" | "legacy_absolute" | "relative";
@@ -548,49 +518,7 @@ export type EffectiveAuthority = {
 };
 
 /** New relative values take precedence; legacy absolute values retain their old meaning. */
-export function effectiveApprovalAuthority(
-  rule: AuthorizationRule | undefined,
-  who: { userId?: string | null; role?: string | null },
-  directLimit?: number | null,
-): EffectiveAuthority {
-  if (!rule)
-    return {
-      mode: "unlimited",
-      directLimit: null,
-      extraAllowance: null,
-      absoluteCeiling: null,
-      effectiveMaximum: null,
-    };
-  const extra = authorityValue(rule.extraAuthority, who);
-  const ceiling = authorityValue(rule.absoluteCeilings, who);
-  if (extra !== null) {
-    const direct = Number.isFinite(directLimit) ? Number(directLimit) : 0;
-    const combined = direct + extra;
-    return {
-      mode: "relative",
-      directLimit: direct,
-      extraAllowance: extra,
-      absoluteCeiling: ceiling,
-      effectiveMaximum: ceiling === null ? combined : Math.min(combined, ceiling),
-    };
-  }
-  const legacy = approvalAuthority(rule, who);
-  if (legacy !== null)
-    return {
-      mode: "legacy_absolute",
-      directLimit: directLimit ?? null,
-      extraAllowance: null,
-      absoluteCeiling: legacy,
-      effectiveMaximum: legacy,
-    };
-  return {
-    mode: "unlimited",
-    directLimit: directLimit ?? null,
-    extraAllowance: null,
-    absoluteCeiling: ceiling,
-    effectiveMaximum: ceiling,
-  };
-}
+export const effectiveApprovalAuthority = sharedEffectiveApprovalAuthority;
 
 /** These existing workflows authorize an actual price, value or quantity. */
 export function requiresAuthorizationAmount(action: string): boolean {
@@ -607,16 +535,7 @@ function amountWithinAuthority(action: string, amount: number | null | undefined
   return Number.isFinite(amount) && amount >= 0 && (limit === null || amount <= limit);
 }
 
-export function canAuthorizeAmount(
-  rule: AuthorizationRule | undefined,
-  who: { userId?: string | null; role?: string | null },
-  amount: number | null | undefined,
-  directLimit?: number | null,
-): boolean {
-  if (!canAuthorize(rule, who)) return false;
-  const limit = effectiveApprovalAuthority(rule, who, directLimit).effectiveMaximum;
-  return amountWithinAuthority(rule?.actionKey ?? "", amount, limit);
-}
+export const canAuthorizeAmount = sharedCanAuthorizeAmount;
 
 /**
  * Administrators who are configured as valid approvers do not approve their
@@ -681,20 +600,7 @@ export type TicketDiscount = {
 };
 
 /** Keep the existing flat approval payload contract, including old single-item requests. */
-export function ticketDiscounts(payload: AuthPayload, field = "requested_discounts"): TicketDiscount[] {
-  if (typeof payload[field] !== "string") return [];
-  try {
-    const values: unknown = JSON.parse(payload[field]);
-    if (!Array.isArray(values) || values.length > 201) return [];
-    const valid = values.every((entry) => entry && Number.isInteger(entry.index) && entry.index >= -1 &&
-      typeof entry.productId === "string" && typeof entry.name === "string" &&
-      [entry.qty,entry.price,entry.value,entry.base].every(Number.isFinite) &&
-      entry.value >= 0 && entry.base >= 0 && ["percent","amount"].includes(entry.type) &&
-      entry.value <= (entry.type === "percent" ? 100 : entry.base) &&
-      typeof entry.requiresApproval === "boolean");
-    return valid && new Set(values.map(entry => entry.index)).size === values.length ? values : [];
-  } catch { return []; }
-}
+export const ticketDiscounts = sharedTicketDiscounts;
 
 export function discountApprovalPercent(entry: TicketDiscount): number {
   return entry.type === "percent" ? entry.value : entry.base > 0 ? entry.value / entry.base * 100 : 0;
@@ -707,22 +613,7 @@ export function discountNeedsApproval(entry: TicketDiscount, percentLimit: numbe
 
 /** Bill discounts apply after item discounts. Check the effective rate on each
  * item as well as the bill itself, so a discounted item cannot hide in a larger bill. */
-export function ticketDiscountApprovalPercent(entries: TicketDiscount[], requestedEntries = entries): number {
-  const bill = entries.find(entry => entry.index === -1);
-  const itemAmount = (entry: TicketDiscount) =>
-    (entry.type === "percent" ? entry.base * entry.value / 100 : entry.value) * Math.abs(entry.qty);
-  // Reducing an item discount increases the balance on which a bill amount is
-  // applied. Use that new balance when checking the approver's authority.
-  const restoredBase = requestedEntries.filter(entry => entry.index >= 0).reduce((sum, entry) => {
-    const approved = entries.find(candidate => candidate.index === entry.index);
-    return sum + itemAmount(entry) - (approved ? itemAmount(approved) : 0);
-  }, 0);
-  const billPercent = bill ? discountApprovalPercent({ ...bill, base: Math.max(0, bill.base + restoredBase) }) : 0;
-  return Math.max(0, billPercent, ...entries.filter(entry => entry.index >= 0).map(entry => {
-    const itemPercent = discountApprovalPercent(entry);
-    return itemPercent + (100 - itemPercent) * billPercent / 100;
-  }));
-}
+export const ticketDiscountApprovalPercent = sharedTicketDiscountApprovalPercent;
 
 export function markTicketDiscountApprovals(entries: TicketDiscount[], percentLimit: number, amountLimit: number): TicketDiscount[] {
   const combinedOverLimit = ticketDiscountApprovalPercent(entries) > percentLimit + 1e-9;

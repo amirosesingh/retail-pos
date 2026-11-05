@@ -116,6 +116,23 @@ const shiftFinancialRuntime = new (require('./db/shift-financial-runtime.cjs').S
   legacy:{aggregate:aggregateRepository,receipts:receiptRepository,journal:shiftSyncJournal,push:legacyPushWorker},
 });
 const authorizationRulesRepository = new AuthorizationRulesRepository(databaseManager);
+const { OfflineApprovalService, OfflineApprovalStore } = require("./offline-approval-service.cjs");
+const offlineApprovalService = new OfflineApprovalService({
+  captureScope: () => {
+    const identity = adminSession.identity(), terminal = terminalStore.read();
+    if (!adminSession.hasPosAuthority() || !adminSession.hasPermission("can_process_sale") || !identity?.authorId || isManagementDevice() || !databaseManager.pool || !databaseService.snapshot().tradingReady || !terminal?.tokenId || !localBranchId())
+      throw Object.assign(new Error("Sign in on the registered branch terminal before approving a bill."), { code: "EPRIVILEGE" });
+    adminSession.touch();
+    const pool = databaseManager.pool, epoch = adminSession.epoch();
+    const stamp = () => JSON.stringify([adminSession.identity(), adminSession.epoch(), terminalStore.read(), databaseManager.profile, authorizationServerUrl(), cloudCredentials.read()?.url]);
+    const expected = stamp();
+    const assertCurrent = () => { if (databaseManager.pool !== pool || stamp() !== expected) throw Object.assign(new Error("The signed-in operator or terminal changed. Request approval again."), { code: "EAPPROVAL_CONTEXT" }); };
+    return { branchId: localBranchId(), terminalId: recordId(terminal.tokenId), requester: identity.canonicalSubject ?? identity.subject, requesterId: recordId(identity.authorId), epoch, assertCurrent };
+  },
+  verify: (username, pin, scope) => verifySyncedApprovalPin(databaseManager.pool, username, pin, scope.branchId,
+    { verifyTotp: approvalTokenVerifier.verify, identifyTotp: approvalTokenVerifier.identify, prepareTotp: approvalTokenVerifier.prepare }),
+  store: new OfflineApprovalStore(databaseManager, operationsRepository),
+});
 const legacyRecoveryAuthority = new (require("./legacy-shift-recovery-authority.cjs").LegacyShiftRecoveryAuthority)({
   keys:shiftAuthorKeys,session:adminSession,connectionManager:databaseManager,
   terminal:()=>terminalStore.read(),project:()=>cloudCredentials.read({strict:true})?.url,
@@ -2289,6 +2306,20 @@ function registerIpc() {
       return {ok:false,reason:"unavailable",error:String(error?.message??error)};
     }
   });
+  ipcMain.handle("approval:authorize-offline-discount", require("./offline-approval-service.cjs").createOfflineApprovalHandler({
+    isPosSender: event => event.sender === mainWindow?.webContents && event.senderFrame === event.sender.mainFrame,
+    authorize: value => guard.guarded(async () => {
+    try {
+      const result = await closeWriteBarrier.run(() => offlineApprovalService.authorize(value));
+      scheduleLocalChanges([{ table: "authorization_log" }]);
+      return result;
+    } catch (error) {
+      recordFault("approval.offline-save", error);
+      const allowed = new Set(["EAPPROVAL", "EAPPROVAL_POLICY", "EAPPROVAL_BUSY", "EAPPROVAL_CONTEXT", "EIDEMPOTENCY", "EPRIVILEGE", "SYNC_BRANCH_FORBIDDEN"]);
+      return { ok: false, code: allowed.has(error?.code) ? error.code : "EAPPROVAL_SAVE", error: allowed.has(error?.code) ? error.message : "The approval could not be saved locally. Its bill remains unpaid." };
+    }
+    }),
+  }));
   ipcMain.handle("auth:cashier-login", (_e, value) => guard.guarded(async () => {
     const current=captureSessionAdoption();
     const input = guard.options(value, { name: "cashier sign in", max: 2 });
