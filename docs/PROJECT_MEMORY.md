@@ -1381,3 +1381,9 @@ release or authorize database execution. Main promotion can trigger automatic
 platform publication, so require the exact final scope, acceptance evidence and
 owner approval before that promotion. Unfinished recovery and stock-report work
 remain in their separate draft PRs; do not imply they are released.
+## CHECKOUT74 — web exchange payment preparation, 5 November
+
+The existing shared refund UPDATE trigger cannot reference another table's NEW
+or OLD fields inside a combined AND condition. Isolate each field expression in
+its own table-specific IF block, preserving refund authorization and both trusted
+exits. Prepare/test only; the exact live project/file needs separate approval.

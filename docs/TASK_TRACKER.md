@@ -5734,3 +5734,14 @@ passed after granting normal temporary-file access. Draft betaPR403 is open
 and labelled beta. Exact-head CI, beta integration and installed acceptance
 remain pending. The separate session-handover race is not fixed by this patch.
 Membership remains ON HOLD.
+## CHECKOUT74 — shared refund trigger record-field isolation, 5 November
+
+- Owner's urgent web-payment failure is confirmed by live metadata/logs: SQLSTATE
+  42703 comes from guard_refund_fields while pos_sale_commit links an exchange.
+  sales correctly has is_refunded, not sale_items.refunded_qty. A combined AND
+  expression prepares the wrong record field before its table-name predicate.
+- Approved preparation is limited to nested table-specific IF blocks, unchanged
+  refund protections, a guarded additive migration, canonical source and isolated
+  checkout/refund regressions. Live application requires exact-project approval.
+- No columns, grants, triggers, business rows or operator settings may be changed.
+  Membership and unfinished stock-report work remain excluded.
