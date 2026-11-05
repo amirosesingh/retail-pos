@@ -1,4 +1,7 @@
-import { companyStoreScope } from "@/lib/company-store-scope";
+import { useConfirmedPresentation } from "@/lib/use-confirmed-presentation";
+import { dashboardPageStores } from "@/lib/dashboard-scope";
+import { ShopComparisonCharts } from "@/platforms/web/components/pos/ShopComparisonCharts";
+import { comparisonShopSeries } from "@/lib/shop-comparison";
 import { HomeShortcuts } from "@/platforms/web/components/pos/HomeShortcuts";
 import { FinancialBreakdown, GrossProfitInfo } from "@/platforms/web/components/pos/FinancialInfo";
 import { SummaryCardRail } from "@/platforms/web/components/pos/SummaryCardRail";
@@ -39,10 +42,8 @@ import {
   shopSlices,
   topCategories,
   topItems,
-  trendSeries,
   type ItemDayRow,
 } from "@/lib/analytics-board";
-import { AnalyticsCardRail } from "@/platforms/web/components/pos/AnalyticsCardRail";
 import { canonicalBranchId } from "@/lib/branch-id";
 
 export const Route = createFileRoute("/analytics")({
@@ -74,10 +75,10 @@ const hasMoney = (value: number) => Number.isFinite(value) && Math.abs(value) >=
 function LiveBoard() {
   const { allStores: directoryStores, currentStore } = usePos();
   const { can, isAdmin, user, terminalStoreId, canSwitchStores } = useAuth();
-  const stores = useMemo(() => companyStoreScope(directoryStores, terminalStoreId || user?.storeId || currentStore.id,
-    !canSwitchStores || !!terminalStoreId || !!user?.storeId),
+  const stores = useMemo(() => dashboardPageStores(directoryStores, currentStore.id, terminalStoreId, user?.storeId, canSwitchStores, "company"),
   [directoryStores, terminalStoreId, user?.storeId, currentStore.id, canSwitchStores]);
   const allStores = stores;
+  const shopColors = useMemo(() => new Map(comparisonShopSeries(allStores).map(shop => [shop.id, shop.color])), [allStores]);
   const storeIds = useMemo(() => stores.map(store => store.id), [stores]);
   const allowed = isAdmin || can("can_view_sales_reports");
   const canExport = can("can_export_reports");
@@ -163,17 +164,6 @@ function LiveBoard() {
         : [],
     [itemRows, selectedCategory, topBy],
   );
-  const trend = useMemo(
-    () =>
-      data
-        ? trendSeries(
-            data.storeDays.filter((r) => !filter || filter.has(r.store_id ?? "")),
-            grain,
-          )
-        : [],
-    [data, filter, grain],
-  );
-
   const totals = useMemo(() => {
     const revenue = shops.reduce((a, s) => a + s.revenue, 0);
     const cost = shops.reduce((a, s) => a + s.cost, 0);
@@ -225,20 +215,7 @@ function LiveBoard() {
       ]),
     ]);
 
-  if (!allowed) {
-    return (
-      <AppShell>
-        <div className="p-6">
-          <p className="text-sm text-muted-foreground">
-            You do not have permission to view sales reporting.
-          </p>
-        </div>
-      </AppShell>
-    );
-  }
-
-  const summaryReady = !!data && !query.isLoading && !query.isError;
-  const empty = summaryReady && shops.length === 0;
+  const empty = !!data && shops.length === 0;
   const giveawayInfo = <FinancialBreakdown rows={[
     ["Item discounts", money(totals.itemDiscount)],
     ["Bill discounts", money(totals.billDiscount)],
@@ -259,6 +236,20 @@ function LiveBoard() {
     hasMoney(totals.perMonth) && <StatCard key="month" label="Avg / month" value={money(totals.perMonth)} hint="Across the range" info={<FinancialBreakdown rows={[["Net revenue", money(totals.revenue)], ["Trading months", String(totals.months)], ["Average per month", money(totals.perMonth)]]}><p>Net revenue ÷ trading months represented in this report.</p></FinancialBreakdown>} />,
     !hasMoney(totals.revenue) && totals.bills !== 0 && <StatCard key="bills" label="Bills" value={String(totals.bills)} hint="Completed bills" />,
   ].filter(Boolean);
+  const confirmedCards = useConfirmedPresentation(allowed ? JSON.stringify([pageDataScope(user), storeIds, from, to, effectiveTimeZone(), filter ? [...filter].sort() : null]) : null,
+    summaryCards, !!data && !query.isLoading && !query.isError);
+
+  if (!allowed) {
+    return (
+      <AppShell>
+        <div className="p-6">
+          <p className="text-sm text-muted-foreground">
+            You do not have permission to view sales reporting.
+          </p>
+        </div>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell>
@@ -272,7 +263,7 @@ function LiveBoard() {
             <p className="text-sm text-muted-foreground page-description">
               {data?.localOnly
                 ? "This terminal’s branch — reports calculated from local SQL Server. Group-wide reports are available on the web."
-                : "Selected company’s shops combined — categories, item drilldown and revenue share. Updates when trading data changes."}
+                : "All authorized company shops across clusters — categories, item drilldown and revenue share. Updates when trading data changes."}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
@@ -356,8 +347,9 @@ function LiveBoard() {
           <AnalyticsErrorPanel error={query.error} onRetry={() => void query.refetch()} />
         )}
 
-        {summaryReady && (summaryCards.length ? <SummaryCardRail label="Business totals">
-          {summaryCards}
+        {query.isError && confirmedCards && <p role="status" className="text-xs text-muted-foreground">Showing last confirmed summary; the refresh did not complete.</p>}
+        {confirmedCards && (confirmedCards.length ? <SummaryCardRail label="Business totals">
+          {confirmedCards}
         </SummaryCardRail> : !empty && <p role="status" className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">No financial totals to show for these shops and dates.</p>)}
 
         {query.isLoading && (
@@ -372,9 +364,9 @@ function LiveBoard() {
           </p>
         )}
 
-        {!empty && !query.isLoading && (
+        {data && !empty && (
           <>
-            <AnalyticsCardRail title="Business graphs">
+            <div aria-label="Business graphs" className="grid min-w-0 gap-4 xl:grid-cols-2">
               <section className="min-w-0 rounded-lg border border-border bg-card p-4">
                 <h2 className="mb-3 min-h-36 text-sm font-semibold">Revenue share by shop</h2>
                 <ResponsiveContainer width="100%" height={270}>
@@ -388,7 +380,7 @@ function LiveBoard() {
                       paddingAngle={2}
                     >
                       {shops.map((s) => (
-                        <Cell key={s.storeId} fill={branchChartColor(s.storeId)} />
+                        <Cell key={s.storeId} fill={shopColors.get(canonicalBranchId(s.storeId)) ?? branchChartColor(s.storeId)} />
                       ))}
                     </Pie>
                     <Tooltip formatter={(v) => money(Number(v ?? 0))} />
@@ -575,33 +567,11 @@ function LiveBoard() {
                   </Button>
                 </div>
               </div>
-              <ResponsiveContainer width="100%" height={270}>
-                <LineChart data={trend}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="label" fontSize={11} />
-                  <YAxis fontSize={11} />
-                  <Tooltip formatter={(v) => money(Number(v ?? 0))} />
-                  <Legend />
-                  <Line
-                    type="monotone"
-                    dataKey="revenue"
-                    name="Revenue"
-                    stroke={ANALYTICS_COLORS.revenue}
-                    strokeWidth={2}
-                    dot={false}
-                  />
-                  {showCostMargin && <Line
-                    type="monotone"
-                    dataKey="profit"
-                    name="Profit"
-                    stroke={ANALYTICS_COLORS.profit}
-                    strokeWidth={2}
-                    dot={false}
-                  />}
-                </LineChart>
-              </ResponsiveContainer>
+              <ShopComparisonCharts rows={data?.storeDays ?? []} directory={allStores}
+                selectedIds={filter ? [...filter] : storeIds} showProfit={showCostMargin} grain={grain}
+                scopeLabel={filter ? "Selected authorized shops" : "All authorized company shops"} />
             </section>
-            </AnalyticsCardRail>
+            </div>
             <div className="min-w-0">
               <section className="min-w-0 rounded-lg border border-border p-4 xl:col-span-7">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
