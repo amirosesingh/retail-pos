@@ -12,6 +12,7 @@ import { productClassification } from "./product-classification";
  */
 import type { Product } from "@/core/types/pos-types";
 import { normaliseCode, productCodes } from "@/lib/product-lookup";
+import { importSourceLine } from "./import-row-source";
 
 /** A row that passed every check and is ready to be saved. */
 export type ImportRow = {
@@ -191,34 +192,72 @@ const equalText = (a: string | undefined, b: string | undefined) =>
 const equalNumber = (a: number | undefined, b: number | null) =>
   b === null || Math.abs(Number(a ?? 0) - b) < 0.000001;
 
+function decimalIdentity(text: string): string | null {
+  if (text.length > 1024) return null;
+  const match = /^([+-]?)(?:(\d+)(?:\.(\d*))?|\.(\d+))(?:e([+-]?\d+))?$/i.exec(text);
+  if (!match) return null;
+  const fraction = match[3] ?? match[4] ?? "";
+  let digits = ((match[2] ?? "0") + fraction).replace(/^0+/, "");
+  if (!digits) return "0";
+  let exponent = BigInt(match[5] ?? "0") - BigInt(fraction.length);
+  const withoutTrailing = digits.replace(/0+$/, "");
+  exponent += BigInt(digits.length - withoutTrailing.length);
+  digits = withoutTrailing;
+  return `${match[1] === "-" ? "-" : ""}${digits}e${exponent}`;
+}
+
+/** Reject decimal text whose value would change on conversion to the product number contract. */
+function unchangedNumber(text: string): number | null {
+  const number = Number(text);
+  return Number.isFinite(number) && decimalIdentity(text) !== null && decimalIdentity(text) === decimalIdentity(String(number)) ? number : null;
+}
+
 /** Numbers arrive as "RM 12.50", "1,200" or blank; read what is really there. */
 export function readNumber(value: unknown): number | null {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  const raw = String(value ?? "").trim();
+  if (typeof value !== "string") return null;
+  const raw = value.trim();
   if (!raw) return null;
-  const numeric = raw.replace(/[\s\u00a0]/g, "");
-  if (/^[+-]?\d+(?:\.\d+)?e[+-]?\d+$/i.test(numeric)) {
-    const n = Number(numeric);
-    return Number.isFinite(n) ? n : null;
+  const accounting = /^\(.*\)$/.test(raw);
+  let numeric = accounting ? raw.slice(1, -1).trim() : raw;
+  const currency = "(?:RMB|RM|MYR|BND|USD|SGD|EUR|GBP|AUD|CAD|INR|JPY|CNY|PHP|[$€£¥₹₱])";
+  numeric = numeric.replace(new RegExp(`^${currency}\\s*`, "i"), "")
+    .replace(new RegExp(`\\s*${currency}$`, "i"), "").trim();
+  if (/[\s\u00a0\u202f]/.test(numeric)) {
+    if (!/^[+-]?\d{1,3}(?:[\s\u00a0\u202f]\d{3})+(?:[.,]\d+)?$/.test(numeric)) return null;
+    numeric = numeric.replace(/[\s\u00a0\u202f]/g, "");
   }
-  let cleaned = raw.replace(/[^0-9.,+-]/g, "");
+  if (accounting) {
+    if (/^[+-]/.test(numeric)) return null;
+    numeric = `-${numeric}`;
+  }
+  if (/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)e[+-]?\d+$/i.test(numeric)) return unchangedNumber(numeric);
+  let cleaned = numeric;
   if (cleaned.includes(",") && cleaned.includes(".")) {
-    cleaned = cleaned.lastIndexOf(",") > cleaned.lastIndexOf(".")
-      ? cleaned.replace(/\./g, "").replace(",", ".") : cleaned.replace(/,/g, "");
+    if (/^[+-]?\d{1,3}(?:\.\d{3})+,\d+$/.test(cleaned)) cleaned = cleaned.replace(/\./g, "").replace(",", ".");
+    else if (/^[+-]?\d{1,3}(?:,\d{3})+\.\d+$/.test(cleaned)) cleaned = cleaned.replace(/,/g, "");
+    else return null;
   } else if (cleaned.includes(",")) {
-    cleaned = /^[+-]?\d{1,3}(,\d{3})+$/.test(cleaned) ? cleaned.replace(/,/g, "") : cleaned.replace(",", ".");
+    if (/^[+-]?\d{1,3}(,\d{3})+$/.test(cleaned)) cleaned = cleaned.replace(/,/g, "");
+    else if (/^[+-]?(?:\d+,\d*|,\d+)$/.test(cleaned)) cleaned = cleaned.replace(",", ".");
+    else return null;
   }
-  if (/^\(.*\)$/.test(raw) && !cleaned.startsWith("-")) cleaned = `-${cleaned}`;
-  if (!cleaned || !/\d/.test(cleaned)) return null;
-  const n = Number(cleaned);
-  return Number.isFinite(n) ? n : null;
+  if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(cleaned)) return null;
+  return unchangedNumber(cleaned);
+}
+
+/** Invalid supplied values must remain invalid, never fall back to database/default amounts. */
+function importedNumber(value: unknown): number | null {
+  const blank = value == null || typeof value === "string" && value.trim() === "";
+  return blank ? null : readNumber(value) ?? Number.NaN;
 }
 
 /** One spreadsheet row, indexed by tidy header name. */
 function fieldReader(raw: Record<string, unknown>) {
   const map = new Map<string, unknown>();
   for (const [h, v] of Object.entries(raw)) map.set(headerKey(h), v);
-  return (name: string) => map.get(name);
+  return (...names: string[]) => names.map(name => map.get(name))
+    .find(value => value != null && !(typeof value === "string" && value.trim() === ""));
 }
 
 function validateReviewRow(row: ImportReviewRow): ImportReviewRow {
@@ -230,6 +269,7 @@ function validateReviewRow(row: ImportReviewRow): ImportReviewRow {
   if (row.taxRate !== null && (!Number.isFinite(row.taxRate) || row.taxRate < 0 || row.taxRate > 100)) missingFields.push("taxRate");
   if (!Number.isFinite(row.stock) || row.stock < 0 || (row.quantityRequired && row.stock <= 0))
     missingFields.push("stock");
+  if (!Number.isFinite(row.customPoints)) missingFields.push("customPoints");
 
   let status: ImportReviewStatus;
   if (row.issue || row.conflictFields.length) status = "conflict";
@@ -300,10 +340,10 @@ export function planImportReview(
   let blankRows = 0;
 
   records.forEach((raw, index) => {
-    const line = index + 2;
+    const line = importSourceLine(raw, index);
     const field = fieldReader(raw);
-    const barcode = textValue(field("barcode") ?? field("sku") ?? field("code"));
-    const importedName = textValue(field("name") ?? field("product") ?? field("description"));
+    const barcode = textValue(field("barcode", "sku", "code"));
+    const importedName = textValue(field("name", "product", "description"));
     if (!barcode && !importedName) {
       blankRows += 1;
       return;
@@ -311,14 +351,14 @@ export function planImportReview(
 
     const key = normaliseCode(barcode);
     const existing = key ? byCode.get(key) : undefined;
-    const importedPrice = readNumber(field("price") ?? field("selling_price") ?? field("retail"));
-    const importedCost = readNumber(field("cost") ?? field("cost_price") ?? field("unit_cost"));
+    const importedPrice = importedNumber(field("price", "selling_price", "retail"));
+    const importedCost = importedNumber(field("cost", "cost_price", "unit_cost"));
     const importedCategory = textValue(field("category"));
     const importedUnit = textValue(field("unit") ?? field("uom"));
-    const stock = readNumber(
-      field("stock_quantity") ?? field("quantity") ?? field("qty") ?? field("received"),
+    const stock = importedNumber(
+      field("stock_quantity", "quantity", "qty", "received"),
     );
-    const importedTaxRate = readNumber(field("tax_rate_percent") ?? field("tax_rate"));
+    const importedTaxRate = importedNumber(field("tax_rate_percent", "tax_rate"));
     const duplicateLine = key ? seen.get(key) : undefined;
     if (key && duplicateLine === undefined) seen.set(key, line);
 
@@ -344,7 +384,7 @@ export function planImportReview(
         category: productClassification(importedCategory || existing?.category),
         unit: importedUnit || existing?.unit || "",
         stock: Math.max(0, Math.round(stock ?? 0)),
-        customPoints: readNumber(field("custom_points")) ?? existing?.customPoints ?? 0,
+        customPoints: importedNumber(field("custom_points")) ?? existing?.customPoints ?? 0,
         taxRate: importedTaxRate ?? (existing ? existing.taxRate * 100 : null),
         existingProductId: existing?.id,
         existingProduct: existing,
@@ -406,9 +446,9 @@ export function planImport(records: Record<string, unknown>[], catalogue: Produc
   const seen = new Map<string, number>();
 
   records.forEach((raw, index) => {
-    const line = index + 2; // header is line 1
+    const line = importSourceLine(raw, index);
     const field = fieldReader(raw);
-    const barcode = String(field("barcode") ?? field("sku") ?? "").trim();
+    const barcode = String(field("barcode", "sku") ?? "").trim();
     const name = String(field("name") ?? "").trim();
 
     if (!barcode && !name) return; // a blank trailing line is not an error

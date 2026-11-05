@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 
 import * as XLSX from "xlsx";
+import { importWorksheetRows } from "@/lib/import-worksheet-rows";
 
 type ParseRequest = { name: string; buffer: ArrayBuffer } | { sheetName: string };
 
@@ -12,7 +13,7 @@ ctx.onmessage = (event: MessageEvent<ParseRequest>) => {
   try {
     ctx.postMessage({ type: "progress", percent: 10, label: "Reading the file…" });
     if ("buffer" in event.data) {
-      workbook = XLSX.read(event.data.buffer, { type: "array", dense: true, raw: true });
+      workbook = XLSX.read(event.data.buffer, { type: "array", dense: true, raw: true, cellNF: true });
       fileName = event.data.name;
       if (workbook.SheetNames.length > 1) {
         ctx.postMessage({ type: "sheets", names: workbook.SheetNames });
@@ -24,7 +25,7 @@ ctx.onmessage = (event: MessageEvent<ParseRequest>) => {
     if (!sheet) throw new Error("The workbook does not contain a worksheet");
 
     ctx.postMessage({ type: "progress", percent: 45, label: "Reading spreadsheet rows…" });
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
+    const rows = importWorksheetRows(sheet);
     const chunkSize = 5_000;
     for (let offset = 0; offset < rows.length; offset += chunkSize) {
       const end = Math.min(rows.length, offset + chunkSize);
