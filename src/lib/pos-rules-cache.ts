@@ -22,6 +22,9 @@ export type CachedRules = {
   revision: string;
   syncedAt: number;
   rules: PosRules;
+  /** Verified capability belongs to this exact terminal/branch/backend/project. */
+  cacheScope?: string;
+  shiftSharingAvailable?: boolean;
   /**
    * A change made on this till that the central database has not confirmed
    * yet. It stays in force locally until the confirmation comes back.
@@ -34,10 +37,25 @@ export type CachedRules = {
 
 type Stored = Omit<CachedRules, "rules"> & { rules: unknown };
 
+/** No credentials or URL paths are persisted in a cache identity. */
+export function rulesCacheScope(terminalId: string, branchId: string, backend: string, project: string): string {
+  if (!terminalId || !branchId || !backend || !project) return "";
+  const origin = (raw: string) => {
+    const url = new URL(raw);
+    if (url.username || url.password || url.search || url.hash ||
+        !["http:", "https:"].includes(url.protocol) ||
+        url.protocol === "http:" && !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) throw new Error("Invalid rules cache origin");
+    return url.origin;
+  };
+  try { return JSON.stringify([terminalId, branchId, origin(backend), origin(project)]); }
+  catch { return ""; }
+}
+
 /** The stored set, but only when it belongs to this terminal and branch. */
 export async function readCachedRules(
   terminalId: string,
   branchId: string,
+  cacheScope = "",
 ): Promise<CachedRules | null> {
   let stored: Stored | null;
   if (typeof window !== "undefined" && isWindowsShell()) {
@@ -58,12 +76,17 @@ export async function readCachedRules(
   if (!stored || typeof stored !== "object") return null;
   if ((stored.branchId ?? "") !== branchId) return null;
   if (stored.terminalId && terminalId && stored.terminalId !== terminalId) return null;
+  // A legacy unscoped entry cannot identify a configured backend/project.
+  if (cacheScope && stored.cacheScope !== cacheScope) return null;
+  if (!cacheScope && stored.cacheScope) return null;
   return {
     terminalId: stored.terminalId ?? "",
     branchId: stored.branchId ?? "",
     revision: stored.revision ?? "",
     syncedAt: Number(stored.syncedAt) || 0,
     rules: normalizeRules(stored.rules),
+    cacheScope: cacheScope || undefined,
+    shiftSharingAvailable: Boolean(cacheScope && stored.cacheScope === cacheScope && stored.shiftSharingAvailable === true),
     pending: stored.pending === true,
     rowVersion: Math.max(0, Number(stored.rowVersion) || 0),
     updatedAt: typeof stored.updatedAt === "string" ? stored.updatedAt : null,

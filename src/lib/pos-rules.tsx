@@ -20,7 +20,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getPosRules } from "./pos-rules.functions";
 import { getPosCallerAuth } from "./pos-caller-auth";
 import { subscribeSettingsRefresh } from "./settings-refresh";
-import { readCachedRules, writeCachedRules, type CachedRules } from "./pos-rules-cache";
+import { readCachedRules, rulesCacheScope, writeCachedRules, type CachedRules } from "./pos-rules-cache";
+import { supabaseConfig } from "./external-supabase-config";
 import { rulesEqual, pendingExpired } from "./pos-rules-pending";
 import { logRules } from "./pos-rules-log";
 import { terminalId } from "./activity-journal";
@@ -35,7 +36,7 @@ import {
   type RulesFailure as RulesFailureKind,
 } from "./pos-rules-failure";
 
-export const posRulesQueryKey = (storeId: string) => ["pos-rules", storeId.trim()] as const;
+export const posRulesQueryKey = (storeId: string, cacheScope = "") => ["pos-rules", storeId.trim(), cacheScope] as const;
 
 /** Why the live values are not in use, in words a supervisor can act on. */
 export type { RulesFailure as RulesFailureKind } from "./pos-rules-failure";
@@ -70,6 +71,7 @@ const STATUS_TEXT: Record<RulesStatus, string> = {
 };
 
 type Ctx = {
+  cacheScope: string;
   shiftSharingAvailable: boolean;
   rules: PosRules;
   loading: boolean;
@@ -150,6 +152,7 @@ const lastGood = new Map<
     rowVersion: number;
     updatedAt: string | null;
     updatedBy: string | null;
+    shiftSharingAvailable: boolean;
   }
 >();
 
@@ -175,6 +178,11 @@ async function fetchRules(auth: Record<string, string>, storeId: string): Promis
 }
 
 const retryDelay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function currentRulesCacheScope(terminal: string, branch: string): string {
+  try { return rulesCacheScope(terminal, branch, serverOrigin() || (typeof window === "undefined" ? "" : window.location.origin), supabaseConfig().url); }
+  catch { return ""; }
+}
 
 /** Transient transport failures get a short bounded retry before degrading. */
 async function fetchRulesResilient(auth: Record<string, string>, storeId: string): Promise<Answer> {
@@ -202,9 +210,11 @@ export function PosRulesProvider({
 }) {
   const queryClient = useQueryClient();
   const scope = (storeId ?? "").trim();
-  const key = useMemo(() => posRulesQueryKey(scope), [scope]);
   const device = useRef<string>("");
   if (!device.current) device.current = typeof window === "undefined" ? "server" : terminalId();
+  const cacheScope = currentRulesCacheScope(device.current, scope);
+  const memoryScope = JSON.stringify([device.current, scope, cacheScope]);
+  const key = useMemo(() => posRulesQueryKey(scope, cacheScope), [scope, cacheScope]);
 
   const query = useQuery<Snapshot>({
     queryKey: key,
@@ -222,10 +232,12 @@ export function PosRulesProvider({
 
       // The confirmed set for this branch: memory first, then the encrypted
       // device copy left by an earlier run.
-      let cached = lastGood.get(scope) ?? null;
-      if (!cached && scope) {
-        const stored: CachedRules | null = await readCachedRules(me, scope).catch(() => null);
-        if (stored) {
+      let cached = lastGood.get(memoryScope) ?? null;
+      if (scope) {
+        const stored: CachedRules | null = await readCachedRules(me, scope, cacheScope).catch(() => null);
+        // A local save updates the encrypted cache before the next refresh.
+        // Do not let an older in-memory confirmed entry hide that pending edit.
+        if (stored && (!cached || stored.pending === true && stored.syncedAt >= cached.at)) {
           cached = {
             rules: stored.rules,
             revision: stored.revision,
@@ -234,8 +246,9 @@ export function PosRulesProvider({
             rowVersion: stored.rowVersion ?? 0,
             updatedAt: stored.updatedAt ?? null,
             updatedBy: stored.updatedBy ?? null,
+            shiftSharingAvailable: Boolean(cacheScope && stored.shiftSharingAvailable === true),
           };
-          lastGood.set(scope, cached);
+          lastGood.set(memoryScope, cached);
         }
       }
 
@@ -279,6 +292,7 @@ export function PosRulesProvider({
         });
         return {
           rules: now.rules,
+          shiftSharingAvailable: now.shiftSharingAvailable,
           usingDefaults: false,
           degraded: true,
           notVerified: false,
@@ -307,6 +321,7 @@ export function PosRulesProvider({
         });
         return {
           rules: now.rules,
+          shiftSharingAvailable: now.shiftSharingAvailable,
           usingDefaults: false,
           degraded: false,
           notVerified: false,
@@ -330,6 +345,7 @@ export function PosRulesProvider({
       logRules("POS_RULES_SYNC_STARTED", { platform, terminal_id: me, branch_id: scope });
       try {
         const res = await fetchRulesResilient(auth as Record<string, string>, scope);
+        if (currentRulesCacheScope(me, scope) !== cacheScope) return unverified("NOT_VERIFIED", "config", "The database connection changed during the rules read.");
         const failure = (res.failure ?? "unknown") as RulesFailureKind;
         if (res.ok && res.identified !== false && res.backend === "database") {
           const at = typeof res.fetchedAt === "number" ? res.fetchedAt : Date.now();
@@ -352,8 +368,9 @@ export function PosRulesProvider({
                 rowVersion: Math.max(0, Number(res.rowVersion) || 0),
                 updatedAt: res.updatedAt ?? null,
                 updatedBy: res.updatedBy ?? null,
+                shiftSharingAvailable: Boolean(cacheScope && res.shiftSharingAvailable === true),
               };
-              lastGood.set(scope, cached);
+              lastGood.set(memoryScope, cached);
               await writeCachedRules({
                 terminalId: me,
                 branchId: scope,
@@ -364,6 +381,8 @@ export function PosRulesProvider({
                 rowVersion: cached.rowVersion,
                 updatedAt: cached.updatedAt,
                 updatedBy: cached.updatedBy,
+                cacheScope,
+                shiftSharingAvailable: cached.shiftSharingAvailable,
               });
             } else if (Math.max(0, Number(res.rowVersion) || 0) > cached.rowVersion) {
               // The branch moved on while this terminal was offline. The
@@ -377,7 +396,7 @@ export function PosRulesProvider({
                 category: "STALE_RULES",
               });
               cached = null;
-              lastGood.delete(scope);
+              lastGood.delete(memoryScope);
             } else if (pendingExpired(cached.at)) {
               // Too old to keep holding the branch to it.
               logRules("POS_RULES_PENDING_ABANDONED", {
@@ -386,22 +405,23 @@ export function PosRulesProvider({
                 branch_id: scope,
               });
               cached = null;
-              lastGood.delete(scope);
+              lastGood.delete(memoryScope);
             } else {
-              lastGood.set(scope, cached);
+              lastGood.set(memoryScope, cached);
               return pendingHeld("");
             }
           }
           // A late answer must never put an older rule set back in place.
           if (!cached || at >= cached.at) {
-            const changed = !cached || cached.revision !== revision;
-            lastGood.set(scope, {
+            const changed = !cached || cached.revision !== revision || cached.shiftSharingAvailable !== (res.shiftSharingAvailable === true);
+            lastGood.set(memoryScope, {
               rules,
               revision,
               at,
               rowVersion: Math.max(0, Number(res.rowVersion) || 0),
               updatedAt: res.updatedAt ?? null,
               updatedBy: res.updatedBy ?? null,
+              shiftSharingAvailable: Boolean(cacheScope && res.shiftSharingAvailable === true),
             });
             if (changed) {
               logRules("POS_RULES_REVISION_CHANGED", {
@@ -420,10 +440,12 @@ export function PosRulesProvider({
                 rowVersion: Math.max(0, Number(res.rowVersion) || 0),
                 updatedAt: res.updatedAt ?? null,
                 updatedBy: res.updatedBy ?? null,
+                cacheScope,
+                shiftSharingAvailable: Boolean(cacheScope && res.shiftSharingAvailable === true),
               });
             }
           }
-          const now = lastGood.get(scope)!;
+          const now = lastGood.get(memoryScope)!;
           logRules("POS_RULES_SYNC_SUCCESS", {
             platform,
             terminal_id: me,
@@ -437,7 +459,7 @@ export function PosRulesProvider({
             notVerified: false,
             status: "LIVE",
             source: "DATABASE",
-            shiftSharingAvailable: res.shiftSharingAvailable === true,
+            shiftSharingAvailable: now.shiftSharingAvailable,
             failure: "none",
             backendError: "",
             revision: now.revision,
@@ -461,6 +483,7 @@ export function PosRulesProvider({
         if (cached) return held(failure, detail);
         return unverified("NOT_VERIFIED", failure, detail);
       } catch (e) {
+        if (currentRulesCacheScope(me, scope) !== cacheScope) return unverified("NOT_VERIFIED", "config", "The database connection changed during the rules read.");
         const message = (e as Error).message;
         const failure = classifyRulesFailure(message);
         logRules("POS_RULES_LOAD_FAILED", {
@@ -496,6 +519,7 @@ export function PosRulesProvider({
     const failure = query.data?.failure ?? "none";
     const status: RulesStatus = query.data?.status ?? (query.isPending ? "SYNCING" : "SYNCING");
     return {
+      cacheScope,
       shiftSharingAvailable: query.data?.shiftSharingAvailable === true,
       rules: query.data?.rules ?? DEFAULT_POS_RULES,
       loading: query.isPending,
@@ -520,6 +544,7 @@ export function PosRulesProvider({
         await queryClient.refetchQueries({ queryKey: key });
       },
       confirmSaved: async (raw: unknown) => {
+        if (currentRulesCacheScope(device.current, scope) !== cacheScope) throw new Error("The database connection changed while rules were being saved.");
         const answer = (raw ?? {}) as Answer;
         const at = typeof answer.fetchedAt === "number" ? answer.fetchedAt : Date.now();
         const savedRules = normalizeRules(answer.rules);
@@ -530,8 +555,10 @@ export function PosRulesProvider({
           rowVersion: Math.max(0, Number(answer.rowVersion) || 0),
           updatedAt: answer.updatedAt ?? null,
           updatedBy: answer.updatedBy ?? null,
+          shiftSharingAvailable: Boolean(cacheScope && (answer.shiftSharingAvailable === true ||
+            answer.shiftSharingAvailable === undefined && lastGood.get(memoryScope)?.shiftSharingAvailable === true)),
         };
-        lastGood.set(scope, saved);
+        lastGood.set(memoryScope, saved);
         queryClient.setQueryData<Snapshot>(key, {
           rules: saved.rules,
           usingDefaults: false,
@@ -539,7 +566,7 @@ export function PosRulesProvider({
           notVerified: false,
           status: "LIVE",
           source: "DATABASE",
-          shiftSharingAvailable: answer.shiftSharingAvailable === true,
+          shiftSharingAvailable: saved.shiftSharingAvailable,
           failure: "none",
           backendError: "",
           revision: saved.revision,
@@ -561,6 +588,8 @@ export function PosRulesProvider({
           rowVersion: saved.rowVersion,
           updatedAt: saved.updatedAt,
           updatedBy: saved.updatedBy,
+          cacheScope,
+          shiftSharingAvailable: saved.shiftSharingAvailable,
         }).catch((error) =>
           logRules("POS_RULES_LOAD_FAILED", {
             platform: platformName(),
@@ -572,7 +601,7 @@ export function PosRulesProvider({
         );
       },
     };
-  }, [key, query.data, query.isPending, queryClient, scope]);
+  }, [key, query.data, query.isPending, queryClient, scope, cacheScope, memoryScope]);
 
   useEffect(() => {
     if (!value.usingDefaults && value.source !== 'UNAVAILABLE') publishShiftSharing(scope, value.rules.allow_branch_shift_sharing);
@@ -584,6 +613,7 @@ export function PosRulesProvider({
 export function usePosRules(): Ctx {
   return (
     useContext(RulesContext) ?? {
+      cacheScope: "",
       rules: DEFAULT_POS_RULES,
       loading: false,
       usingDefaults: false,

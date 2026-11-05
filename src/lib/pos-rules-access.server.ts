@@ -19,6 +19,7 @@ export async function resolveRulesAccess(input: {
   sessionToken?: string;
   cashierToken?: string;
   terminalToken?: string;
+  deviceBindingProof?: string;
   accessToken?: string;
   storeId?: string;
 }): Promise<RulesAccess> {

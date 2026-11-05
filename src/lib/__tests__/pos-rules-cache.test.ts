@@ -7,7 +7,7 @@ vi.mock("../device-secrets", () => ({
   clearDeviceSecret: (name: string) => void store.delete(name),
 }));
 
-import { readCachedRules, writeCachedRules, clearCachedRules } from "../pos-rules-cache";
+import { readCachedRules, rulesCacheScope, writeCachedRules, clearCachedRules } from "../pos-rules-cache";
 import { DEFAULT_POS_RULES } from "../pos-rules";
 
 const entry = {
@@ -43,5 +43,33 @@ describe("last confirmed rules on the device", () => {
 
   it("is empty on a fresh install", async () => {
     expect(await readCachedRules("T-1", "bandar")).toBeNull();
+  });
+
+  it("keeps verified sharing capability only for the exact terminal/branch/backend/project", async () => {
+    const cacheScope = rulesCacheScope("T-1", "bandar", "https://pos.test", "https://project.test");
+    await writeCachedRules({ ...entry, cacheScope, shiftSharingAvailable: true });
+    expect((await readCachedRules("T-1", "bandar", cacheScope))?.shiftSharingAvailable).toBe(true);
+    for (const changed of [
+      rulesCacheScope("T-1", "bandar", "https://beta.test", "https://project.test"),
+      rulesCacheScope("T-1", "bandar", "https://pos.test", "https://other.test"),
+    ]) expect(await readCachedRules("T-1", "bandar", changed)).toBeNull();
+    expect(await readCachedRules("T-1", "bandar")).toBeNull();
+  });
+
+  it("does not infer capability from old rule values or unscoped cache flags", async () => {
+    await writeCachedRules({ ...entry, shiftSharingAvailable: true });
+    expect((await readCachedRules("T-1", "bandar"))?.shiftSharingAvailable).toBe(false);
+    const scope = rulesCacheScope("T-1", "bandar", "https://pos.test", "https://project.test");
+    expect(await readCachedRules("T-1", "bandar", scope)).toBeNull();
+    await writeCachedRules({ ...entry, cacheScope: scope });
+    expect((await readCachedRules("T-1", "bandar", scope))?.shiftSharingAvailable).toBe(false);
+  });
+
+  it("does not establish an identity from malformed or secret-bearing connection URLs", () => {
+    for (const url of ["", "not-a-url", "https://user:pass@pos.test", "https://pos.test?key=private", "file:///profile", "http://remote.test"]) {
+      expect(rulesCacheScope("T-1", "bandar", url, "https://project.test")).toBe("");
+    }
+    expect(rulesCacheScope("T-1", "bandar", "https://POS.test/", "https://project.test/")).toBe(
+      rulesCacheScope("T-1", "bandar", "https://pos.test", "https://project.test"));
   });
 });

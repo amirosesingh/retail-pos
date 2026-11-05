@@ -5091,3 +5091,24 @@ Remaining: independent readback/security review, commit these execution facts
 and final CI/beta integration of PR394, deployed/installed acceptance and separate
 compatible-client/cohort activation review. ProductionPR354 remains draft;
 no production merge, installer publication or automaticstable-release approval.
+## POLICY-65 — preserve native rule proofs and verified edit baselines
+
+5 November owner requested agents complete the remaining fixes and prepare independent beta PRs, including unreadable Electron Operational policies. Baseline beta `5e7327d5`; branch `codex/native-policy-proof-beta`. Preparation/implementation and isolated tests are authorized; no live database/configuration changes or production promotion.
+
+Confirmed: public rules read/save validators discard `deviceBindingProof`; direct read does likewise and direct save drops terminal/session context. This can reject valid native reads or discard normal-terminal scope. The editor also permits changing safety defaults before a verified baseline exists. Preserve proof verification, role/branch denials, Membership hold, settings inheritance and verified offline/pending edits. Acceptance: HTTP/direct proof parity, allowed/denied branch tests, no mutation from unverified defaults, and relevant regression checks. Active implementation; verification/PR integration pending.
+
+Implemented proof propagation, an editor/callback verified-baseline guard, and
+connection-bound confirmed capability caching. A same-revision capability change
+still updates the cache; successful saves that omit capability retain only the
+already verified value in the same context. Both confirmed and pending offline
+rules retain the verified capability. An old unscoped cache or a changed
+terminal/branch/backend/project cannot enable it. No live schema, settings,
+queue/checkpoint or registration change was performed. Initial proof/editor
+implementation passed full Vitest 5,636/7 skipped and TypeScript/lint. The final
+cache extension and save-context checks have focused provider/cache/queue tests.
+Saving rechecks current branch, terminal, connection and permission after async
+credential reads and around local storage; context/auth/permission failures are
+never requeued as network failures. A newer same-context pending cache takes
+precedence over an older confirmed memory entry without requiring restart.
+Final full-suite and installed Electron acceptance remain pending. No publication
+or production promotion.
