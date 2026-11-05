@@ -12323,13 +12323,16 @@ BEGIN
   IF auth.uid() IS NULL THEN
     RETURN NEW; -- trusted server paths (service role) do their own checks
   END IF;
-  IF TG_TABLE_NAME = 'sale_items'
-     AND NEW.refunded_qty IS DISTINCT FROM OLD.refunded_qty THEN
-    RAISE EXCEPTION 'Refunded quantity can only be changed by processing a refund';
+  -- Prepare each record-field expression only for its own trigger table.
+  IF TG_TABLE_NAME = 'sale_items' THEN
+    IF NEW.refunded_qty IS DISTINCT FROM OLD.refunded_qty THEN
+      RAISE EXCEPTION 'Refunded quantity can only be changed by processing a refund';
+    END IF;
   END IF;
-  IF TG_TABLE_NAME = 'sales'
-     AND coalesce(NEW.is_refunded, false) IS DISTINCT FROM coalesce(OLD.is_refunded, false) THEN
-    RAISE EXCEPTION 'A bill can only be marked refunded by processing a refund';
+  IF TG_TABLE_NAME = 'sales' THEN
+    IF coalesce(NEW.is_refunded, false) IS DISTINCT FROM coalesce(OLD.is_refunded, false) THEN
+      RAISE EXCEPTION 'A bill can only be marked refunded by processing a refund';
+    END IF;
   END IF;
   RETURN NEW;
 END;
