@@ -11,7 +11,7 @@ import type { RelayCaller } from "@/core/api/pos-relay.server";
 
 export type RulesAccess =
   | { ok: true; branchId: string; caller: RelayCaller }
-  | { ok: false; status: number; error: string; code: "IDENTITY" | "FORBIDDEN" };
+  | { ok: false; status: number; error: string; code: "IDENTITY" | "FORBIDDEN" | "UNAVAILABLE" };
 
 const trim = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 
@@ -29,6 +29,9 @@ export async function resolveRulesAccess(input: {
     const { verifyRelayCaller } = await import("@/core/api/pos-relay.server");
     caller = await verifyRelayCaller(input);
   } catch (e) {
+    const { TerminalBindingUnavailableError } = await import("./terminal-binding.server");
+    if (e instanceof TerminalBindingUnavailableError)
+      return { ok: false, status: 503, error: "The terminal registration service could not be reached. Try again shortly; saved rules have not been replaced.", code: "UNAVAILABLE" };
     return { ok: false, status: 401, error: (e as Error).message, code: "IDENTITY" };
   }
 

@@ -99,8 +99,18 @@ describe("native rules transports retain proof and terminal authority", () => {
   });
   it("keeps activation failures from becoming rules writes", async () => {
     fixture.registryStatus = 503;
-    expect((await http(readRoute, native())).status).toBe(401);
+    for (const route of [readRoute, saveRoute]) {
+      const result = await http(route, saveData());
+      expect(result.status).toBe(503);
+      expect(await result.json()).toMatchObject({ ok: false, code: "UNAVAILABLE" });
+    }
     expect(fixture.load).not.toHaveBeenCalled(); expect(fixture.save).not.toHaveBeenCalled();
+  });
+  it("direct functions distinguish an actual typed registration outage from a credential denial", async () => {
+    fixture.registryStatus = 503;
+    expect(await getPosRules({ data: native() })).toMatchObject({ ok: false, code: "UNAVAILABLE", failure: "network", identified: false });
+    expect(await savePosRules({ data: saveData() })).toMatchObject({ ok: false, code: "UNAVAILABLE" });
+    expect(fixture.save).not.toHaveBeenCalled();
   });
   it("retains terminal-bound revocable-session compatibility without a raw proof", async () => {
     fixture.boundSession = true;

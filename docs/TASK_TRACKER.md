@@ -5125,6 +5125,14 @@ focused tests: 81 passed across seven files; scoped lint/diff checks passed.
 Final TypeScript/full-suite/CI and actual installed Electron acceptance remain
 pending. These source changes perform no live repair, reset or publication.
 
+The combined PR397 integration head4137b32e passed full Vitest5,727/7 skipped
+and TypeScript. A final confirmed status correction then preserves recognized
+typed terminal-registration unavailability as503/UNAVAILABLE, with a fixed public
+message and a network failure classification for direct reads. Actual identity
+denials remain401 and branch/permission denials403; an arbitrary error status
+cannot masquerade as this typed condition. No authorization bypass or new retry
+policy. That narrow correction requires the final focused/full/CI checks again.
+
 
 ## IMPORT65 — inventory workbook values and validation (5 November)
 

@@ -126,7 +126,7 @@ export const getPosRules = createServerFn({ method: "POST" })
         code: access.code,
         backend: base.source,
         backendError: base.error ?? "",
-        failure: access.code === "FORBIDDEN" ? ("permission" as const) : base.failure,
+        failure: access.code === "FORBIDDEN" ? ("permission" as const) : access.code === "UNAVAILABLE" ? ("network" as const) : base.failure,
         revision: base.revision,
         fetchedAt: base.fetchedAt,
         rowVersion: base.rowVersion,
