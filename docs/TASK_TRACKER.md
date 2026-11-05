@@ -5283,6 +5283,10 @@ passed; independent source review found no pagination blocker. Initial SQL
 fixture validation incorrectly required seven visible fractional digits: SQL
 style127 legitimately omits zero fractions and normalizes offsets to UTC. The
 corrected fixture proves exact SQL equality and preserved nonzero100ns precision.
-Full regression, draft beta PR/exact-head CI and installed acceptance remain
-pending. The separate session-handover race is not fixed by this patch.
+Final normal-temp full regression passed5775 tests/8 skipped/0 failed of5783
+(689 suites passed/1 skipped) on runtime head422daaf7. The initial restricted
+full run failed on sandbox SSR-cache ENOENT imports; the same frozen source
+passed after granting normal temporary-file access. Draft betaPR403 is open
+and labelled beta. Exact-head CI, beta integration and installed acceptance
+remain pending. The separate session-handover race is not fixed by this patch.
 Membership remains ON HOLD.

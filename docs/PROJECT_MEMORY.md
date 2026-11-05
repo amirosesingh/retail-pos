@@ -1223,5 +1223,8 @@ scoped lint and independent review passed. An opt-in wrapper separately passed
 both tests and all13 actual disposable SQL Server groups. SQL style127 may omit
 zero fractions/use UTC Z; exact SQL timestamp equality is the pagination proof,
 not a mandatory seven-digit display format. Public business dates still use the
-previous serialization. Full regression/CI/beta integration and installed-device
-acceptance remain separate; this is not a session-handover authorization fix.
+previous serialization. Final normal-temp full regression passed5775 tests with
+8 skipped/0 failed of5783 on runtime head422daaf7; an initial sandbox-cache import
+failure was rerun without source changes. Draft betaPR403 is open; exact-head CI,
+beta integration and installed-device acceptance remain separate. This is not a
+session-handover authorization fix.
