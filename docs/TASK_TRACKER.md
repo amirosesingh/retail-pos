@@ -15,6 +15,47 @@ FIN62 isolated SQL basis prototype: complete selected-branch/shift inputs and ex
 
 ## FIN62 — owner-approved shift financial/as-of validation correction
 
+## RECOVERY65 and companion stabilization — 5 November
+
+Approved: implement application-driven retained-shift recovery and isolated tests;
+use agents, preserve offline checkout, current permissions/branch restrictions,
+and all original/corrected closing histories. Owner rejected manual cloud copying.
+Worktree codex/retained-shift-recovery-beta starts origin/beta5e7327d5. Permanent
+AGENTS.md sync/database/import/report rules explicitly authorized for update.
+
+Read-only affected-PC evidence: DESKTOP-VIB2MIL/POS_Local GUID F4B03BDB-DE91-
+4582-B68E-186442172E95;29 parents/201 closing rows; CT49620 unchanged through
+export, min29490 above six upload checkpoints; no pending journal/intents/baselines
+or scoped orphans. Complete comparison:16 exact graphs;3 local CLOSED/cloud OPEN
+(2/3/4November);4 competing local/web chains;4 identical-child parent summary
+repairs;1 revision/update-clock difference;1 OPEN created_at precision difference.
+Those are classifications, not authority to overwrite or manufacture receipts.
+
+Active RECOVERY65: bounded exact classification/tests, durable recovery evidence,
+authorized legacy-operation recovery/accepted-correction preservation, resume
+and long-offline/restart/lost-ack/denied-permission cases. Full runtime recovery
+is NOT complete. New necessary schemas remain preparation-only and must be shown
+with exact target/change before application. No live changes or deployment here.
+
+Parallel POLICY66: native rules request schemas strip valid device proof and one
+save schema drops terminal/session context; preserve proofs and existing guards.
+Prevent editing unverified fallback defaults while retaining verified offline
+cache/pending-edit support. Worktree native-policy-proof-beta; tests and beta PR
+pending. This is not approval to change operator policy values.
+
+Parallel IMPORT67: formatted Excel numeric amounts/decimals and row/header mapping
+need reproducible fixes. Preserve original values/identifier text, expose errors
+at original rows/columns, handle missing cells without shifting and test large
+synthetic workbooks. Column N's header is not yet supplied; do not invent it.
+Worktree inventory-import-values-beta; implementation/tests and beta PR pending.
+
+Queued STOCK68: historical stock at selected date/time/actual shift close inside
+Inventory. Audit found item_activity_logs/stock_delta_applied are not proven
+complete (refund/absolute-stock paths, retention and effective-vs-recorded time).
+Need verified baseline/movement coverage and time/valuation decisions. No fake
+historical report or zero-data fallback. Core three fixes take priority; retain
+this unfinished task. Membership remains on hold.
+
 4 November: owner approved agents completing production checks and fixing authoritative shift-total/refund validation, preserving checkout/permissions. Exact local/cloud database changes must be shown before application; no live schema/data change is approved by preparation. Baseline beta68470185; isolated branch codex/shift-financial-validation-beta. Confirmed gap: graph/author validation proves internal consistency/actor, not expected tenders against authoritative sale inputs. Current mutable sale journal cannot reconstruct historical offline refund state. Do not compare old closing against current cloud totals or invent refund timestamps.
 
 Approved business decisions: validate ORIGINAL closing using financial inputs at its saved point; each later administrator recount/correction uses its own saved financial boundary. Preserve all prior audit/accepted receipts and latest accepted authorized correction. Booking deposit/payment-when-received attribution is a SEPARATE pending correction, not part of FIN62. Preserve current tender formula and original-shift refund attribution in this batch; do not silently implement a new cash-flow allocation rule.

@@ -54,6 +54,83 @@
   first. These rules apply equally to beta and production PRs and do not replace
   the separate explicit approval required for each production promotion.
 
+## Durable synchronization and long-offline integrity
+
+- Use one coordinated synchronization pipeline: transactional local outbox,
+  acknowledged event/aggregate uploads, incremental downloads and bounded,
+  resumable recovery snapshots. Reuse the existing engine and contracts rather
+  than introducing a competing sync system for each module. Different domain
+  operations may require different validators and atomic dependency groups.
+- Save a local business operation and its durable pending upload evidence in
+  the same transaction. Keep pending operations until verified server acceptance;
+  retries and lost acknowledgements must not duplicate sales, payments, stock
+  movements or closing actions. A network success alone is not acceptance.
+- Pending offline work must survive restart, slow connectivity and long offline
+  periods. Change Tracking expiry and history-retention policies must not erase,
+  acknowledge or overwrite unsynchronized work. Test expired-history recovery
+  separately from normal short-disconnect retries. Do not promise unlimited
+  offline operation without checking storage capacity and credential/policy rules.
+- Synchronize missing or actually changed facts. Avoid rewriting identical rows,
+  advancing versions unnecessarily or restarting completed downloads. Use bounded
+  pages and durable progress; only advance a checkpoint after its required data
+  and acknowledgement/proof have committed. Revalidate scope and pending changes
+  before trusting a saved cursor or recovery plan after a restart.
+- Versions and timestamps support concurrency checks; neither the highest version
+  nor newest device timestamp alone establishes authority. Preserve original shift
+  closings and authorized corrections from web or native terminals. Retained
+  legacy work with missing evidence needs explicit recovery provenance; never
+  fabricate an original author's signature, accepted receipt or cloud baseline.
+- Classify exact matches, missing operations, validated cloud evolution and true
+  conflicts before recovery writes. Keep both histories for competing closings
+  and require an authorized decision where no safe causal winner can be proved.
+  Never fix recovery by resetting registration/checkpoints, clearing pending work,
+  weakening branch/author checks or ad-hoc manual copying into production.
+  Separately approved, guarded maintenance remains subject to exact-target review.
+- Automatically retry transient failures with bounded requests and controlled
+  backoff, without overlapping identical work. Display actual upload/download,
+  retry, paused, review-required and failed states. Do not hide a failure, report
+  "up to date" with pending work, or repeatedly present a recoverable condition as
+  an unexplained error. Revoked permissions hold work for review, not silent loss.
+
+## Database calls, imports and historical evidence
+
+- Resolve database/backend configuration from the existing trusted operator or
+  hosting configuration. Preserve terminal identity, branch/warehouse/cluster
+  scope and current authorization on every affected online, local and offline
+  path. Do not fall back to another database or untrusted request identity.
+- Preserve timeout/network errors separately from authentication/permission
+  denials and business conflicts. Do not count connectivity failures as wrong PIN
+  attempts or substitute empty/default settings as successfully loaded data.
+  Block edits based on unverified safety defaults; preserve verified offline
+  cached/pending settings according to existing policy.
+- Spreadsheet imports must preserve valid numeric amounts, decimals and identifier
+  text; workbook styling alone must not change their meaning. Do not silently
+  strip arbitrary characters into valid numbers, round/truncate amounts, shift
+  columns when cells are blank, or discard leading zeros in identifiers. Report
+  ambiguous/invalid values by original row and column before saving. Use preview,
+  bounded batches and regression tests with real synthetic workbooks; never
+  rewrite the operator's source workbook merely to clear formatting.
+- Historical reports must use the requested branch/location and exact date/time
+  cutoff with an explicit timezone. A shift-closing shortcut uses the saved actual
+  closing instant. Prove opening balances and complete, deduplicated movements;
+  report incomplete coverage rather than inventing historical stock or valuation
+  from today's quantities/prices. Resolve effective-time versus recorded-time
+  semantics before implementing historical reconstruction.
+
+## Approved-scope autonomy and release evidence
+
+- Continue routine implementation, relevant tests, agent review and beta PR updates
+  within an approved batch without repeatedly requesting the same permission.
+  Ask only for missing business decisions, materially new scope or a separately
+  protected action. Approval is not implied by elapsed time or a passing test.
+- Keep focused fixes in separate beta PRs with current heads and honest status.
+  Do not call a classifier, prepared migration, passing CI or published installer
+  a completed end-to-end recovery. Track implementation, regression tests, beta
+  acceptance, database application and production publication separately.
+- Preserve the existing exact-target database and specific production-promotion
+  approval requirements. General instructions to finish quickly do not authorize
+  live data repairs, billing changes, security bypasses or unreviewed releases.
+
 ## Supabase configuration (do not regress)
 
 `supabaseConfig()` in `src/lib/external-supabase-config.ts` is the single
