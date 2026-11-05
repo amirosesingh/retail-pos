@@ -5195,3 +5195,64 @@ SYNC68 owner clarification: Electron durable pending business operations remain 
 SYNC68 final source preparation verified: existing Main CloudClient now schedules one data HTTP request through response-body completion, bounds waiting work to64 requests/32MiB and alternates waiting upload/download directions without changing atomic batches. Payload and source context are captured at enqueue; pre-send/successful-response checks prevent stale target/actor substitution. Pure management admission with no operation selector and health remain independent. Existing financial source-change errors and30s actual-request deadline are preserved; waiting time does not spend that deadline. No retry/acknowledgement/checkpoint implementation changed.
 
 Final frozen-source verification:109 focused tests across6 files passed; full bounded Vitest5,748 passed/7 skipped/0 failed (5,755 total); TypeScript, scoped ESLint and diff checks passed. A pre-refinement full run5,747/7 passed before the final pure-control selector guard and is not substituted for this final result. No source changes remain pending from this preparation. Await independent review/commit/PR/CI/beta deployment and installed sync acceptance. No database, pool, credentials, permissions, business records, installer or production publication change. This caps Main's sync-data HTTP concurrency, not Supabase's physical pooled connections or independent auth/control requests.
+## DASH69 — explicit dashboard scopes and shop comparison (5 November)
+
+Owner approved a separate UI/query-scope batch, baseline beta59674214,
+codex/dashboard-scope-charts-beta. Live Dashboard must use the selected operating
+branch for all KPIs/charts together. Live Business Board compares all already
+authorized company shops across clusters; normal-terminal branch restrictions
+and user grants remain unchanged. All Shops cards AND period charts follow the
+explicit cluster selection; All clusters shows every authorized shop, including
+zero-valued shops. This supersedes the older always-visible all-cluster card list
+under DEC-26/PROJECT_MEMORY719; it does not hide zero-valued shops within a chosen
+scope. Preserve revenue/refund/discount/sponsorship formulas and cost/export
+permissions. Per-shop colors/legends stay stable across sorting/date/filter
+changes. Charts must not slide or enter the infinite summary-card loop.
+
+Additional approved UI steering: unknown initial summary values remain hidden
+until data is resolved; retain same-scope confirmed cards during background
+refresh, preserve errors and meaningful negative values, reveal changed nonzero
+values without reloading the operational database. Investigate existing helpers
+before any shared animation change. Existing stabilization work remains first
+priority; no schema/settings/permissions/checkout writes, publication or
+production promotion is included. Active source implementation; tests, independent
+review, CI, deployed/installed acceptance remain pending.
+
+DASH69 UI/query-scope source is prepared: selected-branch Dashboard KPIs and
+inventory, authorized company-wide Business Board, explicit cluster-filtered All
+Shops cards/lifetime reads with All clusters, and in-place per-shop line/bar
+comparison using unchanged financial helpers/readers. ID-based colors are
+resolved against the full directory, so sorting/date/view filtering cannot
+recolor its remaining shops. Long chart ranges aggregate monthly, never drop
+records. Existing cost/export/page grants and zero-valued All Shops cards remain.
+Confirmed summaries are keyed by identity/permissions, branch/filter, period and
+timezone; required sponsorship reads also gate Dashboard confirmation. Initial
+unknown cards remain hidden, same-scope confirmed values survive refresh/error,
+and failures retain explicit notices instead of becoming zero. Charts no longer
+use sliding containers. Checkout and database writes are untouched.
+
+Corrected investigation assumption: the original beta Business Board already
+uses cloud auto reads for Management, because Management business mode is
+online-only. DASH69 therefore preserves that original reader byte-for-byte.
+The native Management adapter/status/decimal-parity prototype is deliberately
+unactivated and retained only in the local `.tmp` preparation archive; it is not
+part of this runtime PR. Cold-offline/Main-only-PIN company-board metadata
+availability is a preexisting limitation, not solved or newly verified here.
+The existing shared Main millisecond report cursor can skip high-precision rows;
+its correction/auth and metadata-read work remain separately tracked/approved.
+Do not activate the prototype or broaden generic Management access implicitly.
+
+Final UI-only focused checks:72 tests/14 suites passed; scoped lint/diff checks
+passed. Synthetic headless Chrome at390/768/1440 verified the new chart controls,
+stable colors through cluster/all selection, no horizontal overflow, permission
+fallback to revenue, and zero interaction network requests. These are synthetic
+component checks, not installed POS or signed-in whole-page acceptance. Final
+TypeScript passed; independent cleaned-diff review found no scoped blocker
+and31 additional focused checks passed. The first UI-only full run passed5767
+tests with7 skipped and1 failure: an existing test still required sliding graph
+rails, contrary to the latest owner decision. Only that existing expectation was
+corrected; its category/summary carousel assertions remain. Its focused five-suite
+rerun passed36 tests. Frozen-runtime full regression is running again; CI,
+deployed/installed acceptance, beta integration and production publication remain
+pending. An earlier prototype-era full run was interrupted after a review finding
+and is not final evidence.

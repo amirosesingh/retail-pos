@@ -1177,3 +1177,26 @@ IMPORT65 is prepared in beta PR396, runtime commit 7ffb9862d039941946d9a67b0dce2
 Owner requires one coordinated sync-data HTTP lane within the terminal's existing Main sync client, with fair bounded upload/download page scheduling. Electron durable pending business storage remains SQL Server only; a transient in-memory request scheduler is not a browser/file business outbox. Auth, registration/admission and health control requests remain independent. Preserve existing atomic batch groups, acknowledgements, request timeouts, permissions and checkout. Capture source identity at enqueue and verify before sending/accepting; changing backend/project/terminal/SQL profile may not relabel queued work. This does not imply one physical Supabase database connection or change pool/billing settings.
 
 SYNC68 source preparation passed109 focused actual-client/scheduler tests and the full frozen-source regression (5,748 passed/7 skipped/0 failed,5,755 total), TypeScript/scoped lint/diff checks. It changes no durable SQL outbox/retry/acknowledgement/permission behavior. Installed/deployed acceptance and production promotion are not established by these tests. Exact operation/proof payloads, branch/profile/project guards, independent health/admission and original request deadlines remain required.
+## DASH69 — owner page-scope correction, 5 November
+
+Latest approved rule: Live Dashboard is selected operating branch only; Live
+Business Board is all authorized company shops across clusters. All Shops cards
+and period charts obey its explicit selected cluster, with All clusters showing
+all authorized shops including zero-valued shops. This supersedes the former
+always-visible all-cluster card rule; normal terminal/user authorization remains
+the outer boundary. Preserve financial formulas and distinct collections versus
+net revenue/sponsorship labels. Stable shop identities drive comparison colors;
+charts are responsive in place, never sliding/infinite. Unknown summary values
+must not flash as zero or temporary cards; confirmed same-scope values survive
+background refresh, errors stay visible and losses remain meaningful. No database,
+role, configuration, checkout or publication change follows from this UI batch.
+
+DASH69 preserves the original Business Board data reader. Source review corrected
+an earlier assumption: Management's business mode was already online-only, so
+that page already used cloud auto reads. A prepared native Management projection
+is parked outside active source and must not be published implicitly. Existing
+cold-offline/PIN-only Board metadata readiness and the separate Main precise
+report-cursor limitation remain tracked gaps. The approved UI scope/series work
+does not claim to fix those preexisting capabilities or grant cross-branch access
+to normal terminals. Preserve exact existing financial formulas, sponsorship
+policy and explicit loading/error/source labels.
