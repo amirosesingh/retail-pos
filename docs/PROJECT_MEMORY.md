@@ -1381,3 +1381,23 @@ release or authorize database execution. Main promotion can trigger automatic
 platform publication, so require the exact final scope, acceptance evidence and
 owner approval before that promotion. Unfinished recovery and stock-report work
 remain in their separate draft PRs; do not imply they are released.
+
+## Offline approval audit persistence — 5 November
+
+Owner approved a separate narrow helper correction after actual isolated Electron
+acceptance found that a valid manager approval PIN could not persist its audit.
+`parkGovernanceRow` added `is_synced` and `sync_status` to authorization_log and
+authorization_requests, although neither registered native table has these
+columns. Omit only these helper-invented fields for those two tables; preserve
+caller-supplied unknown fields so native validation still rejects them. Keep
+approval authority, awaited audit/failure behavior, native allowlists and every
+other governance path unchanged. Accepted native writes already enter the
+transactional journal. No schema/configuration/permission change is required.
+
+The narrow patch passes 12 actual native-validator cases and 65 focused approval,
+branch, PIN, checkout and shift-activity regressions, TypeScript and scoped lint.
+Independent review reproduced all 12 new cases without a blocker. Installed
+manager-PIN/payment verification and final full-suite/CI remain separate. Tests
+use only uniquely owned synthetic databases/profiles; no business data or live
+ROSEGILL enrollment is used. Online approval remains unverified without an
+isolated HTTPS authority. Membership remains unchanged and ON HOLD.
