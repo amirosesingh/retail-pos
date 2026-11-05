@@ -125,6 +125,7 @@ const CHANNEL_LEVELS = {
   "staff:cache-roster": OPEN,
   "staff:verify-pin": OPEN,
   "staff:verify-approval-pin": OPEN, // signed-in operator may present an approver credential
+  "approval:authorize-offline-discount": OPEN, // fixed Main-owned audit; current sale authority below
   "approval:own-token-vault": OPEN, // POS main-frame only; fixed encrypted token keys, PIN-locked envelope before sign-in
   "approval:enroll-verifier": OPEN, // permission checked in allowed() and again by the backend
   "staff:sign-in": OPEN,
@@ -442,6 +443,12 @@ function refusal(level, channel, args = []) {
 
 /** True when the caller may run this channel with these arguments right now. */
 function allowed(channel, args = []) {
+  if (channel === "approval:authorize-offline-discount") {
+    if (!adminSession.hasPosAuthority() || !adminSession.hasPermission("can_process_sale")) return false;
+    // Sender admission belongs to the fixed handler; another window must not
+    // extend the POS idle session merely by calling this open channel.
+    return true;
+  }
   if (["sync:legacy-recovery-list", "sync:legacy-recovery-preview", "sync:legacy-recovery-approve", "sync:legacy-recovery-accept-cloud"].includes(channel)) {
     if (!adminSession.hasPosAuthority() || adminSession.identity()?.level !== "admin") return false;
     adminSession.touch(); return true;

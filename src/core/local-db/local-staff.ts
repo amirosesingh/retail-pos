@@ -9,6 +9,21 @@
  * existing browser-storage cache remains the fallback.
  */
 import { localDb, type LocalStaffRow } from "@/core/local-db/local-db";
+import { readTerminalConfig } from "@/core/activation/terminal-tokens";
+
+/** Dedicated Main-owned audit path; never falls back to arbitrary cashier writes. */
+type OfflineDiscountMethod = NonNullable<NonNullable<ReturnType<typeof localDb>>["authorizeOfflineDiscount"]>;
+export const hasNativeOfflineDiscountCapability = () => typeof localDb()?.authorizeOfflineDiscount === "function";
+export async function authorizeOfflineDiscount(value: Omit<Parameters<OfflineDiscountMethod>[0], "registeredTerminalId">): ReturnType<OfflineDiscountMethod> {
+  const bridge = localDb(), terminal = readTerminalConfig();
+  if (!bridge?.authorizeOfflineDiscount || !terminal?.tokenId)
+    return { ok: false, error: "Update and register the desktop app before approving this bill offline." };
+  try {
+    return await bridge.authorizeOfflineDiscount({ ...value, registeredTerminalId: terminal.tokenId });
+  } catch {
+    return { ok: false, code: "EAPPROVAL_UNAVAILABLE", error: "The desktop approval service did not answer. The bill remains unpaid." };
+  }
+}
 
 export type LocalStaffLogin = {
   id: string;
