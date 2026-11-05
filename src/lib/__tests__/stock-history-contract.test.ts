@@ -57,6 +57,25 @@ describe('durable stock-history evidence contract',()=>{
   expect(productsIn([{kind:'update',table:'products',match:{id},values:{stock_quantity:0}},{kind:'upsert',table:'products',rows:[{id}]}])).toEqual({ids:[id],unbounded:false});
   expect(productsIn([{kind:'update',table:'products',match:{category:'unknown'},values:{stock_quantity:0}}])).toEqual({ids:[],unbounded:true});
  });
+ it('does not double-count matching activity/adjustment/receipt representations of one physical effect',()=>{
+  const claim=(table:string,n:string,delta:string)=>({table,id:n,productId:id,branchId:'a',delta});
+  const claims=[claim('item_activity_logs',op,'-2'),claim('stock_delta_applied','33333333-3333-4333-8333-333333333333','-2'),claim('stock_adjustments','44444444-4444-4444-8444-444444444444','-2')];
+  const rows=c.changes(context(),[{id,stock_by_store:{a:3}}],[{id,name:'Fixture',stock_by_store:{a:1}}],claims);
+  expect(rows).toHaveLength(1);expect(rows[0].quantity_delta).toBe('-2');expect(rows[0].source_refs).toHaveLength(3);
+  expect(c.changes(context(),[{id,stock_by_store:{a:3}}],[{id,name:'Fixture',stock_by_store:{a:3}}],claims)[0].quantity_delta).toBe('-2');
+ });
+ it('sums distinct same-source legs and ignores exact repeated references without losing receipt identities',()=>{
+  const claim={table:'item_activity_logs',id:op,productId:id,branchId:'a',delta:'-1'};
+  const row=c.changes(context(),[{id,stock_by_store:{a:3}}],[{id,name:'Fixture',stock_by_store:{a:1}}],[claim,claim,{...claim,id:'33333333-3333-4333-8333-333333333333'}])[0];
+  expect(row.quantity_delta).toBe('-2');expect(row.source_refs).toHaveLength(2);
+ });
+ it('holds conflicting source or local effects instead of inventing an accepted quantity',()=>{
+  const claim={table:'item_activity_logs',id:op,productId:id,branchId:'a',delta:'-1'},before=[{id,stock_by_store:{a:3}}],after=[{id,name:'Fixture',stock_by_store:{a:1}}];
+  expect(()=>c.changes(context(),before,after,[claim])).toThrow();
+  expect(()=>c.changes(context(),before,before,[claim,{...claim,table:'stock_delta_applied',delta:'-2'}])).toThrow();
+  expect(()=>c.changes(context(),before,before,[claim,{...claim,delta:'-2'}])).toThrow();
+  expect(()=>c.changes(context(),before,before,[{...claim,table:'unknown'}])).toThrow();
+ });
  it.each([[],shape.columns.slice(0,10),shape.columns.map((r:Record<string,unknown>,i:number)=>i?r:{...r,length:4})].map(rows=>({rows})))(
   'keeps optional missing/partial/unknown schema unusable without auto-DDL',async({rows})=>{
    const queries:string[]=[];

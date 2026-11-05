@@ -40,6 +40,27 @@ complete writer coverage, validated cloud upload, activation and Inventory UI/ex
 remain unfinished. No database change has been applied and no baseline established.
 The foundation does not certify complete history or a production-ready report.
 
+## Durable metadata checkpoint — 6 November
+
+The next unactivated preparation checkpoint deduplicates activity/adjustment/
+delta-receipt representations of the same stock effect and adds exact-byte SQL
+journal reads plus transactional accepted-receipt acknowledgement. A network200
+without matching movement ID, original payload hash, accepted position/time and
+effect IDs cannot clear pending metadata. A failed acknowledgement transaction
+rolls both metadata and journal back; existing stock stays unchanged.
+
+Verification:40 focused contract/ACK cases and26 actual disposable LocalDB groups
+passed. The optional outbox is not registered in Main, PushWorker or the network
+endpoint yet. It is not a working end-to-end accepted-effect protocol. Original
+author-key domain expansion is proposed separately in
+`stock-history-author-domain-plan.md`; no key/security code is changed.
+
+PR401's first CI had one failure: the explicit SQL source inventory omitted the
+draft migration.6,092 tests passed and11 skipped, with all platform builds green.
+The inventory now explicitly records this source while independently asserting
+that unfinished stock-history preparation is absent from canonical installation.
+This does not authorize application or promote the draft into the installer.
+
 ## Approved meaning
 
 The owner selected actual operational stock at an exact selected instant. A late

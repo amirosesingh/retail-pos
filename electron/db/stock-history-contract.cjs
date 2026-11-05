@@ -78,8 +78,12 @@ function changes(context,before,after,sourceClaims=[]){
   const old=new Map(before.map(row=>[identifier(row.id,true),row])),now=new Map(after.map(row=>[identifier(row.id,true),row]));
   const source=new Map();
   for(const claim of sourceClaims){
-    const key=JSON.stringify([identifier(claim.productId,true),identifier(claim.branchId)]),value=source.get(key)??{delta:0n,refs:[]};
-    const delta=quantity(claim.delta);value.delta+=delta;value.refs.push([claim.table,identifier(claim.id,true),String(delta)]);source.set(key,value);
+    if(!['item_activity_logs','stock_adjustments','stock_delta_applied'].includes(claim.table))fail();
+    const key=JSON.stringify([identifier(claim.productId,true),identifier(claim.branchId)]),value=source.get(key)??{groups:new Map(),seen:new Map(),refs:[]};
+    const delta=quantity(claim.delta),id=identifier(claim.id,true),identity=claim.table+':'+id;
+    if(value.seen.has(identity)){if(value.seen.get(identity)!==delta)fail();continue;}
+    value.seen.set(identity,delta);value.groups.set(claim.table,(value.groups.get(claim.table)??0n)+delta);
+    value.refs.push([claim.table,id,String(delta)]);source.set(key,value);
   }
   const result=[];
   for(const id of [...new Set([...old.keys(),...now.keys()])].sort()){
@@ -87,7 +91,12 @@ function changes(context,before,after,sourceClaims=[]){
     const sourceBranches=[...source.keys()].map(value=>JSON.parse(value)).filter(([product])=>product===id).map(([,branch])=>branch);
     for(const branch of [...new Set([...a.keys(),...b.keys(),...sourceBranches])].sort()){
       const localDelta=(b.get(branch)??0n)-(a.get(branch)??0n),claim=source.get(JSON.stringify([id,branch]));
-      const delta=claim?claim.delta:localDelta;if(!delta)continue;
+      // Activity, adjustment and receipt rows can describe the same physical
+      // movement. Sum distinct legs within each source type; matching source
+      // representations must agree, never be added together a second time.
+      const claims=claim?[...claim.groups.values()]:[];
+      if(claims.some(delta=>delta!==claims[0])||(localDelta!==0n&&claims.length&&claims[0]!==localDelta))fail();
+      const delta=localDelta!==0n?localDelta:claims[0]??0n;if(!delta)continue;
       const product=right??left;
       const row={id:stableId(['stock-history.v1',context.operationId,id,branch]),operation_id:context.operationId,
         product_id:id,store_id:branch,terminal_id:context.terminalId,actor_id:context.actorId,source_kind:context.kind,

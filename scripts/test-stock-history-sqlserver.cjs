@@ -20,7 +20,7 @@ const migration=fs.readFileSync(path.join(__dirname,'../database/sqlserver/prepa
   CREATE TABLE dbo.local_operation_receipts(operation_id uniqueidentifier PRIMARY KEY,operation_type nvarchar(32),entity_id nvarchar(128),note nvarchar(max));
   CREATE TABLE dbo.item_activity_logs(id uniqueidentifier PRIMARY KEY,product_id uniqueidentifier,store_id nvarchar(128),quantity_delta int,created_at datetimeoffset(7),activity_type nvarchar(32),row_version int);
   CREATE TABLE dbo.shifts(id uniqueidentifier PRIMARY KEY,store_id nvarchar(128),status nvarchar(32),closed_at datetimeoffset(7));
-  CREATE TABLE dbo.sync_change_journal(change_id bigint IDENTITY PRIMARY KEY,entity_type nvarchar(128),entity_id nvarchar(128),operation nvarchar(32),branch_id nvarchar(128),entity_version bigint,aggregate_id uniqueidentifier,acknowledged_at datetimeoffset(7));`);
+  CREATE TABLE dbo.sync_change_journal(change_id bigint IDENTITY PRIMARY KEY,entity_type nvarchar(128),entity_id nvarchar(128),operation nvarchar(32),branch_id nvarchar(128),entity_version bigint,aggregate_id uniqueidentifier,acknowledged_at datetimeoffset(7),last_error nvarchar(1000));`);
  const manager={pool,sql:()=>sql},context={key:'source-1',branchId:'a',terminalId:'t',actorId:'admin',clockState:'verified'};
  const store=new StockHistoryStore(manager,{readContext:()=>context,authorizeRead:async()=>({contextKey:context.key,branchId:'a',canViewInventory:true,canExportReports:false,canViewShiftHistory:true})});
  const inTx=async fn=>{const tx=new sql.Transaction(pool);await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);try{const v=await fn(tx);await tx.commit();return v;}catch(e){await tx.rollback().catch(()=>{});throw e;}};
@@ -107,6 +107,40 @@ const migration=fs.readFileSync(path.join(__dirname,'../database/sqlserver/prepa
  const outer=new sql.Transaction(pool);await outer.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
  try{await new sql.Request(outer).batch(migration);assert.equal((await new sql.Request(outer).query('SELECT @@TRANCOUNT n;')).recordset[0].n,1);}finally{await outer.rollback().catch(()=>{});store.invalidateCapability();}
  pass('prepared module preserves caller-owned outer transaction for consolidated all-or-nothing upgrade');
+
+ const {StockHistoryOutbox}=require('../electron/db/stock-history-outbox.cjs');
+ op.values.stock_by_store={a:2,b:1};const uploadOperation=randomUUID();await capture({operationId:uploadOperation});
+ const outbox=new StockHistoryOutbox(manager),batch=await outbox.pending(uploadOperation,'a','t');
+ assert.equal(batch.rows.length,1);assert(Object.isFrozen(batch.rows[0]));
+ const original=(await pool.request().input('operation',uploadOperation).query('SELECT payload_json,payload_hash FROM dbo.stock_history_movements WHERE operation_id=@operation;')).recordset[0];
+ assert.equal(batch.rows[0].payloadJson,original.payload_json);assert.equal(batch.rows[0].payloadHash,original.payload_hash);
+ pass('actual SQL outbox freezes exact original bytes after restarting its reader');
+ const acceptedAt=c.canonicalInstant(new Date().toISOString()),ack={ok:true,version:1,branchId:'a',terminalId:'t',receipts:[{
+  id:batch.rows[0].id,payloadHash:batch.rows[0].payloadHash,ingestedCursor:'22',acceptedAt,effectIds:[randomUUID()]}]};
+ await assert.rejects(outbox.acknowledge(batch,{ok:true}));
+ assert.equal((await pool.request().input('operation',uploadOperation).query('SELECT COUNT(*) n FROM dbo.stock_history_movements WHERE operation_id=@operation AND ingested_cursor IS NULL;')).recordset[0].n,1);
+ pass('HTTP-only acknowledgement leaves real SQL history pending');
+ let interrupted=true;const originalRequest=outbox.store.request.bind(outbox.store);
+ outbox.store.request=tx=>{const request=originalRequest(tx),query=request.query.bind(request);request.query=async text=>{
+  const result=await query(text);if(interrupted&&text.includes('UPDATE dbo.sync_change_journal SET acknowledged_at')){interrupted=false;throw Object.assign(new Error('Synthetic acknowledgement interruption'),{code:'FIXTURE'});}return result;
+ };return request;};
+ await assert.rejects(outbox.acknowledge(batch,ack),{code:'FIXTURE'});
+ assert.equal((await pool.request().input('operation',uploadOperation).query('SELECT COUNT(*) n FROM dbo.stock_history_movements WHERE operation_id=@operation AND ingested_cursor IS NULL;')).recordset[0].n,1);
+ assert.equal((await pool.request().input('operation',uploadOperation).query('SELECT COUNT(*) n FROM dbo.sync_change_journal WHERE aggregate_id=@operation AND acknowledged_at IS NULL;')).recordset[0].n,1);
+ pass('interrupted metadata acknowledgement rolls back ingestion and journal together');
+ assert.deepEqual(await outbox.acknowledge(batch,ack),{acknowledged:1});assert.deepEqual(await stock(),{a:2,b:1});
+ assert.equal(await new StockHistoryOutbox(manager).pending(uploadOperation,'a','t'),null);
+ const accepted=(await pool.request().input('operation',uploadOperation).query("SELECT CONVERT(nvarchar(30),ingested_cursor) accepted_position,CONVERT(nvarchar(40),SWITCHOFFSET(ingested_at,'+00:00'),127) accepted_at FROM dbo.stock_history_movements WHERE operation_id=@operation;")).recordset[0];
+ assert.equal(accepted.accepted_position,'22');assert.equal(c.canonicalInstant(accepted.accepted_at),acceptedAt);
+ pass('exact accepted receipt atomically acknowledges only its SQL metadata without changing stock');
+ assert.equal((await pool.request().query("SELECT coverage_state FROM dbo.stock_history_heads WHERE store_id=N'a';")).recordset[0].coverage_state,'incomplete');
+ pass('an acknowledged movement cannot claim a stale downloaded head is complete');
+ op.values.stock_by_store={a:3,b:1};const changedOperation=randomUUID();await capture({operationId:changedOperation});
+ const changedBatch=await outbox.pending(changedOperation,'a','t'),changedAck={...ack,receipts:[{...ack.receipts[0],id:changedBatch.rows[0].id,payloadHash:changedBatch.rows[0].payloadHash,ingestedCursor:'23',effectIds:[randomUUID()]}]};
+ await pool.request().input('operation',changedOperation).input('other',JSON.stringify({id:randomUUID()})).query('UPDATE dbo.sync_change_journal SET entity_id=@other WHERE aggregate_id=@operation;');
+ await assert.rejects(outbox.acknowledge(changedBatch,changedAck),error=>/STOCK_HISTORY_JOURNAL_CHANGED/.test(error.message));
+ assert.equal((await pool.request().input('operation',changedOperation).query('SELECT COUNT(*) n FROM dbo.stock_history_movements WHERE operation_id=@operation AND ingested_cursor IS NULL;')).recordset[0].n,1);
+ pass('changed journal identity cannot be silently acknowledged as another movement');
  console.log('PASS '+groups+' actual disposable stock-history SQL groups');
 }finally{
  await pool?.close().catch(()=>{});if(created)await master.request().batch('ALTER DATABASE ['+database+'] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;DROP DATABASE ['+database+'];');await master?.close().catch(()=>{});

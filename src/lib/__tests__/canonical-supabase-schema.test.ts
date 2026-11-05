@@ -259,6 +259,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261105063613_admin_attested_legacy_shift_recovery.sql",
       "supabase/migrations/20261105090000_shift_financial_known_history.sql",
       "supabase/migrations/20261105090100_branch_shift_sharing.sql",
+      "supabase/migrations/20261105113916_stock_history_effective_ledger.sql",
       "supabase/migrations/20261105140417_isolate_refund_guard_table_fields.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
@@ -266,6 +267,11 @@ describe("canonical Supabase SQL", () => {
       "supabase/sql/trigger_sync_upgrade.sql",
       "supabase/sql/verify_purchase_order_uuid_sync.sql",
     ]);
+  });
+  it("keeps unfinished stock-history preparation outside the canonical installer", () => {
+    expect(read("supabase/migrations/20261105113916_stock_history_effective_ledger.sql"))
+      .toContain("STOCK401 DRAFT preparation only");
+    expect(read("supabase/schema.sql")).not.toContain("CREATE TABLE IF NOT EXISTS public.stock_history_heads");
   });
 
   it('retains the reviewed shift-sharing upgrade exactly in canonical SQL', () => {
