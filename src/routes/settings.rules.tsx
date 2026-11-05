@@ -35,7 +35,8 @@ import { posFetch, serverOrigin } from "@/lib/server-origin";
 import { requestIdleTimeout } from "@/lib/idle-timeout-client";
 import { isWindowsShell } from "@/platform-config/features";
 import { broadcastSettingsChange } from "@/lib/sync-engine";
-import { reconcileRulesDraft } from "@/lib/pos-rules-draft";
+import { hasVerifiedRulesBaseline, reconcileRulesDraft } from "@/lib/pos-rules-draft";
+import { isTransientRulesSaveFailure } from "@/lib/pos-rules-failure";
 
 export const Route = createFileRoute("/settings/rules")({
   head: () => ({
@@ -70,11 +71,24 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
     branchId,
     terminalId: terminal,
     rowVersion,
+    source,
+    usingDefaults,
+    notVerified,
+    cacheScope,
   } = usePosRules();
 
   const { currentStore } = usePos();
-  const { isAdmin, can } = useAuth();
+  const { isAdmin, can, user, authUserId, terminalUser } = useAuth();
   const mayEdit = isAdmin || can("can_access_pos_settings");
+  const mayEditRules = mayEdit && hasVerifiedRulesBaseline({ source, loading, usingDefaults, notVerified });
+  const contextKey = JSON.stringify([mayEditRules, authUserId, user?.staffId ?? null,
+    terminalUser?.cashierId ?? terminalUser?.userCode ?? null, currentStore.id, branchId, terminal, cacheScope]);
+  const editContext = useRef(contextKey);
+  const contextEpoch = useRef(0);
+  if (editContext.current !== contextKey) {
+    editContext.current = contextKey;
+    contextEpoch.current++;
+  }
 
   const [draft, setDraft] = useState<PosRules>(rules);
   const [saving, setSaving] = useState(false);
@@ -161,16 +175,20 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
     }
   }
 
-  const set = (key: PosRuleKey, value: boolean | number) =>
+  const set = (key: PosRuleKey, value: boolean | number) => {
+    if (!mayEditRules) return;
     setDraft((d) => key === "require_counted_cash_on_close"
       ? withClosingCashCount(d, Boolean(value))
       : ({ ...d, [key]: value }) as PosRules);
+  };
 
   /**
    * Keep the change on this terminal and let the sync worker deliver it.
    * Used when the central system cannot be reached right now.
    */
-  async function keepLocally(reason: string) {
+  async function keepLocally(reason: string, assertContext: () => void) {
+    assertContext();
+    if (!mayEditRules) throw new Error("Verified saved rules are required before changes can be saved.");
     if (!isWindowsShell())
       throw new Error("Rules can only be saved while connected on this device.");
     await queueRulesSave({
@@ -179,21 +197,35 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
       rules: draft,
       patch: draft as unknown as Record<string, boolean | number>,
       expectedVersion: rowVersion,
+      cacheScope,
+      shiftSharingAvailable,
+      assertContext,
     });
-    await refresh();
+    assertContext();
+    // A failed read cannot undo the already committed local save or queue it twice.
+    await refresh().catch(() => undefined);
+    assertContext();
     toast.success("Saved on this terminal", {
       description: `${reason} These rules are in force here and will reach head office on the next connection.`,
     });
   }
 
   async function save() {
+    if (!mayEditRules) return;
+    const startedEpoch = contextEpoch.current;
+    const assertContext = () => {
+      if (contextEpoch.current !== startedEpoch || editContext.current !== contextKey)
+        throw Object.assign(new Error("The active branch, connection or permission changed. Review the current saved rules before saving."), { code: "RULES_CONTEXT_CHANGED" });
+    };
     setSaving(true);
     try {
+      assertContext();
       const auth = await getPosCallerAuth();
+      assertContext();
       if (!auth.accessToken) {
         // Signed in at the till but with no central session — the change is
         // still kept, and the server re-checks the account when it arrives.
-        await keepLocally("Head office could not be reached.");
+        await keepLocally("Head office could not be reached.", assertContext);
         return;
       }
       const payload = {
@@ -219,6 +251,7 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
             ok: response.ok,
           }))
         : await savePosRules({ data: payload });
+      assertContext();
       if (!res.ok) {
         if (/STALE_RULES/i.test(res.error ?? "")) {
           forceNextRules.current = true;
@@ -237,14 +270,14 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
       await broadcastSettingsChange("pos_store_settings");
       toast.success("Rules saved");
     } catch (e) {
-      if (!isWindowsShell()) {
+      if (!isWindowsShell() || !isTransientRulesSaveFailure(e)) {
         notifyError(e, "Could not save rules");
         return;
       }
       try {
-        await keepLocally("Head office could not be reached.");
-      } catch {
-        notifyError(e, "Could not save rules");
+        await keepLocally("Head office could not be reached.", assertContext);
+      } catch (localError) {
+        notifyError(localError, "Could not save rules");
       }
     } finally {
       setSaving(false);
@@ -282,6 +315,7 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
           <Button variant="outline" size="sm" disabled={checking || saving} onClick={() => void checkRulesNow()}><RefreshCw className={`size-4 ${checking ? "animate-spin" : ""}`} />{checking ? "Refreshing…" : "Refresh"}</Button>
         </div>
         {failureText && status !== "LIVE" && <p role="alert" className="text-sm text-destructive">Could not load current saved settings. Check the connection and reload.</p>}
+        {source === "LEGACY_CACHE" && <p role="status" className="text-sm text-muted-foreground">Previous saved rules are preserved for offline operation. Connect to verify this database before editing. Existing pending changes remain pending.</p>}
 
         <section className="rounded-lg border border-border bg-card px-5">
           <div className="flex items-center justify-between gap-3 border-b border-border/60 py-4">
@@ -324,7 +358,7 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
                       {field.kind === "switch" ? (
                         <Switch
                           aria-label={field.label}
-                          disabled={!mayEdit || (field.key === 'allow_branch_shift_sharing' && !shiftSharingAvailable && draft.allow_branch_shift_sharing !== false)}
+                          disabled={!mayEditRules || (field.key === 'allow_branch_shift_sharing' && !shiftSharingAvailable && draft.allow_branch_shift_sharing !== false)}
                           checked={field.key === "require_counted_cash_on_close" ? requiresClosingCashCount(draft) : Boolean(draft[field.key])}
                           onCheckedChange={(v) => set(field.key, v)}
                         />
@@ -333,7 +367,7 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
                           aria-label={field.label}
                           className="numeric h-8 w-28 shrink-0"
                           inputMode="decimal"
-                          disabled={!mayEdit}
+                          disabled={!mayEditRules}
                           value={String(draft[field.key])}
                           onChange={(e) => set(field.key, Number(e.target.value) || 0)}
                         />
@@ -419,7 +453,7 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
             <Button
               size="sm"
               className="ml-auto"
-              disabled={!dirty || saving}
+              disabled={!mayEditRules || !dirty || saving}
               onClick={() => void save()}
             >
               {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}

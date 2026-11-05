@@ -32,4 +32,8 @@ describe("who may read which branch's rules", () => {
     const res = await resolveRulesAccess({ storeId: "bandar" });
     expect(res).toMatchObject({ ok: false, status: 401, code: "IDENTITY" });
   });
+  it("does not trust an arbitrary status field as a typed service outage", async () => {
+    verifyRelayCaller.mockRejectedValue(Object.assign(new Error("Identity rejected"), { status: 503 }));
+    expect(await resolveRulesAccess({ terminalToken: "abc" })).toMatchObject({ ok: false, status: 401, code: "IDENTITY" });
+  });
 });

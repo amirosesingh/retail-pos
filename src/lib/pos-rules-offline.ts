@@ -39,7 +39,14 @@ export async function queueRulesSave(input: {
   patch: Record<string, boolean | number>;
   actor?: string | null;
   expectedVersion: number;
+  cacheScope?: string;
+  shiftSharingAvailable?: boolean;
+  /** Recheck current editor authority around asynchronous storage. */
+  assertContext?: () => void;
 }): Promise<QueuedRules> {
+  if ((input.cacheScope || input.shiftSharingAvailable !== undefined) && !input.assertContext)
+    throw new Error("A current rules editor context is required.");
+  input.assertContext?.();
   const savedAt = Date.now();
   // A pending local edit is a new revision. Reusing the cloud revision makes
   // the next pull look equally new and can restore the old central values.
@@ -59,6 +66,7 @@ export async function queueRulesSave(input: {
     "store_id",
     "Saving register rules",
   );
+  input.assertContext?.();
 
   // The till must obey the new rules straight away, and still obey them after
   // a restart, so the pending set replaces the last confirmed one locally.
@@ -68,11 +76,14 @@ export async function queueRulesSave(input: {
     revision: `${PENDING_REVISION_PREFIX}${savedAt}`,
     syncedAt: savedAt,
     rules: input.rules,
+    cacheScope: input.cacheScope,
+    shiftSharingAvailable: Boolean(input.cacheScope && input.shiftSharingAvailable === true),
     pending: true,
     rowVersion: nextVersion,
     updatedAt: new Date(savedAt).toISOString(),
     updatedBy: input.actor ?? null,
   });
+  input.assertContext?.();
 
   logRules("POS_RULES_SAVE_QUEUED", {
     terminal_id: input.terminalId,

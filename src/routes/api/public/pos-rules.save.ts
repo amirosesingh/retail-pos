@@ -7,6 +7,7 @@ const body = z.object({
   sessionToken: z.string().max(400).optional(),
   cashierToken: z.string().max(400).optional(),
   terminalToken: z.string().max(400).optional(),
+  deviceBindingProof: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
   accessToken: z.string().min(10).max(4000),
   storeId: z.string().max(64).optional(),
   patch: z.record(z.string(), z.union([z.boolean(), z.number()])),

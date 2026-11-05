@@ -5091,6 +5091,47 @@ Remaining: independent readback/security review, commit these execution facts
 and final CI/beta integration of PR394, deployed/installed acceptance and separate
 compatible-client/cohort activation review. ProductionPR354 remains draft;
 no production merge, installer publication or automaticstable-release approval.
+## POLICY-65 — preserve native rule proofs and verified edit baselines
+
+5 November owner requested agents complete the remaining fixes and prepare independent beta PRs, including unreadable Electron Operational policies. Baseline beta `5e7327d5`; branch `codex/native-policy-proof-beta`. Preparation/implementation and isolated tests are authorized; no live database/configuration changes or production promotion.
+
+Confirmed: public rules read/save validators discard `deviceBindingProof`; direct read does likewise and direct save drops terminal/session context. This can reject valid native reads or discard normal-terminal scope. The editor also permits changing safety defaults before a verified baseline exists. Preserve proof verification, role/branch denials, Membership hold, settings inheritance and verified offline/pending edits. Acceptance: HTTP/direct proof parity, allowed/denied branch tests, no mutation from unverified defaults, and relevant regression checks. Active implementation; verification/PR integration pending.
+
+Implemented proof propagation, an editor/callback verified-baseline guard, and
+connection-bound confirmed capability caching. A same-revision capability change
+still updates the cache; successful saves that omit capability retain only the
+already verified value in the same context. Both confirmed and pending offline
+rules retain the verified capability. An old unscoped cache or a changed
+terminal/branch/backend/project cannot enable it. No live schema, settings,
+queue/checkpoint or registration change was performed. Initial proof/editor
+implementation passed full Vitest 5,636/7 skipped and TypeScript/lint. The final
+cache extension and save-context checks have focused provider/cache/queue tests.
+Saving rechecks current branch, terminal, connection and permission after async
+credential reads and around local storage; context/auth/permission failures are
+never requeued as network failures. A newer same-context pending cache takes
+precedence over an older confirmed memory entry without requiring restart.
+Final full-suite and installed Electron acceptance remain pending. No publication
+or production promotion.
+
+Final review corrected first-upgrade offline continuity: an exact nonempty
+terminal/branch-matched legacy cache retains operating values and pending state
+without becoming editable or claiming backend/project capability. It is never
+rewritten on read; actual online verification binds it even when the revision
+did not change. Backend path prefixes are part of the identity. Removed the
+provider's age-only pending abandonment; 90/365-day reconnect fixtures preserve
+unacknowledged edits when cloud values are unchanged. User handover invalidates
+in-flight saves. Independent review found no remaining blocker. Frozen final
+focused tests: 81 passed across seven files; scoped lint/diff checks passed.
+Final TypeScript/full-suite/CI and actual installed Electron acceptance remain
+pending. These source changes perform no live repair, reset or publication.
+
+The combined PR397 integration head4137b32e passed full Vitest5,727/7 skipped
+and TypeScript. A final confirmed status correction then preserves recognized
+typed terminal-registration unavailability as503/UNAVAILABLE, with a fixed public
+message and a network failure classification for direct reads. Actual identity
+denials remain401 and branch/permission denials403; an arbitrary error status
+cannot masquerade as this typed condition. No authorization bypass or new retry
+policy. That narrow correction requires the final focused/full/CI checks again.
 
 
 ## IMPORT65 — inventory workbook values and validation (5 November)
