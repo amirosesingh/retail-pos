@@ -1,10 +1,15 @@
 const { reportDays } = require("../report-days.cjs");
+const { recordId } = require("../../sync/uuid-fields.cjs");
 /** Branch reports are calculated in SQL; receipt lines never enter renderer memory. */
-async function readAnalytics(connectionManager, branchId, from, to, timeZone = "UTC") {
+async function readAnalytics(connectionManager, branchId, from, to, timeZone = "UTC", options = {}) {
   const day = /^\d{4}-\d{2}-\d{2}$/;
   if (!branchId || !day.test(from) || !day.test(to) || from > to)
     throw new Error("Choose a valid report date range and terminal branch.");
   const days = reportDays(from, to, timeZone);
+  // This callback is supplied only by Main after its current permission check.
+  // A renderer-provided flag cannot enable the optional private cost read.
+  const mayReadHourlyCost = () => typeof options.canViewHourlyCost === "function" && options.canViewHourlyCost() === true;
+  const includeHourlyCost = mayReadHourlyCost();
   const result = await connectionManager.pool
     .request()
     .input("branch", String(branchId))
@@ -54,13 +59,34 @@ async function readAnalytics(connectionManager, branchId, from, to, timeZone = "
       SELECT TOP (500001) store_id,store_name_snapshot,created_at,total_amount,discount_amount,coupon_discount
       FROM #bills ORDER BY created_at,id;
       SELECT id,name,code,is_active FROM dbo.stores WHERE id=@branch;
+      ${includeHourlyCost ? `SELECT TOP (500001) b.store_id,b.created_at,
+        b.total_amount-COALESCE(b.tax_amount,0)-COALESCE(b.rounding_adjustment,0) revenue,
+        COALESCE(f.cost,0) cost FROM #bills b
+        LEFT JOIN (SELECT sale_id,SUM(line_cost) cost FROM #facts GROUP BY sale_id) f ON f.sale_id=b.id
+        ORDER BY b.created_at,b.id;` : ""}
       DROP TABLE #facts; DROP TABLE #bills; DROP TABLE #days;
     `);
-  const [storeDays = [], itemDays = [], bills = [], directory = []] = result.recordsets ?? [];
-  if (itemDays.length > 500000 || bills.length > 500000)
+  const [storeDays = [], itemDays = [], bills = [], directory = [], hourFacts = []] = result.recordsets ?? [];
+  if (itemDays.length > 500000 || bills.length > 500000 || hourFacts.length > 500000)
     throw Object.assign(new Error("This report is too large. Select a shorter date range."), {
       code: "EREPORT_LIMIT",
     });
-  return { ok: true, storeDays, itemDays, bills, directory };
+  let hourlyRows;
+  if (includeHourlyCost && mayReadHourlyCost()) {
+    const hours = new Map();
+    const clock = new Intl.DateTimeFormat("en-GB", { timeZone, hour: "numeric", hourCycle: "h23" });
+    for (const row of hourFacts) {
+      if (recordId(row.store_id) !== recordId(branchId))
+        throw Object.assign(new Error("The hourly report does not match this terminal branch."), { code: "EREPORT_SCOPE" });
+      const hour = Number(clock.format(new Date(row.created_at)));
+      const revenue = Number(row.revenue), cost = Number(row.cost);
+      if (!Number.isInteger(hour) || hour < 0 || hour > 23 || !Number.isFinite(revenue) || !Number.isFinite(cost))
+        throw Object.assign(new Error("Hourly report values could not be verified."), { code: "EREPORT_VALUES" });
+      const current = hours.get(hour) ?? { store_id: String(branchId), hour, bills: 0, revenue: 0, cost: 0, profit: 0 };
+      current.bills++; current.revenue += revenue; current.cost += cost; hours.set(hour, current);
+    }
+    hourlyRows = [...hours.values()].map(row => ({ ...row, revenue: Number(row.revenue.toFixed(2)), cost: Number(row.cost.toFixed(2)), profit: Number((row.revenue-row.cost).toFixed(2)) }));
+  }
+  return { ok: true, storeDays, itemDays, bills, directory, ...(hourlyRows ? { hourlyRows } : {}) };
 }
 module.exports = { readAnalytics };

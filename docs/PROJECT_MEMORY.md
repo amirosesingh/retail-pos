@@ -12,6 +12,35 @@ Owner requires all proposed cloud/local database upgrades collected for exact fi
 The exact owner-approved service-only bounded feed RPC and PR384 are applied/deployed on beta. Existing selector/privacy grants and businessrecords are preserved; native continuation is bound to authenticated response metadata. Live147request sample all200/ok with no CPU-exceeded; CPU2–114ms/mean9.469 means NO guarantee allrequestsbelow10ms. Electronfeed131613→133184, all6shiftCTvalid; largebacklog stilldraining. Keep implemented/sample-verified status distinct from fullsync completion, production promotion or installerpublication. Supabase migrationtool ledger20261104042158 corresponds to approvedfile20261104040251, SHA83495D696622241ECA2A8D396234E2FD65EE7C7A3050E93E4280638D6530D59B; do not replay based solely on differing timestamps.
 # POS project memory
 
+## 6 November — consistent trading charts
+
+Cards must remain hidden until their current branch/cluster/range read is
+actually confirmed. Preserve same-scope confirmed cards during background
+refresh with truthful stale/error status; scope/identity/cost-permission changes
+hide the previous scope immediately. Preserve meaningful negative values and the
+loaded All Shops zero-shop-directory exception. Shop chart color depends only
+on canonical shop identity so Dashboard, filtered cluster and company views do
+not recolor it. Charts use a finite vertical grid, never an infinite carousel.
+
+
+Owner-approved chart direction: equal-height chart cards and fixed plot heights
+on Dashboard, All Shops and Live Business Board, in a vertically scrollable
+area with its scrollbar hidden. Use two columns on large screens and one on a
+phone; charts are never infinite/horizontal carousels. Separate revenue and
+gross-profit trends, retain a stable vivid color for each authorized shop, and
+offer daily/monthly grouping plus Today,15days,20days and custom dates. The
+financial comparison stacks cost plus gross profit to revenue and labels margin
+as a percentage; it must not stack revenue a second time.
+
+Dashboard remains the selected registered/authorized branch, All Shops follows
+its selected cluster (or explicit all authorized clusters), and Business Board
+uses only its authorized company directory. Existing financial, refund,
+sponsorship and export rules remain unchanged. Hourly figures must use actual
+saved sales/cost evidence, never apportion daily profit into hours. Reuse existing
+bounded sales on Dashboard/All Shops; prepare a bounded authorized Board hourly
+read separately if required. Any new database routine remains preparation only
+until exact-target/file approval. Membership remains ON HOLD.
+
 ## 6 November — dependency integration is beta first
 
 The owner requests the latest local Electron preview and prompt integration of

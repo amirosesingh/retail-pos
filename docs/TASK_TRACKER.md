@@ -1,3 +1,41 @@
+## 6 November — CHART72 approved implementation
+
+Resume the approved chart consistency batch from clean beta3074a475 in separate
+codex/chart-consistency-beta. Preserve scopes and existing financial formulas:
+selected-branch Dashboard; selected-cluster/all-authorized All Shops; authorized
+company Board; normal terminal stays branch locked. New owner direction replaces
+graph horizontal/infinite scrolling with a hidden-scrollbar VERTICAL chart grid,
+two columns on large screens and one on phones, equal card/fixed plot heights.
+Separate revenue/profit shop-colored trends, daily/monthly grouping, Today/15/20
+day/custom date windows, cost+grossprofit stacked to revenue with Margin%, and
+actual transactions/profit by hour are in scope. Summary-card rails are unchanged.
+
+Inspection confirmed Dashboard and All Shops already have complete date-bounded
+sales and captured line costs, so their hourly charts need no extra reads.
+Board has daily aggregates and bill headers only; daily-cost apportionment would
+be false. Prepare any required bounded hourly aggregate and exact SQL separately,
+with existing account/terminal/branch/cost authorization and no live application.
+Coordinate native Main changes with the agent owning stock/recovery; do not edit
+shared Main concurrently. Use shared chart presentation, keep errors/incomplete
+data truthful, and test branch/cluster/range/cost denial, zero/loading states,
+small/large renders and existing checkout/report regressions. No financial writes,
+grants, operator configuration, deployment or production release is authorized by
+this preparation. Membership stays ON HOLD.
+
+CHART72 first source checkpoint: shared fixed-height vertical charts, separate
+shop revenue/profit trends and actual hourly grouping prepared. Dashboard and
+All Shops reuse their existing bounded complete receipts. Board transaction
+counts use actual bill times; hourly profit remains explicitly unavailable until
+its bounded cost read succeeds. Native SQL reuses #facts and never returns its
+private per-bill cost evidence; Main supplies/rechecks current cost authority and
+rejects session/branch handover. No renderer flag grants access. Existing scopes,
+daily calculations, financial comparison measure choices and sponsorship chart
+remain preserved. All Shops waits for actual lifetime totals/inventory readiness
+before showing shop cards, retaining the loaded zero-shop exception.48 focused
+scope/value/permission tests and TypeScript passed. Actual SQL, responsive
+rendering, full regression and cloud hourly read preparation remain pending.
+No live database or deployment occurred.
+
 ## 6 November — isolated dependency integration verification
 
 The owner asks that completed chore/version bumps be checked and integrated into
@@ -6119,6 +6157,75 @@ ESLint/diff checks pass. Independent agent review found no authorization or writ
 blocker; its retained-data-banner truthfulness nit is corrected. Actual mounted
 browser/portal verification, full regression and required beta CI remain pending.
 
+CHART72 second checkpoint: beta79face20 is integrated at5e9d7efb, preserving the
+completed dependency integration and development protocol fix. The chart color
+now depends only on canonical branch identity, preserving each shop between
+single-branch, cluster and company views. The actual Chrome1440/390px fixture
+passed equal448px cards/fixed256px plots, two/one columns, vertical keyboard
+scrolling, hidden scrollbar, no horizontal overflow, first-read hiding,
+same-scope refresh/error retention, scope-change hiding, meaningful negative
+profit, cost denial, in-place line/bar/month selection and15/20day presets.
+It found the existing global thin-scrollbar style overriding layered utilities;
+a narrowly scoped chart class now preserves the requested hidden scrollbar.
+
+The additional hourly read is prepared, NOT applied. Candidate
+supabase/migrations/20261105170645_bounded_shop_hourly_report.sql SHA256(LF)
+158948DA41505425E3D79BD97160A274B9C8706115D40CEF5C318C803CA1806F adds only public.pos_report_store_hours(date,date,text[]) as
+STABLE SECURITY INVOKER, fixed pg_catalog search path, service_role EXECUTE only.
+It aggregates actual selected sales and existing captured/fallback line costs by
+saved business timezone/hour, bounds100existing branches/3660days and returns at
+most2400aggregate rows. No record/policy/existing routine or existing grant is
+rewritten. Fresh server staff/report/cost and fixed-terminal/management scope
+checks run before and after the read; revocation/account handover returns no
+private result. Until its exact-project review/application, Business Board keeps
+daily/transaction graphs and truthfully reports unavailable hourly profit.
+No extra raw sale lines are downloaded. Dashboard/All Shops reuse existing
+complete bounded receipts; native SQL reuses existing#facts in one query and
+returns only aggregated hours to the renderer after Main's current checks.
+
+Actual disposable PostgreSQL18.6 passed21cases (financial/timezone/refund/signed
+cost/captured-zero/caller-role bounds and unknown-routine collision). Actual
+uniquely owned SQLServer LocalDB passed hourly/daily parity, branch/date limits,
+refund/signed/FOC/zero-cost behavior and denied forged-cost flag, then cleaned up.
+Focused60tests and scoped lint passed. Full regression found the expected new
+migration-inventory assertion, canonical source line-ending preservation and an
+obsolete inline-grid assertion; these were corrected without changing existing
+SQL definitions or loosening its privacy checks. Full final-tree rerun/type and
+independent source review remain required. No live database, queue/checkpoint,
+checkout, permission grant, operator profile, deployment or publication changed.
+
+CHART72 final-source verification at12ee262557ade7140d569147291e559b95a69dfa:
+FULL Node22.22.2/npm11.4.2 Vitest6037passed/10skipped/0failed,710passingfiles
+plus1skipped, max2workers. TypeScript passed. All scoped lint passes, including
+the last added board/security/SQL tests. Final committed migration reran all21
+actual PostgreSQL18.6 scenarios successfully; disposable LocalDB and settled
+actual Chrome1440/390px acceptance passed. All test processes/owned fixtures are
+finished/cleaned; screenshots/logs remain only in ignored .tmp. Existing source
+SQL bytes/guards are preserved. Draft betaPR419 is open/labeledbeta; CI and
+independent review remain pending. No merge, deployment, database application or
+installer publication occurred. Exact candidate SHA256(LF) is
+158948DA41505425E3D79BD97160A274B9C8706115D40CEF5C318C803CA1806F.
+The hourly routine would need separate approval against ROSEGILL→
+rosegill0011@gmail.com's Org(bjxgimekljzlnwejuawj)→pos(qhrufhtbeguxydenzfey),
+postgres,https://qhrufhtbeguxydenzfey.supabase.co before live application.
+
+CHART72 completeness correction: independent review found that a SETOF hourly
+RPC could silently truncate1008groups at PostgREST's default1000row cap. The
+still-unapplied candidate now returns ONE scalar JSON envelope from the same SQL
+snapshot, with version/complete/date/selected-branch binding and exact row_count.
+The server checks the exact envelope keys, complete===true, safe-integer count
+matching rows<=2400, unique authorized shop/hour rows and current authority before
+and after the read. No shop/history restriction, API max_rows setting or grant
+was weakened; cross-page snapshot races are avoided rather than tolerated.
+New candidate SHA256(LF) supersedes158948DA…1806F:
+921067FA9C5EA4F2F4F46A5B2D25976B11C73218AEB60DC5FB69B5B814D9FCB5.
+Actual isolated PostgreSQL18.6 passed22cases. Actual PostgREST with max_rows1000
+first reproduced SETOF truncation, then returned all1008 and2400 scalar-envelope
+hourly groups with correct sums and metadata. All77 focused regressions,
+TypeScript and scoped lint passed. No live database application occurred. Final
+combined beta/source regression and independent re-review are required before
+integration; root owns live approval/promotion.
+
 ### Native approval final device acceptance and beta refresh — 6 November
 
 PR415 frozen runtime bdcd8f82b706b9a62ae38c802102fae2aceb3a46 passed all required
@@ -6181,6 +6288,18 @@ React/Radix dialog groups passed again on these upgraded dependencies. The full
 new-head CI, final typecheck and platform checks are required before beta merge.
 Earlier actual native sale/restart evidence used the prior dependency install;
 do not mislabel that as another installed-application upgrade acceptance run.
+
+CHART72 refreshed58bdb12c (includes beta41500b9) full regression passed:
+6121tests/10skipped/0failed,712passingfiles plus1skipped, max2workers. The
+independent reviewer reran93focused tests and cleared the scalar completeness
+fix. Final display-only refinement adds actual per-shop margin% labels without
+hover in the existing fixed-height/scrollable footer, hidden without cost access;
+Dashboard's existing day/hour calculations are memoized on their real sales and
+product inputs. No financial formula or read changed. Actual Chrome1440/390
+passed again with an explicit55.6% label/cost-denial check;37 focused route,
+financial and chart regressions plus scoped lint passed. SQL hash921067FA…9FCB5
+and all authority code remain unchanged by these UI refinements. Final-head CI
+and separate exact-project migration approval/application remain pending.
 
 ### VIEW77 mounted-browser acceptance and current-beta refresh — 6 November
 
