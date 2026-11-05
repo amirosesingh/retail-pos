@@ -1558,3 +1558,9 @@ The final controlled fixture teardown exited0 after durable readback. The newer
 beta development-loader integration changes no approval/runtime bytes; require
 final-head CI before beta merge. Production and installer publication remain
 separately gated.
+
+VIEW77 mounted acceptance uses the actual shell/shift guard and shared Radix
+portals with isolated scoped providers. Retaining the shell does not retain a
+previous branch page: both data and settings must confirm before mounting its
+protected content. Recheck identity/profile/permission changes with the full
+startup gate; do not infer backend access from these presentation fixtures.

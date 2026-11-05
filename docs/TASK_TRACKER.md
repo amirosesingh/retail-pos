@@ -6181,3 +6181,25 @@ React/Radix dialog groups passed again on these upgraded dependencies. The full
 new-head CI, final typecheck and platform checks are required before beta merge.
 Earlier actual native sale/restart evidence used the prior dependency install;
 do not mislabel that as another installed-application upgrade acceptance run.
+
+### VIEW77 mounted-browser acceptance and current-beta refresh — 6 November
+
+The pre-refresh full suite passed 6,000 tests / 10 skipped / zero failures.
+After incorporating beta00b9ec56's completed Main approval correction, all180
+combined branch/settings/approval/authority tests and TypeScript passed. Only
+append-only documentation conflicted; both batches' evidence was preserved.
+The three runtime changes and original branch tests are byte-identical to the
+previous independently reviewed source. No permission/query/data path changed.
+
+The actual AppShell, ShiftGuard and confirmed-scope hook with shared Radix
+Select/Sheet/Dialog/nested Dropdown passed13 mounted Chrome groups at1440/390.
+Sidebar/header DOM and document identities survive authorized branch pending,
+success and both read-error/retry paths. Prior-branch pages and nested portals
+unmount, pointer/focus locks release, and no protected page/shift action appears
+before both data/settings proofs. Cold/auth/identity/profile/mode/epoch/permission,
+normal-terminal picker/shift-lock and revoked/unregistered gates stay enforced.
+These are isolated controlled-provider fixtures, not real branch writes or proof
+of backend admission; the existing branch/authority regressions remain required.
+No browser exceptions, remote requests or full-document reloads occurred.
+Final exact-head CI and beta integration remain; actual SQL, registration,
+checkout data, pending work and Membership were untouched.
