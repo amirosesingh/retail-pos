@@ -151,7 +151,7 @@ function AllShops() {
   }, [history.sales, state.products, totalStores, from, to]);
   const billPager = usePagination(live.feed, 25);
   const confirmedLive = useConfirmedPresentation(isAdmin && periodStoreIds.length > 0 ? JSON.stringify([pageDataScope(user), periodStoreIds, from, to, effectiveTimeZone()]) : null,
-    live, !history.loading && !history.error);
+    live, inventoryReady && !history.loading && !history.error);
   const comparisonFeed = confirmedLive?.feed;
   const comparisonDays = useMemo(() => comparisonSalesDays(comparisonFeed ?? [], state.products), [comparisonFeed, state.products]);
 

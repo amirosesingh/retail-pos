@@ -144,10 +144,10 @@ function classify(source: string, sqlFile: string, message: string): BoardIssue 
   };
 }
 
-export function fetchBoard(from: string, to: string, storeIds?: readonly string[]): Promise<BoardData> {
-  return fetchBoardData(from, to, storeIds);
+export function fetchBoard(from: string, to: string, storeIds?: readonly string[], options: { includeHourlyProfit?: boolean } = {}): Promise<BoardData> {
+  return fetchBoardData(from, to, storeIds, options);
 }
-async function fetchBoardData(from: string, to: string, storeIds?: readonly string[]): Promise<BoardData> {
+async function fetchBoardData(from: string, to: string, storeIds?: readonly string[], options: { includeHourlyProfit?: boolean } = {}): Promise<BoardData> {
   const scopeIds = storeIds === undefined ? null : [...new Set(storeIds.filter(Boolean).map(canonicalBranchId))];
   if (scopeIds && !scopeIds.length) return { storeDays: [], itemDays: [], bills: [], storeNames: {}, liveStoreIds: [] };
   const allowed = (id: unknown) => !scopeIds || scopeIds.includes(canonicalBranchId(id));
@@ -201,7 +201,21 @@ async function fetchBoardData(from: string, to: string, storeIds?: readonly stri
     issues.push(classify("stores", "supabase/schema.sql", directoryRes.error.message));
   if (issues.length) throw new BoardError(issues);
 
+  let hourly: Pick<BoardData, "hourlyRows" | "hourlyIssue"> = {};
+  if (options.includeHourlyProfit && scopeIds?.length) {
+    try {
+      const [{ loadHourlyTrading }, { hostedFunction }, { getPosCallerAuth }] = await Promise.all([
+        import("./trading-hours.functions"), import("./hosted-function-client"), import("./pos-caller-auth"),
+      ]);
+      hourly = await hostedFunction("trading-hours.loadHourlyTrading", loadHourlyTrading)({
+        data: { ...await getPosCallerAuth(), from, to, storeIds: scopeIds },
+      }).then(result => ({ hourlyRows: result.rows }));
+    } catch (error) {
+      hourly = { hourlyIssue: error instanceof Error ? error.message : "Hourly profit could not be verified." };
+    }
+  }
   return {
+    ...hourly,
     storeDays: (storeRes.data ?? []).map((r) => ({
       sale_day: String(r.sale_day),
       sale_month: String(r.sale_month ?? String(r.sale_day).slice(0, 7)),

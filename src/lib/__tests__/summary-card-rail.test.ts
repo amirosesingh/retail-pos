@@ -112,7 +112,10 @@ describe("manual summary card rails", () => {
     expect(2 * fixture.slideWidths[0]).toBeGreaterThan(1200);
     const graphs = readFileSync("src/routes/analytics.tsx", "utf8");
     expect(graphs).not.toContain("<AnalyticsCardRail");
-    expect(graphs).toContain('aria-label="Business graphs" className="grid');
+    expect(graphs).toContain("<ShopComparisonCharts");
+    const layout = readFileSync("src/platforms/web/components/pos/TradingChartLayout.tsx", "utf8");
+    expect(layout).toContain("overflow-y-auto");
+    expect(layout).not.toContain("<Carousel");
     const dashboard = readFileSync("src/routes/dashboard.tsx", "utf8");
     expect(dashboard).toContain('<DisplayElement name="dashboard.tradingGraphs"><section');
     expect(dashboard).not.toContain("<Carousel");

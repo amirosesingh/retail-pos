@@ -91,7 +91,7 @@ function LiveBoard() {
 
   const query = useQuery({
     queryKey: ["analytics-board", pageDataScope(user), currentStore.id, stores.map(store => store.id).sort().join("|"), effectiveTimeZone(), from, to],
-    queryFn: () => fetchBoard(from, to, storeIds),
+    queryFn: () => fetchBoard(from, to, storeIds, { includeHourlyProfit: showCostMargin }),
     enabled: allowed && storeIds.length > 0,
     meta: {
       tables: [

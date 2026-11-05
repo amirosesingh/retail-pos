@@ -5977,3 +5977,40 @@ actual Vite SSR failure/recovery and native/ESM signed-message/invalid-input
 parity for all four modules. TypeScript, scoped ESLint and diff checks pass.
 Independent agent source review found no blocker. Required CI and actual
 configured preview reload remain pending; no beta/main merge or publication.
+
+CHART72 second checkpoint: beta79face20 is integrated at5e9d7efb, preserving the
+completed dependency integration and development protocol fix. The chart color
+now depends only on canonical branch identity, preserving each shop between
+single-branch, cluster and company views. The actual Chrome1440/390px fixture
+passed equal448px cards/fixed256px plots, two/one columns, vertical keyboard
+scrolling, hidden scrollbar, no horizontal overflow, first-read hiding,
+same-scope refresh/error retention, scope-change hiding, meaningful negative
+profit, cost denial, in-place line/bar/month selection and15/20day presets.
+It found the existing global thin-scrollbar style overriding layered utilities;
+a narrowly scoped chart class now preserves the requested hidden scrollbar.
+
+The additional hourly read is prepared, NOT applied. Candidate
+supabase/migrations/20261105170645_bounded_shop_hourly_report.sql SHA256(LF)
+158948DA41505425E3D79BD97160A274B9C8706115D40CEF5C318C803CA1806F adds only public.pos_report_store_hours(date,date,text[]) as
+STABLE SECURITY INVOKER, fixed pg_catalog search path, service_role EXECUTE only.
+It aggregates actual selected sales and existing captured/fallback line costs by
+saved business timezone/hour, bounds100existing branches/3660days and returns at
+most2400aggregate rows. No record/policy/existing routine or existing grant is
+rewritten. Fresh server staff/report/cost and fixed-terminal/management scope
+checks run before and after the read; revocation/account handover returns no
+private result. Until its exact-project review/application, Business Board keeps
+daily/transaction graphs and truthfully reports unavailable hourly profit.
+No extra raw sale lines are downloaded. Dashboard/All Shops reuse existing
+complete bounded receipts; native SQL reuses existing#facts in one query and
+returns only aggregated hours to the renderer after Main's current checks.
+
+Actual disposable PostgreSQL18.6 passed21cases (financial/timezone/refund/signed
+cost/captured-zero/caller-role bounds and unknown-routine collision). Actual
+uniquely owned SQLServer LocalDB passed hourly/daily parity, branch/date limits,
+refund/signed/FOC/zero-cost behavior and denied forged-cost flag, then cleaned up.
+Focused60tests and scoped lint passed. Full regression found the expected new
+migration-inventory assertion, canonical source line-ending preservation and an
+obsolete inline-grid assertion; these were corrected without changing existing
+SQL definitions or loosening its privacy checks. Full final-tree rerun/type and
+independent source review remain required. No live database, queue/checkpoint,
+checkout, permission grant, operator profile, deployment or publication changed.

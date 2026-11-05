@@ -1,7 +1,6 @@
 import type { Product, Sale, Store } from "@/core/types/pos-types";
 import { indexProducts, lineCost, saleNetRevenue } from "@/core/pricing/profit";
 import type { StoreDayRow } from "./analytics-board";
-import { branchChartColor } from "./analytics-design";
 import { canonicalBranchId } from "./branch-id";
 import { posDayKey, posHour, shiftCalendarDay } from "./time-zone";
 
@@ -12,19 +11,16 @@ export type ComparisonPoint = { label: string; [key: string]: string | number };
 export function comparisonShopSeries(directory: readonly ComparisonShop[]) {
   const shops = [...new Map(directory.map(shop => [canonicalBranchId(shop.id), shop])).entries()]
     .filter(([id]) => id).sort(([a], [b]) => a.localeCompare(b));
-  const hues: number[] = [];
-  const separation = Math.min(35, 120 / Math.max(1, shops.length));
   const names = new Map<string, number>();
   for (const [, shop] of shops) names.set(shop.name, (names.get(shop.name) ?? 0) + 1);
   return shops.map(([id, shop], index) => {
-    const seed = Number(branchChartColor(id).match(/([\d.]+)\)$/)?.[1] ?? 0);
-    let hue = seed;
-    // Nearby hash hues are visually indistinguishable. Resolve them against
-    // the full directory so filtering/ranking cannot recolor the remaining shops.
-    for (let attempt = 0; attempt < 360 && hues.some(previous => {
-      const distance = Math.abs(previous - hue); return Math.min(distance, 360 - distance) < separation;
-    }); attempt++) hue = (hue + 137.508) % 360;
-    hues.push(hue);
+    // Identity alone determines color. Resolving collisions against a filtered
+    // directory would recolor a branch between Dashboard and the company Board.
+    let hash = 2166136261;
+    for (const char of `branch:${id}`) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
+    hash ^= hash >>> 16; hash = Math.imul(hash, 0x7feb352d);
+    hash ^= hash >>> 15; hash = Math.imul(hash, 0x846ca68b); hash ^= hash >>> 16;
+    const hue = ((hash >>> 0) % 3600000) / 10000;
     const color = `oklch(var(--analytics-category-lightness) 0.2 ${hue})`;
     return { id, name: (names.get(shop.name) ?? 0) > 1 ? `${shop.name} · ${id}` : shop.name, key: `shop${index}`, color };
   });
