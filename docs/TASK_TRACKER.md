@@ -15,6 +15,110 @@ FIN62 isolated SQL basis prototype: complete selected-branch/shift inputs and ex
 
 ## FIN62 — owner-approved shift financial/as-of validation correction
 
+## 5 November current integration and newly queued dashboard scope
+
+RECOVERY65 application checkpoint: missing-cloud legacy closing review/upload,
+Main-only actual-admin IPC, immutable SQL pending records, private verified
+receipt, duplicate-review uniqueness and truthful runtime status are implemented
+under verification. Targeted real PostgreSQL21 groups, real isolated SQL Server20
+groups, focused status/IPC/service/receipt102 tests and real React13 browser groups
+pass; separate runs overlap and must not be summed as unique coverage. Total-wire
+256KiB transport guard passes30 focused relay/receipt cases, with legacy ordinary
+sync limits/branch/authentication preserved. TypeScript/scoped lint checks passed
+before final UI lint-only cleanup. No live schema/data changes or publication.
+Core adoption/completion is still a separate unfinished prototype, not included
+in this checkpoint or claimed fixed. Full integrated regression/CI is next.
+
+PR399 single sync-data lane is merged to beta596742141d33a1683f39990299ac7b7217259136.
+Exact source0d2dcf45 passed5,748 tests/7 skipped/0 failed plus109 focused checks,
+TypeScript/lint and all required CI/platform/Workers builds; merge tree parity
+passed. Installed acceptance/publication is separate. Production draftPR400 now
+tracks beta into main and is labelled production/awaiting-owner-approval; no
+promotion or installer publication is approved by creating it. PR354 is historical.
+
+Owner asked to inspect red production commit checks. PR400's12-commit check
+rollups show two CANCELLED older Security runs (7ffb9862/4137b32e), not failed
+assertions; later reviewed heads and merge commits pass. Current59674214 still
+has its fresh production-PR Security run in progress at the recorded check.
+CodeRabbit remains skipped under the owner's earlier waiver. Do not erase old
+run history, skip required tests or call a pending run successful.
+
+DASH69 new request (separate from the nine-workstream stabilization progress):
+Live Dashboard selected branch only; Live Business Board company-wide comparison
+within authorized scope across clusters; All Shops cluster context, revenue/gross
+profit/line/bar charts with stable distinct shop colors and explicit filters.
+Read-only source audit found /dashboard uses allShopsScope while its inventory
+cards use currentStore; /analytics calls itself every-shop but companyStoreScope
+is selected cluster; All Shops currently keeps every authorized card visible and
+filters totals/bills by explicit cluster. Earlier owner decision719 preserves
+all cards, so a new question is pending whether cluster selection should filter
+cards AND charts or only totals/charts. Do not silently narrow/widen cards or
+permissions. Scope/chart proposal audit only until this decision is resolved;
+Membership stays on hold. Core recovery work continues independently.
+
+DASH69 card-loading refinement: start summary cards hidden until their requested
+scope has resolved data; then show qualifying values with the existing smooth
+animation and react to later updates without full-page reload. Preserve verified
+visible data during same-scope background refresh, distinguish errors/unknown
+from zero, and clear a prior scope immediately when switching branch/cluster.
+Keep meaningful negative financial/warning states and existing nonzero semantics;
+All Shops shop cards remain visible even with zero data in the chosen scope.
+Do not add chart sliding or invent animation-ready values from fallback defaults.
+
+DASH69 decision resolved: owner selected "Filter cards and charts by cluster;
+keep All clusters". This supersedes earlier719's always-visible-card behavior
+ONLY when an explicit cluster is selected. All clusters still shows every
+authorized shop including zero-data shops. Live Dashboard is selected branch;
+Live Business Board is all authorized company shops across clusters. Preserve
+normal-terminal branch locks, authorized management scope, existing revenue/
+sponsorship/refund/profit formulas and graph placement; stable shop colors,
+minimal desktop/mobile layout, no sliding/infinite behavior for charts.
+
+RECOVERY65 UI verification:13 isolated real-React/Chrome groups pass at1440/390,
+covering session changes, malformed replies, selected-shift binding, required
+reason, stable retry ID, explicit upgrade hold and pending-not-accepted wording.
+Fixtures used mock IPC/auth and blocked external network; not installed-device
+acceptance. Actual cloud-correction adoption/final CT recovery remains unfinished.
+
+Owner requests production preparation incrementally alongside beta integration;
+keepPR400 scope/checklist current as independently tested fixes reach beta. This
+does not authorize its merge, live database application or installer publication.
+
+## 5 November sync coverage clarification and current work
+
+Owner explicitly confirmed: "All applicable tables; missing/changed records only."
+Full end-to-end coverage means each applicable table and its dependency, delete
+and recovery paths, not a repeated full-table refresh. Initial authorized baseline
+and expired-history snapshots remain distinct from ordinary incremental passes.
+Preserve Membership ON HOLD and existing per-table direction/privacy rules. Add a
+registry-to-runtime coverage review; do not silently enable excluded tables.
+
+Owner additionally selected one coordinated active data-sync request per terminal,
+with bounded/fair upload and download turns and events recording changed facts.
+Native durable pending operations remain in SQL Server, not an Electron file or
+browser outbox. A transient Main scheduling queue is not durable business storage.
+Keep authentication/control/health independent, SQL checkout local, and Supabase
+pool management unchanged. Implement in a separate focused beta PR (SYNC68),
+preserving all existing request/proof/batch/retry/cursor/acknowledgement behavior.
+Owner asked to avoid extra/duplicate previous code: reuse the current engine;
+add only necessary reviewed helpers/tests, and trace compatibility callers before
+removing old paths. No broad rewrite or second per-module sync implementation.
+
+Active work: RECOVERY65 server admission/receipt and native durable review outbox,
+then trusted Main/UI/automatic-sync integration and end-to-end regressions. Root's
+new relay integration plus existing native binding/causal regressions passed 59
+tests on 5 November. That proves isolated routing/denial behavior, not installed
+recovery or live database application. STOCK68 pure historical-quantity engine and
+coverage design runs separately. Electron process-role/resource investigation and
+all-table runtime coverage remain pending. No live database edits in this batch.
+
+Owner asked whether both-connected database differences cause crashes. Divergence
+is normal; observed evidence proves a recovery/loading block, not a process crash.
+Test differing local/cloud data without losing pending work or reloading the UI.
+Owner reported 3–5 or 14–15 Electron processes; inspect roles/windows and CPU/memory
+before classifying extra processes. A prior sanitized local scan found no running
+electron.exe; no remote process leak is verified and no process was stopped.
+
 ## 5 November new owner decisions — supersedes pending questions below
 
 RECOVERY65: owner chose "Allow audited Administrator recovery". Implement a

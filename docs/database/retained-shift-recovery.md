@@ -1,9 +1,53 @@
-# Retained shift recovery — preparation, not runtime activation
+# Retained shift recovery — application integration under verification
 
 Owner approved implementation and isolated tests on 5 November 2026. The
 current branch starts beta `5e7327d5`. No production/local database changes,
 registration resets, pending-work clearing or publication are authorized by
 this document. Membership remains on hold.
+
+## Current implementation checkpoint — 5 November
+
+The missing-cloud-closing path is now wired through the existing Main coordinator:
+current Administrator review, exact immutable SQL Server evidence, a separately
+signed recovery action using an already enrolled key, SQL Server pending metadata,
+and a service-only atomic cloud routine with a complete OPEN graph compare-and-swap.
+It never retroactively signs as the original cashier or certifies an unavailable
+historical financial snapshot. Ordinary ORIGINAL/RECOUNT/FIN62 guards remain intact.
+The review screen sends no branch, reviewer or device-proof authority from UI.
+
+The prepared local schema is outside the automatic installer. If both new pending
+metadata tables are absent, old devices keep ordinary sync behavior without new
+protocol configuration. Management/non-PC paths skip this initial Operations
+recovery flow. Partial schema/failed reads are errors, never false zero. A unique
+shift-scope guard prevents repeated reviews from creating two uploads. The existing
+safe-close barrier covers evidence and approval saves.
+
+Uploads require the exact private transport receipt, actual accepted typed graph,
+full row coverage and unchanged Main source. SQL Server100ns timestamps may undergo
+only the reviewed PostgreSQL microsecond conversion; raw evidence stays immutable.
+Total HTTP request bytes are bounded to256KiB before pending-event persistence and
+again before transport; the server bounds that marked stream before parsing.
+Oversize work is held, never truncated. Lost replies retry the same recovery ID;
+later authorized corrections preserve the accepted original and effective graph.
+ACK writes metadata only, not later local business work or recovery checkpoints.
+
+The runtime adapter tries approved recovery uploads before the expired CT reader,
+lets eligible ordinary uploads continue during a held historical review, preserves
+source-change denials, and shows unknown counts instead of an old false zero.
+The preview's job_id is a capture correlation UUID, not a second JobManager job.
+SQL Server is the durable pending store; no browser/file business outbox is added.
+
+Verification so far includes21 actual PostgreSQL cases with existing shift/FIN62
+guards and concurrent retries/web closing,20 disposable SQL Server groups,102
+focused native status/IPC/service/receipt tests and13 actual React browser groups
+at1440/390. These separate runs overlap; they are not a summed total. Full final
+integration/CI and installed-device checks remain pending. No live SQL was applied.
+
+Still unfinished: reviewed local adoption of accepted cloud corrections,
+receipt-equivalent normalization, all-retained graph coverage through unchanged
+ShiftGapRecovery.finish and its captured V0, long-offline full workflow acceptance,
+exact live-schema preflight and separate cloud/local application approval. This
+draft cannot yet be claimed to clear the affected PC's recovery warning.
 
 ## Confirmed failure
 
@@ -40,8 +84,8 @@ this document provide append-only, scope-bound capture/list/load. They preserve
 the exact raw local/cloud JSON bytes and independent hashes, reject unknown
 schema/trigger definitions, bound storage and keep captures distinct from
 accepted operations. Capture requires a caller-owned transaction and trusted
-Main scope checks before and after awaited SQL calls. Neither the store nor its
-prepared table is installed or wired into synchronization.
+Main scope checks before and after awaited SQL calls. The Main service is now
+wired; the prepared table is not installed on an operator database.
 
 Validation: 12 evidence tests pass with the opt-in uniquely owned LocalDB fixture,
 including actual DDL, immutability, concurrent retries, rollback and restart
@@ -50,10 +94,11 @@ recovery also passes all 16 real isolated SQL Server groups. The regular Vitest
 suite invokes portable classifier/evidence safety tests; the actual LocalDB
 test remains explicitly opt-in.
 
-The store does not yet persist the captured CT position or implement decisions,
-acceptance, upload, source-graph locks or final checkpoint advancement. Integration
-must provide and verify those requirements; saved evidence alone is not proof
-that an upload occurred or that a retained local change may be discarded.
+The evidence store alone does not persist the captured CT position or authorize
+decisions, acceptance, upload or final checkpoint advancement. The dedicated
+outbox/service now provides source locks, review and receipt admission; final
+adoption/completion is unfinished. Saved evidence alone never proves an upload
+occurred or that a retained local change may be discarded.
 
 ## Remaining implementation and acceptance
 

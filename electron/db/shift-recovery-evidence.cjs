@@ -1,6 +1,7 @@
 "use strict";
 
-// PREPARATION ONLY: no installer, IPC, scheduler or upload path calls this store.
+// Main's scoped recovery service captures evidence only after the separately
+// reviewed metadata schema is available; the installer does not create it.
 // Captured evidence is neither an accepted receipt nor an authenticated author action.
 const { createHash } = require("node:crypto");
 const { parseExactJson } = require("../sync/shift-recovery-exact.cjs");

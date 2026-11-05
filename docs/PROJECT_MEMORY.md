@@ -12,6 +12,27 @@ Owner requires all proposed cloud/local database upgrades collected for exact fi
 The exact owner-approved service-only bounded feed RPC and PR384 are applied/deployed on beta. Existing selector/privacy grants and businessrecords are preserved; native continuation is bound to authenticated response metadata. Live147request sample all200/ok with no CPU-exceeded; CPU2–114ms/mean9.469 means NO guarantee allrequestsbelow10ms. Electronfeed131613→133184, all6shiftCTvalid; largebacklog stilldraining. Keep implemented/sample-verified status distinct from fullsync completion, production promotion or installerpublication. Supabase migrationtool ledger20261104042158 corresponds to approvedfile20261104040251, SHA83495D696622241ECA2A8D396234E2FD65EE7C7A3050E93E4280638D6530D59B; do not replay based solely on differing timestamps.
 # POS project memory
 
+## 5 November all-table synchronization clarification
+
+Dashboard decision69: Live Dashboard selected operating branch; Live Business
+Board company-wide across authorized shops/clusters; All Shops cards/charts
+follow the explicit cluster filter, with All clusters showing every authorized
+shop including zero-data shops. This supersedes the earlier always-visible-card
+rule only for a selected cluster. Never expand management grants or normal till
+branch access. Use consistent shop series/colors and existing financial formulas.
+
+The owner confirmed "All applicable tables; missing/changed records only."
+Cover each applicable table, dependency group, tombstone and recovery path within
+the one coordinated sync pipeline. This does not authorize repeated full-table
+downloads, changes to per-table access/direction or activation of Membership.
+Initial authorized baselines and scoped expired-history recovery snapshots remain
+required where saved progress cannot safely support incremental downloads.
+Owner selected one coordinated active data-sync lane per terminal with bounded
+upload/download turns. SQL Server remains the native durable business/pending
+operation store; Electron Main coordinates requests, while protected device keys
+stay in their existing OS vault. Reuse existing sync code, preserve independent
+authentication/control/health and do not change Supabase connection pool settings.
+
 ## 5 November — approved legacy recovery and historical stock semantics
 
 Owner approved actual stock at the selected original movement time. Late offline

@@ -84,6 +84,9 @@ const CHANNEL_LEVELS = {
   "business:shift-recount": OPEN,
   "business:shift-variance-approve": OPEN,
   "business:shift-reconciliation-view": OPEN,
+  "sync:legacy-recovery-list": ADMIN,
+  "sync:legacy-recovery-preview": ADMIN,
+  "sync:legacy-recovery-approve": ADMIN,
   "receipts:find-exact": OPEN,
   "receipts:refund": OPEN,
   "pos:status": OPEN,
@@ -438,6 +441,10 @@ function refusal(level, channel, args = []) {
 
 /** True when the caller may run this channel with these arguments right now. */
 function allowed(channel, args = []) {
+  if (["sync:legacy-recovery-list", "sync:legacy-recovery-preview", "sync:legacy-recovery-approve"].includes(channel)) {
+    if (!adminSession.hasPosAuthority() || adminSession.identity()?.level !== "admin") return false;
+    adminSession.touch(); return true;
+  }
   if (channel === "business:management-report") {
     if (!adminSession.hasPosAuthority()) return false;
     const request = args[0];

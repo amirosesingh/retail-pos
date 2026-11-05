@@ -17,5 +17,6 @@ const BUSINESS_WRITE_CHANNELS = new Set([
   "business:reserve-bill", "business:write-batch", "business:commit-aggregate", "business:save-authorization-rule",
   "business:shift-close-start", "business:shift-close-count", "business:shift-recount",
   "business:shift-variance-approve", "receipts:refund",
+  "sync:legacy-recovery-preview", "sync:legacy-recovery-approve",
 ]);
 module.exports={WriteBarrier,BUSINESS_WRITE_CHANNELS};

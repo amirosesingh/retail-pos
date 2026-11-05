@@ -110,6 +110,11 @@ contextBridge.exposeInMainWorld("pos", {
     resume: () => invoke("sync:resume"),
     getFailures: () => invoke("sync:get-failures"),
     reconcile: (options) => invoke("sync:reconcile", options),
+    legacyRecovery: {
+      list: (options) => invoke("sync:legacy-recovery-list", options),
+      preview: (shiftId) => invoke("sync:legacy-recovery-preview", shiftId),
+      approve: (value) => invoke("sync:legacy-recovery-approve", value),
+    },
     subscribe: (cb) => { const handler=(_event,payload)=>cb(payload); ipcRenderer.on("sync:state",handler); return()=>ipcRenderer.removeListener("sync:state",handler); },
   },
   staffRoster: (storeId) => invoke("staff:roster", storeId),

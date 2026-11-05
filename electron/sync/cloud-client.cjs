@@ -37,6 +37,7 @@ function changedAssignments(assignments, columns) {
 }
 // Main-private transport evidence: body flags cannot authorize partial feed pages.
 const feedContinuation = new WeakMap();
+const legacyRecoveryResponses = new WeakMap();
 
 function transportDiagnostic(error, payload, stage) {
   // Read data descriptors only: foreign errors must not run getters or leak
@@ -216,6 +217,11 @@ class CloudClient {
     // UUID cleanup is for ordinary rows, never for already-signed labels.
     // Raw JSON and proof objects remain exactly those captured by Main.
     if(payload?.sqlServerFinancialEvent)outbound.sqlServerFinancialEvent={...outbound.sqlServerFinancialEvent,operationJson:payload.sqlServerFinancialEvent.operationJson,proof:payload.sqlServerFinancialEvent.proof};
+    if (payload?.sqlServerLegacyRecovery) outbound.sqlServerLegacyRecovery = {
+      ...payload.sqlServerLegacyRecovery,
+      payloadJson: payload.sqlServerLegacyRecovery.payloadJson,
+      attestation: payload.sqlServerLegacyRecovery.attestation,
+    };
     const financialAggregate=payload?.sqlServerAggregate;
     if(financialAggregate&&(financialAggregate.shiftFinancialBasis||financialAggregate.shiftFinancialOpening||financialAggregate.registerFinancialBoundary===true)){
       for(const key of['shiftAuthor','shiftClosingStart','shiftFinancialBasis','shiftFinancialOpening'])if(financialAggregate[key]!==undefined)outbound.sqlServerAggregate[key]=financialAggregate[key];
@@ -225,16 +231,23 @@ class CloudClient {
     let bodyReadError;
     let nonJsonResponse = false;
     let exactGraphBody;
+    let legacyRecoveryBody;
     let transportStage = "fetch";
+    const requestBody = JSON.stringify({ ...outbound, ...personProof, terminalToken: recordId(terminalToken), deviceBindingProof:terminal.deviceBindingProof, ...(terminal.deviceUse === "management" ? { deviceClaimProof: terminal.deviceClaimProof } : {}) });
+    if (payload?.sqlServerLegacyRecovery && Buffer.byteLength(requestBody, "utf8") > require("../security/legacy-shift-recovery-protocol.cjs").MAX_UPLOAD_BYTES)
+      throw Object.assign(new Error("The reviewed closing exceeds the bounded recovery upload. Its saved evidence remains available for review."), { code:"ELEGACY_RECOVERY_OVERSIZED", table:"shifts" });
     try { response = await fetch(`${base}/api/v1/pos/sync${suffix}`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...outbound, ...personProof, terminalToken: recordId(terminalToken), deviceBindingProof:terminal.deviceBindingProof, ...(terminal.deviceUse === "management" ? { deviceClaimProof: terminal.deviceClaimProof } : {}) }),
+      headers: { "content-type": "application/json", ...(payload?.sqlServerLegacyRecovery ? { "x-pos-legacy-recovery": "1" } : {}) },
+      body: requestBody,
       signal: AbortSignal.timeout(30_000),
     });
       transportStage = "body";
       try {
-        if(payload?.sqlServerShiftGraph && response.ok && typeof response.text==="function"){
+        if (payload?.sqlServerLegacyRecovery && response.ok) {
+          legacyRecoveryBody = await boundedText(response, require("./legacy-shift-recovery-receipt.cjs").MAX_RESPONSE_BYTES);
+          data = JSON.parse(legacyRecoveryBody);
+        } else if(payload?.sqlServerShiftGraph && response.ok && typeof response.text==="function"){
           exactGraphBody=await boundedText(response);
           data=JSON.parse(exactGraphBody);
         }else data = await response.json();
@@ -268,6 +281,8 @@ class CloudClient {
       }), { httpStatus: response.status, nonJsonResponse });
     }
     const normalized=normalizeSyncPayload(data);
+    if (legacyRecoveryBody !== undefined && normalized && typeof normalized === "object")
+      legacyRecoveryResponses.set(normalized, legacyRecoveryBody);
     if (payload?.sqlServerPull) {
       const projection = response.headers?.get?.("X-POS-Feed-Projection") ?? null;
       const continuation = response.headers?.get?.("X-POS-Feed-Continue") ?? null;
@@ -365,6 +380,27 @@ class CloudClient {
   }
   shiftGraph({organizationId="default",branchId,shiftId}) {
     return this.shiftProtocolRequest({sqlServerShiftGraph:{organizationId,branchId,shiftId}});
+  }
+  async pushLegacyRecovery(event) {
+    const source = this.financialBasisIdentity(event.branchId, event.shiftId);
+    const assertCurrent = () => {
+      const current = this.financialBasisIdentity(event.branchId, event.shiftId);
+      if (current.pool !== source.pool || current.manager !== source.manager ||
+          JSON.stringify(current.identity) !== JSON.stringify(source.identity)) financialBasisFailure();
+    };
+    const { normalizeLegacyPayload, normalizeLegacyRecovery } = require("../security/legacy-shift-recovery-protocol.cjs");
+    const payload = normalizeLegacyPayload(JSON.parse(event.payloadJson)), proof = normalizeLegacyRecovery(event.proof);
+    if (financialBasisHash(event.payloadJson) !== event.payloadHash || proof.payloadHash !== event.payloadHash ||
+        payload.branchId !== source.identity.branchId || proof.terminalId !== source.identity.terminalId ||
+        proof.projectOrigin !== source.identity.projectOrigin) financialBasisFailure();
+    assertCurrent();
+    const result = await this.shiftProtocolRequest({ sqlServerLegacyRecovery: {
+      organizationId: "default", branchId: event.branchId, payloadJson: event.payloadJson, attestation: proof,
+    } });
+    assertCurrent();
+    const { rememberLegacyRecoveryReceipt } = require("./legacy-shift-recovery-receipt.cjs");
+    return rememberLegacyRecoveryReceipt({ event, raw: legacyRecoveryResponses.get(result),
+      registry: require("../db/schema-registry.cjs").loadRegistry(), assertCurrent });
   }
   async shiftProtocolRequest(payload) {
     try{return await this.request(payload);}
