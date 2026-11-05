@@ -38,7 +38,7 @@ it for a connection. Application configuration remains operator/hosting supplied
 
 | Artifact | Exact SHA256 |
 | --- | --- |
-| `supabase/migrations/20261105090000_shift_financial_known_history.sql` | `75DCFA47F4898FBAAF8E356BE499601DA4DA39B92050B510299061137DF21F20` |
+| `supabase/migrations/20261105090000_shift_financial_known_history.sql` | `A37FD005A688C1E2AC4815E0455E9B97B842531C3ACE0BC3F0A105287498EC2E` |
 | `database/sqlserver/prepared/025_shift_financial_bases.sql` | `2C6E250D04855B86447603763C1A9304241D99D77814040756AB9AA67CB77897` |
 | `database/sqlserver/prepared/026_shift_financial_operations.sql` | `26A55BC6FD352083AA388283F093212E9C74081E9C96FE87A79E71288AE235FA` |
 
@@ -78,3 +78,24 @@ Main/LocalDB/HTTP/PostgreSQL runtime scenarios. Nested-payment transport passes7
 actual-handler/auth checks, and the full local suite passes5578tests/7skipped.
 Exact-head CI, beta deployment and hosted CPU acceptance remain gates.
 This document does not approve application, enrollment, activation or release.
+
+### Guarded application result and replacement candidate
+
+The owner-approved earlier cloud90000 artifact (SHA256 `75DCFA47F4898FBAAF8E356BE499601DA4DA39B92050B510299061137DF21F20`)
+was attempted once and rejected by its source guard. Read-only postflight showed
+zero new namespaces, public protocol routines or migration receipts: full rollback.
+No cloud90100 or local025/026/027 was applied. The private approved original is
+retained as evidence; do not rerun it or infer approval for different bytes.
+
+The replacement candidate above adds only two explicitly reviewed live-source
+fingerprints: a close-start denial-wording variant and a reconciliation
+comments/formatting variant. It also normalizes CRLF before LF-sensitive alias
+patches. Unknown definitions, altered permissions and wrong owners still abort;
+existing authority metadata and the target's denial wording remain preserved.
+Captured raw web definitions and unchanged native delegates are tested in owned
+fixtures. This is compatibility preparation, not a business-rule change or repair.
+
+The new cloud90000 hash requires renewed owner approval before another live
+attempt. Cloud90100 and local025/026/027 hashes remain unchanged, with their prior
+exact approvals and maintenance conditions retained. No protected rollout,
+sharing-OFF cutover or production publication is authorized by these approvals.

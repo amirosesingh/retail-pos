@@ -1074,6 +1074,28 @@ same-PC cashier handover and distinguish sharing from multiple-shifts-per-termin
 Production promotion, exact database application and installer publication remain
 separate approvals. Membership stays on hold; booking deposits remain separately
 tracked, never silently declared fixed by FIN62.
+
+## 5 November — database application and guarded compatibility
+
+PRs 391, 392 and 393 are merged into beta `596566a1`, with their required checks
+passing before merge. The owner-approved retry of the Workers dependency-install
+timeout succeeded without code, settings or billing changes. Do not mistake that
+build-environment timeout for an authentication/database failure.
+
+The owner approved exact cloud 90000/90100 and local 025/026/027 artifacts. The
+first cloud attempt (hash `75DCFA47…F21F20`) was rejected by its source guard and
+fully rolled back: zero new namespaces, public protocol routines or migration
+receipts. No second cloud or local script ran. Preserve those unchanged approvals
+and their safe-maintenance conditions; do not infer approval for changed bytes.
+
+The revised cloud candidate `A37FD005A688C1E2AC4815E0455E9B97B842531C3ACE0BC3F0A105287498EC2E`
+accepts only two reviewed cosmetic source variants and normalizes CRLF before
+alias patching. Unknown definitions, changed permissions and wrong owners still
+abort. Raw live sources must be distinguished from LF-normalized comparisons.
+Captured live delegates remain unchanged and are exercised in isolated workflow
+tests. This revised hash needs renewed owner approval before application. No
+rollout activation, sharing-OFF cutover, production merge or publication follows
+from the earlier database approvals.
 ## SHIFT63 — Operational Rules sharing control approved, 5 November
 
 Owner explicitly approved preparation and implementation of a separate sharing control. Preserve current behaviour by default: sharing ON. OFF limits normal registered tills' operating checkout shifts to their own terminal; multiple cashiers on one PC and authorized management reporting/corrections remain supported. Do not confuse this with allow_multiple_shifts_per_terminal. Independent branch codex/shift-sharing-rules-beta starts current beta68470185 in work/shift-sharing-rules-beta, not the unfinished FIN62 branch. Exact cloud/local schema changes remain unapplied and require final review. Scope: canonical scoped setting/save/reload/inheritance/cache, old-schema capability compatibility, trusted normal-terminal online/offline enforcement including direct APIs, and regression tests. Do not silently change existing rule values, widen management grants or show an unenforced checkbox. Old clients/unknown offline policy and pending sales require explicit rollout safeguards. No application code changed in this worktree yet; FIN62 remains first priority.

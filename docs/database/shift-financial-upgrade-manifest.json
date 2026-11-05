@@ -40,7 +40,7 @@
     },
     {
       "source": "scripts/preparation/shift-financial-web-actions.sql",
-      "sha256": "6ABB3FCC543D81CD5D51CE2910572538C98347C3E211F433AAD20BD8B8991B82"
+      "sha256": "C183B8A19955F180A9CD445F6263D0C8033DB85DA229887A4078E5E81C9A37A5"
     },
     {
       "source": "scripts/preparation/shift-financial-live-business.sql",
@@ -62,8 +62,8 @@
   "artifacts": [
     {
       "file": "supabase/migrations/20261105090000_shift_financial_known_history.sql",
-      "sha256": "75DCFA47F4898FBAAF8E356BE499601DA4DA39B92050B510299061137DF21F20",
-      "bytes": 225783
+      "sha256": "A37FD005A688C1E2AC4815E0455E9B97B842531C3ACE0BC3F0A105287498EC2E",
+      "bytes": 226015
     },
     {
       "file": "database/sqlserver/prepared/025_shift_financial_bases.sql",
