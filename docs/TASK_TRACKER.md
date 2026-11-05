@@ -5277,3 +5277,8 @@ local pass alone.
 - Integration/release blocker: keep this PR draft until the separately reviewed
   new-operation-ID existing-sale replay gap is resolved or the owner explicitly
   decides its rollout. Passing this narrow patch's tests is not release approval.
+- Final frozen runtime verification: independent review passed 9 new unit cases
+  and all 39 actual SQL groups. Full regression completed successfully: 5,777
+  passed, 7 skipped, 0 failures (5,784 total), bounded to two workers. TypeScript,
+  scoped ESLint and diff checks passed. Draft PR404 remains held for the separate
+  existing-sale/new-operation-ID replay blocker and required CI/acceptance.
