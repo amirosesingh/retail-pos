@@ -97,6 +97,20 @@ class AggregateRepository {
     assertFinancialStockUpdate({ ...operation, values: { stock_quantity: result.recordset[0].stock_quantity, stock_by_store: result.recordset[0].stock_by_store } }, aggregate, captured.before);
   }
 
+  async assertNewSaleIdentities(transaction, operations) {
+    const ids = operations.filter(operation => operation.table === "sales" && ["insert", "upsert"].includes(operation.kind))
+      .flatMap(operation => operation.rows ?? (operation.values ? [operation.values] : [])).map(row => row.id);
+    // A different operation receipt cannot prove that an existing bill's
+    // financial/stock effects are missing. Hold partial legacy states too.
+    if (ids.some(value => typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) || new Set(ids).size !== ids.length)
+      throw Object.assign(new Error("The sale contains duplicate or invalid saved bill identities."), { code: "EIDEMPOTENCY", table: "sales" });
+    for (const saleId of [...ids].sort()) {
+      const existing = await new (this.connectionManager.sql().Request)(transaction).input("sale", saleId)
+        .query("SELECT id FROM dbo.sales WITH(UPDLOCK,HOLDLOCK) WHERE id=@sale;");
+      if (existing.recordset?.length) throw Object.assign(new Error("This sale could not be safely matched to a new local receipt. Check the bill in Sales before retrying; saved records have not been rewritten."), { code: "EEXISTING_SALE_RECONCILIATION", table: "sales" });
+    }
+  }
+
   async commit(kind, aggregate) {
     // SQL Server has already rolled back a deadlock victim. Retry the whole
     // atomic operation with the same receipt, never an individual statement
@@ -133,6 +147,8 @@ class AggregateRepository {
         await transaction.commit();
         return { ok: true, operationId, replayed: true, affected: 0 };
       }
+
+      await this.assertNewSaleIdentities(transaction, operations);
 
       // Close-start takes the same shift row lock. Once counting begins no
       // sale can race the database totals used for reconciliation.
@@ -264,7 +280,7 @@ class AggregateRepository {
       return { ok: true, operationId, replayed: false, affected };
     } catch (error) {
       await Promise.resolve(transaction.rollback()).catch(() => undefined);
-      if (["EIDEMPOTENCY", "EBRANCH", "EBRANCH_SCOPE", "SYNC_BRANCH_FORBIDDEN", "EEXCHANGE_STATE", "EPRODUCT_STATE", "PERMISSION_DENIED", "ESHIFT_TERMINAL"].includes(error?.code))
+      if (["EIDEMPOTENCY", "EEXISTING_SALE_RECONCILIATION", "EBRANCH", "EBRANCH_SCOPE", "SYNC_BRANCH_FORBIDDEN", "EEXCHANGE_STATE", "EPRODUCT_STATE", "PERMISSION_DENIED", "ESHIFT_TERMINAL"].includes(error?.code))
         throw error;
       const target = tableName ? ` while writing ${tableName}` : "";
       const native = error?.originalError?.info ?? error?.originalError ?? error;

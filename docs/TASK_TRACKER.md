@@ -5282,3 +5282,17 @@ local pass alone.
   passed, 7 skipped, 0 failures (5,784 total), bounded to two workers. TypeScript,
   scoped ESLint and diff checks passed. Draft PR404 remains held for the separate
   existing-sale/new-operation-ID replay blocker and required CI/acceptance.
+
+### Checkout replay correction — owner-approved extension, 2026-11-05
+
+- Owner approved the previously separate existing-sale replay guard. Implemented
+  before all financial/stock/journal writes, after exact operation-receipt replay.
+  Covers INSERT/UPSERT rows and values, normalized duplicates, deterministic locks,
+  concurrent same-sale IDs, partial headers and neutral foreign-branch responses.
+- Frozen scoped verification: 49 focused tests and 53 disposable SQL groups pass;
+  actual Main Administrator header/items/payment/receipt/journal retry is included.
+  Negative-stock settings and all production data/configuration remain unchanged.
+- Final expanded full regression is running; independent review/CI/installed
+  acceptance remain pending. The earlier last-unit-only full pass and canceled
+  expanded run are not claims about this revised head. Keep PR404 draft until
+  final acceptance; no merge/deploy/publication has been performed.

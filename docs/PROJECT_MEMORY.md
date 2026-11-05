@@ -1236,3 +1236,26 @@ both original beta owned products and the scoped patch. It remains separately
 tracked; this patch does not claim comprehensive sale-identity idempotency.
 Live incident linkage still requires the affected local row/configuration evidence.
 No database changes, production deployment or installer publication were performed.
+
+### 2026-11-05 — separately approved existing-sale replay guard
+
+Owner subsequently approved the extra replay correction and isolated tests in the
+same checkout batch. After the exact accepted operation-receipt replay check and
+before any stock, financial metadata or journal writes, the repository locks new
+sale INSERT/UPSERT identities in deterministic order. Supported rows and values
+forms are both covered. Duplicate normalized identities are rejected. A saved
+sale without this exact operation receipt is held for reconciliation rather than
+having its stock effects guessed, including a legacy partial header. The response
+does not identify another branch. Legitimate original-bill references/authorized
+exchange-link UPDATEs and dedicated refund paths keep their existing validation.
+
+The negative-stock configuration, branch assignments, product ownership, prices,
+SKU, permissions and database schema remain unchanged. Administrator status does
+not widen branch stock access. At the current frozen source, 49 focused tests and
+53 actual disposable SQL groups pass, including current Main Administrator policy
+writing exactly one header/item/payment/receipt and four journal entries across a
+retry. New-operation-ID replays, mixed rows/values forms, partial/foreign headers
+and competing same-sale operations are denied before stock. The final expanded
+full regression and independent review are pending; the earlier 5,777-pass full
+run covered the last-unit-only source. An intervening expanded run was canceled
+after a review found the now-fixed values-form gap and is not final evidence.

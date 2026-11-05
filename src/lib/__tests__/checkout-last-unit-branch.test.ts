@@ -35,3 +35,28 @@ describe('transaction-local sale stock preimage',()=>{
   const f=fixture(),captured=await f.repo.captureSaleStock({},f.table,f.op,f.scope,'sale');f.change({is_archived:true,archived_at:'2026-11-05T00:00:00Z',row_version:'3',updated_at:'2026-11-05T00:00:00Z'});await expect(f.repo.confirmSaleStock({},f.table,f.op,f.scope,captured,1)).resolves.toBeUndefined();
  });
 });
+
+describe('pre-stock existing sale identity guard',()=>{
+ function reader(existing=false){const calls:string[]=[];class Request{sale='';input(_name:string,value:string){this.sale=value;return this;}async query(text:string){expect(text).toContain('WITH(UPDLOCK,HOLDLOCK)');calls.push(this.sale);return{recordset:existing?[{id:this.sale}]:[]};}}const repo=new AggregateRepository({sql:()=>({Request})},{});return{repo,calls};}
+ it('locks new normalized sale IDs in deterministic order and ignores legitimate original references',async()=>{
+  const f=reader(),lower='00000000-0000-4000-8000-000000000002';await f.repo.assertNewSaleIdentities({},[{table:'sales',kind:'upsert',rows:[{id:lower,original_bill_number:'OLD'}]},{table:'sales',kind:'insert',rows:[{id}]},{table:'sales',kind:'update',match:{id:'existing-original'}},{table:'sales',kind:'delete',match:{id:'dedicated-refund-original'}}]);expect(f.calls).toEqual([id,lower]);
+ });
+ it('holds existing immutable or partial sale headers without exposing their branch',async()=>{
+  const f=reader(true);await expect(f.repo.assertNewSaleIdentities({},[{table:'sales',kind:'upsert',rows:[{id}]}])).rejects.toMatchObject({code:'EEXISTING_SALE_RECONCILIATION',table:'sales'});expect(f.calls).toEqual([id]);
+ });
+ it.each([{ids:[id,id]},{ids:['not-a-valid-sale-id']}])('rejects duplicate or malformed IDs before any SQL (%j)',async ({ids})=>{
+  const f=reader();await expect(f.repo.assertNewSaleIdentities({},[{table:'sales',kind:'upsert',rows:ids.map(id=>({id}))}])).rejects.toMatchObject({code:'EIDEMPOTENCY'});expect(f.calls).toEqual([]);
+ });
+ it('does not run sale insertion guards for dedicated original updates/refund references alone',async()=>{
+  const f=reader(true);await f.repo.assertNewSaleIdentities({},[{table:'sales',kind:'update',match:{id}},{table:'sale_refunds',kind:'insert',rows:[{sale_id:id}]}]);expect(f.calls).toEqual([]);
+ });
+});
+
+describe('supported values-form sale rows',()=>{
+ it('checks values-form existing sale IDs before stock and detects mixed-form duplicates',async()=>{
+  const calls:string[]=[];class Request{input(_name:string,value:string){calls.push(value);return this;}async query(){return{recordset:[{id}]};}}
+  const repo=new AggregateRepository({sql:()=>({Request})},{});
+  await expect(repo.assertNewSaleIdentities({},[{kind:'upsert',table:'sales',values:{id}}])).rejects.toMatchObject({code:'EEXISTING_SALE_RECONCILIATION'});expect(calls).toEqual([id]);calls.length=0;
+  await expect(repo.assertNewSaleIdentities({},[{kind:'upsert',table:'sales',rows:[{id}]},{kind:'insert',table:'sales',values:{id}}])).rejects.toMatchObject({code:'EIDEMPOTENCY'});expect(calls).toEqual([]);
+ });
+});
