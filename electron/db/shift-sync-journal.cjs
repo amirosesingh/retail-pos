@@ -27,10 +27,11 @@ const rowsOf = operation => operation.rows ?? (operation.values ? [{ ...operatio
  * This class is not exposed through IPC and accepts no renderer trust flag.
  */
 class ShiftSyncJournal {
-  constructor(operationsRepository, {authorRequired=false,financialBases=null} = {}) {
+  constructor(operationsRepository, {authorRequired=false,financialBases=null,financialOperations=null} = {}) {
     this.repository = operationsRepository;
     this.authorRequired = authorRequired;
     this.financialBases = financialBases;
+    this.financialOperations = financialOperations;
     this.intents = new ShiftIntentStore(operationsRepository.connectionManager,{tables:[...operationsRepository.tables.values()]});
   }
   observe(branchId,shiftId) { return this.intents.observe(branchId,shiftId); }
@@ -59,12 +60,20 @@ class ShiftSyncJournal {
       }
       const mismatch = () => fail(`This ${label} key has different or incomplete saved facts. No ${label} was accepted.`, "EIDEMPOTENCY");
       if (found.recordset.length !== 1) mismatch();
-      const graph = await this.snapshot(transaction, branchId, shiftId, [], {allowUnclosed:kind==="ORIGINAL"});
+      // Only a durable financial marker selects exact replay. Old accepted
+      // history keeps its existing validation; no fresh financial read/reprice.
+      const financial=this.financialBases?.enabled===true?await this.financialBases.forCount(transaction,{branchId,shiftId,countId:id(found.recordset[0].id)}):null;
+      const exactFinancial=financial?.financialRequired===true;
+      const {canonicalExactCents}=exactFinancial?require("../sync/shift-financial-math.cjs"):{};
+      const exactCents=value=>BigInt(canonicalExactCents(value).replace(".",""));
+      const exactMoney=value=>{const negative=value<0n,n=negative?-value:value;return `${negative?"-":""}${n/100n}.${String(n%100n).padStart(2,"0")}`;};
+      const equalMoney=(left,right)=>{if(!exactFinancial)return sameMoney(left,right);if(left==null||right==null)return left==null&&right==null;try{return canonicalExactCents(left)===canonicalExactCents(right);}catch{return false;}};
+      const graph = await this.snapshot(transaction, branchId, shiftId, [], {allowUnclosed:kind==="ORIGINAL",exactFinancial});
       const count = graph.get("shift_cash_counts").find(row => id(row.id) === id(found.recordset[0].id));
       if (!count || count.kind !== kind || count.client_key !== intent.clientKey || (kind==="RECOUNT" && count.reason !== intent.reason) ||
           branch(count.terminal_id) !== branch(intent.terminalId) || count.counted_by_name !== intent.actor ||
           count.counted_by_staff_id !== intent.actor ||
-          !["cash", "card", "digital"].every(tender => sameMoney(count[`counted_${tender}`], intent[tender]))) mismatch();
+          !["cash", "card", "digital"].every(tender => equalMoney(count[`counted_${tender}`], intent[tender]))) mismatch();
       const reconciliations = graph.get("shift_reconciliations").filter(row => id(row.count_id) === id(count.id));
       const events = graph.get("shift_close_events").filter(row => {
         let detail = row.detail;
@@ -81,15 +90,15 @@ class ShiftSyncJournal {
       const money = value => Math.round(Number(value) * 100) / 100;
       const variances = ["cash", "card", "digital"].map(tender => {
         const counted = count[`counted_${tender}`], expected = reconciliation[`expected_${tender}`];
-        if (!sameMoney(reconciliation[`counted_${tender}`], counted) || !finiteMoney(expected)) mismatch();
-        const variance = counted == null ? null : money(Number(counted) - Number(expected));
-        if (!sameMoney(reconciliation[`variance_${tender}`], variance)) mismatch();
-        return variance ?? 0;
+        if (!equalMoney(reconciliation[`counted_${tender}`], counted) || !finiteMoney(expected)) mismatch();
+        const variance = counted == null ? null : exactFinancial?exactMoney(exactCents(counted)-exactCents(expected)):money(Number(counted) - Number(expected));
+        if (!equalMoney(reconciliation[`variance_${tender}`], variance)) mismatch();
+        return variance ?? (exactFinancial?"0.00":0);
       });
-      const total = money(variances.reduce((sum, value) => sum + value, 0));
-      const status = Math.abs(total) <= 0.005 ? "NO_VARIANCE" : total > 0 ? "OVER" : "SHORT";
+      const total = exactFinancial?exactMoney(variances.reduce((sum,value)=>sum+exactCents(value),0n)):money(variances.reduce((sum, value) => sum + value, 0));
+      const status = exactFinancial?(exactCents(total)===0n?"NO_VARIANCE":exactCents(total)>0n?"OVER":"SHORT"):Math.abs(total) <= 0.005 ? "NO_VARIANCE" : total > 0 ? "OVER" : "SHORT";
       if (!count.created_at || !sameTime(reconciliation.created_at) || !sameTime(event.created_at) ||
-          !sameMoney(reconciliation.variance_total, total) || reconciliation.variance_status !== status ||
+          !equalMoney(reconciliation.variance_total, total) || reconciliation.variance_status !== status ||
           (kind==="RECOUNT" && detail?.reason !== intent.reason) || event.to_state !== (kind==="ORIGINAL"?"CASH_COUNT_SUBMITTED":"CLOSED") ||
           branch(event.terminal_id) !== branch(intent.terminalId) || event.actor_name !== intent.actor ||
           event.actor_staff_id !== intent.actor) mismatch();
@@ -100,7 +109,7 @@ class ShiftSyncJournal {
         if(reconciled.length!==1 || !["CLOSED","VARIANCE_REVIEW_REQUIRED","RECONCILIATION"].includes(reconciled[0].to_state) ||
           reconciled[0].from_state!=="CASH_COUNT_SUBMITTED" || reconciled[0].actor_name!==intent.actor ||
           reconciled[0].actor_staff_id!==intent.actor || branch(reconciled[0].terminal_id)!==branch(intent.terminalId) ||
-          facts?.variance_status!==status || !sameMoney(facts?.variance_total,total)) mismatch();
+          facts?.variance_status!==status || !equalMoney(facts?.variance_total,total)) mismatch();
       }
       await transaction.commit();
       return {state:graph.get("shifts")[0].state};
@@ -235,7 +244,7 @@ class ShiftSyncJournal {
     const receiptPayload = { kind: "protected_shift_close", branchId, shiftId, operations: ops };
     const aggregateId = stableUuid(receiptPayload);
     const payloadHash = createHash("sha256").update(JSON.stringify(canonical(receiptPayload))).digest("hex");
-    let priorReceipt = null, causalContext, financialCapture=null, financialCountId=null;
+    let priorReceipt = null, causalContext, financialCapture=null, financialCountId=null,closingReservation=null;
     return this.repository.apply(context, ops, scope, async (transaction, validatedOps) => {
       const graph = await this.snapshot(transaction, branchId, shiftId, validatedOps,{exactFinancial:financialCapture!==null});
       const sql = this.repository.connectionManager.sql();
@@ -247,7 +256,10 @@ class ShiftSyncJournal {
         const attestation=scope.author.sign({branchId,shiftId,intentId:aggregateId,action:kind,payloadHash:frozen.payloadHash});
         await scope.author.save(transaction,attestation);
       }
-      if(financialCapture!==null)await this.financialBases.save(transaction,financialCapture,{intentId:aggregateId,graphPayloadHash:frozen.payloadHash,countId:financialCountId,author:scope.author});
+      if(financialCapture!==null){
+        await this.financialBases.save(transaction,financialCapture,{intentId:aggregateId,graphPayloadHash:frozen.payloadHash,countId:financialCountId,author:scope.author});
+        if(closingReservation){const saved=await this.financialBases.closingMetadata(transaction,financialCapture,{intentId:aggregateId,graphPayloadHash:frozen.payloadHash});await this.financialOperations.finalizeClosing(transaction,closingReservation,saved);scope.author.assertCurrent();}
+      }
       for (const [table, rows] of graph) for (const row of rows) {
         await new sql.Request(transaction)
           .input("entity_type", table).input("entity_id", JSON.stringify({ id: id(row.id) }))
@@ -291,11 +303,16 @@ class ShiftSyncJournal {
            !["ORIGINAL", "RECOUNT"].includes(newCounts[0].kind) ||
            id(reconciliations[0].count_id) !== id(newCounts[0].id)))
         fail("The closed shift has no matching saved cash count and reconciliation.");
+      if(newCounts.length && this.financialOperations?.enabled===true){
+        if(this.financialBases?.enabled!==true)fail("The financial closing persistence is unavailable.","EFINANCIAL_SCHEMA_PENDING");
+        closingReservation=await this.financialOperations.reserveClosing(transaction,{branchId,terminalId:scope.terminalId,shiftId,intentId:aggregateId,kind:newCounts[0].kind,author:scope.author});
+      }
       if(newCounts.length && this.financialBases?.enabled===true){
         if(!scope.author)fail("A verified protected author is required.","ESYNC_SHIFT_AUTHOR_IDENTITY_PENDING");
         financialCountId=id(newCounts[0].id);
-        financialCapture=await this.financialBases.capture(transaction,{branchId,shiftId,countId:financialCountId});
+        financialCapture=await this.financialBases.capture(transaction,{branchId,shiftId,countId:financialCountId,...(closingReservation?{financialFrontier:closingReservation.financialFrontier}:{})});
         if(!financialCapture)fail("The protected financial basis could not be captured.","EFINANCIAL_CAPTURE_INVALID");
+        if(typeof scope.financialSourceHash!=="string"||!/^[a-f0-9]{64}$/.test(scope.financialSourceHash)||financialCapture.sourceHash!==scope.financialSourceHash)fail("Shift financial records changed before this count was saved. Review the count and try again.","ESHIFT_FINANCIAL_CONFLICT");
         const {canonicalExactCents}=require("../sync/shift-financial-math.cjs");
         for(const tender of["cash","card","digital"]){
           let actual;try{actual=canonicalExactCents(reconciliations[0][`expected_${tender}`]);}catch{

@@ -62,6 +62,16 @@ export function canonicalExactCents(value){
   if(amount%CENT!==0n)fail('EFINANCIAL_BASIS_UNSUPPORTED');
   return money(amount);
 }
+// Semantic identity never rounds, including fractional-cent source amounts.
+// Exact semantic key only: preserves subcent differences and rejects JS Number.
+export function exactFinancialDecimalKey(value){
+  if(value===null||value===undefined||typeof value==='number')fail();
+  return decimal(value,{payment:true}).toString();
+}
+export function roundExactMoney(value){
+  if(typeof value!=='string')fail();
+  return money(decimal(value,{payment:true}));
+}
 export function calculateKnownTenderTotals(raw){
   if(typeof raw!=='string')fail();
   if(new TextEncoder().encode(raw).byteLength>MAX_BYTES)fail('EFINANCIAL_BASIS_TOO_LARGE');

@@ -72,7 +72,7 @@ const jobRepository = new JobRepository(databaseManager);
 const jobManager = new JobManager(jobRepository, { publish: (job) => { for (const win of BrowserWindow.getAllWindows()) win.webContents.send("jobs:state", job); } });
 const syncRegistry = loadRegistry();
 const syncCheckpoints = new CheckpointRepository(databaseManager);
-const syncCloud = new CloudClient({ configStore, terminalStore, connectionManager: databaseManager });
+const syncCloud = new CloudClient({ configStore, terminalStore, connectionManager: databaseManager,financialBasisContext:()=>({projectOrigin:cloudCredentials.read({strict:true})?.url,branchId:localBranchId()}) });
 const shiftAuthorKeys = require("./security/shift-author-key.cjs").createShiftAuthorKeys({safeStorage,directory:()=>app.getPath("userData")});
 const shiftAuthority = new (require("./shift-authority.cjs").ShiftAuthorAuthority)({
   keys:shiftAuthorKeys,session:adminSession,connectionManager:databaseManager,
@@ -81,8 +81,9 @@ const shiftAuthority = new (require("./shift-authority.cjs").ShiftAuthorAuthorit
 });
 const changeReader = new ChangeReader(databaseManager, syncRegistry);
 const conflictRepository = new ConflictRepository(databaseManager);
+const legacyPushWorker = new PushWorker({ reader:changeReader,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,validateAuthor:proof=>shiftAuthority.validatePending(proof),validateClosingStart:proof=>shiftAuthority.validatePendingClosingStart(proof) });
 const syncCoordinator = new SyncCoordinator({
-  pushWorker: new PushWorker({ reader:changeReader,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,validateAuthor:proof=>shiftAuthority.validatePending(proof),validateClosingStart:proof=>shiftAuthority.validatePendingClosingStart(proof) }),
+  pushWorker: {reader:changeReader,run:options=>shiftFinancialRuntime.runPush(options)},
   pullWorker: new PullWorker({ connectionManager:databaseManager,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,reader:changeReader,conflicts:conflictRepository,publish:publishBusinessChange }),
   publish: (state) => { for (const win of BrowserWindow.getAllWindows()) win.webContents.send("sync:state",state); },
 });
@@ -91,8 +92,16 @@ const managementReplica = new (require("./sync/management-replica.cjs").Manageme
 const mainTelemetry = createTelemetry({ databaseService,syncCoordinator,jobRepository,configStore,terminalStore,app });
 const operationsRepository = new OperationsRepository(databaseManager, syncRegistry);
 const shiftSyncJournal = new ShiftSyncJournal(operationsRepository,{authorRequired:true});
+// Main-private FIN62 seam. No renderer/IPC configuration and no activation.
+const shiftFinancialDraftProvider = null;
 const aggregateRepository = new AggregateRepository(databaseManager, operationsRepository);
 const receiptRepository = new ReceiptRepository(databaseManager, syncCloud);
+const shiftFinancialRuntime = new (require('./db/shift-financial-runtime.cjs').ShiftFinancialRuntime)({
+  manager:databaseManager,cloud:syncCloud,terminal:()=>terminalStore.read(),authority:shiftAuthority,
+  vault:require('./security/financial-capability-vault.cjs').createFinancialCapabilityVault({safeStorage,directory:()=>app.getPath('userData')}),
+  operationsRepository,registry:syncRegistry,checkpoints:syncCheckpoints,
+  legacy:{aggregate:aggregateRepository,receipts:receiptRepository,journal:shiftSyncJournal,push:legacyPushWorker},
+});
 const authorizationRulesRepository = new AuthorizationRulesRepository(databaseManager);
 
 function publishBusinessChange(change){
@@ -1264,9 +1273,10 @@ async function startLocalShiftClose(raw) {
     pendingShiftCloseSync.add(shiftId);
     return { ok: true, state, replayed: true };
   }
+  const financialContext=typeof shiftFinancialRuntime==='undefined'?null:await shiftFinancialRuntime.shiftContext(branchId,shiftId);
   authorCapture.assertCurrent();
   const actor = authorCapture.subject;
-  const terminalId = String(raw.terminalId ?? shift.terminal_id ?? "").trim() || null;
+  const terminalId = financialContext?.scope.terminalId??(String(raw.terminalId ?? shift.terminal_id ?? "").trim() || null);
   const differentOperator = Boolean(shift.opened_by_staff_id && actor && recordId(String(shift.opened_by_staff_id)) !== recordId(actor));
   const differentTerminal = Boolean(shift.terminal_id && recordId(String(shift.terminal_id)) !== recordId(terminalId));
   const forced = differentOperator || differentTerminal;
@@ -1316,24 +1326,32 @@ async function commitLocalShiftCashCount(raw) {
   const branchId = localBranchId();
   if (!branchId) throw Object.assign(new Error("The terminal branch is not configured."), { code: "EBRANCH" });
   const shiftId = guard.uuid(raw.shiftId, { name: "shift id" });
-  const cash = Number(raw.cash);
-  const card = raw.card == null ? null : Number(raw.card);
-  const digital = raw.digital == null ? null : Number(raw.digital);
-  if (!Number.isFinite(cash) || cash < 0) throw new Error("Enter the cash counted in the drawer.");
-  if (card != null && (!Number.isFinite(card) || card < 0)) throw new Error("The card total counted cannot be negative.");
-  if (digital != null && (!Number.isFinite(digital) || digital < 0)) throw new Error("The digital total counted cannot be negative.");
-  const observation = await shiftSyncJournal.observe(branchId, shiftId);
+  if(typeof shiftFinancialRuntime!=='undefined'){
+    const saved=await shiftFinancialRuntime.savedReplay({branchId,shiftId,kind:'ORIGINAL',raw,actor:authorCapture.subject});
+    authorCapture.assertCurrent();if(saved){pendingShiftCloseSync.add(shiftId);return saved;}
+  }
+  const financialContext=typeof shiftFinancialRuntime==='undefined'?null:await shiftFinancialRuntime.shiftContext(branchId,shiftId);
+  const financialJournal=financialContext?.journal??shiftSyncJournal,financialDraftProvider=financialContext?.draftProvider??shiftFinancialDraftProvider;
+  const exactEnabled = financialDraftProvider !== null;
+  const exactCount = value => require("./db/shift-financial-draft.cjs").normalizeCountedInput(value);
+  const cash = exactEnabled ? exactCount(raw.cash) : Number(raw.cash);
+  const card = raw.card == null ? null : exactEnabled ? exactCount(raw.card) : Number(raw.card);
+  const digital = raw.digital == null ? null : exactEnabled ? exactCount(raw.digital) : Number(raw.digital);
+  if (!exactEnabled && (!Number.isFinite(cash) || cash < 0)) throw new Error("Enter the cash counted in the drawer.");
+  if (!exactEnabled && card != null && (!Number.isFinite(card) || card < 0)) throw new Error("The card total counted cannot be negative.");
+  if (!exactEnabled && digital != null && (!Number.isFinite(digital) || digital < 0)) throw new Error("The digital total counted cannot be negative.");
+  const observation = await financialJournal.observe(branchId, shiftId);
   const shift = observation.parent;
   if (!shift) throw new Error("That shift no longer exists on this terminal.");
   const state = String(shift.state ?? (shift.closed_at ? "CLOSED" : "ACTIVE"));
   if (state === "ACTIVE") throw new Error("Start the closing process before counting the drawer.");
   authorCapture.assertCurrent();
   const actor = authorCapture.subject;
-  const terminalId = String(raw.terminalId ?? shift.terminal_id ?? "").trim() || null;
+  const terminalId = financialContext?.scope.terminalId??(String(raw.terminalId ?? shift.terminal_id ?? "").trim() || null);
   const clientKey = String(raw.clientKey ?? `${shiftId}:original`);
   const intent = { branchId, shiftId, clientKey, actor, terminalId,
-    cash: shiftMoney(cash), card: card == null ? null : shiftMoney(card), digital: digital == null ? null : shiftMoney(digital) };
-  const replay = await shiftSyncJournal.originalReplay(intent);
+    cash: exactEnabled ? cash : shiftMoney(cash), card: card == null ? null : exactEnabled ? card : shiftMoney(card), digital: digital == null ? null : exactEnabled ? digital : shiftMoney(digital) };
+  const replay = await financialJournal.originalReplay(intent);
   authorCapture.assertCurrent();
   if (replay) {
     pendingShiftCloseSync.add(shiftId);
@@ -1343,25 +1361,30 @@ async function commitLocalShiftCashCount(raw) {
     pendingShiftCloseSync.add(shiftId);
     return { ok: true, state };
   }
-  const expected = await operationsRepository.shiftExpectedTotals(branchId, shiftId);
-  const storeResult = await operationsRepository.query(branchId, "stores", { match: { id: branchId }, limit: 1 });
-  const expectedCash = shiftMoney(expected.expected_cash);
-  const expectedCard = shiftMoney(expected.expected_card);
-  const expectedDigital = shiftMoney(expected.expected_digital);
-  const countedCash = shiftMoney(cash);
-  const countedCard = card == null ? null : shiftMoney(card);
-  const countedDigital = digital == null ? null : shiftMoney(digital);
-  const varianceCash = shiftMoney(countedCash - expectedCash);
-  const varianceCard = countedCard == null ? null : shiftMoney(countedCard - expectedCard);
-  const varianceDigital = countedDigital == null ? null : shiftMoney(countedDigital - expectedDigital);
-  const varianceTotal = shiftMoney(varianceCash + (varianceCard ?? 0) + (varianceDigital ?? 0));
-  const varianceStatus = Math.abs(varianceTotal) <= 0.005 ? "NO_VARIANCE" : varianceTotal > 0 ? "OVER" : "SHORT";
+  let storeResult = exactEnabled ? await operationsRepository.query(branchId, "stores", { match: { id: branchId }, limit: 1 }) : null;
+  const exactPrepared = exactEnabled ? await financialDraftProvider.readDraft({branchId,shiftId,kind:"ORIGINAL",counted:{cash,card,digital},branchName:String(storeResult.rows?.[0]?.name ?? branchId),actor}) : null;
+  authorCapture.assertCurrent();
+  if(exactEnabled && (!exactPrepared || !/^[a-f0-9]{64}$/.test(exactPrepared.sourceHash))) throw Object.assign(new Error("The exact closing snapshot is unavailable."),{code:"EFINANCIAL_DRAFT_INVALID"});
+  const exactDraft=exactPrepared?.draft;
+  const expected = exactEnabled ? exactPrepared.totals : await operationsRepository.shiftExpectedTotals(branchId, shiftId);
+  if(!storeResult) storeResult=await operationsRepository.query(branchId, "stores", { match: { id: branchId }, limit: 1 });
+  const expectedCash = exactEnabled ? exactDraft.expected_cash : shiftMoney(expected.expected_cash);
+  const expectedCard = exactEnabled ? exactDraft.expected_card : shiftMoney(expected.expected_card);
+  const expectedDigital = exactEnabled ? exactDraft.expected_digital : shiftMoney(expected.expected_digital);
+  const countedCash = exactEnabled ? exactDraft.counted_cash : shiftMoney(cash);
+  const countedCard = exactEnabled ? exactDraft.counted_card : card == null ? null : shiftMoney(card);
+  const countedDigital = exactEnabled ? exactDraft.counted_digital : digital == null ? null : shiftMoney(digital);
+  const varianceCash = exactEnabled ? exactDraft.variance_cash : shiftMoney(countedCash - expectedCash);
+  const varianceCard = exactEnabled ? exactDraft.variance_card : countedCard == null ? null : shiftMoney(countedCard - expectedCard);
+  const varianceDigital = exactEnabled ? exactDraft.variance_digital : countedDigital == null ? null : shiftMoney(countedDigital - expectedDigital);
+  const varianceTotal = exactEnabled ? exactDraft.variance_total : shiftMoney(varianceCash + (varianceCard ?? 0) + (varianceDigital ?? 0));
+  const varianceStatus = exactEnabled ? exactDraft.variance_status : Math.abs(varianceTotal) <= 0.005 ? "NO_VARIANCE" : varianceTotal > 0 ? "OVER" : "SHORT";
   const countId = randomUUID();
   const reconciliationId = randomUUID();
   const now = new Date().toISOString();
-  const openingFloat = shiftMoney(shift.opening_float);
-  const totalSales = shiftMoney(expected.total_sales);
-  const netCashSales = shiftMoney(expectedCash - openingFloat);
+  const openingFloat = exactEnabled ? exactDraft.opening_float : shiftMoney(shift.opening_float);
+  const totalSales = exactEnabled ? exactPrepared.summary.total_sales : shiftMoney(expected.total_sales);
+  const netCashSales = exactEnabled ? exactDraft.net_cash_sales : shiftMoney(expectedCash - openingFloat);
   const branchName = String(storeResult.rows?.[0]?.name ?? branchId);
   const terminalName = String(shift.terminal_name ?? terminalId ?? "");
   const operations = [
@@ -1400,10 +1423,13 @@ async function commitLocalShiftCashCount(raw) {
     } },
   ];
   const { shiftSummaryRow } = require("./db/shift-summary.cjs");
-  operations.push({ kind: "insert", table: "shift_notifications", rows: [shiftSummaryRow({
+  operations.push({ kind: "insert", table: "shift_notifications", rows: [exactEnabled ? {
+    id:randomUUID(),shift_id:shift.id,store_id:branchId,store_name:branchName,terminal_name:terminalName,closed_by:actor,opened_at:shift.opened_at,closed_at:shift.closed_at??now,channels:["in_app"],created_at:shift.closed_at??now,...exactPrepared.summary,
+  } : shiftSummaryRow({
     id: randomUUID(), shift, totals: expected, branchId, branchName, terminalName,
     actor, closedAt: shift.closed_at ?? now, countedCash,
   })] });
+  const amountText = value => exactEnabled ? value : value.toFixed(2);
   if (varianceStatus !== "NO_VARIANCE") {
     const message = [
       `Cashier: ${actor}`,
@@ -1411,14 +1437,14 @@ async function commitLocalShiftCashCount(raw) {
       `Terminal: ${terminalName}`,
       `Shift: ${shiftId}`,
       `Closed: ${now}`,
-      `Opening float: ${openingFloat.toFixed(2)}`,
-      `Total sales: ${totalSales.toFixed(2)}`,
-      `Net cash sales: ${netCashSales.toFixed(2)}`,
-      `Expected cash: ${expectedCash.toFixed(2)}`,
-      `Counted cash: ${countedCash.toFixed(2)}`,
-      `Card expected / counted: ${expectedCard.toFixed(2)} / ${countedCard == null ? "not counted" : countedCard.toFixed(2)}`,
-      `Digital expected / counted: ${expectedDigital.toFixed(2)} / ${countedDigital == null ? "not counted" : countedDigital.toFixed(2)}`,
-      `Variance: ${varianceTotal > 0 ? "+" : ""}${varianceTotal.toFixed(2)}`,
+      `Opening float: ${amountText(openingFloat)}`,
+      `Total sales: ${amountText(totalSales)}`,
+      `Net cash sales: ${amountText(netCashSales)}`,
+      `Expected cash: ${amountText(expectedCash)}`,
+      `Counted cash: ${amountText(countedCash)}`,
+      `Card expected / counted: ${amountText(expectedCard)} / ${countedCard == null ? "not counted" : amountText(countedCard)}`,
+      `Digital expected / counted: ${amountText(expectedDigital)} / ${countedDigital == null ? "not counted" : amountText(countedDigital)}`,
+      `Variance: ${varianceStatus === "OVER" ? "+" : ""}${amountText(varianceTotal)}`,
     ].join("\n");
     operations.push({
       kind: "insert", table: "shift_variance_alerts", rows: [{
@@ -1451,10 +1477,10 @@ async function commitLocalShiftCashCount(raw) {
   }
   const author = await shiftAuthority.prepare(authorCapture);
   try {
-    await shiftSyncJournal.apply("Closing shift cash count", operations, { branchId, terminalId, observation, author });
+    await financialJournal.apply("Closing shift cash count", operations, { branchId, terminalId, observation, author, ...(exactEnabled ? {financialSourceHash:exactPrepared.sourceHash} : {}) });
   } catch (error) {
     if (![2601, 2627].includes(Number(error?.number ?? error?.originalError?.info?.number))) throw error;
-    const saved = await shiftSyncJournal.originalReplay(intent);
+    const saved = await financialJournal.originalReplay(intent);
     authorCapture.assertCurrent();
     if (!saved) throw error;
     pendingShiftCloseSync.add(shiftId);
@@ -1473,44 +1499,59 @@ async function commitLocalShiftRecount(raw) {
   const shiftId = guard.uuid(raw.shiftId, { name: "shift id" });
   const reason = guard.text(raw.reason, { name: "recount reason", max: 400 }).trim();
   if (!reason) throw new Error("A reason for the recount is required.");
-  const cash = Number(raw.cash);
-  const card = raw.card == null ? null : Number(raw.card);
-  const digital = raw.digital == null ? null : Number(raw.digital);
-  if (!Number.isFinite(cash) || cash < 0) throw new Error("Enter the recounted cash amount.");
-  if (card != null && (!Number.isFinite(card) || card < 0)) throw new Error("The card total counted cannot be negative.");
-  if (digital != null && (!Number.isFinite(digital) || digital < 0)) throw new Error("The digital total counted cannot be negative.");
-  const observation = await shiftSyncJournal.observe(branchId, shiftId);
+  if(typeof shiftFinancialRuntime!=='undefined'){
+    const saved=await shiftFinancialRuntime.savedReplay({branchId,shiftId,kind:'RECOUNT',raw,actor:authorCapture.subject,reason});
+    authorCapture.assertCurrent();if(saved)return saved;
+  }
+  const financialContext=typeof shiftFinancialRuntime==='undefined'?null:await shiftFinancialRuntime.shiftContext(branchId,shiftId);
+  const financialJournal=financialContext?.journal??shiftSyncJournal,financialDraftProvider=financialContext?.draftProvider??shiftFinancialDraftProvider;
+  const exactEnabled = financialDraftProvider !== null;
+  const exactCount = value => require("./db/shift-financial-draft.cjs").normalizeCountedInput(value);
+  const cash = exactEnabled ? exactCount(raw.cash) : Number(raw.cash);
+  const card = raw.card == null ? null : exactEnabled ? exactCount(raw.card) : Number(raw.card);
+  const digital = raw.digital == null ? null : exactEnabled ? exactCount(raw.digital) : Number(raw.digital);
+  if (!exactEnabled && (!Number.isFinite(cash) || cash < 0)) throw new Error("Enter the recounted cash amount.");
+  if (!exactEnabled && card != null && (!Number.isFinite(card) || card < 0)) throw new Error("The card total counted cannot be negative.");
+  if (!exactEnabled && digital != null && (!Number.isFinite(digital) || digital < 0)) throw new Error("The digital total counted cannot be negative.");
+  const observation = await financialJournal.observe(branchId, shiftId);
   const shift = observation.parent;
   if (!shift) throw new Error("That shift no longer exists on this terminal.");
   const state = String(shift.state ?? (shift.closed_at ? "CLOSED" : "ACTIVE"));
   if (!["VARIANCE_REVIEW_REQUIRED", "RECONCILIATION", "CLOSED"].includes(state))
     throw new Error("This shift has not been counted yet.");
-  const clientKey = String(raw.clientKey ?? `${shiftId}:recount:${cash}:${card ?? ""}:${digital ?? ""}:${reason}`);
+  // Preserve the existing ordinary default key spelling (12, 1.5), without
+  // coercing exact counted decimals through binary Number arithmetic.
+  const replayAmount = value => exactEnabled && typeof value === "string" ? value.replace(/\.00$/, "").replace(/(\.[0-9])0$/, "$1") : value;
+  const clientKey = String(raw.clientKey ?? `${shiftId}:recount:${replayAmount(cash)}:${replayAmount(card) ?? ""}:${replayAmount(digital) ?? ""}:${reason}`);
   authorCapture.assertCurrent();
   const actor = authorCapture.subject;
-  const terminalId = String(raw.terminalId ?? shift.terminal_id ?? "").trim() || null;
+  const terminalId = financialContext?.scope.terminalId??(String(raw.terminalId ?? shift.terminal_id ?? "").trim() || null);
   const intent = { branchId, shiftId, clientKey, reason, actor, terminalId,
-    cash: shiftMoney(cash), card: card == null ? null : shiftMoney(card), digital: digital == null ? null : shiftMoney(digital) };
-  const replayed = await shiftSyncJournal.recountReplay(intent);
+    cash: exactEnabled ? cash : shiftMoney(cash), card: card == null ? null : exactEnabled ? card : shiftMoney(card), digital: digital == null ? null : exactEnabled ? digital : shiftMoney(digital) };
+  const replayed = await financialJournal.recountReplay(intent);
   authorCapture.assertCurrent();
   if (replayed) return { ok: true, state: "CLOSED", replayed: true };
-  const expected = await operationsRepository.shiftExpectedTotals(branchId, shiftId);
-  const expectedCash = shiftMoney(expected.expected_cash);
-  const expectedCard = shiftMoney(expected.expected_card);
-  const expectedDigital = shiftMoney(expected.expected_digital);
-  const countedCash = shiftMoney(cash);
-  const countedCard = card == null ? null : shiftMoney(card);
-  const countedDigital = digital == null ? null : shiftMoney(digital);
-  const varianceCash = shiftMoney(countedCash - expectedCash);
-  const varianceCard = countedCard == null ? null : shiftMoney(countedCard - expectedCard);
-  const varianceDigital = countedDigital == null ? null : shiftMoney(countedDigital - expectedDigital);
-  const varianceTotal = shiftMoney(varianceCash + (varianceCard ?? 0) + (varianceDigital ?? 0));
-  const varianceStatus = Math.abs(varianceTotal) <= 0.005 ? "NO_VARIANCE" : varianceTotal > 0 ? "OVER" : "SHORT";
+  const exactPrepared = exactEnabled ? await financialDraftProvider.readDraft({branchId,shiftId,kind:"RECOUNT",counted:{cash,card,digital},branchName:null,actor}) : null;
+  authorCapture.assertCurrent();
+  if(exactEnabled && (!exactPrepared || !/^[a-f0-9]{64}$/.test(exactPrepared.sourceHash))) throw Object.assign(new Error("The exact closing snapshot is unavailable."),{code:"EFINANCIAL_DRAFT_INVALID"});
+  const exactDraft=exactPrepared?.draft;
+  const expected = exactEnabled ? exactPrepared.totals : await operationsRepository.shiftExpectedTotals(branchId, shiftId);
+  const expectedCash = exactEnabled ? exactDraft.expected_cash : shiftMoney(expected.expected_cash);
+  const expectedCard = exactEnabled ? exactDraft.expected_card : shiftMoney(expected.expected_card);
+  const expectedDigital = exactEnabled ? exactDraft.expected_digital : shiftMoney(expected.expected_digital);
+  const countedCash = exactEnabled ? exactDraft.counted_cash : shiftMoney(cash);
+  const countedCard = exactEnabled ? exactDraft.counted_card : card == null ? null : shiftMoney(card);
+  const countedDigital = exactEnabled ? exactDraft.counted_digital : digital == null ? null : shiftMoney(digital);
+  const varianceCash = exactEnabled ? exactDraft.variance_cash : shiftMoney(countedCash - expectedCash);
+  const varianceCard = exactEnabled ? exactDraft.variance_card : countedCard == null ? null : shiftMoney(countedCard - expectedCard);
+  const varianceDigital = exactEnabled ? exactDraft.variance_digital : countedDigital == null ? null : shiftMoney(countedDigital - expectedDigital);
+  const varianceTotal = exactEnabled ? exactDraft.variance_total : shiftMoney(varianceCash + (varianceCard ?? 0) + (varianceDigital ?? 0));
+  const varianceStatus = exactEnabled ? exactDraft.variance_status : Math.abs(varianceTotal) <= 0.005 ? "NO_VARIANCE" : varianceTotal > 0 ? "OVER" : "SHORT";
   const countId = randomUUID();
   const now = new Date().toISOString();
   const author = await shiftAuthority.prepare(authorCapture);
   try {
-    await shiftSyncJournal.apply("Saving shift recount", [
+    await financialJournal.apply("Saving shift recount", [
       { kind: "insert", table: "shift_cash_counts", rows: [{
         id: countId, shift_id: shiftId, store_id: branchId, terminal_id: terminalId,
         kind: "RECOUNT", counted_cash: countedCash, counted_card: countedCard,
@@ -1538,10 +1579,10 @@ async function commitLocalShiftRecount(raw) {
         variance_cash: varianceCash, variance_card: varianceCard, variance_digital: varianceDigital,
         variance_total: varianceTotal, variance_status: varianceStatus, updated_at: now,
       } },
-    ], { branchId, terminalId, observation, author });
+    ], { branchId, terminalId, observation, author, ...(exactEnabled ? {financialSourceHash:exactPrepared.sourceHash} : {}) });
   } catch (error) {
     if (![2601, 2627].includes(Number(error?.number ?? error?.originalError?.info?.number))) throw error;
-    if (!await shiftSyncJournal.recountReplay(intent)) throw error;
+    if (!await financialJournal.recountReplay(intent)) throw error;
     authorCapture.assertCurrent();
     pendingShiftCloseSync.add(shiftId);
     return { ok: true, state: "CLOSED", replayed: true };
@@ -1557,7 +1598,9 @@ async function approveLocalShiftVariance(raw) {
   const branchId = localBranchId();
   if (!branchId) throw Object.assign(new Error("The terminal branch is not configured."), { code: "EBRANCH" });
   const shiftId = guard.uuid(raw.shiftId, { name: "shift id" });
-  const observation = await shiftSyncJournal.observe(branchId, shiftId);
+  const financialContext=typeof shiftFinancialRuntime==='undefined'?null:await shiftFinancialRuntime.shiftContext(branchId,shiftId);
+  const financialJournal=financialContext?.journal??shiftSyncJournal;
+  const observation = await financialJournal.observe(branchId, shiftId);
   authorCapture.assertCurrent();
   const shift = observation.parent;
   if (!shift) throw new Error("That shift no longer exists on this terminal.");
@@ -1573,7 +1616,7 @@ async function approveLocalShiftVariance(raw) {
   const terminalId = String(shift.terminal_id ?? terminal.tokenId ?? terminal.terminalId ?? "").trim() || null;
   const now = new Date().toISOString();
   const author = await shiftAuthority.prepare(authorCapture);
-  await shiftSyncJournal.apply("Approving shift variance", [
+  await financialJournal.apply("Approving shift variance", [
     { kind: "update", table: "shifts", match: { id: shiftId }, values: {
       store_id: branchId, state: "CLOSED", status: "CLOSED", closed_at: shift.closed_at ?? now,
       closed_by_name: actor, updated_at: now,
@@ -1648,6 +1691,14 @@ function captureSessionAdoption() {
   const terminal=JSON.stringify(terminalStore.read()),project=cloudCredentials.read()?.url,backend=authorizationServerUrl();
   return ()=>revision===sessionAdoptionRevision&&adminSession.epoch()===epoch&&databaseManager.pool===pool&&
     terminal===JSON.stringify(terminalStore.read())&&project===cloudCredentials.read()?.url&&backend===authorizationServerUrl();
+}
+function captureLocalOperationIdentity(){
+  // Preserve an already-authorized legacy request without granting it a new
+  // signing identity. Strict financial capture occurs only in an approved path.
+  const epoch=adminSession.epoch(),identity=JSON.stringify(adminSession.identity()),pool=databaseManager.pool;
+  const terminal=JSON.stringify(terminalStore.read()),project=cloudCredentials.read()?.url,backend=authorizationServerUrl();
+  const assertCurrent=()=>{if(adminSession.epoch()!==epoch||JSON.stringify(adminSession.identity())!==identity||databaseManager.pool!==pool||JSON.stringify(terminalStore.read())!==terminal||cloudCredentials.read()?.url!==project||authorizationServerUrl()!==backend)throw Object.assign(new Error('The signed-in operator or terminal context changed. Try the action again.'),{code:'ESYNC_SHIFT_AUTHOR_CHANGED'});};
+  return Object.freeze({assertCurrent,financialCapture(action){assertCurrent();return shiftAuthority.captureFinancial(action);}});
 }
 
 function enrollCurrentShiftAuthor(proof) {
@@ -1992,7 +2043,10 @@ function registerIpc() {
         // enforce the same add/points permissions as the central relay.
         enforcePermissions:true,
       };
-      const result=await aggregateRepository.commit(aggregate.kind,trustedAggregate);
+      const requestCapture=typeof shiftFinancialRuntime!=='undefined'&&operations.some(operation=>['sales','shifts'].includes(operation.table))?captureLocalOperationIdentity():null;
+      const repository=typeof shiftFinancialRuntime==='undefined'?aggregateRepository:await shiftFinancialRuntime.forAggregate(trustedAggregate);
+      requestCapture?.assertCurrent();
+      const result=await repository.commit(aggregate.kind,trustedAggregate);
       publishBusinessChange({kind:aggregate.kind,branchId,operationId:result.operationId??null,tables:[...new Set(operations.map(op=>op.table))],changes:operations.flatMap(op=>(op.rows??[op.match??{}]).map(row=>({table:op.table,entityId:op.table==="product_barcodes"?row.product_id:row.id??null})))});
       scheduleLocalChanges(operations);
       return result;
@@ -2073,7 +2127,17 @@ function registerIpc() {
       authorization,
     );
   }));
-  ipcMain.handle("receipts:refund", (_e, value) => guard.guarded(async () => { if(!adminSession.hasPosAuthority()||!adminSession.hasPermission("can_process_refund"))return{ok:false,code:"PERMISSION_DENIED",error:"Refund permission is required."};const input=guard.options(value,{name:"refund",max:5}); const terminal=terminalStore.read()??{}; const branch=localBranchId();if(input.branchId&&recordId(String(input.branchId))!==recordId(String(branch)))return{ok:false,code:"SYNC_BRANCH_FORBIDDEN",error:"The refund must belong to this terminal branch."};const result=await receiptRepository.refund({saleId:guard.uuid(input.saleId,{name:"sale id"}),refundId:guard.text(input.refundId,{name:"refund id",max:128}),branchId:guard.text(branch,{name:"branch",max:128}),reason:input.reason?guard.text(input.reason,{name:"reason",max:400}):null});publishBusinessChange({kind:"refund",branchId:branch});scheduleAutomaticSync(250);return result; }));
+  ipcMain.handle("receipts:refund", (_e, value) => guard.guarded(async () => {
+    if(!adminSession.hasPosAuthority()||!adminSession.hasPermission("can_process_refund"))return{ok:false,code:"PERMISSION_DENIED",error:"Refund permission is required."};
+    const input=guard.options(value,{name:"refund",max:5}),branch=localBranchId();
+    if(input.branchId&&recordId(String(input.branchId))!==recordId(String(branch)))return{ok:false,code:"SYNC_BRANCH_FORBIDDEN",error:"The refund must belong to this terminal branch."};
+    const saleId=guard.uuid(input.saleId,{name:"sale id"});
+    const requestCapture=typeof shiftFinancialRuntime!=='undefined'?captureLocalOperationIdentity():null;
+    const financial=typeof shiftFinancialRuntime==='undefined'?{repository:receiptRepository,author:null}:await shiftFinancialRuntime.forRefund(branch,saleId,requestCapture);
+    requestCapture?.assertCurrent();
+    const result=await financial.repository.refund({saleId,refundId:guard.text(input.refundId,{name:"refund id",max:128}),branchId:guard.text(branch,{name:"branch",max:128}),reason:input.reason?guard.text(input.reason,{name:"reason",max:400}):null},financial.terminalId?{author:financial.author,terminalId:financial.terminalId,expectedShiftId:financial.expectedShiftId}:null);
+    publishBusinessChange({kind:"refund",branchId:branch});scheduleAutomaticSync(250);return result;
+  }));
   ipcMain.handle("jobs:get-active", async () => databaseManager.isConnected() ? jobRepository.active() : null);
   ipcMain.handle("jobs:get-history", async (_e, limit) => databaseManager.isConnected() ? jobRepository.history(Number(limit)||50) : []);
   ipcMain.handle("sync:get-status", () => syncCoordinator.refresh(localBranchId()));

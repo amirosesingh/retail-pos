@@ -93,7 +93,8 @@ export const correctPostedSale = createServerFn({ method: "POST" })
         return { ok: false as const, error: "Only an administrator can correct a finalized bill." };
       if (scope.storeId && scope.storeId !== data.storeId)
         return { ok: false as const, error: "The bill must belong to the administrator's branch." };
-      const response = await serviceRest("rpc/pos_admin_correct_sale", {
+      const financial = !!scope.appUserId && await (await import('./financial-live-readiness.server')).financialLiveAdapterReady();
+      const response = await serviceRest(financial ? "rpc/pos_live_financial_admin_correct_sale" : "rpc/pos_admin_correct_sale", {
         method: "POST",
         body: JSON.stringify({
           p_sale: data.saleId,
@@ -102,8 +103,10 @@ export const correctPostedSale = createServerFn({ method: "POST" })
           p_items: data.items,
           p_totals: data.totals,
           p_reason: data.reason,
-          p_actor_id: scope.staffUserId || scope.label,
-          p_actor_name: scope.actorName || scope.label,
+          ...(financial ? { p_author: scope.appUserId } : {
+            p_actor_id: scope.staffUserId || scope.label,
+            p_actor_name: scope.actorName || scope.label,
+          }),
           p_terminal: scope.terminalId ?? null,
           p_client_key: data.clientKey,
         }),

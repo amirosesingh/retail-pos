@@ -21,9 +21,9 @@ const nullableMoney=value=>value===null?null:canonicalExactCents(value);
 const cents=value=>BigInt(value.replace('.',''));
 const format=value=>{const sign=value<0n?'-':'',n=value<0n?-value:value;return(sign+(n/100n).toString()+'.'+(n%100n).toString().padStart(2,'0'));};
 class ShiftFinancialBases{
- constructor(manager,{enabled=false,resolveBaseline=null}={}){
-  if(resolveBaseline!==null&&typeof resolveBaseline!=='function')fail('EFINANCIAL_BASIS_CONFIGURATION');
-  this.manager=manager;this.enabled=enabled===true;this.resolveBaseline=resolveBaseline;
+ constructor(manager,{enabled=false,resolveBaseline=null,resolveOpeningOrigin=null,financialOperations=null}={}){
+  if((resolveBaseline!==null&&typeof resolveBaseline!=='function')||(resolveOpeningOrigin!==null&&typeof resolveOpeningOrigin!=='function'))fail('EFINANCIAL_BASIS_CONFIGURATION');
+  this.manager=manager;this.enabled=enabled===true;this.resolveBaseline=resolveBaseline;this.resolveOpeningOrigin=resolveOpeningOrigin;this.financialOperations=financialOperations;
  }
  request(transaction){return transaction?new(this.manager.sql().Request)(transaction):this.manager.pool.request();}
  async query(transaction,sql,inputs={}){const request=this.request(transaction);for(const[key,value]of Object.entries(inputs))request.input(key,value);return request.query(sql);}
@@ -48,7 +48,35 @@ class ShiftFinancialBases{
   if(checks.length!==5||expectedChecks.some(([table,name,definition])=>!checks.some(c=>c.table_name===table&&c.name===name&&!c.is_disabled&&!c.is_not_trusted&&normalizeCheck(c.definition)===definition)))invalid();
   if(triggers.length!==2||tables.some(table=>!triggers.some(t=>t.table_name===table&&t.name===table+'_immutable'&&!t.is_disabled&&!t.is_instead_of_trigger&&t.definition===metadataTrigger(table))))invalid();
  }
- async capture(transaction,{branchId,shiftId,countId}={}){
+ async readSource(transaction,{branchId,shiftId}){
+  let frontier=null;
+  if(this.financialOperations?.enabled===true){
+   // Parent precedes history head, which precedes sale reads, including drafts.
+   const parent=(await this.query(transaction,'SELECT id FROM dbo.shifts WITH(HOLDLOCK) WHERE id=@shift AND store_id=@branch;',{branch:branchId,shift:shiftId})).recordset??[];
+   if(parent.length!==1)fail('EFINANCIAL_CAPTURE_INVALID');
+   frontier=await this.financialOperations.readFrontier(transaction,{branchId,shiftId});
+  }
+  const source=readFileSync(path.join(__dirname,'shift-financial-basis.sql'),'utf8');
+  const row=(await this.query(transaction,source,{branch:branchId,shift:shiftId})).recordset?.[0];
+  let raw=row?.basis_json;if(typeof raw!=='string')fail('EFINANCIAL_CAPTURE_INVALID');
+  if(frontier){const end=raw.trimEnd();if(!end.endsWith('}'))fail('EFINANCIAL_CAPTURE_INVALID');raw=end.slice(0,-1)+',"financialFrontier":'+JSON.stringify(frontier)+'}';}
+  if(frontier)await this.financialOperations.validateKnownSnapshot(transaction,{branchId,shiftId,basisJson:raw});
+  const computed=calculateKnownTenderTotals(raw),basis=parseExactJson(raw,{maxBytes:6*1024*1024,maxDepth:64});
+  if(basis.branchId!==branchId||basis.shiftId!==shiftId)fail('EFINANCIAL_CAPTURE_INVALID');
+  return{raw,computed,basis,sourceHash:hash(raw)};
+ }
+ async readDraft({branchId,shiftId}={}){
+  if(!this.enabled)return null;
+  if(typeof branchId!=='string'||!branchId||branchId.length>128||typeof shiftId!=='string'||!UUID.test(shiftId))fail('EFINANCIAL_CAPTURE_INVALID');
+  const sql=this.manager.sql(),transaction=new sql.Transaction(this.manager.pool);await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+  try{
+   const source=await this.readSource(transaction,{branchId,shiftId}),summary=source.basis.summaryNativeRaw;
+   if(!summary||typeof summary!=='object'||['totalSales','transactions','discounts','refunds'].some(key=>typeof summary[key]!=='string'))fail('EFINANCIAL_CAPTURE_INVALID');
+   const result=Object.freeze({computed:Object.freeze({...source.computed,expected:Object.freeze({...source.computed.expected})}),openingFloat:source.basis.openingFloat,summary:Object.freeze({...summary}),sourceHash:source.sourceHash});
+   await transaction.commit();return result;
+  }catch(error){await Promise.resolve(transaction.rollback()).catch(()=>{});throw error;}
+ }
+ async capture(transaction,{branchId,shiftId,countId,financialFrontier}={}){
   if(!this.enabled)return null;
   if(!transaction||typeof branchId!=='string'||!branchId||branchId.length>128||!UUID.test(shiftId??'')||!UUID.test(countId??''))fail('EFINANCIAL_CAPTURE_INVALID');
   if(typeof transaction.once!=='function'||typeof transaction.removeListener!=='function')fail('EFINANCIAL_CAPTURE_INVALID');
@@ -59,12 +87,14 @@ class ShiftFinancialBases{
   await this.schema(transaction);
   const prior=await this.query(transaction,'SELECT id FROM dbo.shift_cash_counts WITH(UPDLOCK,HOLDLOCK) WHERE id=@count;',{count:countId});
   if(prior.recordset?.length)fail('EFINANCIAL_CAPTURE_COUNT_EXISTS');
-  const source=readFileSync(path.join(__dirname,'shift-financial-basis.sql'),'utf8');
-  const row=(await this.query(transaction,source,{branch:branchId,shift:shiftId})).recordset?.[0];
-  const capturedRaw=row?.basis_json;if(typeof capturedRaw!=='string')fail('EFINANCIAL_CAPTURE_INVALID');
-  const calculated=calculateKnownTenderTotals(capturedRaw);
+  const source=await this.readSource(transaction,{branchId,shiftId});
+  const capturedRaw=source.raw,calculated=source.computed;
+  if(JSON.stringify(source.basis.financialFrontier??null)!==JSON.stringify(financialFrontier??null))fail('EFINANCIAL_FRONTIER_CONFLICT');
   let resolved=this.resolveBaseline?await this.resolveBaseline({transaction,branchId,shiftId,basisJson:capturedRaw}):null;
-  let ready=false,raw=capturedRaw,serverBasisId=null;
+  const cloudOrigin=source.basis.financialFrontier?.cloudOrigin;
+  if(resolved==null&&cloudOrigin)resolved={serverBasisId:cloudOrigin.serverBasisId,versionReferences:[]};
+  if(cloudOrigin&&resolved?.serverBasisId!==cloudOrigin.serverBasisId)fail('EFINANCIAL_ORIGIN_CONFLICT');
+  let ready=false,raw=capturedRaw,serverBasisId=null,openingOrigin=null;
   if(resolved&&typeof resolved==='object'&&typeof resolved.serverBasisId==='string'&&UUID.test(resolved.serverBasisId)&&Array.isArray(resolved.versionReferences)&&resolved.versionReferences.length<=20000){
    let refs;try{refs=JSON.stringify(resolved.versionReferences);}catch{refs=null;}const seen=new Set(),receipts=new Set();
    if(refs!==null&&Buffer.byteLength(refs,'utf8')<=2*1024*1024&&resolved.versionReferences.every(ref=>ref&&typeof ref==='object'&&!Array.isArray(ref)&&Object.keys(ref).length===3&&typeof ref.saleId==='string'&&UUID.test(ref.saleId)&&typeof ref.receiptId==='string'&&UUID.test(ref.receiptId)&&['before','after','delete'].includes(ref.side)&&!seen.has(ref.saleId)&&!receipts.has(ref.receiptId)&&(seen.add(ref.saleId),receipts.add(ref.receiptId),true))){
@@ -72,12 +102,35 @@ class ShiftFinancialBases{
     raw=end.slice(0,-1)+',"versionReferences":'+refs+'}';calculateKnownTenderTotals(raw);ready=true;serverBasisId=resolved.serverBasisId;
    }
   }
+  if(resolved==null && !ready && this.resolveOpeningOrigin){
+   const origin=await this.resolveOpeningOrigin({transaction,branchId,shiftId,basisJson:capturedRaw});
+   if(origin&&typeof origin==='object'&&!Array.isArray(origin)&&Object.keys(origin).length===2&&Object.hasOwn(origin,'openingOrigin')&&Object.hasOwn(origin,'versionReferences')&&Array.isArray(origin.versionReferences)&&origin.versionReferences.length<=20000){
+    let refs;try{refs=JSON.stringify(origin.versionReferences);}catch{refs=null;}
+    const seen=new Set(),receipts=new Set();
+    if(refs!==null&&Buffer.byteLength(refs,'utf8')<=2*1024*1024&&origin.versionReferences.every(ref=>ref&&typeof ref==='object'&&!Array.isArray(ref)&&Object.keys(ref).length===3&&typeof ref.saleId==='string'&&UUID.test(ref.saleId)&&typeof ref.receiptId==='string'&&UUID.test(ref.receiptId)&&['before','after','delete'].includes(ref.side)&&!seen.has(ref.saleId)&&!receipts.has(ref.receiptId)&&(seen.add(ref.saleId),receipts.add(ref.receiptId),true))&&await this.opening(transaction,origin.openingOrigin,branchId,shiftId,capturedRaw)){
+     const end=capturedRaw.trimEnd();if(!end.endsWith('}'))fail('EFINANCIAL_CAPTURE_INVALID');
+     raw=end.slice(0,-1)+',"versionReferences":'+refs+'}';calculateKnownTenderTotals(raw);ready=true;openingOrigin=Object.freeze({...origin.openingOrigin});
+    }
+   }
+  }
   resolved=null;
-  const token=Object.freeze({expected:Object.freeze({...calculated.expected}),financialRequired:true,status:ready?'ready':'pending'});
+  const token=Object.freeze({expected:Object.freeze({...calculated.expected}),financialRequired:true,status:ready?'ready':'pending',sourceHash:source.sourceHash});
   if(lifetime.ended)fail('EFINANCIAL_CAPTURE_INVALID');lifetime.token=token;
-  captures.set(token,{store:this,transaction,lifetime,branchId,shiftId,countId,raw,basisHash:hash(raw),ready,serverBasisId,expected:token.expected});
+  captures.set(token,{store:this,transaction,lifetime,branchId,shiftId,countId,raw,basisHash:hash(raw),ready,serverBasisId,openingOrigin,expected:token.expected});
   return token;
   }catch(error){ended();throw error;}
+ }
+ // This is local immutable evidence, not proof of server receipt acceptance.
+ // The actual cloud OPEN/version lineage must still validate before upload ACK.
+ async opening(transaction,origin,branchId,shiftId,raw){
+  if(!origin||typeof origin!=='object'||Array.isArray(origin)||Object.keys(origin).length!==2||typeof origin.localAggregateId!=='string'||!UUID.test(origin.localAggregateId)||typeof origin.rowHash!=='string'||!/[a-f0-9]{64}/.test(origin.rowHash)||origin.rowHash.length!==64)return false;
+  const rows=(await this.query(transaction,`SELECT aggregate_id,branch_id,shift_id,row_json,row_hash,
+   CASE WHEN TRY_CONVERT(decimal(38,12),COALESCE(JSON_VALUE(row_json,'$.opening_float'),'0'))=TRY_CONVERT(decimal(38,12),COALESCE(JSON_VALUE(@basis,'$.openingFloat'),'0')) THEN 1 ELSE 0 END float_match
+   FROM dbo.pos_sync_shift_openings WITH(HOLDLOCK) WHERE aggregate_id=@aggregate AND branch_id=@branch AND shift_id=@shift;`,{aggregate:origin.localAggregateId,branch:branchId,shift:shiftId,basis:raw})).recordset??[];
+  if(rows.length!==1)return false;const saved=rows[0];
+  if(uid(saved.aggregate_id)!==origin.localAggregateId||saved.branch_id!==branchId||uid(saved.shift_id)!==shiftId||saved.row_hash!==origin.rowHash||typeof saved.row_json!=='string'||hash(saved.row_json)!==origin.rowHash||saved.float_match!==1)return false;
+  let row;try{row=parseExactJson(saved.row_json,{maxBytes:6*1024*1024,maxDepth:64});}catch{return false;}
+  return row.id===shiftId&&row.store_id===branchId&&row.status==='OPEN'&&[undefined,null,'ACTIVE'].includes(row.state)&&row.closed_at==null;
  }
  async intent(transaction,intentId,branchId){
   const row=(await this.query(transaction,'SELECT intent_id,branch_id,shift_id,intent_kind,payload_json,payload_hash FROM dbo.pos_sync_shift_intents WITH(UPDLOCK,HOLDLOCK) WHERE intent_id=@intent AND branch_id=@branch;',{intent:intentId,branch:branchId})).recordset?.[0];
@@ -137,8 +190,14 @@ class ShiftFinancialBases{
   if(prior){if(prior.graph_payload_hash!==graphPayloadHash||prior.basis_hash!==capture.basisHash||prior.basis_json!==capture.raw||uid(prior.count_id)!==countId)fail();return this.get(intentId,capture.branchId,transaction);}
   let proof=null;
   if(capture.ready){
-   if(typeof author.signFinancialBasis!=='function')fail('EFINANCIAL_AUTHOR_PENDING');
-   proof=financialProtocol.normalizeFinancialBasisAttestation(author.signFinancialBasis({branchId:capture.branchId,shiftId:capture.shiftId,intentId,action:payload.kind,graphPayloadHash,basisHash:capture.basisHash,serverBasisId:capture.serverBasisId,formula:'canonical-exact-decimal-v2'}));
+   const facts={branchId:capture.branchId,shiftId:capture.shiftId,intentId,action:payload.kind,graphPayloadHash,basisHash:capture.basisHash,formula:'canonical-exact-decimal-v2'};
+   if(capture.openingOrigin){
+    if(typeof author.signOpeningFinancialBasis!=='function')fail('EFINANCIAL_AUTHOR_PENDING');
+    proof=financialProtocol.normalizeOpeningFinancialBasisAttestation(author.signOpeningFinancialBasis({...facts,openingOrigin:capture.openingOrigin}));
+   }else{
+    if(typeof author.signFinancialBasis!=='function')fail('EFINANCIAL_AUTHOR_PENDING');
+    proof=financialProtocol.normalizeFinancialBasisAttestation(author.signFinancialBasis({...facts,serverBasisId:capture.serverBasisId}));
+   }
    this.verifyCompanion(proof,actor,capture.raw,intentId,payload,graphPayloadHash);
   }
   author.assertCurrent();if(capture.lifetime.ended)fail('EFINANCIAL_CAPTURE_INVALID');
@@ -149,7 +208,23 @@ class ShiftFinancialBases{
  verifyCompanion(proof,actor,raw,intentId,payload,graphHash){
   for(const field of['keyId','projectOrigin','terminalId','authorId','subject','branchId','shiftId','intentId','action'])if(proof[field]!==actor.proof[field])fail();
   if(proof.intentId!==intentId||proof.shiftId!==payload.shiftId||proof.graphPayloadHash!==graphHash||proof.basisHash!==hash(raw)||proof.formula!=='canonical-exact-decimal-v2')fail();
-  if(!crypto.verify(null,Buffer.from(financialProtocol.financialBasisMessage(unsigned(proof))),actor.publicKey,Buffer.from(proof.signature,'base64url')))fail();
+  const message=Object.hasOwn(proof,'openingOrigin')?financialProtocol.openingFinancialBasisMessage:financialProtocol.financialBasisMessage;
+  if(!crypto.verify(null,Buffer.from(message(unsigned(proof))),actor.publicKey,Buffer.from(proof.signature,'base64url')))fail();
+ }
+ async closingMetadata(transaction,token,{intentId,graphPayloadHash}){
+  const captured=captures.get(token);
+  if(!captured||captured.store!==this||captured.transaction!==transaction||captured.lifetime.ended)fail('EFINANCIAL_CAPTURE_INVALID');
+  const rows=(await this.query(transaction,'SELECT b.basis_hash,b.basis_json,b.graph_payload_hash,p.proof_json FROM dbo.pos_sync_shift_financial_bases b LEFT JOIN dbo.pos_sync_shift_financial_proofs p ON p.intent_id=b.intent_id WHERE b.intent_id=@intent AND b.branch_id=@branch;',{intent:intentId,branch:captured.branchId})).recordset??[];
+  if(rows.length!==1||rows[0].basis_hash!==captured.basisHash||rows[0].basis_json!==captured.raw||rows[0].graph_payload_hash!==graphPayloadHash)fail();
+  let proof=null;if(rows[0].proof_json){try{const value=JSON.parse(rows[0].proof_json);proof=Object.hasOwn(value,'openingOrigin')?financialProtocol.normalizeOpeningFinancialBasisAttestation(value):financialProtocol.normalizeFinancialBasisAttestation(value);}catch{fail();}}
+  return Object.freeze({basisHash:captured.basisHash,graphPayloadHash,companionProof:proof});
+ }
+ async forCount(transaction,{branchId,shiftId,countId}){
+  if(!this.enabled)return null;
+  await this.schema(transaction);
+  const rows=(await this.query(transaction,'SELECT intent_id FROM dbo.pos_sync_shift_financial_bases WHERE branch_id=@branch AND shift_id=@shift AND count_id=@count;',{branch:branchId,shift:shiftId,count:countId})).recordset??[];
+  if(rows.length>1)fail();
+  return rows.length?this.get(uid(rows[0].intent_id),branchId,transaction):null;
  }
  async get(intentId,branchId,transaction=null){
   if(!this.enabled)return null;
@@ -169,8 +244,12 @@ class ShiftFinancialBases{
   const count=await this.facts(transaction,payload,uid(basis.count_id),calculated.expected);
   if(count.counted_by_name!==actor.proof.subject||count.counted_by_staff_id!==actor.proof.subject)fail();
   if(!proofs.length)return{financialRequired:true,shiftFinancialBasis:null,status:'pending',code:'EFINANCIAL_BASIS_PENDING'};
-  if(proofs.length!==1)fail();let proof;try{proof=financialProtocol.normalizeFinancialBasisAttestation(JSON.parse(proofs[0].proof_json));}catch{fail();}
+  if(proofs.length!==1)fail();let proof;try{const stored=JSON.parse(proofs[0].proof_json);proof=Object.hasOwn(stored,'openingOrigin')?financialProtocol.normalizeOpeningFinancialBasisAttestation(stored):financialProtocol.normalizeFinancialBasisAttestation(stored);}catch{fail();}
   this.verifyCompanion(proof,actor,basis.basis_json,intentId,payload,row.payload_hash);
+  if(Object.hasOwn(proof,'openingOrigin')&&!await this.opening(transaction,proof.openingOrigin,branchId,payload.shiftId,basis.basis_json))fail();
+  const frontier=parseExactJson(basis.basis_json,{maxBytes:6*1024*1024,maxDepth:64}).financialFrontier;
+  if(frontier?.cloudOrigin&&proof.serverBasisId!==frontier.cloudOrigin.serverBasisId)fail();
+  if(frontier){if(this.financialOperations?.enabled!==true||typeof this.financialOperations.validateSavedFrontier!=='function')fail('EFINANCIAL_LINEAGE_PENDING');await this.financialOperations.validateSavedFrontier(transaction,{branchId,shiftId:payload.shiftId,intentId,financialFrontier:frontier,graphPayloadHash:row.payload_hash,basisHash:basis.basis_hash,companionProof:proof});}
   return{financialRequired:true,shiftFinancialBasis:{basisJson:basis.basis_json,proof},status:'ready'};
  }
 }

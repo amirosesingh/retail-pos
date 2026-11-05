@@ -74,3 +74,8 @@ describe('strict exact-cent field comparison',()=>{
  });
  it.each([null,undefined,1.23,true,'1.001','-1.005','1e-3','not money'])('rejects unverifiable or fractional-cent target %s',value=>{expect(()=>canonicalExactCents(value)).toThrow();});
 });
+describe('exact financial decimal semantic key',()=>{
+ const {exactFinancialDecimalKey}=require('../../../electron/sync/shift-financial-math.cjs');
+ it('normalizes equivalent decimals without rounding subcent differences',()=>{expect(exactFinancialDecimalKey('1')).toBe(exactFinancialDecimalKey('1.000000000000'));expect(exactFinancialDecimalKey('.5')).toBe(exactFinancialDecimalKey('5e-1'));expect(exactFinancialDecimalKey('1.001')).not.toBe(exactFinancialDecimalKey('1.002'));});
+ it.each([null,undefined,1,true,'Infinity','1e39'])('rejects unsupported key input %s',value=>{expect(()=>exactFinancialDecimalKey(value)).toThrow();});
+});

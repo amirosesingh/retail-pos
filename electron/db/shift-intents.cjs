@@ -374,13 +374,14 @@ class ShiftIntentStore {
       shiftAuthor,
     };
   }
-  async freezeOpening(transaction, aggregateId, branchId, shiftId) {
+  async freezeOpening(transaction, aggregateId, branchId, shiftId, {exactFinancial=false}={}) {
     const table = this.registry.tables.find((table) => table.cloudTable === "shifts");
+    const projection=exactFinancial?table.columns.map(column=>/^(?:decimal|numeric)\b/i.test(column.sqlServerType)?`CONVERT(nvarchar(80),[${column.sqlServerColumn}]) AS [${column.sqlServerColumn}]`:`[${column.sqlServerColumn}]`).join(','):'*';
     const rows =
       (
         await this.query(
           transaction,
-          "SELECT * FROM dbo.[shifts] WITH(UPDLOCK,HOLDLOCK) WHERE id=@shift AND store_id=@branch;",
+          `SELECT ${projection} FROM dbo.[shifts] WITH(UPDLOCK,HOLDLOCK) WHERE id=@shift AND store_id=@branch;`,
           { shift: id(shiftId), branch: id(branchId) },
         )
       ).recordset ?? [];

@@ -35,6 +35,8 @@ export type RelayScope = {
   isSupervisor: boolean;
   /** Who is acting: app_users.user_id, used for attribution only. */
   staffUserId?: string | null;
+  /** Immutable account identity from the freshly fetched row, never a claim. */
+  appUserId?: string | null;
   /** Human name written onto rows so attribution is server-truth. */
   actorName?: string | null;
   terminalId?: string | null;
@@ -217,6 +219,7 @@ const deny = (code: RelayDenial["code"], error: string): RelayDenial => ({
 });
 
 type AppUserRow = {
+  id?: string | null;
   user_id?: string | null;
   full_name?: string | null;
   store_id?: string | null;
@@ -226,7 +229,7 @@ type AppUserRow = {
   is_active?: boolean | null;
 };
 
-const SELECT_APP_USER = "select=user_id,full_name,store_id,role,role_slug,permissions,is_active";
+const SELECT_APP_USER = "select=id,user_id,full_name,store_id,role,role_slug,permissions,is_active";
 
 /**
  * Share concurrent lookups, but never reuse completed account authority.
@@ -302,6 +305,7 @@ export async function resolveRelayScope(caller: {
     permissions,
     isSupervisor: !!row && supervisorRole(role, roleSlug),
     staffUserId: row?.user_id ?? null,
+    appUserId: typeof row?.id==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(row.id)?row.id.toLowerCase():null,
     actorName: row?.full_name ?? caller.label ?? null,
     terminalId: caller.terminalId ?? null,
     ...(caller.managementDevice ? { managementDevice: true } : {}),

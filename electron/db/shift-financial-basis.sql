@@ -14,16 +14,23 @@ BEGIN
  RAISERROR('Financial basis preparation requires a SERIALIZABLE caller transaction.',16,1);
  RETURN;
 END;
-DECLARE @opening decimal(38,12),@store nvarchar(450),@inputs nvarchar(max),@expected nvarchar(max);
+DECLARE @opening decimal(38,12),@store nvarchar(450),@inputs nvarchar(max),@expected nvarchar(max),@summary nvarchar(max);
 SELECT @opening=COALESCE(sh.opening_float,0),@store=sh.store_id
  FROM dbo.shifts sh WHERE sh.id=TRY_CONVERT(uniqueidentifier,@shift) AND sh.store_id=@branch;
 IF @store IS NULL BEGIN SELECT CAST(NULL AS nvarchar(max)) AS basis_json; RETURN; END;
 SELECT @inputs=(SELECT LOWER(CONVERT(nvarchar(36),s.id)) AS id,s.store_id AS branchId,s.shift_id AS shiftId,
  CONVERT(nvarchar(80),s.total_amount) AS totalAmount,s.payment_type AS paymentType,s.payments AS paymentsJson,
- s.is_refunded AS isRefunded,CONVERT(nvarchar(30),s.row_version) AS rowVersion
+ CONVERT(nvarchar(80),s.discount_amount) AS discountAmount,s.is_refunded AS isRefunded,CONVERT(nvarchar(30),s.row_version) AS rowVersion
  FROM dbo.sales s WHERE s.store_id=@store AND s.shift_id=CONVERT(nvarchar(36),TRY_CONVERT(uniqueidentifier,@shift))
  ORDER BY LOWER(CONVERT(nvarchar(36),s.id)) COLLATE Latin1_General_100_BIN2 FOR JSON PATH,INCLUDE_NULL_VALUES);
 SET @inputs=COALESCE(NULLIF(@inputs,N''),N'[]');
+-- Presentation facts are captured from these same complete scoped input rows.
+SELECT @summary=(SELECT CONVERT(nvarchar(30),COUNT_BIG(CASE WHEN COALESCE(is_refunded,0)=0 THEN 1 END)) transactions,
+ CONVERT(nvarchar(80),CAST(COALESCE(SUM(CASE WHEN COALESCE(is_refunded,0)=0 THEN COALESCE(total_amount,0) ELSE 0 END),0) AS decimal(38,12))) totalSales,
+ CONVERT(nvarchar(80),CAST(COALESCE(SUM(CASE WHEN COALESCE(is_refunded,0)=0 THEN COALESCE(discount_amount,0) ELSE 0 END),0) AS decimal(38,12))) discounts,
+ CONVERT(nvarchar(80),CAST(COALESCE(SUM(CASE WHEN is_refunded=1 THEN COALESCE(total_amount,0) ELSE 0 END),0) AS decimal(38,12))) refunds
+ FROM OPENJSON(@inputs) WITH(total_amount decimal(38,12) '$.totalAmount',discount_amount decimal(38,12) '$.discountAmount',is_refunded bit '$.isRefunded')
+ FOR JSON PATH,WITHOUT_ARRAY_WRAPPER,INCLUDE_NULL_VALUES);
 WITH inputs AS (
  SELECT * FROM OPENJSON(@inputs) WITH(total_amount decimal(38,12) '$.totalAmount',payment_type nvarchar(max) '$.paymentType',
  payments nvarchar(max) '$.paymentsJson',is_refunded bit '$.isRefunded')
@@ -48,5 +55,5 @@ SELECT @expected=(SELECT
  FROM parts FOR JSON PATH,WITHOUT_ARRAY_WRAPPER,INCLUDE_NULL_VALUES);
 SELECT (SELECT 2 AS prototypeVersion,N'canonical-exact-decimal-v2' AS formula,12 AS numericScale,@store AS branchId,
  LOWER(CONVERT(nvarchar(36),TRY_CONVERT(uniqueidentifier,@shift))) AS shiftId,CONVERT(nvarchar(80),@opening) AS openingFloat,
- JSON_QUERY(@inputs) AS inputs,JSON_QUERY(@expected) AS expectedNativeRaw
+ JSON_QUERY(@inputs) AS inputs,JSON_QUERY(@expected) AS expectedNativeRaw,JSON_QUERY(@summary) AS summaryNativeRaw
  FOR JSON PATH,WITHOUT_ARRAY_WRAPPER,INCLUDE_NULL_VALUES) AS basis_json;

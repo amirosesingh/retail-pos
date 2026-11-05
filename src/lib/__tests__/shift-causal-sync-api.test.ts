@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { financialBasisMessage,openingFinancialBasisMessage } from "../../../electron/security/shift-financial-protocol.cjs";
+import {financialOperationMessage} from '../../../electron/security/financial-author-protocol.cjs';
 import { intentMessage, closingStartMessage } from "../../../electron/security/shift-author-protocol.cjs";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
@@ -208,6 +209,12 @@ function financiallyBound(input=aggregate()){
   return {...input,shiftFinancialBasis:{basisJson,proof:{...unsigned,signature:sign(null,Buffer.from(financialBasisMessage(unsigned)),pair.privateKey).toString("base64url")}}};
 }
 describe("financial companion opt-in relay",()=>{
+  it('registers a boundary without turning metadata acknowledgement into a closing write',async()=>{
+    const input={...financiallyBound(),registerFinancialBoundary:true};rpcResponse={status:'boundary_registered_not_shift_closed',shiftClosed:false,businessUploaded:false};
+    const response=await request({sqlServerAggregate:input});expect(response.status).toBe(200);expect(await response.json()).toMatchObject({shiftClosed:false});
+    expect(rpc).toHaveBeenCalledOnce();expect(rpc).toHaveBeenCalledWith(expect.stringContaining('pos_sync_register_financial_boundary'),expect.objectContaining({p_raw_graph:input.shiftIntent.payloadJson,p_graph_author:input.shiftAuthor,p_financial_basis:input.shiftFinancialBasis}));
+    expect((rpc.mock.calls[0][1] as Record<string,unknown>)).not.toHaveProperty('p_operations');
+  });
   it("verifies an opening-origin proof in its distinct domain without inventing a baseline",async()=>{
     const base=financiallyBound();
     const {serverBasisId:_basis,signature:_signature,...fields}=base.shiftFinancialBasis.proof;
@@ -251,5 +258,65 @@ describe("financial companion opt-in relay",()=>{
     expect(syncAggregateSchema.safeParse({...input,shiftFinancialBasis:{...input.shiftFinancialBasis,invented:true}}).success).toBe(false);
     authorAllowed=false;expect((await request({sqlServerAggregate:input})).status).toBe(200);
     expect(rpc).toHaveBeenCalledWith(expect.stringContaining("pos_sync_push_financial_shift_intent"),expect.objectContaining({p_author_authority:{allowed:false,code:"ESHIFT_AUTHOR_REVOKED"}}));
+  });
+});
+
+describe('financial history relay preparation',()=>{
+  it('reads capability only through verified normal-terminal scope and host-owned project identity',async()=>{
+    rpcResponse={version:1,mode:'disabled',financialProtocol:2,localSchema:26,organizationId:'default',branchId:branch,terminalId:terminal,rolloutId:null,revision:'0',shiftId:null,shiftMode:null};
+    const result=await request({sqlServerFinancialCapability:{organizationId:'default',branchId:branch}});
+    expect(result.status).toBe(200);expect((await result.json()).projectOrigin).toBe('https://cloud.test');
+    expect(rpc).toHaveBeenCalledWith(expect.stringContaining('pos_sync_financial_capability'),{p_org:'default',p_branch:branch,p_terminal:terminal,p_shift:null});
+    rpc.mockClear();expect((await request({sqlServerFinancialCapability:{organizationId:'default',branchId:foreign}})).status).toBe(403);expect(rpc).not.toHaveBeenCalled();
+  });
+  it('does not merge capability reads with uploads or accept a client project/rollout claim',async()=>{
+    expect((await request({sqlServerFinancialCapability:{organizationId:'default',branchId:branch},sqlServerAggregate:aggregate()})).status).toBe(400);
+    expect((await request({sqlServerFinancialCapability:{organizationId:'default',branchId:branch,projectOrigin:'https://forged.test'}})).status).toBe(400);expect(rpc).not.toHaveBeenCalled();
+  });
+  function signedOperation(action:'OPEN'|'SALE',raw:string){
+    const unsigned={version:1,algorithm:'Ed25519',keyId,authorId,subject:'fixture-author',projectOrigin:'https://cloud.test',terminalId:terminal,branchId:branch,operationId:intentId,action,payloadHash:createHash('sha256').update(raw).digest('hex')};
+    return {...unsigned,signature:sign(null,Buffer.from(financialOperationMessage(unsigned)),pair.privateKey).toString('base64url')};
+  }
+  function event(){
+    const operationJson=JSON.stringify({version:1,operationId:intentId,branchId:branch,terminalId:terminal,shiftId,openingOrigin:{localAggregateId:shiftId,rowHash:'b'.repeat(64)},sequence:'1',predecessorOperationId:shiftId,predecessorHash:'b'.repeat(64),action:'SALE',changes:[{saleId:intentId,before:null,after:{id:intentId,branchId:branch,shiftId,totalAmount:'100.00',discountAmount:'0.00',paymentType:'cash',paymentsJson:null,isRefunded:false,rowVersion:'1'}}]});
+    return {organizationId:'default',branchId:branch,operationJson,proof:signedOperation('SALE',operationJson)};
+  }
+  function opening(){
+    const rowJson=JSON.stringify({id:shiftId,store_id:branch,terminal_id:terminal,status:'OPEN',state:'ACTIVE',closed_at:null,opening_float:'20.000000000000'});
+    const openingJson=JSON.stringify({version:1,localAggregateId:intentId,branchId:branch,terminalId:terminal,shiftId,rowHash:createHash('sha256').update(rowJson).digest('hex'),rowJson});
+    return {batchId:intentId,organizationId:'default',branchId:branch,operations:[{table:'shifts',rows:[JSON.parse(rowJson)],changes:[]}],shiftFinancialOpening:{openingJson,proof:signedOperation('OPEN',openingJson)}};
+  }
+  it('authenticates exact financial event bytes and calls only the service ledger',async()=>{
+    const input=event();expect((await request({sqlServerFinancialEvent:input})).status).toBe(200);
+    expect(rpc).toHaveBeenCalledWith(expect.stringContaining('pos_sync_register_financial_event'),expect.objectContaining({p_raw:input.operationJson,p_proof:input.proof,p_branch:branch,p_terminal:terminal}));
+  });
+  it.each(['bytes','signature','foreign','mixed'])('denies %s financial metadata before a write',async kind=>{
+    const input=event();if(kind==='bytes')input.operationJson+=' ';if(kind==='signature')input.proof.signature='A'.repeat(86);if(kind==='foreign')input.branchId=foreign;
+    const response=await request({sqlServerFinancialEvent:input,...(kind==='mixed'?{sqlServerAggregate:aggregate()}: {})});
+    expect(response.status).toBe(kind==='mixed'?400:403);expect(rpc).not.toHaveBeenCalled();
+  });
+  it('never falls back to ordinary upload when the financial ledger is unavailable',async()=>{
+    rpcStatus=503;rpcResponse={error:'unavailable'};expect((await request({sqlServerFinancialEvent:event()})).status).toBe(503);expect(rpc).toHaveBeenCalledOnce();
+  });
+  it('verifies original exact opening bytes before the guarded OPEN business call',async()=>{
+    const input=opening();expect((await request({sqlServerAggregate:input})).status).toBe(200);
+    const raw=JSON.parse(input.shiftFinancialOpening.openingJson);
+    expect(rpc).toHaveBeenCalledWith(expect.stringContaining('pos_sync_register_financial_open'),expect.objectContaining({p_opening_json:raw.rowJson,p_opening_envelope:input.shiftFinancialOpening.openingJson,p_row_hash:raw.rowHash,p_proof:input.shiftFinancialOpening.proof,p_operations:input.operations}));
+  });
+  it('rejects a changed opening row hash and mixed opening/projection mode',async()=>{
+    const input=opening();const raw=JSON.parse(input.shiftFinancialOpening.openingJson);raw.rowHash='c'.repeat(64);input.shiftFinancialOpening.openingJson=JSON.stringify(raw);input.shiftFinancialOpening.proof=signedOperation('OPEN',input.shiftFinancialOpening.openingJson);
+    expect((await request({sqlServerAggregate:input})).status).toBe(403);expect(rpc).not.toHaveBeenCalled();
+    expect((await request({sqlServerAggregate:{...opening(),financialLedgerProjection:true}})).status).toBe(400);
+  });
+  it('routes protected business projection through the derived-state guard without caller grants',async()=>{
+    const input=opening();const {shiftFinancialOpening:_unused,...ordinary}=input;
+    expect((await request({sqlServerAggregate:{...ordinary,financialLedgerProjection:true}})).status).toBe(200);
+    expect(rpc).toHaveBeenCalledWith(expect.stringContaining('pos_sync_push_financial_business_aggregate'),expect.objectContaining({p_operations:ordinary.operations,p_terminal:terminal}));
+    expect(rpc.mock.calls[0][1]).not.toHaveProperty('p_permissions');
+  });
+  it('keeps financial snapshot reads branch-scoped and separate from write authority',async()=>{
+    const input={organizationId:'default',branchId:branch,shiftId};expect((await request({sqlServerFinancialBasis:input})).status).toBe(200);
+    expect(rpc).toHaveBeenCalledWith(expect.stringContaining('pos_sync_read_financial_basis'),expect.objectContaining({p_shift:shiftId,p_terminal:terminal}));rpc.mockClear();
+    expect((await request({sqlServerFinancialBasis:{...input,branchId:foreign}})).status).toBe(403);expect(rpc).not.toHaveBeenCalled();
   });
 });

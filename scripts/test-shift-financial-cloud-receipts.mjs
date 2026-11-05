@@ -25,6 +25,7 @@ try{
  await db.query("INSERT INTO shifts VALUES($1,'A',20,1),($2,'B',500,1)",[sa,sb]);
  await db.query("INSERT INTO sales VALUES($1,'A',$2,100,'cash','[]',false,1)",[sale,sa]);
  await db.query("INSERT INTO sales VALUES($1,'A',$2,5,'card','[]',true,2),($3,'B',$4,900,'cash','[]',false,1)",[randomUUID(),sa,randomUUID(),sb]);
+ await db.exec('ALTER TABLE sales ADD discount_amount numeric DEFAULT 0');
  await db.exec(await read('scripts/preparation/shift-financial-cloud-receipts.sql'));
  await db.exec(await read('scripts/preparation/shift-financial-math-postgres.sql'));
  let first;

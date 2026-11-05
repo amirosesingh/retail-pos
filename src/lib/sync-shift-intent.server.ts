@@ -23,10 +23,15 @@ export const syncAggregateSchema = z.object({
   batchId: z.string().uuid(), organizationId: z.string().min(1).max(128), branchId: z.string().min(1).max(128),
   operations: z.array(syncOperationSchema).min(1).max(200).optional(), shiftIntent: shiftIntentSchema.optional(), shiftAuthor: z.unknown().optional(), shiftClosingStart: z.unknown().optional(),
   shiftFinancialBasis: z.object({basisJson:z.string().min(2).max(6*1024*1024),proof:z.unknown()}).strict().optional(),
+  registerFinancialBoundary:z.literal(true).optional(),
+  financialLedgerProjection:z.literal(true).optional(),
+  shiftFinancialOpening:z.object({openingJson:z.string().min(2).max(6*1024*1024),proof:z.unknown()}).strict().optional(),
 }).transform((aggregate, ctx) => {
   const invalid = () => { ctx.addIssue({ code: "custom", message: "Invalid frozen shift intent" }); return z.NEVER; };
-  if (!aggregate.shiftIntent) return aggregate.operations && aggregate.shiftAuthor === undefined && aggregate.shiftClosingStart === undefined && aggregate.shiftFinancialBasis === undefined ? { ...aggregate, operations: aggregate.operations } : invalid();
+  if(aggregate.shiftFinancialOpening&&aggregate.financialLedgerProjection)return invalid();
+  if (!aggregate.shiftIntent) return aggregate.operations && aggregate.shiftAuthor === undefined && aggregate.shiftClosingStart === undefined && aggregate.shiftFinancialBasis === undefined && aggregate.registerFinancialBoundary===undefined ? { ...aggregate, operations: aggregate.operations } : invalid();
   if (aggregate.operations !== undefined || aggregate.shiftAuthor === undefined) return invalid();
+  if(aggregate.shiftFinancialOpening||aggregate.financialLedgerProjection)return invalid();
   const intent = aggregate.shiftIntent;
   if (new TextEncoder().encode(intent.payloadJson).byteLength > 6 * 1024 * 1024 ||
       aggregate.batchId !== intent.intentId || intent.predecessorIntentId === intent.intentId ||
@@ -39,6 +44,7 @@ export const syncAggregateSchema = z.object({
     const openingFinancialProof=rawFinancialProof!==null&&typeof rawFinancialProof==='object'&&Object.hasOwn(rawFinancialProof,'openingOrigin');
     const shiftFinancialBasis=aggregate.shiftFinancialBasis===undefined?undefined:{...aggregate.shiftFinancialBasis,proof:openingFinancialProof?normalizeOpeningFinancialBasisAttestation(rawFinancialProof):normalizeFinancialBasisAttestation(rawFinancialProof)};
     if(shiftFinancialBasis && (intent.kind==="VARIANCE" || new TextEncoder().encode(shiftFinancialBasis.basisJson).byteLength>6*1024*1024))return invalid();
+    if(aggregate.registerFinancialBoundary && !shiftFinancialBasis)return invalid();
     if (shiftClosingStart && intent.kind !== "ORIGINAL") return invalid();
     const parsed = frozenSchema.parse(JSON.parse(intent.payloadJson));
     const { operations, branchId, ...fields } = parsed;

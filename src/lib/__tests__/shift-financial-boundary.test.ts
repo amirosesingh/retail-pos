@@ -76,13 +76,13 @@ describe("local count financial boundary",()=>{
 
 describe('optional financial-basis journal integration',()=>{
   function financialFixture(kind='ORIGINAL',prior=false){
-    const f=fixture(kind,prior),token={expected:{cash:'100.00',card:'20.00',digital:'10.00'}};
+    const f=fixture(kind,prior),token={sourceHash:'a'.repeat(64),expected:{cash:'100.00',card:'20.00',digital:'10.00'}};
     const capture=vi.fn(async()=>{f.events.push('private basis capture');return token;});
     const save=vi.fn(async(_tx:unknown,_capture:unknown,_scope:unknown)=>{f.events.push('private basis save');});
     f.journal.financialBases={enabled:true,capture,save};
     if(kind!=='VARIANCE')for(const tender of ['cash','card','digital'])f.operations[2].rows![0]['expected_'+tender]=token.expected[tender as keyof typeof token.expected];
     const author={assertCurrent:vi.fn(),sign:vi.fn(()=>({proof:'original'})),save:vi.fn(async()=>{f.events.push('original author save');})};
-    return{...f,capture,save,author,token,runFinancial:()=>f.journal.apply('count',f.operations,{branchId:branch,author})};
+    return{...f,capture,save,author,token,runFinancial:()=>f.journal.apply('count',f.operations,{branchId:branch,author,financialSourceHash:token.sourceHash})};
   }
   it.each(['ORIGINAL','RECOUNT'])('captures %s before writes and stores companion after original author',async kind=>{
     const f=financialFixture(kind);await f.runFinancial();expect(f.repository.shiftExpectedTotals).not.toHaveBeenCalled();expect(f.capture).toHaveBeenCalledOnce();expect(f.save).toHaveBeenCalledOnce();
@@ -101,4 +101,17 @@ describe('optional financial-basis journal integration',()=>{
   it('disabled injected store retains legacy calculation without extra basis work',async()=>{
     const f=financialFixture();f.journal.financialBases.enabled=false;await f.runFinancial();expect(f.repository.shiftExpectedTotals).toHaveBeenCalledOnce();expect(f.capture).not.toHaveBeenCalled();expect(f.save).not.toHaveBeenCalled();
   });
+});
+
+describe('optional closing-history reservation',()=>{
+ it('reserves before capture and finalizes only after persisted basis and original author',async()=>{
+  const f=fixture(),token={expected:{cash:'100.00',card:'20.00',digital:'10.00'},sourceHash:'a'.repeat(64)},reservation={financialFrontier:{sequence:'1'}},saved={basisHash:'b'.repeat(64),graphPayloadHash:'hash',companionProof:{proof:'saved'}};
+  for(const tender of['cash','card','digital'])f.operations[2].rows![0]['expected_'+tender]=token.expected[tender as keyof typeof token.expected];
+  f.journal.financialBases={enabled:true,capture:vi.fn(async()=>{f.events.push('capture');return token;}),save:vi.fn(async()=>{f.events.push('basis saved');}),closingMetadata:vi.fn(async()=>{f.events.push('read saved basis');return saved;})};
+  f.journal.financialOperations={enabled:true,reserveClosing:vi.fn(async()=>{f.events.push('reserve');return reservation;}),finalizeClosing:vi.fn(async()=>{f.events.push('boundary saved');})};
+  const author={assertCurrent:vi.fn(),sign:vi.fn(()=>({})),save:vi.fn(async()=>{f.events.push('author saved');})};
+  await f.journal.apply('closing',f.operations,{branchId:branch,terminalId:'terminal',author,financialSourceHash:token.sourceHash});
+  expect(f.events.indexOf('reserve')).toBeLessThan(f.events.indexOf('capture'));expect(f.events.indexOf('author saved')).toBeLessThan(f.events.indexOf('basis saved'));expect(f.events.indexOf('basis saved')).toBeLessThan(f.events.indexOf('boundary saved'));expect(f.journal.financialBases.capture.mock.calls[0][1]).toMatchObject({financialFrontier:reservation.financialFrontier});expect(f.journal.financialOperations.finalizeClosing.mock.calls[0][2]).toBe(saved);expect(f.events.at(-1)).toBe('commit');
+ });
+ it('required history with missing basis persistence rolls back before reservation or business writes',async()=>{const f=fixture();f.journal.financialOperations={enabled:true,reserveClosing:vi.fn()};await expect(f.run()).rejects.toMatchObject({code:'EFINANCIAL_SCHEMA_PENDING'});expect(f.journal.financialOperations.reserveClosing).not.toHaveBeenCalled();expect(f.events).not.toContain('business write');expect(f.events.at(-1)).toBe('rollback');});
 });

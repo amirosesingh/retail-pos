@@ -1,4 +1,5 @@
 import {createRequire} from 'node:module';
+import {createHash} from 'node:crypto';
 import {EventEmitter} from 'node:events';
 import {describe,it,expect,vi} from 'vitest';
 const require=createRequire(import.meta.url);
@@ -14,11 +15,11 @@ function fixture(resolveBaseline:unknown=null){
 describe('Main-private financial captures',()=>{
  it('legacy disabled has no SQL, filesystem read, resolver or transaction dependency',async()=>{
   const resolveBaseline=vi.fn(),store=new ShiftFinancialBases(null,{resolveBaseline});
-  expect(await store.capture(null,{})).toBeNull();expect(await store.get('bad','bad')).toBeNull();expect(await store.save(null,null)).toBeNull();expect(resolveBaseline).not.toHaveBeenCalled();
+  expect(await store.readDraft({})).toBeNull();expect(await store.capture(null,{})).toBeNull();expect(await store.get('bad','bad')).toBeNull();expect(await store.save(null,null)).toBeNull();expect(resolveBaseline).not.toHaveBeenCalled();
  });
  it('keeps raw data private and exposes only frozen exact totals',async()=>{
   const {store,tx}=fixture();const capture=await store.capture(tx,{branchId:branch,shiftId:shift,countId:count});
-  expect(capture).toEqual({financialRequired:true,status:'pending',expected:{cash:'20.00',card:'0.00',digital:'0.00'}});expect(Object.isFrozen(capture)).toBe(true);expect(Object.isFrozen(capture.expected)).toBe(true);
+  expect(capture).toEqual({financialRequired:true,status:'pending',sourceHash:createHash('sha256').update(raw).digest('hex'),expected:{cash:'20.00',card:'0.00',digital:'0.00'}});expect(Object.isFrozen(capture)).toBe(true);expect(Object.isFrozen(capture.expected)).toBe(true);
   expect(capture).not.toHaveProperty('basisJson');expect(tx.listenerCount('rollback')).toBe(1);tx.emit('rollback');expect(tx.listenerCount('commit')).toBe(0);
  });
  for(const event of ['commit','rollback'])it(`invalidates capture after ${event}, even same transaction object`,async()=>{
@@ -47,4 +48,19 @@ describe('Main-private financial captures',()=>{
  it('rejects an already-present count before financial capture',async()=>{
   const {store,tx}=fixture();store.query.mockResolvedValue({recordset:[{id:count}]});await expect(store.capture(tx,{branchId:branch,shiftId:shift,countId:count})).rejects.toMatchObject({code:'EFINANCIAL_CAPTURE_COUNT_EXISTS'});expect(store.query).toHaveBeenCalledTimes(1);expect(tx.eventNames()).toEqual([]);
  });
+});
+
+
+describe('opening-origin resolver separation',()=>{
+ it('does not consult origin when a real server baseline is available',async()=>{const {store,tx}=fixture(async()=>({serverBasisId:shift,versionReferences:[]}));store.resolveOpeningOrigin=vi.fn(async()=>{throw new Error('should not run');});expect((await store.capture(tx,{branchId:branch,shiftId:shift,countId:count})).status).toBe('ready');expect(store.resolveOpeningOrigin).not.toHaveBeenCalled();tx.emit('rollback');});
+ it('does not hide malformed baseline evidence by falling back to origin',async()=>{const {store,tx}=fixture(async()=>({serverBasisId:'invalid',versionReferences:[]}));store.resolveOpeningOrigin=vi.fn(async()=>null);expect((await store.capture(tx,{branchId:branch,shiftId:shift,countId:count})).status).toBe('pending');expect(store.resolveOpeningOrigin).not.toHaveBeenCalled();tx.emit('rollback');});
+ it.each([{openingOrigin:{localAggregateId:shift,rowHash:'a'.repeat(64)},versionReferences:[],serverBasisId:count},{openingOrigin:{localAggregateId:shift,rowHash:'a'.repeat(64),unknown:1},versionReferences:[]},{openingOrigin:{localAggregateId:shift,rowHash:'bad'},versionReferences:[]}])('never fabricates a baseline from malformed origin',async origin=>{const {store,tx}=fixture();store.resolveOpeningOrigin=vi.fn(async()=>origin);expect((await store.capture(tx,{branchId:branch,shiftId:shift,countId:count})).status).toBe('pending');expect(store.query).toHaveBeenCalledTimes(2);tx.emit('rollback');});
+});
+
+describe('financial frontier binding',()=>{
+ const frontier={openingOrigin:{localAggregateId:shift,rowHash:'b'.repeat(64)},sequence:'0',operationId:shift,hash:'b'.repeat(64),reservedSequence:'1'};
+ function historyFixture(){const f=fixture();f.store.financialOperations={enabled:true,readFrontier:vi.fn(async()=>frontier),validateKnownSnapshot:vi.fn(async()=>{})};f.store.query=vi.fn(async(_tx:unknown,sql:string)=>({recordset:sql.startsWith('SELECT id FROM dbo.shifts')?[{id:shift}]:sql.startsWith('SELECT id')?[]:[{basis_json:raw}]}));return f;}
+ it('binds actual frontier into raw source hash while retaining identical tender totals',async()=>{const {store,tx}=historyFixture();const source=await store.readSource(tx,{branchId:branch,shiftId:shift});expect(source.sourceHash).not.toBe(createHash('sha256').update(raw).digest('hex'));expect(source.computed.expected.cash).toBe('20.00');expect(source.basis.financialFrontier).toEqual(frontier);tx.emit('rollback');});
+ it('rejects missing reserved context instead of signing an unbound frontier',async()=>{const {store,tx}=historyFixture();await expect(store.capture(tx,{branchId:branch,shiftId:shift,countId:count})).rejects.toMatchObject({code:'EFINANCIAL_FRONTIER_CONFLICT'});expect(tx.eventNames()).toEqual([]);});
+ it('accepts only matching actual reserved frontier',async()=>{const {store,tx}=historyFixture();await expect(store.capture(tx,{branchId:branch,shiftId:shift,countId:count,financialFrontier:frontier})).resolves.toMatchObject({financialRequired:true,status:'pending'});tx.emit('rollback');});
 });

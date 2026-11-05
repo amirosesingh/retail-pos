@@ -33,22 +33,22 @@ BEGIN
  PERFORM public.pos_sync_validate_read_scope(p_org,p_branch,p_terminal);
  -- COMPLETE actual server rows from ONE statement snapshot; never a caller list.
  WITH scope AS MATERIALIZED (
-  SELECT id,store_id,opening_float,row_version FROM public.shifts WHERE id=p_shift AND store_id=p_branch
+  SELECT * FROM public.shifts WHERE id=p_shift AND store_id=p_branch
  ), inputs AS MATERIALIZED (
-  SELECT s.id,s.store_id,s.shift_id,s.total_amount,s.payment_type,s.payments,s.is_refunded,s.row_version
+  SELECT s.id,s.store_id,s.shift_id,s.total_amount,s.payment_type,s.payments,s.is_refunded,s.row_version,s.discount_amount
   FROM public.sales s JOIN scope sh ON s.shift_id=sh.id::text AND s.store_id=sh.store_id
  ), raw AS (
   SELECT jsonb_build_object('prototypeVersion',2,'formula','canonical-exact-decimal-v2','branchId',sh.store_id,'shiftId',sh.id,
-   'openingFloat',sh.opening_float::text,'shiftVersion',sh.row_version::text,
+   'openingFloat',sh.opening_float::text,'shiftVersion',sh.row_version::text,'parentSnapshot',to_jsonb(sh),
    'inputs',coalesce((SELECT jsonb_agg(jsonb_build_object('id',i.id,'branchId',i.store_id,'shiftId',i.shift_id,
     'totalAmount',i.total_amount::text,'paymentType',i.payment_type,'paymentsJson',i.payments::text,
-    'isRefunded',i.is_refunded,'rowVersion',i.row_version::text) ORDER BY i.id) FROM inputs i),'[]'::jsonb)) value
+    'discountAmount',i.discount_amount::text,'isRefunded',i.is_refunded,'rowVersion',i.row_version::text) ORDER BY i.id) FROM inputs i),'[]'::jsonb)) value
   FROM scope sh
  ), stored AS (
   INSERT INTO fin62_cloud_preparation.bases(id,organization_id,branch_id,terminal_id,shift_id,basis_version,basis,basis_hash,captured_at,snapshot_text,creator_xid,evidence_order)
   SELECT gen_random_uuid(),p_org,p_branch,p_terminal,p_shift,2,value,encode(sha256(convert_to(value::text,'UTF8')),'hex'),statement_timestamp(),pg_current_snapshot()::text,pg_current_xact_id(),nextval('fin62_evidence_preparation.helper_order') FROM raw
   RETURNING id,basis,basis_hash,captured_at
- ) SELECT jsonb_build_object('basisId',id,'basis',basis,'basisHash',basis_hash,'capturedAt',captured_at) INTO result FROM stored;
+ ) SELECT jsonb_build_object('basisId',id,'basis',basis,'basisHash',basis_hash,'basisJson',basis::text,'capturedAt',captured_at) INTO result FROM stored;
  IF result IS NULL THEN RAISE EXCEPTION 'FIN62_SHIFT_BRANCH_MISSING'; END IF;
  RETURN result;
 END $function$;

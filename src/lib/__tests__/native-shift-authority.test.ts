@@ -1015,9 +1015,37 @@ describe('Main financial OPEN author foundation',()=>{
     expect(readdirSync(f.directory)).toEqual([]);
   });
   it('never grants other operation kinds through the OPEN capture',()=>{
-    const f=fixture();login(authorId,subject,{can_open_shift:true,...all});
-    for(const action of ['SALE','REFUND','TENDER','VOID','FINANCIAL_OPEN'])expect(()=>f.authority.captureFinancial(action)).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_INVALID'}));
+    const f=fixture();login(authorId,subject,{can_open_shift:true});
+    for(const action of ['SALE','REFUND','TENDER','VOID'])expect(()=>f.authority.captureFinancial(action)).toThrowError(expect.objectContaining({code:'PERMISSION_DENIED'}));
+    expect(()=>f.authority.captureFinancial('FINANCIAL_OPEN')).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_INVALID'}));
     expect(readdirSync(f.directory)).toEqual([]);
+  });
+  it.each([['SALE','can_process_sale'],['REFUND','can_process_refund'],['TENDER','can_edit_tenders'],['VOID','can_void_item']])('binds %s signing to its own actual action permission',async(action,flag)=>{
+    const f=fixture();login(authorId,subject,{can_open_shift:true});
+    expect(()=>f.authority.captureFinancial(action)).toThrowError(expect.objectContaining({code:'PERMISSION_DENIED'}));
+    login(authorId,subject,{[flag]:true});
+    const capture=f.authority.captureFinancial(action),author=await f.authority.prepare(capture);
+    const proof=author.signFinancialOperation({...input,action});
+    expect(proof).toMatchObject({action,authorId,subject,branchId:branch});
+    expect(()=>author.signFinancialOperation(input)).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_INVALID'}));
+    expect(()=>f.authority.captureFinancial('OPEN')).toThrowError(expect.objectContaining({code:'PERMISSION_DENIED'}));
+    login(authorId,subject,{});
+    expect(()=>author.signFinancialOperation({...input,action})).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_CHANGED'}));
+  });
+  it('prepares an Operations identity without granting a financial action or changing its author',async()=>{
+    const f=fixture();login(authorId,subject,{});
+    const author=await f.authority.prepare(f.authority.captureFinancialContext());
+    for(const action of ['OPEN','SALE','REFUND','TENDER','VOID'])expect(()=>author.signFinancialOperation({...input,action})).toThrowError(expect.objectContaining({code:'PERMISSION_DENIED'}));
+    expect(f.state.authors).toEqual([]);
+    login(otherId,'later.person',{can_process_sale:true});
+    expect(()=>author.signFinancialOperation({...input,action:'SALE'})).toThrowError(expect.objectContaining({code:'ESYNC_SHIFT_AUTHOR_CHANGED'}));
+    f.context.management=true;expect(()=>f.authority.captureFinancialContext()).toThrowError(expect.objectContaining({code:'PERMISSION_DENIED'}));
+  });
+  it('checks the actual action flag when an immutable writer signs through its prepared context',async()=>{
+    const f=fixture();login(authorId,subject,{can_process_sale:true});
+    const author=await f.authority.prepare(f.authority.captureFinancialContext());
+    expect(author.signFinancialOperation({...input,action:'SALE'})).toMatchObject({action:'SALE',authorId});
+    expect(()=>author.signFinancialOperation({...input,action:'REFUND'})).toThrowError(expect.objectContaining({code:'PERMISSION_DENIED'}));
   });
   it('binds exact raw opening bytes, actual stable author and captured key without old-table writes',async()=>{
     const f=fixture();login(authorId,subject,{can_open_shift:true});

@@ -77,7 +77,28 @@ try{
   assert.notDeepEqual(await fact({...left,branchId:'A'}),await fact({...left,branchId:'a'}));
   for(const raw of ['bad','[{"method":"cash","amount":1,"amount":2}]'])await assert.rejects(fact({...left,isRefunded:true,paymentsJson:raw}));
  });
- await test('changed or forged input requires its exact receipt rather than guessed current state',async()=>{
+ await test('linear payment normalization matches the exact previous oracle, order and failure classes',async()=>{
+  await db.exec(await read('scripts/fixtures/financial-fact-before-linear.sql'));
+  const base={...original.basis.inputs[0],isRefunded:false},rows=[{method:'CARD',amount:'9007199254740993.000000000001',extra:'日本語'},{method:'cash',amount:null},{method:'UNKNOWN',amount:'-0.000000000001'}, {method:null},{}];
+  for(const paymentsJson of [JSON.stringify(rows),'[]','{}','null','',null]){
+   const value={...base,paymentsJson};assert.equal((await db.query('SELECT fin62_cloud_preparation.financial_fact($1::jsonb)=fin62_cloud_preparation.financial_fact_before_linear($1::jsonb) same',[JSON.stringify(value)])).rows[0].same,true);
+  }
+  for(const paymentsJson of ['[null]','[1]','[{"amount":true}]','[{"amount":"NaN"}]','[{"amount":1,"amount":2}]','bad']){
+   const errors=[];for(const name of ['financial_fact','financial_fact_before_linear']){try{await db.query('SELECT fin62_cloud_preparation.'+name+'($1::jsonb)',[JSON.stringify({...base,paymentsJson})]);}catch(error){errors.push([error.code,error.message.split(/\r?\n/)[0]]);}}assert.equal(errors.length,2);assert.deepEqual(errors[0],errors[1]);
+  }
+ });
+ await test('large ordered tender arrays aggregate once and retain exact precision',async()=>{
+  const payments=Array.from({length:8000},(_,i)=>({method:i%2?'CARD':'cash',amount:i%2?'0.000000000001':'1.000000000000',ordinal:i})),basis={...original.basis.inputs[0],isRefunded:false,paymentsJson:JSON.stringify(payments)};
+  const started=performance.now();const result=(await db.query("WITH normalized AS MATERIALIZED(SELECT fin62_cloud_preparation.financial_fact($1::jsonb) f) SELECT jsonb_array_length(f->'payments') n,f->'payments'->0->>'ordinal' first,f->'payments'->7999->>'ordinal' last,(f->'payments'->7999->>'amount')::numeric=0.000000000001 precise FROM normalized",[JSON.stringify(basis)])).rows[0];const elapsed=Math.round(performance.now()-started);assert.deepEqual(result,{n:8000,first:'0',last:'7999',precise:true});assert(elapsed<10000);console.log('MEASURE linear normalization 8000 tenders ms='+elapsed);
+ });
+ await test('v2 snapshot parity uses SINGLE fallback and excludes only already-refunded tender details',async()=>{
+  const snapshot=async value=>(await db.query('SELECT fin62_cloud_preparation.snapshot_financial_fact($1::jsonb) value',[JSON.stringify(value)])).rows[0].value;
+  const base={...original.basis.inputs[0],paymentType:'cash',paymentsJson:null,discountAmount:'0'};
+  for(const paymentsJson of ['',null,'[]','{}','1','"text"','null'])assert.deepEqual(await snapshot({...base,paymentsJson}),await snapshot(base));
+  await assert.rejects(snapshot({...base,paymentsJson:'bad'}));
+  const refunded={...base,isRefunded:true,paymentsJson:'bad'},other={...refunded,paymentType:'card',paymentsJson:'[{invalid'};assert.deepEqual(await snapshot(refunded),await snapshot(other));
+  assert.notDeepEqual(await snapshot(refunded),await snapshot({...other,totalAmount:'101'}));assert.notDeepEqual(await snapshot(refunded),await snapshot({...other,discountAmount:'1'}));
+ }); await test('changed or forged input requires its exact receipt rather than guessed current state',async()=>{
   const changed=structuredClone(original.basis);changed.inputs[0].totalAmount='999';await assert.rejects(validate(changed),/STORED_VERSION_REQUIRED/);await assert.rejects(validate(changed,[ref(sale,refunded)]),/STORED_VERSION_REQUIRED/);
   const actual=structuredClone(original.basis);actual.inputs[0]=refunded.after_basis;await assert.rejects(validate(actual,[{saleId:sale,receiptId:randomUUID(),side:'after'}]),/STORED_VERSION_REQUIRED/);
  });

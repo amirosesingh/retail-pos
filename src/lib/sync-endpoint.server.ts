@@ -77,6 +77,10 @@ const bodySchema = z.object({
     })
     .optional(),
   sqlServerAggregate: syncAggregateSchema.optional(),
+  sqlServerFinancialCapability:z.object({organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128),shiftId:z.string().uuid().optional()}).strict().optional(),
+  sqlServerFinancialEvent:z.object({organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128),operationJson:z.string().min(2).max(6*1024*1024),proof:z.unknown()}).strict().optional(),
+  sqlServerFinancialBasis:z.object({organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128),shiftId:z.string().uuid()}).strict().optional(),
+  sqlServerFinancialObservation:z.object({organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128),operationJson:z.string().min(2).max(16384)}).strict().optional(),
   sqlServerShiftGraph: z.object({
     organizationId: z.string().min(1).max(128), branchId: z.string().min(1).max(128), shiftId: z.string().uuid(),
   }).strict().optional(),
@@ -151,6 +155,7 @@ const bodySchema = z.object({
 
 export async function handleSyncRequest(request: Request): Promise<Response> {
   let body: z.infer<typeof bodySchema>;
+  let exactFinancialOperations = false;
   try {
     const raw = await request.text();
     if (new TextEncoder().encode(raw).byteLength > 8 * 1024 * 1024)
@@ -159,6 +164,48 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
         { status: 413 },
       );
     body = bodySchema.parse(JSON.parse(raw));
+    if (body.sqlServerAggregate?.financialLedgerProjection) {
+      // Validate with the established schema first. Restore only numeric leaves
+      // inside its accepted row/change records; never restore stripped operation
+      // fields or replace trusted branch/actor normalization later in the flow.
+      const { parseExactJson, isExactNumber } = await import("../../electron/sync/shift-recovery-exact.mjs");
+      const exact = parseExactJson(raw, { maxBytes: 8 * 1024 * 1024, maxDepth: 128 }) as Record<string, unknown>;
+      const rawAggregate = exact.sqlServerAggregate as Record<string, unknown>;
+      const operations = body.sqlServerAggregate.operations;
+      if (!operations || !Array.isArray(rawAggregate?.operations) || operations.length !== rawAggregate.operations.length)
+        throw new Error("Invalid exact financial operations");
+      const originals = rawAggregate.operations;
+      const restore = (value: unknown, original: unknown): unknown => {
+        if (typeof value === "number") {
+          if (!isExactNumber(original)) throw new Error("Missing exact numeric source");
+          return original;
+        }
+        if (Array.isArray(value)) {
+          if (!Array.isArray(original) || value.length !== original.length) throw new Error("Invalid exact array source");
+          return value.map((item, index) => restore(item, original[index]));
+        }
+        if (value && typeof value === "object") {
+          if (!original || typeof original !== "object" || Array.isArray(original)) throw new Error("Invalid exact record source");
+          return Object.fromEntries(Object.entries(value).map(([key, item]) => {
+            if (!Object.hasOwn(original, key)) throw new Error("Missing exact record field");
+            return [key, restore(item, (original as Record<string, unknown>)[key])];
+          }));
+        }
+        return value;
+      };
+      body.sqlServerAggregate.operations = operations.map((operation, index) => {
+        const original = originals[index] as Record<string, unknown>;
+        return { ...operation,
+          rows: restore(operation.rows, original.rows) as typeof operation.rows,
+          changes: restore(operation.changes, original.changes) as typeof operation.changes,
+        };
+      });
+      exactFinancialOperations = true;
+    }
+    if(body.sqlServerFinancialCapability||body.sqlServerFinancialEvent||body.sqlServerFinancialBasis||body.sqlServerFinancialObservation||body.sqlServerAggregate?.registerFinancialBoundary||body.sqlServerAggregate?.shiftFinancialOpening||body.sqlServerAggregate?.financialLedgerProjection){
+      const operations=[body.managementSyncBranches,body.ops?.length,body.read,body.sqlServerBatch,body.sqlServerAggregate,body.sqlServerFinancialCapability,body.sqlServerFinancialEvent,body.sqlServerFinancialBasis,body.sqlServerFinancialObservation,body.sqlServerShiftGraph,body.sqlServerPull,body.sqlServerBootstrap,body.sqlServerCounts,body.sqlServerTelemetry,body.oldReceipt];
+      if(operations.filter(Boolean).length!==1)throw new Error('Mixed financial metadata request');
+    }
   } catch {
     return Response.json({ ok: false, error: "Malformed request" }, { status: 400 });
   }
@@ -178,6 +225,10 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     !body.read &&
     !body.sqlServerBatch &&
     !body.sqlServerAggregate &&
+    !body.sqlServerFinancialEvent &&
+    !body.sqlServerFinancialBasis &&
+    !body.sqlServerFinancialCapability &&
+    !body.sqlServerFinancialObservation &&
     !body.sqlServerShiftGraph &&
     !body.sqlServerPull &&
     !body.sqlServerBootstrap &&
@@ -233,10 +284,14 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     const signedAuthor = body.sqlServerAggregate?.shiftAuthor;
     const signedStart = body.sqlServerAggregate?.shiftClosingStart;
     const signedFinancialBasis=body.sqlServerAggregate?.shiftFinancialBasis;
+    const signedFinancialEventProof=body.sqlServerFinancialEvent?.proof;
+    const signedFinancialOpening=body.sqlServerAggregate?.shiftFinancialOpening;
     body = alignVerifiedScopeIds(body, scope);
     if (signedAuthor && body.sqlServerAggregate) body.sqlServerAggregate.shiftAuthor = signedAuthor;
     if (signedStart && body.sqlServerAggregate) body.sqlServerAggregate.shiftClosingStart = signedStart;
     if(signedFinancialBasis && body.sqlServerAggregate)body.sqlServerAggregate.shiftFinancialBasis=signedFinancialBasis;
+    if(signedFinancialEventProof!==undefined&&body.sqlServerFinancialEvent)body.sqlServerFinancialEvent.proof=signedFinancialEventProof;
+    if(signedFinancialOpening&&body.sqlServerAggregate)body.sqlServerAggregate.shiftFinancialOpening=signedFinancialOpening;
   } catch (e) {
     if ((e as { status?: number }).status === 503)
       return Response.json({ ok: false, code: "SERVICE_UNAVAILABLE", error: "Registration verification is temporarily unavailable." }, { status: 503 });
@@ -305,6 +360,10 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
   if (
     body.sqlServerBatch ||
     body.sqlServerAggregate ||
+    body.sqlServerFinancialEvent ||
+    body.sqlServerFinancialBasis ||
+    body.sqlServerFinancialCapability ||
+    body.sqlServerFinancialObservation ||
     body.sqlServerShiftGraph ||
     body.sqlServerPull ||
     body.sqlServerBootstrap ||
@@ -314,6 +373,10 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     const branchId =
       body.sqlServerBatch?.branchId ??
       body.sqlServerAggregate?.branchId ??
+      body.sqlServerFinancialEvent?.branchId ??
+      body.sqlServerFinancialBasis?.branchId ??
+      body.sqlServerFinancialCapability?.branchId ??
+      body.sqlServerFinancialObservation?.branchId ??
       body.sqlServerShiftGraph?.branchId ??
       body.sqlServerPull?.branchId ??
       body.sqlServerBootstrap?.branchId ??
@@ -323,6 +386,10 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     const terminalSync = Boolean(
       body.sqlServerBatch ||
       body.sqlServerAggregate ||
+      body.sqlServerFinancialEvent ||
+      body.sqlServerFinancialBasis ||
+      body.sqlServerFinancialCapability ||
+      body.sqlServerFinancialObservation ||
       body.sqlServerShiftGraph ||
       body.sqlServerPull ||
       body.sqlServerBootstrap ||
@@ -505,6 +572,13 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
         );
     }
     const { serviceRest } = await import("@/core/api/pos-relay.server");
+    let verifiedFinancialOpening:Awaited<ReturnType<typeof import('./sync-financial-operation.server').verifyFinancialOpeningEnvelope>>|undefined;
+    if(body.sqlServerAggregate?.shiftFinancialOpening){
+      if(!verifiedTerminal)return Response.json({ok:false,code:'TERMINAL_REQUIRED',error:'A verified terminal is required.'},{status:403});
+      const {verifyFinancialOpeningEnvelope}=await import('./sync-financial-operation.server');
+      try{verifiedFinancialOpening=await verifyFinancialOpeningEnvelope({...body.sqlServerAggregate.shiftFinancialOpening,terminal:verifiedTerminal,branchId});}
+      catch(error){const status=error&&typeof error==='object'&&'status' in error&&error.status===503?503:error&&typeof error==='object'&&'status' in error&&error.status===403?403:400;return Response.json({ok:false,code:'EFINANCIAL_OPENING_UNVERIFIED',error:'The saved opening could not be verified.'},{status});}
+    }
     let authorState: Awaited<ReturnType<typeof import("./shift-author-verification.server").readShiftAuthorAuthority>> | undefined;
     let startAuthorState: typeof authorState;
     if (body.sqlServerAggregate?.shiftIntent) {
@@ -537,9 +611,40 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
           error: unavailable ? "Author verification is temporarily unavailable; saved work remains pending." : "The protected shift author could not be verified." }, { status: unavailable ? 503 : 403 });
       }
     }
+    if(body.sqlServerFinancialEvent){
+      if(!verifiedTerminal)return Response.json({ok:false,code:'TERMINAL_REQUIRED',error:'A verified terminal is required.'},{status:403});
+      const {verifyFinancialOperationEnvelope}=await import('./sync-financial-operation.server');
+      const {organizationId,operationJson,proof}=body.sqlServerFinancialEvent;
+      try{
+        const verified=await verifyFinancialOperationEnvelope({envelope:{organizationId,operationJson,proof},terminal:verifiedTerminal,branchId});
+        body.sqlServerFinancialEvent.proof=verified.proof;
+      }catch(error){
+        const unavailable=error&&typeof error==='object'&&'status' in error&&error.status===503;
+        const invalid=error&&typeof error==='object'&&'status' in error&&error.status===403;
+        return Response.json({ok:false,code:unavailable?'EFINANCIAL_AUTHOR_UNAVAILABLE':invalid?'EFINANCIAL_AUTHOR_INVALID':'EFINANCIAL_OPERATION_INVALID',error:unavailable?'Financial author verification is temporarily unavailable.':'The financial operation could not be verified.'},{status:unavailable?503:invalid?403:400});
+      }
+    }
+    if(body.sqlServerFinancialCapability&&(!verifiedTerminal||verifiedTerminal.platform!=='pc'||verifiedTerminal.mode!=='operations'))return Response.json({ok:false,code:'TERMINAL_REQUIRED',error:'A verified operating till is required.'},{status:403});
+    if(body.sqlServerFinancialObservation){
+      if(!verifiedTerminal||verifiedTerminal.platform!=='pc'||verifiedTerminal.mode!=='operations')return Response.json({ok:false,code:'TERMINAL_REQUIRED',error:'A verified operating till is required.'},{status:403});
+      try{
+        const {parseFinancialObservation}=await import('./sync-financial-operation.server');
+        const observed=parseFinancialObservation(body.sqlServerFinancialObservation.operationJson);
+        const {sameBranchId}=await import('./branch-id');
+        if(!sameBranchId(observed.branchId,branchId)||observed.terminalId!==verifiedTerminal.id.toLowerCase())return Response.json({ok:false,code:'EFINANCIAL_OBSERVATION_FORBIDDEN',error:'The observation scope could not be verified.'},{status:403});
+      }catch{return Response.json({ok:false,code:'EFINANCIAL_OBSERVATION_INVALID',error:'The observation could not be verified.'},{status:400});}
+    }
     const governanceBatch =
       body.sqlServerBatch && governanceRpcTables.has(body.sqlServerBatch.table);
-    const rpc = governanceBatch
+    const rpc = body.sqlServerFinancialCapability
+      ? (["pos_sync_financial_capability",{p_org:body.sqlServerFinancialCapability.organizationId,p_branch:branchId,p_terminal:scope.terminalId??"",p_shift:body.sqlServerFinancialCapability.shiftId??null}] as const)
+      : body.sqlServerFinancialObservation
+      ? (["pos_sync_register_financial_observation",{p_org:body.sqlServerFinancialObservation.organizationId,p_branch:branchId,p_terminal:scope.terminalId??"",p_raw:body.sqlServerFinancialObservation.operationJson}] as const)
+      : body.sqlServerFinancialEvent
+      ? (["pos_sync_register_financial_event",{p_org:body.sqlServerFinancialEvent.organizationId,p_branch:branchId,p_terminal:scope.terminalId??"",p_raw:body.sqlServerFinancialEvent.operationJson,p_proof:body.sqlServerFinancialEvent.proof}] as const)
+      : body.sqlServerFinancialBasis
+      ? (["pos_sync_read_financial_basis",{p_org:body.sqlServerFinancialBasis.organizationId,p_branch:branchId,p_terminal:scope.terminalId??"",p_shift:body.sqlServerFinancialBasis.shiftId}] as const)
+      : governanceBatch
       ? ([
           "pos_sync_push_governance_batch",
           {
@@ -563,6 +668,16 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
               p_changes: body.sqlServerBatch.changes,
             },
           ] as const)
+        : body.sqlServerAggregate?.shiftFinancialOpening
+          ? (["pos_sync_register_financial_open",{p_batch:body.sqlServerAggregate.batchId,p_org:body.sqlServerAggregate.organizationId,p_branch:branchId,p_terminal:scope.terminalId??"",p_local_aggregate:verifiedFinancialOpening!.opening.localAggregateId,p_opening_json:verifiedFinancialOpening!.opening.rowJson,p_row_hash:verifiedFinancialOpening!.opening.rowHash,p_operations:body.sqlServerAggregate.operations,p_opening_envelope:body.sqlServerAggregate.shiftFinancialOpening.openingJson,p_proof:verifiedFinancialOpening!.proof}] as const)
+        : body.sqlServerAggregate?.financialLedgerProjection
+          ? (["pos_sync_push_financial_business_aggregate",{p_batch:body.sqlServerAggregate.batchId,p_org:body.sqlServerAggregate.organizationId,p_branch:branchId,p_terminal:scope.terminalId??"",p_operations:body.sqlServerAggregate.operations}] as const)
+        : body.sqlServerAggregate?.registerFinancialBoundary
+          ? (["pos_sync_register_financial_boundary",{
+            p_org:body.sqlServerAggregate.organizationId,p_branch:branchId,p_terminal:scope.terminalId??"",
+            p_raw_graph:body.sqlServerAggregate.shiftIntent!.payloadJson,p_graph_author:body.sqlServerAggregate.shiftAuthor,
+            p_financial_basis:body.sqlServerAggregate.shiftFinancialBasis,
+          }] as const)
         : body.sqlServerAggregate
           ? ([
               body.sqlServerAggregate.shiftIntent ? (body.sqlServerAggregate.shiftFinancialBasis ? "pos_sync_push_financial_shift_intent" : body.sqlServerAggregate.shiftClosingStart ? "pos_sync_push_started_shift_intent" : "pos_sync_push_author_shift_intent") : "pos_sync_push_aggregate",
@@ -644,10 +759,20 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
         terminalId: scope.terminalId ?? "", cursor: body.sqlServerPull.cursor, keepCommerce, signal: request.signal });
       if (protectedResponse) return protectedResponse;
     }
+    let rpcBody: string;
+    if (exactFinancialOperations) {
+      const { stringifyExactJson } = await import("../../electron/sync/shift-recovery-exact.mjs");
+      try { rpcBody = stringifyExactJson(rpc[1], { maxBytes: 8 * 1024 * 1024, maxDepth: 128 }); }
+      catch { return Response.json({ ok: false, code: "FINANCIAL_OPERATIONS_INVALID", error: "The protected financial operations cannot be encoded safely." }, { status: 400 }); }
+    } else rpcBody = JSON.stringify(rpc[1]);
     const response = await serviceRest(`rpc/${rpc[0]}`, {
       method: "POST",
-      body: JSON.stringify(rpc[1]),
+      body: rpcBody,
     });
+    if(response.ok&&body.sqlServerFinancialCapability){
+      const {financialCapabilityResponse}=await import('./financial-capability.server');
+      return financialCapabilityResponse(response,{organizationId:body.sqlServerFinancialCapability.organizationId,branchId,terminalId:scope.terminalId??'',shiftId:body.sqlServerFinancialCapability.shiftId});
+    }
     if (response.ok && (body.sqlServerPull || body.sqlServerBootstrap || body.sqlServerShiftGraph)) {
       const { redactOwnedParsedSyncDownload } = await import("./sync-download-redaction");
       const management = scope.managementReplica === true || scope.managementDevice === true;

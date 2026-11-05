@@ -1040,3 +1040,37 @@ Physical-device and fresh-installer limits remain tracked separately.
 ## FIN62 current continuation — 4 November
 
 Owner reiterated: complete shift totals/refund validation first with agents; update PR391 and prepare PR354; present exact database changes before application. Current published PR391 head d15be0af passed required CI; uncommitted foundations are not covered by that result. Exact-decimal v2 math, cloud snapshot/version lineage and optional authenticated admission are prepared. Local basis persistence passed 14 disposable LocalDB groups, 10 upgrade groups, 21 capture groups and 12 unit tests; TypeScript passed. All metadata remains default-off/preparation-only. Native journal integration, fully offline opening-origin provenance, final regressions and exact final migration manifest remain pending. No new live database writes, main promotion or publication. Booking deposit attribution remains separate; Membership remains on hold.
+
+## 5 November — superseding FIN62 release checkpoint
+
+Main-private runtime assembly, offline opening provenance, saved financial history,
+OBSERVE refresh, durable no-op proofs and guarded administrator adapters now exist
+in the PR391 continuation. Earlier unassembled/pending notes above describe their
+historical revisions. Capability enforcement remains disabled without separately
+approved rollout, compatible installed clients and scoped readiness. New metadata
+does not activate it automatically. Original accepted history and unresolved
+legacy work must remain intact; installing an update alone is not proof that every
+historical closing has uploaded.
+
+Eleven owned Main/LocalDB/HTTP/native PostgreSQL scenarios passed, including saved
+original closing after later refund, retries/no duplicates, full Change Tracking
+progress and exact large scalar decimals. Independent native review passed397
+tests across17 suites. Nested payment transport and final-head full CI remain
+distinct gates; isolated fixtures are not installed-device/hosted CPU acceptance.
+
+Candidate exact cloud/local artifacts are recorded in
+database/shift-financial-upgrade-manifest.json and production-upgrade-bundle.md;
+old prototype hashes are superseded. No application or rollout approval exists.
+Fresh/reset composition is legacy supabase/schema.sql, then FIN62 cloud90000,
+then the separate SHIFT63 sharing migration90100. Base schema alone is not the
+complete new protocol. Do not paste guarded migrations into the base schema or
+replace the captured live sale writer's promotion checks.
+
+Owner explicitly requires PR391 and PR392 integrated into beta, combined conflict
+resolution/regression verification and final production PR354 review before any
+production release. PR392 is a separate default-ON Operational Rules sharing
+control; local027 is required before its new native installer is used. Preserve
+same-PC cashier handover and distinguish sharing from multiple-shifts-per-terminal.
+Production promotion, exact database application and installer publication remain
+separate approvals. Membership stays on hold; booking deposits remain separately
+tracked, never silently declared fixed by FIN62.

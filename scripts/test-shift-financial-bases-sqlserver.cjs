@@ -12,10 +12,10 @@ async function main(){
  const {manager,repository}=local,sql=manager.sql(),terminal=randomUUID(),authorId=randomUUID();
  const test=async(name,fn)=>{await fn();passed++;console.log('PASS '+name);};
  const authority=new ShiftAuthorAuthority({keys:vault.keys,connectionManager:manager,session:{identity:()=>({source:'pos',authorId,canonicalSubject:'cashier',branchId:branch}),epoch:()=>1,hasPermission:()=>true},terminal:()=>({tokenId:terminal,deviceUse:'operations',branchId:branch}),project:()=> 'https://fixture.supabase.co',branch:()=>branch});
- const writer=new ShiftSyncJournal(repository),baseline=randomUUID();let baselineAvailable=true,resolverCalls=0;
- const store=new ShiftFinancialBases(manager,{enabled:true,resolveBaseline:async()=>{resolverCalls++;return baselineAvailable?{serverBasisId:baseline,versionReferences:[]}:null;}});
+ const writer=new ShiftSyncJournal(repository),baseline=randomUUID();let baselineAvailable=true,resolverCalls=0,originCapture=false,originResolution=false;
+ const store=new ShiftFinancialBases(manager,{enabled:true,resolveBaseline:async()=>{resolverCalls++;return baselineAvailable?{serverBasisId:baseline,versionReferences:[]}:null;},resolveOpeningOrigin:async({transaction,branchId,shiftId})=>{if(!originResolution)return null;const saved=(await new sql.Request(transaction).input('branch',branchId).input('shift',shiftId).query('SELECT aggregate_id,row_hash FROM dbo.pos_sync_shift_openings WHERE branch_id=@branch AND shift_id=@shift;')).recordset[0];return saved?{openingOrigin:{localAggregateId:String(saved.aggregate_id).toLowerCase(),rowHash:saved.row_hash},versionReferences:[]}:null;}});
  const insert=async(tx,table,row)=>{const req=new sql.Request(tx);Object.entries(row).forEach(([k,v],i)=>req.input('v'+i,v));await req.query(`INSERT dbo.[${table}](${Object.keys(row).map(k=>'['+k+']').join(',')}) VALUES(${Object.keys(row).map((_,i)=>'@v'+i).join(',')});`);};
- const seed=async()=>{const shift=randomUUID();await local.insert('shifts',{id:shift,store_id:branch,status:'OPEN',state:'CASH_COUNT_REQUIRED',opening_float:20,opened_at:'2026-11-01T00:00:00Z',row_version:1});await local.insert('sales',{id:randomUUID(),store_id:branch,shift_id:shift,total_amount:100,payment_type:'cash',is_refunded:false,row_version:1});return shift;};
+ const seed=async()=>{const shift=randomUUID();await local.insert('shifts',{id:shift,store_id:branch,status:'OPEN',state:'CASH_COUNT_REQUIRED',opening_float:20,opened_at:'2026-11-01T00:00:00Z',row_version:1});if(originCapture){const tx=new sql.Transaction(manager.pool);await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);try{await new sql.Request(tx).input('id',shift).query("UPDATE dbo.shifts SET state=N'ACTIVE' WHERE id=@id;");await writer.intents.freezeOpening(tx,randomUUID(),branch,shift);await new sql.Request(tx).input('id',shift).query("UPDATE dbo.shifts SET state=N'CASH_COUNT_REQUIRED' WHERE id=@id;");await tx.commit();}catch(error){await tx.rollback();throw error;}}await local.insert('sales',{id:randomUUID(),store_id:branch,shift_id:shift,total_amount:100,payment_type:'cash',is_refunded:false,row_version:1});return shift;};
  const close=async({rollback=false,clone=false}={})=>{
   const shift=await seed(),count=randomUUID(),recon=randomUUID(),intent=randomUUID(),author=await authority.prepare(authority.capture('ORIGINAL'));
   const tx=new sql.Transaction(manager.pool);await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
@@ -36,27 +36,54 @@ async function main(){
    await tx.commit();return{intent,shift,count,result};
   }catch(error){await tx.rollback().catch(()=>{});throw error;}
  };
- const closeViaJournal=async(expected='120.00')=>{
+ const closeViaJournal=async(expected='120.00',mutateSource=false)=>{
   const shift=await seed(),count=randomUUID(),recon=randomUUID(),author=await authority.prepare(authority.capture('ORIGINAL'));
   const journal=new ShiftSyncJournal(repository,{authorRequired:true,financialBases:store});
-  const observation=await journal.observe(branch,shift);
+  const observation=await journal.observe(branch,shift),draft=await store.readDraft({branchId:branch,shiftId:shift});assert.equal(draft.computed.expected.cash,'120.00');assert.equal(draft.summary.totalSales,'100.000000000000');assert.equal(draft.summary.transactions,'1');
+  if(mutateSource)await manager.pool.request().input('shift',shift).query('UPDATE dbo.sales SET discount_amount=2 WHERE shift_id=@shift;');
   const facts={counted_cash:'120.00',counted_card:null,counted_digital:null,expected_cash:expected,expected_card:'0.00',expected_digital:'0.00',variance_cash:'0.00',variance_card:null,variance_digital:null,variance_total:'0.00',variance_status:'NO_VARIANCE'};
   const ops=[{kind:'insert',table:'shift_cash_counts',rows:[{id:count,shift_id:shift,store_id:branch,kind:'ORIGINAL',counted_cash:'120.00',counted_card:null,counted_digital:null,counted_by_name:'cashier',counted_by_staff_id:'cashier'}]},
    {kind:'insert',table:'shift_reconciliations',rows:[{id:recon,count_id:count,shift_id:shift,store_id:branch,...facts}]},
    {kind:'update',table:'shifts',match:{id:shift},values:{store_id:branch,status:'CLOSED',state:'CLOSED',closed_at:'2026-11-01T12:00:00Z',final_counted_cash:'120.00',...facts}}];
-  const run=()=>journal.apply('financial fixture',ops,{branchId:branch,observation,author});
-  if(expected!=='120.00'){await assert.rejects(run(),{code:'ESHIFT_FINANCIAL_CONFLICT'});assert.equal((await manager.pool.request().input('id',count).query('SELECT id FROM dbo.shift_cash_counts WHERE id=@id;')).recordset.length,0);return;}
+  const run=()=>journal.apply('financial fixture',ops,{branchId:branch,observation,author,financialSourceHash:draft.sourceHash});
+  if(expected!=='120.00'||mutateSource){await assert.rejects(run(),{code:'ESHIFT_FINANCIAL_CONFLICT'});assert.equal((await manager.pool.request().input('id',count).query('SELECT id FROM dbo.shift_cash_counts WHERE id=@id;')).recordset.length,0);return;}
   await run();const row=(await manager.pool.request().input('shift',shift).query('SELECT intent_id FROM dbo.pos_sync_shift_intents WHERE shift_id=@shift;')).recordset[0];assert(row);const result=await store.get(String(row.intent_id).toLowerCase(),branch);assert.equal(result.status,'ready');assert(result.shiftFinancialBasis.basisJson);const intent=(await journal.intents.get(String(row.intent_id).toLowerCase(),branch));const parent=intent.operations.find(op=>op.table==='shifts').rows[0];assert.equal(require('../electron/sync/shift-financial-math.cjs').canonicalExactCents(parent.expected_cash),'120.00');assert.equal(typeof parent.expected_cash,'string');
+ };
+ const bigReplay=async()=>{
+  const shift=await seed(),journal=new ShiftSyncJournal(repository,{authorRequired:true,financialBases:store});
+  await manager.pool.request().input('shift',shift).query("UPDATE dbo.sales SET total_amount=9007199254740993.005 WHERE shift_id=@shift;");
+  const saveCount=async(kind,cash)=>{
+   const source=await store.readDraft({branchId:branch,shiftId:shift}),observation=await journal.observe(branch,shift),author=await authority.prepare(authority.capture(kind));
+   const {buildShiftFinancialDraft}=require('../electron/db/shift-financial-draft.cjs');
+   const draft=buildShiftFinancialDraft({computed:source.computed,counted:{cash,card:null,digital:null},openingFloat:source.openingFloat});
+   const count=randomUUID(),clientKey=shift+':'+kind,now=kind==='ORIGINAL'?'2026-11-01T12:00:00Z':'2026-11-01T13:00:00Z',reason=kind==='RECOUNT'?'exact recount':null;
+   const facts=Object.fromEntries(Object.entries(draft).filter(([key])=>/^(?:expected_|counted_|variance_)/.test(key)));
+   const events=[{id:randomUUID(),shift_id:shift,store_id:branch,terminal_id:'terminal',event:kind==='ORIGINAL'?'cash_count_submitted':'recount_submitted',to_state:kind==='ORIGINAL'?'CASH_COUNT_SUBMITTED':'CLOSED',detail:{count_id:count,...(reason?{reason}:{})},actor_name:'cashier',actor_staff_id:'cashier',created_at:now}];
+   if(kind==='ORIGINAL')events.push({id:randomUUID(),shift_id:shift,store_id:branch,terminal_id:'terminal',event:'reconciled',from_state:'CASH_COUNT_SUBMITTED',to_state:'CLOSED',detail:{variance_status:draft.variance_status,variance_total:draft.variance_total},actor_name:'cashier',actor_staff_id:'cashier',created_at:now});
+   const ops=[{kind:'insert',table:'shift_cash_counts',rows:[{id:count,shift_id:shift,store_id:branch,terminal_id:'terminal',kind,counted_cash:cash,counted_card:null,counted_digital:null,counted_by_name:'cashier',counted_by_staff_id:'cashier',client_key:clientKey,reason,created_at:now}]},
+    {kind:'insert',table:'shift_reconciliations',rows:[{id:randomUUID(),count_id:count,shift_id:shift,store_id:branch,...facts,created_at:now}]},
+    {kind:'insert',table:'shift_close_events',rows:events},
+    {kind:'update',table:'shifts',match:{id:shift},values:{store_id:branch,status:'CLOSED',state:'CLOSED',closed_at:'2026-11-01T12:00:00Z',final_counted_cash:cash,...facts}}];
+   await journal.apply('exact historical replay',ops,{branchId:branch,observation,author,financialSourceHash:source.sourceHash});
+   return{branchId:branch,shiftId:shift,clientKey,actor:'cashier',terminalId:'terminal',cash,card:null,digital:null,...(reason?{reason}:{})};
+  };
+  const original=await saveCount('ORIGINAL','9007199254741013.00');assert.equal((await journal.originalReplay(original)).state,'CLOSED');await assert.rejects(journal.originalReplay({...original,cash:'9007199254741013.01'}),{code:'EIDEMPOTENCY'});
+  const recount=await saveCount('RECOUNT','9007199254741013.02');assert.equal(await journal.recountReplay(recount),true);assert.equal((await journal.originalReplay(original)).state,'CLOSED');await assert.rejects(journal.recountReplay({...recount,cash:'9007199254741013.01'}),{code:'EIDEMPOTENCY'});
  };
  try{
   await test('disabled class performs no SQL or baseline work',async()=>{const disabled=new ShiftFinancialBases(null);assert.equal(await disabled.capture(null,{}),null);assert.equal(await disabled.get('bad','bad'),null);assert.equal(await disabled.save(null,null),null);});
   await test('enabled missing schema fails closed without installation',async()=>{await assert.rejects(store.schema(null),{code:'EFINANCIAL_SCHEMA_PENDING'});});
   await manager.pool.request().batch(readFileSync(require.resolve('./preparation/025_shift_financial_bases.sql'),'utf8'));
+  await test('exact draft summary includes complete nonrefunded and refunded source rows',async()=>{const shift=await seed();await manager.pool.request().input('shift',shift).query('UPDATE dbo.sales SET discount_amount=3 WHERE shift_id=@shift;');await local.insert('sales',{id:randomUUID(),store_id:branch,shift_id:shift,total_amount:5,payment_type:'card',discount_amount:1,is_refunded:false,row_version:1});await local.insert('sales',{id:randomUUID(),store_id:branch,shift_id:shift,total_amount:10,payment_type:'cash',discount_amount:2,is_refunded:true,row_version:1});const draft=await store.readDraft({branchId:branch,shiftId:shift});assert.deepEqual(draft.summary,{transactions:'2',totalSales:'105.000000000000',discounts:'4.000000000000',refunds:'10.000000000000'});assert.deepEqual(draft.computed.expected,{cash:'120.00',card:'5.00',digital:'0.00'});});
   await test('optional journal captures and persists exact SQL decimal strings with original author',async()=>{await closeViaJournal();});
   await test('optional journal rejects stale exact draft before any financial writes',async()=>{await closeViaJournal('119.99');});
+  await test('same-tender financial source change rejects stale summary before writes',async()=>{await closeViaJournal('120.00',true);});
+  await test('financial markers replay original/recount beyond 2^53 exactly and reject adjacent cents after later recount',bigReplay);
   let ready;
   await test('actual signed intent, basis and companion commit atomically and survive new reader',async()=>{ready=await close();assert.equal(ready.result.status,'ready');assert.deepEqual(await new ShiftFinancialBases(manager,{enabled:true}).get(ready.intent,branch),ready.result);});
   await test('missing baseline retains local closing and required pending marker without later re-sign',async()=>{baselineAvailable=false;const pending=await close();assert.equal(pending.result.status,'pending');baselineAvailable=true;const before=resolverCalls;assert.deepEqual(await store.get(pending.intent,branch),pending.result);assert.equal(resolverCalls,before);});
+  await test('offline origin signs actual immutable OPEN reference with no invented baseline ID',async()=>{baselineAvailable=false;originCapture=true;originResolution=true;const value=await close();assert.equal(value.result.status,'ready');assert(value.result.shiftFinancialBasis.proof.openingOrigin);assert(!Object.hasOwn(value.result.shiftFinancialBasis.proof,'serverBasisId'));assert.deepEqual(await new ShiftFinancialBases(manager,{enabled:true}).get(value.intent,branch),value.result);const before=(await manager.pool.request().input('shift',value.shift).query('SELECT row_hash FROM dbo.pos_sync_shift_openings WHERE shift_id=@shift;')).recordset[0].row_hash;await manager.pool.request().input('shift',value.shift).input('hash','f'.repeat(64)).query('UPDATE dbo.pos_sync_shift_openings SET row_hash=@hash WHERE shift_id=@shift;');await assert.rejects(store.get(value.intent,branch),{code:'EFINANCIAL_BASIS_TAMPERED'});await manager.pool.request().input('shift',value.shift).input('hash',before).query('UPDATE dbo.pos_sync_shift_openings SET row_hash=@hash WHERE shift_id=@shift;');assert.deepEqual(await store.get(value.intent,branch),value.result);originCapture=false;originResolution=false;baselineAvailable=true;});
+  await test('origin resolver without durable OPEN cannot sign or fabricate origin',async()=>{baselineAvailable=false;originResolution=true;const value=await close();assert.equal(value.result.status,'pending');assert.equal(value.result.shiftFinancialBasis,null);baselineAvailable=true;originResolution=false;});
   await test('post-save rollback removes closing, intent and both metadata records; transaction reuse denied',async()=>{await close({rollback:true});});
   await test('caller-constructed capture rejected',async()=>{await close({clone:true});});
   await test('legacy intent without marker remains legacy',async()=>{assert.equal(await store.get(randomUUID(),branch),null);});

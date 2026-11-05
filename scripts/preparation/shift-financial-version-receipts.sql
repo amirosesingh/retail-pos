@@ -24,7 +24,7 @@ REVOKE ALL ON fin62_version_preparation.sales_versions FROM PUBLIC,anon,authenti
 CREATE FUNCTION fin62_version_preparation.basis(row_value jsonb) RETURNS jsonb
 LANGUAGE sql IMMUTABLE SET search_path=pg_catalog AS $$
  SELECT jsonb_build_object('id',row_value->>'id','branchId',row_value->>'store_id','shiftId',row_value->>'shift_id',
- 'totalAmount',row_value->>'total_amount','paymentType',row_value->>'payment_type','paymentsJson',(row_value->'payments')::text,
+ 'totalAmount',row_value->>'total_amount','discountAmount',row_value->>'discount_amount','paymentType',row_value->>'payment_type','paymentsJson',(row_value->'payments')::text,
  'isRefunded',row_value->'is_refunded','rowVersion',row_value->>'row_version');
 $$;
 REVOKE ALL ON FUNCTION fin62_version_preparation.basis(jsonb) FROM PUBLIC,anon,authenticated,service_role;

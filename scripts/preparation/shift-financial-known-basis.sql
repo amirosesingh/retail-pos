@@ -8,9 +8,23 @@ CREATE FUNCTION fin62_cloud_preparation.fact_identity(value text) RETURNS text
 LANGUAGE sql IMMUTABLE STRICT SET search_path=pg_catalog AS $$
  SELECT CASE WHEN value ~* '^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$' THEN lower(value) ELSE value END;
 $$;
+CREATE FUNCTION fin62_cloud_preparation.fact_payment(entry jsonb) RETURNS jsonb
+LANGUAGE plpgsql IMMUTABLE STRICT SET search_path=pg_catalog AS $$
+DECLARE method text;folded text;
+BEGIN
+ IF jsonb_typeof(entry)<>'object' THEN RAISE EXCEPTION 'FIN62_FINANCIAL_FACT_UNVERIFIED';END IF;
+ IF entry?'amount' AND entry->'amount'<>'null'::jsonb THEN
+  IF jsonb_typeof(entry->'amount') NOT IN('number','string') THEN RAISE EXCEPTION 'FIN62_FINANCIAL_FACT_UNVERIFIED';END IF;
+  entry:=jsonb_set(entry,'{amount}',to_jsonb(fin62_preparation.math_decimal_text(entry->>'amount')));
+ END IF;
+ method:=entry->>'method';folded:=translate(method,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz');
+ IF jsonb_typeof(entry->'method')='string' AND folded COLLATE "C" IN('cash','card','wallet','bank_transfer','transfer','qr','online','ewallet') THEN entry:=jsonb_set(entry,'{method}',to_jsonb(folded));END IF;
+ RETURN entry;
+END $$;
+REVOKE ALL ON FUNCTION fin62_cloud_preparation.fact_payment(jsonb) FROM PUBLIC,anon,authenticated,service_role;
 CREATE FUNCTION fin62_cloud_preparation.financial_fact(item jsonb) RETURNS jsonb
 LANGUAGE plpgsql IMMUTABLE STRICT SET search_path=pg_catalog AS $fact$
-DECLARE parsed json;payments jsonb;entry jsonb;amount jsonb;method text;folded text;list jsonb:='[]'::jsonb;total numeric;refunded boolean;
+DECLARE parsed json;payments jsonb;method text;folded text;total numeric;refunded boolean;
 BEGIN
  IF jsonb_typeof(item)<>'object' OR NOT(item?'totalAmount' AND item?'paymentType' AND item?'paymentsJson' AND item?'isRefunded') OR
   jsonb_typeof(item->'totalAmount') NOT IN('string','null') OR jsonb_typeof(item->'paymentType') NOT IN('string','null') OR
@@ -19,30 +33,36 @@ BEGIN
  refunded:=coalesce((item->>'isRefunded')::boolean,false);
  IF item->'paymentsJson'='null'::jsonb THEN payments:='null'::jsonb;
  ELSE
-  BEGIN parsed:=(item->>'paymentsJson')::json;EXCEPTION WHEN invalid_text_representation THEN RAISE EXCEPTION 'FIN62_FINANCIAL_FACT_UNVERIFIED';END;
+  BEGIN parsed:=CASE WHEN item->>'paymentsJson'='' THEN 'null'::json ELSE (item->>'paymentsJson')::json END;EXCEPTION WHEN invalid_text_representation THEN RAISE EXCEPTION 'FIN62_FINANCIAL_FACT_UNVERIFIED';END;
   PERFORM fin62_preparation.math_unique_json(parsed);payments:=parsed::jsonb;
   IF jsonb_typeof(payments)='array' THEN
-   FOR entry IN SELECT value FROM jsonb_array_elements(payments) LOOP
-    IF jsonb_typeof(entry)<>'object' THEN RAISE EXCEPTION 'FIN62_FINANCIAL_FACT_UNVERIFIED';END IF;
-    IF entry?'amount' AND entry->'amount'<>'null'::jsonb THEN
-     IF jsonb_typeof(entry->'amount') NOT IN('number','string') THEN RAISE EXCEPTION 'FIN62_FINANCIAL_FACT_UNVERIFIED';END IF;
-     amount:=to_jsonb(fin62_preparation.math_decimal_text(entry->>'amount'));entry:=jsonb_set(entry,'{amount}',amount);
-    END IF;
-    method:=entry->>'method';folded:=translate(method,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz');
-    IF jsonb_typeof(entry->'method')='string' AND folded COLLATE "C" IN('cash','card','wallet','bank_transfer','transfer','qr','online','ewallet') THEN entry:=jsonb_set(entry,'{method}',to_jsonb(folded));END IF;
-    list:=list||jsonb_build_array(entry);
-   END LOOP;payments:=list;
+   -- Aggregate once in original order; repeated JSONB array concatenation
+   -- copies the growing array for every tender and becomes quadratic.
+   SELECT coalesce(jsonb_agg(fin62_cloud_preparation.fact_payment(value) ORDER BY ordinal),'[]'::jsonb) INTO payments
+   FROM jsonb_array_elements(payments) WITH ORDINALITY tender(value,ordinal);
   END IF;
  END IF;
+ IF jsonb_typeof(payments) IS DISTINCT FROM 'array' OR payments='[]'::jsonb THEN payments:='null'::jsonb;END IF;
  method:=item->>'paymentType';folded:=translate(method,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz');
  IF folded COLLATE "C" IN('cash','card','wallet','bank_transfer','transfer','qr','online','ewallet') THEN method:=folded;END IF;
  RETURN jsonb_build_object('id',fin62_cloud_preparation.fact_identity(item->>'id'),
   'branchId',fin62_cloud_preparation.fact_identity(item->>'branchId'),'shiftId',fin62_cloud_preparation.fact_identity(item->>'shiftId'),
-  'totalAmount',total,'paymentType',method,'payments',payments,'isRefunded',refunded);
+  'totalAmount',total,'discountAmount',CASE WHEN item->>'discountAmount' IS NULL THEN 0 ELSE fin62_preparation.math_decimal_text(item->>'discountAmount') END,'paymentType',method,'payments',payments,'isRefunded',refunded);
 END $fact$;
 REVOKE ALL ON FUNCTION fin62_cloud_preparation.fact_identity(text),fin62_cloud_preparation.financial_fact(jsonb) FROM PUBLIC,anon,authenticated,service_role;
 
--- Actual MVCC visibility, never statement time, determines which transitions
+-- NEW v2 snapshots exclude refunded tender fields exactly as canonical math.
+-- Actual mutation policy continues to use FULL financial_fact below/elsewhere.
+CREATE FUNCTION fin62_cloud_preparation.snapshot_financial_fact(item jsonb) RETURNS jsonb
+LANGUAGE plpgsql IMMUTABLE STRICT SET search_path=pg_catalog AS $$
+BEGIN
+ IF item->'isRefunded'='true'::jsonb THEN
+  IF jsonb_typeof(item->'paymentType') NOT IN('string','null') OR jsonb_typeof(item->'paymentsJson') NOT IN('string','null') THEN RAISE EXCEPTION 'FIN62_FINANCIAL_FACT_UNVERIFIED';END IF;
+  RETURN fin62_cloud_preparation.financial_fact(item||jsonb_build_object('paymentType',NULL,'paymentsJson',NULL))-'paymentType'-'payments';
+ END IF;
+ RETURN fin62_cloud_preparation.financial_fact(item);
+END $$;
+REVOKE ALL ON FUNCTION fin62_cloud_preparation.snapshot_financial_fact(jsonb) FROM PUBLIC,anon,authenticated,service_role;-- Actual MVCC visibility, never statement time, determines which transitions
 -- were absent from the baseline snapshot. Timestamps remain diagnostics only.
 CREATE FUNCTION fin62_cloud_preparation.version_reachable(p_basis uuid,p_sale uuid,p_receipt uuid,p_initial jsonb)
 RETURNS boolean LANGUAGE plpgsql STABLE SET search_path=pg_catalog AS $lineage$
@@ -59,7 +79,7 @@ BEGIN
  IF (SELECT count(*) FROM fin62_version_preparation.sales_versions v WHERE v.sale_id=p_sale AND ((v.capture_xid=base.creator_xid AND v.evidence_order>base.evidence_order) OR
   (v.capture_xid<>base.creator_xid AND NOT pg_visible_in_snapshot(v.capture_xid,base.snapshot_text::pg_snapshot))))>512 THEN RAISE EXCEPTION 'FIN62_VERSION_LINEAGE_LIMIT';END IF;
  RETURN (WITH RECURSIVE edges AS MATERIALIZED(
-  SELECT v.id,fin62_cloud_preparation.financial_fact(v.before_basis) before_fact,fin62_cloud_preparation.financial_fact(v.after_basis) after_fact
+  SELECT v.id,fin62_cloud_preparation.snapshot_financial_fact(v.before_basis) before_fact,fin62_cloud_preparation.snapshot_financial_fact(v.after_basis) after_fact
   FROM fin62_version_preparation.sales_versions v WHERE v.sale_id=p_sale AND ((v.capture_xid=base.creator_xid AND v.evidence_order>base.evidence_order) OR
    (v.capture_xid<>base.creator_xid AND NOT pg_visible_in_snapshot(v.capture_xid,base.snapshot_text::pg_snapshot)))
    AND (v.before_basis IS NULL OR (fin62_cloud_preparation.fact_identity(v.before_basis->>'branchId')=fin62_cloud_preparation.fact_identity(base.branch_id)
@@ -67,7 +87,7 @@ BEGIN
    AND (v.after_basis IS NULL OR (fin62_cloud_preparation.fact_identity(v.after_basis->>'branchId')=fin62_cloud_preparation.fact_identity(base.branch_id)
     AND fin62_cloud_preparation.fact_identity(v.after_basis->>'shiftId')=base.shift_id::text))
  ),reachable(fact) AS(
-  SELECT coalesce(fin62_cloud_preparation.financial_fact(p_initial),'null'::jsonb)
+  SELECT coalesce(fin62_cloud_preparation.snapshot_financial_fact(p_initial),'null'::jsonb)
   UNION
   SELECT coalesce(e.after_fact,'null'::jsonb) FROM reachable r JOIN edges e ON coalesce(e.before_fact,'null'::jsonb)=r.fact
  ) SELECT EXISTS(SELECT 1 FROM edges e JOIN reachable r ON coalesce(e.before_fact,'null'::jsonb)=r.fact WHERE e.id=p_receipt));
@@ -140,13 +160,13 @@ BEGIN
  END LOOP;
  FOR item IN SELECT value FROM jsonb_array_elements(action_basis->'inputs') LOOP
   identifier:=item->>'id';old_item:=baseline_map->identifier;
-  IF fin62_cloud_preparation.financial_fact(old_item) IS NOT DISTINCT FROM fin62_cloud_preparation.financial_fact(item) THEN CONTINUE; END IF;
+  IF fin62_cloud_preparation.snapshot_financial_fact(old_item) IS NOT DISTINCT FROM fin62_cloud_preparation.snapshot_financial_fact(item) THEN CONTINUE; END IF;
   ref:=refs_map->identifier;
   IF ref IS NULL OR coalesce(ref->>'side','') NOT IN('before','after') THEN RAISE EXCEPTION 'FIN62_STORED_VERSION_REQUIRED'; END IF;
   SELECT * INTO historical FROM fin62_version_preparation.sales_versions WHERE id=(ref->>'receiptId')::uuid AND sale_id=identifier::uuid;
   IF NOT FOUND OR NOT fin62_cloud_preparation.version_reachable(saved.id,identifier::uuid,historical.id,old_item) THEN RAISE EXCEPTION 'FIN62_STORED_VERSION_REQUIRED'; END IF;
   selected:=CASE WHEN ref->>'side'='before' THEN historical.before_basis ELSE historical.after_basis END;
-  IF fin62_cloud_preparation.financial_fact(selected) IS DISTINCT FROM fin62_cloud_preparation.financial_fact(item) OR fin62_cloud_preparation.fact_identity(selected->>'branchId') IS DISTINCT FROM fin62_cloud_preparation.fact_identity(p_branch) OR fin62_cloud_preparation.fact_identity(selected->>'shiftId') IS DISTINCT FROM saved.shift_id::text
+  IF fin62_cloud_preparation.snapshot_financial_fact(selected) IS DISTINCT FROM fin62_cloud_preparation.snapshot_financial_fact(item) OR fin62_cloud_preparation.fact_identity(selected->>'branchId') IS DISTINCT FROM fin62_cloud_preparation.fact_identity(p_branch) OR fin62_cloud_preparation.fact_identity(selected->>'shiftId') IS DISTINCT FROM saved.shift_id::text
   THEN RAISE EXCEPTION 'FIN62_STORED_VERSION_REQUIRED'; END IF;
   used_ids:=array_append(used_ids,ref->>'receiptId');
  END LOOP;
