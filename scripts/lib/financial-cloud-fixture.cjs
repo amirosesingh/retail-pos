@@ -3,7 +3,7 @@ const assert=require('node:assert/strict');
 const{readFileSync}=require('node:fs');const{resolve,dirname}=require('node:path');
 const{randomUUID,createHash}=require('node:crypto');const Module=require('node:module');
 const root=resolve(__dirname,'../..');const read=async p=>readFileSync(resolve(root,p),'utf8');
-async function createFullFinancialCloud({db:suppliedDb,terminal=randomUUID(),author=randomUUID(),manager=randomUUID(),admin=randomUUID(),shift=randomUUID(),product=randomUUID(),actualSaleDefinition=false,upgradeSql=null}={}){
+async function createFullFinancialCloud({db:suppliedDb,terminal=randomUUID(),author=randomUUID(),manager=randomUUID(),admin=randomUUID(),shift=randomUUID(),product=randomUUID(),actualSaleDefinition=false,upgradeSql=null,capturedActual=false}={}){
  const schema=(await read('supabase/schema.sql')).replaceAll('\r\n','\n');
  function fn(name){const start=schema.lastIndexOf('CREATE OR REPLACE FUNCTION public.'+name+'(');assert(start>=0,name);const tail=schema.slice(start),tag=tail.match(/\bAS\s+(\$[\w]*\$)/i)?.[1],first=tail.indexOf(tag),end=tail.indexOf(tag+';',first+tag.length);assert(end>first);return tail.slice(0,end+tag.length+1);}
  function table(name){const start=schema.indexOf('CREATE TABLE IF NOT EXISTS public.'+name+' (');assert(start>=0,name);return schema.slice(start,schema.indexOf('\n);',start)+3);}
@@ -25,7 +25,7 @@ async function createFullFinancialCloud({db:suppliedDb,terminal=randomUUID(),aut
  const before=(await db.query("SELECT proname,pg_get_functiondef(oid) definition,proacl::text FROM pg_proc WHERE oid IN('public.pos_sale_commit(jsonb,jsonb,jsonb,jsonb,jsonb,text)'::regprocedure,'public.sale_refund(uuid,jsonb,text,text,text)'::regprocedure) ORDER BY proname")).rows;
  await db.exec("ALTER TABLE pos_settings ADD COLUMN integration_settings jsonb NOT NULL DEFAULT '{}';");await db.exec(table('pos_store_settings'));for(const name of['has_role','pos_rules_defaults','pos_rules_row','pos_rules_get','shift_log_event','shift_close_start','shift_variance_approve','shift_reconcile_now','shift_cash_count_submit','shift_recount_submit'])await db.exec(fn(name));
  if(!upgradeSql)await db.exec(await read('scripts/preparation/shift-financial-web-actions.sql'));
- if(actualSaleDefinition){await db.exec("CREATE TABLE promotions(id text PRIMARY KEY,promo_type text,is_active boolean,deleted_at timestamptz,title text,code_scope text,code_cluster_id text);ALTER TABLE stores ADD COLUMN IF NOT EXISTS group_id text;");const fixture=JSON.parse(await read('scripts/fixtures/fin62-pos-sale-live-definition.json'));assert.equal(createHash('sha256').update(fixture.definition).digest('hex'),fixture.sha256);await db.exec(fixture.definition);}
+ if(actualSaleDefinition||capturedActual){await db.exec("CREATE TABLE promotions(id text PRIMARY KEY,promo_type text,is_active boolean,deleted_at timestamptz,title text,code_scope text,code_cluster_id text);ALTER TABLE stores ADD COLUMN IF NOT EXISTS group_id text;");const fixture=JSON.parse(await read('scripts/fixtures/fin62-pos-sale-live-definition.json'));assert.equal(createHash('sha256').update(fixture.definition).digest('hex'),fixture.sha256);await db.exec(fixture.definition);}
  if(!upgradeSql)await db.exec(await read('scripts/preparation/shift-financial-live-business.sql'));
  await db.exec(table('missed_bill_entries'));
  for(const name of['pos_admin_correct_sale','pos_admin_correct_tender','pos_admin_add_missed_bill'])await db.exec(fn(name));
@@ -36,6 +36,15 @@ async function createFullFinancialCloud({db:suppliedDb,terminal=randomUUID(),aut
  if(!upgradeSql)await db.exec(await read('scripts/preparation/shift-financial-admin-aliases.sql'));
 
  await db.exec('ALTER TABLE terminal_tokens ADD COLUMN IF NOT EXISTS claimed_at timestamptz;');
+ if(capturedActual){
+  assert(upgradeSql,'Captured originals require the exact artifact');
+  await db.exec('SET check_function_bodies=off;');
+  try{for(const file of['fin62-web-live-definitions.json','fin62-writers-delegates-live-definitions.json'])for(const row of JSON.parse(await read('scripts/fixtures/'+file)).definitions){
+   if(row.normalized_md5)assert.equal(createHash('md5').update(row.definition.replaceAll('\r\n','\n')).digest('hex'),row.normalized_md5);
+   await db.exec(row.definition);
+   if(typeof row.acl==='string'){await db.exec('REVOKE ALL ON FUNCTION '+row.signature+' FROM PUBLIC,anon,authenticated,service_role;');for(const role of['PUBLIC','anon','authenticated','service_role'])if(new RegExp('(?:\\{|,)'+(role==='PUBLIC'?'':role)+'=X/').test(row.acl))await db.exec('GRANT EXECUTE ON FUNCTION '+row.signature+' TO '+role+';');}
+  }}finally{await db.exec('RESET check_function_bodies;');}
+ }
  if(upgradeSql)await db.exec(upgradeSql);
  else{
   await db.exec(await read('scripts/preparation/shift-financial-rollout-capability.sql'));

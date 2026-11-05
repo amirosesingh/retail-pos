@@ -1391,7 +1391,7 @@ REVOKE ALL ON FUNCTION public.pos_sync_register_financial_observation(text,text,
 GRANT EXECUTE ON FUNCTION public.pos_sync_register_financial_observation(text,text,text,text) TO service_role;
 
 -- Source: scripts/preparation/shift-financial-web-actions.sql
--- Canonical source SHA256: 6ABB3FCC543D81CD5D51CE2910572538C98347C3E211F433AAD20BD8B8991B82
+-- Canonical source SHA256: C183B8A19955F180A9CD445F6263D0C8033DB85DA229887A4078E5E81C9A37A5
 -- FIN62 PREPARATION ONLY / NOT FINAL / DO NOT APPLY TO OPERATOR DATABASE.
 -- New web actions only: exact canonical v2 arithmetic under the actual existing
 -- caller/action/branch guards. Legacy accepted replay returns remain untouched.
@@ -1406,7 +1406,7 @@ BEGIN
  ('shift_variance_approve','902e778332c2dca9bc34d241a1f9e119'),
  ('shift_reconcile_now','04a2bce3bfad4277dcc9aa2751f6ddbd'),
  ('shift_recount_submit','fa77acc46f885c1734e18d883d4f7f89')) expected(name,digest) LOOP
-  IF NOT EXISTS(SELECT 1 FROM pg_proc r WHERE r.pronamespace='public'::regnamespace AND r.proname=p.name AND md5(replace(pg_get_functiondef(r.oid),E'\r\n',E'\n'))=p.digest AND r.proowner='postgres'::regrole AND r.prosecdef AND r.prolang=(SELECT oid FROM pg_language WHERE lanname='plpgsql')) THEN RAISE EXCEPTION 'FIN62_WEB_SOURCE_UNEXPECTED: %',p.name;END IF;
+  IF NOT EXISTS(SELECT 1 FROM pg_proc r WHERE r.pronamespace='public'::regnamespace AND r.proname=p.name AND md5(replace(pg_get_functiondef(r.oid),E'\r\n',E'\n')) IN (p.digest,CASE p.name WHEN 'shift_close_start' THEN '0017c1ad94bcd3b3db49fdaa803d70ce' WHEN 'shift_reconcile_now' THEN '920af85fa748db61b9d9c723c16eb495' ELSE p.digest END) AND r.proowner='postgres'::regrole AND r.prosecdef AND r.prolang=(SELECT oid FROM pg_language WHERE lanname='plpgsql')) THEN RAISE EXCEPTION 'FIN62_WEB_SOURCE_UNEXPECTED: %',p.name;END IF;
  END LOOP;
 END $pins$;
 CREATE SCHEMA fin62_web_preparation;
@@ -1671,7 +1671,7 @@ END $function$
  IF after_row.proowner IS DISTINCT FROM before_row.proowner OR after_row.proacl IS DISTINCT FROM before_row.proacl OR after_row.proconfig IS DISTINCT FROM before_row.proconfig OR after_row.prosecdef IS DISTINCT FROM before_row.prosecdef OR after_row.proargtypes IS DISTINCT FROM before_row.proargtypes OR after_row.proargdefaults::text IS DISTINCT FROM before_row.proargdefaults::text OR after_row.prorettype IS DISTINCT FROM before_row.prorettype THEN RAISE EXCEPTION 'FIN62_WEB_AUTHORITY_CHANGED';END IF;
  SELECT oid INTO STRICT routine FROM pg_proc WHERE pronamespace='public'::regnamespace AND proname='shift_reconcile_now';
  SELECT * INTO STRICT before_row FROM pg_proc WHERE oid=routine;
- IF md5(replace(pg_get_functiondef(routine),E'\r\n',E'\n'))<>'04a2bce3bfad4277dcc9aa2751f6ddbd' THEN RAISE EXCEPTION 'FIN62_WEB_SOURCE_CHANGED';END IF;
+ IF md5(replace(pg_get_functiondef(routine),E'\r\n',E'\n')) NOT IN('04a2bce3bfad4277dcc9aa2751f6ddbd','920af85fa748db61b9d9c723c16eb495') THEN RAISE EXCEPTION 'FIN62_WEB_SOURCE_CHANGED';END IF;
  EXECUTE 'CREATE OR REPLACE FUNCTION public.shift_reconcile_now(p_shift uuid, p_count_id uuid, p_cash numeric, p_card numeric, p_digital numeric)
  RETURNS TABLE(state text, variance_status text)
  LANGUAGE plpgsql
@@ -1874,7 +1874,7 @@ BEGIN
  FOREACH name IN ARRAY ARRAY['shift_close_start','shift_variance_approve'] LOOP
   SELECT oid INTO STRICT routine FROM pg_proc WHERE pronamespace='public'::regnamespace AND proname=name;
   SELECT * INTO STRICT before_row FROM pg_proc WHERE oid=routine;
-  source:=pg_get_functiondef(routine);
+  source:=replace(pg_get_functiondef(routine),E'\r\n',E'\n');
   source:=replace(source,'SELECT * INTO v FROM public.shifts WHERE id = p_shift FOR UPDATE;','PERFORM pg_advisory_xact_lock(hashtextextended(''pos-sync-shift:''||p_shift::text,0)); SELECT * INTO v FROM public.shifts WHERE id = p_shift FOR UPDATE;');
   source:=replace(source,'DECLARE v public.shifts%ROWTYPE;','DECLARE v_fin62_graph boolean := false; v public.shifts%ROWTYPE;');
   IF name='shift_variance_approve' THEN

@@ -5004,3 +5004,90 @@ b19d6bdfca0e6eeb3cc0e58cd70460ff7d933b66 on5November. This is source
 integration only: exact cloud/local application and scoped rollout remain
 unapproved. PR392's feature dependency merge is being committed for fresh CI;
 production/main and installer publication remain untouched.
+
+## 5 November — exact database application approved
+
+Owner separately approved cloud90000 SHA75DCFA47F4898FBAAF8E356BE499601DA4DA39B92050B510299061137DF21F20 then90100 SHA17B9FB70FF19E5A43C034D9024D593C2918507257B7B92CD63E491AE9668FB07 to ROSEGILL POS projectqhrufhtbeguxydenzfey, orgbjxgimekljzlnwejuawj, postgres, https://qhrufhtbeguxydenzfey.supabase.co after fresh guarded preflight. Owner also approved local025/026/027 exact manifest/sharing-review hashes for ONLY LAPTOP-N0QBONGL\LCRPOS/POS_Local GUIDCEAFA630-D613-423C-8997-8A31DF70C506 after safe Electron closure and preflight. Each file owns its transaction; no cross-database atomicity is claimed. Stop on unknown/partial state. Preserve all business records, grants, settings, queues/checkpoints and signed history. No historical repair, enrollment, rollout activation, sharingOFF, production promotion or installer publication is authorized.
+
+PR391/392/393 are merged into beta596566a1 after exact-head required CI and reviewed merge-tree checks. Workers beta push build7b85b682 timed out in npm dependency installation before compilation/deployment; owner separately approved retry of ONLY that same build/commit/settings. This does not authorize a new configuration/billing/DB change. Agents verify read-only preflight and monitor the single authorized retry; root alone applies approved database files.
+
+Fresh cloud review: projectACTIVE_HEALTHY; all five LF-normalized live writer definitions match reviewed sources, including existing promotion guards; no financial/sharing namespaces exist. Raw fingerprint differences were Windows CRLF only. Local preflight: exact server/databaseGUID, migration24, no new financial tables or sharing column, no other active user requests. Application is not yet recorded complete; verify readiness/grants/no activation and local object shapes before completion.
+
+Application outcome: approved cloud90000 was attempted once and failed safely at
+FIN62_WEB_SOURCE_UNEXPECTED:shift_close_start. Read-only postflight confirmed
+all financial/sharing namespaces absent and no migration receipts: full rollback.
+No cloud90100 or local025/026/027 executed. Preserve unchanged approvals for
+those unchanged files; any changed90000 bytes require renewed exact-hash approval.
+Two independently reviewed live-source variants are cosmetic only: close-start
+0017c1ad94bcd3b3db49fdaa803d70ce differs only denial wording; reconciliation
+920af85f differs only comments/formatting. Prepare explicit recognized-variant
+compatibility and raw-capture regression tests, keep unknown-source rejection,
+then regenerate/review new artifact and obtain approval before retry. No blanket
+normalization or authorization bypass is permitted.
+
+The one owner-approved Workers retry e8174569-f211-4a4f-9b2c-cd0fbc5fc87b succeeded:
+same beta596566a1, total3m28s, install1m23s/build26s/deploy22s. GitHub hosting check
+is green. The earlier failure was npm installation timeout, not database failure.
+No code/configuration/billing changes or additional retries were performed.
+
+Compatibility checkpoint: candidate cloud90000 is now
+`A37FD005A688C1E2AC4815E0455E9B97B842531C3ACE0BC3F0A105287498EC2E`.
+Only two explicit reviewed web-source variants and CRLF-safe patching changed;
+90100 and all three local hashes remain unchanged. Five portable and five native
+strict-error artifact cases passed, including unknown permission/owner denial
+and complete rollback. Captured 22 current raw originals are loaded unchanged;
+12 actual Main/owned LocalDB/HTTP/native PostgreSQL workflows passed, including
+the actual native batch replay/branch-denial path. A CI wrapper retains the
+captured-source guard tests. Full current-source regression is running. Pending:
+final diff/CI/beta integration and renewed exact90000 approval, then fresh target
+preflight and approved cloud/local execution. No automatic retry is authorized.
+
+Final compatibility verification: full Vitest 5,616 passed / 7 skipped (679
+suites passed / 1 skipped); TypeScript, scoped lint and diff checks passed.
+Five portable plus five strict native artifact cases and twelve captured-live
+Main/LocalDB/HTTP/native PostgreSQL workflows passed. All fixtures are isolated;
+no operator data was used or changed. No orphaned PostgreSQL fixture process was
+found in this worktree after cleanup. The revised A37FD005…98EC2E artifact remains
+unapproved and unapplied. Publish only the scoped compatibility PR for beta CI;
+require renewed exact-file approval before a second cloud attempt. Keep all
+unchanged cloud/local approvals and safe-closure conditions pending, not lost.
+
+Owner renewed approval for corrected cloud90000 exact SHA
+A37FD005A688C1E2AC4815E0455E9B97B842531C3ACE0BC3F0A105287498EC2E
+after PR394 CI and fresh preflight. PR394 exact head af5a6ebe now passes all
+required security/platform/hosting checks. Fresh independent metadata preflight
+matches all eleven reviewed writer/web fingerprints and verifies no partial
+upgrade objects or receipts. Continue only the approved exact cloud sequence,
+then unchanged local025/026/027 after safe closure and exact identity checks.
+No rollout activation, sharing-OFF change or publication is authorized.
+
+## Approved database upgrades applied and verified — 5 November
+
+Corrected cloud90000 A37FD005…98EC2E applied successfully after one connector
+confirmation expired without execution (empty-state readback verified before
+reopening the same exact request). Supabase history:20261105020052,
+shift_financial_known_history. Postflight: private financial readiness true,
+49contracts, zero rollout approvals/protected shifts, all five original
+sale/refund/admin writer normalized fingerprints unchanged.
+
+Unchanged approved cloud90100 17B9FB70…8FB07 applied after fresh live settings
+anchor preflight. History:20261105020324,branch_shift_sharing. Postflight: both
+financial/sharing readiness true;49/24 contracts; sharing defaultON; new nullable
+boolean column/no default; wrappers deny anon/authenticated and allow service;
+no private client write grants; zero rollout approvals/protected shifts. No
+historical business-row repair or activation was performed.
+
+Local025/026/027 exact approved canonical files applied once through the
+independently reviewed fail-fast SQLCMD harness to ONLY
+LAPTOP-N0QBONGL\LCRPOS/POS_Local GUIDCEAFA630-D613-423C-8997-8A31DF70C506.
+Electron was already closed and no other POS_Local user session was present.
+Each file owned its transaction with5s lock/30s query limits. All10 financial
+metadata tables are empty; sharing column is nullablebit/no default; existing
+registered migration24 and all existing user-table row counts are unchanged.
+No queue/checkpoint/configuration/permission reset, business backfill or data
+restore. Do not replay026: preserve installed metadata. Other PCs are excluded.
+
+Remaining: independent readback/security review, commit these execution facts
+and final CI/beta integration of PR394, deployed/installed acceptance and separate
+compatible-client/cohort activation review. ProductionPR354 remains draft;
+no production merge, installer publication or automaticstable-release approval.
