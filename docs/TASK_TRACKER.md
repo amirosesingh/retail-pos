@@ -6143,3 +6143,17 @@ approval, checkout helper and native runtime bytes remain identical to bdcd8f82.
 All184 focused tests across ten approval/authority/pricing/tax/receipt/interop
 suites pass on that integration. Final pushed-head CI remains required; no
 production promotion, publication or operator database upgrade was performed.
+
+Latest destination refresh: verified beta79face2078ee35ebf50a51b59f0f503e6e25b1f7
+(PR417 reviewed dependency upgrades) integrated at61f84e92 without conflicts.
+Only package/lock/project records changed from the preceding integration; all
+approval/Main/checkout runtime source bytes still match bdcd8f82. A new clean
+verification checkout uses the fresh chore-beta-verification dependency install;
+its parsed lock matches the integrated source exactly. Installed React Query
+5.105.1, Radix toggle-group1.2.1, Capacitor Android8.6.0, electron-builder26.18.0
+and CapgoCLI8.99.1 were checked without mutating a shared install. All184 focused
+approval/authority/pricing/tax/receipt/interop tests and all six real shared
+React/Radix dialog groups passed again on these upgraded dependencies. The full
+new-head CI, final typecheck and platform checks are required before beta merge.
+Earlier actual native sale/restart evidence used the prior dependency install;
+do not mislabel that as another installed-application upgrade acceptance run.
