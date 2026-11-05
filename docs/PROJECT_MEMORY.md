@@ -12,6 +12,18 @@ Owner requires all proposed cloud/local database upgrades collected for exact fi
 The exact owner-approved service-only bounded feed RPC and PR384 are applied/deployed on beta. Existing selector/privacy grants and businessrecords are preserved; native continuation is bound to authenticated response metadata. Live147request sample all200/ok with no CPU-exceeded; CPU2–114ms/mean9.469 means NO guarantee allrequestsbelow10ms. Electronfeed131613→133184, all6shiftCTvalid; largebacklog stilldraining. Keep implemented/sample-verified status distinct from fullsync completion, production promotion or installerpublication. Supabase migrationtool ledger20261104042158 corresponds to approvedfile20261104040251, SHA83495D696622241ECA2A8D396234E2FD65EE7C7A3050E93E4280638D6530D59B; do not replay based solely on differing timestamps.
 # POS project memory
 
+## 6 November — existing-PC stock-history delivery
+
+Prepare one consolidated existing-data local SQL file, retaining the reviewed
+025–030 transaction/shape guards and appending031 only after the stock-history
+writer explicitly freezes its source. The currently released preparation artifact
+090F24031A07660C2D36512D2B38197A06491BB28408CCAAFDBB66FC400A4730
+is not silently extended with unfinished metadata. Preserve existing records,
+grants, local pending work and operator configuration; unknown/partial shapes
+fail closed and the complete update rolls back on failure. No live application
+or publication is authorized by preparation; exact file/target review remains.
+
+
 ## 6 November — dependency integration is beta first
 
 The owner requests the latest local Electron preview and prompt integration of

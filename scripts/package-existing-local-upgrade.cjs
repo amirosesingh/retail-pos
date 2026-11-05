@@ -31,7 +31,10 @@ function packageUpgrade(manifest=JSON.parse(fs.readFileSync(manifestPath,'utf8')
  const core=installerSections();
  assert.equal(digest(canonical(core.schema)),manifest.coreSources.schema,'Reviewed core source changed');
  assert.deepEqual(core.migrations.map(m=>[m.name,digest(canonical(m.sql))]),manifest.coreSources.migrations,'Reviewed core migrations changed');
- const modules=sourceModules().map(module=>{
+ const sources=sourceModules();
+ assert(Array.isArray(manifest.modules),'Reviewed module manifest is missing');
+ assert.deepEqual(manifest.modules.map(module=>module.id),sources.map(module=>module.id),'Reviewed module set/order changed; no upgrade was generated');
+ const modules=sources.map(module=>{
   const saved=manifest.modules.find(item=>item.id===module.id);assert(saved&&saved.sourceHash===module.canonicalHash,'Reviewed module changed: '+module.id);
   assert.deepEqual(saved.shape.selectors,module.selectors);
   const probes=[...module.selectors.tables.map(name=>`OBJECT_ID(${literal('dbo.'+name)}) IS NOT NULL`),...(module.selectors.columns??[]).map(c=>`COL_LENGTH(${literal('dbo.'+c.table)},${literal(c.column)}) IS NOT NULL`)];
