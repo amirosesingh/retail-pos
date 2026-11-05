@@ -1096,6 +1096,17 @@ Captured live delegates remain unchanged and are exercised in isolated workflow
 tests. This revised hash needs renewed owner approval before application. No
 rollout activation, sharing-OFF cutover, production merge or publication follows
 from the earlier database approvals.
+
+The owner subsequently approved the revised exact A37FD005…98EC2E file. On
+5 November both cloud files and local025/026/027 were applied successfully to
+their exact approved targets; independent postflight passed. See
+[the application record](database/shift-financial-application-20261105.md) for
+hashes, cloud ledger versions and the single local database GUID. No rollout
+approvals/protected shifts exist, sharing remains ON, and no production release
+was performed. Treat earlier pending-status notes as historical checkpoints.
+Never infer permission to repeat026, update another PC or activate a cohort from
+this completed application. Installed/deployed acceptance and specific production
+approval remain separate.
 ## SHIFT63 — Operational Rules sharing control approved, 5 November
 
 Owner explicitly approved preparation and implementation of a separate sharing control. Preserve current behaviour by default: sharing ON. OFF limits normal registered tills' operating checkout shifts to their own terminal; multiple cashiers on one PC and authorized management reporting/corrections remain supported. Do not confuse this with allow_multiple_shifts_per_terminal. Independent branch codex/shift-sharing-rules-beta starts current beta68470185 in work/shift-sharing-rules-beta, not the unfinished FIN62 branch. Exact cloud/local schema changes remain unapplied and require final review. Scope: canonical scoped setting/save/reload/inheritance/cache, old-schema capability compatibility, trusted normal-terminal online/offline enforcement including direct APIs, and regression tests. Do not silently change existing rule values, widen management grants or show an unenforced checkbox. Old clients/unknown offline policy and pending sales require explicit rollout safeguards. No application code changed in this worktree yet; FIN62 remains first priority.

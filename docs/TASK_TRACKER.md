@@ -5051,3 +5051,43 @@ found in this worktree after cleanup. The revised A37FD005…98EC2E artifact rem
 unapproved and unapplied. Publish only the scoped compatibility PR for beta CI;
 require renewed exact-file approval before a second cloud attempt. Keep all
 unchanged cloud/local approvals and safe-closure conditions pending, not lost.
+
+Owner renewed approval for corrected cloud90000 exact SHA
+A37FD005A688C1E2AC4815E0455E9B97B842531C3ACE0BC3F0A105287498EC2E
+after PR394 CI and fresh preflight. PR394 exact head af5a6ebe now passes all
+required security/platform/hosting checks. Fresh independent metadata preflight
+matches all eleven reviewed writer/web fingerprints and verifies no partial
+upgrade objects or receipts. Continue only the approved exact cloud sequence,
+then unchanged local025/026/027 after safe closure and exact identity checks.
+No rollout activation, sharing-OFF change or publication is authorized.
+
+## Approved database upgrades applied and verified — 5 November
+
+Corrected cloud90000 A37FD005…98EC2E applied successfully after one connector
+confirmation expired without execution (empty-state readback verified before
+reopening the same exact request). Supabase history:20261105020052,
+shift_financial_known_history. Postflight: private financial readiness true,
+49contracts, zero rollout approvals/protected shifts, all five original
+sale/refund/admin writer normalized fingerprints unchanged.
+
+Unchanged approved cloud90100 17B9FB70…8FB07 applied after fresh live settings
+anchor preflight. History:20261105020324,branch_shift_sharing. Postflight: both
+financial/sharing readiness true;49/24 contracts; sharing defaultON; new nullable
+boolean column/no default; wrappers deny anon/authenticated and allow service;
+no private client write grants; zero rollout approvals/protected shifts. No
+historical business-row repair or activation was performed.
+
+Local025/026/027 exact approved canonical files applied once through the
+independently reviewed fail-fast SQLCMD harness to ONLY
+LAPTOP-N0QBONGL\LCRPOS/POS_Local GUIDCEAFA630-D613-423C-8997-8A31DF70C506.
+Electron was already closed and no other POS_Local user session was present.
+Each file owned its transaction with5s lock/30s query limits. All10 financial
+metadata tables are empty; sharing column is nullablebit/no default; existing
+registered migration24 and all existing user-table row counts are unchanged.
+No queue/checkpoint/configuration/permission reset, business backfill or data
+restore. Do not replay026: preserve installed metadata. Other PCs are excluded.
+
+Remaining: independent readback/security review, commit these execution facts
+and final CI/beta integration of PR394, deployed/installed acceptance and separate
+compatible-client/cohort activation review. ProductionPR354 remains draft;
+no production merge, installer publication or automaticstable-release approval.

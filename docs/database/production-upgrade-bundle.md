@@ -1,6 +1,6 @@
-# Production upgrade bundle — preparation only
+# Production upgrade bundle and application record
 
-Status: not finalized or approved for application. No SQL in this plan has been executed.
+Status: the exact approved files were applied to the named cloud project and one local database on 5 November. See [the application record](shift-financial-application-20261105.md). Other targets, rollout activation and publication remain unapproved. Historical candidate notes below are retained as evidence, not replay instructions.
 
 ## Controlling boundary
 
@@ -99,3 +99,10 @@ The new cloud90000 hash requires renewed owner approval before another live
 attempt. Cloud90100 and local025/026/027 hashes remain unchanged, with their prior
 exact approvals and maintenance conditions retained. No protected rollout,
 sharing-OFF cutover or production publication is authorized by these approvals.
+
+The owner subsequently renewed approval for the exact revised hash. Application
+and independent postflight succeeded for both cloud files and all three local
+files on the single approved local database. The section above records the
+earlier preparation boundary; the dated application record is authoritative for
+what ran. Do not rerun installed metadata or bulk-push timestamped migrations
+without reviewing the recorded repository-file/live-ledger correspondence.
