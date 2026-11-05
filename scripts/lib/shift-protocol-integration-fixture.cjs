@@ -27,11 +27,15 @@ function sourceTable(schema, name) {
   assert(start >= 0, name);
   return schema.slice(start, schema.indexOf('\n);', start) + 3);
 }
-async function createCloud(branch, terminal) {
+async function createCloud(branch, terminal, { financialRolloutStub = true } = {}) {
   const { PGlite } = await import('@electric-sql/pglite');
   const db = new PGlite(), schema = read('supabase/schema.sql');
   const fn = name => sourceFunction(schema, name), table = name => sourceTable(schema, name);
   try {
+    // Isolated causal tests only. Full rollout certification explicitly disables
+    // this stub and installs the actual default-deny approval/readiness policy.
+    if (financialRolloutStub) await db.exec(`CREATE SCHEMA fin62_rollout_preparation;
+      CREATE FUNCTION fin62_rollout_preparation.assert_approved(text,text,text) RETURNS void LANGUAGE plpgsql AS $$ BEGIN RETURN; END $$;`);
     await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role; CREATE SCHEMA auth;
       CREATE FUNCTION auth.role() RETURNS text LANGUAGE sql AS $$ SELECT current_setting('test.auth_role',true) $$;
       CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql AS $$ SELECT NULL::uuid $$;
@@ -144,16 +148,16 @@ async function createLocal(branch) {
       async restart() { await pool.close(); pool = await connect(database); manager.pool = pool; } };
   } catch (error) { await close(); throw error; }
 }
-function mainCalls(repository, writer, branch, terminal, session, shiftAuthority) {
+function mainCalls(repository, writer, branch, terminal, session, shiftAuthority, financialRuntime = null) {
   const source = read('electron/main.cjs'), start = source.indexOf('async function startLocalShiftClose('), end = source.indexOf('\nfunction redactShiftRow(', start);
   assert(start >= 0 && end > start);
   const mainRequire = createRequire(resolve(root, 'electron/main.cjs'));
-  const context = { require: mainRequire, localBranchId: () => branch, operationsRepository: repository, shiftSyncJournal: writer,
+  const context = { require: mainRequire, shiftFinancialDraftProvider:null, localBranchId: () => branch, operationsRepository: repository, shiftSyncJournal: writer,
     guard: mainRequire('./ipc-guard.cjs'), recordId: mainRequire('./sync/uuid-fields.cjs').recordId, randomUUID, Date,
     shiftMoney: value => Math.round(Number(value ?? 0) * 100) / 100,
     adminSession: session, shiftAuthority,
     terminalStore: { read: () => ({ tokenId: terminal }) }, pendingShiftCloseSync: new Set(),
-    publishBusinessChange() {}, scheduleAutomaticSync() {} };
+    publishBusinessChange() {}, scheduleAutomaticSync() {}, ...(financialRuntime ? {shiftFinancialRuntime:financialRuntime} : {}) };
   runInNewContext(source.slice(start, end) + '\nthis.calls={startLocalShiftClose,commitLocalShiftCashCount,commitLocalShiftRecount};', context);
   return context.calls;
 }

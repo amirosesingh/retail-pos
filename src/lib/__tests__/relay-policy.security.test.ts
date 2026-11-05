@@ -21,6 +21,20 @@ const admin: RelayScope = { ...cashier, role: "admin", roleSlug: "admin", isSupe
 
 beforeEach(() => restMock.mockReset());
 
+describe('stable relay account identity',()=>{
+ it('uses only the fresh database UUID, ignoring a supplied identity alias',async()=>{
+  const stable='00000000-0000-4000-8000-000000000011';
+  restMock.mockResolvedValue({ok:true,json:async()=>[{id:stable,user_id:'cashier-current',store_id:'A',role:'staff',role_slug:'cashier',is_active:true,permissions:{can_process_sale:true}}]});
+  const caller={kind:'staff' as const,label:'Cashier',storeId:'A',staffUserId:'cashier-current',appUserId:'00000000-0000-4000-8000-000000000099'};
+  const scope=await resolveRelayScope(caller);
+  expect(scope).toMatchObject({appUserId:stable,staffUserId:'cashier-current',permissions:{can_process_sale:true},isSupervisor:false});
+ });
+ it('does not substitute a mutable username when the stable UUID is unavailable',async()=>{
+  restMock.mockResolvedValue({ok:true,json:async()=>[{id:'not-a-uuid',user_id:'alias',role:'staff',is_active:true,permissions:{}}]});
+  expect(await resolveRelayScope({kind:'staff',label:'Alias',staffUserId:'alias'})).toMatchObject({appUserId:null,staffUserId:'alias',permissions:{}});
+ });
+});
+
 describe("relay authorisation", () => {
   it.each(["insert", "upsert", "delete"] as const)("allows only administrators to %s global payment methods", async kind => {
     const op = kind === "delete" ? { kind, table: "payment_types", match: { id: "method" } }

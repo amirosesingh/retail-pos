@@ -1,8 +1,10 @@
+const {prepareFinancialOpening,prepareFinancialHistory,assertFinancialHistoryAcknowledgement}=require("./financial-history-ack.cjs");
 const { recordId } = require("./uuid-fields.cjs");
 const { retryDelay } = require("./retry.cjs");
 const { stableUuid } = require("../db/repositories/aggregates.cjs");
 const { ACTIVITY_TABLES } = require("./event-policy.cjs");
 const { assertShiftClosureAcknowledgement } = require("./shift-closure-ack.cjs");
+const {prepareShiftFinancialBasis,assertShiftFinancialAcknowledgement}=require("./shift-financial-ack.cjs");
 
 function groupBy(values, key) {
   const groups = new Map();
@@ -155,7 +157,7 @@ function isSharedPosFieldChange(change) {
 }
 
 /** A child-only retry must carry its locally owned parent into the same cloud transaction. */
-async function includeMissingParents(operations, reader, registry, branchId) {
+async function includeMissingParents(operations, reader, registry, branchId, {exactFinancial=false}={}) {
   branchId = recordId(branchId);
   const completed = (operations.find(op => op.table === "held_orders" && !op.deletePhase)?.rows ?? []).filter(row => row.status === "completed");
   if (completed.length) {
@@ -184,7 +186,7 @@ async function includeMissingParents(operations, reader, registry, branchId) {
     if (!ids.length) continue;
     const table = registry.tables.find((item) => item.cloudTable === parentName);
     const rows = rowsForBranch(table,
-      await reader.rows(table, ids.map((id) => ({ key: { id } })), { branchId }), branchId);
+      await reader.rows(table, ids.map((id) => ({ key: { id } })), { branchId,exactFinancial }), branchId);
     const found = new Set(rows.filter(belongs).map((row) => String(row.id)));
     if (ids.some((id) => !found.has(id)))
       throw Object.assign(new Error(`${childName} has no ${parentName} parent in this terminal branch.`), {
@@ -227,9 +229,12 @@ function terminalWritableChanges(tableName, changes, { branchId = "", terminalId
 }
 
 class PushWorker {
-  constructor({ reader, cloud, checkpoints, registry, validateAuthor, validateClosingStart }) {
+  constructor({ reader, cloud, checkpoints, registry, validateAuthor, validateClosingStart, validateFinancialBasis, financialHistoryEnabled=false, validateFinancialOperation }) {
+    this.financialHistoryEnabled=financialHistoryEnabled===true;
+    this.validateFinancialOperation=validateFinancialOperation;
     this.validateAuthor = validateAuthor;
     this.validateClosingStart = validateClosingStart;
+    this.validateFinancialBasis = validateFinancialBasis;
     this.reader = reader;
     this.cloud = cloud;
     this.checkpoints = checkpoints;
@@ -260,11 +265,41 @@ class PushWorker {
     }
     throw new Error("The synchronization retry loop ended unexpectedly.");
   }
+  async registerFinancialHistory(branchId,terminalId,onProgress){
+    if(!this.financialHistoryEnabled)return;
+    const seen=new Set();
+    for(let page=0;page<100;page++){
+      const items=await this.reader.financialHistory?.(branchId,terminalId,100)??[];if(!items.length)return;
+      for(const raw of items){
+        const item=prepareFinancialHistory(raw,branchId,terminalId),key=item.shiftId+':'+item.operationId+':'+item.payloadHash;
+        if(seen.has(key))throw Object.assign(new Error('The metadata receipt was not persisted. Work remains pending.'),{code:'EFINANCIAL_HISTORY_UNCONFIRMED',table:'shifts'});seen.add(key);
+        let ack;
+        if(item.kind==='MUTATION'){
+          const proof=this.validateFinancialOperation?this.validateFinancialOperation(item.proof):item.proof;
+          ack=await this.retry(()=>this.cloud.pushFinancialEvent({branchId,operationJson:item.payloadJson,proof}));
+        }else if(item.kind==='OBSERVE'){
+          ack=await this.retry(()=>this.cloud.pushFinancialObservation({branchId,operationJson:item.payloadJson}));
+        }else{
+          const intent=item.intent,shiftAuthor=this.validateAuthor?this.validateAuthor(intent.shiftAuthor):intent.shiftAuthor;
+          const shiftClosingStart=intent.shiftClosingStart&&(this.validateClosingStart?this.validateClosingStart(intent.shiftClosingStart):intent.shiftClosingStart);
+          let financial=prepareShiftFinancialBasis(intent,branchId,shiftAuthor);
+          if(financial&&this.validateFinancialBasis)financial=prepareShiftFinancialBasis({...intent,shiftFinancialBasis:{basisJson:financial.basisJson,proof:this.validateFinancialBasis(financial.proof)}},branchId,shiftAuthor);
+          const shiftIntent={version:intent.version,intentId:intent.intentId,shiftId:intent.shiftId,kind:intent.kind,baseToken:intent.baseToken,predecessorIntentId:intent.predecessorIntentId,predecessorIntentHash:intent.predecessorIntentHash,payloadJson:intent.payloadJson};
+          ack=await this.retry(()=>this.cloud.registerFinancialBoundary({batchId:intent.intentId,branchId,shiftIntent,shiftAuthor,...(shiftClosingStart?{shiftClosingStart}:{}),shiftFinancialBasis:financial}));
+        }
+        assertFinancialHistoryAcknowledgement(item,ack);
+        if(typeof this.reader.acknowledgeFinancialHistory!=='function')throw Object.assign(new Error('Durable financial metadata acknowledgements are unavailable.'),{code:'EFINANCIAL_HISTORY_UNCONFIRMED',table:'shifts'});
+        await this.reader.acknowledgeFinancialHistory(item,ack);
+        onProgress({direction:'push',table:'financial_history_metadata',completed:1});
+      }
+    }
+  }
   async pushAggregates(branchId, batchSize, isolate = false, onProgress = () => {}, includeActivity = true) {
     branchId = recordId(branchId);
     this.pushErrors = []; this.blockedTables = new Set();
     let pushed = 0;
     const terminalId = this.cloud.terminalId?.() ?? "";
+    await this.registerFinancialHistory(branchId,terminalId,onProgress);
     const deferred = new Set();
     const protectedSettings = new Set(["pos_settings", "pos_store_settings",
       "authorization_actions", "authorization_action_history"]);
@@ -281,9 +316,16 @@ class PushWorker {
         originalIds.forEach(id => deferred.add(id)); continue;
       }
       try {
+      const financialRequired=await this.reader.financialAggregateRequired?.(aggregate.aggregateId,branchId,terminalId)??false;
+      const financialOpening=await this.reader.financialOpening?.(aggregate.aggregateId,branchId,terminalId)??null;
+      if((financialRequired||financialOpening)&&!this.financialHistoryEnabled)throw Object.assign(new Error('The matching financial history capability is required. Saved work remains pending.'),{code:'EFINANCIAL_PROTOCOL_UNAVAILABLE',table:'shifts'});
+      await this.registerFinancialHistory(branchId,terminalId,onProgress);
       const intent=await this.reader.protectedIntent?.(aggregate.aggregateId,branchId);
       if(intent){
+        if(financialRequired && this.reader.financialHistoryReady && !await this.reader.financialHistoryReady(branchId,terminalId,{shiftId:intent.shiftId})){deferred.add(aggregate.aggregateId);continue;}
         if(originalIds.length!==1 || recordId(originalIds[0])!==recordId(intent.intentId))throw Object.assign(new Error("A protected closing intent cannot be combined with another transaction."),{code:"EIDEMPOTENCY",table:"shifts"});
+        if(intent.financialRequired===true && (!intent.shiftFinancialBasis || !intent.shiftFinancialBasis.proof))
+          prepareShiftFinancialBasis(intent,branchId);
         if((this.reader.predecessorAccepted && !await this.reader.predecessorAccepted(intent)) ||
           (this.reader.shiftPrerequisites && !await this.reader.shiftPrerequisites(intent))){
           deferred.add(aggregate.aggregateId);continue;
@@ -292,14 +334,21 @@ class PushWorker {
           baseToken:intent.baseToken,predecessorIntentId:intent.predecessorIntentId,predecessorIntentHash:intent.predecessorIntentHash,payloadJson:intent.payloadJson};
         const shiftAuthor=this.validateAuthor?this.validateAuthor(intent.shiftAuthor):intent.shiftAuthor;
         const shiftClosingStart=intent.shiftClosingStart && (this.validateClosingStart?this.validateClosingStart(intent.shiftClosingStart):intent.shiftClosingStart);
-        const acknowledgement=await this.retry(()=>this.cloud.pushAggregate({batchId:intent.intentId,branchId,shiftIntent,...(shiftAuthor?{shiftAuthor}:{}),...(shiftClosingStart?{shiftClosingStart}:{})}));
+        let shiftFinancialBasis=prepareShiftFinancialBasis(intent,branchId,shiftAuthor);
+        if(shiftFinancialBasis && this.validateFinancialBasis){
+          const verified=this.validateFinancialBasis(shiftFinancialBasis.proof);
+          shiftFinancialBasis=prepareShiftFinancialBasis({...intent,shiftFinancialBasis:{basisJson:shiftFinancialBasis.basisJson,proof:verified}},branchId,shiftAuthor);
+        }
+        const acknowledgement=await this.retry(()=>this.cloud.pushAggregate({batchId:intent.intentId,branchId,shiftIntent,...(shiftAuthor?{shiftAuthor}:{}),...(shiftClosingStart?{shiftClosingStart}:{}),...(shiftFinancialBasis?{shiftFinancialBasis}:{})}));
         if(!acknowledgement?.ok)throw new Error(acknowledgement?.error??"Cloud did not acknowledge the closing intent.");
         const proof=assertShiftClosureAcknowledgement(acknowledgement,intent.operations,branchId,intent,this.registry);
+        assertShiftFinancialAcknowledgement(acknowledgement,intent,shiftFinancialBasis);
         await this.reader.acknowledgeProtectedIntent(intent,proof);
         pushed+=aggregate.changes.length;
         onProgress({direction:"push",table:intent.operations.map(operation=>operation.table).join(", "),completed:aggregate.changes.length});
         continue;
       }
+      if(financialRequired && this.reader.financialHistoryReady && !await this.reader.financialHistoryReady(branchId,terminalId,{aggregateId:aggregate.aggregateId})){deferred.add(aggregate.aggregateId);continue;}
       const requiresSettingsProof = aggregate.changes.some((change) =>
         protectedSettings.has(change.entity_type) ||
         (change.entity_type === "settings_scoped" && isSharedPosFieldChange(change)));
@@ -330,7 +379,7 @@ class PushWorker {
             changes: live,
             rows: await uploadRows(table.cloudTable, rowsForBranch(
               table,
-              (await this.reader.rows(table, live, { branchId })).map(row=>table.cloudTable==="shifts" ? openings.get(recordId(row.id))??row:row),
+              (await this.reader.rows(table, live, { branchId,exactFinancial:financialRequired })).map(row=>table.cloudTable==="shifts" ? openings.get(recordId(row.id))??row:row),
               branchId,
             )),
           });
@@ -359,7 +408,7 @@ class PushWorker {
       if(waitingForIntent){originalIds.forEach(id=>deferred.add(id));continue;}
       for(let index=operations.length-1;index>=0;index--)if(!operations[index].rows.length&&!operations[index].changes.length)operations.splice(index,1);
       try {
-        await includeMissingParents(operations, this.reader, this.registry, branchId);
+        await includeMissingParents(operations, this.reader, this.registry, branchId,{exactFinancial:financialRequired});
         await includeClosedShiftGraphs(operations, this.reader, this.registry, branchId);
       } catch (error) {
         throw error;
@@ -389,13 +438,22 @@ class PushWorker {
         // rows. A later pass can therefore have a different payload after an
         // ambiguous timeout. Bind the cloud receipt to the actual snapshot;
         // unchanged retries still replay, and newer revisions get a new key.
+        let openingSidecar;
+        if(financialOpening){
+          const verified=prepareFinancialOpening(financialOpening,branchId,terminalId);
+          if(operations.length!==1||operations[0].table!=='shifts'||operations[0].deletePhase||operations[0].rows.length!==1||recordId(operations[0].rows[0].id)!==verified.shiftId)throw Object.assign(new Error('The protected opening requires its exact original business group.'),{code:'EFINANCIAL_HISTORY_INVALID',table:'shifts'});
+          openingSidecar={openingJson:verified.openingJson,proof:verified.proof};
+        }
         const batchId = stableUuid({ branchId, aggregateId: aggregate.aggregateId, operations });
+        const financialCoverageToken=financialRequired?this.reader.prepareFinancialBusinessCoverage?.({operations,batchId,branchId,terminalId}):null;
         const acknowledged = await this.retry(() =>
-          this.cloud.pushAggregate({ batchId, branchId, operations }),
+          this.cloud.pushAggregate({ batchId, branchId, operations,...(openingSidecar?{shiftFinancialOpening:openingSidecar}:{}),...(financialRequired?{financialLedgerProjection:true}:{}) }),
         );
         if (!acknowledged?.ok)
           throw new Error(acknowledged?.error ?? "Cloud did not acknowledge the aggregate.");
         assertShiftClosureAcknowledgement(acknowledged, operations, branchId);
+        if(financialRequired)await this.reader.acknowledgeFinancialBusinessRows?.({token:financialCoverageToken,operations,batchId,acknowledgement:acknowledged,branchId,terminalId});
+        if(financialOpening){if(typeof this.reader.acknowledgeFinancialOpening!=='function')throw Object.assign(new Error('The opening acknowledgement cannot be persisted.'),{code:'EFINANCIAL_HISTORY_UNCONFIRMED',table:'shifts'});await this.reader.acknowledgeFinancialOpening(financialOpening,acknowledged,branchId,terminalId);}
         for (const id of originalIds) await this.reader.acknowledgeAggregate(id);
         pushed += aggregate.changes.length;
         onProgress({ direction: "push", table: operations.map(op => op.table).join(", "), completed: aggregate.changes.length });
@@ -436,6 +494,7 @@ class PushWorker {
     const terminalId = this.cloud.terminalId?.() ?? "";
     let pushed = await this.pushAggregates(branchId, batchSize, true, onProgress, includeActivity);
     const deferredTables = new Set();
+    let financialCoverageAdvanced=false;
     // One lookup per pass instead of one SQL round trip for every table.
     const savedCheckpoints = this.checkpoints.list
       ? new Map((await this.checkpoints.list(branchId, "push")).map(row => [row.entity_type, row]))
@@ -490,6 +549,9 @@ class PushWorker {
         // after a later web correction. Different edits and deletes stay queued.
         const covered=await this.reader.acceptedShiftChanges?.(table,changes,branchId)??new Set();
         changes=changes.filter(change=>!covered.has(recordId(String(change.key?.id??""))));
+        const financialCovered=await this.reader.acceptedFinancialBusinessChanges?.(table,changes,branchId,terminalId)??new Set();
+        if(financialCovered.size)financialCoverageAdvanced=true;
+        changes=changes.filter(change=>!financialCovered.has(recordId(String(change.key?.id??""))));
         if (!changes.length) {
           const version = Math.max(...window.map((row) => Number(row.version)));
           await this.checkpoints.save(branchId, table.sqlServerTable, "push", {
@@ -590,6 +652,11 @@ class PushWorker {
         this.pushErrors.push(Object.assign(error, {table: error.table ?? table.cloudTable}));
       }
     }
+    if (this.pushErrors.length) throw Object.assign(this.pushErrors[0], {pushed, failures:this.pushErrors.length});
+    // Exact acknowledged business CT rows may have been the only remaining
+    // prerequisite. Drain that protected intent now, without another bootstrap
+    // or a blind checkpoint advance. Ordinary legacy passes stay unchanged.
+    if(financialCoverageAdvanced)pushed+=await this.pushAggregates(branchId,batchSize,true,onProgress,includeActivity);
     if (this.pushErrors.length) throw Object.assign(this.pushErrors[0], {pushed, failures:this.pushErrors.length});
     return { pushed, deferredTables:[...deferredTables] };
   }

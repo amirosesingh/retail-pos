@@ -9,6 +9,12 @@ const op = { kind: 'rpc' as const, table: 'sales', fn: 'pos_sale_commit', args: 
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
 beforeEach(() => { mocks.fetch.mockReset(); mocks.project = `https://fixture-${++mocks.sequence}.test`; });
 describe('shift-sharing guarded relay', () => {
+ it('keeps sharing admission ahead of financial dispatch when a verified account is present', async () => {
+  mocks.fetch.mockResolvedValueOnce(json({}));
+  expect((await runRelayRpc(op, { ...scope, appUserId: '11111111-1111-4111-8111-111111111111' })).ok).toBe(true);
+  expect(mocks.fetch).toHaveBeenCalledTimes(1);
+  expect(mocks.fetch.mock.calls[0][0]).toContain('/rpc/pos_checkout_sale_for_terminal');
+ });
  it('sends only the verified terminal/actor and all canonical optional defaults', async () => {
   mocks.fetch.mockResolvedValueOnce(json({}));
   expect((await runRelayRpc(op, scope)).ok).toBe(true);

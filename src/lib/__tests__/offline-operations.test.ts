@@ -120,17 +120,17 @@ describe("offline terminal operations", () => {
     const main = readFileSync("electron/main.cjs", "utf8");
     for (const [writer, context] of [
       ["operationsRepository", "Starting shift close"],
-      ["shiftSyncJournal", "Closing shift cash count"],
-      ["shiftSyncJournal", "Saving shift recount"],
-      ["shiftSyncJournal", "Approving shift variance"],
+      ["financialJournal", "Closing shift cash count"],
+      ["financialJournal", "Saving shift recount"],
+      ["financialJournal", "Approving shift variance"],
       ["operationsRepository", "Recording cash drawer request"],
       ["operationsRepository", "Recording cash drawer result"],
     ]) {
       const start = main.indexOf(`${writer}.apply("${context}"`);
       expect(start, context).toBeGreaterThan(-1);
-      expect(main.slice(start, start + 4_000), context).toContain(
-        writer === "shiftSyncJournal" ? "{ branchId, terminalId, observation, author }" : "{ branchId, terminalId }",
-      );
+      const call=main.slice(start,start+4_000);
+      if(writer==='financialJournal')expect(call,context).toMatch(/\{ branchId, terminalId, observation, author(?:\s*\}|,)/);
+      else expect(call,context).toContain('{ branchId, terminalId }');
     }
   });
 

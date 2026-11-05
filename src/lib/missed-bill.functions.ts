@@ -73,8 +73,9 @@ export const addMissedBill = createServerFn({ method: "POST" })
         return { ok: false as const, error: "The missed bill must belong to this terminal/account branch.", canEdit: true };
       if (!scope.staffUserId) return { ok: false as const, error: "A verified administrator account is required.", canEdit: true };
       const { sessionToken: _session, accessToken: _access, terminalToken: _terminal, cashierToken: _cashier, deviceBindingProof: _binding, ...entry } = data;
-      const response = await serviceRest("rpc/pos_admin_add_missed_bill", {
-        method: "POST", body: JSON.stringify({ p_entry: entry, p_actor_id: scope.staffUserId, p_terminal: scope.terminalId ?? null }),
+      const financial = !!scope.appUserId && await (await import('./financial-live-readiness.server')).financialLiveAdapterReady();
+      const response = await serviceRest(financial ? "rpc/pos_live_financial_admin_add_missed_bill" : "rpc/pos_admin_add_missed_bill", {
+        method: "POST", body: JSON.stringify({ p_entry: entry, ...(financial ? { p_author: scope.appUserId } : { p_actor_id: scope.staffUserId }), p_terminal: scope.terminalId ?? null }),
       });
       if (!response.ok) {
         const text = await response.text();

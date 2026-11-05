@@ -30,6 +30,10 @@ function fixture(options: { branch?: string; terminal?: string | null } = {}) {
   let state: State = { tables: Object.fromEntries(registry.tables.map((table: { sqlServerTable: string }) => [table.sqlServerTable, []])), journal: [], receipts: [], intents:[],baselines:[],openings:[],authors:[],closingStarts:[],intentStarts:[] };
   state.tables.shifts.push({ id: shiftId, store_id: ownBranch, terminal_id: options.terminal === undefined ? terminal : options.terminal,
     status: "OPEN", state: "CASH_COUNT_REQUIRED", closed_at: null, row_version: 2, opening_float: 20 });
+  // Synthetic financial inputs underlying the fixture's 100/20/10 expectations.
+  state.tables.sales.push(...[["cash",80],["card",20],["wallet",10]].map(([method,total],index)=>({
+    id:uuid(900+index),store_id:ownBranch,shift_id:shiftId,payment_type:method,total_amount:total,is_refunded:false,
+  })));
   const events: string[] = [];
   const faults: { journal?: Error; receipt?: Error; business?: Error; transform?: (table: string, rows: Row[]) => Row[] } = {};
   class Transaction {
@@ -44,6 +48,11 @@ function fixture(options: { branch?: string; terminal?: string | null } = {}) {
     input(name: string, value: unknown, typedValue?: unknown) { this.inputs[name] = arguments.length === 3 ? typedValue : value; return this; }
     async query(query: string) {
       const data = this.transaction.image;
+      if (query.includes("COUNT(s.id) transactions")) {
+        const sales=data.tables.sales.filter(row=>sameId(row.store_id,this.inputs.branch)&&sameId(row.shift_id,this.inputs.shift)&&!row.is_refunded);
+        const sum=(method:string)=>sales.filter(row=>row.payment_type===method).reduce((total,row)=>total+Number(row.total_amount),0);
+        return {recordset:[{expected_cash:Number(data.tables.shifts[0].opening_float)+sum("cash"),expected_card:sum("card"),expected_digital:sum("wallet")}]};
+      }
       if(query.startsWith("INSERT dbo.pos_sync_shift_intent_starts")){data.intentStarts.push({intent_id:this.inputs.intent,proof_json:this.inputs.proof});return{recordset:[],rowsAffected:[1]};}
       if(query.startsWith("SELECT proof_json FROM dbo.pos_sync_shift_intent_starts"))return{recordset:copy(data.intentStarts.filter(row=>sameId(row.intent_id,this.inputs.intent)))};
       if(query.startsWith("SELECT proof_json FROM dbo.pos_sync_shift_closing_starts"))return{recordset:copy(data.closingStarts.filter(row=>sameId(row.shift_id,this.inputs.shift)&&sameId(row.branch_id,this.inputs.branch)))};

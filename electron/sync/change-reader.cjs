@@ -4,15 +4,20 @@ const { ACTIVITY_TABLES } = require("./event-policy.cjs");
 const { recordId } = require("./uuid-fields.cjs");
 const { ShiftSyncJournal } = require("../db/shift-sync-journal.cjs");
 const {ShiftIntentStore} = require("../db/shift-intents.cjs");
-const {exactGraph,exactRows,projection}=require("./shift-recovery-exact.cjs");
+const {exactGraph,exactRows,projection,parseExactJson,isExactNumber}=require("./shift-recovery-exact.cjs");
 const {createHash}=require("node:crypto");
+const {stableUuid}=require("../db/repositories/aggregates.cjs");
+const {prepareFinancialOpening,prepareFinancialHistory,assertFinancialHistoryAcknowledgement}=require("./financial-history-ack.cjs");
 const SHIFT_GRAPH_TABLES = ["shifts", "shift_cash_counts", "shift_reconciliations", "shift_close_events",
   "shift_notifications", "shift_variance_alerts"];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 class ChangeReader {
-  constructor(connectionManager, registry = null) {
+  constructor(connectionManager, registry = null, {financialBases=null,financialOperations=null,financialCoverageSource=null}={}) {
     this.connectionManager = connectionManager;
+    this.financialBases=financialBases;this.financialOperations=financialOperations;
+    this.financialCoverageSource=financialCoverageSource;
+    this.financialCoverageCaptures=new Map();this.financialCoverageTokens=new WeakMap();
     this.registry = registry ?? { tables: [] };
     this.tables = new Map((registry?.tables ?? []).map((table) => [table.sqlServerTable, table]));
     this.pendingGraphChecks = new WeakMap();
@@ -51,9 +56,25 @@ class ChangeReader {
     }
     return (result.recordset ?? []).map((row) => ({ ...row, remote: Boolean(row.change_context), key: Object.fromEntries(primary.map((column) => [column, row[column]])), entityId: this.entityId(primary, row) }));
   }
-  async rows(value, changes, { branchId = "" } = {}) {
+  async rows(value, changes, { branchId = "", exactFinancial = false } = {}) {
     const { table, primary } = this.table(value);
     if (!changes.length) return [];
+    const coverage=this.financialCoverageSource&&this.financialOperations?.enabled===true&&!SHIFT_GRAPH_TABLES.includes(table.cloudTable)&&primary.length===1&&primary[0]==='id';
+    if(coverage)return this.financialTransaction(async tx=>{
+      const source=this.financialCoverageBinding(branchId,this.financialCoverageSource.identity.terminalId),request=new(this.connectionManager.sql().Request)(tx);
+      const clauses=changes.map((change,index)=>{request.input('coverage'+index,(change.key??change).id);return '@coverage'+index;});
+      const scope=branchId&&table.scope==='branch'?(table.cloudTable==='products'?branchPredicate(this.registry,table,'source'):rendererReadBranchPredicate(this.registry,table,'source')):null;
+      if(scope)request.input('branch',branchId);
+      const result=await request.query(`SELECT source.*,(SELECT ${projection(table)} FOR JSON PATH,INCLUDE_NULL_VALUES,WITHOUT_ARRAY_WRAPPER) __financial_row_json FROM dbo.[${table.sqlServerTable}] source WITH(HOLDLOCK) WHERE source.id IN(${clauses.join(',')})${scope?' AND ('+scope+')':''};`);
+      const rows=(result.recordset??[]).map(value=>{const{__financial_row_json,...physical}=value,exact=JSON.parse(__financial_row_json),wire=this.financialBusinessWire(table,toCloudRow(table,physical),exact,exactFinancial),key=this.financialCoverageKey(table,exact,source);
+        // PushWorker canonicalizes SQL-equivalent branch labels at upload.
+        const branchColumn=table.scope==='branch'&&table.direction!=='pull'?(table.columns.some(c=>c.cloudColumn==='store_id')?'store_id':table.columns.some(c=>c.cloudColumn==='branch_id')?'branch_id':null):null;
+        const sent=branchColumn&&(!String(wire[branchColumn]??'').trim()||recordId(String(wire[branchColumn]).trim())===recordId(branchId))?{...wire,[branchColumn]:recordId(branchId)}:wire;
+        const captureId=table.cloudTable+':'+recordId(wire.id)+':'+createHash('sha256').update(JSON.stringify(sent)).digest('hex'),prior=this.financialCoverageCaptures.get(captureId);
+        this.financialCoverageCaptures.set(captureId,prior&&prior.key.rowHash!==key.rowHash?{ambiguous:true,key}:prior?.ambiguous?prior:{key,ambiguous:false});
+        return wire;});
+      if(this.financialCoverageCaptures.size>10000)this.financialCoverageCaptures.clear();source.assertSource();return rows;
+    });
     const request = this.connectionManager.pool.request();
     const clauses = changes.map((change, index) => {
       const key = change.key ?? change;
@@ -157,7 +178,68 @@ class ChangeReader {
     }
     return [...byAggregate.entries()].map(([aggregateId, changes]) => ({ aggregateId, changes }));
   }
-  protectedIntent(aggregateId,branchId) { return this.intents.get(aggregateId,branchId); }
+  async protectedIntent(aggregateId,branchId) {
+    const intent=await this.intents.get(aggregateId,branchId);
+    if(!intent||this.financialBases?.enabled!==true)return intent;
+    const financial=await this.financialBases.get(recordId(aggregateId),branchId);
+    return financial?{...intent,...financial}:intent;
+  }
+  async financialTransaction(work){
+    const sql=this.connectionManager.sql(),tx=new sql.Transaction(this.connectionManager.pool);await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+    try{await this.financialOperations.schema(tx);const result=await work(tx);await tx.commit();return result;}catch(error){await tx.rollback().catch(()=>{});throw error;}
+  }
+  financialQuery(tx,statement,inputs={}){const request=new(this.connectionManager.sql().Request)(tx);for(const[k,v]of Object.entries(inputs))request.input(k,v);return request.query(statement);}
+  async financialOpening(aggregateId,branchId,terminalId){
+    if(this.financialOperations?.enabled!==true)return null;
+    const rows=await this.financialTransaction(async tx=>(await this.financialQuery(tx,"SELECT opening_payload_json,opening_payload_hash,proof_json FROM dbo.pos_sync_shift_financial_origins WHERE branch_id=@branch AND local_aggregate_id=@aggregate AND terminal_id=@terminal AND JSON_VALUE(CASE WHEN ISJSON(proof_json)=1 THEN proof_json ELSE N'{}' END,'$.action')='OPEN';",{branch:branchId,aggregate:aggregateId,terminal:terminalId})).recordset??[]);
+    if(rows.length>1)throw Object.assign(new Error('One exact opening is required.'),{code:'EFINANCIAL_HISTORY_INVALID'});
+    if(!rows.length)return null;const row=rows[0];if(createHash('sha256').update(row.opening_payload_json,'utf8').digest('hex')!==row.opening_payload_hash)throw Object.assign(new Error('The frozen opening changed.'),{code:'EFINANCIAL_HISTORY_INVALID'});
+    return prepareFinancialOpening({openingJson:row.opening_payload_json,proof:JSON.parse(row.proof_json)},branchId,terminalId);
+  }
+  async financialHistory(branchId,terminalId,limit=100){
+    if(this.financialOperations?.enabled!==true)return [];
+    const rows=await this.financialTransaction(async tx=>(await this.financialQuery(tx,`SELECT TOP (@limit) e.*,f.computed_merged_hash,f.pending_from_hash,CONVERT(nvarchar(30),e.sequence) sequence_text FROM dbo.pos_sync_shift_financial_events e
+      LEFT JOIN dbo.pos_sync_shift_financial_refreshes f ON f.branch_id=e.branch_id AND f.shift_id=e.shift_id AND f.terminal_id=e.terminal_id AND f.operation_id=e.operation_id
+      JOIN dbo.pos_sync_shift_financial_origins o ON o.branch_id=e.branch_id AND o.shift_id=e.shift_id AND o.terminal_id=e.terminal_id
+      WHERE e.branch_id=@branch AND e.terminal_id=@terminal AND
+       (JSON_VALUE(e.payload_json,'$.cloudOrigin.serverBasisId') IS NOT NULL OR EXISTS(SELECT 1 FROM dbo.local_operation_receipts r WHERE r.operation_type=N'financial_history_opened' AND r.entity_id=CONVERT(nvarchar(36),o.local_aggregate_id) AND r.note COLLATE Latin1_General_100_BIN2=o.opening_payload_hash COLLATE Latin1_General_100_BIN2+N':'+o.terminal_id))
+       AND NOT EXISTS(SELECT 1 FROM dbo.local_operation_receipts r WHERE r.operation_type=N'financial_history_registered' AND r.entity_id=CONVERT(nvarchar(36),e.shift_id)+N':'+CONVERT(nvarchar(36),e.operation_id) AND r.note COLLATE Latin1_General_100_BIN2=e.payload_hash COLLATE Latin1_General_100_BIN2+N':'+e.terminal_id)
+      ORDER BY e.shift_id,e.sequence;`,{branch:branchId,terminal:terminalId,limit:Math.max(1,Math.min(100,Number(limit)||100))})).recordset??[]);
+    const items=[];
+    for(const row of rows){const item={kind:row.event_kind,branchId:row.branch_id,terminalId:row.terminal_id,shiftId:String(row.shift_id).toLowerCase(),operationId:String(row.operation_id).toLowerCase(),sequence:row.sequence_text,payloadJson:row.payload_json,payloadHash:row.payload_hash,proof:JSON.parse(row.proof_json)};
+      if(item.kind==='OBSERVE'){item.computedMergedHash=row.computed_merged_hash;item.pendingFromHash=row.pending_from_hash;}
+      if(item.kind==='CLOSING')item.intent=await this.protectedIntent(item.operationId,branchId);
+      items.push(prepareFinancialHistory(item,branchId,terminalId));
+    }return items;
+  }
+  async financialAggregateRequired(aggregateId,branchId,terminalId){
+    if(this.financialOperations?.enabled!==true)return false;
+    return this.financialTransaction(async tx=>Boolean((await this.financialQuery(tx,`SELECT CASE WHEN EXISTS(SELECT 1 FROM dbo.pos_sync_shift_financial_events WHERE operation_id=@aggregate AND branch_id=@branch AND terminal_id=@terminal)
+      OR EXISTS(SELECT 1 FROM dbo.sync_change_journal j JOIN dbo.pos_sync_shift_financial_sale_lineage l ON l.sale_id=TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(j.entity_id)=1 THEN j.entity_id ELSE N'{}' END,'$.id')) WHERE j.aggregate_id=@aggregate AND j.entity_type=N'sales' AND l.branch_id=@branch) OR EXISTS(SELECT 1 FROM dbo.sync_change_journal j JOIN dbo.pos_sync_shift_financial_observations o ON o.sale_id=TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(j.entity_id)=1 THEN j.entity_id ELSE N'{}' END,'$.id')) WHERE j.aggregate_id=@aggregate AND j.entity_type=N'sales' AND o.branch_id=@branch AND o.terminal_id=@terminal) THEN 1 ELSE 0 END required;`,{aggregate:aggregateId,branch:branchId,terminal:terminalId})).recordset?.[0]?.required));
+  }
+  async financialHistoryReady(branchId,terminalId,{shiftId=null,aggregateId=null}={}){
+    if(this.financialOperations?.enabled!==true)return true;
+    return this.financialTransaction(async tx=>!(await this.financialQuery(tx,`SELECT TOP (1) e.operation_id FROM dbo.pos_sync_shift_financial_events e WHERE e.branch_id=@branch AND e.terminal_id=@terminal AND (@shift IS NULL OR e.shift_id=TRY_CONVERT(uniqueidentifier,@shift)) AND (@aggregate IS NULL OR e.shift_id IN(SELECT target.shift_id FROM dbo.pos_sync_shift_financial_events target WHERE target.branch_id=@branch AND target.terminal_id=@terminal AND target.operation_id=TRY_CONVERT(uniqueidentifier,@aggregate)) OR e.shift_id IN(SELECT l.shift_id FROM dbo.sync_change_journal j JOIN dbo.pos_sync_shift_financial_sale_lineage l ON l.sale_id=TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(j.entity_id)=1 THEN j.entity_id ELSE N'{}' END,'$.id')) WHERE j.aggregate_id=TRY_CONVERT(uniqueidentifier,@aggregate) AND j.entity_type=N'sales' AND l.branch_id=@branch) OR e.shift_id IN(SELECT o.shift_id FROM dbo.sync_change_journal j JOIN dbo.pos_sync_shift_financial_observations o ON o.sale_id=TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(j.entity_id)=1 THEN j.entity_id ELSE N'{}' END,'$.id')) WHERE j.aggregate_id=TRY_CONVERT(uniqueidentifier,@aggregate) AND j.entity_type=N'sales' AND o.branch_id=@branch AND o.terminal_id=@terminal)) AND NOT EXISTS(SELECT 1 FROM dbo.local_operation_receipts r WHERE r.operation_type=N'financial_history_registered' AND r.entity_id=CONVERT(nvarchar(36),e.shift_id)+N':'+CONVERT(nvarchar(36),e.operation_id) AND r.note COLLATE Latin1_General_100_BIN2=e.payload_hash COLLATE Latin1_General_100_BIN2+N':'+e.terminal_id);`,{branch:branchId,terminal:terminalId,shift:shiftId,aggregate:aggregateId})).recordset?.length);
+  }
+  async saveFinancialReceipt({type,entityId,payloadHash,terminalId},tx){
+    const note=payloadHash+':'+terminalId;
+    const operationId=stableUuid({domain:'retail-pos.financial-history-ack.v1',type,entityId,payloadHash,terminalId});
+    const prior=(await this.financialQuery(tx,'SELECT operation_type,entity_id,note FROM dbo.local_operation_receipts WITH(UPDLOCK,HOLDLOCK) WHERE operation_id=@id;',{id:operationId})).recordset??[];
+    if(prior.length){if(prior.length!==1||prior[0].operation_type!==type||prior[0].entity_id!==entityId||prior[0].note!==note)throw Object.assign(new Error('The metadata acknowledgement differs.'),{code:'EIDEMPOTENCY'});return;}
+    await this.financialQuery(tx,'INSERT dbo.local_operation_receipts(operation_id,operation_type,entity_id,note) VALUES(@id,@type,@entity,@hash);',{id:operationId,type,entity:entityId,hash:note});
+  }
+  async acknowledgeFinancialOpening(opening,ack,branchId,terminalId){
+    const verified=prepareFinancialOpening(opening,branchId,terminalId);if(ack?.ok!==true)throw Object.assign(new Error('The opening was not accepted.'),{code:'EFINANCIAL_HISTORY_UNCONFIRMED'});
+    return this.financialTransaction(tx=>this.saveFinancialReceipt({type:'financial_history_opened',entityId:verified.operationId,payloadHash:verified.payloadHash,terminalId},tx));
+  }
+  async acknowledgeFinancialHistory(item,ack){
+    const verified=prepareFinancialHistory(item,item.branchId,item.terminalId);assertFinancialHistoryAcknowledgement(verified,ack);
+    return this.financialTransaction(async tx=>{
+      const rows=(await this.financialQuery(tx,'SELECT payload_hash,payload_json FROM dbo.pos_sync_shift_financial_events WHERE branch_id=@branch AND shift_id=@shift AND terminal_id=@terminal AND operation_id=@operation;',{branch:item.branchId,shift:item.shiftId,terminal:item.terminalId,operation:item.operationId})).recordset??[];
+      if(rows.length!==1||rows[0].payload_hash!==item.payloadHash||rows[0].payload_json!==item.payloadJson)throw Object.assign(new Error('The immutable event differs.'),{code:'EFINANCIAL_HISTORY_INVALID'});
+      await this.saveFinancialReceipt({type:'financial_history_registered',entityId:item.shiftId+':'+item.operationId,payloadHash:item.payloadHash,terminalId:item.terminalId},tx);
+    });
+  }
   frozenOpeningRows(aggregateId,branchId) { return this.intents.openingRows(aggregateId,branchId); }
   protectedShiftIds(shiftIds,branchId) { return this.intents.hasIntents(shiftIds,branchId); }
   async predecessorAccepted(intent){
@@ -197,6 +279,88 @@ class ChangeReader {
     return true;
   }
   acceptedShiftChanges(table,changes,branchId) { return this.intents.coveredChanges(table,changes,branchId); }
+  financialCoverageBinding(branchId,terminalId){
+    if(this.financialOperations?.enabled!==true||!this.financialCoverageSource)return null;
+    const source=this.financialCoverageSource;source.assertSource();
+    if(recordId(source.identity?.branchId)!==recordId(branchId)||recordId(source.identity?.terminalId)!==recordId(terminalId)||!source.identity?.databaseGuid||!source.identity?.projectOrigin||!source.identity?.backend||!source.identity?.activation||!source.identity?.profile)
+      throw Object.assign(new Error('The financial row acknowledgement has a different database or device scope.'),{code:'EFINANCIAL_HISTORY_UNCONFIRMED',table:'shifts'});
+    return source;
+  }
+  financialCoverageKey(table,row,source){
+    const schemaHash=createHash('sha256').update(JSON.stringify(table.columns.map(c=>[c.sqlServerColumn,c.cloudColumn,c.sqlServerType,c.cloudType]))).digest('hex');
+    const rowHash=createHash('sha256').update(JSON.stringify(table.columns.map(c=>[c.sqlServerColumn,String(c.cloudType).toLowerCase()==='uuid'?recordId(row[c.sqlServerColumn]):row[c.sqlServerColumn]]))).digest('hex');
+    return{schemaHash,rowHash,id:stableUuid({domain:'retail-pos.financial-business-row-ack.v1',source:source.identity,table:table.cloudTable,id:recordId(row.id),schemaHash,rowHash}),entity:table.cloudTable+':'+recordId(row.id)};
+  }
+  financialBusinessWire(table,ordinary,physical,enabled){
+    if(!enabled)return ordinary;
+    const raw=value=>{
+      if(isExactNumber(value)){
+        if(typeof JSON.rawJSON!=='function')throw Object.assign(new Error('This installed runtime cannot preserve exact financial JSON numbers.'),{code:'EFINANCIAL_EXACT_TRANSPORT_UNAVAILABLE'});
+        return JSON.rawJSON(value.raw);
+      }
+      if(Array.isArray(value))return value.map(raw);
+      if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,raw(item)]));
+      return value;
+    };
+    const result={...ordinary};
+    for(const column of table.columns){const type=String(column.cloudType).toLowerCase(),value=physical[column.sqlServerColumn];
+      if(/^(numeric|decimal|money|smallmoney|bigint|integer|smallint|real|double precision|timestamp|date|time)/.test(type))result[column.cloudColumn]=value;
+      else if((type==='jsonb'||type.endsWith('[]'))&&typeof value==='string'){
+        try{result[column.cloudColumn]=raw(parseExactJson(value));}catch(error){if(table.cloudTable==='settings_scoped'&&column.cloudColumn==='value'&&error.code!=='EFINANCIAL_EXACT_TRANSPORT_UNAVAILABLE')continue;throw error;}
+      }
+    }
+    return result;
+  }
+  async financialCoverageRows(tx,table,ids,branchId){
+    const request=new(this.connectionManager.sql().Request)(tx).input('branch',branchId);
+    const keys=ids.map((id,index)=>{request.input('coverage'+index,id);return '@coverage'+index;});
+    const scope=table.scope==='branch'?rendererReadBranchPredicate(this.registry,table,'source'):null;
+    return(await request.query(`SELECT ${projection(table)} FROM dbo.[${table.sqlServerTable}] source WITH(UPDLOCK,HOLDLOCK) WHERE source.id IN(${keys.join(',')})${scope?' AND ('+scope+')':''};`)).recordset??[];
+  }
+  async financialCoverageReceipts(tx,keys,lock=false){
+    const request=new(this.connectionManager.sql().Request)(tx),ids=keys.map((key,index)=>{request.input('receipt'+index,key.id);return '@receipt'+index;});
+    const rows=(await request.query(`SELECT operation_id,operation_type,entity_id,note FROM dbo.local_operation_receipts${lock?' WITH(UPDLOCK,HOLDLOCK)':''} WHERE operation_id IN(${ids.join(',')});`)).recordset??[];
+    return new Map(rows.map(row=>[recordId(row.operation_id),row]));
+  }
+  prepareFinancialBusinessCoverage({operations,batchId,branchId,terminalId}){
+    const source=this.financialCoverageBinding(branchId,terminalId);if(!source)return null;
+    const keys=[];
+    for(const operation of operations){if(operation.deletePhase||SHIFT_GRAPH_TABLES.includes(operation.table))continue;for(const row of operation.rows??[]){
+      const captureId=operation.table+':'+recordId(row.id)+':'+createHash('sha256').update(JSON.stringify(row)).digest('hex'),capture=this.financialCoverageCaptures.get(captureId);
+      this.financialCoverageCaptures.delete(captureId);if(capture&&!capture.ambiguous)keys.push(capture.key);
+    }}
+    const token=Object.freeze({});this.financialCoverageTokens.set(token,{source,batchId:recordId(batchId),branchId,terminalId,keys,payloadHash:createHash('sha256').update(JSON.stringify(operations)).digest('hex')});return token;
+  }
+  async acknowledgeFinancialBusinessRows({token,operations,batchId,acknowledgement,branchId,terminalId}){
+    if(token==null)return;const evidence=this.financialCoverageTokens.get(token);
+    if(!evidence||evidence.batchId!==recordId(batchId)||evidence.branchId!==branchId||evidence.terminalId!==terminalId||evidence.payloadHash!==createHash('sha256').update(JSON.stringify(operations)).digest('hex')||acknowledgement?.ok!==true||recordId(acknowledgement.batch_id)!==recordId(batchId))
+      throw Object.assign(new Error('The financial business upload was not acknowledged for its exact captured batch.'),{code:'EFINANCIAL_HISTORY_UNCONFIRMED',table:'shifts'});
+    evidence.source.assertSource();
+    await this.financialTransaction(async tx=>{
+      const all=[...new Map(evidence.keys.map(key=>[key.id,key])).values()];
+      for(let start=0;start<all.length;start+=100){
+        const keys=all.slice(start,start+100),receipts=await this.financialCoverageReceipts(tx,keys,true),missing=[];
+        for(const key of keys){const note=key.rowHash+':'+key.schemaHash+':'+recordId(batchId),prior=receipts.get(key.id);
+          if(prior){if(prior.operation_type!=='financial_business_row_accepted'||prior.entity_id!==key.entity||!String(prior.note).startsWith(key.rowHash+':'+key.schemaHash+':')||!UUID.test(String(prior.note).slice(130)))throw Object.assign(new Error('A financial row receipt has conflicting saved evidence.'),{code:'EIDEMPOTENCY'});}
+          else missing.push({id:key.id,entity:key.entity,note});
+        }
+        if(missing.length)await this.financialQuery(tx,"INSERT dbo.local_operation_receipts(operation_id,operation_type,entity_id,note) SELECT CONVERT(uniqueidentifier,id),N'financial_business_row_accepted',entity,note FROM OPENJSON(@rows) WITH(id nvarchar(36),entity nvarchar(128),note nvarchar(400));",{rows:JSON.stringify(missing)});
+      }
+      evidence.source.assertSource();
+    });this.financialCoverageTokens.delete(token);
+  }
+  async acceptedFinancialBusinessChanges(value,changes,branchId,terminalId){
+    const source=this.financialCoverageBinding(branchId,terminalId),covered=new Set();if(!source||SHIFT_GRAPH_TABLES.includes(value.cloudTable))return covered;
+    const {table,primary}=this.table(value);if(primary.length!==1||primary[0]!=='id')return covered;
+    const ids=changes.filter(change=>change.operation!=='D'&&UUID.test(recordId(change.key?.id))).map(change=>recordId(change.key.id));if(!ids.length)return covered;
+    await this.financialTransaction(async tx=>{for(let start=0;start<ids.length;start+=100){
+      const rows=await this.financialCoverageRows(tx,table,ids.slice(start,start+100),branchId),keys=rows.map(row=>this.financialCoverageKey(table,row,source));if(!keys.length)continue;
+      const receipts=await this.financialCoverageReceipts(tx,keys);
+      for(let index=0;index<keys.length;index++){const key=keys[index],prior=receipts.get(key.id);
+        if(prior?.operation_type==='financial_business_row_accepted'&&prior.entity_id===key.entity&&String(prior.note).startsWith(key.rowHash+':'+key.schemaHash+':')&&UUID.test(String(prior.note).slice(130)))covered.add(recordId(rows[index].id));
+      }
+    }source.assertSource();});return covered;
+  }
   async acknowledgeProtectedIntent(intent,proof) {
     const sql=this.connectionManager.sql(),transaction=new sql.Transaction(this.connectionManager.pool);
     await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);

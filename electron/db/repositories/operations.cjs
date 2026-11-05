@@ -675,9 +675,11 @@ class OperationsRepository {
    * Node/renderer memory even when a shift contains millions of sales; SQL
    * Server scans/aggregates the matching rows and returns one record.
    */
-  async shiftExpectedTotals(branchId, shiftId) {
+  async shiftExpectedTotals(branchId, shiftId, transaction = null) {
     if (!branchId) throw Object.assign(new Error("The terminal branch is not configured."), { code: "EBRANCH" });
-    const request = this.pool().request()
+    const request = (transaction
+      ? new (this.connectionManager.sql().Request)(transaction)
+      : this.pool().request())
       .input("branch", String(branchId))
       .input("shift", String(shiftId));
     const result = await request.query(`

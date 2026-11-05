@@ -74,7 +74,7 @@ function fixture() {
     save(ops);
     return { ok: true };
   });
-  const context: Row = { localBranchId: () => branch,
+  const context: Row = { shiftFinancialDraftProvider:null, localBranchId: () => branch,
     shiftAuthority:{capture:()=>({subject:context.adminSession.identity()?.subject??actor,assertCurrent:()=>undefined}),prepare:async()=>({assertCurrent:()=>undefined})},
     operationsRepository: { query: vi.fn(async (_branch, table, options) => ({ rows: (data[table]??[]).filter(row => row.store_id === _branch && Object.entries(options.match).every(([key, value]) => row[key] === value)) })), shiftExpectedTotals: totals },
     shiftSyncJournal: { observe:async()=>{if(data.shifts[0].store_id!==branch)throw Object.assign(new Error("Foreign branch"),{code:"SYNC_BRANCH_FORBIDDEN"});return{parent:copy(data.shifts[0])};},originalReplay:(intent:Row)=>writer.originalReplay(intent),recountReplay: (intent: Row) => writer.recountReplay(intent), apply },
