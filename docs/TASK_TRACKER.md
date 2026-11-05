@@ -6132,6 +6132,30 @@ actual Vite SSR failure/recovery and native/ESM signed-message/invalid-input
 parity for all four modules. TypeScript, scoped ESLint and diff checks pass.
 Independent agent source review found no blocker. Required CI and actual
 configured preview reload remain pending; no beta/main merge or publication.
+# VIEW77 — retain the shell during authorized branch changes, 6 November
+
+Owner reports full-page loading when selecting another branch/cluster and asks
+that only affected content refresh. Source confirms dataSnapshotReady correctly
+rejects the prior branch snapshot, but AppShell replaces the entire workspace
+while the new data/settings load. Preserve that read proof and all authorization.
+Keep only a previously confirmed same-account/session/database/permission shell;
+unmount protected page content while its current scope is unresolved. ShiftGuard
+must not offer opening/closing actions using unverified settings. Initial setup,
+sign-in, identity changes and revocation retain existing full startup gates.
+
+Isolated baseline beta91f4961a, codex/branch-switch-presentation-beta. Scope:
+AppShell presentation, ShiftGuard pending presentation, explicit branch-read
+loading/error status and focused lifecycle/permission tests. No query cadence,
+Membership dependency, business calculation, permission, database or queue change.
+Verify sidebar/header remain mounted, old-scope page/popups are absent, current
+data appears only after confirmation, errors/retry remain available, and denied
+normal-terminal switching stays denied. Targeted source revert is the rollback.
+
+Prepared verification:79 focused tests across seven lifecycle, stale-read,
+permission, registration and inventory-update suites pass. TypeScript/scoped
+ESLint/diff checks pass. Independent agent review found no authorization or write
+blocker; its retained-data-banner truthfulness nit is corrected. Actual mounted
+browser/portal verification, full regression and required beta CI remain pending.
 
 CHART72 second checkpoint: beta79face20 is integrated at5e9d7efb, preserving the
 completed dependency integration and development protocol fix. The chart color
@@ -6276,3 +6300,25 @@ passed again with an explicit55.6% label/cost-denial check;37 focused route,
 financial and chart regressions plus scoped lint passed. SQL hash921067FA…9FCB5
 and all authority code remain unchanged by these UI refinements. Final-head CI
 and separate exact-project migration approval/application remain pending.
+
+### VIEW77 mounted-browser acceptance and current-beta refresh — 6 November
+
+The pre-refresh full suite passed 6,000 tests / 10 skipped / zero failures.
+After incorporating beta00b9ec56's completed Main approval correction, all180
+combined branch/settings/approval/authority tests and TypeScript passed. Only
+append-only documentation conflicted; both batches' evidence was preserved.
+The three runtime changes and original branch tests are byte-identical to the
+previous independently reviewed source. No permission/query/data path changed.
+
+The actual AppShell, ShiftGuard and confirmed-scope hook with shared Radix
+Select/Sheet/Dialog/nested Dropdown passed13 mounted Chrome groups at1440/390.
+Sidebar/header DOM and document identities survive authorized branch pending,
+success and both read-error/retry paths. Prior-branch pages and nested portals
+unmount, pointer/focus locks release, and no protected page/shift action appears
+before both data/settings proofs. Cold/auth/identity/profile/mode/epoch/permission,
+normal-terminal picker/shift-lock and revoked/unregistered gates stay enforced.
+These are isolated controlled-provider fixtures, not real branch writes or proof
+of backend admission; the existing branch/authority regressions remain required.
+No browser exceptions, remote requests or full-document reloads occurred.
+Final exact-head CI and beta integration remain; actual SQL, registration,
+checkout data, pending work and Membership were untouched.
