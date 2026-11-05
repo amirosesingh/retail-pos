@@ -10,6 +10,20 @@ const root = process.cwd();
 const path = resolve(root, 'electron/security/shift-author-protocol.cjs');
 const native = createRequire(import.meta.url)(path);
 
+const companions = ['shift-financial-protocol.cjs', 'financial-author-protocol.cjs', 'legacy-shift-recovery-protocol.cjs'];
+
+it.each(companions)('keeps %s development interop bounded to its reviewed exports and dependency', async file => {
+  const plugin = shiftProtocolDevInterop();
+  plugin.configResolved({ root });
+  const companionPath = resolve(root, 'electron/security', file);
+  const source = await readFile(companionPath, 'utf8');
+  expect(plugin.transform(source, companionPath)?.code).toContain("import { normalizeBinding } from './shift-author-protocol.cjs';");
+  expect(plugin.transform(source, `${companionPath}.other`)).toBeNull();
+  expect(() => plugin.transform(source.replace('./shift-author-protocol.cjs', './other.cjs'), companionPath)).toThrow('Unexpected shared shift protocol imports');
+  expect(() => plugin.transform(`const extra = require('node:fs');\n${source}`, companionPath)).toThrow('Unexpected shared shift protocol imports');
+  expect(() => plugin.transform(`${source}\nmodule.exports = {};`, companionPath)).toThrow('Unexpected shared shift protocol exports');
+});
+
 it('limits the serve transform to the canonical file and rejects changed export contracts', async () => {
   const plugin = shiftProtocolDevInterop();
   plugin.configResolved({ root });
@@ -54,6 +68,57 @@ it('reproduces the real Vite SSR failure and preserves native protocol bytes aft
         expect(() => esm[name](invalid)).toThrow('The shift author proof is invalid.');
         expect(() => native[name](invalid)).toThrow('The shift author proof is invalid.');
       }
+    }
+  } finally { await fixed.close(); }
+}, 30_000);
+
+it('loads the actual financial and recovery protocol dependency graph with unchanged signed bytes', async () => {
+  const options = { configFile: false as const, root, logLevel: 'silent' as const,
+    server: { middlewareMode: true, hmr: false as const, watch: null } };
+  const broken = await createServer(options);
+  try {
+    await expect(broken.ssrLoadModule('/electron/security/shift-financial-protocol.cjs')).rejects.toThrow(/require is not defined/);
+  } finally { await broken.close(); }
+  const fixed = await createServer({ ...options, plugins: [shiftProtocolDevInterop()] });
+  const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+  const binding = { version: 1, algorithm: 'Ed25519', keyId: uuid(1), projectOrigin: 'https://PUBLIC.fixture/', terminalId: uuid(2), authorId: uuid(3), subject: 'fixture-author', branchId: uuid(4) };
+  const basis = { ...binding, shiftId: uuid(5), intentId: uuid(6), action: 'ORIGINAL', graphPayloadHash: 'a'.repeat(64), basisHash: 'b'.repeat(64), serverBasisId: uuid(7), formula: 'canonical-exact-decimal-v2' };
+  const { serverBasisId: _serverBasisId, ...openingFields } = basis;
+  const opening = { ...openingFields, openingOrigin: { localAggregateId: uuid(8), rowHash: 'c'.repeat(64) } };
+  const operation = { ...binding, operationId: uuid(9), action: 'SALE', payloadHash: 'd'.repeat(64) };
+  const recovery = { ...binding, shiftId: uuid(5), recoveryId: uuid(10), action: 'LEGACY_CLOSING_RECOVERY_V1', payloadHash: 'e'.repeat(64) };
+  const payload = { version: 1, recoveryId: uuid(10), branchId: uuid(4), terminalId: uuid(2), shiftId: uuid(5), evidenceHash: 'f'.repeat(64), cloudWitnessHash: 'a'.repeat(64), reason: 'Review retained fixture closing', localGraphText: '[]', cloudGraphText: '[]', financialVerification: 'UNVERIFIED_HISTORICAL' };
+  const signature = Buffer.alloc(64).toString('base64url');
+  const cases: Record<string, [string, unknown[]][]> = {
+    'shift-financial-protocol.cjs': [
+      ['financialBasisMessage', [basis]], ['normalizeFinancialBasisAttestation', [{ ...basis, signature }]],
+      ['openingFinancialBasisMessage', [opening]], ['normalizeOpeningFinancialBasisAttestation', [{ ...opening, signature }]],
+    ],
+    'financial-author-protocol.cjs': [
+      ['financialOperationMessage', [operation]], ['normalizeFinancialAttestation', [{ ...operation, signature }]],
+    ],
+    'legacy-shift-recovery-protocol.cjs': [
+      ['normalizeLegacyPayload', [payload]], ['unsignedLegacyRecovery', [recovery]],
+      ['normalizeLegacyRecovery', [{ ...recovery, signature }]], ['legacyRecoveryMessage', [recovery]],
+      ['legacyRecoveryWire', [JSON.stringify(payload), { ...recovery, signature }]],
+    ],
+  };
+  try {
+    for (const file of companions) {
+      const nativeModule = createRequire(import.meta.url)(resolve(root, 'electron/security', file));
+      const esm = await fixed.ssrLoadModule(`/electron/security/${file}`);
+      expect(Object.keys(esm).sort()).toEqual(Object.keys(nativeModule).sort());
+      for (const [name, args] of cases[file]!) {
+        const expected = nativeModule[name](...args);
+        expect(esm[name](...args)).toEqual(expected);
+        if (typeof expected === 'string') expect(Buffer.from(esm[name](...args))).toEqual(Buffer.from(expected));
+        for (const invalid of [null, {}, { ...(args[0] as object), unexpected: true }]) {
+          const bad = [invalid, ...args.slice(1)];
+          expect(() => nativeModule[name](...bad)).toThrow();
+          expect(() => esm[name](...bad)).toThrow();
+        }
+      }
+      for (const name of ['ACTION', 'MAX_UPLOAD_BYTES']) if (name in nativeModule) expect(esm[name]).toEqual(nativeModule[name]);
     }
   } finally { await fixed.close(); }
 }, 30_000);

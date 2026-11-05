@@ -12,6 +12,19 @@ Owner requires all proposed cloud/local database upgrades collected for exact fi
 The exact owner-approved service-only bounded feed RPC and PR384 are applied/deployed on beta. Existing selector/privacy grants and businessrecords are preserved; native continuation is bound to authenticated response metadata. Live147request sample all200/ok with no CPU-exceeded; CPU2–114ms/mean9.469 means NO guarantee allrequestsbelow10ms. Electronfeed131613→133184, all6shiftCTvalid; largebacklog stilldraining. Keep implemented/sample-verified status distinct from fullsync completion, production promotion or installerpublication. Supabase migrationtool ledger20261104042158 corresponds to approvedfile20261104040251, SHA83495D696622241ECA2A8D396234E2FD65EE7C7A3050E93E4280638D6530D59B; do not replay based solely on differing timestamps.
 # POS project memory
 
+## 6 November — dependency integration is beta first
+
+The owner requests the latest local Electron preview and prompt integration of
+completed chore/version PRs into beta. This does not approve main promotion or
+native publication. Retail version1.4.82 is already prepared; dependency PRs406
+through410 do not increment the application version. Recheck their combination
+with actual current beta before merge: the original green dependency checks use
+the older beta4e9a854a, while the reviewed destination is3074a475. Preserve source
+commit attribution, resolve only necessary dependency-lock conflicts, and keep
+payment/recovery source and all operator profiles/databases untouched. Use a
+fresh isolated dependency tree rather than changing the running Electron's
+shared node_modules. Record runtime/package acceptance separately from CI.
+
 ## 5 November all-table synchronization clarification
 
 Dashboard decision69: Live Dashboard selected operating branch; Live Business
@@ -1481,3 +1494,12 @@ Do not alter active-shift selection, exact cursors, saved times or authorization
 The actual Operations snapshot returns raw shift recordsets (unlike its other
 codec-normalized tables); paged history already normalizes opened_at. The report
 adapter therefore handles native Date seeds without changing those shared paths.
+# 6 November — latest local preview continuity
+
+Keep latest merged beta Electron and web previews running beside each other.
+Reload integrated runtime changes safely; preserve unsaved checkout, SQL settings,
+sealed registration and pending work. Website local startup must use the existing
+hosting environment, not device overrides or hardcoded credentials. DEV76 extends
+the already existing development-only shared-protocol loader to its exact public
+financial/recovery companions after an actual local SSR failure; no wire behavior
+or deployed/native security protocol is changed.
