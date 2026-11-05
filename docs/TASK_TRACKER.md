@@ -31,6 +31,15 @@ or scoped orphans. Complete comparison:16 exact graphs;3 local CLOSED/cloud OPEN
 repairs;1 revision/update-clock difference;1 OPEN created_at precision difference.
 Those are classifications, not authority to overwrite or manufacture receipts.
 
+RECOVERY65 preparation checkpoint: draft PR395 created. Permanent rules and
+bounded classifier committed; 60 isolated classifier cases pass. Dedicated
+append-only evidence store and prepared (not installed) SQL pass 12 tests with
+real disposable LocalDB, including concurrency, rollback and restart readback.
+Existing runtime recovery passes 16 isolated SQL Server regression groups.
+Portable classifier/evidence tests are wired into Vitest. No business export is
+committed. This does NOT complete application recovery; modern author/financial
+guards still need an explicit reviewed legacy recovery flow and runtime wiring.
+
 Active RECOVERY65: bounded exact classification/tests, durable recovery evidence,
 authorized legacy-operation recovery/accepted-correction preservation, resume
 and long-offline/restart/lost-ack/denied-permission cases. Full runtime recovery

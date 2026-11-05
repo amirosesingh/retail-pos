@@ -91,6 +91,7 @@ function cell(column, value, local, budget) {
     return ["uuid", id(value)];
   }
   if (type === "boolean") {
+    if (local && isExactNumber(value) && ["0", "1e0"].includes(decimal(value))) value = decimal(value) === "1e0";
     if (local && (value === 0 || value === 1)) value = Boolean(value);
     if (typeof value !== "boolean") refuse();
     return ["boolean", value];

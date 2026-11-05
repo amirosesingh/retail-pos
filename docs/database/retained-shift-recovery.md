@@ -33,6 +33,28 @@ derived-summary candidates and competing ORIGINAL histories. Long-offline and
 lost-ack context tests prove the classifier does not invent authority; they do
 NOT verify a complete outbox/reconnect lifecycle.
 
+## Prepared immutable evidence storage
+
+`electron/db/shift-recovery-evidence.cjs` and the prepared SQL file alongside
+this document provide append-only, scope-bound capture/list/load. They preserve
+the exact raw local/cloud JSON bytes and independent hashes, reject unknown
+schema/trigger definitions, bound storage and keep captures distinct from
+accepted operations. Capture requires a caller-owned transaction and trusted
+Main scope checks before and after awaited SQL calls. Neither the store nor its
+prepared table is installed or wired into synchronization.
+
+Validation: 12 evidence tests pass with the opt-in uniquely owned LocalDB fixture,
+including actual DDL, immutability, concurrent retries, rollback and restart
+readback. The fixture never connects to POS_Local. Existing retained-graph
+recovery also passes all 16 real isolated SQL Server groups. The regular Vitest
+suite invokes portable classifier/evidence safety tests; the actual LocalDB
+test remains explicitly opt-in.
+
+The store does not yet persist the captured CT position or implement decisions,
+acceptance, upload, source-graph locks or final checkpoint advancement. Integration
+must provide and verify those requirements; saved evidence alone is not proof
+that an upload occurred or that a retained local change may be discarded.
+
 ## Remaining implementation and acceptance
 
 1. Preserve complete local/cloud exact before-images in dedicated append-only
