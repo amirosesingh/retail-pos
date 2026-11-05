@@ -12,6 +12,19 @@ Owner requires all proposed cloud/local database upgrades collected for exact fi
 The exact owner-approved service-only bounded feed RPC and PR384 are applied/deployed on beta. Existing selector/privacy grants and businessrecords are preserved; native continuation is bound to authenticated response metadata. Live147request sample all200/ok with no CPU-exceeded; CPU2–114ms/mean9.469 means NO guarantee allrequestsbelow10ms. Electronfeed131613→133184, all6shiftCTvalid; largebacklog stilldraining. Keep implemented/sample-verified status distinct from fullsync completion, production promotion or installerpublication. Supabase migrationtool ledger20261104042158 corresponds to approvedfile20261104040251, SHA83495D696622241ECA2A8D396234E2FD65EE7C7A3050E93E4280638D6530D59B; do not replay based solely on differing timestamps.
 # POS project memory
 
+## 6 November — dependency integration is beta first
+
+The owner requests the latest local Electron preview and prompt integration of
+completed chore/version PRs into beta. This does not approve main promotion or
+native publication. Retail version1.4.82 is already prepared; dependency PRs406
+through410 do not increment the application version. Recheck their combination
+with actual current beta before merge: the original green dependency checks use
+the older beta4e9a854a, while the reviewed destination is3074a475. Preserve source
+commit attribution, resolve only necessary dependency-lock conflicts, and keep
+payment/recovery source and all operator profiles/databases untouched. Use a
+fresh isolated dependency tree rather than changing the running Electron's
+shared node_modules. Record runtime/package acceptance separately from CI.
+
 ## 5 November all-table synchronization clarification
 
 Dashboard decision69: Live Dashboard selected operating branch; Live Business
