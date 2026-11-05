@@ -19,9 +19,11 @@ describe("optimistic notification visibility", () => {
     expect(ids(visibleActivityRows([row("a")], [], new Set(["old:branch:a"]),
       "new:branch"))).toEqual(["a"]);
   });
-  it("preserves remote clears and audit-only filtering without mutating records", () => {
+  it("applies only the current user's remote clear and keeps system resolution and audit-only filtering", () => {
     const rows = [row("active"), row("remote", ["manager"]), row("audit", [], {auditOnly: true})];
-    expect(ids(visibleActivityRows(rows, [], new Set(), "user:branch"))).toEqual(["active"]);
+    expect(ids(visibleActivityRows(rows, [], new Set(), "user:branch", ["user"]))).toEqual(["active", "remote"]);
+    expect(ids(visibleActivityRows(rows, [], new Set(), "manager:branch", ["MANAGER"]))).toEqual(["active"]);
+    expect(visibleActivityRows([row("resolved", ["system:approval-resolved"])], [], new Set(), "user:branch", ["user"])).toEqual([]);
     expect(rows[0].clearedBy).toEqual([]);
   });
 });

@@ -40,7 +40,7 @@ describe("trusted settings and shift operations", () => {
   it("prevents duplicate shifts with a serializable branch lock", async () => {
     query.mockResolvedValue({ recordset: [{ id: "existing" }] });
     await expect(repository.assertShiftOpening({}, { table: "shifts", kind: "insert", rows: [{ opening_float: 20, status: "OPEN" }] }, scope)).rejects.toThrow("already open");
-    expect(query.mock.calls[0][0]).toContain("UPDLOCK,HOLDLOCK");
+    expect(query.mock.calls.some(([sql]) => sql.includes('FROM dbo.shifts WITH (UPDLOCK,HOLDLOCK)'))).toBe(true);
   });
   it("retains complete database totals for shifts larger than the visible bill cache", () => {
     const row = shiftSummaryRow({ id: "summary", shift: { id: "shift", opening_float: 50, opened_at: "now" }, branchId: "a", branchName: "A", terminalName: "T", actor: "Amy", closedAt: "later", countedCash: 1050,

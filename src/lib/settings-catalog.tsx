@@ -282,7 +282,7 @@ export const SETTINGS_CARDS: SettingsCard[] = [
   },
   {
     id: "receipt-designer",
-    label: "Receipt designer",
+    label: "Sales receipt designer",
     blurb: "Logo placement and size, dynamic fields and scoped receipt CSS.",
     icon: ListPlus,
     category: "receipts",
@@ -403,7 +403,7 @@ export const SETTINGS_CARDS: SettingsCard[] = [
   {
     id: "region",
     label: "Region & time",
-    blurb: "Country, time zone, date order and 12 / 24-hour clock.",
+    blurb: "Country, currency, time zone, date order and 12 / 24-hour clock.",
     icon: Globe,
     category: "business",
     scope: "company",
@@ -476,8 +476,8 @@ export const SETTINGS_CARDS: SettingsCard[] = [
   },
   {
     id: "booking-slip",
-    label: "Booking slip wording",
-    blurb: "Terms & conditions and the customer signature line.",
+    label: "Booking receipt settings",
+    blurb: "Booking slips, racket tags, terms & conditions and signatures.",
     icon: ReceiptText,
     category: "sales",
     scope: "company",

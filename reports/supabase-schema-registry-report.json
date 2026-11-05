@@ -1,8 +1,8 @@
 {
   "source": "supabase/schema.sql",
-  "generatedAt": "2026-10-23T23:33:17.228Z",
+  "generatedAt": "2026-10-26T23:17:35.708Z",
   "tableCount": 70,
-  "columnCount": 1194,
+  "columnCount": 1197,
   "tables": [
     {
       "name": "coupon_campaigns",
@@ -2328,6 +2328,12 @@
           "hasDefault": false
         },
         {
+          "name": "contact_email",
+          "declaration": "text",
+          "nullable": true,
+          "hasDefault": false
+        },
+        {
           "name": "address",
           "declaration": "text",
           "nullable": true,
@@ -3328,7 +3334,7 @@
         },
         {
           "name": "ecom_visible",
-          "declaration": "boolean DEFAULT true NOT NULL",
+          "declaration": "boolean DEFAULT false NOT NULL",
           "nullable": false,
           "hasDefault": true
         },
@@ -3421,6 +3427,12 @@
           "declaration": "text",
           "nullable": true,
           "hasDefault": false
+        },
+        {
+          "name": "catalogue_store_ids",
+          "declaration": "text[] NOT NULL DEFAULT '{}'",
+          "nullable": false,
+          "hasDefault": true
         }
       ],
       "primaryKey": [
@@ -6205,6 +6217,12 @@
         },
         {
           "name": "allow_multiple_shifts_per_terminal",
+          "declaration": "boolean",
+          "nullable": true,
+          "hasDefault": false
+        },
+        {
+          "name": "allow_branch_shift_sharing",
           "declaration": "boolean",
           "nullable": true,
           "hasDefault": false

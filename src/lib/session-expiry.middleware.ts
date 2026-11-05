@@ -21,7 +21,7 @@ export const sessionExpiryMiddleware = createMiddleware({ type: "function" }).cl
       const message = String(err?.message ?? "");
       if (status >= 500)
         noteConnectivityIssue(
-          "The server is temporarily unavailable. The till will retry automatically.",
+          "The server is temporarily unavailable. Some data or actions may be unavailable until the connection recovers.",
         );
       else if (status && isTokenRejection(status, message)) notifySessionExpired(startedAt);
       throw error;

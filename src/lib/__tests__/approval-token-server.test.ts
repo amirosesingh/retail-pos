@@ -36,6 +36,7 @@ vi.mock("@/core/api/pos-relay.server", () => ({
     return { kind: "terminal", terminalId: terminalToken, storeId: f.branch };
   },
 }));
+vi.mock("../terminal-binding.server",()=>({readVerifiedTerminal:async(id:string)=>({id,branchId:f.branch,platform:"mobile",mode:"operations"})}));
 vi.mock("../authorization.server", () => ({ loadRuleRows: () => f.rules() }));
 vi.mock("../system-audit.server", () => ({ writeSystemAudit: async () => {} }));
 import {

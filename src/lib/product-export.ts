@@ -21,6 +21,7 @@ export async function exportProductsXlsx(
   stores: Store[],
   fileName = "products",
   includeCost = true,
+  includeEcommerce = true,
 ) {
   const XLSX = await import("xlsx");
   const rows = products.map((p) => {
@@ -33,12 +34,12 @@ export async function exportProductsXlsx(
       sub_category: p.subCategory ?? "",
       unit: p.unit ?? "",
       price: p.price,
-      ecom_price: p.ecomPrice ?? "",
       tax_rate: p.taxRate,
       reorder_level: p.reorderLevel,
       custom_points: p.customPoints ?? "",
     };
     if (includeCost) row.cost = p.cost;
+    if (includeEcommerce) row.ecom_price = p.ecomPrice ?? "";
     for (const s of stores) row[`stock_${s.code}`] = p.stockByStore?.[s.id] ?? 0;
     return row;
   });

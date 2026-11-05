@@ -128,6 +128,7 @@ export type RulesSource = "database" | "defaults";
  * network outage.
  */
 export type RulesResult = {
+  shiftSharingAvailable: boolean;
   rules: PosRules;
   source: RulesSource;
   error?: string;
@@ -142,6 +143,7 @@ export type RulesResult = {
 };
 
 type RulesSnapshotRow = {
+  branch_shift_sharing_available?: unknown;
   rules?: unknown;
   store_id?: unknown;
   row_version?: unknown;
@@ -168,6 +170,7 @@ export async function loadRulesResult(storeId: string): Promise<RulesResult> {
     const json = await rpc<RulesSnapshotRow>("pos_rules_snapshot", { _store_id: storeId || "" });
     const rules = normalizeRules(json?.rules);
     return {
+      shiftSharingAvailable: json?.branch_shift_sharing_available === true,
       rules,
       source: "database",
       failure: "none",
@@ -181,6 +184,7 @@ export async function loadRulesResult(storeId: string): Promise<RulesResult> {
   } catch (e) {
     const message = (e as Error).message.slice(0, 300);
     return {
+      shiftSharingAvailable: false,
       rules: { ...DEFAULT_POS_RULES },
       source: "defaults",
       error: message,
@@ -222,6 +226,7 @@ export async function saveRules(
   const json = (await res.json()) as RulesSnapshotRow;
   const rules = normalizeRules(json?.rules);
   return {
+    shiftSharingAvailable: json?.branch_shift_sharing_available === true,
     rules,
     source: "database",
     failure: "none",

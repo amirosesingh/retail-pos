@@ -6,6 +6,7 @@ import {
   createPublicKey,
   publicEncrypt,
 } from "node:crypto";
+import { readVerifiedTerminal } from "./terminal-binding.server";
 import { serviceRest, verifyRelayCaller } from "@/core/api/pos-relay.server";
 import { requireCallerScope, type CallerProof } from "./privileged-caller.server";
 import { approvalMethods, APPROVAL_TOKEN_LEASE_MS, OFFLINE_APPROVAL_TOKEN_LEASE_MS } from "./approval-credentials";
@@ -147,7 +148,7 @@ export async function enrollApprovalToken(proof: CallerProof) {
   const actor = await requireCallerScope(proof);
   if (!actor.staffUserId || actor.stale || actor.kind === "terminal" || !proof.terminalToken)
     throw new Error("Sign in on a registered terminal first");
-  const terminal = await verifyRelayCaller({ terminalToken: proof.terminalToken });
+  const terminal = await verifyRelayCaller({ terminalToken: proof.terminalToken, deviceBindingProof:proof.deviceBindingProof });
   if (!terminal.terminalId) throw new Error("Terminal registration is required");
   const deviceOptions = await issuerOptions(terminal.terminalId);
   if (!["ios", "android", "mobile", "pc", "windows"].includes(deviceOptions[0]?.platform) || deviceOptions[0]?.approval_token_enabled === false)
@@ -181,9 +182,10 @@ export async function verifyApprovalTotp(
   code: string,
   branch: string,
   receiverToken?: string,
+  deviceBindingProof?:string,
 ) {
   if (!receiverToken) return null;
-  const receiver = await verifyRelayCaller({ terminalToken: receiverToken }).catch(() => null);
+  const receiver = await verifyRelayCaller({ terminalToken: receiverToken, deviceBindingProof }).catch(() => null);
   if (!receiver?.terminalId || (receiver.storeId && receiver.storeId.toLowerCase() !== branch.toLowerCase()))
     return null;
   const receiverRows = await rows<{ platform: string }>(
@@ -196,7 +198,8 @@ export async function verifyApprovalTotp(
   const devices = (await state("read", person.user_id)) as Device[];
   for (const device of devices) {
     try {
-      const terminal = await verifyRelayCaller({ terminalToken: device.terminal_id });
+      const registered = await readVerifiedTerminal(device.terminal_id);
+      const terminal = {terminalId:registered.id,storeId:registered.branchId};
       if (
         !terminal.terminalId ||
         (person.store_id && terminal.storeId && terminal.storeId.toLowerCase() !== branch.toLowerCase())
@@ -222,9 +225,9 @@ export async function verifyApprovalTotp(
  * Never pick the first match: short codes are not globally unique identities.
  * This lookup does not consume; the existing verifier performs final validation.
  */
-export async function identifyApprovalTotp(code: string, branch: string, receiverToken?: string) {
+export async function identifyApprovalTotp(code: string, branch: string, receiverToken?: string, deviceBindingProof?:string) {
   if (!/^\d{8}$/.test(code) || !receiverToken) return null;
-  const receiver = await verifyRelayCaller({ terminalToken: receiverToken }).catch(() => null);
+  const receiver = await verifyRelayCaller({ terminalToken: receiverToken, deviceBindingProof }).catch(() => null);
   if (!receiver?.terminalId || (receiver.storeId && receiver.storeId.toLowerCase() !== branch.toLowerCase())) return null;
   const devices = await state("read_branch", branch) as Device[];
   if (devices.length > 1000) return null; // fail closed, never partially search a large scope
@@ -237,8 +240,8 @@ export async function identifyApprovalTotp(code: string, branch: string, receive
   return matches.length === 1 ? matches[0].user_id : null;
 }
 /** Revalidate one saved device enrollment without a staff login or exposing its secret. */
-export async function approvalTokenStatus(terminalToken: string, userId: string, credentialId: string) {
-  const terminal = await verifyRelayCaller({ terminalToken });
+export async function approvalTokenStatus(terminalToken: string, userId: string, credentialId: string, deviceBindingProof?:string) {
+  const terminal = await verifyRelayCaller({ terminalToken, deviceBindingProof });
   if (!terminal.terminalId || !credentialId) return { ok: true as const, active: false };
   const issuer = await issuerOptions(terminal.terminalId);
   if (!["ios", "android", "mobile", "pc", "windows"].includes(issuer[0]?.platform) ||
@@ -260,7 +263,7 @@ export async function registerApprovalVerifier(proof: CallerProof, publicKey: st
   const actor = await requireCallerScope(proof, { permission: "can_manage_staff" });
   if (!actor.staffUserId || actor.kind === "terminal" || !proof.terminalToken)
     throw new Error("Staff manager sign-in required");
-  const terminal = await verifyRelayCaller({ terminalToken: proof.terminalToken });
+  const terminal = await verifyRelayCaller({ terminalToken: proof.terminalToken, deviceBindingProof:proof.deviceBindingProof });
   if (
     !terminal.terminalId ||
     !terminal.storeId ||
@@ -311,8 +314,8 @@ function encryptVerifierBundle(publicKey: string, bundle: unknown) {
   };
 }
 /** Main-process only: registered Windows tills receive branch-scoped verifier bundles. */
-export async function approvalVerifierBundle(terminalToken: string) {
-  const terminal = await verifyRelayCaller({ terminalToken });
+export async function approvalVerifierBundle(terminalToken: string, deviceBindingProof?:string) {
+  const terminal = await verifyRelayCaller({ terminalToken, deviceBindingProof });
   if (terminal.kind !== "terminal" || !terminal.terminalId || !terminal.storeId)
     throw new Error("Registered terminal required");
   const registration = await rows<{ platform: string }>(

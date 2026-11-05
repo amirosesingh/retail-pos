@@ -1,3 +1,4 @@
+import { isTerminalApp } from "@/platform-config/platform";
 import { useEffect, useState } from "react";
 import { DatabaseZap } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -12,6 +13,8 @@ import { CLEAR_EVENT } from "@/lib/notification-guard";
  */
 export function DbConnectionModal() {
   const [message, setMessage] = useState<string | null>(null);
+  const [terminal, setTerminal] = useState(false);
+  useEffect(() => setTerminal(isTerminalApp()), []);
 
   useEffect(() => {
     const onFail = (e: Event) => {
@@ -42,11 +45,11 @@ export function DbConnectionModal() {
         </p>
         <div className="sticky bottom-0 flex gap-2 bg-background pt-2">
           <Button className="flex-1" variant="outline" onClick={() => setMessage(null)}>Close</Button>
-          <Button className="flex-1" onClick={() => {
+          {terminal && <Button className="flex-1" onClick={() => {
             setMessage(null);
             window.sessionStorage.setItem(LOCAL_DATABASE_SETTINGS_REQUEST, "1");
             window.location.assign("/database-startup");
-          }}>Local database settings</Button>
+          }}>Local database settings</Button>}
         </div>
       </DialogContent>
     </Dialog>

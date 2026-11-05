@@ -9,10 +9,10 @@ it.each(["unavailable", "error", "unknown", "missing"])(
     expect(result.error).not.toContain("Invalid username or PIN");
   },
 );
-it("retains wrong-PIN counting only for genuine credential refusals and legacy uncoded refusals", () => {
+it("counts genuine credential refusals but not uncoded validation or setup refusals", () => {
   expect(countsAsWrongCashierPin(localCashierLoginFailure("invalid").code)).toBe(true);
   expect(countsAsWrongCashierPin(localCashierLoginFailure("bad-pin").code)).toBe(true);
-  expect(countsAsWrongCashierPin(undefined)).toBe(true);
+  expect(countsAsWrongCashierPin(undefined)).toBe(false);
 });
 it.each(["locked", "inactive", "scope"])(
   "preserves the %s refusal without adding an incorrect local PIN failure",

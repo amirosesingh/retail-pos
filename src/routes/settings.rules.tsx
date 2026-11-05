@@ -60,6 +60,7 @@ export const Route = createFileRoute("/settings/rules")({
 
 export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
   const {
+    shiftSharingAvailable,
     rules,
     loading,
     failureText,
@@ -318,12 +319,12 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
                     >
                       <div className="min-w-0 flex items-center gap-1">
                         <Label className="text-sm">{field.label}</Label>
-                        <HelpTip text={field.blurb} label={`About ${field.label}`} />
+                        <HelpTip text={field.blurb + (field.key === 'allow_branch_shift_sharing' && !shiftSharingAvailable ? ' This control needs the reviewed cloud and terminal upgrades before it can be changed.' : '')} label={`About ${field.label}`} />
                       </div>
                       {field.kind === "switch" ? (
                         <Switch
                           aria-label={field.label}
-                          disabled={!mayEdit}
+                          disabled={!mayEdit || (field.key === 'allow_branch_shift_sharing' && !shiftSharingAvailable && draft.allow_branch_shift_sharing !== false)}
                           checked={field.key === "require_counted_cash_on_close" ? requiresClosingCashCount(draft) : Boolean(draft[field.key])}
                           onCheckedChange={(v) => set(field.key, v)}
                         />

@@ -9,6 +9,38 @@ const registry = JSON.parse(
 );
 const begin = "-- SQLSERVER_SYNC_CONTRACT_BEGIN";
 const end = "-- SQLSERVER_SYNC_CONTRACT_END";
+const sharingUpgrade = fs.readFileSync(path.join(root, 'scripts/preparation/shift-branch-sharing.sql'), 'utf8').replaceAll('\r\n', '\n');
+const sharingPreserve = sharingUpgrade.split('preserve text:=$preserve$')[1]?.split('$preserve$;')[0];
+if (!sharingPreserve?.includes('-- SHIFT63_PRESERVE_ABSENT_RULE')) throw new Error('The reviewed shift-sharing settings compatibility hook is missing.');
+// Keep newly generated sync routines aligned with the reviewed incremental fix.
+const shiftClosureMigration = fs.readFileSync(path.join(root, "supabase", "migrations",
+  "20261030153259_confirm_shift_closure_sync_acknowledgement.sql"), "utf8");
+const legacyShiftClosureHelpers = shiftClosureMigration.split("-- SHIFT_CLOSURE_SYNC_HELPERS_BEGIN")[1]
+  ?.split("-- SHIFT_CLOSURE_SYNC_HELPERS_END")[0];
+const shiftClosureProofMigration = fs.readFileSync(path.join(root,"supabase","migrations",
+  "20261030164829_bind_shift_closure_proof_to_requested_revision.sql"),"utf8");
+const shiftClosureProof = shiftClosureProofMigration.split("-- SHIFT_CLOSURE_SYNC_PROOF_V2_BEGIN")[1]
+  ?.split("-- SHIFT_CLOSURE_SYNC_PROOF_V2_END")[0]?.trim();
+if (!legacyShiftClosureHelpers || !shiftClosureProof) throw new Error("The shift closure acknowledgement helpers are missing.");
+const legacyProofStart = legacyShiftClosureHelpers.indexOf("CREATE OR REPLACE FUNCTION public.pos_sync_shift_closure_ack(");
+const legacyProofEnd = legacyShiftClosureHelpers.indexOf("END $fn$;",legacyProofStart)+"END $fn$;".length;
+if (legacyProofStart<0 || legacyProofEnd<=legacyProofStart) throw new Error("The legacy closure proof boundary is missing.");
+const shiftLifecycleMigration = fs.readFileSync(path.join(root, "supabase", "migrations",
+  "20261101052452_prevent_closed_shift_reopening_during_sync.sql"), "utf8");
+const shiftLifecyclePredicate = shiftLifecycleMigration.split("-- SHIFT_CLOSED_SYNC_PREDICATE_BEGIN")[1]
+  ?.split("-- SHIFT_CLOSED_SYNC_PREDICATE_END")[0]?.trim();
+const shiftLifecycleValidation = shiftLifecycleMigration.split("-- SHIFT_CLOSED_SYNC_VALIDATION_BEGIN")[1]
+  ?.split("-- SHIFT_CLOSED_SYNC_VALIDATION_END")[0]?.trim();
+if (!shiftLifecyclePredicate || !shiftLifecycleValidation) throw new Error("The closed-shift lifecycle contract is missing.");
+const shiftOwnershipAnchor = "PERFORM public.pos_sync_assert_shift_ownership(p_rows,p_branch_id);";
+if (shiftClosureProof.split(shiftOwnershipAnchor).length !== 2) throw new Error("The shift proof ownership anchor is ambiguous.");
+const guardedShiftClosureProof = shiftClosureProof.replace(shiftOwnershipAnchor, shiftOwnershipAnchor + "\n\n" + shiftLifecycleValidation);
+const shiftClosureHelpers = legacyShiftClosureHelpers.slice(0,legacyProofStart)+guardedShiftClosureProof+legacyShiftClosureHelpers.slice(legacyProofEnd);
+const activityAckMigration = fs.readFileSync(path.join(root, "supabase", "migrations",
+  "20261030234813_guard_activity_acknowledgement_branch_ownership.sql"), "utf8");
+const activityAckOwnership = activityAckMigration.split("-- ACTIVITY_ACK_OWNERSHIP_BEGIN")[1]
+  ?.split("-- ACTIVITY_ACK_OWNERSHIP_END")[0]?.trim();
+if (!activityAckOwnership) throw new Error("The activity acknowledgement ownership contract is missing.");
 const q = (value) => `"${value}"`;
 const primary = (table) => table.columns.filter((column) => column.primaryKey);
 const columnNames = (table) => new Set(table.columns.map((column) => column.cloudColumn));
@@ -217,6 +249,8 @@ REVOKE ALL ON FUNCTION public.pos_sync_validate_scope(text,text,text) FROM PUBLI
 GRANT EXECUTE ON FUNCTION public.pos_sync_validate_scope(text,text,text) TO service_role;`,
 ];
 
+out.push(shiftClosureHelpers);
+
 for (const table of tables) {
   const omitted = excludedColumns(table.cloudTable);
   const portableColumns = table.columns.filter((column) => !omitted.has(column.cloudColumn));
@@ -230,9 +264,11 @@ for (const table of tables) {
           ["stock_quantity", "stock_by_store"].includes(column.cloudColumn)
         ),
     )
-    .map((column) => `${q(column.cloudColumn)}=EXCLUDED.${q(column.cloudColumn)}`);
+    .map((column) => table.cloudTable === "products" && column.cloudColumn === "owner_store_id"
+      ? `"owner_store_id"=COALESCE(NULLIF(btrim(EXCLUDED."owner_store_id"),''),public."products"."owner_store_id")`
+      : `${q(column.cloudColumn)}=EXCLUDED.${q(column.cloudColumn)}`);
   const versionWhere = columnNames(table).has("row_version")
-    ? ` WHERE EXCLUDED."row_version">public.${q(table.cloudTable)}."row_version"`
+    ? ` WHERE EXCLUDED."row_version">public.${q(table.cloudTable)}."row_version"${table.cloudTable === "shifts" ? ` AND EXCLUDED."store_id"=public."shifts"."store_id" ${shiftLifecyclePredicate}` : ""}`
     : "";
   const immutable =
     table.conflictRule === "immutable_reversal" || table.conflictRule === "movement_delta";
@@ -241,9 +277,7 @@ for (const table of tables) {
       ? `UPDATE SET "is_refunded"=(public."sales"."is_refunded" OR EXCLUDED."is_refunded"),"row_version"=GREATEST(public."sales"."row_version",EXCLUDED."row_version")`
       : table.cloudTable === "sale_items"
         ? `UPDATE SET "refunded_qty"=GREATEST(public."sale_items"."refunded_qty",EXCLUDED."refunded_qty"),"row_version"=GREATEST(public."sale_items"."row_version",EXCLUDED."row_version")`
-        : table.cloudTable === "activity_events"
-          ? `UPDATE SET "cleared_by"=EXCLUDED."cleared_by"`
-          : ["authorization_requests", "authorization_log"].includes(table.cloudTable)
+        : ["authorization_requests", "authorization_log"].includes(table.cloudTable)
             ? "NOTHING"
             : updates.length && !immutable
               ? `UPDATE SET ${updates.join(",")}${versionWhere}`
@@ -266,7 +300,9 @@ for (const table of tables) {
     END IF;
   END LOOP;`
       : "";
-  if (table.cloudTable === "issued_vouchers") {
+  if (table.cloudTable === "activity_events") {
+    out.push(activityAckOwnership);
+  } else if (table.cloudTable === "issued_vouchers") {
     out.push(`CREATE OR REPLACE FUNCTION public.sync_apply_issued_vouchers(p_rows jsonb) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER AS $fn$
 DECLARE v_count integer:=0; v_row jsonb; v_existing public.issued_vouchers%ROWTYPE; v_branch text;
 BEGIN
@@ -335,9 +371,11 @@ BEGIN FOR v_row IN SELECT value FROM jsonb_array_elements(COALESCE(p_rows,'[]'::
     out.push(`CREATE OR REPLACE FUNCTION public.sync_apply_${table.cloudTable}(p_rows jsonb) RETURNS integer LANGUAGE plpgsql SECURITY INVOKER AS $fn$
 DECLARE v_count integer; v_row jsonb;
 BEGIN
+  ${table.cloudTable === "pos_store_settings" ? sharingPreserve : ""}
   ${table.cloudTable === "stores" ? "IF NULLIF(current_setting('pos.sync_branch',true),'') IS NULL OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p_rows,'[]'::jsonb)) r WHERE r->>'id' IS DISTINCT FROM current_setting('pos.sync_branch',true)) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;" : ""}
   ${refundOn}
   ${shiftGuardOn}
+  ${table.cloudTable === "shifts" ? "PERFORM public.pos_sync_assert_shift_ownership(p_rows,current_setting('pos.sync_branch',true));" : ""}
   INSERT INTO public.${q(table.cloudTable)} (${columns.join(",")})
   SELECT ${columns.join(",")} FROM jsonb_populate_recordset(NULL::public.${q(table.cloudTable)}, COALESCE(p_rows,'[]'::jsonb))
   ON CONFLICT (${primary(table)
@@ -347,6 +385,7 @@ BEGIN
   ${applyStock}
   ${shiftGuardOff}
   ${refundOff}
+  ${table.cloudTable === "shifts" ? "PERFORM public.pos_sync_shift_closure_ack(p_rows,current_setting('pos.sync_branch',true));" : ""}
   RETURN v_count;
 END $fn$;`);
   const deleteWhere = primary(table)
@@ -437,10 +476,10 @@ BEGIN
   IF NOT (v_me.role='admin' OR v_me.store_id IS NULL OR v_me.store_id=p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF;
  END IF;
  SELECT payload_hash INTO v_prior FROM public.sync_idempotency_receipts WHERE batch_id=p_batch_id;
- IF FOUND THEN IF v_prior<>v_hash THEN RAISE EXCEPTION 'SYNC_IDEMPOTENCY_MISMATCH'; END IF; RETURN jsonb_build_object('ok',true,'replayed',true,'batch_id',p_batch_id); END IF;
+ IF FOUND THEN IF v_prior<>v_hash THEN RAISE EXCEPTION 'SYNC_IDEMPOTENCY_MISMATCH'; END IF; RETURN jsonb_build_object('ok',true,'replayed',true,'batch_id',p_batch_id)||CASE WHEN p_table='shifts' THEN public.pos_sync_shift_closure_ack(p_rows,p_branch_id) ELSE '{}'::jsonb END; END IF;
  CASE p_table ${applyCases("p_rows", "p_changes")} ELSE RAISE EXCEPTION 'SYNC_TABLE_FORBIDDEN'; END CASE;
  INSERT INTO public.sync_idempotency_receipts(batch_id,organization_id,branch_id,table_name,payload_hash,applied_count) VALUES(p_batch_id,p_organization_id,p_branch_id,p_table,v_hash,v_count);
- RETURN jsonb_build_object('ok',true,'applied',v_count,'batch_id',p_batch_id);
+ RETURN jsonb_build_object('ok',true,'applied',v_count,'batch_id',p_batch_id)||CASE WHEN p_table='shifts' THEN public.pos_sync_shift_closure_ack(p_rows,p_branch_id) ELSE '{}'::jsonb END;
 END $fn$;`);
 
 out.push(`CREATE OR REPLACE FUNCTION public.pos_sync_push_aggregate(p_batch_id uuid,p_organization_id text,p_branch_id text,p_terminal_id text,p_operations jsonb)
@@ -458,7 +497,7 @@ BEGIN
   IF v_me.id IS NULL OR NOT (v_me.role='admin' OR COALESCE((v_me.permissions->>'can_manage_sync_backup')::boolean,false)) THEN RAISE EXCEPTION 'SYNC_FORBIDDEN'; END IF;
   IF NOT (v_me.role='admin' OR v_me.store_id IS NULL OR v_me.store_id=p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; END IF;
  SELECT payload_hash INTO v_prior FROM public.sync_idempotency_receipts WHERE batch_id=p_batch_id;
- IF FOUND THEN IF v_prior<>v_hash THEN RAISE EXCEPTION 'SYNC_IDEMPOTENCY_MISMATCH'; END IF; RETURN jsonb_build_object('ok',true,'replayed',true,'batch_id',p_batch_id); END IF;
+ IF FOUND THEN IF v_prior<>v_hash THEN RAISE EXCEPTION 'SYNC_IDEMPOTENCY_MISMATCH'; END IF; RETURN jsonb_build_object('ok',true,'replayed',true,'batch_id',p_batch_id)||public.pos_sync_aggregate_shift_closure_ack(p_operations,p_branch_id); END IF;
  FOR v_op IN SELECT value FROM jsonb_array_elements(p_operations) LOOP v_table:=v_op->>'table'; v_rows:=COALESCE(v_op->'rows','[]'::jsonb);
   IF v_table='products' AND EXISTS(SELECT 1 FROM jsonb_array_elements(p_operations) related WHERE related->>'table' IN ('item_activity_logs','stock_delta_applied')) THEN
    SELECT COALESCE(jsonb_agg((row_value-'stock_quantity'-'stock_by_store')||jsonb_build_object('stock_quantity',0,'stock_by_store','{}'::jsonb)),'[]'::jsonb) INTO v_rows FROM jsonb_array_elements(v_rows) AS product_rows(row_value);
@@ -466,7 +505,7 @@ BEGIN
   CASE v_table ${applyCases("v_rows", "v_op->'changes'")} ELSE RAISE EXCEPTION 'SYNC_TABLE_FORBIDDEN'; END CASE; v_total:=v_total+v_count;
  END LOOP;
  INSERT INTO public.sync_idempotency_receipts(batch_id,organization_id,branch_id,table_name,payload_hash,applied_count) VALUES(p_batch_id,p_organization_id,p_branch_id,'__aggregate__',v_hash,v_total);
- RETURN jsonb_build_object('ok',true,'applied',v_total,'batch_id',p_batch_id);
+ RETURN jsonb_build_object('ok',true,'applied',v_total,'batch_id',p_batch_id)||public.pos_sync_aggregate_shift_closure_ack(p_operations,p_branch_id);
 END $fn$;`);
 
 const pullFunction = `CREATE OR REPLACE FUNCTION public.pos_sync_pull(p_organization_id text,p_branch_id text,p_terminal_id text,p_after_cursor bigint DEFAULT 0,p_limit integer DEFAULT 500)
@@ -501,11 +540,19 @@ out.push(pullFunction);
 const bootstrapCases = tables
   .map((table) => {
     const key = keyJson(table, "x");
+    // Keep the reviewed audit bootstrap seek on its existing UUID index. Its
+    // serialized cursor, predicates and every other table's paging stay intact.
+    const auditUuidKey = table.cloudTable === "change_history";
+    if (auditUuidKey && (primary(table).length !== 1 ||
+      primary(table)[0].cloudColumn !== "id" || primary(table)[0].cloudType !== "uuid"))
+      throw new Error("The change_history UUID bootstrap key contract changed.");
+    const comparison = auditUuidKey ? `x."id">((p_after_cursor::jsonb)->>'id')::uuid` : `${key}>p_after_cursor`;
+    const order = auditUuidKey ? `x."id"` : key;
     const history =
       table.retentionClass === "historical" && dateColumn(table)
         ? `AND (p_history_days>=7300 OR x.${q(dateColumn(table))}>=now()-make_interval(days=>GREATEST(p_history_days,30)))`
         : "";
-    return `WHEN '${table.cloudTable}' THEN SELECT COALESCE(jsonb_agg(${rowJson(table, "page.row_data")} ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT ${key} cursor,x row_data FROM public.${q(table.cloudTable)} x WHERE (${branchPredicate(table)}) ${history} AND (p_after_cursor IS NULL OR ${key}>p_after_cursor) ORDER BY ${key} LIMIT LEAST(GREATEST(p_limit,100),2000)) page;`;
+    return `WHEN '${table.cloudTable}' THEN SELECT COALESCE(jsonb_agg(${rowJson(table, "page.row_data")} ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT ${key} cursor,x row_data FROM public.${q(table.cloudTable)} x WHERE (${branchPredicate(table)}) ${history} AND (p_after_cursor IS NULL OR ${comparison}) ORDER BY ${order} LIMIT LEAST(GREATEST(p_limit,100),2000)) page;`;
   })
   .join("\n    ");
 const bootstrapFunction = `CREATE OR REPLACE FUNCTION public.pos_sync_bootstrap(p_organization_id text,p_branch_id text,p_terminal_id text,p_table text,p_after_cursor text DEFAULT NULL,p_history_days integer DEFAULT 90,p_limit integer DEFAULT 500)
@@ -575,11 +622,50 @@ const block = out
     "LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS",
   )
   .replace(/^[ \t]+$/gm, "");
+const causalMigration = fs.readFileSync(path.join(root, "supabase", "migrations", "20261102082439_shift_closing_causal_intents.sql"), "utf8");
+const causalHelpers = causalMigration.split("-- SHIFT_CAUSAL_HELPERS_BEGIN")[1]?.split("-- SHIFT_CAUSAL_HELPERS_END")[0];
+if (!causalHelpers) throw new Error("Missing reviewed shift causal helpers");
 const start = schema.indexOf(begin);
 const finish = schema.indexOf(end);
-if (start >= 0 && finish >= start)
+if (process.argv.includes("--shift-causal-only")) {
+  if (start < 0 || finish < start) throw new Error("Missing original sync contract boundary");
+} else if (start >= 0 && finish >= start)
   schema = schema.slice(0, start) + block + schema.slice(finish + end.length);
 else schema = `${schema.trimEnd()}\n\n${block}\n`;
+// Later canonical upgrade blocks redefine the legacy RPCs. Apply this reviewed
+// final contract after them so neither fresh schema nor regeneration loses CAS.
+const causalBegin = "-- SHIFT_CAUSAL_CONTRACT_BEGIN", causalEnd = "-- SHIFT_CAUSAL_CONTRACT_END";
+const causalStart = schema.indexOf(causalBegin), causalFinish = schema.indexOf(causalEnd);
+if (causalStart >= 0) {
+  if (causalFinish < causalStart) throw new Error("Incomplete canonical shift causal contract");
+  schema = schema.slice(0, causalStart) + schema.slice(causalFinish + causalEnd.length);
+}
+const authorRegistry = fs.readFileSync(path.join(root, "supabase", "migrations", "20261102101610_shift_author_key_registry.sql"), "utf8");
+const authorEnforcement = fs.readFileSync(path.join(root, "supabase", "migrations", "20261102103716_enforce_shift_author_uploads.sql"), "utf8");
+const authorHelperGuards = authorEnforcement.split("-- SHIFT_AUTHOR_HELPER_GUARDS_BEGIN")[1]?.split("-- SHIFT_AUTHOR_HELPER_GUARDS_END")[0];
+if (!authorHelperGuards) throw new Error("Missing reviewed author helper guards");
+const authorBegin = "-- SHIFT_AUTHOR_CONTRACT_BEGIN", authorEnd = "-- SHIFT_AUTHOR_CONTRACT_END";
+const correctionBegin = "-- SHIFT_CORRECTION_ACTIVITY_TYPE_BEGIN", correctionEnd = "-- SHIFT_CORRECTION_ACTIVITY_TYPE_END";
+const startBegin = "-- SHIFT_CLOSING_START_CONTRACT_BEGIN", startEnd = "-- SHIFT_CLOSING_START_CONTRACT_END";
+const graphReadBegin = "-- SHIFT_GRAPH_READ_SCOPE_BEGIN", graphReadEnd = "-- SHIFT_GRAPH_READ_SCOPE_END";
+const historyPageBegin = "-- PROTECTED_HISTORY_PAGE_BEGIN", historyPageEnd = "-- PROTECTED_HISTORY_PAGE_END";
+const historyProjectionBegin = "-- PROTECTED_HISTORY_PROJECTION_PERFORMANCE_BEGIN", historyProjectionEnd = "-- PROTECTED_HISTORY_PROJECTION_PERFORMANCE_END";
+for (const [blockBegin, blockEnd] of [[authorBegin, authorEnd], [correctionBegin, correctionEnd], [startBegin, startEnd], [graphReadBegin, graphReadEnd], [historyPageBegin, historyPageEnd], [historyProjectionBegin, historyProjectionEnd]]) {
+  const blockStart = schema.indexOf(blockBegin), blockFinish = schema.indexOf(blockEnd);
+  if (blockStart >= 0) {
+    if (blockFinish < blockStart) throw new Error("Incomplete final shift authority contract");
+    schema = schema.slice(0, blockStart) + schema.slice(blockFinish + blockEnd.length);
+  }
+}
+const correctionMigration = fs.readFileSync(path.join(root, "supabase", "migrations", "20261102104005_fix_closed_shift_correction_activity_type.sql"), "utf8");
+const startMigration = fs.readFileSync(path.join(root, "supabase", "migrations", "20261102153013_bind_signed_closing_start_evidence.sql"), "utf8");
+const graphReadMigration = fs.readFileSync(path.join(root, "supabase", "migrations", "20261103023417_management_closing_graph_read_scope.sql"), "utf8");
+const historyPageMigration = fs.readFileSync(path.join(root, "supabase", "migrations", "20261103074926_protected_byte_bounded_history_download.sql"), "utf8");
+const historyProjectionMigration = fs.readFileSync(path.join(root, "supabase", "migrations", "20261103091907_optimize_protected_history_projection.sql"), "utf8");
+const finalHardening = schema.lastIndexOf("-- Final public-schema privilege hardening after notification rule definitions.");
+if (finalHardening < 0) throw new Error("Missing final privilege hardening boundary");
+schema = `${schema.slice(0, finalHardening).trimEnd()}\n\n${causalBegin}\n${causalMigration.trim()}\n${causalEnd}\n\n${authorBegin}\n${authorRegistry.trim()}\n${authorEnforcement.trim()}\n${authorEnd}\n\n${correctionBegin}\n${correctionMigration.trim()}\n${correctionEnd}\n\n${startBegin}\n${startMigration.trim()}\n${startEnd}\n\n${graphReadBegin}\n${graphReadMigration.trim()}\n${graphReadEnd}\n\n${schema.slice(finalHardening).trim()}\n`;
+schema = schema.replace("-- Final public-schema privilege hardening after notification rule definitions.", `${historyPageBegin}\n${historyPageMigration.trim()}\n${historyPageEnd}\n\n${historyProjectionBegin}\n${historyProjectionMigration.trim()}\n${historyProjectionEnd}\n\n-- Final public-schema privilege hardening after notification rule definitions.`);
 fs.writeFileSync(schemaPath, schema);
 console.log(`Supabase sync contract generated for ${tables.length} keyed tables`);
 
@@ -589,7 +675,15 @@ const functionSql = (name) => {
   const functionEnd = block.indexOf("$fn$;", functionStart) + "$fn$;".length;
   if (functionStart < 0 || functionEnd < "$fn$;".length)
     throw new Error(`Could not find generated function ${name}`);
-  return block.slice(functionStart, functionEnd);
+  let definition = block.slice(functionStart, functionEnd);
+  const preflight = name === "pos_sync_push_batch" ? "jsonb_build_array(jsonb_build_object('table',p_table,'rows',p_rows,'changes',p_changes))"
+    : name === "pos_sync_push_aggregate" ? "p_operations" : null;
+  if (preflight) {
+    const anchor = " SELECT payload_hash INTO v_prior FROM public.sync_idempotency_receipts WHERE batch_id=p_batch_id;";
+    if (definition.split(anchor).length !== 2) throw new Error("Unexpected generated preflight anchor");
+    definition = definition.replace(anchor, ` PERFORM public.pos_sync_shift_preflight(${preflight},p_branch_id);\n${anchor}`);
+  }
+  return definition;
 };
 
 const migrationIndex = process.argv.indexOf("--migration");
@@ -617,7 +711,10 @@ DROP TRIGGER IF EXISTS settings_scoped_bump_row_version ON public.settings_scope
 CREATE TRIGGER settings_scoped_bump_row_version BEFORE UPDATE ON public.settings_scoped FOR EACH ROW EXECUTE FUNCTION public.preserve_or_bump_row_version();
 
 `;
-  fs.writeFileSync(migrationPath, preamble + schema.slice(hardeningStart, contractEnd));
+  const authorPrerequisite = `DO $author_prerequisite$ BEGIN
+ IF to_regprocedure('public.pos_sync_shift_author_guard(text,jsonb,jsonb,text,text)') IS NULL THEN RAISE EXCEPTION 'Reviewed AUTH37 prerequisite is required before regenerating graph helpers'; END IF;
+END $author_prerequisite$;\n`;
+  fs.writeFileSync(migrationPath, "BEGIN;\n" + authorPrerequisite + preamble + schema.slice(hardeningStart, contractEnd) + "\n" + authorHelperGuards + "\nCOMMIT;\n");
   console.log(`Migration sync contract written to ${path.relative(root, migrationPath)}`);
 }
 
@@ -663,9 +760,18 @@ if (pushMigrationIndex >= 0) {
     throw new Error("--push-migration must name an existing file under supabase/migrations");
   const migration = `-- Normalize only missing or SQL-equivalent branch ids after the
 -- terminal-to-branch binding has been verified. Foreign branch ids stay blocked.
+BEGIN;
+DO $shift_causal_prerequisite$ BEGIN
+ IF to_regprocedure('public.pos_sync_shift_preflight(jsonb,text)') IS NULL OR
+    to_regprocedure('public.pos_sync_push_shift_intent(uuid,text,text,text,jsonb,jsonb)') IS NULL OR
+    to_regprocedure('public.pos_sync_shift_author_guard(text,jsonb,jsonb,text,text)') IS NULL
+ THEN RAISE EXCEPTION 'Reviewed SHIFT36 prerequisite is required before regenerating push routines'; END IF;
+END $shift_causal_prerequisite$;
 ${functionSql("pos_sync_push_batch")}
 
 ${functionSql("pos_sync_push_aggregate")}
+
+${authorHelperGuards}
 
 REVOKE ALL ON FUNCTION public.pos_sync_push_batch(uuid,text,text,text,text,jsonb,jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.pos_sync_push_aggregate(uuid,text,text,text,jsonb) FROM PUBLIC, anon, authenticated;
@@ -673,6 +779,7 @@ GRANT EXECUTE ON FUNCTION public.pos_sync_push_batch(uuid,text,text,text,text,js
 GRANT EXECUTE ON FUNCTION public.pos_sync_push_aggregate(uuid,text,text,text,jsonb) TO service_role;
 
 NOTIFY pgrst, 'reload schema';
+COMMIT;
 `;
   fs.writeFileSync(migrationPath, migration);
   console.log(`Push migration written to ${path.relative(root, migrationPath)}`);

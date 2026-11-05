@@ -1,5 +1,5 @@
 /** Local readiness releases startup UI only; it never grants a user permission. */
-export type LocalStartupState = { state?: string; enabled?: boolean; configured?: boolean; connected?: boolean; tradingReady?: boolean };
+export type LocalStartupState = { state?: string; enabled?: boolean; configured?: boolean; connected?: boolean; tradingReady?: boolean; startupPaused?: boolean; startupActivity?: import("./desktop-startup-progress").StartupActivity | null };
 export function canStartLocally(input: {
   windows: boolean;
   management: boolean;

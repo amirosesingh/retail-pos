@@ -1,8 +1,43 @@
 const { AsyncLocalStorage } = require("node:async_hooks");
+const { bootstrapDiagnostic, tagBootstrapDiagnostic } = require("../diagnostics.cjs");
+function retainDiagnostic(target, source) {
+  const { bootstrapPhase: phase, bootstrapOrigin: origin, ...fields } = bootstrapDiagnostic(source, []);
+  try {
+    const privateFields = Object.getOwnPropertyDescriptor(source, "bootstrapDiagnostic")?.value;
+    const table = Object.getOwnPropertyDescriptor(privateFields, "table")?.value;
+    if (typeof table === "string" && /^[a-z][a-z0-9_]{0,62}$/.test(table)) fields.table = table;
+  } catch { /* Diagnostics never replace the original outcome. */ }
+  return tagBootstrapDiagnostic(target, { ...fields, ...(phase ? { phase } : {}), ...(origin ? { origin } : {}) });
+}
 const syncLease = new AsyncLocalStorage();
+const authorHold = error => /^(?:ESYNC_SHIFT_AUTHOR_|ESHIFT_AUTHOR_)/.test(String(error?.code??""));
 class SyncCoordinator {
   constructor({ pushWorker, pullWorker, publish = () => {} }) { this.pushWorker=pushWorker; this.pullWorker=pullWorker; this.publish=publish; this.running=false; this.activeRun=null; this.activeOptions=null; this.paused=false; this.status={ phase:"idle", pending:0, failed:0, conflicts:0, lastPushAt:null, lastPullAt:null, lastError:null, lastComparedAt:null, lastVerifiedAt:null, tables:[], recentTables:[], credentialsInvalid:false, membershipDeferred:false, membershipMirrored:0 }; }
   snapshot() { return { ...this.status, running:this.running, paused:this.paused }; }
+  unresolved() { return this.unresolvedFailures??=new Map(); }
+  publishFailureStatus(branchId) {
+    const failures=[...this.unresolved().values()].filter(failure=>failure.branchId===String(branchId??""));
+    this.status.lastError=failures.length?[...new Set(failures.map(failure=>failure.error))].join(" "):null;
+    this.status.credentialsInvalid=failures.some(failure=>failure.credentialsInvalid);
+  }
+  rememberFailure(error,options,direction) {
+    const table=String(error?.table??error?.detail??"").trim(),raw=String(error?.message??error);
+    const message=table&&!raw.includes(table)?`${raw} (table: ${table})`:raw;
+    const code=String(error?.code??"ESYNC"),status=Number(error?.status??error?.statusCode??0);
+    const branchId=String(options.branchId??""),includeActivity=direction==="push"&&options.includeActivity!==false,skipMembership=direction==="pull"&&Boolean(options.skipMembership);
+    // Bound entries by actual work scope, never an arbitrary error message.
+    const key=JSON.stringify([branchId,direction,includeActivity,skipMembership]),previous=this.unresolved().get(key);
+    const denied=!authorHold(error)&&(status===401||status===403||code==="HTTP_401"||code==="HTTP_403");
+    this.unresolved().set(key,{branchId,direction,includeActivity,skipMembership,error:message,credentialsInvalid:Boolean(previous?.credentialsInvalid||denied)});
+    this.publishFailureStatus(branchId);
+    return message;
+  }
+  clearSuccessfulFailures(options,direction,result) {
+    // Deferred tables did not receive a verified successful pass. Status must
+    // not turn that partial outcome into acknowledgement of an older failure.
+    if(result?.deferredTables?.length||result?.membershipDeferred)return;
+    for(const [key,failure] of this.unresolved())if(failure.branchId===String(options.branchId??"")&&failure.direction===direction&&(!failure.includeActivity||options.includeActivity!==false)&&(direction!=="pull"||failure.skipMembership||!options.skipMembership))this.unresolved().delete(key);
+  }
   async withExclusive(work) {
     if (syncLease.getStore() === this) return work();
     const prior = this.exclusiveTail ?? Promise.resolve();
@@ -66,7 +101,8 @@ class SyncCoordinator {
   }
   async runOnce(options = {}) {
     this.running=true;
-    Object.assign(this.status, { pushed:0, merged:0, currentTable:null, startedAt:new Date().toISOString(), lastError:null });
+    Object.assign(this.status, { pushed:0, merged:0, currentTable:null, startedAt:new Date().toISOString() });
+    this.publishFailureStatus(options.branchId);
     const workerOptions = { ...options, onProgress: progress => {
       const field = progress.direction === "push" ? "pushed" : "merged";
       this.status[field] += Number(progress.completed) || 0;
@@ -79,37 +115,37 @@ class SyncCoordinator {
       this.status.recentTables.length=Math.min(this.status.recentTables.length,50);
       this.publish(this.snapshot());
     } };
-    let result;
+    let result;let failedDirection="push";
     try {
       this.status.phase="pushing"; this.publish(this.snapshot());
       let pushError = null; let pushed = {};
-      try { if (!options.pullOnly) { pushed=await this.pushWorker.run(workerOptions); this.status.lastPushAt=new Date().toISOString(); } }
-      catch(error) { pushError=error; }
-      if (pushError && (pushError.code === "ECHANGEGAP" || [401,403].includes(Number(pushError.status)))) throw pushError;
+      try { if (!options.pullOnly) { pushed=await this.pushWorker.run(workerOptions); this.status.lastPushAt=new Date().toISOString();this.clearSuccessfulFailures(options,"push",pushed);this.publishFailureStatus(options.branchId); } }
+      catch(error) { pushError=error;this.rememberFailure(error,options,"push"); }
+      if (pushError && (pushError.code === "ECHANGEGAP" || (!authorHold(pushError)&&[401,403].includes(Number(pushError.status))))) throw pushError;
       let pulled = {};
       if (!options.pushOnly) {
+        failedDirection="pull";
         this.status.phase="pulling"; this.status.currentTable=null; this.publish(this.snapshot());
         pulled=(await this.pullWorker.run(workerOptions)) ?? {}; this.status.lastPullAt=new Date().toISOString(); this.status.conflicts=Number(pulled.conflicts??this.status.conflicts); this.status.membershipDeferred=Boolean(pulled.membershipDeferred); this.status.membershipMirrored=Number(pulled.membershipMirrored??0);
+        this.clearSuccessfulFailures(options,"pull",pulled);this.publishFailureStatus(options.branchId);
       }
       this.status.pushed=Number(pushed.pushed??this.status.pushed); this.status.merged=Number(pulled.merged??this.status.merged);
-      if (pushError) throw pushError;
-      this.status.phase="idle"; this.status.lastError=null; this.status.credentialsInvalid=false;
+      if (pushError) { failedDirection="push"; throw pushError; }
+      this.status.phase="idle"; this.publishFailureStatus(options.branchId);
       result={ ok:true,...pushed,...pulled };
     } catch(error) {
       const failedTable=String(error?.table??error?.detail??"").trim();
-      const rawMessage=String(error?.message??error);
-      this.status.phase="idle"; this.status.lastError=failedTable&&!rawMessage.includes(failedTable)?`${rawMessage} (table: ${failedTable})`:rawMessage;
+      this.status.phase="idle";
+      const message=this.rememberFailure(error,options,failedDirection);
       const code=String(error?.code??"ESYNC");
-      const status=Number(error?.status??error?.statusCode??0);
-      this.status.credentialsInvalid=status===401||status===403||code==="HTTP_401"||code==="HTTP_403";
-      result={ ok:false,code,error:this.status.lastError,table:failedTable||null };
+      result=retainDiagnostic({ ok:false,code,error:message,table:failedTable||null },error);
     } finally {
       this.running=false;
       this.status.currentTable=null;
       await this.refresh(options.branchId);
       this.publish(this.snapshot());
     }
-    return { ...result, ...this.snapshot() };
+    return retainDiagnostic({ ...result, ...this.snapshot() }, result);
   }
   pause(){this.paused=true;this.publish(this.snapshot());return this.snapshot();}
   resume(){this.paused=false;this.publish(this.snapshot());return this.snapshot();}

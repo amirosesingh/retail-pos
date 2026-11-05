@@ -64,7 +64,7 @@ describe("route guards", () => {
   it("AppShell still blocks anonymous access and gates admin paths", () => {
     // Matched on structure, not exact spelling: the guard may be wrapped over
     // several lines, but it must still short-circuit to the sign-in screen.
-    expect(APP_SHELL).toMatch(/if\s*\(!user\)[\s\S]{0,600}?<TerminalLogin\s*\/>/);
+    expect(APP_SHELL).toMatch(/if\s*\(!user\)\s*return\s*\([\s\S]{0,600}?<TerminalLogin(?:\s+view=\{loginView\})?\s*\/>/);
     expect(APP_SHELL).toContain("routePermissionForPath");
     for (const path of ["/staff", "/promotions", "/audit"]) {
       expect(NAV).toContain(`to: "${path}"`);

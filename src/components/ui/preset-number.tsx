@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Input } from "./input";
+import { DecimalSettingInput } from "./decimal-setting-input";
 
 /** Common choices without discarding existing or custom numeric values. */
 export function PresetNumber({ value, onChange, options, label, disabled, min, max, step = 1 }: {
@@ -18,8 +18,10 @@ export function PresetNumber({ value, onChange, options, label, disabled, min, m
       {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
       <option value="custom">Custom…</option>
     </select>
-    {isCustom && <Input aria-label={`${label} custom value`} className="h-9 w-24" type="number"
+    {isCustom && <DecimalSettingInput aria-label={`${label} custom value`} className="h-9 w-24"
       min={min} max={max} step={step} disabled={disabled} value={value}
-      onChange={(event) => { const n = event.target.valueAsNumber; if (Number.isFinite(n)) onChange(Math.max(min, Math.min(max, Math.round(n / step) * step))); }} />}
+      allowNegative={min < 0}
+      normalizeValue={n => Math.max(min, Math.min(max, Math.round(n / step) * step))}
+      onValueChange={onChange} />}
   </div>;
 }

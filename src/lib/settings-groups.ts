@@ -59,7 +59,7 @@ const GROUP_SPECS: GroupSpec[] = [
   {
     id: "receipts",
     label: "Receipts & printing",
-    blurb: "The printer itself and everything that prints on a slip.",
+    blurb: "Sales receipt layout and shared printer hardware settings.",
     members: [
       { card: "printer" },
       { card: "elements" },
@@ -67,17 +67,16 @@ const GROUP_SPECS: GroupSpec[] = [
       { card: "lines" },
       { card: "qr" },
       { card: "receipt-designer" },
-      { card: "booking-slip", shared: true },
     ],
   },
   {
     id: "booking-rules",
-    label: "Booking rules",
+    label: "Booking rules & services",
     blurb: "Scheduling, deposits, turnaround and cancellation in one place.",
     members: [
       { card: "booking-rules" },
       { card: "services" },
-      { card: "booking-slip", shared: true },
+      { card: "booking-slip" },
     ],
   },
   {

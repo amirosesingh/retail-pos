@@ -9,7 +9,7 @@ import { notifyError } from "@/lib/notify";
  * reference number. Counting happens in a dialog, so a session can be opened
  * from the list and closed again without losing the page you were on.
  */
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeftRight, ClipboardList, Lock, Pencil, Plus } from "lucide-react";
 import { toast } from "sonner";
@@ -55,14 +55,19 @@ import {
   type StockRecordRow,
 } from "@/platforms/web/components/pos/StockCountDialog";
 import { StockRecordView } from "@/platforms/web/components/pos/StockRecordView";
+import { negativeStockCountAllowed, negativeStockProducts } from "@/lib/inventory-negative-stock";
+import { createCatalogueVisibility } from "@/lib/branch-policy";
 
 const ALL = "all";
 
 function StockOperationsPage() {
-  const { state, currentStore } = usePos();
+  const { state, currentStore, ready } = usePos();
+  const search = Route.useSearch();
+  const navigate = useNavigate();
   const { authorize } = useManagerGate();
 
-  const { user, isAdmin, isSupervisor } = useAuth();
+  const { user, isAdmin, isSupervisor, can, ready: authReady } = useAuth();
+  const canAdjustStock = can("can_adjust_stock");
   const multiBranch = state.stores.length > 1;
   const mayPickCountStore = multiBranch && (isAdmin || isSupervisor);
 
@@ -77,6 +82,8 @@ function StockOperationsPage() {
   const [statusFilter, setStatusFilter] = useState<string>(ALL);
   const [branchFilter, setBranchFilter] = useState<string>("current");
   const [countOpen, setCountOpen] = useState(false);
+  const [initialProductIds, setInitialProductIds] = useState<string[]>([]);
+  const reviewRequest = useRef<string | null>(null);
   const [resuming, setResuming] = useState<StockRecordRow | null>(null);
   const [viewing, setViewing] = useState<StockRecordRow | null>(null);
   const [discardTarget, setDiscardTarget] = useState<string | null>(null);
@@ -87,6 +94,24 @@ function StockOperationsPage() {
   useEffect(() => {
     setCountStoreId(currentStore.id);
   }, [currentStore.id]);
+
+  useEffect(() => {
+    if (!ready || !authReady || search.review !== "negative" || !search.branch || reviewRequest.current === search.branch) return;
+    if (!negativeStockCountAllowed(search.branch, currentStore.id, canAdjustStock)) {
+      toast.error("Select the original branch and use an account with Adjust / recount stock permission before starting this count.");
+      return;
+    }
+    const visible = createCatalogueVisibility(state.settings, state.stores, state.transfers);
+    const ids = negativeStockProducts(state.products, currentStore.id, visible).map(product => product.id);
+    if (!ids.length) { toast.info("No negative-stock products remain at this branch."); return; }
+    // A denial or not-yet-loaded catalogue must remain retryable when its scope
+    // or permissions are corrected. Consume only a review actually opened.
+    reviewRequest.current = search.branch;
+    setInitialProductIds(ids);
+    setResuming(null);
+    setActiveCountStoreId(currentStore.id);
+    setCountOpen(true);
+  }, [ready, authReady, search.review, search.branch, currentStore.id, canAdjustStock, state.products, state.settings, state.stores, state.transfers]);
 
   useEffect(() => {
     void myServerId().then(setMeId).catch(error => notifyError(error, "Reading stock count identity"));
@@ -160,6 +185,7 @@ function StockOperationsPage() {
       return;
     }
     setResuming(null);
+    setInitialProductIds([]);
     setActiveCountStoreId(target.id);
     setCountOpen(true);
     toast.info(`New stock count will write to ${target.name}`, {
@@ -168,6 +194,7 @@ function StockOperationsPage() {
   };
 
   const resume = (row: StockRecordRow) => {
+    setInitialProductIds([]);
     setActiveCountStoreId(row.store_id ?? currentStore.id);
     setResuming(row);
     setCountOpen(true);
@@ -485,9 +512,12 @@ function StockOperationsPage() {
         draft={resuming}
         targetStore={state.stores.find((store) => store.id === activeCountStoreId) ?? currentStore}
         editGrant={editGrant}
+        initialProductIds={initialProductIds}
         onOpenChange={(open) => {
           setCountOpen(open);
           if (!open) {
+            setInitialProductIds([]);
+            if (search.review) void navigate({ to: "/stock-operations", replace: true, search: {} });
             setResuming(null);
             setEditGrant(null);
             void refresh();
@@ -521,6 +551,10 @@ function StockOperationsPage() {
 }
 
 export const Route = createFileRoute("/stock-operations")({
+  validateSearch: (search: Record<string, unknown>): { review?: "negative"; branch?: string } => ({
+    review: search.review === "negative" ? "negative" : undefined,
+    branch: typeof search.branch === "string" ? search.branch : undefined,
+  }),
   head: () => ({
     meta: [
       { title: "Stock Operations — Retail" },

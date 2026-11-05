@@ -13,7 +13,7 @@ const member = z.object({
   name: z.string(),
   phone: z.string(),
   email: z.string(),
-  tier: z.enum(["Bronze", "Silver", "Gold"]),
+  tier: z.string().min(1).max(80),
   points: z.number(),
   totalSpend: z.number(),
   joinedAt: z.string(),

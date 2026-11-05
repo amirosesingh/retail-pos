@@ -40,6 +40,7 @@ const { CloudClient } = require("./sync/cloud-client.cjs");
 const closeWriteBarrier = new (require("./sync/write-barrier.cjs").WriteBarrier)();
 const { createTelemetry } = require("./telemetry.cjs");
 const { OperationsRepository } = require("./db/repositories/operations.cjs");
+const { ShiftSyncJournal } = require("./db/shift-sync-journal.cjs");
 const { readAnalytics } = require("./db/repositories/analytics.cjs");
 const { aggregatePolicy } = require("./db/write-policy.cjs");
 const { AggregateRepository } = require("./db/repositories/aggregates.cjs");
@@ -59,6 +60,9 @@ const databaseService = new DatabaseService({
   manager: databaseManager,
   migrate: (profile) => applyMigrations(databaseManager, profile),
   log: diagnostics.logConnection,
+  startupPaused:()=>syncCoordinator.paused,
+  startupIdentity:()=>{const terminal=terminalStore.read();return [authorizationServerUrl(),cloudCredentials.read()?.url??"",terminal?[terminal.tokenId,terminal.deviceUse,terminal.locationId,terminal.storeId,terminal.branchId]:null];},
+  publishStartupActivity:(activity)=>{if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send("database:startup-activity",activity);},
   publish: (state) => {
     for (const win of BrowserWindow.getAllWindows()) win.webContents.send("database:state", state);
   },
@@ -68,11 +72,18 @@ const jobRepository = new JobRepository(databaseManager);
 const jobManager = new JobManager(jobRepository, { publish: (job) => { for (const win of BrowserWindow.getAllWindows()) win.webContents.send("jobs:state", job); } });
 const syncRegistry = loadRegistry();
 const syncCheckpoints = new CheckpointRepository(databaseManager);
-const syncCloud = new CloudClient({ configStore, terminalStore, connectionManager: databaseManager });
+const syncCloud = new CloudClient({ configStore, terminalStore, connectionManager: databaseManager,financialBasisContext:()=>({projectOrigin:cloudCredentials.read({strict:true})?.url,branchId:localBranchId()}) });
+const shiftAuthorKeys = require("./security/shift-author-key.cjs").createShiftAuthorKeys({safeStorage,directory:()=>app.getPath("userData")});
+const shiftAuthority = new (require("./shift-authority.cjs").ShiftAuthorAuthority)({
+  keys:shiftAuthorKeys,session:adminSession,connectionManager:databaseManager,
+  terminal:()=>terminalStore.read(),project:()=>cloudCredentials.read({strict:true})?.url,
+  branch:()=>localBranchId(),isManagementDevice:()=>isManagementDevice(),backendUrl:()=>authorizationServerUrl(),
+});
 const changeReader = new ChangeReader(databaseManager, syncRegistry);
 const conflictRepository = new ConflictRepository(databaseManager);
+const legacyPushWorker = new PushWorker({ reader:changeReader,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,validateAuthor:proof=>shiftAuthority.validatePending(proof),validateClosingStart:proof=>shiftAuthority.validatePendingClosingStart(proof) });
 const syncCoordinator = new SyncCoordinator({
-  pushWorker: new PushWorker({ reader:changeReader,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry }),
+  pushWorker: {reader:changeReader,run:options=>shiftFinancialRuntime.runPush(options)},
   pullWorker: new PullWorker({ connectionManager:databaseManager,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,reader:changeReader,conflicts:conflictRepository,publish:publishBusinessChange }),
   publish: (state) => { for (const win of BrowserWindow.getAllWindows()) win.webContents.send("sync:state",state); },
 });
@@ -80,8 +91,17 @@ const localDataLifecycle = new LocalDataLifecycle({ connectionManager:databaseMa
 const managementReplica = new (require("./sync/management-replica.cjs").ManagementReplica)({ cloud:syncCloud, databaseService, connectionManager:databaseManager, lifecycle:localDataLifecycle, jobs:jobRepository, coordinator:syncCoordinator });
 const mainTelemetry = createTelemetry({ databaseService,syncCoordinator,jobRepository,configStore,terminalStore,app });
 const operationsRepository = new OperationsRepository(databaseManager, syncRegistry);
+const shiftSyncJournal = new ShiftSyncJournal(operationsRepository,{authorRequired:true});
+// Main-private FIN62 seam. No renderer/IPC configuration and no activation.
+const shiftFinancialDraftProvider = null;
 const aggregateRepository = new AggregateRepository(databaseManager, operationsRepository);
 const receiptRepository = new ReceiptRepository(databaseManager, syncCloud);
+const shiftFinancialRuntime = new (require('./db/shift-financial-runtime.cjs').ShiftFinancialRuntime)({
+  manager:databaseManager,cloud:syncCloud,terminal:()=>terminalStore.read(),authority:shiftAuthority,
+  vault:require('./security/financial-capability-vault.cjs').createFinancialCapabilityVault({safeStorage,directory:()=>app.getPath('userData')}),
+  operationsRepository,registry:syncRegistry,checkpoints:syncCheckpoints,
+  legacy:{aggregate:aggregateRepository,receipts:receiptRepository,journal:shiftSyncJournal,push:legacyPushWorker},
+});
 const authorizationRulesRepository = new AuthorizationRulesRepository(databaseManager);
 
 function publishBusinessChange(change){
@@ -109,7 +129,7 @@ const approvalTokenVerifier = createApprovalTokenVerifier({
     try {
       const response = await fetch(`${url}/api/v1/pos/sync?operation=authorization`, {
         method: "POST", signal: abort.signal, headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action: "approval_credentials", data: { action: "bundle", data: { terminalToken } } }),
+        body: JSON.stringify({ action: "approval_credentials", data: { action: "bundle", data: { terminalToken, deviceBindingProof:terminalStore.read()?.deviceBindingProof } } }),
       });
       return response.ok ? approvalVerifierKey.openEnvelope(await response.json()) : null;
     } finally { clearTimeout(timer); }
@@ -117,23 +137,45 @@ const approvalTokenVerifier = createApprovalTokenVerifier({
 });
 
 function isManagementDevice(){const t=terminalStore.read();return Boolean(t?.tokenId&&t.deviceUse==="management"&&!t.locationId&&!t.storeId&&!t.branchId);}
+const activationBoundary = require("./verified-activation.cjs");
 function localBranchId(){
   if(isManagementDevice())return null;
   const terminal=terminalStore.read()??{};
-  return [terminal.locationId,terminal.storeId,terminal.branchId,adminSession.branchId()]
+  return [terminal.locationId,terminal.storeId,terminal.branchId]
     .map(value=>recordId(String(value??"").trim())).find(Boolean)??null;
 }
-function rememberVerifiedBranch(branchId){
-  if(!branchId||isManagementDevice())return;
-  const terminal=terminalStore.read();
-  if(terminal?.tokenId&&!terminal.locationId&&!terminal.storeId&&!terminal.branchId){
-    terminalStore.write({...terminal,branchId});
-    // The renderer may already have loaded its first local snapshot while the
-    // sealed activation still lacked its branch mirror. Wake it immediately;
-    // otherwise SQL contains the catalogue but the till remains empty until a
-    // full application restart.
-    publishBusinessChange({kind:"branch",branchId:String(branchId)});
-  }
+function rememberVerifiedBranch(){ /* Account scope never assigns a physical terminal. */ }
+function authorizedLocalBranch(){return activationBoundary.authorizedBranch(terminalStore.read(),adminSession.branchId());}
+async function assertSafeRegistrationChange(config){
+  const previous=terminalStore.lastBinding();
+  if(!previous||activationBoundary.sameBinding(activationBoundary.binding(previous),activationBoundary.binding(config)))return;
+  if(!adminSession.hasLevel("admin")&&!adminSession.recoveryActive())throw new Error("An administrator must authorize terminal reassignment.");
+  if(!databaseManager.isConnected())throw new Error("Connect the local database before changing terminal registration so pending transactions can be checked.");
+  const branch=activationBoundary.binding(previous)?.branchId;
+  // Management can have pending work from several branches in the same SQL
+  // store. Inspect all unacknowledged work rather than treating null as a
+  // branch or preventing a legitimate replacement activation forever.
+  const summary=branch?await changeReader.pendingSummary(branch):{
+    pending:Number((await databaseManager.pool.request().query("SELECT COUNT_BIG(*) pending FROM dbo.sync_change_journal WHERE acknowledged_at IS NULL;")).recordset?.[0]?.pending??0),failed:0,
+  };
+  const conflicts=await conflictRepository.unresolved();
+  if(summary.pending||summary.failed||conflicts?.length)throw new Error("Synchronize or review pending transactions before changing terminal registration.");
+}
+function recordRegistrationChange(previous,config){
+  const before=activationBoundary.binding(previous),after=activationBoundary.binding(config);
+  if(!before||activationBoundary.sameBinding(before,after))return;
+  diagnostics.logConnection("activation.reassignment.succeeded",{category:"activation",stage:"reassignment",actor:adminSession.identity()?.subject??null,previousMode:before.mode,previousBranch:before.branchId,mode:after.mode,branch:after.branchId});
+}
+async function verifiedTerminalMirror(config){
+  const existing=terminalStore.read();
+  activationBoundary.assertUnchanged(existing,config);
+  if(existing&&(existing.deviceBindingProof||!config.deviceBindingProof))return {...existing};
+  const backend=authorizationServerUrl();
+  if(!backend||!config?.deviceBindingProof)throw new Error("Connect to the POS backend to verify this terminal registration.");
+  const response=await fetch(`${backend}/api/public/terminal-pairing`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({tokenId:config.tokenId,proofHash:config.deviceBindingProof}),signal:AbortSignal.timeout(8000)});
+  const result=await response.json();
+  if(!response.ok||!result.approved)throw new Error("The terminal registration could not be verified.");
+  return activationBoundary.canonicalConfig(config,result.terminal,existing);
 }
 function stampVerifiedBranchOperations(operations,branchId,aggregateKind=null){
   const branchStampedTables=new Set(["audit_logs","shift_sessions","activity_events","authorization_requests","authorization_log","record_edits","member_verifications","entity_status_history"]);
@@ -206,20 +248,24 @@ function prepareLocalData({force=false}={}){
   if(localDataPreparePromise)return localDataPreparePromise;
   const profile=databaseConfig.profile()??{};
   localDataPreparePromise=(async()=>{
+    const activity=databaseService.beginStartupActivity?.()??{report:()=>{},finish:()=>{}};
+    let preparationError;
     try{
-      const result=await localDataLifecycle.ensure({branchId:localBranchId(),historyDays:Number(profile.retentionDays)||90,force});
+      const result=await localDataLifecycle.ensure({branchId:localBranchId(),historyDays:Number(profile.retentionDays)||90,force,onActivity:activity.report});
       diagnostics.logConnection("synchronization.bootstrap.succeeded", { category:"synchronization", stage:"bootstrap", state:"ready" });
       return result;
     }
     catch(error){
-      // Reaching this function means SQL Server already passed validation and is
-      // connected. A cloud, activation or reconciliation problem belongs to the
-      // synchronization status; it must not describe the healthy local database
-      // as degraded or disable offline trading.
-      databaseService.markReady({phase:"sync_pending",syncReady:false,code:error?.code??"EBOOTSTRAP",error:String(error?.message??error),differences:error?.differences});
-      diagnostics.logConnection("synchronization.bootstrap.failed", { category:"synchronization", stage:"bootstrap", code:error?.code??"EBOOTSTRAP", message:String(error?.message??error) });
+      preparationError=error;
+      // A healthy SQL connection is not proof of a complete local snapshot.
+      // Preserve offline access only if this run already qualified that cache;
+      // first/incomplete bootstrap failures keep the gate without disconnecting SQL.
+      const detail={phase:"sync_pending",syncReady:false,code:error?.code??"EBOOTSTRAP",error:String(error?.message??error),differences:error?.differences};
+      if(localDataLifecycle.preserveCachedReady?.())databaseService.markReady(detail);
+      else databaseService.transition("enabled_bootstrapping",detail);
+      diagnostics.logConnection("synchronization.bootstrap.failed", { category:"synchronization", stage:"bootstrap", code:error?.code??"EBOOTSTRAP", message:String(error?.message??error), ...diagnostics.bootstrapDiagnostic(error,syncRegistry.tables.map(table=>table.cloudTable)) });
       throw error;
-    }
+    }finally{activity.finish(preparationError);}
   })().finally(()=>{localDataPreparePromise=null;});
   return localDataPreparePromise;
 }
@@ -305,7 +351,7 @@ async function runAutomaticSync() {
   const includeActivity = Date.now() - lastActivityFlush >= ACTIVITY_INTERVAL_MS;
   let result = await syncCoordinator.runNow({ branchId: localBranchId(), batchSize: 500, includeActivity });
   if (result.ok && includeActivity) lastActivityFlush = Date.now();
-  if (!result.ok) diagnostics.logConnection("synchronization.automatic.failed", { category:"synchronization", stage:result.stage??"automatic", code:result.code??"ESYNC", message:result.error??result.message??"Automatic synchronization failed." });
+  if (!result.ok) diagnostics.logConnection("synchronization.automatic.failed", { category:"synchronization", stage:result.stage??"automatic", code:result.code??"ESYNC", message:result.error??result.message??"Automatic synchronization failed.", ...diagnostics.bootstrapDiagnostic(result,syncRegistry.tables.map(table=>table.cloudTable)) });
   if (result.code === "ECHANGEGAP") {
     try {
       await prepareLocalData({ force: true });
@@ -760,6 +806,10 @@ async function startAppServer(preferredPort = null) {
 
 let cloudServerRestartTimer = null;
 function scheduleCloudServerRestart() {
+  // Vite is owned by the developer, not by this Electron process. Native
+  // requests read the vault directly and the renderer applies its saved
+  // override; only our packaged server needs a new environment after a save.
+  if (DEV_URL) return;
   if (cloudServerRestartTimer) clearTimeout(cloudServerRestartTimer);
   cloudServerRestartTimer = setTimeout(async () => {
     cloudServerRestartTimer = null;
@@ -1208,6 +1258,7 @@ async function printRaw(bytes, options = {}) {
 const shiftMoney = (value) => Math.round(Number(value ?? 0) * 100) / 100;
 
 async function startLocalShiftClose(raw) {
+  const authorCapture = shiftAuthority.capture("START_CLOSE");
   const branchId = localBranchId();
   if (!branchId) throw Object.assign(new Error("The terminal branch is not configured."), { code: "EBRANCH" });
   const shiftId = guard.uuid(raw.shiftId, { name: "shift id" });
@@ -1215,15 +1266,17 @@ async function startLocalShiftClose(raw) {
   if (!reason) throw new Error("A reason for closing this shift is required.");
   const result = await operationsRepository.query(branchId, "shifts", { match: { id: shiftId }, limit: 1 });
   const shift = result.rows?.[0];
+  authorCapture.assertCurrent();
   if (!shift) throw new Error("That shift no longer exists on this terminal.");
   const state = String(shift.state ?? (shift.closed_at ? "CLOSED" : "ACTIVE"));
   if (state !== "ACTIVE") {
     pendingShiftCloseSync.add(shiftId);
     return { ok: true, state, replayed: true };
   }
-  const identity = adminSession.identity();
-  const actor = identity?.subject ?? String(shift.opened_by_name ?? "");
-  const terminalId = String(raw.terminalId ?? shift.terminal_id ?? "").trim() || null;
+  const financialContext=typeof shiftFinancialRuntime==='undefined'?null:await shiftFinancialRuntime.shiftContext(branchId,shiftId);
+  authorCapture.assertCurrent();
+  const actor = authorCapture.subject;
+  const terminalId = financialContext?.scope.terminalId??(String(raw.terminalId ?? shift.terminal_id ?? "").trim() || null);
   const differentOperator = Boolean(shift.opened_by_staff_id && actor && recordId(String(shift.opened_by_staff_id)) !== recordId(actor));
   const differentTerminal = Boolean(shift.terminal_id && recordId(String(shift.terminal_id)) !== recordId(terminalId));
   const forced = differentOperator || differentTerminal;
@@ -1234,13 +1287,15 @@ async function startLocalShiftClose(raw) {
   if (!mayCloseShift({differentOperator,differentTerminal,isAdmin:adminSession.hasLevel("admin"),canManageOthers:adminSession.hasPermission("can_manage_other_shifts"),canClose:adminSession.hasPermission("can_close_shift"),allowHandover:policy?.allowAnyStaffCloseShift === true}))
     throw Object.assign(new Error("You do not have permission to close another employee or terminal shift."), { code: "EFORBIDDEN" });
   const now = new Date().toISOString();
+  const author = await shiftAuthority.prepare(authorCapture);
+  const eventId = randomUUID();
   await operationsRepository.apply("Starting shift close", [
     { kind: "update", table: "shifts", match: { id: shiftId }, values: {
       store_id: branchId, state: "CASH_COUNT_REQUIRED", close_reason: reason,
       closing_started_at: now, closing_started_by: actor, updated_at: now,
     } },
     { kind: "insert", table: "shift_close_events", rows: [{
-      id: randomUUID(), shift_id: shiftId, store_id: branchId, terminal_id: terminalId,
+      id: eventId, shift_id: shiftId, store_id: branchId, terminal_id: terminalId,
       event: "closing_started", from_state: "ACTIVE", to_state: "CASH_COUNT_REQUIRED",
       detail: {
         reason, forced,
@@ -1249,7 +1304,13 @@ async function startLocalShiftClose(raw) {
       },
       actor_name: actor, actor_staff_id: actor, created_at: now,
     }] },
-  ], { branchId, terminalId });
+  ], { branchId, terminalId }, transaction => require('./db/shift-closing-start.cjs').save(operationsRepository, transaction, author, {branchId,shiftId,eventId}), async transaction => {
+    author.assertCurrent();
+    const request = new (operationsRepository.connectionManager.sql().Request)(transaction);
+    const current = (await request.input('shift',shiftId).input('branch',branchId).query('SELECT * FROM dbo.[shifts] WITH(UPDLOCK,HOLDLOCK) WHERE id=@shift AND store_id=@branch;')).recordset?.[0];
+    if (!current || String(current.state ?? (current.closed_at ? 'CLOSED' : 'ACTIVE')) !== 'ACTIVE' ||
+      JSON.stringify(require('./sync/row-codec.cjs').toRendererRow(operationsRepository.tables.get('shifts'),current)) !== JSON.stringify(shift)) throw Object.assign(new Error('The shift changed while closing was being prepared. Reload and retry.'),{code:'ESHIFT_LOCAL_CHANGED'});
+  }, () => author.assertCurrent());
   publishBusinessChange({ kind: "shift", branchId, operationId: shiftId });
   pendingShiftCloseSync.add(shiftId);
   scheduleAutomaticSync(250);
@@ -1261,52 +1322,69 @@ async function startLocalShiftClose(raw) {
  * only the resulting workflow state is returned.
  */
 async function commitLocalShiftCashCount(raw) {
+  const authorCapture = shiftAuthority.capture("ORIGINAL");
   const branchId = localBranchId();
   if (!branchId) throw Object.assign(new Error("The terminal branch is not configured."), { code: "EBRANCH" });
   const shiftId = guard.uuid(raw.shiftId, { name: "shift id" });
-  const cash = Number(raw.cash);
-  const card = raw.card == null ? null : Number(raw.card);
-  const digital = raw.digital == null ? null : Number(raw.digital);
-  if (!Number.isFinite(cash) || cash < 0) throw new Error("Enter the cash counted in the drawer.");
-  if (card != null && (!Number.isFinite(card) || card < 0)) throw new Error("The card total counted cannot be negative.");
-  if (digital != null && (!Number.isFinite(digital) || digital < 0)) throw new Error("The digital total counted cannot be negative.");
-  const shifts = await operationsRepository.query(branchId, "shifts", { match: { id: shiftId }, limit: 1 });
-  const shift = shifts.rows?.[0];
+  if(typeof shiftFinancialRuntime!=='undefined'){
+    const saved=await shiftFinancialRuntime.savedReplay({branchId,shiftId,kind:'ORIGINAL',raw,actor:authorCapture.subject});
+    authorCapture.assertCurrent();if(saved){pendingShiftCloseSync.add(shiftId);return saved;}
+  }
+  const financialContext=typeof shiftFinancialRuntime==='undefined'?null:await shiftFinancialRuntime.shiftContext(branchId,shiftId);
+  const financialJournal=financialContext?.journal??shiftSyncJournal,financialDraftProvider=financialContext?.draftProvider??shiftFinancialDraftProvider;
+  const exactEnabled = financialDraftProvider !== null;
+  const exactCount = value => require("./db/shift-financial-draft.cjs").normalizeCountedInput(value);
+  const cash = exactEnabled ? exactCount(raw.cash) : Number(raw.cash);
+  const card = raw.card == null ? null : exactEnabled ? exactCount(raw.card) : Number(raw.card);
+  const digital = raw.digital == null ? null : exactEnabled ? exactCount(raw.digital) : Number(raw.digital);
+  if (!exactEnabled && (!Number.isFinite(cash) || cash < 0)) throw new Error("Enter the cash counted in the drawer.");
+  if (!exactEnabled && card != null && (!Number.isFinite(card) || card < 0)) throw new Error("The card total counted cannot be negative.");
+  if (!exactEnabled && digital != null && (!Number.isFinite(digital) || digital < 0)) throw new Error("The digital total counted cannot be negative.");
+  const observation = await financialJournal.observe(branchId, shiftId);
+  const shift = observation.parent;
   if (!shift) throw new Error("That shift no longer exists on this terminal.");
   const state = String(shift.state ?? (shift.closed_at ? "CLOSED" : "ACTIVE"));
   if (state === "ACTIVE") throw new Error("Start the closing process before counting the drawer.");
+  authorCapture.assertCurrent();
+  const actor = authorCapture.subject;
+  const terminalId = financialContext?.scope.terminalId??(String(raw.terminalId ?? shift.terminal_id ?? "").trim() || null);
+  const clientKey = String(raw.clientKey ?? `${shiftId}:original`);
+  const intent = { branchId, shiftId, clientKey, actor, terminalId,
+    cash: exactEnabled ? cash : shiftMoney(cash), card: card == null ? null : exactEnabled ? card : shiftMoney(card), digital: digital == null ? null : exactEnabled ? digital : shiftMoney(digital) };
+  const replay = await financialJournal.originalReplay(intent);
+  authorCapture.assertCurrent();
+  if (replay) {
+    pendingShiftCloseSync.add(shiftId);
+    return { ok: true, state: replay.state, replayed: true };
+  }
   if (!["CLOSING_STARTED", "CASH_COUNT_REQUIRED"].includes(state)) {
     pendingShiftCloseSync.add(shiftId);
     return { ok: true, state };
   }
-  const prior = await operationsRepository.query(branchId, "shift_cash_counts", { match: { shift_id: shiftId, kind: "ORIGINAL" }, limit: 1 });
-  if (prior.rows?.length) {
-    const current = await operationsRepository.query(branchId, "shifts", { match: { id: shiftId }, limit: 1 });
-    pendingShiftCloseSync.add(shiftId);
-    return { ok: true, state: String(current.rows?.[0]?.state ?? "CLOSED"), replayed: true };
-  }
-  const expected = await operationsRepository.shiftExpectedTotals(branchId, shiftId);
-  const storeResult = await operationsRepository.query(branchId, "stores", { match: { id: branchId }, limit: 1 });
-  const expectedCash = shiftMoney(expected.expected_cash);
-  const expectedCard = shiftMoney(expected.expected_card);
-  const expectedDigital = shiftMoney(expected.expected_digital);
-  const countedCash = shiftMoney(cash);
-  const countedCard = card == null ? null : shiftMoney(card);
-  const countedDigital = digital == null ? null : shiftMoney(digital);
-  const varianceCash = shiftMoney(countedCash - expectedCash);
-  const varianceCard = countedCard == null ? null : shiftMoney(countedCard - expectedCard);
-  const varianceDigital = countedDigital == null ? null : shiftMoney(countedDigital - expectedDigital);
-  const varianceTotal = shiftMoney(varianceCash + (varianceCard ?? 0) + (varianceDigital ?? 0));
-  const varianceStatus = Math.abs(varianceTotal) <= 0.005 ? "NO_VARIANCE" : varianceTotal > 0 ? "OVER" : "SHORT";
-  const identity = adminSession.identity();
-  const actor = identity?.subject ?? String(shift.opened_by_name ?? "");
-  const terminalId = String(raw.terminalId ?? shift.terminal_id ?? "").trim() || null;
+  let storeResult = exactEnabled ? await operationsRepository.query(branchId, "stores", { match: { id: branchId }, limit: 1 }) : null;
+  const exactPrepared = exactEnabled ? await financialDraftProvider.readDraft({branchId,shiftId,kind:"ORIGINAL",counted:{cash,card,digital},branchName:String(storeResult.rows?.[0]?.name ?? branchId),actor}) : null;
+  authorCapture.assertCurrent();
+  if(exactEnabled && (!exactPrepared || !/^[a-f0-9]{64}$/.test(exactPrepared.sourceHash))) throw Object.assign(new Error("The exact closing snapshot is unavailable."),{code:"EFINANCIAL_DRAFT_INVALID"});
+  const exactDraft=exactPrepared?.draft;
+  const expected = exactEnabled ? exactPrepared.totals : await operationsRepository.shiftExpectedTotals(branchId, shiftId);
+  if(!storeResult) storeResult=await operationsRepository.query(branchId, "stores", { match: { id: branchId }, limit: 1 });
+  const expectedCash = exactEnabled ? exactDraft.expected_cash : shiftMoney(expected.expected_cash);
+  const expectedCard = exactEnabled ? exactDraft.expected_card : shiftMoney(expected.expected_card);
+  const expectedDigital = exactEnabled ? exactDraft.expected_digital : shiftMoney(expected.expected_digital);
+  const countedCash = exactEnabled ? exactDraft.counted_cash : shiftMoney(cash);
+  const countedCard = exactEnabled ? exactDraft.counted_card : card == null ? null : shiftMoney(card);
+  const countedDigital = exactEnabled ? exactDraft.counted_digital : digital == null ? null : shiftMoney(digital);
+  const varianceCash = exactEnabled ? exactDraft.variance_cash : shiftMoney(countedCash - expectedCash);
+  const varianceCard = exactEnabled ? exactDraft.variance_card : countedCard == null ? null : shiftMoney(countedCard - expectedCard);
+  const varianceDigital = exactEnabled ? exactDraft.variance_digital : countedDigital == null ? null : shiftMoney(countedDigital - expectedDigital);
+  const varianceTotal = exactEnabled ? exactDraft.variance_total : shiftMoney(varianceCash + (varianceCard ?? 0) + (varianceDigital ?? 0));
+  const varianceStatus = exactEnabled ? exactDraft.variance_status : Math.abs(varianceTotal) <= 0.005 ? "NO_VARIANCE" : varianceTotal > 0 ? "OVER" : "SHORT";
   const countId = randomUUID();
   const reconciliationId = randomUUID();
   const now = new Date().toISOString();
-  const openingFloat = shiftMoney(shift.opening_float);
-  const totalSales = shiftMoney(expected.total_sales);
-  const netCashSales = shiftMoney(expectedCash - openingFloat);
+  const openingFloat = exactEnabled ? exactDraft.opening_float : shiftMoney(shift.opening_float);
+  const totalSales = exactEnabled ? exactPrepared.summary.total_sales : shiftMoney(expected.total_sales);
+  const netCashSales = exactEnabled ? exactDraft.net_cash_sales : shiftMoney(expectedCash - openingFloat);
   const branchName = String(storeResult.rows?.[0]?.name ?? branchId);
   const terminalName = String(shift.terminal_name ?? terminalId ?? "");
   const operations = [
@@ -1315,7 +1393,7 @@ async function commitLocalShiftCashCount(raw) {
       kind: "ORIGINAL", counted_cash: countedCash, counted_card: countedCard,
       counted_digital: countedDigital, reason: shift.close_reason ?? null,
       counted_by_name: actor, counted_by_staff_id: actor,
-      client_key: String(raw.clientKey ?? `${shiftId}:original`), created_at: now,
+      client_key: clientKey, created_at: now,
     }] },
     { kind: "insert", table: "shift_reconciliations", rows: [{
       id: reconciliationId, shift_id: shiftId, store_id: branchId, count_id: countId,
@@ -1335,7 +1413,8 @@ async function commitLocalShiftCashCount(raw) {
     ] },
     { kind: "update", table: "shifts", match: { id: shiftId }, values: {
       store_id: branchId, state: "CLOSED", status: "CLOSED",
-      closed_at: shift.closed_at ?? now, final_counted_cash: countedCash,
+      closed_at: shift.closed_at ?? now, closed_by_name: actor, closed_by_staff_id: actor,
+      final_counted_cash: countedCash,
       counted_cash: countedCash, closing_float: countedCash, counted_card: countedCard,
       counted_digital: countedDigital, expected_cash: expectedCash, expected_card: expectedCard,
       expected_digital: expectedDigital, variance_cash: varianceCash,
@@ -1344,10 +1423,13 @@ async function commitLocalShiftCashCount(raw) {
     } },
   ];
   const { shiftSummaryRow } = require("./db/shift-summary.cjs");
-  operations.push({ kind: "insert", table: "shift_notifications", rows: [shiftSummaryRow({
+  operations.push({ kind: "insert", table: "shift_notifications", rows: [exactEnabled ? {
+    id:randomUUID(),shift_id:shift.id,store_id:branchId,store_name:branchName,terminal_name:terminalName,closed_by:actor,opened_at:shift.opened_at,closed_at:shift.closed_at??now,channels:["in_app"],created_at:shift.closed_at??now,...exactPrepared.summary,
+  } : shiftSummaryRow({
     id: randomUUID(), shift, totals: expected, branchId, branchName, terminalName,
     actor, closedAt: shift.closed_at ?? now, countedCash,
   })] });
+  const amountText = value => exactEnabled ? value : value.toFixed(2);
   if (varianceStatus !== "NO_VARIANCE") {
     const message = [
       `Cashier: ${actor}`,
@@ -1355,14 +1437,14 @@ async function commitLocalShiftCashCount(raw) {
       `Terminal: ${terminalName}`,
       `Shift: ${shiftId}`,
       `Closed: ${now}`,
-      `Opening float: ${openingFloat.toFixed(2)}`,
-      `Total sales: ${totalSales.toFixed(2)}`,
-      `Net cash sales: ${netCashSales.toFixed(2)}`,
-      `Expected cash: ${expectedCash.toFixed(2)}`,
-      `Counted cash: ${countedCash.toFixed(2)}`,
-      `Card expected / counted: ${expectedCard.toFixed(2)} / ${countedCard == null ? "not counted" : countedCard.toFixed(2)}`,
-      `Digital expected / counted: ${expectedDigital.toFixed(2)} / ${countedDigital == null ? "not counted" : countedDigital.toFixed(2)}`,
-      `Variance: ${varianceTotal > 0 ? "+" : ""}${varianceTotal.toFixed(2)}`,
+      `Opening float: ${amountText(openingFloat)}`,
+      `Total sales: ${amountText(totalSales)}`,
+      `Net cash sales: ${amountText(netCashSales)}`,
+      `Expected cash: ${amountText(expectedCash)}`,
+      `Counted cash: ${amountText(countedCash)}`,
+      `Card expected / counted: ${amountText(expectedCard)} / ${countedCard == null ? "not counted" : amountText(countedCard)}`,
+      `Digital expected / counted: ${amountText(expectedDigital)} / ${countedDigital == null ? "not counted" : amountText(countedDigital)}`,
+      `Variance: ${varianceStatus === "OVER" ? "+" : ""}${amountText(varianceTotal)}`,
     ].join("\n");
     operations.push({
       kind: "insert", table: "shift_variance_alerts", rows: [{
@@ -1393,13 +1475,16 @@ async function commitLocalShiftCashCount(raw) {
       }],
     });
   }
+  const author = await shiftAuthority.prepare(authorCapture);
   try {
-    await operationsRepository.apply("Closing shift cash count", operations, { branchId, terminalId });
+    await financialJournal.apply("Closing shift cash count", operations, { branchId, terminalId, observation, author, ...(exactEnabled ? {financialSourceHash:exactPrepared.sourceHash} : {}) });
   } catch (error) {
     if (![2601, 2627].includes(Number(error?.number ?? error?.originalError?.info?.number))) throw error;
-    const current = await operationsRepository.query(branchId, "shifts", { match: { id: shiftId }, limit: 1 });
+    const saved = await financialJournal.originalReplay(intent);
+    authorCapture.assertCurrent();
+    if (!saved) throw error;
     pendingShiftCloseSync.add(shiftId);
-    return { ok: true, state: String(current.rows?.[0]?.state ?? "CLOSED"), replayed: true };
+    return { ok: true, state: saved.state, replayed: true };
   }
   publishBusinessChange({ kind: "shift", branchId, operationId: shiftId });
   pendingShiftCloseSync.add(shiftId);
@@ -1408,45 +1493,65 @@ async function commitLocalShiftCashCount(raw) {
 }
 
 async function commitLocalShiftRecount(raw) {
+  const authorCapture = shiftAuthority.capture("RECOUNT");
   const branchId = localBranchId();
   if (!branchId) throw Object.assign(new Error("The terminal branch is not configured."), { code: "EBRANCH" });
   const shiftId = guard.uuid(raw.shiftId, { name: "shift id" });
   const reason = guard.text(raw.reason, { name: "recount reason", max: 400 }).trim();
   if (!reason) throw new Error("A reason for the recount is required.");
-  const cash = Number(raw.cash);
-  const card = raw.card == null ? null : Number(raw.card);
-  const digital = raw.digital == null ? null : Number(raw.digital);
-  if (!Number.isFinite(cash) || cash < 0) throw new Error("Enter the recounted cash amount.");
-  if (card != null && (!Number.isFinite(card) || card < 0)) throw new Error("The card total counted cannot be negative.");
-  if (digital != null && (!Number.isFinite(digital) || digital < 0)) throw new Error("The digital total counted cannot be negative.");
-  const result = await operationsRepository.query(branchId, "shifts", { match: { id: shiftId }, limit: 1 });
-  const shift = result.rows?.[0];
+  if(typeof shiftFinancialRuntime!=='undefined'){
+    const saved=await shiftFinancialRuntime.savedReplay({branchId,shiftId,kind:'RECOUNT',raw,actor:authorCapture.subject,reason});
+    authorCapture.assertCurrent();if(saved)return saved;
+  }
+  const financialContext=typeof shiftFinancialRuntime==='undefined'?null:await shiftFinancialRuntime.shiftContext(branchId,shiftId);
+  const financialJournal=financialContext?.journal??shiftSyncJournal,financialDraftProvider=financialContext?.draftProvider??shiftFinancialDraftProvider;
+  const exactEnabled = financialDraftProvider !== null;
+  const exactCount = value => require("./db/shift-financial-draft.cjs").normalizeCountedInput(value);
+  const cash = exactEnabled ? exactCount(raw.cash) : Number(raw.cash);
+  const card = raw.card == null ? null : exactEnabled ? exactCount(raw.card) : Number(raw.card);
+  const digital = raw.digital == null ? null : exactEnabled ? exactCount(raw.digital) : Number(raw.digital);
+  if (!exactEnabled && (!Number.isFinite(cash) || cash < 0)) throw new Error("Enter the recounted cash amount.");
+  if (!exactEnabled && card != null && (!Number.isFinite(card) || card < 0)) throw new Error("The card total counted cannot be negative.");
+  if (!exactEnabled && digital != null && (!Number.isFinite(digital) || digital < 0)) throw new Error("The digital total counted cannot be negative.");
+  const observation = await financialJournal.observe(branchId, shiftId);
+  const shift = observation.parent;
   if (!shift) throw new Error("That shift no longer exists on this terminal.");
   const state = String(shift.state ?? (shift.closed_at ? "CLOSED" : "ACTIVE"));
   if (!["VARIANCE_REVIEW_REQUIRED", "RECONCILIATION", "CLOSED"].includes(state))
     throw new Error("This shift has not been counted yet.");
-  const clientKey = String(raw.clientKey ?? `${shiftId}:recount:${cash}:${card ?? ""}:${digital ?? ""}:${reason}`);
-  const prior = await operationsRepository.query(branchId, "shift_cash_counts", { match: { client_key: clientKey }, limit: 1 });
-  if (prior.rows?.length) return { ok: true, state: "CLOSED", replayed: true };
-  const expected = await operationsRepository.shiftExpectedTotals(branchId, shiftId);
-  const expectedCash = shiftMoney(expected.expected_cash);
-  const expectedCard = shiftMoney(expected.expected_card);
-  const expectedDigital = shiftMoney(expected.expected_digital);
-  const countedCash = shiftMoney(cash);
-  const countedCard = card == null ? null : shiftMoney(card);
-  const countedDigital = digital == null ? null : shiftMoney(digital);
-  const varianceCash = shiftMoney(countedCash - expectedCash);
-  const varianceCard = countedCard == null ? null : shiftMoney(countedCard - expectedCard);
-  const varianceDigital = countedDigital == null ? null : shiftMoney(countedDigital - expectedDigital);
-  const varianceTotal = shiftMoney(varianceCash + (varianceCard ?? 0) + (varianceDigital ?? 0));
-  const varianceStatus = Math.abs(varianceTotal) <= 0.005 ? "NO_VARIANCE" : varianceTotal > 0 ? "OVER" : "SHORT";
-  const identity = adminSession.identity();
-  const actor = identity?.subject ?? String(shift.opened_by_name ?? "");
-  const terminalId = String(raw.terminalId ?? shift.terminal_id ?? "").trim() || null;
+  // Preserve the existing ordinary default key spelling (12, 1.5), without
+  // coercing exact counted decimals through binary Number arithmetic.
+  const replayAmount = value => exactEnabled && typeof value === "string" ? value.replace(/\.00$/, "").replace(/(\.[0-9])0$/, "$1") : value;
+  const clientKey = String(raw.clientKey ?? `${shiftId}:recount:${replayAmount(cash)}:${replayAmount(card) ?? ""}:${replayAmount(digital) ?? ""}:${reason}`);
+  authorCapture.assertCurrent();
+  const actor = authorCapture.subject;
+  const terminalId = financialContext?.scope.terminalId??(String(raw.terminalId ?? shift.terminal_id ?? "").trim() || null);
+  const intent = { branchId, shiftId, clientKey, reason, actor, terminalId,
+    cash: exactEnabled ? cash : shiftMoney(cash), card: card == null ? null : exactEnabled ? card : shiftMoney(card), digital: digital == null ? null : exactEnabled ? digital : shiftMoney(digital) };
+  const replayed = await financialJournal.recountReplay(intent);
+  authorCapture.assertCurrent();
+  if (replayed) return { ok: true, state: "CLOSED", replayed: true };
+  const exactPrepared = exactEnabled ? await financialDraftProvider.readDraft({branchId,shiftId,kind:"RECOUNT",counted:{cash,card,digital},branchName:null,actor}) : null;
+  authorCapture.assertCurrent();
+  if(exactEnabled && (!exactPrepared || !/^[a-f0-9]{64}$/.test(exactPrepared.sourceHash))) throw Object.assign(new Error("The exact closing snapshot is unavailable."),{code:"EFINANCIAL_DRAFT_INVALID"});
+  const exactDraft=exactPrepared?.draft;
+  const expected = exactEnabled ? exactPrepared.totals : await operationsRepository.shiftExpectedTotals(branchId, shiftId);
+  const expectedCash = exactEnabled ? exactDraft.expected_cash : shiftMoney(expected.expected_cash);
+  const expectedCard = exactEnabled ? exactDraft.expected_card : shiftMoney(expected.expected_card);
+  const expectedDigital = exactEnabled ? exactDraft.expected_digital : shiftMoney(expected.expected_digital);
+  const countedCash = exactEnabled ? exactDraft.counted_cash : shiftMoney(cash);
+  const countedCard = exactEnabled ? exactDraft.counted_card : card == null ? null : shiftMoney(card);
+  const countedDigital = exactEnabled ? exactDraft.counted_digital : digital == null ? null : shiftMoney(digital);
+  const varianceCash = exactEnabled ? exactDraft.variance_cash : shiftMoney(countedCash - expectedCash);
+  const varianceCard = exactEnabled ? exactDraft.variance_card : countedCard == null ? null : shiftMoney(countedCard - expectedCard);
+  const varianceDigital = exactEnabled ? exactDraft.variance_digital : countedDigital == null ? null : shiftMoney(countedDigital - expectedDigital);
+  const varianceTotal = exactEnabled ? exactDraft.variance_total : shiftMoney(varianceCash + (varianceCard ?? 0) + (varianceDigital ?? 0));
+  const varianceStatus = exactEnabled ? exactDraft.variance_status : Math.abs(varianceTotal) <= 0.005 ? "NO_VARIANCE" : varianceTotal > 0 ? "OVER" : "SHORT";
   const countId = randomUUID();
   const now = new Date().toISOString();
+  const author = await shiftAuthority.prepare(authorCapture);
   try {
-    await operationsRepository.apply("Saving shift recount", [
+    await financialJournal.apply("Saving shift recount", [
       { kind: "insert", table: "shift_cash_counts", rows: [{
         id: countId, shift_id: shiftId, store_id: branchId, terminal_id: terminalId,
         kind: "RECOUNT", counted_cash: countedCash, counted_card: countedCard,
@@ -1474,9 +1579,11 @@ async function commitLocalShiftRecount(raw) {
         variance_cash: varianceCash, variance_card: varianceCard, variance_digital: varianceDigital,
         variance_total: varianceTotal, variance_status: varianceStatus, updated_at: now,
       } },
-    ], { branchId, terminalId });
+    ], { branchId, terminalId, observation, author, ...(exactEnabled ? {financialSourceHash:exactPrepared.sourceHash} : {}) });
   } catch (error) {
     if (![2601, 2627].includes(Number(error?.number ?? error?.originalError?.info?.number))) throw error;
+    if (!await financialJournal.recountReplay(intent)) throw error;
+    authorCapture.assertCurrent();
     pendingShiftCloseSync.add(shiftId);
     return { ok: true, state: "CLOSED", replayed: true };
   }
@@ -1487,11 +1594,15 @@ async function commitLocalShiftRecount(raw) {
 }
 
 async function approveLocalShiftVariance(raw) {
+  const authorCapture = shiftAuthority.capture("VARIANCE");
   const branchId = localBranchId();
   if (!branchId) throw Object.assign(new Error("The terminal branch is not configured."), { code: "EBRANCH" });
   const shiftId = guard.uuid(raw.shiftId, { name: "shift id" });
-  const result = await operationsRepository.query(branchId, "shifts", { match: { id: shiftId }, limit: 1 });
-  const shift = result.rows?.[0];
+  const financialContext=typeof shiftFinancialRuntime==='undefined'?null:await shiftFinancialRuntime.shiftContext(branchId,shiftId);
+  const financialJournal=financialContext?.journal??shiftSyncJournal;
+  const observation = await financialJournal.observe(branchId, shiftId);
+  authorCapture.assertCurrent();
+  const shift = observation.parent;
   if (!shift) throw new Error("That shift no longer exists on this terminal.");
   const state = String(shift.state ?? (shift.closed_at ? "CLOSED" : "ACTIVE"));
   if (state === "CLOSED") {
@@ -1500,12 +1611,12 @@ async function approveLocalShiftVariance(raw) {
   }
   if (!["VARIANCE_REVIEW_REQUIRED", "RECONCILIATION"].includes(state))
     throw new Error("This shift is not waiting for variance approval.");
-  const identity = adminSession.identity();
-  const actor = identity?.subject ?? "";
+  const actor = authorCapture.subject;
   const terminal = terminalStore.read() ?? {};
   const terminalId = String(shift.terminal_id ?? terminal.tokenId ?? terminal.terminalId ?? "").trim() || null;
   const now = new Date().toISOString();
-  await operationsRepository.apply("Approving shift variance", [
+  const author = await shiftAuthority.prepare(authorCapture);
+  await financialJournal.apply("Approving shift variance", [
     { kind: "update", table: "shifts", match: { id: shiftId }, values: {
       store_id: branchId, state: "CLOSED", status: "CLOSED", closed_at: shift.closed_at ?? now,
       closed_by_name: actor, updated_at: now,
@@ -1516,7 +1627,7 @@ async function approveLocalShiftVariance(raw) {
       detail: { note: String(raw.note ?? "").slice(0, 400) }, actor_name: actor,
       actor_staff_id: actor, created_at: now,
     }] },
-  ], { branchId, terminalId });
+  ], { branchId, terminalId, observation, author });
   publishBusinessChange({ kind: "shift", branchId, operationId: shiftId });
   pendingShiftCloseSync.add(shiftId);
   scheduleAutomaticSync(250);
@@ -1573,6 +1684,26 @@ function authorizationServerUrl() {
   // must use its configured hosted backend because its local app server never
   // carries the central database service credential.
   return DEV_URL ? baseUrl : null;
+}
+
+function captureSessionAdoption() {
+  const revision=++sessionAdoptionRevision,epoch=adminSession.epoch(),pool=databaseManager.pool;
+  const terminal=JSON.stringify(terminalStore.read()),project=cloudCredentials.read()?.url,backend=authorizationServerUrl();
+  return ()=>revision===sessionAdoptionRevision&&adminSession.epoch()===epoch&&databaseManager.pool===pool&&
+    terminal===JSON.stringify(terminalStore.read())&&project===cloudCredentials.read()?.url&&backend===authorizationServerUrl();
+}
+function captureLocalOperationIdentity(){
+  // Preserve an already-authorized legacy request without granting it a new
+  // signing identity. Strict financial capture occurs only in an approved path.
+  const epoch=adminSession.epoch(),identity=JSON.stringify(adminSession.identity()),pool=databaseManager.pool;
+  const terminal=JSON.stringify(terminalStore.read()),project=cloudCredentials.read()?.url,backend=authorizationServerUrl();
+  const assertCurrent=()=>{if(adminSession.epoch()!==epoch||JSON.stringify(adminSession.identity())!==identity||databaseManager.pool!==pool||JSON.stringify(terminalStore.read())!==terminal||cloudCredentials.read()?.url!==project||authorizationServerUrl()!==backend)throw Object.assign(new Error('The signed-in operator or terminal context changed. Try the action again.'),{code:'ESYNC_SHIFT_AUTHOR_CHANGED'});};
+  return Object.freeze({assertCurrent,financialCapture(action){assertCurrent();return shiftAuthority.captureFinancial(action);}});
+}
+
+function enrollCurrentShiftAuthor(proof) {
+  // Enrollment grants no POS authority. Its unavailability cannot fail login.
+  void shiftAuthority.enrollOnline(proof).catch(()=>undefined);
 }
 
 function registerIpc() {
@@ -1677,7 +1808,7 @@ function registerIpc() {
       response = await fetch(`${authorizationUrl}/api/v1/pos/ipc-authorize`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ username: user, pin: secret, terminalId: terminalStore.read()?.tokenId ?? null }),
+        body: JSON.stringify({ username: user, pin: secret, terminalId: terminalStore.read()?.tokenId ?? null, deviceBindingProof:terminalStore.read()?.deviceBindingProof }),
         signal: controller.signal,
       });
     } catch {
@@ -1698,29 +1829,66 @@ function registerIpc() {
     return { ok: true };
   });
   ipcMain.handle("admin:adopt-session", async (_e, value, rawTerminal) => guard.guarded(async () => {
-    const revision = ++sessionAdoptionRevision;
-    const initialIdentity = adminSession.identity();
-    const proof=guard.credentialProof(typeof value==="string"?{accessToken:value}:value);
-    if(!proof.accessToken&&!proof.sessionToken&&!proof.cashierToken)return{ok:false,error:"A verified signed-in user is required."};
+    // A transport or backend-protocol failure is not a staff permission denial.
+    // Return only fixed operational guidance; upstream details may be private.
+    const failed=(code,status)=>({ok:false,code,status,stage:"authorize",error:{
+      EBACKEND_UPGRADE_REQUIRED:"The configured POS backend must be updated before this terminal registration can be verified. Ask an administrator to review the backend version; saved settings have not been changed.",
+      EACTIVATION_BINDING:"The verified registration does not match this computer's saved terminal. Ask an administrator to review its registration; do not change the branch to bypass this check.",
+      EAUTH_DENIED:"The signed-in user or terminal could not be authorized. Sign in again or ask an administrator to review access.",
+      EAUTH_UNAVAILABLE:"The POS authorization service could not be reached or did not answer correctly. Reconnect and retry; saved registration and permissions have not been changed.",
+      EACTIVATION_STORE:"This computer could not save the verified registration in its secure store. Retry after checking Windows secure storage.",
+    }[code]??"The signed-in POS session could not be verified."});
+    try {
+    const current=captureSessionAdoption();
+    const supplied=guard.credentialProof(typeof value==="string"?{accessToken:value}:value);
+    const sealed=terminalStore.read();
+    const candidate=rawTerminal==null?sealed:guard.terminalConfig(rawTerminal);
+    if(sealed&&candidate)activationBoundary.assertUnchanged(sealed,candidate);
+    const proof={...supplied,...(sealed?.tokenId?{terminalToken:sealed.tokenId,deviceBindingProof:sealed.deviceBindingProof||supplied.deviceBindingProof}: {})};
+    if(!proof.accessToken&&!proof.sessionToken&&!proof.cashierToken)return failed("EAUTH_DENIED",401);
     const authorizationUrl=authorizationServerUrl();
-    if(!authorizationUrl)return{ok:false,error:"Configure the hosted POS backend address before connecting the local database."};
+    if(!authorizationUrl)return failed("EAUTH_UNAVAILABLE",503);
     const response=await fetch(`${authorizationUrl}/api/v1/pos/ipc-adopt`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(proof),signal:AbortSignal.timeout(8_000)});
-    const result=await response.json().catch(()=>({ok:false,error:"Authorization failed."}));
-    if(!response.ok||!result.ok)return{ok:false,error:result.error??"Authorization failed."};
-    const currentIdentity = adminSession.identity();
-    if (revision !== sessionAdoptionRevision || initialIdentity?.subject !== currentIdentity?.subject || initialIdentity?.source !== currentIdentity?.source)
-      return {ok:false,error:"The signed-in user changed while permissions were refreshing."};
-    // The hosted backend has now verified this live POS identity. This is the
-    // safe point to repair the native activation mirror that boot hydration
-    // could not write before a staff session existed.
-    const terminal=rawTerminal==null?null:guard.terminalConfig(rawTerminal);
-    if(terminal){
+    const result=await response.json().catch(()=>null);
+    if(!response.ok||result?.ok!==true){
+      if(response.status===401||response.status===403)return failed("EAUTH_DENIED",response.status);
+      if(response.status===426||result?.code==="EBACKEND_UPGRADE_REQUIRED")return failed("EBACKEND_UPGRADE_REQUIRED",426);
+      if(result?.code==="EAUTH_DENIED"&&response.status<500)return failed("EAUTH_DENIED",403);
+      return failed("EAUTH_UNAVAILABLE",503);
+    }
+    if(!["admin","supervisor","staff"].includes(result.level)||typeof result.subject!=="string"||!result.subject.trim()||
+       !result.permissions||typeof result.permissions!=="object"||Array.isArray(result.permissions)||
+       Object.values(result.permissions).some(flag=>typeof flag!=="boolean")||
+       (result.branchId!==null&&typeof result.branchId!=="string"))return failed("EBACKEND_UPGRADE_REQUIRED",426);
+    if(!current())return failed("EAUTH_DENIED",401);
+    if(candidate){
+      const currentTerminal=terminalStore.read();
+      if(Boolean(sealed)!==Boolean(currentTerminal)||(sealed&&!activationBoundary.sameBinding(activationBoundary.binding(sealed),activationBoundary.binding(currentTerminal))))
+        return failed("EACTIVATION_BINDING",403);
+      const terminal=activationBoundary.canonicalConfig({...candidate,deviceBindingProof:proof.deviceBindingProof},result.terminal,sealed);
+      if(!sealed)await assertSafeRegistrationChange(terminal);
+      if(result.branchId&&terminal.deviceUse==="operations")activationBoundary.authorizedBranch(terminal,result.branchId);
+      // Registration safety checks may await SQL; do not adopt an earlier
+      // user's or activation's response after that asynchronous boundary.
+      if(!current())return failed("EAUTH_DENIED",401);
+      const latestTerminal=terminalStore.read();
+      if(Boolean(sealed)!==Boolean(latestTerminal)||(sealed&&!activationBoundary.sameBinding(activationBoundary.binding(sealed),activationBoundary.binding(latestTerminal))))return failed("EACTIVATION_BINDING",403);
+      const previous=terminalStore.lastBinding();
       const mirrored=terminalStore.write(terminal);
-      if(mirrored?.ok===false)return{ok:false,code:"EACTIVATION_STORE",error:mirrored.error??"Windows secure storage could not save the terminal activation."};
+      if(mirrored?.ok===false)return failed("EACTIVATION_STORE",503);
+      recordRegistrationChange(previous,terminal);
     }
     adminSession.grant(result.level,result.subject,result.permissions,"pos",result.branchId);
+    adminSession.bindVerifiedAuthor(result.authorId,result.subject);
     syncCloud.setAuthorizationProof(proof);
+    enrollCurrentShiftAuthor(proof);
     rememberVerifiedBranch(result.branchId);return{ok:true,level:result.level};
+    }catch(error){
+      if(error?.name==="BadArg")throw error;
+      if(error?.code==="EBACKEND_UPGRADE_REQUIRED")return failed("EBACKEND_UPGRADE_REQUIRED",426);
+      if(error?.code==="EACTIVATION_BINDING")return failed("EACTIVATION_BINDING",403);
+      return failed("EAUTH_UNAVAILABLE",503);
+    }
   }));
   ipcMain.handle("admin:unlock", async (_e, username, pin) => guard.guarded(async () => {
     const user = guard.text(username, { name: "username", max: 160 });
@@ -1730,7 +1898,7 @@ function registerIpc() {
     const response = await fetch(`${authorizationUrl}/api/v1/pos/ipc-authorize`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ username: user, pin: secret, terminalId: terminalStore.read()?.terminalId ?? null }),
+      body: JSON.stringify({ username: user, pin: secret, terminalId: terminalStore.read()?.tokenId ?? null, deviceBindingProof:terminalStore.read()?.deviceBindingProof }),
     });
     const result = await response.json().catch(() => ({ ok: false, error: "Authorization failed." }));
     if (!response.ok || !result.ok) return { ok: false, error: result.error ?? "Authorization failed." };
@@ -1868,6 +2036,7 @@ function registerIpc() {
         operations,
         branchId,
         terminalId:terminal.tokenId??terminal.terminalId??null,
+        managementDevice:isManagementDevice(),
         permissions:adminSession.identity()?.permissions??{},
         ...aggregatePolicy(aggregate.kind,operations,adminSession.identity()),
         // Automatic sale/payment accrual is governed by the aggregate itself.
@@ -1875,7 +2044,10 @@ function registerIpc() {
         // enforce the same add/points permissions as the central relay.
         enforcePermissions:true,
       };
-      const result=await aggregateRepository.commit(aggregate.kind,trustedAggregate);
+      const requestCapture=typeof shiftFinancialRuntime!=='undefined'&&operations.some(operation=>['sales','shifts'].includes(operation.table))?captureLocalOperationIdentity():null;
+      const repository=typeof shiftFinancialRuntime==='undefined'?aggregateRepository:await shiftFinancialRuntime.forAggregate(trustedAggregate);
+      requestCapture?.assertCurrent();
+      const result=await repository.commit(aggregate.kind,trustedAggregate);
       publishBusinessChange({kind:aggregate.kind,branchId,operationId:result.operationId??null,tables:[...new Set(operations.map(op=>op.table))],changes:operations.flatMap(op=>(op.rows??[op.match??{}]).map(row=>({table:op.table,entityId:op.table==="product_barcodes"?row.product_id:row.id??null})))});
       scheduleLocalChanges(operations);
       return result;
@@ -1886,13 +2058,20 @@ function registerIpc() {
   }));
   ipcMain.handle("business:snapshot", (_e, options) => guard.guarded(async () => {
     if(!databaseManager.isConnected())return{ok:false,code:"EDATABASE_NOT_READY",error:"SQL Server setup or connection is not complete yet."};
-    const snapshot = await operationsRepository.snapshot(localBranchId(), terminalStore.read()?.tokenId ?? null, { salesOnly: options?.salesOnly === true, onProgress: (progress) => { if (!_e.sender.isDestroyed()) _e.sender.send("business:read-progress", progress); } });
+    const snapshot = await operationsRepository.snapshot(authorizedLocalBranch(), terminalStore.read()?.tokenId ?? null, { salesOnly: options?.salesOnly === true, onProgress: (progress) => { if (!_e.sender.isDestroyed()) _e.sender.send("business:read-progress", progress); } });
     return require("./read-snapshot-policy.cjs").filterSnapshot({ ...snapshot, shifts: (snapshot.shifts ?? []).map(redactShiftRow) }, adminSession);
+  }));
+  ipcMain.handle("business:management-report", (_e, options) => guard.guarded(async () => {
+    try {
+      const safe = guard.options(options, { name: "management report", max: 10 });
+      adminSession.touch();
+      return await require("./db/repositories/management-reports.cjs").readManagementReport({ manager: databaseManager, databaseService, session: adminSession, management: isManagementDevice(), options: safe, redactShift: redactShiftRow });
+    } catch (error) { return { ok: false, code: error?.code ?? "EMANAGEMENT_REPORT", error: String(error?.message ?? error) }; }
   }));
   ipcMain.handle("business:analytics", (_e, from, to, timeZone) => guard.guarded(async () => {
     if (!adminSession.hasPosAuthority() || !adminSession.hasPermission("can_view_sales_reports"))
       return { ok: false, code: "PERMISSION_DENIED", error: "Sales report permission is required." };
-    return readAnalytics(databaseManager, localBranchId(), guard.text(from, { name: "from date", max: 10 }), guard.text(to, { name: "to date", max: 10 }), guard.text(timeZone || "UTC", { name: "time zone", max: 80 }));
+    return readAnalytics(databaseManager, authorizedLocalBranch(), guard.text(from, { name: "from date", max: 10 }), guard.text(to, { name: "to date", max: 10 }), guard.text(timeZone || "UTC", { name: "time zone", max: 80 }));
   }));
   ipcMain.handle("business:query", (_e, table, options) => guard.guarded(async () => {
     try {
@@ -1900,7 +2079,7 @@ function registerIpc() {
       if(!databaseManager.isConnected())return{ok:false,code:"EDATABASE_NOT_READY",rows:[],error:"SQL Server setup or connection is not complete yet."};
       const terminal = terminalStore.read() ?? {};
       const result = await operationsRepository.query(
-        localBranchId(), safeTable, guard.queryOptions(options),
+        authorizedLocalBranch(), safeTable, guard.queryOptions(options),
         terminal.tokenId ?? terminal.terminalId ?? null,
       );
       return safeTable === "shifts"
@@ -1911,8 +2090,8 @@ function registerIpc() {
       // Reads can race terminal restoration during startup; return a normal
       // not-ready result instead of rejecting the IPC promise and flooding the
       // Electron/Chromium console with an uncaught handler error.
-      if (error?.code === "EBRANCH") {
-        return { ok: false, code: "EBRANCH", rows: [], error: error.message };
+      if (error?.code === "EBRANCH" || error?.code === "EACTIVATION_BINDING") {
+        return { ok: false, code: error.code, rows: [], error: error.message };
       }
       throw error;
     }
@@ -1949,7 +2128,17 @@ function registerIpc() {
       authorization,
     );
   }));
-  ipcMain.handle("receipts:refund", (_e, value) => guard.guarded(async () => { if(!adminSession.hasPosAuthority()||!adminSession.hasPermission("can_process_refund"))return{ok:false,code:"PERMISSION_DENIED",error:"Refund permission is required."};const input=guard.options(value,{name:"refund",max:5}); const terminal=terminalStore.read()??{}; const branch=localBranchId();if(input.branchId&&recordId(String(input.branchId))!==recordId(String(branch)))return{ok:false,code:"SYNC_BRANCH_FORBIDDEN",error:"The refund must belong to this terminal branch."};const result=await receiptRepository.refund({saleId:guard.uuid(input.saleId,{name:"sale id"}),refundId:guard.text(input.refundId,{name:"refund id",max:128}),branchId:guard.text(branch,{name:"branch",max:128}),reason:input.reason?guard.text(input.reason,{name:"reason",max:400}):null});publishBusinessChange({kind:"refund",branchId:branch});scheduleAutomaticSync(250);return result; }));
+  ipcMain.handle("receipts:refund", (_e, value) => guard.guarded(async () => {
+    if(!adminSession.hasPosAuthority()||!adminSession.hasPermission("can_process_refund"))return{ok:false,code:"PERMISSION_DENIED",error:"Refund permission is required."};
+    const input=guard.options(value,{name:"refund",max:5}),branch=localBranchId();
+    if(input.branchId&&recordId(String(input.branchId))!==recordId(String(branch)))return{ok:false,code:"SYNC_BRANCH_FORBIDDEN",error:"The refund must belong to this terminal branch."};
+    const saleId=guard.uuid(input.saleId,{name:"sale id"});
+    const requestCapture=typeof shiftFinancialRuntime!=='undefined'?captureLocalOperationIdentity():null;
+    const financial=typeof shiftFinancialRuntime==='undefined'?{repository:receiptRepository,author:null}:await shiftFinancialRuntime.forRefund(branch,saleId,requestCapture);
+    requestCapture?.assertCurrent();
+    const result=await financial.repository.refund({saleId,refundId:guard.text(input.refundId,{name:"refund id",max:128}),branchId:guard.text(branch,{name:"branch",max:128}),reason:input.reason?guard.text(input.reason,{name:"reason",max:400}):null},financial.terminalId?{author:financial.author,terminalId:financial.terminalId,expectedShiftId:financial.expectedShiftId}:null);
+    publishBusinessChange({kind:"refund",branchId:branch});scheduleAutomaticSync(250);return result;
+  }));
   ipcMain.handle("jobs:get-active", async () => databaseManager.isConnected() ? jobRepository.active() : null);
   ipcMain.handle("jobs:get-history", async (_e, limit) => databaseManager.isConnected() ? jobRepository.history(Number(limit)||50) : []);
   ipcMain.handle("sync:get-status", () => syncCoordinator.refresh(localBranchId()));
@@ -1991,12 +2180,16 @@ function registerIpc() {
   });
   ipcMain.handle("staff:sign-in", async (_e, username, pin) => {
     try {
+      const current=captureSessionAdoption();
       const result = await verifySyncedStaffPin(databaseManager.pool, username, pin, localBranchId());
+      if(!current())return{ok:false,reason:"unavailable",error:"The sign-in context changed. Sign in again."};
       if (result.ok && result.staff) {
         const staff = result.staff;
         const role = staff.role || staff.role_slug;
         const level = role === "admin" ? "admin" : ["manager", "supervisor"].includes(role) ? "supervisor" : "staff";
         adminSession.grant(level, staff.username, staff.permissions ?? {}, "pos", staff.store_id ?? localBranchId());
+        // verifySyncedStaffPin selects a.user_id, independent of the login alias.
+        adminSession.bindVerifiedAuthor(staff.id,staff.username);
       }
       return result;
     } catch (error) {
@@ -2028,7 +2221,7 @@ function registerIpc() {
       const response = await fetch(`${url}/api/v1/pos/sync?operation=authorization`, {
         method: "POST", signal: abort.signal, headers: { "content-type": "application/json" },
         body: JSON.stringify({ action: "approval_credentials", data: { action: "register_verifier", data: {
-          ...data, terminalToken: terminalStore.read()?.tokenId, publicKey: approvalVerifierKey.publicKey(),
+          ...data, terminalToken: terminalStore.read()?.tokenId, deviceBindingProof:terminalStore.read()?.deviceBindingProof, publicKey: approvalVerifierKey.publicKey(),
         } } }),
       });
       const result = await response.json();
@@ -2039,12 +2232,13 @@ function registerIpc() {
   ipcMain.handle("staff:verify-approval-pin", async (_e, username, pin) => {
     try {
       if (!adminSession.hasPosAuthority()) return { ok: false, reason: "unavailable", error: "Sign in before authorizing an action" };
-      return await verifySyncedApprovalPin(databaseManager.pool, username, pin, localBranchId(), { verifyTotp: approvalTokenVerifier.verify, identifyTotp: approvalTokenVerifier.identify });
+      return await verifySyncedApprovalPin(databaseManager.pool, username, pin, localBranchId(), { verifyTotp: approvalTokenVerifier.verify, identifyTotp: approvalTokenVerifier.identify, prepareTotp: approvalTokenVerifier.prepare });
     } catch (error) {
       return {ok:false,reason:"unavailable",error:String(error?.message??error)};
     }
   });
   ipcMain.handle("auth:cashier-login", (_e, value) => guard.guarded(async () => {
+    const current=captureSessionAdoption();
     const input = guard.options(value, { name: "cashier sign in", max: 2 });
     const username = guard.text(input.username, { name: "username", max: 120 });
     const pin = guard.text(input.pin, { name: "PIN or passcode", max: 32 });
@@ -2053,7 +2247,9 @@ function registerIpc() {
       return { ok: false, status: 503, code: "no_server", error: "The hosted POS backend is not configured." };
     const terminal = terminalStore.read() ?? {};
     const abort = new AbortController();
-    const timer = setTimeout(() => abort.abort(), 6_000);
+    // Match the browser PIN request budget: verification also prepares Auth
+    // and the device session. Six seconds abandoned valid slow sign-ins.
+    const timer = setTimeout(() => abort.abort(), 30_000);
     let response;
     let result;
     try {
@@ -2066,6 +2262,7 @@ function registerIpc() {
           pin,
           platform: "electron",
           terminalId: terminal.tokenId ?? null,
+          deviceBindingProof: terminal.deviceBindingProof ?? null,
           branchId: localBranchId(),
         }),
       });
@@ -2080,16 +2277,19 @@ function registerIpc() {
     // database-maintenance permission here made ordinary cashier checkouts
     // fail with EPRIVILEGE even though can_process_sale was granted.
     if (response.ok && result?.ok && result.cashier) {
+      if(!current())return{ok:false,status:409,code:"EAUTH_CHANGED",error:"The sign-in context changed. Sign in again."};
       const cashier = result.cashier;
       const role = String(cashier.role ?? cashier.role_slug ?? "staff").toLowerCase();
       const level = role === "admin" ? "admin" : role === "manager" || role === "supervisor" ? "supervisor" : "staff";
       const branchId = cashier.store_id ?? localBranchId();
       adminSession.grant(level, cashier.username ?? username, cashier.permissions ?? {}, "pos", branchId);
+      adminSession.bindVerifiedAuthor(cashier.id,cashier.username);
       const proof = {
         ...(typeof result.sessionToken === "string" ? { sessionToken: result.sessionToken } : {}),
         ...(typeof result.cashierToken === "string" ? { cashierToken: result.cashierToken } : {}),
       };
       syncCloud.setAuthorizationProof(proof);
+      enrollCurrentShiftAuthor(proof);
       rememberVerifiedBranch(branchId);
     }
     return { ...result, status: response.status };
@@ -2269,10 +2469,17 @@ function registerIpc() {
   ipcMain.handle("net:head", (_e, url) => netHttp.head(String(url)));
   ipcMain.handle("net:get-binary", (_e, url) => netHttp.getBinary(String(url)));
 
-  ipcMain.handle("terminal:read", () => ({ ok: true, config: terminalStore.read() }));
-  ipcMain.handle("terminal:write", (_e, raw) => {
+  ipcMain.handle("terminal:read", () => {
+    try { return { ok: true, config: terminalStore.read({ strict: true }) }; }
+    catch { return { ok: false, code: "EACTIVATION_STORE", error: "Could not restore the saved terminal registration. Your registration has not been removed. Retry opening the app." }; }
+  });
+  ipcMain.handle("terminal:write", async (_e, raw) => {
     try {
-      const config=guard.terminalConfig(raw);
+      const before=terminalStore.read();
+      const config=await verifiedTerminalMirror(guard.terminalConfig(raw));
+      const after=terminalStore.read();
+      if(Boolean(before)!==Boolean(after)||(before&&!activationBoundary.sameBinding(activationBoundary.binding(before),activationBoundary.binding(after))))throw new Error("The terminal registration changed during verification.");
+      if(!before)await assertSafeRegistrationChange(config);
       const activationBackend=String(config?.backendUrl??"").trim().replace(/\/+$/,"");
       const savedBackend=String(configStore.get("backendUrl")??"").trim().replace(/\/+$/,"");
       // The connection page is authoritative. Older activation payloads may
@@ -2280,7 +2487,9 @@ function registerIpc() {
       // http origin; neither may erase a proven HTTPS deployment address.
       const backend=/^https:\/\/.+/i.test(savedBackend)?savedBackend:/^https:\/\/.+/i.test(activationBackend)?activationBackend:"";
       if(backend)configStore.set("backendUrl",backend);
+      const previous=terminalStore.lastBinding();
       const saved=terminalStore.write(config?{...config,...(backend?{backendUrl:backend}:{})}:config);
+      if(saved?.ok)recordRegistrationChange(previous,config);
       if(saved?.ok&&isManagementDevice()){managementReplica.resetRetry();terminalIdentityPausedSync=false;syncCoordinator.resume();scheduleAutomaticSync(250);}
       else if(saved?.ok&&config&&terminalIdentityPausedSync){terminalIdentityPausedSync=false;syncCoordinator.resume();scheduleAutomaticSync(250);}
       return saved;

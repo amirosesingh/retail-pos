@@ -7,7 +7,9 @@ import {
 } from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { RECEIPT_LINE_SECTIONS } from "@/lib/receipt-line-sections";
 import type { ReceiptCustomLine } from "@/core/types/pos-types";
 
 export const Route = createFileRoute("/settings/lines")({
@@ -43,15 +45,18 @@ function LinesForm() {
   const lines = effective.customLines ?? [];
   return (
     <div className="space-y-3">
+      <p className="text-xs text-muted-foreground">Add a text block and choose where it prints. Header and Footer apply to all slips; Sales body sections apply to sale receipts. Each new line prints separately.</p>
       {lines.length === 0 && (
         <p className="text-xs text-muted-foreground">
           No custom lines yet — add policy notes, promotions or opening hours.
         </p>
       )}
       {lines.map((line, i) => (
-        <div key={line.id} className="flex flex-wrap items-center gap-2">
-          <Input
-            className="min-w-[180px] flex-1"
+        <section key={line.id} className="space-y-3 rounded-xl border bg-card p-4">
+          <Label>Text block {i + 1}</Label>
+          <Textarea
+            aria-label={`Receipt text block ${i + 1}`}
+            rows={3}
             value={line.text}
             placeholder="Return policy: 7 days with receipt"
             onChange={(e) =>
@@ -61,9 +66,10 @@ function LinesForm() {
               )
             }
           />
+          <div className="flex flex-wrap items-center gap-2">
           <ThemedSelect
-            ariaLabel="Line placement"
-            className="w-40 shrink-0"
+            ariaLabel={`Text block ${i + 1} section`}
+            className="min-w-0 flex-1"
             value={line.placement}
             onChange={(v) =>
               setField(
@@ -73,10 +79,7 @@ function LinesForm() {
                 ),
               )
             }
-            options={[
-              { value: "header", label: "Below header" },
-              { value: "footer", label: "Above footer" },
-            ]}
+            options={[...RECEIPT_LINE_SECTIONS]}
           />
           <Button
             variant="ghost"
@@ -104,7 +107,8 @@ function LinesForm() {
           >
             <Trash2 className="size-4" />
           </Button>
-        </div>
+          </div>
+        </section>
       ))}
       <Button
         variant="outline"
@@ -112,7 +116,7 @@ function LinesForm() {
         onClick={() =>
           setField("customLines", [
             ...lines,
-            { id: `line-${Date.now()}`, text: "", placement: "footer" as const },
+            { id: crypto.randomUUID(), text: "", placement: "footer" as const },
           ])
         }
       >

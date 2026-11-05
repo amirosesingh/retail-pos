@@ -6,9 +6,19 @@ class CheckpointRepository {
       .query("SELECT * FROM dbo.sync_checkpoints WHERE branch_id=@branch AND direction=@direction;");
     return result.recordset ?? [];
   }
-  async get(branchId, entity, direction) {
-    const result=await this.connectionManager.pool.request().input("branch",branchId).input("entity",entity).input("direction",direction).query("SELECT TOP (1) * FROM dbo.sync_checkpoints WHERE branch_id=@branch AND entity_type=@entity AND direction=@direction;");
+  async get(branchId, entity, direction, transaction=null) {
+    const result=await this.request(transaction).input("branch",branchId).input("entity",entity).input("direction",direction).query(`SELECT TOP (1) * FROM dbo.sync_checkpoints ${transaction?"WITH (HOLDLOCK)":""} WHERE branch_id=@branch AND entity_type=@entity AND direction=@direction;`);
     return result.recordset?.[0]??null;
+  }
+  async advanceRecovery(branchId, entity, version, transaction) {
+    if(!transaction)throw new Error("Recovery checkpoint requires its page transaction.");
+    await this.request(transaction).input("organization","default").input("branch",branchId).input("entity",entity).input("version",version).query(`
+      MERGE dbo.sync_checkpoints WITH (HOLDLOCK) AS target
+      USING (SELECT @organization organization_id,@branch branch_id,@entity entity_type,'push' direction) source
+      ON target.organization_id=source.organization_id AND target.branch_id=source.branch_id AND target.entity_type=source.entity_type AND target.direction=source.direction
+      WHEN MATCHED AND (target.change_tracking_version IS NULL OR target.change_tracking_version<CONVERT(bigint,@version))
+        THEN UPDATE SET change_tracking_version=CONVERT(bigint,@version),updated_at=SYSDATETIMEOFFSET()
+      WHEN NOT MATCHED THEN INSERT(organization_id,branch_id,entity_type,direction,change_tracking_version) VALUES(@organization,@branch,@entity,'push',CONVERT(bigint,@version));`);
   }
   async save(branchId, entity, direction, patch, transaction=null) {
     const request=this.request(transaction).input("organization","default").input("branch",branchId).input("entity",entity).input("direction",direction).input("cursor",patch.committed_cursor??null).input("version",patch.change_tracking_version??null);

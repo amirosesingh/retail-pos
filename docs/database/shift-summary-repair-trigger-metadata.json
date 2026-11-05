@@ -1,0 +1,168 @@
+[
+  {
+    "metadata": {
+      "columns": [
+        {
+          "name": "id",
+          "type": "uuid",
+          "default": "gen_random_uuid()",
+          "nullable": "NO"
+        },
+        {
+          "name": "user_name",
+          "type": "text",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "action_category",
+          "type": "text",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "action_name",
+          "type": "text",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "target_module",
+          "type": "text",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "details",
+          "type": "jsonb",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "default": "now()",
+          "nullable": "NO"
+        },
+        {
+          "name": "user_id",
+          "type": "text",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "action",
+          "type": "text",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "entity",
+          "type": "text",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "before_state",
+          "type": "jsonb",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "after_state",
+          "type": "jsonb",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "store_id",
+          "type": "text",
+          "default": null,
+          "nullable": "YES"
+        }
+      ],
+      "triggers": [
+        {
+          "name": "sync_feed_delete",
+          "table": "audit_logs",
+          "source": "\nbegin\n  insert into public.sync_change_feed(\n    organization_id, branch_id, terminal_id, table_name,\n    entity_id, operation, row_version, tombstone\n  )\n  select 'default', coalesce(o.store_id, 'global'), null, 'audit_logs',\n         jsonb_build_object('id', o.id)::text, 'delete', 1, true\n  from old_audit_rows o;\n  return null;\nend;\n",
+          "body_md5": "c232143d97ad08ea5c63d6ac7dc2a904",
+          "function": "sync_feed_audit_logs_delete()",
+          "definition": "CREATE TRIGGER sync_feed_delete AFTER DELETE ON public.audit_logs REFERENCING OLD TABLE AS old_audit_rows FOR EACH STATEMENT EXECUTE FUNCTION sync_feed_audit_logs_delete()"
+        },
+        {
+          "name": "sync_feed_insert",
+          "table": "audit_logs",
+          "source": "\nbegin\n  insert into public.sync_change_feed(\n    organization_id, branch_id, terminal_id, table_name,\n    entity_id, operation, row_version, tombstone\n  )\n  select 'default', coalesce(n.store_id, 'global'), null, 'audit_logs',\n         jsonb_build_object('id', n.id)::text, 'insert', 1, false\n  from new_audit_rows n;\n  return null;\nend;\n",
+          "body_md5": "2ed8a858c85562e2c8f3cbeb0b24c3fe",
+          "function": "sync_feed_audit_logs_insert()",
+          "definition": "CREATE TRIGGER sync_feed_insert AFTER INSERT ON public.audit_logs REFERENCING NEW TABLE AS new_audit_rows FOR EACH STATEMENT EXECUTE FUNCTION sync_feed_audit_logs_insert()"
+        },
+        {
+          "name": "sync_feed_update",
+          "table": "audit_logs",
+          "source": "\nbegin\n  insert into public.sync_change_feed(\n    organization_id, branch_id, terminal_id, table_name,\n    entity_id, operation, row_version, tombstone\n  )\n  select 'default', coalesce(n.store_id, 'global'), null, 'audit_logs',\n         jsonb_build_object('id', n.id)::text, 'update', 1, false\n  from new_audit_rows n;\n  return null;\nend;\n",
+          "body_md5": "72f36486de2ae53fe755ddce16151ab0",
+          "function": "sync_feed_audit_logs_update()",
+          "definition": "CREATE TRIGGER sync_feed_update AFTER UPDATE ON public.audit_logs REFERENCING NEW TABLE AS new_audit_rows FOR EACH STATEMENT EXECUTE FUNCTION sync_feed_audit_logs_update()"
+        },
+        {
+          "name": "shifts_aa_stale_guard",
+          "table": "shifts",
+          "source": "\r\nDECLARE\r\n  new_stamp text;\r\n  old_stamp text;\r\nBEGIN\r\n  IF NEW.row_version IS NULL OR NEW.row_version = 0 OR OLD.row_version IS NULL THEN\r\n    RETURN NEW;\r\n  END IF;\r\n\r\n  IF NEW.row_version < OLD.row_version THEN\r\n    RETURN NULL;\r\n  END IF;\r\n\r\n  IF NEW.row_version = OLD.row_version THEN\r\n    new_stamp := to_jsonb(NEW) ->> 'updated_at';\r\n    old_stamp := to_jsonb(OLD) ->> 'updated_at';\r\n    IF new_stamp IS NOT NULL AND old_stamp IS NOT NULL AND new_stamp < old_stamp THEN\r\n      RETURN NULL;\r\n    END IF;\r\n  END IF;\r\n\r\n  RETURN NEW;\r\nEND;\r\n",
+          "body_md5": "3733e4ac528c834bfd20f8764a466f03",
+          "function": "skip_stale_update()",
+          "definition": "CREATE TRIGGER shifts_aa_stale_guard BEFORE UPDATE ON public.shifts FOR EACH ROW EXECUTE FUNCTION skip_stale_update()"
+        },
+        {
+          "name": "shifts_bump_row_version",
+          "table": "shifts",
+          "source": "\r\nBEGIN\r\n  NEW.row_version := COALESCE(OLD.row_version, 0) + 1;\r\n  RETURN NEW;\r\nEND;\r\n",
+          "body_md5": "590b3078ce355a216f389c60b8008d8d",
+          "function": "bump_row_version()",
+          "definition": "CREATE TRIGGER shifts_bump_row_version BEFORE UPDATE ON public.shifts FOR EACH ROW EXECUTE FUNCTION bump_row_version()"
+        },
+        {
+          "name": "shifts_guard_client_writes",
+          "table": "shifts",
+          "source": "\r\nBEGIN\r\n  IF coalesce(current_setting('pos.shift_fn', true), '') = 'on' THEN RETURN NEW; END IF;\r\n\r\n  IF TG_OP = 'INSERT' THEN\r\n    NEW.state              := 'ACTIVE';\r\n    NEW.status             := 'OPEN';\r\n    NEW.closed_at          := NULL;\r\n    NEW.counted_cash       := NULL;\r\n    NEW.counted_card       := NULL;\r\n    NEW.counted_digital    := NULL;\r\n    NEW.final_counted_cash := NULL;\r\n    NEW.expected_cash      := NULL;\r\n    NEW.expected_card      := NULL;\r\n    NEW.expected_digital   := NULL;\r\n    NEW.variance_cash      := NULL;\r\n    NEW.variance_card      := NULL;\r\n    NEW.variance_digital   := NULL;\r\n    NEW.variance_total     := NULL;\r\n    NEW.variance_status    := NULL;\r\n    NEW.close_reason       := NULL;\r\n    NEW.closing_started_at := NULL;\r\n    RETURN NEW;\r\n  END IF;\r\n\r\n  -- Updates from a client can only ever touch the housekeeping fields.\r\n  NEW.state              := OLD.state;\r\n  NEW.status             := OLD.status;\r\n  NEW.closed_at          := OLD.closed_at;\r\n  NEW.closed_by_name     := OLD.closed_by_name;\r\n  NEW.closed_by_staff_id := OLD.closed_by_staff_id;\r\n  NEW.closed_by_role     := OLD.closed_by_role;\r\n  NEW.opening_float      := OLD.opening_float;\r\n  NEW.counted_cash       := OLD.counted_cash;\r\n  NEW.counted_card       := OLD.counted_card;\r\n  NEW.counted_digital    := OLD.counted_digital;\r\n  NEW.closing_float      := OLD.closing_float;\r\n  NEW.final_counted_cash := OLD.final_counted_cash;\r\n  NEW.expected_cash      := OLD.expected_cash;\r\n  NEW.expected_card      := OLD.expected_card;\r\n  NEW.expected_digital   := OLD.expected_digital;\r\n  NEW.variance_cash      := OLD.variance_cash;\r\n  NEW.variance_card      := OLD.variance_card;\r\n  NEW.variance_digital   := OLD.variance_digital;\r\n  NEW.variance_total     := OLD.variance_total;\r\n  NEW.variance_status    := OLD.variance_status;\r\n  NEW.close_reason       := OLD.close_reason;\r\n  NEW.closing_started_at := OLD.closing_started_at;\r\n  RETURN NEW;\r\nEND ",
+          "body_md5": "ebe71ffe053a6f6f397b3a53c2e8e566",
+          "function": "shifts_guard_client_writes()",
+          "definition": "CREATE TRIGGER shifts_guard_client_writes BEFORE INSERT OR UPDATE ON public.shifts FOR EACH ROW EXECUTE FUNCTION shifts_guard_client_writes()"
+        },
+        {
+          "name": "shifts_set_updated_at",
+          "table": "shifts",
+          "source": "\r\nBEGIN\r\n  NEW.updated_at = now();\r\n  RETURN NEW;\r\nEND;\r\n",
+          "body_md5": "749d6e72e457701152e365704cde3807",
+          "function": "update_updated_at_column()",
+          "definition": "CREATE TRIGGER shifts_set_updated_at BEFORE UPDATE ON public.shifts FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()"
+        },
+        {
+          "name": "shifts_sync_status_trg",
+          "table": "shifts",
+          "source": "\r\nBEGIN\r\n  IF NEW.closed_at IS NOT NULL THEN\r\n    NEW.status := 'CLOSED';\r\n  ELSIF NEW.status = 'CLOSED' THEN\r\n    NEW.closed_at := COALESCE(NEW.closed_at, now());\r\n  ELSE\r\n    NEW.status := 'OPEN';\r\n  END IF;\r\n  RETURN NEW;\r\nEND;\r\n",
+          "body_md5": "45652b7ffe1794ac619f32e0a9e5cb81",
+          "function": "shifts_sync_status()",
+          "definition": "CREATE TRIGGER shifts_sync_status_trg BEFORE INSERT OR UPDATE ON public.shifts FOR EACH ROW EXECUTE FUNCTION shifts_sync_status()"
+        },
+        {
+          "name": "shifts_unfinished_tickets",
+          "table": "shifts",
+          "source": "\r\nBEGIN\r\n  IF OLD.state='ACTIVE' AND (NEW.state IS DISTINCT FROM 'ACTIVE' OR NEW.closed_at IS NOT NULL) AND EXISTS(\r\n    SELECT 1 FROM public.held_orders h WHERE h.store_id=NEW.store_id\r\n      AND (h.shift_id=NEW.id::text OR h.shift_id IS NULL)\r\n      AND h.status NOT IN ('completed','cancelled')\r\n  ) THEN RAISE EXCEPTION 'Complete or cancel all draft and held bills before closing this shift.'; END IF;\r\n  RETURN NEW;\r\nEND ",
+          "body_md5": "1539979362f3d8509800d00a44709ba1",
+          "function": "guard_shift_unfinished_tickets()",
+          "definition": "CREATE TRIGGER shifts_unfinished_tickets BEFORE UPDATE ON public.shifts FOR EACH ROW EXECUTE FUNCTION guard_shift_unfinished_tickets()"
+        },
+        {
+          "name": "sync_feed_change",
+          "table": "shifts",
+          "source": "\r\nBEGIN INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)\r\n SELECT 'default',branches.branch_id,branches.terminal_id,'shifts',CASE WHEN TG_OP='DELETE' THEN jsonb_build_object('id',OLD.\"id\")::text ELSE jsonb_build_object('id',NEW.\"id\")::text END,lower(TG_OP),COALESCE(NEW.row_version,OLD.row_version,1),TG_OP='DELETE' FROM (SELECT COALESCE(NEW.store_id,OLD.store_id,'global')::text branch_id,NULL::text terminal_id) branches; RETURN NULL; END ",
+          "body_md5": "a0a9de529599da6ce8b86c41f07a9d51",
+          "function": "sync_feed_shifts()",
+          "definition": "CREATE TRIGGER sync_feed_change AFTER INSERT OR DELETE OR UPDATE ON public.shifts FOR EACH ROW EXECUTE FUNCTION sync_feed_shifts()"
+        }
+      ]
+    }
+  }
+]

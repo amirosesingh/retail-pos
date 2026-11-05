@@ -1,6 +1,20 @@
 # POS MASTER DOCUMENTATION
 
-**Single authoritative technical reference for this Point of Sale system.**
+**Detailed technical reference for this Point of Sale system.**
+
+Documentation reconciliation, **2026-10-27**: read the permanent
+[project rules](../AGENTS.md), approved [project memory](PROJECT_MEMORY.md) and
+current [task tracker](TASK_TRACKER.md) before applying this document. The original
+audit below is a historical snapshot, not a current version inventory or global
+verification certificate. The reviewed development checkpoint is `1af373f5`
+(source package 1.4.80); current code and deployed behavior must be checked separately.
+
+Normal Operations terminals remain locked to their verified branch for every
+role. Management admission does not grant all-branch authority. Membership is
+**ON HOLD**. The tracker records confirmed discrepancies and pending verification;
+this documentation update fixes none of those application defects.
+
+### Original audit snapshot (historical)
 
 | Field               | Value                                                                                                               |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------- |
@@ -126,7 +140,15 @@ Reads mirror it through `src/lib/db-query.ts`.
 
 ## 2. Platform matrix
 
-The same React bundle runs everywhere; behaviour forks on two predicates:
+The following matrix records the original audit. For current build-time/runtime
+capabilities, use [PLATFORM-PARITY.md](PLATFORM-PARITY.md),
+`src/platform-config/features.ts` and the platform build aliases. In particular,
+the current Electron business store uses SQL Server journals/checkpoints; the
+legacy browser-storage queue description below must not guide a new sync engine.
+Current signed mobile/iOS OTA and management replication are covered in their
+linked runbooks. Old platform/printing claims are not device acceptance evidence.
+
+At the time of the original audit, behavior was described using two predicates:
 `isLiveOnly()` (`src/lib/live-mode.ts`, true for Android) and the presence of
 `window.pos` (the Electron preload bridge).
 
@@ -191,7 +213,7 @@ src/
     relay-policy.server.ts branch + permission authorisation for relayed writes
     register/             checkout decomposed into 7 hooks
     __tests__/            24 vitest suites
-  integrations/supabase/  generated client, types, auth middleware (do not edit)
+  integrations/supabase/  runtime external client and types; never restore legacy clients/middleware that bypass supabaseConfig()
 electron/
   main.cjs                windows, IPC registration, backup, updater wiring
   preload.cjs             contextBridge -> window.pos (78 channels)
@@ -1047,9 +1069,17 @@ and `pos.ui-scale` vs `pos.ui.scale`, both pairs are live in different modules.
 
 ## 36. Environment variables and secrets
 
+Current configuration rule: `supabaseConfig()` in
+`src/lib/external-supabase-config.ts` is the single URL/publishable-key resolver.
+Native operator configuration is sealed and applied with
+`setTerminalSupabaseOverride()`; web hosting supplies public configuration.
+The legacy generated-client paths described elsewhere in the original audit
+must not be reintroduced or registered in `src/start.ts`. Preserve server secrets
+and signing keys; consult AGENTS.md before changing configuration.
+
 | Name                                                                      | Side        | Used by                                           |
 | ------------------------------------------------------------------------- | ----------- | ------------------------------------------------- |
-| `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` (`…ANON_KEY` legacy) | browser     | generated client — publishable by design          |
+| `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` (`…ANON_KEY` legacy) | web hosting | public hosting configuration through the runtime resolver; not an embedded native-device connection |
 | `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`                                | server      | server functions                                  |
 | `SUPABASE_SERVICE_ROLE_KEY`                                               | server only | the write relay (`pos-relay.server.ts`)           |
 | `SETTINGS_ENCRYPTION_KEY`                                                 | server only | AES-256-GCM for `secure_settings`                 |
@@ -1341,7 +1371,13 @@ belong in the hosting secret store and are read inside handlers only.
 
 ## Maintenance rule
 
-This is the only technical document for the system. When behaviour changes,
-update the affected section here in the same change — do not create a second
-document. Every claim added must be tagged CONFIRMED only if it was read in code
-or queried in the database at the time of writing.
+The original "only technical document" restriction is superseded by the
+owner-approved documentation hierarchy: AGENTS.md for permanent safeguards,
+PROJECT_MEMORY.md for approved architecture/decisions, TASK_TRACKER.md for current
+work/evidence, and existing technical runbooks/audits for supporting detail.
+Reuse those references rather than create competing architecture or task ledgers.
+Update affected current guidance when behavior changes; preserve historical audit
+evidence with its date/revision instead of rewriting its recorded test results.
+Tag a source/deployed-definition claim CONFIRMED only when actually inspected,
+record the baseline, and keep runtime/device verification separate. Source
+inspection alone does not prove an end-to-end operation works.

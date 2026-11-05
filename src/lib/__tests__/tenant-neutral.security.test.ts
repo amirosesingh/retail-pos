@@ -30,7 +30,10 @@ describe("tenant-neutral builds", () => {
 
 describe("public credential surfaces are throttled", () => {
   it("cashier PIN sign-in counts failures by account and by caller address", () => {
-    const route = read("src", "routes", "api", "public", "cashier-login.ts");
+    const route = read("src", "lib", "cashier-login-endpoint.server.ts");
+    const declaration = read("src", "routes", "api", "public", "cashier-login.ts");
+    expect(declaration).toContain('from "@/lib/cashier-login-endpoint.server"');
+    expect(declaration).toContain("withCors(await handleCashierLogin(request), request)");
     expect(route).toContain("pin-throttle.server");
     expect(route).toContain("throttleFail");
     expect(route).toContain("throttleReset");

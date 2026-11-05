@@ -1,6 +1,7 @@
 import { db } from "@/core/api/pos-db";
 import { draftTicketId, registerSessionDraft } from "@/lib/session-draft";
 import { documentDevice } from "@/lib/document-origin";
+import { sameBranchId } from "@/lib/branch-id";
 /**
  * Parked tickets.
  *
@@ -221,8 +222,11 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
   async function resumeHeld(id: string) {
     if (resuming.current.has(id) || (activeId.current === id && deps.lines.length)) return;
     resuming.current.add(id);
+    const branchStillSelected = () => sameBranchId(latestDeps.current.storeId, deps.storeId);
+    const requireSelectedBranch = () => { if (!branchStillSelected()) throw new Error("The branch changed while this ticket was opening. It remains available in its original branch's Holds."); };
     try {
       const order = held.find((h) => h.id === id) ?? await loadHeldOrder(id);
+      requireSelectedBranch();
       if (!order) { toast.error("This held ticket is no longer available"); return; }
       if (order.storeId !== deps.storeId) {
         toast.error("That held ticket belongs to another branch");
@@ -233,6 +237,7 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
       let request: Awaited<ReturnType<typeof loadApprovalCentre>>["ready"][number] | undefined;
       if (order.pendingRequestId) {
         const centre = await loadApprovalCentre(deps.storeId, order.pendingRequestId);
+        requireSelectedBranch();
         request = [...centre.waiting, ...centre.ready, ...centre.history].find(
           (candidate) => candidate.id === order.pendingRequestId,
         );
@@ -242,6 +247,7 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
         }
       }
       const parked = deps.lines.length ? await holdOrder(true) : null;
+      requireSelectedBranch();
       if (deps.lines.length && !parked) return;
       if (order.pendingRequestId) {
         const storedSnapshotHash = order.approvalSnapshotHash ?? undefined;
@@ -249,6 +255,7 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
           order.pendingRequestId,
           storedSnapshotHash ?? request?.snapshotHash ?? undefined,
         ).catch(() => null);
+        requireSelectedBranch();
         if (!claimed || !claimed.ok) {
           if (parked) {
             try {
@@ -257,6 +264,7 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
               // hold first and put the cashier's original ticket back exactly
               // as it was instead of leaving the register unexpectedly blank.
               await db.setHeldOrderStatus(parked.id, "draft");
+              requireSelectedBranch();
               activeId.current = parked.id;
               if (parked.billNo) released.current.delete(parked.billNo);
               deps.onApprovalCleared?.();
@@ -298,9 +306,15 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
       }
       try {
         await db.setHeldOrderStatus(id, "draft");
+        requireSelectedBranch();
         activeId.current = id;
         if (order.billNo) released.current.delete(order.billNo);
       } catch (error) {
+        if (!branchStillSelected()) {
+          await updateHeldOrder(id, { status: "held", ...(restoredApproval ? { pendingRequestId: null, approvalSnapshotHash: null } : {}) }).catch(() => undefined);
+          toast.warning("The ticket stayed in its original branch's Holds");
+          return;
+        }
         if (restoredApproval) {
           await updateHeldOrder(id, {
             status: "held",
@@ -367,6 +381,8 @@ export function useRegisterHeldOrders(deps: HeldOrdersDeps) {
 
   useEffect(() => registerSessionDraft(async action => {
     const current = latestDeps.current;
+    if (action === "hold" && resuming.current.size > 0)
+      throw new Error("Wait for the held ticket to finish opening before changing branch or signing out.");
     if (action === "release") {
       if (current.billNo) released.current.add(current.billNo);
       activeId.current = null;

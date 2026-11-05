@@ -37,6 +37,7 @@ export function permissionSubpages(id: string) {
 // This affects editor placement only; pageAllowsAction's ownership is untouched.
 const RELATED_CONTROLS: Record<string, PermissionKey[]> = {
   audit: ["can_export_reports"],
+  shifts: ["can_view_sales_reports"],
   staff: ["can_access_pos_settings"],
   register: ["can_access_pos_settings", "can_add_member", "can_add_new_product", "can_edit_product_details", "can_hold_cart", "can_link_product_barcode", "can_manage_bookings", "can_open_shift", "can_reopen_held_order", "can_reprint_bill", "can_view_member_history"],
   receipts: ["can_edit_tenders"],

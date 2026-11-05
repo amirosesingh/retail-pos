@@ -846,6 +846,7 @@ export function StaffManager() {
                   ))}
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground">{editing ? "Changing role applies its preset; keeping the same role preserves this user's permissions." : "This role's permissions are selected automatically. After creation, use Edit permissions to add or remove individual access."}</p>
             </div>
             <div className="space-y-1">
               <div className="flex items-center gap-1"><Label htmlFor="staff-branch" className="text-xs">Branch *</Label><HelpTip label="About branch assignment" text="All branches uses the terminal’s branch for each sale." /></div>

@@ -1,3 +1,6 @@
+import { productReadColumns, canUseEcommerceDevice } from "@/lib/ecommerce-device";
+import { readShiftSharing } from '@/lib/shift-sharing-policy';
+import { createProductProjectionReader } from "@/lib/product-projection";
 import { productClassification } from "@/lib/product-classification";
 import { withoutWorkspacePurpose } from "@/lib/retired-workspace-settings";
 import { commitRowCount, runProgressBatch, yieldToUi } from "@/lib/commit-progress";
@@ -6,9 +9,12 @@ import { normalizeUuidFields } from "@/lib/uuid-fields";
 import { isLegacyExchange } from "@/lib/legacy-exchange";
 import { redeemedPoints } from "@/lib/points-redemption";
 import { recordId } from "@/lib/sale-identity";
-import { readLocalLocationDirectory, resolveLocationDirectory, type LocationDirectoryResult } from "./location-directory";
+import { locationReadError, readLocalLocationDirectory, resolveLocationDirectory, type LocationDirectoryResult } from "./location-directory";
 export type { LocationDirectoryResult } from "./location-directory";
 import { beginDataTask, withDataTask } from "@/lib/data-progress";
+import { isManagementDevice } from "@/lib/management-device";
+import { readManagementReport } from "@/lib/management-report-client";
+import { effectiveTimeZone } from "@/lib/time-zone";
 import {
   authenticatedExternalClientSnapshot,
   supabaseExternal as supabase,
@@ -43,6 +49,7 @@ import { MAX_ROWS, readAllPages, type PagedRead } from "@/lib/paged-read";
 import { canonicalBranchId, canonicalStockMap } from "@/lib/branch-id";
 import { loadCashierToken, readCredentials } from "@/lib/pos-credentials";
 import { normalizeReceiptLogoLayout } from "@/lib/receipt-logo";
+import { normalizeReceiptHeaderLayout } from "@/lib/receipt-header";
 import {
   acknowledgeBrowserBatch,
   persistBrowserBatch,
@@ -54,6 +61,7 @@ import { safeCreatedAt, safeReceiptNo } from "@/lib/report-data-safety";
 import { isLinkedRecordError, usageBlock, type ProductUsage } from "@/lib/product-delete";
 import type {
   AppSettings,
+  ReceiptSettings,
   Member,
   MemberTier,
   PosState,
@@ -164,6 +172,7 @@ export const rowToProduct = (r: Row): Product => normalizeUuidFields({
   taxRate: num(r.tax_rate),
   customPoints: r.custom_points == null ? undefined : num(r.custom_points),
   ownerStoreId: (r.owner_store_id as string | null | undefined) ?? null,
+  catalogueStoreIds: jsonValue<unknown[]>(r._catalogue_store_ids ?? r.catalogue_store_ids, []).filter((id): id is string => typeof id === "string"),
 });
 
 /**
@@ -287,8 +296,8 @@ export const productToRow = (p: Product): Row => {
       .filter((v) => v.code),
     cost_price: safeNum(p.cost),
     selling_price: safeNum(p.price),
-    ecom_price: safeNumOrNull(p.ecomPrice),
-    ecom_visible: p.ecomVisible ?? true,
+    ...(canUseEcommerceDevice() ? { ecom_price: safeNumOrNull(p.ecomPrice) } : {}),
+    ...(canUseEcommerceDevice() ? { ecom_visible: p.ecomVisible ?? false } : {}),
     is_archived: p.archived === true,
     archived_at: p.archived ? new Date().toISOString() : null,
     // Stock is only ever written when the caller actually carries the per-branch
@@ -313,6 +322,7 @@ const rowToMember = (r: Row, tierName: (id: string | null) => MemberTier): Membe
   name: r.full_name,
   phone: r.phone ?? "",
   email: r.email ?? "",
+  contactEmail: typeof r.contact_email === "string" ? r.contact_email : undefined,
   tier: tierName(r.tier_id),
   points: num(r.loyalty_points),
   totalSpend: num(r.total_spent),
@@ -330,15 +340,27 @@ const rowToMember = (r: Row, tierName: (id: string | null) => MemberTier): Membe
   updatedAt: r.updated_at ?? undefined,
 });
 
-const memberToRow = (
+/** A catalogue edit never submits quantities, including stale stock from an open form. */
+export function catalogProductRow(product: Product, fields?: { ecommerce?: boolean; cost?: boolean }): Row {
+  const row = productToRow(product);
+  delete row.stock_quantity;
+  delete row.stock_by_store;
+  if (fields?.ecommerce === false) { delete row.ecom_price; delete row.ecom_visible; }
+  if (fields?.cost === false) { delete row.cost_price; delete row.landing_pct; }
+  return row;
+}
+
+export const memberToRow = (
   m: Member,
   tierId: (name: MemberTier) => string | null,
   includeBalances = true,
+  includeContact = false,
 ): Row => ({
   id: m.id,
   member_code: m.code,
   full_name: m.name,
   phone: m.phone,
+  ...(includeContact && m.contactEmail !== undefined ? { contact_email: m.contactEmail.trim() } : {}),
   // A normal cashier may enrol or edit a member without being allowed to
   // alter loyalty balances or tier. Omitting these columns lets a new row use the
   // database defaults and preserves the existing values on an upsert.
@@ -463,6 +485,9 @@ export const rowToSettings = (r: Row | null): AppSettings =>
           showLogo: r.show_logo ?? true,
           logo: settingsText((r as { logo_data_url?: unknown }).logo_data_url),
           logoLayout: normalizeReceiptLogoLayout(settingsObject(r.receipt_design).logoLayout),
+          headerLayout: normalizeReceiptHeaderLayout(settingsObject(r.receipt_design).headerLayout),
+          documentLayouts: settingsObject(settingsObject(r.receipt_design).documentLayouts),
+          documentSections: settingsObject(settingsObject(r.receipt_design).documentSections),
           showPoints: r.show_points ?? true,
           showBarcode: r.show_barcode ?? true,
           showTax: r.show_tax_details ?? true,
@@ -528,7 +553,7 @@ const buildSettingsRow = (s: AppSettings): Row => ({
   footer_text: s.receipt.footerText,
   show_logo: s.receipt.showLogo,
   logo_data_url: s.receipt.logo ?? "",
-  receipt_design: { logoLayout: s.receipt.logoLayout },
+  receipt_design: { logoLayout: s.receipt.logoLayout, headerLayout: normalizeReceiptHeaderLayout(s.receipt.headerLayout), documentLayouts: s.receipt.documentLayouts ?? {}, documentSections: s.receipt.documentSections ?? {} },
   show_points: s.receipt.showPoints,
   show_barcode: s.receipt.showBarcode,
   show_tax_details: s.receipt.showTax,
@@ -572,12 +597,23 @@ const SETTINGS_SECTION_COLUMNS: Record<keyof AppSettings, string[]> = {
   integrations: ["integration_settings"],
 };
 
+const RECEIPT_FIELD_COLUMNS: Record<keyof ReceiptSettings, string> = {
+  paper: "paper_size", companyName: "company_name", taxNumber: "tax_number", regNumber: "reg_number",
+  phone: "phone", website: "website", fonts: "fonts", customLines: "custom_lines", qr: "qr",
+  css: "receipt_css", bookingSlip: "booking_slip", headerText: "header_text", footerText: "footer_text",
+  showLogo: "show_logo", logo: "logo_data_url", logoLayout: "receipt_design", headerLayout: "receipt_design",
+  showPoints: "show_points", showBarcode: "show_barcode", showTax: "show_tax_details",
+  documentLayouts: "receipt_design", documentSections: "receipt_design",
+};
+
 /** Physical database fields affected by this UI patch. */
-const settingsPatchRow = (s: AppSettings, patch: Partial<AppSettings>): Row => {
+export const settingsPatchRow = (s: AppSettings, patch: { [K in keyof AppSettings]?: Partial<AppSettings[K]> }): Row => {
   const full = buildSettingsRow(s);
   const keys = new Set(
     Object.keys(patch).flatMap(
-      (section) => SETTINGS_SECTION_COLUMNS[section as keyof AppSettings] ?? [],
+      (section) => section === "receipt"
+        ? Object.keys(patch.receipt ?? {}).flatMap(key => RECEIPT_FIELD_COLUMNS[key as keyof ReceiptSettings] ? [RECEIPT_FIELD_COLUMNS[key as keyof ReceiptSettings]] : [])
+        : SETTINGS_SECTION_COLUMNS[section as keyof AppSettings] ?? [],
     ),
   );
   const row = Object.fromEntries(
@@ -1135,6 +1171,9 @@ export function stableChildId(parentId: string, group: string, index: number): s
 let tierIdByName: Record<string, string> = {};
 let tierNameById: Record<string, MemberTier> = {};
 
+export function registerMembershipTierNames(tiers: {id:string;name:string}[]) {
+  for (const tier of tiers) { tierIdByName[tier.name] = recordId(tier.id); tierNameById[recordId(tier.id)] = tier.name; }
+}
 const tierId = (name: MemberTier) => tierIdByName[name] ?? null;
 const tierName = (id: string | null): MemberTier => (id && tierNameById[recordId(id)]) || "Bronze";
 
@@ -1257,7 +1296,7 @@ async function loadCloudLocationDirectory(): Promise<LocationDirectoryResult> {
     }
     const relayFallback = await relayed();
     if (relayFallback) return relayFallback;
-    return { ok: false, error: new Error(direct.error.message || "Could not load locations") };
+    return { ok: false, error: locationReadError(direct.error) };
   } catch (error) {
     const relayFallback = await relayed().catch(() => null);
     if (relayFallback) return relayFallback;
@@ -1279,14 +1318,17 @@ async function loadCompleteProductCatalogue(client: typeof supabase, showProgres
   try { return await readProductCatalogue(client, task.report); } finally { task.finish(); }
 }
 async function readProductCatalogue(client: typeof supabase, report: (completed: number, total: number | null) => void): Promise<PagedRead<Row>> {
+  const readProjection = createProductProjectionReader(productReadColumns());
   return readCataloguePages<Row>(async (afterId, limit) => {
     if (!hasStaffSession()) {
       return { data: null, error: { message: "The verified staff session ended while loading the catalogue." } };
     }
-    let query = client.from("products").select("*")
-      .is("deleted_at", null).order("id", { ascending: true }).limit(limit);
-    if (afterId) query = query.gt("id", afterId);
-    return await query;
+    return readProjection(async columns => {
+      let query = client.from("products").select(columns)
+        .is("deleted_at", null).order("id", { ascending: true }).limit(limit);
+      if (afterId) query = query.gt("id", afterId);
+      return await query;
+    });
   }, report);
 }
 
@@ -1627,8 +1669,16 @@ export async function loadLocalSales(): Promise<Sale[]> {
  */
 async function localOpenShift(storeId: string): Promise<Shift | null | undefined> {
   if (!localDb()?.query) return undefined;
+  const registration = readTerminalConfig();
+  let ownTerminal: string | null = null;
+  if (registration?.locationId && registration.tokenId) {
+    const settings = await routedQuery('pos_store_settings', { in: { column: 'store_id', values: ['', storeId] }, limit: 2 });
+    const sharing = settings.find(row => row.store_id === storeId)?.allow_branch_shift_sharing
+      ?? settings.find(row => row.store_id === '')?.allow_branch_shift_sharing ?? true;
+    if (sharing === false || sharing === 0) ownTerminal = registration.tokenId;
+  }
   const rows = await routedQuery("shifts", {
-    match: { store_id: storeId, status: "OPEN" },
+    match: { store_id: storeId, status: "OPEN", ...(ownTerminal ? { terminal_id: ownTerminal } : {}) },
     orderBy: { column: "opened_at", ascending: false },
     limit: 1,
   });
@@ -1653,9 +1703,61 @@ export async function loadShiftsByIds(ids: string[]): Promise<Shift[]> {
   return rows.map(rowToShift);
 }
 
+/** Complete history uses the same masked projection as recent shift reads. */
+export async function loadShiftPage(
+  storeId: string,
+  cursor: Cursor = null,
+  limit = 500,
+  range?: { from?: string; to?: string; source?: "auto" | "cloud"; businessFrom?: string; businessTo?: string; timeZone?: string },
+): Promise<Page<Shift> & { source: "management-local" | "local" | "cloud" }> {
+  if (!storeId.trim()) throw new Error("Select a branch to load shift history.");
+  const pageSize = Math.min(500, Math.max(1, limit));
+  let rows: Row[] | undefined;
+  let source: "management-local" | "local" | "cloud" = "cloud";
+  if (range?.source !== "cloud" && isManagementDevice()) {
+    const replica=await readManagementReport({ kind:"shifts", storeIds:[storeId],
+      from:range?.businessFrom || range?.from?.slice(0,10) || "1900-01-01",
+      to:range?.businessTo || range?.to?.slice(0,10) || "9999-12-30",
+      zone:range?.timeZone || effectiveTimeZone(), cursor, limit:pageSize,
+    });
+    if(replica) {rows=(replica.rows??[]) as Row[];source="management-local";}
+  }
+  if (rows===undefined && range?.source !== "cloud" && !isManagementDevice() && effectiveDatabaseMode() === "local") {
+    source="local";
+    rows = await routedQuery("shifts", {
+      match: { store_id: storeId },
+      ...((range?.from || range?.to) ? { dateRange: {
+        column: "opened_at", from: range.from || "0001-01-01T00:00:00.000Z", to: range.to || "9999-12-31T23:59:59.999Z",
+      } } : {}),
+      orderBy: { column: "opened_at", ascending: false },
+      ...(cursor ? { cursor: { column: "opened_at", value: cursor.ts, id: cursor.id } } : {}),
+      limit: pageSize,
+    });
+  } else if(rows===undefined) {
+    const client = await authenticatedExternalClientSnapshot();
+    if (!client) throw new Error("The verified cloud staff session is still being restored.");
+    const response = await client.rpc("shift_page_secure" as never, {
+      p_store_id: storeId, p_from: range?.from || null, p_to: range?.to || null,
+      p_before_opened_at: cursor?.ts ?? null, p_before_id: cursor?.id ?? null, p_limit: pageSize,
+    } as never);
+    if (response.error) throw response.error;
+    rows = (response.data ?? []) as Row[];
+  }
+  const normalized = rows.map(row => ({ ...row,
+    opened_at: row.opened_at instanceof Date ? row.opened_at.toISOString() : String(row.opened_at),
+    id: String(row.id),
+  }));
+  return { rows: normalized.map(rowToShift), cursor: nextCursor(normalized, "opened_at", pageSize), hasMore: normalized.length >= pageSize, source };
+}
+
 export async function loadActiveShift(storeId: string): Promise<Shift | null> {
   const local = await localOpenShift(storeId);
   if (local !== undefined) return local;
+  if (readTerminalConfig()?.locationId && canRelay()) {
+    const selected = await relayActiveShift(storeId);
+    if (!selected.ok) throw new Error(selected.error ?? 'Could not select this till\'s shift');
+    return selected.row ? rowToShift(selected.row as Row) : null;
+  }
   // A cashier signed in with a PIN has no account on the central database, so
   // the direct read is refused or filtered out. The proven server relay answers
   // for those tills — without it the register would flip back to "locked"
@@ -1705,6 +1807,8 @@ export async function openShiftOnServer(s: Shift): Promise<Shift | null> {
   // bypassed SQL Server Change Tracking. The normal commit path below stores
   // it locally and the background coordinator publishes it afterwards.
   if (localDb()?.writeBatch) return null;
+  const registration = readTerminalConfig();
+  if (registration?.locationId && readShiftSharing(s.storeId) === false) return null;
   if (!hasStaffSession()) return null;
   try {
     const res = await supabase.rpc(
@@ -1740,42 +1844,48 @@ export async function loadSalesPage(
   storeId: string,
   cursor: Cursor = null,
   limit = PAGE_SIZE,
-  range?: { from: string; to: string },
-): Promise<Page<Sale>> {
-  if (localDb()?.query) {
-    const heads = (await routedQuery("sales", {
-      match: { store_id: storeId },
-      ...(range ? { dateRange: { column: "created_at", ...range } } : {}),
+  range?: { from?: string; to?: string; shiftId?: string; source?: "auto" | "cloud" },
+): Promise<Page<Sale> & {source:"local"|"cloud"}> {
+  if (range?.source !== "cloud" && localDb()?.query) {
+    const heads:Row[] = ((await routedQuery("sales", {
+      match: { store_id: storeId, ...(range?.shiftId ? {shift_id:range.shiftId} : {}) },
+      ...(range?.from && range?.to ? { dateRange: { column: "created_at", from: range.from, to: range.to } } : {}),
       orderBy: { column: "created_at", ascending: false },
       ...(cursor ? { cursor: { column: "created_at", value: cursor.ts, id: cursor.id } } : {}),
       limit,
-    })) as Row[];
+    })) as Row[]).map<Row>(row=>({...row,created_at:row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at}));
     const items: Row[] = [];
     const ids = heads.map((row) => String(row.id));
     for (let start = 0; start < ids.length; start += 50) {
-      items.push(
-        ...((await routedQuery("sale_items", {
+      for(let offset=0;;offset+=2000){
+        const page=(await routedQuery("sale_items", {
           in: { column: "sale_id", values: ids.slice(start, start + 50) },
-          limit: 2000,
-        })) as Row[]),
-      );
+          orderBy:{column:"id",ascending:true},limit:2000,offset,
+        })) as Row[];
+        items.push(...page);
+        if(page.length<2000) break;
+      }
     }
     const bySale = new Map<string, Row[]>();
     for (const item of items) {
       const saleId = String(item.sale_id);
-      bySale.set(saleId, [...(bySale.get(saleId) ?? []), item]);
+      const lines=bySale.get(saleId);
+      if(lines) lines.push(item); else bySale.set(saleId,[item]);
     }
     const complete = heads.map((row) => ({ ...row, sale_items: bySale.get(String(row.id)) ?? [] }));
     return {
       rows: complete.map(rowToSale),
       cursor: nextCursor(complete, "created_at", limit),
       hasMore: complete.length >= limit,
+      source:"local",
     };
   }
   const query = () => {
     let q = supabase.from("sales").select(saleColumns());
     if (storeId) q = q.eq("store_id", storeId) as typeof q;
-    if (range) q = q.gte("created_at", range.from).lte("created_at", range.to) as typeof q;
+    if (range?.shiftId) q = q.eq("shift_id",range.shiftId) as typeof q;
+    if (range?.from) q = q.gte("created_at", range.from) as typeof q;
+    if (range?.to) q = q.lte("created_at", range.to) as typeof q;
     return keyset(q as never, "created_at", cursor, limit);
   };
   let res = await query();
@@ -1793,6 +1903,7 @@ export async function loadSalesPage(
     rows: rows.map(rowToSale),
     cursor: nextCursor(rows, "created_at", limit),
     hasMore: rows.length >= limit,
+    source:"cloud",
   };
 }
 
@@ -2197,7 +2308,10 @@ async function commitOpsInternal(context: string, ops: SyncOp[], report?: (compl
       const sharedPosSettings =
         ops.some((op) => op.table === "pos_settings") &&
         ops.every((op) => op.table === "pos_settings" || op.table === "settings_scoped");
-      const aggregateKind = sharedPosSettings
+      const paymentCatalogue = ops.every(op => op.table === "payment_types");
+      const aggregateKind = paymentCatalogue
+        ? "general"
+        : sharedPosSettings
         ? "settings"
         : /sale/i.test(context)
           ? "sale"
@@ -3057,13 +3171,13 @@ export const db = {
       {
         kind: "upsert",
         table: "members",
-        rows: [memberToRow(m, tierId, includeBalances)],
+        rows: [memberToRow(m, tierId, includeBalances, true)],
       },
     ]),
 
   /** Save one product and wait until it is stored somewhere. */
-  commitProduct: (p: Product) =>
-    commitOps("Saving product", [{ kind: "upsert", table: "products", rows: [productToRow(p)] }]),
+  commitProduct: (p: Product, catalogOnly = false, fields?: { ecommerce?: boolean; cost?: boolean }) =>
+    commitOps("Saving product", [{ kind: "upsert", table: "products", rows: [catalogOnly ? catalogProductRow(p, fields) : productToRow(p)] }]),
 
   /**
    * Save a branch price as a scoped record. The product's global prices stay
@@ -3091,7 +3205,7 @@ export const db = {
             scope: "BRANCH",
             scope_id: branchId,
             key,
-            value: { selling_price: safeNum(price), ecom_price: safeNumOrNull(ecomPrice) },
+            value: { selling_price: safeNum(price), ...(ecomPrice !== undefined ? { ecom_price: safeNumOrNull(ecomPrice) } : settingsObject(current[0]?.value).ecom_price !== undefined ? { ecom_price: settingsObject(current[0]?.value).ecom_price } : {}) },
             is_overridden: true,
             updated_by: updatedBy ?? null,
             updated_at: new Date().toISOString(),

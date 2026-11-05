@@ -72,13 +72,71 @@ function connectionFailed(event, detail) {
   return Boolean(detail.code) || detail.connected === false || /(?:failed|failure|error|timeout|migration_required)/i.test(state);
 }
 
+const BOOTSTRAP_PHASES = new Set(["download", "local_apply"]);
+const BOOTSTRAP_ORIGINS = new Set(["prefetch", "gap_recovery", "job", "refresh"]);
+const TRANSPORT_FIELDS = {
+  transportOperation: new Set(["feed", "bootstrap", "graph", "count", "upload", "other"]),
+  transportStage: new Set(["fetch", "body"]),
+  transportCode: new Set(["ENOTFOUND", "EAI_AGAIN", "ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT", "UND_ERR_SOCKET", "ABORT_ERR"]),
+  transportErrorName: new Set(["TypeError", "TimeoutError", "AbortError", "Error"]),
+};
+const ownValue = (object, key) => {
+  try { return Object.getOwnPropertyDescriptor(object, key)?.value; } catch { return undefined; }
+};
+
+/** Private, best-effort breadcrumbs must never replace an error or affect sync. */
+function tagBootstrapDiagnostic(error, fields) {
+  try {
+    if (!error || (typeof error !== "object" && typeof error !== "function")) return error;
+    const previous = ownValue(error, "bootstrapDiagnostic");
+    const next = {};
+    for (const key of ["table", "phase", "origin", "httpStatus", "nonJsonResponse", ...Object.keys(TRANSPORT_FIELDS)]) {
+      const value = ownValue(fields, key) ?? ownValue(previous, key);
+      if (TRANSPORT_FIELDS[key]?.has(value)) next[key] = value;
+      if (key === "table" && typeof value === "string" && /^[a-z][a-z0-9_]{0,62}$/.test(value)) next[key] = value;
+      if (key === "phase" && BOOTSTRAP_PHASES.has(value)) next[key] = value;
+      if (key === "origin" && BOOTSTRAP_ORIGINS.has(value)) next[key] = value;
+      if (key === "httpStatus" && Number.isInteger(value) && value >= 100 && value <= 599) next[key] = value;
+      if (key === "nonJsonResponse" && typeof value === "boolean") next[key] = value;
+    }
+    Object.defineProperty(error, "bootstrapDiagnostic", { value: Object.freeze(next), configurable: true, writable: true, enumerable: false });
+  } catch { /* Frozen, primitive or foreign failures retain their exact behavior. */ }
+  return error;
+}
+
+/** Only registered table names and fixed primitive fields may reach the log. */
+function bootstrapDiagnostic(error, registeredTables) {
+  try {
+    const value = ownValue(error, "bootstrapDiagnostic");
+    const safe = {};
+    const table = ownValue(value, "table");
+    if (typeof table === "string" && /^[a-z][a-z0-9_]{0,62}$/.test(table) && registeredTables.includes(table)) safe.table = table;
+    const phase = ownValue(value, "phase"), origin = ownValue(value, "origin");
+    const status = ownValue(value, "httpStatus"), nonJson = ownValue(value, "nonJsonResponse");
+    if (BOOTSTRAP_PHASES.has(phase)) safe.bootstrapPhase = phase;
+    if (BOOTSTRAP_ORIGINS.has(origin)) safe.bootstrapOrigin = origin;
+    if (Number.isInteger(status) && status >= 100 && status <= 599) safe.httpStatus = status;
+    if (typeof nonJson === "boolean") safe.nonJsonResponse = nonJson;
+    for (const [key, values] of Object.entries(TRANSPORT_FIELDS)) {
+      const field = ownValue(value, key);
+      if (values.has(field)) safe[key] = field;
+    }
+    return safe;
+  } catch { return {}; }
+}
+
 /** Durable, credential-free evidence for local SQL/cloud routing failures. */
 function logConnection(event, detail = {}) {
   const safe = {};
-  const allowed = ["state", "connected", "scope", "code", "stage", "category", "message", "latencyMs", "table", "sqlNumber", "reason", "exitCode", "type", "window"];
+  const allowed = ["state", "connected", "scope", "code", "stage", "category", "message", "latencyMs", "table", "sqlNumber", "reason", "exitCode", "type", "window", "bootstrapPhase", "bootstrapOrigin", "httpStatus", "nonJsonResponse", ...Object.keys(TRANSPORT_FIELDS)];
   for (const key of allowed) {
-    const value = detail?.[key];
+    const value = ownValue(detail, key);
     if (value == null) continue;
+    if (TRANSPORT_FIELDS[key] && !TRANSPORT_FIELDS[key].has(value)) continue;
+    if (key === "bootstrapPhase" && !BOOTSTRAP_PHASES.has(value)) continue;
+    if (key === "bootstrapOrigin" && !BOOTSTRAP_ORIGINS.has(value)) continue;
+    if (key === "httpStatus" && (!Number.isInteger(value) || value < 100 || value > 599)) continue;
+    if (key === "nonJsonResponse" && typeof value !== "boolean") continue;
     safe[key] = typeof value === "string"
       ? value
           .replace(/https?:\/\/[^\s]+/gi, "[url]")
@@ -149,6 +207,7 @@ function databaseErrors(limit = 100) {
       code: detail?.code ?? null,
       message: detail?.message ?? "The database operation did not complete.",
       occurrences: Number(previous?.occurrences ?? 0) + 1,
+      ...Object.fromEntries(Object.entries(TRANSPORT_FIELDS).flatMap(([key, values]) => values.has(ownValue(detail, key)) ? [[key, ownValue(detail, key)]] : [])),
     });
   }
   return [...active.values()]
@@ -277,6 +336,8 @@ function writeReport(extra = {}) {
 }
 
 module.exports = {
+  tagBootstrapDiagnostic,
+  bootstrapDiagnostic,
   logCrash,
   logServer,
   logConnection,

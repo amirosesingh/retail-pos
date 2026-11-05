@@ -54,13 +54,9 @@ export type PrinterPrefs = {
   lineEnding?: SlipLineEnding;
   /** Page margins in millimetres applied to every printed document. */
   margins?: { top: number; right: number; bottom: number; left: number };
-  /**
-   * Real printable band of the roll, per paper size, in millimetres.
-   * 58mm rolls only print about 48mm; 80mm rolls about 72mm. A printer that
-   * starts a few millimetres further right can be nudged with `printOffset`.
-   */
+  /** Legacy calibration retained when reading older profiles; layout now uses paper size and margins. */
   printWidth?: { "30mm"?: number; "58mm": number; "80mm": number };
-  /** Left nudge in millimetres applied to slip printing. */
+  /** Legacy offset retained for profile compatibility; margins now control alignment. */
   printOffset?: number;
 };
 
@@ -132,12 +128,13 @@ export function printBridge(): PrintBridge | null {
 let sharedPrefs: PrinterPrefs | undefined;
 export function setSharedPrinterPrefs(prefs: PrinterPrefs | undefined) { sharedPrefs = prefs; }
 
-export function getPrinterPrefs(): PrinterPrefs {
+export function getPrinterPrefs(override?: PrinterPrefs): PrinterPrefs {
   if (typeof window === "undefined") return EMPTY;
   try {
-    const raw = sharedPrefs ? null : window.localStorage.getItem(PRINTER_KEY);
-    if (!sharedPrefs && !raw) return EMPTY;
-    const parsed = sharedPrefs ?? JSON.parse(raw!) as Partial<PrinterPrefs>;
+    const profile = override ?? sharedPrefs;
+    const raw = profile ? null : window.localStorage.getItem(PRINTER_KEY);
+    if (!profile && !raw) return EMPTY;
+    const parsed = profile ?? JSON.parse(raw!) as Partial<PrinterPrefs>;
     return {
       deviceName: parsed.deviceName ?? "",
       share: parsed.share ?? "",

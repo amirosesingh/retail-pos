@@ -43,6 +43,7 @@ vi.mock("@/integrations/supabase/external-client", () => ({
 
 import {
   db,
+  commitOps,
   receivingPriceOps,
   receivingCorrectionOps,
   type ReceivingInvoice,
@@ -87,6 +88,15 @@ const opsSent = () =>
 const saleArgs = () => opsSent().find((o) => o.kind === "rpc" && o.table === "sales")?.args;
 
 describe("checkout commit", () => {
+  it.each(["Saving payment types", "Deleting payment type"])("routes %s through catalogue settings instead of checkout", async context => {
+    platform.offlineFirst = true;
+    localAggregate.mockResolvedValue({ ok: true });
+    const op = context.startsWith("Deleting") ? { kind: "delete" as const, table: "payment_types", match: { id: "method" } }
+      : { kind: "upsert" as const, table: "payment_types", rows: [{ id: "method", name: "Cash", type_code: "cash" }] };
+    await expect(commitOps(context, [op])).resolves.toBe("local");
+    expect(localAggregate).toHaveBeenCalledWith(expect.objectContaining({ kind: "general", operations: [op] }));
+    expect(live).not.toHaveBeenCalled();
+  });
   beforeEach(() => {
     platform.offlineFirst = false;
     live.mockReset();

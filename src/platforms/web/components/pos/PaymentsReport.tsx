@@ -1,3 +1,4 @@
+import { completedReportBills } from "@/lib/report-display";
 import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
 import { ReportReceiptLink } from "@/platforms/web/components/pos/ReportReceiptLink";
 import { useMemo } from "react";
@@ -92,13 +93,15 @@ export function PaymentsReport() {
     [history.sales, from, to, storeId, cashier, tender, q, products],
   );
 
-  /** Takings per cashier, split by tender. */
+  const completedRows = useMemo(() => completedReportBills(rows), [rows]);
+  const refundedRows = rows.filter(sale => sale.refunded);
+  /** Takings per cashier, split by tender; refunds remain in history below. */
   const perCashier = useMemo(() => {
     const map = new Map<
       string,
       { bills: number; total: number; cash: number; card: number; other: number }
     >();
-    for (const s of rows) {
+    for (const s of completedRows) {
       const cur = map.get(s.cashier) ?? { bills: 0, total: 0, cash: 0, card: 0, other: 0 };
       cur.bills += 1;
       cur.total += s.total;
@@ -110,9 +113,9 @@ export function PaymentsReport() {
       map.set(s.cashier, cur);
     }
     return [...map.entries()].sort((a, b) => b[1].total - a[1].total);
-  }, [rows]);
+  }, [completedRows]);
 
-  const takings = rows.reduce((a, s) => a + s.total, 0);
+  const takings = completedRows.reduce((a, s) => a + s.total, 0);
   const cash = perCashier.reduce((a, [, v]) => a + v.cash, 0);
   const card = perCashier.reduce((a, [, v]) => a + v.card, 0);
   const pager = usePagination(rows);
@@ -130,13 +133,14 @@ export function PaymentsReport() {
           onTo={setTo}
           onExport={() =>
             downloadReport("cashier-payments", [
-              ["Time", "Bill", "Store", "Cashier", "Member", "Total", "Tenders"],
+              ["Time", "Bill", "Store", "Cashier", "Member", "Status", "Total", "Tenders"],
               ...rows.map((s) => [
                 stamp(s.createdAt),
                 s.receiptNo,
                 storeName(s.storeId),
                 s.cashier,
                 s.memberId ?? "",
+                s.refunded ? "Refunded" : "Completed",
                 s.total.toFixed(2),
                 paymentsLabel(tendersOf(s)),
               ]),
@@ -199,8 +203,8 @@ export function PaymentsReport() {
         {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
         <div className="grid gap-4 sm:grid-cols-4">
-          <StatCard label="Transactions" value={String(rows.length)} />
-          <StatCard label="Total taken" value={money(takings)} />
+          <StatCard label="Completed bills" value={String(completedRows.length)} />
+          <StatCard label="Collected · excluding refunded bills" value={money(takings)} />
           <StatCard
             label="Cash"
             value={money(cash)}
@@ -212,6 +216,8 @@ export function PaymentsReport() {
             hint={takings ? `${Math.round((card / takings) * 100)}% of takings` : undefined}
           />
         </div>
+
+        <p className="text-xs text-muted-foreground">Summary excludes refunded bills; their original records remain in history and export. {refundedRows.length > 0 && `Refunded: ${refundedRows.length} bills · ${money(refundedRows.reduce((sum, sale) => sum + sale.total, 0))}.`} A tender filter selects whole bills, including their other payment types.</p>
 
         <div className="rounded-2xl border border-border bg-card">
           <div className="border-b border-border px-4 py-2 text-sm font-medium">Per cashier</div>
@@ -272,6 +278,7 @@ export function PaymentsReport() {
                   </TableCell>
                   <TableCell data-sort-value={s.receiptNo}>
                     <ReportReceiptLink sale={s} />
+                    <Badge className="ml-2" variant={s.refunded ? "destructive" : "secondary"}>{s.refunded ? "Refunded" : "Completed"}</Badge>
                   </TableCell>
                   <TableCell className="text-muted-foreground">{storeName(s.storeId)}</TableCell>
                   <TableCell>{s.cashier}</TableCell>

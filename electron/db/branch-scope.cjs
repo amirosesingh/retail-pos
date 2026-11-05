@@ -1,3 +1,4 @@
+const { catalogueReadPredicate } = require("./catalogue-scope.cjs");
 /**
  * Build the SQL Server equivalent of the branch predicates generated for the
  * Supabase synchronization RPCs. Registry names are trusted build artifacts;
@@ -58,6 +59,8 @@ function rendererReadBranchPredicate(registry, table, alias = "source", seen = n
       : owned;
   }
   if (names.has("branch_id")) return `${alias}.[branch_id]=@branch`;
+  if (table.cloudTable === "products" && names.has("owner_store_id"))
+    return catalogueReadPredicate(registry, alias);
   if (names.has("owner_store_id"))
     return `(NULLIF(${alias}.[owner_store_id],N'') IS NULL OR ${alias}.[owner_store_id]=@branch)`;
   if (names.has("from_store_id") && names.has("to_store_id"))

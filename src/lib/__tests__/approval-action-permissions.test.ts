@@ -10,6 +10,10 @@ describe("approval requires action authority as well as rule eligibility", () =>
     expect(approverActionAllowed("refund", { role: "manager", permissions: { can_process_refund: false } })).toBe(false);
     expect(approverActionAllowed("refund", { role: "manager", permissions: {} })).toBe(false);
   });
+  it("requires release approval permission rather than transfer creation for cross-cluster approval",()=>{
+    expect(approverActionAllowed("cross_group_transfer_approval",{role:"staff",permissions:{can_create_transfer:true}})).toBe(false);
+    expect(approverActionAllowed("cross_group_transfer_approval",{role:"staff",permissions:{can_approve_transfer:true}})).toBe(true);
+  });
   it("lets an assigned user qualify without a manager title, while preserving exclusions", () => {
     const who = { userId: "cashier-2", role: "staff", permissions: { can_process_refund: true } };
     const rule = { ...defaultRule("refund"), allowedRoles: [], allowedUserIds: [who.userId] };

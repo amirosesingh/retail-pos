@@ -118,17 +118,19 @@ describe("offline terminal operations", () => {
 
   it("passes the sealed branch and terminal scope to trusted shift and drawer writes", () => {
     const main = readFileSync("electron/main.cjs", "utf8");
-    for (const context of [
-      "Starting shift close",
-      "Closing shift cash count",
-      "Saving shift recount",
-      "Approving shift variance",
-      "Recording cash drawer request",
-      "Recording cash drawer result",
+    for (const [writer, context] of [
+      ["operationsRepository", "Starting shift close"],
+      ["financialJournal", "Closing shift cash count"],
+      ["financialJournal", "Saving shift recount"],
+      ["financialJournal", "Approving shift variance"],
+      ["operationsRepository", "Recording cash drawer request"],
+      ["operationsRepository", "Recording cash drawer result"],
     ]) {
-      const start = main.indexOf(`operationsRepository.apply("${context}"`);
+      const start = main.indexOf(`${writer}.apply("${context}"`);
       expect(start, context).toBeGreaterThan(-1);
-      expect(main.slice(start, start + 4_000), context).toContain("{ branchId, terminalId }");
+      const call=main.slice(start,start+4_000);
+      if(writer==='financialJournal')expect(call,context).toMatch(/\{ branchId, terminalId, observation, author(?:\s*\}|,)/);
+      else expect(call,context).toContain('{ branchId, terminalId }');
     }
   });
 
@@ -210,7 +212,9 @@ describe("offline terminal operations", () => {
     expect(main).toContain('!String(row?.store_id??"").trim()');
     expect(main).toContain("adminSession.branchId()");
     expect(main).toContain('code:"SYNC_BRANCH_FORBIDDEN"');
-    expect(aggregates).toContain("async assertBranch(transaction, table, record, match, branchId)");
+    expect(aggregates).toContain("async assertBranch(transaction, table, record, match, branchId, financialStock = false)");
+    expect(aggregates).toContain('financialStock ? rendererReadBranchPredicate(this.operationsRepository.registry, table, "candidate") : branchPredicate(this.operationsRepository.registry, table, "candidate")');
+    expect(readFileSync("electron/db/financial-stock-policy.cjs", "utf8")).toContain('scope.productWriteKind === "sale"');
     expect(aggregates).toContain("branchId: aggregate.branchId");
     expect(aggregates).toContain("terminalId: aggregate.terminalId");
     expect(aggregates).toContain('code: "SYNC_BRANCH_FORBIDDEN"');

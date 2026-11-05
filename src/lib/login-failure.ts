@@ -83,6 +83,10 @@ export function failureFromAuthError(
 ): LoginFailure {
   const code = (typeof error === "string" ? "" : error?.code ?? "").toLowerCase();
   const msg = (typeof error === "string" ? error : error?.message ?? "").toLowerCase();
+  const status = typeof error === "string" ? 0 : Number(error?.status ?? 0);
+  // A provider/database timeout has not rejected the password. In particular,
+  // GoTrue can return "context deadline exceeded" without saying "timeout".
+  if (status === 408 || status >= 500) return "cloud-unreachable";
   // Supabase Auth exposes stable machine-readable codes. Prefer them over
   // wording, which can change without changing the actual failure.
   if (["invalid_credentials", "email_not_confirmed"].includes(code))
@@ -96,13 +100,23 @@ export function failureFromAuthError(
   if (/invalid login credentials|invalid email or password|invalid grant/.test(msg))
     return "invalid-credentials";
   if (/email not confirmed|user is banned|disabled|deactivat/.test(msg)) return "account-inactive";
-  if (/failed to fetch|load failed|network|timeout|abort|dns|enotfound|econnrefused/.test(msg))
+  if (/failed to fetch|load failed|network|timeout|timed out|deadline exceeded|abort|dns|enotfound|econnrefused/.test(msg))
     return "cloud-unreachable";
   if (/invalid api ?key|no api key|jwt|unrecognized|project not found|not found/.test(msg))
     return "configuration-invalid";
   if (/relation .* does not exist|schema|undefined table/.test(msg)) return "cloud-schema-missing";
   if (/too many requests|rate limit/.test(msg)) return "unknown-error";
   return "unknown-error";
+}
+
+/** A verified password does not establish that a failed profile read denied access. */
+export function failureFromLoginProfileError(
+  error: { code?: string; message?: string; status?: number },
+): LoginFailure {
+  if (error.code === "42501" || error.status === 403) return "permission-denied";
+  if (["42P01", "PGRST205"].includes(error.code ?? "")) return "cloud-schema-missing";
+  const failure = failureFromAuthError(error);
+  return failure === "cloud-schema-missing" ? failure : "cloud-unreachable";
 }
 
 /**
@@ -150,6 +164,6 @@ export function localCashierLoginFailure(reason: string): { ok: false; code: Log
       : "The local SQL database is still connecting or is unavailable. Wait for the database to become ready, then retry. Your PIN has not been rejected.",
   };
 }
-/** Legacy uncoded refusals keep their behavior; infrastructure errors never consume PIN attempts. */
+/** Only a verified credential refusal consumes a PIN attempt; missing codes prove nothing. */
 export const countsAsWrongCashierPin = (code: LoginFailure | "session-open-failed" | undefined) =>
-  code === undefined || code === "invalid-credentials";
+  code === "invalid-credentials";

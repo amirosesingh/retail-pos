@@ -171,11 +171,13 @@ describe("local SQL Server discovery privilege", () => {
       "utf8",
     );
     const main = readFileSync("electron/main.cjs", "utf8");
-    const adoptRoute = readFileSync("src/routes/api/v1/pos/ipc-adopt.ts", "utf8");
+    const adoptRoute = readFileSync("src/lib/ipc-adopt-endpoint.server.ts", "utf8");
+    expect(readFileSync("src/routes/api/v1/pos/ipc-adopt.ts", "utf8")).toContain("handleIpcAdopt(request)");
 
     expect(gate).toContain("ensureDesktopPosSession(true)");
     const handoff = readFileSync("src/lib/desktop-pos-session.ts", "utf8");
-    expect(handoff).toContain("bridge.adoptSession!(credentials, readTerminalConfig())");
+    expect(handoff).toContain("bridge.adoptSession!({ ...credentials, ...registrationProof }, readTerminalConfig())");
+    expect(handoff).toContain("readNativeTerminalProof()");
     expect(gate).toContain('requiredLevel === "admin" && adopted.level !== "admin"');
     expect(main).toContain('ipcMain.handle("admin:adopt-session"');
     expect(main).toContain('configStore.get("backendUrl")');
@@ -183,7 +185,7 @@ describe("local SQL Server discovery privilege", () => {
     expect(main).not.toContain('`${baseUrl}/api/v1/pos/ipc-adopt`');
     expect(main).toContain('`${authorizationUrl}/api/v1/pos/ipc-authorize`');
     expect(main).not.toContain('`${baseUrl}/api/v1/pos/ipc-authorize`');
-    expect(adoptRoute).toContain("verifyRelayCaller(proof)");
+    expect(adoptRoute).toMatch(/verifyRelayCaller\(proof(?:,|\))/);
     expect(adoptRoute).toContain("sessionToken:");
     expect(adoptRoute).toContain("cashierToken:");
     expect(adoptRoute).not.toMatch(/role\s*:\s*input/);
@@ -191,7 +193,10 @@ describe("local SQL Server discovery privilege", () => {
     expect(adoptRoute).not.toMatch(/authority\.permissions\.can_manage_sync_backup/);
     expect(main).toContain('adminSession.grant(result.level,result.subject,result.permissions,"pos",result.branchId)');
     expect(main).toContain("const mirrored=terminalStore.write(terminal)");
-    expect(main).toContain("terminal.locationId,terminal.storeId,terminal.branchId,adminSession.branchId()");
+    expect(main).toContain("terminal.locationId,terminal.storeId,terminal.branchId]");
+    expect(main).not.toContain("terminal.locationId,terminal.storeId,terminal.branchId,adminSession.branchId()");
+    expect(main).toContain("activationBoundary.canonicalConfig({...candidate,deviceBindingProof:proof.deviceBindingProof},result.terminal,sealed)");
+    expect(main).toContain("activationBoundary.authorizedBranch(terminalStore.read(),adminSession.branchId())");
     expect(ipcGate).toContain("adminSession.hasPosAuthority()");
     expect(wizard).toMatch(
       /const authorization = await authorizeDatabaseChange\(\);[\s\S]{0,220}const migrated = await api\(\)!\.migrateDatabase\(profile\)/,

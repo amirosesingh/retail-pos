@@ -40,7 +40,7 @@ export async function resolveIdleMinutes(input: {
   staffUserId?: string | null;
   cashierId?: string | null;
   branchId?: string | null;
-}): Promise<number> {
+}, options: { signal?: AbortSignal } = {}): Promise<number> {
   const clamp = (n: unknown): number | null => {
     const v = Number(n);
     return Number.isFinite(v) && v > 0 ? Math.min(1440, Math.round(v)) : null;
@@ -52,6 +52,7 @@ export async function resolveIdleMinutes(input: {
     for (const scope of scopes) {
       const res = await serviceRest(
         `pos_store_settings?store_id=eq.${encodeURIComponent(scope)}&select=idle_timeout_minutes&limit=1`,
+        { ...(options.signal ? { signal: options.signal } : {}) },
       );
       if (!res.ok) continue;
       const row = one<{ idle_timeout_minutes: number | null }>(await res.json());
@@ -67,6 +68,7 @@ export async function resolveIdleMinutes(input: {
     if (input.staffUserId) {
       const res = await serviceRest(
         `app_users?user_id=eq.${encodeURIComponent(input.staffUserId)}&select=idle_timeout_minutes&limit=1`,
+        { ...(options.signal ? { signal: options.signal } : {}) },
       );
       if (res.ok) {
         const row = one<{ idle_timeout_minutes: number | null }>(await res.json());
@@ -76,6 +78,7 @@ export async function resolveIdleMinutes(input: {
     }
     if (branchDefault) return branchDefault;
   } catch {
+    options.signal?.throwIfAborted();
     /* fall through to the shipped default */
   }
   return DEFAULT_IDLE_MINUTES;
@@ -91,16 +94,19 @@ export async function startSession(input: {
   branchId?: string | null;
   terminalId?: string | null;
   platform?: string | null;
-}): Promise<{ token: string; idleMinutes: number }> {
+}, options: { signal?: AbortSignal } = {}): Promise<{ token: string; idleMinutes: number }> {
+  options.signal?.throwIfAborted();
   const token = mintSessionToken();
   const idleMinutes = await resolveIdleMinutes({
     ...(input.staffUserId ? { staffUserId: input.staffUserId } : {}),
     ...(input.cashierId ? { cashierId: input.cashierId } : {}),
     ...(input.branchId ? { branchId: input.branchId } : {}),
-  });
+  }, options);
 
+  options.signal?.throwIfAborted();
   const res = await serviceRest("user_sessions", {
     method: "POST",
+    ...(options.signal ? { signal: options.signal } : {}),
     prefer: "return=minimal",
     body: JSON.stringify([
       {
@@ -118,6 +124,7 @@ export async function startSession(input: {
     ]),
   });
   if (!res.ok) throw new Error((await res.text()).slice(0, 300) || "Could not start the session");
+  options.signal?.throwIfAborted();
   return { token, idleMinutes };
 }
 

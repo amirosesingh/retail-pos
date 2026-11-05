@@ -76,6 +76,7 @@ const CHANNEL_LEVELS = {
   "business:reserve-bill": OPEN, // verified sale permission checked in allowed()
   "business:snapshot": OPEN,
   "business:query": OPEN,
+  "business:management-report": OPEN, // explicit report permissions below; handler additionally verifies sealed management registration and complete replica
   "business:save-authorization-rule": OPEN,
   "business:shift-expected": OPEN,
   "business:shift-close-start": OPEN,
@@ -437,6 +438,19 @@ function refusal(level, channel, args = []) {
 
 /** True when the caller may run this channel with these arguments right now. */
 function allowed(channel, args = []) {
+  if (channel === "business:management-report") {
+    if (!adminSession.hasPosAuthority()) return false;
+    const request = args[0];
+    if (!["sales", "totals", "shifts"].includes(request?.kind)) return false;
+    const pageEnabled = adminSession.identity()?.permissions?.["page:shifts"] !== false;
+    const shiftPage = require("./permission-pages.json").find(page => page.id === "shifts");
+    const shiftRead = adminSession.hasLevel("admin") || (pageEnabled && shiftPage.keys.some(flag => adminSession.hasPermission(flag)));
+    const permitted = request.kind === "shifts" ? shiftRead : adminSession.hasPermission("can_view_sales_reports") ||
+      (request.kind === "sales" && request.shiftId && pageEnabled && ["can_shift_expected_cash_view", "can_shift_report_reprint"].some(flag => adminSession.hasPermission(flag)));
+    if (!permitted) return false;
+    adminSession.touch();
+    return true;
+  }
   if (channel === "staff:verify-approval-pin" || channel === "approval:enroll-verifier") {
     if (!adminSession.hasPosAuthority()) return false;
     if (channel === "approval:enroll-verifier" && !adminSession.hasPermission("can_manage_staff")) return false;

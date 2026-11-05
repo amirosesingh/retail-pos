@@ -169,7 +169,8 @@ describe("online approval primary database", () => {
     expect(panel.match(/const WIRED_ACTIONS = new Set\(\[([\s\S]*?)\]\)/)?.[1]).toContain('"sponsorship"');
     expect(panel).toContain("Excluded people (");
     expect(panel).toContain("options={AUTH_MODES.filter");
-    expect(panel).toContain("mode: mode ?? existing.mode");
+    expect(panel).toContain('mode: action.key === "cross_group_transfer_approval" ? "request" : mode ?? existing.mode');
+    expect(panel).toContain('["sponsorship", "cross_group_transfer_approval"].includes(action.key) || mode.value === "request"');
     expect(panel).not.toContain('mode.value !== "either"');
     expect(panel).toContain("Complete the highlighted settings before saving");
     expect(panel).toContain("Approval Request settings will become inactive, not deleted");

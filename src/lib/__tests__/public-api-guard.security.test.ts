@@ -26,7 +26,15 @@ describe("public API endpoints", () => {
 
   it.each(files)("%s names a guard from the shared module", (file) => {
     const src = readFileSync(join(DIR, file), "utf8");
-    expect(src).toContain("@/lib/public-api-guard.server");
-    expect(GUARDS.some((g) => src.includes(g))).toBe(true);
+    let handler = src;
+    if (file === "cashier-login.ts") {
+      // This route delegates to the same guarded endpoint as the Worker entry.
+      // Follow that exact implementation, retaining the guard requirement.
+      expect(src).toContain('import { handleCashierLogin } from "@/lib/cashier-login-endpoint.server"');
+      expect(src).toContain("withCors(await handleCashierLogin(request), request)");
+      handler = readFileSync(join(process.cwd(), "src/lib/cashier-login-endpoint.server.ts"), "utf8");
+    }
+    expect(handler).toContain("@/lib/public-api-guard.server");
+    expect(GUARDS.some((g) => handler.includes(g))).toBe(true);
   });
 });

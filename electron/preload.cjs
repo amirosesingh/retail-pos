@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld("pos", {
   commitAggregate: (aggregate) => invoke("business:commit-aggregate", aggregate),
   snapshot: (options) => invoke("business:snapshot", options),
   analytics: (from, to, timeZone) => invoke("business:analytics", from, to, timeZone),
+  managementReport: (options) => invoke("business:management-report", options),
   query: (table, options) => invoke("business:query", table, options),
   saveAuthorizationRule: (value) => invoke("business:save-authorization-rule", value),
   shiftExpectedTotals: (shiftId) => invoke("business:shift-expected", shiftId),
@@ -88,6 +89,11 @@ contextBridge.exposeInMainWorld("pos", {
       const handler = (_event, payload) => cb(payload);
       ipcRenderer.on("database:state", handler);
       return () => ipcRenderer.removeListener("database:state", handler);
+    },
+    onStartupActivity: (cb) => {
+      const handler = (_event, activity) => cb(activity);
+      ipcRenderer.on("database:startup-activity", handler);
+      return () => ipcRenderer.removeListener("database:startup-activity", handler);
     },
   },
   jobs: {

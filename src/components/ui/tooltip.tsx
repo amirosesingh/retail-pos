@@ -4,6 +4,11 @@ import * as React from "react";
 import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 
 import { cn } from "@/lib/utils";
+import { createOfflineGateContent, createOfflineGatePortal } from "@/lib/offline-gate-snapshot-context";
+
+const GateTooltipContent = createOfflineGateContent(TooltipPrimitive.Content, ["onEscapeKeyDown", "onPointerDownOutside"]);
+
+const TooltipPortal = createOfflineGatePortal(TooltipPrimitive.Portal);
 
 const TooltipProvider = TooltipPrimitive.Provider;
 
@@ -15,8 +20,8 @@ const TooltipContent = React.forwardRef<
   React.ElementRef<typeof TooltipPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof TooltipPrimitive.Content>
 >(({ className, sideOffset = 4, ...props }, ref) => (
-  <TooltipPrimitive.Portal>
-    <TooltipPrimitive.Content
+  <TooltipPortal>
+    <GateTooltipContent
       ref={ref}
       sideOffset={sideOffset}
       className={cn(
@@ -25,7 +30,7 @@ const TooltipContent = React.forwardRef<
       )}
       {...props}
     />
-  </TooltipPrimitive.Portal>
+  </TooltipPortal>
 ));
 TooltipContent.displayName = TooltipPrimitive.Content.displayName;
 

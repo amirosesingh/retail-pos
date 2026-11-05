@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Product } from "@/core/types/pos-types";
 import { inventoryMetrics, inventoryUnitMargin, isLowStock, needsCostReview, productMargin } from "../inventory-metrics";
-import { emptyUnitCostSettings, updateUnitCostRules } from "../total-unit-cost";
+import { emptyUnitCostSettings, totalUnitCost, updateUnitCostRules } from "../total-unit-cost";
 
 const branch = "15a19c3f-1805-428b-8606-e82e474f0db3";
 const product = (overrides: Partial<Product>): Product => ({
@@ -19,6 +19,33 @@ const product = (overrides: Partial<Product>): Product => ({
 });
 
 describe("inventory metrics", () => {
+  it("keeps purchase, retail and configured total unit cost valuations separate across thousands of rows", () => {
+    const active = Array.from({ length: 5_000 }, (_, index) => product({
+      id: `item-${index}`, cost: 10, price: 20,
+      stockByStore: { [branch]: 2, "other-branch": 999_999 }, taxRate: 6,
+    }));
+    const archived = Array.from({ length: 200 }, (_, index) => product({
+      id: `archived-${index}`, archived: true, cost: 9_999, price: 99_999,
+      stockByStore: { [branch]: 99_999 },
+    }));
+    const before = JSON.stringify(active[0]);
+    const metrics = inventoryMetrics([...active, ...archived], branch);
+    expect(metrics).toMatchObject({ products: 5_000, units: 10_000, costValue: 100_000, retailValue: 200_000, potentialProfit: 100_000 });
+    const rules = updateUnitCostRules(emptyUnitCostSettings, "default", [], { percent: 20, amount: 3 });
+    expect(active.reduce((value, item) => value + totalUnitCost(item.cost, item.id, rules)! * item.stockByStore[branch], 0)).toBe(150_000);
+    // Retail valuation uses the stored selling price, without charging sales
+    // tax again; purchasing cost and on-hand quantities remain unchanged.
+    expect(JSON.stringify(active[0])).toBe(before);
+  });
+
+  it("preserves fractional and negative branch quantities without adding other branches or pack factors", () => {
+    const metrics = inventoryMetrics([
+      product({ id: "fractional", cost: 8, price: 12, packs: [{ name: "Carton", factor: 12 }], stockByStore: { [branch]: 1.25, elsewhere: 5_000 } }),
+      product({ id: "negative", cost: 10, price: 20, stockByStore: { [branch]: -1 } }),
+    ], branch);
+    expect(metrics).toMatchObject({ units: 0.25, costValue: 0, retailValue: -5, negativeStock: 1 });
+  });
+
   it("summarizes only active products and merges case-variant branch stock", () => {
     const metrics = inventoryMetrics(
       [

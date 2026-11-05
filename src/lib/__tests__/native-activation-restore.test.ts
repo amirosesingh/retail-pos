@@ -11,17 +11,45 @@ describe("native activation restore", () => {
   beforeEach(() => {
     vi.resetModules();
     secrets.read.mockReset();
+    secrets.write.mockClear();
     secrets.read.mockResolvedValue(null);
     readDisk = vi.fn(async () => ({ ok: true, config }));
     vi.stubGlobal("window", { localStorage: { getItem: () => null, setItem: vi.fn(), removeItem: vi.fn() },
       dispatchEvent: vi.fn(), pos: { readTerminalConfig: readDisk, writeTerminalConfig: vi.fn(async () => ({ ok: true })) } });
   });
   afterEach(() => vi.unstubAllGlobals());
+  it("does not consume or delete a native registration saved in a browser", async () => {
+    Reflect.deleteProperty(window, "pos");
+    const removeItem = vi.fn();
+    Object.assign(window, { localStorage: { getItem: vi.fn(() => JSON.stringify(config)), removeItem } });
+    secrets.read.mockResolvedValue(config);
+    const terminal = await import("@/core/activation/terminal-tokens");
+    expect(terminal.readTerminalConfig()).toBeNull();
+    await expect(terminal.hydrateTerminalConfig()).resolves.toBeNull();
+    expect(secrets.read).not.toHaveBeenCalled();
+    expect(secrets.write).not.toHaveBeenCalled();
+    expect(removeItem).not.toHaveBeenCalled();
+    expect(readDisk).not.toHaveBeenCalled();
+  });
   it("restores the desktop registration before hydration completes, without internet", async () => {
     const terminal = await import("@/core/activation/terminal-tokens");
     await expect(terminal.hydrateTerminalConfig()).resolves.toMatchObject(config);
     expect(terminal.isTerminalConfigHydrated()).toBe(true);
     expect(readDisk).toHaveBeenCalledOnce();
+  });
+  it("keeps a failed native registration read retryable instead of publishing an unregistered terminal", async () => {
+    readDisk.mockResolvedValueOnce({ ok: false, code: "EACTIVATION_STORE" });
+    const terminal = await import("@/core/activation/terminal-tokens");
+
+    await expect(terminal.hydrateTerminalConfig()).rejects.toThrow("Could not restore the saved terminal registration");
+    expect(terminal.isTerminalConfigHydrated()).toBe(false);
+    expect(terminal.readTerminalConfig()).toBeNull();
+    expect(secrets.write).not.toHaveBeenCalled();
+    expect(window.localStorage.removeItem).not.toHaveBeenCalled();
+
+    await expect(terminal.hydrateTerminalConfig()).resolves.toMatchObject(config);
+    expect(terminal.isTerminalConfigHydrated()).toBe(true);
+    expect(readDisk).toHaveBeenCalledTimes(2);
   });
   it("shares concurrent restores instead of publishing a temporary missing registration", async () => {
     let finish!: (value: unknown) => void;
@@ -36,6 +64,7 @@ describe("native activation restore", () => {
   });
   it("keeps unreadable Android activation retryable instead of declaring it absent", async () => {
     Reflect.deleteProperty(window, "pos");
+    Object.assign(window, { Capacitor: { isNativePlatform: () => true, getPlatform: () => "android" } });
     secrets.read.mockRejectedValueOnce(new Error("storage not ready"));
     const terminal = await import("@/core/activation/terminal-tokens");
     await expect(terminal.hydrateTerminalConfig()).rejects.toThrow("registration has not been removed");

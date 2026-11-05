@@ -29,7 +29,10 @@ describe("public username login", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(await response.json()).toMatchObject({ ok: true, accessToken: "access" });
-    expect(mocks.reset).toHaveBeenCalledExactlyOnceWith("staff-password:manager");
+    const signal = mocks.login.mock.calls[0][2];
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(mocks.status).toHaveBeenCalledWith("staff-password:manager", signal);
+    expect(mocks.reset).toHaveBeenCalledExactlyOnceWith("staff-password:manager", signal);
   });
 
   it("throttles wrong passwords without identifying the account", async () => {
@@ -58,7 +61,7 @@ describe("public username login", () => {
     const spoofed = request();
     spoofed.headers.set("x-forwarded-for", "1.2.3.4");
     await handleUsernameLogin(spoofed);
-    expect(mocks.status).toHaveBeenCalledWith("staff-password-ip:unknown");
-    expect(mocks.status).not.toHaveBeenCalledWith("staff-password-ip:1.2.3.4");
+    expect(mocks.status).toHaveBeenCalledWith("staff-password-ip:unknown", expect.any(AbortSignal));
+    expect(mocks.status.mock.calls.map(call => call[0])).not.toContain("staff-password-ip:1.2.3.4");
   });
 });

@@ -1,0 +1,87 @@
+{
+  "status": "candidate_not_approved_not_applied",
+  "encoding": "UTF-8, LF, no BOM",
+  "cloudTarget": {
+    "organizationId": "bjxgimekljzlnwejuawj",
+    "project": "pos",
+    "projectId": "qhrufhtbeguxydenzfey",
+    "url": "https://qhrufhtbeguxydenzfey.supabase.co",
+    "database": "postgres"
+  },
+  "localTarget": "Identify and approve each actual SQL Server/database separately. Never infer it from this manifest.",
+  "sources": [
+    {
+      "source": "scripts/preparation/shift-financial-math-postgres.sql",
+      "sha256": "FA99870D7E1205ACFF2608E99681D20A464C2D124BBE6BFF3E4F9C6A52C88E2A"
+    },
+    {
+      "source": "scripts/preparation/shift-financial-cloud-receipts.sql",
+      "sha256": "989768764B06B19FD5B302C129761FD2FFF7714165734150D1E280B26D341A61"
+    },
+    {
+      "source": "scripts/preparation/shift-financial-version-receipts.sql",
+      "sha256": "E586BEE66E61A826D85CF9DC2A7C54FB615CA6A774A335BFBC05F0737A8F120B"
+    },
+    {
+      "source": "scripts/preparation/shift-financial-known-basis.sql",
+      "sha256": "D457C1244530ADE35D458F5A9E48BE234F61A9A248631EB65D5FAAA22144457E"
+    },
+    {
+      "source": "scripts/preparation/shift-financial-opening-origin.sql",
+      "sha256": "63F29DE5708D85D6C4F575BA300A137512B3C1258433C8E476F080F1BB4A0075"
+    },
+    {
+      "source": "scripts/preparation/shift-financial-admission.sql",
+      "sha256": "099C671B723AE6D2213194102A7909E752B03FC4B06C795B808D850C0F6E20DB"
+    },
+    {
+      "source": "scripts/preparation/shift-financial-operation-history.sql",
+      "sha256": "D3118AC2657B889CB9B57B8C2096EA2C2AC563800D7436096D017A98D17F34E2"
+    },
+    {
+      "source": "scripts/preparation/shift-financial-web-actions.sql",
+      "sha256": "C183B8A19955F180A9CD445F6263D0C8033DB85DA229887A4078E5E81C9A37A5"
+    },
+    {
+      "source": "scripts/preparation/shift-financial-live-business.sql",
+      "sha256": "A014E7A06AEB4A4B42C4825EF0C899466AE9D09726B3B52886E06881266B5A8E"
+    },
+    {
+      "source": "scripts/preparation/shift-financial-admin-aliases.sql",
+      "sha256": "7C7BA27E530ABD0ACC7E5D126E0CAA04EE9749E5E9F076B8956D3F60A6091CF2"
+    },
+    {
+      "source": "scripts/preparation/shift-financial-rollout-capability.sql",
+      "sha256": "BDB60AFFEBE577A4B885B54C04C6F21EBA8AE87EBEE55C05E4930FA54A6AC57D"
+    },
+    {
+      "source": "scripts/preparation/shift-financial-final-readiness.sql",
+      "sha256": "CD2EB62C446C7FEBC99C1FA9F41012A56CABAB74CD8D4DEA2BB0ECFDAC14467A"
+    }
+  ],
+  "artifacts": [
+    {
+      "file": "supabase/migrations/20261105090000_shift_financial_known_history.sql",
+      "sha256": "A37FD005A688C1E2AC4815E0455E9B97B842531C3ACE0BC3F0A105287498EC2E",
+      "bytes": 226015
+    },
+    {
+      "file": "database/sqlserver/prepared/025_shift_financial_bases.sql",
+      "sha256": "2C6E250D04855B86447603763C1A9304241D99D77814040756AB9AA67CB77897",
+      "bytes": 11936
+    },
+    {
+      "file": "database/sqlserver/prepared/026_shift_financial_operations.sql",
+      "sha256": "26A55BC6FD352083AA388283F093212E9C74081E9C96FE87A79E71288AE235FA",
+      "bytes": 12790
+    }
+  ],
+  "boundaries": [
+    "No live application approval",
+    "No rollout approval rows",
+    "No historical backfill or business-row rewrite",
+    "No PIN or permission-grant rewrite",
+    "Separate SHIFT63 cloud/local rule files must follow in the reviewed order",
+    "Local metadata files are individually transactional; no cross-database atomicity is claimed"
+  ]
+}

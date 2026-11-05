@@ -1,5 +1,8 @@
 const { normalizeUuidFields, recordId } = require("../../sync/uuid-fields.cjs");
 const { loadRegistry } = require("../schema-registry.cjs");
+const { assertFinancialWrite } = require("../financial-write-policy.cjs");
+const { isFinancialStockUpdate, assertFinancialStockUpdate } = require("../financial-stock-policy.cjs");
+const { catalogueStoreIdsProjection } = require("../catalogue-scope.cjs");
 const {
   branchPredicate,
   rendererReadBranchPredicate,
@@ -158,15 +161,34 @@ class OperationsRepository {
       }
     }
   }
-  async apply(context, operations, scope = {}) {
+  async apply(context, operations, scope = {}, beforeCommit, beforeWrite, beforeFinalize) {
+    // This callback stays inside Main; IPC handlers pass three arguments and
+    // never accept a renderer-controlled trust flag or transaction callback.
+    if ((beforeCommit !== undefined && typeof beforeCommit !== "function") ||
+        (beforeWrite !== undefined && typeof beforeWrite !== "function") ||
+        (beforeFinalize !== undefined && typeof beforeFinalize !== "function"))
+      throw new Error("The transaction callback must be an internal function.");
     const ops = this.validate(operations);
     this.assertWriteScope(ops, scope);
     const sql = this.connectionManager.sql();
     const transaction = new sql.Transaction(this.pool());
     await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
     let affected = 0;
+    const finalize = () => {
+      // No await may separate this Main-only epoch check from commit().
+      if (beforeFinalize?.()?.then) throw new Error("The final transaction guard must be synchronous.");
+    };
     try {
+      if (beforeWrite && await beforeWrite(transaction, ops) === false) {
+        // Only Main supplies this callback. A proven protected receipt replay
+        // must not re-run an older parent UPDATE over a later recount.
+        finalize();
+        await transaction.commit();
+        return {ok:true,context:String(context ?? "").slice(0,160),affected:0,replayed:true};
+      }
       for (const op of ops) affected += await this.applyOperation(transaction, op, scope);
+      if (beforeCommit) await beforeCommit(transaction, ops);
+      finalize();
       await transaction.commit();
       return { ok: true, context: String(context ?? "").slice(0, 160), affected };
     } catch (error) {
@@ -214,6 +236,7 @@ class OperationsRepository {
         const existing = toRendererRow(table, current);
         for (const [field, value] of Object.entries(values)) {
           if (metadata.has(field) || stock.has(field) || same(field, value, existing[field])) continue;
+          if (field === "ecom_price" && permissions.can_publish_product !== true) refuse();
           const permitted = prices.has(field)
             ? permissions.can_edit_product_price === true ||
               (field === "cost_price" && scope.productWriteKind === "receiving" && permissions.can_receive_purchase_order === true)
@@ -340,11 +363,31 @@ class OperationsRepository {
         throw Object.assign(new Error("Shift closing must use the protected cash-count workflow."), { code: "PERMISSION_DENIED" });
       if (!Number.isFinite(Number(row.opening_float)) || Number(row.opening_float) < 0)
         throw Object.assign(new Error("Opening float must be a finite non-negative amount."), { code: "ESHIFT_INPUT" });
+      const { readShiftRules } = require('../shift-sharing.cjs');
+      const rules = await readShiftRules(this.connectionManager, transaction, scope.branchId);
+      const sharing = rules.sharing || scope.managementDevice === true;
+      if (!sharing && (!scope.terminalId || String(row.terminal_id).toLowerCase() !== String(scope.terminalId).toLowerCase()))
+        throw Object.assign(new Error('A shift must be opened for this registered till.'), { code: 'ESHIFT_TERMINAL' });
       const current = await new (this.connectionManager.sql().Request)(transaction)
         .input("branch", scope.branchId)
-        .query("SELECT id FROM dbo.shifts WITH (UPDLOCK,HOLDLOCK) WHERE store_id=@branch AND closed_at IS NULL AND status=N'OPEN';");
+        .input('terminal', scope.terminalId ?? null)
+        .input('sharing', sharing)
+        .query("SELECT id FROM dbo.shifts WITH (UPDLOCK,HOLDLOCK) WHERE store_id=@branch AND closed_at IS NULL AND status=N'OPEN' AND (@sharing=1 OR terminal_id=@terminal);");
       if (current.recordset?.length)
         throw Object.assign(new Error("A shift is already open for this branch. Refresh the shift status to continue it."), { code: "ESHIFT_OPEN" });
+    }
+  }
+  async assertCheckoutShift(transaction, op, scope = {}) {
+    if (op.table !== 'sales' || scope.enforcePermissions !== true || scope.managementDevice === true || !['insert', 'upsert'].includes(op.kind)) return;
+    const { readShiftRules, requireOwnShift } = require('../shift-sharing.cjs');
+    const rules = await readShiftRules(this.connectionManager, transaction, scope.branchId);
+    if (rules.sharing) return;
+    for (const row of writeRows(op)) {
+      const result = await new (this.connectionManager.sql().Request)(transaction)
+        .input('sale', row.id).input('shift', row.shift_id ?? null).input('branch', scope.branchId)
+        .query("IF EXISTS(SELECT 1 FROM dbo.sales WITH(UPDLOCK,HOLDLOCK) WHERE id=TRY_CONVERT(uniqueidentifier,@sale)) SELECT CAST(1 AS bit) already_saved; ELSE SELECT terminal_id FROM dbo.shifts WITH(UPDLOCK,HOLDLOCK) WHERE id=TRY_CONVERT(uniqueidentifier,@shift) AND store_id=@branch;");
+      if (result.recordset?.[0]?.already_saved) continue;
+      requireOwnShift(result.recordset?.[0], scope.terminalId, false);
     }
   }
   async assertLegacyExchange(transaction, op, scope = {}) {
@@ -365,6 +408,26 @@ class OperationsRepository {
   }
   async applyOperation(transaction, op, scope = {}) {
     scope = normalizeUuidFields(scope);
+    if (op.table === "products" && scope.enforcePermissions === true && writeRows(op).some(row => Object.hasOwn(row, "catalogue_store_ids")))
+      throw Object.assign(new Error("Catalogue transfer provenance is centrally managed."), { code: "PERMISSION_DENIED" });
+    const financialStock = isFinancialStockUpdate(op, scope);
+    if (financialStock) {
+      const current = await new (this.connectionManager.sql().Request)(transaction)
+        .input("product", op.match.id).input("branch", scope.branchId)
+        .query(`SELECT source.* FROM dbo.products source WITH (UPDLOCK,HOLDLOCK) WHERE source.id=@product AND (${rendererReadBranchPredicate(this.registry, this.tables.get("products"), "source")});`);
+      assertFinancialStockUpdate(op, scope, current.recordset?.[0]);
+    }
+    const replacementSaleId = scope.enforcePermissions === true ? assertFinancialWrite(op, scope) : null;
+    if (replacementSaleId) {
+      // An immutable upsert can be a no-op. Verify the persisted replacement,
+      // not merely the renderer's proposed exchange header, in this transaction.
+      const replacement = await new (this.connectionManager.sql().Request)(transaction)
+        .input("replacement", replacementSaleId).input("branch", scope.branchId)
+        .input("bill", op.values.exchanged_to_bill_number).input("original", op.match.bill_number)
+        .query("SELECT id FROM dbo.sales WITH (UPDLOCK,HOLDLOCK) WHERE id=@replacement AND store_id=@branch AND bill_number=@bill AND original_bill_number=@original AND is_exchange=1 AND is_refunded=0;");
+      if (!replacement.recordset?.length)
+        throw Object.assign(new Error("The matching replacement exchange bill is not saved."), { code: "PERMISSION_DENIED" });
+    }
     if (op.table === "activity_events" && op.kind === "update") {
       const operator = scope.activityOperator;
       if (!operator?.subject || !scope.branchId)
@@ -375,7 +438,7 @@ class OperationsRepository {
       const person = account.recordset?.[0];
       const ids = [operator.subject, person?.id, person?.user_id, person?.email].filter(Boolean).map(value => String(value).toLowerCase());
       const result = await new Request(transaction).input("event", op.match.id)
-        .query("SELECT store_id,terminal_id,event_type,meta FROM dbo.activity_events WITH (UPDLOCK,HOLDLOCK) WHERE id=@event;");
+        .query("SELECT store_id,terminal_id,event_type,meta,cleared_by FROM dbo.activity_events WITH (UPDLOCK,HOLDLOCK) WHERE id=@event;");
       const event = result.recordset?.[0];
       if (!event) throw Object.assign(new Error("Notification not found."), { code: "PERMISSION_DENIED" });
       let meta = event.meta;
@@ -391,20 +454,32 @@ class OperationsRepository {
       const targeted = !!audience || users.length || roles.length || !!terminal;
       const operational = ["stock_request_received","transfer_sent","transfer_received","po_finalised"].includes(event.event_type);
       const sensitive = ["sale_complete","sale_refund","sale_void","shift_open","shift_close","shift_cash_variance","drawer_open","xreport_print"].includes(event.event_type);
-      const visible = targeted
+      const legacyVisible = targeted
         ? sameBranch && (users.some(id => ids.includes(id)) || roles.includes(operator.role) || (terminal && terminal === String(scope.terminalId ?? "").toLowerCase()))
         : operational ? !!event.store_id && sameBranch
         : sensitive ? operator.role === "admin"
         : operator.mayViewGeneralActivity && (operator.role === "admin" || sameBranch);
+      // Saved channel routes supersede the legacy audience (which can contain
+      // push-only recipients). A terminal app route is also a valid recipient.
+      const routes = meta.notification_routes;
+      const routed = routes && typeof routes === "object";
+      const selected = routed && (values(routes.app).some(id => ids.includes(id)) ||
+        (scope.terminalId && values(routes.terminalApp).includes(String(scope.terminalId).toLowerCase())));
+      const visible = routed ? selected && (sameBranch || operator.role === "admin")
+        : meta.in_app_disabled !== true && legacyVisible;
       if (!visible) throw Object.assign(new Error("Notification access denied."), { code: "PERMISSION_DENIED" });
       // columnValueForSql owns JSON encoding for text[] columns. Supplying a
       // pre-encoded string here double-encodes it and violates ISJSON checks.
-      op = { ...op, values: { cleared_by: [String(person?.id ?? operator.subject)] } };
+      let acknowledged = event.cleared_by;
+      if (typeof acknowledged === "string") { try { acknowledged = JSON.parse(acknowledged); } catch { acknowledged = []; } }
+      const previous = Array.isArray(acknowledged) ? acknowledged.filter(value => typeof value === "string" && value) : [];
+      op = { ...op, values: { cleared_by: [...new Set([...previous, String(person?.id ?? operator.subject)])] } };
     }
     await this.assertLegacyExchange(transaction, op, scope);
     await this.assertProductPermissions(transaction, op, scope);
     await this.assertSettingsPermissions(transaction, op, scope);
     await this.assertShiftOpening(transaction, op, scope);
+    await this.assertCheckoutShift(transaction, op, scope);
     const { branchId, terminalId } = scope;
     await this.assertMemberPermissions(transaction, op, scope);
     const table = this.tables.get(op.table);
@@ -427,7 +502,10 @@ class OperationsRepository {
         columns.forEach((column, index) => request.input(`v${index}`, columnValueForSql(table, column, normalizedRow[column])));
         const source = columns.map((column, index) => `@v${index} AS [${column}]`).join(",");
         const on = primary.map((column) => `target.[${column}]=source.[${column}]`).join(" AND ");
-        const updates = columns.filter((column) => !primary.includes(column) && column !== "row_version").map((column) => `target.[${column}]=source.[${column}]`);
+        const updates = columns.filter((column) => !primary.includes(column) && column !== "row_version").map((column) =>
+          op.table === "products" && column === "owner_store_id"
+            ? "target.[owner_store_id]=COALESCE(NULLIF(LTRIM(RTRIM(source.[owner_store_id])),N''),target.[owner_store_id])"
+            : `target.[${column}]=source.[${column}]`);
         if (hasRowVersion) updates.push("target.[row_version]=COALESCE(target.[row_version],0)+1");
         const update = updates.join(",");
         const insertColumns = columns.map((column) => `[${column}]`).join(",");
@@ -448,7 +526,7 @@ class OperationsRepository {
     match.forEach(([, value], index) => { if (value !== null) request.input(`m${index}`, valueForSql(value)); });
     const where = match.map(([column, value], index) => value === null ? `[${column}] IS NULL` : `[${column}]=@m${index}`).join(" AND ");
     let query;
-    const ownership = this.branchPredicate(table, "source");
+    const ownership = financialStock ? rendererReadBranchPredicate(this.registry, table, "source") : this.branchPredicate(table, "source");
     const restrictedWhere = `${where}${ownership ? ` AND (${ownership})` : ""}`;
     if (op.kind === "delete" && table.deleteRule === "tombstone" && table.columns.some((column) => column.sqlServerColumn === "deleted_at")) {
       request.input("deletedAt", new Date().toISOString());
@@ -478,7 +556,7 @@ class OperationsRepository {
     const names = new Set(table.columns.map((column) => column.sqlServerColumn));
     const where = [];
     if (names.has("deleted_at")) where.push("deleted_at IS NULL");
-    if (name === "products") where.push("(NULLIF(owner_store_id,N'') IS NULL OR owner_store_id=@branch)");
+    if (name === "products") where.push(rendererReadBranchPredicate(this.registry, table, "source"));
     const sql = this.connectionManager.sql();
     const transaction = new sql.Transaction(this.pool());
     await transaction.begin(sql.ISOLATION_LEVEL?.READ_COMMITTED);
@@ -487,7 +565,7 @@ class OperationsRepository {
       for (let offset = 0; offset <= MAX_SNAPSHOT_ROWS; offset += SNAPSHOT_PAGE_ROWS) {
         const request = new sql.Request(transaction).input("offset", offset).input("limit", SNAPSHOT_PAGE_ROWS);
         if (name === "products") request.input("branch", branchId == null ? null : String(branchId));
-        const page = await request.query(`SELECT * FROM dbo.[${name}] ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY [id] OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY;`);
+        const page = await request.query(`SELECT ${name === "products" ? `source.*,${catalogueStoreIdsProjection(this.registry)} AS [_catalogue_store_ids]` : "*"} FROM dbo.[${name}]${name === "products" ? " source" : ""} ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY [id] OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY;`);
         const pageRows = page.recordset ?? [];
         // The extra empty page proves that exactly MAX_SNAPSHOT_ROWS is safe;
         // any row beyond it must fail visibly instead of being silently omitted.
@@ -587,7 +665,7 @@ class OperationsRepository {
     }
     request.input("limit", limit);
     request.input("offset", offset);
-    const select = columns.map((column) => `source.[${column.sqlServerColumn}] AS [${column.cloudColumn}]`).join(",");
+    const select = columns.map((column) => `source.[${column.sqlServerColumn}] AS [${column.cloudColumn}]`).join(",") + (tableName === "products" && columns.some(column => column.cloudColumn === "stock_by_store") ? `,${catalogueStoreIdsProjection(this.registry)} AS [_catalogue_store_ids]` : "");
     const tieOrder = primary.sqlServerColumn === orderColumn.sqlServerColumn ? "" : `,source.[${primary.sqlServerColumn}] ${direction}`;
     const result = await request.query(`SELECT ${select} FROM dbo.[${table.sqlServerTable}] source ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY source.[${orderColumn.sqlServerColumn}] ${direction}${tieOrder} OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY;`);
     return { ok: true, rows: (result.recordset ?? []).map((row) => toRendererRow(table, row)) };
@@ -597,9 +675,11 @@ class OperationsRepository {
    * Node/renderer memory even when a shift contains millions of sales; SQL
    * Server scans/aggregates the matching rows and returns one record.
    */
-  async shiftExpectedTotals(branchId, shiftId) {
+  async shiftExpectedTotals(branchId, shiftId, transaction = null) {
     if (!branchId) throw Object.assign(new Error("The terminal branch is not configured."), { code: "EBRANCH" });
-    const request = this.pool().request()
+    const request = (transaction
+      ? new (this.connectionManager.sql().Request)(transaction)
+      : this.pool().request())
       .input("branch", String(branchId))
       .input("shift", String(shiftId));
     const result = await request.query(`

@@ -14,6 +14,8 @@ export type ActionButtonProps = Omit<ButtonProps, "children"> & {
   layout?: "stack" | "inline";
   /** Hide the text label and show only the icon (tooltip keeps the label). */
   iconOnly?: boolean;
+  /** Fit a standalone control to its label; canvas-sized controls still fill their node. */
+  fitContent?: boolean;
   /** Explains why the control is unavailable, shown in place of the label. */
   disabledReason?: string;
 };
@@ -29,6 +31,7 @@ export function ActionButton({
   layout = "stack",
   className,
   iconOnly = false,
+  fitContent = false,
   disabledReason,
   ...props
 }: ActionButtonProps) {
@@ -55,7 +58,7 @@ export function ActionButton({
   };
   const tip = props.disabled && disabledReason ? `${label} — ${disabledReason}` : label;
   const control = (
-    <div className="min-w-0 flex-1">
+    <div className={cn("min-w-0", fitContent && !fill ? "inline-flex shrink-0" : "flex-1")}>
       <Button
         aria-label={label}
         {...(hideText || disabledReason ? { title: tip } : {})}
@@ -69,6 +72,7 @@ export function ActionButton({
             : "h-auto min-h-10 w-full min-w-0 px-2 py-2",
           layout === "stack" && !hideText ? "flex-col gap-1" : "justify-center gap-2",
           !fill && layout === "stack" ? "text-xs" : "",
+          fitContent && !fill && "w-auto",
           className,
         )}
         {...props}

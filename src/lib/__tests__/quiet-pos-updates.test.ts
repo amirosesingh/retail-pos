@@ -20,13 +20,21 @@ describe("quiet POS updates",()=>{
     expect(html.match(/role="progressbar"/g)).toHaveLength(1);
     expect(html).toContain("w-1/2 animate-pulse");
   });
+  it("keeps controlled startup blocked without fake progress or retry",()=>{
+    const html=renderToStaticMarkup(h(TillLoader,{startup:{active:false,message:"Recovery needs attention",notice:"Saved records are intact"}}));
+    expect(html).toContain("Recovery needs attention");expect(html).not.toContain('role="progressbar"');expect(html).not.toContain("Try again");
+    const active=renderToStaticMarkup(h(TillLoader,{startup:{active:true,message:"Downloading",detail:"42 rows saved locally"}}));
+    expect(active).toContain('role="progressbar"');expect(active).not.toContain('aria-valuenow');expect(active).toContain("42 rows saved locally");
+  });
   it("does not show a global progress strip after login or reload routes on resume",()=>{
     expect(readFileSync("src/platforms/web/components/pos/AppShell.tsx","utf8")).not.toContain("<DataProgress");
     const root=readFileSync("src/routes/__root.tsx","utf8");
     const recovery=root.slice(root.indexOf("const recover = (event: Event) =>"),root.indexOf("// Coalesce a committed sync page"));
     expect(recovery).not.toContain("router.invalidate()");
     expect(recovery).toContain('refreshResumedQueries(queryClient, event.type === CONNECTIVITY_RESTORED_EVENT)');
-    expect(root).toContain("queryReadsChangedTables(query.meta, changed)");
+    expect(root).toContain("createLiveQueryRefresh(queryClient");
+    expect(root).toContain("subscribeDataChange(change => refresh.change(change))");
+    expect(readFileSync("src/lib/live-query-refresh.ts","utf8")).toContain("queryReadsChangedTables(query.meta, tables)");
   });
   it("does not recreate state when a background snapshot has no changes",()=>{
     const previous={products:[{id:"one",price:10}],members:[{id:"member"}],settings:{theme:"emerald"}};

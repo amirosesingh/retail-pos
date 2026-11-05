@@ -1,5 +1,5 @@
--- Retail POS local database update — 1.4.79
--- Latest local migration: 018_sql_document_counters.sql
+-- Retail POS local database update — 1.4.81
+-- Latest local migration: 024_shift_closing_start_proofs.sql
 -- Source: retail-pos-local-database.sql bundled with this application.
 -- Select your configured POS database. This file never switches databases.
 -- Back up the existing database before upgrading. No business rows are deleted.
@@ -2724,6 +2724,7 @@ IF OBJECT_ID(N''dbo.members'', N''U'') IS NULL BEGIN CREATE TABLE dbo.[members] 
   [full_name] nvarchar(max) NOT NULL,
   [phone] nvarchar(450) NOT NULL,
   [email] nvarchar(max) NULL,
+  [contact_email] nvarchar(max) NULL,
   [address] nvarchar(max) NULL,
   [country_code] nvarchar(max) NULL,
   [postal_code] nvarchar(max) NULL,
@@ -2767,6 +2768,8 @@ IF COL_LENGTH(N''dbo.members'', N''phone'') IS NULL ALTER TABLE dbo.[members] AD
 IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE c.object_id=OBJECT_ID(N''dbo.members'') AND c.name=N''phone'' AND t.name IN (N''nvarchar'',N''varchar'') AND c.max_length=-1) ALTER TABLE dbo.[members] ALTER COLUMN [phone] nvarchar(450) NOT NULL;
 
 IF COL_LENGTH(N''dbo.members'', N''email'') IS NULL ALTER TABLE dbo.[members] ADD [email] nvarchar(max) NULL;
+
+IF COL_LENGTH(N''dbo.members'', N''contact_email'') IS NULL ALTER TABLE dbo.[members] ADD [contact_email] nvarchar(max) NULL;
 
 IF COL_LENGTH(N''dbo.members'', N''address'') IS NULL ALTER TABLE dbo.[members] ADD [address] nvarchar(max) NULL;
 
@@ -4168,7 +4171,7 @@ IF OBJECT_ID(N''dbo.products'', N''U'') IS NULL BEGIN CREATE TABLE dbo.[products
   [sku] nvarchar(max) NULL,
   [reorder_level] int NOT NULL CONSTRAINT [DF_products_reorder_level] DEFAULT (0),
   [tax_rate] decimal(38,12) NOT NULL CONSTRAINT [DF_products_tax_rate] DEFAULT (0),
-  [ecom_visible] bit NOT NULL CONSTRAINT [DF_products_ecom_visible] DEFAULT (1),
+  [ecom_visible] bit NOT NULL CONSTRAINT [DF_products_ecom_visible] DEFAULT (0),
   [stock_by_store] nvarchar(max) NOT NULL CONSTRAINT [DF_products_stock_by_store] DEFAULT (N''{}''),
   [updated_at] datetimeoffset(7) NOT NULL CONSTRAINT [DF_products_updated_at] DEFAULT (SYSDATETIMEOFFSET()),
   [landing_pct] decimal(38,12) NULL,
@@ -4184,6 +4187,7 @@ IF OBJECT_ID(N''dbo.products'', N''U'') IS NULL BEGIN CREATE TABLE dbo.[products
   [row_version] int NOT NULL CONSTRAINT [DF_products_row_version] DEFAULT (1),
   [owner_store_id] nvarchar(450) NULL,
   [deleted_at] nvarchar(max) NULL,
+  [catalogue_store_ids] nvarchar(max) NOT NULL CONSTRAINT [DF_products_catalogue_store_ids] DEFAULT (N''[]''),
   CONSTRAINT [PK_products] PRIMARY KEY ([id])
 
 ); END;
@@ -4316,10 +4320,10 @@ IF OBJECT_ID(N''dbo.products'', N''U'') IS NOT NULL AND COL_LENGTH(N''dbo.produc
   SELECT 1 FROM sys.default_constraints dc
   JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
   WHERE dc.parent_object_id=OBJECT_ID(N''dbo.products'') AND c.name=N''ecom_visible''
-) ALTER TABLE dbo.[products] ADD CONSTRAINT [DF_products_ecom_visible] DEFAULT (1) FOR [ecom_visible];
+) ALTER TABLE dbo.[products] ADD CONSTRAINT [DF_products_ecom_visible] DEFAULT (0) FOR [ecom_visible];
 
 IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N''dbo.products'') AND name=N''ecom_visible'' AND is_nullable=1) BEGIN
-  EXEC sys.sp_executesql N''UPDATE dbo.[products] SET [ecom_visible]=1 WHERE [ecom_visible] IS NULL;'';
+  EXEC sys.sp_executesql N''UPDATE dbo.[products] SET [ecom_visible]=0 WHERE [ecom_visible] IS NULL;'';
   ALTER TABLE dbo.[products] ALTER COLUMN [ecom_visible] bit NOT NULL;
 END;
 
@@ -4433,6 +4437,19 @@ IF COL_LENGTH(N''dbo.products'', N''owner_store_id'') IS NULL ALTER TABLE dbo.[p
 IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id WHERE c.object_id=OBJECT_ID(N''dbo.products'') AND c.name=N''owner_store_id'' AND t.name IN (N''nvarchar'',N''varchar'') AND c.max_length=-1) ALTER TABLE dbo.[products] ALTER COLUMN [owner_store_id] nvarchar(450) NULL;
 
 IF COL_LENGTH(N''dbo.products'', N''deleted_at'') IS NULL ALTER TABLE dbo.[products] ADD [deleted_at] nvarchar(max) NULL;
+
+IF COL_LENGTH(N''dbo.products'', N''catalogue_store_ids'') IS NULL ALTER TABLE dbo.[products] ADD [catalogue_store_ids] nvarchar(max) NULL;
+
+IF OBJECT_ID(N''dbo.products'', N''U'') IS NOT NULL AND COL_LENGTH(N''dbo.products'', N''catalogue_store_ids'') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM sys.default_constraints dc
+  JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id
+  WHERE dc.parent_object_id=OBJECT_ID(N''dbo.products'') AND c.name=N''catalogue_store_ids''
+) ALTER TABLE dbo.[products] ADD CONSTRAINT [DF_products_catalogue_store_ids] DEFAULT (N''[]'') FOR [catalogue_store_ids];
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N''dbo.products'') AND name=N''catalogue_store_ids'' AND is_nullable=1) BEGIN
+  EXEC sys.sp_executesql N''UPDATE dbo.[products] SET [catalogue_store_ids]=N''''[]'''' WHERE [catalogue_store_ids] IS NULL;'';
+  ALTER TABLE dbo.[products] ALTER COLUMN [catalogue_store_ids] nvarchar(max) NOT NULL;
+END;
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N''dbo.products'') AND name=N''UX_products_barcode'') CREATE UNIQUE INDEX [UX_products_barcode] ON dbo.[products]([barcode]);
 
@@ -7903,6 +7920,7 @@ IF OBJECT_ID(N''dbo.pos_store_settings'', N''U'') IS NULL BEGIN CREATE TABLE dbo
   [max_drawer_cash_limit] decimal(38,12) NULL,
   [require_reason_for_payout] bit NULL,
   [allow_multiple_shifts_per_terminal] bit NULL,
+  [allow_branch_shift_sharing] bit NULL,
   [enable_cashier_x_report] bit NULL,
   [show_opening_float_at_close] bit NULL,
   [show_expected_totals_at_close] bit NULL,
@@ -7975,6 +7993,8 @@ IF COL_LENGTH(N''dbo.pos_store_settings'', N''max_drawer_cash_limit'') IS NULL A
 IF COL_LENGTH(N''dbo.pos_store_settings'', N''require_reason_for_payout'') IS NULL ALTER TABLE dbo.[pos_store_settings] ADD [require_reason_for_payout] bit NULL;
 
 IF COL_LENGTH(N''dbo.pos_store_settings'', N''allow_multiple_shifts_per_terminal'') IS NULL ALTER TABLE dbo.[pos_store_settings] ADD [allow_multiple_shifts_per_terminal] bit NULL;
+
+IF COL_LENGTH(N''dbo.pos_store_settings'', N''allow_branch_shift_sharing'') IS NULL ALTER TABLE dbo.[pos_store_settings] ADD [allow_branch_shift_sharing] bit NULL;
 
 IF COL_LENGTH(N''dbo.pos_store_settings'', N''enable_cashier_x_report'') IS NULL ALTER TABLE dbo.[pos_store_settings] ADD [enable_cashier_x_report] bit NULL;
 
@@ -9423,7 +9443,73 @@ IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N''dbo.shift_cash
   ALTER TABLE dbo.[shift_cash_counts] ALTER COLUMN [created_at] datetimeoffset(7) NOT NULL;
 END;
 
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N''dbo.shift_cash_counts'') AND name=N''UX_shift_cash_counts_shift_id'') CREATE UNIQUE INDEX [UX_shift_cash_counts_shift_id] ON dbo.[shift_cash_counts]([shift_id]);
+-- SHIFT-34: preserve one ORIGINAL and any number of immutable RECOUNT records.
+-- No stored count is rewritten. Unexpected index shapes/data require review.
+SET ANSI_NULLS ON; SET QUOTED_IDENTIFIER ON; SET ANSI_PADDING ON;
+SET ANSI_WARNINGS ON; SET ARITHABORT ON; SET CONCAT_NULL_YIELDS_NULL ON;
+SET NUMERIC_ROUNDABORT OFF;
+BEGIN TRY
+ BEGIN TRANSACTION;
+ IF OBJECT_ID(N''dbo.shift_cash_counts'',N''U'') IS NULL
+    OR COL_LENGTH(N''dbo.shift_cash_counts'',N''shift_id'') IS NULL
+    OR COL_LENGTH(N''dbo.shift_cash_counts'',N''kind'') IS NULL
+  THROW 51021,''Shift count table is incomplete; no uniqueness repair was applied.'',1;
+ DECLARE @shift34Default nvarchar(max);
+ SELECT @shift34Default=dc.definition FROM sys.columns c
+ JOIN sys.types t ON t.user_type_id=c.user_type_id
+ LEFT JOIN sys.default_constraints dc ON dc.object_id=c.default_object_id
+ WHERE c.object_id=OBJECT_ID(N''dbo.shift_cash_counts'') AND c.name=N''kind''
+   AND t.name=N''nvarchar'' AND c.is_nullable=0 AND c.is_computed=0 AND (c.max_length=-1 OR c.max_length>=16);
+ IF @shift34Default IS NULL OR
+    REPLACE(REPLACE(REPLACE(@shift34Default,N''('',N''''),N'')'',N''''),N'' '',N'''') COLLATE Latin1_General_100_BIN2
+      NOT IN(N''''''ORIGINAL'''''',N''N''''ORIGINAL'''''')
+  THROW 51021,''Unexpected shift count kind type/default; no uniqueness repair was applied.'',1;
+ DECLARE @shift34Rows bigint;
+ SELECT @shift34Rows=COUNT_BIG(*) FROM dbo.shift_cash_counts WITH (TABLOCKX,HOLDLOCK);
+ IF EXISTS(SELECT 1 FROM dbo.shift_cash_counts WHERE kind IS NULL
+    OR kind COLLATE Latin1_General_100_BIN2 NOT IN(N''ORIGINAL'',N''RECOUNT'')
+    OR DATALENGTH(kind) NOT IN(14,16))
+    OR EXISTS(SELECT shift_id FROM dbo.shift_cash_counts WHERE kind=N''ORIGINAL''
+       GROUP BY shift_id HAVING COUNT_BIG(*)>1)
+  THROW 51021,''Shift count data conflicts with ORIGINAL-only uniqueness; no records were changed.'',1;
+ DECLARE @shift34Index int,@shift34Filter nvarchar(max);
+ SELECT @shift34Index=index_id,@shift34Filter=filter_definition
+ FROM sys.indexes WHERE object_id=OBJECT_ID(N''dbo.shift_cash_counts'') AND name=N''UX_shift_cash_counts_shift_id'';
+ IF @shift34Index IS NOT NULL AND (
+    EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N''dbo.shift_cash_counts'') AND index_id=@shift34Index
+      AND (is_unique<>1 OR type<>2 OR is_primary_key=1 OR is_unique_constraint=1 OR is_disabled=1 OR is_hypothetical=1
+        OR ignore_dup_key=1 OR fill_factor<>0 OR is_padded=1 OR allow_row_locks<>1 OR allow_page_locks<>1 OR data_space_id<>1))
+    OR EXISTS(SELECT 1 FROM sys.stats WHERE object_id=OBJECT_ID(N''dbo.shift_cash_counts'') AND stats_id=@shift34Index AND no_recompute=1)
+    OR EXISTS(SELECT 1 FROM sys.partitions WHERE object_id=OBJECT_ID(N''dbo.shift_cash_counts'') AND index_id=@shift34Index AND data_compression<>0)
+    OR EXISTS(SELECT 1 FROM sys.indexes i WHERE i.object_id=OBJECT_ID(N''dbo.shift_cash_counts'') AND i.index_id=@shift34Index
+      AND (COALESCE(JSON_VALUE((SELECT i.* FOR JSON PATH,WITHOUT_ARRAY_WRAPPER),''$.optimize_for_sequential_key''),''false'') NOT IN(''false'',''0'')
+        OR COALESCE(JSON_VALUE((SELECT i.* FOR JSON PATH,WITHOUT_ARRAY_WRAPPER),''$.suppress_dup_key_messages''),''false'') NOT IN(''false'',''0'')))
+    OR (SELECT COUNT(*) FROM sys.index_columns WHERE object_id=OBJECT_ID(N''dbo.shift_cash_counts'') AND index_id=@shift34Index)<>1
+    OR NOT EXISTS(SELECT 1 FROM sys.index_columns ic JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
+      WHERE ic.object_id=OBJECT_ID(N''dbo.shift_cash_counts'') AND ic.index_id=@shift34Index AND ic.key_ordinal=1 AND ic.is_descending_key=0 AND c.name=N''shift_id'')
+    OR (@shift34Filter IS NOT NULL AND
+      REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(@shift34Filter,N''('',N''''),N'')'',N''''),N''['',N''''),N'']'',N''''),N'' '',N'''')<>N''kind=N''''ORIGINAL''''''))
+  THROW 51021,''Unexpected named shift count index; no uniqueness repair was applied.'',1;
+ IF EXISTS(SELECT 1 FROM sys.indexes i
+    WHERE i.object_id=OBJECT_ID(N''dbo.shift_cash_counts'') AND i.is_unique=1
+      AND i.index_id<>COALESCE(@shift34Index,-1)
+      AND EXISTS(SELECT 1 FROM sys.index_columns ic JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
+        WHERE ic.object_id=i.object_id AND ic.index_id=i.index_id AND c.name=N''shift_id''))
+  THROW 51021,''An unreviewed shift-related unique index exists; no uniqueness repair was applied.'',1;
+ IF @shift34Index IS NULL OR @shift34Filter IS NULL
+ BEGIN
+  IF NOT EXISTS(SELECT 1 FROM sys.filegroups WHERE data_space_id=1 AND is_default=1)
+   THROW 51021,''Unexpected default filegroup; no uniqueness repair was applied.'',1;
+  IF @shift34Index IS NOT NULL DROP INDEX [UX_shift_cash_counts_shift_id] ON dbo.[shift_cash_counts];
+  CREATE UNIQUE INDEX [UX_shift_cash_counts_shift_id] ON dbo.[shift_cash_counts]([shift_id]) WHERE [kind]=N''ORIGINAL'';
+ END;
+ COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+ IF @@TRANCOUNT>0 ROLLBACK TRANSACTION;
+ THROW;
+END CATCH;
+
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N''dbo.shift_cash_counts'') AND name=N''UX_shift_cash_counts_client_key'') CREATE UNIQUE INDEX [UX_shift_cash_counts_client_key] ON dbo.[shift_cash_counts]([client_key]) WHERE [client_key] IS NOT NULL;
 
@@ -11117,6 +11203,238 @@ IF OBJECT_ID(N''dbo.pos_document_counters'',N''U'') IS NULL
  );
 
 
+-- SHIFT-36 local protocol metadata only. No domain row/checkpoint is rewritten.
+BEGIN TRY
+ BEGIN TRANSACTION;
+ IF OBJECT_ID(N''dbo.pos_sync_shift_baselines'',N''U'') IS NULL
+  CREATE TABLE dbo.pos_sync_shift_baselines(
+   branch_id nvarchar(128) NOT NULL,shift_id uniqueidentifier NOT NULL,
+   graph_token char(64) NOT NULL,closed_at_raw nvarchar(80) NOT NULL,graph_json nvarchar(max) NOT NULL,
+   observation_generation uniqueidentifier NOT NULL,
+   CONSTRAINT PK_pos_sync_shift_baselines PRIMARY KEY(branch_id,shift_id),
+   CONSTRAINT CK_pos_sync_shift_baselines_json CHECK(ISJSON(graph_json)=1));
+ IF OBJECT_ID(N''dbo.pos_sync_shift_intents'',N''U'') IS NULL
+  CREATE TABLE dbo.pos_sync_shift_intents(
+   intent_sequence bigint IDENTITY(1,1) NOT NULL,intent_id uniqueidentifier NOT NULL,
+   branch_id nvarchar(128) NOT NULL,shift_id uniqueidentifier NOT NULL,intent_kind nvarchar(16) NOT NULL,
+   baseline_generation uniqueidentifier NULL,base_token char(64) NULL,
+   predecessor_intent_id uniqueidentifier NULL,predecessor_intent_hash char(64) NULL,
+   payload_json nvarchar(max) NOT NULL,payload_hash char(64) NOT NULL,
+   accepted_token char(64) NULL,current_token char(64) NULL,superseded bit NULL,acknowledged_at datetimeoffset(7) NULL,ack_coverage_json nvarchar(max) NULL,
+   CONSTRAINT PK_pos_sync_shift_intents PRIMARY KEY(intent_id),
+   CONSTRAINT UQ_pos_sync_shift_intents_sequence UNIQUE(intent_sequence),
+   CONSTRAINT CK_pos_sync_shift_intents_json CHECK(ISJSON(payload_json)=1),
+   CONSTRAINT CK_pos_sync_shift_intents_coverage CHECK(ack_coverage_json IS NULL OR ISJSON(ack_coverage_json)=1),
+   CONSTRAINT CK_pos_sync_shift_intents_kind CHECK(intent_kind IN(N''ORIGINAL'',N''RECOUNT'',N''VARIANCE'')),
+   CONSTRAINT CK_pos_sync_shift_intents_predecessor CHECK(
+    (predecessor_intent_id IS NULL AND predecessor_intent_hash IS NULL) OR
+    (predecessor_intent_id IS NOT NULL AND predecessor_intent_hash IS NOT NULL AND base_token IS NULL AND predecessor_intent_id<>intent_id)));
+ IF OBJECT_ID(N''dbo.pos_sync_shift_openings'',N''U'') IS NULL
+  CREATE TABLE dbo.pos_sync_shift_openings(
+   aggregate_id uniqueidentifier NOT NULL,shift_id uniqueidentifier NOT NULL,branch_id nvarchar(128) NOT NULL,
+   row_json nvarchar(max) NOT NULL,row_hash char(64) NOT NULL,
+   CONSTRAINT PK_pos_sync_shift_openings PRIMARY KEY(aggregate_id,shift_id),
+   CONSTRAINT CK_pos_sync_shift_openings_json CHECK(ISJSON(row_json)=1));
+ DECLARE @Shift36Columns TABLE(table_name sysname,column_name sysname,type_name sysname,max_length smallint,nullable bit,identity_column bit);
+ INSERT @Shift36Columns VALUES
+ (N''pos_sync_shift_baselines'',N''branch_id'',N''nvarchar'',256,0,0),(N''pos_sync_shift_baselines'',N''shift_id'',N''uniqueidentifier'',16,0,0),
+ (N''pos_sync_shift_baselines'',N''graph_token'',N''char'',64,0,0),(N''pos_sync_shift_baselines'',N''closed_at_raw'',N''nvarchar'',160,0,0),
+ (N''pos_sync_shift_baselines'',N''graph_json'',N''nvarchar'',-1,0,0),(N''pos_sync_shift_baselines'',N''observation_generation'',N''uniqueidentifier'',16,0,0),
+ (N''pos_sync_shift_intents'',N''intent_sequence'',N''bigint'',8,0,1),(N''pos_sync_shift_intents'',N''intent_id'',N''uniqueidentifier'',16,0,0),
+ (N''pos_sync_shift_intents'',N''branch_id'',N''nvarchar'',256,0,0),(N''pos_sync_shift_intents'',N''shift_id'',N''uniqueidentifier'',16,0,0),
+ (N''pos_sync_shift_intents'',N''intent_kind'',N''nvarchar'',32,0,0),(N''pos_sync_shift_intents'',N''baseline_generation'',N''uniqueidentifier'',16,1,0),
+ (N''pos_sync_shift_intents'',N''base_token'',N''char'',64,1,0),(N''pos_sync_shift_intents'',N''predecessor_intent_id'',N''uniqueidentifier'',16,1,0),
+ (N''pos_sync_shift_intents'',N''predecessor_intent_hash'',N''char'',64,1,0),(N''pos_sync_shift_intents'',N''payload_json'',N''nvarchar'',-1,0,0),
+ (N''pos_sync_shift_intents'',N''payload_hash'',N''char'',64,0,0),(N''pos_sync_shift_intents'',N''accepted_token'',N''char'',64,1,0),
+ (N''pos_sync_shift_intents'',N''current_token'',N''char'',64,1,0),(N''pos_sync_shift_intents'',N''superseded'',N''bit'',1,1,0),
+ (N''pos_sync_shift_intents'',N''acknowledged_at'',N''datetimeoffset'',10,1,0),
+ (N''pos_sync_shift_intents'',N''ack_coverage_json'',N''nvarchar'',-1,1,0),
+ (N''pos_sync_shift_openings'',N''aggregate_id'',N''uniqueidentifier'',16,0,0),(N''pos_sync_shift_openings'',N''shift_id'',N''uniqueidentifier'',16,0,0),
+ (N''pos_sync_shift_openings'',N''branch_id'',N''nvarchar'',256,0,0),(N''pos_sync_shift_openings'',N''row_json'',N''nvarchar'',-1,0,0),
+ (N''pos_sync_shift_openings'',N''row_hash'',N''char'',64,0,0);
+ IF EXISTS(SELECT 1 FROM @Shift36Columns e LEFT JOIN sys.columns c ON c.object_id=OBJECT_ID(N''dbo.''+e.table_name) AND c.name=e.column_name
+   WHERE c.column_id IS NULL OR TYPE_NAME(c.user_type_id)<>e.type_name OR c.max_length<>e.max_length OR c.is_nullable<>e.nullable OR c.is_identity<>e.identity_column OR c.is_computed=1 OR c.default_object_id<>0)
+   OR EXISTS(SELECT 1 FROM sys.columns c WHERE c.object_id IN(OBJECT_ID(N''dbo.pos_sync_shift_baselines''),OBJECT_ID(N''dbo.pos_sync_shift_intents''),OBJECT_ID(N''dbo.pos_sync_shift_openings''))
+     AND NOT EXISTS(SELECT 1 FROM @Shift36Columns e WHERE OBJECT_ID(N''dbo.''+e.table_name)=c.object_id AND e.column_name=c.name))
+  THROW 51022,''Unexpected closing protocol metadata; no domain records were changed.'',1;
+ IF NOT EXISTS(SELECT 1 FROM sys.key_constraints WHERE parent_object_id=OBJECT_ID(N''dbo.pos_sync_shift_baselines'') AND name=N''PK_pos_sync_shift_baselines'' AND type=''PK'')
+   OR NOT EXISTS(SELECT 1 FROM sys.key_constraints WHERE parent_object_id=OBJECT_ID(N''dbo.pos_sync_shift_intents'') AND name=N''PK_pos_sync_shift_intents'' AND type=''PK'')
+   OR NOT EXISTS(SELECT 1 FROM sys.key_constraints WHERE parent_object_id=OBJECT_ID(N''dbo.pos_sync_shift_intents'') AND name=N''UQ_pos_sync_shift_intents_sequence'' AND type=''UQ'')
+   OR NOT EXISTS(SELECT 1 FROM sys.key_constraints WHERE parent_object_id=OBJECT_ID(N''dbo.pos_sync_shift_openings'') AND name=N''PK_pos_sync_shift_openings'' AND type=''PK'')
+   OR (SELECT COUNT(*) FROM sys.check_constraints WHERE parent_object_id IN(OBJECT_ID(N''dbo.pos_sync_shift_baselines''),OBJECT_ID(N''dbo.pos_sync_shift_intents''),OBJECT_ID(N''dbo.pos_sync_shift_openings''))
+     AND name IN(N''CK_pos_sync_shift_baselines_json'',N''CK_pos_sync_shift_intents_json'',N''CK_pos_sync_shift_intents_kind'',N''CK_pos_sync_shift_intents_predecessor'',N''CK_pos_sync_shift_openings_json'',N''CK_pos_sync_shift_intents_coverage'') AND is_disabled=0 AND is_not_trusted=0)<>6
+  THROW 51022,''Unexpected closing protocol constraints; no domain records were changed.'',1;
+ IF NOT EXISTS(SELECT 1 FROM sys.identity_columns WHERE object_id=OBJECT_ID(N''dbo.pos_sync_shift_intents'') AND name=N''intent_sequence''
+   AND CONVERT(bigint,seed_value)=1 AND CONVERT(bigint,increment_value)=1
+   AND (last_value IS NULL OR CONVERT(bigint,last_value)>=COALESCE((SELECT MAX(intent_sequence) FROM dbo.pos_sync_shift_intents),0)))
+  THROW 51022,''Unexpected closing protocol identity; no domain records were changed.'',1;
+ DECLARE @Shift36Checks TABLE(table_name sysname,constraint_name sysname,expected nvarchar(max));
+ INSERT @Shift36Checks VALUES
+ (N''pos_sync_shift_baselines'',N''CK_pos_sync_shift_baselines_json'',N''(isjson([graph_json])=(1))''),
+ (N''pos_sync_shift_intents'',N''CK_pos_sync_shift_intents_json'',N''(isjson([payload_json])=(1))''),
+ (N''pos_sync_shift_intents'',N''CK_pos_sync_shift_intents_coverage'',N''([ack_coverage_json] IS NULL OR isjson([ack_coverage_json])=(1))''),
+ (N''pos_sync_shift_intents'',N''CK_pos_sync_shift_intents_kind'',N''([intent_kind]=N''''VARIANCE'''' OR [intent_kind]=N''''RECOUNT'''' OR [intent_kind]=N''''ORIGINAL'''')''),
+ (N''pos_sync_shift_intents'',N''CK_pos_sync_shift_intents_predecessor'',N''([predecessor_intent_id] IS NULL AND [predecessor_intent_hash] IS NULL OR [predecessor_intent_id] IS NOT NULL AND [predecessor_intent_hash] IS NOT NULL AND [base_token] IS NULL AND [predecessor_intent_id]<>[intent_id])''),
+ (N''pos_sync_shift_openings'',N''CK_pos_sync_shift_openings_json'',N''(isjson([row_json])=(1))'');
+ IF EXISTS(SELECT 1 FROM @Shift36Checks e LEFT JOIN sys.check_constraints c ON c.parent_object_id=OBJECT_ID(N''dbo.''+e.table_name) AND c.name=e.constraint_name
+   WHERE c.object_id IS NULL OR c.definition COLLATE Latin1_General_100_BIN2 <> e.expected COLLATE Latin1_General_100_BIN2)
+   OR EXISTS(SELECT 1 FROM sys.check_constraints c WHERE c.parent_object_id IN(OBJECT_ID(N''dbo.pos_sync_shift_baselines''),OBJECT_ID(N''dbo.pos_sync_shift_intents''),OBJECT_ID(N''dbo.pos_sync_shift_openings''))
+     AND NOT EXISTS(SELECT 1 FROM @Shift36Checks e WHERE OBJECT_ID(N''dbo.''+e.table_name)=c.parent_object_id AND e.constraint_name=c.name))
+  THROW 51022,''Unexpected closing protocol CHECK expression; no domain records were changed.'',1;
+ IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N''dbo.pos_sync_shift_intents'') AND name=N''IX_pos_sync_shift_intents_tail'')
+  CREATE INDEX IX_pos_sync_shift_intents_tail ON dbo.pos_sync_shift_intents(branch_id,shift_id,intent_sequence DESC);
+ DECLARE @Shift36Keys TABLE(table_name sysname,index_name sysname,column_name sysname,ordinal int,descending_key bit,unique_index bit);
+ INSERT @Shift36Keys VALUES
+ (N''pos_sync_shift_baselines'',N''PK_pos_sync_shift_baselines'',N''branch_id'',1,0,1),
+ (N''pos_sync_shift_baselines'',N''PK_pos_sync_shift_baselines'',N''shift_id'',2,0,1),
+ (N''pos_sync_shift_intents'',N''PK_pos_sync_shift_intents'',N''intent_id'',1,0,1),
+ (N''pos_sync_shift_intents'',N''UQ_pos_sync_shift_intents_sequence'',N''intent_sequence'',1,0,1),
+ (N''pos_sync_shift_intents'',N''IX_pos_sync_shift_intents_tail'',N''branch_id'',1,0,0),
+ (N''pos_sync_shift_intents'',N''IX_pos_sync_shift_intents_tail'',N''shift_id'',2,0,0),
+ (N''pos_sync_shift_intents'',N''IX_pos_sync_shift_intents_tail'',N''intent_sequence'',3,1,0),
+ (N''pos_sync_shift_openings'',N''PK_pos_sync_shift_openings'',N''aggregate_id'',1,0,1),
+ (N''pos_sync_shift_openings'',N''PK_pos_sync_shift_openings'',N''shift_id'',2,0,1);
+ IF EXISTS(SELECT 1 FROM @Shift36Keys e LEFT JOIN sys.indexes i ON i.object_id=OBJECT_ID(N''dbo.''+e.table_name) AND i.name=e.index_name
+   LEFT JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id AND ic.key_ordinal=e.ordinal
+   LEFT JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
+   WHERE c.name IS NULL OR c.name<>e.column_name OR ic.is_descending_key<>e.descending_key OR i.is_unique<>e.unique_index
+     OR i.is_disabled=1 OR i.is_hypothetical=1 OR i.ignore_dup_key=1 OR i.has_filter=1)
+   OR EXISTS(SELECT 1 FROM sys.indexes i JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id
+     WHERE EXISTS(SELECT 1 FROM @Shift36Keys e WHERE OBJECT_ID(N''dbo.''+e.table_name)=i.object_id AND e.index_name=i.name)
+     AND (ic.is_included_column=1 OR NOT EXISTS(SELECT 1 FROM @Shift36Keys e WHERE OBJECT_ID(N''dbo.''+e.table_name)=i.object_id AND e.index_name=i.name AND e.ordinal=ic.key_ordinal)))
+  THROW 51022,''Unexpected closing protocol index shape; no domain records were changed.'',1;
+ IF EXISTS(SELECT 1 FROM sys.indexes i WHERE i.object_id IN(OBJECT_ID(N''dbo.pos_sync_shift_baselines''),OBJECT_ID(N''dbo.pos_sync_shift_intents''),OBJECT_ID(N''dbo.pos_sync_shift_openings'')) AND i.is_unique=1
+   AND NOT EXISTS(SELECT 1 FROM @Shift36Keys e WHERE OBJECT_ID(N''dbo.''+e.table_name)=i.object_id AND e.index_name=i.name))
+  THROW 51022,''Unexpected closing protocol uniqueness; no domain records were changed.'',1;
+ COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+ IF @@TRANCOUNT>0 ROLLBACK TRANSACTION;
+ THROW;
+END CATCH;
+
+
+-- AUTH-37 private references/signatures only. No business row or cursor rewrite.
+BEGIN TRY
+ BEGIN TRANSACTION;
+ IF OBJECT_ID(N''dbo.pos_sync_shift_intents'',N''U'') IS NULL
+  THROW 51023,''Closing intent metadata must be installed before author references.'',1;
+ IF OBJECT_ID(N''dbo.pos_sync_shift_author_keys'',N''U'') IS NULL
+  CREATE TABLE dbo.pos_sync_shift_author_keys(
+   scope_hash char(64) NOT NULL,project_origin nvarchar(2048) NOT NULL,terminal_id nvarchar(200) NOT NULL,
+   author_id uniqueidentifier NOT NULL,key_id uniqueidentifier NOT NULL,public_key varchar(59) NOT NULL,
+   CONSTRAINT PK_pos_sync_shift_author_keys PRIMARY KEY(scope_hash),
+   CONSTRAINT UQ_pos_sync_shift_author_keys_id UNIQUE(key_id));
+ IF OBJECT_ID(N''dbo.pos_sync_shift_authors'',N''U'') IS NULL
+  CREATE TABLE dbo.pos_sync_shift_authors(
+   intent_id uniqueidentifier NOT NULL,scope_hash char(64) NOT NULL,key_id uniqueidentifier NOT NULL,
+   attestation_json nvarchar(max) NOT NULL,
+   CONSTRAINT PK_pos_sync_shift_authors PRIMARY KEY(intent_id),
+   CONSTRAINT CK_pos_sync_shift_authors_json CHECK(ISJSON(attestation_json)=1));
+ DECLARE @Author23Columns TABLE(table_name sysname,column_name sysname,type_name sysname,max_length smallint);
+ INSERT @Author23Columns VALUES
+ (N''pos_sync_shift_author_keys'',N''scope_hash'',N''char'',64),(N''pos_sync_shift_author_keys'',N''project_origin'',N''nvarchar'',4096),
+ (N''pos_sync_shift_author_keys'',N''terminal_id'',N''nvarchar'',400),(N''pos_sync_shift_author_keys'',N''author_id'',N''uniqueidentifier'',16),
+ (N''pos_sync_shift_author_keys'',N''key_id'',N''uniqueidentifier'',16),(N''pos_sync_shift_author_keys'',N''public_key'',N''varchar'',59),
+ (N''pos_sync_shift_authors'',N''intent_id'',N''uniqueidentifier'',16),(N''pos_sync_shift_authors'',N''scope_hash'',N''char'',64),
+ (N''pos_sync_shift_authors'',N''key_id'',N''uniqueidentifier'',16),(N''pos_sync_shift_authors'',N''attestation_json'',N''nvarchar'',-1);
+ IF EXISTS(SELECT 1 FROM @Author23Columns e LEFT JOIN sys.columns c ON c.object_id=OBJECT_ID(N''dbo.''+e.table_name) AND c.name=e.column_name
+   WHERE c.column_id IS NULL OR TYPE_NAME(c.user_type_id)<>e.type_name OR c.max_length<>e.max_length OR c.is_nullable=1 OR c.is_identity=1 OR c.is_computed=1 OR c.default_object_id<>0)
+   OR EXISTS(SELECT 1 FROM sys.columns c WHERE c.object_id IN(OBJECT_ID(N''dbo.pos_sync_shift_author_keys''),OBJECT_ID(N''dbo.pos_sync_shift_authors''))
+     AND NOT EXISTS(SELECT 1 FROM @Author23Columns e WHERE OBJECT_ID(N''dbo.''+e.table_name)=c.object_id AND e.column_name=c.name))
+  THROW 51023,''Unexpected author metadata shape; no records were changed.'',1;
+ IF NOT EXISTS(SELECT 1 FROM sys.check_constraints WHERE parent_object_id=OBJECT_ID(N''dbo.pos_sync_shift_authors'') AND name=N''CK_pos_sync_shift_authors_json''
+   AND LOWER(REPLACE(REPLACE(REPLACE(definition,N'' '',N''''),CHAR(13),N''''),CHAR(10),N'''')) COLLATE Latin1_General_100_BIN2=N''(isjson([attestation_json])=(1))'' COLLATE Latin1_General_100_BIN2 AND is_disabled=0 AND is_not_trusted=0)
+   OR EXISTS(SELECT 1 FROM sys.check_constraints WHERE parent_object_id IN(OBJECT_ID(N''dbo.pos_sync_shift_author_keys''),OBJECT_ID(N''dbo.pos_sync_shift_authors'')) AND name<>N''CK_pos_sync_shift_authors_json'')
+  THROW 51023,''Unexpected author metadata constraints; no records were changed.'',1;
+ IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N''dbo.pos_sync_shift_authors'') AND name=N''IX_pos_sync_shift_authors_scope'')
+  CREATE INDEX IX_pos_sync_shift_authors_scope ON dbo.pos_sync_shift_authors(scope_hash,key_id);
+ DECLARE @Author23Keys TABLE(table_name sysname,index_name sysname,column_name sysname,ordinal int,is_unique bit);
+ INSERT @Author23Keys VALUES
+ (N''pos_sync_shift_author_keys'',N''PK_pos_sync_shift_author_keys'',N''scope_hash'',1,1),
+ (N''pos_sync_shift_author_keys'',N''UQ_pos_sync_shift_author_keys_id'',N''key_id'',1,1),
+ (N''pos_sync_shift_authors'',N''PK_pos_sync_shift_authors'',N''intent_id'',1,1),
+ (N''pos_sync_shift_authors'',N''IX_pos_sync_shift_authors_scope'',N''scope_hash'',1,0),
+ (N''pos_sync_shift_authors'',N''IX_pos_sync_shift_authors_scope'',N''key_id'',2,0);
+ IF EXISTS(SELECT 1 FROM @Author23Keys e LEFT JOIN sys.indexes i ON i.object_id=OBJECT_ID(N''dbo.''+e.table_name) AND i.name=e.index_name
+   LEFT JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id AND ic.key_ordinal=e.ordinal
+   LEFT JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
+   WHERE c.name IS NULL OR c.name<>e.column_name OR ic.is_descending_key=1 OR i.is_unique<>e.is_unique OR i.is_disabled=1 OR i.is_hypothetical=1 OR i.ignore_dup_key=1 OR i.has_filter=1
+     OR (e.index_name LIKE N''PK[_]%'' AND (i.is_primary_key<>1 OR i.type<>1))
+     OR (e.index_name LIKE N''UQ[_]%'' AND (i.is_unique_constraint<>1 OR i.type<>2))
+     OR (e.index_name LIKE N''IX[_]%'' AND (i.is_primary_key<>0 OR i.is_unique_constraint<>0 OR i.type<>2)))
+   OR EXISTS(SELECT 1 FROM sys.indexes i JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id
+     WHERE EXISTS(SELECT 1 FROM @Author23Keys e WHERE OBJECT_ID(N''dbo.''+e.table_name)=i.object_id AND e.index_name=i.name)
+     AND (ic.is_included_column=1 OR NOT EXISTS(SELECT 1 FROM @Author23Keys e WHERE OBJECT_ID(N''dbo.''+e.table_name)=i.object_id AND e.index_name=i.name AND e.ordinal=ic.key_ordinal)))
+   OR EXISTS(SELECT 1 FROM sys.indexes i WHERE i.object_id IN(OBJECT_ID(N''dbo.pos_sync_shift_author_keys''),OBJECT_ID(N''dbo.pos_sync_shift_authors'')) AND i.is_unique=1
+     AND NOT EXISTS(SELECT 1 FROM @Author23Keys e WHERE OBJECT_ID(N''dbo.''+e.table_name)=i.object_id AND e.index_name=i.name))
+   OR EXISTS(SELECT 1 FROM sys.foreign_keys WHERE parent_object_id IN(OBJECT_ID(N''dbo.pos_sync_shift_author_keys''),OBJECT_ID(N''dbo.pos_sync_shift_authors'')))
+   OR EXISTS(SELECT 1 FROM sys.triggers WHERE parent_id IN(OBJECT_ID(N''dbo.pos_sync_shift_author_keys''),OBJECT_ID(N''dbo.pos_sync_shift_authors'')))
+  THROW 51023,''Unexpected author metadata index; no records were changed.'',1;
+ COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+ IF @@TRANCOUNT>0 ROLLBACK TRANSACTION;
+ THROW;
+END CATCH;
+
+
+-- Separate immutable start evidence. No business data, keys or cursors are rewritten.
+BEGIN TRY
+ BEGIN TRANSACTION;
+ IF OBJECT_ID(N''dbo.pos_sync_shift_intents'',N''U'') IS NULL OR OBJECT_ID(N''dbo.pos_sync_shift_author_keys'',N''U'') IS NULL
+  THROW 51024,''Install existing shift author metadata before closing-start evidence.'',1;
+ IF OBJECT_ID(N''dbo.pos_sync_shift_closing_starts'',N''U'') IS NULL
+  CREATE TABLE dbo.pos_sync_shift_closing_starts(
+   shift_id uniqueidentifier NOT NULL,branch_id nvarchar(128) NOT NULL,event_id uniqueidentifier NOT NULL,proof_json nvarchar(max) NOT NULL,
+   CONSTRAINT PK_pos_sync_shift_closing_starts PRIMARY KEY(shift_id),
+   CONSTRAINT UQ_pos_sync_shift_closing_starts_event UNIQUE(event_id),
+   CONSTRAINT CK_pos_sync_shift_closing_starts_json CHECK(ISJSON(proof_json)=1));
+ IF OBJECT_ID(N''dbo.pos_sync_shift_intent_starts'',N''U'') IS NULL
+  CREATE TABLE dbo.pos_sync_shift_intent_starts(
+   intent_id uniqueidentifier NOT NULL,proof_json nvarchar(max) NOT NULL,
+   CONSTRAINT PK_pos_sync_shift_intent_starts PRIMARY KEY(intent_id),
+   CONSTRAINT CK_pos_sync_shift_intent_starts_json CHECK(ISJSON(proof_json)=1));
+ DECLARE @Start24Columns TABLE(table_name sysname,column_name sysname,type_name sysname,max_length smallint);
+ INSERT @Start24Columns VALUES
+ (N''pos_sync_shift_closing_starts'',N''shift_id'',N''uniqueidentifier'',16),(N''pos_sync_shift_closing_starts'',N''branch_id'',N''nvarchar'',256),
+ (N''pos_sync_shift_closing_starts'',N''event_id'',N''uniqueidentifier'',16),(N''pos_sync_shift_closing_starts'',N''proof_json'',N''nvarchar'',-1),
+ (N''pos_sync_shift_intent_starts'',N''intent_id'',N''uniqueidentifier'',16),(N''pos_sync_shift_intent_starts'',N''proof_json'',N''nvarchar'',-1);
+ IF EXISTS(SELECT 1 FROM @Start24Columns e LEFT JOIN sys.columns c ON c.object_id=OBJECT_ID(N''dbo.''+e.table_name) AND c.name=e.column_name
+  WHERE c.column_id IS NULL OR TYPE_NAME(c.user_type_id)<>e.type_name OR c.max_length<>e.max_length OR c.is_nullable=1 OR c.is_identity=1 OR c.is_computed=1 OR c.default_object_id<>0)
+  OR EXISTS(SELECT 1 FROM sys.columns c WHERE c.object_id IN(OBJECT_ID(N''dbo.pos_sync_shift_closing_starts''),OBJECT_ID(N''dbo.pos_sync_shift_intent_starts''))
+   AND NOT EXISTS(SELECT 1 FROM @Start24Columns e WHERE OBJECT_ID(N''dbo.''+e.table_name)=c.object_id AND e.column_name=c.name))
+  THROW 51024,''Unexpected closing-start metadata shape; no records were changed.'',1;
+ DECLARE @Start24Keys TABLE(table_name sysname,index_name sysname,column_name sysname,is_primary bit);
+ INSERT @Start24Keys VALUES
+ (N''pos_sync_shift_closing_starts'',N''PK_pos_sync_shift_closing_starts'',N''shift_id'',1),
+ (N''pos_sync_shift_closing_starts'',N''UQ_pos_sync_shift_closing_starts_event'',N''event_id'',0),
+ (N''pos_sync_shift_intent_starts'',N''PK_pos_sync_shift_intent_starts'',N''intent_id'',1);
+ IF EXISTS(SELECT 1 FROM @Start24Keys e LEFT JOIN sys.indexes i ON i.object_id=OBJECT_ID(N''dbo.''+e.table_name) AND i.name=e.index_name
+   LEFT JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id AND ic.key_ordinal=1
+   LEFT JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
+   WHERE c.name IS NULL OR c.name<>e.column_name OR i.is_unique<>1 OR i.is_primary_key<>e.is_primary OR i.is_disabled=1 OR i.is_hypothetical=1 OR i.ignore_dup_key=1 OR i.has_filter=1 OR ic.is_descending_key=1
+    OR (e.is_primary=1 AND i.type<>1) OR (e.is_primary=0 AND (i.is_unique_constraint<>1 OR i.type<>2)))
+  OR EXISTS(SELECT 1 FROM sys.indexes i JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id
+   WHERE EXISTS(SELECT 1 FROM @Start24Keys e WHERE OBJECT_ID(N''dbo.''+e.table_name)=i.object_id AND e.index_name=i.name) AND (ic.key_ordinal<>1 OR ic.is_included_column=1))
+  OR EXISTS(SELECT 1 FROM sys.indexes i WHERE i.object_id IN(OBJECT_ID(N''dbo.pos_sync_shift_closing_starts''),OBJECT_ID(N''dbo.pos_sync_shift_intent_starts'')) AND i.is_unique=1
+   AND NOT EXISTS(SELECT 1 FROM @Start24Keys e WHERE OBJECT_ID(N''dbo.''+e.table_name)=i.object_id AND e.index_name=i.name))
+  OR EXISTS(SELECT 1 FROM sys.foreign_keys WHERE parent_object_id IN(OBJECT_ID(N''dbo.pos_sync_shift_closing_starts''),OBJECT_ID(N''dbo.pos_sync_shift_intent_starts'')))
+  OR EXISTS(SELECT 1 FROM sys.triggers WHERE parent_id IN(OBJECT_ID(N''dbo.pos_sync_shift_closing_starts''),OBJECT_ID(N''dbo.pos_sync_shift_intent_starts'')))
+  THROW 51024,''Unexpected closing-start metadata indexes; no records were changed.'',1;
+ IF EXISTS(SELECT 1 FROM sys.check_constraints WHERE parent_object_id IN(OBJECT_ID(N''dbo.pos_sync_shift_closing_starts''),OBJECT_ID(N''dbo.pos_sync_shift_intent_starts''))
+  AND (name NOT IN(N''CK_pos_sync_shift_closing_starts_json'',N''CK_pos_sync_shift_intent_starts_json'') OR is_disabled=1 OR is_not_trusted=1 OR
+   LOWER(REPLACE(REPLACE(REPLACE(definition,N'' '',N''''),CHAR(13),N''''),CHAR(10),N'''')) COLLATE Latin1_General_100_BIN2<>N''(isjson([proof_json])=(1))'' COLLATE Latin1_General_100_BIN2))
+  OR (SELECT COUNT(*) FROM sys.check_constraints WHERE parent_object_id IN(OBJECT_ID(N''dbo.pos_sync_shift_closing_starts''),OBJECT_ID(N''dbo.pos_sync_shift_intent_starts'')))<>2
+  THROW 51024,''Unexpected closing-start metadata constraints; no records were changed.'',1;
+ COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+ IF @@TRANCOUNT>0 ROLLBACK TRANSACTION;
+ THROW;
+END CATCH;
+
+
 IF OBJECT_ID(N''dbo.pos_schema_migrations'', N''U'') IS NULL CREATE TABLE dbo.pos_schema_migrations (
  version int NOT NULL PRIMARY KEY, name nvarchar(200) NOT NULL, applied_at datetimeoffset(7) NOT NULL DEFAULT SYSDATETIMEOFFSET());
 IF NOT EXISTS(SELECT 1 FROM dbo.pos_schema_migrations WHERE version=1) INSERT dbo.pos_schema_migrations(version,name) VALUES(1,N''initial_sqlserver_parity'');';
@@ -11952,6 +12270,366 @@ IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version=18)
  INSERT dbo.pos_schema_migrations(version,name) VALUES(18,N''''sql_document_counters'''');'';
 COMMIT TRANSACTION;
 END;';
+-- 019_member_contact_email.sql
+EXEC sys.sp_executesql N'IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version=19)
+BEGIN
+BEGIN TRANSACTION;
+EXEC sys.sp_executesql N''-- Editable POS contact, separate from verified membership identity.
+IF OBJECT_ID(N''''dbo.members'''',N''''U'''') IS NOT NULL AND COL_LENGTH(N''''dbo.members'''',N''''contact_email'''') IS NULL
+ ALTER TABLE dbo.members ADD contact_email nvarchar(max) NULL;
+IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version=19)
+ INSERT dbo.pos_schema_migrations(version,name) VALUES(19,N''''member_contact_email'''');'';
+COMMIT TRANSACTION;
+END;';
+-- 020_unpublished_catalog_default.sql
+EXEC sys.sp_executesql N'IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version=20)
+BEGIN
+BEGIN TRANSACTION;
+EXEC sys.sp_executesql N''-- New operational products are unpublished until management chooses to publish.
+IF OBJECT_ID(N''''dbo.products'''',N''''U'''') IS NOT NULL AND COL_LENGTH(N''''dbo.products'''',N''''ecom_visible'''') IS NOT NULL
+BEGIN
+ DECLARE @commerceDefault sysname;
+ SELECT @commerceDefault=d.name FROM sys.default_constraints d JOIN sys.columns c ON c.object_id=d.parent_object_id AND c.column_id=d.parent_column_id WHERE d.parent_object_id=OBJECT_ID(N''''dbo.products'''') AND c.name=N''''ecom_visible'''';
+ IF @commerceDefault IS NOT NULL
+ BEGIN
+  DECLARE @commerceDropSql nvarchar(max);
+  SET @commerceDropSql=N''''ALTER TABLE dbo.products DROP CONSTRAINT ''''+QUOTENAME(@commerceDefault);
+  EXEC(@commerceDropSql);
+ END;
+ ALTER TABLE dbo.products ADD CONSTRAINT DF_products_ecom_visible DEFAULT (0) FOR ecom_visible;
+END;
+IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version=20)
+ INSERT dbo.pos_schema_migrations(version,name) VALUES(20,N''''unpublished_catalog_default'''');'';
+COMMIT TRANSACTION;
+END;';
+-- 021_shift_count_original_uniqueness.sql
+EXEC sys.sp_executesql N'IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version=21)
+BEGIN
+BEGIN TRANSACTION;
+EXEC sys.sp_executesql N''-- SHIFT-34: preserve one ORIGINAL and any number of immutable RECOUNT records.
+-- No stored count is rewritten. Unexpected index shapes/data require review.
+SET ANSI_NULLS ON; SET QUOTED_IDENTIFIER ON; SET ANSI_PADDING ON;
+SET ANSI_WARNINGS ON; SET ARITHABORT ON; SET CONCAT_NULL_YIELDS_NULL ON;
+SET NUMERIC_ROUNDABORT OFF;
+BEGIN TRY
+ BEGIN TRANSACTION;
+ IF OBJECT_ID(N''''dbo.shift_cash_counts'''',N''''U'''') IS NULL
+    OR COL_LENGTH(N''''dbo.shift_cash_counts'''',N''''shift_id'''') IS NULL
+    OR COL_LENGTH(N''''dbo.shift_cash_counts'''',N''''kind'''') IS NULL
+  THROW 51021,''''Shift count table is incomplete; no uniqueness repair was applied.'''',1;
+ DECLARE @shift34Default nvarchar(max);
+ SELECT @shift34Default=dc.definition FROM sys.columns c
+ JOIN sys.types t ON t.user_type_id=c.user_type_id
+ LEFT JOIN sys.default_constraints dc ON dc.object_id=c.default_object_id
+ WHERE c.object_id=OBJECT_ID(N''''dbo.shift_cash_counts'''') AND c.name=N''''kind''''
+   AND t.name=N''''nvarchar'''' AND c.is_nullable=0 AND c.is_computed=0 AND (c.max_length=-1 OR c.max_length>=16);
+ IF @shift34Default IS NULL OR
+    REPLACE(REPLACE(REPLACE(@shift34Default,N''''('''',N''''''''),N'''')'''',N''''''''),N'''' '''',N'''''''') COLLATE Latin1_General_100_BIN2
+      NOT IN(N''''''''''''ORIGINAL'''''''''''',N''''N''''''''ORIGINAL'''''''''''')
+  THROW 51021,''''Unexpected shift count kind type/default; no uniqueness repair was applied.'''',1;
+ DECLARE @shift34Rows bigint;
+ SELECT @shift34Rows=COUNT_BIG(*) FROM dbo.shift_cash_counts WITH (TABLOCKX,HOLDLOCK);
+ IF EXISTS(SELECT 1 FROM dbo.shift_cash_counts WHERE kind IS NULL
+    OR kind COLLATE Latin1_General_100_BIN2 NOT IN(N''''ORIGINAL'''',N''''RECOUNT'''')
+    OR DATALENGTH(kind) NOT IN(14,16))
+    OR EXISTS(SELECT shift_id FROM dbo.shift_cash_counts WHERE kind=N''''ORIGINAL''''
+       GROUP BY shift_id HAVING COUNT_BIG(*)>1)
+  THROW 51021,''''Shift count data conflicts with ORIGINAL-only uniqueness; no records were changed.'''',1;
+ DECLARE @shift34Index int,@shift34Filter nvarchar(max);
+ SELECT @shift34Index=index_id,@shift34Filter=filter_definition
+ FROM sys.indexes WHERE object_id=OBJECT_ID(N''''dbo.shift_cash_counts'''') AND name=N''''UX_shift_cash_counts_shift_id'''';
+ IF @shift34Index IS NOT NULL AND (
+    EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N''''dbo.shift_cash_counts'''') AND index_id=@shift34Index
+      AND (is_unique<>1 OR type<>2 OR is_primary_key=1 OR is_unique_constraint=1 OR is_disabled=1 OR is_hypothetical=1
+        OR ignore_dup_key=1 OR fill_factor<>0 OR is_padded=1 OR allow_row_locks<>1 OR allow_page_locks<>1 OR data_space_id<>1))
+    OR EXISTS(SELECT 1 FROM sys.stats WHERE object_id=OBJECT_ID(N''''dbo.shift_cash_counts'''') AND stats_id=@shift34Index AND no_recompute=1)
+    OR EXISTS(SELECT 1 FROM sys.partitions WHERE object_id=OBJECT_ID(N''''dbo.shift_cash_counts'''') AND index_id=@shift34Index AND data_compression<>0)
+    OR EXISTS(SELECT 1 FROM sys.indexes i WHERE i.object_id=OBJECT_ID(N''''dbo.shift_cash_counts'''') AND i.index_id=@shift34Index
+      AND (COALESCE(JSON_VALUE((SELECT i.* FOR JSON PATH,WITHOUT_ARRAY_WRAPPER),''''$.optimize_for_sequential_key''''),''''false'''') NOT IN(''''false'''',''''0'''')
+        OR COALESCE(JSON_VALUE((SELECT i.* FOR JSON PATH,WITHOUT_ARRAY_WRAPPER),''''$.suppress_dup_key_messages''''),''''false'''') NOT IN(''''false'''',''''0'''')))
+    OR (SELECT COUNT(*) FROM sys.index_columns WHERE object_id=OBJECT_ID(N''''dbo.shift_cash_counts'''') AND index_id=@shift34Index)<>1
+    OR NOT EXISTS(SELECT 1 FROM sys.index_columns ic JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
+      WHERE ic.object_id=OBJECT_ID(N''''dbo.shift_cash_counts'''') AND ic.index_id=@shift34Index AND ic.key_ordinal=1 AND ic.is_descending_key=0 AND c.name=N''''shift_id'''')
+    OR (@shift34Filter IS NOT NULL AND
+      REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(@shift34Filter,N''''('''',N''''''''),N'''')'''',N''''''''),N''''['''',N''''''''),N'''']'''',N''''''''),N'''' '''',N'''''''')<>N''''kind=N''''''''ORIGINAL''''''''''''))
+  THROW 51021,''''Unexpected named shift count index; no uniqueness repair was applied.'''',1;
+ IF EXISTS(SELECT 1 FROM sys.indexes i
+    WHERE i.object_id=OBJECT_ID(N''''dbo.shift_cash_counts'''') AND i.is_unique=1
+      AND i.index_id<>COALESCE(@shift34Index,-1)
+      AND EXISTS(SELECT 1 FROM sys.index_columns ic JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
+        WHERE ic.object_id=i.object_id AND ic.index_id=i.index_id AND c.name=N''''shift_id''''))
+  THROW 51021,''''An unreviewed shift-related unique index exists; no uniqueness repair was applied.'''',1;
+ IF @shift34Index IS NULL OR @shift34Filter IS NULL
+ BEGIN
+  IF NOT EXISTS(SELECT 1 FROM sys.filegroups WHERE data_space_id=1 AND is_default=1)
+   THROW 51021,''''Unexpected default filegroup; no uniqueness repair was applied.'''',1;
+  IF @shift34Index IS NOT NULL DROP INDEX [UX_shift_cash_counts_shift_id] ON dbo.[shift_cash_counts];
+  CREATE UNIQUE INDEX [UX_shift_cash_counts_shift_id] ON dbo.[shift_cash_counts]([shift_id]) WHERE [kind]=N''''ORIGINAL'''';
+ END;
+ COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+ IF @@TRANCOUNT>0 ROLLBACK TRANSACTION;
+ THROW;
+END CATCH;
+-- SHIFT34_HISTORY_BEGIN: the generator also embeds the guarded repair above.
+IF NOT EXISTS(SELECT 1 FROM dbo.pos_schema_migrations WHERE version=21)
+ INSERT dbo.pos_schema_migrations(version,name) VALUES(21,N''''shift_count_original_uniqueness'''');'';
+COMMIT TRANSACTION;
+END;';
+-- 022_shift_causal_intents.sql
+EXEC sys.sp_executesql N'IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version=22)
+BEGIN
+BEGIN TRANSACTION;
+EXEC sys.sp_executesql N''-- SHIFT-36 local protocol metadata only. No domain row/checkpoint is rewritten.
+BEGIN TRY
+ BEGIN TRANSACTION;
+ IF OBJECT_ID(N''''dbo.pos_sync_shift_baselines'''',N''''U'''') IS NULL
+  CREATE TABLE dbo.pos_sync_shift_baselines(
+   branch_id nvarchar(128) NOT NULL,shift_id uniqueidentifier NOT NULL,
+   graph_token char(64) NOT NULL,closed_at_raw nvarchar(80) NOT NULL,graph_json nvarchar(max) NOT NULL,
+   observation_generation uniqueidentifier NOT NULL,
+   CONSTRAINT PK_pos_sync_shift_baselines PRIMARY KEY(branch_id,shift_id),
+   CONSTRAINT CK_pos_sync_shift_baselines_json CHECK(ISJSON(graph_json)=1));
+ IF OBJECT_ID(N''''dbo.pos_sync_shift_intents'''',N''''U'''') IS NULL
+  CREATE TABLE dbo.pos_sync_shift_intents(
+   intent_sequence bigint IDENTITY(1,1) NOT NULL,intent_id uniqueidentifier NOT NULL,
+   branch_id nvarchar(128) NOT NULL,shift_id uniqueidentifier NOT NULL,intent_kind nvarchar(16) NOT NULL,
+   baseline_generation uniqueidentifier NULL,base_token char(64) NULL,
+   predecessor_intent_id uniqueidentifier NULL,predecessor_intent_hash char(64) NULL,
+   payload_json nvarchar(max) NOT NULL,payload_hash char(64) NOT NULL,
+   accepted_token char(64) NULL,current_token char(64) NULL,superseded bit NULL,acknowledged_at datetimeoffset(7) NULL,ack_coverage_json nvarchar(max) NULL,
+   CONSTRAINT PK_pos_sync_shift_intents PRIMARY KEY(intent_id),
+   CONSTRAINT UQ_pos_sync_shift_intents_sequence UNIQUE(intent_sequence),
+   CONSTRAINT CK_pos_sync_shift_intents_json CHECK(ISJSON(payload_json)=1),
+   CONSTRAINT CK_pos_sync_shift_intents_coverage CHECK(ack_coverage_json IS NULL OR ISJSON(ack_coverage_json)=1),
+   CONSTRAINT CK_pos_sync_shift_intents_kind CHECK(intent_kind IN(N''''ORIGINAL'''',N''''RECOUNT'''',N''''VARIANCE'''')),
+   CONSTRAINT CK_pos_sync_shift_intents_predecessor CHECK(
+    (predecessor_intent_id IS NULL AND predecessor_intent_hash IS NULL) OR
+    (predecessor_intent_id IS NOT NULL AND predecessor_intent_hash IS NOT NULL AND base_token IS NULL AND predecessor_intent_id<>intent_id)));
+ IF OBJECT_ID(N''''dbo.pos_sync_shift_openings'''',N''''U'''') IS NULL
+  CREATE TABLE dbo.pos_sync_shift_openings(
+   aggregate_id uniqueidentifier NOT NULL,shift_id uniqueidentifier NOT NULL,branch_id nvarchar(128) NOT NULL,
+   row_json nvarchar(max) NOT NULL,row_hash char(64) NOT NULL,
+   CONSTRAINT PK_pos_sync_shift_openings PRIMARY KEY(aggregate_id,shift_id),
+   CONSTRAINT CK_pos_sync_shift_openings_json CHECK(ISJSON(row_json)=1));
+ DECLARE @Shift36Columns TABLE(table_name sysname,column_name sysname,type_name sysname,max_length smallint,nullable bit,identity_column bit);
+ INSERT @Shift36Columns VALUES
+ (N''''pos_sync_shift_baselines'''',N''''branch_id'''',N''''nvarchar'''',256,0,0),(N''''pos_sync_shift_baselines'''',N''''shift_id'''',N''''uniqueidentifier'''',16,0,0),
+ (N''''pos_sync_shift_baselines'''',N''''graph_token'''',N''''char'''',64,0,0),(N''''pos_sync_shift_baselines'''',N''''closed_at_raw'''',N''''nvarchar'''',160,0,0),
+ (N''''pos_sync_shift_baselines'''',N''''graph_json'''',N''''nvarchar'''',-1,0,0),(N''''pos_sync_shift_baselines'''',N''''observation_generation'''',N''''uniqueidentifier'''',16,0,0),
+ (N''''pos_sync_shift_intents'''',N''''intent_sequence'''',N''''bigint'''',8,0,1),(N''''pos_sync_shift_intents'''',N''''intent_id'''',N''''uniqueidentifier'''',16,0,0),
+ (N''''pos_sync_shift_intents'''',N''''branch_id'''',N''''nvarchar'''',256,0,0),(N''''pos_sync_shift_intents'''',N''''shift_id'''',N''''uniqueidentifier'''',16,0,0),
+ (N''''pos_sync_shift_intents'''',N''''intent_kind'''',N''''nvarchar'''',32,0,0),(N''''pos_sync_shift_intents'''',N''''baseline_generation'''',N''''uniqueidentifier'''',16,1,0),
+ (N''''pos_sync_shift_intents'''',N''''base_token'''',N''''char'''',64,1,0),(N''''pos_sync_shift_intents'''',N''''predecessor_intent_id'''',N''''uniqueidentifier'''',16,1,0),
+ (N''''pos_sync_shift_intents'''',N''''predecessor_intent_hash'''',N''''char'''',64,1,0),(N''''pos_sync_shift_intents'''',N''''payload_json'''',N''''nvarchar'''',-1,0,0),
+ (N''''pos_sync_shift_intents'''',N''''payload_hash'''',N''''char'''',64,0,0),(N''''pos_sync_shift_intents'''',N''''accepted_token'''',N''''char'''',64,1,0),
+ (N''''pos_sync_shift_intents'''',N''''current_token'''',N''''char'''',64,1,0),(N''''pos_sync_shift_intents'''',N''''superseded'''',N''''bit'''',1,1,0),
+ (N''''pos_sync_shift_intents'''',N''''acknowledged_at'''',N''''datetimeoffset'''',10,1,0),
+ (N''''pos_sync_shift_intents'''',N''''ack_coverage_json'''',N''''nvarchar'''',-1,1,0),
+ (N''''pos_sync_shift_openings'''',N''''aggregate_id'''',N''''uniqueidentifier'''',16,0,0),(N''''pos_sync_shift_openings'''',N''''shift_id'''',N''''uniqueidentifier'''',16,0,0),
+ (N''''pos_sync_shift_openings'''',N''''branch_id'''',N''''nvarchar'''',256,0,0),(N''''pos_sync_shift_openings'''',N''''row_json'''',N''''nvarchar'''',-1,0,0),
+ (N''''pos_sync_shift_openings'''',N''''row_hash'''',N''''char'''',64,0,0);
+ IF EXISTS(SELECT 1 FROM @Shift36Columns e LEFT JOIN sys.columns c ON c.object_id=OBJECT_ID(N''''dbo.''''+e.table_name) AND c.name=e.column_name
+   WHERE c.column_id IS NULL OR TYPE_NAME(c.user_type_id)<>e.type_name OR c.max_length<>e.max_length OR c.is_nullable<>e.nullable OR c.is_identity<>e.identity_column OR c.is_computed=1 OR c.default_object_id<>0)
+   OR EXISTS(SELECT 1 FROM sys.columns c WHERE c.object_id IN(OBJECT_ID(N''''dbo.pos_sync_shift_baselines''''),OBJECT_ID(N''''dbo.pos_sync_shift_intents''''),OBJECT_ID(N''''dbo.pos_sync_shift_openings''''))
+     AND NOT EXISTS(SELECT 1 FROM @Shift36Columns e WHERE OBJECT_ID(N''''dbo.''''+e.table_name)=c.object_id AND e.column_name=c.name))
+  THROW 51022,''''Unexpected closing protocol metadata; no domain records were changed.'''',1;
+ IF NOT EXISTS(SELECT 1 FROM sys.key_constraints WHERE parent_object_id=OBJECT_ID(N''''dbo.pos_sync_shift_baselines'''') AND name=N''''PK_pos_sync_shift_baselines'''' AND type=''''PK'''')
+   OR NOT EXISTS(SELECT 1 FROM sys.key_constraints WHERE parent_object_id=OBJECT_ID(N''''dbo.pos_sync_shift_intents'''') AND name=N''''PK_pos_sync_shift_intents'''' AND type=''''PK'''')
+   OR NOT EXISTS(SELECT 1 FROM sys.key_constraints WHERE parent_object_id=OBJECT_ID(N''''dbo.pos_sync_shift_intents'''') AND name=N''''UQ_pos_sync_shift_intents_sequence'''' AND type=''''UQ'''')
+   OR NOT EXISTS(SELECT 1 FROM sys.key_constraints WHERE parent_object_id=OBJECT_ID(N''''dbo.pos_sync_shift_openings'''') AND name=N''''PK_pos_sync_shift_openings'''' AND type=''''PK'''')
+   OR (SELECT COUNT(*) FROM sys.check_constraints WHERE parent_object_id IN(OBJECT_ID(N''''dbo.pos_sync_shift_baselines''''),OBJECT_ID(N''''dbo.pos_sync_shift_intents''''),OBJECT_ID(N''''dbo.pos_sync_shift_openings''''))
+     AND name IN(N''''CK_pos_sync_shift_baselines_json'''',N''''CK_pos_sync_shift_intents_json'''',N''''CK_pos_sync_shift_intents_kind'''',N''''CK_pos_sync_shift_intents_predecessor'''',N''''CK_pos_sync_shift_openings_json'''',N''''CK_pos_sync_shift_intents_coverage'''') AND is_disabled=0 AND is_not_trusted=0)<>6
+  THROW 51022,''''Unexpected closing protocol constraints; no domain records were changed.'''',1;
+ IF NOT EXISTS(SELECT 1 FROM sys.identity_columns WHERE object_id=OBJECT_ID(N''''dbo.pos_sync_shift_intents'''') AND name=N''''intent_sequence''''
+   AND CONVERT(bigint,seed_value)=1 AND CONVERT(bigint,increment_value)=1
+   AND (last_value IS NULL OR CONVERT(bigint,last_value)>=COALESCE((SELECT MAX(intent_sequence) FROM dbo.pos_sync_shift_intents),0)))
+  THROW 51022,''''Unexpected closing protocol identity; no domain records were changed.'''',1;
+ DECLARE @Shift36Checks TABLE(table_name sysname,constraint_name sysname,expected nvarchar(max));
+ INSERT @Shift36Checks VALUES
+ (N''''pos_sync_shift_baselines'''',N''''CK_pos_sync_shift_baselines_json'''',N''''(isjson([graph_json])=(1))''''),
+ (N''''pos_sync_shift_intents'''',N''''CK_pos_sync_shift_intents_json'''',N''''(isjson([payload_json])=(1))''''),
+ (N''''pos_sync_shift_intents'''',N''''CK_pos_sync_shift_intents_coverage'''',N''''([ack_coverage_json] IS NULL OR isjson([ack_coverage_json])=(1))''''),
+ (N''''pos_sync_shift_intents'''',N''''CK_pos_sync_shift_intents_kind'''',N''''([intent_kind]=N''''''''VARIANCE'''''''' OR [intent_kind]=N''''''''RECOUNT'''''''' OR [intent_kind]=N''''''''ORIGINAL'''''''')''''),
+ (N''''pos_sync_shift_intents'''',N''''CK_pos_sync_shift_intents_predecessor'''',N''''([predecessor_intent_id] IS NULL AND [predecessor_intent_hash] IS NULL OR [predecessor_intent_id] IS NOT NULL AND [predecessor_intent_hash] IS NOT NULL AND [base_token] IS NULL AND [predecessor_intent_id]<>[intent_id])''''),
+ (N''''pos_sync_shift_openings'''',N''''CK_pos_sync_shift_openings_json'''',N''''(isjson([row_json])=(1))'''');
+ IF EXISTS(SELECT 1 FROM @Shift36Checks e LEFT JOIN sys.check_constraints c ON c.parent_object_id=OBJECT_ID(N''''dbo.''''+e.table_name) AND c.name=e.constraint_name
+   WHERE c.object_id IS NULL OR c.definition COLLATE Latin1_General_100_BIN2 <> e.expected COLLATE Latin1_General_100_BIN2)
+   OR EXISTS(SELECT 1 FROM sys.check_constraints c WHERE c.parent_object_id IN(OBJECT_ID(N''''dbo.pos_sync_shift_baselines''''),OBJECT_ID(N''''dbo.pos_sync_shift_intents''''),OBJECT_ID(N''''dbo.pos_sync_shift_openings''''))
+     AND NOT EXISTS(SELECT 1 FROM @Shift36Checks e WHERE OBJECT_ID(N''''dbo.''''+e.table_name)=c.parent_object_id AND e.constraint_name=c.name))
+  THROW 51022,''''Unexpected closing protocol CHECK expression; no domain records were changed.'''',1;
+ IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N''''dbo.pos_sync_shift_intents'''') AND name=N''''IX_pos_sync_shift_intents_tail'''')
+  CREATE INDEX IX_pos_sync_shift_intents_tail ON dbo.pos_sync_shift_intents(branch_id,shift_id,intent_sequence DESC);
+ DECLARE @Shift36Keys TABLE(table_name sysname,index_name sysname,column_name sysname,ordinal int,descending_key bit,unique_index bit);
+ INSERT @Shift36Keys VALUES
+ (N''''pos_sync_shift_baselines'''',N''''PK_pos_sync_shift_baselines'''',N''''branch_id'''',1,0,1),
+ (N''''pos_sync_shift_baselines'''',N''''PK_pos_sync_shift_baselines'''',N''''shift_id'''',2,0,1),
+ (N''''pos_sync_shift_intents'''',N''''PK_pos_sync_shift_intents'''',N''''intent_id'''',1,0,1),
+ (N''''pos_sync_shift_intents'''',N''''UQ_pos_sync_shift_intents_sequence'''',N''''intent_sequence'''',1,0,1),
+ (N''''pos_sync_shift_intents'''',N''''IX_pos_sync_shift_intents_tail'''',N''''branch_id'''',1,0,0),
+ (N''''pos_sync_shift_intents'''',N''''IX_pos_sync_shift_intents_tail'''',N''''shift_id'''',2,0,0),
+ (N''''pos_sync_shift_intents'''',N''''IX_pos_sync_shift_intents_tail'''',N''''intent_sequence'''',3,1,0),
+ (N''''pos_sync_shift_openings'''',N''''PK_pos_sync_shift_openings'''',N''''aggregate_id'''',1,0,1),
+ (N''''pos_sync_shift_openings'''',N''''PK_pos_sync_shift_openings'''',N''''shift_id'''',2,0,1);
+ IF EXISTS(SELECT 1 FROM @Shift36Keys e LEFT JOIN sys.indexes i ON i.object_id=OBJECT_ID(N''''dbo.''''+e.table_name) AND i.name=e.index_name
+   LEFT JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id AND ic.key_ordinal=e.ordinal
+   LEFT JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
+   WHERE c.name IS NULL OR c.name<>e.column_name OR ic.is_descending_key<>e.descending_key OR i.is_unique<>e.unique_index
+     OR i.is_disabled=1 OR i.is_hypothetical=1 OR i.ignore_dup_key=1 OR i.has_filter=1)
+   OR EXISTS(SELECT 1 FROM sys.indexes i JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id
+     WHERE EXISTS(SELECT 1 FROM @Shift36Keys e WHERE OBJECT_ID(N''''dbo.''''+e.table_name)=i.object_id AND e.index_name=i.name)
+     AND (ic.is_included_column=1 OR NOT EXISTS(SELECT 1 FROM @Shift36Keys e WHERE OBJECT_ID(N''''dbo.''''+e.table_name)=i.object_id AND e.index_name=i.name AND e.ordinal=ic.key_ordinal)))
+  THROW 51022,''''Unexpected closing protocol index shape; no domain records were changed.'''',1;
+ IF EXISTS(SELECT 1 FROM sys.indexes i WHERE i.object_id IN(OBJECT_ID(N''''dbo.pos_sync_shift_baselines''''),OBJECT_ID(N''''dbo.pos_sync_shift_intents''''),OBJECT_ID(N''''dbo.pos_sync_shift_openings'''')) AND i.is_unique=1
+   AND NOT EXISTS(SELECT 1 FROM @Shift36Keys e WHERE OBJECT_ID(N''''dbo.''''+e.table_name)=i.object_id AND e.index_name=i.name))
+  THROW 51022,''''Unexpected closing protocol uniqueness; no domain records were changed.'''',1;
+ COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+ IF @@TRANCOUNT>0 ROLLBACK TRANSACTION;
+ THROW;
+END CATCH;
+-- SHIFT36_HISTORY_BEGIN: also embedded in the current additive installer.
+IF NOT EXISTS(SELECT 1 FROM dbo.pos_schema_migrations WHERE version=22)
+ INSERT dbo.pos_schema_migrations(version,name) VALUES(22,N''''shift_causal_intents'''');'';
+COMMIT TRANSACTION;
+END;';
+-- 023_shift_author_attestations.sql
+EXEC sys.sp_executesql N'IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version=23)
+BEGIN
+BEGIN TRANSACTION;
+EXEC sys.sp_executesql N''-- AUTH-37 private references/signatures only. No business row or cursor rewrite.
+BEGIN TRY
+ BEGIN TRANSACTION;
+ IF OBJECT_ID(N''''dbo.pos_sync_shift_intents'''',N''''U'''') IS NULL
+  THROW 51023,''''Closing intent metadata must be installed before author references.'''',1;
+ IF OBJECT_ID(N''''dbo.pos_sync_shift_author_keys'''',N''''U'''') IS NULL
+  CREATE TABLE dbo.pos_sync_shift_author_keys(
+   scope_hash char(64) NOT NULL,project_origin nvarchar(2048) NOT NULL,terminal_id nvarchar(200) NOT NULL,
+   author_id uniqueidentifier NOT NULL,key_id uniqueidentifier NOT NULL,public_key varchar(59) NOT NULL,
+   CONSTRAINT PK_pos_sync_shift_author_keys PRIMARY KEY(scope_hash),
+   CONSTRAINT UQ_pos_sync_shift_author_keys_id UNIQUE(key_id));
+ IF OBJECT_ID(N''''dbo.pos_sync_shift_authors'''',N''''U'''') IS NULL
+  CREATE TABLE dbo.pos_sync_shift_authors(
+   intent_id uniqueidentifier NOT NULL,scope_hash char(64) NOT NULL,key_id uniqueidentifier NOT NULL,
+   attestation_json nvarchar(max) NOT NULL,
+   CONSTRAINT PK_pos_sync_shift_authors PRIMARY KEY(intent_id),
+   CONSTRAINT CK_pos_sync_shift_authors_json CHECK(ISJSON(attestation_json)=1));
+ DECLARE @Author23Columns TABLE(table_name sysname,column_name sysname,type_name sysname,max_length smallint);
+ INSERT @Author23Columns VALUES
+ (N''''pos_sync_shift_author_keys'''',N''''scope_hash'''',N''''char'''',64),(N''''pos_sync_shift_author_keys'''',N''''project_origin'''',N''''nvarchar'''',4096),
+ (N''''pos_sync_shift_author_keys'''',N''''terminal_id'''',N''''nvarchar'''',400),(N''''pos_sync_shift_author_keys'''',N''''author_id'''',N''''uniqueidentifier'''',16),
+ (N''''pos_sync_shift_author_keys'''',N''''key_id'''',N''''uniqueidentifier'''',16),(N''''pos_sync_shift_author_keys'''',N''''public_key'''',N''''varchar'''',59),
+ (N''''pos_sync_shift_authors'''',N''''intent_id'''',N''''uniqueidentifier'''',16),(N''''pos_sync_shift_authors'''',N''''scope_hash'''',N''''char'''',64),
+ (N''''pos_sync_shift_authors'''',N''''key_id'''',N''''uniqueidentifier'''',16),(N''''pos_sync_shift_authors'''',N''''attestation_json'''',N''''nvarchar'''',-1);
+ IF EXISTS(SELECT 1 FROM @Author23Columns e LEFT JOIN sys.columns c ON c.object_id=OBJECT_ID(N''''dbo.''''+e.table_name) AND c.name=e.column_name
+   WHERE c.column_id IS NULL OR TYPE_NAME(c.user_type_id)<>e.type_name OR c.max_length<>e.max_length OR c.is_nullable=1 OR c.is_identity=1 OR c.is_computed=1 OR c.default_object_id<>0)
+   OR EXISTS(SELECT 1 FROM sys.columns c WHERE c.object_id IN(OBJECT_ID(N''''dbo.pos_sync_shift_author_keys''''),OBJECT_ID(N''''dbo.pos_sync_shift_authors''''))
+     AND NOT EXISTS(SELECT 1 FROM @Author23Columns e WHERE OBJECT_ID(N''''dbo.''''+e.table_name)=c.object_id AND e.column_name=c.name))
+  THROW 51023,''''Unexpected author metadata shape; no records were changed.'''',1;
+ IF NOT EXISTS(SELECT 1 FROM sys.check_constraints WHERE parent_object_id=OBJECT_ID(N''''dbo.pos_sync_shift_authors'''') AND name=N''''CK_pos_sync_shift_authors_json''''
+   AND LOWER(REPLACE(REPLACE(REPLACE(definition,N'''' '''',N''''''''),CHAR(13),N''''''''),CHAR(10),N'''''''')) COLLATE Latin1_General_100_BIN2=N''''(isjson([attestation_json])=(1))'''' COLLATE Latin1_General_100_BIN2 AND is_disabled=0 AND is_not_trusted=0)
+   OR EXISTS(SELECT 1 FROM sys.check_constraints WHERE parent_object_id IN(OBJECT_ID(N''''dbo.pos_sync_shift_author_keys''''),OBJECT_ID(N''''dbo.pos_sync_shift_authors'''')) AND name<>N''''CK_pos_sync_shift_authors_json'''')
+  THROW 51023,''''Unexpected author metadata constraints; no records were changed.'''',1;
+ IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N''''dbo.pos_sync_shift_authors'''') AND name=N''''IX_pos_sync_shift_authors_scope'''')
+  CREATE INDEX IX_pos_sync_shift_authors_scope ON dbo.pos_sync_shift_authors(scope_hash,key_id);
+ DECLARE @Author23Keys TABLE(table_name sysname,index_name sysname,column_name sysname,ordinal int,is_unique bit);
+ INSERT @Author23Keys VALUES
+ (N''''pos_sync_shift_author_keys'''',N''''PK_pos_sync_shift_author_keys'''',N''''scope_hash'''',1,1),
+ (N''''pos_sync_shift_author_keys'''',N''''UQ_pos_sync_shift_author_keys_id'''',N''''key_id'''',1,1),
+ (N''''pos_sync_shift_authors'''',N''''PK_pos_sync_shift_authors'''',N''''intent_id'''',1,1),
+ (N''''pos_sync_shift_authors'''',N''''IX_pos_sync_shift_authors_scope'''',N''''scope_hash'''',1,0),
+ (N''''pos_sync_shift_authors'''',N''''IX_pos_sync_shift_authors_scope'''',N''''key_id'''',2,0);
+ IF EXISTS(SELECT 1 FROM @Author23Keys e LEFT JOIN sys.indexes i ON i.object_id=OBJECT_ID(N''''dbo.''''+e.table_name) AND i.name=e.index_name
+   LEFT JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id AND ic.key_ordinal=e.ordinal
+   LEFT JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
+   WHERE c.name IS NULL OR c.name<>e.column_name OR ic.is_descending_key=1 OR i.is_unique<>e.is_unique OR i.is_disabled=1 OR i.is_hypothetical=1 OR i.ignore_dup_key=1 OR i.has_filter=1
+     OR (e.index_name LIKE N''''PK[_]%'''' AND (i.is_primary_key<>1 OR i.type<>1))
+     OR (e.index_name LIKE N''''UQ[_]%'''' AND (i.is_unique_constraint<>1 OR i.type<>2))
+     OR (e.index_name LIKE N''''IX[_]%'''' AND (i.is_primary_key<>0 OR i.is_unique_constraint<>0 OR i.type<>2)))
+   OR EXISTS(SELECT 1 FROM sys.indexes i JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id
+     WHERE EXISTS(SELECT 1 FROM @Author23Keys e WHERE OBJECT_ID(N''''dbo.''''+e.table_name)=i.object_id AND e.index_name=i.name)
+     AND (ic.is_included_column=1 OR NOT EXISTS(SELECT 1 FROM @Author23Keys e WHERE OBJECT_ID(N''''dbo.''''+e.table_name)=i.object_id AND e.index_name=i.name AND e.ordinal=ic.key_ordinal)))
+   OR EXISTS(SELECT 1 FROM sys.indexes i WHERE i.object_id IN(OBJECT_ID(N''''dbo.pos_sync_shift_author_keys''''),OBJECT_ID(N''''dbo.pos_sync_shift_authors'''')) AND i.is_unique=1
+     AND NOT EXISTS(SELECT 1 FROM @Author23Keys e WHERE OBJECT_ID(N''''dbo.''''+e.table_name)=i.object_id AND e.index_name=i.name))
+   OR EXISTS(SELECT 1 FROM sys.foreign_keys WHERE parent_object_id IN(OBJECT_ID(N''''dbo.pos_sync_shift_author_keys''''),OBJECT_ID(N''''dbo.pos_sync_shift_authors'''')))
+   OR EXISTS(SELECT 1 FROM sys.triggers WHERE parent_id IN(OBJECT_ID(N''''dbo.pos_sync_shift_author_keys''''),OBJECT_ID(N''''dbo.pos_sync_shift_authors'''')))
+  THROW 51023,''''Unexpected author metadata index; no records were changed.'''',1;
+ COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+ IF @@TRANCOUNT>0 ROLLBACK TRANSACTION;
+ THROW;
+END CATCH;
+-- AUTH37_HISTORY_BEGIN
+IF NOT EXISTS(SELECT 1 FROM dbo.pos_schema_migrations WHERE version=23)
+ INSERT dbo.pos_schema_migrations(version,name) VALUES(23,N''''shift_author_attestations'''');'';
+COMMIT TRANSACTION;
+END;';
+-- 024_shift_closing_start_proofs.sql
+EXEC sys.sp_executesql N'IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version=24)
+BEGIN
+BEGIN TRANSACTION;
+EXEC sys.sp_executesql N''-- Separate immutable start evidence. No business data, keys or cursors are rewritten.
+BEGIN TRY
+ BEGIN TRANSACTION;
+ IF OBJECT_ID(N''''dbo.pos_sync_shift_intents'''',N''''U'''') IS NULL OR OBJECT_ID(N''''dbo.pos_sync_shift_author_keys'''',N''''U'''') IS NULL
+  THROW 51024,''''Install existing shift author metadata before closing-start evidence.'''',1;
+ IF OBJECT_ID(N''''dbo.pos_sync_shift_closing_starts'''',N''''U'''') IS NULL
+  CREATE TABLE dbo.pos_sync_shift_closing_starts(
+   shift_id uniqueidentifier NOT NULL,branch_id nvarchar(128) NOT NULL,event_id uniqueidentifier NOT NULL,proof_json nvarchar(max) NOT NULL,
+   CONSTRAINT PK_pos_sync_shift_closing_starts PRIMARY KEY(shift_id),
+   CONSTRAINT UQ_pos_sync_shift_closing_starts_event UNIQUE(event_id),
+   CONSTRAINT CK_pos_sync_shift_closing_starts_json CHECK(ISJSON(proof_json)=1));
+ IF OBJECT_ID(N''''dbo.pos_sync_shift_intent_starts'''',N''''U'''') IS NULL
+  CREATE TABLE dbo.pos_sync_shift_intent_starts(
+   intent_id uniqueidentifier NOT NULL,proof_json nvarchar(max) NOT NULL,
+   CONSTRAINT PK_pos_sync_shift_intent_starts PRIMARY KEY(intent_id),
+   CONSTRAINT CK_pos_sync_shift_intent_starts_json CHECK(ISJSON(proof_json)=1));
+ DECLARE @Start24Columns TABLE(table_name sysname,column_name sysname,type_name sysname,max_length smallint);
+ INSERT @Start24Columns VALUES
+ (N''''pos_sync_shift_closing_starts'''',N''''shift_id'''',N''''uniqueidentifier'''',16),(N''''pos_sync_shift_closing_starts'''',N''''branch_id'''',N''''nvarchar'''',256),
+ (N''''pos_sync_shift_closing_starts'''',N''''event_id'''',N''''uniqueidentifier'''',16),(N''''pos_sync_shift_closing_starts'''',N''''proof_json'''',N''''nvarchar'''',-1),
+ (N''''pos_sync_shift_intent_starts'''',N''''intent_id'''',N''''uniqueidentifier'''',16),(N''''pos_sync_shift_intent_starts'''',N''''proof_json'''',N''''nvarchar'''',-1);
+ IF EXISTS(SELECT 1 FROM @Start24Columns e LEFT JOIN sys.columns c ON c.object_id=OBJECT_ID(N''''dbo.''''+e.table_name) AND c.name=e.column_name
+  WHERE c.column_id IS NULL OR TYPE_NAME(c.user_type_id)<>e.type_name OR c.max_length<>e.max_length OR c.is_nullable=1 OR c.is_identity=1 OR c.is_computed=1 OR c.default_object_id<>0)
+  OR EXISTS(SELECT 1 FROM sys.columns c WHERE c.object_id IN(OBJECT_ID(N''''dbo.pos_sync_shift_closing_starts''''),OBJECT_ID(N''''dbo.pos_sync_shift_intent_starts''''))
+   AND NOT EXISTS(SELECT 1 FROM @Start24Columns e WHERE OBJECT_ID(N''''dbo.''''+e.table_name)=c.object_id AND e.column_name=c.name))
+  THROW 51024,''''Unexpected closing-start metadata shape; no records were changed.'''',1;
+ DECLARE @Start24Keys TABLE(table_name sysname,index_name sysname,column_name sysname,is_primary bit);
+ INSERT @Start24Keys VALUES
+ (N''''pos_sync_shift_closing_starts'''',N''''PK_pos_sync_shift_closing_starts'''',N''''shift_id'''',1),
+ (N''''pos_sync_shift_closing_starts'''',N''''UQ_pos_sync_shift_closing_starts_event'''',N''''event_id'''',0),
+ (N''''pos_sync_shift_intent_starts'''',N''''PK_pos_sync_shift_intent_starts'''',N''''intent_id'''',1);
+ IF EXISTS(SELECT 1 FROM @Start24Keys e LEFT JOIN sys.indexes i ON i.object_id=OBJECT_ID(N''''dbo.''''+e.table_name) AND i.name=e.index_name
+   LEFT JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id AND ic.key_ordinal=1
+   LEFT JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
+   WHERE c.name IS NULL OR c.name<>e.column_name OR i.is_unique<>1 OR i.is_primary_key<>e.is_primary OR i.is_disabled=1 OR i.is_hypothetical=1 OR i.ignore_dup_key=1 OR i.has_filter=1 OR ic.is_descending_key=1
+    OR (e.is_primary=1 AND i.type<>1) OR (e.is_primary=0 AND (i.is_unique_constraint<>1 OR i.type<>2)))
+  OR EXISTS(SELECT 1 FROM sys.indexes i JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id
+   WHERE EXISTS(SELECT 1 FROM @Start24Keys e WHERE OBJECT_ID(N''''dbo.''''+e.table_name)=i.object_id AND e.index_name=i.name) AND (ic.key_ordinal<>1 OR ic.is_included_column=1))
+  OR EXISTS(SELECT 1 FROM sys.indexes i WHERE i.object_id IN(OBJECT_ID(N''''dbo.pos_sync_shift_closing_starts''''),OBJECT_ID(N''''dbo.pos_sync_shift_intent_starts'''')) AND i.is_unique=1
+   AND NOT EXISTS(SELECT 1 FROM @Start24Keys e WHERE OBJECT_ID(N''''dbo.''''+e.table_name)=i.object_id AND e.index_name=i.name))
+  OR EXISTS(SELECT 1 FROM sys.foreign_keys WHERE parent_object_id IN(OBJECT_ID(N''''dbo.pos_sync_shift_closing_starts''''),OBJECT_ID(N''''dbo.pos_sync_shift_intent_starts'''')))
+  OR EXISTS(SELECT 1 FROM sys.triggers WHERE parent_id IN(OBJECT_ID(N''''dbo.pos_sync_shift_closing_starts''''),OBJECT_ID(N''''dbo.pos_sync_shift_intent_starts'''')))
+  THROW 51024,''''Unexpected closing-start metadata indexes; no records were changed.'''',1;
+ IF EXISTS(SELECT 1 FROM sys.check_constraints WHERE parent_object_id IN(OBJECT_ID(N''''dbo.pos_sync_shift_closing_starts''''),OBJECT_ID(N''''dbo.pos_sync_shift_intent_starts''''))
+  AND (name NOT IN(N''''CK_pos_sync_shift_closing_starts_json'''',N''''CK_pos_sync_shift_intent_starts_json'''') OR is_disabled=1 OR is_not_trusted=1 OR
+   LOWER(REPLACE(REPLACE(REPLACE(definition,N'''' '''',N''''''''),CHAR(13),N''''''''),CHAR(10),N'''''''')) COLLATE Latin1_General_100_BIN2<>N''''(isjson([proof_json])=(1))'''' COLLATE Latin1_General_100_BIN2))
+  OR (SELECT COUNT(*) FROM sys.check_constraints WHERE parent_object_id IN(OBJECT_ID(N''''dbo.pos_sync_shift_closing_starts''''),OBJECT_ID(N''''dbo.pos_sync_shift_intent_starts'''')))<>2
+  THROW 51024,''''Unexpected closing-start metadata constraints; no records were changed.'''',1;
+ COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+ IF @@TRANCOUNT>0 ROLLBACK TRANSACTION;
+ THROW;
+END CATCH;
+-- AUTH37_START_HISTORY_BEGIN
+IF NOT EXISTS(SELECT 1 FROM dbo.pos_schema_migrations WHERE version=24)
+ INSERT dbo.pos_schema_migrations(version,name) VALUES(24,N''''shift_closing_start_proofs'''');'';
+COMMIT TRANSACTION;
+END;';
 BEGIN TRANSACTION;
 EXEC sys.sp_executesql N'-- SECTION 3: Verify all required tables, columns and migration versions
 
@@ -12038,7 +12716,7 @@ DECLARE @Missing int = @Required - @Present;
 
 SELECT
   DB_NAME() AS database_name,
-  N''1.4.79'' AS application_version,
+  N''1.4.81'' AS application_version,
   @Required AS required_tables,
   @Present AS present_tables,
   @Missing AS missing_tables,
@@ -12405,6 +13083,7 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N''members'', N''full_name''),
   (N''members'', N''phone''),
   (N''members'', N''email''),
+  (N''members'', N''contact_email''),
   (N''members'', N''address''),
   (N''members'', N''country_code''),
   (N''members'', N''postal_code''),
@@ -12563,6 +13242,7 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N''products'', N''row_version''),
   (N''products'', N''owner_store_id''),
   (N''products'', N''deleted_at''),
+  (N''products'', N''catalogue_store_ids''),
   (N''promotions'', N''id''),
   (N''promotions'', N''title''),
   (N''promotions'', N''promo_type''),
@@ -12960,6 +13640,7 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N''pos_store_settings'', N''max_drawer_cash_limit''),
   (N''pos_store_settings'', N''require_reason_for_payout''),
   (N''pos_store_settings'', N''allow_multiple_shifts_per_terminal''),
+  (N''pos_store_settings'', N''allow_branch_shift_sharing''),
   (N''pos_store_settings'', N''enable_cashier_x_report''),
   (N''pos_store_settings'', N''show_opening_float_at_close''),
   (N''pos_store_settings'', N''show_expected_totals_at_close''),
@@ -13054,11 +13735,11 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N''authorization_actions'', N''require_reason''),
   (N''authorization_actions'', N''threshold''),
   (N''authorization_actions'', N''is_enabled''),
-  (N''authorization_actions'', N''row_version''),
+  (N''authorization_actions'', N''row_version'');
+INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N''authorization_actions'', N''updated_by''),
   (N''authorization_actions'', N''created_at''),
-  (N''authorization_actions'', N''updated_at'');
-INSERT INTO @RequiredColumns (table_name, column_name) VALUES
+  (N''authorization_actions'', N''updated_at''),
   (N''authorization_action_history'', N''id''),
   (N''authorization_action_history'', N''action_id''),
   (N''authorization_action_history'', N''action_key''),
@@ -13282,14 +13963,14 @@ IF @MissingColumnCount > 0
 IF OBJECT_ID(N''dbo.pos_schema_migrations'', N''U'') IS NULL
   THROW 51002, ''Retail POS local database migration history table is missing.'', 1;
 
-EXEC(N''IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 1) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 2) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 3) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 4) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 5) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 6) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 7) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 8) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 9) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 10) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 11) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 12) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 13) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 14) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 15) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 16) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 17) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 18)
+EXEC(N''IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 1) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 2) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 3) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 4) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 5) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 6) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 7) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 8) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 9) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 10) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 11) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 12) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 13) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 14) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 15) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 16) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 17) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 18) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 19) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 20) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 21) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 22) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 23) OR NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations WHERE version = 24)
   THROW 51002, ''''Retail POS local database migration history is incomplete.'''', 1;'');
 
 EXEC(N''SELECT version, name, applied_at
 FROM dbo.pos_schema_migrations
 ORDER BY version;'');
 
-PRINT N''Retail POS 1.4.79: POS_Local installation and validation completed successfully.'';';
+PRINT N''Retail POS 1.4.81: POS_Local installation and validation completed successfully.'';';
 COMMIT TRANSACTION;
 END TRY
 BEGIN CATCH

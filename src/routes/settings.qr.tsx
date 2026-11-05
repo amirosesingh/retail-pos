@@ -9,7 +9,8 @@ import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import type { ReceiptCustomLine } from "@/core/types/pos-types";
+import { receiptQrError } from "@/lib/receipt-qr";
+import { useMemo } from "react";
 
 export const Route = createFileRoute("/settings/qr")({
   head: () => ({
@@ -41,6 +42,7 @@ export const Route = createFileRoute("/settings/qr")({
 
 function QrForm() {
   const { effective, setField } = useSettingsCtx();
+  const error = useMemo(() => effective.qr.enabled ? receiptQrError(effective.qr.value) : null, [effective.qr.enabled, effective.qr.value]);
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
@@ -55,9 +57,11 @@ function QrForm() {
         <Label className="text-xs text-muted-foreground">Link or text</Label>
         <Input
           placeholder="https://example.com/feedback"
+          aria-label="Receipt QR link or text"
           value={effective.qr.value}
           onChange={(e) => setField("qr", { ...effective.qr, value: e.target.value })}
         />
+        {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1">
@@ -80,7 +84,7 @@ function QrForm() {
             ariaLabel="QR placement"
             value={effective.qr.placement}
             onChange={(v) =>
-              setField("qr", { ...effective.qr, placement: v as ReceiptCustomLine["placement"] })
+              setField("qr", { ...effective.qr, placement: v as typeof effective.qr.placement })
             }
             options={[
               { value: "header", label: "Top of receipt" },

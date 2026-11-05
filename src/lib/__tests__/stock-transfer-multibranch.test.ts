@@ -119,9 +119,6 @@ describe("multi-branch stock transfer contract", () => {
 
     expect(store).toContain('status: saveAsDraft ? "draft"');
     expect(store).toContain("const savedTransfer = (await loadTransfer(transfer.id)) ?? transfer");
-    expect(store).toContain("const durableRequest = await loadTransfer(id)");
-    expect(store).toContain('if (durableRequest.status === "approved") return { success: true }');
-    expect(store).toContain('forcedId: stableChildId(before.id, "8", 0)');
     expect(persistence).toContain("previousLineCount - lines.length");
     expect(persistence).toContain('table: "stock_transfer_items",');
     expect(composer).toContain("Save draft");

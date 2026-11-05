@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { setActivityAudienceIdentity } from "../activity-audience";
 
 const posFetch = vi.fn(() => Promise.resolve({ ok: true, json: async () => ({ ok: true }) }));
 const readCredentials = vi.fn<
@@ -23,6 +24,7 @@ const localStorage = {
 
 describe("per-user notification state", () => {
   beforeEach(() => {
+    setActivityAudienceIdentity(null);
     values.clear();
     posFetch.mockClear();
     readCredentials.mockReset();
@@ -38,12 +40,19 @@ describe("per-user notification state", () => {
     });
   });
 
-  it("persists a clear and shares it with other users on this device", async () => {
+  it("persists a clear only for the current user on this device", async () => {
     const activity = await import("../activity-events");
     expect(await activity.clearActivityEntry("manager-1", "event-1")).toBe(true);
     expect(activity.isCleared("manager-1", "event-1")).toBe(true);
-    expect(activity.isCleared("manager-2", "event-1")).toBe(true);
+    expect(activity.isCleared("manager-2", "event-1")).toBe(false);
     expect(posFetch).toHaveBeenCalled();
+    expect(values.has("pos.activity.cleared.personal.v2")).toBe(true);
+  });
+
+  it("does not reuse legacy shared clears as personal acknowledgements", async () => {
+    values.set("pos.activity.cleared", JSON.stringify({ shared: ["legacy-event"] }));
+    const activity = await import("../activity-events");
+    expect(activity.isCleared("manager-1", "legacy-event")).toBe(false);
     expect(values.has("pos.activity.cleared")).toBe(true);
   });
 
@@ -55,6 +64,27 @@ describe("per-user notification state", () => {
     } as Parameters<typeof activity.mergeRemoteActivityPreferences>[1][number];
     activity.mergeRemoteActivityPreferences("manager-1", [row]);
     expect(activity.clearedIds("manager-1")).toContain("event-remote");
+    expect(activity.clearedIds("manager-2")).not.toContain("event-remote");
+  });
+
+  it("recognizes the verified account UUID without importing another person's acknowledgement", async () => {
+    setActivityAudienceIdentity({ userIds: ["manager-1", "account-uuid"], mayViewGeneralActivity: true });
+    const activity = await import("../activity-events");
+    const row = { id: "uuid-clear", clearedBy: ["ACCOUNT-UUID"] } as Parameters<typeof activity.mergeRemoteActivityPreferences>[1][number];
+    activity.mergeRemoteActivityPreferences("manager-1", [row]);
+    activity.mergeRemoteActivityPreferences("manager-2", [row]);
+    expect(activity.isCleared("manager-1", "uuid-clear")).toBe(true);
+    expect(activity.isCleared("manager-2", "uuid-clear")).toBe(false);
+  });
+
+  it("does not acknowledge under a replacement user after a local read is delayed", async () => {
+    setActivityAudienceIdentity({ userIds: ["manager-1"], mayViewGeneralActivity: true });
+    localBridge.current = { query: vi.fn().mockResolvedValue({ ok: true, rows: [{ id: "event-1", meta: {}, cleared_by: [] }] }) };
+    const activity = await import("../activity-events");
+    const pending = activity.clearActivityEntry("manager-1", "event-1");
+    setActivityAudienceIdentity({ userIds: ["manager-2"], mayViewGeneralActivity: true });
+    expect(await pending).toBe(false);
+    expect(commitOps).not.toHaveBeenCalled();
   });
 
   it("clears every visible notification through authenticated persistence", async () => {
@@ -64,6 +94,14 @@ describe("per-user notification state", () => {
       expect.arrayContaining(["event-1", "event-2"]),
     );
     expect(posFetch).toHaveBeenCalled();
+  });
+
+  it("distinguishes a failed feed read from an empty notification queue when requested", async () => {
+    posFetch.mockResolvedValueOnce({ ok: false, json: async () => ({ ok: false }) });
+    const activity = await import("../activity-events");
+    await expect(activity.listActivityEvents({}, { requireSuccess: true })).rejects.toThrow("Could not load notifications");
+    posFetch.mockResolvedValueOnce({ ok: false, json: async () => ({ ok: false }) });
+    await expect(activity.listActivityEvents()).resolves.toEqual([]);
   });
 
   it("waits for the server to acknowledge a clear", async () => {
@@ -210,15 +248,24 @@ describe("per-user notification state", () => {
 
   it("mirrors local SQL clear updates through the sync contract", () => {
     const generator = readFileSync("scripts/generate-supabase-sync-contract.cjs", "utf8");
+    const correctionName = "20261030234813_guard_activity_acknowledgement_branch_ownership.sql";
+    const correction = readFileSync(`supabase/migrations/${correctionName}`, "utf8");
+    const contract = correction.split("-- ACTIVITY_ACK_OWNERSHIP_BEGIN")[1]?.split("-- ACTIVITY_ACK_OWNERSHIP_END")[0]?.trim();
     const migration = readFileSync(
       "supabase/migrations/20260928183500_sync_activity_notification_preferences.sql",
       "utf8",
     );
     const bell = readFileSync("src/platforms/web/components/pos/ActivityBell.tsx", "utf8");
 
-    expect(generator).toMatch(
-      /table\.cloudTable === "activity_events"\s+\? `UPDATE SET "cleared_by"=EXCLUDED\."cleared_by"`/,
-    );
+    expect(generator).toContain(correctionName);
+    expect(generator).toContain("out.push(activityAckOwnership)");
+    expect(contract).toBeTruthy();
+    expect(contract).toContain("COALESCE(public.activity_events.cleared_by");
+    expect(contract).toContain("COALESCE(EXCLUDED.cleared_by");
+    expect(contract).toContain("public.pos_sync_validate_scope('default',v_branch");
+    expect(contract).toContain("lower(btrim(public.activity_events.store_id))=lower(btrim(v_branch))");
+    expect(contract).toContain("RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'");
+    expect(readFileSync("supabase/schema.sql", "utf8").replaceAll("\r\n", "\n")).toContain(contract!.replaceAll("\r\n", "\n"));
     expect(migration).toContain("ON CONFLICT (id) DO UPDATE");
     expect(migration).toContain("SET cleared_by = EXCLUDED.cleared_by");
     expect(bell).toContain("...row.clearedBy, meKey");
@@ -244,7 +291,7 @@ describe("per-user notification state", () => {
     expect(bell).not.toContain('value="history"');
     const root = readFileSync("src/routes/__root.tsx", "utf8");
     expect(root).toContain('<Toaster position="top-right" closeButton={false} />');
-    expect(bell).toContain("<DialogContent showCloseButton={false}");
+    expect(bell).toContain("<DialogContent showCloseButton={true}");
     expect(bell).toContain("closeButton: false");
     expect(bell).not.toContain('value="attention"');
     expect(bell).not.toContain('value="warning"');
@@ -254,7 +301,7 @@ describe("per-user notification state", () => {
     expect(styles).toContain('.ui-animated-list-item[data-state="exiting"]');
     expect(styles).toContain("prefers-reduced-motion: reduce");
     expect(report).toContain("Active and history");
-    expect(report).toContain("Cleared history");
+    expect(report).toContain("Cleared by me");
     expect(report).not.toContain("reopenActivityEntry");
     expect(report).toContain("useAnimatedItems");
     expect(report).toContain("ui-animated-table-row");
@@ -263,7 +310,7 @@ describe("per-user notification state", () => {
   it("keeps the live notification feed to seven days without deleting audit history", () => {
     const bell = readFileSync("src/platforms/web/components/pos/ActivityBell.tsx", "utf8");
     expect(bell).toContain("NOTIFICATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000");
-    expect(bell).toContain("from: new Date(Date.now() - NOTIFICATION_RETENTION_MS).toISOString()");
+    expect(bell).toContain("const retentionFrom = new Date(Date.now() - NOTIFICATION_RETENTION_MS).toISOString()");
     expect(bell).not.toContain("deleteActivityEvent");
   });
 });

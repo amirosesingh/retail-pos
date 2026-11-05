@@ -43,6 +43,8 @@ const handlers: Record<string, (data: unknown) => Promise<unknown>> = Object.fre
   "shift-corrections.correctClosedShift": async (data) => (await import("./shift-corrections.functions")).correctClosedShift({ data: data as never }),
   "sale-corrections.loadPostedSaleForCorrection": async (data) => (await import("./sale-corrections.functions")).loadPostedSaleForCorrection({ data: data as never }),
   "sale-corrections.correctPostedSale": async (data) => (await import("./sale-corrections.functions")).correctPostedSale({ data: data as never }),
+  "missed-bill.addMissedBill": async (data) => (await import("./missed-bill.functions")).addMissedBill({ data: data as never }),
+  "missed-bill.listMissedBillCashiers": async (data) => (await import("./missed-bill.functions")).listMissedBillCashiers({ data: data as never }),
   "tender-correction.correctSaleTender": async (data) => (await import("./tender-correction.functions")).correctSaleTender({ data: data as never }),
   "store-groups.loadStoreGroupsForCaller": async (data) => (await import("./store-groups.functions")).loadStoreGroupsForCaller({ data: data as never }),
   "store-groups.saveStoreGroupForCaller": async (data) => (await import("./store-groups.functions")).saveStoreGroupForCaller({ data: data as never }),

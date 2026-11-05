@@ -32,7 +32,7 @@ describe("business UI persistence acknowledgements", () => {
     const store = source("src/lib/pos-store.tsx");
     const inventory = source("src/routes/inventory.tsx");
     const quickMember = source("src/platforms/web/components/pos/QuickMemberDialog.tsx");
-    expect(store).toContain("const target = await db.commitProduct(stored)");
+    expect(store).toContain("const target = await db.commitProduct(stored, options?.catalogOnly === true");
     expect(store).toContain("const target = await db.commitProducts(updated)");
     expect(store).toContain("await db.commitProduct(merged)");
     expect(store).toContain(

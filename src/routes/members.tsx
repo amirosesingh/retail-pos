@@ -1,3 +1,5 @@
+import { useMembershipTiers } from "@/lib/membership-tiers";
+import { MembershipTiersEditor } from "@/platforms/web/components/pos/MembershipTiersEditor";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { createFileRoute } from "@tanstack/react-router";
 import { useDeferredValue, useMemo, useState } from "react";
@@ -62,10 +64,11 @@ function Members() {
   const [historyMember, setHistoryMember] = useState<Member | null>(null);
   const [verifyMember, setVerifyMember] = useState<Member | null>(null);
   const gateway = useVerificationGateway();
+  const tiers = useMembershipTiers();
 
   const search = useDeferredValue(query.trim().toLowerCase());
   const rows = useMemo(() => state.members.filter(m =>
-    `${m.name} ${m.code} ${m.phone} ${m.email}`.toLowerCase().includes(search)), [state.members, search]);
+    `${m.name} ${m.code} ${m.phone} ${m.email} ${m.contactEmail ?? ""}`.toLowerCase().includes(search)), [state.members, search]);
   const pager = usePagination(rows);
   const visitsByMember = useMemo(() => {
     const visits = new Map<string, number>();
@@ -85,7 +88,8 @@ function Members() {
               points outstanding
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            {can("can_edit_member_points") && <MembershipTiersEditor />}
             <div className="relative">
               <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -95,7 +99,7 @@ function Members() {
                 className="w-56 pl-9"
               />
             </div>
-            <Button onClick={() => setDraft(blank())}>
+            <Button disabled={!can("can_add_member")} onClick={() => setDraft(blank())}>
               <Plus className="size-4" /> Enroll member
             </Button>
           </div>
@@ -110,6 +114,7 @@ function Members() {
                   <div>
                     <button
                       className="text-base font-semibold hover:text-primary"
+                      disabled={!can("can_add_member")}
                       onClick={() => setDraft(m)}
                     >
                       {m.name}
@@ -143,7 +148,7 @@ function Members() {
                   <Stat label="Visits" value={String(visits)} />
                 </dl>
                 <p className="mt-3 text-xs text-muted-foreground">
-                  {m.phone} · {m.email}
+                  {m.phone} · {m.contactEmail ?? m.email}
                 </p>
                 <div className="mt-3 flex gap-2">
                   {can("can_view_member_history") && (
@@ -168,6 +173,7 @@ function Members() {
                   <Button
                     size="sm"
                     variant="ghost"
+                    disabled={!can("can_add_member")}
                     onClick={async () => {
                       try {
                         await removeMember(m.id);
@@ -235,27 +241,17 @@ function Members() {
                 />
               </div>
               <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">Email</Label>
-                <Input
-                  value={draft.email}
-                  readOnly
-                  aria-readonly="true"
-                  placeholder="Managed in the member portal"
-                  className="bg-muted/40"
-                />
+                <Label className="text-xs text-muted-foreground">Contact email</Label>
+                <Input type="email" maxLength={254} value={draft.contactEmail ?? draft.email} onChange={event => setDraft({...draft,contactEmail:event.target.value})} placeholder="Optional contact email" />
               </div>
               <div className="space-y-1">
                 <Label className="text-xs text-muted-foreground">Tier</Label>
                 <ThemedSelect
                   ariaLabel="Tier"
                   value={draft.tier}
-                  disabled={!can("can_edit_member_points")}
+                  disabled={!can("can_edit_member_points") || tiers.isLoading}
                   onChange={(v) => setDraft({ ...draft, tier: v as Member["tier"] })}
-                  options={[
-                    { value: "Bronze", label: "Bronze" },
-                    { value: "Silver", label: "Silver" },
-                    { value: "Gold", label: "Gold" },
-                  ]}
+                  options={[...new Set([...(tiers.data ?? []).map(tier => tier.name), draft.tier])].map(name => ({value:name,label:name}))}
                 />
               </div>
               <div className="space-y-1">
@@ -284,8 +280,7 @@ function Members() {
                 />
               </div>
               <p className="col-span-2 text-xs text-muted-foreground">
-                Email and date of birth are verified profile details. Members manage them securely
-                through the membership portal.
+                Contact email can be edited here. Verified sign-in identity and date of birth remain managed through the membership portal.
               </p>
             </div>
           )}
@@ -296,6 +291,7 @@ function Members() {
                   toast.error("Member name is required");
                   return;
                 }
+                if (draft.contactEmail?.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(draft.contactEmail.trim())) { toast.error("Enter a valid contact email"); return; }
                 try {
                   await upsertMember(draft);
                   setDraft(null);

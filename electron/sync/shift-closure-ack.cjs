@@ -1,0 +1,58 @@
+const { recordId } = require("./uuid-fields.cjs");
+const {TOKEN,hashPayload} = require("../db/shift-intents.cjs");
+const {validateCoverage}=require("./shift-coverage.cjs");
+
+function closedShiftRows(operations) {
+  return operations.flatMap(operation => operation.table === "shifts" && !operation.deletePhase
+    ? (operation.rows ?? []).filter(row =>
+      String(row.status ?? "").toUpperCase() === "CLOSED" ||
+      String(row.state ?? "").toUpperCase() === "CLOSED" ||
+      (row.closed_at !== null && row.closed_at !== undefined && row.closed_at !== ""))
+    : []);
+}
+
+function revision(value) {
+  if (typeof value !== "number" && (typeof value !== "string" || !/^\d+$/.test(value))) return null;
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number >= 1 ? number : null;
+}
+
+// A total applied count cannot prove a particular shift reached CLOSED. Older
+// servers can return ok even when their version predicate ignored that row.
+// Require the atomic SQL postcondition's proof on new uploads AND receipt replay.
+// Other table uploads retain their existing acknowledgement contract.
+function assertShiftClosureAcknowledgement(acknowledgement, operations, branchId, intent=null,registry=null) {
+  const rows = closedShiftRows(operations);
+  if (!rows.length) return;
+  const fail = () => {
+    throw Object.assign(new Error(
+      "The central database has not confirmed this shift closure. Its upload remains pending; check synchronization status before retrying.",
+    ), { code: "ESHIFT_CLOSURE_UNCONFIRMED", table: "shifts" });
+  };
+  const branch = recordId(branchId);
+  if (!branch || acknowledgement?.shift_closure_ack_version !== (intent?3:2) ||
+      !Array.isArray(acknowledgement.shift_closures)) return fail();
+  const expected = new Map();
+  for (const row of rows) {
+    const id = recordId(row.id), rowVersion = revision(row.row_version);
+    if (!id || recordId(row.store_id) !== branch || rowVersion === null || expected.has(id)) return fail();
+    expected.set(id, rowVersion);
+  }
+  if (acknowledgement.shift_closures.length !== expected.size) return fail();
+  const seen = new Set();
+  for (const proof of acknowledgement.shift_closures) {
+    const id = recordId(proof?.id), rowVersion = revision(proof?.row_version);
+    const requestedVersion = revision(proof?.requested_row_version);
+    if (!expected.has(id) || seen.has(id) || recordId(proof?.store_id) !== branch ||
+        rowVersion === null || requestedVersion !== expected.get(id)) return fail();
+    if(intent && (expected.size!==1 || id!==intent.shiftId || recordId(proof.intent_id)!==intent.intentId ||
+      proof.intent_hash!==intent.payloadHash || hashPayload(intent.payloadJson)!==intent.payloadHash ||
+      !TOKEN.test(proof.accepted_token??"") || !TOKEN.test(proof.current_token??"") || typeof proof.superseded!=="boolean" ||
+      proof.superseded!==(proof.accepted_token!==proof.current_token))) return fail();
+    if(intent)validateCoverage(proof.coverage,intent,registry);
+    seen.add(id);
+  }
+  return intent ? acknowledgement.shift_closures[0] : undefined;
+}
+
+module.exports = { assertShiftClosureAcknowledgement };

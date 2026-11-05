@@ -125,6 +125,9 @@ export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
       "receipt.paper",
       "receipt.showLogo",
       "receipt.logoLayout",
+      "receipt.headerLayout",
+      "receipt.documentLayouts",
+      "receipt.documentSections",
       "receipt.showPoints",
       "receipt.showBarcode",
       "receipt.showTax",
@@ -219,6 +222,7 @@ export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
     blurb: "Country, time zone, date order and clock format.",
     paths: [
       "integrations.country",
+      "integrations.currency",
       "integrations.timeZone",
       "integrations.dateFormat",
       "integrations.timeFormat",

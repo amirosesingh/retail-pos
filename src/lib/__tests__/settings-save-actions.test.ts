@@ -4,6 +4,13 @@ import { describe, expect, it } from "vitest";
 const read = (path: string) => readFileSync(path, "utf8");
 
 describe("settings save actions", () => {
+  it("does not apply a late save acknowledgment or error to a different branch/terminal draft",()=>{
+    const frame=read("src/platforms/web/components/pos/settings/SettingsFrame.tsx");
+    expect(frame).toContain("saveScopeRef.current = JSON.stringify(scopeIds)");
+    const save=frame.slice(frame.indexOf("const save = async ()"),frame.indexOf("const discard ="));
+    expect(save).toMatch(/await commitSettingsDraft[\s\S]*?if \(saveScopeRef.current !== submittedScope\) return;[\s\S]*?setDraft\(null\)/);
+    expect(save).toMatch(/catch \(e\) \{\s*if \(saveScopeRef.current !== submittedScope\) return;/);
+  });
   const independentlySaved = [
     "settings.branch-telemetry.tsx",
     "settings.database.tsx",

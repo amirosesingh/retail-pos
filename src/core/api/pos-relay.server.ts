@@ -1,4 +1,9 @@
 import { canCrossBranches } from "./relay-policy.server";
+import { recordId, sameRecordId } from "@/lib/sale-identity";
+import { sameBranchId } from "@/lib/branch-id";
+import { dispatchFailure } from "@/lib/transfer-dispatch-result";
+import { DesktopAdoptionUnavailableError } from "@/lib/desktop-adoption-availability.server";
+import { STOCK_REQUEST_HEAD_COLUMNS, STOCK_REQUEST_ITEM_COLUMNS, STOCK_REQUEST_PAGE_SIZE, checkedStockRequestApprovalState, completeStockRequestRows, projectStockRequestRows, stockRequestItemPage, validateStockRequestHead } from "@/lib/stock-request-contract";
 /**
  * Server-side write relay for the POS database.
  *
@@ -36,6 +41,7 @@ export type RelayRpc = { kind: "rpc"; table: string; fn: string; args: Record<st
 
 /** Read requests the relay may answer for a proven till. */
 export type RelayRead =
+  | { kind: "transferRequestApprovalState"; requestId: string }
   | { kind: "health" }
   | { kind: "activeShift"; storeId: string }
   | { kind: "stores" }
@@ -52,6 +58,7 @@ export const RELAY_TABLES = new Set([
   "sales",
   "sale_items",
   "payment_transactions",
+  "payment_types",
   "item_activity_logs",
   "shifts",
   "shift_sessions",
@@ -162,14 +169,55 @@ export function hasServiceKey(): boolean {
  * Answer a read for a proven till. This keeps offline/compatibility sessions
  * working when no live backend Auth session is available.
  */
-export async function runRelayRead(read: RelayRead): Promise<{
+export async function runRelayRead(read: RelayRead, scope?: RelayScope): Promise<{
   ok: boolean;
   row?: Record<string, unknown> | null;
   rows?: Record<string, unknown>[];
   error?: string;
+  code?: string;
+  status?: number;
   inventoryMode?: "deep" | "legacy";
   inventoryWarning?: string;
 }> {
+  if (read.kind === "transferRequestApprovalState") {
+    if (!scope || scope.managementReplica || scope.kind === "terminal" || scope.stale || !scope.staffUserId ||
+        (scope.role !== "admin" && scope.roleSlug !== "admin" && scope.permissions.can_approve_transfer !== true))
+      return { ok: false, status: 403, code: "PERMISSION_DENIED", error: "An active transfer approver session is required." };
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(read.requestId))
+      return { ok: false, status: 400, code: "SCOPE_MISSING", error: "The stock request identity is invalid." };
+    try {
+      const response = await serviceRest(`stock_transfers?id=eq.${encodeURIComponent(recordId(read.requestId))}&select=${STOCK_REQUEST_HEAD_COLUMNS}&limit=1`);
+      if (!response.ok) throw new Error("Request read failed");
+      const request = projectStockRequestRows(await response.json(), STOCK_REQUEST_HEAD_COLUMNS)[0];
+      if (!request || request.kind !== "request" || !sameRecordId(String(request.id), read.requestId))
+        return { ok: false, status: 404, code: "SCOPE_MISSING", error: "The stock request is no longer available." };
+      validateStockRequestHead(request, "request");
+      if (scope.storeId ? !sameBranchId(request.from_store_id, scope.storeId) : !canCrossBranches(scope))
+        return { ok: false, status: 403, code: "STORE_FORBIDDEN", error: "You can only approve stock requests for your sending branch." };
+      const count = (res: Response) => { const total = res.headers.get("content-range")?.match(/\/(\d+)$/)?.[1]; return total === undefined ? null : Number(total); };
+      const childResponse = await serviceRest(`stock_transfers?source_request_id=eq.${encodeURIComponent(String(request.id))}&select=${STOCK_REQUEST_HEAD_COLUMNS}&order=id&limit=2`, { prefer: "count=exact" });
+      if (!childResponse.ok) throw new Error("Fulfilment read failed");
+      const children = completeStockRequestRows(await childResponse.json(), count(childResponse), STOCK_REQUEST_HEAD_COLUMNS, 1);
+      const fulfilment = children[0] ?? null;
+      if (fulfilment && (fulfilment.kind !== "transfer" || !sameRecordId(String(fulfilment.source_request_id), String(request.id)) ||
+          !sameBranchId(fulfilment.from_store_id, request.from_store_id) || !sameBranchId(fulfilment.to_store_id, request.to_store_id)))
+        throw new Error("Inconsistent fulfilment");
+      const lines = async (id: unknown) => {
+        const rows: Record<string, unknown>[] = []; let total: number | null = null;
+        do {
+          const res = await serviceRest(`stock_transfer_items?transfer_id=eq.${encodeURIComponent(String(id))}&select=${STOCK_REQUEST_ITEM_COLUMNS}&order=id&limit=${STOCK_REQUEST_PAGE_SIZE}&offset=${rows.length}`, { prefer: "count=exact" });
+          if (!res.ok) throw new Error("Request line read failed");
+          const page = stockRequestItemPage(await res.json(), count(res), total, rows.length);
+          rows.push(...page.rows); total = page.count;
+        } while (rows.length < total);
+        return rows;
+      };
+      const [requestItems, fulfilmentItems] = await Promise.all([lines(request.id), fulfilment ? lines(fulfilment.id) : Promise.resolve([])]);
+      return { ok: true, row: checkedStockRequestApprovalState({ request, fulfilment, requestItems, fulfilmentItems }) };
+    } catch {
+      return { ok: false, status: 503, code: "TRANSFER_REQUEST_UNAVAILABLE", error: "The central request and fulfilment could not be read completely. Refresh them before approval." };
+    }
+  }
   // The endpoint has already verified the caller and resolved its branch.
   // A health check must never attempt a write with a fabricated record ID.
   if (read.kind === "health") return { ok: true };
@@ -271,6 +319,17 @@ export async function runRelayRead(read: RelayRead): Promise<{
     if (!res.ok) return { ok: false, error: (await res.text()).slice(0, 400) };
     return { ok: true, rows: (await res.json()) as Record<string, unknown>[] };
   }
+  if (scope) {
+    if (!canCrossBranches(scope) && read.storeId !== scope.storeId)
+      return { ok: false, status: 403, code: 'STORE_FORBIDDEN', error: 'You can only read your own branch.' };
+    const selected = await shiftSharingRpc('pos_shift_active_for_terminal', {
+      method: 'POST', body: JSON.stringify({ p_branch: read.storeId, p_terminal: scope.terminalId ?? null }),
+    });
+    if (selected?.ok) return { ok: true, row: await selected.json() as Record<string, unknown> | null };
+    if (selected) return { ok: false, error: (await selected.text()).slice(0, 400) };
+    // Older schemas have never supported disabling sharing. Preserve their
+    // branch-wide selection; every other failure stays visible.
+  }
   const res = await serviceRest(
     `shifts?store_id=eq.${encodeURIComponent(read.storeId)}&status=eq.OPEN` +
       `&closed_at=is.null&order=opened_at.desc&limit=1`,
@@ -288,6 +347,28 @@ function serviceHeaders(key: string): Record<string, string> {
   // New-format sb_secret_ keys are opaque strings, not bearer JWTs.
   if (!key.startsWith("sb_")) headers["Authorization"] = `Bearer ${key}`;
   return headers;
+}
+
+function missingShiftSharingRpc(response: Response, text: string, name: string): boolean {
+  if (response.status !== 404) return false;
+  try {
+    const value = JSON.parse(text) as { code?: unknown; message?: unknown };
+    return !!value && value.code === 'PGRST202' && typeof value.message === 'string' && value.message.includes(name);
+  } catch { return false; }
+}
+const absentShiftSharingRpcs = new Map<string, number>();
+async function shiftSharingRpc(name: string, init: RequestInit): Promise<Response | null> {
+  const key = `${supabaseConfig().url}\n${name}`;
+  if ((absentShiftSharingRpcs.get(key) ?? 0) > Date.now()) return null;
+  const response = await serviceRest(`rpc/${name}`, init);
+  if (response.status === 404 && missingShiftSharingRpc(response, await response.clone().text(), name)) {
+    // Cache only schema absence, never accounts, branch authority or errors.
+    // A newly applied upgrade is discovered within five seconds.
+    absentShiftSharingRpcs.set(key, Date.now() + 5000);
+    return null;
+  }
+  absentShiftSharingRpcs.delete(key);
+  return response;
 }
 
 /** A rejected-credential answer, as opposed to a permission or data problem. */
@@ -363,6 +444,12 @@ const RELAY_RPCS: Record<
     idArg: "p_transfer_id",
     storeColumn: "from_store_id",
   },
+  stock_transfer_dispatch_atomic: {
+    permission: "can_create_transfer",
+    ownerTable: "stock_transfers",
+    idArg: "p_transfer_id",
+    storeColumn: "from_store_id",
+  },
   stock_transfer_receive: {
     permission: "can_receive_transfer",
     ownerTable: "stock_transfers",
@@ -377,6 +464,25 @@ const RELAY_RPCS: Record<
   },
 };
 
+/** Native dispatch responses expose operational guidance, never database text. */
+async function nativeDispatchFailure(response: Response): Promise<{ ok: false; error: string; code?: string; status: number }> {
+  const body: unknown = await response.json().catch(() => null);
+  const fields = body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : {};
+  const safe = dispatchFailure({ ...fields, status: response.status });
+  const upstreamCode = typeof fields.code === "string" ? fields.code : "";
+  const sqlDenial = /^[0-9A-Z]{5}$/.test(upstreamCode);
+  // Only a bounded diagnostic code/status stays server-side. Messages, hints,
+  // details and gateway response bodies can contain private database context.
+  const diagnosticCode = sqlDenial || /^PGRST\d{3}$/.test(upstreamCode) ? upstreamCode : "UNKNOWN";
+  console.warn("[transfer-dispatch] Backend rejection", { code: diagnosticCode, status: response.status });
+  // A genuine gateway/transport failure may have committed before the response
+  // was lost. Keep its HTTP status and omit a definitive business-error code so
+  // the client can make its single identical, receipt-backed reconciliation.
+  const ambiguous = !sqlDenial && safe.code === "TRANSFER_DISPATCH_UNCONFIRMED" &&
+    (response.status >= 500 || response.status === 408);
+  return { ok: false, error: safe.error, status: response.status, ...(!ambiguous ? { code: safe.code } : {}) };
+}
+
 /**
  * Run one allow-listed routine on the caller's behalf.
  *
@@ -387,7 +493,7 @@ const RELAY_RPCS: Record<
 export async function runRelayRpc(
   op: RelayRpc,
   scope: RelayScope,
-): Promise<{ ok: boolean; error?: string; code?: string }> {
+): Promise<{ ok: boolean; error?: string; code?: string; status?: number; data?: unknown }> {
   if (op.fn === "pos_sale_commit") {
     if (
       scope.role !== "admin" &&
@@ -424,6 +530,22 @@ export async function runRelayRpc(
         code: "STORE_FORBIDDEN",
         error: "You can only sell for your own branch.",
       };
+    }
+    if (scope.staffUserId) {
+      const guarded = await shiftSharingRpc('pos_checkout_sale_for_terminal', {
+        method: 'POST', body: JSON.stringify({ p_terminal: scope.terminalId ?? null, p_actor: scope.staffUserId,
+          _sale: op.args._sale, _items: op.args._items ?? [], _payments: op.args._payments ?? [],
+          _movements: op.args._movements ?? [], _member: op.args._member ?? null, _exchange_bill: op.args._exchange_bill ?? null }),
+      });
+      if (guarded?.ok) return { ok: true };
+      if (guarded) return { ok: false, error: (await guarded.text()).slice(0, 400) };
+    }
+    if(scope.appUserId){
+      const {financialLiveAdapterReady}=await import('@/lib/financial-live-readiness.server');
+      if(await financialLiveAdapterReady()){
+        const res=await serviceRest('rpc/pos_live_financial_sale',{method:'POST',body:JSON.stringify({p_author:scope.appUserId,p_branch:storeId,p_terminal:scope.terminalId??null,p_sale:op.args._sale,p_items:op.args._items??[],p_payments:op.args._payments??[],p_movements:op.args._movements??[],p_member:op.args._member??null,p_exchange_bill:op.args._exchange_bill??null})});
+        return res.ok?{ok:true}:{ok:false,error:(await res.text()).slice(0,400)};
+      }
     }
     const res = await serviceRest("rpc/pos_sale_commit", {
       method: "POST",
@@ -469,6 +591,7 @@ export async function runRelayRpc(
   }
 
   const spec = RELAY_RPCS[op.fn];
+  const nativeDispatch = op.fn === "stock_transfer_dispatch" || op.fn === "stock_transfer_dispatch_atomic";
   if (!spec) return { ok: false, code: "TABLE_FORBIDDEN", error: `"${op.fn}" cannot be run` };
   if (
     scope.role !== "admin" &&
@@ -488,7 +611,7 @@ export async function runRelayRpc(
   const lookup = await serviceRest(
     `${spec.ownerTable}?id=eq.${encodeURIComponent(id)}&select=${spec.storeColumn}&limit=1`,
   );
-  if (!lookup.ok) return { ok: false, error: (await lookup.text()).slice(0, 300) };
+  if (!lookup.ok) return nativeDispatch ? nativeDispatchFailure(lookup) : { ok: false, error: (await lookup.text()).slice(0, 300) };
   const rows = (await lookup.json()) as Record<string, unknown>[];
   const owner = rows[0];
   if (!owner) return { ok: false, code: "SCOPE_MISSING", error: "That record no longer exists." };
@@ -517,11 +640,31 @@ export async function runRelayRpc(
             ? "p_verified_by"
             : null;
   const args = actorField ? { ...op.args, [actorField]: actor } : op.args;
-  const res = await serviceRest(`rpc/${op.fn}`, {
+  if(op.fn==='sale_refund'&&scope.appUserId){
+    const {financialLiveAdapterReady}=await import('@/lib/financial-live-readiness.server');
+    if(await financialLiveAdapterReady()){
+      const res=await serviceRest('rpc/pos_live_financial_refund',{method:'POST',body:JSON.stringify({p_author:scope.appUserId,p_branch:storeId,p_terminal:scope.terminalId??null,p_sale_id:id,p_lines:op.args._lines??null,p_client_refund_id:op.args._client_refund_id??null,p_reason:op.args._reason??null})});
+      return res.ok?{ok:true}:{ok:false,error:(await res.text()).slice(0,400)};
+    }
+  }
+  // Only the account resolved from the verified session may become the native
+  // database actor. Renderer attribution/actor parameters are never forwarded.
+  const nativeApproval = op.fn === "stock_transfer_approve";
+  if ((nativeApproval || nativeDispatch) && (!scope.staffUserId || scope.stale || scope.kind === "terminal"))
+    return { ok: false, code: "PERMISSION_DENIED", error: "An active staff session is required to act on transfers." };
+  const rpcArgs = nativeApproval || nativeDispatch ? {
+    p_transfer_id: id,
+    p_staff_user_id: scope.staffUserId,
+    p_bound_store_id: canCrossBranches(scope) ? null : scope.storeId,
+    p_lines: op.args.p_lines ?? null,
+    ...(nativeDispatch ? { p_strict_lines: op.fn === "stock_transfer_dispatch_atomic" } : {}),
+  } : args;
+  const res = await serviceRest(`rpc/${nativeApproval ? "stock_transfer_approve_for_staff" : nativeDispatch ? "stock_transfer_dispatch_atomic_for_staff" : op.fn}`, {
     method: "POST",
-    body: JSON.stringify(args),
+    body: JSON.stringify(rpcArgs),
   });
-  if (res.ok) return { ok: true };
+  if (res.ok) return op.fn === "stock_transfer_dispatch_atomic" ? { ok: true, data: await res.json() } : { ok: true };
+  if (nativeDispatch) return nativeDispatchFailure(res);
   return { ok: false, error: (await res.text()).slice(0, 400) };
 }
 
@@ -544,6 +687,27 @@ export async function runRelayOp(
   const decision = await safeAuthorizeRelayOp(op, scope, batchIds);
   if (!decision.ok) return { ok: false, error: decision.error, code: decision.code };
   const safeOp = decision.op;
+  if (safeOp.table === 'shifts' && (safeOp.kind === 'insert' || safeOp.kind === 'upsert') && scope.staffUserId) {
+    if (!safeOp.rows || safeOp.rows.length !== 1) return { ok: false, code: 'SHIFT_OPEN_INVALID', error: 'Open one shift at a time.' };
+    const guarded = await shiftSharingRpc('pos_open_shift_for_terminal', { method: 'POST', body: JSON.stringify({
+      p_terminal: scope.terminalId ?? null, p_actor: scope.staffUserId, p_row: safeOp.rows[0],
+    }) });
+    if (guarded?.ok) return { ok: true };
+    if (guarded) return { ok: false, error: (await guarded.text()).slice(0, 400) };
+  }
+  if (safeOp.table === "shift_notifications" || (safeOp.table === "shifts" && safeOp.kind === "delete")) {
+    // Preserve the existing relay policy first. The narrow SQL route then checks
+    // enrolled graph admission and performs this exact mutation atomically.
+    const result = await serviceRest("rpc/pos_sync_shift_author_raw_write", { method: "POST", body: JSON.stringify({
+      p_operation: safeOp, p_terminal_id: scope.terminalId ?? "",
+    }) });
+    return result.ok ? { ok: true } : { ok: false, code: "SHIFT_WRITE_PENDING", error: (await result.text()).slice(0, 400) };
+  }
+  // Receipt graphs are immutable on replay, matching the native SQL writer.
+  // A permission check followed by merge-duplicates would still race another
+  // checkout inserting the same ID. Corrections have dedicated transactions.
+  const immutableReceipt = ["sales", "sale_items", "payment_transactions"].includes(safeOp.table);
+  const conflictResolution = immutableReceipt ? "ignore-duplicates" : "merge-duplicates";
 
   let res: Response;
   switch (safeOp.kind) {
@@ -557,7 +721,7 @@ export async function runRelayOp(
         {
           method: "POST",
           body: JSON.stringify(safeOp.rows),
-          prefer: keyed ? "return=minimal,resolution=merge-duplicates" : "return=minimal",
+          prefer: keyed ? `return=minimal,resolution=${conflictResolution}` : "return=minimal",
         },
       );
       break;
@@ -566,7 +730,7 @@ export async function runRelayOp(
       res = await serviceRest(`${safeOp.table}?on_conflict=${conflictKey(safeOp.table)}`, {
         method: "POST",
         body: JSON.stringify(safeOp.rows),
-        prefer: "return=minimal,resolution=merge-duplicates",
+        prefer: `return=minimal,resolution=${conflictResolution}`,
       });
       break;
     case "update":
@@ -584,7 +748,25 @@ export async function runRelayOp(
       break;
   }
 
-  if (res.ok) return { ok: true };
+  if (res.ok) {
+    if (safeOp.table === "sales" && (safeOp.kind === "insert" || safeOp.kind === "upsert") && !canCrossBranches(scope)) {
+      // An ignored duplicate is not evidence that this caller owns its parent.
+      // The batch can trust successful parent IDs for subsequent children only
+      // after checking the persisted branch, including a duplicate no-op.
+      const ids = [...new Set(safeOp.rows.map(row => recordId(String(row.id ?? ""))))];
+      if (ids.some(id => !id)) return { ok: false, code: "STORE_FORBIDDEN", error: "The sale identity is missing." };
+      if (ids.length) {
+        const quoted = ids.map(id => `"${id.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`).join(",");
+        const params = new URLSearchParams({ select: "id,store_id", id: `in.(${quoted})` });
+        const check = await serviceRest(`sales?${params}`);
+        if (!check.ok) return { ok: false, code: "STORE_FORBIDDEN", error: "The saved sale branch could not be verified." };
+        const saved = await check.json() as Array<{ id: string; store_id: string }>;
+        if (!scope.storeId || saved.length !== ids.length || saved.some(row => !ids.includes(recordId(row.id)) || !sameBranchId(row.store_id, scope.storeId)))
+          return { ok: false, code: "STORE_FORBIDDEN", error: "You cannot use another branch's sale." };
+      }
+    }
+    return { ok: true };
+  }
 
   // A re-pushed tender can collide with the copy the first attempt already
   // stored. The per-tender idempotency key settles it: when every row is
@@ -632,6 +814,8 @@ export type RelayCaller = {
   storeId?: string | null;
   /** app_users.user_id, when the proof carries it. */
   staffUserId?: string | null;
+  /** Stable app_users.id, only when carried by an independently verified cashier proof. */
+  appUserId?: string | null;
   /** A cashier proof's independently verified, revocable login. */
   sessionToken?: string;
   /** Sign-in email, when the proof carries one. Used to find the staff record. */
@@ -644,6 +828,7 @@ export type RelayCaller = {
   terminalId?: string | null;
   managementDevice?: boolean;
   managementMobileDevice?: boolean;
+  terminal?: import("@/lib/terminal-binding.server").VerifiedTerminalDescriptor;
 };
 
 /**
@@ -655,26 +840,43 @@ export type RelayCaller = {
  * the person who signed in with a PIN.
  */
 export class RelayAuthenticationError extends Error {}
+const stableAppUserId = (value: unknown): string | null => typeof value === "string" &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) ? value.toLowerCase() : null;
 
 export async function verifyRelayCaller(input: {
   sessionToken?: string;
   cashierToken?: string;
   terminalToken?: string;
   accessToken?: string;
-}): Promise<RelayCaller> {
+  deviceBindingProof?: string;
+}, options: { strictAvailability?: boolean } = {}): Promise<RelayCaller> {
   let identity: RelayCaller | null = null;
+  let verifiedRawSession: string | null = null;
   let terminalStore: string | null = null;
   let terminalId: string | null = null;
   let managementDevice = false;
   let managementMobileDevice = false;
+  let storedTerminalId:string|null=null;
+  let storedBranch:string|null=null;
+  let terminal:import("@/lib/terminal-binding.server").VerifiedTerminalDescriptor|undefined;
 
   // A cryptographic session record is the strongest proof: it can be revoked
   // centrally and expires when the till has been left idle.
   if (input.sessionToken) {
     const { touchSession } = await import("@/lib/session-guard.server");
-    const check = await touchSession(input.sessionToken);
+    let check: Awaited<ReturnType<typeof touchSession>>;
+    try { check = await touchSession(input.sessionToken); }
+    catch (error) {
+      if (options.strictAvailability) throw new DesktopAdoptionUnavailableError();
+      throw error;
+    }
+    if (options.strictAvailability && !check.ok && check.reason === "unavailable")
+      throw new DesktopAdoptionUnavailableError();
     if (check.ok) {
+      verifiedRawSession = input.sessionToken;
       const s = check.session;
+      storedTerminalId=s.terminal_id??null;
+      storedBranch=s.branch_id??null;
       const kind: RelayCaller["kind"] =
         s.kind === "cashier" ? "cashier" : s.kind === "terminal" ? "terminal" : "staff";
       identity = {
@@ -692,47 +894,56 @@ export async function verifyRelayCaller(input: {
     const { verifyCashierSession } = await import("@/lib/pos-session.server");
     const session = await (async () => {
       try {
-        return await verifyCashierSession(input.cashierToken!);
+        return options.strictAvailability
+          ? await verifyCashierSession(input.cashierToken!, { strictAvailability: true })
+          : await verifyCashierSession(input.cashierToken!);
       } catch {
+        if (options.strictAvailability) throw new DesktopAdoptionUnavailableError();
         return null;
       }
     })();
-    if (session)
+    if (session) {
+      storedTerminalId=session.terminalId??null;
+      storedBranch=session.storeId??null;
       identity = {
         kind: "cashier",
         label: session.username,
         staffUserId: session.username,
+        ...(stableAppUserId(session.id) ? { appUserId: stableAppUserId(session.id) } : {}),
         storeId: session.storeId,
         sessionToken: session.sessionToken,
       };
+    }
   }
 
-  if (input.terminalToken) {
-    const res = await serviceRest(
-      `terminal_tokens?id=eq.${encodeURIComponent(input.terminalToken)}&select=id,status,location_id,platform,revoked_at`,
-    );
-    if (res.ok) {
-      const rows = (await res.json()) as {
-        status?: string;
-        location_id?: string | null;
-        platform?: string;
-        revoked_at?: string | null;
-      }[];
-      const row = rows[0];
-      // A revoked token (remote reset, branch removed) never proves anything.
-      if (row && !row.revoked_at && (row.status === "active" || row.status === "used")) {
-        terminalId = input.terminalToken;
-        terminalStore = row.location_id ?? null;
-        managementDevice = (row.platform === "mobile" || row.platform === "pc") && !terminalStore;
-        managementMobileDevice = row.platform === "mobile" && !terminalStore;
+  // A normal PIN handoff includes both the raw revocable session and its signed
+  // cashier envelope. Preserve the stable profile id only when they identify the
+  // same login. Username-only legacy sessions still work, but cannot enroll keys.
+  if (identity?.kind === "cashier" && verifiedRawSession && input.cashierToken) {
+    const { verifyCashierSession } = await import("@/lib/pos-session.server");
+    const stable = await verifyCashierSession(input.cashierToken).catch(() => null);
+    if (stable && stable.sessionToken === verifiedRawSession && stable.username === identity.staffUserId &&
+        (stable.storeId || null) === (identity.storeId || null) && stableAppUserId(stable.id)) identity.appUserId = stableAppUserId(stable.id);
+  }
+
+  if(storedTerminalId && input.terminalToken && recordId(storedTerminalId)!==recordId(input.terminalToken))
+    throw new RelayAuthenticationError("The request does not match the signed-in terminal.");
+  const requestedTerminal=storedTerminalId || input.terminalToken;
+  if(requestedTerminal){
+    const {readVerifiedTerminal}=await import("@/lib/terminal-binding.server");
+    terminal=await readVerifiedTerminal(requestedTerminal,input.deviceBindingProof,!storedTerminalId);
+    terminalId=terminal.id;
+    terminalStore=terminal.branchId;
+    if(storedTerminalId && terminal.mode==="operations" && (!storedBranch || !sameBranchId(storedBranch,terminalStore)))
+      throw new RelayAuthenticationError("This terminal registration changed. Sign in again after its assignment is reviewed.");
+    managementDevice=terminal.mode==="management";
+    managementMobileDevice=managementDevice && terminal.platform==="mobile";
         identity ??= {
           kind: "terminal",
-          label: input.terminalToken,
+          label: requestedTerminal,
           storeId: terminalStore,
           terminalId,
         };
-      }
-    }
   }
 
   // Use Auth only when no person session identified the caller. PIN sign-in
@@ -744,14 +955,39 @@ export async function verifyRelayCaller(input: {
       identity.kind === "terminal" ||
       (identity.kind === "staff" && !identity.staffUserId))
   ) {
-    const res = await fetch(`${supabaseConfig().url}/auth/v1/user`, {
-      headers: {
-        apikey: supabaseConfig().key,
-        Authorization: `Bearer ${input.accessToken}`,
-      },
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${supabaseConfig().url}/auth/v1/user`, {
+        headers: {
+          apikey: supabaseConfig().key,
+          Authorization: `Bearer ${input.accessToken}`,
+        },
+      });
+    } catch (error) {
+      if (options.strictAvailability) {
+        throw new DesktopAdoptionUnavailableError();
+      }
+      throw error;
+    }
+    if (options.strictAvailability && !res.ok) {
+      if (res.status === 400 || res.status === 401 || res.status === 403)
+        throw new RelayAuthenticationError("Your sign-in could not be verified.");
+      throw new DesktopAdoptionUnavailableError();
+    }
     if (res.ok) {
-      const user = (await res.json()) as { id?: string; email?: string };
+      let user: { id?: string; email?: string };
+      if (options.strictAvailability) {
+        try {
+          const value: unknown = await res.json();
+          if (!value || typeof value !== "object" || Array.isArray(value) ||
+              typeof (value as { id?: unknown }).id !== "string" || !(value as { id: string }).id.trim() ||
+              ((value as { email?: unknown }).email != null && typeof (value as { email?: unknown }).email !== "string"))
+            throw new Error("Invalid verification response");
+          user = value as { id: string; email?: string };
+        } catch {
+          throw new DesktopAdoptionUnavailableError();
+        }
+      } else user = (await res.json()) as { id?: string; email?: string };
       if (user.id) {
         // The token is proven; only now are its claims worth reading.
         const { claimsFromJwt, claimsFromPayload } = await import("@/core/api/relay-claims.server");
@@ -780,5 +1016,6 @@ export async function verifyRelayCaller(input: {
   // make the till read or write another branch's operational data.
   if (terminalStore) identity = { ...identity, storeId: terminalStore, terminalId };
   if (managementDevice) identity = { ...identity, terminalId, managementDevice: true, managementMobileDevice };
+  if(terminal)identity={...identity,terminal};
   return identity;
 }

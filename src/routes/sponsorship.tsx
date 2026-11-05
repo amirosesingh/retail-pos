@@ -49,6 +49,8 @@ import {
 import { formatDateTime } from "@/lib/time-zone";
 import { submitAuthorizationRequest } from "@/lib/authorization-client";
 import { notifyError } from "@/lib/notify";
+import { createCatalogueVisibility } from "@/lib/branch-policy";
+import { sameBranchId } from "@/lib/branch-id";
 
 export const Route = createFileRoute("/sponsorship")({
   component: SponsorshipPage,
@@ -91,6 +93,19 @@ function SponsorshipPage() {
       (!user?.storeId || store.id === user.storeId),
   );
   const [direct, setDirect] = useState(false);
+  const branchContext = useRef(currentStore.id);
+  useEffect(() => {
+    if (sameBranchId(branchContext.current, currentStore.id)) return;
+    branchContext.current = currentStore.id;
+    // Retain an explicitly selected source while a draft is being prepared.
+    // Empty history views otherwise follow the newly selected branch.
+    if (formOpen || busyRef.current || lines.length) return;
+    setSource(currentStore.id);
+    setOffset(0);
+    setHandover(null);
+  }, [currentStore.id, formOpen, lines.length]);
+  const catalogueVisible = useMemo(() => createCatalogueVisibility(state.settings, state.stores, state.transfers),
+    [state.settings, state.stores, state.transfers]);
   const allowed = can("can_view_sponsorship");
   const load = useCallback(
     async (foreground = true) => {
@@ -144,13 +159,13 @@ function SponsorshipPage() {
       .filter(
         (product) =>
           !product.archived &&
-          (!product.ownerStoreId || product.ownerStoreId === source) &&
+          catalogueVisible(product, source) &&
           stockAt(product, source) > 0 &&
           (!query ||
             `${product.name} ${product.sku} ${product.barcode}`.toLowerCase().includes(query)),
       )
       .slice(0, 30);
-  }, [state.products, search, source]);
+  }, [state.products, search, source, catalogueVisible]);
   async function ensureOnline() {
     if (!navigator.onLine)
       throw new Error("Sponsorship requires an online approval and a confirmed stock write");
@@ -162,6 +177,13 @@ function SponsorshipPage() {
   }
   async function submit() {
     if (busyRef.current) return;
+    if (!sourceChoices.some(store => sameBranchId(store.id, source)) || lines.some(line => {
+      const product = state.products.find(item => item.id === line.productId);
+      return !product || !catalogueVisible(product, source);
+    })) {
+      toast.error("Some products are unavailable in this source's catalogue. Review the source and products before submitting.");
+      return;
+    }
     if (
       lines.some(
         (line) =>

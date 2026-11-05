@@ -26,6 +26,21 @@ const rule = {
 };
 
 describe("central relative approval authority", () => {
+  it.each([null, undefined])("rejects a missing monetary approval amount: %s", amount => {
+    expect(canAuthorizeAmount(rule, { role: "manager" }, amount, 10)).toBe(false);
+    const escalated = { ...rule, escalationAfterMinutes: 1, escalationRoles: ["area_manager"], absoluteCeilings: { "role:area_manager": 20 } };
+    expect(canDecideRequestAmount(escalated, { role: "area_manager" }, {
+      createdAt: new Date(Date.now() - 120_000).toISOString(), requestedAmount: amount ?? null, requesterDirectLimit: 10,
+    })).toBe(false);
+  });
+  it.each([-1, Infinity, NaN])("rejects invalid numeric approval even with unlimited authority: %s", amount => {
+    const unlimited = { ...rule, extraAuthority: {}, authorityLimits: {}, absoluteCeilings: {} };
+    expect(canAuthorizeAmount(unlimited, { role: "manager" }, amount)).toBe(false);
+  });
+  it.each(["void_cart", "void_line", "reduce_qty", "shift_close", "terminal_unpair"] as const)("preserves intentionally amountless %s approvals", action => {
+    const amountless = { ...defaultRule(action), mode: "pin" as const, allowedRoles: ["manager"], authorityLimits: { "role:manager": 20 } };
+    expect(canAuthorizeAmount(amountless, { role: "manager" }, null)).toBe(true);
+  });
   it("builds a short day and terminal based approval reference", () => {
     expect(
       approvalReference({

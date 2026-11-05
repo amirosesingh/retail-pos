@@ -147,6 +147,7 @@ export const getPosRules = createServerFn({ method: "POST" })
       updatedBy: loaded.updatedBy,
       scope: access.branchId,
       rules: loaded.rules,
+      shiftSharingAvailable: loaded.shiftSharingAvailable,
     };
   });
 

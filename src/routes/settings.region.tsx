@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+import { CURRENCIES, currencyCode, formatMoney } from "@/lib/currency";
 import { HelpTip } from "@/components/ui/help-tip";
 import { createFileRoute } from "@tanstack/react-router";
 import { SettingsFrame, useSettingsCtx } from "@/platforms/web/components/pos/settings/SettingsFrame";
@@ -10,11 +12,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { usePos } from "@/lib/pos-store";
-import { TIME_ZONES, effectiveTimeZone, formatDateTime } from "@/lib/time-zone";
+import { TIME_ZONES, formatDateTime } from "@/lib/time-zone";
 import type { TimeFormat } from "@/core/types/pos-types";
 
 /** Countries the shop is likely to trade in, with a sensible default zone. */
 const COUNTRIES: { code: string; name: string; zone: string }[] = [
+  { code: "BN", name: "Brunei", zone: "Asia/Brunei" },
+  { code: "KE", name: "Kenya", zone: "Africa/Nairobi" },
   { code: "MY", name: "Malaysia", zone: "Asia/Kuala_Lumpur" },
   { code: "SG", name: "Singapore", zone: "Asia/Singapore" },
   { code: "TH", name: "Thailand", zone: "Asia/Bangkok" },
@@ -57,6 +61,11 @@ function RegionPage() {
 }
 
 function RegionForm() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
   const { state } = usePos();
   const { updateSettings } = useSettingsCtx();
   const it = state.settings.integrations;
@@ -94,6 +103,15 @@ function RegionForm() {
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Currency</Label>
+            <Select value={currencyCode(it.currency)} onValueChange={currency => patch({ currency })}>
+              <SelectTrigger aria-label="Business currency"><SelectValue /></SelectTrigger>
+              <SelectContent>{CURRENCIES.map(code => <SelectItem key={code} value={code}>{code}</SelectItem>)}</SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">Display currency only; existing amounts are not converted. Country and currency can be selected independently.</p>
           </div>
 
           <div className="space-y-1">
@@ -142,8 +160,9 @@ function RegionForm() {
 
         <div className="rounded-lg border border-border bg-muted/40 p-4">
           <p className="text-xs text-muted-foreground">Right now, this till reads</p>
-          <p className="numeric mt-1 text-lg font-semibold">{formatDateTime(new Date())}</p>
-          <p className="text-[11px] text-muted-foreground">Zone in force: {effectiveTimeZone()}</p>
+          <p className="numeric mt-1 text-lg font-semibold">{formatDateTime(now, { timeZone: it.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone })}</p>
+          <p className="text-[11px] text-muted-foreground">Selected zone: {it.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone}</p>
+          <p className="mt-2 text-sm">Currency: {currencyCode(it.currency)} · {formatMoney(1234.56, it.currency)}</p>
         </div>
       </div>
     </>

@@ -225,3 +225,46 @@ it("finds the offline code owner without consuming and rejects ambiguous devices
   await f.verifier.refresh(true);
   expect(f.verifier.identify(code, "branch-a")).toBeNull();
 });
+
+it("uses a downloaded offline token immediately without a network refresh", async () => {
+  const f = fixture();
+  await f.verifier.refresh();
+  f.options.fetchBundle.mockClear();
+  const code = tokenAt(f.secret, Math.floor(Date.now() / 30000));
+  expect(await f.verifier.prepare(code, "branch-a")).toEqual({ ok: true });
+  expect(f.options.fetchBundle).not.toHaveBeenCalled();
+  expect(f.query).not.toHaveBeenCalled();
+});
+
+it("downloads a missing verifier on demand independently of catalogue synchronization", async () => {
+  const f = fixture();
+  const code = tokenAt(f.secret, Math.floor(Date.now() / 30000));
+  expect(await f.verifier.prepare(code, "branch-a")).toEqual({ ok: true });
+  expect(f.options.fetchBundle).toHaveBeenCalledOnce();
+  expect(f.verifier.identify(code, "branch-a")).toBe("manager");
+  expect(f.query).not.toHaveBeenCalled();
+});
+
+it("does not count an unavailable offline verifier as an incorrect token", async () => {
+  const query = vi.fn(async (_sql: string) => ({ recordset: [{ key: "lookup" }] }));
+  const request = { input: () => request, query };
+  const pool = { request: () => request };
+  const identifyTotp = vi.fn();
+  const prepareTotp = vi.fn(async () => ({ ok: false, error: "Download the branch verifier first" }));
+  expect(await verifySyncedApprovalPin(pool, "", "12345678", "branch-a", { identifyTotp, prepareTotp }))
+    .toEqual({ ok: false, reason: "unavailable", error: "Download the branch verifier first" });
+  expect(identifyTotp).not.toHaveBeenCalled();
+  expect(query).toHaveBeenCalledOnce();
+  expect(query.mock.calls[0][0]).toContain("target.attempts<5");
+});
+
+it("reserves the branch lookup budget before preparing an offline token", async () => {
+  const query = vi.fn(async () => ({ recordset: [] }));
+  const request = { input: () => request, query };
+  const prepareTotp = vi.fn();
+  const identifyTotp = vi.fn();
+  expect(await verifySyncedApprovalPin({ request: () => request }, "", "12345678", "branch-a", { identifyTotp, prepareTotp }))
+    .toMatchObject({ ok: false, reason: "locked" });
+  expect(prepareTotp).not.toHaveBeenCalled();
+  expect(identifyTotp).not.toHaveBeenCalled();
+});

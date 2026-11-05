@@ -1,7 +1,8 @@
+import { canUseEcommerceDevice } from "@/lib/ecommerce-device";
 import { SettingsBackLink } from "@/platforms/web/components/pos/settings/SettingsBackLink";
 import { HelpTip } from "@/components/ui/help-tip";
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ChevronDown, ChevronUp, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { SettingsShell } from "@/platforms/web/components/pos/settings/SettingsShell";
@@ -69,20 +70,28 @@ function ListEditor({
   onRemove: (node: ProductCategory, kind: CatalogKind) => void;
 }) {
   const [name, setName] = useState("");
+  const adding = useRef(false);
+  const [busy, setBusy] = useState(false);
   const items = listOf(categories, kind);
 
   async function add() {
+    if (!allowed || adding.current) return;
     const value = name.trim();
     if (!value) return toast.error(`Give the ${title.toLowerCase()} a name`);
     if (items.some((i) => i.name.toLowerCase() === value.toLowerCase())) {
       return toast.error(`${value} is already on the list`);
     }
+    adding.current = true;
+    setBusy(true);
     try {
       await saveCategory({ name: value, kind, parentId: null, sort: items.length + 1 });
       setName("");
       toast.success("Saved");
     } catch {
       toast.error("Could not save that entry");
+    } finally {
+      adding.current = false;
+      setBusy(false);
     }
   }
 
@@ -102,7 +111,7 @@ function ListEditor({
             onChange={(e) => setName(e.target.value)}
             placeholder={placeholder}
             className="h-9"
-            disabled={!allowed}
+            disabled={!allowed || busy}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
@@ -111,14 +120,14 @@ function ListEditor({
             }}
           />
         </div>
-        <Button onClick={add} disabled={!allowed}>
-          <Plus className="size-4" /> Add
+        <Button onClick={add} disabled={!allowed || busy}>
+          <Plus className="size-4" /> {busy ? "Saving…" : "Add"}
         </Button>
       </div>
 
       <div className="divide-y divide-border rounded-md border border-border">
         {items.map((item) => (
-          <div key={item.id} className="flex items-center justify-between gap-2 px-3 py-2">
+          <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
             <span className="flex min-w-0 items-center gap-2 truncate text-sm">
               <span
                 className={
@@ -139,7 +148,7 @@ function ListEditor({
                 disabled={!allowed}
                 aria-label={`${item.name} active`}
                 onCheckedChange={(next) => {
-                  void setCategoryActive(item.id, next);
+                  void setCategoryActive(item.id, next).catch(error => notifyError(error, "Could not update category status"));
                 }}
               />
               <Button
@@ -147,7 +156,7 @@ function ListEditor({
                 variant="ghost"
                 disabled={!allowed}
                 aria-label={`Move ${item.name} up`}
-                onClick={() => reorderCategory(categories, item.id, -1)}
+                onClick={() => void reorderCategory(categories, item.id, -1).catch(error => notifyError(error, "Could not reorder categories"))}
               >
                 <ChevronUp className="size-4" />
               </Button>
@@ -156,7 +165,7 @@ function ListEditor({
                 variant="ghost"
                 disabled={!allowed}
                 aria-label={`Move ${item.name} down`}
-                onClick={() => reorderCategory(categories, item.id, 1)}
+                onClick={() => void reorderCategory(categories, item.id, 1).catch(error => notifyError(error, "Could not reorder categories"))}
               >
                 <ChevronDown className="size-4" />
               </Button>
@@ -203,9 +212,15 @@ function CatalogMetaSettings() {
   } = usePos();
   const autoArchiveZeroStock = configuredGlobalSettings.integrations.autoArchiveZeroStock !== false;
 
+  const [ecomDraft, setEcomDraft] = useState<boolean | null>(null);
+  const [ecomBusy, setEcomBusy] = useState(false);
+  const ecommerceEnabled = ecomDraft ?? configuredGlobalSettings.integrations.ecommerceEnabled !== false;
+
   const [unitCode, setUnitCode] = useState("");
   const [unitName, setUnitName] = useState("");
   const [unitDecimal, setUnitDecimal] = useState(false);
+  const addingUnit = useRef(false);
+  const [unitBusy, setUnitBusy] = useState(false);
 
   /** How many catalogue items still carry this name at this level. */
   const productsUsing = (node: ProductCategory, kind: CatalogKind) =>
@@ -234,13 +249,20 @@ function CatalogMetaSettings() {
       toast.error(`${inUse} product${inUse > 1 ? "s are" : " is"} still filed under ${node.name}`);
       return;
     }
-    await deleteCategory(node.id);
-    toast.success(`${node.name} removed`);
+    try {
+      await deleteCategory(node.id);
+      toast.success(`${node.name} removed`);
+    } catch (error) {
+      notifyError(error, "Could not remove that category");
+    }
   }
 
   async function addUnit() {
+    if (!allowed || addingUnit.current) return;
     const code = unitCode.trim().toLowerCase();
     if (!code) return toast.error("Give the unit a short code, e.g. kg");
+    addingUnit.current = true;
+    setUnitBusy(true);
     try {
       await saveUnit({
         code,
@@ -254,6 +276,9 @@ function CatalogMetaSettings() {
       toast.success("Unit saved");
     } catch {
       toast.error("Could not save that unit");
+    } finally {
+      addingUnit.current = false;
+      setUnitBusy(false);
     }
   }
 
@@ -271,6 +296,11 @@ function CatalogMetaSettings() {
           </p>
           </div>
         </header>
+
+        {canUseEcommerceDevice() && <section className="space-y-3 rounded-xl border bg-card p-4">
+          <label className="flex items-center justify-between gap-3"><span><span className="block font-medium">E-commerce catalog controls</span><span className="block text-sm text-muted-foreground">Available on the management web app and registered management devices only, with Publish products permission. Price edits also require Edit product pricing.</span></span><Switch aria-label="Enable e-commerce catalog controls" checked={ecommerceEnabled} disabled={!can("can_access_pos_settings") || settingsScopeLoading || ecomBusy} onCheckedChange={setEcomDraft} /></label>
+          <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-muted-foreground">Disabling hides the controls and preserves existing e-commerce prices and publication records.</p><Button type="button" size="sm" disabled={ecomDraft === null || !can("can_access_pos_settings") || settingsScopeLoading || ecomBusy} onClick={async () => { setEcomBusy(true); try { updateGlobalSettings({ integrations: { ...configuredGlobalSettings.integrations, ecommerceEnabled } }); await saveConfiguredSettings(); setEcomDraft(null); toast.success("E-commerce catalog setting saved"); } catch (error) { notifyError(error, "Saving e-commerce catalog controls"); } finally { setEcomBusy(false); } }}>Save e-commerce setting</Button></div>
+        </section>}
 
         <div className="flex items-center justify-between gap-4 rounded-lg border border-border bg-card p-4">
           <div>
@@ -307,7 +337,7 @@ function CatalogMetaSettings() {
           </p>
         )}
 
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid min-w-0 gap-4 xl:grid-cols-3">
           <ListEditor
             kind="category"
             categories={categories}
@@ -354,7 +384,7 @@ function CatalogMetaSettings() {
                 onChange={(e) => setUnitCode(e.target.value)}
                 placeholder="kg"
                 className="h-9 w-28"
-                disabled={!allowed}
+                disabled={!allowed || unitBusy}
               />
             </div>
             <div className="space-y-1">
@@ -364,20 +394,20 @@ function CatalogMetaSettings() {
                 onChange={(e) => setUnitName(e.target.value)}
                 placeholder="Kilogram"
                 className="h-9 w-52"
-                disabled={!allowed}
+                disabled={!allowed || unitBusy}
               />
             </div>
             <div className="flex items-center gap-2 pb-2">
               <Switch
                 checked={unitDecimal}
                 onCheckedChange={setUnitDecimal}
-                disabled={!allowed}
+                disabled={!allowed || unitBusy}
                 aria-label="Allow decimal quantities"
               />
               <span className="text-sm">Allow decimals</span>
             </div>
-            <Button onClick={addUnit} disabled={!allowed}>
-              <Plus className="size-4" /> Add
+            <Button onClick={addUnit} disabled={!allowed || unitBusy}>
+              <Plus className="size-4" /> {unitBusy ? "Saving…" : "Add"}
             </Button>
           </div>
 
@@ -399,7 +429,7 @@ function CatalogMetaSettings() {
                   disabled={!allowed}
                   aria-label={`Unit ${u.code} active`}
                   onCheckedChange={(next) => {
-                    void setUnitActive(u.id, next);
+                    void setUnitActive(u.id, next).catch(error => notifyError(error, "Could not update unit status"));
                   }}
                 />
                 <button
@@ -408,7 +438,11 @@ function CatalogMetaSettings() {
                   aria-label={`Delete unit ${u.code}`}
                   disabled={!allowed}
                   onClick={async () => {
-                    await deleteUnit(u.id, u.code);
+                    try {
+                      await deleteUnit(u.id, u.code);
+                    } catch (error) {
+                      notifyError(error, "Could not remove that unit");
+                    }
                   }}
                 >
                   ×

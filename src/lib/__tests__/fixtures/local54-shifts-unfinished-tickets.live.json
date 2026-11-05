@@ -1,0 +1,4 @@
+{
+  "definition": "CREATE   TRIGGER dbo.shifts_unfinished_tickets ON dbo.shifts\r\nAFTER UPDATE AS\r\nBEGIN\r\n SET NOCOUNT ON;\r\n IF EXISTS(SELECT 1 FROM inserted i JOIN deleted d ON d.id=i.id\r\n JOIN dbo.held_orders h WITH (UPDLOCK,HOLDLOCK) ON h.store_id=i.store_id AND (h.shift_id=CONVERT(nvarchar(36),i.id) OR h.shift_id IS NULL)\r\n WHERE d.state='ACTIVE' AND (i.state<>'ACTIVE' OR i.closed_at IS NOT NULL) AND h.status NOT IN ('completed','cancelled'))\r\n THROW 51022,'Complete or cancel all draft and held bills before closing this shift.',1;\r\nEND;",
+  "definition_sha256": "3BB304E7D93DD5F747133EF3FE5CF558C61D4CFBF4A5603B3001295F365C4949"
+}

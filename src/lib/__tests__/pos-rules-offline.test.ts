@@ -32,6 +32,13 @@ describe("what may be approved with no connection", () => {
     );
   });
 
+  it("does not apply the void-cart online-only policy to opening the cash drawer", () => {
+    const policy = rules({ online_only_void_cart: true, allow_offline_approvals: true, offline_approval_requires_pin: true });
+    expect(offlineApprovalMode(policy, "void_cart")).toBe("refused");
+    expect(offlineApprovalMode(policy, "no_sale_drawer")).toBe("manager_pin");
+    expect(offlineApprovalMode({ ...policy, allow_offline_approvals: false }, "no_sale_drawer")).toBe("refused");
+  });
+
   it("asks for a manager PIN when the branch requires one", () => {
     expect(offlineApprovalMode(rules({ offline_approval_requires_pin: true }), "void_line")).toBe(
       "manager_pin",

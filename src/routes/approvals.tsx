@@ -44,6 +44,7 @@ import { subscribeApprovals } from "@/lib/approval-centre";
 import { syncNow } from "@/lib/sync-engine";
 import { lineDiscountTotal, r2 } from "@/core/types/pos-types";
 import { previewBillAfterDiscount } from "@/lib/ticket-snapshot";
+import { formatMoney } from "@/lib/currency";
 
 export const Route = createFileRoute("/approvals")({
   component: ApprovalsPage,
@@ -81,7 +82,7 @@ const approvalValue = (value: number | null, unit: AuthorizationRequest["valueUn
   if (value === null || !Number.isFinite(value)) return "—";
   if (unit === "percent") return `${money(value)}%`;
   if (unit === "quantity") return `${value} item${value === 1 ? "" : "s"}`;
-  if (unit === "currency") return `$${money(value)}`;
+  if (unit === "currency") return formatMoney(value);
   return money(value);
 };
 
@@ -209,7 +210,7 @@ function ApprovalsPage() {
     if (sequence === loadSequence.current) setLoading(false);
   }, [storeId, allBranches, status, page, pageSize]);
 
-  useEffect(() => { setPage(1); }, [storeId]);
+  useEffect(() => { setPage(1); setOpenRequestId(null); }, [storeId]);
 
   useEffect(() => {
     setRows([]);
@@ -312,7 +313,7 @@ function ApprovalsPage() {
 
   return (
     <AppShell>
-      <ApprovalHistoryDialog open={historyOpen} onOpenChange={setHistoryOpen} storeId={storeId} stores={pos?.state.stores ?? []} allBranches={allBranches && me?.role === "admin"} />
+      <ApprovalHistoryDialog open={historyOpen} onOpenChange={setHistoryOpen} storeId={storeId} stores={pos?.state.stores ?? []} allBranches={allBranches && me?.canAccessAllBranches === true} />
       <div className="pos-page-container">
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div>

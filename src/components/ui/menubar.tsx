@@ -3,6 +3,10 @@ import * as MenubarPrimitive from "@radix-ui/react-menubar";
 import { Check, ChevronRight, Circle } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { createOfflineGateContent, createOfflineGatePortal } from "@/lib/offline-gate-snapshot-context";
+
+const GateMenubarContent = createOfflineGateContent(MenubarPrimitive.Content);
+const GateMenubarSubContent = createOfflineGateContent(MenubarPrimitive.SubContent);
 
 function MenubarMenu({ ...props }: React.ComponentProps<typeof MenubarPrimitive.Menu>) {
   return <MenubarPrimitive.Menu {...props} />;
@@ -12,8 +16,9 @@ function MenubarGroup({ ...props }: React.ComponentProps<typeof MenubarPrimitive
   return <MenubarPrimitive.Group {...props} />;
 }
 
-function MenubarPortal({ ...props }: React.ComponentProps<typeof MenubarPrimitive.Portal>) {
-  return <MenubarPrimitive.Portal {...props} />;
+const ScopedMenubarPortal = createOfflineGatePortal(MenubarPrimitive.Portal);
+function MenubarPortal(props: React.ComponentProps<typeof MenubarPrimitive.Portal>) {
+  return <ScopedMenubarPortal {...props} />;
 }
 
 function MenubarRadioGroup({ ...props }: React.ComponentProps<typeof MenubarPrimitive.RadioGroup>) {
@@ -79,7 +84,7 @@ const MenubarSubContent = React.forwardRef<
   React.ElementRef<typeof MenubarPrimitive.SubContent>,
   React.ComponentPropsWithoutRef<typeof MenubarPrimitive.SubContent>
 >(({ className, ...props }, ref) => (
-  <MenubarPrimitive.SubContent
+  <GateMenubarSubContent
     ref={ref}
     className={cn(
       "ui-menu-motion z-50 min-w-[8rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-lg data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 origin-(--radix-menubar-content-transform-origin)",
@@ -94,8 +99,8 @@ const MenubarContent = React.forwardRef<
   React.ElementRef<typeof MenubarPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof MenubarPrimitive.Content>
 >(({ className, align = "start", alignOffset = -4, sideOffset = 8, ...props }, ref) => (
-  <MenubarPrimitive.Portal>
-    <MenubarPrimitive.Content
+  <MenubarPortal>
+    <GateMenubarContent
       ref={ref}
       align={align}
       alignOffset={alignOffset}
@@ -106,7 +111,7 @@ const MenubarContent = React.forwardRef<
       )}
       {...props}
     />
-  </MenubarPrimitive.Portal>
+  </MenubarPortal>
 ));
 MenubarContent.displayName = MenubarPrimitive.Content.displayName;
 

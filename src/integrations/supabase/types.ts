@@ -1327,6 +1327,7 @@ export type Database = {
           date_of_birth: string | null;
           deleted_at: string | null;
           email: string | null;
+          contact_email: string | null;
           full_name: string;
           id: string;
           is_verified: boolean;
@@ -1349,6 +1350,7 @@ export type Database = {
           date_of_birth?: string | null;
           deleted_at?: string | null;
           email?: string | null;
+          contact_email?: string | null;
           full_name: string;
           id?: string;
           is_verified?: boolean;
@@ -1371,6 +1373,7 @@ export type Database = {
           date_of_birth?: string | null;
           deleted_at?: string | null;
           email?: string | null;
+          contact_email?: string | null;
           full_name?: string;
           id?: string;
           is_verified?: boolean;
@@ -5157,6 +5160,10 @@ export type Database = {
           isSetofReturn: false;
         };
       };
+      staff_membership_tier_save: {
+        Args: { p_name: string; p_discount?: number; p_multiplier?: number; p_id?: string | null }
+        Returns: Json
+      }
       voucher_token: { Args: never; Returns: string };
     };
     Enums: {

@@ -1,19 +1,72 @@
+function releaseResponseBody(response, signal) {
+  const cleanup = response.body?.cancel();
+  if (!cleanup) return Promise.resolve();
+  return new Promise(resolve => {
+    const finish = () => {
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    signal.addEventListener("abort", finish, { once: true });
+    // Some stream cancellation promises outlive the fetch abort. Observe their
+    // eventual rejection, but release this beat once its transport is aborted.
+    Promise.resolve(cleanup).then(finish, finish);
+    if (signal.aborted) finish();
+  });
+}
+
 function createTelemetry({ databaseService, syncCoordinator, jobRepository, configStore, terminalStore, app }) {
   let timer = null;
   let presence = { sessionStatus: "idle", staffName: null, staffRole: null };
+  let presenceRevision = 0;
+  let generation = 0;
+  let stopped = false;
+  let active = null;
+  let restartPending = false;
 
   function setPresence(next = {}) {
-    presence = {
+    const updated = {
       sessionStatus: next.sessionStatus === "signed_in" ? "signed_in" : "idle",
       staffName: next.staffName || null,
       staffRole: next.staffRole || null,
     };
+    if (Object.keys(updated).some(key => updated[key] !== presence[key])) presenceRevision++;
+    presence = updated;
     void beat();
     return { ok: true };
   }
 
-  async function beat() {
+  function current(run) {
+    return !stopped && run.generation === generation && !run.controller.signal.aborted;
+  }
+
+  function beat() {
+    if (stopped) return Promise.resolve();
+    if (active) {
+      if (active.generation !== generation) restartPending = true;
+      return active.promise;
+    }
+    const run = { generation, controller: new AbortController(), sentPresenceRevision: null, promise: null };
+    active = run;
+    run.promise = Promise.resolve().then(() => send(run)).catch(() => {
+      /* telemetry never interrupts trading */
+    }).finally(() => {
+      if (active !== run) return;
+      active = null;
+      // Timer ticks are absorbed by the active run. Only a real presence change
+      // after dispatch (or a restart) needs another immediate observation.
+      const followUp = !stopped && (restartPending ||
+        (run.generation === generation && run.sentPresenceRevision !== null &&
+          run.sentPresenceRevision !== presenceRevision));
+      restartPending = false;
+      if (followUp) void beat();
+    });
+    return run.promise;
+  }
+
+  async function send(run) {
+    let deadline;
     try {
+      if (!current(run)) return;
       const base = String(configStore.get("backendUrl") ?? "").replace(/\/+$/, "");
       const terminal = terminalStore.read() ?? {};
       const token = terminal.tokenId;
@@ -24,6 +77,7 @@ function createTelemetry({ databaseService, syncCoordinator, jobRepository, conf
       const sync = syncCoordinator.snapshot();
       const pool = databaseService.manager.pool;
       const job = pool ? await jobRepository.active() : null;
+      if (!current(run)) return;
       let schemaVersion = null;
       let pending = 0;
       let conflicts = 0;
@@ -35,15 +89,20 @@ function createTelemetry({ databaseService, syncCoordinator, jobRepository, conf
           "SELECT COUNT_BIG(*) conflicts FROM dbo.sync_conflicts WHERE status='unresolved'; " +
           "SELECT COUNT_BIG(*) failed FROM dbo.pos_jobs WHERE status='failed';",
         );
+        if (!current(run)) return;
         schemaVersion = Number(result.recordsets?.[0]?.[0]?.schema_version ?? 0);
         pending = Number(result.recordsets?.[1]?.[0]?.pending ?? 0);
         conflicts = Number(result.recordsets?.[2]?.[0]?.conflicts ?? 0);
         failed = Number(result.recordsets?.[3]?.[0]?.failed ?? failed);
       }
       const lastSynced = [sync.lastPushAt, sync.lastPullAt].filter(Boolean).sort().at(-1) ?? null;
-      await fetch(`${base}/api/v1/pos/sync`, {
+      run.sentPresenceRevision = presenceRevision;
+      deadline = setTimeout(() => run.controller.abort(), 30_000);
+      deadline.unref?.();
+      const response = await fetch(`${base}/api/v1/pos/sync`, {
         method: "POST",
         headers: { "content-type": "application/json" },
+        signal: run.controller.signal,
         body: JSON.stringify({
           terminalToken: token,
           sqlServerTelemetry: {
@@ -76,14 +135,24 @@ function createTelemetry({ databaseService, syncCoordinator, jobRepository, conf
           },
         }),
       });
-    } catch {
-      /* telemetry never interrupts trading */
+      // This best-effort observation has no response fields to adopt. Release
+      // the body/socket even for HTTP errors instead of waiting for GC.
+      await releaseResponseBody(response, run.controller.signal);
+    } finally {
+      clearTimeout(deadline);
     }
   }
 
   return {
-    start() { if (!timer) { void beat(); timer = setInterval(beat, 60_000); timer.unref?.(); } },
-    stop() { if (timer) clearInterval(timer); timer = null; },
+    start() { if (timer === null) { stopped = false; void beat(); timer = setInterval(beat, 60_000); timer.unref?.(); } },
+    stop() {
+      if (timer !== null) clearInterval(timer);
+      timer = null;
+      stopped = true;
+      generation++;
+      restartPending = false;
+      active?.controller.abort();
+    },
     beat,
     setPresence,
   };

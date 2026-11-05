@@ -39,6 +39,11 @@ describe("product field permission at shared local SQL writer", () => {
     await expect(repository.assertProductPermissions({}, { table: "products", kind: "update", match: { id: "product" }, values: { cost_price: 7 } }, receiving)).resolves.toBeUndefined();
     await expect(repository.assertProductPermissions({}, { table: "products", kind: "update", match: { id: "product" }, values: { selling_price: 7 } }, receiving)).rejects.toThrow("permission");
   });
+  it("requires publication and price permission together for an e-commerce price edit", async () => {
+    const op = {table:"products",kind:"update",match:{id:"product"},values:{ecom_price:15}};
+    await expect(repository.assertProductPermissions({},op,{...scope,permissions:{can_edit_product_price:true}})).rejects.toThrow("permission");
+    await expect(repository.assertProductPermissions({},op,{...scope,permissions:{can_edit_product_price:true,can_publish_product:true}})).resolves.toBeUndefined();
+  });
   it("denies unrelated stock aggregate tables", () => {
     expect(() => aggregatePolicy("stock", [{ table: "sales", kind: "update", values: {}, match: { id: "sale" } }], { source: "pos", level: "cashier", permissions: { can_adjust_stock: true } })).toThrow("unrelated");
   });

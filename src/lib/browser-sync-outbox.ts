@@ -18,6 +18,64 @@ let hydrated: Promise<void> | null = null;
 
 const available = () => typeof indexedDB !== "undefined";
 
+export type BrowserOutboxStatus =
+  | { state: "ready"; pending: number }
+  | { state: "uninitialized"; pending: 0 }
+  | { state: "unavailable"; pending: null };
+
+/** Read-only diagnostics, independent of the cached count and retry schedule.
+ * Never create/upgrade storage or change hydration, records or retry state. */
+export function readBrowserOutboxStatus(): Promise<BrowserOutboxStatus> {
+  if (!available()) return Promise.resolve({ state: "unavailable", pending: null });
+  return new Promise(resolve => {
+    let done = false;
+    let fresh = false;
+    let db: IDBDatabase | undefined;
+    let transaction: IDBTransaction | undefined;
+    const finish = (result: BrowserOutboxStatus, abort = false) => {
+      if (done) return;
+      done = true;
+      clearTimeout(deadline);
+      if (abort) try { transaction?.abort(); } catch { /* already settled */ }
+      db?.close();
+      resolve(result);
+    };
+    // One local read deadline, not a poll or a retry. An unavailable store must
+    // not leave the existing system-health check waiting indefinitely.
+    const deadline = setTimeout(() => finish({ state: "unavailable", pending: null }, true), 5_000);
+    let request: IDBOpenDBRequest;
+    try { request = indexedDB.open(DATABASE); }
+    catch { finish({ state: "unavailable", pending: null }); return; }
+    request.onupgradeneeded = () => {
+      fresh = true;
+      // An absent database opens an upgrade transaction even without a version.
+      // Abort it instead of creating the queue as a side effect of diagnostics.
+      request.transaction?.abort();
+    };
+    request.onerror = () => finish(fresh ? { state: "uninitialized", pending: 0 } : { state: "unavailable", pending: null });
+    request.onblocked = () => finish({ state: "unavailable", pending: null });
+    request.onsuccess = () => {
+      db = request.result;
+      if (done) { db.close(); return; }
+      db.onversionchange = () => finish({ state: "unavailable", pending: null }, true);
+      if (!db.objectStoreNames.contains(STORE)) { finish({ state: "unavailable", pending: null }); return; }
+      try {
+        transaction = db.transaction(STORE, "readonly");
+        const count = transaction.objectStore(STORE).count();
+        let pending: number | null = null;
+        count.onsuccess = () => {
+          const value = Number(count.result);
+          pending = Number.isSafeInteger(value) && value >= 0 ? value : null;
+        };
+        count.onerror = () => finish({ state: "unavailable", pending: null }, true);
+        transaction.oncomplete = () => finish(pending === null
+          ? { state: "unavailable", pending: null } : { state: "ready", pending });
+        transaction.onerror = transaction.onabort = () => finish({ state: "unavailable", pending: null });
+      } catch { finish({ state: "unavailable", pending: null }, true); }
+    };
+  });
+}
+
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DATABASE, 1);

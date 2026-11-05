@@ -1,11 +1,14 @@
-import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
-import { subscribePageDataRefresh } from "@/lib/page-data-refresh";
+import { effectiveTimeZone, formatDateTime as posDisplayDateTime, posDayKey } from "@/lib/time-zone";
 import { canOpenDrawer } from "@/lib/receipt-printer";
 import { tenderSales } from "@/lib/shift-close";
 import { sameRecordId } from "@/lib/sale-identity";
+import { companyStoreScope } from "@/lib/company-store-scope";
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
-import { Pencil, Printer, Users, Vault } from "lucide-react";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { FinancialBreakdown, FinancialInfoTip, SalesTotalInfo } from "@/platforms/web/components/pos/FinancialInfo";
+import { salesReconciliation } from "@/lib/sales-reconciliation";
+import { SummaryCardRail } from "@/platforms/web/components/pos/SummaryCardRail";
+import { Pencil, Printer, Vault } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Button } from "@/components/ui/button";
@@ -37,11 +40,8 @@ import { defaultTradingHours } from "@/lib/pos-seed";
 import { useAuth } from "@/lib/pos-auth";
 import { useUserPermissions } from "@/lib/pos-permissions";
 import { openCashDrawer, printShiftReport } from "@/lib/pos-print";
-import { signInsForDay, type SignInEntry } from "@/lib/shift-attendance";
-import { localShiftSessions, mergeSessions } from "@/lib/shift-sessions";
-import { commitLabel, loadShiftSessions } from "@/core/api/pos-db";
+import { commitLabel } from "@/core/api/pos-db";
 import { notifyError } from "@/lib/notify";
-import type { ShiftSession } from "@/core/types/pos-types";
 import { parsePositiveAmount } from "@/core/pricing/amount";
 import { usePosRules } from "@/lib/pos-rules.tsx";
 import { useManagerGate } from "@/lib/manager-gate";
@@ -50,6 +50,14 @@ import { logSystemAction } from "@/lib/system-audit";
 import { correctClosedShift } from "@/lib/shift-corrections-client";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 import type { Shift } from "@/core/types/pos-types";
+import { useReportSales } from "@/lib/use-report-sales";
+import { useReportShifts } from "@/lib/use-report-shifts";
+import { useShiftSales } from "@/lib/use-shift-sales";
+import { ReportFilters } from "@/platforms/web/components/pos/report-kit";
+import { HistoryDateNavigation } from "@/platforms/web/components/pos/HistoryDateNavigation";
+import { filterShiftHistory, shiftHistoryStatus, type ShiftHistoryStatus } from "@/lib/shift-history-view";
+import { formatMoney } from "@/lib/currency";
+import { catalogColumnPositions, tableColumnHidden } from "@/lib/table-column-policy";
 
 export const Route = createFileRoute("/shifts")({
   head: () => ({
@@ -69,7 +77,7 @@ export const Route = createFileRoute("/shifts")({
 
 function Shifts() {
   const { state, activeShift, openShift, currentStore, stores } = usePos();
-  const { user, isAdmin, can } = useAuth();
+  const { user, isAdmin, can, terminalStoreId, canSwitchStores } = useAuth();
   const { requirePermission } = useUserPermissions();
   const { rules } = usePosRules();
   const { authorize, rules: authorizationRules } = useManagerGate();
@@ -77,33 +85,26 @@ function Shifts() {
   // Never carry a suggested or previous drawer count into a new shift.
   const [float, setFloat] = useState("");
   const [closeOpen, setCloseOpen] = useState(false);
-  const [signIns, setSignIns] = useState<SignInEntry[]>([]);
-  const [sessions, setSessions] = useState<ShiftSession[]>([]);
-  const mayViewSignIns = isAdmin || can("can_shift_signin_history_view");
   const mayViewShiftHistory = isAdmin || can("can_shift_closing_history_view");
-  const [signHistoryOpen, setSignHistoryOpen] = useState(false);
   const [shiftHistoryOpen, setShiftHistoryOpen] = useState(false);
-  const [signSearch, setSignSearch] = useState("");
   const [historySearch, setHistorySearch] = useState("");
-  const [signPage, setSignPage] = useState(0);
+  const [historyFrom, setHistoryFrom] = useState("");
+  const [historyTo, setHistoryTo] = useState("");
+  const [historyStatus, setHistoryStatus] = useState<ShiftHistoryStatus>("all");
+  const [historyColumnFilters, setHistoryColumnFilters] = useState<Record<string, string>>({});
+  const [historyFilterVersion, setHistoryFilterVersion] = useState(0);
+  const [summaryFrom, setSummaryFrom] = useState(() => `${posDayKey().slice(0, 7)}-01`);
+  const [summaryTo, setSummaryTo] = useState(() => posDayKey());
   const [historyPage, setHistoryPage] = useState(0);
-  const matches = (values: unknown[], query: string) =>
-    values.join(" ").toLowerCase().includes(query.trim().toLowerCase());
-  const visibleSignIns = signIns.filter((entry) =>
-    matches([entry.name, entry.staffId, entry.role, entry.firstSeen], signSearch),
-  );
-  const visibleSessions = sessions.filter((entry) =>
-    matches(
-      [
-        entry.staffName,
-        entry.role,
-        entry.terminalName,
-        entry.signedInAt,
-        posDisplayDateTime(new Date(entry.signedInAt)),
-      ],
-      signSearch,
-    ),
-  );
+  const changeHistoryColumnFilters = useCallback((filters: Record<string, string>) => {
+    setHistoryColumnFilters(filters);
+    setHistoryPage(0);
+  }, []);
+  const clearHistoryFilters = () => {
+    setHistoryFrom(""); setHistoryTo(""); setHistorySearch(""); setHistoryStatus("all");
+    setHistoryColumnFilters({}); setHistoryPage(0);
+    setHistoryFilterVersion(version => version + 1);
+  };
   const [correcting, setCorrecting] = useState<Shift | null>(null);
   const [correctCash, setCorrectCash] = useState("");
   const [correctCard, setCorrectCard] = useState("");
@@ -112,59 +113,55 @@ function Shifts() {
   const [correctBusy, setCorrectBusy] = useState(false);
   const correctionClientKey = useRef<string | null>(null);
 
-  // Local per-terminal log — read after mount so SSR and hydration match.
-  useEffect(() => {
-    if (!mayViewSignIns || !signHistoryOpen) {
-      setSignIns([]);
-      return;
-    }
-    const refresh = () => setSignIns(signInsForDay());
-    refresh();
-    const t = window.setInterval(refresh, 30_000);
-    return () => window.clearInterval(t);
-  }, [user?.staffId, mayViewSignIns, signHistoryOpen]);
-
-  // Central record of every sign-in against a shift, with the local cache as
-  // the offline fallback.
-  useEffect(() => {
-    if (!mayViewSignIns || !signHistoryOpen) {
-      setSessions([]);
-      return;
-    }
-    let alive = true;
-    const refresh = async () => {
-      const local = localShiftSessions();
-      try {
-        const remote = await loadShiftSessions(currentStore.id);
-        if (alive) setSessions(mergeSessions(remote, local));
-      } catch {
-        if (alive) setSessions(local);
-      }
-    };
-    const offData = subscribePageDataRefresh(refresh, ["shift_sessions"], { allowOffline: true, initial: true });
-    return () => {
-      alive = false;
-      offData();
-    };
-  }, [currentStore.id, activeShift?.id, mayViewSignIns, signHistoryOpen]);
-
-  const storeSales = state.sales.filter((s) => sameRecordId(s.storeId, currentStore.id));
-  const storeShifts = state.shifts.filter((s) => sameRecordId(s.storeId, currentStore.id));
-  const visibleShifts = storeShifts.filter((shift) =>
-    matches(
-      [
-        shift.cashier,
-        shift.terminalName,
-        shift.status,
-        shift.openedAt,
-        posDisplayDateTime(new Date(shift.openedAt)),
-      ],
-      historySearch,
-    ),
-  );
-  const shiftSales = activeShift
-    ? storeSales.filter((s) => sameRecordId(s.shiftId, activeShift.id) && !s.refunded)
-    : [];
+  const summaryStores = useMemo(() => companyStoreScope(stores, terminalStoreId || user?.storeId || currentStore.id,
+    !canSwitchStores || !!terminalStoreId || !!user?.storeId),
+  [stores, terminalStoreId, user?.storeId, currentStore.id, canSwitchStores]);
+  const summaryStoreIds = useMemo(() => summaryStores.map(store => store.id), [summaryStores]);
+  const validSummaryRange = !!summaryFrom && !!summaryTo && summaryFrom <= summaryTo;
+  const summaryHistory = useReportSales(state.sales, summaryStoreIds, summaryFrom, summaryTo,
+    isAdmin && summaryStores.length > 0 && validSummaryRange);
+  const summarySales = summaryHistory.sales.filter(sale => !sale.refunded);
+  const shiftHistory = useReportShifts(state.shifts, currentStore.id, historyFrom, historyTo,
+    mayViewShiftHistory && shiftHistoryOpen);
+  const storeShifts = shiftHistory.shifts;
+  const validHistoryRange = !historyFrom || !historyTo || historyFrom <= historyTo;
+  const countedCashVisible = isAdmin || can("can_shift_counted_cash_view");
+  const varianceVisible = isAdmin || can("can_shift_variance_view");
+  const reportVisible = can("can_shift_report_reprint");
+  const historyHiddenColumns = useMemo(() => {
+    const labels = ["Cashier", "Status", "Opened", "Closed", "Closed by", "Terminal", "Duration", "Float",
+      ...(countedCashVisible ? ["Closing float"] : []), ...(varianceVisible ? ["Over / short"] : []),
+      ...(reportVisible ? ["Z report"] : []), ...(isAdmin ? ["Correction"] : [])];
+    const positions = catalogColumnPositions("routes/shifts#3", labels);
+    const hidden = (state.settings.visibility?.hidden ?? {}) as Record<string, string[]>;
+    const role = isAdmin ? "admin" : (user?.metaRole ?? user?.role ?? null);
+    // Match Table's column policy; its first identity column is fixed visible.
+    return labels.filter((_, index) => index > 0 && tableColumnHidden(hidden, "routes/shifts#3",
+      positions[index], role, user?.staffId ?? null, user?.permissions));
+  }, [countedCashVisible, varianceVisible, reportVisible, isAdmin, state.settings.visibility?.hidden,
+    user?.metaRole, user?.role, user?.staffId, user?.permissions]);
+  const historyTimeZone = effectiveTimeZone();
+  const historyMinute = Math.floor(Date.now() / 60_000);
+  const historyNow = useMemo(() => new Date(historyMinute * 60_000), [historyMinute]);
+  const visibleShifts = useMemo(() => filterShiftHistory(storeShifts, {
+    branchId: currentStore.id, from: historyFrom, to: historyTo,
+    search: historySearch, status: historyStatus, columnFilters: historyColumnFilters,
+    countedCashVisible, varianceVisible, hiddenColumns: historyHiddenColumns, correctionVisible: isAdmin, reportVisible,
+    dayKey: value => posDayKey(value, historyTimeZone),
+    formatDateTime: value => posDisplayDateTime(value, { timeZone: historyTimeZone }),
+    formatMoney: value => formatMoney(value, state.settings.integrations.currency),
+    now: historyNow,
+  }), [storeShifts, currentStore.id, historyFrom, historyTo, historySearch, historyStatus,
+    historyColumnFilters, countedCashVisible, varianceVisible, historyHiddenColumns, isAdmin, reportVisible,
+    state.settings, historyTimeZone, historyNow]);
+  const historyPageCount = Math.max(1, Math.ceil(visibleShifts.length / 25));
+  const currentHistoryPage = Math.min(historyPage, historyPageCount - 1);
+  const hasHistoryFilters = !!(historyFrom || historyTo || historySearch.trim() || historyStatus !== "all" ||
+    Object.values(historyColumnFilters).some(value => value.trim()));
+  const activeSales = useShiftSales(currentStore.id,activeShift?.id,
+    !!activeShift && sameRecordId(activeShift.storeId,currentStore.id));
+  const shiftSales = (activeSales.sales ?? []).filter(sale=>!sale.refunded);
+  const [printingShift,setPrintingShift]=useState("");
   const cashTaken = tenderSales(activeShift, shiftSales, "cash");
   const expected = (activeShift?.openingFloat ?? 0) + cashTaken;
 
@@ -183,6 +180,23 @@ function Shifts() {
   const mayPrintXReport =
     (isAdmin || can("can_shift_financial_summary_view")) &&
     (isAdmin || can("can_shift_report_reprint"));
+  const printCompleteShiftReport=async(shift:Shift,kind:"xreport"|"zreport")=>{
+    if(printingShift || (kind==="xreport" ? !mayPrintXReport : !can("can_shift_report_reprint"))) return;
+    setPrintingShift(shift.id);
+    try{
+      const complete=await activeSales.readForPrint(shift);
+      await printShiftReport(shift,complete,kind,{
+        financialSummary:isAdmin || can("can_shift_financial_summary_view"),
+        paymentBreakdown:isAdmin || can("can_shift_payment_breakdown_view"),
+        expected:isAdmin || can("can_shift_expected_cash_view"),
+        counted:isAdmin || can("can_shift_counted_cash_view"),
+        variance:isAdmin || can("can_shift_variance_view"),
+      });
+      if(kind==="xreport") logSystemAction({actorName:user?.name ?? shift.cashier,actorRole:user?.role ?? null,
+        actionType:"X_REPORT_PRINTED",entityAffected:"shifts",entityId:shift.id,storeId:currentStore.id,terminalId:hereId});
+    }catch(error){notifyError(error,"Could not load the complete shift report. Nothing was printed.");}
+    finally{setPrintingShift("");}
+  };
   const storeIndex = stores.findIndex((s) => s.id === currentStore.id);
   const storeLabel = `Store ${storeIndex + 1}`;
 
@@ -272,42 +286,54 @@ function Shifts() {
         )}
         {isAdmin && (
           <section className="rounded-lg border border-border bg-card p-5">
-            <h2 className="mb-3 text-sm font-semibold">Aggregated multi-store statistics</h2>
-            <div className="grid gap-4 md:grid-cols-4">
-              {stores.map((st, i) => {
-                const sales = state.sales.filter(
-                  (s) => sameRecordId(s.storeId, st.id) && !s.refunded,
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold">{summaryStores.length > 1 ? "Current cluster" : "Current branch"} · sales by sale date</h2>
+              <ReportFilters title="Shift page sales period">
+                <div><Label htmlFor="shift-sales-from">From</Label><Input id="shift-sales-from" type="date" value={summaryFrom} max={summaryTo || undefined} onChange={event => setSummaryFrom(event.target.value)} /></div>
+                <div><Label htmlFor="shift-sales-to">Through</Label><Input id="shift-sales-to" type="date" value={summaryTo} min={summaryFrom || undefined} onChange={event => setSummaryTo(event.target.value)} /></div>
+              </ReportFilters>
+            </div>
+            <p className="mb-3 text-xs text-muted-foreground">{summaryFrom} to {summaryTo}, using the store time zone. Collected is after discounts, tax and rounding. Refunded bills are excluded. Shift history below is filtered by shift opening date.</p>
+            {!validSummaryRange ? <p role="alert" className="text-sm text-destructive">Choose a valid sales date range.</p> : summaryHistory.error ? <p role="alert" className="text-sm text-destructive">Report incomplete: {summaryHistory.error}</p> : summaryHistory.loading ? <p role="status" className="text-sm text-muted-foreground">Loading the complete sales period…</p> : <>
+            {summaryHistory.refreshing && <p role="status" className="mb-2 text-xs text-muted-foreground">Updating sales…</p>}
+            <SummaryCardRail label="Shift page shop totals">
+              {summaryStores.map((st) => {
+                const sales = summarySales.filter(
+                  (s) => sameRecordId(s.storeId, st.id),
                 );
                 return (
                   <Metric
                     key={st.id}
-                    label={`Store ${i + 1} · ${st.name} (${sales.length} sales)`}
+                    label={`${st.code} · ${st.name} (${sales.length} sales)`}
                     value={money(sales.reduce((a, s) => a + s.total, 0))}
+                    info={<SalesTotalInfo totals={salesReconciliation(sales)} />}
                   />
                 );
               })}
-              <Metric
-                label="Company-wide revenue"
-                value={money(
-                  state.sales.filter((s) => !s.refunded).reduce((a, s) => a + s.total, 0),
-                )}
-                highlight
-              />
-            </div>
+            </SummaryCardRail>
+            </>}
           </section>
         )}
         <section className="rounded-lg border border-border bg-card p-5">
           {activeShift ? (
-            <div className="grid gap-4 md:grid-cols-4">
+            <div className="space-y-4">
+              <div>
+                <h2 className="text-sm font-semibold">Current operating shift</h2>
+                <p className="break-all text-xs text-muted-foreground">Ref {activeShift.id}</p>
+              </div>
+              <SummaryCardRail label="Active shift overview">
               <Metric label="Opened by" value={activeShift.cashier} />
               <Metric label="Serving now" value={user?.name || activeShift.cashier} />
-              <Metric label="Opened" value={new Date(activeShift.openedAt).toLocaleTimeString()} />
-              <Metric label="Transactions" value={String(shiftSales.length)} />
+              <Metric label="Opened" value={posDisplayDateTime(activeShift.openedAt)} />
+              <Metric label="Transactions" value={activeSales.sales ? String(shiftSales.length) : "—"} />
               <Metric label="Terminal" value={activeShift.terminalName ?? "This PC"} />
               <Metric label="Running for" value={shiftDuration(activeShift)} />
               {(isAdmin || can("can_shift_expected_cash_view")) && (
-                <Metric label="Expected drawer" value={money(expected)} highlight />
+                <Metric label="Expected drawer" value={activeSales.sales ? money(expected) : "—"} highlight info={activeSales.sales && <FinancialBreakdown rows={[["Opening float", money(activeShift.openingFloat)], ["Net cash sales", money(cashTaken)], ["Expected drawer", money(expected)]]}><p>Opening float plus net cash received in this shift. Card and digital payments are excluded; cash change is deducted.</p></FinancialBreakdown>} />
               )}
+              </SummaryCardRail>
+              {activeSales.loading && <p role="status" className="text-xs text-muted-foreground">Loading all transactions for this shift…</p>}
+              {activeSales.error && <p role="alert" className="text-xs text-destructive">Shift totals could not be refreshed: {activeSales.error}</p>}
               {overdueNow && (
                 <p className="md:col-span-4 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
                   This shift is past the trading-day window and is flagged as overdue.
@@ -327,26 +353,8 @@ function Shifts() {
                 {mayPrintXReport && (
                   <Button
                     variant="outline"
-                    onClick={() => {
-                      // Read-only audit snapshot: derived from recorded sales,
-                      // never editable, and every print is logged.
-                      void printShiftReport(activeShift, storeSales, "xreport", {
-                        financialSummary: isAdmin || can("can_shift_financial_summary_view"),
-                        paymentBreakdown: isAdmin || can("can_shift_payment_breakdown_view"),
-                        expected: isAdmin || can("can_shift_expected_cash_view"),
-                        counted: isAdmin || can("can_shift_counted_cash_view"),
-                        variance: isAdmin || can("can_shift_variance_view"),
-                      });
-                      logSystemAction({
-                        actorName: user?.name ?? activeShift.cashier,
-                        actorRole: user?.role ?? null,
-                        actionType: "X_REPORT_PRINTED",
-                        entityAffected: "shifts",
-                        entityId: activeShift.id,
-                        storeId: currentStore.id,
-                        terminalId: hereId,
-                      });
-                    }}
+                    disabled={!!printingShift}
+                    onClick={() => void printCompleteShiftReport(activeShift,"xreport")}
                   >
                     <Printer className="size-4" /> Print X report
                   </Button>
@@ -417,11 +425,6 @@ function Shifts() {
           )}
         </section>
         <div className="flex flex-wrap gap-2">
-          {mayViewSignIns && (
-            <Button variant="outline" onClick={() => setSignHistoryOpen(true)}>
-              <Users className="size-4" /> Sign-in history
-            </Button>
-          )}
           {mayViewShiftHistory && (
             <Button variant="outline" onClick={() => setShiftHistoryOpen(true)}>
               Shift history
@@ -430,161 +433,54 @@ function Shifts() {
         </div>{" "}
       </div>
 
-      <Dialog open={mayViewSignIns && signHistoryOpen} onOpenChange={setSignHistoryOpen}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-5xl">
-          <DialogHeader>
-            <DialogTitle>Sign-in history</DialogTitle>
-            <DialogDescription>Staff sign-ins for this branch and terminal.</DialogDescription>
-          </DialogHeader>
-          <Input
-            aria-label="Search sign-in history"
-            placeholder="Search staff, role or terminal…"
-            value={signSearch}
-            onChange={(event) => {
-              setSignSearch(event.target.value);
-              setSignPage(0);
-            }}
-          />{" "}
-          <section className="rounded-lg border border-border bg-card">
-            <h2 className="flex items-center gap-2 px-5 py-3 text-sm font-semibold">
-              <Users className="size-4" /> Signed in today on this terminal
-            </h2>
-            <Separator />
-            {visibleSignIns.length === 0 ? (
-              <p className="px-5 py-4 text-sm text-muted-foreground">
-                No sign-ins recorded yet today.
-              </p>
-            ) : (
-              <Table tableId="routes/shifts#1">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>User</TableHead>
-                    <TableHead>Staff ID</TableHead>
-                    <TableHead>Role</TableHead>
-                    <TableHead>First sign-in</TableHead>
-                    <TableHead>Last seen</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {visibleSignIns.map((e) => (
-                    <TableRow key={e.staffId}>
-                      <TableCell className="font-medium">
-                        {e.name}
-                        {user && (user.staffId === e.staffId || user.name === e.name) && (
-                          <Badge variant="outline" className="ml-2">
-                            signed in
-                          </Badge>
-                        )}
-                      </TableCell>
-                      <TableCell className="numeric text-muted-foreground">{e.staffId}</TableCell>
-                      <TableCell className="capitalize text-muted-foreground">{e.role}</TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {new Date(e.firstSeen).toLocaleTimeString()}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {new Date(e.lastSeen).toLocaleTimeString()}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </section>
-          <section className="rounded-lg border border-border bg-card">
-            <h2 className="flex items-center gap-2 px-5 py-3 text-sm font-semibold">
-              <Users className="size-4" /> Shift sign-in history (all terminals)
-            </h2>
-            <Separator />
-            {visibleSessions.length === 0 ? (
-              <p className="px-5 py-4 text-sm text-muted-foreground">
-                No shift sessions recorded for this branch yet.
-              </p>
-            ) : (
-              <Table tableId="routes/shifts#2">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>User</TableHead>
-                    <TableHead>Role</TableHead>
-                    <TableHead>Terminal</TableHead>
-                    <TableHead>Signed in</TableHead>
-                    <TableHead>Signed out</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {visibleSessions.slice(signPage * 25, (signPage + 1) * 25).map((s) => (
-                    <TableRow key={s.id}>
-                      <TableCell className="font-medium">
-                        {s.staffName}
-                        {s.shiftId === activeShift?.id && !s.signedOutAt && (
-                          <Badge variant="outline" className="ml-2">
-                            on shift
-                          </Badge>
-                        )}
-                      </TableCell>
-                      <TableCell className="capitalize text-muted-foreground">
-                        {s.role ?? "—"}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {s.terminalName ?? "—"}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {posDisplayDateTime(new Date(s.signedInAt))}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {s.signedOutAt
-                          ? posDisplayDateTime(new Date(s.signedOutAt))
-                          : "Still signed in"}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </section>
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-sm text-muted-foreground">
-              {visibleSessions.length} sign-ins · Page {signPage + 1}
-            </span>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                disabled={signPage === 0}
-                onClick={() => setSignPage((page) => page - 1)}
-              >
-                Previous
-              </Button>
-              <Button
-                variant="outline"
-                disabled={(signPage + 1) * 25 >= visibleSessions.length}
-                onClick={() => setSignPage((page) => page + 1)}
-              >
-                Next
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
       <Dialog open={mayViewShiftHistory && shiftHistoryOpen} onOpenChange={setShiftHistoryOpen}>
         <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-6xl">
           <DialogHeader>
             <DialogTitle>Shift history</DialogTitle>
             <DialogDescription>
-              Search this branch's shifts and open permitted reports.
+              {currentStore.name} · dates use the store time zone. Open includes older unresolved shifts when no date filter is set.
+              {" "}Viewing history does not change the current operating shift.
             </DialogDescription>
           </DialogHeader>
-          <Input
-            aria-label="Search shift history"
-            placeholder="Search cashier, terminal, status or date…"
-            value={historySearch}
-            onChange={(event) => {
-              setHistorySearch(event.target.value);
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1"><Label htmlFor="shift-history-from">Opened from</Label><Input id="shift-history-from" type="date" value={historyFrom} onChange={event => { setHistoryFrom(event.target.value); setHistoryPage(0); }} /></div>
+            <div className="space-y-1"><Label htmlFor="shift-history-to">Opened through</Label><Input id="shift-history-to" type="date" value={historyTo} min={historyFrom || undefined} onChange={event => { setHistoryTo(event.target.value); setHistoryPage(0); }} /></div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <HistoryDateNavigation from={historyFrom} to={historyTo} onChange={range => {
+              setHistoryFrom(range.from);
+              setHistoryTo(range.to);
               setHistoryPage(0);
-            }}
-          />
+            }} />
+            <Button size="sm" variant="outline" disabled={!hasHistoryFilters} onClick={clearHistoryFilters}>Clear filters</Button>
+            {can("can_view_sales_reports") && <Button size="sm" variant="outline" onClick={() => window.location.assign("/reports/sales")}>Sales by date · Reports</Button>}
+          </div>
+          {!validHistoryRange && <p role="alert" className="text-sm text-destructive">Choose an end date on or after the start date.</p>}
+          {shiftHistory.loading && <p role="status" className="text-sm text-muted-foreground">Loading complete shift history…</p>}
+          {shiftHistory.refreshing && <p role="status" className="text-sm text-muted-foreground">Updating shift history…</p>}
+          {shiftHistory.error && <p role="alert" className="text-sm text-destructive">Complete history could not be loaded. Showing available cached shifts. {shiftHistory.error.includes("shift_page_secure") ? "The database needs the prepared shift-history upgrade." : shiftHistory.error}</p>}
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="min-w-0 flex-1 space-y-1">
+              <Label htmlFor="shift-history-search">Search</Label>
+              <Input id="shift-history-search"
+                aria-label="Search shift history"
+                placeholder="Search cashier, terminal, reference or date…"
+                value={historySearch}
+                onChange={(event) => { setHistorySearch(event.target.value); setHistoryPage(0); }}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="shift-history-status" className="block">Status</Label>
+              <select id="shift-history-status" className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                value={historyStatus} onChange={event => { setHistoryStatus(event.target.value as ShiftHistoryStatus); setHistoryPage(0); }}>
+                <option value="all">All</option><option value="open">Open</option><option value="closed">Closed</option>
+              </select>
+            </div>
+          </div>
           <section className="rounded-lg border border-border bg-card">
             <h2 className="px-5 py-3 text-sm font-semibold">Shift history</h2>
             <Separator />
-            <Table tableId="routes/shifts#3">
+            <Table key={historyFilterVersion} tableId="routes/shifts#3" loading={shiftHistory.loading} onColumnFiltersChange={changeHistoryColumnFilters}>
               <TableHeader>
                 <TableRow>
                   <TableHead>Cashier</TableHead>
@@ -608,26 +504,26 @@ function Shifts() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {visibleShifts.slice(historyPage * 25, (historyPage + 1) * 25).map((sh) => (
+                {visibleShifts.slice(currentHistoryPage * 25, (currentHistoryPage + 1) * 25).map((sh) => (
                   <TableRow key={sh.id}>
-                    <TableCell>{sh.cashier}</TableCell>
+                    <TableCell>{sh.cashier}<span className="block max-w-52 break-all text-[11px] text-muted-foreground">Ref {sh.id}</span></TableCell>
                     <TableCell>
                       <Badge
                         variant="outline"
                         className={
-                          sh.closedAt
+                          shiftHistoryStatus(sh) === "CLOSED"
                             ? "text-[10px]"
                             : "border-success/40 bg-success/10 text-[10px] text-success"
                         }
                       >
-                        {sh.closedAt ? "CLOSED" : "OPEN"}
+                        {shiftHistoryStatus(sh)}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       {posDisplayDateTime(new Date(sh.openedAt))}
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {sh.closedAt ? posDisplayDateTime(new Date(sh.closedAt)) : "open"}
+                      {sh.closedAt ? posDisplayDateTime(new Date(sh.closedAt)) : shiftHistoryStatus(sh) === "OPEN" ? "open" : "—"}
                       {sh.overdue && (
                         <span className="ml-2 rounded bg-destructive/15 px-1.5 py-0.5 text-[10px] text-destructive">
                           OVERDUE
@@ -639,7 +535,7 @@ function Shifts() {
                       {sh.terminalName ?? "—"}
                     </TableCell>
                     <TableCell className="numeric text-muted-foreground">
-                      {shiftDuration(sh)}
+                      {shiftDuration(sh, historyNow)}
                     </TableCell>
                     <TableCell className="numeric text-right">{money(sh.openingFloat)}</TableCell>
                     {(isAdmin || can("can_shift_counted_cash_view")) && (
@@ -673,15 +569,8 @@ function Shifts() {
                         <Button
                           size="sm"
                           variant="ghost"
-                          onClick={() =>
-                            void printShiftReport(sh, storeSales, "zreport", {
-                              financialSummary: isAdmin || can("can_shift_financial_summary_view"),
-                              paymentBreakdown: isAdmin || can("can_shift_payment_breakdown_view"),
-                              expected: isAdmin || can("can_shift_expected_cash_view"),
-                              counted: isAdmin || can("can_shift_counted_cash_view"),
-                              variance: isAdmin || can("can_shift_variance_view"),
-                            })
-                          }
+                          disabled={!!printingShift}
+                          onClick={() => void printCompleteShiftReport(sh,"zreport")}
                         >
                           <Printer className="size-4" />
                         </Button>
@@ -703,8 +592,8 @@ function Shifts() {
                 ))}
                 {!visibleShifts.length && (
                   <TableRow>
-                    <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
-                      No shifts yet.
+                    <TableCell colSpan={8 + Number(countedCashVisible) + Number(varianceVisible) + Number(can("can_shift_report_reprint")) + Number(isAdmin)} className="py-10 text-center text-muted-foreground">
+                      {hasHistoryFilters ? "No shifts match these filters." : "No shifts yet."}
                     </TableCell>
                   </TableRow>
                 )}
@@ -712,21 +601,21 @@ function Shifts() {
             </Table>
           </section>{" "}
           <div className="flex items-center justify-between gap-2">
-            <span className="text-sm text-muted-foreground">
-              {visibleShifts.length} shifts · Page {historyPage + 1}
+            <span className="text-sm text-muted-foreground" aria-live="polite">
+              {visibleShifts.length} matching shifts · Page {currentHistoryPage + 1} of {historyPageCount}
             </span>
             <div className="flex gap-2">
               <Button
                 variant="outline"
-                disabled={historyPage === 0}
-                onClick={() => setHistoryPage((page) => page - 1)}
+                disabled={currentHistoryPage === 0}
+                onClick={() => setHistoryPage(currentHistoryPage - 1)}
               >
                 Previous
               </Button>
               <Button
                 variant="outline"
-                disabled={(historyPage + 1) * 25 >= visibleShifts.length}
-                onClick={() => setHistoryPage((page) => page + 1)}
+                disabled={currentHistoryPage + 1 >= historyPageCount}
+                onClick={() => setHistoryPage(currentHistoryPage + 1)}
               >
                 Next
               </Button>
@@ -744,6 +633,11 @@ function Shifts() {
               the audit history.
             </DialogDescription>
           </DialogHeader>
+          {correcting && <div className="min-w-0 rounded-md bg-muted/40 p-3 text-sm">
+            <p>{stores.find(store => sameRecordId(store.id, correcting.storeId))?.name ?? correcting.storeId} · {correcting.terminalName ?? correcting.terminalId ?? "Unknown terminal"}</p>
+            <p>Opened {posDisplayDateTime(correcting.openedAt)} · Closed {correcting.closedAt ? posDisplayDateTime(correcting.closedAt) : "—"}</p>
+            <p className="break-all text-xs text-muted-foreground">Ref {correcting.id}</p>
+          </div>}
           <div className="grid gap-3 sm:grid-cols-3">
             <div className="space-y-1">
               <Label>Counted cash</Label>
@@ -802,15 +696,17 @@ function Metric({
   label,
   value,
   highlight,
+  info,
 }: {
   label: string;
   value: string;
   highlight?: boolean;
+  info?: ReactNode;
 }) {
   return (
-    <div className="rounded-md bg-surface-2 px-4 py-3">
-      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className={`numeric text-lg font-semibold ${highlight ? "text-primary" : ""}`}>{value}</p>
+    <div className="min-w-0 rounded-md bg-surface-2 px-4 py-3">
+      <div className="flex items-center justify-between gap-1"><p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>{info && <FinancialInfoTip label={label}>{info}</FinancialInfoTip>}</div>
+      <p className={`numeric min-w-0 text-lg font-semibold [overflow-wrap:anywhere] ${highlight ? "text-primary" : ""}`}>{value}</p>
     </div>
   );
 }

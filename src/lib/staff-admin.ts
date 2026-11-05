@@ -14,7 +14,7 @@ import {
 } from "@/lib/staff-admin-client";
 import type { StaffPermissions, StaffRole } from "@/lib/permissions";
 import { isExternalEmail } from "@/lib/internal-domains";
-import { readTerminalConfig } from "@/core/activation/terminal-tokens";
+import { readNativeTerminalProof } from "./native-terminal-proof";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 
 export type StaffAccountInput = {
@@ -137,6 +137,19 @@ export type RosterReason =
 
 export type TerminalRoster = { staff: TerminalStaff[]; reason: RosterReason };
 
+function diagnoseTerminalRoster(origin: string, proof: unknown): void {
+  if (!import.meta.env.DEV) return;
+  void (async () => {
+    const { terminalRosterDiagnostic } = await import("./terminal-roster-diagnostic");
+    const native = typeof window === "undefined" ? undefined :
+      (window as unknown as { pos?: { readTerminalConfig?: () => Promise<unknown> } }).pos;
+    const nativeResult = await native?.readTerminalConfig?.();
+    console.warn("[pos:terminal-roster diagnostic]", JSON.stringify(terminalRosterDiagnostic({
+      backendUrl: origin, outgoingProof: proof, nativeResult,
+    })));
+  })().catch(() => undefined);
+}
+
 /** Staff to show on a till's sign-in grid, plus why the list is empty. */
 export async function listTerminalStaff(storeId: string | null): Promise<TerminalRoster> {
   const rows = (value: unknown): TerminalStaff[] => {
@@ -175,29 +188,37 @@ export async function listTerminalStaff(storeId: string | null): Promise<Termina
     const { serverOrigin, serverUnreachableOnDevice, posFetch } = await import("./server-origin");
     if (serverUnreachableOnDevice()) return { staff: [], reason: "no-server" };
     if (serverOrigin()) {
-      const terminalToken = readTerminalConfig()?.tokenId ?? "";
+      const terminalProof = await readNativeTerminalProof();
+      // Development-only, read-only comparisons. Never print either identity
+      // or proof, and never delay or replace the actual roster request.
+      if (import.meta.env.DEV) diagnoseTerminalRoster(serverOrigin(), terminalProof);
       const res = await posFetch("/api/public/terminal-staff", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ storeId, terminalToken }),
+        body: JSON.stringify({ storeId, ...terminalProof }),
       });
+      if (import.meta.env.DEV) console.warn("[pos:terminal-roster diagnostic status]", res.status);
       if (res.status === 401 || res.status === 403) return { staff: [], reason: "not-authorised" };
       if (!res.ok) return { staff: [], reason: "unreachable" };
       return done(await mirror(rows(await res.json().catch(() => null))));
     }
 
-    const terminalToken = readTerminalConfig()?.tokenId;
-    if (!terminalToken) return { staff: [], reason: "not-authorised" };
+    const terminalProof = await readNativeTerminalProof();
+    if (import.meta.env.DEV) diagnoseTerminalRoster("", terminalProof);
+    if (!terminalProof.terminalToken) return { staff: [], reason: "not-authorised" };
     return done(
       await mirror(
         rows(
           await listTerminalStaffAccounts({
-            data: { storeId, terminalToken },
+            data: { storeId, ...terminalProof, terminalToken:terminalProof.terminalToken },
           }),
         ),
       ),
     );
-  } catch {
+  } catch (error) {
+    if ((error as { code?: string } | null)?.code === "EACTIVATION_BINDING") {
+      return { staff: [], reason: "not-authorised" };
+    }
     // A till must still be able to sign in by typing a username.
     return { staff: [], reason: "unreachable" };
   }

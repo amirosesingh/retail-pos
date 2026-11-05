@@ -1,11 +1,81 @@
+import { isExactNumber } from "../../electron/sync/shift-recovery-exact.mjs";
+const ECOMMERCE_FIELDS: ReadonlySet<string> = new Set(["ecom_price", "ecom_visible", "ecom_enabled", "is_published"]);
+const TERMINAL_SECRET_FIELDS: ReadonlySet<string> = new Set(["claim_secret_hash", "claim_proof", "claimed_proof_hash"]);
+
+function setOwn(row: Record<string, unknown>, key: string, value: unknown) {
+  // Match Object.fromEntries even for __proto__ or an inherited setter/readonly
+  // property. Ordinary new keys take the inexpensive assignment path.
+  if (key in row) Object.defineProperty(row, key, { value, enumerable: true, configurable: true, writable: true });
+  else row[key] = value;
+}
+
+function priceSettingsValue(value: Record<string, unknown>) {
+  const copy: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (key !== "ecom_price") setOwn(copy, key, child);
+  }
+  return copy;
+}
+
 /** Activation proofs are credentials, not business data for another till. */
-export function redactSyncDownload(value: unknown, table = ""): unknown {
-  if (Array.isArray(value)) return value.map(row => redactSyncDownload(row, table));
+export function redactSyncDownload(value: unknown, table = "", management = false): unknown {
+  if (Array.isArray(value)) return value.map(row => redactSyncDownload(row, table, management));
+  if (!value || typeof value !== "object") return value;
+  let row = value as Record<string, unknown>;
+  if (!management && (table === "settings_scoped" || row.table_name === "settings_scoped") && typeof row.key === "string" && row.key.startsWith("product_price:") && row.value && typeof row.value === "object") {
+    row = { ...row, value: priceSettingsValue(row.value as Record<string, unknown>) };
+  }
+  const context = typeof row.table_name === "string" ? row.table_name : table;
+  const copy: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(row)) {
+    if ((context === "terminal_tokens" && TERMINAL_SECRET_FIELDS.has(key)) || (!management && ((context === "products" && ECOMMERCE_FIELDS.has(key)) || key === "ecommerceEnabled"))) continue;
+    setOwn(copy, key, redactSyncDownload(child, context, management));
+  }
+  return copy;
+}
+
+/**
+ * Redact a privately owned result of JSON.parse/Response.json without cloning
+ * its entire graph. Never use on shared, frozen or arbitrary caller objects:
+ * the pure redactSyncDownload API above retains that contract. Parsed JSON has
+ * only own data properties, no aliases, getters, custom prototypes or toJSON.
+ */
+export function redactOwnedParsedSyncDownload(value: unknown, table = "", management = false): unknown {
+  // Only losslessly parsed private numeric tokens are atomic; caller objects
+  // cannot request a redaction bypass. Ordinary parsed JSON never matches.
+  if (isExactNumber(value)) return value;
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index++) {
+      const child = value[index];
+      if (child && typeof child === "object") value[index] = redactOwnedParsedSyncDownload(child, table, management);
+    }
+    return value;
+  }
   if (!value || typeof value !== "object") return value;
   const row = value as Record<string, unknown>;
+  if (!management && (table === "settings_scoped" || row.table_name === "settings_scoped") && typeof row.key === "string" && row.key.startsWith("product_price:") && row.value && typeof row.value === "object" && !isExactNumber(row.value)) {
+    // Preserve the existing projection's unusual array-to-object behavior.
+    row.value = priceSettingsValue(row.value as Record<string, unknown>);
+  }
   const context = typeof row.table_name === "string" ? row.table_name : table;
-  const secret = new Set(["claim_secret_hash", "claim_proof", "claimed_proof_hash"]);
-  return Object.fromEntries(Object.entries(row)
-    .filter(([key]) => context !== "terminal_tokens" || !secret.has(key))
-    .map(([key, child]) => [key, redactSyncDownload(child, context)]));
+  const keys = Object.keys(row);
+  let result = row;
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index];
+    if ((context === "terminal_tokens" && TERMINAL_SECRET_FIELDS.has(key)) || (!management && ((context === "products" && ECOMMERCE_FIELDS.has(key)) || key === "ecommerceEnabled"))) {
+      // Deleting a property can force V8's slow dictionary representation and
+      // make final JSON serialization more expensive than the saved clone.
+      // Only rows that actually lose a field need a replacement object.
+      if (result === row) {
+        result = {};
+        for (let previous = 0; previous < index; previous++) setOwn(result, keys[previous], row[keys[previous]]);
+      }
+      continue;
+    }
+    const child = row[key];
+    const redacted = child && typeof child === "object" ? redactOwnedParsedSyncDownload(child, context, management) : child;
+    if (result !== row) setOwn(result, key, redacted);
+    else if (redacted !== child) row[key] = redacted;
+  }
+  return result;
 }

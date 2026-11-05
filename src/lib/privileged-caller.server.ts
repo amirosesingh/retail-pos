@@ -4,6 +4,7 @@ export type CallerProof = {
   sessionToken?: string;
   cashierToken?: string;
   terminalToken?: string;
+  deviceBindingProof?: string;
   accessToken?: string;
 };
 

@@ -7,6 +7,9 @@ beforeAll(async () => {
   await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated;
     CREATE TABLE pos_settings(id int, notification_settings jsonb);
     INSERT INTO pos_settings VALUES(1,'{}');
+    CREATE TABLE app_users(user_id text,role text,role_slug text,is_active boolean);
+    INSERT INTO app_users VALUES('admin-a','admin','admin',true),('admin-custom','admin','owner',true),
+      ('disabled-admin','admin','admin',false),('other-manager','manager','manager',true);
     CREATE TABLE authorization_log(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), action_key text,
       outcome text, authorized_by text, requested_by text, authorizer_role text, terminal_id text,
       store_id text, detail jsonb, created_at timestamptz DEFAULT now());
@@ -16,6 +19,9 @@ beforeAll(async () => {
   const migration = readFileSync("supabase/migrations/20261023141539_soft_token_approval_notifications.sql", "utf8");
   await db.exec(migration);
   await db.exec(migration);
+  const upgrade = readFileSync("supabase/migrations/20261025133911_soft_token_owner_admin_notification_rule.sql", "utf8");
+  await db.exec(upgrade);
+  await db.exec(upgrade);
 });
 afterAll(async () => { await db.close(); });
 const approve = (outcome: string, method: string, owner: string) => db.query(`INSERT INTO authorization_log
@@ -23,7 +29,7 @@ const approve = (outcome: string, method: string, owner: string) => db.query(`IN
   VALUES('discount_over_limit',$1,$2,'cashier','manager','pc','branch-a',
     jsonb_build_object('credential_method',$3::text,'approved_by_name',$2::text,'requested_by_name','Cashier','ticket_reference','BILL-1'))`,
   [outcome, owner, method]);
-it("notifies the exact token owner for each successful approval, never failed or PIN attempts", async () => {
+it("notifies the verified token owner and active administrators, never other staff or failed/PIN attempts", async () => {
   await approve("approved", "totp", "manager-a");
   await approve("approved", "totp", "manager-b");
   await approve("failed_pin", "totp", "manager-a");
@@ -31,10 +37,11 @@ it("notifies the exact token owner for each successful approval, never failed or
   const rows = (await db.query<{meta: {audience_user_ids: string[];ticket_reference: string};message:string}>(
     "SELECT meta,message FROM activity_events ORDER BY actor_id")).rows;
   expect(rows).toHaveLength(2);
-  expect(rows[0].meta.audience_user_ids).toEqual(["manager-a"]);
-  expect(rows[1].meta.audience_user_ids).toEqual(["manager-b"]);
+  expect(rows[0].meta.audience_user_ids).toEqual(["admin-a", "admin-custom", "manager-a"]);
+  expect(rows[1].meta.audience_user_ids).toEqual(["admin-a", "admin-custom", "manager-b"]);
   expect(rows[0].meta.ticket_reference).toBe("BILL-1");
   expect(rows[0].message).toContain("Cashier");
+  expect(rows[0].message).toContain("BILL-1");
 });
 it("honors the saved preference without suppressing the approval audit record", async () => {
   await db.exec(`UPDATE pos_settings SET notification_settings='{"inApp":{"soft_token_approval":false}}'`);

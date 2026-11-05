@@ -16,10 +16,14 @@ it("reads and reconciles ordinary/shared promotions without exposing another bra
     await db.exec(`CREATE TABLE products(id text, owner_store_id text); CREATE TABLE promotions(id text, foc_product_id text);
       INSERT INTO products VALUES ('shared',NULL),('own','a'),('other','b');
       INSERT INTO promotions VALUES ('ordinary',NULL),('shared','shared'),('own','own'),('other','other'),('missing','missing');`);
-    for (const predicate of [branchPredicate(registry, promotions), rendererReadBranchPredicate(registry, promotions), scopedWhere(registry, promotions)]) {
+    for (const predicate of [branchPredicate(registry, promotions), scopedWhere(registry, promotions)]) {
       const result = await db.query(`SELECT source.id FROM promotions source WHERE ${postgres(predicate)} ORDER BY source.id`, ["a"]);
       expect(result.rows).toEqual([{ id: "ordinary" }, { id: "own" }, { id: "shared" }]);
     }
+    // An old registry without a branch/cluster directory cannot establish that
+    // an ownerless product belongs to this company. Ordinary promotions remain.
+    const read = await db.query(`SELECT source.id FROM promotions source WHERE ${postgres(rendererReadBranchPredicate(registry, promotions))} ORDER BY source.id`, ["a"]);
+    expect(read.rows).toEqual([{ id: "ordinary" }, { id: "own" }]);
   } finally { await db.close(); }
 });
 

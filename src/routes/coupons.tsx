@@ -1,4 +1,6 @@
 import { copyText } from "@/platform-config/clipboard";
+import { createCatalogueVisibility } from "@/lib/branch-policy";
+import { keepExistingMarketingOption, marketingSelectionError } from "@/lib/marketing-catalogue";
 import { subscribePageDataRefresh } from "@/lib/page-data-refresh";
 import { formatDate as posDisplayDate } from "@/lib/time-zone";
 import { createFileRoute } from "@tanstack/react-router";
@@ -112,6 +114,12 @@ function CouponsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [draft, setDraft] = useState<Campaign | null>(null);
+  const [draftContext,setDraftContext]=useState<{branch:string;original?:Campaign}>({branch:state.currentStoreId});
+  const catalogueProducts=useMemo(()=>{
+    const visible=createCatalogueVisibility(state.settings,state.stores,state.transfers);
+    return state.products.filter(product=>product.archived!==true&&visible(product,state.currentStoreId));
+  },[state.settings,state.stores,state.transfers,state.products,state.currentStoreId]);
+  const openDraft=(value:Campaign,original?:Campaign)=>{setDraftContext({branch:state.currentStoreId,original});setDraft(value);};
   const [issueFor, setIssueFor] = useState<Campaign | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -173,12 +181,17 @@ function CouponsPage() {
   }, [vouchers]);
 
   const categories = useMemo(
-    () => Array.from(new Set(state.products.map((p) => p.category).filter(Boolean))).sort(),
-    [state.products],
+    () => Array.from(new Set(catalogueProducts.map((p) => p.category).filter(Boolean))).sort(),
+    [catalogueProducts],
   );
 
   async function save() {
     if (!draft) return;
+    const kind=(scope:Campaign["scope"])=>scope==="PRODUCT"?"product":scope==="CATEGORY"?"category":"bill";
+    const selectionError=marketingSelectionError({kind:kind(draft.scope),value:draft.scopeValue},
+      draftContext.original?{kind:kind(draftContext.original.scope),value:draftContext.original.scopeValue}:undefined,
+      catalogueProducts,draftContext.branch,state.currentStoreId);
+    if(selectionError) return toast.error(selectionError);
     const slug = slugify(draft.slug || draft.name);
     const validationError = validateCouponCampaign({ ...draft, slug });
     if (validationError) return toast.error(validationError);
@@ -251,7 +264,7 @@ function CouponsPage() {
               redeemed
             </p>
           </div>
-          {tab === "campaigns" && <Button onClick={() => setDraft(blankCampaign())}>
+          {tab === "campaigns" && <Button onClick={() => openDraft(blankCampaign())}>
             <Plus className="mr-2 h-4 w-4" /> New campaign
           </Button>}
         </header>
@@ -353,7 +366,7 @@ function CouponsPage() {
                             variant="ghost"
                             title="Edit campaign"
                             aria-label={`Edit ${c.name}`}
-                            onClick={() => setDraft(c)}
+                            onClick={() => openDraft(c,c)}
                           >
                             <Pencil className="h-4 w-4" />
                           </Button>
@@ -513,7 +526,7 @@ function CouponsPage() {
                     <ThemedSelect
                       value={draft.scopeValue ?? ""}
                       onChange={(v) => setDraft({ ...draft, scopeValue: v })}
-                      options={categories.map((c) => ({ value: c, label: c }))}
+                      options={keepExistingMarketingOption(categories.map((c) => ({ value: c, label: c })),draft.scopeValue,draftContext.original?.scope==="CATEGORY"?draftContext.original.scopeValue:undefined,"category")}
                     />
                   </div>
                 ) : null}
@@ -523,7 +536,7 @@ function CouponsPage() {
                     <ThemedSelect
                       value={draft.scopeValue ?? ""}
                       onChange={(v) => setDraft({ ...draft, scopeValue: v })}
-                      options={state.products.map((p) => ({ value: p.id, label: p.name }))}
+                      options={keepExistingMarketingOption(catalogueProducts.map((p) => ({ value: p.id, label: p.name })),draft.scopeValue,draftContext.original?.scope==="PRODUCT"?draftContext.original.scopeValue:undefined,"product")}
                     />
                   </div>
                 ) : null}

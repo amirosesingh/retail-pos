@@ -1,3 +1,4 @@
+import { formatDateTime as systemTimeStamp } from "@/lib/time-zone";
 import { useCallback, useEffect, useId, useState } from "react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
@@ -6,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Table } from "@/components/ui/table";
 import {
   Dialog,
   DialogContent,
@@ -136,7 +138,7 @@ export function NotificationRulesPage() {
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty, draft]);
   const save = async () => {
-    if (!data || busy || data.needsUpgrade) return;
+    if (!data || busy || loading || data.needsUpgrade) return;
     setBusy(true);
     setError("");
     try {
@@ -179,7 +181,7 @@ export function NotificationRulesPage() {
   const branches = stores.map((store) => ({ value: store.id, label: store.name }));
   const names = (rule: NotificationRule) =>
     rule.audience === "original"
-      ? "Original private recipients"
+      ? rule.event === "soft_token_approval" ? "Token owner and administrators" : "Original private recipients"
       : rule.audience === "branch"
         ? "Staff in matched branches"
         : rule.audience === "audit"
@@ -234,26 +236,26 @@ export function NotificationRulesPage() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
               />
-              <Button disabled={busy} onClick={() => setDraft(newNotificationRule())}>
+              <Button disabled={busy || loading} onClick={() => setDraft(newNotificationRule())}>
                 Add rule
               </Button>
               <Button
-                disabled={busy || data.needsUpgrade || (!dirty && !data.imported)}
+                disabled={busy || loading || data.needsUpgrade || (!dirty && !data.imported)}
                 onClick={() => void save()}
               >
                 {busy ? "Saving…" : "Save rules"}
               </Button>
               <Button
                 variant="outline"
-                disabled={busy || !!dirty || !!draft}
+                disabled={busy || loading || !!dirty || !!draft}
                 onClick={() => void load(offset)}
               >
-                Refresh saved rules
+                {loading ? "Refreshing…" : "Refresh saved rules"}
               </Button>
               {(dirty || data.imported) && <span className="text-sm">Unsaved changes</span>}
             </div>
             <div className="overflow-x-auto rounded-lg border">
-              <table className="w-full text-left text-sm">
+              <Table aria-label="Notification rules" mobileCards={false} clientDataControls={false} className="w-full text-left text-sm">
                 <thead>
                   <tr>
                     {[
@@ -321,7 +323,7 @@ export function NotificationRulesPage() {
                             <Button
                               variant="outline"
                               size="sm"
-                              disabled={busy}
+                              disabled={busy || loading}
                               onClick={() => setDraft({ ...rule })}
                               aria-label={`Edit ${rule.name}`}
                             >
@@ -330,7 +332,7 @@ export function NotificationRulesPage() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              disabled={busy}
+                              disabled={busy || loading}
                               onClick={() =>
                                 setRules((current) => current.filter((item) => item.id !== rule.id))
                               }
@@ -350,7 +352,7 @@ export function NotificationRulesPage() {
                     </tr>
                   )}
                 </tbody>
-              </table>
+              </Table>
             </div>
             <section className="space-y-3">
               <h2 className="text-lg font-semibold">Delivery history</h2>
@@ -360,7 +362,7 @@ export function NotificationRulesPage() {
                 not automatically resent.
               </p>
               <div className="overflow-x-auto rounded-lg border">
-                <table className="w-full text-left text-sm">
+                <Table aria-label="Notification delivery history" mobileCards={false} clientDataControls={false} className="w-full text-left text-sm">
                   <thead>
                     <tr>
                       {["Time", "Rule", "Channel", "Recipient", "Status / reason"].map((label) => (
@@ -373,7 +375,7 @@ export function NotificationRulesPage() {
                   <tbody>
                     {data.history.map((row) => (
                       <tr key={row.id} className="border-t">
-                        <td className="p-3">{new Date(row.created_at).toLocaleString()}</td>
+                        <td className="p-3">{systemTimeStamp(row.created_at)}</td>
                         <td className="p-3">{row.rule_name}</td>
                         <td className="p-3">{row.channel}</td>
                         <td className="p-3">
@@ -386,7 +388,7 @@ export function NotificationRulesPage() {
                           {row.reason && ` · ${row.reason}`}
                           {row.status === "queued" &&
                             new Date(row.next_attempt) > new Date() &&
-                            ` · due ${new Date(row.next_attempt).toLocaleString()}`}
+                            ` · due ${systemTimeStamp(row.next_attempt)}`}
                         </td>
                       </tr>
                     ))}
@@ -398,7 +400,7 @@ export function NotificationRulesPage() {
                       </tr>
                     )}
                   </tbody>
-                </table>
+                </Table>
               </div>
               <div className="flex gap-2">
                 <Button
@@ -564,7 +566,10 @@ export function NotificationRulesPage() {
                     })
                   }
                   options={
-                    PRIVATE_NOTIFICATION_EVENTS.includes(draft.event)
+                    draft.event === "soft_token_approval"
+                      ? [{ value: "original", label: "Token owner and administrators" },
+                          { value: "selected", label: "Selected token owners or administrators" }]
+                      : PRIVATE_NOTIFICATION_EVENTS.includes(draft.event)
                       ? [{ value: "original", label: "Original private recipients" }]
                       : [
                           { value: "selected", label: "Selected users and roles" },

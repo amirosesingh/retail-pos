@@ -5,8 +5,8 @@ import {
   ReportFilters,
 } from "@/platforms/web/components/pos/report-kit";
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Download, LoaderCircle, RefreshCw, RotateCcw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Check, Download, LoaderCircle, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,7 @@ import {
   EVENT_LABELS,
   SEVERITY_TONE,
   clearActivityEntry,
+  activityAcknowledgedBy,
   isActivityLogMissing,
   listActivityEvents,
   markActivitySeen,
@@ -49,7 +50,7 @@ const SEVERITY_OPTIONS = [
 const STATUS_OPTIONS = [
   { value: "all", label: "Active and history" },
   { value: "active", label: "Active notifications" },
-  { value: "history", label: "Cleared history" },
+  { value: "history", label: "Cleared by me" },
 ];
 
 const when = (iso: string) => {
@@ -73,30 +74,41 @@ function NotificationsReport() {
   const [busy, setBusy] = useState(false);
   const [preferenceBusy, setPreferenceBusy] = useState("");
   const [missing, setMissing] = useState(false);
+  const [loadError,setLoadError]=useState("");
+  const loadRevision=useRef(0);
+  const cancelLoad=useCallback(()=>{loadRevision.current++;},[]);
   const meKey = user?.staffId ?? user?.name ?? "";
 
   const load = useCallback(async () => {
+    const revision=++loadRevision.current;
     setBusy(true);
-    const list = await listActivityEvents({
-      limit: 500,
-      types: type === "all" ? undefined : [type],
-      severities: severity === "all" ? undefined : [severity as EventSeverity],
-    });
-    setRows(list);
-    mergeRemoteActivityPreferences(meKey, list);
-    setMissing(isActivityLogMissing());
-    markActivitySeen(list[0]?.createdAt ?? new Date().toISOString(), meKey);
-    setBusy(false);
+    try {
+      const list = await listActivityEvents({
+        limit: 500,
+        types: type === "all" ? undefined : [type],
+        severities: severity === "all" ? undefined : [severity as EventSeverity],
+      },{requireSuccess:true});
+      if(revision!==loadRevision.current) return;
+      setRows(list);setLoadError("");
+      mergeRemoteActivityPreferences(meKey, list);
+      setMissing(isActivityLogMissing());
+      markActivitySeen(list[0]?.createdAt ?? new Date().toISOString(), meKey);
+    } catch(error) {
+      if(revision===loadRevision.current) setLoadError(error instanceof Error?error.message:"Could not load notifications. Try refreshing.");
+    } finally {if(revision===loadRevision.current) setBusy(false);}
   }, [type, severity, meKey]);
 
   useEffect(() => {
     if (mayViewAudit) void load();
-  }, [mayViewAudit, load]);
+    else {setRows([]);setBusy(false);setLoadError("");}
+    return cancelLoad;
+  }, [mayViewAudit, load, cancelLoad]);
+  useEffect(()=>{setRows([]);},[meKey]);
 
   const filtered = useMemo(() => {
     const needle = actor.trim().toLowerCase();
     return rows.filter((row) => {
-      const inHistory = row.clearedBy.length > 0;
+      const inHistory = activityAcknowledgedBy(row,meKey);
       if (status === "active" && inHistory) return false;
       if (status === "history" && !inHistory) return false;
       if (!needle) return true;
@@ -106,17 +118,19 @@ function NotificationsReport() {
         row.message.toLowerCase().includes(needle)
       );
     });
-  }, [rows, actor, status]);
+  }, [rows, actor, status, meKey]);
 
   const updatePreference = async (row: ActivityEvent) => {
-    const inHistory = row.clearedBy.length > 0;
+    const inHistory = activityAcknowledgedBy(row,meKey);
     if (inHistory) return;
     setPreferenceBusy(row.id);
-    const saved = await clearActivityEntry(meKey, row.id);
-    if (!saved)
+    try {
+      const saved = await clearActivityEntry(meKey, row.id);
+      if (!saved) toast.error("Could not update notification history. Check the connection and try again.");
+      else await load();
+    } catch {
       toast.error("Could not update notification history. Check the connection and try again.");
-    else await load();
-    setPreferenceBusy("");
+    } finally {setPreferenceBusy("");}
   };
 
   const page = usePagination(filtered);
@@ -148,6 +162,7 @@ function NotificationsReport() {
   return (
     <AppShell>
       <div className="pos-page-container">
+        {loadError && <p role="alert" className="rounded-lg border border-destructive/40 p-3 text-sm text-destructive">Notification history could not refresh: {loadError}</p>}
         {missing && (
           <p className="rounded-md border border-border bg-surface-2 p-3 text-sm text-muted-foreground">
             The activity log needs a database update. Follow the existing-database upgrade
@@ -231,7 +246,7 @@ function NotificationsReport() {
                     row.terminalName || "",
                     stores.find((store) => store.id === row.storeId)?.name ?? row.storeId,
                     row.whatsappStatus,
-                    row.clearedBy.length ? "Acknowledged" : "Active",
+                    activityAcknowledgedBy(row,meKey) ? "Cleared by me" : "Active",
                   ]),
                 ])
               }
@@ -309,27 +324,25 @@ function NotificationsReport() {
                     </TableCell>
                     <TableCell className="text-sm capitalize">{r.whatsappStatus}</TableCell>
                     <TableCell className="text-sm">
-                      {r.clearedBy.length > 0 ? "History" : "Active"}
+                      {activityAcknowledgedBy(r,meKey) ? "Cleared by me" : "Active"}
                     </TableCell>
                     <TableCell className="text-right">
                       <Button
                         type="button"
                         variant="ghost"
                         size="sm"
-                        className="h-7 px-2 text-xs"
-                        disabled={preferenceBusy === r.id || r.clearedBy.length > 0}
+                        className="min-h-11 px-2 text-xs"
+                        disabled={preferenceBusy === r.id || activityAcknowledgedBy(r,meKey)}
                         onClick={() => void updatePreference(r)}
                       >
                         {preferenceBusy === r.id ? (
                           <LoaderCircle className="size-3 animate-spin" />
-                        ) : r.clearedBy.length > 0 ? (
-                          <RotateCcw className="size-3" />
                         ) : (
                           <Check className="size-3" />
                         )}
                         {preferenceBusy === r.id
                           ? "Saving…"
-                          : r.clearedBy.length > 0
+                          : activityAcknowledgedBy(r,meKey)
                             ? "Cleared"
                             : "Clear"}
                       </Button>

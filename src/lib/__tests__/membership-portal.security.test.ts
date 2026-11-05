@@ -109,8 +109,9 @@ describe("customer membership portal security", () => {
     expect(client).toContain('posFetch("/api/v1/pos/sync?operation=membership_lookup"');
     expect(client).not.toContain("MEMBERSHIP_SUPABASE_SERVICE_ROLE_KEY");
     expect(register).toContain("void upsertMember(cached)");
-    expect(memberEditor).toContain("Email and date of birth are verified profile details");
-    expect(memberEditor.match(/aria-readonly="true"/g)).toHaveLength(2);
+    expect(memberEditor).toContain("Verified sign-in identity and date of birth remain managed through the membership portal.");
+    expect(memberEditor).toContain("contactEmail:event.target.value");
+    expect(memberEditor.match(/aria-readonly="true"/g)).toHaveLength(1);
     expect(checkout).not.toContain("postMembershipSale");
     expect(service).not.toContain("membership_event_outbox");
     expect(mirrorIdentitySql).toContain("member.membership_member_id = source.id");

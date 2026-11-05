@@ -18,8 +18,35 @@ class JobRepository {
     for (const [key, value] of entries) request.input(key, value ?? null);
     await request.query(`UPDATE dbo.pos_jobs SET ${entries.map(([key]) => `[${key}]=@${key}`).join(",")}, updated_at=SYSDATETIMEOFFSET() WHERE job_id=@job_id;`);
   }
+  async recovery(type, branchId, terminalId) {
+    const result=await this.pool().request().input("type",type).input("branch",branchId).input("terminal",terminalId)
+      .query("SELECT TOP (1) * FROM dbo.pos_jobs WHERE job_type=@type AND branch_id=@branch AND terminal_id=@terminal ORDER BY started_at DESC,job_id DESC;");
+    return result.recordset?.[0]??null;
+  }
+  async get(jobId, transaction=null) {
+    const result=await this.request(transaction).input("job",jobId).query(`SELECT * FROM dbo.pos_jobs ${transaction?"WITH (UPDLOCK,HOLDLOCK)":""} WHERE job_id=@job;`);
+    return result.recordset?.[0]??null;
+  }
   async active() {
     const result = await this.pool().request().query("SELECT TOP (1) * FROM dbo.pos_jobs WHERE status IN ('queued','starting','running','paused','retrying','interrupted') ORDER BY updated_at DESC;");
+    return result.recordset?.[0] ?? null;
+  }
+  async hasOtherActiveJobs(exceptJobId = null) {
+    const result = await this.pool().request().input("except", exceptJobId)
+      .query("SELECT TOP (1) job_id FROM dbo.pos_jobs WHERE status IN ('queued','starting','running','paused','retrying','interrupted') AND (@except IS NULL OR job_id<>@except);");
+    return Boolean(result.recordset?.length);
+  }
+  async startupSnapshot(type, branchId, exceptHistoryJobId = null) {
+    const result = await this.pool().request().input("type", type).input("branch", branchId).input("history",exceptHistoryJobId)
+      .query(`SELECT TOP (1) snapshot.* FROM dbo.pos_jobs snapshot
+        WHERE snapshot.job_type=@type AND snapshot.status='completed' AND snapshot.branch_id=@branch
+          AND NOT EXISTS (SELECT 1 FROM dbo.pos_jobs barrier
+            WHERE barrier.job_id<>snapshot.job_id AND (barrier.branch_id=@branch OR barrier.branch_id IS NULL)
+              AND COALESCE(barrier.finished_at,barrier.updated_at,barrier.started_at)>=COALESCE(snapshot.finished_at,snapshot.updated_at,snapshot.started_at)
+              AND (barrier.job_type LIKE 'bootstrap[_]%' OR barrier.job_type NOT IN ('history_gap_recovery_v1','retention')
+                OR (barrier.job_type='retention' AND barrier.status<>'completed')
+                OR (barrier.job_type='history_gap_recovery_v1' AND barrier.status<>'completed' AND (@history IS NULL OR barrier.job_id<>@history))))
+        ORDER BY snapshot.finished_at DESC;`);
     return result.recordset?.[0] ?? null;
   }
   async history(limit = 50) {

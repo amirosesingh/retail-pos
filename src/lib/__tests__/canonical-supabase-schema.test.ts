@@ -18,6 +18,22 @@ function sqlFiles(directory = root): string[] {
 }
 
 describe("canonical Supabase SQL", () => {
+  it("retains the additive graph-read admission after all original shift authority contracts", () => {
+    const schema = read("supabase/schema.sql");
+    const begin = "-- SHIFT_GRAPH_READ_SCOPE_BEGIN", end = "-- SHIFT_GRAPH_READ_SCOPE_END";
+    expect(schema.split(begin + "\n")[1]?.split("\n" + end)[0])
+      .toBe(read("supabase/migrations/20261103023417_management_closing_graph_read_scope.sql").trim());
+    expect(schema.indexOf(begin)).toBeGreaterThan(schema.indexOf("-- SHIFT_CLOSING_START_CONTRACT_END"));
+    expect(schema.indexOf(begin)).toBeGreaterThan(schema.indexOf("-- SHIFT_AUTHOR_CONTRACT_END"));
+    expect(schema.indexOf(begin)).toBeGreaterThan(schema.indexOf("-- SHIFT_CAUSAL_CONTRACT_END"));
+    expect(schema.split(begin)).toHaveLength(2);
+  });
+  it("retains the additive closing-start contract byte-for-byte after the author foundation", () => {
+    const schema = read("supabase/schema.sql");
+    const block = schema.split("-- SHIFT_CLOSING_START_CONTRACT_BEGIN\n")[1]?.split("\n-- SHIFT_CLOSING_START_CONTRACT_END")[0];
+    expect(block).toBe(read("supabase/migrations/20261102153013_bind_signed_closing_start_evidence.sql").trim());
+    expect(schema.indexOf("-- SHIFT_CLOSING_START_CONTRACT_BEGIN")).toBeGreaterThan(schema.indexOf("-- SHIFT_AUTHOR_CONTRACT_END"));
+  });
   it("keeps one manual upgrade, its CLI migrations, the installer and deliberate reset", () => {
     expect(sqlFiles().filter((file) => file.startsWith("supabase/"))).toEqual([
       "supabase/membership/migrations/20261002183000_isolated_membership_project.sql",
@@ -206,12 +222,61 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261024123525_sponsorship_line_discounts.sql",
       "supabase/migrations/20261024124905_sponsorship_direct_issue_and_numbering.sql",
       "supabase/migrations/20261025003332_optimize_active_shift_lookup.sql",
+      "supabase/migrations/20261025133911_soft_token_owner_admin_notification_rule.sql",
+      "supabase/migrations/20261025141638_personal_notification_acknowledgements.sql",
+      "supabase/migrations/20261026075533_index_private_foreign_keys.sql",
+      "supabase/migrations/20261026110000_seed_missing_staff_role_defaults.sql",
+      "supabase/migrations/20261026111000_member_contact_and_tier_editor.sql",
+      "supabase/migrations/20261026114000_preserve_management_ecommerce_during_branch_sync.sql",
+      "supabase/migrations/20261026161839_honor_configured_cross_cluster_transfer_approvers.sql",
+      "supabase/migrations/20261026162030_isolate_cluster_catalogue_reads.sql",
+      "supabase/migrations/20261026231535_verified_native_transfer_approval.sql",
+      "supabase/migrations/20261026232513_paged_secure_shift_history.sql",
+      "supabase/migrations/20261029064933_preserve_product_owner_on_stale_sync.sql",
+      "supabase/migrations/20261029073121_add_missed_bill_historical_entry.sql",
+      "supabase/migrations/20261030075132_typed_terminal_pin_verification.sql",
+      "supabase/migrations/20261030081625_product_bootstrap_uuid_keyset.sql",
+      "supabase/migrations/20261030081804_optimize_catalogue_read_policy.sql",
+      "supabase/migrations/20261030102943_optimize_branch_catalogue_sync_reads.sql",
+      "supabase/migrations/20261030153259_confirm_shift_closure_sync_acknowledgement.sql",
+      "supabase/migrations/20261030164829_bind_shift_closure_proof_to_requested_revision.sql",
+      "supabase/migrations/20261030234813_guard_activity_acknowledgement_branch_ownership.sql",
+      "supabase/migrations/20261031031945_preserve_validated_branch_context_for_shift_sync.sql",
+      "supabase/migrations/20261031042447_atomic_transfer_dispatch_and_verified_native_actor.sql",
+      "supabase/migrations/20261031080149_prevent_transfer_line_reparenting.sql",
+      "supabase/migrations/20261031105517_change_history_bootstrap_uuid_keyset.sql",
+      "supabase/migrations/20261101052452_prevent_closed_shift_reopening_during_sync.sql",
+      "supabase/migrations/20261102082439_shift_closing_causal_intents.sql",
+      "supabase/migrations/20261102101610_shift_author_key_registry.sql",
+      "supabase/migrations/20261102103716_enforce_shift_author_uploads.sql",
+      "supabase/migrations/20261102104005_fix_closed_shift_correction_activity_type.sql",
+      "supabase/migrations/20261102153013_bind_signed_closing_start_evidence.sql",
+      "supabase/migrations/20261103023417_management_closing_graph_read_scope.sql",
+      "supabase/migrations/20261103074926_protected_byte_bounded_history_download.sql",
+      "supabase/migrations/20261103091907_optimize_protected_history_projection.sql",
+      "supabase/migrations/20261103105157_preserve_shift_reconciliation_parent_summaries.sql",
+      "supabase/migrations/20261104040251_protected_byte_bounded_feed_download.sql",
+      "supabase/migrations/20261105090000_shift_financial_known_history.sql",
+      "supabase/migrations/20261105090100_branch_shift_sharing.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
       "supabase/sql/trigger_sync_upgrade.sql",
       "supabase/sql/verify_purchase_order_uuid_sync.sql",
     ]);
+  });
+
+  it('retains the reviewed shift-sharing upgrade exactly in canonical SQL', () => {
+    const migration = read('supabase/migrations/20261105090100_branch_shift_sharing.sql').trim();
+    expect(read('supabase/schema.sql').split('-- SHIFT63_BRANCH_SHARING_BEGIN\n')[1]?.split('\n-- SHIFT63_BRANCH_SHARING_END')[0].trim()).toBe(migration);
+    expect(read('scripts/preparation/shift-branch-sharing.sql').trim()).toBe(migration);
+  });
+
+  it("retains the service-only bounded feed RPC exactly in canonical installation SQL", () => {
+    const schema = read("supabase/schema.sql");
+    const block = schema.split("-- PROTECTED_FEED_PAGE_BEGIN\n")[1]?.split("\n-- PROTECTED_FEED_PAGE_END")[0];
+    expect(block).toBe(read("supabase/migrations/20261104040251_protected_byte_bounded_feed_download.sql").trim());
+    expect(schema.split("-- PROTECTED_FEED_PAGE_BEGIN")).toHaveLength(2);
   });
 
   it("syncs offline member profile details without exposing the Auth identity", () => {

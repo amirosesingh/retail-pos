@@ -48,4 +48,30 @@ describe("SKU allocation when browser storage is full", () => {
     expect(second).toBe("SKU-000002");
     expect(reserveSkuLease).toHaveBeenCalledTimes(1);
   });
+
+  it("reads another tab's advanced shared cursor instead of reusing its cached number", async () => {
+    const values = new Map<string, string>();
+    window.localStorage.getItem = vi.fn(key => values.get(key) ?? null);
+    window.localStorage.setItem = vi.fn((key, value) => { values.set(key, value); });
+    const tabA = await import("../sku");
+    expect(await tabA.nextSku([], { storeId: "cluster-a" })).toBe("SKU-000001");
+    vi.resetModules();
+    const tabB = await import("../sku");
+    expect(await tabB.nextSku([], { storeId: "cluster-b" })).toBe("SKU-000002");
+    expect(await tabA.nextSku([], { storeId: "cluster-a" })).toBe("SKU-000003");
+    expect(reserveSkuLease).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not resurrect a cached cursor after another tab exhausts the shared range", async () => {
+    const values = new Map<string, string>();
+    window.localStorage.getItem = vi.fn(key => values.get(key) ?? null);
+    window.localStorage.setItem = vi.fn((key, value) => { values.set(key, value); });
+    const tabA = await import("../sku");
+    expect(await tabA.nextSku([])).toBe("SKU-000001");
+    const key = "pos.sku.global-lease.v1";
+    const exhausted = JSON.parse(values.get(key)!);
+    values.set(key, JSON.stringify({ ...exhausted, next: exhausted.end + 1 }));
+    reserveSkuLease.mockResolvedValueOnce({ ok: true, lease: { lease_id: "22222222-2222-4222-a222-222222222222", start_value: 251, end_value: 500, prefix: "SKU-", padding: 6 } });
+    expect(await tabA.nextSku([])).toBe("SKU-000251");
+  });
 });

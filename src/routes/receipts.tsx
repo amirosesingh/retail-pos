@@ -1,5 +1,8 @@
+import { useReportSales } from "@/lib/use-report-sales";
+import { useViewedBranchShift } from "@/lib/use-viewed-branch-shift";
+import { posDayKey as storeDay } from "@/lib/time-zone";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
-import { uniqueSales, sameRecordId } from "@/lib/sale-identity";
+import { branchReceiptHistory, latestReceiptShift, receiptMatchesShift } from "@/lib/receipt-history";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Ban, Gift, Printer, ReceiptText, Search, ScrollText, Wallet, Wrench } from "lucide-react";
@@ -49,6 +52,10 @@ import {
 } from "@/lib/record-edit-flow";
 import { billCorrectionTotals } from "@/lib/bill-correction";
 import { useManagerGate } from "@/lib/manager-gate";
+import { AddMissedBillDialog } from "@/platforms/web/components/pos/AddMissedBillDialog";
+import { HistoryDateNavigation } from "@/platforms/web/components/pos/HistoryDateNavigation";
+import { rowToSale } from "@/core/api/pos-db";
+import { isMissedBillReference } from "@/lib/missed-bill-reference";
 
 export const Route = createFileRoute("/receipts")({
   head: () => ({
@@ -86,15 +93,17 @@ const TEMPLATES: { key: Template; label: string; icon: typeof Printer }[] = [
 ];
 
 function ReceiptVault() {
-  const { state, currentStore, activeShift, refundSale, changeSalePayment, correctSale } = usePos();
+  const { state, currentStore, refundSale, changeSalePayment, correctSale } = usePos();
   const { user, can, isAdmin } = useAuth();
+  const viewedShift = useViewedBranchShift();
+  const receiptShift = viewedShift.shift ?? (viewedShift.checked ? latestReceiptShift(state.shifts, currentStore.id) : null);
   const { requirePermission } = useUserPermissions();
   const { authorize, rules: authorizationRules } = useManagerGate();
   const [query, setQuery] = useState("");
   /** Cashiers land on their own shift; anything older needs a date range. */
   const [scope, setScope] = useState<"shift" | "range" | "all">("shift");
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
+  const [fromDate, setFromDate] = useState(() => storeDay());
+  const [toDate, setToDate] = useState(() => storeDay());
   const [template, setTemplate] = useState<Template>("standard");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
@@ -124,25 +133,56 @@ function ReceiptVault() {
   const [exhausted, setExhausted] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [findingExact, setFindingExact] = useState(false);
+  const [allPageLoaded, setAllPageLoaded] = useState(false);
+  const [historyError, setHistoryError] = useState("");
   const [cloudHistory, setCloudHistory] = useState<Set<string>>(() => new Set());
+  const historyBranch = useRef(currentStore.id);
+  historyBranch.current = currentStore.id;
+  useEffect(() => {
+    setOlder([]); setCursor(null); setExhausted(false); setSelectedId(null); setCloudHistory(new Set());
+    setAllPageLoaded(false); setHistoryError("");
+  }, [currentStore.id]);
 
   // Employees only ever see the log of the store they are on duty at.
   const sales = useMemo(() => {
-    const live = state.sales.filter((s) => s.storeId === currentStore.id);
-
-    return uniqueSales([...older, ...live]);
+    return branchReceiptHistory(state.sales, older, currentStore.id);
   }, [state.sales, currentStore.id, older]);
 
+  const rangeValid = !!fromDate && !!toDate && fromDate <= toDate;
+  const periodFrom = scope === "shift" && receiptShift ? storeDay(receiptShift.openedAt) : fromDate;
+  const periodTo = scope === "shift" && receiptShift ? storeDay(viewedShift.shift ? new Date() : receiptShift.closedAt || receiptShift.openedAt) : toDate;
+  const rangeHistory = useReportSales(sales, [currentStore.id], periodFrom, periodTo,
+    !!currentStore.id && (scope === "range" ? rangeValid : scope === "shift" && !!receiptShift));
+  const periodSales = scope === "all" ? sales : branchReceiptHistory(rangeHistory.sales, [], currentStore.id);
+
+  // Fetch a real first page even when this branch has no recent in-memory bills.
+  // Further history stays explicitly paged rather than downloading the whole company.
+  useEffect(() => {
+    if (scope !== "all" || allPageLoaded || !currentStore.id) return;
+    const branchId = currentStore.id;
+    let alive = true;
+    setLoadingOlder(true);
+    setHistoryError("");
+    void loadSalesPage(branchId, null).then(page => {
+      if (!alive || historyBranch.current !== branchId) return;
+      setOlder(previous => branchReceiptHistory(page.rows, previous, branchId));
+      setCursor(page.cursor); setExhausted(!page.hasMore);
+    }).catch(error => {
+      if (alive && historyBranch.current === branchId) setHistoryError(error instanceof Error ? error.message : "Could not load branch receipts.");
+    }).finally(() => {
+      if (alive && historyBranch.current === branchId) { setLoadingOlder(false); setAllPageLoaded(true); }
+    });
+    return () => { alive = false; };
+  }, [scope, currentStore.id, allPageLoaded]);
+
   const loadOlder = async () => {
+    if (loadingOlder) return;
+    const requestedBranch = currentStore.id;
     setLoadingOlder(true);
     try {
-      const from =
-        cursor ??
-        (() => {
-          const last = sales[sales.length - 1];
-          return last ? { ts: last.createdAt, id: last.id } : null;
-        })();
-      const page = await loadSalesPage(currentStore.id, from);
+      setHistoryError("");
+      const page = await loadSalesPage(requestedBranch, cursor);
+      if (historyBranch.current !== requestedBranch) return;
       setOlder((prev) => [...prev, ...page.rows]);
       setCursor(page.cursor);
       if (!page.hasMore) setExhausted(true);
@@ -155,9 +195,11 @@ function ReceiptVault() {
 
   const searchExact = async () => {
     if (!query.trim()) return;
+    const requestedBranch = currentStore.id;
     setFindingExact(true);
     try {
-      const found = await findReceiptExact(query, currentStore.id);
+      const found = await findReceiptExact(query, requestedBranch);
+      if (historyBranch.current !== requestedBranch) return;
       if (!found) {
         toast.error("No exact receipt was found for this branch");
         return;
@@ -176,10 +218,11 @@ function ReceiptVault() {
     }
   };
 
-  const scoped = sales.filter((s) => {
-    if (scope === "shift") return activeShift ? sameRecordId(s.shiftId, activeShift.id) : false;
+  const scoped = periodSales.filter((s) => {
+    if (scope === "shift") return receiptMatchesShift(s, receiptShift?.id ?? null);
     if (scope === "range") {
-      const day = new Date(s.createdAt).toLocaleDateString("en-CA");
+      if (!rangeValid) return false;
+      const day = storeDay(s.createdAt);
       if (fromDate && day < fromDate) return false;
       if (toDate && day > toDate) return false;
       return true;
@@ -445,7 +488,21 @@ function ReceiptVault() {
               Viewing data for {currentStore.name} only · signed in as {user?.name}
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex min-w-0 flex-wrap gap-2">
+            <AddMissedBillDialog onSaved={result => {
+              if (historyBranch.current !== result.storeId) return;
+              if (result.receiptJson) {
+                const receipt = JSON.parse(result.receiptJson);
+                const sale = rowToSale({ ...receipt.sale, sale_items: receipt.items });
+                setOlder(previous => [sale, ...previous.filter(existing => existing.id !== sale.id)]);
+                setCloudHistory(previous => new Set(previous).add(sale.id));
+                setSelectedId(sale.id);
+                setScope("all");
+              } else {
+                setQuery(result.receiptNo);
+                toast.info("Use Find exact to load the saved historical bill from cloud history.");
+              }
+            }} />
             <div className="relative">
               <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -467,14 +524,15 @@ function ReceiptVault() {
             </Button>
           </div>
         </header>
+        {selected && isMissedBillReference(selected.receiptNo) && <p className="rounded-md border px-3 py-2 text-sm text-muted-foreground">Historical sale entered later. Payments were already received; this bill is not part of today's drawer.</p>}
 
         <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-card p-3">
           <div className="flex gap-2">
             {(
               [
-                { id: "shift", label: "Current shift" },
+                { id: "shift", label: viewedShift.shift ? "Current shift" : "Latest loaded shift" },
                 { id: "range", label: "Date range" },
-                { id: "all", label: "Everything" },
+                { id: "all", label: "Branch history" },
               ] as const
             ).map((s) => (
               <button
@@ -519,25 +577,25 @@ function ReceiptVault() {
                   className="mt-1 h-9 w-40"
                 />
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setFromDate("");
-                  setToDate("");
-                }}
-              >
-                Clear dates
-              </Button>
+              <HistoryDateNavigation from={fromDate} to={toDate} onChange={range => {
+                setFromDate(range.from);
+                setToDate(range.to);
+              }} />
             </div>
           )}
 
           <p className="ml-auto text-xs text-muted-foreground">
-            {scope === "shift" && !activeShift
-              ? "No shift open — showing every receipt at this store."
-              : `${rows.length} receipt${rows.length === 1 ? "" : "s"} shown`}
+            {scope === "shift"
+              ? !viewedShift.checked ? "Checking this branch's shift…"
+                : receiptShift ? `${viewedShift.shift ? "Open" : "Latest loaded"} shift · ${posDisplayDateTime(receiptShift.openedAt)} · ${rows.length} receipts`
+                  : "No shift loaded for this branch. Choose Date range or Branch history."
+              : `${rows.length} receipt${rows.length === 1 ? "" : "s"} shown${scope === "all" && !exhausted ? " · more history available below" : ""}`}
           </p>
         </div>
+
+        {scope === "range" && !rangeValid && <p role="alert" className="text-sm text-destructive">Choose a valid start and end date.</p>}
+        {scope !== "all" && (rangeHistory.loading || rangeHistory.refreshing) && <p role="status" className="text-sm text-muted-foreground">Loading receipts from this branch's selected period…</p>}
+        {(scope === "all" ? historyError : rangeHistory.error) && <p role="alert" className="text-sm text-destructive">{scope === "all" ? historyError : rangeHistory.error}</p>}
 
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
           <section className="rounded-lg border border-border bg-card">
@@ -576,11 +634,11 @@ function ReceiptVault() {
                 {!rows.length && (
                   <li className="py-16 text-center text-sm text-muted-foreground">
                     {scope === "shift"
-                      ? "No receipts on the current shift yet."
+                      ? "No receipts on this branch's selected shift."
                       : "No receipts match this filter."}
                   </li>
                 )}
-                {!exhausted && sales.length > 0 && (
+                {scope === "all" && !exhausted && (
                   <li className="py-3 text-center">
                     <Button
                       variant="outline"

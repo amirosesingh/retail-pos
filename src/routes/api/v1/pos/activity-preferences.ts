@@ -77,6 +77,7 @@ export const Route = createFileRoute("/api/v1/pos/activity-preferences")({
           role: scope.roleSlug ?? scope.role,
           storeId: scope.storeId,
           terminalId: scope.terminalId,
+          allStores: scope.branchRestricted === false && !scope.storeId,
           mayViewGeneralActivity,
         };
 

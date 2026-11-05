@@ -1299,7 +1299,7 @@ html, main, .pos-popup-surface, .overflow-auto, .overflow-y-auto, .overflow-x-au
   overflow: auto;
 }
 .register-lookup {
-  flex: 0 0 22rem;
+  flex: 0 0 auto;
   min-width: 0;
   min-height: 0;
   width: 100%;
@@ -1368,9 +1368,13 @@ html, main, .pos-popup-surface, .overflow-auto, .overflow-y-auto, .overflow-x-au
   min-height: 3rem;
   padding-inline-start: 2.5rem;
 }
+.register-lookup-results { max-height: 14rem; }
+.register-lookup-suggestions { display: none; }
 @container (min-width: 60rem) {
   .register-standard { gap: 0; }
   .register-standard > [role="separator"] { margin-inline: 0.375rem; }
+  .register-lookup-results { max-height: none; }
+  .register-lookup-suggestions { display: block; }
 }
 /* Shared settings presentation: readable controls, stable semantic category accents. */
 .settings-workspace .settings-form :where(input, select, textarea, label) {
@@ -1537,4 +1541,12 @@ html[data-native-caption] .pos-dialog-content.notification-panel { top: 44px; ma
   background-color: color-mix(in srgb, var(--popover) 78%, transparent);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
+}
+
+/* Settings controls stay readable on touch screens without enlarging receipt previews. */
+.settings-workspace .settings-form :where(label, h3) { font-size: 0.9375rem; line-height: 1.5; }
+.settings-workspace .settings-form :where(button) > svg { flex-shrink: 0; }
+.settings-workspace .settings-form :where(button:not([role="switch"])) > svg { min-width: 1rem; min-height: 1rem; }
+@media (max-width: 640px) {
+  .settings-workspace .settings-form :where(input, select, textarea) { font-size: 1rem; }
 }

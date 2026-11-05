@@ -258,6 +258,7 @@ function credentialProof(value) {
     sessionToken: 400,
     cashierToken: 2000,
     terminalToken: 2000,
+    deviceBindingProof: 64,
   };
   for (const key of Object.keys(raw)) {
     if (!Object.hasOwn(limits, key))

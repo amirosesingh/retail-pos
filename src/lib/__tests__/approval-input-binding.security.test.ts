@@ -1,16 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ rules: vi.fn(), load: vi.fn(), pin: vi.fn(), log: vi.fn(), grant: vi.fn(), create: vi.fn(), people: vi.fn(), person: vi.fn(), scope: vi.fn(), request: vi.fn(), decide: vi.fn() }));
+const mocks = vi.hoisted(() => ({ rules: vi.fn(), load: vi.fn(), pin: vi.fn(), log: vi.fn(), grant: vi.fn(), verifyGrant: vi.fn(), create: vi.fn(), people: vi.fn(), person: vi.fn(), scope: vi.fn(), request: vi.fn(), decide: vi.fn() }));
 vi.mock("@tanstack/react-start", () => ({ createServerFn: () => ({ validator: (parse: (v: unknown) => unknown) => ({ handler: (fn: (v: { data: unknown }) => unknown) => (v: { data: unknown }) => fn({ data: parse(v.data) }) }) }) }));
 vi.mock("@/core/api/pos-relay.server", () => ({ verifyRelayCaller: async () => ({ kind: "cashier" }) }));
 vi.mock("@/core/api/relay-policy.server", () => ({ resolveRelayScope: mocks.scope }));
-vi.mock("../pos-rules.server", () => ({ loadRulesResult: mocks.rules, signOverrideGrant: mocks.grant }));
+vi.mock("../pos-rules.server", () => ({ loadRulesResult: mocks.rules, signOverrideGrant: mocks.grant, verifyOverrideGrant: mocks.verifyGrant }));
 vi.mock("../authorization.server", () => ({ loadRuleRows: mocks.load, verifyAuthorizationPin: mocks.pin, writeLog: mocks.log,
   createRequest: mocks.create, getRequest: mocks.request, decideRequest: mocks.decide, listAuthorizationPeopleRows: mocks.people, hasRequestAudit: async () => true, markRequestNotified: vi.fn() }));
 vi.mock("../pin-throttle.server", () => ({ throttleStatus: async () => ({ locked: false }), throttleReset: vi.fn(), throttleFail: vi.fn(), minutesLeft: () => 1 }));
 vi.mock("../pin-request-throttle.server", () => ({ beginPinRequest: async () => ({ locked: false, key: "attempt" }), finishPinRequest: vi.fn() }));
 vi.mock("../approval-token-server", () => ({ approvalPerson: mocks.person, verifyApprovalTotp: async () => null, identifyApprovalTotp: async () => null }));
-import { authorizeWithPin, submitAuthorizationRequest, decideAuthorizationRequest } from "../authorization.functions";
-import { defaultRule, normalizeRequest } from "../authorization";
+import { authorizeWithPin, submitAuthorizationRequest, decideAuthorizationRequest, verifyBusinessAuthorization } from "../authorization.functions";
+import { approvalForAction, defaultRule, normalizeRequest } from "../authorization";
 beforeEach(() => {
   vi.resetAllMocks();
   mocks.scope.mockResolvedValue({ kind: "cashier", role: "staff", roleSlug: "cashier", storeId: "branch-a", staffUserId: "requester", actorName: "Requester", permissions: {}, isSupervisor: false });
@@ -25,6 +25,34 @@ beforeEach(() => {
 });
 const input = { cashierToken: "valid-cashier-proof", actionKey: "manual_discount", authorizerId: "approver", pin: "1234", binding: "ticket-binding", requesterDirectLimit: 999, storeId: "branch-a", valueUnit: "percent" as const };
 describe("server-derived requester direct approval limit", () => {
+  it("allows an amountless cart approval after an unrelated numeric discount approval", async () => {
+    const discount = { actionKey: "discount_over_limit", requestedAmount: 15, approvedAmount: 15 };
+    const resumedGrant = approvalForAction("void_cart", discount);
+    mocks.load.mockResolvedValue([{ ...defaultRule("void_cart"), mode: "pin", isEnabled: true, allowedRoles: ["manager"] }]);
+    mocks.verifyGrant.mockReturnValue({ approvedBy: "approver", approvedAmount: null });
+    const result = await verifyBusinessAuthorization({ data: { ...input, actionKey: "void_cart", payload: {},
+      requestedAmount: resumedGrant?.requestedAmount ?? resumedGrant?.approvedAmount ?? null, grantToken: "void-grant" } });
+    expect(result).toMatchObject({ ok: true, required: true });
+    expect(approvalForAction("discount_over_limit", discount)).toBe(discount);
+  });
+  it.each([null, undefined])("does not mint a numeric grant with missing requested value %s", async requestedAmount => {
+    expect((await authorizeWithPin({ data: { ...input, requestedAmount } })).ok).toBe(false);
+    expect(mocks.grant).not.toHaveBeenCalled();
+  });
+  it.each([null, undefined, -1, NaN])("does not accept an old numeric grant with invalid approved value %s", async approvedAmount => {
+    mocks.verifyGrant.mockReturnValue({ approvedBy: "approver", approvedAmount });
+    expect((await verifyBusinessAuthorization({ data: { ...input, requestedAmount: 15, payload: {}, grantToken: "old-grant" } })).ok).toBe(false);
+  });
+  it.each([15, 16])("accepts a numeric grant covering value 15 with ceiling %s", async approvedAmount => {
+    mocks.verifyGrant.mockReturnValue({ approvedBy: "approver", approvedAmount });
+    expect((await verifyBusinessAuthorization({ data: { ...input, requestedAmount: 15, payload: {}, grantToken: "grant" } })).ok).toBe(true);
+  });
+  it("rejects an above-ceiling numeric grant and preserves disabled rules", async () => {
+    mocks.verifyGrant.mockReturnValue({ approvedBy: "approver", approvedAmount: 14 });
+    expect((await verifyBusinessAuthorization({ data: { ...input, requestedAmount: 15, payload: {}, grantToken: "grant" } })).ok).toBe(false);
+    mocks.load.mockResolvedValue([{ ...defaultRule("manual_discount"), mode: "none", isEnabled: true }]);
+    expect((await verifyBusinessAuthorization({ data: { ...input, requestedAmount: null, payload: {} } })).ok).toBe(true);
+  });
   it("rejects a valid approval PIN outside the person's saved approval branch selection",async()=>{
     mocks.person.mockResolvedValue({user_id:"approver",role:"manager",role_slug:"supervisor",store_id:null,is_active:true,permissions:{can_give_discount:true,"approval_scope:configured":true,"approval_scope:branch:branch-b":true}});
     expect((await authorizeWithPin({data:{...input,requestedAmount:15}})).ok).toBe(false);

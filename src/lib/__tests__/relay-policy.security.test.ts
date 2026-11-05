@@ -21,7 +21,44 @@ const admin: RelayScope = { ...cashier, role: "admin", roleSlug: "admin", isSupe
 
 beforeEach(() => restMock.mockReset());
 
+describe('stable relay account identity',()=>{
+ it('uses only the fresh database UUID, ignoring a supplied identity alias',async()=>{
+  const stable='00000000-0000-4000-8000-000000000011';
+  restMock.mockResolvedValue({ok:true,json:async()=>[{id:stable,user_id:'cashier-current',store_id:'A',role:'staff',role_slug:'cashier',is_active:true,permissions:{can_process_sale:true}}]});
+  const caller={kind:'staff' as const,label:'Cashier',storeId:'A',staffUserId:'cashier-current',appUserId:'00000000-0000-4000-8000-000000000099'};
+  const scope=await resolveRelayScope(caller);
+  expect(scope).toMatchObject({appUserId:stable,staffUserId:'cashier-current',permissions:{can_process_sale:true},isSupervisor:false});
+ });
+ it('does not substitute a mutable username when the stable UUID is unavailable',async()=>{
+  restMock.mockResolvedValue({ok:true,json:async()=>[{id:'not-a-uuid',user_id:'alias',role:'staff',is_active:true,permissions:{}}]});
+  expect(await resolveRelayScope({kind:'staff',label:'Alias',staffUserId:'alias'})).toMatchObject({appUserId:null,staffUserId:'alias',permissions:{}});
+ });
+});
+
 describe("relay authorisation", () => {
+  it.each(["insert", "upsert", "delete"] as const)("allows only administrators to %s global payment methods", async kind => {
+    const op = kind === "delete" ? { kind, table: "payment_types", match: { id: "method" } }
+      : { kind, table: "payment_types", rows: [{ id: "method", name: "Cash", type_code: "cash" }] };
+    expect((await safeAuthorizeRelayOp(op, admin)).ok).toBe(true);
+    expect(await safeAuthorizeRelayOp(op, { ...cashier, permissions: { can_access_pos_settings: true } })).toMatchObject({ ok: false, code: "PERMISSION_DENIED" });
+    expect(restMock).not.toHaveBeenCalled();
+  });
+  it.each(["sales", "sale_items"])("requires the saved sale permission for generic %s writes", async table => {
+    for (const kind of ["insert", "upsert"] as const) {
+      const out = await safeAuthorizeRelayOp({ kind, table, rows: [{ id: "sale-denied" }] }, { ...cashier, permissions: { can_process_sale: false } });
+      expect(out).toMatchObject({ ok: false, code: "PERMISSION_DENIED" });
+    }
+    expect(restMock).not.toHaveBeenCalled();
+  });
+  it.each(["insert", "upsert"] as const)("rejects an existing tender change disguised as %s", async kind => {
+    restMock.mockResolvedValue({ ok: true, json: async () => [{ id: "sale-1", payment_type: "card", payments: [] }] });
+    const out = await safeAuthorizeRelayOp({ kind, table: "sales", rows: [{ id: "sale-1", payment_type: "cash" }] }, cashier);
+    expect(out).toMatchObject({ ok: false, code: "PERMISSION_DENIED" });
+  });
+  it.each(["insert", "upsert"] as const)("preserves an unchanged tender retry using %s", async kind => {
+    restMock.mockResolvedValue({ ok: true, json: async () => [{ id: "sale-1", payment_type: "card", payments: [] }] });
+    expect((await safeAuthorizeRelayOp({ kind, table: "sales", rows: [{ id: "sale-1", payment_type: "card", payments: [] }] }, cashier)).ok).toBe(true);
+  });
   it("stamps the caller's branch onto inserted rows", async () => {
     const out = await safeAuthorizeRelayOp(
       { kind: "insert", table: "sales", rows: [{ id: "1" }] },

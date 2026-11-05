@@ -104,6 +104,29 @@ describe("shared database reliability", () => {
     expect(await readPage(fetch, 100)).toMatchObject({ limit: 50, nextLimit: 100 });
     expect(fetch.mock.calls.map((call) => call[0])).toEqual([100, 50]);
   });
+  it("backs off repeated database timeouts without advancing a page or retrying at the minimum", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetch = vi.fn(async (limit: number) => {
+        if (limit > 25) throw Object.assign(new Error("statement timeout"), { code: "57014" });
+        return { rows: [{ id: "kept" }], cursor: "unchanged-until-success" };
+      });
+      const result = readPage(fetch, 100);
+      await vi.advanceTimersByTimeAsync(249);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(fetch).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(499);
+      expect(fetch).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await result).toMatchObject({ limit: 25, nextLimit: 25, batch: { cursor: "unchanged-until-success" } });
+      expect(fetch.mock.calls.map(call => call[0])).toEqual([100, 50, 25]);
+      const minimum = vi.fn(async () => { throw Object.assign(new Error("timeout"), { code: "57014" }); });
+      await expect(readPage(minimum, 10)).rejects.toThrow("timeout");
+      expect(minimum).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
   it("does not let a sale label bypass member administration permissions", () => {
     expect(() =>
       aggregatePolicy(
@@ -219,6 +242,13 @@ describe("shared database reliability", () => {
       table,
       ['{"id":"local"}', '{"id":"remote"}'],
       expect.any(Transaction),
+      {
+        branchId: "B1",
+        changes: [
+          { entity_id: '{"id":"local"}', row_data: { id: "local" }, tombstone: false },
+          { entity_id: '{"id":"remote"}', row_data: { id: "remote" }, tombstone: false },
+        ],
+      },
     );
     expect(cloud.applyLocalBatch).toHaveBeenCalledWith(expect.any(Transaction), table, {
       rows: [{ entity_id: '{"id":"remote"}', row_data: { id: "remote" }, tombstone: false }],

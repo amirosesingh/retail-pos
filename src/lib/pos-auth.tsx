@@ -1,3 +1,4 @@
+import { profileStoreAssignment } from "./auth-branch-assignment";
 import { clearOperatorIdentity, isOperatorIdentity, matchesOperatorIdentity, readOperatorIdentity, saveOperatorIdentity } from "./operator-auth-identity";
 import { localStartupAuthReady } from "./local-startup";
 import { useLocalStartupReady } from "./use-local-startup";
@@ -5,6 +6,8 @@ import { createSessionTransition } from "./session-transition";
 import { terminalUserPermissions } from "./terminal-user-permissions";
 import { createPermissionRefresh } from "./permission-refresh";
 import { ensureDesktopPosSession } from "./desktop-pos-session";
+import { readNativeTerminalProof } from "./native-terminal-proof";
+import { terminalRuntimePlatform } from "@/core/activation/terminal-platform";
 import { subscribeDataChange, subscribeSettingsChange } from "./sync-engine";
 import { normalizeUuidFields } from "./uuid-fields";
 import { preserveSessionDrafts } from "./session-draft";
@@ -38,6 +41,8 @@ import { recordSignIn } from "@/lib/shift-attendance";
 import { endShiftSessions } from "@/lib/shift-sessions";
 import { notifySessionExpired, onSessionExpired } from "@/lib/session-expiry";
 import { validateStoredAuthSession } from "@/lib/auth-session-guard";
+import { resumedAuthProof } from "@/lib/resumed-auth-proof";
+import { usernamePasswordFailure } from "@/lib/username-password-failure";
 import { setCentralAuthSessionPresent as publishCentralAuthSessionPresent, setSessionStartupPending } from "@/lib/session-presence";
 import { APP_RESUME_EVENT } from "@/core/activation/connection-health";
 import {
@@ -57,6 +62,7 @@ import { isWindowsShell } from "@/platform-config/features";
 import { recordDiagnostic, reasonCode } from "@/lib/diagnostics";
 import {
   failureFromAuthError,
+  failureFromLoginProfileError,
   failureFromReadiness,
   loginFailureMessage,
   type LoginFailure,
@@ -86,7 +92,9 @@ async function validateCentralAuthSession(online: boolean) {
   if (centralSessionCheck?.epoch === epoch && centralSessionCheck.online === online) return centralSessionCheck.promise;
   const promise = validateStoredAuthSession(supabase.auth, {
     online,
-    ...(isWindowsShell() ? { timeoutMs: 8000 } : {}),
+    // Auth and account checks are bounded server-side too. Keep browser/phone
+    // startup from waiting forever while preserving the shorter desktop gate.
+    timeoutMs: isWindowsShell() ? 8000 : 20_000,
     verifySession: async (current) => {
       const { verifySession } = await import("@/lib/session-verify-client");
       const checked = await verifySession({
@@ -190,6 +198,8 @@ export type TerminalUser = {
 
 /** Row loaded from public.app_users for the signed-in account. */
 export type AppUserProfile = {
+  /** Native acknowledgements use the account row UUID when supplied by the profile RPC. */
+  id?: string;
   user_id: string;
   full_name: string;
   role: AppRole;
@@ -630,7 +640,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             body: JSON.stringify({ username: email.trim(), password }),
           });
           if (!response.ok) {
-            const code = response.status === 401 ? "invalid-credentials" as const : "cloud-unreachable" as const;
+            const payload = await response.json().catch(() => null) as { code?: string } | null;
+            const code = usernamePasswordFailure(response.status, payload);
             return { ok: false, code, error: response.status === 429 ? "Too many attempts. Try again later." : loginFailureMessage(code) };
           }
           const verified = await response.json() as {
@@ -663,17 +674,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       markStartupStage("authentication");
       // The account must resolve to a profile with a role before it is let in.
       try {
-        const { data: profileRows, error: profileError } = await supabase.rpc("current_app_user");
+        const { data: profileRows, error: profileError } = await supabase.rpc("current_app_user")
+          .abortSignal(AbortSignal.timeout(15_000));
         const profile = (Array.isArray(profileRows) ? profileRows[0] : null) as Record<
           string,
           unknown
         > | null;
         if (profileError || !profile) {
           await supabase.auth.signOut({ scope: "local" });
+          const code = profileError ? failureFromLoginProfileError(profileError) : "permission-denied" as const;
           return {
             ok: false,
-            code: "permission-denied" as const,
-            error: loginFailureMessage("permission-denied"),
+            code,
+            error: loginFailureMessage(code),
           };
         }
         if (profile["is_active"] === false) {
@@ -684,12 +697,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             error: loginFailureMessage("account-inactive"),
           };
         }
-      } catch {
+      } catch (failure) {
         await supabase.auth.signOut({ scope: "local" });
+        const code = failureFromLoginProfileError(failure as Error);
         return {
           ok: false,
-          code: "permission-denied" as const,
-          error: loginFailureMessage("permission-denied"),
+          code,
+          error: loginFailureMessage(code),
         };
       }
 
@@ -717,8 +731,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             data: {
               kind: "staff",
               accessToken: token,
+              ...(await readNativeTerminalProof()),
               label: data.user?.email ?? email.trim(),
-              platform: typeof navigator === "undefined" ? "web" : navigator.platform || "web",
+              platform: terminalRuntimePlatform(),
             },
           });
           if (started.ok) {
@@ -805,9 +820,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           } else {
             const { serverUrl } = await import("@/lib/server-origin");
             const { requestCashierLogin } = await import("@/lib/cashier-login-request");
+            const registrationProof = await readNativeTerminalProof();
             const response = await requestCashierLogin<ServerLogin>(serverUrl("/api/public/cashier-login"), {
               username: code, pin,
-              platform: typeof navigator === "undefined" ? "web" : navigator.platform || "web",
+              ...(registrationProof.terminalToken ? { terminalId: registrationProof.terminalToken } : {}),
+              ...(registrationProof.deviceBindingProof ? { deviceBindingProof: registrationProof.deviceBindingProof } : {}),
+              platform: terminalRuntimePlatform(),
               branchId: activeBranchId(null),
             });
             status = response.status;
@@ -874,7 +892,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // the desktop process independently verifies it before granting IPC.
           role: account.role,
           roleSlug: account.role_slug,
-          storeId: activeBranchId(account.store_id ?? null),
+          storeId: isTerminalApp()
+            ? activeBranchId(account.store_id ?? null)
+            : profileStoreAssignment(account),
           email: "",
           cashierId: account.id,
           permissions: account.permissions as unknown as TerminalUser["permissions"],
@@ -932,7 +952,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         let cashierToken = verified?.cashierToken ?? "";
         const sessionToken = verified?.sessionToken ?? "";
         if (!cashierToken && !signedInOffline) {
-          const issued = await issueCashierSession({ data: { username: next.userCode, pin } });
+          const issued = await issueCashierSession({ data: { username: next.userCode, pin, ...(await readNativeTerminalProof()) } });
           if (issued.ok) cashierToken = issued.token;
         }
         if (cashierToken) {
@@ -951,11 +971,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               data: {
                 kind: "cashier",
                 cashierToken,
+                ...(await readNativeTerminalProof()),
                 label: next.name,
                 staffUserId: next.userCode,
                 ...(next.cashierId ? { cashierId: next.cashierId } : {}),
                 ...(next.storeId ? { branchId: next.storeId } : {}),
-                platform: typeof navigator === "undefined" ? "web" : navigator.platform || "web",
+                platform: terminalRuntimePlatform(),
               },
             });
             if (started.ok) {
@@ -1218,12 +1239,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       storeId: isTrueAdmin
         ? null
         : isElevated
-          ? (appUser?.store_id ?? (meta["store_id"] as string | null | undefined) ?? null)
-          : (appUser?.store_id ??
+          ? profileStoreAssignment(appUser, meta["store_id"] as string | null | undefined)
+          : profileStoreAssignment(appUser,
             (meta["store_id"] as string | null | undefined) ??
-            terminalUser?.storeId ??
-            found?.storeId ??
-            null),
+            terminalUser?.storeId ?? found?.storeId ?? null),
       permissions: isTrueAdmin
         ? { ...FULL_PERMISSIONS }
         : isElevated
@@ -1251,9 +1270,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setActivityAudienceIdentity(
       user
         ? {
-            userIds: [user.staffId, user.email].filter(Boolean),
+            userIds: [user.staffId, user.email, ...(appUser?.id ? [appUser.id] : [])].filter(Boolean),
             role: user.metaRole ?? user.roles[0] ?? user.role,
-            storeId: activeBranchId(user.storeId),
+            storeId: readTerminalConfig()?.locationId?.trim() || user.storeId,
+            allStores: appUser?.store_id === null && !readTerminalConfig()?.locationId?.trim(),
             terminalId: readTerminalConfig()?.tokenId ?? null,
             mayViewGeneralActivity:
               user.role === "admin" || user.permissions.can_view_audit_trail === true,
@@ -1261,7 +1281,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         : null,
     );
     return () => setActivityAudienceIdentity(null);
-  }, [user]);
+  }, [user, appUser]);
 
   // Local, per-terminal record of who signed in today. Lets a shift opened by
   // one cashier be continued by another while still showing every user.
@@ -1443,18 +1463,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // or server failure leaves the user's work and session untouched.
         const authCheck = await validateCentralAuthSession(true);
         if (!alive || !isCurrentEpoch(startedAt)) return;
-        if (authCheck.state === "verified" && matchesOperatorIdentity(authCheck.session?.user, operatorAuthId.current)) {
-          centralSessionVerifiedRef.current = true;
-        } else if (authCheck.state === "rejected" || !matchesOperatorIdentity(authCheck.session?.user, operatorAuthId.current)) {
-          // A definite refusal (or an absent local session) invalidates the
-          // previous proof. An unavailable server with the same stored
-          // session does not: connectivity loss must not sign out a till.
-          centralSessionVerifiedRef.current = false;
+        const resumedProof = resumedAuthProof(authCheck, centralSessionVerifiedRef.current, operatorAuthId.current);
+        if (resumedProof) {
+          centralSessionVerifiedRef.current = resumedProof.verified;
+          setCentralSessionVerified(resumedProof.verified, resumedProof.accessToken);
         }
-        setCentralSessionVerified(
-          centralSessionVerifiedRef.current,
-          authCheck.session?.access_token,
-        );
         if (authCheck.state === "rejected") {
           // Remove a rejected secondary Auth session even when a separate POS
           // person session remains valid. Otherwise every resume retries the

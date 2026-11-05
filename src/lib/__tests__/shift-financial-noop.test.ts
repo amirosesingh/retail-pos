@@ -1,0 +1,20 @@
+import { createHash, generateKeyPairSync, randomUUID, sign } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { describe, expect, it } from 'vitest';
+const require=createRequire(import.meta.url);
+const{verifyNoopCapture,validateNoopPayload}=require('../../../electron/db/shift-financial-noop.cjs');
+const{financialOperationMessage}=require('../../../electron/security/financial-author-protocol.cjs');
+const pair=generateKeyPairSync('ed25519');
+const scope={branchId:'A',shiftId:randomUUID(),terminalId:'TILL',operationId:randomUUID()};
+const id=randomUUID(),binding={version:1,algorithm:'Ed25519',keyId:randomUUID(),authorId:randomUUID(),subject:'cashier',projectOrigin:'https://fixture.test',terminalId:scope.terminalId};
+const before={id,branchId:'A',shiftId:scope.shiftId,totalAmount:'12.50',paymentType:'cash',paymentsJson:null,discountAmount:'0',isRefunded:false,rowVersion:'9007199254740993'};
+const payload=()=>({version:1,kind:'FINANCIAL_NOOP',...scope,action:'REFUND',changes:[{saleId:id,before,after:{...before,rowVersion:'9007199254740994'}}]});
+const capture=(value=payload())=>{const raw=JSON.stringify(value),hash=createHash('sha256').update(raw).digest('hex'),proof={...binding,operationId:scope.operationId,branchId:scope.branchId,action:'REFUND',payloadHash:hash};return{payload_json:raw,payload_hash:hash,proof_json:JSON.stringify({...proof,signature:sign(null,Buffer.from(financialOperationMessage(proof)),pair.privateKey).toString('base64url')})};};
+describe('local transaction no-op proof',()=>{
+ it('verifies exact original versions while allowing only rowVersion to differ',()=>{expect(verifyNoopCapture(capture(),scope,binding.projectOrigin,pair.publicKey).kind).toBe('NOOP');});
+ it.each(['totalAmount','paymentType','paymentsJson','discountAmount','isRefunded'])('rejects a financial change even with a genuine signature: %s',key=>{const value=payload();(value.changes[0].after as Record<string,unknown>)[key]=key==='isRefunded'?true:'changed';expect(()=>verifyNoopCapture(capture(value),scope,binding.projectOrigin,pair.publicKey)).toThrow();});
+ it.each(['branchId','shiftId','terminalId','operationId'])('rejects forged scope %s',key=>{expect(()=>verifyNoopCapture(capture(),{...scope,[key]:randomUUID()},binding.projectOrigin,pair.publicKey)).toThrow();});
+ it('rejects another project, key, or tampered raw bytes',()=>{expect(()=>verifyNoopCapture(capture(),scope,'https://other.test',pair.publicKey)).toThrow();expect(()=>verifyNoopCapture(capture(),scope,binding.projectOrigin,generateKeyPairSync('ed25519').publicKey)).toThrow();const row=capture();row.payload_json+=' ';expect(()=>verifyNoopCapture(row,scope,binding.projectOrigin,pair.publicKey)).toThrow();});
+ it('rejects edited actor/signature attribution',()=>{const row=capture(),proof=JSON.parse(row.proof_json);proof.authorId=randomUUID();row.proof_json=JSON.stringify(proof);expect(()=>verifyNoopCapture(row,scope,binding.projectOrigin,pair.publicKey)).toThrow();});
+ it('cannot be an empty/freeform bypass for an unknown journal',()=>{expect(()=>validateNoopPayload({...payload(),changes:[]},scope)).toThrow();const value=payload();value.changes.push(value.changes[0]);expect(()=>validateNoopPayload(value,scope)).toThrow();expect(()=>validateNoopPayload({...payload(),verified:true},scope)).toThrow();});
+});

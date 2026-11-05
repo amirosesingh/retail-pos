@@ -1,7 +1,7 @@
 {
   "version": 1,
   "source": "supabase/schema.sql",
-  "generatedAt": "2026-10-23T23:33:17.228Z",
+  "generatedAt": "2026-10-26T23:17:35.708Z",
   "tables": [
     {
       "cloudTable": "coupon_campaigns",
@@ -4792,6 +4792,19 @@
           "uniqueGroup": null
         },
         {
+          "cloudColumn": "contact_email",
+          "sqlServerColumn": "contact_email",
+          "cloudType": "text",
+          "sqlServerType": "nvarchar(max)",
+          "nullable": true,
+          "defaultRule": null,
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
+        },
+        {
           "cloudColumn": "address",
           "sqlServerColumn": "address",
           "cloudType": "text",
@@ -6796,7 +6809,7 @@
           "cloudType": "boolean",
           "sqlServerType": "bit",
           "nullable": false,
-          "defaultRule": "1",
+          "defaultRule": "0",
           "primaryKey": false,
           "foreignKey": false,
           "foreignKeyTarget": null,
@@ -6995,6 +7008,19 @@
           "sqlServerType": "nvarchar(max)",
           "nullable": true,
           "defaultRule": null,
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
+        },
+        {
+          "cloudColumn": "catalogue_store_ids",
+          "sqlServerColumn": "catalogue_store_ids",
+          "cloudType": "text[]",
+          "sqlServerType": "nvarchar(max)",
+          "nullable": false,
+          "defaultRule": "N'[]'",
           "primaryKey": false,
           "foreignKey": false,
           "foreignKeyTarget": null,
@@ -12625,6 +12651,19 @@
           "uniqueGroup": null
         },
         {
+          "cloudColumn": "allow_branch_shift_sharing",
+          "sqlServerColumn": "allow_branch_shift_sharing",
+          "cloudType": "boolean",
+          "sqlServerType": "bit",
+          "nullable": true,
+          "defaultRule": null,
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
+        },
+        {
           "cloudColumn": "enable_cashier_x_report",
           "sqlServerColumn": "enable_cashier_x_report",
           "cloudType": "boolean",
@@ -14929,7 +14968,8 @@
             "column": "id"
           },
           "unique": true,
-          "uniqueGroup": "UQ_shift_cash_counts_0"
+          "uniqueGroup": "UQ_shift_cash_counts_0",
+          "uniqueFilter": "[kind]=N'ORIGINAL'"
         },
         {
           "cloudColumn": "store_id",

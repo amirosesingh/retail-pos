@@ -19,7 +19,9 @@ import { platformName } from "@/platform-config/platform";
 import { localDb } from "@/core/local-db/local-db";
 import { hasStaffSession } from "@/core/api/sync-relay";
 import { activeBranchId } from "./active-branch";
+import { unconfirmedShiftClosureActivity } from "../../electron/shift-closure-activity.mjs";
 import { activityAudienceIdentity, activityVisibleTo } from "./activity-audience";
+import { notificationAcknowledgedBy } from "./notification-visibility";
 import {
   ACTIVITY_SOURCE_BATCH_SIZE,
   ACTIVITY_WINDOW_ERROR,
@@ -69,7 +71,7 @@ export type ActivityEvent = {
 
 /** Every event the till can raise, grouped for the settings matrix. */
 export const EVENT_CATALOG: { group: string; types: { type: string; label: string }[] }[] = [
-  { group: "Approvals", types: [{ type: "soft_token_approval", label: "Soft token used to approve an action" }] },
+  { group: "Approvals", types: [{ type: "soft_token_approval", label: "Soft token used — owner and administrators" }] },
   {
     group: "Sign in & security",
     types: [
@@ -164,7 +166,7 @@ async function send(entry: Queued): Promise<boolean> {
     // travels with every one. Before sign-in the event simply waits in the
     // local queue and is flushed once there is a session.
     const credentials = await readCredentials();
-    const res = await pushActivityEvent({ data: { ...entry, ...credentials } });
+    const res = await pushActivityEvent({ data: { ...unconfirmedShiftClosureActivity(entry), ...credentials } });
     return res.ok;
   } catch {
     return false;
@@ -217,7 +219,7 @@ export async function flushActivityQueue(): Promise<void> {
 /** Raise an event. Never throws; callers may await durable storage when required. */
 export async function recordActivity(input: ActivityEventInput): Promise<void> {
   const entry: Queued = {
-    ...input,
+    ...unconfirmedShiftClosureActivity(input),
     severity: input.severity ?? "info",
     clientEventId: isBrowser() && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}`,
     createdAt: new Date().toISOString(),
@@ -465,7 +467,7 @@ async function listLocalActivityEventPage(filter: ActivityFilter): Promise<Activ
             ? row.storeId
             : row.title;
   const direction = (filter.sortDirection ?? "desc") === "asc" ? 1 : -1;
-  rows.sort((left, right) => value(left).localeCompare(value(right)) * direction);
+  rows.sort((left, right) => value(left).localeCompare(value(right)) * direction || left.id.localeCompare(right.id));
   const total = rows.length;
   const offset = Math.max(0, filter.offset ?? 0);
   const limit = Math.max(1, Math.min(2000, filter.limit ?? 100));
@@ -492,11 +494,13 @@ const looksMissing = (error: unknown) => {
 };
 
 /** Newest first. Returns [] when the caller is not an admin or supervisor. */
-export async function listActivityEvents(filter: ActivityFilter = {}): Promise<ActivityEvent[]> {
+export async function listActivityEvents(filter: ActivityFilter = {}, options: { requireSuccess?: boolean } = {}): Promise<ActivityEvent[]> {
+  let localReadError: unknown;
   if (localDb()?.query) {
     try {
       return (await listLocalActivityEventPage(filter)).rows;
-    } catch {
+    } catch (error) {
+      localReadError = error;
       // A broken local connection may still fall back to the hosted history.
     }
   }
@@ -506,13 +510,18 @@ export async function listActivityEvents(filter: ActivityFilter = {}): Promise<A
     // A registered terminal proves the device, not the person. The activity
     // feed requires a current staff/cashier identity, so an offline or signed-
     // out supervisor view must stay quiet instead of polling a guaranteed 401.
-    if (!credentials.sessionToken && !credentials.cashierToken && !credentials.accessToken)
+    if (!credentials.sessionToken && !credentials.cashierToken && !credentials.accessToken) {
+      if (options.requireSuccess && localReadError) throw localReadError;
       return [];
+    }
     // A Windows till must use the Supabase project restored from its DPAPI
     // vault. Never send this preference read to the separately configured web
     // backend, and never fall back to it when the staff Auth session is absent.
     if (platformName() === "electron") {
-      if (!credentials.accessToken) return [];
+      if (!credentials.accessToken) {
+        if (options.requireSuccess && localReadError) throw localReadError;
+        return [];
+      }
       return (await listActivityEventPageDirect(filter)).rows;
     }
     const response = await posFetch("/api/v1/pos/activity-preferences", {
@@ -524,14 +533,16 @@ export async function listActivityEvents(filter: ActivityFilter = {}): Promise<A
     if (!response.ok || !result.ok) {
       if (looksMissing({ message: result.error })) logMissing = true;
       if (localDb()?.query) return (await listLocalActivityEventPage(filter)).rows;
+      if (options.requireSuccess && !logMissing) throw new Error("Could not load notifications.");
       return [];
     }
     return (result.rows ?? []).map(map);
-  } catch {
-    if (localDb()?.query)
-      return listLocalActivityEventPage(filter)
-        .then((page) => page.rows)
-        .catch(() => []);
+  } catch (error) {
+    if (localDb()?.query) {
+      const fallback = listLocalActivityEventPage(filter).then((page) => page.rows);
+      return options.requireSuccess ? fallback : fallback.catch(() => []);
+    }
+    if (options.requireSuccess) throw error;
     return [];
   }
 }
@@ -552,8 +563,7 @@ export async function listActivityEventPage(
     const credentials = await readCredentials();
     if (!credentials.sessionToken && !credentials.cashierToken && !credentials.accessToken)
       return { rows: [], total: 0 };
-    if (platformName() === "electron") {
-      if (!credentials.accessToken) return { rows: [], total: 0 };
+    if (platformName() === "electron" && credentials.accessToken && activityAudienceIdentity()?.mayViewGeneralActivity) {
       return await listActivityEventPageDirect(filter);
     }
     const response = await posFetch("/api/v1/pos/activity-preferences", {
@@ -665,11 +675,10 @@ export function toCsv(rows: ActivityEvent[]): string {
 /* ------------------------------------------------------- cleared entries */
 
 /**
- * Clearing an entry acknowledges it for every recipient. The event, the
- * approval request and the authorisation log remain unchanged. Clears are
- * persisted before the shared delivery cache hides the notification.
+ * Clearing acknowledges an alert only for the verified person. Approval and
+ * activity history remain unchanged. Never reuse the old shared clear cache.
  */
-const CLEARED_KEY = "pos.activity.cleared";
+const CLEARED_KEY = "pos.activity.cleared.personal.v2";
 
 type ClearedMap = Record<string, string[]>;
 
@@ -694,42 +703,52 @@ function writeClearedMap(map: ClearedMap) {
   window.dispatchEvent(new CustomEvent("pos:activity-cleared-changed"));
 }
 
-export const clearedIds = (userId: string): string[] => [...new Set([...(readClearedMap()["shared"] ?? []),...(readClearedMap()[who(userId)] ?? [])])];
+export const clearedIds = (userId: string): string[] => [...new Set(readClearedMap()[who(userId)] ?? [])];
+
+export function activityAcknowledgementIds(userId: string): string[] {
+  const identity = activityAudienceIdentity();
+  return identity?.userIds.some(id => id.toLowerCase() === userId.toLowerCase())
+    ? [...new Set([userId, ...identity.userIds])] : [userId];
+}
+
+export const activityAcknowledgedBy = (row: Pick<ActivityEvent, "clearedBy">, userId: string): boolean =>
+  notificationAcknowledgedBy(row, activityAcknowledgementIds(userId));
 
 /**
- * Dismissal is shared across recipients and synchronized devices. Approval records
- * and audit events remain durable.
+ * Merge only this person's acknowledgements from other devices. Another
+ * recipient's clear must never dismiss the current person's notification.
  */
-export function mergeRemoteActivityPreferences(_userId: string, rows: ActivityEvent[]) {
+export function mergeRemoteActivityPreferences(userId: string, rows: ActivityEvent[]) {
   const map = readClearedMap();
-  const previous = map["shared"] ?? [];
-  map["shared"] = [...new Set([...previous,...rows.filter(row => row.clearedBy.length > 0).map(row => row.id)])];
-  if (map["shared"].length === previous.length) return;
+  const key = who(userId);
+  const previous = map[key] ?? [];
+  map[key] = [...new Set([...previous,...rows.filter(row => activityAcknowledgedBy(row,userId)).map(row => row.id)])];
+  if (map[key].length === previous.length) return;
   writeClearedMap(map);
 }
 
 async function saveNotificationClear(userId: string, id: string): Promise<boolean> {
   if (!userId || !id) return false;
+  const identity = activityAudienceIdentity();
   try {
     const bridge = localDb();
     if (bridge?.query) {
       const result = await bridge.query("activity_events",{match:{id},limit:1});
       if (!result.ok || !result.rows?.[0]) return false;
       const row = result.rows[0] as Row;
-      const identity = activityAudienceIdentity();
+      if (activityAudienceIdentity() !== identity) return false;
       if (identity && !activityVisibleTo(row,identity)) return false;
-      const previous = map(row).clearedBy;
-      if (!previous.length) {
+      if (!activityAcknowledgedBy(map(row),userId)) {
         const {commitOps} = await import("@/core/api/pos-db");
         await commitOps("Clearing notification",[{kind:"update",table:"activity_events",match:{id},values:{cleared_by:JSON.stringify([userId])},requireMatch:true}]);
       }
       return true;
     }
     const credentials = await readCredentials();
-    if (platformName() === "electron") {
-      if (!credentials.accessToken) return false;
+    if (activityAudienceIdentity() !== identity) return false;
+    if (platformName() === "electron" && credentials.accessToken) {
       const result = await supabaseExternal.rpc("set_activity_event_cleared",{p_event_id:id,p_cleared:true});
-      return !result.error;
+      if (!result.error) return true;
     }
     const response = await posFetch("/api/v1/pos/activity-preferences",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"clear",eventId:id,cleared:true,...credentials})});
     const result = await response.json() as {ok?:boolean};
@@ -740,7 +759,7 @@ async function saveNotificationClear(userId: string, id: string): Promise<boolea
 export async function clearActivityEntry(userId: string, id: string): Promise<boolean> {
   if (!await saveNotificationClear(userId,id)) return false;
   const map = readClearedMap();
-  const key = "shared";
+  const key = who(userId);
   const list = map[key] ?? [];
   if (!list.includes(id)) map[key] = [...list, id];
   writeClearedMap(map);
@@ -748,7 +767,7 @@ export async function clearActivityEntry(userId: string, id: string): Promise<bo
 }
 
 export async function reopenActivityEntry(userId: string, id: string): Promise<boolean> {
-  if ((readClearedMap()["shared"] ?? []).includes(id)) return false;
+  if (clearedIds(userId).includes(id)) return false;
   const map = readClearedMap();
   const key = who(userId);
   map[key] = (map[key] ?? []).filter((x) => x !== id);
@@ -765,16 +784,17 @@ export async function clearAllActivityEntries(
   const bridge = localDb();
   if (bridge?.query && ids.length) {
     if (!userId) return false;
+    const identity = activityAudienceIdentity();
     try {
       const result = await bridge.query("activity_events",{in:{column:"id",values:ids},limit:ids.length});
       if (!result.ok || result.rows?.length !== ids.length) return false;
-      const identity = activityAudienceIdentity();
+      if (activityAudienceIdentity() !== identity) return false;
       if (identity && result.rows.some(row => !activityVisibleTo(row as Row,identity))) return false;
       const {commitOps} = await import("@/core/api/pos-db");
-      const rows = result.rows.filter(row => !map(row as Row).clearedBy.length);
+      const rows = result.rows.filter(row => !activityAcknowledgedBy(map(row as Row),userId));
       if (rows.length) await commitOps("Clearing notifications",rows.map(row => ({kind:"update" as const,table:"activity_events",match:{id:row.id},values:{cleared_by:JSON.stringify([userId])},requireMatch:true})));
       const cleared = readClearedMap();
-      cleared["shared"] = [...new Set([...(cleared["shared"] ?? []),...ids])];
+      cleared[who(userId)] = [...new Set([...(cleared[who(userId)] ?? []),...ids])];
       writeClearedMap(cleared);
       return true;
     } catch { return false; }

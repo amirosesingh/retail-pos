@@ -1,3 +1,4 @@
+import { formatTime as systemTime } from "@/lib/time-zone";
 /**
  * The one status indicator for the whole app (web, desktop till and Android).
  *
@@ -40,7 +41,7 @@ export function CloudStateIcon({ tone, className }: { tone: StatusTone; classNam
   );
 }
 
-const time = (value: string | null) => (value ? new Date(value).toLocaleTimeString() : "—");
+const time = (value: string | null) => (value ? systemTime(value) : "—");
 
 /** Start-up / full-screen version: just the cloud, nothing else. */
 export function ConnectingCloud({ className }: { className?: string }) {

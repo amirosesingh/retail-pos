@@ -1,3 +1,4 @@
+import { formatMoney } from "./currency";
 import { logger } from "./audit-log";
 import { sendWhatsAppBill } from "./whatsapp-client";
 import { listQueuedMessages, queueMessage, resolveMessage } from "./whatsapp-queue";
@@ -15,8 +16,7 @@ import {
   type WhatsAppSettings,
 } from "@/core/types/pos-types";
 
-const cash = (n: number) =>
-  n.toLocaleString(undefined, { style: "currency", currency: "USD" });
+const cash = formatMoney;
 
 /** Strip formatting and apply the default dialling code to local numbers. */
 export function normalizeWhatsAppNumber(raw: string, countryCode: string) {

@@ -260,13 +260,14 @@ export const listTerminalStaffAccounts = createServerFn({ method: "POST" })
       .object({
         storeId: z.string().max(60).nullable().optional(),
         terminalToken: z.string().min(10).max(200),
+        deviceBindingProof: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
       })
       .parse(data),
   )
   .handler(async ({ data }) => {
     try {
       const { verifyRelayCaller } = await import("@/core/api/pos-relay.server");
-      const caller = await verifyRelayCaller({ terminalToken: data.terminalToken });
+      const caller = await verifyRelayCaller({ terminalToken: data.terminalToken, deviceBindingProof:data.deviceBindingProof });
       if (caller.kind !== "terminal" || !caller.terminalId)
         return { ok: false as const, error: "An active terminal is required", staff: [] };
       if (data.storeId && caller.storeId && data.storeId !== caller.storeId)

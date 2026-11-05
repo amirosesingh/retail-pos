@@ -65,7 +65,7 @@ function ElementsForm() {
         {TOGGLES.map((t) => (
           <div
             key={t.key}
-            className="flex items-center justify-between rounded-md border border-border px-3 py-2"
+            className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-3 py-3"
           >
             <span className="text-sm">{t.label}</span>
             <Switch

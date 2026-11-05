@@ -164,6 +164,8 @@ const tables = report.tables.map((table, tableIndex) => ({
           : null,
       unique,
       uniqueGroup: uniqueGroup >= 0 ? `UQ_${table.name}_${uniqueGroup}` : null,
+      ...(table.name === "shift_cash_counts" && column.name === "shift_id"
+        ? { uniqueFilter: "[kind]=N'ORIGINAL'" } : {}),
     };
   }),
 }));
@@ -267,7 +269,13 @@ END;`);
       );
     }
   }
-  for (const column of table.columns.filter((item) => item.unique)) {
+  if (table.cloudTable === "shift_cash_counts") {
+    // The portable report records the key but not PostgreSQL's partial-index
+    // predicate. Keep this one reviewed translation scoped to shift counts.
+    lines.push(fs.readFileSync(path.join(outputDir,"migrations","021_shift_count_original_uniqueness.sql"),"utf8")
+      .split("-- SHIFT34_HISTORY_BEGIN")[0]);
+  }
+  for (const column of table.columns.filter((item) => item.unique && !item.uniqueFilter)) {
     const filter = column.nullable ? ` WHERE [${column.sqlServerColumn}] IS NOT NULL` : "";
     lines.push(
       `IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.${table.sqlServerTable}') AND name=N'UX_${table.sqlServerTable}_${column.sqlServerColumn}') CREATE UNIQUE INDEX [UX_${table.sqlServerTable}_${column.sqlServerColumn}] ON dbo.[${table.sqlServerTable}]([${column.sqlServerColumn}])${filter};`,
@@ -406,6 +414,9 @@ lines.push(`IF OBJECT_ID(N'dbo.local_operation_receipts', N'U') IS NULL CREATE T
 // Include the additive counter definition in every schema repair, even if migration 18 is already recorded.
 lines.push(fs.readFileSync(path.join(outputDir,"migrations","018_sql_document_counters.sql"),"utf8")
   .split("IF NOT EXISTS (SELECT 1 FROM dbo.pos_schema_migrations")[0]);
+lines.push(fs.readFileSync(path.join(outputDir,"migrations","022_shift_causal_intents.sql"),"utf8").split("-- SHIFT36_HISTORY_BEGIN")[0]);
+lines.push(fs.readFileSync(path.join(outputDir,"migrations","023_shift_author_attestations.sql"),"utf8").split("-- AUTH37_HISTORY_BEGIN")[0]);
+lines.push(fs.readFileSync(path.join(outputDir,"migrations","024_shift_closing_start_proofs.sql"),"utf8").split("-- AUTH37_START_HISTORY_BEGIN")[0]);
 lines.push(`IF OBJECT_ID(N'dbo.pos_schema_migrations', N'U') IS NULL CREATE TABLE dbo.pos_schema_migrations (
  version int NOT NULL PRIMARY KEY, name nvarchar(200) NOT NULL, applied_at datetimeoffset(7) NOT NULL DEFAULT SYSDATETIMEOFFSET());
 IF NOT EXISTS(SELECT 1 FROM dbo.pos_schema_migrations WHERE version=1) INSERT dbo.pos_schema_migrations(version,name) VALUES(1,N'initial_sqlserver_parity');`);

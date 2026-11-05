@@ -13,6 +13,7 @@ const schema = z.object({
     cashierToken: z.string().max(2000).optional(),
     accessToken: z.string().max(4000).optional(),
     terminalToken: z.string().uuid().optional(),
+    deviceBindingProof:z.string().regex(/^[a-f0-9]{64}$/i).optional(),
     publicKey: z.string().min(300).max(6000).optional(),
     userId: z.string().min(1).max(160).optional(),
     credentialId: z.string().uuid().optional(),
@@ -29,11 +30,11 @@ export async function handleApprovalCredentials(request: Request) {
       action === "enroll"
         ? await enrollApprovalToken(data)
         : action === "status"
-          ? await approvalTokenStatus(z.string().uuid().parse(data.terminalToken), z.string().parse(data.userId), z.string().uuid().parse(data.credentialId))
+          ? await approvalTokenStatus(z.string().uuid().parse(data.terminalToken), z.string().parse(data.userId), z.string().uuid().parse(data.credentialId),data.deviceBindingProof)
         : action === "register_verifier"
           ? await registerApprovalVerifier(data, z.string().parse(data.publicKey))
           : action === "bundle"
-            ? await approvalVerifierBundle(data.terminalToken || "")
+            ? await approvalVerifierBundle(data.terminalToken || "",data.deviceBindingProof)
             : await manageApprovalMethods(
                 data,
                 z.string().parse(data.userId),

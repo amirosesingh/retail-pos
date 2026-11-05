@@ -1,3 +1,5 @@
+import { Link } from "@tanstack/react-router";
+import { SettingsEditDialog } from "@/platforms/web/components/pos/settings/SettingsEditDialog";
 import { HelpTip } from "@/components/ui/help-tip";
 /**
  * Booking rules.
@@ -12,11 +14,11 @@ import { Plus, Trash2 } from "lucide-react";
 import { SettingsFrame, useSettingsCtx } from "@/platforms/web/components/pos/settings/SettingsFrame";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DecimalSettingInput } from "@/components/ui/decimal-setting-input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
 import { usePos } from "@/lib/pos-store";
-import { bookingRulesOf, DEFAULT_SERVICE_TERMS, type BookingRules } from "@/core/types/pos-types";
+import { bookingRulesOf, type BookingRules } from "@/core/types/pos-types";
 
 export const Route = createFileRoute("/settings/booking-rules")({
   head: () => ({
@@ -43,6 +45,7 @@ export const Route = createFileRoute("/settings/booking-rules")({
     >
       <SettingsTabs current="/settings/booking-rules" />
 
+      <p className="text-sm text-muted-foreground">Select a rule to edit. <Link to="/settings/booking-slip" className="font-semibold text-primary underline underline-offset-4">Booking slips, tags &amp; wording</Link> are managed separately from sales receipts.</p>
       <BookingRulesForm />
     </SettingsFrame>
   ),
@@ -73,20 +76,18 @@ function Row({
 function Section({
   title,
   blurb,
+  summary,
   children,
 }: {
   title: string;
   blurb: string;
+  summary?: string;
   children: React.ReactNode;
 }) {
   return (
-    <section className="space-y-2">
-      <div>
-        <h2 className="text-sm font-semibold">{title}</h2>
-        <p className="text-xs text-muted-foreground">{blurb}</p>
-      </div>
+    <SettingsEditDialog title={title} description={blurb} summary={summary}>
       {children}
-    </section>
+    </SettingsEditDialog>
   );
 }
 
@@ -151,10 +152,11 @@ function BookingRulesForm() {
   const num = (v: string) => Math.max(0, Number(v) || 0);
 
   return (
-    <div className="space-y-6">
+    <div className="grid items-start gap-3 sm:grid-cols-2">
       <Section
         title="Deposits & payment"
-        blurb="What has to be collected before a job leaves the counter."
+        blurb="Deposit minimums and payment choices at booking and collection."
+        summary={`${rules.requireDeposit ? "Deposit required" : "Deposit optional"} · Minimum ${rules.depositMin}${rules.depositMode === "percent" ? "%" : " (flat)"}`}
       >
         <Row
           label="Require a deposit on every booking"
@@ -189,11 +191,11 @@ function BookingRulesForm() {
             <Label className="text-xs text-muted-foreground">
               Minimum {rules.depositMode === "percent" ? "(%)" : "(amount)"}
             </Label>
-            <Input
+            <DecimalSettingInput
               className="numeric text-right"
-              inputMode="decimal"
-              value={rules.depositMin || ""}
-              onChange={(e) => patch({ depositMin: num(e.target.value) })}
+              aria-label="Minimum booking deposit"
+              value={rules.depositMin}
+              onValueChange={(depositMin) => patch({ depositMin })}
               placeholder="0"
             />
           </div>
@@ -234,7 +236,7 @@ function BookingRulesForm() {
         </Row>
       </Section>
 
-      <Section title="Scheduling" blurb="How the ready-by date and time are proposed and policed.">
+      <Section title="Scheduling" blurb="Ready-by dates and uncollected bookings." summary={`${rules.defaultTurnaroundHours || 0}h turnaround · Ready-by ${rules.requirePromisedAt ? "required" : "optional"}`}>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1">
             <div className="flex items-center gap-1"><Label className="text-xs text-muted-foreground">Default turnaround (hours)</Label><HelpTip label="About Default turnaround (hours)" text="Pre-fills the ready-by box. 0 leaves it blank." /></div>
@@ -281,7 +283,8 @@ function BookingRulesForm() {
 
       <Section
         title="Racket / stringing jobs"
-        blurb="What a job card carries before it can be saved."
+        blurb="Job tags, tension defaults and suggested racket and string models."
+        summary={`Tags ${rules.autoJobTag ? "on" : "off"} · ${rules.defaultTensionMain} / ${rules.defaultTensionCross} ${rules.defaultTensionUnit}`}
       >
         <Row
           label="Generate a job tag automatically"
@@ -314,21 +317,19 @@ function BookingRulesForm() {
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Default mains</Label>
-            <Input
+            <DecimalSettingInput
               className="numeric text-right"
-              inputMode="decimal"
-              value={rules.defaultTensionMain || ""}
-              onChange={(e) => patch({ defaultTensionMain: num(e.target.value) })}
+              value={rules.defaultTensionMain}
+              onValueChange={(defaultTensionMain) => patch({ defaultTensionMain })}
               placeholder="26"
             />
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Default cross</Label>
-            <Input
+            <DecimalSettingInput
               className="numeric text-right"
-              inputMode="decimal"
-              value={rules.defaultTensionCross || ""}
-              onChange={(e) => patch({ defaultTensionCross: num(e.target.value) })}
+              value={rules.defaultTensionCross}
+              onValueChange={(defaultTensionCross) => patch({ defaultTensionCross })}
               placeholder="28"
             />
           </div>
@@ -366,13 +367,12 @@ function BookingRulesForm() {
         />
         <div className="space-y-1">
           <div className="flex items-center gap-1"><Label className="text-xs text-muted-foreground">Locked base labour fee</Label><HelpTip label="About Locked base labour fee" text="Pre-filled and read-only on the intake screen. Cashiers must override it to change it." /></div>
-          <Input
+          <DecimalSettingInput
             className="numeric text-right"
-            inputMode="decimal"
-            value={integrations.baseLaborFee || ""}
-            onChange={(e) =>
+            value={integrations.baseLaborFee}
+            onValueChange={(baseLaborFee) =>
               updateSettings({
-                integrations: { ...integrations, baseLaborFee: num(e.target.value) },
+                integrations: { ...integrations, baseLaborFee },
               })
             }
             placeholder="0.00"
@@ -382,7 +382,8 @@ function BookingRulesForm() {
 
       <Section
         title="Combo & overrides"
-        blurb="What happens when a racket and string are bought together, and who may unlock the labour fee."
+        blurb="Labour discounts when a racket and string are purchased together."
+        summary={rules.comboRule === "off" ? "Combo discount off" : rules.comboRule === "waive_labour" ? "Labour waived for combos" : `${rules.comboValue}${rules.comboRule === "percent" ? "%" : " flat"} off combo labour`}
       >
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1">
@@ -412,12 +413,11 @@ function BookingRulesForm() {
           </div>
           <div className="space-y-1">
             <div className="flex items-center gap-1"><Label className="text-xs text-muted-foreground">Combo discount value</Label><HelpTip label="About combo discount value" text="Applied to the labour line when a stock racket and a stock string are both on the job." /></div>
-            <Input
+            <DecimalSettingInput
               className="numeric text-right"
-              inputMode="decimal"
               disabled={rules.comboRule !== "percent" && rules.comboRule !== "amount"}
-              value={rules.comboValue || ""}
-              onChange={(e) => patch({ comboValue: num(e.target.value) })}
+              value={rules.comboValue}
+              onValueChange={(comboValue) => patch({ comboValue })}
               placeholder="0"
             />
           </div>
@@ -427,28 +427,10 @@ function BookingRulesForm() {
 
       <Section
         title="Service terms & high-tension liability"
-        blurb="Shown on the racket intake form and printed on job tags and settlement receipts."
+        blurb="Shown at racket intake and printed on job tags and settlement receipts."
+        summary={`Acceptance ${rules.requireLiabilityAccept ? "required" : "optional"} · Warning above ${rules.highTensionThreshold} ${rules.defaultTensionUnit}`}
       >
-        <div className="space-y-1">
-          <Label className="text-xs text-muted-foreground">
-            Service terms &amp; high-tension liability disclaimer
-          </Label>
-          <Textarea
-            rows={5}
-            value={rules.serviceTerms}
-            onChange={(e) => patch({ serviceTerms: e.target.value })}
-            placeholder={DEFAULT_SERVICE_TERMS}
-          />
-          <div className="flex justify-end">
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => patch({ serviceTerms: DEFAULT_SERVICE_TERMS })}
-            >
-              Restore default wording
-            </Button>
-          </div>
-        </div>
+        <p className="text-sm text-muted-foreground">Edit the printed liability wording in <Link to="/settings/booking-slip" className="font-semibold text-primary underline">Booking receipt settings → Service / liability terms</Link>.</p>
         <Row
           label="Require the liability agreement at intake"
           hint="A racket job cannot be saved until the customer has accepted the terms."
@@ -463,19 +445,16 @@ function BookingRulesForm() {
           <Label className="text-xs text-muted-foreground">
             High-tension warning above ({rules.defaultTensionUnit})
           </Label>
-          <Input
+          <DecimalSettingInput
             className="numeric text-right"
-            inputMode="decimal"
-            value={rules.highTensionThreshold || ""}
-            onChange={(e) => patch({ highTensionThreshold: num(e.target.value) })}
+            value={rules.highTensionThreshold}
+            onValueChange={(highTensionThreshold) => patch({ highTensionThreshold })}
             placeholder="26"
           />
         </div>
       </Section>
 
-      <Section title="Control" blurb="Who may undo or re-spec a booking once it exists.">
-        <p className="text-sm text-muted-foreground">Assign Cancel/delete booking, Collect bookings, and Booking management permissions to each user in Staff &amp; Permissions. Role titles do not grant these actions.</p>
-      </Section>
+
     </div>
   );
 }

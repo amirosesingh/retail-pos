@@ -25,6 +25,7 @@ export type SalesReportFilters = {
 export const SalesReportContext = createContext<
   | (SalesReportFilters & {
       history: ReturnType<typeof useReportSales>;
+      reportStoreIds: string[];
       exportAction?: RefObject<(() => void) | undefined>;
     })
   | null

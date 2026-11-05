@@ -1,19 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { orders, ranges, nullFilters, auth, counts, page, dateBounds } = vi.hoisted(() => ({
+const { orders, ranges, nullFilters, auth, counts, page, dateBounds, projections } = vi.hoisted(() => ({
+  projections: [] as string[],
   dateBounds: [] as [string, string, string][],
   orders: [] as string[],
   ranges: [] as [number, number][],
   nullFilters: [] as string[],
   auth: { present: true, restored: true },
   counts: [] as (string | undefined)[],
-  page: vi.fn<(from: number, to: number) => Promise<{ data: Record<string, unknown>[]; error: { message: string; code?: string } | null; count?: number }>>(),
+  page: vi.fn<(from: number, to: number) => Promise<{ data: Record<string, unknown>[] | null; error: { message: string; code?: string } | null; count?: number }>>(),
 }));
 
 vi.mock("@/integrations/supabase/external-client", () => {
   const client = {
     from: () => ({
       select: (_columns: string, options?: { count?: string }) => {
+        projections.push(_columns);
         counts.push(options?.count);
         const query = {
           eq: () => query,
@@ -63,6 +65,7 @@ import { __resetSessionEpoch, bumpSessionEpoch } from "../session-epoch";
 describe("routed query ordering", () => {
   beforeEach(() => {
     dateBounds.splice(0);
+    projections.splice(0);
     orders.splice(0);
     ranges.splice(0);
     nullFilters.splice(0);
@@ -77,6 +80,18 @@ describe("routed query ordering", () => {
     await routedQuery("sales", { match: { store_id: "branch-a" }, dateRange: { column: "created_at", from: "2026-01-01T00:00:00Z", to: "2026-01-31T23:59:59Z" }, limit: 500 });
     expect(dateBounds).toEqual([["gte", "created_at", "2026-01-01T00:00:00Z"], ["lte", "created_at", "2026-01-31T23:59:59Z"]]);
     expect(ranges).toEqual([[0, 499]]);
+  });
+  it("keeps old backend catalogue reads working when only the new provenance column is unavailable", async () => {
+    page.mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column products.catalogue_store_ids does not exist" } })
+      .mockResolvedValueOnce({ data: [{ id: "p", owner_store_id: "a" }], error: null });
+    expect(await routedQuery("products", { columns: "id,owner_store_id,catalogue_store_ids", match: { owner_store_id: "a" }, limit: 50 })).toEqual([{ id: "p", owner_store_id: "a" }]);
+    expect(projections).toEqual(["id,owner_store_id,catalogue_store_ids", "id,owner_store_id"]);
+    expect(ranges).toEqual([[0, 49], [0, 49]]);
+  });
+  it("does not downgrade a denied product read merely because its error names the provenance column", async () => {
+    page.mockResolvedValue({ data: null, error: { code: "42501", message: "permission denied for column catalogue_store_ids" } });
+    await expect(routedQuery("products", { columns: "id,catalogue_store_ids", limit: 50 })).rejects.toThrow("permission denied");
+    expect(page).toHaveBeenCalledOnce();
   });
 
   it("does not count bounded reads and counts an uncapped table only once", async () => {

@@ -45,6 +45,35 @@ test('canonical installer matches the current generated schema and every migrati
   assert.match(sections.schema,/\[is_verified\] bit/);
 });
 
+test('new-product publication default quotes dynamic DDL before EXEC',()=>{
+  const migration=installerSections().migrations.find(m=>m.version===20);
+  assert.ok(migration);
+  const sql=migration.sql;
+  // SQL Server EXEC accepts a string/variable concatenation, not a function
+  // call within that concatenation. Evaluate QUOTENAME before executing DDL.
+  assert.match(sql,/DECLARE @commerceDropSql nvarchar\(max\)/);
+  assert.match(sql,/SET @commerceDropSql=N'ALTER TABLE dbo\.products DROP CONSTRAINT '\+QUOTENAME\(@commerceDefault\)/);
+  assert.match(sql,/EXEC\(@commerceDropSql\)/);
+  assert.doesNotMatch(sql,/EXEC\([^;]*QUOTENAME\(/);
+  assert.match(sql,/DEFAULT \(0\) FOR ecom_visible/);
+  assert.ok(sql.indexOf('INSERT dbo.pos_schema_migrations')>sql.indexOf('DEFAULT (0)'));
+  assert.doesNotMatch(sql,/\b(?:UPDATE|DELETE|TRUNCATE)\s+(?:TABLE\s+)?dbo\.products\b/i);
+});
+
+test('ORIGINAL-only count uniqueness ships the exact guarded upgrade and required version',()=>{
+  const sections=installerSections();
+  const repair=sections.migrations.find(m=>m.version===21);
+  assert.ok(repair,'installed databases require the additive version 21 upgrade');
+  const source=readFileSync('database/sqlserver/migrations/021_shift_count_original_uniqueness.sql','utf8').replaceAll('\r\n','\n').trim();
+  assert.equal(repair.sql.replaceAll('\r\n','\n'),source);
+  assert.ok(sections.schema.replaceAll('\r\n','\n').includes(source.split('-- SHIFT34_HISTORY_BEGIN')[0]));
+  assert.match(sections.validation,/WHERE version = 21/);
+  assert.match(source,/WITH \(TABLOCKX,HOLDLOCK\)/);
+  assert.ok(source.indexOf('Unexpected named shift count index')<source.indexOf('DROP INDEX'));
+  assert.match(source,/WHERE \[kind\]=N'ORIGINAL'/);
+  assert.doesNotMatch(source,/\b(?:UPDATE|DELETE|TRUNCATE)\s+(?:FROM\s+)?dbo\./i);
+});
+
 test('purchase order width repair guards data before rebuilding scoped indexes',()=>{
   const sections=installerSections();
   const repair=sections.migrations.find(m=>m.version===14);
