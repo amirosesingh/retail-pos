@@ -182,6 +182,7 @@ class AggregateRepository {
         const operationAffected = await this.operationsRepository.applyOperation(transaction, operation, {
           branchId: aggregate.branchId,
           terminalId: aggregate.terminalId,
+          managementDevice: aggregate.managementDevice === true,
           permissions: aggregate.permissions,
           productWriteKind: aggregate.productWriteKind,
           financialStockDeltas: aggregate.financialStockDeltas,
@@ -233,7 +234,7 @@ class AggregateRepository {
       return { ok: true, operationId, replayed: false, affected };
     } catch (error) {
       await Promise.resolve(transaction.rollback()).catch(() => undefined);
-      if (["EIDEMPOTENCY", "EBRANCH", "EBRANCH_SCOPE", "SYNC_BRANCH_FORBIDDEN", "EEXCHANGE_STATE", "EPRODUCT_STATE", "PERMISSION_DENIED"].includes(error?.code))
+      if (["EIDEMPOTENCY", "EBRANCH", "EBRANCH_SCOPE", "SYNC_BRANCH_FORBIDDEN", "EEXCHANGE_STATE", "EPRODUCT_STATE", "PERMISSION_DENIED", "ESHIFT_TERMINAL"].includes(error?.code))
         throw error;
       const target = tableName ? ` while writing ${tableName}` : "";
       const native = error?.originalError?.info ?? error?.originalError ?? error;

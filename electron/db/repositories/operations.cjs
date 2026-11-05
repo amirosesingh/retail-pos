@@ -363,11 +363,31 @@ class OperationsRepository {
         throw Object.assign(new Error("Shift closing must use the protected cash-count workflow."), { code: "PERMISSION_DENIED" });
       if (!Number.isFinite(Number(row.opening_float)) || Number(row.opening_float) < 0)
         throw Object.assign(new Error("Opening float must be a finite non-negative amount."), { code: "ESHIFT_INPUT" });
+      const { readShiftRules } = require('../shift-sharing.cjs');
+      const rules = await readShiftRules(this.connectionManager, transaction, scope.branchId);
+      const sharing = rules.sharing || scope.managementDevice === true;
+      if (!sharing && (!scope.terminalId || String(row.terminal_id).toLowerCase() !== String(scope.terminalId).toLowerCase()))
+        throw Object.assign(new Error('A shift must be opened for this registered till.'), { code: 'ESHIFT_TERMINAL' });
       const current = await new (this.connectionManager.sql().Request)(transaction)
         .input("branch", scope.branchId)
-        .query("SELECT id FROM dbo.shifts WITH (UPDLOCK,HOLDLOCK) WHERE store_id=@branch AND closed_at IS NULL AND status=N'OPEN';");
+        .input('terminal', scope.terminalId ?? null)
+        .input('sharing', sharing)
+        .query("SELECT id FROM dbo.shifts WITH (UPDLOCK,HOLDLOCK) WHERE store_id=@branch AND closed_at IS NULL AND status=N'OPEN' AND (@sharing=1 OR terminal_id=@terminal);");
       if (current.recordset?.length)
         throw Object.assign(new Error("A shift is already open for this branch. Refresh the shift status to continue it."), { code: "ESHIFT_OPEN" });
+    }
+  }
+  async assertCheckoutShift(transaction, op, scope = {}) {
+    if (op.table !== 'sales' || scope.enforcePermissions !== true || scope.managementDevice === true || !['insert', 'upsert'].includes(op.kind)) return;
+    const { readShiftRules, requireOwnShift } = require('../shift-sharing.cjs');
+    const rules = await readShiftRules(this.connectionManager, transaction, scope.branchId);
+    if (rules.sharing) return;
+    for (const row of writeRows(op)) {
+      const result = await new (this.connectionManager.sql().Request)(transaction)
+        .input('sale', row.id).input('shift', row.shift_id ?? null).input('branch', scope.branchId)
+        .query("IF EXISTS(SELECT 1 FROM dbo.sales WITH(UPDLOCK,HOLDLOCK) WHERE id=TRY_CONVERT(uniqueidentifier,@sale)) SELECT CAST(1 AS bit) already_saved; ELSE SELECT terminal_id FROM dbo.shifts WITH(UPDLOCK,HOLDLOCK) WHERE id=TRY_CONVERT(uniqueidentifier,@shift) AND store_id=@branch;");
+      if (result.recordset?.[0]?.already_saved) continue;
+      requireOwnShift(result.recordset?.[0], scope.terminalId, false);
     }
   }
   async assertLegacyExchange(transaction, op, scope = {}) {
@@ -459,6 +479,7 @@ class OperationsRepository {
     await this.assertProductPermissions(transaction, op, scope);
     await this.assertSettingsPermissions(transaction, op, scope);
     await this.assertShiftOpening(transaction, op, scope);
+    await this.assertCheckoutShift(transaction, op, scope);
     const { branchId, terminalId } = scope;
     await this.assertMemberPermissions(transaction, op, scope);
     const table = this.tables.get(op.table);

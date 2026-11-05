@@ -7908,6 +7908,7 @@ IF OBJECT_ID(N'dbo.pos_store_settings', N'U') IS NULL BEGIN CREATE TABLE dbo.[po
   [max_drawer_cash_limit] decimal(38,12) NULL,
   [require_reason_for_payout] bit NULL,
   [allow_multiple_shifts_per_terminal] bit NULL,
+  [allow_branch_shift_sharing] bit NULL,
   [enable_cashier_x_report] bit NULL,
   [show_opening_float_at_close] bit NULL,
   [show_expected_totals_at_close] bit NULL,
@@ -7980,6 +7981,8 @@ IF COL_LENGTH(N'dbo.pos_store_settings', N'max_drawer_cash_limit') IS NULL ALTER
 IF COL_LENGTH(N'dbo.pos_store_settings', N'require_reason_for_payout') IS NULL ALTER TABLE dbo.[pos_store_settings] ADD [require_reason_for_payout] bit NULL;
 
 IF COL_LENGTH(N'dbo.pos_store_settings', N'allow_multiple_shifts_per_terminal') IS NULL ALTER TABLE dbo.[pos_store_settings] ADD [allow_multiple_shifts_per_terminal] bit NULL;
+
+IF COL_LENGTH(N'dbo.pos_store_settings', N'allow_branch_shift_sharing') IS NULL ALTER TABLE dbo.[pos_store_settings] ADD [allow_branch_shift_sharing] bit NULL;
 
 IF COL_LENGTH(N'dbo.pos_store_settings', N'enable_cashier_x_report') IS NULL ALTER TABLE dbo.[pos_store_settings] ADD [enable_cashier_x_report] bit NULL;
 

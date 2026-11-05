@@ -4945,3 +4945,43 @@ Exact generated cloud/local hashes remain unchanged and generatorcheck passes.
 Independent staged-file review found no accidental profile/key/credential files;
 private.tmp/buildoutputs excluded. Commit/push and exact-head CI remain separate
 from these local results. No live database application or production promotion.
+## SHIFT63 — Operational Rules sharing control approved, 5 November
+
+Owner explicitly approved preparation and implementation of a separate sharing control. Preserve current behaviour by default: sharing ON. OFF limits normal registered tills' operating checkout shifts to their own terminal; multiple cashiers on one PC and authorized management reporting/corrections remain supported. Do not confuse this with allow_multiple_shifts_per_terminal. Independent branch codex/shift-sharing-rules-beta starts current beta68470185 in work/shift-sharing-rules-beta, not the unfinished FIN62 branch. Exact cloud/local schema changes remain unapplied and require final review. Scope: canonical scoped setting/save/reload/inheritance/cache, old-schema capability compatibility, trusted normal-terminal online/offline enforcement including direct APIs, and regression tests. Do not silently change existing rule values, widen management grants or show an unenforced checkbox. Old clients/unknown offline policy and pending sales require explicit rollout safeguards. No application code changed in this worktree yet; FIN62 remains first priority.
+
+SHIFT63 implementation checkpoint: separate branch now has default-ON nullable canonical setting, guarded frontend operating selection, verified-server/native SQL enforcement, source/migration/canonical parity and prepared local027 additive upgrade. Fifteen actual disposable PostgreSQL +fifteen PGlite policy groups and ten actual owned LocalDB aggregate/upgrade groups passed; twenty focused unit/relay cases passed. First full run5100passed/3failed: newcanonical migration-list registration fixed; unchangedworkerd/reset andrailtimeout passed serialrerun49cases. Final bounded-parallel fullsuite running; no commit until finalchecks/rootreview. PhysicalUI credential checks notperformed. See docs/database/shift-branch-sharing-upgrade.md for exactobjects, FIN62 outeradapter/historicalcontext dependency and oldbinary/OFF rollout limits. No live database, operator setting, production or publication change.
+
+SHIFT63 reviewed checkpoint: prepared20261105090100 followsFIN62financial090000. Root/independentreview corrected unknownUIdefault(ON), malformedbranch-bearingManagement label(Maincanonicalhelper), completepeercohort/cutovergate, realnativeAPIhistoricalbypass, oldclientABSENTcolumnpreservation, all3sourceanchors, metadatafingerprints/ACL/trigger/columnshape, and callerTransaction safety. ActualPG22+PGlite22, actualLocalDB11, MainIPC/policy/relay/canonicalfocused52pass; TypeScript/scopedlint/diffpass. Fullcheckpoint5107pass/7skip; finalsmallSQL/Mainrefinements targetedpassed, exactheadCIstillrequired. Root/productionreview freshnativeforeignsale denied/rolledback, ownsaleaccepted, preacceptedcross-till receiptACKonce. No actualUIcredential/phonecheckclaim. Codeprepareddraftintegration; local027requiredbeforethisinstaller, OFFrequirescurrentclient+alllocalmetadataverifiedcohort/oldqueue review. Unknownlegacy cross-tillpendingheld, neverdropped/relabelled. No liveDBapply, actualcohortapproval, featureactivation, productionpromotion orpublication. SQLhashes in docs/database/shift-branch-sharing-upgrade.md supersedeearliercandidatehashes. Commit/pushdraftonlyauthorizedafterfinalreview; do notmergebeforerootcombinedchecks.
+
+## 5 November — reviewed FIN62/SHIFT63 integration checkpoint
+
+Owner requires PR391 and PR392 integrated into beta before production release.
+PR391 now includes the financial implementation and isolated CI fixture repairs;
+its current head is f9bb227a. PR392 includes its notification fixture dependency
+repair91599685. The local feature dependency merge preserves both sets of guards:
+sharing admission runs first, with FIN fallback only for exact old-schema absence.
+Installed rule/admission failures never fall back. Main retains trusted terminal
+classification, financial runtime and offline authorization. Four textual
+conflicts were resolved using the independently reviewed rehearsal; no repository
+replacement, live database or actual beta/main merge occurs in this checkpoint.
+
+Combined rehearsal:5614 tests passed/7 skipped; TypeScript passed. Independent
+native83 units, actual financial11, local sharing11 and PostgreSQL sharing22
+scenarios passed. Both exact committed cloud artifacts pass seven composition
+scenarios with real49/24 readiness, permissions, native own/foreign/replay and
+Management/missed-bill compatibility. Portable and native composition tests are
+now retained in source and CI, not only a private diagnostic scratch file.
+Ten additional standalone CI commands and23 legacy Main closure scenarios passed.
+Exact database hashes are unchanged; all upgrades/rollout remain unapplied.
+
+Remaining gates: exact updated-head CI, beta integration/deployment acceptance,
+exact database target/file approval and compatible local/cohort rollout, then
+specific PR354 production approval. Separate owner-approved iOS metadata PR393
+sets1.4.81/build5 and preserves signing keys. Membership remains ON HOLD;
+booking-deposit attribution and held359 repair stay separately tracked.
+
+PR391 final headf9bb227a passed all required CI and merged to beta as
+b19d6bdfca0e6eeb3cc0e58cd70460ff7d933b66 on5November. This is source
+integration only: exact cloud/local application and scoped rollout remain
+unapproved. PR392's feature dependency merge is being committed for fresh CI;
+production/main and installer publication remain untouched.

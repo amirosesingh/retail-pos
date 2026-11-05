@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RelayScope } from '@/core/api/relay-policy.server';
-const mocks = vi.hoisted(() => ({ fetch: vi.fn(), ready: vi.fn() }));
+const mocks = vi.hoisted(() => ({ fetch: vi.fn(), ready: vi.fn(), sequence: 0 }));
 vi.stubGlobal('fetch', mocks.fetch);
 vi.mock('@/lib/financial-live-readiness.server', () => ({ financialLiveAdapterReady: mocks.ready }));
 vi.mock('@/lib/external-supabase-config', () => ({
-  supabaseConfig: () => ({ url: 'https://example.test', key: 'k' }),
+  supabaseConfig: () => ({ url: `https://financial-fixture-${mocks.sequence}.test`, key: 'k' }),
   runtimeEnvValue: () => 'service-key',
 }));
 import { runRelayRpc } from '@/core/api/pos-relay.server';
@@ -15,22 +15,22 @@ const scope: RelayScope = {
 };
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
 const refund = { kind: 'rpc' as const, table: 'sales', fn: 'sale_refund', args: { _sale_id: 'sale-1', _client_refund_id: 'retry-1', _lines: null } };
-beforeEach(() => { mocks.fetch.mockReset(); mocks.ready.mockReset().mockResolvedValue(true); });
+beforeEach(() => { mocks.sequence++; mocks.fetch.mockReset(); mocks.ready.mockReset().mockResolvedValue(true); });
 
 describe('financial live relay admission', () => {
   it('preserves legacy optional array defaults in the complete named RPC body', async () => {
-    mocks.fetch.mockResolvedValueOnce(json({}));
+    mocks.fetch.mockResolvedValueOnce(json({ code: 'PGRST202', message: 'Could not find pos_checkout_sale_for_terminal' }, 404)).mockResolvedValueOnce(json({}));
     const sale = { kind: 'rpc' as const, table: 'sales', fn: 'pos_sale_commit', args: { _sale: { store_id: 'STORE-A' } } };
     expect((await runRelayRpc(sale, { ...scope, permissions: { can_process_sale: true } })).ok).toBe(true);
-    const body = JSON.parse(mocks.fetch.mock.calls[0][1].body);
+    const body = JSON.parse(mocks.fetch.mock.calls.at(-1)![1].body);
     expect(Object.keys(body)).toHaveLength(9);
     expect(body).toMatchObject({ p_items: [], p_payments: [], p_movements: [], p_member: null, p_exchange_bill: null });
   });
   it('uses the financial sale adapter only after the existing sale and branch guards', async () => {
-    mocks.fetch.mockResolvedValueOnce(json({}));
+    mocks.fetch.mockResolvedValueOnce(json({ code: 'PGRST202', message: 'Could not find pos_checkout_sale_for_terminal' }, 404)).mockResolvedValueOnce(json({}));
     const sale = { kind: 'rpc' as const, table: 'sales', fn: 'pos_sale_commit', args: { _sale: { id: 'sale-1', store_id: 'STORE-A' }, _items: [], _payments: [], _movements: [] } };
     expect((await runRelayRpc(sale, { ...scope, permissions: { can_process_sale: true } })).ok).toBe(true);
-    const [url, init] = mocks.fetch.mock.calls[0];
+    const [url, init] = mocks.fetch.mock.calls.at(-1)!;
     expect(url).toContain('/rpc/pos_live_financial_sale');
     expect(JSON.parse(init.body)).toEqual({ p_author: scope.appUserId, p_branch: 'STORE-A', p_terminal: 'TILL-A', p_sale: sale.args._sale, p_items: [], p_payments: [], p_movements: [], p_member: null, p_exchange_bill: null });
   });

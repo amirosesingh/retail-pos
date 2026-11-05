@@ -1,4 +1,5 @@
 import { productReadColumns, canUseEcommerceDevice } from "@/lib/ecommerce-device";
+import { readShiftSharing } from '@/lib/shift-sharing-policy';
 import { createProductProjectionReader } from "@/lib/product-projection";
 import { productClassification } from "@/lib/product-classification";
 import { withoutWorkspacePurpose } from "@/lib/retired-workspace-settings";
@@ -1668,8 +1669,16 @@ export async function loadLocalSales(): Promise<Sale[]> {
  */
 async function localOpenShift(storeId: string): Promise<Shift | null | undefined> {
   if (!localDb()?.query) return undefined;
+  const registration = readTerminalConfig();
+  let ownTerminal: string | null = null;
+  if (registration?.locationId && registration.tokenId) {
+    const settings = await routedQuery('pos_store_settings', { in: { column: 'store_id', values: ['', storeId] }, limit: 2 });
+    const sharing = settings.find(row => row.store_id === storeId)?.allow_branch_shift_sharing
+      ?? settings.find(row => row.store_id === '')?.allow_branch_shift_sharing ?? true;
+    if (sharing === false || sharing === 0) ownTerminal = registration.tokenId;
+  }
   const rows = await routedQuery("shifts", {
-    match: { store_id: storeId, status: "OPEN" },
+    match: { store_id: storeId, status: "OPEN", ...(ownTerminal ? { terminal_id: ownTerminal } : {}) },
     orderBy: { column: "opened_at", ascending: false },
     limit: 1,
   });
@@ -1744,6 +1753,11 @@ export async function loadShiftPage(
 export async function loadActiveShift(storeId: string): Promise<Shift | null> {
   const local = await localOpenShift(storeId);
   if (local !== undefined) return local;
+  if (readTerminalConfig()?.locationId && canRelay()) {
+    const selected = await relayActiveShift(storeId);
+    if (!selected.ok) throw new Error(selected.error ?? 'Could not select this till\'s shift');
+    return selected.row ? rowToShift(selected.row as Row) : null;
+  }
   // A cashier signed in with a PIN has no account on the central database, so
   // the direct read is refused or filtered out. The proven server relay answers
   // for those tills — without it the register would flip back to "locked"
@@ -1793,6 +1807,8 @@ export async function openShiftOnServer(s: Shift): Promise<Shift | null> {
   // bypassed SQL Server Change Tracking. The normal commit path below stores
   // it locally and the background coordinator publishes it afterwards.
   if (localDb()?.writeBatch) return null;
+  const registration = readTerminalConfig();
+  if (registration?.locationId && readShiftSharing(s.storeId) === false) return null;
   if (!hasStaffSession()) return null;
   try {
     const res = await supabase.rpc(

@@ -326,7 +326,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
         { status: 403 },
       );
     try {
-      const result = body.read.kind === "transferRequestApprovalState" ? await runRelayRead(body.read, scope) : await runRelayRead(body.read);
+      const result = ['transferRequestApprovalState', 'activeShift'].includes(body.read.kind) ? await runRelayRead(body.read, scope) : await runRelayRead(body.read);
       return Response.json(result, { status: result.ok ? 200 : result.status ?? 500 });
     } catch (e) {
       return Response.json({ ok: false, error: (e as Error).message }, { status: 503 });
