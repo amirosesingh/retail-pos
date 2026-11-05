@@ -5927,6 +5927,161 @@ Keep that boundary; a separate Main-owned verified-approval logging capability
 requires approval and tests. PR412 fixes only registered audit-payload shape;
 actual cashier approved-payment acceptance remains pending that distinct fix.
 
+## Native offline approval capability — proposal only, 5 November
+
+Status: INVESTIGATION / OWNER IMPLEMENTATION APPROVAL REQUIRED. PR412 is merged
+into beta at8633bb294fc3b3f0cde4392c4d926abb342bcff8, with exact tested-tree
+parity and passing platform/permission/Workers checks. Its helper-only correction
+must not be described as a fix for the separate cashier admission restriction.
+
+Confirmed device boundary: after the real local manager approval PIN verifies,
+AuthorizationDialog tries a generic authorization_log aggregate. Main's existing
+business:commit-aggregate admission requires Supervisor for general aggregates,
+so an ordinary cashier correctly receives EPRIVILEGE before the write handler.
+Do not remove that gate, temporarily elevate the requester, relabel the request
+as a sale, trust a renderer approval assertion, or grant arbitrary audit writes.
+
+Proposed smallest bounded implementation:
+1. Add a dedicated Main-owned offline approval operation, admitted only for an
+   already authenticated POS requester on the registered Operations terminal.
+   Capture and recheck the native session epoch, operator, terminal/branch,
+   backend/project and SQL pool/profile identity before and after every await.
+2. Reuse verifySyncedApprovalPin and its canonical account throttling, independent
+   approval PIN/TOTP, enabled credential, active account and branch-scope checks.
+   Main must validate current effective local branch/global rules and action
+   permission, roles/users, amount/ceiling, required reason and complete canonical
+   bill/action binding. Renderer-supplied role/permission/limit is not authority.
+   Share the existing pure policy implementation across Main/UI where necessary;
+   do not copy an approximate second business-rule formula.
+3. Main constructs one fixed authorization_log row from the verified requester,
+   actual approver and sealed terminal. Commit only that row through the existing
+   aggregate repository/journal/operation receipt, without widening generic IPC
+   permissions. Return the verified audit identity only after SQL acceptance.
+4. Bind a stable request UUID to the full public action/bill context. Freeze the
+   exact Main-generated audit row (including created_at) after verification;
+   identical lost-ack retries must reuse its exact payload, not consume a TOTP
+   twice or generate another audit. Bound any Main capability cache and its TTL.
+   After restart require credential verification anew, and check the existing
+   audit plus exact receipt/context before acknowledging the original operation.
+   An audit row alone is not proof of credential verification. Changed context,
+   requester, branch, policy, role revocation or receipt mismatch stays denied.
+5. Preserve awaited failure behavior and the unpaid/held ticket on rejection or
+   SQL rollback. This is a narrowly verified audit capability, not a promise of
+   new one-use financial-grant enforcement: the existing native financial grant
+   contract must be inspected and any additional enforcement scope approved.
+
+Expected source surfaces for review (not edited by this investigation):
+- New electron/offline-approval-service.cjs with injected verifier, trusted scope,
+  current-rule reader and existing transactional writer.
+- electron/main.cjs, electron/preload.cjs and electron/ipc-privilege.cjs for the
+  dedicated bounded IPC; preserve business:commit-aggregate's existing gate.
+- src/core/local-db/local-db.ts, src/core/local-db/local-staff.ts and
+  src/platforms/web/components/pos/AuthorizationDialog.tsx for the typed native
+  path; hosted/mobile approval behavior remains unchanged.
+- One shared pure policy module only if required to reuse the existing exact
+  rule/action-permission semantics, with native/browser parity tests.
+- Focused service/IPC/UI tests and an opt-in owned disposable SQL fixture.
+
+Required allowed/denied verification: genuine cashier requester plus permitted
+manager approval; Administrator parity; invalid/locked/missing PIN; independent
+login-PIN rejection; disabled/out-of-scope/revoked approver; missing reason,
+ceiling/mode/unsupported-action denial; modified bill and foreign branch/terminal
+claims; session/profile/policy change during I/O; unsolicited and replayed
+capabilities; identical lost acknowledgement and duplicate concurrent calls;
+TOTP retry without a second use; SQL rollback preserving ticket and no audit;
+one durable audit/journal/receipt; and real isolated Electron held20% approval
+then exactly one last-unit payment with unchanged foreign stock. Retest generic
+cashier arbitrary-audit denial, current checkout/replay/negative-stock setting,
+authorization rules and web/mobile behavior. No business POS_Local tests.
+
+No runtime implementation, new grants, database/schema application, production
+promotion or publication is authorized by this proposal. Existing schema appears
+sufficient; if implementation reveals an unavoidable schema or protocol change,
+present its exact scope separately before changing it. Membership remains ON HOLD.
+
+### Native offline ticket approval — owner implementation approval supersedes proposal
+
+Owner explicitly approved the separate Main-owned approval-save correction and
+isolated tests. Implemented only the capable Operations Electron complete-ticket
+discount_over_limit path; all other approval/platform paths remain unchanged.
+No generic cashier Supervisor gate, schema, configuration or financial-grant
+contract is widened. Strict native POS-main-frame admission precedes verifier,
+cache and SQL; denied display/child senders cannot refresh the global idle timer.
+Fresh requester and approver rows, current branch scope/credential switches,
+selected authorization rule and effective global/branch settings are checked and
+locked before the fixed audit/journal/receipt commit. Canonical UUID case and
+canonical username case are representational only; different IDs/branches deny.
+Ambiguous effective rules and duplicate canonical settings hold explicitly.
+
+Review findings corrected: unexpected-sender admission and idle touch; approver
+scope/PIN/TOTP revocation after verification; requester revocation during await;
+case-only UUID SQL fetch and JavaScript selection under BIN2; raw journal key
+bypassing the existing pending pull barrier; truncated author/reason inputs;
+platform/older-bridge routing and self-PIN identity; expired cache capacity; and
+foreign/ambiguous rule baselines. Existing calculation/normalization/privacy
+functions are reused exactly in packaged pure modules. No unrelated authorization
+types, ticket parsing, request models or route helpers were removed.
+
+Verification checkpoint: 58 new service/bridge tests; 73 existing policy/discount
+regressions; 19 actual owned CI-SQL and 20 BIN2 groups; six real React/Radix dialog
+groups. SQL composition includes real bcrypt approval verification, atomic audit,
+journal/receipt, restart/lost acknowledgement, current requester/approver denial,
+canonical ChangeReader identity and pending PullWorker barrier, and actual
+PushWorker snapshot retry/acknowledgement with a synthetic cloud adapter. It does
+not claim real hosted/Android credential acceptance or stronger inherited cloud
+log-content verification. All disposable fixtures were owner/GUID guarded and
+cleaned; the separate retained device-acceptance profile contains synthetic data.
+The earlier active-profile full-test EPERM was a test-inventory/Chromium-lock
+issue; final regression uses a clean checkout.
+
+Pending finalization: independently reviewed frozen source hashes; final full
+suite/platform CI; cold isolated Electron POS/display sender admission and final
+ordinary/manager-approved payment/restart readback; latest-beta integration. No
+production promotion, installer publication or real database repair included.
+
+### Native approval final amount binding — approved correction, 6 November
+
+Owner-authorized completion includes exact raw ticket evidence needed to validate
+manual discount amounts before existing audit normalization. The current
+checkpoint a4e1879a contains a confirmed new-capability gap: a forged bill base
+can understate the requested percentage. The current register also divides an
+item coupon by max(1, qty), which inflates the approval-context base for fractional
+quantities even though the actual stock/price writer uses the true quantity.
+
+This bounded correction adds raw coupon/discount type and manual/promotion
+context to the existing snapshot builder/types, validates every item and bill
+entry against that complete raw evidence in Main, and corrects only the existing
+approval-context denominator to actual nonzero quantity. Audit-normalized
+snapshots/fingerprints and checkout writer calculations remain unchanged. The
+existing pure r2/lineDiscountTotal bodies move verbatim to one packaged module
+and remain aliased from pos-types, with parity checks; no alternative formula,
+rule, grant or database object is added. Affected additions beyond the checkpoint
+are src/routes/index.tsx, src/lib/ticket-snapshot.ts, src/core/types/pos-types.ts,
+the pure shared math module/declaration and focused tests. Main service and the
+existing isolated SQL fixture also receive the complete evidence checks.
+
+Required verification includes the forged $20/$10 bill-base case, fractional
+qty0.5/price100/coupon20, amount/percent and combined discounts, bill promotions,
+signed exchange lines, sub-cent rounding, omitted/duplicate/tampered evidence,
+raw precision before normalization, unchanged audit privacy/fingerprint, and
+existing requester/approver/branch/retry denials. No real POS data, schema,
+permissions, checkout financial writer, Membership or deployment is changed.
+
+Amount-binding verification checkpoint: all105 service/bridge/cumulative/bill
+review tests and73 existing authorization/snapshot/pricing/tax/receipt tests pass;
+TypeScript passes and scoped lint has zero errors (existing fixture any warnings).
+The synthetic test originally lacked capturedAt, causing timestamp-only expected
+snapshot mismatches; adding its fixed original instant corrected the harness.
+Initial restricted-temp Vite cache ENOENT was rerun with normal temp access.
+Actual owned disposable SQL composition passes19 CI and20 BIN2 groups, including
+real approval PIN, lost-ACK/restart receipt checks, current revocation, canonical
+pending journal barrier, acknowledged upload and whole-transaction rollback.
+Both temporary database/instance pairs were GUID/owner guarded and cleaned.
+Independent read-only review additionally passed3,780 old/new money-helper parity
+cases,180 legitimate bills and900 tampered evidence variants, and reproduced
+whole-service forged-base denial plus actual fractional amount-limit enforcement.
+No remaining amount-binding blocker was reported. Final frozen-head/full CI and
+cold actual Main/preload device acceptance remain pending before beta completion.
 ## CHECKOUT74 — shared refund trigger record-field isolation, 5 November
 
 - Owner's urgent web-payment failure is confirmed by live metadata/logs: SQLSTATE
@@ -6046,3 +6201,66 @@ hourly groups with correct sums and metadata. All77 focused regressions,
 TypeScript and scoped lint passed. No live database application occurred. Final
 combined beta/source regression and independent re-review are required before
 integration; root owns live approval/promotion.
+
+### Native approval final device acceptance and beta refresh — 6 November
+
+PR415 frozen runtime bdcd8f82b706b9a62ae38c802102fae2aceb3a46 passed all required
+remote checks (Role & permission, Android, Windows, iOS, labels and Workers;
+CodeRabbit skipped under the owner's instruction). Its clean exact-source full
+regression passed6,064 tests/10 skipped/zero failures of6,074. TypeScript and
+scoped lint passed with zero errors; actual SQL19 CI/20 BIN2 and six real shared
+React/Radix groups passed as recorded above.
+
+Final owned-device evidence used only synthetic database
+Retail_DeviceAcceptance_20261105_8b1cb17b_A1, GUID
+706e15a6-e274-41ec-a036-524b1cf553e7, with the pre-existing owner marker, sealed
+synthetic registration and dedicated test profile rechecked before actions.
+No real POS_Local or cloud business row was used. Actual cashier UI sign-in,
+20% manager approval PIN, Main-generated audit and a last-unit card payment all
+completed through the real Main/preload/register code. The one new bill is
+TSTA-WIN38-20261106-0001: total16, discount4, manager linked. Durable SQL readback
+shows seven sales/items/payments/sale receipts (the six earlier synthetic sales
+preserved), exactly one approval audit/journal/receipt for the new bill, own
+TEST-0001 stock1 to0, foreign fixture stock9 unchanged and zero active user
+transactions. A later cold restart/readback preserved those exact records with
+no duplicate or stock effect. Real post-restart Main PIN verification bound the
+fixture staff account; the hidden-window UI animation timings were not used to
+claim additional UI acceptance.
+
+The actual separate customer-display BrowserWindow/preload and the ordinary
+cashier generic aggregate both received EPRIVILEGE; the former returned the
+POS-window-only denial and did not change the Main session epoch. This confirms
+installed sender admission, while the isolated unit test retains its separate
+idle-timeout check. Only the signed-out/idle synthetic test app was then torn
+down; process exit0 was observed and all persisted evidence retained.
+
+Limits: the network-isolated synthetic profile is an offline acceptance test,
+not real hosted authorization/enrollment or Android credential acceptance. Two
+earlier visible fixture sessions received close attempts with activity-log flush
+errors and were then killed with exit1; the initiating cause is not established
+and is not represented as an approval-code crash or a resolved shutdown defect.
+Final payment SQL acceptance was confirmed before and after restart. The test
+harness's missing require/global, stale scratch commands, new-origin display-name
+preference and hidden-window animation waits were handled only in ignored test
+artifacts; no product guard, real queue, registration or permission was bypassed.
+
+Verified newer beta91f4961a was integrated at7e7dd2cd with no conflicts. It adds
+only the reviewed development-loader correction and its records/tests; the
+approval, checkout helper and native runtime bytes remain identical to bdcd8f82.
+All184 focused tests across ten approval/authority/pricing/tax/receipt/interop
+suites pass on that integration. Final pushed-head CI remains required; no
+production promotion, publication or operator database upgrade was performed.
+
+Latest destination refresh: verified beta79face2078ee35ebf50a51b59f0f503e6e25b1f7
+(PR417 reviewed dependency upgrades) integrated at61f84e92 without conflicts.
+Only package/lock/project records changed from the preceding integration; all
+approval/Main/checkout runtime source bytes still match bdcd8f82. A new clean
+verification checkout uses the fresh chore-beta-verification dependency install;
+its parsed lock matches the integrated source exactly. Installed React Query
+5.105.1, Radix toggle-group1.2.1, Capacitor Android8.6.0, electron-builder26.18.0
+and CapgoCLI8.99.1 were checked without mutating a shared install. All184 focused
+approval/authority/pricing/tax/receipt/interop tests and all six real shared
+React/Radix dialog groups passed again on these upgraded dependencies. The full
+new-head CI, final typecheck and platform checks are required before beta merge.
+Earlier actual native sale/restart evidence used the prior dependency install;
+do not mislabel that as another installed-application upgrade acceptance run.

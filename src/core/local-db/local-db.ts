@@ -377,6 +377,10 @@ export type LocalSyncStatus = {
 };
 
 export type PosBridge = {
+  authorizeOfflineDiscount?: (value: {
+    requestId: string; actionKey: "discount_over_limit"; registeredTerminalId: string; branchId: string;
+    username: string; credential: string; selfAuthorization?: boolean; reason: string; snapshot: unknown; payload: Record<string, string | number | boolean | null>; requestedAmount: number;
+  }) => Promise<{ ok: boolean; auditId?: string; replayed?: boolean; authorizer?: { id: string; name: string; role: string }; error?: string; code?: string }>;
   /** Close only the Electron window that sent the request. */
   closeWindow?: () => Promise<unknown>;
   onBeforeClose?: (flush: () => Promise<void>) => () => void;

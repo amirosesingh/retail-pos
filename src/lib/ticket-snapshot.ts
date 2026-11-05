@@ -19,6 +19,9 @@ export type SnapshotLine = {
   unitPrice: number;
   discount: number;
   lineTotal: number;
+  /** Raw native approval evidence; omitted from the normalized audit snapshot. */
+  discountType?: "amount" | "percent";
+  couponDiscount?: number;
   /** true when the price was typed at the till rather than taken from the catalogue */
   priceOverridden?: boolean;
 };
@@ -47,6 +50,10 @@ export type TicketSnapshot = {
   tax: number;
   serviceCharge: number;
   total: number;
+  /** Raw native approval evidence, not additional receipt or pricing inputs. */
+  cartDiscount?: number;
+  cartDiscountType?: "amount" | "percent";
+  promoDiscount?: number;
   /** what the cashier is asking for, and what the ticket would come to */
   requestedValue?: number;
   requestedLabel?: string;
