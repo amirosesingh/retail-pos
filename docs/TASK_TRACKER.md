@@ -6014,3 +6014,18 @@ obsolete inline-grid assertion; these were corrected without changing existing
 SQL definitions or loosening its privacy checks. Full final-tree rerun/type and
 independent source review remain required. No live database, queue/checkpoint,
 checkout, permission grant, operator profile, deployment or publication changed.
+
+CHART72 final-source verification at12ee262557ade7140d569147291e559b95a69dfa:
+FULL Node22.22.2/npm11.4.2 Vitest6037passed/10skipped/0failed,710passingfiles
+plus1skipped, max2workers. TypeScript passed. All scoped lint passes, including
+the last added board/security/SQL tests. Final committed migration reran all21
+actual PostgreSQL18.6 scenarios successfully; disposable LocalDB and settled
+actual Chrome1440/390px acceptance passed. All test processes/owned fixtures are
+finished/cleaned; screenshots/logs remain only in ignored .tmp. Existing source
+SQL bytes/guards are preserved. Draft betaPR419 is open/labeledbeta; CI and
+independent review remain pending. No merge, deployment, database application or
+installer publication occurred. Exact candidate SHA256(LF) is
+158948DA41505425E3D79BD97160A274B9C8706115D40CEF5C318C803CA1806F.
+The hourly routine would need separate approval against ROSEGILL→
+rosegill0011@gmail.com's Org(bjxgimekljzlnwejuawj)→pos(qhrufhtbeguxydenzfey),
+postgres,https://qhrufhtbeguxydenzfey.supabase.co before live application.

@@ -14,6 +14,15 @@ The exact owner-approved service-only bounded feed RPC and PR384 are applied/dep
 
 ## 6 November — consistent trading charts
 
+Cards must remain hidden until their current branch/cluster/range read is
+actually confirmed. Preserve same-scope confirmed cards during background
+refresh with truthful stale/error status; scope/identity/cost-permission changes
+hide the previous scope immediately. Preserve meaningful negative values and the
+loaded All Shops zero-shop-directory exception. Shop chart color depends only
+on canonical shop identity so Dashboard, filtered cluster and company views do
+not recolor it. Charts use a finite vertical grid, never an infinite carousel.
+
+
 Owner-approved chart direction: equal-height chart cards and fixed plot heights
 on Dashboard, All Shops and Live Business Board, in a vertically scrollable
 area with its scrollbar hidden. Use two columns on large screens and one on a
