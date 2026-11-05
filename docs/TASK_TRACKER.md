@@ -402,9 +402,10 @@ live PC update. Preserve populated installed025–027, migration records, pendin
 queues/checkpoints, settings, permissions and all business values. Exact final
 artifact hash and actual PC target approval remain required before application.
 
-SQL72 now incorporates beta57fe48a4 at preparation headc3c1cddc. The only merge
-conflict was additive tracker text; both histories are retained. Frozen recovery
-and checkout runtime matches beta. Packaging-only catalogue capture on an owned
+SQL72 now incorporates beta759b4d0b at preparation mergeaca859b2. The two refreshes
+preserved additive tracker text and both scoped LF-attribute additions. Reviewed
+offline-approval/refund fixes, recovery, checkout and Management reader match the
+destination exactly. Packaging-only catalogue capture on an owned
 full Retail fixture verified84 SQL tables including all70 registry/domain tables,
 then cross-checked existing runtime metadata preflights for025/026/028/029/030.
 The manifest retains engine/collation provenance, canonical source hashes,
@@ -434,6 +435,11 @@ typed comparisons hit the60-second fixture budget; binary JSON fingerprints
 reduce valid apply/rerun to about10/5 seconds without raising any timeout.
 Unknown/literal-case/Unicode/escape/NULL/index/trigger/owner differences remain
 reject cases; no weak or version-only skipping is introduced.
+Post-refresh checks pass90 dependency-free CI Node tests (including10 packaging),
+scoped lint, exact packager check and independent platform parity. Git staged
+blob and raw standalone file have identical SHA256 and zero CR bytes. DraftPR411
+still needs exact-head remote CI and beta integration; no target application or
+publication has occurred.
 
 Owner requires one local SQL file for existing PCs and exact database changes
 before live application. Separate branch codex/consolidated-sql-upgrade-1482-beta
