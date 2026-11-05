@@ -28,7 +28,7 @@ import { ShiftCloseDialog } from "@/platforms/web/components/pos/ShiftCloseDialo
  * Staff holding `can_bypass_shift_lock` (admins and supervisors by default)
  * are never locked.
  */
-export function ShiftGuard({ children }: { children: ReactNode }) {
+export function ShiftGuard({ children, scopePending = false }: { children: ReactNode; scopePending?: boolean }) {
   const { activeShift, openShift, currentStore, shiftReadError, shiftChecked } = usePos();
   const { user, lock, can, terminalStoreName } = useAuth();
   // The cashier is whoever is signed in — never typed in by hand.
@@ -42,6 +42,15 @@ export function ShiftGuard({ children }: { children: ReactNode }) {
   // Never hardcode a branch: the terminal's registered branch wins, then the
   // active store, then a neutral phrase while the store list is still loading.
   const branchLabel = terminalStoreName?.trim() || currentStore?.name?.trim() || "this terminal";
+
+  // The old shift/settings must not open an action panel in a new branch view.
+  // Match the normal wrapper shape so navigation and header stay mounted.
+  if (scopePending) return <div className="flex min-h-0 flex-1 flex-col">
+    <div role="status" className="flex items-center gap-2 border-b border-border bg-muted/40 px-4 py-1.5 text-[11px] text-muted-foreground">
+      <Loader2 className="size-3 animate-spin" /><span>Updating {branchLabel}…</span>
+    </div>
+    <div className="flex min-h-0 flex-1">{children}</div>
+  </div>;
 
   if (activeShift) {
     const closing = (activeShift.state ?? "ACTIVE") !== "ACTIVE";

@@ -1776,6 +1776,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
         await preserveSessionDrafts();
         // Retire old-branch results before the binding or React view changes.
         bootstrapGeneration.current++;
+        setLoadPhase("loading");
+        setLocationLoadError(null);
         setSettingsSnapshotLoaded(false);
         if (!registeredBranchId) bindTerminalBranch(selectedId, location.name);
         shiftReadSequence.current += 1;
