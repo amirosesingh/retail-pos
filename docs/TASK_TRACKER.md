@@ -15,6 +15,35 @@ FIN62 isolated SQL basis prototype: complete selected-branch/shift inputs and ex
 
 ## FIN62 — owner-approved shift financial/as-of validation correction
 
+## SQL72 — one guarded existing-database upgrade, preparation
+
+Owner requires one local SQL file for existing PCs and exact database changes
+before live application. Separate branch codex/consolidated-sql-upgrade-1482-beta
+starts from beta8b1cb17b. Packaging must retain the reviewed financial/sharing
+metadata025–027, include final recovery028–030 and optional history031 only after
+their sources/shape validators are frozen, and skip only recognized installed
+shapes. Never replay the full installer, repair archive flags, switch databases,
+rewrite stock/sales/permissions, reset queues/checkpoints or activate new rules.
+
+Preparation adds a dependency-free assembler with one owned outer transaction,
+bounded schema-upgrade lock, existing-core validation, source-byte hashes and
+retained module shape guards. Only each declared initial no-caller guard is
+removed to permit safe nesting in that owned transaction; module transactions
+remain balanced. Caller work is rejected before changing XACT_ABORT. Five pure
+packaging tests pass; an initial parser-only failure on the existing one-line026
+guard was corrected. No final upgrade artifact or apply approval exists yet.
+Actual rollback/rerun/unknown-shape tests and recognized026/recovery idempotence
+remain required; do not claim the packaging unit tests prove SQL execution.
+
+SQL72 actual-engine checkpoint: four uniquely owned disposable LocalDB groups
+pass: caller transaction preservation, rollback of every earlier metadata module
+after a late failure, successful three-module composition without sentinel or
+migration-ledger changes, and truthful rejection of already-installed026 rather
+than partial repair. Fixture cleaned. This is transaction-composition evidence,
+not final idempotence or full existing-Retail schema acceptance. The final single
+file still waits for frozen recovery/history sources and exact installed-shape
+validation; no operator database has been updated.
+
 ## RELEASE71 — incremental production preparation, 5 November
 
 Owner requested preparing production alongside fixes and promoting completed,
