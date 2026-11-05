@@ -12651,6 +12651,19 @@
           "uniqueGroup": null
         },
         {
+          "cloudColumn": "allow_branch_shift_sharing",
+          "sqlServerColumn": "allow_branch_shift_sharing",
+          "cloudType": "boolean",
+          "sqlServerType": "bit",
+          "nullable": true,
+          "defaultRule": null,
+          "primaryKey": false,
+          "foreignKey": false,
+          "foreignKeyTarget": null,
+          "unique": false,
+          "uniqueGroup": null
+        },
+        {
           "cloudColumn": "enable_cashier_x_report",
           "sqlServerColumn": "enable_cashier_x_report",
           "cloudType": "boolean",

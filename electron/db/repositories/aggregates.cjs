@@ -37,9 +37,10 @@ function branchFor(operation, fallback) {
 }
 
 class AggregateRepository {
-  constructor(connectionManager, operationsRepository) {
+  constructor(connectionManager, operationsRepository, {financialOperations=null} = {}) {
     this.connectionManager = connectionManager;
     this.operationsRepository = operationsRepository;
+    this.financialOperations = financialOperations;
   }
 
   async assertBranch(transaction, table, record, match, branchId, financialStock = false) {
@@ -88,6 +89,8 @@ class AggregateRepository {
     const operationId = aggregate?.operationId || stableUuid({ kind, operations });
     if (!/^[0-9a-f-]{36}$/i.test(operationId)) throw new Error("A stable aggregate UUID is required.");
     const payloadHash = createHash("sha256").update(JSON.stringify(canonical({ kind, operations }))).digest("hex");
+    const financialStore=this.financialOperations?.enabled===true?this.financialOperations:null;
+    const financialContext=financialStore?await financialStore.prepareContext({branchId:aggregate.branchId,terminalId:aggregate.terminalId,operationId,kind}):null;
     const sql = this.connectionManager.sql();
     const transaction = new sql.Transaction(this.operationsRepository.pool());
     await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
@@ -125,6 +128,28 @@ class AggregateRepository {
           throw Object.assign(new Error("This shift is closing or closed. Refresh the shift status before recording a sale."), { code: "ESHIFT_CLOSED" });
       }
       let affected = 0;
+      const financialTokens=[],openingTokens=new Map();
+      if(financialStore){
+        const monetary=new Set(['total_amount','payment_type','payments','discount_amount','is_refunded','store_id','shift_id']);
+        const sales=operations.filter(op=>op.table==='sales' && (['insert','upsert','delete'].includes(op.kind)||Object.keys(op.values??{}).some(key=>monetary.has(key))));
+        const grouped=new Map();
+        for(const op of sales){
+          const records=op.rows?.length?op.rows:[op.values??op.match];
+          for(const record of records){
+            const saleId=record?.id??op.match?.id;
+            if(typeof saleId!=='string'||! /^[0-9a-f-]{36}$/i.test(saleId))throw Object.assign(new Error('An exact sale identity is required for financial capture.'),{code:'EFINANCIAL_OPERATION_INVALID'});
+            const saved=(await new sql.Request(transaction).input('sale',saleId).query('SELECT store_id,shift_id FROM dbo.sales WHERE id=@sale;')).recordset?.[0];
+            const branchId=saved?.store_id??record.store_id??aggregate.branchId;
+            const shiftId=saved?.shift_id??record.shift_id??null;
+            if(branchId!==aggregate.branchId)throw Object.assign(new Error('The financial sale does not belong to this terminal branch.'),{code:'SYNC_BRANCH_FORBIDDEN'});
+            const key=shiftId??'';if(!grouped.has(key))grouped.set(key,new Set());grouped.get(key).add(saleId.toLowerCase());
+          }
+        }
+        for(const[shiftId,sales]of [...grouped].sort(([a],[b])=>a.localeCompare(b))){
+          const action=kind==='refund'?'REFUND':kind==='payment'?'TENDER':'SALE';
+          const token=await financialStore.captureMutation(transaction,{branchId:aggregate.branchId,terminalId:aggregate.terminalId,shiftId:shiftId||null,operationId,action,preparedContext:financialContext,saleIds:[...sales]});financialTokens.push(token);
+        }
+      }
       const newOpenings = new Set();
       for (const operation of operations) {
         stage = "business rows";
@@ -136,7 +161,12 @@ class AggregateRepository {
         if(operation.table==="shifts" && ["insert","upsert"].includes(operation.kind))for(const record of records){
           const saved=await new sql.Request(transaction).input("shift",record.id)
             .query("SELECT id FROM dbo.[shifts] WITH(UPDLOCK,HOLDLOCK) WHERE id=@shift;");
-          if(!saved.recordset?.length)newOpenings.add(record.id);
+          if(!saved.recordset?.length){
+            newOpenings.add(record.id);
+            if(financialStore&&!openingTokens.has(record.id)){
+              openingTokens.set(record.id,await financialStore.captureOpening(transaction,{branchId:aggregate.branchId,terminalId:aggregate.terminalId,shiftId:record.id,operationId,preparedContext:financialContext}));
+            }
+          }
         }
         // Deletes must be checked while their owner row still exists. Inserts
         // and updates are checked after application so child ownership can be
@@ -152,6 +182,7 @@ class AggregateRepository {
         const operationAffected = await this.operationsRepository.applyOperation(transaction, operation, {
           branchId: aggregate.branchId,
           terminalId: aggregate.terminalId,
+          managementDevice: aggregate.managementDevice === true,
           permissions: aggregate.permissions,
           productWriteKind: aggregate.productWriteKind,
           financialStockDeltas: aggregate.financialStockDeltas,
@@ -188,8 +219,9 @@ class AggregateRepository {
       if(newOpenings.size){
         const {ShiftIntentStore}=require("../shift-intents.cjs");
         const store=new ShiftIntentStore(this.connectionManager,this.operationsRepository.registry);
-        for(const shiftId of newOpenings)await store.freezeOpening(transaction,operationId,aggregate.branchId,shiftId);
+        for(const shiftId of newOpenings){await store.freezeOpening(transaction,operationId,aggregate.branchId,shiftId,{exactFinancial:financialStore!==null});if(financialStore)await financialStore.finalizeOpening(transaction,openingTokens.get(shiftId));}
       }
+      for(const token of financialTokens)await financialStore.finalizeMutation(transaction,token);
       tableName = "local_operation_receipts";
       await new sql.Request(transaction)
         .input("operation_id", sql.UniqueIdentifier, operationId)
@@ -197,11 +229,12 @@ class AggregateRepository {
         .input("entity_id", operationId)
         .input("note", payloadHash)
         .query("INSERT dbo.local_operation_receipts(operation_id,operation_type,entity_id,note) VALUES(@operation_id,@operation_type,@entity_id,@note);");
+      if(financialStore)for(const token of [...financialTokens,...openingTokens.values()])financialStore.assertCurrent(transaction,token);
       await transaction.commit();
       return { ok: true, operationId, replayed: false, affected };
     } catch (error) {
       await Promise.resolve(transaction.rollback()).catch(() => undefined);
-      if (["EIDEMPOTENCY", "EBRANCH", "EBRANCH_SCOPE", "SYNC_BRANCH_FORBIDDEN", "EEXCHANGE_STATE", "EPRODUCT_STATE", "PERMISSION_DENIED"].includes(error?.code))
+      if (["EIDEMPOTENCY", "EBRANCH", "EBRANCH_SCOPE", "SYNC_BRANCH_FORBIDDEN", "EEXCHANGE_STATE", "EPRODUCT_STATE", "PERMISSION_DENIED", "ESHIFT_TERMINAL"].includes(error?.code))
         throw error;
       const target = tableName ? ` while writing ${tableName}` : "";
       const native = error?.originalError?.info ?? error?.originalError ?? error;

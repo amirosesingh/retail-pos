@@ -7,7 +7,7 @@ vi.mock("@tanstack/react-router", () => ({ createFileRoute: () => (options: unkn
 vi.mock("../external-supabase-config", () => ({ runtimeEnvValue: () => "fixture-service-key", supabaseConfig: () => ({ url: "https://project.fixture", key: "fixture-public" }) }));
 vi.mock("../session-guard.server", () => ({ touchSession: h.touch }));
 import { Route } from "@/routes/api/v1/pos/shift-author-enroll";
-import { enrollShiftAuthor, verifyShiftAuthorAttestation, readShiftAuthorAuthority, requireCurrentShiftAuthorPermission, shiftAuthorTerminalEnrolled, verifyShiftClosingStart, readShiftClosingStartAuthority } from "../shift-author-verification.server";
+import { verifyFinancialAuthorAttestation, readFinancialAuthorPermission, enrollShiftAuthor, verifyShiftAuthorAttestation, readShiftAuthorAuthority, requireCurrentShiftAuthorPermission, shiftAuthorTerminalEnrolled, verifyShiftClosingStart, readShiftClosingStartAuthority } from "../shift-author-verification.server";
 import { signCashierSession } from "../pos-session.server";
 
 const authorId = "00000000-0000-4000-8000-000000000001", otherId = "00000000-0000-4000-8000-000000000002";
@@ -16,7 +16,7 @@ const shiftId = "00000000-0000-4000-8000-000000000005", intentId = "00000000-000
 const descriptor = { id: terminalId, platform: "pc" as const, mode: "operations" as const, branchId: "A" };
 const proof = "a".repeat(64);
 let pair: CryptoKeyPair, publicKey: string, saved: Record<string, unknown> | null;
-let person: Record<string, unknown>, terminal: Record<string, unknown>, outage: boolean;
+let person: Record<string, unknown> & { permissions: Record<string, boolean> }, terminal: Record<string, unknown>, outage: boolean;
 const encode = (data: ArrayBuffer) => Buffer.from(data).toString("base64url");
 const sign = async (message: string) => encode(await crypto.subtle.sign("Ed25519", pair.privateKey, new TextEncoder().encode(message)));
 const enrollment = () => ({ version: 1 as const, algorithm: "Ed25519" as const, keyId, authorId, projectOrigin: "https://project.fixture", terminalId, publicKey });
@@ -189,5 +189,39 @@ describe("historical signature proof and current action authority are separate",
   it("holds unavailable authority instead of treating it as revocation or upgrading permission", async () => {
     await enrollShiftAuthor(await request()); outage = true;
     await expect(readShiftAuthorAuthority(await attestation())).rejects.toMatchObject({ status: 503 });
+  });
+});
+
+// FIN62 helpers are deliberately not an exposed route or an operation issuer.
+describe("financial author foundation",()=>{
+  async function financialProof(action="SALE"){
+    const {financialOperationMessage}=await import("../../../electron/security/financial-author-protocol.cjs");
+    const base=await attestation();
+    const unsigned={version:base.version,algorithm:base.algorithm,keyId:base.keyId,projectOrigin:base.projectOrigin,terminalId:base.terminalId,authorId:base.authorId,subject:base.subject,branchId:base.branchId,operationId:intentId,action,payloadHash:base.payloadHash};
+    return {...unsigned,signature:await sign(financialOperationMessage(unsigned))};
+  }
+  const check=(value:unknown,extra={})=>verifyFinancialAuthorAttestation({attestation:value,payloadJson,terminal:descriptor,branchId:"A",operationId:intentId,action:"SALE",...extra});
+  it("verifies the actual registered author and checks the existing current action flag",async()=>{
+    await enrollShiftAuthor(await request());const value=await financialProof();expect(await check(value)).toEqual(value);
+    expect(await readFinancialAuthorPermission(value)).toMatchObject({allowed:true});
+    person.permissions.can_process_sale=false;expect(await readFinancialAuthorPermission(value)).toMatchObject({allowed:false});
+    expect(await check(value)).toEqual(value); // Crypto history is distinct from new-write admission.
+  });
+  it("keeps refund, tender and void flags separate without granting them",async()=>{
+    await enrollShiftAuthor(await request());
+    for(const [action,flag] of [["OPEN","can_open_shift"],["REFUND","can_process_refund"],["TENDER","can_edit_tenders"],["VOID","can_void_item"]]){
+      const value=await financialProof(action);expect(await readFinancialAuthorPermission(value)).toMatchObject({allowed:false});
+      person.permissions[flag]=true;expect(await readFinancialAuthorPermission(value)).toMatchObject({allowed:true});delete person.permissions[flag];
+    }
+  });
+  it("rejects substituted scope, bytes, identities and shift-domain proof",async()=>{
+    await enrollShiftAuthor(await request());const value=await financialProof();
+    for(const patch of [{payloadJson:payloadJson+" "},{branchId:"B"},{operationId:shiftId},{terminal:{...descriptor,branchId:"B"}},{action:"REFUND"}])await expect(check(value,patch)).rejects.toMatchObject({code:"EFINANCIAL_AUTHOR_INVALID"});
+    for(const patch of [{authorId:otherId},{terminalId:otherId},{projectOrigin:"https://other.fixture"},{signature:(await attestation()).signature}])await expect(check({...value,...patch})).rejects.toMatchObject({code:"EFINANCIAL_AUTHOR_INVALID"});
+  });
+  it("denies revoked or branch-moved authors for new writes while preserving signed history",async()=>{
+    await enrollShiftAuthor(await request());const value=await financialProof();saved!.revoked_at="2026-11-04T00:00:00Z";
+    expect(await readFinancialAuthorPermission(value)).toMatchObject({allowed:false});expect(await check(value)).toEqual(value);
+    saved!.revoked_at=null;person.store_id="B";expect(await readFinancialAuthorPermission(value)).toMatchObject({allowed:false});
   });
 });

@@ -7936,6 +7936,7 @@ IF OBJECT_ID(N'dbo.pos_store_settings', N'U') IS NULL BEGIN CREATE TABLE dbo.[po
   [max_drawer_cash_limit] decimal(38,12) NULL,
   [require_reason_for_payout] bit NULL,
   [allow_multiple_shifts_per_terminal] bit NULL,
+  [allow_branch_shift_sharing] bit NULL,
   [enable_cashier_x_report] bit NULL,
   [show_opening_float_at_close] bit NULL,
   [show_expected_totals_at_close] bit NULL,
@@ -8008,6 +8009,8 @@ IF COL_LENGTH(N'dbo.pos_store_settings', N'max_drawer_cash_limit') IS NULL ALTER
 IF COL_LENGTH(N'dbo.pos_store_settings', N'require_reason_for_payout') IS NULL ALTER TABLE dbo.[pos_store_settings] ADD [require_reason_for_payout] bit NULL;
 
 IF COL_LENGTH(N'dbo.pos_store_settings', N'allow_multiple_shifts_per_terminal') IS NULL ALTER TABLE dbo.[pos_store_settings] ADD [allow_multiple_shifts_per_terminal] bit NULL;
+
+IF COL_LENGTH(N'dbo.pos_store_settings', N'allow_branch_shift_sharing') IS NULL ALTER TABLE dbo.[pos_store_settings] ADD [allow_branch_shift_sharing] bit NULL;
 
 IF COL_LENGTH(N'dbo.pos_store_settings', N'enable_cashier_x_report') IS NULL ALTER TABLE dbo.[pos_store_settings] ADD [enable_cashier_x_report] bit NULL;
 
@@ -13586,6 +13589,7 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'pos_store_settings', N'max_drawer_cash_limit'),
   (N'pos_store_settings', N'require_reason_for_payout'),
   (N'pos_store_settings', N'allow_multiple_shifts_per_terminal'),
+  (N'pos_store_settings', N'allow_branch_shift_sharing'),
   (N'pos_store_settings', N'enable_cashier_x_report'),
   (N'pos_store_settings', N'show_opening_float_at_close'),
   (N'pos_store_settings', N'show_expected_totals_at_close'),
@@ -13680,9 +13684,9 @@ INSERT INTO @RequiredColumns (table_name, column_name) VALUES
   (N'authorization_actions', N'require_reason'),
   (N'authorization_actions', N'threshold'),
   (N'authorization_actions', N'is_enabled'),
-  (N'authorization_actions', N'row_version'),
-  (N'authorization_actions', N'updated_by');
+  (N'authorization_actions', N'row_version');
 INSERT INTO @RequiredColumns (table_name, column_name) VALUES
+  (N'authorization_actions', N'updated_by'),
   (N'authorization_actions', N'created_at'),
   (N'authorization_actions', N'updated_at'),
   (N'authorization_action_history', N'id'),

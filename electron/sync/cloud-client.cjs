@@ -1,5 +1,13 @@
 const { normalizeSyncPayload } = require("./uuid-payload.cjs");
 const { recordId } = require("./uuid-fields.cjs");
+const {createHash}=require("node:crypto");
+const {parseExactJson}=require("./shift-recovery-exact.cjs");
+const {normalizeFinancialSourceEvidence,normalizePublishedThrough}=require("./financial-source-order.cjs");
+const financialBasisWitnesses=new WeakMap();
+const financialCapabilityWitnesses=new WeakMap();
+const deepFreezeFinancial=value=>{if(value&&typeof value==='object'){for(const child of Object.values(value))deepFreezeFinancial(child);Object.freeze(value);}return value;};
+const financialBasisFailure=()=>{throw Object.assign(new Error("The verified financial basis is unavailable or its source changed."),{code:"EFINANCIAL_BASIS_SOURCE_CHANGED",table:"shifts"});};
+const financialBasisHash=value=>createHash("sha256").update(value,"utf8").digest("hex");
 const { policy } = require("./conflicts.cjs");
 const { toLocalValue } = require("./row-codec.cjs");
 const { tagBootstrapDiagnostic } = require("../diagnostics.cjs");
@@ -104,10 +112,11 @@ const CONFIGURATION_LWW_TABLES = new Set([
 ]);
 
 class CloudClient {
-  constructor({ configStore, terminalStore, connectionManager = null }) {
+  constructor({ configStore, terminalStore, connectionManager = null, financialBasisContext = null }) {
     this.configStore = configStore;
     this.terminalStore = terminalStore;
     this.connectionManager = connectionManager;
+    this.financialBasisContext=financialBasisContext;
     this.authorizationProof = null;
   }
   setAuthorizationProof(proof) {
@@ -203,6 +212,14 @@ class CloudClient {
       );
     const personProof = governance ? (this.authorizationProof ?? {}) : {};
     const suffix = operation ? `?operation=${encodeURIComponent(operation)}` : "";
+    const outbound=normalizeSyncPayload(payload);
+    // UUID cleanup is for ordinary rows, never for already-signed labels.
+    // Raw JSON and proof objects remain exactly those captured by Main.
+    if(payload?.sqlServerFinancialEvent)outbound.sqlServerFinancialEvent={...outbound.sqlServerFinancialEvent,operationJson:payload.sqlServerFinancialEvent.operationJson,proof:payload.sqlServerFinancialEvent.proof};
+    const financialAggregate=payload?.sqlServerAggregate;
+    if(financialAggregate&&(financialAggregate.shiftFinancialBasis||financialAggregate.shiftFinancialOpening||financialAggregate.registerFinancialBoundary===true)){
+      for(const key of['shiftAuthor','shiftClosingStart','shiftFinancialBasis','shiftFinancialOpening'])if(financialAggregate[key]!==undefined)outbound.sqlServerAggregate[key]=financialAggregate[key];
+    }
     let response;
     let data;
     let bodyReadError;
@@ -212,7 +229,7 @@ class CloudClient {
     try { response = await fetch(`${base}/api/v1/pos/sync${suffix}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...normalizeSyncPayload(payload), ...personProof, terminalToken: recordId(terminalToken), deviceBindingProof:terminal.deviceBindingProof, ...(terminal.deviceUse === "management" ? { deviceClaimProof: terminal.deviceClaimProof } : {}) }),
+      body: JSON.stringify({ ...outbound, ...personProof, terminalToken: recordId(terminalToken), deviceBindingProof:terminal.deviceBindingProof, ...(terminal.deviceUse === "management" ? { deviceClaimProof: terminal.deviceClaimProof } : {}) }),
       signal: AbortSignal.timeout(30_000),
     });
       transportStage = "body";
@@ -276,7 +293,60 @@ class CloudClient {
       },
     });
   }
+  financialBasisIdentity(branchId,shiftId){
+    if(typeof this.financialBasisContext!=="function"||!this.connectionManager?.pool||!this.connectionManager.profile)financialBasisFailure();
+    const context=this.financialBasisContext(),terminal=this.terminalStore.read()??{},profile=this.connectionManager.profile;
+    if(context?.branchId!==branchId||typeof context.projectOrigin!=="string"||!/^https:\/\//.test(context.projectOrigin)||!branchId||typeof shiftId!=="string"||! /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(shiftId)||!this.terminalId()||this.connectionManager.pool.__posConnectionFaulted)financialBasisFailure();
+    let project;try{const url=new URL(context.projectOrigin);project=url.origin;if(url.protocol!=="https:"||url.username||url.password||url.search||url.hash||!['','/'].includes(url.pathname))financialBasisFailure();}catch{financialBasisFailure();}
+    const selectors=Object.fromEntries(['id','host','instanceName','port','database','authMode','username','encrypt','trustServerCertificate'].map(key=>[key,profile[key]]));
+    const identity={branchId,shiftId,terminalId:this.terminalId(),projectOrigin:project,backend:this.backendUrl(),profile:financialBasisHash(JSON.stringify(selectors)),activation:financialBasisHash(JSON.stringify({id:terminal.tokenId,branch:terminal.branchId,mode:terminal.deviceUse,proof:terminal.deviceBindingProof,claim:terminal.deviceClaimProof}))};
+    if(!/^https:\/\//.test(identity.backend))financialBasisFailure();
+    return{identity,pool:this.connectionManager.pool,manager:this.connectionManager};
+  }
+  async financialCapabilityIdentity(branchId,shiftId=null){
+    const source=this.financialBasisIdentity(branchId,shiftId??'00000000-0000-0000-0000-000000000000');
+    const database=(await source.pool.request().query("SELECT LOWER(CONVERT(nvarchar(36),database_guid)) database_guid FROM sys.database_recovery_status WHERE database_id=DB_ID();")).recordset??[];
+    if(database.length!==1||typeof database[0].database_guid!=="string"||! /^[a-f0-9-]{36}$/.test(database[0].database_guid))financialBasisFailure();
+    const identity={...source.identity,databaseGuid:database[0].database_guid};delete identity.shiftId;
+    const assertSource=()=>{const current=this.financialBasisIdentity(branchId,shiftId??'00000000-0000-0000-0000-000000000000');if(current.pool!==source.pool||current.manager!==source.manager||JSON.stringify(current.identity)!==JSON.stringify(source.identity))financialBasisFailure();};
+    assertSource();return{identity:Object.freeze(identity),pool:source.pool,manager:source.manager,assertSource};
+  }
+  async readFinancialCapability({organizationId="default",branchId,shiftId=null}){
+    const source=await this.financialCapabilityIdentity(branchId,shiftId),scope={organizationId,branchId,shiftId,terminalId:source.identity.terminalId,projectOrigin:source.identity.projectOrigin};
+    const response=await this.shiftProtocolRequest({sqlServerFinancialCapability:{organizationId,branchId,...(shiftId===null?{}:{shiftId})}});source.assertSource();
+    const value=require('./financial-capability.cjs').normalizeFinancialCapability(response,scope),token=Object.freeze({});
+    financialCapabilityWitnesses.set(token,{...source,value,scope});return token;
+  }
+  async readFinancialBasis({organizationId="default",branchId,shiftId}){
+    const source=this.financialBasisIdentity(branchId,shiftId);
+    const database=(await source.pool.request().query("SELECT LOWER(CONVERT(nvarchar(36),database_guid)) database_guid FROM sys.database_recovery_status WHERE database_id=DB_ID();")).recordset??[];
+    if(database.length!==1||typeof database[0].database_guid!=="string"||! /^[a-f0-9-]{36}$/.test(database[0].database_guid))financialBasisFailure();
+    const assertSource=()=>{const current=this.financialBasisIdentity(branchId,shiftId);if(current.pool!==source.pool||current.manager!==source.manager||JSON.stringify(current.identity)!==JSON.stringify(source.identity))financialBasisFailure();};
+    assertSource();
+    const result=await this.shiftProtocolRequest({sqlServerFinancialBasis:{organizationId,branchId,shiftId}});assertSource();
+    if(!result||typeof result.basisId!=="string"||! /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(result.basisId)||typeof result.basisHash!=="string"||! /^[a-f0-9]{64}$/.test(result.basisHash)||typeof result.basisJson!=="string"||Buffer.byteLength(result.basisJson,'utf8')>6*1024*1024||financialBasisHash(result.basisJson)!==result.basisHash)financialBasisFailure();
+    let basis;try{basis=parseExactJson(result.basisJson,{maxBytes:6*1024*1024,maxDepth:64});}catch{financialBasisFailure();}
+    if(basis.branchId!==branchId||basis.shiftId!==shiftId||!basis.parentSnapshot||typeof basis.parentSnapshot!=="object")financialBasisFailure();
+    const sourceEvidence=normalizeFinancialSourceEvidence(result.sourceEvidence),ownPublishedThrough=normalizePublishedThrough(result.ownPublishedThrough);
+    const token=Object.freeze({});
+    financialBasisWitnesses.set(token,{assertSource,...source,value:Object.freeze({serverBasisId:result.basisId,serverBasisHash:result.basisHash,basisJson:result.basisJson,parentSnapshot:deepFreezeFinancial(basis.parentSnapshot),branchId,shiftId,terminalId:source.identity.terminalId,projectOrigin:source.identity.projectOrigin,databaseGuid:database[0].database_guid,sourceEvidence,ownPublishedThrough,purpose:'financial_basis_read'})});
+    return token;
+  }
+  pushFinancialEvent({organizationId="default",branchId,operationJson,proof}) {
+    return this.shiftProtocolRequest({sqlServerFinancialEvent:{organizationId,branchId,operationJson,proof}});
+  }
+  pushFinancialObservation({organizationId="default",branchId,operationJson}) {
+    return this.shiftProtocolRequest({sqlServerFinancialObservation:{organizationId,branchId,operationJson}});
+  }
+  registerFinancialBoundary(batch) { return this.pushAggregate({...batch,registerFinancialBoundary:true}); }
   pushAggregate(batch) {
+    if((batch.registerFinancialBoundary!==undefined && (batch.registerFinancialBoundary!==true||!batch.shiftIntent||!batch.shiftFinancialBasis))||
+      (batch.financialLedgerProjection!==undefined&&(batch.financialLedgerProjection!==true||batch.shiftIntent))||
+      (batch.shiftFinancialOpening!==undefined&&(!batch.shiftFinancialOpening||batch.shiftIntent||typeof batch.shiftFinancialOpening.openingJson!=="string"||!batch.shiftFinancialOpening.proof)))
+      throw Object.assign(new Error("The protected financial upload is incomplete."),{code:"EFINANCIAL_HISTORY_INVALID",table:"shifts"});
+    const missingFinancialProof = batch.financialRequired === true && batch.shiftFinancialBasis == null;
+    if (missingFinancialProof || batch.shiftFinancialBasis === null || (batch.shiftFinancialBasis !== undefined && !batch.shiftIntent))
+      throw Object.assign(new Error("The saved shift financial proof is required before upload."), {code:missingFinancialProof?"ESHIFT_FINANCIAL_PROOF_REQUIRED":"ESHIFT_FINANCIAL_PROOF_INVALID",table:"shifts"});
     const payload = {
       sqlServerAggregate: {
         batchId: batch.batchId,
@@ -285,6 +355,10 @@ class CloudClient {
         ...(batch.shiftIntent ? {shiftIntent:batch.shiftIntent} : {operations:batch.operations}),
         ...(batch.shiftAuthor ? {shiftAuthor:batch.shiftAuthor} : {}),
         ...(batch.shiftClosingStart ? {shiftClosingStart:batch.shiftClosingStart} : {}),
+        ...(batch.shiftFinancialBasis !== undefined ? {shiftFinancialBasis:batch.shiftFinancialBasis} : {}),
+        ...(batch.registerFinancialBoundary===true?{registerFinancialBoundary:true}:{}),
+        ...(batch.financialLedgerProjection===true?{financialLedgerProjection:true}:{}),
+        ...(batch.shiftFinancialOpening!==undefined?{shiftFinancialOpening:{openingJson:batch.shiftFinancialOpening.openingJson,proof:batch.shiftFinancialOpening.proof}}:{}),
       },
     };
     return batch.shiftIntent ? this.shiftProtocolRequest(payload) : this.request(payload);
@@ -551,4 +625,12 @@ class CloudClient {
     }
   }
 }
-module.exports = { CloudClient };
+function readVerifiedFinancialBasis(token,expected){
+  const saved=financialBasisWitnesses.get(token);if(!saved||!expected||expected.connectionManager!==saved.manager||expected.branchId!==saved.value.branchId||expected.shiftId!==saved.value.shiftId||expected.terminalId!==saved.value.terminalId||(expected.projectOrigin!==undefined&&expected.projectOrigin!==saved.value.projectOrigin))financialBasisFailure();
+  saved.assertSource();return saved.value;
+}
+function readVerifiedFinancialCapability(token,expected){
+  const saved=financialCapabilityWitnesses.get(token);if(!saved||!expected||saved.manager!==expected.connectionManager||saved.scope.branchId!==expected.branchId||saved.scope.shiftId!==(expected.shiftId??null)||saved.scope.terminalId!==expected.terminalId||saved.scope.projectOrigin!==expected.projectOrigin)financialBasisFailure();
+  saved.assertSource();return Object.freeze({descriptor:saved.value,binding:saved.identity});
+}
+module.exports = { CloudClient,readVerifiedFinancialBasis,readVerifiedFinancialCapability };

@@ -9,7 +9,7 @@ import { randomUUID,createHash } from 'node:crypto';
 import { runInNewContext } from 'node:vm';
 
 const require = createRequire(import.meta.url);
-const read = name => readFile(new URL('../' + name, import.meta.url), 'utf8');
+const read = async name => (await readFile(new URL('../' + name, import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
 const schema = await read('supabase/schema.sql');
 const mainSource = await read('electron/main.cjs');
 const registry = JSON.parse(await read('database/sqlserver/schema-registry.json'));
@@ -300,7 +300,7 @@ function localFixture() {
   assert(start>=0 && end>start);
   const context={require:name=>name.startsWith('./') ? require('../electron/'+name.slice(2)) : require(name),
     localBranchId:()=> 'a',operationsRepository:repository,
-    shiftSyncJournal:actualWriter,shiftAuthority,
+    shiftSyncJournal:actualWriter,shiftAuthority,shiftFinancialDraftProvider:null,
     guard:require('../electron/ipc-guard.cjs'),recordId,randomUUID,Date,
     shiftMoney:value=>Math.round(Number(value ?? 0)*100)/100,
     adminSession:session,

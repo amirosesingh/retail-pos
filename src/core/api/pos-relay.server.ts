@@ -319,6 +319,17 @@ export async function runRelayRead(read: RelayRead, scope?: RelayScope): Promise
     if (!res.ok) return { ok: false, error: (await res.text()).slice(0, 400) };
     return { ok: true, rows: (await res.json()) as Record<string, unknown>[] };
   }
+  if (scope) {
+    if (!canCrossBranches(scope) && read.storeId !== scope.storeId)
+      return { ok: false, status: 403, code: 'STORE_FORBIDDEN', error: 'You can only read your own branch.' };
+    const selected = await shiftSharingRpc('pos_shift_active_for_terminal', {
+      method: 'POST', body: JSON.stringify({ p_branch: read.storeId, p_terminal: scope.terminalId ?? null }),
+    });
+    if (selected?.ok) return { ok: true, row: await selected.json() as Record<string, unknown> | null };
+    if (selected) return { ok: false, error: (await selected.text()).slice(0, 400) };
+    // Older schemas have never supported disabling sharing. Preserve their
+    // branch-wide selection; every other failure stays visible.
+  }
   const res = await serviceRest(
     `shifts?store_id=eq.${encodeURIComponent(read.storeId)}&status=eq.OPEN` +
       `&closed_at=is.null&order=opened_at.desc&limit=1`,
@@ -336,6 +347,28 @@ function serviceHeaders(key: string): Record<string, string> {
   // New-format sb_secret_ keys are opaque strings, not bearer JWTs.
   if (!key.startsWith("sb_")) headers["Authorization"] = `Bearer ${key}`;
   return headers;
+}
+
+function missingShiftSharingRpc(response: Response, text: string, name: string): boolean {
+  if (response.status !== 404) return false;
+  try {
+    const value = JSON.parse(text) as { code?: unknown; message?: unknown };
+    return !!value && value.code === 'PGRST202' && typeof value.message === 'string' && value.message.includes(name);
+  } catch { return false; }
+}
+const absentShiftSharingRpcs = new Map<string, number>();
+async function shiftSharingRpc(name: string, init: RequestInit): Promise<Response | null> {
+  const key = `${supabaseConfig().url}\n${name}`;
+  if ((absentShiftSharingRpcs.get(key) ?? 0) > Date.now()) return null;
+  const response = await serviceRest(`rpc/${name}`, init);
+  if (response.status === 404 && missingShiftSharingRpc(response, await response.clone().text(), name)) {
+    // Cache only schema absence, never accounts, branch authority or errors.
+    // A newly applied upgrade is discovered within five seconds.
+    absentShiftSharingRpcs.set(key, Date.now() + 5000);
+    return null;
+  }
+  absentShiftSharingRpcs.delete(key);
+  return response;
 }
 
 /** A rejected-credential answer, as opposed to a permission or data problem. */
@@ -498,6 +531,22 @@ export async function runRelayRpc(
         error: "You can only sell for your own branch.",
       };
     }
+    if (scope.staffUserId) {
+      const guarded = await shiftSharingRpc('pos_checkout_sale_for_terminal', {
+        method: 'POST', body: JSON.stringify({ p_terminal: scope.terminalId ?? null, p_actor: scope.staffUserId,
+          _sale: op.args._sale, _items: op.args._items ?? [], _payments: op.args._payments ?? [],
+          _movements: op.args._movements ?? [], _member: op.args._member ?? null, _exchange_bill: op.args._exchange_bill ?? null }),
+      });
+      if (guarded?.ok) return { ok: true };
+      if (guarded) return { ok: false, error: (await guarded.text()).slice(0, 400) };
+    }
+    if(scope.appUserId){
+      const {financialLiveAdapterReady}=await import('@/lib/financial-live-readiness.server');
+      if(await financialLiveAdapterReady()){
+        const res=await serviceRest('rpc/pos_live_financial_sale',{method:'POST',body:JSON.stringify({p_author:scope.appUserId,p_branch:storeId,p_terminal:scope.terminalId??null,p_sale:op.args._sale,p_items:op.args._items??[],p_payments:op.args._payments??[],p_movements:op.args._movements??[],p_member:op.args._member??null,p_exchange_bill:op.args._exchange_bill??null})});
+        return res.ok?{ok:true}:{ok:false,error:(await res.text()).slice(0,400)};
+      }
+    }
     const res = await serviceRest("rpc/pos_sale_commit", {
       method: "POST",
       body: JSON.stringify(op.args),
@@ -591,6 +640,13 @@ export async function runRelayRpc(
             ? "p_verified_by"
             : null;
   const args = actorField ? { ...op.args, [actorField]: actor } : op.args;
+  if(op.fn==='sale_refund'&&scope.appUserId){
+    const {financialLiveAdapterReady}=await import('@/lib/financial-live-readiness.server');
+    if(await financialLiveAdapterReady()){
+      const res=await serviceRest('rpc/pos_live_financial_refund',{method:'POST',body:JSON.stringify({p_author:scope.appUserId,p_branch:storeId,p_terminal:scope.terminalId??null,p_sale_id:id,p_lines:op.args._lines??null,p_client_refund_id:op.args._client_refund_id??null,p_reason:op.args._reason??null})});
+      return res.ok?{ok:true}:{ok:false,error:(await res.text()).slice(0,400)};
+    }
+  }
   // Only the account resolved from the verified session may become the native
   // database actor. Renderer attribution/actor parameters are never forwarded.
   const nativeApproval = op.fn === "stock_transfer_approve";
@@ -631,6 +687,14 @@ export async function runRelayOp(
   const decision = await safeAuthorizeRelayOp(op, scope, batchIds);
   if (!decision.ok) return { ok: false, error: decision.error, code: decision.code };
   const safeOp = decision.op;
+  if (safeOp.table === 'shifts' && (safeOp.kind === 'insert' || safeOp.kind === 'upsert') && scope.staffUserId) {
+    if (!safeOp.rows || safeOp.rows.length !== 1) return { ok: false, code: 'SHIFT_OPEN_INVALID', error: 'Open one shift at a time.' };
+    const guarded = await shiftSharingRpc('pos_open_shift_for_terminal', { method: 'POST', body: JSON.stringify({
+      p_terminal: scope.terminalId ?? null, p_actor: scope.staffUserId, p_row: safeOp.rows[0],
+    }) });
+    if (guarded?.ok) return { ok: true };
+    if (guarded) return { ok: false, error: (await guarded.text()).slice(0, 400) };
+  }
   if (safeOp.table === "shift_notifications" || (safeOp.table === "shifts" && safeOp.kind === "delete")) {
     // Preserve the existing relay policy first. The narrow SQL route then checks
     // enrolled graph admission and performs this exact mutation atomically.

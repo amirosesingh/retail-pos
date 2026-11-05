@@ -344,6 +344,7 @@ try {
     const root = fileURLToPath(new URL("../", import.meta.url));
     try {
       for (const path of ["scripts/generate-supabase-sync-contract.cjs", "scripts/sqlserver-sync-policy.cjs",
+        "scripts/preparation/shift-branch-sharing.sql",
         "database/sqlserver/schema-registry.json", "supabase/schema.sql", `supabase/migrations/${correctionName}`,
         "supabase/migrations/20261030153259_confirm_shift_closure_sync_acknowledgement.sql",
         "supabase/migrations/20261030164829_bind_shift_closure_proof_to_requested_revision.sql",

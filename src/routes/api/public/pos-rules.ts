@@ -58,6 +58,7 @@ async function handlePost(request: Request): Promise<Response> {
       updatedAt: loaded.updatedAt,
       updatedBy: loaded.updatedBy,
       rules: loaded.rules,
+      shiftSharingAvailable: loaded.shiftSharingAvailable,
     });
   } catch (e) {
     return Response.json({ ok: false, error: (e as Error).message }, { status: 500 });

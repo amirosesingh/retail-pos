@@ -26,6 +26,7 @@ import { logRules } from "./pos-rules-log";
 import { terminalId } from "./activity-journal";
 import { serverOrigin, posFetch } from "./server-origin";
 import { platformName } from "@/platform-config/platform";
+import { publishShiftSharing } from './shift-sharing-policy';
 
 export { platformName };
 import { DEFAULT_POS_RULES, normalizeRules, type PosRules } from "./pos-rules";
@@ -69,6 +70,7 @@ const STATUS_TEXT: Record<RulesStatus, string> = {
 };
 
 type Ctx = {
+  shiftSharingAvailable: boolean;
   rules: PosRules;
   loading: boolean;
   /** True when the rules shown are the built-in safety set, not the saved ones. */
@@ -100,6 +102,7 @@ type Ctx = {
 const RulesContext = createContext<Ctx | null>(null);
 
 type Snapshot = {
+  shiftSharingAvailable?: boolean;
   rules: PosRules;
   usingDefaults: boolean;
   degraded: boolean;
@@ -117,6 +120,7 @@ type Snapshot = {
 };
 
 type Answer = {
+  shiftSharingAvailable?: boolean;
   ok?: boolean;
   identified?: boolean;
   branchId?: string;
@@ -433,6 +437,7 @@ export function PosRulesProvider({
             notVerified: false,
             status: "LIVE",
             source: "DATABASE",
+            shiftSharingAvailable: res.shiftSharingAvailable === true,
             failure: "none",
             backendError: "",
             revision: now.revision,
@@ -491,6 +496,7 @@ export function PosRulesProvider({
     const failure = query.data?.failure ?? "none";
     const status: RulesStatus = query.data?.status ?? (query.isPending ? "SYNCING" : "SYNCING");
     return {
+      shiftSharingAvailable: query.data?.shiftSharingAvailable === true,
       rules: query.data?.rules ?? DEFAULT_POS_RULES,
       loading: query.isPending,
       usingDefaults: query.data?.usingDefaults ?? false,
@@ -533,6 +539,7 @@ export function PosRulesProvider({
           notVerified: false,
           status: "LIVE",
           source: "DATABASE",
+          shiftSharingAvailable: answer.shiftSharingAvailable === true,
           failure: "none",
           backendError: "",
           revision: saved.revision,
@@ -567,6 +574,10 @@ export function PosRulesProvider({
     };
   }, [key, query.data, query.isPending, queryClient, scope]);
 
+  useEffect(() => {
+    if (!value.usingDefaults && value.source !== 'UNAVAILABLE') publishShiftSharing(scope, value.rules.allow_branch_shift_sharing);
+  }, [scope, value.usingDefaults, value.source, value.rules.allow_branch_shift_sharing]);
+  useEffect(() => () => publishShiftSharing(scope, undefined), [scope]);
   return <RulesContext.Provider value={value}>{children}</RulesContext.Provider>;
 }
 
@@ -576,6 +587,7 @@ export function usePosRules(): Ctx {
       rules: DEFAULT_POS_RULES,
       loading: false,
       usingDefaults: false,
+      shiftSharingAvailable: false,
       degraded: false,
       notVerified: false,
       status: "SYNCING",

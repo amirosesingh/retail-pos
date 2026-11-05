@@ -1,4 +1,5 @@
 import { preserveSessionDrafts } from "./session-draft";
+import { effectiveOperatingShiftSharing, operatingShiftAllowed, readShiftSharing, subscribeShiftSharing } from './shift-sharing-policy';
 import { branchReadApplies, latestOpenShiftForBranch, reconcileActiveShiftRows, shiftIsOpenForBranch } from "./branch-shift-state";
 import { BranchOperationGate } from "./branch-operation-gate";
 import { formatMoney, setPosCurrency } from "./currency";
@@ -1684,12 +1685,21 @@ export function PosProvider({ children }: { children: ReactNode }) {
     void sharedSettingsReader.current?.setReady(sharedSettingsReady);
   }, [sharedSettingsReady]);
 
+  const branchShiftSharing = useSyncExternalStore(subscribeShiftSharing, () => readShiftSharing(currentStore.id), () => undefined);
   const activeShift = useMemo(() => {
     const branch = activeBranchId(currentStore.id) ?? currentStore.id;
-    if (shiftIsOpenForBranch(dbShift, branch)) return dbShift;
+    const registration = readTerminalConfig();
+    const terminal = registration?.locationId ? registration.tokenId : null;
+    const sharing = effectiveOperatingShiftSharing(branchShiftSharing);
+    const allowed = (shift: Shift) => operatingShiftAllowed(shift, branch, terminal, sharing);
+    if (shiftIsOpenForBranch(dbShift, branch) && allowed(dbShift)) return dbShift;
+    // When sharing is disabled the latest branch shift may belong to another
+    // till. Select this till's open shift without hiding the branch history.
+    if (terminal && !sharing)
+      return latestOpenShiftForBranch(state.shifts.filter(allowed), branch);
     if (shiftChecked) return null;
     return latestOpenShiftForBranch(state.shifts, branch);
-  }, [dbShift, shiftChecked, state.shifts, currentStore.id]);
+  }, [dbShift, shiftChecked, state.shifts, currentStore.id, branchShiftSharing]);
   const selectedShiftRef = useRef(activeShift);
   selectedShiftRef.current = activeShift;
 
