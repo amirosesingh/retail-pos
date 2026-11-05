@@ -1,3 +1,36 @@
+## 6 November — isolated dependency integration verification
+
+The owner asks that completed chore/version bumps be checked and integrated into
+beta while payment and sync recovery continue. Retail's application version is
+already 1.4.82. Five dependency PRs406–410 remain separate from publication and
+production approval. Their green original checks use beta4e9a854a; actual current
+beta is3074a475. Do not represent those checks as verification of the current
+combined source.
+
+Approved preparation scope: a separate codex/chore-beta-verification worktree,
+preserving all five original heads as merge parents and changing only package
+metadata/lock plus this evidence. No real POS profile, operator database,
+registration, queues, settings, private keys or application code is changed.
+No remote merge, release, signing or installer publication is included.
+
+Local preview order406,407,408,409,410 retains every original package upgrade.
+Only407 conflicts with406's dependency hoisting: retain Chalk4 for the builder
+and resolve Chalk5 underneath its actual CLI consumers with npm11.4.2/Node22.
+Existing minimatch/resedit and added mimic-fn/require-main-filename entries are
+preserved semantically. The final preview bdf82beb has source tree
+458704d89a0ed1cc8f38e761cb8046deed493456 and changes only package.json and its lock
+relative to beta3074. Fresh isolated Node22.22.2/npm11.4.2 installation passed
+(1063packages). TypeScript passed. All92 native Node checks passed, including
+actual Capgo valid/invalid local bundle packaging and updater/sync/database
+fixtures. The first restricted-temp run passed91/92 but Windows denied a fixture
+installer rename; the unchanged normal-temp rerun passed92/92. Full regression
+(two workers), full lint/advisory audit and unsigned no-publish Windows packaging
+are running, not passed claims. Desktop compilation completed and builder26.18
+started its package collection with npmRebuild=false. Record final results before
+recommending integration. Generated schema/report timestamps are incidental build
+output and must not enter the source PR. Database changes remain separately
+controlled. Membership remains ON HOLD.
+
 FIN62 cloud phase: PR391d15be0af allrequiredCIpassed. Ownerapproved exactdecimalv2 NEWactions only/final2dp halfawayzero; preserveoldacceptedhistory. Activeindependentnative/PGmath implementations, safecomplete-server-baseline receipts and financialauthor-domain foundation. Actualfinancialoperationauthor/writercapture and historical admission wiring remain open; no synthetic authorized flag/GUC or unverifiedclientrowlist may claim authority. All cloud/local DBapplication deferredEND exactbundleapproval. No finalcloudmigration applied or existingfinancialamountsrewritten.
 
 FIN62 known-snapshot preparation verification: seven disposableLocalDB metadata-upgrade groups and20 SQLServer financial-basis groups passed, fixturescleaned. Independent review corrected IGNORE_DUP_KEY/physicalindex guard, canonicalUUIDtextorder, and transaction-preserving rejectedcaller behavior. Native prototype exposes expectedNativeRaw with scale12/formulaversion rather than claiming parity with PostgreSQL2dp wiremoney. Shared final monetary canonicalization/admission binding remain pending; no runtime activation or database application. Candidate025 hash updated in final-bundle document. Decision/preparationfiles are queued for PR391 update, not automatic migration discovery.
