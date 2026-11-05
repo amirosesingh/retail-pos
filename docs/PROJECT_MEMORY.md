@@ -1373,6 +1373,26 @@ session-handover authorization fix.
 
 ## RELEASE71 — proposed 1.4.82 metadata, 5 November
 
+SQL72's urgent manual PC deliverable is one standalone existing-database SQL file
+for completed025–030 only; stock031 and Supabase application are excluded. It
+must recognize schema24 plus installed canonical metadata, preserve all existing
+rows/permissions/queues/checkpoints/settings and roll back the entire batch on
+unknown or partial objects. It must not replay the full installer, rewrite archive
+flags, switch databases, activate a rollout or change connection settings. Source
+capture, test fixtures and packaging never authorize a live operator target.
+
+SQL72 now emits `database/sqlserver/retail-pos-existing-upgrade-1.4.82.sql`
+without runtime/source dependencies; current SHA256
+090F24031A07660C2D36512D2B38197A06491BB28408CCAAFDBB66FC400A4730.
+Exact typed/binary JSON catalogue guards recognize only reviewed schema24 plus
+canonical installed module shapes. Preserve SQL literal bytes while recognizing
+reviewed structural LF/CRLF variants; never globally normalize definition strings.
+Scoped LF attributes preserve emitted/source provenance hashes across checkouts.
+Final tests pass10 packaging,28 full-Retail actual SQL and4 original composition
+groups; all owned fixtures cleaned, no operator connection. Installed target
+approval/application, device acceptance, beta CI/integration and publication stay
+separate. Unfinished stock031 and Supabase execution are excluded.
+
 Retail 1.4.81 is already published; do not overwrite or retag it. Prepare 1.4.82
 on beta with matching package, application, SQL artifact labels and iOS marketing
 version/build metadata. These edits must preserve SQL semantics, dependencies,
@@ -1473,3 +1493,19 @@ pricing helpers by verbatim shared extraction and alias/parity tests. Unknown,
 missing or inconsistent native evidence remains unpaid and denied. Existing
 Android/Management/older bridge paths and general cashier write gates stay
 unchanged. No live database or release approval is implied.
+## CHECKOUT74 — web exchange payment preparation, 5 November
+
+The existing shared refund UPDATE trigger cannot reference another table's NEW
+or OLD fields inside a combined AND condition. Isolate each field expression in
+its own table-specific IF block, preserving refund authorization and both trusted
+exits. Prepare/test only; the exact live project/file needs separate approval.
+
+## SHIFT75 — report presentation date contract, 5 November
+
+Native snapshot timestamps may arrive as Date objects even though Shift's public
+openedAt type is string. Normalize only those report-display Date values; preserve
+existing SQL/cloud strings byte-for-byte, including seven fractional digits.
+Do not alter active-shift selection, exact cursors, saved times or authorization.
+The actual Operations snapshot returns raw shift recordsets (unlike its other
+codec-normalized tables); paged history already normalizes opened_at. The report
+adapter therefore handles native Date seeds without changing those shared paths.
