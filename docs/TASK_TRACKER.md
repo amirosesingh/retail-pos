@@ -78,6 +78,14 @@ the saved legacy graph with explicit unavailable-historical-snapshot provenance;
 new protected/FIN62-required writes remain excluded from any such exception.
 Until answered, no legacy financial-admission exception is implemented or applied.
 
+Nonblocking source-audit follow-up from POLICY66: other validators named pinInput
+and closeInput in pos-rules.functions.ts omit native proof/context fields, but
+their actual native callers are not traced. This is unverified, not a confirmed
+runtime defect; do not expand PR397 or claim those paths verified from a keyword
+match. Trace them separately before proposing a scoped correction. Current
+rules get/save transport, branch/permission and offline-cache fixes remain the
+approved policy batch.
+
 4 November: owner approved agents completing production checks and fixing authoritative shift-total/refund validation, preserving checkout/permissions. Exact local/cloud database changes must be shown before application; no live schema/data change is approved by preparation. Baseline beta68470185; isolated branch codex/shift-financial-validation-beta. Confirmed gap: graph/author validation proves internal consistency/actor, not expected tenders against authoritative sale inputs. Current mutable sale journal cannot reconstruct historical offline refund state. Do not compare old closing against current cloud totals or invent refund timestamps.
 
 Approved business decisions: validate ORIGINAL closing using financial inputs at its saved point; each later administrator recount/correction uses its own saved financial boundary. Preserve all prior audit/accepted receipts and latest accepted authorized correction. Booking deposit/payment-when-received attribution is a SEPARATE pending correction, not part of FIN62. Preserve current tender formula and original-shift refund attribution in this batch; do not silently implement a new cash-flow allocation rule.

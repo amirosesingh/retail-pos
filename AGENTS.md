@@ -208,6 +208,11 @@ that device builds require. The guard lives in
   branch. Another branch's protected warehouses or inventory require an
   explicitly approved cross-branch workflow. Do not infer an independent
   warehouse ACL or new access entitlement from the location hierarchy.
+- Preserve the approved DEC-48 exception in project memory: a normal terminal
+  may view positive available stock at other active locations in its own cluster
+  through the authorized availability workflow. This grants no operating-branch
+  switch, other-branch write access or cross-cluster catalogue visibility. SKU
+  allocation remains global; per-location quantities remain distinct.
 - Shared physical SQL storage grants no shared access. Management replication
   stores only its configured authorized scope. Preserve original business,
   branch, warehouse, terminal and user attribution where applicable through
