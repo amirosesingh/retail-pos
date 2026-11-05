@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { navGroups, routePermissionForPath } from "@/platforms/web/components/pos/nav-config";
+import { canOpenReportsHub, canSeeNavigationItem, navGroups, routePermissionForPath } from "@/platforms/web/components/pos/nav-config";
 import { SETTINGS_CARDS } from "../settings-catalog";
 
 describe("navigation grouping", () => {
@@ -12,6 +12,16 @@ describe("navigation grouping", () => {
     expect(entry?.flag).toBe("can_view_inventory");
     expect(routePermissionForPath("/reports/inventory")).toBe("can_view_inventory");
     expect(routePermissionForPath("/reports/stock")).toBe("can_view_sales_reports");
+  });
+  it("admits inventory-only navigation to the link hub while keeping Sales/Audit cards denied", () => {
+    const can = (flag: string) => flag === "can_view_inventory";
+    const entries = navGroups.find(group => group.id === "reports")!.items;
+    expect(canOpenReportsHub(can)).toBe(true);
+    const shown = entries.filter(item => canSeeNavigationItem(item,can,false,() => true)).map(item => item.to);
+    expect(shown).toContain("/reports");expect(shown).toContain("/reports/inventory");
+    expect(shown).not.toContain("/reports/sales");expect(shown).not.toContain("/reports/history");
+    expect(canSeeNavigationItem(entries.find(item => item.to === "/reports")!,can,false,() => false)).toBe(false);
+    expect(canOpenReportsHub(() => false)).toBe(false);
   });
   it("separates membership from staff and inventory", () => {
     expect(navGroups.find(group => group.id === "people")?.label).toBe("Membership");
