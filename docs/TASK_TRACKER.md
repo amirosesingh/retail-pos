@@ -17,6 +17,102 @@ FIN62 isolated SQL basis prototype: complete selected-branch/shift inputs and ex
 
 ## 5 November current integration and newly queued dashboard scope
 
+Latest owner release decision: FINISH DEVICE ACCEPTANCE FIRST, not approval to
+merge400. Owner explicitly requests offline recovery, historical stock report
+and one consolidated existing-data SQL upgrade completed before production.
+Continue necessary implementation/isolated tests under those existing feature
+batches with agents; present exact cloud/local database changes before any live
+application. Electron404 corrects the shared sale-saving path, including ordinary
+sales without an approval, but installed acceptance is not yet proven. Native
+testing must use an explicitly isolated database/profile, never real POS data.
+The next final release head/scope still requires exact owner approval.
+
+Current integration checkpoint: completed PRs396/397/398/399/402/403/404/405
+are merged to beta8b1cb17b04187fe468033c04c4383eecc691babb, exact reviewed tree
+57dbea4f321016c4ed95c753af10a6547d43fb88. Candidate1.4.82 metadata is consistent;
+no tag/installer has been published. Final reviewed-head CI passed5789 tests with
+9 skipped/0 failed. Both checkout and metadata automatic beta deployments passed.
+Production remains main3d9d314c/Retail1.4.81. Draft promotionPR400 contains55
+scoped files and no schema/data change; merge preview preserves the exact tree.
+The identical-tree postmerge Security rerun and exact owner release/installed-test
+disposition remain pending. Do not infer approval or call production updated.
+
+Separate pending work: draft395 runtime recovery/CT acceptance, draft401 stock
+historical storage/UI, consolidated guarded local recovery upgrade, installed
+acceptance, Management session handover, navigation-pin ownership and deposit
+attribution. Newly opened dependency PRs406–410 are unreviewed/excluded from400;
+held359 and Membership remain untouched. User clarified sale failure is Electron
+only while web succeeds:404 targets the local SQL aggregate path; installed PCs
+need a new native installer to receive it. No cloud ownership/stock repair follows.
+
+New production checkout refusal after approved discount: source mapping confirms
+SYNC_BRANCH_FORBIDDEN / products, not a PIN or network error. Relevant checkout,
+financial-stock policy and catalogue guards are unchanged between main3d9d314c,
+betaada83bb9 and the recovery precision checkpoint. Twenty-three actual isolated
+SQL cases reproduce a valid unowned legacy product losing stock-based catalogue
+eligibility when its last quantity becomes zero; aggregate post-write validation
+then rejects and rolls back the sale. Own/sibling/posted/cached catalogue proof
+cases pass; genuine foreign/ineligible preimages remain denied.
+
+Owner requested read-only tracing of the last two recent approvals. Exact pos
+project/org identity was verified; both STR1 approvals reference the same bill and
+were approved/consumed. One matching cloud product has no owner and STR1 stock1;
+this matches the reproduced condition, while exact cashier-PC local linkage is
+still unverified. No real records are copied into test fixtures. Owner now APPROVED
+the separate same-transaction preimage/postcondition checkout correction and
+isolated tests: existing aggregate repository plus focused tests, preserving
+strict financial-stock deltas and unchanged catalogue identity. No ownership
+assignment, stock repair, database/configuration changes or deployment covered.
+Use a separate beta branch/PR from betaada83bb9; no live product, stock, sales or
+configuration change was made.
+
+Checkout testing also confirmed a PREEXISTING financial replay gap on original
+beta and the scoped patch: an existing sale/item graph under a NEW aggregate
+operationId can deduct stock again if its stock preimage again matches (isolated
+restock reproduction). Same-operation exact receipt replay remains protected.
+Owner now APPROVED the additional aggregate-only replay guard and isolated tests:
+after exact accepted-operation receipt handling, before stock/financial capture/
+journal writes, lock normalized proposed new sale IDs deterministically and hold
+any existing sale without that aggregate's exact accepted receipt. No invented
+receipts, guessed partial recovery, financial-row rewrites or stock changes to
+real data. Preserve legitimate new sales, old original-bill exchange references,
+same-operation retries, branch rules and separate refund workflows. Code/tests
+only; no schema/configuration/data application or deployment. PR404 stays draft
+until this guard and final full/independent/CI checks pass.
+
+Negative-stock clarification: allowing negative quantity does not waive catalogue
+or branch authority. The last-unit failure is transient eligibility loss at zero,
+not a refusal from the negative-stock limit. Preserve the configured rule and test
+positive/zero/negative transitions with actual allowed/denied branch cases.
+
+Recovery completion within the ORIGINAL approved application-recovery batch:
+now that exact downloads pass the complete regression, reuse the existing Main
+authority/SQL service/IPC/preload/review UI for explicit Administrator cloud-choice
+and private-receipt convergence, bounded ACKed-but-not-adopted restart scanning,
+truthful pending stages, and a fresh existing six-table V0 proof after adoption.
+No new role, grant, business decision, manual cloud copy or checkpoint reset.
+
+Startup access investigation refined the first apparent blocker: existing
+/database-startup already bypasses the trading boot gate and mounts AuthProvider;
+it currently only exposes connection setup. Actual existing online/offline Main
+POS login handlers passed a synthetic connected-but-not-tradingReady test, so no
+backend auth relaxation is needed. Add a bounded ordinary Administrator sign-in/
+review section to that route using existing PrivilegeGate and Main POS authority;
+keep trading blocked, reject staff/emergency/stale identities, and preserve normal
+login navigation elsewhere. Do not change NativeBoot/root readiness/permissions
+or repurpose emergency sessions. If more shared auth semantics prove necessary,
+stop and present the additional scope. Runtime changes remain in the unmerged
+feature branch with isolated tests; no live metadata/activation/deployment.
+
+Recovery wiring review found three existing Main safety/status consumers still
+reading ordinary pending counts instead of the new combined upload/convergence
+count. Isolated extraction proves reassignment could pass and signed-out/offline
+shutdown could report zero with retained recovery work. Correct those three
+already-approved Main callsites and existing focused tests only; preserve the
+existing exit policy and authorization. This does not authorize a Change Tracking
+acceptance change. The exact all-six-table recovery test still holds older
+unproven CT entries, so this draft remains incomplete and excluded from production.
+
 Owner APPROVED two narrow code/isolated-test batches on5 November:
 1. Exact-witness-only correction in electron/sync/shift-graph.cjs and
    electron/db/shift-intents.cjs plus focused tests. Preserve legacy no-witness

@@ -127,7 +127,7 @@ machine names or a beta application label are not proof of the current target.
 | Cloud: `supabase/migrations/20261105063613_admin_attested_legacy_shift_recovery.sql` | `145FDD86BBF6E2D7B4CB6CB9B9E0D72639329ED24979357AEAE2C724BA43EC2E` | New private append-only receipt table, index/trigger and service-only `pos_sync_recover_legacy_closing(text,text,text,text,jsonb,jsonb)`; deny direct table access. No business rows rewritten. |
 | Local1: `docs/database/retained-shift-recovery-evidence.sql` | `E3727FE62A276C1EAF200F8783B289D5BE745F2E95D563CDA850EEE9F8CAADCD` | New immutable `dbo.pos_shift_recovery_evidence`, bounded raw before-images, scope index/checks/trigger. Empty on application. |
 | Local2: `docs/database/legacy-shift-recovery-outbox.sql` | `08917EE9041033A68A81751D6409B0BB60E7E0D1D3878DCF577EA64D0B6C5307` | New immutable `dbo.pos_sync_shift_legacy_recoveries` and `dbo.pos_sync_shift_legacy_recovery_receipts`, identity/scope indexes and evidence/receipt relationships. Empty on application. |
-| Local3: `docs/database/reviewed-shift-adoption.sql` | `A57873CF32707C99256DA2345362FD91DCD42D64876CE59EC1DCE2F48E39F36F` | New immutable `dbo.pos_shift_recovery_adoptions` decision archive, evidence relationship, uniqueness and exact constraints. Empty on application. |
+| Local3: `docs/database/reviewed-shift-adoption.sql` | `5EE385C20BE5C3A79C0F0CBB91D0D4294EF17D0CB8B350201C23B4B65BF4CE92` | New immutable `dbo.pos_shift_recovery_adoptions` decision archive, evidence relationship, uniqueness and exact constraints. The unapplied identity index includes decision_id so distinct explicit reviews can remain append-only. Empty on application. |
 
 These are reviewed-source hashes for preparation, not final apply instructions.
 The existing files each own a transaction and abort on unexpected existing
@@ -146,10 +146,16 @@ adoption archives the exact before-image before changing its effective projectio
 Those operations must preserve accepted web corrections and pending work, and
 must not invent an original financial snapshot or cashier signature.
 
-The approved exact-writer/ordinary-delta correction now passes40 actual disposable
-SQL groups and53 focused tests, including independent review. It changes no schema
-artifact above. Full integrated regression remains pending; this does not apply
-or approve any candidate or complete runtime adoption.
+The later recovery wiring/CT-proof preparation now passes59 actual disposable
+SQL groups and135 focused tests. Current real Administrator review or a fresh
+private accepted receipt is required for reviewed no-write recovery coverage;
+persisted decision rows alone grant no authority. The captured-V0 six-table
+completion case passes. A fresh accepted-original snapshot can prove the narrow
+restart/later-web-correction chain; unprovable intermediate histories stay for
+explicit review. The Local3 index change above permits permanent distinct review
+decisions and requires exact file review before application. Full integrated
+regression on current beta remains pending; none of this applies or approves
+these candidates or activates a production recovery.
 
 Final gates: full integrated exact-writer regression, complete runtime
 adoption integration, independent allowed/denied/retry/rollback tests, compatible

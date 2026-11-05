@@ -114,6 +114,7 @@ contextBridge.exposeInMainWorld("pos", {
       list: (options) => invoke("sync:legacy-recovery-list", options),
       preview: (shiftId) => invoke("sync:legacy-recovery-preview", shiftId),
       approve: (value) => invoke("sync:legacy-recovery-approve", value),
+      acceptCloud: (value) => invoke("sync:legacy-recovery-accept-cloud", value),
     },
     subscribe: (cb) => { const handler=(_event,payload)=>cb(payload); ipcRenderer.on("sync:state",handler); return()=>ipcRenderer.removeListener("sync:state",handler); },
   },

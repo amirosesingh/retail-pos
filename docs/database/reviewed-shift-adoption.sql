@@ -32,7 +32,7 @@ CREATE TABLE dbo.pos_shift_recovery_adoptions(
    (decision_kind='RECEIPT_NORMALIZATION' AND receipt_recovery_id IS NOT NULL AND receipt_json IS NOT NULL))),
  CONSTRAINT CK_reviewed_adoption_hash CHECK(local_before_hash NOT LIKE '%[^0-9a-f]%' AND target_graph_hash NOT LIKE '%[^0-9a-f]%' AND local_after_hash NOT LIKE '%[^0-9a-f]%')
 );
-CREATE UNIQUE INDEX UX_reviewed_adoption_identity ON dbo.pos_shift_recovery_adoptions(database_guid,branch_id,terminal_id,backend_origin_hash,shift_id,target_graph_hash,local_before_hash);
+CREATE UNIQUE INDEX UX_reviewed_adoption_identity ON dbo.pos_shift_recovery_adoptions(database_guid,branch_id,terminal_id,backend_origin_hash,shift_id,target_graph_hash,local_before_hash,decision_id);
 EXEC sys.sp_addextendedproperty @name=N'RetailRecoveryOwner',@value=N'retail.reviewed-adoption.v1',
  @level0type=N'SCHEMA',@level0name=N'dbo',@level1type=N'TABLE',@level1name=N'pos_shift_recovery_adoptions';
 EXEC(N'CREATE TRIGGER dbo.TR_reviewed_adoption_immutable ON dbo.pos_shift_recovery_adoptions

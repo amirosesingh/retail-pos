@@ -18,8 +18,11 @@ function createLegacyShiftRecoveryRuntime({ reader: baseReader, recovery, enable
       const saved = await recovery().pendingSummary(); assertCurrent();
       readFailure = null;
       if (!saved.pending) return summary;
+      const queues = Number.isSafeInteger(saved.uploadPending) && Number.isSafeInteger(saved.convergencePending)
+        ? [{ table: "legacy_closing_upload", pending: saved.uploadPending, failed: 0 }, { table: "legacy_closing_local_convergence", pending: saved.convergencePending, failed: 0 }].filter(row => row.pending)
+        : [{ table: "legacy_shift_recovery", pending: saved.pending, failed: 0 }];
       return { ...summary, pending: Number(summary.pending ?? 0) + saved.pending,
-        queuedTables: [...(summary.queuedTables ?? []), { table: "legacy_shift_recovery", pending: saved.pending, failed: 0 }] };
+        queuedTables: [...(summary.queuedTables ?? []), ...queues] };
     } catch (error) { readFailure = codeOf(error); throw error; }
   };
   async function run(options, ordinaryRun) {

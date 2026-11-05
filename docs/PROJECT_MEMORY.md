@@ -1278,3 +1278,23 @@ An obsolete graph-carousel test was updated to the latest in-place graph rule;
 its category rail assertions remain. The original analytics reader, checkout,
 permissions, Main/IPC and database sources are unchanged. CI/hosted/installed
 acceptance, beta merge and any production promotion/publication remain separate.
+
+## Current completed beta batch and release boundary, 5 November
+
+Completed imports, native policy/proof loading, permanent rules, single data lane,
+dashboard/chart scope, precise Management cursors, Electron last-unit/replay guards
+and1.4.82 version metadata are integrated through PRs396–399/402–405 at beta
+8b1cb17b04187fe468033c04c4383eecc691babb. Reviewed and merged trees match exactly;
+final reviewed-head CI passed5789/9skipped/0failed and beta delivery passed.
+Production remains1.4.81 on main3d9d314c. PR400 proposes only these completed
+changes, with no database execution or new schema requirement. Exact promotion
+and automatic publication approval, remaining merged-head checks and installed
+acceptance/disposition are separate. Do not treat the latest generic status or
+merge request as approval for unpublished scope.
+
+Keep recovery395/CT safeguards, historical-stock401 storage/UI, guarded consolidated
+local recovery upgrade, Management handover/navigation-pin follow-ups and deposits
+tracked separately; new dependency PRs406–410 are unreviewed. Membership remains
+ON HOLD. The reproduced sale-completion refusal is in Electron's local aggregate
+path; web uses a different path. The native fix requires a new installed build,
+not merely a website deployment, and performs no ownership or stock data repair.

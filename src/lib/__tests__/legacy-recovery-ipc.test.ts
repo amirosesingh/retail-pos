@@ -11,11 +11,12 @@ function fixture() {
   const ipcMain = { handle: (name: string, callback: (event: object, value?: unknown) => Promise<unknown>) => handlers.set(name, callback) };
   const barrier = new WriteBarrier(); privilege.install(ipcMain, { writeBarrier: barrier });
   const service = { list: vi.fn(async () => ({ available: true, items: [] })), preview: vi.fn(async () => ({ shiftId: shift, canApprove: false })),
-    approve: vi.fn(async () => ({ state: "PENDING" })) };
+    approve: vi.fn(async () => ({ state: "PENDING" })), acceptCloud: vi.fn(async () => ({ state: "ADOPTED", checkpointAdvanced: false, downloadRecoveryComplete: false })) };
+  const wake = vi.fn();
   const sender = {}, mainFrame = {}, event = { sender, senderFrame: mainFrame };
-  installLegacyShiftRecoveryIpc({ ipcMain, service, session, isPosSender: (value: typeof event) => value.sender === sender && value.senderFrame === mainFrame });
+  installLegacyShiftRecoveryIpc({ ipcMain, service, session, onAdoptCommitted: wake, isPosSender: (value: typeof event) => value.sender === sender && value.senderFrame === mainFrame });
   const call = (name: string, value?: unknown, caller = event) => handlers.get(name)!(caller, value);
-  return { service, call, event, barrier };
+  return { service, call, event, barrier, wake };
 }
 afterEach(() => { session.clear(); session.clearRecovery(); });
 describe("installed legacy recovery IPC and existing privilege wrapper", () => {
@@ -24,6 +25,7 @@ describe("installed legacy recovery IPC and existing privilege wrapper", () => {
     const f = fixture();
     expect(await f.call(CHANNELS.list, {})).toMatchObject({ ok: false });
     expect(await f.call(CHANNELS.approve, {})).toMatchObject({ ok: false });
+    expect(await f.call(CHANNELS.acceptCloud, {})).toMatchObject({ ok: false });
     expect(f.service.list).not.toHaveBeenCalled(); expect(f.service.approve).not.toHaveBeenCalled();
   });
   it("denies a manual emergency administrator session and no session", async () => {
@@ -57,7 +59,17 @@ describe("installed legacy recovery IPC and existing privilege wrapper", () => {
     session.grant("admin", "fixture", {}, "pos"); const f = fixture(); await f.barrier.sealAndDrain();
     expect(await f.call(CHANNELS.preview, shift)).toMatchObject({ ok: false, code: "EAPP_CLOSING" });
     expect(await f.call(CHANNELS.approve, {})).toMatchObject({ ok: false, code: "EAPP_CLOSING" });
+    expect(await f.call(CHANNELS.acceptCloud, {})).toMatchObject({ ok: false, code: "EAPP_CLOSING" });
     expect(f.service.preview).not.toHaveBeenCalled(); expect(f.service.approve).not.toHaveBeenCalled();
+  });
+  it("only wakes normal lifecycle after a guarded Administrator cloud-choice commits", async () => {
+    session.grant("admin", "fixture", {}, "pos"); const f = fixture();
+    const input = { captureKey: "a".repeat(64), decisionId: shift, reason: "Keep the reviewed web correction" };
+    expect(await f.call(CHANNELS.acceptCloud, input)).toEqual({ ok: true, state: "ADOPTED", checkpointAdvanced: false, downloadRecoveryComplete: false });
+    expect(f.service.acceptCloud).toHaveBeenCalledExactlyOnceWith(input); expect(f.wake).toHaveBeenCalledOnce();
+    expect(await f.call(CHANNELS.acceptCloud, { ...input, proof: { accepted: true } })).toMatchObject({ ok: false, code: "EBADARG" });
+    f.service.acceptCloud.mockRejectedValueOnce(Object.assign(Error("changed source"), { code: "SYNC_BRANCH_FORBIDDEN" }));
+    expect(await f.call(CHANNELS.acceptCloud, input)).toMatchObject({ ok: false, code: "SYNC_BRANCH_FORBIDDEN" }); expect(f.wake).toHaveBeenCalledOnce();
   });
   it("sanitizes unexpected SQL failures without exposing query details", async () => {
     session.grant("admin", "fixture", {}, "pos"); const f = fixture(); f.service.list.mockRejectedValueOnce(new Error("secret fixture SQL text"));

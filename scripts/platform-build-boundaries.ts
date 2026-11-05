@@ -16,6 +16,7 @@ const windowsOnly = [
   "platforms/windows/components/DesktopUpdateBanner",
   "platforms/windows/components/LocalDatabaseWizard",
   "platforms/windows/components/LocalDatabaseOperations",
+  "platforms/windows/components/StartupShiftRecoveryReview",
 ];
 const updaterOnly = [
   "routes/settings.updates",

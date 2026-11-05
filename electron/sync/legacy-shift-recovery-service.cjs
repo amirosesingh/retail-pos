@@ -1,6 +1,6 @@
 "use strict";
-// Main-only adapter inside the existing sync coordinator. It does not adopt
-// business graphs, clear retained work or advance Change Tracking checkpoints.
+// Main-only adapter inside the existing sync coordinator. Reviewed adoption
+// changes only the proved local graph; existing lifecycle recovery owns V0.
 const { randomUUID } = require("node:crypto");
 const { recordId } = require("./uuid-fields.cjs");
 const { exactGraph, stringifyExactJson, isExactNumber } = require("./shift-recovery-exact.cjs");
@@ -10,10 +10,11 @@ const fail = (code = "ELEGACY_RECOVERY_SCOPE") => { throw Object.assign(new Erro
 const id = value => { const text = recordId(value); if (!UUID.test(text)) fail(); return text; };
 const limitOf = value => { if (!Number.isSafeInteger(value) || value < 1 || value > 100) fail(); return value; };
 class LegacyShiftRecoveryService {
-  constructor({ connectionManager, registry, cloud, evidenceStore, outbox, authority, readContext }) {
+  constructor({ connectionManager, registry, cloud, evidenceStore, outbox, authority, readContext, adopter = null }) {
     if (!connectionManager || !registry || !cloud || !evidenceStore || !outbox || !authority || typeof readContext !== "function") fail();
-    Object.assign(this, { connectionManager, registry, cloud, evidenceStore, outbox, authority, readContext });
+    Object.assign(this, { connectionManager, registry, cloud, evidenceStore, outbox, authority, readContext, adopter });
     this.transactions = new WeakMap(); this.capabilities = new WeakMap(); this.pushing = null;
+    this.reviewedDecisions = new Map(); this.coverageTokens = new WeakMap();
   }
   invalidateCapability() { this.capabilities = new WeakMap(); }
   capability() {
@@ -53,6 +54,55 @@ class LegacyShiftRecoveryService {
     const request = new (this.connectionManager.sql().Request)(tx);
     for (const [key, value] of Object.entries(values)) request.input(key, value);
     return request.query(text);
+  }
+  async withRecoveryTransaction(capture, tx, work) {
+    this.assertCurrent(capture);
+    if (!tx || tx.parent !== capture.pool || this.transactions.has(tx)) fail("ELEGACY_RECOVERY_SCOPE");
+    const result = await this.query(tx, `SELECT CONVERT(varchar(36),database_guid) database_guid,
+      CASE WHEN @@TRANCOUNT>0 AND EXISTS(SELECT 1 FROM sys.dm_exec_sessions WHERE session_id=@@SPID AND transaction_isolation_level=4) THEN 1 ELSE 0 END ready
+      FROM sys.database_recovery_status WHERE database_id=DB_ID();`);
+    if (result.recordset?.length !== 1 || result.recordset[0].ready !== 1 || id(result.recordset[0].database_guid) !== capture.databaseGuid) fail("ELEGACY_RECOVERY_SCOPE");
+    this.assertCurrent(capture);
+    const scope = { databaseGuid: capture.databaseGuid, branchId: capture.context.branchId, terminalId: capture.context.terminalId, backendOriginHash: capture.context.backendOriginHash };
+    this.transactions.set(tx, { scope, capture });
+    try { const value = await work(scope); this.assertCurrent(capture); return value; }
+    finally { this.transactions.delete(tx); }
+  }
+  // Only requested gap graphs enter here. No network runs under SQL locks;
+  // persisted ACK/adoption rows are hints until a fresh private proof is read.
+  async prepareCoverage(graph) {
+    if (!this.adopter) return null;
+    const capture = this.capture(), shiftId = id(graph?.shiftId);
+    if (!exactGraph(graph, capture.context.branchId, shiftId)) fail("ELEGACY_RECOVERY_EXACT_GRAPH_REQUIRED");
+    let review = this.reviewedDecisions.get(shiftId);
+    if (review) { try { this.authority.assertPrepared(review.reviewer); this.assertCurrent(review.capture); } catch { this.reviewedDecisions.delete(shiftId); review = null; } }
+    const saved = await this.atomic(capture, async (tx, scope) => {
+      if (!await this.hasSchema(tx) || !await this.adoptionAvailable(tx)) return null;
+      const rows = (await this.query(tx, `SELECT TOP(1) CONVERT(varchar(36),decision_id) decision_id,CONVERT(varchar(36),receipt_recovery_id) receipt_recovery_id,target_graph_json
+        FROM dbo.pos_shift_recovery_adoptions WITH(HOLDLOCK) WHERE database_guid=@database AND branch_id=@branch AND terminal_id=@terminal
+        AND backend_origin_hash=@backend AND shift_id=@shift AND ${review ? "decision_id=@decision" : "decision_kind='RECEIPT_NORMALIZATION'"}
+        ORDER BY decided_at DESC,decision_id DESC;`, { database: scope.databaseGuid, branch: scope.branchId, terminal: scope.terminalId,
+        backend: scope.backendOriginHash, shift: shiftId, ...(review ? { decision: review.decisionId } : {}) })).recordset ?? [];
+      if (!rows.length) return null;
+      const row = rows[0], event = review ? null : await this.outbox.load(tx, scope, id(row.receipt_recovery_id));
+      if (!review && !event) fail("ELEGACY_RECOVERY_PENDING_STATE");
+      return { decisionId: id(row.decision_id), event,targetGraphJson:row.target_graph_json,scope };
+    });
+    if (!saved) return null;
+    const witness = saved.event ? await this.cloud.pushLegacyRecovery(saved.event) : null;
+    this.assertCurrent(capture); if (review) this.authority.assertPrepared(review.reviewer);
+    if(saved.event&&saved.targetGraphJson!==this.adopter.target(graph,saved.scope).graphJson){
+      const result=await this.normalizeAccepted(capture,saved.event,witness,{priorDecisionId:saved.decisionId,graph});
+      saved.decisionId=result.decisionId;
+    }
+    const token = Object.freeze({});
+    this.coverageTokens.set(token, { capture, graph, decisionId: saved.decisionId, reviewer: review?.reviewer ?? null, event: saved.event, witness });
+    return token;
+  }
+  async verifyCoverage(tx, token, graph, branchId) {
+    const saved = this.coverageTokens.get(token);
+    if (!saved || saved.graph !== graph || saved.capture.context.branchId !== branchId || !exactGraph(graph, branchId, graph.shiftId)) fail("ELEGACY_RECOVERY_EXACT_GRAPH_REQUIRED");
+    return this.withRecoveryTransaction(saved.capture, tx, scope => this.adopter.reviewedCoverage(tx, { ...saved, scope, graph }));
   }
   assertScope(tx, scope) {
     const active = this.transactions.get(tx);
@@ -97,6 +147,37 @@ class LegacyShiftRecoveryService {
     if (result.recordset?.length !== 1 || typeof value !== "string" || !/^(0|[1-9]\d*)$/.test(value) || BigInt(value) > BigInt(Number.MAX_SAFE_INTEGER)) fail("ELEGACY_RECOVERY_PENDING_STATE");
     return Number(value);
   }
+  async adoptionAvailable(tx) {
+    if (!this.adopter) return false;
+    const result = await this.query(tx, "SELECT OBJECT_ID(N'dbo.pos_shift_recovery_adoptions',N'U') adoption_id;");
+    if (result.recordset?.length !== 1 || !Object.hasOwn(result.recordset[0], "adoption_id")) fail("ELEGACY_RECOVERY_SCHEMA");
+    if (result.recordset[0].adoption_id === null) return false;
+    await this.adopter.schema(tx); return true;
+  }
+  async convergence(tx, scope, { limit = null, available, shiftId = null } = {}) {
+    if (!this.adopter) return limit === null ? 0 : [];
+    const predicate = available ? "AND NOT EXISTS(SELECT 1 FROM dbo.pos_shift_recovery_adoptions a WHERE a.receipt_recovery_id=e.recovery_id)" : "";
+    const select = limit === null ? "CONVERT(nvarchar(30),COUNT_BIG(*)) pending_count" : "TOP(@limit) CONVERT(varchar(36),e.recovery_id) recovery_id";
+    const result = await this.query(tx, `SELECT ${select} FROM dbo.pos_sync_shift_legacy_recoveries e WITH(HOLDLOCK)
+      WHERE e.database_guid=@database AND e.branch_id=@branch AND e.terminal_id=@terminal AND e.backend_origin_hash=@backend
+      AND EXISTS(SELECT 1 FROM dbo.pos_sync_shift_legacy_recovery_receipts r WHERE r.recovery_id=e.recovery_id) ${predicate}
+      ${shiftId === null ? "" : "AND e.shift_id=@shift"}
+      ${limit === null ? "" : "ORDER BY e.created_at,e.recovery_id"};`,
+    { database: scope.databaseGuid, branch: scope.branchId, terminal: scope.terminalId, backend: scope.backendOriginHash, ...(limit === null ? {} : { limit }), ...(shiftId === null ? {} : { shift: shiftId }) });
+    if (limit !== null) {
+      if (!Array.isArray(result.recordset) || result.recordset.length > limit) fail("ELEGACY_RECOVERY_PENDING_STATE");
+      return result.recordset.map(row => id(row.recovery_id));
+    }
+    const value = result.recordset?.[0]?.pending_count;
+    if (result.recordset?.length !== 1 || typeof value !== "string" || !/^(0|[1-9]\d*)$/.test(value) || BigInt(value) > BigInt(Number.MAX_SAFE_INTEGER)) fail("ELEGACY_RECOVERY_PENDING_STATE");
+    return Number(value);
+  }
+  async summaryPending(tx, scope) {
+    const uploadPending = await this.countPending(tx, scope);
+    if (!this.adopter) return Object.freeze({ available: true, pending: uploadPending });
+    const adoptionAvailable = await this.adoptionAvailable(tx), convergencePending = await this.convergence(tx, scope, { available: adoptionAvailable });
+    return Object.freeze({ available: true, adoptionAvailable, uploadPending, convergencePending, pending: uploadPending + convergencePending });
+  }
   async pendingSummary() {
     // Older installations do not have this optional queue. A harmless schema
     // probe must precede requirements belonging only to the new protocol.
@@ -104,7 +185,7 @@ class LegacyShiftRecoveryService {
     const capture = this.capture();
     return this.atomic(capture, async (tx, scope) => {
       if (!await this.hasSchema(tx)) return Object.freeze({ available: false, pending: 0 });
-      return Object.freeze({ available: true, pending: await this.countPending(tx, scope) });
+      return this.summaryPending(tx, scope);
     });
   }
   async list({ afterId = null, limit = 25 } = {}) {
@@ -112,6 +193,7 @@ class LegacyShiftRecoveryService {
     const capture = this.capture(true); limitOf(limit); if (afterId !== null) id(afterId);
     return this.atomic(capture, async (tx, scope) => {
       if (!await this.hasSchema(tx)) return Object.freeze({ available: false, reason: "UPGRADE_REQUIRED", items: [] });
+      if (this.adopter && !await this.adoptionAvailable(tx)) return Object.freeze({ available: false, reason: "UPGRADE_REQUIRED", items: [] });
       const result = await this.query(tx, `SELECT TOP(@limit) CONVERT(varchar(36),id) id,status,state,
         CONVERT(nvarchar(40),opened_at,127) opened_at,CONVERT(nvarchar(40),closed_at,127) closed_at
         FROM dbo.shifts WITH(UPDLOCK,HOLDLOCK) WHERE store_id=@branch AND terminal_id=@terminal AND (@after IS NULL OR id>@after) ORDER BY id;`,
@@ -134,6 +216,7 @@ class LegacyShiftRecoveryService {
     // this transaction, then capture current SQL rows after the response.
     await this.atomic(capture, async (tx, scope) => {
       if (!await this.hasSchema(tx)) fail("ELEGACY_RECOVERY_UPGRADE_REQUIRED");
+      if (this.adopter && !await this.adoptionAvailable(tx)) fail("ELEGACY_RECOVERY_UPGRADE_REQUIRED");
       const r = await this.query(tx, "SELECT store_id,terminal_id FROM dbo.shifts WITH(UPDLOCK,HOLDLOCK) WHERE id=@id;", { id: shiftId });
       if (r.recordset?.length !== 1 || recordId(r.recordset[0].store_id) !== scope.branchId || recordId(r.recordset[0].terminal_id) !== scope.terminalId) fail("SYNC_BRANCH_FORBIDDEN");
     });
@@ -147,10 +230,11 @@ class LegacyShiftRecoveryService {
       const localTables = await this.outbox.localGraph(tx, scope, shiftId), localGraphText = JSON.stringify(localTables);
       this.outbox.assertOwnedGraphs(scope, localGraphText, cloudGraphText);
       const evidence = await this.evidenceStore.capture(tx, { scope, shiftId, jobId: randomUUID(), localGraphText, cloudGraphText });
+      const canAcceptCloud = this.adopter ? await this.adoptionAvailable(tx) && evidence.classification !== "legacy-local-closing-needs-review" && await this.convergence(tx, scope, { available: true, shiftId }) === 0 : false;
       const local = localTables.find(part => part.table === "shifts")?.rows, remote = exact.tables.find(part => part.table === "shifts")?.rows;
       if (local?.length !== 1 || remote?.length !== 1) fail();
       return Object.freeze({ shiftId, captureKey: evidence.captureKey, classification: evidence.classification,
-        canApprove: evidence.classification === "legacy-local-closing-needs-review", financialVerification: "UNVERIFIED_HISTORICAL",
+        canApprove: evidence.classification === "legacy-local-closing-needs-review", canAcceptCloud, financialVerification: "UNVERIFIED_HISTORICAL",
         local: this.summary(local[0]), cloud: this.summary(remote[0]) });
     });
   }
@@ -160,8 +244,51 @@ class LegacyShiftRecoveryService {
     const reviewer = await this.authority.prepare(capture.approval); this.assertCurrent(capture);
     return this.atomic(capture, async (tx, scope) => {
       if (!await this.hasSchema(tx)) fail("ELEGACY_RECOVERY_UPGRADE_REQUIRED");
+      if (this.adopter && !await this.adoptionAvailable(tx)) fail("ELEGACY_RECOVERY_UPGRADE_REQUIRED");
       const event = await this.outbox.create(tx, { scope, captureKey, recoveryId, reason, reviewer });
       return Object.freeze({ recoveryId: event.recoveryId, state: "PENDING", financialVerification: "UNVERIFIED_HISTORICAL" });
+    });
+  }
+  async acceptCloud({ captureKey, decisionId, reason }) {
+    this.invalidateCapability();
+    if (!this.adopter || !HASH.test(captureKey)) fail("ELEGACY_RECOVERY_UPGRADE_REQUIRED");
+    decisionId = id(decisionId); const capture = this.capture(true);
+    const saved = await this.atomic(capture, async (tx, scope) => {
+      if (!await this.hasSchema(tx) || !await this.adoptionAvailable(tx)) fail("ELEGACY_RECOVERY_UPGRADE_REQUIRED");
+      const evidence = await this.evidenceStore.load(tx, scope, captureKey);
+      if (!evidence) fail("ELEGACY_RECOVERY_REVIEW_REQUIRED");
+      if (await this.convergence(tx, scope, { available: true, shiftId: id(evidence.shiftId) })) fail("ELEGACY_RECOVERY_CONVERGENCE_PENDING");
+      this.outbox.assertOwnedGraphs(scope, evidence.localGraphText, evidence.cloudGraphText);
+      return { scope, evidence, shiftId: id(evidence.shiftId) };
+    });
+    this.assertCurrent(capture);
+    const response = await this.cloud.shiftGraph({ branchId: saved.scope.branchId, shiftId: saved.shiftId }); this.assertCurrent(capture);
+    const exact = exactGraph(response, saved.scope.branchId, saved.shiftId);
+    if (!exact || stringifyExactJson(exact.tables) !== saved.evidence.cloudGraphText) fail("ELEGACY_RECOVERY_REVIEW_CHANGED");
+    const reviewer = await this.authority.prepare(capture.approval); this.assertCurrent(capture);
+    const plan = this.adopter.prepareAdmin({ scope: saved.scope, reviewer, graph: response, reason });
+    const result = await this.atomic(capture, async (tx, scope) => {
+      // An upload ACK may arrive during either await above. Keep this check
+      // inside the same serializable transaction as the local adoption.
+      if (await this.convergence(tx, scope, { available: true, shiftId: saved.shiftId })) fail("ELEGACY_RECOVERY_CONVERGENCE_PENDING");
+      return this.adopter.apply(tx, { scope, plan, captureKey, decisionId });
+    });
+    // A new process/session must make a new explicit review. Never restore this
+    // authority from a SQL decision row or renderer state.
+    if (this.reviewedDecisions.size >= 2000) this.reviewedDecisions.delete(this.reviewedDecisions.keys().next().value);
+    this.reviewedDecisions.set(saved.shiftId, { decisionId: result.decisionId, reviewer, capture });
+    return Object.freeze({ state: "ADOPTED", decisionId: result.decisionId, checkpointAdvanced: false, downloadRecoveryComplete: false });
+  }
+  async normalizeAccepted(capture, event, witness, {priorDecisionId=null,graph=null}={}) {
+    const response = graph??await this.cloud.shiftGraph({ branchId: capture.context.branchId, shiftId: event.shiftId }); this.assertCurrent(capture);
+    const exact = exactGraph(response, capture.context.branchId, event.shiftId);
+    if (!exact) fail("ELEGACY_RECOVERY_EXACT_GRAPH_REQUIRED");
+    return this.atomic(capture, async (tx, scope) => {
+      if (!await this.adoptionAvailable(tx)) fail("ELEGACY_RECOVERY_UPGRADE_REQUIRED");
+      const localGraphText = JSON.stringify(await this.outbox.localGraph(tx, scope, event.shiftId)), cloudGraphText = stringifyExactJson(exact.tables);
+      const evidence = await this.evidenceStore.capture(tx, { scope, shiftId: event.shiftId, jobId: randomUUID(), localGraphText, cloudGraphText });
+      const plan = this.adopter.prepareReceipt({ scope, event, witness, graph: response,priorDecisionId });
+      return this.adopter.apply(tx, { scope, plan, captureKey: evidence.captureKey, decisionId: randomUUID() });
     });
   }
   pushPending({ branchId, limit = 5 }) {
@@ -179,7 +306,14 @@ class LegacyShiftRecoveryService {
       if (capture.pool !== pool || branchId !== capture.context.branchId) fail("SYNC_BRANCH_FORBIDDEN");
       const events = await this.atomic(capture, async (tx, scope) => {
         if (!await this.hasSchema(tx)) return null;
-        return this.outbox.pending(tx, scope, { limit });
+        const pending = [...await this.outbox.pending(tx, scope, { limit })];
+        if (this.adopter && pending.length < limit) {
+          const available = await this.adoptionAvailable(tx);
+          for (const recoveryId of await this.convergence(tx, scope, { limit: limit - pending.length, available })) {
+            const event = await this.outbox.load(tx, scope, recoveryId); if (!event) fail("ELEGACY_RECOVERY_PENDING_STATE"); pending.push(event);
+          }
+        }
+        return pending;
       });
       if (events === null) return Object.freeze({ skipped: true, reason: "UPGRADE_REQUIRED", acknowledged: 0, pushed: 0, pending: 0 });
       let acknowledged = 0;
@@ -191,9 +325,10 @@ class LegacyShiftRecoveryService {
         this.assertCurrent(capture);
         await this.atomic(capture, (tx, scope) => this.outbox.acknowledge(tx, { scope, recoveryId: event.recoveryId, witness }));
         acknowledged++;
+        if (this.adopter) await this.normalizeAccepted(capture, event, witness);
       }
-      const pending = await this.atomic(capture, (tx, scope) => this.countPending(tx, scope));
-      return Object.freeze({ skipped: false, acknowledged, pushed: acknowledged, pending, downloadRecoveryComplete: false });
+      const summary = await this.atomic(capture, (tx, scope) => this.summaryPending(tx, scope));
+      return Object.freeze({ skipped: false, acknowledged, pushed: acknowledged, ...(this.adopter ? summary : { pending: summary.pending }), downloadRecoveryComplete: false });
     };
     this.pushing = run;
     run.promise = work().finally(() => { if (this.pushing === run) this.pushing = null; });

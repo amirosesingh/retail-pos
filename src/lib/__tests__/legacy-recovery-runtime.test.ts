@@ -1,19 +1,79 @@
 import { createRequire } from "node:module";
-import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
+import { afterEach, describe, expect, it, vi } from "vitest";
 const require = createRequire(import.meta.url);
 const { createLegacyShiftRecoveryRuntime } = require("../../../electron/sync/legacy-shift-recovery-runtime.cjs");
 const { SyncCoordinator } = require("../../../electron/sync/coordinator.cjs");
+const session = require("../../../electron/admin-session.cjs");
 const branch = "00000000-0000-4000-8000-000000000001";
 function fixture() {
   let supported = true, source = "profile/project/backend/proof/v1", active = branch;
   const base = { connectionManager: { pool: {} }, pendingSummary: vi.fn(async () => ({ pending: 0, failed: 0, queuedTables: [] })) };
-  const recovery = { pendingSummary: vi.fn(async () => ({ available: true, pending: 0 })), pushPending: vi.fn(async () => ({ pushed: 0, pending: 0 })) };
+  const recovery = { pendingSummary: vi.fn(async (): Promise<{ available: boolean; pending: number; uploadPending?: number; convergencePending?: number }> => ({ available: true, pending: 0 })), pushPending: vi.fn(async () => ({ pushed: 0, pending: 0 })) };
   const ordinary = vi.fn(async (_options: object) => ({ pushed: 2 }));
   const runtime = createLegacyShiftRecoveryRuntime({ reader: base, recovery: () => recovery, enabled: () => supported, activeBranch: () => active,
     captureSource: () => { const captured = source; return () => { if (captured !== source) throw Object.assign(Error("source changed"), { code: "SYNC_BRANCH_FORBIDDEN" }); }; } });
   const coordinator = new SyncCoordinator({ pushWorker: { reader: runtime.reader, run: (options: object) => runtime.run(options, ordinary) }, pullWorker: { run: vi.fn(async () => ({})) }, publish: vi.fn() });
   return { base, recovery, ordinary, runtime, coordinator, supported: (value: boolean) => { supported = value; }, source: (value: string) => { source = value; }, branch: (value: string) => { active = value; } };
 }
+
+function mainConsumers() {
+  const f = fixture(), source = readFileSync("electron/main.cjs", "utf8");
+  const part = (start: string, end: string) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)));
+  const original = { tokenId: "old-fixture-terminal", branchId: branch }, config = { tokenId: "replacement-fixture-terminal", branchId: branch };
+  const runFinal = vi.fn(async () => ({ ok: true })), health = vi.fn(async () => ({ online: false, ready: false, code: "EOFFLINE" }));
+  const context = {
+    adminSession: session, terminalStore: { lastBinding: () => original }, activationBoundary: { binding: (value: object) => value, sameBinding: (a: typeof original, b: typeof original) => a.tokenId === b.tokenId },
+    databaseManager: { isConnected: () => true }, changeReader: f.base, legacyRecoveryRuntime: f.runtime,
+    conflictRepository: { unresolved: async () => [] }, localBranchId: () => branch,
+    syncCoordinator: { paused: false, resume() {}, pause() {}, runFinal }, syncCloud: { health },
+    pendingShiftCloseSync: new Set(["saved-closing"]), mandatoryShiftSyncRun: null,
+    SHUTDOWN_SYNC_TIMEOUT_MS: 1000, reportCloseProgress() {},
+    settleWithin: async (work: () => Promise<unknown>) => { try { return { ok: true, value: await work() }; } catch (error) { return { ok: false, error }; } },
+    require: (name: string) => { expect(name).toBe("./sync/shutdown-sync.cjs"); return require("../../../electron/sync/shutdown-sync.cjs"); },
+    probes: {} as { assertSafeRegistrationChange(config: object): Promise<void>; flushSyncBeforeShutdown(options?: object): Promise<Record<string, unknown>>; synchronizeClosingShifts(): Promise<Record<string, unknown>> },
+  };
+  runInNewContext(part("async function assertSafeRegistrationChange(", "\nfunction recordRegistrationChange(") + "\n" +
+    part("async function flushSyncBeforeShutdown(", "\nfunction reportCloseProgress(") + "\n" +
+    part("async function synchronizeClosingShifts(", "\nasync function restoreShiftCloseGuard(") +
+    "\nthis.probes={assertSafeRegistrationChange,flushSyncBeforeShutdown,synchronizeClosingShifts};", context);
+  return { ...f, ...context.probes, config, original, runFinal, health };
+}
+
+afterEach(() => session.clear());
+
+describe("actual Main pending consumers include durable legacy recovery", () => {
+  it("holds reassignment while only legacy convergence remains and permits an unchanged registration", async () => {
+    const f = mainConsumers(); session.grant("admin", "synthetic.admin", {}, "pos", branch);
+    f.recovery.pendingSummary.mockResolvedValue({ available: true, pending: 2, uploadPending: 0, convergencePending: 2 });
+    await expect(f.assertSafeRegistrationChange(f.config)).rejects.toThrow("pending transactions");
+    expect(f.recovery.pendingSummary).toHaveBeenCalledOnce();
+    await expect(f.assertSafeRegistrationChange(f.original)).resolves.toBeUndefined();
+    expect(f.recovery.pendingSummary).toHaveBeenCalledOnce();
+  });
+  it.each([true, false])("retains truthful pending counts on signed-out/offline exit (signed out=%s)", async signedOut => {
+    const f = mainConsumers(); if (!signedOut) session.grant("admin", "synthetic.admin", {}, "pos", branch);
+    f.recovery.pendingSummary.mockResolvedValue({ available: true, pending: 2, uploadPending: 1, convergencePending: 1 });
+    expect(await f.flushSyncBeforeShutdown({ allowSignedOutExit: true })).toMatchObject({ ok: true, pending: 2, synchronized: false });
+    expect(f.runFinal).not.toHaveBeenCalled(); expect(f.health).toHaveBeenCalledTimes(signedOut ? 0 : 1);
+  });
+  it("includes legacy pending in the offline mandatory-closing response", async () => {
+    const f = mainConsumers(); f.recovery.pendingSummary.mockResolvedValue({ available: true, pending: 2 });
+    expect(await f.synchronizeClosingShifts()).toMatchObject({ ok: false, offline: true, pending: 2, code: "EOFFLINE" });
+    expect(f.runFinal).not.toHaveBeenCalled();
+  });
+  it("keeps ordinary no-legacy semantics and never treats a failed count as empty", async () => {
+    const f = mainConsumers(); session.grant("admin", "synthetic.admin", {}, "pos", branch); f.supported(false);
+    await expect(f.assertSafeRegistrationChange(f.config)).resolves.toBeUndefined();
+    f.base.pendingSummary.mockResolvedValue({ pending: 3, failed: 0, queuedTables: [] });
+    expect(await f.flushSyncBeforeShutdown()).toMatchObject({ ok: true, offline: true, pending: 3, synchronized: false });
+    expect(f.recovery.pendingSummary).not.toHaveBeenCalled();
+    f.supported(true); f.recovery.pendingSummary.mockRejectedValue(Object.assign(Error("Unavailable legacy queue count"), { code: "ELEGACY_RECOVERY_PENDING_STATE" }));
+    await expect(f.assertSafeRegistrationChange(f.config)).rejects.toMatchObject({ code: "ELEGACY_RECOVERY_PENDING_STATE" });
+    expect(await f.flushSyncBeforeShutdown()).toMatchObject({ ok: false, code: "ELEGACY_RECOVERY_PENDING_STATE" });
+  });
+});
 describe("existing coordinator legacy recovery runtime adapter", () => {
   it("adds only verified new-queue counts and refuses final close while the historical event remains pending", async () => {
     const f = fixture(); f.recovery.pendingSummary.mockResolvedValue({ available: true, pending: 1 });
@@ -69,5 +129,11 @@ describe("existing coordinator legacy recovery runtime adapter", () => {
   it("different branch does not inherit another branch's private hold flags", async () => {
     const f = fixture(); f.recovery.pushPending.mockRejectedValue(Error("held old branch")); await f.runtime.run({ branchId: branch }, f.ordinary);
     f.branch("00000000-0000-4000-8000-000000000099"); expect(f.runtime.status({ pending: 0 })).toEqual({ pending: 0 });
+  });
+  it("counts ACKed local convergence as pending without claiming another cloud upload", async () => {
+    const f = fixture(); f.recovery.pendingSummary.mockResolvedValue({ available: true, pending: 2, uploadPending: 0, convergencePending: 2 });
+    expect(await f.runtime.reader.pendingSummary(branch)).toMatchObject({ pending: 2, queuedTables: [{ table: "legacy_closing_local_convergence", pending: 2 }] });
+    f.recovery.pushPending.mockResolvedValue({ pushed: 0, pending: 2 });
+    expect(await f.coordinator.runFinal({ branchId: branch })).toMatchObject({ ok: false, code: "ESYNC_PENDING", pending: 2 });
   });
 });

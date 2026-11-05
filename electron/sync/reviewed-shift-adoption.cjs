@@ -1,5 +1,5 @@
 "use strict";
-// Bounded, isolated prototype. No Main/IPC/worker imports this module yet.
+// Bounded local convergence, admitted only through Main's reviewed recovery.
 // Review decisions authorize only this exact local projection; never a cloud
 // write, an old cashier signature, a journal ACK or a checkpoint reset.
 const { createHash, randomUUID } = require("node:crypto");
@@ -57,9 +57,10 @@ class ReviewedShiftAdoption {
   }
   // A fresh native accepted receipt is required even if the event has a local
   // ACK already. Caller provides its fresh private exact current-graph witness.
-  prepareReceipt({ scope, event, witness, graph }) {
+  prepareReceipt({ scope, event, witness, graph, priorDecisionId = null }) {
     const verify = () => this.assertReceipt(witness, event), receipt = verify();
     if (!receipt || typeof receipt.receiptJson !== "string") fail("EREVIEWED_RECEIPT_REQUIRED");
+    if(priorDecisionId!==null&&!UUID.test(recordId(priorDecisionId)))fail("EREVIEWED_RECEIPT_REQUIRED");
     const raw = parseExactJson(receipt.receiptJson), target = this.target(graph, scope);
     if (target.shiftId !== event.shiftId || raw.current_token !== target.exact.graphToken || stringifyExactJson(raw.graph.tables) !== target.tablesText) fail("EREVIEWED_RECEIPT_REQUIRED");
     const accepted = parseExactJson(raw.accepted_graph_text), current = new Map(target.exact.tables.map(t => [t.table, t.rows]));
@@ -69,7 +70,7 @@ class ReviewedShiftAdoption {
     }
     const plan = Object.freeze({ mode: "RECEIPT_NORMALIZATION", shiftId: target.shiftId });
     this.plans.set(plan, { ...target, scope: JSON.stringify(scope), reviewerId: event.proof.authorId, subject: event.proof.subject,
-      reason: "Adopt the verified accepted historical closing and preserved cloud evolution", receiptJson: receipt.receiptJson, event,
+      reason: "Adopt the verified accepted historical closing and preserved cloud evolution", receiptJson: receipt.receiptJson, event,priorDecisionId,
       verifyReceipt: verify,
       assertCurrent: () => { verify(); if (this.target(graph, scope).graphJson !== target.graphJson) fail(); } });
     return plan;
@@ -85,7 +86,7 @@ class ReviewedShiftAdoption {
     const [, , columns = [], indexes = [], foreign = [], checks = []] = result.recordsets;
     if (columns.length !== Object.keys(COLUMNS).length || columns.some(c => { const expected = COLUMNS[c.name]; return !expected || c.type_name !== expected[0] || c.max_length !== expected[1] || Boolean(c.is_nullable) !== expected[2] || c.is_identity || c.is_computed || c.default_object_id || c.type_name === "datetimeoffset" && c.scale !== 7 || ["capture_key", "branch_id", "terminal_id", "backend_origin_hash", "local_before_hash", "target_graph_hash", "target_graph_token", "local_after_hash"].includes(c.name) && c.collation_name !== "Latin1_General_100_BIN2"; })) fail("EREVIEWED_ADOPTION_SCHEMA");
     const unique = indexes.filter(i => i.name === "UX_reviewed_adoption_identity"), primary = indexes.filter(i => i.is_primary_key);
-    const identity = ["database_guid", "branch_id", "terminal_id", "backend_origin_hash", "shift_id", "target_graph_hash", "local_before_hash"];
+    const identity = ["database_guid", "branch_id", "terminal_id", "backend_origin_hash", "shift_id", "target_graph_hash", "local_before_hash", "decision_id"];
     if (indexes.length !== identity.length + 1 || unique.length !== identity.length || unique.some(i => !i.is_unique || i.is_disabled || i.ignore_dup_key || i.has_filter || i.is_included_column || identity[i.key_ordinal - 1] !== i.column_name) || primary.length !== 1 || primary[0].column_name !== "decision_id" || !primary[0].is_unique || primary[0].is_disabled || primary[0].ignore_dup_key || primary[0].has_filter || primary[0].is_included_column) fail("EREVIEWED_ADOPTION_SCHEMA");
     if (foreign.length !== 1 || foreign[0].is_disabled || foreign[0].is_not_trusted || foreign[0].delete_referential_action || foreign[0].update_referential_action || foreign[0].target_table !== "pos_shift_recovery_evidence" || foreign[0].source_column !== "capture_key" || foreign[0].target_column !== "capture_key" || checks.length !== 3 || checks.some(c => c.is_disabled || c.is_not_trusted || !Object.hasOwn(CHECKS,c.name) || normalizeCheck(c.definition) !== normalizeCheck(CHECKS[c.name]))) fail("EREVIEWED_ADOPTION_SCHEMA");
   }
@@ -138,6 +139,81 @@ class ReviewedShiftAdoption {
     await request.query(`WITH CHANGE_TRACKING_CONTEXT(0x434C4F5544) MERGE dbo.[${table.sqlServerTable}] WITH(HOLDLOCK) target USING(SELECT ${columns.map((name, i) => `${expressions[i]} AS [${name}]`).join(",")}) source ON target.id=source.id
       ${immutable ? "" : `WHEN MATCHED THEN UPDATE SET ${updates}`} WHEN NOT MATCHED THEN INSERT(${columns.map(n => `[${n}]`).join(",")}) VALUES(${columns.map(n => `source.[${n}]`).join(",")});`);
   }
+  acceptedLocal(local, receipt) {
+    const raw=parseExactJson(receipt.receiptJson),accepted=parseExactJson(raw.accepted_graph_text);
+    return classifyRetainedShiftGraph({registry:this.registry,branchId:raw.branch_id,shiftId:raw.shift_id,localTables:local,cloudTables:accepted}).kind==='exact';
+  }
+  async acceptedPrior(tx,{scope,prepared,evidence,before,event,receipt}){
+    if(!prepared.priorDecisionId||!this.acceptedLocal(before,receipt))fail("EREVIEWED_RECEIPT_REQUIRED");
+    const rows=(await this.query(tx,`SELECT *,CONVERT(nvarchar(30),before_ct_version) exact_before_ct_version
+      FROM dbo.pos_shift_recovery_adoptions WITH(UPDLOCK,HOLDLOCK) WHERE decision_id=@id;`,{id:prepared.priorDecisionId})).recordset??[];
+    if(rows.length!==1)fail("EREVIEWED_RECEIPT_REQUIRED");
+    const row=rows[0],prior=await this.evidenceStore.load(tx,scope,row.capture_key),payload=JSON.parse(event.payloadJson),accepted=parseExactJson(receipt.receiptJson);
+    const archived=row.receipt_json&&parseExactJson(row.receipt_json),target=parseExactJson(row.target_graph_json);
+    if(!prior||recordId(row.database_guid)!==scope.databaseGuid||row.branch_id!==scope.branchId||row.terminal_id!==scope.terminalId||row.backend_origin_hash!==scope.backendOriginHash||
+      recordId(row.shift_id)!==prepared.shiftId||row.decision_kind!=='RECEIPT_NORMALIZATION'||recordId(row.receipt_recovery_id)!==event.recoveryId||
+      prior.localGraphText!==payload.localGraphText||row.local_before_hash!==hash(prior.localGraphText)||row.local_after_hash!==hash(evidence.localGraphText)||
+      row.target_graph_hash!==hash(row.target_graph_json)||!this.acceptedLocal(target.tables,receipt)||!archived||['recovery_id','payload_hash','evidence_hash','cloud_witness_hash','accepted_token','accepted_graph_hash'].some(key=>archived[key]!==accepted[key])||
+      TABLES.some(name=>!exactRows(this.registry.tables.find(t=>t.cloudTable===name),before.find(part=>part.table===name)?.rows??[],target.tables?.find(part=>part.table===name)?.rows??[])))fail("EREVIEWED_RECEIPT_REQUIRED");
+    const position=row.exact_before_ct_version;
+    if(typeof position!=='string'||!/^(0|[1-9]\d*)$/.test(position)||BigInt(position)>9223372036854775807n)fail("EREVIEWED_CT_REQUIRED");
+    for(const name of TABLES){
+      const bounds=(await this.query(tx,`SELECT CONVERT(nvarchar(30),CHANGE_TRACKING_MIN_VALID_VERSION(OBJECT_ID(@name))) minimum_version,
+        CONVERT(nvarchar(30),CHANGE_TRACKING_CURRENT_VERSION()) current_version;`,{name:'dbo.'+name})).recordset?.[0];
+      if(!bounds||![bounds.minimum_version,bounds.current_version].every(value=>typeof value==='string'&&/^(0|[1-9]\d*)$/.test(value))||
+        BigInt(position)<BigInt(bounds.minimum_version)||BigInt(position)>BigInt(bounds.current_version))fail("ELOCAL_PENDING_UNVERIFIED");
+      const changed=(await this.query(tx,`DECLARE @baseline bigint=CONVERT(bigint,@since);
+        SELECT TOP(2001) CT.id FROM CHANGETABLE(CHANGES dbo.[${name}],@baseline) CT LEFT JOIN dbo.[${name}] saved WITH(UPDLOCK,HOLDLOCK) ON saved.id=CT.id
+        WHERE (CT.SYS_CHANGE_CONTEXT IS NULL OR CT.SYS_CHANGE_CONTEXT<>0x434C4F5544) AND
+        (CT.SYS_CHANGE_OPERATION='D' OR saved.id IS NULL OR saved.store_id IS NULL OR saved.store_id IN('','global') OR saved.${name==='shifts'?'id':'shift_id'}=@shift);`,
+      {since:position,shift:prepared.shiftId})).recordset??[];
+      if(changed.length)fail("ELOCAL_CT_PENDING");
+    }
+  }
+  // Called only with a live Main capability, inside the download's existing
+  // serializable transaction. The immutable SQL row is evidence, not authority.
+  async reviewedCoverage(tx, { scope, decisionId, graph, reviewer = null, event = null, witness = null }) {
+    const authorize = () => {
+      if (reviewer) this.authority.assertPrepared(reviewer);
+      else if (!event || !witness) fail("EREVIEWED_APPROVAL_REQUIRED");
+      else this.assertReceipt(witness, event);
+    };
+    authorize(); await this.check(tx, scope); await this.schema(tx); await this.outbox.preflight(tx, scope);
+    const rows = (await this.query(tx, `SELECT *,CONVERT(nvarchar(30),before_ct_version) exact_before_ct_version,
+      CONVERT(nvarchar(30),CHANGE_TRACKING_CURRENT_VERSION()) exact_current_ct_version
+      FROM dbo.pos_shift_recovery_adoptions WITH(UPDLOCK,HOLDLOCK) WHERE decision_id=@id;`, { id: decisionId })).recordset ?? [];
+    if (rows.length !== 1) fail("EREVIEWED_APPROVAL_REQUIRED");
+    const row = rows[0], target = this.target(graph, scope), evidence = await this.evidenceStore.load(tx, scope, row.capture_key);
+    if (!evidence || recordId(row.database_guid) !== scope.databaseGuid || row.branch_id !== scope.branchId || row.terminal_id !== scope.terminalId ||
+        row.backend_origin_hash !== scope.backendOriginHash || recordId(row.shift_id) !== target.shiftId || recordId(evidence.shiftId) !== target.shiftId ||
+        row.local_before_hash !== hash(evidence.localGraphText) || row.target_graph_hash !== hash(row.target_graph_json) || row.target_graph_json !== target.graphJson ||
+        row.target_graph_token !== target.exact.graphToken || evidence.cloudGraphText !== target.tablesText ||
+        typeof row.exact_before_ct_version !== "string" || !/^(0|[1-9]\d*)$/.test(row.exact_before_ct_version) || BigInt(row.exact_before_ct_version) > 9223372036854775807n ||
+        typeof row.exact_current_ct_version !== "string" || !/^(0|[1-9]\d*)$/.test(row.exact_current_ct_version) || BigInt(row.exact_before_ct_version)>BigInt(row.exact_current_ct_version))
+      fail("EREVIEWED_SOURCE_CHANGED");
+    this.outbox.assertOwnedGraphs(scope, evidence.localGraphText, evidence.cloudGraphText);
+    if (reviewer) {
+      if (row.decision_kind !== "ADMIN_ACCEPTED_CLOUD" || recordId(row.reviewer_id) !== reviewer.binding.authorId || row.reviewer_subject !== reviewer.subject) fail("PERMISSION_DENIED");
+    } else {
+      const currentEvent=await this.outbox.load(tx,scope,event.recoveryId);
+      if(!currentEvent||currentEvent.payloadHash!==event.payloadHash||JSON.parse(currentEvent.payloadJson).localGraphText!==evidence.localGraphText&&!this.acceptedLocal(parseExactJson(evidence.localGraphText),this.assertReceipt(witness,currentEvent)))fail("EREVIEWED_RECEIPT_REQUIRED");
+      this.assertReceipt(witness,currentEvent);
+      const plan = this.prepareReceipt({ scope, event:currentEvent, witness, graph }); this.plans.get(plan).assertCurrent();
+      const receipt = this.assertReceipt(witness, event), saved = (await this.query(tx,
+        "SELECT receipt_json,receipt_sha256 FROM dbo.pos_sync_shift_legacy_recovery_receipts WITH(UPDLOCK,HOLDLOCK) WHERE recovery_id=@id;", { id: event.recoveryId })).recordset;
+      const accepted = parseExactJson(receipt.receiptJson), original = saved?.length === 1 && parseExactJson(saved[0].receipt_json);
+      const decided = row.receipt_json && parseExactJson(row.receipt_json);
+      if (row.decision_kind !== "RECEIPT_NORMALIZATION" || recordId(row.receipt_recovery_id) !== event.recoveryId || !original || !decided ||
+          hash(saved[0].receipt_json) !== saved[0].receipt_sha256 ||
+          ["recovery_id", "payload_hash", "evidence_hash", "cloud_witness_hash", "accepted_token"].some(key => original[key] !== accepted[key] || decided[key] !== accepted[key])) fail("EREVIEWED_RECEIPT_REQUIRED");
+    }
+    await this.pending(tx, scope, target.shiftId);
+    const local = await this.outbox.localGraph(tx, scope, target.shiftId);
+    if (hash(JSON.stringify(local)) !== row.local_after_hash || TABLES.some(name => !exactRows(this.registry.tables.find(t => t.cloudTable === name),
+      local.find(part => part.table === name)?.rows ?? [], target.exact.tables.find(part => part.table === name)?.rows ?? []))) fail("EREVIEWED_SOURCE_CHANGED");
+    authorize(); await this.check(tx, scope);
+    return Object.freeze({ beforeCtVersion: row.exact_before_ct_version });
+  }
   async apply(tx, { scope, plan, captureKey, decisionId }) {
     const prepared = this.plans.get(plan);
     if (!prepared || prepared.scope !== JSON.stringify(scope) || !HASH.test(captureKey) || !UUID.test(recordId(decisionId))) fail("EREVIEWED_APPROVAL_REQUIRED");
@@ -167,9 +243,10 @@ class ReviewedShiftAdoption {
       const verified = prepared.verifyReceipt(), event = await this.outbox.load(tx, scope, prepared.event.recoveryId);
       const payload = event && JSON.parse(event.payloadJson), incoming = parseExactJson(verified.receiptJson);
       const saved = await this.query(tx, "SELECT receipt_json,receipt_sha256 FROM dbo.pos_sync_shift_legacy_recovery_receipts WITH(UPDLOCK,HOLDLOCK) WHERE recovery_id=@id;", { id: prepared.event.recoveryId });
-      if (!event || event.payloadHash !== prepared.event.payloadHash || payload.localGraphText !== evidence.localGraphText || saved.recordset?.length !== 1 || hash(saved.recordset[0].receipt_json) !== saved.recordset[0].receipt_sha256) fail("EREVIEWED_RECEIPT_REQUIRED");
+      if (!event || event.payloadHash !== prepared.event.payloadHash || saved.recordset?.length !== 1 || hash(saved.recordset[0].receipt_json) !== saved.recordset[0].receipt_sha256) fail("EREVIEWED_RECEIPT_REQUIRED");
       const original = parseExactJson(saved.recordset[0].receipt_json);
       if (["recovery_id", "payload_hash", "evidence_hash", "cloud_witness_hash", "accepted_token"].some(key => original[key] !== incoming[key])) fail("EREVIEWED_RECEIPT_REQUIRED");
+      if(payload.localGraphText!==evidence.localGraphText)await this.acceptedPrior(tx,{scope,prepared,evidence,before,event,receipt:verified});
     }
     const position = (await this.query(tx, "SELECT CONVERT(nvarchar(30),CHANGE_TRACKING_CURRENT_VERSION()) current_version;")).recordset?.[0]?.current_version;
     if (typeof position !== "string" || !/^\d+$/.test(position)) fail("EREVIEWED_CT_REQUIRED");
@@ -201,7 +278,8 @@ class ReviewedShiftAdoption {
     // The baseline uses the exact transport JSON, not JSON.stringify of the
     // ordinary parsed response (which may have rounded decimals/timestamps).
     if (prepared.exact.graphToken !== null) await this.query(tx, `MERGE dbo.pos_sync_shift_baselines WITH(HOLDLOCK) target USING(SELECT @branch branch_id,@shift shift_id) source ON target.branch_id=source.branch_id AND target.shift_id=source.shift_id
-      WHEN MATCHED THEN UPDATE SET graph_token=@token,closed_at_raw=@closed,graph_json=@graph,observation_generation=@generation
+      WHEN MATCHED AND (target.graph_token<>@token OR target.closed_at_raw COLLATE Latin1_General_100_BIN2<>@closed COLLATE Latin1_General_100_BIN2 OR target.graph_json COLLATE Latin1_General_100_BIN2<>@graph COLLATE Latin1_General_100_BIN2)
+        THEN UPDATE SET graph_token=@token,closed_at_raw=@closed,graph_json=@graph,observation_generation=@generation
       WHEN NOT MATCHED THEN INSERT(branch_id,shift_id,graph_token,closed_at_raw,graph_json,observation_generation) VALUES(@branch,@shift,@token,@closed,@graph,@generation);`,
     { branch: scope.branchId, shift: prepared.shiftId, token: prepared.exact.graphToken, closed: prepared.exact.closedAtRaw, graph: prepared.graphJson, generation: randomUUID() });
     prepared.assertCurrent(); await this.check(tx, scope);

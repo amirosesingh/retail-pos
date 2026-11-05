@@ -9,7 +9,7 @@ function deferred<T>() { let resolve!: (value: T) => void; const promise = new P
 function fixture() {
   const context = { branchId: BRANCH, terminalId: TERMINAL, backendOriginHash: "a".repeat(64), profileKey: "project/backend/proof/profile-v1" };
   const pool = {}, cm = { pool, sql: () => sql };
-  let open = 0, guid = DATABASE, epoch = 1, admin = true, schema: boolean | "partial" = true, pending = "1";
+  let open = 0, guid = DATABASE, epoch = 1, admin = true, schema: boolean | "partial" = true, pending = "1", convergence = "0", adoption = true;
   const statements: string[] = [], transactions: object[] = [];
   class Transaction {
     async begin() { open++; transactions.push(this); }
@@ -22,8 +22,10 @@ function fixture() {
     async query(text: string) {
       statements.push(text);
       if (text.includes("sys.database_recovery_status")) return { recordset: [{ database_guid: guid }] };
+      if (text.includes("adoption_id")) return { recordset: [{ adoption_id: adoption ? 4 : null }] };
       if (text.includes("OBJECT_ID")) return { recordset: [{ evidence_id: 1, event_id: schema ? 2 : null, receipt_id: schema === true ? 3 : null }] };
-      if (text.includes("COUNT_BIG")) return { recordset: [{ pending_count: pending }] };
+      if (text.includes("COUNT_BIG")) return { recordset: [{ pending_count: text.includes("AND EXISTS") ? convergence : pending }] };
+      if (text.includes("CONVERT(varchar(36),e.recovery_id)")) return { recordset: convergence === "1" ? [{ recovery_id: RECOVERY }] : [] };
       if (text.includes("SELECT store_id,terminal_id")) return { recordset: [{ store_id: BRANCH, terminal_id: TERMINAL }] };
       if (text.includes("SELECT TOP(@limit)")) return { recordset: [{ id: SHIFT, status: "CLOSED", state: "CLOSED", opened_at: "2026-01-01T00:00:00Z", closed_at: "2026-01-01T08:00:00Z" }] };
       throw Error("Unexpected fixture SQL: " + text);
@@ -41,13 +43,15 @@ function fixture() {
     capture: vi.fn(() => { if (!admin) throw Object.assign(Error("Denied"), { code: "PERMISSION_DENIED" }); const saved = epoch; return { assertCurrent: () => { if (!admin || saved !== epoch) throw Object.assign(Error("Session changed"), { code: "PERMISSION_DENIED" }); } }; }),
     prepare: vi.fn(async (capture: { assertCurrent: () => void }) => { capture.assertCurrent(); return Object.freeze({}); }),
   };
-  const event = Object.freeze({ recoveryId: RECOVERY });
-  const evidenceStore = { preflight: vi.fn(async () => undefined), capture: vi.fn(async (tx: object, input: { scope: object; cloudGraphText: string }) => { expect(service.assertScope(tx, input.scope)).toBe(true); expect(input.cloudGraphText).toContain("100.1234567890123456789"); return { captureKey: "c".repeat(64), classification: "legacy-local-closing-needs-review" }; }) };
+  const event = Object.freeze({ recoveryId: RECOVERY, shiftId: SHIFT });
+  const evidenceStore = { preflight: vi.fn(async () => undefined), load: vi.fn(async () => ({ shiftId: SHIFT, localGraphText: JSON.stringify(tables), cloudGraphText: stringifyExactJson(parseExactJson(raw).tables) })), capture: vi.fn(async (tx: object, input: { scope: object; cloudGraphText: string }) => { expect(service.assertScope(tx, input.scope)).toBe(true); expect(input.cloudGraphText).toContain("100.1234567890123456789"); return { captureKey: "c".repeat(64), classification: "legacy-local-closing-needs-review" }; }) };
   const outbox = { preflight: vi.fn(async () => undefined), localGraph: vi.fn(async () => tables), assertOwnedGraphs: vi.fn(),
-    create: vi.fn(async () => event), pending: vi.fn(async () => [event]),
-    acknowledge: vi.fn(async (tx: object, input: { scope: object }) => { expect(service.assertScope(tx, input.scope)).toBe(true); pending = "0"; return { acknowledged: true }; }) };
+    create: vi.fn(async () => event), load: vi.fn(async () => event), pending: vi.fn(async () => pending === "1" ? [event] : []),
+    acknowledge: vi.fn(async (tx: object, input: { scope: object }) => { expect(service.assertScope(tx, input.scope)).toBe(true); pending = "0"; if (service.adopter) convergence = "1"; return { acknowledged: true }; }) };
   const service = new LegacyShiftRecoveryService({ connectionManager: cm, registry: {}, cloud, evidenceStore, outbox, authority, readContext: () => context });
+  const adopter = { schema: vi.fn(async () => undefined), prepareAdmin: vi.fn(() => ({})), prepareReceipt: vi.fn(() => ({})), apply: vi.fn(async (_tx: object, value: { decisionId: string }) => { convergence = "0"; return { decisionId: value.decisionId }; }) };
   return { service, context, cm, cloud, authority, outbox, evidenceStore, statements, transactions, branded, tables,
+    adopter, enableAdopter: () => { service.adopter = adopter; }, setAdoption: (value: boolean) => { adoption = value; }, setConvergence: (value: string) => { convergence = value; },
     setGuid: (value: string) => { guid = value; }, setEpoch: () => { epoch++; }, setAdmin: (value: boolean) => { admin = value; }, setSchema: (value: boolean | "partial") => { schema = value; }, setPending: (value: string) => { pending = value; }, open: () => open };
 }
 describe("native legacy recovery coordinator", () => {
@@ -148,5 +152,54 @@ describe("native legacy recovery coordinator", () => {
     f.service.query = async () => { throw Error("SQL temporarily unavailable"); };
     await expect(f.service.pendingSummary()).rejects.toMatchObject({ code: "ELEGACY_RECOVERY_CAPABILITY_UNAVAILABLE", retryable: true });
     f.service.query = originalQuery; expect((await f.service.pendingSummary()).pending).toBe(1);
+  });
+});
+
+describe("reviewed local convergence service integration", () => {
+  const decision = { captureKey: "c".repeat(64), decisionId: RECOVERY, reason: "Use the reviewed cloud correction" };
+  it("requires current actual Admin before any cloud-choice SQL/network work", async () => {
+    const f = fixture(); f.enableAdopter(); f.setAdmin(false);
+    await expect(f.service.acceptCloud(decision)).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    expect(f.statements).toEqual([]); expect(f.cloud.shiftGraph).not.toHaveBeenCalled();
+  });
+  it("passes only Main-owned fresh graph, scope and authority to adoption", async () => {
+    const f = fixture(); f.enableAdopter();
+    expect(await f.service.acceptCloud(decision)).toEqual({ state: "ADOPTED", decisionId: RECOVERY, checkpointAdvanced: false, downloadRecoveryComplete: false });
+    expect(f.adopter.prepareAdmin).toHaveBeenCalledOnce(); expect(f.adopter.apply).toHaveBeenCalledOnce(); expect(f.cloud.pushLegacyRecovery).not.toHaveBeenCalled(); expect(f.open()).toBe(0);
+  });
+  it.each(["cloud graph", "author preparation"])("holds an ACK arriving during %s before any adoption", async stage => {
+    const f = fixture(); f.enableAdopter(); f.setPending("0");
+    if (stage === "cloud graph") f.cloud.shiftGraph.mockImplementation(async () => { expect(f.open()).toBe(0); f.setConvergence("1"); return f.branded(); });
+    else f.authority.prepare.mockImplementation(async capture => { capture.assertCurrent(); f.setConvergence("1"); return {}; });
+    await expect(f.service.acceptCloud(decision)).rejects.toMatchObject({ code: "ELEGACY_RECOVERY_CONVERGENCE_PENDING" });
+    expect(f.adopter.apply).not.toHaveBeenCalled(); expect(f.outbox.create).not.toHaveBeenCalled();
+    expect(await f.service.pendingSummary()).toMatchObject({ uploadPending: 0, convergencePending: 1, pending: 1 });
+    expect(await f.service.pushPending({ branchId: BRANCH })).toMatchObject({ pending: 0, downloadRecoveryComplete: false });
+  });
+  it.each(["branch", "profile", "pool", "session", "database"])("rejects %s changing across a cloud-choice await", async change => {
+    const f = fixture(); f.enableAdopter(); const started = deferred<void>(), response = deferred<object>();
+    f.cloud.shiftGraph.mockImplementation(async () => { expect(f.open()).toBe(0); started.resolve(); return response.promise; });
+    const pending = f.service.acceptCloud(decision); await started.promise;
+    if (change === "branch") f.context.branchId = uuid(99); if (change === "profile") f.context.profileKey = "new profile";
+    if (change === "pool") f.cm.pool = {}; if (change === "session") f.setEpoch(); if (change === "database") f.setGuid(uuid(99));
+    response.resolve(f.branded()); await expect(pending).rejects.toThrow(); expect(f.adopter.apply).not.toHaveBeenCalled();
+  });
+  it("does not substitute a changed cloud graph for the reviewed preview", async () => {
+    const f = fixture(); f.enableAdopter(); f.evidenceStore.load.mockResolvedValueOnce({ shiftId: SHIFT, localGraphText: JSON.stringify(f.tables), cloudGraphText: "[]" });
+    await expect(f.service.acceptCloud(decision)).rejects.toMatchObject({ code: "ELEGACY_RECOVERY_REVIEW_CHANGED" }); expect(f.adopter.apply).not.toHaveBeenCalled();
+  });
+  it("does not report false zero when ACK is committed but local normalization fails", async () => {
+    const f = fixture(); f.enableAdopter(); f.adopter.apply.mockRejectedValueOnce(Object.assign(Error("power loss"), { code: "ELEGACY_RECOVERY_PENDING" }));
+    await expect(f.service.pushPending({ branchId: BRANCH })).rejects.toMatchObject({ code: "ELEGACY_RECOVERY_PENDING" });
+    expect(await f.service.pendingSummary()).toMatchObject({ uploadPending: 0, convergencePending: 1, pending: 1 });
+    expect(await f.service.pushPending({ branchId: BRANCH })).toMatchObject({ uploadPending: 0, convergencePending: 0, pending: 0, downloadRecoveryComplete: false });
+    expect(f.cloud.pushLegacyRecovery).toHaveBeenCalledTimes(2); expect(f.adopter.prepareReceipt).toHaveBeenCalledTimes(2);
+  });
+  it("missing adoption upgrade preserves ACKed work and blocks new approvals without changing ordinary queues", async () => {
+    const f = fixture(); f.enableAdopter(); f.setAdoption(false); f.setPending("0"); f.setConvergence("1");
+    expect(await f.service.pendingSummary()).toMatchObject({ adoptionAvailable: false, convergencePending: 1, pending: 1 });
+    await expect(f.service.approve({ ...decision, recoveryId: RECOVERY })).rejects.toMatchObject({ code: "ELEGACY_RECOVERY_UPGRADE_REQUIRED" });
+    await expect(f.service.acceptCloud(decision)).rejects.toMatchObject({ code: "ELEGACY_RECOVERY_UPGRADE_REQUIRED" });
+    expect(f.outbox.create).not.toHaveBeenCalled(); expect(f.adopter.apply).not.toHaveBeenCalled();
   });
 });

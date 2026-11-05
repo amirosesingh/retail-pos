@@ -381,6 +381,272 @@ async function main() {
       const baseline = (await pool.request().input("id", c.id).query("SELECT graph_json FROM dbo.pos_sync_shift_baselines WHERE shift_id=@id;")).recordset[0].graph_json;
       assert.equal(baseline, JSON.stringify(incoming));
     });
+    // Runtime composition uses a separate terminal scope in this owned database,
+    // so older deliberately malformed receipt fixtures cannot mask its queue.
+    await pool.request().batch("ALTER TABLE dbo.pos_sync_shift_intents ADD intent_sequence bigint IDENTITY(1,1),payload_json nvarchar(max) NULL,payload_hash char(64) NULL,ack_coverage_json nvarchar(max) NULL;");
+    const runtimeTerminal = crypto.randomUUID(), runtimeBinding = { projectOrigin, terminalId: runtimeTerminal, authorId };
+    const runtimeInfo = keys.prepare(runtimeBinding); keys.markEnrolled(runtimeBinding, { keyId: runtimeInfo.keyId, publicKey: runtimeInfo.publicKey });
+    await pool.request().input("scope", scopeHash(runtimeBinding)).input("project", projectOrigin).input("terminal", runtimeTerminal).input("author", authorId).input("key", runtimeInfo.keyId).input("public", runtimeInfo.publicKey).query("INSERT dbo.pos_sync_shift_author_keys VALUES(@scope,@project,@terminal,@author,@key,@public);");
+    const runtimeScope = { ...scope, terminalId: runtimeTerminal };
+    const runtimeAuthority = new LegacyShiftRecoveryAuthority({ keys, session: { identity: () => ({ source: "pos", level: "admin", authorId, canonicalSubject: "fixture.admin" }), epoch: () => epoch }, connectionManager: cm,
+      terminal: () => ({ tokenId: runtimeTerminal, deviceType: "pc", deviceUse: "operations", locationId: branchId, deviceBindingProof: "a".repeat(64) }), project: () => projectOrigin, branch: () => branchId, backendUrl: () => "https://fixture.invalid" });
+    let runtimeService;
+    const runtimeGuard = (tx, input) => runtimeService.assertScope(tx, input);
+    const runtimeEvidence = new ShiftRecoveryEvidenceStore({ connectionManager: cm, registry, assertScope: runtimeGuard });
+    const runtimeOutbox = new LegacyShiftRecoveryOutbox({ connectionManager: cm, registry, evidenceStore: runtimeEvidence, authority: runtimeAuthority, assertScope: runtimeGuard, assertReceipt: assertLegacyRecoveryReceipt });
+    const runtimeAdopter = new ReviewedShiftAdoption({ connectionManager: cm, registry: all, evidenceStore: runtimeEvidence, outbox: runtimeOutbox, authority: runtimeAuthority, assertScope: runtimeGuard, assertReceipt: assertLegacyRecoveryReceipt });
+    const runtimeGraphs = new Map(),runtimeAccepted=new Map(),runtimeTokens=new Map(); let crashAfterAck = false, recoveryNetworkCalls = 0;
+    const runtimeReceipt = (event, target) => {
+      if(!runtimeAccepted.has(event.recoveryId))runtimeAccepted.set(event.recoveryId,stringifyExactJson(target));
+      const accepted = runtimeAccepted.get(event.recoveryId),acceptedTables=parseExactJson(accepted), token = "e".repeat(64),currentToken=runtimeTokens.get(event.shiftId)??token;
+      const raw = stringifyExactJson({ version: parseExactJson("1"), recovery_id: event.recoveryId, payload_hash: event.payloadHash, evidence_hash: event.evidenceHash, cloud_witness_hash: event.cloudWitnessHash,
+        financial_verification: "UNVERIFIED_HISTORICAL", provenance: "ADMIN_REVIEWED_LEGACY", branch_id: branchId, terminal_id: runtimeTerminal, shift_id: event.shiftId,
+        reviewer_id: event.proof.authorId, key_id: event.proof.keyId, accepted_token: token, current_token: currentToken, superseded: token!==currentToken, accepted_graph_text: accepted, accepted_graph_hash: hash(accepted),
+        graph: { tables: target, graphToken: currentToken, closedAtRaw: target[0].rows[0].closed_at },
+        coverage: { version: parseExactJson("1"), mode: "matched_request_rows", tables: acceptedTables.map(part => {
+          const fields = registry.tables.find(table => table.cloudTable === part.table).columns.map(column => column.cloudColumn), managed = fields.filter(field => ["row_version", "updated_at"].includes(field));
+          return { table: part.table, fields: fields.filter(field => !managed.includes(field)), serverManagedFields: managed, rows: part.rows.map(row => ({ id: row.id, serverValues: Object.fromEntries(managed.map(field => [field, row[field]])) })) };
+        }) } });
+      return rememberLegacyRecoveryReceipt({ event, raw, registry, assertCurrent: () => { assert.equal(cm.pool, pool); } });
+    };
+    const runtimeCloud = {
+      shiftGraph: async ({ shiftId }) => { const tables = runtimeGraphs.get(shiftId); return transport(shiftId, tables, tables[0].rows[0].status === "CLOSED" ? runtimeTokens.get(shiftId)??"e".repeat(64) : null); },
+      pushLegacyRecovery: async event => {
+        // A second connection can acquire both rows only after the caller's
+        // preparation transaction released its SQL locks before HTTP replay.
+        await other.request().input('id',event.recoveryId).input('shift',event.shiftId).query('SET LOCK_TIMEOUT 500;SELECT recovery_id FROM dbo.pos_sync_shift_legacy_recoveries WITH(UPDLOCK) WHERE recovery_id=@id;SELECT id FROM dbo.shifts WITH(UPDLOCK) WHERE id=@shift;SET LOCK_TIMEOUT -1;');
+        recoveryNetworkCalls++; return runtimeReceipt(event, runtimeGraphs.get(event.shiftId));
+      },
+    };
+    const ordinaryCurrentGraph=cloudCurrent.shiftGraph;
+    cloudCurrent.shiftGraph=options=>runtimeGraphs.has(options.shiftId)?runtimeCloud.shiftGraph(options):ordinaryCurrentGraph(options);
+    const runtimeApply = runtimeAdopter.apply.bind(runtimeAdopter);
+    runtimeAdopter.apply = async (...args) => { if (crashAfterAck) { crashAfterAck = false; throw Object.assign(Error("Simulated power loss after durable ACK"), { code: "ELEGACY_RECOVERY_FIXTURE_CRASH" }); } return runtimeApply(...args); };
+    const restartRuntime = () => { runtimeService = new LegacyShiftRecoveryService({ connectionManager: cm, registry: all, cloud: runtimeCloud, evidenceStore: runtimeEvidence, outbox: runtimeOutbox, authority: runtimeAuthority,
+      adopter: runtimeAdopter, readContext: () => ({ branchId, terminalId: runtimeTerminal, backendOriginHash: scope.backendOriginHash, profileKey: "fixture-runtime-profile" }) }); };
+    const runtimeSeed = async () => {
+      const candidate = await seed();
+      for (const name of TABLES) if (registry.tables.find(table => table.cloudTable === name).columns.some(column => column.sqlServerColumn === "terminal_id"))
+        await pool.request().input("id", candidate.id).input("terminal", runtimeTerminal).query(`WITH CHANGE_TRACKING_CONTEXT(0x434C4F5544) UPDATE dbo.[${name}] SET terminal_id=@terminal WHERE ${name === "shifts" ? "id" : "shift_id"}=@id;`);
+      candidate.localGraphText = await graph(candidate.id); return candidate;
+    };
+    restartRuntime(); let runtimeCandidate, runtimeEvent;
+    reader.reviewedShiftRecovery={prepare:graph=>runtimeService.prepareCoverage(graph),verify:(tx,token,graph,branch)=>runtimeService.verifyCoverage(tx,token,graph,branch)};
+    const checkReviewed=async(incoming,token,options={})=>atomic(tx=>reader.pendingShiftGraph(registry.tables.find(t=>t.cloudTable==='shifts'),[JSON.stringify({id:incoming.shiftId})],tx,
+      {branchId,incomingGraph:incoming,requireExact:true,reviewedCoverage:token,...options}));
+    await test("actual wired service freezes Admin review then retains durable ACK as pending local convergence after crash", async () => {
+      runtimeCandidate = await runtimeSeed(); const open = toCloud(runtimeCandidate.localGraphText).map(part => ({ ...part, rows: part.table === "shifts" ? [{ ...part.rows[0], status: "OPEN", state: "ACTIVE", closed_at: null }] : [] }));
+      runtimeGraphs.set(runtimeCandidate.id, open);
+      const preview = await runtimeService.preview(runtimeCandidate.id); assert.equal(preview.canApprove, true);
+      const approval = await runtimeService.approve({ captureKey: preview.captureKey, recoveryId: crypto.randomUUID(), reason: "Actual Administrator reviewed historical closing" });
+      runtimeEvent = await runtimeService.atomic(runtimeService.capture(), (tx, input) => runtimeOutbox.load(tx, input, approval.recoveryId));
+      const accepted = toCloud(runtimeCandidate.localGraphText);
+      for (const part of accepted) for (const row of part.rows) for (const column of registry.tables.find(table => table.cloudTable === part.table).columns)
+        if (String(column.cloudType).startsWith("timestamp") && typeof row[column.cloudColumn] === "string") row[column.cloudColumn] = row[column.cloudColumn].replace(".1234567", ".123457");
+      runtimeGraphs.set(runtimeCandidate.id, accepted); crashAfterAck = true;
+      await assert.rejects(runtimeService.pushPending({ branchId }), error => error.code === "ELEGACY_RECOVERY_FIXTURE_CRASH");
+      assert.deepEqual(await runtimeService.pendingSummary(), { available: true, adoptionAvailable: true, uploadPending: 0, convergencePending: 1, pending: 1 });
+      assert.equal(await graph(runtimeCandidate.id), runtimeCandidate.localGraphText);
+      const held = await runtimeService.preview(runtimeCandidate.id); assert.equal(held.canAcceptCloud, false);
+      await assert.rejects(runtimeService.acceptCloud({ captureKey: held.captureKey, decisionId: crypto.randomUUID(), reason: "Receipt normalization must finish first" }), error => error.code === "ELEGACY_RECOVERY_CONVERGENCE_PENDING");
+    });
+    await test("actual restart finds ACKed unadopted event and obtains fresh private receipt before exact normalization", async () => {
+      restartRuntime(); const result = await runtimeService.pushPending({ branchId }); assert.equal(result.pending, 0); assert.equal(result.downloadRecoveryComplete, false); assert.equal(recoveryNetworkCalls, 2);
+      assert(JSON.parse(await graph(runtimeCandidate.id))[0].rows[0].closed_at.includes(".1234570"));
+      assert.equal((await pool.request().input("id", runtimeEvent.recoveryId).query("SELECT COUNT(*) n FROM dbo.pos_shift_recovery_adoptions WHERE receipt_recovery_id=@id;")).recordset[0].n, 1);
+      const before = recoveryNetworkCalls; await runtimeService.pushPending({ branchId }); assert.equal(recoveryNetworkCalls, before);
+    });
+    await test("receipt-backed gap restart uses a fresh private replay only for its requested graph",async()=>{
+      restartRuntime();const incoming=await runtimeCloud.shiftGraph({shiftId:runtimeCandidate.id}),before=await graph(runtimeCandidate.id),checkpointsBefore=await pool.request().query('SELECT * FROM dbo.sync_checkpoints;');
+      await assert.rejects(checkReviewed(incoming,Object.freeze({accepted:true})),e=>e.code==='ELEGACY_RECOVERY_EXACT_GRAPH_REQUIRED');
+      const calls=recoveryNetworkCalls,token=await reader.prepareReviewedShiftCoverage(incoming,branchId);assert(token);assert.equal(recoveryNetworkCalls,calls+1);
+      assert.equal(await checkReviewed(incoming,token),false);assert.equal(await graph(runtimeCandidate.id),before);
+      assert.deepEqual((await pool.request().query('SELECT * FROM dbo.sync_checkpoints;')).recordset,checkpointsBefore.recordset);
+      await runtimeService.pushPending({branchId});assert.equal(recoveryNetworkCalls,calls+1);
+      restartRuntime();await assert.rejects(checkReviewed(incoming,token),e=>e.code==='ELEGACY_RECOVERY_EXACT_GRAPH_REQUIRED');
+      const replay=runtimeCloud.pushLegacyRecovery;runtimeCloud.pushLegacyRecovery=async()=>{throw Object.assign(Error('Synthetic current permission denial'),{code:'PERMISSION_DENIED'});};
+      try{await assert.rejects(reader.prepareReviewedShiftCoverage(incoming,branchId),e=>e.code==='PERMISSION_DENIED');}finally{runtimeCloud.pushLegacyRecovery=replay;}
+      assert.equal(await graph(runtimeCandidate.id),before);
+    });
+    await test("accepted original after-image adopts later web evolution with a fresh private receipt after restart",async()=>{
+      const before=await graph(runtimeCandidate.id),evolved=toCloud(before);
+      evolved[0].rows[0].note='Later accepted administrator web correction';evolved[0].rows[0].row_version=parseExactJson('2');
+      runtimeGraphs.set(runtimeCandidate.id,evolved);runtimeTokens.set(runtimeCandidate.id,'f'.repeat(64));restartRuntime();
+      const incoming=await runtimeCloud.shiftGraph({shiftId:runtimeCandidate.id}),token=await reader.prepareReviewedShiftCoverage(incoming,branchId);assert(token);
+      assert.equal(await checkReviewed(incoming,token),false);assert.equal(JSON.parse(await graph(runtimeCandidate.id))[0].rows[0].note,evolved[0].rows[0].note);
+      const decisions=(await pool.request().input('id',runtimeEvent.recoveryId).query('SELECT local_before_hash,local_after_hash,capture_key FROM dbo.pos_shift_recovery_adoptions WHERE receipt_recovery_id=@id;')).recordset;
+      assert.equal(decisions.length,2);assert(decisions.some(row=>row.local_before_hash===hash(before)));
+      assert.equal((await runtimeService.pendingSummary()).pending,0);restartRuntime();
+      const retry=await runtimeCloud.shiftGraph({shiftId:runtimeCandidate.id}),fresh=await reader.prepareReviewedShiftCoverage(retry,branchId);assert(fresh);assert.equal(await checkReviewed(retry,fresh),false);
+    });
+    await test("a nonprovable intermediate web after-image stays held for explicit Admin review",async()=>{
+      const current=runtimeGraphs.get(runtimeCandidate.id),before=await graph(runtimeCandidate.id),evolved=toCloud(before);
+      evolved[0].rows[0].note='Another later administrator correction';evolved[0].rows[0].row_version=parseExactJson('3');
+      runtimeGraphs.set(runtimeCandidate.id,evolved);runtimeTokens.set(runtimeCandidate.id,'1'.repeat(64));restartRuntime();
+      try{await assert.rejects(reader.prepareReviewedShiftCoverage(await runtimeCloud.shiftGraph({shiftId:runtimeCandidate.id}),branchId),e=>e.code==='EREVIEWED_RECEIPT_REQUIRED');assert.equal(await graph(runtimeCandidate.id),before);}
+      finally{runtimeGraphs.set(runtimeCandidate.id,current);runtimeTokens.set(runtimeCandidate.id,'f'.repeat(64));restartRuntime();}
+    });
+    await test("actual Admin cloud-choice service rechecks preview, archives local graph and never uploads a replacement", async () => {
+      const candidate = await runtimeSeed(), target = toCloud(candidate.localGraphText); target[0].rows[0].note = "Accepted existing web correction"; runtimeGraphs.set(candidate.id, target);
+      const preview = await runtimeService.preview(candidate.id); assert.equal(preview.canAcceptCloud, true); const calls = recoveryNetworkCalls;
+      const result = await runtimeService.acceptCloud({ captureKey: preview.captureKey, decisionId: crypto.randomUUID(), reason: "Keep the accepted Administrator web correction" });
+      assert.equal(result.state, "ADOPTED"); assert.equal(result.checkpointAdvanced, false); assert.equal(result.downloadRecoveryComplete, false); assert.equal(recoveryNetworkCalls, calls);
+      const saved = await runtimeService.atomic(runtimeService.capture(), (tx, input) => runtimeEvidence.load(tx, input, preview.captureKey)); assert.equal(saved.localGraphText, candidate.localGraphText);
+      assert.equal(JSON.parse(await graph(candidate.id))[0].rows[0].note, target[0].rows[0].note);
+    });
+    await test("actual cloud-choice service refuses changed cloud preview without replacing local data", async () => {
+      const candidate = await runtimeSeed(), target = toCloud(candidate.localGraphText); target[0].rows[0].note = "First web correction"; runtimeGraphs.set(candidate.id, target);
+      const preview = await runtimeService.preview(candidate.id); target[0].rows[0].note = "Newer web correction after preview";
+      await assert.rejects(runtimeService.acceptCloud({ captureKey: preview.captureKey, decisionId: crypto.randomUUID(), reason: "Cannot use changed preview" }), error => error.code === "ELEGACY_RECOVERY_REVIEW_CHANGED");
+      assert.equal(await graph(candidate.id), candidate.localGraphText);
+      // Explicitly review the fresh cloud record before finishing this fixture.
+      const next = await runtimeService.preview(candidate.id); await runtimeService.acceptCloud({ captureKey: next.captureKey, decisionId: crypto.randomUUID(), reason: "Choose the freshly reviewed correction" });
+    });
+    const queuedRuntimeClosing = async () => {
+      const candidate = await runtimeSeed(), open = toCloud(candidate.localGraphText).map(part => ({ ...part, rows: part.table === "shifts" ? [{ ...part.rows[0], status: "OPEN", state: "ACTIVE", closed_at: null }] : [] }));
+      runtimeGraphs.set(candidate.id, open);
+      const first = await runtimeService.preview(candidate.id), approved = await runtimeService.approve({ captureKey: first.captureKey, recoveryId: crypto.randomUUID(), reason: "Synthetic historical closing review" });
+      const event = await runtimeService.atomic(runtimeService.capture(), (tx, input) => runtimeOutbox.load(tx, input, approved.recoveryId)), target = toCloud(candidate.localGraphText);
+      for (const part of target) for (const row of part.rows) for (const column of registry.tables.find(table => table.cloudTable === part.table).columns)
+        if (String(column.cloudType).startsWith("timestamp") && typeof row[column.cloudColumn] === "string") row[column.cloudColumn] = row[column.cloudColumn].replace(".1234567", ".123457");
+      runtimeGraphs.set(candidate.id, target);
+      const preview = await runtimeService.preview(candidate.id); assert.equal(preview.canAcceptCloud, true);
+      return { candidate, event, target, preview };
+    };
+    const checkpointState = async () => (await pool.request().query("SELECT branch_id,entity_type,direction,CONVERT(nvarchar(30),change_tracking_version) version FROM dbo.sync_checkpoints ORDER BY branch_id,entity_type,direction;")).recordset;
+    for (const stage of ["cloud graph", "author preparation"]) await test("ACK during " + stage + " holds Admin adoption without losing accepted convergence", async () => {
+      const value = await queuedRuntimeClosing(), before = await checkpointState();
+      const originalRead = runtimeCloud.shiftGraph, originalPrepare = runtimeAuthority.prepare.bind(runtimeAuthority);
+      let waiting = true;
+      const acknowledge = async () => {
+        if (!waiting) return; waiting = false;
+        const witness = runtimeReceipt(value.event, value.target);
+        await runtimeService.atomic(runtimeService.capture(), (tx, input) => runtimeOutbox.acknowledge(tx, { scope: input, recoveryId: value.event.recoveryId, witness }));
+      };
+      if (stage === "cloud graph") runtimeCloud.shiftGraph = async input => { await acknowledge(); return originalRead(input); };
+      else runtimeAuthority.prepare = async capture => { const reviewer = await originalPrepare(capture); await acknowledge(); return reviewer; };
+      try {
+        await assert.rejects(runtimeService.acceptCloud({ captureKey: value.preview.captureKey, decisionId: crypto.randomUUID(), reason: "Admin choice racing a valid upload ACK" }), error => error.code === "ELEGACY_RECOVERY_CONVERGENCE_PENDING");
+      } finally { runtimeCloud.shiftGraph = originalRead; runtimeAuthority.prepare = originalPrepare; }
+      assert.equal(waiting, false); assert.equal(await graph(value.candidate.id), value.candidate.localGraphText);
+      assert.equal((await pool.request().input("shift", value.candidate.id).query("SELECT COUNT(*) n FROM dbo.pos_shift_recovery_adoptions WHERE shift_id=@shift;")).recordset[0].n, 0);
+      assert.equal((await pool.request().input("shift", value.candidate.id).query("SELECT COUNT(*) n FROM dbo.pos_sync_shift_baselines WHERE shift_id=@shift;")).recordset[0].n, 0);
+      assert.deepEqual(await checkpointState(), before); assert.equal((await runtimeService.pendingSummary()).convergencePending, 1);
+      assert.equal((await runtimeService.pushPending({ branchId })).pending, 0);
+    });
+    await test("final serializable convergence check blocks a concurrent ACK before adoption apply", async () => {
+      const value = await queuedRuntimeClosing(), before = await checkpointState(), originalApply = runtimeAdopter.apply;
+      const witness = runtimeReceipt(value.event, value.target); let tried = false;
+      runtimeAdopter.apply = async (...args) => {
+        tried = true;
+        await assert.rejects(runtimeService.atomic(runtimeService.capture(), async (tx, input) => {
+          await runtimeService.query(tx, "SET LOCK_TIMEOUT 250;");
+          try { return await runtimeOutbox.acknowledge(tx, { scope: input, recoveryId: value.event.recoveryId, witness }); }
+          finally { await runtimeService.query(tx, "SET LOCK_TIMEOUT -1;"); }
+        }), error => error.number === 1222 || error.originalError?.info?.number === 1222);
+        return originalApply(...args);
+      };
+      try { await assert.rejects(runtimeService.acceptCloud({ captureKey: value.preview.captureKey, decisionId: crypto.randomUUID(), reason: "Competing ACK must wait for this serializable check" }), error => error.code === "ELOCAL_UPLOAD_PENDING"); }
+      finally { runtimeAdopter.apply = originalApply; }
+      assert.equal(tried, true); assert.equal(await graph(value.candidate.id), value.candidate.localGraphText);
+      assert.equal((await pool.request().input("id", value.event.recoveryId).query("SELECT COUNT(*) n FROM dbo.pos_sync_shift_legacy_recovery_receipts WHERE recovery_id=@id;")).recordset[0].n, 0);
+      assert.deepEqual(await checkpointState(), before); assert.equal((await runtimeService.pushPending({ branchId })).pending, 0);
+    });
+    await test("a forged historical target and false CT ceiling cannot borrow a genuine original receipt",async()=>{
+      const value=await queuedRuntimeClosing();assert.equal((await runtimeService.pushPending({branchId})).pending,0);
+      const original=await graph(value.candidate.id),accepted=runtimeGraphs.get(value.candidate.id),legitimate=toCloud(original);
+      legitimate[0].rows[0].note='Genuine later server correction';legitimate[0].rows[0].row_version=parseExactJson('2');
+      await pool.request().input('shift',value.candidate.id).query("UPDATE dbo.shifts SET note='Counterfeit earlier target' WHERE id=@shift;");
+      const forged=await graph(value.candidate.id),fake=runtimeAdopter.target(transport(value.candidate.id,toCloud(forged),'9'.repeat(64)),runtimeScope);
+      await pool.request().input('recovery',value.event.recoveryId).input('target',fake.graphJson).input('targetHash',hash(fake.graphJson)).input('after',hash(forged)).query(`
+        INSERT dbo.pos_shift_recovery_adoptions(decision_id,capture_key,database_guid,branch_id,terminal_id,backend_origin_hash,shift_id,decision_kind,reviewer_id,reviewer_subject,reason,local_before_hash,target_graph_hash,target_graph_token,target_graph_json,before_ct_version,local_after_hash,receipt_recovery_id,receipt_json,decided_at)
+        SELECT TOP(1) NEWID(),capture_key,database_guid,branch_id,terminal_id,backend_origin_hash,shift_id,decision_kind,reviewer_id,reviewer_subject,reason,local_before_hash,@targetHash,REPLICATE('9',64),@target,CHANGE_TRACKING_CURRENT_VERSION(),@after,receipt_recovery_id,receipt_json,SYSDATETIMEOFFSET()
+        FROM dbo.pos_shift_recovery_adoptions WHERE receipt_recovery_id=@recovery ORDER BY decided_at DESC;`);
+      runtimeGraphs.set(value.candidate.id,legitimate);runtimeTokens.set(value.candidate.id,'8'.repeat(64));restartRuntime();
+      try{await assert.rejects(reader.prepareReviewedShiftCoverage(await runtimeCloud.shiftGraph({shiftId:value.candidate.id}),branchId),e=>e.code==='EREVIEWED_RECEIPT_REQUIRED');assert.equal(await graph(value.candidate.id),forged);}
+      finally{
+        // Restore only this disposable fixture's deliberate counterfeit input;
+        // the application under test made no restoration or acknowledgement.
+        await pool.request().input('shift',value.candidate.id).input('note',JSON.parse(original)[0].rows[0].note).query('WITH CHANGE_TRACKING_CONTEXT(0x434C4F5544) UPDATE dbo.shifts SET note=@note WHERE id=@shift;');
+        runtimeGraphs.set(value.candidate.id,accepted);runtimeTokens.delete(value.candidate.id);restartRuntime();
+      }
+    });
+    await test("an identical local edit after a prior receipt decision still blocks automatic web evolution",async()=>{
+      const value=await queuedRuntimeClosing();assert.equal((await runtimeService.pushPending({branchId})).pending,0);
+      const before=await graph(value.candidate.id),accepted=runtimeGraphs.get(value.candidate.id),evolved=toCloud(before);
+      evolved[0].rows[0].note='Server change after a later local CT edit';evolved[0].rows[0].row_version=parseExactJson('2');
+      await pool.request().input('shift',value.candidate.id).query('UPDATE dbo.shift_reconciliations SET id=id WHERE shift_id=@shift;');
+      runtimeGraphs.set(value.candidate.id,evolved);runtimeTokens.set(value.candidate.id,'7'.repeat(64));restartRuntime();
+      try{await assert.rejects(reader.prepareReviewedShiftCoverage(await runtimeCloud.shiftGraph({shiftId:value.candidate.id}),branchId),e=>e.code==='ELOCAL_CT_PENDING');assert.equal(await graph(value.candidate.id),before);}
+      finally{runtimeGraphs.set(value.candidate.id,accepted);runtimeTokens.delete(value.candidate.id);restartRuntime();}
+    });
+    let gapReview;
+    const confirmMatching=async shiftId=>{const preview=await runtimeService.preview(shiftId);assert.equal(preview.classification,'exact');assert.equal(preview.canAcceptCloud,true);
+      return runtimeService.acceptCloud({captureKey:preview.captureKey,decisionId:crypto.randomUUID(),reason:'Explicit matching-record re-verification by actual Administrator'});};
+    await test("matching Admin re-review is append-only and preserves business rows and baseline generation",async()=>{
+      gapReview=await runtimeSeed();runtimeGraphs.set(gapReview.id,toCloud(gapReview.localGraphText));const before=await graph(gapReview.id);
+      await confirmMatching(gapReview.id);
+      const baseline=async()=>(await pool.request().input('shift',gapReview.id).query('SELECT * FROM dbo.pos_sync_shift_baselines WHERE shift_id=@shift;')).recordset;
+      const prior=await baseline();await confirmMatching(gapReview.id);assert.deepEqual(await baseline(),prior);assert.equal(await graph(gapReview.id),before);
+      assert.equal((await pool.request().input('shift',gapReview.id).query('SELECT COUNT(*) n FROM dbo.pos_shift_recovery_adoptions WHERE shift_id=@shift;')).recordset[0].n,2);
+      restartRuntime();const incoming=await runtimeCloud.shiftGraph({shiftId:gapReview.id});assert.equal(await reader.prepareReviewedShiftCoverage(incoming,branchId),null);
+      await confirmMatching(gapReview.id);const token=await reader.prepareReviewedShiftCoverage(incoming,branchId);assert(token);assert.equal(await checkReviewed(incoming,token),false);
+      assert.deepEqual(await baseline(),prior);assert.equal(await graph(gapReview.id),before);
+    });
+    await test("reviewed coverage rejects stale Admin epoch, source, branch and foreign transaction without writes",async()=>{
+      let incoming=await runtimeCloud.shiftGraph({shiftId:gapReview.id}),token=await reader.prepareReviewedShiftCoverage(incoming,branchId),before=await graph(gapReview.id);assert(token);
+      const source=runtimeService.readContext;runtimeService.readContext=()=>({...source(),profileKey:'changed-owned-profile'});
+      await assert.rejects(checkReviewed(incoming,token),e=>e.code==='SYNC_BRANCH_FORBIDDEN');runtimeService.readContext=source;
+      await assert.rejects(atomic(tx=>runtimeService.verifyCoverage(tx,token,incoming,crypto.randomUUID())),e=>e.code==='ELEGACY_RECOVERY_EXACT_GRAPH_REQUIRED');
+      const foreign=new sql.Transaction(other);await foreign.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);try{await assert.rejects(runtimeService.verifyCoverage(foreign,token,incoming,branchId),e=>e.code==='ELEGACY_RECOVERY_SCOPE');}finally{await foreign.rollback();}
+      epoch++;await assert.rejects(checkReviewed(incoming,token));assert.equal(await reader.prepareReviewedShiftCoverage(incoming,branchId),null);
+      await confirmMatching(gapReview.id);incoming=await runtimeCloud.shiftGraph({shiftId:gapReview.id});token=await reader.prepareReviewedShiftCoverage(incoming,branchId);assert(token);
+      assert.equal(await checkReviewed(incoming,token),false);assert.equal(await graph(gapReview.id),before);
+    });
+    await test("reviewed coverage rechecks schema, pending journal, intent and FIN62 under graph locks",async()=>{
+      const incoming=await runtimeCloud.shiftGraph({shiftId:gapReview.id}),token=await reader.prepareReviewedShiftCoverage(incoming,branchId);assert(token);
+      const verify=()=>atomic(tx=>runtimeService.verifyCoverage(tx,token,incoming,branchId)),before=await graph(gapReview.id);
+      await pool.request().query('ALTER INDEX UX_reviewed_adoption_identity ON dbo.pos_shift_recovery_adoptions DISABLE;');
+      try{await assert.rejects(verify(),e=>e.code==='EREVIEWED_ADOPTION_SCHEMA');}finally{await pool.request().query('ALTER INDEX UX_reviewed_adoption_identity ON dbo.pos_shift_recovery_adoptions REBUILD;');}
+      await pool.request().input('branch',branchId).input('key',JSON.stringify({id:gapReview.id})).query("INSERT dbo.sync_change_journal VALUES('shifts',@key,@branch,NULL);");
+      try{await assert.rejects(verify(),e=>e.code==='ELOCAL_UPLOAD_PENDING');}finally{await pool.request().query('DELETE dbo.sync_change_journal;');}
+      await pool.request().input('branch',branchId).input('shift',gapReview.id).query('INSERT dbo.pos_sync_shift_intents(intent_id,branch_id,shift_id,acknowledged_at) VALUES(NEWID(),@branch,@shift,NULL);');
+      try{await assert.rejects(verify(),e=>e.code==='ELOCAL_UPLOAD_PENDING');}finally{await pool.request().query('DELETE dbo.pos_sync_shift_intents;');}
+      await pool.request().input('branch',branchId).input('shift',gapReview.id).batch('CREATE TABLE dbo.pos_sync_shift_financial_origins(branch_id nvarchar(128),shift_id uniqueidentifier);INSERT dbo.pos_sync_shift_financial_origins VALUES(@branch,@shift);');
+      try{await assert.rejects(verify(),e=>e.code==='EREVIEWED_FINANCIAL_PROTECTED');}finally{await pool.request().query('DROP TABLE dbo.pos_sync_shift_financial_origins;');}
+      assert.equal(await graph(gapReview.id),before);
+    });
+    await test("later identical CT edit needs a new explicit decision and ordinary uploads retain their guard",async()=>{
+      const incoming=await runtimeCloud.shiftGraph({shiftId:gapReview.id}),token=await reader.prepareReviewedShiftCoverage(incoming,branchId),before=await graph(gapReview.id);assert(token);
+      await pool.request().input('shift',gapReview.id).query('UPDATE dbo.shift_reconciliations SET id=id WHERE shift_id=@shift;');
+      await assert.rejects(checkReviewed(incoming,token),e=>e.code==='ELOCAL_CT_PENDING');
+      await confirmMatching(gapReview.id);const fresh=await reader.prepareReviewedShiftCoverage(incoming,branchId);assert(fresh);assert.equal(await checkReviewed(incoming,fresh),false);
+      await assert.rejects(checkReviewed(incoming,fresh,{requireExact:false}),e=>e.code==='ELOCAL_CT_PENDING');assert.equal(await graph(gapReview.id),before);
+    });
+    await test("exact reviewed graph locks exclude a concurrent local edit before checkpoint admission",async()=>{
+      const incoming=await runtimeCloud.shiftGraph({shiftId:gapReview.id}),token=await reader.prepareReviewedShiftCoverage(incoming,branchId);assert(token);
+      await atomic(async tx=>{assert.equal(await reader.pendingShiftGraph(registry.tables.find(t=>t.cloudTable==='shifts'),[JSON.stringify({id:gapReview.id})],tx,{branchId,incomingGraph:incoming,requireExact:true,reviewedCoverage:token}),false);
+        const result=await other.request().input('shift',gapReview.id).query('SET LOCK_TIMEOUT 250;BEGIN TRY UPDATE dbo.shift_reconciliations SET id=id WHERE shift_id=@shift;SELECT 0 error_number;END TRY BEGIN CATCH SELECT ERROR_NUMBER() error_number;END CATCH;');
+        assert.equal(result.recordsets.flat().find(row=>Object.hasOwn(row,'error_number'))?.error_number,1222);});
+      await other.request().query('SET LOCK_TIMEOUT -1;');
+    });
+    await test("runtime adoption completes only through fresh existing all-retained captured-V0 proofs", async () => {
+      for(const saved of (await runtimeService.list({limit:100})).items){
+        const preview=await runtimeService.preview(saved.shiftId);
+        if(preview.canAcceptCloud)await runtimeService.acceptCloud({captureKey:preview.captureKey,decisionId:crypto.randomUUID(),reason:'Explicit actual Administrator matching-graph recovery review'});
+      }
+      for (const tableName of TABLES) {
+        const recovery = await new ShiftGapRecovery({ connectionManager: cm, registry, reader, checkpoints, branchId, tableName, cloud: {...cloudCurrent,terminalId:()=>runtimeTerminal} }).begin();
+        const captured = recovery.baseline; await recovery.proveMissing(cloudCurrent); await recovery.finish();
+        assert.equal(String((await checkpoints.get(branchId, tableName, "push")).change_tracking_version), captured);
+      }
+    });
+    await test("a later unattributed deletion stays held instead of inheriting reviewed coverage",async()=>{
+      const unknown=crypto.randomUUID();await pool.request().input('id',unknown).input('branch',branchId).query("INSERT dbo.shifts(id,store_id,status,state,row_version) VALUES(@id,@branch,'OPEN','ACTIVE',1);DELETE dbo.shifts WHERE id=@id;");
+      const incoming=await runtimeCloud.shiftGraph({shiftId:gapReview.id}),before=await checkpointState();
+      assert.equal(await reader.prepareReviewedShiftCoverage(incoming,branchId),null);
+      await assert.rejects(checkReviewed(incoming,null),e=>e.code==='ELOCAL_CT_PENDING');assert.deepEqual(await checkpointState(),before);
+    });
     console.log(`PASS ${passed} isolated SQL Server legacy recovery groups`);
   } finally {
     if (other) await other.close(); if (pool) await pool.close();

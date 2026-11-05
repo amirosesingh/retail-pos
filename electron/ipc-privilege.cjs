@@ -87,6 +87,7 @@ const CHANNEL_LEVELS = {
   "sync:legacy-recovery-list": ADMIN,
   "sync:legacy-recovery-preview": ADMIN,
   "sync:legacy-recovery-approve": ADMIN,
+  "sync:legacy-recovery-accept-cloud": ADMIN,
   "receipts:find-exact": OPEN,
   "receipts:refund": OPEN,
   "pos:status": OPEN,
@@ -441,7 +442,7 @@ function refusal(level, channel, args = []) {
 
 /** True when the caller may run this channel with these arguments right now. */
 function allowed(channel, args = []) {
-  if (["sync:legacy-recovery-list", "sync:legacy-recovery-preview", "sync:legacy-recovery-approve"].includes(channel)) {
+  if (["sync:legacy-recovery-list", "sync:legacy-recovery-preview", "sync:legacy-recovery-approve", "sync:legacy-recovery-accept-cloud"].includes(channel)) {
     if (!adminSession.hasPosAuthority() || adminSession.identity()?.level !== "admin") return false;
     adminSession.touch(); return true;
   }

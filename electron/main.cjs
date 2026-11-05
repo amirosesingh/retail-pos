@@ -79,7 +79,10 @@ const shiftAuthority = new (require("./shift-authority.cjs").ShiftAuthorAuthorit
   terminal:()=>terminalStore.read(),project:()=>cloudCredentials.read({strict:true})?.url,
   branch:()=>localBranchId(),isManagementDevice:()=>isManagementDevice(),backendUrl:()=>authorizationServerUrl(),
 });
-const changeReader = new ChangeReader(databaseManager, syncRegistry);
+const changeReader = new ChangeReader(databaseManager, syncRegistry, {reviewedShiftRecovery:{
+  prepare:graph=>legacyShiftRecovery?.prepareCoverage(graph),
+  verify:(tx,token,graph,branch)=>legacyShiftRecovery.verifyCoverage(tx,token,graph,branch),
+}});
 const conflictRepository = new ConflictRepository(databaseManager);
 const legacyPushWorker = new PushWorker({ reader:changeReader,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,validateAuthor:proof=>shiftAuthority.validatePending(proof),validateClosingStart:proof=>shiftAuthority.validatePendingClosingStart(proof) });
 let legacyShiftRecovery;
@@ -128,6 +131,10 @@ const recoveryOutbox = new (require("./db/legacy-shift-recovery-outbox.cjs").Leg
 });
 legacyShiftRecovery = new (require("./sync/legacy-shift-recovery-service.cjs").LegacyShiftRecoveryService)({
   connectionManager:databaseManager,registry:syncRegistry,cloud:syncCloud,evidenceStore:recoveryEvidence,outbox:recoveryOutbox,authority:legacyRecoveryAuthority,
+  adopter:new (require("./sync/reviewed-shift-adoption.cjs").ReviewedShiftAdoption)({
+    connectionManager:databaseManager,registry:syncRegistry,evidenceStore:recoveryEvidence,outbox:recoveryOutbox,authority:legacyRecoveryAuthority,
+    assertScope:recoveryScope,assertReceipt:require("./sync/legacy-shift-recovery-receipt.cjs").assertLegacyRecoveryReceipt,
+  }),
   readContext:()=>{
     const binding = require("./verified-activation.cjs").binding(terminalStore.read());
     if (!binding || binding.mode !== "operations" || binding.platform !== "pc" || isManagementDevice())
@@ -193,7 +200,7 @@ async function assertSafeRegistrationChange(config){
   // Management can have pending work from several branches in the same SQL
   // store. Inspect all unacknowledged work rather than treating null as a
   // branch or preventing a legitimate replacement activation forever.
-  const summary=branch?await changeReader.pendingSummary(branch):{
+  const summary=branch?await legacyRecoveryRuntime.reader.pendingSummary(branch):{
     pending:Number((await databaseManager.pool.request().query("SELECT COUNT_BIG(*) pending FROM dbo.sync_change_journal WHERE acknowledged_at IS NULL;")).recordset?.[0]?.pending??0),failed:0,
   };
   const conflicts=await conflictRepository.unresolved();
@@ -440,7 +447,7 @@ async function flushSyncBeforeShutdown({ allowSignedOutExit = false } = {}) {
       run: async () => {
         const settled = await settleWithin(() => require('./sync/shutdown-sync.cjs').runShutdownSync({
           health: () => syncCloud.health({ timeoutMs: 8000 }),
-          pendingSummary: () => changeReader.pendingSummary(branchId),
+          pendingSummary: () => legacyRecoveryRuntime.reader.pendingSummary(branchId),
           run: () => syncCoordinator.runFinal({branchId,batchSize:500}),
           signedOut: !adminSession.hasPosAuthority(),
           allowSignedOutExit,
@@ -470,7 +477,7 @@ async function synchronizeClosingShifts(shiftId = null) {
       return { ok: false, code: "ELOCALDB", error: "The local database is not ready." };
     const healthResult = await syncCloud.health({ timeoutMs: SHUTDOWN_SYNC_TIMEOUT_MS });
     if (!healthResult.online) {
-      const remaining = await changeReader.pendingSummary(branchId);
+      const remaining = await legacyRecoveryRuntime.reader.pendingSummary(branchId);
       return { ok: false, offline: true, ...remaining, code:"EOFFLINE", error:"The shift is saved locally but has not been acknowledged by the cloud. Reconnect and retry synchronization before closing." };
     }
     if (!healthResult.ready)
@@ -2182,6 +2189,9 @@ function registerIpc() {
   ipcMain.handle("sync:get-status", async () => legacyRecoveryRuntime.status(await syncCoordinator.refresh(localBranchId())));
   require("./sync/legacy-shift-recovery-ipc.cjs").installLegacyShiftRecoveryIpc({
     ipcMain,service:legacyShiftRecovery,session:adminSession,
+    // Reuse the existing coordinator/lifecycle retry. It creates fresh gap
+    // proofs after adoption; a saved decision never resets a checkpoint.
+    onAdoptCommitted:()=>{automaticSyncQueued=true;scheduleAutomaticSync(250);},
     isPosSender:event=>event.sender===mainWindow?.webContents && event.senderFrame===event.sender.mainFrame,
   });
   ipcMain.handle("sync:run-now", (_e, options) => guard.guarded(async()=>{const input=guard.options(options,{name:"sync options"});const branchId=localBranchId();if(!branchId)throw Object.assign(new Error("The terminal branch is not configured."),{code:"EBRANCH"});const result=await observedDatabaseOperation("synchronization","manual",() => syncCoordinator.runNow({...input,branchId}));return result.code==="ECHANGEGAP"?prepareLocalData({force:true}):result;}));

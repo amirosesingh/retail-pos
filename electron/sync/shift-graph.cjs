@@ -21,6 +21,7 @@ async function prepareShiftGraphs({
   branchId,
   changes,
   byteBudget = 64 * 1024 * 1024,
+  recovery = null,
 }) {
   const branch = id(branchId),
     shifts = new Set();
@@ -55,7 +56,7 @@ async function prepareShiftGraphs({
     if (!UUID.test(shift)) refuse("The closing download has no verified shift.");
     shifts.add(shift);
   }
-  const graphs = new Map(),exactNoops=new Set();
+  const graphs = new Map(),exactNoops=new Set(),reviewedCoverage=new Map();
   let graphBytes = 0;
   for (const shiftId of [...shifts].sort()) {
     const graph = await cloud.shiftGraph({ branchId: branch, shiftId });
@@ -68,11 +69,13 @@ async function prepareShiftGraphs({
           "EOVERSIZED",
         );
       graphs.set(shiftId, graph);
+      if(recovery?.requiresExact(shiftId))reviewedCoverage.set(shiftId,await recovery.prepareGraph?.(graph)??null);
     }
   }
   return {
     graphs,
     exactNoops,
+    reviewedCoverage,
     covers(change) {
       if (!GRAPH_TABLES.includes(change.table_name)) return false;
       let key;
@@ -126,6 +129,7 @@ async function applyShiftGraphs({
           changes: [parentChange],
           incomingGraph: graph,
           requireExact: Boolean(recovery?.requiresExact(shiftId)),
+          reviewedCoverage: recovery?.requiresExact(shiftId) ? prepared.reviewedCoverage?.get(shiftId) ?? null : null,
         })
       ).size
     )
