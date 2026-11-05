@@ -1531,6 +1531,14 @@ hosting environment, not device overrides or hardcoded credentials. DEV76 extend
 the already existing development-only shared-protocol loader to its exact public
 financial/recovery companions after an actual local SSR failure; no wire behavior
 or deployed/native security protocol is changed.
+# 6 November — branch-view loading is local to the content area
+
+Retain the already confirmed shell for the same authenticated session, tenant,
+storage mode and permissions when an authorized user changes branch. This is
+presentation memory only: it must not declare the new branch snapshot/settings
+ready, render protected prior-branch content or permit opening/closing a shift
+before confirmation. Preserve normal-terminal locks, existing drafts and read
+generation guards. This does not authorize cross-branch reads or change sync.
 
 ## Native approval release evidence — 6 November
 
@@ -1550,3 +1558,9 @@ The final controlled fixture teardown exited0 after durable readback. The newer
 beta development-loader integration changes no approval/runtime bytes; require
 final-head CI before beta merge. Production and installer publication remain
 separately gated.
+
+VIEW77 mounted acceptance uses the actual shell/shift guard and shared Radix
+portals with isolated scoped providers. Retaining the shell does not retain a
+previous branch page: both data and settings must confirm before mounting its
+protected content. Recheck identity/profile/permission changes with the full
+startup gate; do not infer backend access from these presentation fixtures.
