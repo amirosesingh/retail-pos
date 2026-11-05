@@ -1,6 +1,16 @@
 const { reportDays } = require("../report-days.cjs");
 const { recordId } = require("../../sync/uuid-fields.cjs");
 const refuse = (code, message) => { throw Object.assign(new Error(message), { code }); };
+const CURSOR_AT = "__pos_report_cursor_at";
+const publicRow = row => Object.fromEntries(Object.entries(row).filter(([key]) => key !== CURSOR_AT));
+// Keep the SQL datetimeoffset(7) string: a driver Date loses the last four
+// fractional digits and can exclude the remaining rows of the next page.
+const reportCursor = row => {
+  if (!row) return null;
+  if (typeof row[CURSOR_AT] !== "string" || !Number.isFinite(Date.parse(row[CURSOR_AT])))
+    refuse("EREPORT_CURSOR", "The exact saved report time could not be read.");
+  return { ts: row[CURSOR_AT], id: recordId(row.id) };
+};
 
 /** Separate read-only capability: never opens the management replica to generic writes. */
 async function readManagementReport({ manager, databaseService, session, management, options, redactShift }) {
@@ -60,11 +70,12 @@ async function readManagementReport({ manager, databaseService, session, managem
   }
   if (kind === "shifts") {
     if (typeof redactShift !== "function") refuse("EMANAGEMENT_REPORT", "The shift privacy projection is unavailable.");
-    const result = await request.query(`SELECT TOP (@limit) s.* FROM dbo.${table} s WHERE ${selected.replaceAll("created_at", "opened_at")}${cursor} ORDER BY s.opened_at DESC,LOWER(CONVERT(nvarchar(128),s.id)) DESC;`);
-    const rows = (result.recordset ?? []).map(row => dates(redactShift(row))), last = rows.at(-1);
-    return { ok: true, complete: true, source: "management-local", rows, hasMore: rows.length >= limit, cursor: last ? { ts: last.opened_at, id: recordId(last.id) } : null };
+    const result = await request.query(`SELECT TOP (@limit) s.*,CONVERT(nvarchar(40),s.opened_at,127) AS ${CURSOR_AT} FROM dbo.${table} s WHERE ${selected.replaceAll("created_at", "opened_at")}${cursor} ORDER BY s.opened_at DESC,LOWER(CONVERT(nvarchar(128),s.id)) DESC;`);
+    const saved = result.recordset ?? [];
+    const rows = saved.map(row => dates(redactShift(publicRow(row))));
+    return { ok: true, complete: true, source: "management-local", rows, hasMore: rows.length >= limit, cursor: reportCursor(saved.at(-1)) };
   }
-  const result = await request.query(`SELECT TOP (@limit) s.* INTO #selected_sales FROM dbo.sales s WHERE ${selected}${cursor} ORDER BY s.created_at DESC,LOWER(CONVERT(nvarchar(128),s.id)) DESC;
+  const result = await request.query(`SELECT TOP (@limit) s.*,CONVERT(nvarchar(40),s.created_at,127) AS ${CURSOR_AT} INTO #selected_sales FROM dbo.sales s WHERE ${selected}${cursor} ORDER BY s.created_at DESC,LOWER(CONVERT(nvarchar(128),s.id)) DESC;
     SELECT * FROM #selected_sales ORDER BY created_at DESC,LOWER(CONVERT(nvarchar(128),id)) DESC;
     SELECT TOP (500001) si.* FROM dbo.sale_items si JOIN #selected_sales s ON s.id=si.sale_id;
     DROP TABLE #selected_sales;`);
@@ -75,9 +86,9 @@ async function readManagementReport({ manager, databaseService, session, managem
     const row = session.hasPermission("can_view_cost_margin") ? item : { ...item, unit_cost: null };
     const id = recordId(item.sale_id), list = bySale.get(id) ?? []; list.push(row); bySale.set(id, list);
   }
-  const rows = heads.map(row => ({ ...dates(row), sale_items: (bySale.get(recordId(row.id)) ?? []).map(dates) }));
+  const rows = heads.map(row => ({ ...dates(publicRow(row)), sale_items: (bySale.get(recordId(row.id)) ?? []).map(dates) }));
   const last = heads.at(-1);
   return { ok: true, complete: true, source: "management-local", rows,
-    hasMore: heads.length >= limit, cursor: last ? { ts: new Date(last.created_at).toISOString(), id: recordId(last.id) } : null };
+    hasMore: heads.length >= limit, cursor: reportCursor(last) };
 }
 module.exports = { readManagementReport };

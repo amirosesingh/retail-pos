@@ -5260,3 +5260,33 @@ CI, deployed/installed acceptance, beta integration and production publication
 remain pending. An earlier prototype-era full run was interrupted after a review
 finding and is not final evidence. Do not merge/publish on the strength of this
 local pass alone.
+## REPORT70 — exact Management pagination cursors (5 November)
+
+Owner approved one narrow code/isolated-test batch, from betaada83bb9 in
+codex/management-report-cursors-beta. Fix only the dedicated Management report
+reader's SQL Server datetimeoffset(7) cursor truncation for sales and shifts.
+Select an exact SQL timestamp string before the driver converts it to Date;
+preserve descending(timestamp,id), existing scopes, permissions, completeness,
+cost and shift privacy checks, and strip private aliases from returned rows.
+Test limits1/2,100ns/same-time-ID/offset/date boundaries plus denied, empty and
+incomplete cases against an owned disposable SQL database. No production data,
+schema/configuration, RPC/HTTP changes, publication or merge is included.
+The separate in-flight session-handover authorization race remains a tracked
+proposal and is explicitly outside this approval; do not fix it implicitly.
+Implementation is frozen: the reader selects an internal SQL style127 timestamp,
+uses it only for the continuation cursor, and removes it before public rows and
+shift redaction. Existing public Date serialization remains unchanged. Focused
+report/IPC/replica/permission/configuration checks passed51 tests across7 suites
+(1 opt-in test skipped); the opt-in wrapper separately passed2 tests including
+all13 actual disposable SQL Server groups. TypeScript, scoped lint and diff checks
+passed; independent source review found no pagination blocker. Initial SQL
+fixture validation incorrectly required seven visible fractional digits: SQL
+style127 legitimately omits zero fractions and normalizes offsets to UTC. The
+corrected fixture proves exact SQL equality and preserved nonzero100ns precision.
+Final normal-temp full regression passed5775 tests/8 skipped/0 failed of5783
+(689 suites passed/1 skipped) on runtime head422daaf7. The initial restricted
+full run failed on sandbox SSR-cache ENOENT imports; the same frozen source
+passed after granting normal temporary-file access. Draft betaPR403 is open
+and labelled beta. Exact-head CI, beta integration and installed acceptance
+remain pending. The separate session-handover race is not fixed by this patch.
+Membership remains ON HOLD.
