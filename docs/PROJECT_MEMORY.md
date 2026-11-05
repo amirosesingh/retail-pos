@@ -32,6 +32,19 @@ bounded sales on Dashboard/All Shops; prepare a bounded authorized Board hourly
 read separately if required. Any new database routine remains preparation only
 until exact-target/file approval. Membership remains ON HOLD.
 
+## 6 November — dependency integration is beta first
+
+The owner requests the latest local Electron preview and prompt integration of
+completed chore/version PRs into beta. This does not approve main promotion or
+native publication. Retail version1.4.82 is already prepared; dependency PRs406
+through410 do not increment the application version. Recheck their combination
+with actual current beta before merge: the original green dependency checks use
+the older beta4e9a854a, while the reviewed destination is3074a475. Preserve source
+commit attribution, resolve only necessary dependency-lock conflicts, and keep
+payment/recovery source and all operator profiles/databases untouched. Use a
+fresh isolated dependency tree rather than changing the running Electron's
+shared node_modules. Record runtime/package acceptance separately from CI.
+
 ## 5 November all-table synchronization clarification
 
 Dashboard decision69: Live Dashboard selected operating branch; Live Business
@@ -1467,3 +1480,12 @@ Do not alter active-shift selection, exact cursors, saved times or authorization
 The actual Operations snapshot returns raw shift recordsets (unlike its other
 codec-normalized tables); paged history already normalizes opened_at. The report
 adapter therefore handles native Date seeds without changing those shared paths.
+# 6 November — latest local preview continuity
+
+Keep latest merged beta Electron and web previews running beside each other.
+Reload integrated runtime changes safely; preserve unsaved checkout, SQL settings,
+sealed registration and pending work. Website local startup must use the existing
+hosting environment, not device overrides or hardcoded credentials. DEV76 extends
+the already existing development-only shared-protocol loader to its exact public
+financial/recovery companions after an actual local SSR failure; no wire behavior
+or deployed/native security protocol is changed.

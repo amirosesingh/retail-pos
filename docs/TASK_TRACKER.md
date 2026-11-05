@@ -36,6 +36,52 @@ scope/value/permission tests and TypeScript passed. Actual SQL, responsive
 rendering, full regression and cloud hourly read preparation remain pending.
 No live database or deployment occurred.
 
+## 6 November — isolated dependency integration verification
+
+The owner asks that completed chore/version bumps be checked and integrated into
+beta while payment and sync recovery continue. Retail's application version is
+already 1.4.82. Five dependency PRs406–410 remain separate from publication and
+production approval. Their green original checks use beta4e9a854a; actual current
+beta is3074a475. Do not represent those checks as verification of the current
+combined source.
+
+Approved preparation scope: a separate codex/chore-beta-verification worktree,
+preserving all five original heads as merge parents and changing only package
+metadata/lock plus this evidence. No real POS profile, operator database,
+registration, queues, settings, private keys or application code is changed.
+No remote merge, release, signing or installer publication is included.
+
+Local preview order406,407,408,409,410 retains every original package upgrade.
+Only407 conflicts with406's dependency hoisting: retain Chalk4 for the builder
+and resolve Chalk5 underneath its actual CLI consumers with npm11.4.2/Node22.
+Existing minimatch/resedit and added mimic-fn/require-main-filename entries are
+preserved semantically. The final preview bdf82beb has source tree
+458704d89a0ed1cc8f38e761cb8046deed493456 and changes only package.json and its lock
+relative to beta3074. Fresh isolated Node22.22.2/npm11.4.2 installation passed
+(1063packages). TypeScript passed. All92 native Node checks passed, including
+actual Capgo valid/invalid local bundle packaging and updater/sync/database
+fixtures. The first restricted-temp run passed91/92 but Windows denied a fixture
+installer rename; the unchanged normal-temp rerun passed92/92. The restricted
+full run likewise failed on missing Vite SSR temp files/workerd fixture startup;
+the unchanged normal-access rerun passed5983 tests/10skipped/0failed across706
+files with two workers. Focused Query/Radix/startup/report/offline-checkout checks
+passed120 tests across15files. Full lint passed with0errors/27existing warnings.
+npm audit passed its high threshold:0high/0critical,19moderate/3low retained as
+advisory follow-up rather than a zero-warning claim.
+
+Unsigned Windows desktop build, NSIS installer/blockmap and full package smoke
+all passed with builder26.18.0, Electron44.9.1 and npmRebuild=false. The smoke
+verified ASAR integrity and the packaged SQL driver; signing/publication were
+disabled. The local acceptance installer hash is
+E493C3C7C0E869D4EB6827445D5AEAFE06D1F43CADBC96EE93A50AD955ADD088.
+This is a test artifact, not a release candidate containing pending payment fixes.
+Generated schema/report/route artifacts were inspected and restored after the
+build; no generated changes enter the PR. Registry changes were timestamps only;
+the existing source scanner reported two informational numeric-input observations
+in NotificationRulesPage, not a newly introduced dependency defect. Actual
+signed-in installed workflow checks remain separate. No remote integration,
+database application or native publication occurred. Membership remains ON HOLD.
+
 FIN62 cloud phase: PR391d15be0af allrequiredCIpassed. Ownerapproved exactdecimalv2 NEWactions only/final2dp halfawayzero; preserveoldacceptedhistory. Activeindependentnative/PGmath implementations, safecomplete-server-baseline receipts and financialauthor-domain foundation. Actualfinancialoperationauthor/writercapture and historical admission wiring remain open; no synthetic authorized flag/GUC or unverifiedclientrowlist may claim authority. All cloud/local DBapplication deferredEND exactbundleapproval. No finalcloudmigration applied or existingfinancialamountsrewritten.
 
 FIN62 known-snapshot preparation verification: seven disposableLocalDB metadata-upgrade groups and20 SQLServer financial-basis groups passed, fixturescleaned. Independent review corrected IGNORE_DUP_KEY/physicalindex guard, canonicalUUIDtextorder, and transaction-preserving rejectedcaller behavior. Native prototype exposes expectedNativeRaw with scale12/formulaversion rather than claiming parity with PostgreSQL2dp wiremoney. Shared final monetary canonicalization/admission binding remain pending; no runtime activation or database application. Candidate025 hash updated in final-bundle document. Decision/preparationfiles are queued for PR391 update, not automatic migration discovery.
@@ -5911,3 +5957,23 @@ actual cashier approved-payment acceptance remains pending that distinct fix.
 Report ordering compares instant milliseconds plus the remaining SQL 100 ns
 fraction, so mixed precision/offset strings sort correctly without rewriting
 raw timestamps or pagination cursors. Equal instants retain descending ID ties.
+# DEV76 — complete shared protocol loading in local previews, 6 November
+
+The owner requested latest Electron and web previews side by side, then reported
+that the local environments did not load. The web checkout had no environment
+file; its process now reads the existing operator-managed root .env.local without
+copying or logging secrets. A real development-server request then reproduced
+`require is not defined` in shift-financial-protocol.cjs. Extend only the existing
+serve-only exact-file interop to the three financial/recovery protocol companions.
+Keep their native source, signed bytes, validators, permissions and build output
+unchanged. Baseline beta3074a475; isolated codex/dev-financial-protocol-beta.
+Acceptance: real Vite SSR reproduction, native/ESM valid and denied parity, exact
+file/export/import-contract denials, focused regression, and latest local previews.
+No database, registration, settings, queue or checkpoint changes. Targeted rollback
+is a revert of this development-only loader correction.
+
+Prepared validation: 60 tests across four focused suites pass, including the
+actual Vite SSR failure/recovery and native/ESM signed-message/invalid-input
+parity for all four modules. TypeScript, scoped ESLint and diff checks pass.
+Independent agent source review found no blocker. Required CI and actual
+configured preview reload remain pending; no beta/main merge or publication.
