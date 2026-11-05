@@ -17,6 +17,27 @@ FIN62 isolated SQL basis prototype: complete selected-branch/shift inputs and ex
 
 ## 5 November current integration and newly queued dashboard scope
 
+Owner APPROVED two narrow code/isolated-test batches on5 November:
+1. Exact-witness-only correction in electron/sync/shift-graph.cjs and
+   electron/db/shift-intents.cjs plus focused tests. Preserve legacy no-witness
+   behavior and every branch/pending/immutable-history guard; no live database
+   changes, deployment or runtime adoption activation covered.
+2. Exact Management report pagination in
+   electron/db/repositories/management-reports.cjs plus focused tests. Preserve
+   current permission/completeness/cost/branch guards and every record across
+   submillisecond page boundaries. No schema/data changes or deployment covered.
+The separately found Management session-handover race and nav-pin ownership
+correction remain outside these approvals; prepare their scopes separately.
+
+Owner additionally requests production preparation side by side. Keep draftPR400
+current as scoped beta work is verified; this is not specific production merge
+or installer-publication approval. PR402 is merged betaada83bb9 with exact tree
+parity and live beta asset delivery verified. Postmerge Android's sole failed
+job hit an external Kotlin artifact HTTP504, not a compiler assertion; a bounded
+failed-job retry is appropriate without source/settings changes. Other recorded
+postmerge platform/Security/Workers checks passed. No production/installer/DB
+action performed by that merge.
+
 RECOVERY65 application checkpoint: missing-cloud legacy closing review/upload,
 Main-only actual-admin IPC, immutable SQL pending records, private verified
 receipt, duplicate-review uniqueness and truthful runtime status are implemented
@@ -35,9 +56,9 @@ results exclude the uncommitted adoption prototype and installed-device tests.
 Reviewed-adoption prototype:33 actual disposable SQL Server groups pass; one
 ordinary subsequent cloud-delta regression attempts a rounded decimal and rolls
 back as designed. No committed production damage was demonstrated. A separate
-owner approval question is pending for exact-witness-only changes in shared
-shift-graph.cjs and ShiftIntentStore.adopt; do not edit those writers before the
-answer. Independent review also corrected unbounded OPEN timestamp changes and
+owner approval for exact-witness-only changes in shared shift-graph.cjs and
+ShiftIntentStore.adopt is now received; implementation/tests are active under the
+narrow scope above. Independent review corrected unbounded OPEN timestamp changes and
 same-name-but-different CHECK constraints;17 focused tests pass. The complete
 opt-in SQL script still fails at the known ordinary-delta regression, with its
 transaction rolled back. Current prototype/DDL remains unactivated/unapplied;

@@ -106,3 +106,50 @@ files on the single approved local database. The section above records the
 earlier preparation boundary; the dated application record is authoritative for
 what ran. Do not rerun installed metadata or bulk-push timestamped migrations
 without reviewing the recorded repository-file/live-ledger correspondence.
+
+## Next legacy-recovery preparation — NOT approved for application
+
+The owner approved the narrow exact-witness download correction and Management
+pagination code/isolated tests on5 November. Neither approval applies these
+schema candidates, activates local adoption, enrolls real keys or publishes a
+release. The already-applied financial/sharing files above are not replay steps
+for this new preparation. Current recovery preparation checkpoint:5c5ce06b.
+
+Proposed cloud target remains ROSEGILL / rosegill0011@gmail.com's Org
+(`bjxgimekljzlnwejuawj`) / pos (`qhrufhtbeguxydenzfey`), database `postgres`,
+https://qhrufhtbeguxydenzfey.supabase.co. No fresh live-definition preflight or
+application has been performed for this candidate. Exact local server/database/
+GUID/schema identity must be verified separately for every existing PC; historical
+machine names or a beta application label are not proof of the current target.
+
+| Candidate artifact / order within its database | Exact current SHA256 | Change on schema application |
+| --- | --- | --- |
+| Cloud: `supabase/migrations/20261105063613_admin_attested_legacy_shift_recovery.sql` | `145FDD86BBF6E2D7B4CB6CB9B9E0D72639329ED24979357AEAE2C724BA43EC2E` | New private append-only receipt table, index/trigger and service-only `pos_sync_recover_legacy_closing(text,text,text,text,jsonb,jsonb)`; deny direct table access. No business rows rewritten. |
+| Local1: `docs/database/retained-shift-recovery-evidence.sql` | `E3727FE62A276C1EAF200F8783B289D5BE745F2E95D563CDA850EEE9F8CAADCD` | New immutable `dbo.pos_shift_recovery_evidence`, bounded raw before-images, scope index/checks/trigger. Empty on application. |
+| Local2: `docs/database/legacy-shift-recovery-outbox.sql` | `08917EE9041033A68A81751D6409B0BB60E7E0D1D3878DCF577EA64D0B6C5307` | New immutable `dbo.pos_sync_shift_legacy_recoveries` and `dbo.pos_sync_shift_legacy_recovery_receipts`, identity/scope indexes and evidence/receipt relationships. Empty on application. |
+| Local3: `docs/database/reviewed-shift-adoption.sql` | `A57873CF32707C99256DA2345362FD91DCD42D64876CE59EC1DCE2F48E39F36F` | New immutable `dbo.pos_shift_recovery_adoptions` decision archive, evidence relationship, uniqueness and exact constraints. Empty on application. |
+
+These are reviewed-source hashes for preparation, not final apply instructions.
+The existing files each own a transaction and abort on unexpected existing
+objects. A final single local existing-database upgrade file must be generated,
+reviewed and tested for atomicity and recognized already-installed shapes before
+being offered to an operator. Do not naively concatenate/replay these separate
+transactions or run a full installer. Their final consolidated bytes/hash and
+per-PC target preflight still require owner review before application.
+
+Schema application alone creates no closing, sale, stock adjustment, signature,
+recovery approval, receipt, adoption decision or checkpoint advance. Later actual
+application use is distinct: an authenticated Administrator may explicitly review
+a missing historical closing under the approved provenance rule; the cloud routine
+rechecks current authority and complete OPEN compare-and-swap. Reviewed local
+adoption archives the exact before-image before changing its effective projection.
+Those operations must preserve accepted web corrections and pending work, and
+must not invent an original financial snapshot or cashier signature.
+
+Final gates: passing exact-writer/ordinary-delta SQL regression, complete runtime
+adoption integration, independent allowed/denied/retry/rollback tests, compatible
+cloud/local sequence and fresh schema/grant checks, isolated upgrade tests, actual
+device acceptance, and separate exact-target application approval. Installer and
+production publication remain separately unapproved. Never delete immutable
+evidence/pending history as a rollback after accepted operations exist; preserve
+records and prepare a targeted forward correction.
