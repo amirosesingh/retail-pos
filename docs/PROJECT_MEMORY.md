@@ -1423,6 +1423,13 @@ remain in their separate draft PRs; do not imply they are released.
 
 ## STOCK401 — retained unfinished stock-history foundation, 5 November
 
+6 November: owner explicitly approved implementation/tests for the dedicated
+stock-event domain in `docs/database/stock-history-author-domain-plan.md`, using
+only existing enrolled Main-owned keys. No generic signing API, rotation, new
+enrollment or live database/deployment action. Reports must expose the same
+historical stock reader alongside its Inventory shortcut. Exact source-effect,
+cohort/opening/time coverage remains required; never certify unknown past stock.
+
 Owner reactivated completion on 6 November; this supersedes the later deferral
 description retained below as history. Continue reviewed report/Main/UI/export
 then actual effect-bound capture, durable single-lane sync and coverage proof.

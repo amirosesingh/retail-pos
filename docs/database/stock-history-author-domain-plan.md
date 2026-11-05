@@ -1,9 +1,10 @@
-# STOCK401 original-author evidence — preparation requiring scope approval
+# STOCK401 original-author evidence — approved implementation, 6 November
 
-This document is a proposal, not an implemented signer or a live database change.
-The existing report approval covers accepted-effect capture and durable metadata.
-It does not authorize expanding the existing protected key API. Preserve every
-existing shift/financial domain, enrollment, key file and permission check.
+The owner approved this exact dedicated-domain implementation and isolated tests
+on 6 November. This supersedes the earlier preparation-only boundary; live
+database application, enrollment, activation and deployment remain excluded.
+Preserve every existing shift/financial domain, enrollment, key file and
+permission check. Source completion and verification are recorded separately.
 
 ## Why this boundary exists
 

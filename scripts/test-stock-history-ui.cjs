@@ -11,7 +11,7 @@ export let model={branch:'a',name:'Fixture A',open:true,inventory:true,export:tr
 const listeners=new Set();export const calls=[],exports=[],pending=[];let defer=false;
 export const set=(next)=>{model={...model,...next};listeners.forEach(fn=>fn());};export const watch=()=>useSyncExternalStore(fn=>{listeners.add(fn);return()=>listeners.delete(fn);},()=>model);
 export const useAuth=()=>{const m=watch();return{isAdmin:false,can:key=>key==='can_view_inventory'?m.inventory:key==='can_export_reports'?m.export:key==='can_shift_closing_history_view'?m.shifts:false};};
-export const usePos=()=>({state:{shifts:[]}});export const effectiveTimeZone=()=>watch().zone;export const sessionEpoch=()=>model.epoch;
+export const usePos=()=>{const m=watch();return{state:{shifts:[]},currentStore:{id:m.branch,name:m.name}};};export const effectiveTimeZone=()=>watch().zone;export const sessionEpoch=()=>model.epoch;
 export const useAuthOptional=()=>null;export const usePosOptional=()=>null;export const usePersonalAppearance=()=>({profile:{tableViews:{}},editable:false,update:()=>{}});
 export const isCurrentEpoch=value=>value===model.epoch;
 export const useReportShifts=(_seed,branch,_from,_to,enabled)=>({shifts:enabled?[{id:'30000000-0000-4000-8000-000000000001',storeId:branch,status:'CLOSED',closedAt:'2026-11-05T13:00:00.1234567Z',cashier:'Fixture cashier'}]:[],loading:false,error:''});
@@ -24,8 +24,9 @@ export const loadStockHistoryPage=async(r)=>{calls.push(r);const page=response(r
 export const deferNext=()=>defer=true;export const resolve=()=>pending.shift()?.();export const xlsx={utils:{book_new:()=>({sheets:[]}),aoa_to_sheet:rows=>rows,json_to_sheet:rows=>rows,book_append_sheet:(book,sheet,name)=>book.sheets.push({name,sheet})},writeFile:(book,name)=>exports.push({book,name})};
 `);
   fs.writeFileSync(path.join(directory, "xlsx.ts"), `export{utils,writeFile};import{xlsx}from'./fixture';const{utils,writeFile}=xlsx;`);
-  fs.writeFileSync(path.join(directory, "main.tsx"), `import React from'react';import{createRoot}from'react-dom/client';import{StockHistoryDialog}from'@/platforms/web/components/pos/StockHistoryDialog';import*as f from'./fixture';import'@/styles.css';
-window.fixture=f;function App(){const m=f.watch();return <StockHistoryDialog open={m.open} onOpenChange={open=>f.set({open})} branchId={m.branch} branchName={m.name}/>;}createRoot(document.getElementById('root')).render(<App/>);`);
+  fs.writeFileSync(path.join(directory, "shell.tsx"), `export const AppShell=({children})=><main>{children}</main>;`);
+  fs.writeFileSync(path.join(directory, "main.tsx"), `import React from'react';import{createRoot}from'react-dom/client';import{StockHistoryDialog}from'@/platforms/web/components/pos/StockHistoryDialog';import{StockAtTimeReport}from'@/routes/reports.inventory';import*as f from'./fixture';import'@/styles.css';
+window.fixture=f;function App(){const m=f.watch();return location.search==='?report'?<StockAtTimeReport/>:<StockHistoryDialog open={m.open} onOpenChange={open=>f.set({open})} branchId={m.branch} branchName={m.name}/>;}createRoot(document.getElementById('root')).render(<App/>);`);
   const { createServer } = await import("vite"), react = (await import("@vitejs/plugin-react")).default, tailwind = (await import("@tailwindcss/vite")).default;
   const { popupRuntimeAliases } = await import(pathToFileURL(path.join(root,"scripts/popup-runtime-aliases.mjs")).href);
   let server,browser,passed=0;
@@ -33,6 +34,7 @@ window.fixture=f;function App(){const m=f.watch();return <StockHistoryDialog ope
     const fixture=path.join(directory,"fixture.ts");
     server=await createServer({configFile:false,root,cacheDir:path.join(directory,".vite"),plugins:[react(),tailwind()],resolve:{alias:[
       ...["pos-auth","pos-store","time-zone","use-report-shifts","session-epoch","stock-history-client","personal-appearance"].map(name=>({find:new RegExp(`^@/lib/${name}$`),replacement:fixture})),
+      {find:/^@\/platforms\/web\/components\/pos\/AppShell$/,replacement:path.join(directory,"shell.tsx")},
       {find:/^xlsx$/,replacement:path.join(directory,"xlsx.ts")},...popupRuntimeAliases(),{find:"@",replacement:path.join(root,"src")},
     ]},server:{host:"127.0.0.1",port:0,fs:{allow:[root,fs.realpathSync(path.join(root,"node_modules"))]}},logLevel:"error"});
     await server.listen();const origin=`http://127.0.0.1:${server.httpServer.address().port}`;
@@ -83,6 +85,22 @@ window.fixture=f;function App(){const m=f.watch();return <StockHistoryDialog ope
       await page.getByRole("combobox",{name:"Stock cutoff method"}).click();assert.equal(await page.getByRole("option",{name:"After a closed shift"}).count(),0);await page.keyboard.press("Escape");
       await page.evaluate(()=>window.fixture.set({inventory:false,epoch:2}));await page.getByRole("dialog").waitFor({state:"detached"});
       passed++;console.log("PASS independent export/shift visibility and inventory revocation");await page.close();
+    }
+    for(const width of [1440,390]) {
+      const page=await browser.newPage({viewport:{width,height:840}});
+      await page.route("**/*",route=>route.request().url().startsWith(origin)?route.continue():route.abort());
+      await page.goto(origin+"/.tmp/stock-history-ui/index.html?report");
+      await page.getByRole("heading",{name:"Inventory · Stock at time"}).waitFor();
+      assert.equal(await page.evaluate(()=>window.fixture.calls.length),0);
+      await page.getByRole("button",{name:"Select date and time"}).click();
+      await page.getByRole("dialog").waitFor();await page.getByRole("button",{name:"Show stock",exact:true}).click();
+      await page.getByText("9007199254740993",{exact:true}).waitFor();
+      assert.equal((await page.evaluate(()=>window.fixture.calls[0])).branchId,"a");
+      await page.evaluate(()=>window.fixture.set({inventory:false,epoch:2}));
+      await page.getByRole("dialog").waitFor({state:"detached"});
+      await page.getByText("Inventory permission is required to view this report.",{exact:true}).waitFor();
+      assert.equal(await page.getByRole("button",{name:"Select date and time"}).count(),0);
+      passed++;console.log(`PASS Reports entry reuses scoped dialog and permission revocation ${width}px`);await page.close();
     }
     console.log(`PASS ${passed} actual stock-history UI groups`);
   } finally {await browser?.close();await server?.close();}

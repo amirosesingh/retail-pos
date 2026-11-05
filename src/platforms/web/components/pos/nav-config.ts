@@ -374,6 +374,14 @@ const originalGroups: NavGroup[] = [
         blurb: "Stock checks, damages, losses and variance.",
       },
       {
+        to: "/reports/inventory",
+        label: "Inventory · Stock at time",
+        icon: CalendarClock,
+        flag: "can_view_inventory",
+        keywords: "historical stock summary inventory quantity selected date time shift closing",
+        blurb: "Verified stock quantities at a selected date, time or shift closing.",
+      },
+      {
         to: "/reports/payments",
         label: "Payments by Cashier",
         icon: BarChart3,

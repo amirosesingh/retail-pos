@@ -5986,6 +5986,24 @@ raw timestamps or pagination cursors. Equal instants retain descending ID ties.
 
 ## STOCK401 — resumed capture/ACK verification, 6 November
 
+Owner now explicitly approved the dedicated stock-event author-proof implementation
+and isolated tests described in `docs/database/stock-history-author-domain-plan.md`.
+This supersedes that document's preparation-only security deferral. Reuse only
+existing enrolled Main-owned keys; no generic signer, enrollment, rotation, live
+SQL application or deployment is included. Finish accepted-effect consumption,
+exact ACK, source/cohort and opening coverage before activation. Signatures never
+prove physical device time. Add Reports → Inventory → Stock at time through the
+same scoped reader/dialog as Inventory; preserve its existing shortcut and do not
+describe discoverability as completed historical coverage.
+
+Reports discoverability checkpoint: `/reports/inventory` is listed as Inventory ·
+Stock at time in Reports and uses the same dialog/reader/current branch as the
+Inventory shortcut. Five navigation tests, nine actual React/Radix browser groups
+(1440/390px), TypeScript and scoped lint pass. Synthetic transport only; no real
+database/profile was used. Prior frozen head722744f8 passed all required CI and
+platform/Workers builds (CodeRabbit owner-deferred). Capture/admission/coverage
+remain unfinished; this entry is not available in a published release yet.
+
 Draft PR401 read/UI checkpoint68c36a07, metadata checkpoint5a7197ca and accepted
 cloud effect/eligible-opening checkpointbcc8d00b are committed and pushed. Latest
 beta79face20 is integrated via5f21a970 without conflicts. CI on bcc8d00b passes all

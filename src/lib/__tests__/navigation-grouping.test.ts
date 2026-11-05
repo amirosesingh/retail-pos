@@ -6,6 +6,13 @@ describe("navigation grouping", () => {
   it("keeps Selling at the existing register route", () => {
     expect(navGroups.flatMap(group => group.items).find(item => item.to === "/")?.label).toBe("Selling");
   });
+  it("makes historical inventory discoverable in Reports with its existing inventory permission", () => {
+    const entry = navGroups.find(group => group.id === "reports")?.items.find(item => item.to === "/reports/inventory");
+    expect(entry?.label).toBe("Inventory · Stock at time");
+    expect(entry?.flag).toBe("can_view_inventory");
+    expect(routePermissionForPath("/reports/inventory")).toBe("can_view_inventory");
+    expect(routePermissionForPath("/reports/stock")).toBe("can_view_sales_reports");
+  });
   it("separates membership from staff and inventory", () => {
     expect(navGroups.find(group => group.id === "people")?.label).toBe("Membership");
     expect(navGroups.find(group => group.id === "people")?.items.map(item => item.to)).toEqual(["/members", "/verifications"]);
