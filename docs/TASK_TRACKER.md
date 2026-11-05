@@ -4865,6 +4865,25 @@ reviewed files are in its diff; no older checkout or unrelated generated report
 was staged. Platform/security/hosting build checks started automatically. Keep
 this draft unmerged until its separate release gates are satisfied; a PR build
 does not establish successful registered-device recovery or production approval.
+## 5 November — approved iOS version metadata alignment
+
+Owner approved a separate metadata-only beta batch: align both Xcode App build
+configurations with the existing Retail 1.4.81 package/lock/source version and
+advance the native build counter from 4 to 5, following its existing integer
+increment convention. Scope is project version metadata and this tracker only.
+Preserve signing settings, OTA/private keys, credentials, runtime behavior and
+every unfinished task. No database changes, signing, deployment or publication.
+Acceptance: verify package/lock/source/Xcode alignment, both plist substitutions,
+and that the diff contains no signing/runtime changes; run existing iOS metadata
+checks and require exact-head macOS CI. Local Windows cannot certify Xcode/device
+builds. Implemented locally: Debug/Release marketing 1.4.81 and build 5;
+package/lock/source/plist alignment passed, five bundle-identity tests and six
+existing iOS packaging/release tests passed using disposable fixtures. Final
+diff contains only four project metadata lines plus this tracking entry; signing
+settings and private keys were untouched. Status: implemented and locally
+verified; draft beta PR and exact-head macOS CI remain pending. Rollback is a
+targeted revert of this metadata commit, not a repository replacement.
+
 
 ## FIN62 current continuation — 4 November
 
