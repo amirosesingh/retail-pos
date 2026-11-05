@@ -5260,6 +5260,48 @@ CI, deployed/installed acceptance, beta integration and production publication
 remain pending. An earlier prototype-era full run was interrupted after a review
 finding and is not final evidence. Do not merge/publish on the strength of this
 local pass alone.
+
+### Checkout last-unit branch rejection — prepared 2026-11-05
+
+- Completed scoped code/tests: same-transaction eligible preimage and strict actual
+  persisted stock/unchanged-catalogue verification in AggregateRepository only.
+- Passed: 43 focused tests; 39 disposable full-commit SQL Server groups. Baseline
+  last-unit failure reproduced before correction; fixture uses synthetic rows only.
+- Pending: independent review, final compiler/lint/CI, beta PR acceptance and any
+  separately authorized promotion/publication. No live DB change is needed here.
+- Separate finding awaiting owner scope decision: NEW-operation-ID replay of an
+  already saved immutable sale graph can repeat stock effects after a refill;
+  reproduced in original beta too. Existing same-operation-ID replay remains safe.
+- Rollback: revert only this scoped checkout PR; no schema/data rollback is needed.
+  Membership, terminal registration, permissions and other sync work are unchanged.
+- Integration/release blocker: keep this PR draft until the separately reviewed
+  new-operation-ID existing-sale replay gap is resolved or the owner explicitly
+  decides its rollout. Passing this narrow patch's tests is not release approval.
+- Final frozen runtime verification: independent review passed 9 new unit cases
+  and all 39 actual SQL groups. Full regression completed successfully: 5,777
+  passed, 7 skipped, 0 failures (5,784 total), bounded to two workers. TypeScript,
+  scoped ESLint and diff checks passed. Draft PR404 remains held for the separate
+  existing-sale/new-operation-ID replay blocker and required CI/acceptance.
+
+### Checkout replay correction — owner-approved extension, 2026-11-05
+
+- Owner approved the previously separate existing-sale replay guard. Implemented
+  before all financial/stock/journal writes, after exact operation-receipt replay.
+  Covers INSERT/UPSERT rows and values, normalized duplicates, deterministic locks,
+  concurrent same-sale IDs, partial headers and neutral foreign-branch responses.
+- Frozen scoped verification: 49 focused tests and 53 disposable SQL groups pass;
+  actual Main Administrator header/items/payment/receipt/journal retry is included.
+  Negative-stock settings and all production data/configuration remain unchanged.
+- Final expanded full regression is running; independent review/CI/installed
+  acceptance remain pending. The earlier last-unit-only full pass and canceled
+  expanded run are not claims about this revised head. Keep PR404 draft until
+  final acceptance; no merge/deploy/publication has been performed.
+- Final expanded runtime regression completed: 5,783 passed, 7 skipped, 0 failed
+  of 5,790 tests (two workers). TypeScript/scoped lint pass. Independent review
+  passed all 15 new unit cases and all 53 disposable SQL groups. This replaces
+  the earlier preparation-only verification status; CI/installed acceptance,
+  beta merge and production release remain separate. No live records changed.
+
 ## REPORT70 — exact Management pagination cursors (5 November)
 
 Owner approved one narrow code/isolated-test batch, from betaada83bb9 in

@@ -1208,6 +1208,58 @@ An obsolete graph-carousel test was updated to the latest in-place graph rule;
 its category rail assertions remain. The original analytics reader, checkout,
 permissions, Main/IPC and database sources are unchanged. CI/hosted/installed
 acceptance, beta merge and any production promotion/publication remain separate.
+
+### 2026-11-05 — prepared last-unit checkout branch correction
+
+Owner approved a narrow checkout-code correction and isolated tests only. In a
+multi-cluster catalogue, an unowned legacy product can be readable solely because
+it has nonzero stock in the registered branch/cluster. Saving a valid last-unit
+sale removed that transient proof and the aggregate post-write catalogue check
+then rejected its own update with `SYNC_BRANCH_FORBIDDEN` / `products`.
+
+The scoped correction captures the eligible product under the existing serializable
+transaction's row/range locks for strict Main-validated sale-stock updates only.
+After the update it requires one affected row, unchanged catalogue/ownership facts
+and the existing own-branch stock-delta equation against actual persisted values.
+Only stock and existing SQL archive/clock fields may change. General product writes,
+other-branch stock, permissions and catalogue policy remain unchanged. No schema,
+configuration or business-record repair is required by this patch.
+
+Verification: 43 focused tests and 39 uniquely owned disposable SQL Server groups
+passed, including actual complete commits, manager-authorization metadata present/
+absent, last unit/negative-to-zero, provenance/foreign denials, tamper rollback,
+concurrent sales, row locks, retry, same-operation replay and the real archive
+lifecycle trigger. These tests do not constitute installed cashier UI acceptance.
+A separate preexisting issue was reproduced: reusing an already saved sale/item
+identity under a NEW aggregate operation ID can deduct refilled stock again, on
+both original beta owned products and the scoped patch. It remains separately
+tracked; this patch does not claim comprehensive sale-identity idempotency.
+Live incident linkage still requires the affected local row/configuration evidence.
+No database changes, production deployment or installer publication were performed.
+
+### 2026-11-05 — separately approved existing-sale replay guard
+
+Owner subsequently approved the extra replay correction and isolated tests in the
+same checkout batch. After the exact accepted operation-receipt replay check and
+before any stock, financial metadata or journal writes, the repository locks new
+sale INSERT/UPSERT identities in deterministic order. Supported rows and values
+forms are both covered. Duplicate normalized identities are rejected. A saved
+sale without this exact operation receipt is held for reconciliation rather than
+having its stock effects guessed, including a legacy partial header. The response
+does not identify another branch. Legitimate original-bill references/authorized
+exchange-link UPDATEs and dedicated refund paths keep their existing validation.
+
+The negative-stock configuration, branch assignments, product ownership, prices,
+SKU, permissions and database schema remain unchanged. Administrator status does
+not widen branch stock access. At the current frozen source, 49 focused tests and
+53 actual disposable SQL groups pass, including current Main Administrator policy
+writing exactly one header/item/payment/receipt and four journal entries across a
+retry. New-operation-ID replays, mixed rows/values forms, partial/foreign headers
+and competing same-sale operations are denied before stock. The final expanded
+full regression and independent review are pending; the earlier 5,777-pass full
+run covered the last-unit-only source. An intervening expanded run was canceled
+after a review found the now-fixed values-form gap and is not final evidence.
+
 ## REPORT70 — exact read-only report pagination, 5 November
 
 Management sales/shift pages must preserve SQL Server datetimeoffset(7) precision
