@@ -15,7 +15,7 @@ it("enforces report permissions before reaching the dedicated read handler for o
   expect(privilege.allowed("business:management-report", [{ ...options, kind: "sales", shiftId: "shift" }])).toBe(true);
   expect(privilege.allowed("business:management-report", [options])).toBe(false);
 });
-function fixture({ complete = true, branch = null as string | null, management = true, permissions = ["can_view_sales_reports"] } = {}) {
+function fixture({ complete = true, branch = null as string | null, management = true, permissions = ["can_view_sales_reports"], cursorAt = "2026-10-26T01:00:00.0000000+00:00" as unknown } = {}) {
   const calls: { sql: string; inputs: Record<string, unknown> }[] = [];
   const pool = { request: () => {
     const inputs: Record<string, unknown> = {};
@@ -23,8 +23,8 @@ function fixture({ complete = true, branch = null as string | null, management =
       calls.push({ sql, inputs });
       if (sql.includes("SELECT requested.")) return { recordset: complete ? [] : [{ id: "b" }] };
       if (sql.includes("COUNT_BIG")) return { recordset: [{ store_id: "a", revenue: 50, bills: 5 }] };
-      if (sql.includes("FROM dbo.shifts")) return { recordset: [{ id: "shift", opened_at: new Date("2026-10-26T01:00:00Z"), expected_cash: 99 }] };
-      return { recordsets: [[{ id: "sale", created_at: new Date("2026-10-26T01:00:00Z") }], [{ sale_id: "sale", unit_cost: 10 }]] };
+      if (sql.includes("FROM dbo.shifts")) return { recordset: [{ id: "shift", opened_at: new Date("2026-10-26T01:00:00Z"), expected_cash: 99, __pos_report_cursor_at: cursorAt }] };
+      return { recordsets: [[{ id: "sale", created_at: new Date("2026-10-26T01:00:00Z"), __pos_report_cursor_at: cursorAt }], [{ sale_id: "sale", unit_cost: 10 }]] };
     } }; return request;
   } };
   return { calls, deps: { manager: { pool, isConnected: () => true }, databaseService: { snapshot: () => ({ tradingReady: true }) },
@@ -52,6 +52,8 @@ it("pages sales using bound cursor and redacts item costs without margin permiss
   expect(result.rows[0]).toMatchObject({ created_at: "2026-10-26T01:00:00.000Z", sale_items: [{ unit_cost: null }] });
   expect(f.calls[1].sql).toContain("@cursorAt"); expect(f.calls[1].sql).toContain("TOP (@limit)");
   expect(f.calls[1].inputs.cursorId).toBe("previous");
+  expect(result.cursor.ts).toBe("2026-10-26T01:00:00.0000000+00:00");
+  expect(result.rows[0]).not.toHaveProperty("__pos_report_cursor_at");
 });
 it("uses the existing masked shift projection and shift permissions instead of granting cash details", async () => {
   const denied = fixture();
@@ -61,4 +63,19 @@ it("uses the existing masked shift projection and shift permissions instead of g
   const result = await readManagementReport({ ...f.deps, options: { ...options, kind: "shifts" }, redactShift });
   expect(redactShift).toHaveBeenCalledOnce(); expect(result.rows[0]).not.toHaveProperty("expected_cash");
   expect(result.rows[0].opened_at).toBe("2026-10-26T01:00:00.000Z");
+  expect(result.cursor.ts).toBe("2026-10-26T01:00:00.0000000+00:00");
+  expect(result.rows[0]).not.toHaveProperty("__pos_report_cursor_at");
+  expect(redactShift.mock.calls[0][0]).not.toHaveProperty("__pos_report_cursor_at");
+});
+
+it.each(["2026-10-26T01:00:00.1234567Z", "2026-10-26T09:00:00.1234567+08:00", "2026-10-26T01:00:00Z"])("keeps the exact SQL cursor %s without changing public date serialization", async cursorAt => {
+  const f = fixture({ cursorAt });
+  const result = await readManagementReport({ ...f.deps, options: { ...options, kind: "sales" } });
+  expect(result.cursor.ts).toBe(cursorAt);
+  expect(result.rows[0].created_at).toBe("2026-10-26T01:00:00.000Z");
+});
+
+it.each([null, "invalid", new Date("2026-10-26T01:00:00Z")])("refuses a page with an unavailable exact SQL cursor (%s)", async cursorAt => {
+  const f = fixture({ cursorAt });
+  await expect(readManagementReport({ ...f.deps, options: { ...options, kind: "sales" } })).rejects.toMatchObject({ code: "EREPORT_CURSOR" });
 });

@@ -15,6 +15,30 @@ FIN62 isolated SQL basis prototype: complete selected-branch/shift inputs and ex
 
 ## FIN62 — owner-approved shift financial/as-of validation correction
 
+## RELEASE71 — incremental production preparation, 5 November
+
+Owner requested preparing production alongside fixes and promoting completed,
+verified features through beta without replacing unrelated code. Retail1.4.81
+already exists as an immutable published release; proposed next patch is1.4.82,
+with no existing remote v1.4.82 tag at preparation. Separate current-beta branch
+codex/release-1-4-82-beta prepares metadata only: existing version generator for
+package/lock/APP_VERSION and SQL artifact labels, matching iOS marketing version
+and incremented native build number. Preserve dependencies, signing credentials,
+OTA key and all application/database behaviour. Inspect generated SQL diffs for
+version text only. No tag, installer workflow, billing, schema execution or
+publication is authorized by preparation. Require metadata/release checks, scoped
+review and beta CI; specific final production promotion/publication remains a
+separate exact reviewed-head decision. Other feature PRs retain their own gates.
+
+RELEASE71 verification: nine dependency-free release/version/iOS publication
+fixture tests and 22 focused release-channel/revision/desktop tests passed.
+Independent review and structural comparisons prove package dependencies, SQL
+semantics and signing configuration unchanged. The initial focused invocation
+could not load absent worktree dependencies; it passed after reusing the existing
+installed dependency tree, without package installation or source changes.
+No actual publication, key access, tag or database execution occurred. Exact-head
+CI and beta integration remain pending; do not call 1.4.82 published.
+
 ## 5 November permanent-rule update and current task index
 
 Owner approved updating AGENTS.md without overwriting existing instructions.
@@ -5203,3 +5227,140 @@ SYNC68 owner clarification: Electron durable pending business operations remain 
 SYNC68 final source preparation verified: existing Main CloudClient now schedules one data HTTP request through response-body completion, bounds waiting work to64 requests/32MiB and alternates waiting upload/download directions without changing atomic batches. Payload and source context are captured at enqueue; pre-send/successful-response checks prevent stale target/actor substitution. Pure management admission with no operation selector and health remain independent. Existing financial source-change errors and30s actual-request deadline are preserved; waiting time does not spend that deadline. No retry/acknowledgement/checkpoint implementation changed.
 
 Final frozen-source verification:109 focused tests across6 files passed; full bounded Vitest5,748 passed/7 skipped/0 failed (5,755 total); TypeScript, scoped ESLint and diff checks passed. A pre-refinement full run5,747/7 passed before the final pure-control selector guard and is not substituted for this final result. No source changes remain pending from this preparation. Await independent review/commit/PR/CI/beta deployment and installed sync acceptance. No database, pool, credentials, permissions, business records, installer or production publication change. This caps Main's sync-data HTTP concurrency, not Supabase's physical pooled connections or independent auth/control requests.
+## DASH69 — explicit dashboard scopes and shop comparison (5 November)
+
+Owner approved a separate UI/query-scope batch, baseline beta59674214,
+codex/dashboard-scope-charts-beta. Live Dashboard must use the selected operating
+branch for all KPIs/charts together. Live Business Board compares all already
+authorized company shops across clusters; normal-terminal branch restrictions
+and user grants remain unchanged. All Shops cards AND period charts follow the
+explicit cluster selection; All clusters shows every authorized shop, including
+zero-valued shops. This supersedes the older always-visible all-cluster card list
+under DEC-26/PROJECT_MEMORY719; it does not hide zero-valued shops within a chosen
+scope. Preserve revenue/refund/discount/sponsorship formulas and cost/export
+permissions. Per-shop colors/legends stay stable across sorting/date/filter
+changes. Charts must not slide or enter the infinite summary-card loop.
+
+Additional approved UI steering: unknown initial summary values remain hidden
+until data is resolved; retain same-scope confirmed cards during background
+refresh, preserve errors and meaningful negative values, reveal changed nonzero
+values without reloading the operational database. Investigate existing helpers
+before any shared animation change. Existing stabilization work remains first
+priority; no schema/settings/permissions/checkout writes, publication or
+production promotion is included. Active source implementation; tests, independent
+review, CI, deployed/installed acceptance remain pending.
+
+DASH69 UI/query-scope source is prepared: selected-branch Dashboard KPIs and
+inventory, authorized company-wide Business Board, explicit cluster-filtered All
+Shops cards/lifetime reads with All clusters, and in-place per-shop line/bar
+comparison using unchanged financial helpers/readers. ID-based colors are
+resolved against the full directory, so sorting/date/view filtering cannot
+recolor its remaining shops. Long chart ranges aggregate monthly, never drop
+records. Existing cost/export/page grants and zero-valued All Shops cards remain.
+Confirmed summaries are keyed by identity/permissions, branch/filter, period and
+timezone; required sponsorship reads also gate Dashboard confirmation. Initial
+unknown cards remain hidden, same-scope confirmed values survive refresh/error,
+and failures retain explicit notices instead of becoming zero. Charts no longer
+use sliding containers. Checkout and database writes are untouched.
+
+Corrected investigation assumption: the original beta Business Board already
+uses cloud auto reads for Management, because Management business mode is
+online-only. DASH69 therefore preserves that original reader byte-for-byte.
+The native Management adapter/status/decimal-parity prototype is deliberately
+unactivated and retained only in the local `.tmp` preparation archive; it is not
+part of this runtime PR. Cold-offline/Main-only-PIN company-board metadata
+availability is a preexisting limitation, not solved or newly verified here.
+The existing shared Main millisecond report cursor can skip high-precision rows;
+its correction/auth and metadata-read work remain separately tracked/approved.
+Do not activate the prototype or broaden generic Management access implicitly.
+
+Final UI-only focused checks:72 tests/14 suites passed; scoped lint/diff checks
+passed. Synthetic headless Chrome at390/768/1440 verified the new chart controls,
+stable colors through cluster/all selection, no horizontal overflow, permission
+fallback to revenue, and zero interaction network requests. These are synthetic
+component checks, not installed POS or signed-in whole-page acceptance. Final
+TypeScript passed; independent cleaned-diff review found no scoped blocker
+and31 additional focused checks passed. The first UI-only full run passed5767
+tests with7 skipped and1 failure: an existing test still required sliding graph
+rails, contrary to the latest owner decision. Only that existing expectation was
+corrected; its category/summary carousel assertions remain. Its focused five-suite
+rerun passed36 tests. Final UI-only full regression passed5768 tests/7 skipped/
+0 failures of5775. Runtime feature headb91530314d2aa08e3f0b45ac999ce203d5bfd0ea
+is committed in draft betaPR402 (helper commita333e84c precedes the feature).
+Only14 reviewed files are included; temporary/native prototypes are excluded.
+CI, deployed/installed acceptance, beta integration and production publication
+remain pending. An earlier prototype-era full run was interrupted after a review
+finding and is not final evidence. Do not merge/publish on the strength of this
+local pass alone.
+
+### Checkout last-unit branch rejection — prepared 2026-11-05
+
+- Completed scoped code/tests: same-transaction eligible preimage and strict actual
+  persisted stock/unchanged-catalogue verification in AggregateRepository only.
+- Passed: 43 focused tests; 39 disposable full-commit SQL Server groups. Baseline
+  last-unit failure reproduced before correction; fixture uses synthetic rows only.
+- Pending: independent review, final compiler/lint/CI, beta PR acceptance and any
+  separately authorized promotion/publication. No live DB change is needed here.
+- Separate finding awaiting owner scope decision: NEW-operation-ID replay of an
+  already saved immutable sale graph can repeat stock effects after a refill;
+  reproduced in original beta too. Existing same-operation-ID replay remains safe.
+- Rollback: revert only this scoped checkout PR; no schema/data rollback is needed.
+  Membership, terminal registration, permissions and other sync work are unchanged.
+- Integration/release blocker: keep this PR draft until the separately reviewed
+  new-operation-ID existing-sale replay gap is resolved or the owner explicitly
+  decides its rollout. Passing this narrow patch's tests is not release approval.
+- Final frozen runtime verification: independent review passed 9 new unit cases
+  and all 39 actual SQL groups. Full regression completed successfully: 5,777
+  passed, 7 skipped, 0 failures (5,784 total), bounded to two workers. TypeScript,
+  scoped ESLint and diff checks passed. Draft PR404 remains held for the separate
+  existing-sale/new-operation-ID replay blocker and required CI/acceptance.
+
+### Checkout replay correction — owner-approved extension, 2026-11-05
+
+- Owner approved the previously separate existing-sale replay guard. Implemented
+  before all financial/stock/journal writes, after exact operation-receipt replay.
+  Covers INSERT/UPSERT rows and values, normalized duplicates, deterministic locks,
+  concurrent same-sale IDs, partial headers and neutral foreign-branch responses.
+- Frozen scoped verification: 49 focused tests and 53 disposable SQL groups pass;
+  actual Main Administrator header/items/payment/receipt/journal retry is included.
+  Negative-stock settings and all production data/configuration remain unchanged.
+- Final expanded full regression is running; independent review/CI/installed
+  acceptance remain pending. The earlier last-unit-only full pass and canceled
+  expanded run are not claims about this revised head. Keep PR404 draft until
+  final acceptance; no merge/deploy/publication has been performed.
+- Final expanded runtime regression completed: 5,783 passed, 7 skipped, 0 failed
+  of 5,790 tests (two workers). TypeScript/scoped lint pass. Independent review
+  passed all 15 new unit cases and all 53 disposable SQL groups. This replaces
+  the earlier preparation-only verification status; CI/installed acceptance,
+  beta merge and production release remain separate. No live records changed.
+
+## REPORT70 — exact Management pagination cursors (5 November)
+
+Owner approved one narrow code/isolated-test batch, from betaada83bb9 in
+codex/management-report-cursors-beta. Fix only the dedicated Management report
+reader's SQL Server datetimeoffset(7) cursor truncation for sales and shifts.
+Select an exact SQL timestamp string before the driver converts it to Date;
+preserve descending(timestamp,id), existing scopes, permissions, completeness,
+cost and shift privacy checks, and strip private aliases from returned rows.
+Test limits1/2,100ns/same-time-ID/offset/date boundaries plus denied, empty and
+incomplete cases against an owned disposable SQL database. No production data,
+schema/configuration, RPC/HTTP changes, publication or merge is included.
+The separate in-flight session-handover authorization race remains a tracked
+proposal and is explicitly outside this approval; do not fix it implicitly.
+Implementation is frozen: the reader selects an internal SQL style127 timestamp,
+uses it only for the continuation cursor, and removes it before public rows and
+shift redaction. Existing public Date serialization remains unchanged. Focused
+report/IPC/replica/permission/configuration checks passed51 tests across7 suites
+(1 opt-in test skipped); the opt-in wrapper separately passed2 tests including
+all13 actual disposable SQL Server groups. TypeScript, scoped lint and diff checks
+passed; independent source review found no pagination blocker. Initial SQL
+fixture validation incorrectly required seven visible fractional digits: SQL
+style127 legitimately omits zero fractions and normalizes offsets to UTC. The
+corrected fixture proves exact SQL equality and preserved nonzero100ns precision.
+Final normal-temp full regression passed5775 tests/8 skipped/0 failed of5783
+(689 suites passed/1 skipped) on runtime head422daaf7. The initial restricted
+full run failed on sandbox SSR-cache ENOENT imports; the same frozen source
+passed after granting normal temporary-file access. Draft betaPR403 is open
+and labelled beta. Exact-head CI, beta integration and installed acceptance
+remain pending. The separate session-handover race is not fixed by this patch.
+Membership remains ON HOLD.

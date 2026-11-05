@@ -3,9 +3,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Sale } from "@/core/types/pos-types";
 
-const fixture = vi.hoisted(() => ({ sales: [] as Sale[], loading: false, error: "", ready: true, costs: true, sponsor: 0 }));
+const fixture = vi.hoisted(() => ({ sales: [] as Sale[], loading: false, error: "", ready: true, costs: true, sponsor: 0, sponsorLoading: false, sponsorError: false }));
 vi.mock("@/lib/pos-auth", () => ({ useAuth: () => ({
-  user: null, canSwitchStores: true, terminalStoreId: null,
+  ready: true, user: { staffId: "admin", role: "admin", permissions: {} }, canSwitchStores: true, terminalStoreId: null,
   can: (flag: string) => flag !== "can_view_cost_margin" || fixture.costs,
 }) }));
 vi.mock("@/lib/pos-store", () => ({
@@ -16,10 +16,10 @@ vi.mock("@/lib/pos-store", () => ({
   }),
 }));
 vi.mock("@/lib/use-report-sales", () => ({ useReportSales: () => ({ sales: fixture.sales, loading: fixture.loading, error: fixture.error }) }));
-vi.mock("@/lib/use-sponsorship-totals", () => ({ useSponsorshipTotals: () => ({ total: fixture.sponsor, rows: [{ day: "2026-10-27", value: fixture.sponsor }], loading: false, error: false }) }));
+vi.mock("@/lib/use-sponsorship-totals", () => ({ useSponsorshipTotals: () => ({ total: fixture.sponsor, rows: [{ day: "2026-10-27", value: fixture.sponsor }], loading: fixture.sponsorLoading, error: fixture.sponsorError }) }));
 vi.mock("@/lib/drawer-events", () => ({ useDrawerEvents: () => [] }));
 vi.mock("@/lib/ui-visibility", () => ({ useVisibility: () => ({ visible: (name: string) => name === "dashboard.revenueSummary" }) }));
-vi.mock("@/lib/time-zone", () => ({ posDayKey: () => "2026-10-27", posHour: () => 12, shiftCalendarDay: () => "2026-10-27", formatTime: () => "12:00" }));
+vi.mock("@/lib/time-zone", () => ({ effectiveTimeZone: () => "Asia/Brunei", posDayKey: () => "2026-10-27", posHour: () => 12, shiftCalendarDay: () => "2026-10-27", formatTime: () => "12:00" }));
 vi.mock("@/core/activation/terminal-platform", () => ({ terminalRuntimePlatform: () => "web" }));
 vi.mock("@tanstack/react-router", () => ({ createFileRoute: () => (options: unknown) => ({ options }) }));
 vi.mock("@/platforms/web/components/pos/AppShell", () => ({ AppShell: ({ children }: { children: ReactNode }) => children }));
@@ -43,9 +43,16 @@ const sale = (patch: Partial<Sale> = {}): Sale => ({
   subtotal: 100, discount: 10, tax: 9, roundingAdjustment: -0.05, total: 98.95,
   paid: 100, change: 1.05, method: "cash", memberId: null, pointsEarned: 0, ...patch,
 });
-beforeEach(() => { fixture.sales = []; fixture.loading = false; fixture.error = ""; fixture.ready = true; fixture.costs = true; fixture.sponsor = 0; });
+beforeEach(() => { fixture.sales = []; fixture.loading = false; fixture.error = ""; fixture.ready = true; fixture.costs = true; fixture.sponsor = 0; fixture.sponsorLoading = false; fixture.sponsorError = false; });
 
 describe("live dashboard summary", () => {
+  it("does not confirm a partial card array before required sponsorship values resolve", () => {
+    fixture.sales = [sale()]; fixture.sponsor = 20; fixture.sponsorLoading = true;
+    expect(render()).not.toContain('aria-label="Revenue summary"');
+    expect(render()).toContain("Sponsorship values are loading");
+    fixture.sponsorLoading = false; fixture.sponsorError = true;
+    expect(render()).not.toContain('aria-label="Revenue summary"');
+  });
   it("replaces loaded all-zero cards with a clear empty message", () => {
     const html = render();
     expect(html).toContain("No trading totals to show today");

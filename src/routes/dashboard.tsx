@@ -1,3 +1,5 @@
+import { useConfirmedPresentation } from "@/lib/use-confirmed-presentation";
+import { pageDataScope } from "@/lib/page-data-cache";
 import { receiptAdjustmentLabel } from "@/lib/report-display";
 import {useSponsorshipTotals} from "@/lib/use-sponsorship-totals";
 import { CashierBillList } from "@/platforms/web/components/pos/CashierBillList";
@@ -7,7 +9,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useReportSales } from "@/lib/use-report-sales";
 import { dashboardDailyTrading } from "@/lib/dashboard-trading";
-import { allShopsScope } from "@/lib/all-shops-scope";
+import { dashboardPageStores } from "@/lib/dashboard-scope";
 import { terminalRuntimePlatform } from "@/core/activation/terminal-platform";
 import { FinancialBreakdown, FinancialInfoTip, GrossProfitInfo, SalesTotalInfo } from "@/platforms/web/components/pos/FinancialInfo";
 import { salesReconciliation } from "@/lib/sales-reconciliation";
@@ -28,7 +30,6 @@ import { AlertTriangle } from "lucide-react";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Carousel, CarouselContent, CarouselItem } from "@/components/ui/carousel";
 import { Separator } from "@/components/ui/separator";
 import {
   Table,
@@ -42,7 +43,7 @@ import { money, usePos } from "@/lib/pos-store";
 import { useDrawerEvents } from "@/lib/drawer-events";
 import { hourlyProfit, profitOf } from "@/core/pricing/profit";
 import { paymentsLabel } from "@/core/types/pos-types";
-import { formatTime, posDayKey, posHour, shiftCalendarDay } from "@/lib/time-zone";
+import { effectiveTimeZone, formatTime, posDayKey, posHour, shiftCalendarDay } from "@/lib/time-zone";
 import { defaultReviewThresholds } from "@/lib/pos-seed";
 import { sameBranchId } from "@/lib/branch-id";
 import { cashierReviewTotals, hasSplitPayments } from "@/lib/cashier-review";
@@ -77,7 +78,7 @@ const hasMoney = (value: number) => Number.isFinite(value) && Math.abs(value) >=
 
 function Dashboard() {
   const { state, currentStore, ready: inventoryReady, loadPhase } = usePos();
-  const { can, canSwitchStores, terminalStoreId, user } = useAuth();
+  const { ready: authReady, can, canSwitchStores, terminalStoreId, user } = useAuth();
   const { visible } = useVisibility();
   const showCostMargin = can("can_view_cost_margin");
   const showStockValue = showCostMargin && visible("inventory.stockValue");
@@ -96,10 +97,10 @@ function Dashboard() {
     window.addEventListener("focus", refresh);
     return () => { window.clearInterval(timer); window.removeEventListener("focus", refresh); };
   }, []);
-  const unrestrictedManagement = canSwitchStores && !terminalStoreId && !user?.storeId;
-  const reportStores = useMemo(() => allShopsScope(state.stores, terminalStoreId || user?.storeId || currentStore.id, unrestrictedManagement), [state.stores, terminalStoreId, user?.storeId, currentStore.id, unrestrictedManagement]);
+  const reportStores = useMemo(() => dashboardPageStores(state.stores, currentStore.id, terminalStoreId, user?.storeId, canSwitchStores, "branch"), [state.stores, terminalStoreId, user?.storeId, currentStore.id, canSwitchStores]);
   const storeIds = useMemo(() => reportStores.map(store => store.id), [reportStores]);
-  const scopeLabel = unrestrictedManagement ? "All authorized shops" : reportStores[0]?.name || currentStore.name;
+  const dashboardStore = reportStores[0];
+  const scopeLabel = dashboardStore?.name || "Selected branch unavailable";
   const cloudHome = terminalRuntimePlatform() === "web";
   const revenueFrom = useMemo(() => {
     if (revenuePeriod === "custom") {
@@ -135,8 +136,8 @@ function Dashboard() {
   const refunds = useMemo(() => todaySales.filter((s) => s.refunded), [todaySales]);
   const catalogueVisible = useMemo(() => createCatalogueVisibility(state.settings, state.stores, state.transfers), [state.settings, state.stores, state.transfers]);
   const stock = useMemo(
-    () => inventoryMetrics(state.products.filter(product => catalogueVisible(product, currentStore.id)), currentStore.id),
-    [state.products, catalogueVisible, currentStore.id],
+    () => inventoryMetrics(dashboardStore ? state.products.filter(product => catalogueVisible(product, dashboardStore.id)) : [], dashboardStore?.id ?? ""),
+    [state.products, catalogueVisible, dashboardStore],
   );
 
   const chartSales = useMemo(() => sales.filter(sale => {
@@ -194,7 +195,6 @@ function Dashboard() {
   }, [todaySales, todayDrawer, thresholds]);
 
   const flagged = cashiers.filter((c) => c.flags.length);
-  const summaryReady = inventoryReady && !reportLoading && !reportError;
   const summaryCards = [
     includeSponsorship && !sponsorship.loading && !sponsorship.error && hasMoney(todaySponsorship) && hasMoney(revenue + todaySponsorship) && <Kpi key="daily-value" label="Sales value with sponsorship · not collections" value={money(revenue + todaySponsorship)} highlight info={can("can_view_sales_reports") && <SalesTotalInfo totals={todayTotals} adjustmentLabel={receiptAdjustmentLabel(live)} sponsorshipValue={todaySponsorship} />} />,
     includeSponsorship && !sponsorship.loading && !sponsorship.error && hasMoney(todaySponsorship) && <Kpi key="sponsorship" label="Sponsorship value included" value={money(todaySponsorship)} info={<FinancialBreakdown rows={[["Sponsorship value", money(todaySponsorship)]]}><p>Included under the saved daily-sales policy. Stock value is separate from customer payments.</p></FinancialBreakdown>} />,
@@ -206,6 +206,10 @@ function Dashboard() {
     refunds.length !== 0 && <Kpi key="refunds" label="Refunds" value={`${refunds.length} · ${money(refunds.reduce((a, s) => a + Math.abs(s.total), 0))}`} />,
     todayDrawer.length !== 0 && <Kpi key="drawer" label="No-sale drawer opens" value={String(todayDrawer.length)} />,
   ].filter(Boolean);
+  const confirmedCards = useConfirmedPresentation(
+    authReady && user && storeIds.length > 0 ? JSON.stringify([pageDataScope(user), storeIds, today, readFrom, readTo, effectiveTimeZone(), includeSponsorship]) : null,
+    summaryCards, inventoryReady && !reportLoading && !reportError &&
+      (!includeSponsorship || (!sponsorship.loading && !sponsorship.error)));
 
   return (
     <AppShell>
@@ -222,31 +226,25 @@ function Dashboard() {
 
 
         {reportError && <p role="alert" className="rounded-lg border border-destructive/40 p-3 text-sm text-destructive">Report incomplete: {reportError}</p>}
+        {(reportError || (includeSponsorship && sponsorship.error)) && confirmedCards && <p role="status" className="text-xs text-muted-foreground">Showing last confirmed summary; the refresh did not complete.</p>}
         {reportLoading && <p role="status" className="text-sm text-muted-foreground">Loading the complete sales history for these shops…</p>}
         {includeSponsorship && sponsorship.loading && <p role="status" className="text-sm text-muted-foreground">Sponsorship values are loading; the combined summary is not complete yet.</p>}
         {includeSponsorship && sponsorship.error && <p role="alert" className="rounded-lg border border-destructive/40 p-3 text-sm text-destructive">Sponsorship totals could not be loaded. Sales collections remain separate.</p>}
-        <DisplayElement name="dashboard.revenueSummary">{summaryReady && (summaryCards.length ? <SummaryCardRail label="Revenue summary">
-          {summaryCards}
+        <DisplayElement name="dashboard.revenueSummary">{confirmedCards && (confirmedCards.length ? <SummaryCardRail label="Revenue summary">
+          {confirmedCards}
         </SummaryCardRail> : <p role="status" className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">No trading totals to show today.</p>)}</DisplayElement>
 
         <DisplayElement name="dashboard.inventorySummary"><section className="rounded-lg border border-border bg-card p-4">
           <div className="mb-3">
-            <h2 className="text-sm font-semibold">Inventory position · {currentStore.name}</h2>
+            <h2 className="text-sm font-semibold">Inventory position · {scopeLabel}</h2>
             <p className="text-xs text-muted-foreground">
               Current active catalogue and on-hand value at this branch.
             </p>
           </div>
-          <InventorySummaryCards metrics={stock} ready={inventoryReady} loadPhase={loadPhase} showStockValue={showStockValue} showPotentialProfit />
+          <InventorySummaryCards metrics={stock} ready={inventoryReady && !!dashboardStore} loadPhase={loadPhase} showStockValue={showStockValue} showPotentialProfit />
         </section></DisplayElement>
 
-        <DisplayElement name="dashboard.tradingGraphs"><Carousel
-          opts={{ align: "start", containScroll: "trimSnaps" }}
-          aria-label="Live dashboard graphs"
-          // Keep arrow keys inside charts available for Recharts data-point navigation.
-          // Touch/pointer dragging moves between cards without navigation buttons.
-          onKeyDownCapture={() => undefined}
-          className="min-w-0"
-        >
+        <DisplayElement name="dashboard.tradingGraphs"><section aria-label="Live dashboard graphs" className="min-w-0">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-sm font-semibold">Trading graphs</h2>
               <div className="flex flex-wrap items-center gap-2">
@@ -267,8 +265,8 @@ function Dashboard() {
               </div>
           </div>
           <p className="mb-3 text-xs text-muted-foreground">{revenueFrom} to {revenueTo} · applies to all trading graphs</p>
-          <CarouselContent className="touch-pan-y">
-          <CarouselItem className="basis-[92%] sm:basis-3/4 lg:basis-[48%] 2xl:basis-1/3">
+          <div className="grid min-w-0 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+          <div className="min-w-0">
           <section className="flex h-88 min-w-0 flex-col rounded-lg border border-border bg-card p-4">
             <h2 className="mb-3 shrink-0 text-sm font-semibold">{includeSponsorship ? "Sales value including sponsorship" : "Sales collected"}</h2>
             {includeSponsorship && <p className="mb-2 text-xs text-muted-foreground">Sponsorship is product value, not money collected.</p>}
@@ -291,9 +289,9 @@ function Dashboard() {
               </ResponsiveContainer>
             </div>
           </section>
-          </CarouselItem>
+          </div>
 
-          <CarouselItem className="basis-[92%] sm:basis-3/4 lg:basis-[48%] 2xl:basis-1/3">
+          <div className="min-w-0">
           <section className="flex h-88 min-w-0 flex-col rounded-lg border border-border bg-card p-4">
             <h2 className="mb-3 min-h-10 shrink-0 text-sm font-semibold">
               Transactions by hour · peak {peak.bills > 0 ? peak.hour : "—"}
@@ -315,9 +313,9 @@ function Dashboard() {
               </ResponsiveContainer>
             </div>
           </section>
-          </CarouselItem>
+          </div>
 
-        {showCostMargin && <CarouselItem className="basis-[92%] sm:basis-3/4 lg:basis-[48%] 2xl:basis-1/3">
+        {showCostMargin && <div className="min-w-0">
           <section className="flex h-88 min-w-0 flex-col rounded-lg border border-border bg-card p-4">
           <h2 className="mb-3 min-h-10 shrink-0 text-sm font-semibold">
             Profit by hour · gross profit {money(chartProfit.profit)}
@@ -346,10 +344,10 @@ function Dashboard() {
             </ResponsiveContainer>
           </div>
         </section>
-          </CarouselItem>}
+          </div>}
 
-          </CarouselContent>
-        </Carousel></DisplayElement>
+          </div>
+        </section></DisplayElement>
 
         <DisplayElement name="dashboard.cashierReview"><section className="rounded-lg border border-border bg-card">
           <div className="flex items-center gap-2 px-5 py-3">
