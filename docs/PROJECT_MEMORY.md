@@ -1298,3 +1298,86 @@ tracked separately; new dependency PRs406–410 are unreviewed. Membership remai
 ON HOLD. The reproduced sale-completion refusal is in Electron's local aggregate
 path; web uses a different path. The native fix requires a new installed build,
 not merely a website deployment, and performs no ownership or stock data repair.
+
+### 2026-11-05 — prepared last-unit checkout branch correction
+
+Owner approved a narrow checkout-code correction and isolated tests only. In a
+multi-cluster catalogue, an unowned legacy product can be readable solely because
+it has nonzero stock in the registered branch/cluster. Saving a valid last-unit
+sale removed that transient proof and the aggregate post-write catalogue check
+then rejected its own update with `SYNC_BRANCH_FORBIDDEN` / `products`.
+
+The scoped correction captures the eligible product under the existing serializable
+transaction's row/range locks for strict Main-validated sale-stock updates only.
+After the update it requires one affected row, unchanged catalogue/ownership facts
+and the existing own-branch stock-delta equation against actual persisted values.
+Only stock and existing SQL archive/clock fields may change. General product writes,
+other-branch stock, permissions and catalogue policy remain unchanged. No schema,
+configuration or business-record repair is required by this patch.
+
+Verification: 43 focused tests and 39 uniquely owned disposable SQL Server groups
+passed, including actual complete commits, manager-authorization metadata present/
+absent, last unit/negative-to-zero, provenance/foreign denials, tamper rollback,
+concurrent sales, row locks, retry, same-operation replay and the real archive
+lifecycle trigger. These tests do not constitute installed cashier UI acceptance.
+A separate preexisting issue was reproduced: reusing an already saved sale/item
+identity under a NEW aggregate operation ID can deduct refilled stock again, on
+both original beta owned products and the scoped patch. It remains separately
+tracked; this patch does not claim comprehensive sale-identity idempotency.
+Live incident linkage still requires the affected local row/configuration evidence.
+No database changes, production deployment or installer publication were performed.
+
+### 2026-11-05 — separately approved existing-sale replay guard
+
+Owner subsequently approved the extra replay correction and isolated tests in the
+same checkout batch. After the exact accepted operation-receipt replay check and
+before any stock, financial metadata or journal writes, the repository locks new
+sale INSERT/UPSERT identities in deterministic order. Supported rows and values
+forms are both covered. Duplicate normalized identities are rejected. A saved
+sale without this exact operation receipt is held for reconciliation rather than
+having its stock effects guessed, including a legacy partial header. The response
+does not identify another branch. Legitimate original-bill references/authorized
+exchange-link UPDATEs and dedicated refund paths keep their existing validation.
+
+The negative-stock configuration, branch assignments, product ownership, prices,
+SKU, permissions and database schema remain unchanged. Administrator status does
+not widen branch stock access. At the current frozen source, 49 focused tests and
+53 actual disposable SQL groups pass, including current Main Administrator policy
+writing exactly one header/item/payment/receipt and four journal entries across a
+retry. New-operation-ID replays, mixed rows/values forms, partial/foreign headers
+and competing same-sale operations are denied before stock. The final expanded
+full regression and independent review are pending; the earlier 5,777-pass full
+run covered the last-unit-only source. An intervening expanded run was canceled
+after a review found the now-fixed values-form gap and is not final evidence.
+
+## REPORT70 — exact read-only report pagination, 5 November
+
+Management sales/shift pages must preserve SQL Server datetimeoffset(7) precision
+in their descending timestamp/ID cursors. JavaScript Date milliseconds are not a
+safe pagination boundary. The approved correction selects an internal exact SQL
+string, strips it from business rows, and preserves current authorization,
+completeness and privacy behavior. Only isolated fixtures may be changed during
+testing; no production database or configuration change is authorized. Session
+handover authorization races require a separate correction plan/approval.
+
+REPORT70 source is frozen after51 focused tests across7 suites, TypeScript,
+scoped lint and independent review passed. An opt-in wrapper separately passed
+both tests and all13 actual disposable SQL Server groups. SQL style127 may omit
+zero fractions/use UTC Z; exact SQL timestamp equality is the pagination proof,
+not a mandatory seven-digit display format. Public business dates still use the
+previous serialization. Final normal-temp full regression passed5775 tests with
+8 skipped/0 failed of5783 on runtime head422daaf7; an initial sandbox-cache import
+failure was rerun without source changes. Draft betaPR403 is open; exact-head CI,
+beta integration and installed-device acceptance remain separate. This is not a
+session-handover authorization fix.
+
+## RELEASE71 — proposed 1.4.82 metadata, 5 November
+
+Retail 1.4.81 is already published; do not overwrite or retag it. Prepare 1.4.82
+on beta with matching package, application, SQL artifact labels and iOS marketing
+version/build metadata. These edits must preserve SQL semantics, dependencies,
+signing identities and private keys. Metadata preparation does not publish a
+release or authorize database execution. Main promotion can trigger automatic
+platform publication, so require the exact final scope, acceptance evidence and
+owner approval before that promotion. Unfinished recovery and stock-report work
+remain in their separate draft PRs; do not imply they are released.

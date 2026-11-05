@@ -392,6 +392,31 @@ runtime defect; do not expand PR397 or claim those paths verified from a keyword
 match. Trace them separately before proposing a scoped correction. Current
 rules get/save transport, branch/permission and offline-cache fixes remain the
 approved policy batch.
+
+## RELEASE71 — incremental production preparation, 5 November
+
+Owner requested preparing production alongside fixes and promoting completed,
+verified features through beta without replacing unrelated code. Retail1.4.81
+already exists as an immutable published release; proposed next patch is1.4.82,
+with no existing remote v1.4.82 tag at preparation. Separate current-beta branch
+codex/release-1-4-82-beta prepares metadata only: existing version generator for
+package/lock/APP_VERSION and SQL artifact labels, matching iOS marketing version
+and incremented native build number. Preserve dependencies, signing credentials,
+OTA key and all application/database behaviour. Inspect generated SQL diffs for
+version text only. No tag, installer workflow, billing, schema execution or
+publication is authorized by preparation. Require metadata/release checks, scoped
+review and beta CI; specific final production promotion/publication remains a
+separate exact reviewed-head decision. Other feature PRs retain their own gates.
+
+RELEASE71 verification: nine dependency-free release/version/iOS publication
+fixture tests and 22 focused release-channel/revision/desktop tests passed.
+Independent review and structural comparisons prove package dependencies, SQL
+semantics and signing configuration unchanged. The initial focused invocation
+could not load absent worktree dependencies; it passed after reusing the existing
+installed dependency tree, without package installation or source changes.
+No actual publication, key access, tag or database execution occurred. Exact-head
+CI and beta integration remain pending; do not call 1.4.82 published.
+
 ## 5 November permanent-rule update and current task index
 
 Owner approved updating AGENTS.md without overwriting existing instructions.
@@ -5637,3 +5662,75 @@ CI, deployed/installed acceptance, beta integration and production publication
 remain pending. An earlier prototype-era full run was interrupted after a review
 finding and is not final evidence. Do not merge/publish on the strength of this
 local pass alone.
+
+### Checkout last-unit branch rejection — prepared 2026-11-05
+
+- Completed scoped code/tests: same-transaction eligible preimage and strict actual
+  persisted stock/unchanged-catalogue verification in AggregateRepository only.
+- Passed: 43 focused tests; 39 disposable full-commit SQL Server groups. Baseline
+  last-unit failure reproduced before correction; fixture uses synthetic rows only.
+- Pending: independent review, final compiler/lint/CI, beta PR acceptance and any
+  separately authorized promotion/publication. No live DB change is needed here.
+- Separate finding awaiting owner scope decision: NEW-operation-ID replay of an
+  already saved immutable sale graph can repeat stock effects after a refill;
+  reproduced in original beta too. Existing same-operation-ID replay remains safe.
+- Rollback: revert only this scoped checkout PR; no schema/data rollback is needed.
+  Membership, terminal registration, permissions and other sync work are unchanged.
+- Integration/release blocker: keep this PR draft until the separately reviewed
+  new-operation-ID existing-sale replay gap is resolved or the owner explicitly
+  decides its rollout. Passing this narrow patch's tests is not release approval.
+- Final frozen runtime verification: independent review passed 9 new unit cases
+  and all 39 actual SQL groups. Full regression completed successfully: 5,777
+  passed, 7 skipped, 0 failures (5,784 total), bounded to two workers. TypeScript,
+  scoped ESLint and diff checks passed. Draft PR404 remains held for the separate
+  existing-sale/new-operation-ID replay blocker and required CI/acceptance.
+
+### Checkout replay correction — owner-approved extension, 2026-11-05
+
+- Owner approved the previously separate existing-sale replay guard. Implemented
+  before all financial/stock/journal writes, after exact operation-receipt replay.
+  Covers INSERT/UPSERT rows and values, normalized duplicates, deterministic locks,
+  concurrent same-sale IDs, partial headers and neutral foreign-branch responses.
+- Frozen scoped verification: 49 focused tests and 53 disposable SQL groups pass;
+  actual Main Administrator header/items/payment/receipt/journal retry is included.
+  Negative-stock settings and all production data/configuration remain unchanged.
+- Final expanded full regression is running; independent review/CI/installed
+  acceptance remain pending. The earlier last-unit-only full pass and canceled
+  expanded run are not claims about this revised head. Keep PR404 draft until
+  final acceptance; no merge/deploy/publication has been performed.
+- Final expanded runtime regression completed: 5,783 passed, 7 skipped, 0 failed
+  of 5,790 tests (two workers). TypeScript/scoped lint pass. Independent review
+  passed all 15 new unit cases and all 53 disposable SQL groups. This replaces
+  the earlier preparation-only verification status; CI/installed acceptance,
+  beta merge and production release remain separate. No live records changed.
+
+## REPORT70 — exact Management pagination cursors (5 November)
+
+Owner approved one narrow code/isolated-test batch, from betaada83bb9 in
+codex/management-report-cursors-beta. Fix only the dedicated Management report
+reader's SQL Server datetimeoffset(7) cursor truncation for sales and shifts.
+Select an exact SQL timestamp string before the driver converts it to Date;
+preserve descending(timestamp,id), existing scopes, permissions, completeness,
+cost and shift privacy checks, and strip private aliases from returned rows.
+Test limits1/2,100ns/same-time-ID/offset/date boundaries plus denied, empty and
+incomplete cases against an owned disposable SQL database. No production data,
+schema/configuration, RPC/HTTP changes, publication or merge is included.
+The separate in-flight session-handover authorization race remains a tracked
+proposal and is explicitly outside this approval; do not fix it implicitly.
+Implementation is frozen: the reader selects an internal SQL style127 timestamp,
+uses it only for the continuation cursor, and removes it before public rows and
+shift redaction. Existing public Date serialization remains unchanged. Focused
+report/IPC/replica/permission/configuration checks passed51 tests across7 suites
+(1 opt-in test skipped); the opt-in wrapper separately passed2 tests including
+all13 actual disposable SQL Server groups. TypeScript, scoped lint and diff checks
+passed; independent source review found no pagination blocker. Initial SQL
+fixture validation incorrectly required seven visible fractional digits: SQL
+style127 legitimately omits zero fractions and normalizes offsets to UTC. The
+corrected fixture proves exact SQL equality and preserved nonzero100ns precision.
+Final normal-temp full regression passed5775 tests/8 skipped/0 failed of5783
+(689 suites passed/1 skipped) on runtime head422daaf7. The initial restricted
+full run failed on sandbox SSR-cache ENOENT imports; the same frozen source
+passed after granting normal temporary-file access. Draft betaPR403 is open
+and labelled beta. Exact-head CI, beta integration and installed acceptance
+remain pending. The separate session-handover race is not fixed by this patch.
+Membership remains ON HOLD.
