@@ -13,6 +13,7 @@ export async function readStockHistoryPage(proof:CallerProof,input:StockHistoryR
  const owner=scope.role==='admin'||scope.roleSlug==='admin';
  if(!owner&&scope.permissions['page:inventory']===false)throw new Error('Inventory permission is required.');
  if(request.export&&!owner&&(scope.permissions.can_export_reports!==true||scope.permissions['page:reports']===false))throw new Error('Report export permission is required.');
+ if(request.closedShiftId&&!owner&&(scope.permissions.can_shift_closing_history_view!==true||scope.permissions['page:shifts']===false))throw new Error('Shift history permission is required for a saved closing cutoff.');
  const branchId=request.branchId??scope.storeId;
  if(!branchId||((scope.storeId||!canCrossBranches(scope))&&(!scope.storeId||!sameBranchId(scope.storeId,branchId))))
   throw new Error('You can only read historical stock for your authorized branch.');
@@ -28,6 +29,7 @@ export async function readStockHistoryPage(proof:CallerProof,input:StockHistoryR
   };
   if(error?.message?.includes('STOCK_HISTORY_SOURCE_CHANGED'))throw Object.assign(new Error('Stock history changed. Refresh the report before continuing.'),{code:'ESTOCK_HISTORY_SOURCE_CHANGED'});
   if(error?.message?.includes('STOCK_HISTORY_SHIFT_UNAVAILABLE'))throw new Error('The selected shift is not closed or is outside this report branch.');
+  if(error?.message?.includes('STOCK_HISTORY_ROW_OVERSIZED'))throw new Error('One historical product record is too large for a safe report page. Ask an administrator to review its saved description.');
   if(response.status===401||response.status===403||error?.code==='42501')throw new Error('Your current account or terminal is not allowed to read this stock report.');
   throw new Error(response.status>=500?'The company database did not answer the stock report. Try again shortly.':'The stock-history database structure or report needs review.');
  }

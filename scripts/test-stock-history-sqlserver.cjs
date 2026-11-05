@@ -22,7 +22,7 @@ const migration=fs.readFileSync(path.join(__dirname,'../database/sqlserver/prepa
   CREATE TABLE dbo.shifts(id uniqueidentifier PRIMARY KEY,store_id nvarchar(128),status nvarchar(32),closed_at datetimeoffset(7));
   CREATE TABLE dbo.sync_change_journal(change_id bigint IDENTITY PRIMARY KEY,entity_type nvarchar(128),entity_id nvarchar(128),operation nvarchar(32),branch_id nvarchar(128),entity_version bigint,aggregate_id uniqueidentifier,acknowledged_at datetimeoffset(7));`);
  const manager={pool,sql:()=>sql},context={key:'source-1',branchId:'a',terminalId:'t',actorId:'admin',clockState:'verified'};
- const store=new StockHistoryStore(manager,{readContext:()=>context,authorizeRead:async()=>({contextKey:context.key,branchId:'a',canViewInventory:true,canExportReports:false})});
+ const store=new StockHistoryStore(manager,{readContext:()=>context,authorizeRead:async()=>({contextKey:context.key,branchId:'a',canViewInventory:true,canExportReports:false,canViewShiftHistory:true})});
  const inTx=async fn=>{const tx=new sql.Transaction(pool);await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);try{const v=await fn(tx);await tx.commit();return v;}catch(e){await tx.rollback().catch(()=>{});throw e;}};
  const stock=async()=>JSON.parse((await pool.request().query(`SELECT stock_by_store FROM dbo.products WHERE id='${pid}'`)).recordset[0].stock_by_store);
  const op={kind:'update',table:'products',match:{id:pid},values:{stock_by_store:{a:2,b:1}}};

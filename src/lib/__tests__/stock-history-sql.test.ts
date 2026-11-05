@@ -30,13 +30,13 @@ beforeEach(async()=>{
  ('manager','manager','supervisor',NULL,true,'{"can_view_inventory":true,"can_export_reports":true}');
  INSERT INTO terminal_tokens VALUES('${normal}','a','active',NULL,'pc',true,false),('${management}',NULL,'active',NULL,'pc',true,true),('${mobile}',NULL,'active',NULL,'mobile',true,false);`);
 });
-async function seed(){
+async function seed(names=['鞋 “A”','Archived zero']){
  await db.query(`INSERT INTO stock_history_baselines(id,store_id,cutoff_at_raw,cutoff_ticks,captured_at_raw,captured_ticks,source_cursor,opening_kind,verification_state,expected_pairs,terminal_watermarks,verified_by,evidence_hash)
   VALUES($1,'a',$2,$3,$2,$3,0,'system_snapshot','verified',2,'{"fixture":"isolated"}','admin',$4)`,[baseline,start,String(c.instant(start)),'a'.repeat(64)]);
  await db.query(`INSERT INTO stock_history_heads(store_id,committed_cursor,coverage_generation,coverage_state,baseline_id,coverage_from_ticks,coverage_through_ticks)
   VALUES('a',1,0,'complete',$1,$2,$3)`,[baseline,String(c.instant(start)),String(c.instant('2026-11-06T00:00:00Z'))]);
- await db.exec(`INSERT INTO stock_history_openings(id,baseline_id,product_id,store_id,quantity,product_name,sku,barcode)
-  VALUES(gen_random_uuid(),'${baseline}','${product}','a',3,'鞋 “A”',NULL,'00001'),(gen_random_uuid(),'${baseline}','${archived}','a',0,'Archived zero','SKU-0',NULL);`);
+ await db.query(`INSERT INTO stock_history_openings(id,baseline_id,product_id,store_id,quantity,product_name,sku,barcode)
+  VALUES(gen_random_uuid(),'${baseline}','${product}','a',3,$1,NULL,'00001'),(gen_random_uuid(),'${baseline}','${archived}','a',0,$2,'SKU-0',NULL);`,names);
  const source=c.normalizeContext({operationId:'40000000-0000-4000-8000-000000000001',branchId:'a',terminalId:normal,actorId:'cashier',kind:'sale',clockState:'verified'},cutoff);
  const row=c.changes(source,[{id:product,name:'鞋 “A”',stock_by_store:{a:3}}],[{id:product,name:'鞋 “A”',barcode:'00001',stock_by_store:{a:1}}])[0];
  await db.query(`INSERT INTO stock_history_movements(id,operation_id,product_id,store_id,terminal_id,actor_id,source_kind,quantity_delta,effective_at_raw,effective_ticks,
@@ -93,6 +93,8 @@ describe('actual cloud stock-history SQL read and authorization',()=>{
  it('resolves only a closed samebranch shift at its actual stored source precision',async()=>{
   await seed();const shift='50000000-0000-4000-8000-000000000001';
   await db.exec(`INSERT INTO shifts VALUES('${shift}','a','CLOSED','2026-11-05T01:00:00.123456Z');`);
+  await expect(page({closedShift:shift})).rejects.toThrow(/SHIFT_PERMISSION_DENIED/);
+  await db.exec(`UPDATE app_users SET permissions=permissions||'{"can_shift_closing_history_view":true}' WHERE user_id='cashier';`);
   expect(await page({at:'2026-11-05T00:00:00.0000000Z',closedShift:shift})).toMatchObject({cutoff:'2026-11-05T01:00:00.1234560Z'});
   await db.exec(`UPDATE shifts SET status='OPEN' WHERE id='${shift}';`);await expect(page({closedShift:shift})).rejects.toThrow(/SHIFT_UNAVAILABLE/);
   await db.exec(`UPDATE shifts SET status='CLOSED',store_id='b' WHERE id='${shift}';`);await expect(page({closedShift:shift})).rejects.toThrow(/SHIFT_UNAVAILABLE/);
@@ -100,6 +102,16 @@ describe('actual cloud stock-history SQL read and authorization',()=>{
  it('denies direct anon/authenticated RPC execution and generic ledger mutation',async()=>{
   for(const role of ['anon','authenticated']){await db.exec('SET ROLE '+role);try{await expect(page()).rejects.toThrow(/permission denied/);}finally{await db.exec('RESET ROLE');}}
   await db.exec('SET ROLE service_role');try{await expect(db.exec("INSERT INTO stock_history_heads(store_id) VALUES('forged');")).rejects.toThrow(/permission denied/);}finally{await db.exec('RESET ROLE');}
+ });
+ it('bounds response bytes without omitting the next large product',async()=>{
+  await seed(['a'.repeat(130000),'b'.repeat(130000)]);
+  const first=await page();expect(first).toMatchObject({status:'complete',next:product});expect((first.rows as unknown[])).toHaveLength(1);
+  expect(Buffer.byteLength(JSON.stringify(first),'utf8')).toBeLessThan(262144);
+  const second=await page({after:product,revision:String(first.sourceRevision)});
+  expect(second).toMatchObject({rows:[{productId:archived}],next:null});
+ });
+ it('refuses an oversized first row instead of truncating or skipping it',async()=>{
+  await seed(['\n'.repeat(130000),'small']);await expect(page()).rejects.toThrow(/ROW_OVERSIZED/);
  });
  it('keeps physical movements/openings immutable and refuses incomplete/future coverage',async()=>{
   await seed();await expect(db.exec('UPDATE stock_history_movements SET quantity_delta=3;')).rejects.toThrow(/IMMUTABLE/);

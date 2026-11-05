@@ -5826,6 +5826,24 @@ Membership remains ON HOLD.
 
 ## STOCK401 — draft foundation checkpoint, 5 November
 
+6 November owner steering supersedes the deferral recorded below: resume and
+complete historical-stock reporting, retaining exact database review before any
+application. Baseline7721cbd integrated with beta3074 as d290964; documentation and
+attribute conflicts preserved both sides. WORKING: bounded authorized date/time
+and closed-shift report read/Main/Inventory UI/export checkpoint. NEXT: actual
+accepted-effect writer capture and single-lane sync acknowledgements, complete
+coverage/opening evidence and independent/full/device checks. An unavailable-only
+screen is not completion. No live database, baseline, stock or permission edits;
+Membership remains ON HOLD. See the resumed plan for file scopes and rollback.
+
+READ/UI CHECKPOINT IMPLEMENTED (not final report completion): Inventory dialog,
+business-zone/DST and exact source closed cutoff, current SQL/Main POS/branch
+admission, optional Management online read, byte-bounded pages and exact scoped
+Excel export.107 focused tests/20 actual disposable LocalDB groups/7 actual
+React-Radix desktop+phone groups and TypeScript pass. Scoped lint0errors/5test
+warnings. Independent review/full acceptance and the actual capture/sync/coverage
+tasks above remain outstanding. No capture activation or real DB change.
+
 Owner approved the historical stock implementation/preparation scope and actual
 goods-arrival meaning (default original Main/save instant; authorized explicit
 arrival separate from invoice date). Preserve offline checkout, all existing

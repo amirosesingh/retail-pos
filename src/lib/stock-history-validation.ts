@@ -18,6 +18,7 @@ const responseSchema=z.object({
   barcode:z.string().max(20000).nullable(),quantity:units.nullable(),negative:z.boolean().nullable()})).max(500),next:z.string().uuid().nullable(),
 });
 export function checkedStockHistoryPage(input:unknown,branchId?:string):StockHistoryPage{
+ if(new TextEncoder().encode(JSON.stringify(input)).byteLength>262144)throw new Error('The stock report page exceeds its safe response limit.');
  const page=responseSchema.parse(input),ids=new Set<string>();
  if(branchId&&page.branchId!==branchId)throw new Error('The stock report belongs to a different branch.');
  for(const row of page.rows){

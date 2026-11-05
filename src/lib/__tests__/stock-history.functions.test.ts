@@ -59,6 +59,7 @@ describe('actual stock-history function with existing current-account scope reso
   await expect(call()).rejects.toThrow(/database did not answer/);
  });
  it('uses the server-resolved saved shift cutoff and rejects an unexpected ordinary cutoff',async()=>{
+  row.permissions={can_view_inventory:true,can_shift_closing_history_view:true};
   const shifted={...complete(),cutoff:'2026-11-05T02:00:00.0000000Z'};
   rest.mockImplementation(async(path:string)=>path.startsWith('app_users?')?new Response(JSON.stringify([row])):new Response(JSON.stringify(shifted)));
   expect(await call({closedShiftId:product})).toMatchObject({cutoff:shifted.cutoff});await expect(call()).rejects.toThrow(/cutoff changed/);

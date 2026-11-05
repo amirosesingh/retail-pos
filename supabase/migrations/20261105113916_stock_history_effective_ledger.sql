@@ -144,11 +144,16 @@ CREATE OR REPLACE FUNCTION public.pos_stock_history_page(p_actor text,p_terminal
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $fn$
 DECLARE h public.stock_history_heads%ROWTYPE;b public.stock_history_baselines%ROWTYPE;
  cutoff numeric;read_raw text;revision text;reasons jsonb:='[]'::jsonb;actual_pairs bigint;page jsonb;next_id uuid;
+ candidate record;wire jsonb;page_rows jsonb[]:=ARRAY[]::jsonb[];page_bytes integer:=2;last_id uuid;balance numeric;
 BEGIN
  PERFORM private.stock_history_authorize_read(p_actor,p_terminal,p_branch,COALESCE(p_export,false));
  IF p_limit NOT BETWEEN 1 AND 500 OR p_limit IS NULL OR p_zone IS NULL OR length(p_zone) NOT BETWEEN 1 AND 100
   OR length(COALESCE(p_source_revision,''))>512 THEN RAISE EXCEPTION 'STOCK_HISTORY_INVALID_REQUEST'; END IF;
  IF p_closed_shift IS NOT NULL THEN
+  IF NOT EXISTS(SELECT 1 FROM public.app_users person WHERE person.user_id=p_actor AND person.is_active IS TRUE AND
+   (COALESCE(person.role::text='admin' OR person.role_slug='admin',false) OR
+    (person.permissions->'can_shift_closing_history_view'='true'::jsonb AND person.permissions->'page:shifts' IS DISTINCT FROM 'false'::jsonb)))
+   THEN RAISE EXCEPTION 'STOCK_HISTORY_SHIFT_PERMISSION_DENIED' USING ERRCODE='42501';END IF;
   SELECT to_char(closed_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US')||'0Z' INTO p_cutoff FROM public.shifts
    WHERE id=p_closed_shift AND store_id=p_branch AND closed_at IS NOT NULL AND lower(status) IN('closed','completed') FOR SHARE;
   IF NOT FOUND THEN RAISE EXCEPTION 'STOCK_HISTORY_SHIFT_UNAVAILABLE'; END IF;
@@ -181,20 +186,24 @@ BEGIN
    'reasons',reasons,'cutoff',p_cutoff,'timeZone',p_zone,'branchId',p_branch,'baselineAt',b.cutoff_at_raw,'readAt',read_raw,
    'coverageThroughTicks',h.coverage_through_ticks::text,'sourceRevision',revision,'pendingCount','0','rows','[]'::jsonb,'next',NULL,'restatable',true);
  END IF;
- WITH chosen AS MATERIALIZED(
-  SELECT o.* FROM public.stock_history_openings o WHERE o.store_id=p_branch AND o.baseline_id=b.id
-   AND (p_after IS NULL OR o.product_id>p_after) ORDER BY o.product_id LIMIT p_limit+1
- ), numbered AS(
-  SELECT o.*,row_number() OVER(ORDER BY product_id) position FROM chosen o
- ), result AS(
-  SELECT n.product_id,n.product_name,n.sku,n.barcode,n.position,n.quantity+COALESCE((SELECT sum(m.quantity_delta)
-    FROM public.stock_history_movements m WHERE m.store_id=p_branch AND m.product_id=n.product_id AND m.effective_ticks>b.cutoff_ticks
-     AND m.effective_ticks<=cutoff AND m.ingested_cursor<=h.committed_cursor),0) quantity FROM numbered n
- )
- SELECT COALESCE(jsonb_agg(jsonb_build_object('productId',product_id,'locationId',p_branch,'name',product_name,'sku',sku,'barcode',barcode,
-   'quantity',quantity::text,'negative',quantity<0) ORDER BY product_id) FILTER(WHERE position<=p_limit),'[]'::jsonb),
-  CASE WHEN count(*)>p_limit THEN (array_agg(product_id ORDER BY product_id))[p_limit] ELSE NULL END
- INTO page,next_id FROM result;
+ -- Build one immutable keyset page, stopping before its byte budget. A large
+ -- product is never skipped or truncated; an oversized first row fails clearly.
+ FOR candidate IN SELECT o.* FROM public.stock_history_openings o WHERE o.store_id=p_branch AND o.baseline_id=b.id
+  AND (p_after IS NULL OR o.product_id>p_after) ORDER BY o.product_id LIMIT p_limit+1 LOOP
+  IF cardinality(page_rows)>=p_limit THEN next_id:=last_id;EXIT;END IF;
+  SELECT candidate.quantity+COALESCE(sum(m.quantity_delta),0) INTO balance FROM public.stock_history_movements m
+   WHERE m.store_id=p_branch AND m.product_id=candidate.product_id AND m.effective_ticks>b.cutoff_ticks
+    AND m.effective_ticks<=cutoff AND m.ingested_cursor<=h.committed_cursor;
+  wire:=jsonb_build_object('productId',candidate.product_id,'locationId',p_branch,'name',candidate.product_name,
+   'sku',candidate.sku,'barcode',candidate.barcode,'quantity',balance::text,'negative',balance<0);
+  IF page_bytes+octet_length(convert_to(wire::text,'UTF8'))+1>245760 THEN
+   IF cardinality(page_rows)=0 THEN RAISE EXCEPTION 'STOCK_HISTORY_ROW_OVERSIZED';END IF;
+   next_id:=last_id;EXIT;
+  END IF;
+  page_bytes:=page_bytes+octet_length(convert_to(wire::text,'UTF8'))+1;
+  page_rows:=array_append(page_rows,wire);last_id:=candidate.product_id;
+ END LOOP;
+ page:=to_jsonb(page_rows);
  RETURN jsonb_build_object('status','complete','reasons','[]'::jsonb,'cutoff',p_cutoff,'timeZone',p_zone,'branchId',p_branch,
   'baselineAt',b.cutoff_at_raw,'readAt',read_raw,'sourceRevision',revision,'pendingCount','0','restatable',true,'rows',page,'next',next_id);
 END $fn$;

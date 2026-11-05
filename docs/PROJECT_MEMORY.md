@@ -1410,6 +1410,14 @@ remain in their separate draft PRs; do not imply they are released.
 
 ## STOCK401 — retained unfinished stock-history foundation, 5 November
 
+Owner reactivated completion on 6 November; this supersedes the later deferral
+description retained below as history. Continue reviewed report/Main/UI/export
+then actual effect-bound capture, durable single-lane sync and coverage proof.
+No historical quantity may be inferred from current stock or unverified clocks;
+no live schema/baseline application before exact review. The existing standalone
+local025–030 upgrade stays unchanged while prepared031 is unfinished. Keep PR401
+draft until complete independent regression and report acceptance.
+
 Owner approved actual goods-arrival time for receiving, default original
 Main/save stock-operation instant unless authorized explicit arrival is supplied;
 invoice date remains separate. Do not relabel old invoice entry dates as proven

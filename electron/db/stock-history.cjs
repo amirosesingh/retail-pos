@@ -5,6 +5,7 @@ const schemaObjects=require('./stock-history-schema-objects.json');
 const {catalogSql,physicalObjects}=require('./stock-history-schema-check.cjs');
 const CAPABILITIES=new WeakMap();
 const CAPTURES=new WeakMap();
+const readPageSql=require('node:fs').readFileSync(require('node:path').join(__dirname,'stock-history-page.sql'),'utf8');
 const tableList=contract.TABLES.map(name=>`N'${name}'`).join(',');
 const unavailable=(reason)=>Object.freeze({available:false,reason});
 const columnKey=row=>JSON.stringify([row.table,row.column,row.type,Number(row.length),Number(row.precision),Number(row.scale),!!row.nullable]);
@@ -179,6 +180,7 @@ class StockHistoryStore{
   if(input.branchId!=null&&contract.identifier(input.branchId)!==branch)contract.fail('SYNC_BRANCH_FORBIDDEN');
   let cutoff=input.closedShiftId?null:contract.canonicalInstant(input.cutoff);
   const closedShift=input.closedShiftId?contract.identifier(input.closedShiftId,true):null;
+  if(closedShift&&scope.canViewShiftHistory!==true)contract.fail('PERMISSION_DENIED');
   const zone=input.timeZone;if(typeof zone!=='string'||zone.length>100)contract.fail();
   try{new Intl.DateTimeFormat('en',{timeZone:zone}).format(0);}catch{contract.fail();}
   const limit=input.limit??100;if(!Number.isInteger(limit)||limit<1||limit>500)contract.fail();
@@ -232,19 +234,15 @@ class StockHistoryStore{
     return{status:reasons.some(reason=>['BEFORE_BASELINE','FUTURE_CUTOFF'].includes(reason))?'unsupported':'incomplete',reasons,cutoff,timeZone:zone,branchId:branch,
      baselineAt:meta?.cutoff_at_raw??null,coverageThroughTicks:meta?.coverage_through_ticks==null?null:String(meta.coverage_through_ticks),
      pendingCount:String(meta?.pending_count??0),sourceRevision:revision,rows:[],next:null};}
-   request.input('history_baseline',meta.baseline_id).input('history_cursor',String(meta.committed_cursor)).input('history_baseline_ticks',String(meta.cutoff_ticks));
-   const result=await request.query(`SELECT TOP(@history_limit) o.product_id,o.product_name,o.sku,o.barcode,
-     CONVERT(nvarchar(50),o.quantity+COALESCE((SELECT SUM(m.quantity_delta) FROM dbo.stock_history_movements m
-      WHERE m.store_id=o.store_id AND m.product_id=o.product_id AND m.effective_ticks>CONVERT(decimal(20,0),@history_baseline_ticks)
-       AND m.effective_ticks<=CONVERT(decimal(20,0),@history_ticks) AND m.ingested_cursor<=CONVERT(bigint,@history_cursor)),0)) quantity
-     FROM dbo.stock_history_openings o WHERE o.store_id=@history_branch AND o.baseline_id=@history_baseline
-      AND (@history_after IS NULL OR o.product_id>CONVERT(uniqueidentifier,@history_after)) ORDER BY o.product_id;`);
-   const rows=result.recordset??[],more=rows.length>limit;
+   request.input('history_baseline',meta.baseline_id).input('history_cursor',String(meta.committed_cursor)).input('history_baseline_ticks',String(meta.cutoff_ticks)).input('history_page_size',limit);
+   const result=await request.query(readPageSql),wire=result.recordset?.[0];
+   if(!wire||typeof wire.rows_json!=='string'||Buffer.byteLength(wire.rows_json,'utf8')>245760)contract.fail('ESTOCK_HISTORY_OVERSIZED');
+   const rows=JSON.parse(wire.rows_json);
+   if(!Array.isArray(rows)||rows.length>limit)contract.fail();
    await recheckRead();
    await tx.commit();return{status:'complete',reasons:[],cutoff,timeZone:zone,branchId:branch,baselineAt:meta.cutoff_at_raw,
     readAt:contract.canonicalInstant(meta.read_at),sourceRevision:revision,pendingCount:'0',restatable:true,
-    rows:rows.slice(0,limit).map(row=>({productId:String(row.product_id).toLowerCase(),locationId:branch,name:row.product_name,sku:row.sku,barcode:row.barcode,quantity:String(row.quantity),negative:BigInt(row.quantity)<0n})),
-    next:more?String(rows[limit-1].product_id).toLowerCase():null};
+    rows,next:wire.next_id?String(wire.next_id).toLowerCase():null};
   }catch(error){await Promise.resolve(tx.rollback()).catch(()=>{});throw error;}
  }
 }

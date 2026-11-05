@@ -1,5 +1,39 @@
 # STOCK68: stock at an exact effective time
 
+## Resumed implementation — 6 November
+
+The owner reactivated PR401 implementation on 6 November, superseding the urgent
+release deferral below. Complete the existing accurate, permission-scoped report;
+do not treat an unavailable-only screen as completion. No live database upgrade,
+opening balance, backfill, stock adjustment or publication is authorized here.
+
+Current recoverable baseline is foundation7721cbd plus current beta3074a475,
+integrated as d290964. Both sides of documentation/attribute conflicts were
+preserved. Implementation is split into independently reviewable checkpoints:
+
+1. Complete bounded authorized report reads, exact business-zone date/time and
+   saved-closed-shift selection, Inventory dialog and scope/coverage-preserving
+   export. Add a dedicated read-only Main module; coordinate its small factory
+   hook separately from the approval/payment writer's Main changes. Unknown
+   opening/coverage/schema stays visibly unavailable/incomplete.
+2. Finish actual native/cloud stock-effect capture and acknowledgements through
+   the existing durable SQL journal and single sync lane, preserving original
+   physical time and accepted effect identity. Cover every relevant stock writer,
+   including creation/deletion/merge, refund, transfer legs and deferred receiving.
+   A terminal-only upload is not proof of original author or backdated authority.
+3. Prove opening/cohort/watermark/retention coverage in isolated scenarios, finish
+   independent and full regression/device checks, and update the draft PR. Present
+   exact cloud/local upgrade files and hashes before any application. Prepared031
+   remains excluded from the already completed standalone025–030 SQL file until
+   it is independently finalized and approved.
+
+Affected scopes: existing stock-history read/capture/schema modules and tests;
+new report/selection/export and Main-read helpers; Inventory link; existing sync
+adapters and necessary stock writer hooks. Checkout arithmetic, permissions,
+registration, operator configuration and Membership remain unchanged. Reverting
+an unactivated checkpoint is a targeted source revert; never delete retained
+movement/outbox evidence after activation.
+
 Status: draft quantity kernel plus storage/capture/authorized-read foundation.
 Current beta `8b1cb17b` is integrated by feature merge `e4f3badb`. Main/IPC,
 complete writer coverage, validated cloud upload, activation and Inventory UI/export
@@ -230,3 +264,39 @@ Resume in this order:
 7. Run combined full regression, independent review and beta/device acceptance.
    Present exact cloud/local files/hashes/targets before any application. Only then
    consider beta integration and separately approved production promotion.
+
+## 6 November read/UI checkpoint — still not a complete report release
+
+The Inventory dialog now selects an explicit business-zone date/time or a saved
+same-branch closed-shift instant. Repeated DST hours require choosing an offset;
+nonexistent times are refused. Only opening/coverage-verified quantities display;
+missing metadata/openings/pending/uncertain history never become zero stock.
+The current SQL account, registered Operations branch, POS frame and session/
+database context are rechecked by a dedicated Main read handler. Export admission
+and shift-history admission remain separate. Management uses its existing online
+scope rather than claiming local replica coverage.
+
+Both SQL readers produce keyset pages bounded at245,760 row bytes with a separate
+response-envelope allowance. Oversized first rows fail instead of being skipped.
+Export starts at the first page under export authorization, retains the displayed
+revision/cutoff/location and exact quantity/identifier strings, rejects changed
+pages or session handover, and caps20,000 products. No historical price/cost is
+presented. The draft cloud file now contains the reader's byte and shift-access
+guards; its former prepared hash is superseded and is not application approval.
+
+Verification:107 focused tests pass across7 suites, including17 isolated
+PostgreSQL cases and new DST/export/native-admission tests;20 actual uniquely
+owned disposable LocalDB groups pass and their fixture was cleaned. TypeScript
+passes; scoped lint has0 errors and5 test-only explicit-any warnings. Seven
+actual isolated React/Radix browser groups pass, including1440/390px layout,
+negative quantities, exact export metadata, no background read loop, incomplete
+coverage, stale branch/session response rejection, exact closed cutoff, repeated
+DST choice and independent permission removal. Screenshots are local ignored test
+artifacts. The first UI run exposed only missing synthetic preference mocks and
+the browser's canonical datetime-local fill format; app behavior was unchanged.
+
+Still pending: independent checkpoint review, actual accepted-effect/native
+capture/upload/ack coverage for every writer, eligible openings/cohort/clock/
+creation/retention evidence, complete full regression and installed acceptance.
+Capture remains uninstalled/null. No schema/baseline/business row, queue,
+checkpoint, registration, live configuration or permission grant was changed.

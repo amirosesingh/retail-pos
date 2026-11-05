@@ -5,12 +5,13 @@ import {hostedFunction} from './hosted-function-client';
 import {loadStockHistoryPageDirect} from './stock-history.functions';
 import {checkedStockHistoryPage,stockHistoryRequestSchema} from './stock-history-validation';
 import {sessionEpoch} from './session-epoch';
+import {isManagementDevice} from './management-device';
 import type {StockHistoryPage,StockHistoryRequest} from './stock-history-report';
 const hosted=hostedFunction('stock-history.page',loadStockHistoryPageDirect);
 export async function loadStockHistoryPage(input:StockHistoryRequest):Promise<StockHistoryPage>{
  const request=stockHistoryRequestSchema.parse(input),epoch=sessionEpoch();
  const current=()=>{if(sessionEpoch()!==epoch)throw Object.assign(new Error('The signed-in account changed. Open the report again.'),{code:'SESSION_CHANGED'});};
- if(effectiveDatabaseMode()==='local'){
+ if(effectiveDatabaseMode()==='local'&&!isManagementDevice()){
   const bridge=localDb();
   if(!bridge?.stockHistory)throw new Error('This desktop version does not include the stock-history reader. Update the app before opening this report.');
   const result=await bridge.stockHistory(request);current();

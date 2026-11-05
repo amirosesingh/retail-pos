@@ -44,6 +44,7 @@ export function stockHistoryExplanation(reason:string):string{
   case 'INCOMPLETE_MOVEMENTS':return 'Complete stock movement coverage has not been proved for this date and time.';
   case 'BASELINE_PREHISTORY_CHANGED':return 'A late movement predates the opening balance; it needs reconciliation before quantities can be shown.';
   case 'CLOCK_UNVERIFIED':return 'An original device clock is unverified; the exact historical timing needs review.';
+  case 'MANAGEMENT_LOCAL_HISTORY_UNAVAILABLE':return 'Historical stock on a management terminal uses its authorized online report.';
   default:return 'The requested historical stock could not be verified.';
  }
 }
