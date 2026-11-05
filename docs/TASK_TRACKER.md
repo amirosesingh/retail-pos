@@ -5752,3 +5752,12 @@ Membership remains ON HOLD.
 - Pending: exact-head full-suite and CI, real manager approval PIN plus durable
   audit/held-ticket payment readback, beta integration and production acceptance.
   No production merge, installer publication or business database edit included.
+
+Final full regression: 5,960 passed / 10 skipped / 0 failed of 5,970, unchanged
+runtime in a clean exact-head checkout. The initial active Electron fixture
+profile caused only canonical inventory EPERM on locked Chromium blob storage.
+Actual new cashier approval test captured EPRIVILEGE at Main admission: generic
+`general` aggregate writes require Supervisor even after manager PIN verification.
+Keep that boundary; a separate Main-owned verified-approval logging capability
+requires approval and tests. PR412 fixes only registered audit-payload shape;
+actual cashier approved-payment acceptance remains pending that distinct fix.

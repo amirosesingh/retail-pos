@@ -1401,3 +1401,12 @@ manager-PIN/payment verification and final full-suite/CI remain separate. Tests
 use only uniquely owned synthetic databases/profiles; no business data or live
 ROSEGILL enrollment is used. Online approval remains unverified without an
 isolated HTTPS authority. Membership remains unchanged and ON HOLD.
+
+Final unchanged-source regression passed 5,960 tests, 10 skipped, zero failures
+of 5,970 in a clean exact-head checkout. An earlier active-profile run hit only
+Chromium blob-storage EPERM during the canonical SQL inventory; no application
+logic failed. Actual cashier device testing exposed a separate preexisting gate:
+a `general` audit aggregate requires Supervisor authority even after a manager's
+approval PIN verifies. That guarded refusal remains intact and needs a separately
+approved Main-owned approval capability; this helper patch does not grant it or
+claim to complete cashier approval/payment acceptance.
