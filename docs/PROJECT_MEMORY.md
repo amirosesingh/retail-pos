@@ -1373,6 +1373,26 @@ session-handover authorization fix.
 
 ## RELEASE71 — proposed 1.4.82 metadata, 5 November
 
+SQL72's urgent manual PC deliverable is one standalone existing-database SQL file
+for completed025–030 only; stock031 and Supabase application are excluded. It
+must recognize schema24 plus installed canonical metadata, preserve all existing
+rows/permissions/queues/checkpoints/settings and roll back the entire batch on
+unknown or partial objects. It must not replay the full installer, rewrite archive
+flags, switch databases, activate a rollout or change connection settings. Source
+capture, test fixtures and packaging never authorize a live operator target.
+
+SQL72 now emits `database/sqlserver/retail-pos-existing-upgrade-1.4.82.sql`
+without runtime/source dependencies; current SHA256
+090F24031A07660C2D36512D2B38197A06491BB28408CCAAFDBB66FC400A4730.
+Exact typed/binary JSON catalogue guards recognize only reviewed schema24 plus
+canonical installed module shapes. Preserve SQL literal bytes while recognizing
+reviewed structural LF/CRLF variants; never globally normalize definition strings.
+Scoped LF attributes preserve emitted/source provenance hashes across checkouts.
+Final tests pass10 packaging,28 full-Retail actual SQL and4 original composition
+groups; all owned fixtures cleaned, no operator connection. Installed target
+approval/application, device acceptance, beta CI/integration and publication stay
+separate. Unfinished stock031 and Supabase execution are excluded.
+
 Retail 1.4.81 is already published; do not overwrite or retag it. Prepare 1.4.82
 on beta with matching package, application, SQL artifact labels and iOS marketing
 version/build metadata. These edits must preserve SQL semantics, dependencies,

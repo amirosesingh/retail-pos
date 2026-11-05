@@ -164,3 +164,75 @@ device acceptance, and separate exact-target application approval. Installer and
 production publication remain separately unapproved. Never delete immutable
 evidence/pending history as a rollback after accepted operations exist; preserve
 records and prepare a targeted forward correction.
+
+## SQL72 — one local existing-database file for1.4.82
+
+The urgent local-PC deliverable is
+[`database/sqlserver/retail-pos-existing-upgrade-1.4.82.sql`](../../database/sqlserver/retail-pos-existing-upgrade-1.4.82.sql).
+It is one plain SSMS batch and needs no accompanying scripts, manifest, Node,
+connection string or source files to run. It is a prepared artifact, **not an
+instruction or approval to execute it on any PC**. Supabase upgrades and the
+unfinished historical-stock031 source are excluded.
+
+Current artifact SHA256:
+`090F24031A07660C2D36512D2B38197A06491BB28408CCAAFDBB66FC400A4730`.
+The file uses LF bytes; its Git attributes pin those bytes on Windows and CI.
+The reviewed source files have scoped LF attributes too, without source-blob
+changes. SQL literal contents are preserved: only structural newline variants
+outside quoted literals are recognized. An embedded CR is reconstructed with
+`NCHAR(13)` and an explicit `nvarchar(max)` concatenation, never rewritten as LF.
+
+| Included module, applied in this order only if absent | Canonical reviewed source SHA256 | Possible new objects |
+| --- | --- | --- |
+|025 financial bases | `2C6E250D04855B86447603763C1A9304241D99D77814040756AB9AA67CB77897` |2 immutable financial-basis/proof tables |
+|026 financial operations | `26A55BC6FD352083AA388283F093212E9C74081E9C96FE87A79E71288AE235FA` |8 financial-history metadata tables |
+|027 branch sharing | `E0E9A77D847A08961BAA1EB7D75C67F971960E086FA286A7891FC424DE93F359` |Nullable `pos_store_settings.allow_branch_shift_sharing`; existing settings remain unchanged |
+|028 recovery evidence | `E3727FE62A276C1EAF200F8783B289D5BE745F2E95D563CDA850EEE9F8CAADCD` |Immutable evidence table |
+|029 recovery outbox | `08917EE9041033A68A81751D6409B0BB60E7E0D1D3878DCF577EA64D0B6C5307` |2 immutable pending/accepted recovery metadata tables |
+|030 reviewed adoption | `5EE385C20BE5C3A79C0F0CBB91D0D4294EF17D0CB8B350201C23B4B65BF4CE92` |Immutable adoption-decision table; identity index includes `decision_id` |
+
+Across absent modules this creates14 empty metadata tables,22 indexes,36 CHECKs,
+3 foreign keys,14 immutability triggers and4 ownership properties, plus the one
+nullable sharing column. Already-installed recognized objects and all their rows
+are retained exactly. No business rows, migration-ledger records, financial
+evidence, accepted history, stock, prices, sales, shifts, registration, queues,
+checkpoints, settings or permission grants are rewritten. No feature is activated.
+
+Recognition checks the reviewed schema24 physical catalogue (84 managed tables,
+including all70 registered/domain tables) and each included module's exact
+columns, types, nullability, defaults, explicit/inherited collations, constraints,
+ordered/index options, foreign keys, trigger source/options and ownership marks.
+Typed, binary-ordered SQL JSON fingerprints cover every inspected field and NULL
+explicitly; the full inspectable manifest is retained in
+`database/sqlserver/prepared/existing-upgrade-1.4.82.manifest.json`. Its capture
+provenance is SQL Server17.0.1145.4 Express64, default
+`SQL_Latin1_General_CP1_CI_AS`. A schema24 receipt plus correct physical objects is
+required; historic receipts1–23 are not artificially required. Extra unrelated
+operator tables are preserved but not certified. Arbitrary custom/core or older
+schemas and old experimental030 indexes are unsupported and abort safely.
+
+One owned outer transaction and a bounded upgrade lock cover the whole batch.
+Module transactions remain balanced. A partial namespace, unrecognized existing
+shape, failed new module or final core mismatch rolls back every change in the
+batch. It rejects caller transactions before changing their session error mode.
+It does not replay the installer, repair archive flags, switch/create databases,
+change database/connection settings, increase timeouts, or repair unknown shapes.
+
+Validation checkpoint:10 pure packaging tests, scoped lint and deterministic
+Ubuntu-LF/Windows-CJS-CRLF packaging parity pass. The final exact-byte full-Retail
+LocalDB matrix passes28 groups, and the original minimal-core atomic-composition
+fixture passes4 groups. Both fixtures were cleaned. The full matrix covers
+CI/BIN2 collations, all old-table/permission snapshots, installed025–027 rows,
+rerun, malformed/partial objects, literal/case/Unicode/escape/NULL distinctions,
+index order/filter, immutability/ownership, concurrent maintenance, late rollback
+and6002-character quoted-CR reconstruction. The earlier27-group predecessor run
+is historical evidence only. No application/runtime source was changed bySQL72.
+Actual operator-device/schema acceptance, exact per-PC server/database/GUID
+approval, maintenance closure and backup remain separate before application.
+No operator database was used by capture or tests. Installed-device recovery,
+beta/main promotion and release publication remain separately tracked.
+
+For maintainers, `node scripts/package-existing-local-upgrade.cjs --check`
+verifies exact generated bytes without a database. `--write` regenerates them
+from the reviewed manifest/source. Only the generated `.sql` is the operator
+download; the manifest and helper/test scripts are maintainer evidence.
