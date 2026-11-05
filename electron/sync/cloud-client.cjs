@@ -64,7 +64,7 @@ function transportDiagnostic(error, payload, stage) {
     return {
       transportOperation: payload?.sqlServerPull ? "feed" : payload?.sqlServerBootstrap ? "bootstrap"
         : payload?.sqlServerShiftGraph ? "graph" : payload?.sqlServerCounts ? "count"
-          : payload?.sqlServerBatch || payload?.sqlServerAggregate ? "upload" : "other",
+          : payload?.sqlServerBatch || payload?.sqlServerAggregate || payload?.sqlServerLegacyRecovery ? "upload" : "other",
       transportStage: stage,
       transportCode: own(error, "code") ?? own(own(error, "cause"), "code"),
       transportErrorName: own(error, "name") ?? (error instanceof TypeError ? "TypeError" : error instanceof Error ? "Error" : undefined),
@@ -211,7 +211,7 @@ class CloudClient {
       // Branch admission is control-plane metadata. Health/login/enrollment use
       // their existing separate paths and cannot wait behind data downloads.
       if (!operation && captured?.managementSyncBranches === true && Object.keys(captured).length === 1) return work();
-      const upload = captured?.sqlServerBatch || captured?.sqlServerAggregate || captured?.sqlServerFinancialEvent || captured?.sqlServerFinancialObservation;
+      const upload = captured?.sqlServerBatch || captured?.sqlServerAggregate || captured?.sqlServerFinancialEvent || captured?.sqlServerFinancialObservation || captured?.sqlServerLegacyRecovery;
       return this.requestLane.run(upload ? "upload" : "download", Buffer.byteLength(capturedJson, "utf8"), work);
     } catch (error) { return Promise.reject(error); }
   }
