@@ -26,6 +26,16 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 const respond = (index: number, value: unknown = {}) => pending[index]!.response.resolve(Response.json(value));
 
 describe("one coordinated CloudClient data request lane", () => {
+  it("schedules the new signed recovery operation in the existing upload turn", async () => {
+    const { client } = fixture();
+    const first = client.counts({ branchId: "branch-a" });
+    const download = client.pullBatch({ branchId: "branch-a", cursor: 10, limit: 100 });
+    const recovery = client.request({ sqlServerLegacyRecovery: { organizationId: "default", branchId: "branch-a", payloadJson: "{}", attestation: {} } });
+    respond(0); await first; await tick();
+    expect(pending[1]!.body).toHaveProperty("sqlServerLegacyRecovery");
+    respond(1); await recovery; await tick();
+    expect(pending[2]!.body).toHaveProperty("sqlServerPull"); respond(2, []); await download;
+  });
   it("serializes real upload/download/bootstrap/count requests and alternates fairly between directions", async () => {
     const { client } = fixture();
     const first = client.pushBatch({ batchId: "u1", branchId: "branch-a", table: "products", rows: [{ id: "p1" }] });

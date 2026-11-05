@@ -149,6 +149,22 @@ function createShiftAuthorKeys({ safeStorage, directory }) {
     }
     return publicInfo(saved);
   }
-  return { prepare, enrollment, signIntent, signClosingStart, signFinancialBasis, signOpeningFinancialBasis, signFinancialOperation, markEnrolled };
+  function signLegacyRecovery(binding, input) {
+    const legacy = require('./legacy-shift-recovery-protocol.cjs');
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw failure('ESYNC_SHIFT_AUTHOR_INVALID');
+    const { expectedKeyId, ...facts } = input;
+    const fields = ['subject', 'branchId', 'shiftId', 'recoveryId', 'action', 'payloadHash'];
+    if (Object.keys(facts).length !== fields.length || fields.some(key => !Object.hasOwn(facts, key))) throw failure('ESYNC_SHIFT_AUTHOR_INVALID');
+    const keyId = expected({ expectedKeyId });
+    if (!keyId) throw failure('ESYNC_SHIFT_AUTHOR_INVALID');
+    const parsedBinding = protocol.normalizeBinding(binding);
+    const unsigned = { version: 1, algorithm: 'Ed25519', keyId, ...parsedBinding, ...facts };
+    legacy.legacyRecoveryMessage(unsigned);
+    // Existing enrolled key only. Recovery never creates, rotates or enrolls it.
+    const saved = load(parsedBinding, { expectedKeyId: keyId });
+    if (!saved.enrolled) throw failure('ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING');
+    return legacy.normalizeLegacyRecovery({ ...unsigned, signature: crypto.sign(null, Buffer.from(legacy.legacyRecoveryMessage(unsigned)), saved.privateKey).toString('base64url') });
+  }
+  return { prepare, enrollment, signIntent, signClosingStart, signFinancialBasis, signOpeningFinancialBasis, signFinancialOperation, signLegacyRecovery, markEnrolled };
 }
 module.exports = { createShiftAuthorKeys };

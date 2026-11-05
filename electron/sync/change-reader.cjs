@@ -11,12 +11,14 @@ const {prepareFinancialOpening,prepareFinancialHistory,assertFinancialHistoryAck
 const SHIFT_GRAPH_TABLES = ["shifts", "shift_cash_counts", "shift_reconciliations", "shift_close_events",
   "shift_notifications", "shift_variance_alerts"];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const ctVersion = value => { const text=typeof value==='number'&&Number.isSafeInteger(value)?String(value):value;return typeof text === "string" && /^(0|[1-9]\d*)$/.test(text) && BigInt(text) <= 9223372036854775807n ? text : null; };
 
 class ChangeReader {
-  constructor(connectionManager, registry = null, {financialBases=null,financialOperations=null,financialCoverageSource=null}={}) {
+  constructor(connectionManager, registry = null, {financialBases=null,financialOperations=null,financialCoverageSource=null,reviewedShiftRecovery=null}={}) {
     this.connectionManager = connectionManager;
     this.financialBases=financialBases;this.financialOperations=financialOperations;
     this.financialCoverageSource=financialCoverageSource;
+    this.reviewedShiftRecovery=reviewedShiftRecovery;
     this.financialCoverageCaptures=new Map();this.financialCoverageTokens=new WeakMap();
     this.registry = registry ?? { tables: [] };
     this.tables = new Map((registry?.tables ?? []).map((table) => [table.sqlServerTable, table]));
@@ -426,7 +428,30 @@ class ChangeReader {
     const unaccepted=await query('SELECT TOP(1) intent_id FROM dbo.pos_sync_shift_intents WITH(UPDLOCK,HOLDLOCK) WHERE branch_id=@branch AND shift_id=@shift AND acknowledged_at IS NULL;',{branch,shift});
     return seen.size===SHIFT_GRAPH_TABLES.length&&!unaccepted.recordset?.length?createHash('sha256').update(JSON.stringify(collected)).digest('hex'):false;
   }
-  async pendingShiftGraph(table, entityIds, transaction, { branchId, changes = [], incomingGraph, requireExact = false } = {}) {
+  async prepareReviewedShiftCoverage(graph, branchId) {
+    if (!this.reviewedShiftRecovery) return null;
+    const exact=exactGraph(graph,branchId,graph?.shiftId); if(!exact)return null;
+    // Read-only hint only. Final admission repeats every check under the
+    // download transaction's graph locks; nothing is acknowledged here.
+    for(const name of SHIFT_GRAPH_TABLES){
+      const table=this.tables.get(name),ids=exact.tables.find(part=>part.table===name)?.rows.map(row=>recordId(row.id));
+      if(!table||!ids)return null;
+      const bounds=(await this.connectionManager.pool.request().input('branch',branchId).input('entity',name).input('object','dbo.'+name).query(`SELECT
+        CONVERT(nvarchar(30),(SELECT TOP(1) change_tracking_version FROM dbo.sync_checkpoints WHERE branch_id=@branch AND entity_type=@entity AND direction='push')) checkpoint_version,
+        CONVERT(nvarchar(30),CHANGE_TRACKING_MIN_VALID_VERSION(OBJECT_ID(@object))) min_version,CONVERT(nvarchar(30),CHANGE_TRACKING_CURRENT_VERSION()) current_version;`)).recordset?.[0];
+      const since=ctVersion(bounds?.checkpoint_version),min=ctVersion(bounds?.min_version),current=ctVersion(bounds?.current_version);
+      if(since===null||min===null||current===null||BigInt(since)<BigInt(min)||BigInt(since)>BigInt(current))continue;
+      const rows=(await this.connectionManager.pool.request().input('since',since).input('ids',JSON.stringify(ids)).query(`DECLARE @baseline bigint=CONVERT(bigint,@since);
+        SELECT TOP(2001) CT.id,CT.SYS_CHANGE_OPERATION operation FROM CHANGETABLE(CHANGES dbo.[${name}],@baseline) CT
+        WHERE (CT.SYS_CHANGE_CONTEXT IS NULL OR CT.SYS_CHANGE_CONTEXT<>0x434C4F5544) AND
+        (CT.id IN(SELECT TRY_CONVERT(uniqueidentifier,[value]) FROM OPENJSON(@ids)) OR CT.SYS_CHANGE_OPERATION='D');`)).recordset??[];
+      if(rows.length>2000||rows.some(row=>row.operation==='D'))return null;
+      const covered=await this.intents.coveredChanges(table,rows,branchId);
+      if(rows.some(row=>!covered.has(recordId(row.id))))return this.reviewedShiftRecovery.prepare(graph);
+    }
+    return null;
+  }
+  async pendingShiftGraph(table, entityIds, transaction, { branchId, changes = [], incomingGraph, requireExact = false, reviewedCoverage = null } = {}) {
     if (!SHIFT_GRAPH_TABLES.includes(table.cloudTable)) return false;
     const branch = recordId(String(branchId ?? "").trim());
     if (!transaction || !branch || branch.length > 128)
@@ -475,6 +500,8 @@ class ChangeReader {
         WHERE id IN (SELECT TRY_CONVERT(uniqueidentifier,[value]) FROM OPENJSON(@ids));`, { ids: JSON.stringify(ids) })).recordset ?? [];
       if (revalidated.some(row => !shiftIds.includes(recordId(String(row.shift_id))) || recordId(String(row.store_id)) !== branch)) return true;
     }
+    if(requireExact&&shiftIds.length===1&&incomingGraph)matchedExpired=await this.proveExactShiftGraph(query,branch,shiftIds[0],incomingGraph);
+    let reviewed=null;
     for (const name of SHIFT_GRAPH_TABLES) {
       const keys = new Set(graph.get(name));
       if (name === table.cloudTable) ids.forEach(id => keys.add(id));
@@ -487,13 +514,12 @@ class ChangeReader {
           (SELECT TRY_CONVERT(uniqueidentifier,[value]) FROM OPENJSON(@ids)) OR NOT EXISTS
           (SELECT 1 FROM dbo.[${name}] saved WHERE saved.id=TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(journal.entity_id)=1 THEN journal.entity_id ELSE N'{}' END,'$.id'))));`, inputs);
       if (journal.recordset?.length) return true;
-      const bounds = (await query(`SELECT (SELECT TOP (1) change_tracking_version FROM dbo.sync_checkpoints WITH (UPDLOCK,HOLDLOCK)
-        WHERE branch_id=@branch AND entity_type=@entity AND direction='push') AS checkpoint_version,
-        CHANGE_TRACKING_MIN_VALID_VERSION(OBJECT_ID(@object)) AS min_version, CHANGE_TRACKING_CURRENT_VERSION() AS current_version;`,
+      const bounds = (await query(`SELECT CONVERT(nvarchar(30),(SELECT TOP (1) change_tracking_version FROM dbo.sync_checkpoints WITH (UPDLOCK,HOLDLOCK)
+        WHERE branch_id=@branch AND entity_type=@entity AND direction='push')) AS checkpoint_version,
+        CONVERT(nvarchar(30),CHANGE_TRACKING_MIN_VALID_VERSION(OBJECT_ID(@object))) AS min_version, CONVERT(nvarchar(30),CHANGE_TRACKING_CURRENT_VERSION()) AS current_version;`,
       { branch, entity: name, object: `dbo.${name}` })).recordset?.[0];
-      const since = Number(bounds?.checkpoint_version);
-      const valid = bounds?.checkpoint_version != null && bounds?.min_version != null && bounds?.current_version != null &&
-        Number.isSafeInteger(since) && since >= Number(bounds.min_version) && since <= Number(bounds.current_version);
+      const since = ctVersion(bounds?.checkpoint_version),minimum=ctVersion(bounds?.min_version),current=ctVersion(bounds?.current_version);
+      const valid = since !== null && minimum !== null && current !== null && BigInt(since)>=BigInt(minimum) && BigInt(since)<=BigInt(current);
       // Missing/expired CT evidence is not proof of no local edits. A fresh
       // empty graph may bootstrap without inventing a checkpoint.
       if (!valid) {
@@ -504,13 +530,19 @@ class ChangeReader {
         }
         continue;
       }
-      const tracked = await query(`SELECT TOP (2001) CT.id, CT.SYS_CHANGE_OPERATION AS operation FROM CHANGETABLE(CHANGES dbo.[${name}], @since) CT
+      const tracked = await query(`DECLARE @baseline bigint=CONVERT(bigint,@since);
+        SELECT TOP (2001) CT.id, CT.SYS_CHANGE_OPERATION AS operation,CONVERT(nvarchar(30),CT.SYS_CHANGE_VERSION) exact_version FROM CHANGETABLE(CHANGES dbo.[${name}], @baseline) CT
         WHERE (CT.SYS_CHANGE_CONTEXT IS NULL OR CT.SYS_CHANGE_CONTEXT<>0x434C4F5544)
         AND (CT.id IN (SELECT TRY_CONVERT(uniqueidentifier,[value]) FROM OPENJSON(@ids)) OR CT.SYS_CHANGE_OPERATION='D');`,
       { since, ids: JSON.stringify([...keys]) });
       const trackedRows=tracked.recordset??[];
       const covered=trackedRows.length<=2000 ? await this.intents.coveredChanges(this.tables.get(name),trackedRows,branch,transaction) : new Set();
-      if (trackedRows.some(row=>!covered.has(recordId(String(row.id))))) throw Object.assign(new Error("A local closing Change Tracking edit is still beyond its upload checkpoint. Upload or resolve it before retrying this cloud page."),
+      const unproved=trackedRows.filter(row=>!covered.has(recordId(String(row.id))));
+      if(unproved.length&&trackedRows.length<=2000&&requireExact&&matchedExpired&&reviewedCoverage&&this.reviewedShiftRecovery){
+        reviewed??=await this.reviewedShiftRecovery.verify(transaction,reviewedCoverage,incomingGraph,branch);
+        if(!ctVersion(reviewed?.beforeCtVersion))throw Object.assign(new Error('The reviewed closing position is invalid.'),{code:'ELOCAL_CT_PENDING',table:name});
+      }
+      if (unproved.some(row=>!reviewed||row.operation==='D'||!graph.get(name).has(recordId(String(row.id)))||!ctVersion(row.exact_version)||BigInt(row.exact_version)>BigInt(reviewed.beforeCtVersion))) throw Object.assign(new Error("A local closing Change Tracking edit is still beyond its upload checkpoint. Upload or resolve it before retrying this cloud page."),
         { code: "ELOCAL_CT_PENDING", table: name });
     }
     if(requireExact&&!matchedExpired){
