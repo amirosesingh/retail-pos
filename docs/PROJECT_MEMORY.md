@@ -1259,3 +1259,24 @@ and competing same-sale operations are denied before stock. The final expanded
 full regression and independent review are pending; the earlier 5,777-pass full
 run covered the last-unit-only source. An intervening expanded run was canceled
 after a review found the now-fixed values-form gap and is not final evidence.
+
+## REPORT70 — exact read-only report pagination, 5 November
+
+Management sales/shift pages must preserve SQL Server datetimeoffset(7) precision
+in their descending timestamp/ID cursors. JavaScript Date milliseconds are not a
+safe pagination boundary. The approved correction selects an internal exact SQL
+string, strips it from business rows, and preserves current authorization,
+completeness and privacy behavior. Only isolated fixtures may be changed during
+testing; no production database or configuration change is authorized. Session
+handover authorization races require a separate correction plan/approval.
+
+REPORT70 source is frozen after51 focused tests across7 suites, TypeScript,
+scoped lint and independent review passed. An opt-in wrapper separately passed
+both tests and all13 actual disposable SQL Server groups. SQL style127 may omit
+zero fractions/use UTC Z; exact SQL timestamp equality is the pagination proof,
+not a mandatory seven-digit display format. Public business dates still use the
+previous serialization. Final normal-temp full regression passed5775 tests with
+8 skipped/0 failed of5783 on runtime head422daaf7; an initial sandbox-cache import
+failure was rerun without source changes. Draft betaPR403 is open; exact-head CI,
+beta integration and installed-device acceptance remain separate. This is not a
+session-handover authorization fix.
