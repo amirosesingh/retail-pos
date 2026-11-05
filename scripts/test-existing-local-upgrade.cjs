@@ -22,6 +22,13 @@ test("reviewed bytes and module dependency identities are mandatory", () => {
   assert.throws(() => render([moduleFor("030_later", fixture.sql), fixture]), /order/);
   assert.throws(() => render([{ ...fixture, id: "../../secret" }]), /identity/);
 });
+test("Windows and LF checkouts produce identical upgrade bytes while raw source hashes remain inspectable", () => {
+  const windows = moduleFor(fixture.id, fixture.sql.replaceAll("\n", "\r\n"));
+  const lf = render([fixture]), crlf = render([windows]);
+  assert.equal(lf.sql, crlf.sql); assert.equal(lf.sha256, crlf.sha256);
+  assert.notEqual(lf.sources[0].rawHash, crlf.sources[0].rawHash);
+  assert.equal(lf.sources[0].canonicalHash, crlf.sources[0].canonicalHash);
+});
 test("unreviewed database switches, privilege changes and broken transaction modules are rejected", () => {
   for (const statement of ["USE POS_Local;", "ALTER DATABASE POS_Local SET READ_ONLY;", "GRANT SELECT TO public;", "COMMIT;", "RETURN;", "GO\n"])
     assert.throws(() => render([moduleFor("028_fixture", fixture.sql + statement)]));
@@ -38,7 +45,11 @@ test("the three already reviewed financial/sharing modules compose without editi
   const names = ["025_shift_financial_bases", "026_shift_financial_operations", "027_shift_branch_sharing"];
   const modules = names.map(id => moduleFor(id, readFileSync("database/sqlserver/prepared/" + id + ".sql", "utf8"), true));
   const out = render(modules);
-  for (const module of modules) assert.ok(out.sql.includes(module.sha256));
+  for (const module of modules) {
+    const prepared = nestedModule(module);
+    assert.ok(out.sql.includes(prepared.canonicalHash));
+    assert.equal(out.sources.find(source => source.id === module.id).rawHash, module.sha256);
+  }
   assert.match(out.sql, /Financial proofs are immutable/);
   assert.match(out.sql, /shift-sharing column has an unexpected definition/);
   assert.equal(out.sources.length, 3);

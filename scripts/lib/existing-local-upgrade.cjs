@@ -59,8 +59,7 @@ function renderExistingLocalUpgrade({ version, modules, coreValidation }) {
     " -- Validate the existing core before any new metadata is created.",
     " EXEC sys.sp_executesql " + literal(coreValidation) + ";",
     ...prepared.flatMap(module => [
-      `-- Module ${module.id}; exact source SHA256 ${module.rawHash}`,
-      `-- Canonical LF source SHA256 ${module.canonicalHash}`,
+      `-- Module ${module.id}; reviewed canonical LF source SHA256 ${module.canonicalHash}`,
       " IF @@TRANCOUNT<>1 OR XACT_STATE()<>1 THROW 51028,'Upgrade transaction ownership changed.',1;",
       " EXEC sys.sp_executesql " + literal(module.body) + ";",
       " IF @@TRANCOUNT<>1 OR XACT_STATE()<>1 THROW 51028,'A metadata module did not complete its transaction.',1;",
