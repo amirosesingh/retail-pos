@@ -2,7 +2,7 @@
   Retail POS local Microsoft SQL Server schema
   Generated from the migrations loaded by the POS application.
 
-  Application version: 1.4.81
+  Application version: 1.4.82
   Latest local migration: 024_shift_closing_start_proofs.sql
   Target database: POS_Local
 
@@ -12665,7 +12665,7 @@ DECLARE @Missing int = @Required - @Present;
 
 SELECT
   DB_NAME() AS database_name,
-  N'1.4.81' AS application_version,
+  N'1.4.82' AS application_version,
   @Required AS required_tables,
   @Present AS present_tables,
   @Missing AS missing_tables,
@@ -13919,5 +13919,5 @@ EXEC(N'SELECT version, name, applied_at
 FROM dbo.pos_schema_migrations
 ORDER BY version;');
 
-PRINT N'Retail POS 1.4.81: POS_Local installation and validation completed successfully.';
+PRINT N'Retail POS 1.4.82: POS_Local installation and validation completed successfully.';
 GO

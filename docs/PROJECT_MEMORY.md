@@ -1228,3 +1228,14 @@ previous serialization. Final normal-temp full regression passed5775 tests with
 failure was rerun without source changes. Draft betaPR403 is open; exact-head CI,
 beta integration and installed-device acceptance remain separate. This is not a
 session-handover authorization fix.
+
+## RELEASE71 — proposed 1.4.82 metadata, 5 November
+
+Retail 1.4.81 is already published; do not overwrite or retag it. Prepare 1.4.82
+on beta with matching package, application, SQL artifact labels and iOS marketing
+version/build metadata. These edits must preserve SQL semantics, dependencies,
+signing identities and private keys. Metadata preparation does not publish a
+release or authorize database execution. Main promotion can trigger automatic
+platform publication, so require the exact final scope, acceptance evidence and
+owner approval before that promotion. Unfinished recovery and stock-report work
+remain in their separate draft PRs; do not imply they are released.
