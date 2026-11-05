@@ -1437,3 +1437,13 @@ The existing shared refund UPDATE trigger cannot reference another table's NEW
 or OLD fields inside a combined AND condition. Isolate each field expression in
 its own table-specific IF block, preserving refund authorization and both trusted
 exits. Prepare/test only; the exact live project/file needs separate approval.
+
+## SHIFT75 — report presentation date contract, 5 November
+
+Native snapshot timestamps may arrive as Date objects even though Shift's public
+openedAt type is string. Normalize only those report-display Date values; preserve
+existing SQL/cloud strings byte-for-byte, including seven fractional digits.
+Do not alter active-shift selection, exact cursors, saved times or authorization.
+The actual Operations snapshot returns raw shift recordsets (unlike its other
+codec-normalized tables); paged history already normalizes opened_at. The report
+adapter therefore handles native Date seeds without changing those shared paths.
