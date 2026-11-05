@@ -177,14 +177,15 @@ REVOKE ALL ON FUNCTION private.stock_history_match_effect_candidates(uuid,text,n
 -- Append-only status avoids a shared report-head lock after business product
 -- locks. The reader checks this revision twice; it never certifies unlinked
 -- effects/gaps as complete just because its older head was previously complete.
-CREATE FUNCTION private.stock_history_capture_state(p_branch text) RETURNS jsonb
+CREATE FUNCTION private.stock_history_capture_state(p_branch text,p_baseline uuid DEFAULT NULL) RETURNS jsonb
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $fn$
  WITH effects AS(SELECT e.id,c.effect_id FROM private.stock_history_accepted_effects e
-  LEFT JOIN private.stock_history_effect_coverage c ON c.effect_id=e.id WHERE e.store_id=p_branch),
+  LEFT JOIN private.stock_history_effect_coverage c ON c.effect_id=e.id
+   AND (c.movement_id IS NOT NULL OR c.baseline_id=p_baseline) WHERE e.store_id=p_branch),
  counts AS(SELECT count(*) total,count(effect_id) covered,count(*) FILTER(WHERE effect_id IS NULL) unvalidated FROM effects),
  gaps AS(SELECT count(*) total FROM private.stock_history_capture_gaps WHERE store_id=p_branch OR store_id IS NULL)
  SELECT jsonb_build_object('revision',counts.total::text||':'||counts.covered::text||':'||gaps.total::text,
   'unvalidatedEffects',counts.unvalidated::text,'captureGaps',gaps.total::text) FROM counts,gaps
  $fn$;
-REVOKE ALL ON FUNCTION private.stock_history_capture_state(text) FROM PUBLIC,anon,authenticated,service_role;
+REVOKE ALL ON FUNCTION private.stock_history_capture_state(text,uuid) FROM PUBLIC,anon,authenticated,service_role;
 COMMIT;

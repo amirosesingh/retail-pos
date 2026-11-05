@@ -129,6 +129,21 @@ describe('actual accepted cloud stock effects, without claiming original author/
   }
   expect((await db.query("SELECT has_table_privilege('service_role','products','SELECT') allowed")).rows[0]).toEqual({allowed:true});
  });
+ it('a later baseline cannot certify an earlier report when the intervening actual effect has no movement',async()=>{
+  const old='55555555-5555-4555-8555-555555555555',later='66666666-6666-4666-8666-666666666666';
+  const start='2026-11-05T00:00:00.0000000Z',future='2026-11-05T02:00:00.0000000Z',cutoff='2026-11-05T01:00:00.0000000Z';
+  await db.exec(`INSERT INTO stock_history_baselines(id,store_id,cutoff_at_raw,cutoff_ticks,captured_at_raw,captured_ticks,source_cursor,opening_kind,verification_state,expected_pairs,terminal_watermarks,verified_by,evidence_hash)
+   VALUES('${old}','a','${start}',private.stock_history_ticks('${start}'),'${start}',private.stock_history_ticks('${start}'),0,'system_snapshot','verified',1,'{}','fixture','${'a'.repeat(64)}'),
+    ('${later}','a','${future}',private.stock_history_ticks('${future}'),'${future}',private.stock_history_ticks('${future}'),0,'system_snapshot','verified',1,'{}','fixture','${'b'.repeat(64)}');
+   INSERT INTO stock_history_openings(id,baseline_id,product_id,store_id,quantity,product_name) VALUES(gen_random_uuid(),'${old}','${product}','a',3,'Old'),(gen_random_uuid(),'${later}','${product}','a',2,'Later');
+   UPDATE stock_history_heads SET baseline_id='${later}',coverage_state='complete',coverage_from_ticks=private.stock_history_ticks('${start}'),coverage_through_ticks=private.stock_history_ticks('${future}') WHERE store_id='a';`);
+  await sourceAndChange();const effect=(await rows('stock_history_accepted_effects'))[0]!.id;
+  await db.query('INSERT INTO private.stock_history_effect_coverage(effect_id,baseline_id) VALUES($1,$2)',[effect,later]);
+  expect((await db.query<{page:object}>(`SELECT pos_stock_history_page('admin',NULL,'a','${cutoff}','Asia/Brunei',NULL,100,NULL,false,NULL) page`)).rows[0]!.page)
+   .toMatchObject({status:'incomplete',reasons:['UNVALIDATED_STOCK_EFFECTS'],rows:[]});
+  expect((await db.query<{state:{unvalidatedEffects:string}}>(`SELECT private.stock_history_capture_state('a','${later}') state`)).rows[0]!.state.unvalidatedEffects).toBe('0');
+  expect((await db.query<{state:{unvalidatedEffects:string}}>(`SELECT private.stock_history_capture_state('a','${old}') state`)).rows[0]!.state.unvalidatedEffects).toBe('1');
+ });
  it('aborts unknown existing capture schema instead of replacing it',async()=>{
   await expect(db.exec(capture)).rejects.toThrow(/EXISTING_SCHEMA_REVIEW_REQUIRED/);await db.exec('ROLLBACK');
   expect(await rows('stock_history_accepted_effects')).toHaveLength(0);

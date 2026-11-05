@@ -162,11 +162,6 @@ BEGIN
  cutoff:=private.stock_history_ticks(p_cutoff);
  read_raw:=to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US')||'0Z';
  IF cutoff>private.stock_history_ticks(read_raw) THEN reasons:=reasons||'"FUTURE_CUTOFF"'::jsonb; END IF;
- IF to_regprocedure('private.stock_history_capture_state(text)') IS NOT NULL THEN
-  EXECUTE 'SELECT private.stock_history_capture_state($1)' INTO capture_state USING p_branch;
-  IF (capture_state->>'unvalidatedEffects')::bigint>0 THEN reasons:=reasons||'"UNVALIDATED_STOCK_EFFECTS"'::jsonb;END IF;
-  IF (capture_state->>'captureGaps')::bigint>0 THEN reasons:=reasons||'"CAPTURE_GAPS"'::jsonb;END IF;
- END IF;
  SELECT * INTO h FROM public.stock_history_heads WHERE store_id=p_branch FOR SHARE;
  IF NOT FOUND OR h.baseline_id IS NULL THEN
   RETURN jsonb_build_object('status','incomplete','reasons',reasons||'"NO_VERIFIED_OPENING"'::jsonb,
@@ -178,6 +173,13 @@ BEGIN
   AND cutoff_ticks<=cutoff ORDER BY cutoff_ticks DESC,id DESC LIMIT 1;
  IF NOT FOUND THEN SELECT * INTO b FROM public.stock_history_baselines WHERE id=h.baseline_id AND store_id=p_branch; END IF;
  IF NOT FOUND THEN RAISE EXCEPTION 'STOCK_HISTORY_INVALID_OPENING'; END IF;
+ -- An effect absorbed by a later opening is not coverage for an older report.
+ -- Resolve the requested opening before checking its effect associations.
+ IF to_regprocedure('private.stock_history_capture_state(text,uuid)') IS NOT NULL THEN
+  EXECUTE 'SELECT private.stock_history_capture_state($1,$2)' INTO capture_state USING p_branch,b.id;
+  IF (capture_state->>'unvalidatedEffects')::bigint>0 THEN reasons:=reasons||'"UNVALIDATED_STOCK_EFFECTS"'::jsonb;END IF;
+  IF (capture_state->>'captureGaps')::bigint>0 THEN reasons:=reasons||'"CAPTURE_GAPS"'::jsonb;END IF;
+ END IF;
  SELECT count(*) INTO actual_pairs FROM public.stock_history_openings WHERE baseline_id=b.id AND store_id=p_branch;
  IF b.verification_state<>'verified' OR b.expected_pairs<>actual_pairs THEN reasons:=reasons||'"UNVERIFIED_OPENING"'::jsonb; END IF;
  IF cutoff<b.cutoff_ticks THEN reasons:=reasons||'"BEFORE_BASELINE"'::jsonb; END IF;
@@ -215,7 +217,7 @@ BEGIN
  END LOOP;
  page:=to_jsonb(page_rows);
  IF capture_state IS NOT NULL THEN
-  EXECUTE 'SELECT private.stock_history_capture_state($1)' INTO capture_after USING p_branch;
+  EXECUTE 'SELECT private.stock_history_capture_state($1,$2)' INTO capture_after USING p_branch,b.id;
   IF capture_state IS DISTINCT FROM capture_after THEN RAISE EXCEPTION 'STOCK_HISTORY_SOURCE_CHANGED';END IF;
  END IF;
  RETURN jsonb_build_object('status','complete','reasons','[]'::jsonb,'cutoff',p_cutoff,'timeZone',p_zone,'branchId',p_branch,

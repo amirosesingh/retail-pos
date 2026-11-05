@@ -42,6 +42,14 @@ The foundation does not certify complete history or a production-ready report.
 
 ## Durable metadata checkpoint — 6 November
 
+Independent coverage review found a future publication hazard: an effect linked
+only to a newer opening could globally appear covered for an older requested
+opening. The draft reader now selects its opening before checking effects, and
+the private coverage revision admits baseline-only inclusion for that selected
+opening only. A newer opening cannot certify unknown earlier movement timing.
+The actual PostgreSQL reproduction and 35 focused read/effect scenarios pass.
+No publisher, live opening or gap-resolution writer is enabled by this fix.
+
 The next unactivated preparation checkpoint deduplicates activity/adjustment/
 delta-receipt representations of the same stock effect and adds exact-byte SQL
 journal reads plus transactional accepted-receipt acknowledgement. A network200
