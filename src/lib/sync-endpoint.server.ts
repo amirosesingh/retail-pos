@@ -77,6 +77,12 @@ const bodySchema = z.object({
     })
     .optional(),
   sqlServerAggregate: syncAggregateSchema.optional(),
+  sqlServerLegacyRecovery: z.object({
+    organizationId: z.string().min(1).max(128),
+    branchId: z.string().min(1).max(128),
+    payloadJson: z.string().min(2).max(256 * 1024),
+    attestation: z.unknown(),
+  }).strict().optional(),
   sqlServerFinancialCapability:z.object({organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128),shiftId:z.string().uuid().optional()}).strict().optional(),
   sqlServerFinancialEvent:z.object({organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128),operationJson:z.string().min(2).max(6*1024*1024),proof:z.unknown()}).strict().optional(),
   sqlServerFinancialBasis:z.object({organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128),shiftId:z.string().uuid()}).strict().optional(),
@@ -153,17 +159,40 @@ const bodySchema = z.object({
     .optional(),
 });
 
+async function boundedRecoveryBody(request: Request): Promise<string> {
+  const limit = 256 * 1024;
+  const oversized = () => Object.assign(new Error("The recovery request exceeds 256 KiB."), { code: "PAYLOAD_TOO_LARGE" });
+  if (Number(request.headers.get("content-length")) > limit) throw oversized();
+  const reader = request.body?.getReader();
+  if (!reader) throw new Error("Missing recovery body");
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let bytes = 0, raw = "";
+  try {
+    while (true) {
+      const part = await reader.read(); if (part.done) break;
+      bytes += part.value.byteLength;
+      if (bytes > limit) { await reader.cancel().catch(() => undefined); throw oversized(); }
+      raw += decoder.decode(part.value, { stream: true });
+    }
+    return raw + decoder.decode();
+  } finally { reader.releaseLock(); }
+}
+
 export async function handleSyncRequest(request: Request): Promise<Response> {
   let body: z.infer<typeof bodySchema>;
   let exactFinancialOperations = false;
   try {
-    const raw = await request.text();
+    // This header only LOWERS the existing generic limit. It grants no identity
+    // or permission; all device, reviewer and branch guards still run below.
+    const raw = request.headers.get("x-pos-legacy-recovery") === "1" ? await boundedRecoveryBody(request) : await request.text();
     if (new TextEncoder().encode(raw).byteLength > 8 * 1024 * 1024)
       return Response.json(
         { ok: false, code: "PAYLOAD_TOO_LARGE", error: "The sync batch exceeds 8 MiB." },
         { status: 413 },
       );
     body = bodySchema.parse(JSON.parse(raw));
+    if (body.sqlServerLegacyRecovery && request.headers.get("x-pos-legacy-recovery") !== "1")
+      throw new Error("Missing bounded recovery transport");
     if (body.sqlServerAggregate?.financialLedgerProjection) {
       // Validate with the established schema first. Restore only numeric leaves
       // inside its accepted row/change records; never restore stripped operation
@@ -202,11 +231,13 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       });
       exactFinancialOperations = true;
     }
-    if(body.sqlServerFinancialCapability||body.sqlServerFinancialEvent||body.sqlServerFinancialBasis||body.sqlServerFinancialObservation||body.sqlServerAggregate?.registerFinancialBoundary||body.sqlServerAggregate?.shiftFinancialOpening||body.sqlServerAggregate?.financialLedgerProjection){
-      const operations=[body.managementSyncBranches,body.ops?.length,body.read,body.sqlServerBatch,body.sqlServerAggregate,body.sqlServerFinancialCapability,body.sqlServerFinancialEvent,body.sqlServerFinancialBasis,body.sqlServerFinancialObservation,body.sqlServerShiftGraph,body.sqlServerPull,body.sqlServerBootstrap,body.sqlServerCounts,body.sqlServerTelemetry,body.oldReceipt];
+    if(body.sqlServerLegacyRecovery||body.sqlServerFinancialCapability||body.sqlServerFinancialEvent||body.sqlServerFinancialBasis||body.sqlServerFinancialObservation||body.sqlServerAggregate?.registerFinancialBoundary||body.sqlServerAggregate?.shiftFinancialOpening||body.sqlServerAggregate?.financialLedgerProjection){
+      const operations=[body.managementSyncBranches,body.ops?.length,body.read,body.sqlServerBatch,body.sqlServerAggregate,body.sqlServerLegacyRecovery,body.sqlServerFinancialCapability,body.sqlServerFinancialEvent,body.sqlServerFinancialBasis,body.sqlServerFinancialObservation,body.sqlServerShiftGraph,body.sqlServerPull,body.sqlServerBootstrap,body.sqlServerCounts,body.sqlServerTelemetry,body.oldReceipt];
       if(operations.filter(Boolean).length!==1)throw new Error('Mixed financial metadata request');
     }
-  } catch {
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "PAYLOAD_TOO_LARGE")
+      return Response.json({ ok: false, code: "PAYLOAD_TOO_LARGE", error: "The recovery request exceeds 256 KiB; saved work remains pending." }, { status: 413 });
     return Response.json({ ok: false, error: "Malformed request" }, { status: 400 });
   }
 
@@ -225,6 +256,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     !body.read &&
     !body.sqlServerBatch &&
     !body.sqlServerAggregate &&
+    !body.sqlServerLegacyRecovery &&
     !body.sqlServerFinancialEvent &&
     !body.sqlServerFinancialBasis &&
     !body.sqlServerFinancialCapability &&
@@ -286,12 +318,16 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     const signedFinancialBasis=body.sqlServerAggregate?.shiftFinancialBasis;
     const signedFinancialEventProof=body.sqlServerFinancialEvent?.proof;
     const signedFinancialOpening=body.sqlServerAggregate?.shiftFinancialOpening;
+    const signedRecovery=body.sqlServerLegacyRecovery;
     body = alignVerifiedScopeIds(body, scope);
     if (signedAuthor && body.sqlServerAggregate) body.sqlServerAggregate.shiftAuthor = signedAuthor;
     if (signedStart && body.sqlServerAggregate) body.sqlServerAggregate.shiftClosingStart = signedStart;
     if(signedFinancialBasis && body.sqlServerAggregate)body.sqlServerAggregate.shiftFinancialBasis=signedFinancialBasis;
     if(signedFinancialEventProof!==undefined&&body.sqlServerFinancialEvent)body.sqlServerFinancialEvent.proof=signedFinancialEventProof;
     if(signedFinancialOpening&&body.sqlServerAggregate)body.sqlServerAggregate.shiftFinancialOpening=signedFinancialOpening;
+    // Recovery labels and raw graph text were signed by Main. Scope alignment
+    // must never edit those bytes; the verifier checks them against the binding.
+    if(signedRecovery)body.sqlServerLegacyRecovery=signedRecovery;
   } catch (e) {
     if ((e as { status?: number }).status === 503)
       return Response.json({ ok: false, code: "SERVICE_UNAVAILABLE", error: "Registration verification is temporarily unavailable." }, { status: 503 });
@@ -360,6 +396,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
   if (
     body.sqlServerBatch ||
     body.sqlServerAggregate ||
+    body.sqlServerLegacyRecovery ||
     body.sqlServerFinancialEvent ||
     body.sqlServerFinancialBasis ||
     body.sqlServerFinancialCapability ||
@@ -373,6 +410,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     const branchId =
       body.sqlServerBatch?.branchId ??
       body.sqlServerAggregate?.branchId ??
+      body.sqlServerLegacyRecovery?.branchId ??
       body.sqlServerFinancialEvent?.branchId ??
       body.sqlServerFinancialBasis?.branchId ??
       body.sqlServerFinancialCapability?.branchId ??
@@ -386,6 +424,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     const terminalSync = Boolean(
       body.sqlServerBatch ||
       body.sqlServerAggregate ||
+      body.sqlServerLegacyRecovery ||
       body.sqlServerFinancialEvent ||
       body.sqlServerFinancialBasis ||
       body.sqlServerFinancialCapability ||
@@ -572,6 +611,20 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
         );
     }
     const { serviceRest } = await import("@/core/api/pos-relay.server");
+    let legacyRecovery: Awaited<ReturnType<typeof import("./legacy-shift-recovery.server").verifyLegacyShiftRecovery>> | undefined;
+    if (body.sqlServerLegacyRecovery) {
+      if (!verifiedTerminal)
+        return Response.json({ ok: false, code: "TERMINAL_REQUIRED", error: "A verified terminal is required." }, { status: 403 });
+      const { verifyLegacyShiftRecovery, LegacyRecoveryError } = await import("./legacy-shift-recovery.server");
+      try {
+        legacyRecovery = await verifyLegacyShiftRecovery({ terminal: verifiedTerminal, branchId,
+          payloadJson: body.sqlServerLegacyRecovery.payloadJson, attestation: body.sqlServerLegacyRecovery.attestation });
+      } catch (error) {
+        const known = error instanceof LegacyRecoveryError;
+        return Response.json({ ok: false, code: known ? error.code : "ELEGACY_RECOVERY_INVALID",
+          error: "Legacy shift recovery remains pending administrator review." }, { status: known ? error.status : 403 });
+      }
+    }
     let verifiedFinancialOpening:Awaited<ReturnType<typeof import('./sync-financial-operation.server').verifyFinancialOpeningEnvelope>>|undefined;
     if(body.sqlServerAggregate?.shiftFinancialOpening){
       if(!verifiedTerminal)return Response.json({ok:false,code:'TERMINAL_REQUIRED',error:'A verified terminal is required.'},{status:403});
@@ -636,7 +689,13 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     }
     const governanceBatch =
       body.sqlServerBatch && governanceRpcTables.has(body.sqlServerBatch.table);
-    const rpc = body.sqlServerFinancialCapability
+    const rpc = body.sqlServerLegacyRecovery
+      ? (["pos_sync_recover_legacy_closing", {
+          p_organization_id: body.sqlServerLegacyRecovery.organizationId, p_branch_id: branchId,
+          p_terminal_id: scope.terminalId ?? "", p_payload_json: body.sqlServerLegacyRecovery.payloadJson,
+          p_attestation: legacyRecovery!.attestation, p_authority: legacyRecovery!.authority,
+        }] as const)
+      : body.sqlServerFinancialCapability
       ? (["pos_sync_financial_capability",{p_org:body.sqlServerFinancialCapability.organizationId,p_branch:branchId,p_terminal:scope.terminalId??"",p_shift:body.sqlServerFinancialCapability.shiftId??null}] as const)
       : body.sqlServerFinancialObservation
       ? (["pos_sync_register_financial_observation",{p_org:body.sqlServerFinancialObservation.organizationId,p_branch:branchId,p_terminal:scope.terminalId??"",p_raw:body.sqlServerFinancialObservation.operationJson}] as const)

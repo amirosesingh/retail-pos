@@ -10,3 +10,4 @@ export function DesktopUpdateBanner() { return null; }
 export function DesktopCloseSyncStatus() { return null; }
 export function LocalDatabaseWizard(_props: { initiallyOpen?: boolean; onRecoveryClose?: () => void } = {}) { return null; }
 export function LocalDatabaseOperations() { return null; }
+export function StartupShiftRecoveryReview(_props: { connected: boolean; renderLogin?: unknown }) { return null; }

@@ -22,14 +22,14 @@ async function applySnapshot(cloud, transaction, table, rows, reader, branchId) 
 }
 const { readPage,MAX_PAGE_BYTES } = require("../sync/page-policy.cjs");
 function keyFor(table,row){const primary=table.columns.filter(column=>column.primaryKey).map(column=>column.cloudColumn);return JSON.stringify(Object.fromEntries(primary.map(column=>[column,row[column]])));}
-async function snapshotPage({cloud,connectionManager,table,branchId,historyDays,cursor,size,rowFilter=()=>true}){
+async function snapshotPage({cloud,connectionManager,table,branchId,historyDays,cursor,size,rowFilter=()=>true,recovery=null}){
   let prepared,selected;const decisions=new Map();
   const page=await readPage(async limit=>{
     prepared=null;
     const batch=await cloud.bootstrapPage({table:table.cloudTable,branchId,historyDays,cursor,limit});
     if(Buffer.byteLength(JSON.stringify(batch),"utf8")>MAX_PAGE_BYTES)throw Object.assign(new Error("Download exceeds the safe page size."),{code:"EOVERSIZED"});
     selected=(batch.rows??[]).filter(row=>{const key=keyFor(table,row);if(!decisions.has(key))decisions.set(key,rowFilter(row));return decisions.get(key);});
-    prepared=await prepareShiftGraphs({cloud,connectionManager,branchId,changes:selected.map(row=>({table_name:table.cloudTable,entity_id:keyFor(table,row),row_data:row,tombstone:false}))});
+    prepared=await prepareShiftGraphs({cloud,connectionManager,branchId,recovery,changes:selected.map(row=>({table_name:table.cloudTable,entity_id:keyFor(table,row),row_data:row,tombstone:false}))});
     return batch;
   },size,{table:table.cloudTable});
   return{...page,prepared,selected};
@@ -42,7 +42,7 @@ async function refreshTable({registry,cloud,connectionManager,branchId,historyDa
   try{do{
     diagnosticPhase="download";
     reportActivity(onActivity,{phase:"downloading",table:table.cloudTable,processedRows:completed});
-    const page=await snapshotPage({cloud,connectionManager,table,branchId,historyDays,cursor,size,rowFilter});const batch=page.batch;size=page.nextLimit;
+    const page=await snapshotPage({cloud,connectionManager,table,branchId,historyDays,cursor,size,rowFilter,recovery});const batch=page.batch;size=page.nextLimit;
     diagnosticPhase="local_apply";
     reportActivity(onActivity,{phase:"applying",table:table.cloudTable,processedRows:completed});
     const rows=batch.rows??[];

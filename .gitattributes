@@ -6,3 +6,12 @@
 /docs/database/shift-financial-upgrade-manifest.json text eol=lf
 /supabase/migrations/20261105113916_stock_history_effective_ledger.sql text eol=lf
 /database/sqlserver/prepared/031_stock_history_effective_ledger.sql text eol=lf
+/database/sqlserver/retail-pos-existing-upgrade-1.4.82.sql text eol=lf
+/database/sqlserver/prepared/existing-upgrade-1.4.82.manifest.json text eol=lf
+# Exact source provenance for that artifact. These entries do not change blobs.
+/database/sqlserver/retail-pos-local-database.sql text eol=lf
+/database/sqlserver/prepared/027_shift_branch_sharing.sql text eol=lf
+/docs/database/retained-shift-recovery-evidence.sql text eol=lf
+/docs/database/legacy-shift-recovery-outbox.sql text eol=lf
+/docs/database/reviewed-shift-adoption.sql text eol=lf
+/supabase/migrations/20261105140417_isolate_refund_guard_table_fields.sql text eol=lf

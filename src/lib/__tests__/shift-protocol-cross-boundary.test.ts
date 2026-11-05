@@ -5,8 +5,10 @@ import { randomUUID } from "node:crypto";
 // Opt-in Windows engine test. This runs real LocalDB and PGlite, but is NOT an
 // installed Electron/IPC, physical device, live Supabase or OS-vault test.
 // All HTTP goes through the real sync API in-process; only the transport,
-// device/Auth identity, encrypted test vault and feed-page selection are isolated
-// adapters. Key generation/signing, enrollment HTTP handler, registry SQL and
+// device/Auth identity, encrypted test vault and protected-feed selection/privacy
+// projection are synthetic adapters. Feed bytes/headers follow the current
+// bounded contract; actual feed SQL projection has its own acceptance tests.
+// Main session/role logic, key signing, enrollment handler, registry SQL and
 // signed-intent admission are production implementations on synthetic identities.
 vi.mock("../external-supabase-config", () => ({ runtimeEnvValue: () => "synthetic-service", supabaseConfig: () => ({ url: "https://cloud.invalid", key: "synthetic-public" }) }));
 vi.mock("@tanstack/react-router", () => ({ createFileRoute: () => (options: unknown) => ({ options }) }));
@@ -15,14 +17,15 @@ import { Route } from "@/routes/api/v1/pos/shift-author-enroll";
 import { handleSyncRequest } from "../sync-endpoint.server";
 
 const require = createRequire(import.meta.url);
+const session = require("../../../electron/admin-session.cjs");
 const enabled = process.env.CODEX_SHIFT36_LOCALDB === "1";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic CJS and SQL engine fixture boundary
 type Row = Record<string, any>;
 let local: Row | undefined, db: Row | undefined, vault: Row | undefined;
-afterEach(async () => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); try { await db?.close(); } finally { try { await local?.close(); } finally { vault?.close(); local=undefined;db=undefined;vault=undefined; } } }, 60000);
+afterEach(async () => { session.clear(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); try { await db?.close(); } finally { try { await local?.close(); } finally { vault?.close(); local=undefined;db=undefined;vault=undefined; } } }, 60000);
 
 describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClient → API → isolated PostgreSQL", () => {
-  async function exerciseClosingProtocol(openingAlreadyAcknowledged: boolean) {
+  async function exerciseClosingProtocol(openingAlreadyAcknowledged: boolean, cashierCountsOriginal = false) {
     const { createCloud, createLocal, mainCalls, graphNames, createAuthorKeys } = require("../../../scripts/lib/shift-protocol-integration-fixture.cjs");
     const branch = randomUUID(), terminal = randomUUID(), shift = randomUUID(), sale = randomUUID(), proof = "a".repeat(64);
     db = await createCloud(branch, terminal); local = await createLocal(branch);
@@ -38,11 +41,14 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
     const reader = new ChangeReader(manager, registry), checkpoints = new CheckpointRepository(manager);
     const cashierId = randomUUID(), adminId = randomUUID();
     const permissions = { can_process_sale: true, can_close_shift: true, can_shift_cash_count: true, can_shift_cash_recount: true };
-    for (const [id, subject] of [[cashierId, "original-cashier"], [adminId, "authorized-admin"]])
-      await db!.query("INSERT INTO app_users(id,user_id,auth_user_id,role,role_slug,permissions,is_active,store_id) VALUES($1,$2,$1,'staff','cashier',$3::jsonb,true,$4)", [id, subject, JSON.stringify(permissions), branch]);
-    const person = (authorId: string, subject: string) => ({ source: "pos", authorId, canonicalSubject: subject, subject, branchId: branch });
-    let identity = person(cashierId, "original-cashier"), epoch = 1;
-    const session = { identity: () => identity, epoch: () => epoch, hasLevel: () => true, hasPermission: (key: string) => permissions[key as keyof typeof permissions] === true };
+    const cashierPermissions = { ...permissions, can_shift_cash_recount: false };
+    for (const [id, subject, role, flags] of [[cashierId, "original-cashier", "staff", cashierPermissions], [adminId, "authorized-admin", "admin", permissions]])
+      await db!.query("INSERT INTO app_users(id,user_id,auth_user_id,role,role_slug,permissions,is_active,store_id) VALUES($1,$2,$1,$3,$3,$4::jsonb,true,$5)", [id, subject, role, JSON.stringify(flags), branch]);
+    const login = (authorId: string, subject: string, level: string, flags: Row, scope = branch, source = "pos") => {
+      session.grant(level, subject, flags, source, scope); session.bindVerifiedAuthor(authorId, subject);
+    };
+    login(cashierId, "original-cashier", "staff", cashierPermissions);
+    expect(session.hasLevel("admin")).toBe(false);
     const terminalConfig = { tokenId: terminal, locationId: branch, deviceUse: "operations", deviceBindingProof: proof, deviceClaimProof: proof };
     vault = createAuthorKeys();
     const { ShiftAuthorAuthority } = require("../../../electron/shift-authority.cjs");
@@ -76,20 +82,21 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
       return scalar(`SELECT public.${name}(${spec.map(([key, type], index) => `${key}=>$${index + 1}::${type}`).join(",")}) AS result`, values);
     };
     vi.stubGlobal("fetch", vi.fn(async (value: string | URL | Request, options?: RequestInit) => {
-      const url = String(value);
+      const url = value instanceof Request ? value.url : String(value);
+      const bodyText = options?.body ?? (value instanceof Request ? await value.clone().text() : undefined);
       if (url === "https://pos.invalid/api/v1/pos/shift-author-enroll") {
         const handler = (Route as unknown as { options: { server: { handlers: { POST: (input: { request: Request }) => Promise<Response> } } } }).options.server.handlers.POST;
-        return handler({ request: new Request(url, options) });
+        return handler({ request: new Request(url, { ...options, body: bodyText }) });
       }
-      if (url === "https://cloud.invalid/auth/v1/user") return Response.json({ id: identity.authorId });
+      if (url === "https://cloud.invalid/auth/v1/user") return Response.json({ id: session.identity()?.authorId });
       if (url.startsWith("https://cloud.invalid/rest/v1/app_users?")) {
         const parsed = new URL(url), field = ["id", "user_id", "auth_user_id"].find(key => parsed.searchParams.has(key));
         if (!field) throw new Error("Fixture requires an explicit account selector");
         return Response.json((await db!.query(`SELECT * FROM app_users WHERE ${field}::text=$1`, [parsed.searchParams.get(field)!.slice(3)])).rows);
       }
       if (url === "https://pos.invalid/api/v1/pos/sync") {
-        const body = JSON.parse(String(options?.body)); outbound.push(structuredClone(body));
-        const response = await handleSyncRequest(new Request(url, options));
+        const body = JSON.parse(String(bodyText)); outbound.push(structuredClone(body));
+        const response = await handleSyncRequest(new Request(url, { ...options, body: bodyText }));
         if (body.sqlServerAggregate?.shiftIntent?.kind === "ORIGINAL" && response.ok && loseOriginalReply) {
           loseOriginalReply = false;
           // Commit is real; only delivery of its response is lost.
@@ -100,9 +107,24 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
       if (url.startsWith("https://cloud.invalid/rest/v1/terminal_tokens?"))
         return Response.json([{ id: terminal, platform: "pc", status: "used", location_id: branch, is_claimed: true, claim_proof: proof }]);
       if (url.startsWith("https://cloud.invalid/rest/v1/stores?")) return Response.json([{ id: branch }]);
-      const match = /^https:\/\/cloud\.invalid\/rest\/v1\/rpc\/([a-z_]+)$/.exec(url);
+      const match = /^https:\/\/cloud\.invalid\/rest\/v1\/rpc\/([a-z0-9_]+)$/.exec(url);
       if (match) {
-        try { return Response.json(await rpc(match[1], JSON.parse(String(options?.body)))); }
+        const args = JSON.parse(String(bodyText));
+        if (match[1] === "pos_sync_feed_page_v1") {
+          rpcCalls.push({ name: match[1], args: structuredClone(args) });
+          expect(Object.keys(args).sort()).toEqual(["p_organization_id", "p_branch_id", "p_terminal_id", "p_after_cursor", "p_keep_commerce", "p_max_bytes"].sort());
+          expect(args.p_branch_id).toBe(branch); expect(args.p_terminal_id).toBe(terminal);
+          expect(args.p_max_bytes).toBe(2 * 1024 * 1024); expect(typeof args.p_keep_commerce).toBe("boolean");
+          // The feed selection/privacy projection is synthetic, not execution
+          // of pos_sync_feed_page_v1 SQL. The guarded API consumes real bounded
+          // response bytes/attestation and the real client applies this page.
+          const remaining = feed.filter(row => row.cursor > args.p_after_cursor), selected = remaining.slice(0, 10);
+          const body = JSON.stringify(selected), bytes = new TextEncoder().encode(body).byteLength;
+          expect(bytes).toBeLessThanOrEqual(args.p_max_bytes);
+          return new Response(body, { headers: { "content-type": "application/json", "X-POS-Feed-Projection": "1", "X-POS-Feed-Bytes": String(bytes),
+            "X-POS-Feed-Rows": String(selected.length), "X-POS-Feed-Continue": remaining.length > selected.length ? "1" : "0" } });
+        }
+        try { return Response.json(await rpc(match[1], args)); }
         catch (error) { return Response.json({ message: (error as Error).message, code: (error as Row).code }, { status: 400 }); }
       }
       throw new Error(`External/unexpected network is blocked: ${url}`);
@@ -135,6 +157,21 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
       discount_amount: 0, tax_amount: 0, payment_type: "cash", payments: [], points_earned: 0, points_redeemed: 0, is_exchange: false, is_refunded: false,
       paid_amount: 80, change_amount: 0, exchange_credit: 0, coupon_discount: 0, rounding_adjustment: 0, row_version: 1, created_at: openedAt,
     }] }] });
+    const closingFacts = () => sqlRows("SELECT (SELECT COUNT(*) FROM dbo.shift_cash_counts) counts,(SELECT COUNT(*) FROM dbo.shift_reconciliations) reconciliations,(SELECT COUNT(*) FROM dbo.shift_close_events) events,(SELECT COUNT(*) FROM dbo.shift_notifications) notifications,(SELECT COUNT(*) FROM dbo.pos_sync_shift_intents) intents,(SELECT COUNT(*) FROM dbo.sync_change_journal) journal;");
+    const beforeDenied = await closingFacts();
+    login(cashierId, "original-cashier", "staff", { ...cashierPermissions, can_close_shift: false, can_shift_cash_count: false });
+    await expect(calls.startLocalShiftClose({ shiftId: shift, reason: "Denied cashier" })).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    await expect(calls.commitLocalShiftCashCount({ shiftId: shift, cash: 100 })).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    login(adminId, "authorized-admin", "admin", permissions, randomUUID());
+    expect(session.hasLevel("admin")).toBe(true);
+    await expect(calls.commitLocalShiftCashCount({ shiftId: shift, cash: 100 })).rejects.toMatchObject({ code: "SYNC_BRANCH_FORBIDDEN" });
+    login(adminId, "authorized-admin", "admin", permissions, branch, "manual");
+    await expect(calls.commitLocalShiftCashCount({ shiftId: shift, cash: 100 })).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    login(cashierId, "original-cashier", "staff", cashierPermissions);
+    const staleAuthor = authority.capture("START_CLOSE"); session.clear();
+    await expect(authority.prepare(staleAuthor)).rejects.toMatchObject({ code: "ESYNC_SHIFT_AUTHOR_CHANGED" });
+    expect(await closingFacts()).toEqual(beforeDenied);
+    login(cashierId, "original-cashier", "staff", cashierPermissions);
     await calls.startLocalShiftClose({ shiftId: shift, reason: "End of day", terminalId: terminal });
     const savedStarts = await sqlRows("SELECT * FROM dbo.pos_sync_shift_closing_starts;");
     expect(savedStarts).toHaveLength(1);
@@ -144,13 +181,25 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
     // Close/reopen the owned SQL connection and instantiate a new encrypted-key
     // store and authority. No OS process/device restart is claimed.
     await local!.restart(); vault!.keys = vault!.reopen();
-    identity = person(adminId, "authorized-admin"); epoch++;
+    const originalAuthorId = cashierCountsOriginal ? cashierId : adminId;
+    const originalSubject = cashierCountsOriginal ? "original-cashier" : "authorized-admin";
+    login(originalAuthorId, originalSubject, cashierCountsOriginal ? "staff" : "admin", cashierCountsOriginal ? cashierPermissions : permissions);
+    expect(session.hasLevel("admin")).toBe(!cashierCountsOriginal);
     authority = newAuthority();
     calls = mainCalls(repository, new ShiftSyncJournal(repository, { authorRequired: true }), branch, terminal, session, authority);
     expect(await authority.enrollOnline({ accessToken: "synthetic-admin-access" })).toEqual({ ok: true });
     expect(await sqlRows("SELECT * FROM dbo.pos_sync_shift_closing_starts;")).toEqual(savedStarts);
     expect(authority.validatePendingClosingStart(startProof)).toEqual(startProof);
     await expect(calls.commitLocalShiftCashCount({ shiftId: shift, cash: 100, clientKey: "original-1", terminalId: terminal })).resolves.toMatchObject({ ok: true, state: "CLOSED" });
+    const beforeRecountDenied = await closingFacts();
+    login(cashierId, "original-cashier", "staff", cashierPermissions);
+    await expect(calls.commitLocalShiftRecount({ shiftId: shift, cash: 110, reason: "No recount permission", clientKey: "denied-recount", terminalId: terminal })).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    expect(await closingFacts()).toEqual(beforeRecountDenied);
+    login(adminId, "authorized-admin", "admin", permissions);
+    expect(session.identity()).toMatchObject({ level: "admin", source: "pos", authorId: adminId });
+    expect(await scalar("SELECT role FROM app_users WHERE id=$1", [adminId])).toBe("admin");
+    authority = newAuthority(); calls = mainCalls(repository, new ShiftSyncJournal(repository, { authorRequired: true }), branch, terminal, session, authority);
+    expect(await authority.enrollOnline({ accessToken: "synthetic-admin-access" })).toEqual({ ok: true });
     await calls.commitLocalShiftRecount({ shiftId: shift, cash: 110, reason: "First recount", clientKey: "recount-1", terminalId: terminal });
     await calls.commitLocalShiftRecount({ shiftId: shift, cash: 120, reason: "Second recount", clientKey: "recount-2", terminalId: terminal });
     const savedIntents = await sqlRows("SELECT * FROM dbo.pos_sync_shift_intents ORDER BY intent_sequence;");
@@ -167,11 +216,11 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
     expect(frozen[1].predecessorIntentId).toBe(frozen[0].intentId); expect(frozen[2].predecessorIntentId).toBe(frozen[1].intentId);
     expect(frozen.map((value: Row) => value.operations.find((op: Row) => op.table === "shift_cash_counts").rows.length)).toEqual([1, 2, 3]);
     expect(await reader.frozenOpeningRows(opening.operationId, branch)).toEqual(frozenOpen);
-    identity = person(randomUUID(), "different-current-cashier"); epoch++;
+    login(randomUUID(), "different-current-cashier", "staff", { can_process_sale: true });
     const queued = await reader.pendingAggregates(branch, 500);
     expect(queued.filter((entry: Row) => entry.aggregateId.toLowerCase() === frozen[0].intentId)).toHaveLength(1);
     const signed = await reader.protectedIntent(savedIntents[0].intent_id, branch);
-    expect(signed.shiftAuthor).toMatchObject({ authorId: adminId, subject: "authorized-admin", action: "ORIGINAL" });
+    expect(signed.shiftAuthor).toMatchObject({ authorId: originalAuthorId, subject: originalSubject, action: "ORIGINAL" });
     expect(authority.validatePending(signed.shiftAuthor)).toEqual(signed.shiftAuthor);
     expect(() => authority.validatePending({ ...signed.shiftAuthor, keyId: randomUUID() })).toThrow();
     expect(signed.shiftClosingStart).toEqual(startProof);
@@ -181,15 +230,27 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
     // Send only the protocol's declared wire fields, exactly as PushWorker does.
     const shiftIntent = Object.fromEntries(["version", "intentId", "shiftId", "kind", "baseToken", "predecessorIntentId", "predecessorIntentHash", "payloadJson"].map(key => [key, wire[key]]));
     const receiptsBeforeDenial = Number(await scalar("SELECT count(*) FROM pos_sync_private.shift_author_receipts"));
-    for (const altered of [{ ...signed.shiftAuthor, signature: "A".repeat(86) }, { ...signed.shiftAuthor, authorId: cashierId }])
+    for (const altered of [{ ...signed.shiftAuthor, signature: "A".repeat(86) }, { ...signed.shiftAuthor, authorId: originalAuthorId === cashierId ? adminId : cashierId }])
       await expect(cloud.pushAggregate({ batchId: signed.intentId, branchId: branch, shiftIntent, shiftAuthor: altered, shiftClosingStart: startProof })).rejects.toMatchObject({ code: "ESHIFT_AUTHOR_INVALID" });
     for (const altered of [{ ...startProof, signature: "A".repeat(86) }, { ...startProof, authorId: adminId }])
       await expect(cloud.pushAggregate({ batchId: signed.intentId, branchId: branch, shiftIntent,
         shiftAuthor: signed.shiftAuthor, shiftClosingStart: altered })).rejects.toMatchObject({ code: "ESHIFT_AUTHOR_INVALID" });
+    const uploadOriginal = () => cloud.pushAggregate({ batchId: signed.intentId, branchId: branch, shiftIntent, shiftAuthor: signed.shiftAuthor, shiftClosingStart: startProof });
+    if (openingAlreadyAcknowledged) {
+      // These current-grant checks need an accepted cloud opening. The other
+      // scenario deliberately keeps OPEN queued until the real worker drains it.
+      await db!.query("UPDATE app_users SET permissions='{}'::jsonb WHERE id=$1", [originalAuthorId]);
+      await expect(uploadOriginal()).rejects.toThrow("SYNC_SHIFT_AUTHOR_PERMISSION_REVOKED");
+      await db!.query("UPDATE app_users SET permissions=$2::jsonb,store_id=$3 WHERE id=$1", [originalAuthorId, JSON.stringify(cashierCountsOriginal ? cashierPermissions : permissions), randomUUID()]);
+      await expect(uploadOriginal()).rejects.toThrow("SYNC_SHIFT_AUTHOR_PERMISSION_REVOKED");
+      await db!.query("UPDATE app_users SET store_id=$2 WHERE id=$1", [originalAuthorId, branch]);
+    }
     expect(Number(await scalar("SELECT count(*) FROM pos_sync_private.shift_closing_start_receipts"))).toBe(0);
     expect(Number(await scalar("SELECT count(*) FROM pos_sync_private.shift_author_receipts"))).toBe(receiptsBeforeDenial);
     expect(await sqlRows("SELECT * FROM dbo.pos_sync_shift_intents ORDER BY intent_sequence;")).toEqual(savedIntents);
     outbound.length = 0; // Subsequent assertions count the actual worker attempts only.
+    const startRequestsBeforeWorker = rpcCalls.filter(call => call.name === "pos_sync_push_started_shift_intent").length;
+    const recountRequestsBeforeWorker = rpcCalls.filter(call => call.name === "pos_sync_push_author_shift_intent").length;
     // Keep the actual driver's UUID casing; do not normalize the reader or
     // fixture to hide a worker identity-comparison regression.
 
@@ -220,7 +281,7 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
     const graph = await cloud.shiftGraph({ branchId: branch, shiftId: shift });
     const closedAtRaw = graph.closedAtRaw;
     expect(Number(graph.tables[0].rows[0].counted_cash)).toBe(120);
-    expect(graph.tables.find((part: Row) => part.table === "shift_cash_counts").rows.map((row: Row) => row.counted_by_staff_id).sort()).toEqual(["authorized-admin", "authorized-admin", "authorized-admin"].sort());
+    expect(graph.tables.find((part: Row) => part.table === "shift_cash_counts").rows.map((row: Row) => row.counted_by_staff_id).sort()).toEqual([originalSubject, "authorized-admin", "authorized-admin"].sort());
     expect(graph.tables[0].rows[0].closing_started_by).toBe("original-cashier");
     const startEvents = graph.tables.find((part: Row) => part.table === "shift_close_events").rows.filter((row: Row) => row.event === "closing_started");
     expect(startEvents).toHaveLength(1);
@@ -233,13 +294,13 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
     expect(sentIntents.filter(body => body.sqlServerAggregate.shiftIntent.intentId === frozen[0].intentId).map(body => body.sqlServerAggregate.shiftIntent.payloadJson)).toEqual([savedIntents[0].payload_json, savedIntents[0].payload_json]);
     expect(sentIntents.filter(body => body.sqlServerAggregate.shiftIntent.intentId === frozen[0].intentId).every(body =>
       JSON.stringify(body.sqlServerAggregate.shiftClosingStart) === JSON.stringify(startProof))).toBe(true);
-    expect(rpcCalls.filter(call => call.name === "pos_sync_push_started_shift_intent")).toHaveLength(2);
+    expect(rpcCalls.filter(call => call.name === "pos_sync_push_started_shift_intent").length - startRequestsBeforeWorker).toBe(2);
     expect(rpcCalls.filter(call => call.name === "pos_sync_push_started_shift_intent").every(call =>
-      call.args.p_closing_start.authorId === cashierId && call.args.p_shift_author.authorId === adminId)).toBe(true);
+      call.args.p_closing_start.authorId === cashierId && call.args.p_shift_author.authorId === originalAuthorId)).toBe(true);
     const recountRequests = sentIntents.filter(body => body.sqlServerAggregate.shiftIntent.kind === "RECOUNT");
     expect(recountRequests).toHaveLength(2);
     expect(recountRequests.every(body => !("shiftClosingStart" in body.sqlServerAggregate))).toBe(true);
-    expect(rpcCalls.filter(call => call.name === "pos_sync_push_author_shift_intent")).toHaveLength(2);
+    expect(rpcCalls.filter(call => call.name === "pos_sync_push_author_shift_intent").length - recountRequestsBeforeWorker).toBe(2);
     const registeredAuthors = rpcCalls.filter(call => call.name === "pos_shift_author_key").map(call => call.args.p_author_id);
     expect(registeredAuthors).toContain(cashierId); expect(registeredAuthors).toContain(adminId);
     const firstIntentIndex = outbound.findIndex(body => body.sqlServerAggregate?.shiftIntent);
@@ -283,7 +344,10 @@ describe.skipIf(!enabled)("opt-in actual native storage → worker → CloudClie
     expect(await sqlRows("SELECT * FROM dbo.sync_checkpoints WHERE direction=N'push' ORDER BY entity_type;")).toEqual(pushCheckpoints);
     expect(publish).toHaveBeenCalledTimes(1);
     expect(rpcCalls.some(call => call.name === "pos_sync_shift_graph")).toBe(true);
+    expect(rpcCalls.some(call => call.name === "pos_sync_feed_page_v1")).toBe(true);
+    expect(rpcCalls.some(call => call.name === "pos_sync_pull")).toBe(false);
   }
   it("preserves separately signed starter/count authors through restart, lost reply, recounts and protected web adoption",()=>exerciseClosingProtocol(false),180000);
   it("uploads an offline closing after OPEN was already acknowledged, retaining complete signed work through a lost reply and retry",()=>exerciseClosingProtocol(true),180000);
+  it("accepts an ordinary cashier closing and subsequent real Administrator recounts with current role/branch denials",()=>exerciseClosingProtocol(true, true),180000);
 });
