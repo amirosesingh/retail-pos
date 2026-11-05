@@ -93,12 +93,20 @@ regression passed5,729 tests/7 skipped, with required platform/hosting/permissio
 checks passing. Installed-device acceptance remains unverified. These new fixes
 have not been promoted to main or published as new installers.
 
-Recovery PR395 remains draft: exact classification and append-only evidence
-preparation are tested but not full runtime recovery. Legacy financial recovery
-without its original snapshot needs the owner's rule decision; never manually
-copy it into cloud records. Historical date/time stock reporting is queued after
-the priority fixes and requires proven opening/movement coverage and time
-semantics. Preserve these unfinished tasks in TASK_TRACKER.md.
+PR399 single sync-data lane and PR398 permanent rules are also merged; current
+beta is59674214. Production draftPR400 tracks these reviewed beta changes and
+passes required checks; no new production promotion/installers are authorized.
+
+Recovery PR395 remains draft. Its committed review/upload head c900679d passes
+5,848 full-suite tests/8 skipped/0 failed and required CI, not full installed
+runtime recovery. The owner approved audited actual-Administrator recovery when
+old financial snapshots are unavailable; preserve that provenance and all newer
+protected-shift checks. Reviewed local adoption remains an unactivated prototype.
+A subsequent ordinary-delta precision regression rolls back; shared exact-number
+writer correction awaits its separately requested approval. Never manually copy
+retained closings into cloud records. Historical stock's quantity kernel is
+tested, but proven opening/movement storage, authorized loader and UI remain
+unfinished. Preserve these tasks and evidence in TASK_TRACKER.md.
 
 Last reconciled: **2026-11-03, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.

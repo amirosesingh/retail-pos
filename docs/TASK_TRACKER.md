@@ -27,7 +27,17 @@ pass; separate runs overlap and must not be summed as unique coverage. Total-wir
 sync limits/branch/authentication preserved. TypeScript/scoped lint checks passed
 before final UI lint-only cleanup. No live schema/data changes or publication.
 Core adoption/completion is still a separate unfinished prototype, not included
-in this checkpoint or claimed fixed. Full integrated regression/CI is next.
+in this checkpoint or claimed fixed. Exact committed head c900679d passed the
+separate full Vitest run:5,848 passed/8 skipped/0 failed (5,856 total), plus
+TypeScript. All current required GitHub/platform/Workers checks pass. These
+results exclude the uncommitted adoption prototype and installed-device tests.
+
+Reviewed-adoption prototype:31 actual disposable SQL Server groups pass; one
+ordinary subsequent cloud-delta regression attempts a rounded decimal and rolls
+back as designed. No committed production damage was demonstrated. A separate
+owner approval question is pending for exact-witness-only changes in shared
+shift-graph.cjs and ShiftIntentStore.adopt; do not edit those writers before the
+answer. Current prototype/DDL is not activated, applied or included in PR395.
 
 PR399 single sync-data lane is merged to beta596742141d33a1683f39990299ac7b7217259136.
 Exact source0d2dcf45 passed5,748 tests/7 skipped/0 failed plus109 focused checks,
@@ -38,10 +48,11 @@ promotion or installer publication is approved by creating it. PR354 is historic
 
 Owner asked to inspect red production commit checks. PR400's12-commit check
 rollups show two CANCELLED older Security runs (7ffb9862/4137b32e), not failed
-assertions; later reviewed heads and merge commits pass. Current59674214 still
-has its fresh production-PR Security run in progress at the recorded check.
+assertions; later reviewed heads and merge commits pass. Current59674214 now
+passes all required production-draft checks, including Security and Workers.
 CodeRabbit remains skipped under the owner's earlier waiver. Do not erase old
-run history, skip required tests or call a pending run successful.
+run history or skip required tests. Passing checks alone do not authorize
+production promotion, installers or live database application.
 
 DASH69 new request (separate from the nine-workstream stabilization progress):
 Live Dashboard selected branch only; Live Business Board company-wide comparison
