@@ -98,6 +98,11 @@
   hosting configuration. Preserve terminal identity, branch/warehouse/cluster
   scope and current authorization on every affected online, local and offline
   path. Do not fall back to another database or untrusted request identity.
+- Parameterize SQL values and restrict dynamic identifiers to the reviewed
+  schema/registry. Use the configured connection pool with bounded concurrency;
+  avoid duplicate in-flight reads and unnecessary polling. A terminal is not
+  equivalent to one physical PostgreSQL connection. Do not change pool limits,
+  operator connection settings or billing to conceal a query/sync defect.
 - Preserve timeout/network errors separately from authentication/permission
   denials and business conflicts. Do not count connectivity failures as wrong PIN
   attempts or substitute empty/default settings as successfully loaded data.
