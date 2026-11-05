@@ -1,26 +1,46 @@
 import { resolve } from 'node:path';
 
-const names = 'normalizeClosingStart, closingStartMessage, normalizeBinding, normalizeEnrollment, normalizeAttestation, enrollmentMessage, intentMessage';
-const footer = `module.exports = { ${names} };`;
+const authorNames = 'normalizeClosingStart, closingStartMessage, normalizeBinding, normalizeEnrollment, normalizeAttestation, enrollmentMessage, intentMessage';
+const contracts = [
+  { file: 'shift-author-protocol.cjs', names: authorNames, footer: `module.exports = { ${authorNames} };`, bindingImport: false },
+  { file: 'shift-financial-protocol.cjs', names: 'financialBasisMessage,normalizeFinancialBasisAttestation,openingFinancialBasisMessage,normalizeOpeningFinancialBasisAttestation', bindingImport: true },
+  { file: 'financial-author-protocol.cjs', names: 'financialOperationMessage,normalizeFinancialAttestation', bindingImport: true },
+  { file: 'legacy-shift-recovery-protocol.cjs', names: 'ACTION, MAX_UPLOAD_BYTES, normalizeLegacyPayload, unsignedLegacyRecovery, normalizeLegacyRecovery, legacyRecoveryMessage, legacyRecoveryWire', bindingImport: true, spacedFooter: true },
+];
 const normalizePath = value => value.replaceAll('\\', '/');
+const bindingRequire = /^const[ \t]+\{[ \t]*normalizeBinding[ \t]*\}[ \t]*=[ \t]*require\((['"])\.\/shift-author-protocol\.cjs\1\);[ \t]*$/m;
 
-/** Vite's dev SSR evaluator needs ESM exports for this one shared wire module. */
+/** Vite dev SSR evaluates these exact shared CommonJS wire modules as ESM. */
 export function shiftProtocolDevInterop() {
-  let protocolPath;
+  let protocols = new Map();
   return {
     name: 'shift-protocol-dev-interop',
     apply: 'serve',
     enforce: 'pre',
     configResolved(config) {
-      protocolPath = normalizePath(resolve(config.root, 'electron/security/shift-author-protocol.cjs'));
+      protocols = new Map(contracts.map(contract => [
+        normalizePath(resolve(config.root, 'electron/security', contract.file)), contract,
+      ]));
     },
     transform(source, id) {
-      if (normalizePath(id.split('?')[0]) !== protocolPath) return null;
+      const contract = protocols.get(normalizePath(id.split('?')[0]));
+      if (!contract) return null;
+      const footer = contract.footer ?? (contract.spacedFooter
+        ? `module.exports = { ${contract.names} };` : `module.exports={${contract.names}};`);
       if (!source.trimEnd().endsWith(footer) || source.split('module.exports').length !== 2) {
         throw new Error('Unexpected shared shift protocol exports; review the development interop boundary.');
       }
-      const start = source.lastIndexOf(footer);
-      return { code: `${source.slice(0, start)}export { ${names} };\n`, map: null };
+      let body = source.slice(0, source.lastIndexOf(footer));
+      const requires = body.match(/\brequire[ \t]*\(/g) ?? [];
+      if (contract.bindingImport) {
+        if (requires.length !== 1 || !bindingRequire.test(body)) {
+          throw new Error('Unexpected shared shift protocol imports; review the development interop boundary.');
+        }
+        body = body.replace(bindingRequire, "import { normalizeBinding } from './shift-author-protocol.cjs';");
+      } else if (requires.length) {
+        throw new Error('Unexpected shared shift protocol imports; review the development interop boundary.');
+      }
+      return { code: `${body}export { ${contract.names} };\n`, map: null };
     },
   };
 }

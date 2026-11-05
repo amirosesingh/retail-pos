@@ -5919,3 +5919,23 @@ actual cashier approved-payment acceptance remains pending that distinct fix.
 Report ordering compares instant milliseconds plus the remaining SQL 100 ns
 fraction, so mixed precision/offset strings sort correctly without rewriting
 raw timestamps or pagination cursors. Equal instants retain descending ID ties.
+# DEV76 — complete shared protocol loading in local previews, 6 November
+
+The owner requested latest Electron and web previews side by side, then reported
+that the local environments did not load. The web checkout had no environment
+file; its process now reads the existing operator-managed root .env.local without
+copying or logging secrets. A real development-server request then reproduced
+`require is not defined` in shift-financial-protocol.cjs. Extend only the existing
+serve-only exact-file interop to the three financial/recovery protocol companions.
+Keep their native source, signed bytes, validators, permissions and build output
+unchanged. Baseline beta3074a475; isolated codex/dev-financial-protocol-beta.
+Acceptance: real Vite SSR reproduction, native/ESM valid and denied parity, exact
+file/export/import-contract denials, focused regression, and latest local previews.
+No database, registration, settings, queue or checkpoint changes. Targeted rollback
+is a revert of this development-only loader correction.
+
+Prepared validation: 60 tests across four focused suites pass, including the
+actual Vite SSR failure/recovery and native/ESM signed-message/invalid-input
+parity for all four modules. TypeScript, scoped ESLint and diff checks pass.
+Independent agent source review found no blocker. Required CI and actual
+configured preview reload remain pending; no beta/main merge or publication.

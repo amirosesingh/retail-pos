@@ -1460,3 +1460,12 @@ Do not alter active-shift selection, exact cursors, saved times or authorization
 The actual Operations snapshot returns raw shift recordsets (unlike its other
 codec-normalized tables); paged history already normalizes opened_at. The report
 adapter therefore handles native Date seeds without changing those shared paths.
+# 6 November — latest local preview continuity
+
+Keep latest merged beta Electron and web previews running beside each other.
+Reload integrated runtime changes safely; preserve unsaved checkout, SQL settings,
+sealed registration and pending work. Website local startup must use the existing
+hosting environment, not device overrides or hardcoded credentials. DEV76 extends
+the already existing development-only shared-protocol loader to its exact public
+financial/recovery companions after an actual local SSR failure; no wire behavior
+or deployed/native security protocol is changed.
