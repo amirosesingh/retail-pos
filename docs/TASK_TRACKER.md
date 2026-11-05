@@ -5260,3 +5260,20 @@ CI, deployed/installed acceptance, beta integration and production publication
 remain pending. An earlier prototype-era full run was interrupted after a review
 finding and is not final evidence. Do not merge/publish on the strength of this
 local pass alone.
+
+### Checkout last-unit branch rejection — prepared 2026-11-05
+
+- Completed scoped code/tests: same-transaction eligible preimage and strict actual
+  persisted stock/unchanged-catalogue verification in AggregateRepository only.
+- Passed: 43 focused tests; 39 disposable full-commit SQL Server groups. Baseline
+  last-unit failure reproduced before correction; fixture uses synthetic rows only.
+- Pending: independent review, final compiler/lint/CI, beta PR acceptance and any
+  separately authorized promotion/publication. No live DB change is needed here.
+- Separate finding awaiting owner scope decision: NEW-operation-ID replay of an
+  already saved immutable sale graph can repeat stock effects after a refill;
+  reproduced in original beta too. Existing same-operation-ID replay remains safe.
+- Rollback: revert only this scoped checkout PR; no schema/data rollback is needed.
+  Membership, terminal registration, permissions and other sync work are unchanged.
+- Integration/release blocker: keep this PR draft until the separately reviewed
+  new-operation-ID existing-sale replay gap is resolved or the owner explicitly
+  decides its rollout. Passing this narrow patch's tests is not release approval.

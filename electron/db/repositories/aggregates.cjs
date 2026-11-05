@@ -1,8 +1,12 @@
 const { normalizeUuidFields } = require("../../sync/uuid-fields.cjs");
 const { createHash } = require("node:crypto");
 const { branchPredicate, rendererReadBranchPredicate } = require("../branch-scope.cjs");
-const { isFinancialStockUpdate } = require("../financial-stock-policy.cjs");
+const { isFinancialStockUpdate, assertFinancialStockUpdate } = require("../financial-stock-policy.cjs");
 
+const { projection } = require("../../sync/shift-recovery-exact.cjs");
+const SALE_STOCK_MUTABLE = new Set(["stock_quantity", "stock_by_store", "row_version", "updated_at", "is_archived", "archived_at"]);
+const stockRefused = () => { throw Object.assign(new Error("The sale stock write no longer matches its verified branch product."), { code: "SYNC_BRANCH_FORBIDDEN", table: "products" }); };
+const stableProduct = (table,row) => JSON.stringify(table.columns.filter(column => !SALE_STOCK_MUTABLE.has(column.sqlServerColumn)).map(column => [column.sqlServerColumn,row[column.sqlServerColumn]]));
 const AGGREGATE_KINDS = new Set([
   "sale", "payment", "refund", "shift", "product", "receiving", "stock",
   "transfer", "booking", "held_order", "general", "branch",
@@ -67,6 +71,30 @@ class AggregateRepository {
       throw Object.assign(new Error(`${table.cloudTable} does not belong to this terminal branch.`), {
         code: "SYNC_BRANCH_FORBIDDEN", table: table.cloudTable,
       });
+  }
+
+  async captureSaleStock(transaction, table, operation, aggregate, kind) {
+    if (kind !== "sale" || !isFinancialStockUpdate(operation, aggregate)) return null;
+    const predicate = rendererReadBranchPredicate(this.operationsRepository.registry, table, "source");
+    if (!predicate || !aggregate.branchId) stockRefused();
+    const result = await new (this.connectionManager.sql().Request)(transaction)
+      .input("product", operation.match?.id).input("branch", String(aggregate.branchId))
+      .query(`SELECT ${projection(table)} FROM dbo.products source WITH(UPDLOCK,HOLDLOCK) WHERE source.id=@product AND (${predicate});`);
+    if (result.recordset?.length !== 1) stockRefused();
+    const before = result.recordset[0];
+    assertFinancialStockUpdate(operation, aggregate, before);
+    return { before, identity: stableProduct(table,before) };
+  }
+
+  async confirmSaleStock(transaction, table, operation, aggregate, captured, affected) {
+    if (affected !== 1) stockRefused();
+    const result = await new (this.connectionManager.sql().Request)(transaction).input("product", operation.match.id)
+      .query(`SELECT ${projection(table)} FROM dbo.products source WITH(UPDLOCK,HOLDLOCK) WHERE source.id=@product;`);
+    if (result.recordset?.length !== 1 || stableProduct(table,result.recordset[0]) !== captured.identity) stockRefused();
+    // Reuse the strict branch-only stock equation against actual persisted
+    // values. Ownership/catalogue facts must remain unchanged; consuming the
+    // last stock unit may remove the transient read predicate's stock proof.
+    assertFinancialStockUpdate({ ...operation, values: { stock_quantity: result.recordset[0].stock_quantity, stock_by_store: result.recordset[0].stock_by_store } }, aggregate, captured.before);
   }
 
   async commit(kind, aggregate) {
@@ -179,6 +207,7 @@ class AggregateRepository {
         // "undefined", silently filtered out otherwise valid insert sources,
         // and made the post-write ownership check report a false branch
         // violation for sales, shift sessions, and other aggregates.
+        const stockPreimage = await this.captureSaleStock(transaction, table, operation, aggregate, kind);
         const operationAffected = await this.operationsRepository.applyOperation(transaction, operation, {
           branchId: aggregate.branchId,
           terminalId: aggregate.terminalId,
@@ -201,7 +230,8 @@ class AggregateRepository {
           );
         affected += operationAffected;
         if (operation.kind !== "delete") {
-          for (const record of records) await this.assertBranch(transaction, table, record, operation.match, aggregate.branchId, isFinancialStockUpdate(operation, aggregate));
+          if (stockPreimage) await this.confirmSaleStock(transaction, table, operation, aggregate, stockPreimage, operationAffected);
+          else for (const record of records) await this.assertBranch(transaction, table, record, operation.match, aggregate.branchId, isFinancialStockUpdate(operation, aggregate));
         }
         for (const record of records) {
           const request = new sql.Request(transaction)
