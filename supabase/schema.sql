@@ -25133,10 +25133,10 @@ COMMIT;
 
 -- Bounded hourly trading read (20261105170645; application scope admission required).
 CREATE FUNCTION public.pos_report_store_hours(p_from date, p_to date, p_store_ids text[])
-RETURNS TABLE(store_id text, hour integer, bills bigint, revenue numeric, cost numeric, profit numeric)
+RETURNS jsonb
 LANGUAGE plpgsql STABLE SECURITY INVOKER SET search_path = pg_catalog
 AS $report$
-DECLARE zone text;
+DECLARE zone text; result jsonb;
 BEGIN
   IF p_from IS NULL OR p_to IS NULL OR NOT isfinite(p_from) OR NOT isfinite(p_to)
      OR p_from > p_to OR p_to - p_from >= 3660
@@ -25147,8 +25147,7 @@ BEGIN
   END IF;
   SELECT coalesce((SELECT n.name FROM pg_catalog.pg_timezone_names n
     WHERE n.name=(SELECT s.integration_settings->>'timeZone' FROM public.pos_settings s WHERE s.id=1)), 'UTC') INTO zone;
-  RETURN QUERY
-    WITH selected_bills AS MATERIALIZED (
+  WITH selected_bills AS MATERIALIZED (
       SELECT s.id,s.store_id,s.created_at,
         s.total_amount-coalesce(s.tax_amount,0)-coalesce(s.rounding_adjustment,0) AS net
       FROM public.sales s
@@ -25159,16 +25158,19 @@ BEGIN
       SELECT si.sale_id,sum(round((coalesce(si.unit_cost,p.cost_price,0)*si.quantity)::numeric,2)) AS amount
       FROM selected_bills b JOIN public.sale_items si ON si.sale_id=b.id
       LEFT JOIN public.products p ON p.id=si.product_id GROUP BY si.sale_id
-    )
-    SELECT b.store_id,extract(hour FROM b.created_at AT TIME ZONE zone)::integer,count(*),
-      round(sum(b.net)::numeric,2),round(sum(coalesce(c.amount,0))::numeric,2),
-      round(sum(b.net-coalesce(c.amount,0))::numeric,2)
+    ), hours AS (
+    SELECT b.store_id,extract(hour FROM b.created_at AT TIME ZONE zone)::integer AS hour,count(*) AS bills,
+      round(sum(b.net)::numeric,2) AS revenue,round(sum(coalesce(c.amount,0))::numeric,2) AS cost,
+      round(sum(b.net-coalesce(c.amount,0))::numeric,2) AS profit
     FROM selected_bills b LEFT JOIN costs c ON c.sale_id=b.id
     GROUP BY b.store_id,extract(hour FROM b.created_at AT TIME ZONE zone)::integer
-    ORDER BY b.store_id,extract(hour FROM b.created_at AT TIME ZONE zone)::integer;
+  ) SELECT jsonb_build_object('version',1,'complete',true,'from',p_from,'to',p_to,'store_ids',to_jsonb(p_store_ids),
+      'row_count',count(*),'rows',coalesce(jsonb_agg(to_jsonb(h) ORDER BY h.store_id,h.hour),'[]'::jsonb))
+    INTO result FROM hours h;
+  RETURN result;
 END;
 $report$;
 REVOKE ALL ON FUNCTION public.pos_report_store_hours(date,date,text[]) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.pos_report_store_hours(date,date,text[]) TO service_role;
 COMMENT ON FUNCTION public.pos_report_store_hours(date,date,text[]) IS
-  'Service-only bounded report read. The application verifies current staff, cost permission and fixed-terminal/management branch scope before and after this read. Maximum 100 branches x 24 hours. No writes.';
+  'Service-only bounded report read. The application verifies current staff, cost permission and fixed-terminal/management branch scope before and after this read. One scalar JSON envelope avoids PostgREST row caps; maximum 100 branches x 24 hours. No writes.';

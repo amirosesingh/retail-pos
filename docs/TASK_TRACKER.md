@@ -6029,3 +6029,20 @@ installer publication occurred. Exact candidate SHA256(LF) is
 The hourly routine would need separate approval against ROSEGILL→
 rosegill0011@gmail.com's Org(bjxgimekljzlnwejuawj)→pos(qhrufhtbeguxydenzfey),
 postgres,https://qhrufhtbeguxydenzfey.supabase.co before live application.
+
+CHART72 completeness correction: independent review found that a SETOF hourly
+RPC could silently truncate1008groups at PostgREST's default1000row cap. The
+still-unapplied candidate now returns ONE scalar JSON envelope from the same SQL
+snapshot, with version/complete/date/selected-branch binding and exact row_count.
+The server checks the exact envelope keys, complete===true, safe-integer count
+matching rows<=2400, unique authorized shop/hour rows and current authority before
+and after the read. No shop/history restriction, API max_rows setting or grant
+was weakened; cross-page snapshot races are avoided rather than tolerated.
+New candidate SHA256(LF) supersedes158948DA…1806F:
+921067FA9C5EA4F2F4F46A5B2D25976B11C73218AEB60DC5FB69B5B814D9FCB5.
+Actual isolated PostgreSQL18.6 passed22cases. Actual PostgREST with max_rows1000
+first reproduced SETOF truncation, then returned all1008 and2400 scalar-envelope
+hourly groups with correct sums and metadata. All77 focused regressions,
+TypeScript and scoped lint passed. No live database application occurred. Final
+combined beta/source regression and independent re-review are required before
+integration; root owns live approval/promotion.

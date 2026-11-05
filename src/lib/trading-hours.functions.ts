@@ -41,8 +41,17 @@ export const loadHourlyTrading = createServerFn({ method: "POST" })
     if (!response.ok) throw new Error(response.status === 404
       ? "Hourly profit reporting requires its reviewed database upgrade. Other charts remain available."
       : "Hourly profit could not be verified. Other charts remain available.");
-    const raw: unknown = await response.json();
-    if (!Array.isArray(raw) || raw.length > 2400) throw new Error("The hourly report response is invalid.");
+    const envelope: unknown = await response.json();
+    if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) throw new Error("The hourly report response is invalid.");
+    const result = envelope as Record<string, unknown>;
+    const expectedKeys = ["complete", "from", "row_count", "rows", "store_ids", "to", "version"];
+    if (JSON.stringify(Object.keys(result).sort()) !== JSON.stringify(expectedKeys)
+      || result.version !== 1 || result.complete !== true || result.from !== data.from || result.to !== data.to
+      || !Array.isArray(result.store_ids) || JSON.stringify(result.store_ids) !== JSON.stringify(stores)
+      || !Array.isArray(result.rows) || !Number.isSafeInteger(result.row_count) || result.row_count !== result.rows.length
+      || result.rows.length > 2400)
+      throw new Error("The hourly report is incomplete or does not match its authorized scope.");
+    const raw = result.rows;
     const seen = new Set<string>();
     const rows = raw.map((value): StoreHourRow => {
       if (!value || typeof value !== "object") throw new Error("The hourly report response is invalid.");

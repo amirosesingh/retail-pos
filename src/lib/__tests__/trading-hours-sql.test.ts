@@ -4,8 +4,10 @@ import { readFileSync } from "node:fs";
 const migration = readFileSync("supabase/migrations/20261105170645_bounded_shop_hourly_report.sql", "utf8");
 const schema = readFileSync("supabase/schema.sql", "utf8");
 let db: PGlite;
+const envelope = async (from = "2026-11-01", to = from, stores: (string | null)[] | null = ["A"]) =>
+  (await db.query<{ envelope: { rows: Record<string, unknown>[]; row_count: number; complete: boolean; from: string; to: string; store_ids: string[] } }>("SELECT public.pos_report_store_hours($1::date,$2::date,$3::text[]) AS envelope", [from, to, stores])).rows[0]!.envelope;
 const call = async (from = "2026-11-01", to = from, stores: (string | null)[] | null = ["A"]) =>
-  (await db.query<Record<string, unknown>>("SELECT * FROM public.pos_report_store_hours($1::date,$2::date,$3::text[])", [from, to, stores])).rows.map(row => ({ ...row, bills: Number(row.bills), revenue: Number(row.revenue), cost: Number(row.cost), profit: Number(row.profit) }));
+  (await envelope(from, to, stores)).rows.map(row => ({ ...row, bills: Number(row.bills), revenue: Number(row.revenue), cost: Number(row.cost), profit: Number(row.profit) }));
 beforeAll(async () => {
   db = new PGlite(); await db.waitReady;
   await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;
@@ -78,6 +80,14 @@ describe("service-only bounded hourly report (actual PostgreSQL SQL)", () => {
       await expect(call()).rejects.toThrow("permission denied");
     });
   }
+  it("returns one complete scalar envelope for 1008 hourly groups, beyond the REST row cap", async () => {
+    await db.exec(`RESET ROLE; INSERT INTO stores SELECT 'shop-'||n FROM generate_series(0,41) n ON CONFLICT DO NOTHING;
+      INSERT INTO sales SELECT 'bulk-'||n||'-'||h,'shop-'||n,'2026-10-31T16:00Z'::timestamptz+h*interval '1 hour',10,0,0,false
+        FROM generate_series(0,41) n CROSS JOIN generate_series(0,23) h; SET ROLE service_role;`);
+    const stores = Array.from({ length: 42 }, (_, n) => `shop-${n}`), result = await envelope("2026-11-01", "2026-11-01", stores);
+    expect(result.row_count).toBe(1008); expect(result.rows).toHaveLength(1008); expect(result.complete).toBe(true);
+    expect(result.store_ids).toEqual(stores); expect(result.from).toBe("2026-11-01"); expect(result.to).toBe("2026-11-01");
+  });
   it("aborts an unknown existing-routine collision rather than replacing it", async () => {
     await db.exec("RESET ROLE");
     await expect(db.exec(migration)).rejects.toThrow("already exists");
