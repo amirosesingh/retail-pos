@@ -171,4 +171,3 @@ describe("isolated real PostgreSQL legacy recovery RPC", () => {
     expect(privileges.allowed).toBe(false);
   });
 });
-
