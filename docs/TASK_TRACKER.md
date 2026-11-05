@@ -5761,3 +5761,18 @@ Actual new cashier approval test captured EPRIVILEGE at Main admission: generic
 Keep that boundary; a separate Main-owned verified-approval logging capability
 requires approval and tests. PR412 fixes only registered audit-payload shape;
 actual cashier approved-payment acceptance remains pending that distinct fix.
+
+## SHIFT75 — report-only native Date normalization, 5 November
+
+- Owner reports local Electron Shifts-page failure: openedAt.localeCompare is
+  not a function. SQL snapshot/changed-row seeds can retain Date objects, while
+  paged history already normalizes opened_at into strings before display.
+- Approved fix is limited to the report merge/sort helper and hook, preserving
+  exact existing timestamp strings, branch/business-day filtering, duplicate
+  replacement, query authority and invalid-date handling. No active-shift reader,
+  checkout selection, pagination cursor, database records or permissions change.
+- Focused actual-hook and helper regressions plus TypeScript/lint are required.
+  Installed Electron verification and automatic CI remain separate.
+- Frozen verification: 21 focused tests across five suites, TypeScript and scoped
+  ESLint pass. The initial restricted-temp history import hit known SSR-cache
+  ENOENT; unchanged tests passed with normal temporary-file access.

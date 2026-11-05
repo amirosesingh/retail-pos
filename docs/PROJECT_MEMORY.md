@@ -1410,3 +1410,13 @@ a `general` audit aggregate requires Supervisor authority even after a manager's
 approval PIN verifies. That guarded refusal remains intact and needs a separately
 approved Main-owned approval capability; this helper patch does not grant it or
 claim to complete cashier approval/payment acceptance.
+
+## SHIFT75 — report presentation date contract, 5 November
+
+Native snapshot timestamps may arrive as Date objects even though Shift's public
+openedAt type is string. Normalize only those report-display Date values; preserve
+existing SQL/cloud strings byte-for-byte, including seven fractional digits.
+Do not alter active-shift selection, exact cursors, saved times or authorization.
+The actual Operations snapshot returns raw shift recordsets (unlike its other
+codec-normalized tables); paged history already normalizes opened_at. The report
+adapter therefore handles native Date seeds without changing those shared paths.
