@@ -65,12 +65,15 @@ describe("per-shop chart values and identity", () => {
     expect(comparisonPoints([day("A", 1.25), day("A", 2.5, 0, "2026-11-02")], series, ["A"], "revenue", "monthly"))
       .toEqual([{ label: "2026-11", [a.key]: 3.75 }]);
   });
-  it("resolves actual hashed-color collisions against the unfiltered directory and disambiguates names", () => {
+  it("distinguishes old hashed-color collisions and keeps color across page/cluster/branch directories", () => {
     const directory = [{ id: "shop-627", name: "Shop" }, { id: "shop-2100", name: "Shop" }];
     const series = comparisonShopSeries(directory);
     expect(new Set(series.map(shop => shop.color)).size).toBe(2);
     expect(new Set(series.map(shop => shop.name)).size).toBe(2);
     expect(comparisonShopSeries([...directory].reverse())).toEqual(series);
+    for (const shop of series) expect(comparisonShopSeries(directory.filter(row => row.id === shop.id))[0].color).toBe(shop.color);
+    const company = comparisonShopSeries(stores);
+    for (const shop of company) expect(comparisonShopSeries(stores.filter(row => row.id === shop.id))[0].color).toBe(shop.color);
   });
   it("aggregates long ranges monthly without truncating any revenue", () => {
     const rows = Array.from({ length: 800 }, (_, index) => day("A", 1, 0, new Date(Date.UTC(2020, 0, index + 1)).toISOString().slice(0, 10)));

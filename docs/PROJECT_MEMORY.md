@@ -24,6 +24,35 @@ fail closed and the complete update rolls back on failure. No live application
 or publication is authorized by preparation; exact file/target review remains.
 
 
+## 6 November — consistent trading charts
+
+Cards must remain hidden until their current branch/cluster/range read is
+actually confirmed. Preserve same-scope confirmed cards during background
+refresh with truthful stale/error status; scope/identity/cost-permission changes
+hide the previous scope immediately. Preserve meaningful negative values and the
+loaded All Shops zero-shop-directory exception. Shop chart color depends only
+on canonical shop identity so Dashboard, filtered cluster and company views do
+not recolor it. Charts use a finite vertical grid, never an infinite carousel.
+
+
+Owner-approved chart direction: equal-height chart cards and fixed plot heights
+on Dashboard, All Shops and Live Business Board, in a vertically scrollable
+area with its scrollbar hidden. Use two columns on large screens and one on a
+phone; charts are never infinite/horizontal carousels. Separate revenue and
+gross-profit trends, retain a stable vivid color for each authorized shop, and
+offer daily/monthly grouping plus Today,15days,20days and custom dates. The
+financial comparison stacks cost plus gross profit to revenue and labels margin
+as a percentage; it must not stack revenue a second time.
+
+Dashboard remains the selected registered/authorized branch, All Shops follows
+its selected cluster (or explicit all authorized clusters), and Business Board
+uses only its authorized company directory. Existing financial, refund,
+sponsorship and export rules remain unchanged. Hourly figures must use actual
+saved sales/cost evidence, never apportion daily profit into hours. Reuse existing
+bounded sales on Dashboard/All Shops; prepare a bounded authorized Board hourly
+read separately if required. Any new database routine remains preparation only
+until exact-target/file approval. Membership remains ON HOLD.
+
 ## 6 November — dependency integration is beta first
 
 The owner requests the latest local Electron preview and prompt integration of
