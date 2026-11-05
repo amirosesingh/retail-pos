@@ -103,6 +103,9 @@
   attempts or substitute empty/default settings as successfully loaded data.
   Block edits based on unverified safety defaults; preserve verified offline
   cached/pending settings according to existing policy.
+  Upgrades must not silently replace previously matched offline operating rules
+  with defaults. Preserve a safe read-only legacy transition until connection
+  binding is verified; never use it to enable new privileges or unsupported rules.
 - Spreadsheet imports must preserve valid numeric amounts, decimals and identifier
   text; workbook styling alone must not change their meaning. Do not silently
   strip arbitrary characters into valid numbers, round/truncate amounts, shift

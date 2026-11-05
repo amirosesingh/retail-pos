@@ -65,6 +65,19 @@ Need verified baseline/movement coverage and time/valuation decisions. No fake
 historical report or zero-data fallback. Core three fixes take priority; retain
 this unfinished task. Membership remains on hold.
 
+Retained earlier work: NATIVE-PROOF64 diagnostic preparation remains on
+codex/native-terminal-proof-diagnostic-beta at c7597596. It is not installed,
+published or verified on the affected PC. Device-proof cause must not be declared
+fixed from a green reachability/registration-presence check. Preserve that
+separate task and its original no-registration-rewrite approval boundary.
+
+Pending business decision for RECOVERY65: old missing cloud closings have no
+original frozen financial basis. Existing ORIGINAL/RECOUNT signatures cannot
+honestly represent them. Asked owner whether an actual Administrator may attest
+the saved legacy graph with explicit unavailable-historical-snapshot provenance;
+new protected/FIN62-required writes remain excluded from any such exception.
+Until answered, no legacy financial-admission exception is implemented or applied.
+
 4 November: owner approved agents completing production checks and fixing authoritative shift-total/refund validation, preserving checkout/permissions. Exact local/cloud database changes must be shown before application; no live schema/data change is approved by preparation. Baseline beta68470185; isolated branch codex/shift-financial-validation-beta. Confirmed gap: graph/author validation proves internal consistency/actor, not expected tenders against authoritative sale inputs. Current mutable sale journal cannot reconstruct historical offline refund state. Do not compare old closing against current cloud totals or invent refund timestamps.
 
 Approved business decisions: validate ORIGINAL closing using financial inputs at its saved point; each later administrator recount/correction uses its own saved financial boundary. Preserve all prior audit/accepted receipts and latest accepted authorized correction. Booking deposit/payment-when-received attribution is a SEPARATE pending correction, not part of FIN62. Preserve current tender formula and original-shift refund attribution in this batch; do not silently implement a new cash-flow allocation rule.
