@@ -12,6 +12,34 @@ Owner requires all proposed cloud/local database upgrades collected for exact fi
 The exact owner-approved service-only bounded feed RPC and PR384 are applied/deployed on beta. Existing selector/privacy grants and businessrecords are preserved; native continuation is bound to authenticated response metadata. Live147request sample all200/ok with no CPU-exceeded; CPU2–114ms/mean9.469 means NO guarantee allrequestsbelow10ms. Electronfeed131613→133184, all6shiftCTvalid; largebacklog stilldraining. Keep implemented/sample-verified status distinct from fullsync completion, production promotion or installerpublication. Supabase migrationtool ledger20261104042158 corresponds to approvedfile20261104040251, SHA83495D696622241ECA2A8D396234E2FD65EE7C7A3050E93E4280638D6530D59B; do not replay based solely on differing timestamps.
 # POS project memory
 
+## 5 November — controlling instructions and current integration status
+
+Owner explicitly approved permanent AGENTS.md improvements: one coordinated
+event/aggregate synchronization engine with durable local outbox, incremental
+downloads and resumable recovery snapshots; preserve long-offline pending work,
+offline checkout, permissions and original/admin-corrected histories. No version
+or device timestamp alone selects a winning record. Database calls, import
+accuracy, historical-report evidence and truthful progress rules are in AGENTS.md.
+Routine work within an approved batch proceeds without redundant approval asks;
+exact live database changes and specific production promotions remain separate.
+Membership stays on hold. Existing DEC-48 stock availability is preserved.
+
+Current verified GitHub state: PR354 is already merged and Retail1.4.81 was
+published on 5 November at11:01:30 Asia/Brunei. Its older draft/pending paragraphs
+below are historical checkpoints, not the current release state. New imports
+PR396 and native/offline policies PR397 are merged into beta e4be3768 only.
+Their merge trees match their reviewed heads; final combined policy/import
+regression passed5,729 tests/7 skipped, with required platform/hosting/permission
+checks passing. Installed-device acceptance remains unverified. These new fixes
+have not been promoted to main or published as new installers.
+
+Recovery PR395 remains draft: exact classification and append-only evidence
+preparation are tested but not full runtime recovery. Legacy financial recovery
+without its original snapshot needs the owner's rule decision; never manually
+copy it into cloud records. Historical date/time stock reporting is queued after
+the priority fixes and requires proven opening/movement coverage and time
+semantics. Preserve these unfinished tasks in TASK_TRACKER.md.
+
 Last reconciled: **2026-11-03, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
 
