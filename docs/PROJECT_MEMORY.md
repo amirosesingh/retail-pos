@@ -1,3 +1,12 @@
+4 November FIN62 monetary decision: owner explicitly approved ONE exact-decimal tender calculation for NEW closings/corrections, with final currency totals rounded to two decimals and half-cent ties away from zero. Preserve all existing saved sales/receipts/closings and accepted history; no backfill/recalculation. Use an explicit new formula/protocol version rather than relabel legacy native/PostgreSQL rounding as equivalent.
+
+4 November FIN62 multi-terminal decision: validate the complete financial snapshot KNOWN to the saving terminal at the action's transaction. Do not wait for all offline terminals or silently certify global completeness. Later unseen uploads do not rewrite the accepted original snapshot; a later authorized correction captures its own known-data snapshot. Preserve branch scope, authoritative baseline/delta validation, audits and pending work.
+
+## 4 November — action-specific shift financial validation decision
+
+Each ORIGINAL closing and later authorized administrator RECOUNT/correction must validate the financial inputs at that action's saved point. Preserve prior accepted audit/receipts and later legitimate corrections. Do not compare a delayed historical closing to today's mutable refund state. Booking-deposit drawer attribution remains a separate task. FIN62 preparation may not claim complete financial verification from internally consistent graph values or author signatures alone.
+
+Owner requires all proposed cloud/local database upgrades collected for exact final review before any application. Supabase is production even when used by beta. Prepare additive existing-data local SQL upgrade files where required; no reset/rebuild, stock/sales rewrite, credential or permission change is authorized. Membership and checks requiring owner credential entry remain excluded. Release requires explicit tested acceptance, not a zero-error promise.
 ## 4 November FEED55 rollout evidence
 
 The exact owner-approved service-only bounded feed RPC and PR384 are applied/deployed on beta. Existing selector/privacy grants and businessrecords are preserved; native continuation is bound to authenticated response metadata. Live147request sample all200/ok with no CPU-exceeded; CPU2–114ms/mean9.469 means NO guarantee allrequestsbelow10ms. Electronfeed131613→133184, all6shiftCTvalid; largebacklog stilldraining. Keep implemented/sample-verified status distinct from fullsync completion, production promotion or installerpublication. Supabase migrationtool ledger20261104042158 corresponds to approvedfile20261104040251, SHA83495D696622241ECA2A8D396234E2FD65EE7C7A3050E93E4280638D6530D59B; do not replay based solely on differing timestamps.
@@ -1027,3 +1036,41 @@ maintenance audit. Existing stock/SKU/prices, child/header states, approval gran
 and shortage checks stay preserved. Future live repairs require their own evidence
 and exact-project approval; never infer missing original quantities from a child.
 Physical-device and fresh-installer limits remain tracked separately.
+
+## FIN62 current continuation — 4 November
+
+Owner reiterated: complete shift totals/refund validation first with agents; update PR391 and prepare PR354; present exact database changes before application. Current published PR391 head d15be0af passed required CI; uncommitted foundations are not covered by that result. Exact-decimal v2 math, cloud snapshot/version lineage and optional authenticated admission are prepared. Local basis persistence passed 14 disposable LocalDB groups, 10 upgrade groups, 21 capture groups and 12 unit tests; TypeScript passed. All metadata remains default-off/preparation-only. Native journal integration, fully offline opening-origin provenance, final regressions and exact final migration manifest remain pending. No new live database writes, main promotion or publication. Booking deposit attribution remains separate; Membership remains on hold.
+
+## 5 November — superseding FIN62 release checkpoint
+
+Main-private runtime assembly, offline opening provenance, saved financial history,
+OBSERVE refresh, durable no-op proofs and guarded administrator adapters now exist
+in the PR391 continuation. Earlier unassembled/pending notes above describe their
+historical revisions. Capability enforcement remains disabled without separately
+approved rollout, compatible installed clients and scoped readiness. New metadata
+does not activate it automatically. Original accepted history and unresolved
+legacy work must remain intact; installing an update alone is not proof that every
+historical closing has uploaded.
+
+Eleven owned Main/LocalDB/HTTP/native PostgreSQL scenarios passed, including saved
+original closing after later refund, retries/no duplicates, full Change Tracking
+progress and exact large scalar decimals. Independent native review passed397
+tests across17 suites. Nested payment transport and final-head full CI remain
+distinct gates; isolated fixtures are not installed-device/hosted CPU acceptance.
+
+Candidate exact cloud/local artifacts are recorded in
+database/shift-financial-upgrade-manifest.json and production-upgrade-bundle.md;
+old prototype hashes are superseded. No application or rollout approval exists.
+Fresh/reset composition is legacy supabase/schema.sql, then FIN62 cloud90000,
+then the separate SHIFT63 sharing migration90100. Base schema alone is not the
+complete new protocol. Do not paste guarded migrations into the base schema or
+replace the captured live sale writer's promotion checks.
+
+Owner explicitly requires PR391 and PR392 integrated into beta, combined conflict
+resolution/regression verification and final production PR354 review before any
+production release. PR392 is a separate default-ON Operational Rules sharing
+control; local027 is required before its new native installer is used. Preserve
+same-PC cashier handover and distinguish sharing from multiple-shifts-per-terminal.
+Production promotion, exact database application and installer publication remain
+separate approvals. Membership stays on hold; booking deposits remain separately
+tracked, never silently declared fixed by FIN62.

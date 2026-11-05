@@ -1,3 +1,27 @@
+FIN62 cloud phase: PR391d15be0af allrequiredCIpassed. Ownerapproved exactdecimalv2 NEWactions only/final2dp halfawayzero; preserveoldacceptedhistory. Activeindependentnative/PGmath implementations, safecomplete-server-baseline receipts and financialauthor-domain foundation. Actualfinancialoperationauthor/writercapture and historical admission wiring remain open; no synthetic authorized flag/GUC or unverifiedclientrowlist may claim authority. All cloud/local DBapplication deferredEND exactbundleapproval. No finalcloudmigration applied or existingfinancialamountsrewritten.
+
+FIN62 known-snapshot preparation verification: seven disposableLocalDB metadata-upgrade groups and20 SQLServer financial-basis groups passed, fixturescleaned. Independent review corrected IGNORE_DUP_KEY/physicalindex guard, canonicalUUIDtextorder, and transaction-preserving rejectedcaller behavior. Native prototype exposes expectedNativeRaw with scale12/formulaversion rather than claiming parity with PostgreSQL2dp wiremoney. Shared final monetary canonicalization/admission binding remain pending; no runtime activation or database application. Candidate025 hash updated in final-bundle document. Decision/preparationfiles are queued for PR391 update, not automatic migration discovery.
+
+FIN62 next preparation: candidate existing-data local metadata025 is under scripts/preparation ONLY, NOTauto-discovered/applied. Metadata-only table/index/check/immutabletrigger, strict existing-shape and caller-transaction safeguards; six real disposableLocalDBgroups passed/cleaned. Exact proposal/hash in production-upgrade-bundle.md. Native financial-basis prototype under preparation remains unconnected to runtime/cloud. No production migration/datawrite or publication. PR391 current4fc8f04a checks allpassed; new decisions/preparation update will require newheadchecks.
+
+FIN62 owner resolved multi-terminal semantics: VALIDATE SAVED KNOWN-DATA SNAPSHOT. Complete terminal-known baseline plus its authorized local financial changes at save, not a global all-terminals cutoff. Later other-terminal uploads must not retroactively change the original action; later authorized corrections use their own snapshot. Protocol completeness/authentication and legacy handling still require implementation/tests; no database application permitted before final bundle.
+
+FIN62 first-batch verification: root full suite5099 passed/7 skipped (651 suites passed/1 skipped), separate prototype bridge1passed and17 isolated SQL groups. Independent4 actual SQL Server financial-boundary groups and31 existing native causal workflow scenarios passed with disposable fixtures cleaned; TypeScript/scoped lint/diffchecks passed. One pre-existing trusted-journal test lint warning remains. Source remains LOCAL race safeguard plus isolated prototype; cloud historical-authority gap and offline evidence protocol are NOT fixed or deployed. All new database application deferred until final exact bundle approval.
+
+FIN62 first implementation prepared (not deployed): OperationsRepository can read the unchanged tender aggregate on the active transaction; protected ORIGINAL/RECOUNT saves recalculate expected amounts inside their existing SERIALIZABLE transaction before writes/signing. Unsupported new count/reconciliation shapes reject; exact accepted replay and variance-only approval keep their historical basis. 130 focused tests passed. Root full regression and isolated native SQL race/legacy workflow checks are running. This closes a LOCAL draft/read race only, not the cloud's authoritative historical validation gap. No schema change is needed for this first guard.
+
+FIN62 isolated SQL basis prototype: complete selected-branch/shift inputs and exact existing-formula totals in one SQL MVCC statement; 17 isolated parity/precision groups passed. scripts/preparation/shift-financial-basis.sql is NOT an apply-ready migration, authenticated admission guard or persisted financial evidence. Cloud/new offline protocol remains pending. Do not release or label full FIN62 fixed based on the prototype/local guard.
+4 November controlling owner instruction: FIN62 first, agents; defer ALL live cloud/local database changes until final exact ordered bundle review/approval. Supabase is PRODUCTION, never isolated by beta label. Prepare additive existing-data local SQL upgrade file if necessary; do not reset/rebuild/overwrite databases. Exclude Membership and checks requiring owner credential entry. Other pending tasks remain tracked, not silently completed. Report progress in this chat; cross-device push delivery is not guaranteed by agent. No external messages/notification service configured. Release only after required acceptance, exact promotion and release authority.
+
+## FIN62 — owner-approved shift financial/as-of validation correction
+
+4 November: owner approved agents completing production checks and fixing authoritative shift-total/refund validation, preserving checkout/permissions. Exact local/cloud database changes must be shown before application; no live schema/data change is approved by preparation. Baseline beta68470185; isolated branch codex/shift-financial-validation-beta. Confirmed gap: graph/author validation proves internal consistency/actor, not expected tenders against authoritative sale inputs. Current mutable sale journal cannot reconstruct historical offline refund state. Do not compare old closing against current cloud totals or invent refund timestamps.
+
+Approved business decisions: validate ORIGINAL closing using financial inputs at its saved point; each later administrator recount/correction uses its own saved financial boundary. Preserve all prior audit/accepted receipts and latest accepted authorized correction. Booking deposit/payment-when-received attribution is a SEPARATE pending correction, not part of FIN62. Preserve current tender formula and original-shift refund attribution in this batch; do not silently implement a new cash-flow allocation rule.
+
+Active: independent source/root-cause review; isolated reproductions; design additive native/cloud financial-version and action-witness metadata with trusted complete input boundary, exact arithmetic and all-writer concurrency discipline. Missing/ambiguous evidence must remain explicit; a caller-supplied subset/hash or signature alone is insufficient. Do not rewrite prior frozen signed intents or force pending closures. Proposed metadata is not implemented/applied. Actual schemas, compatibility rollout and migration hashes remain to be reviewed before database application. Membership stays ON HOLD.
+
+Production: PR390 merged beta68470185; 5085 tests passed/7 skipped, exact merged tree parity verified. PR354 preparation continues; latest beta CI/PR-head synchronization, installed isolated checkout/offline/reconnect/platform acceptance, FIN62 and bounded CPU evidence remain release gates. Owner conditional production release instruction does not make incomplete gates pass. Existing production POS_Local must not be manually reset/rebuilt or overwritten.
 4 November NOOP60 integration: PR389 merged beta0bfa12e3 after exact-head CI, independent118 regression tests, 11 isolated SQL Server groups and TypeScript checks passed. Merged tree equals reviewed797e3017. Postmerge Cloudflare beta build15239080 passed; installed runtime acceptance remains separate. Owner requests PR390 refresh/merge after checks and production354 preparation; no production merge or installer release authorized by this entry.
 
 4 November OWN61 follow-up: normal local sync verified all22 ownerSTR1/all22cloudzero on exact POS_Local identity; total2169. No forcedlocalrepair/queueclear/checkpointreset. PR390 commits historicalartifact/tests/evidence only; merge does not executeSQL. Installedcheckout remains unverified.
@@ -4841,3 +4865,83 @@ reviewed files are in its diff; no older checkout or unrelated generated report
 was staged. Platform/security/hosting build checks started automatically. Keep
 this draft unmerged until its separate release gates are satisfied; a PR build
 does not establish successful registered-device recovery or production approval.
+
+## FIN62 current continuation — 4 November
+
+Owner reiterated: complete shift totals/refund validation first with agents; update PR391 and prepare PR354; present exact database changes before application. Current published PR391 head d15be0af passed required CI; uncommitted foundations are not covered by that result. Exact-decimal v2 math, cloud snapshot/version lineage and optional authenticated admission are prepared. Local basis persistence passed 14 disposable LocalDB groups, 10 upgrade groups, 21 capture groups and 12 unit tests; TypeScript passed. All metadata remains default-off/preparation-only. Native journal integration, fully offline opening-origin provenance, final regressions and exact final migration manifest remain pending. No new live database writes, main promotion or publication. Booking deposit attribution remains separate; Membership remains on hold.
+
+FIN62 checkpoint verification: full isolated regression 5,305 passed / 7 skipped (658 suites passed / 1 skipped); TypeScript and diff checks passed. Actual PostgreSQL financial admission 16 groups passed including concurrent corrections and unchanged old RPC/seven triggers; 5 cloud preparation bridge tests passed. Optional journal/persistence remains unactivated. Pending Main exact-draft consumption, opening-origin provenance integration, capability rollout and final exact DB manifest; no live DB application.
+
+## FIN62 production-ready request — 4 November
+
+Owner requests completing the release candidate so only the final publish decision remains. Continue approved shift/refund integration using agents; no main promotion, publication or live database application is implied. Exact cloud/local database bundle still requires review before application. PR391 checkpoint dc28c542 contains tested optional foundations (5,305 passed, 7 skipped); Main activation remains off. Active next steps: exact Main drafting with complete source-hash race guard, durable opening-origin persistence/admission, immutable financial-operation version upload for never-uploaded offline intermediate states, final capability/legacy transition, full regression and beta acceptance. Preserve current checkout, permission enforcement, registration, historical amounts and pending queues. Never mark production ready while these remain incomplete.
+
+FIN62 offline-history batch APPROVED: owner approved implementation and isolated tests of docs/database/shift-financial-operation-history-batch.md on 4 November. Scope includes actual aggregate/refund transaction capture, immutable financial versions and closing boundary, frozen upload and guarded cloud protocol. No liveDB application, main promotion or installer publication. Exact final migration bundle remains a separate approval gate.
+
+5 November owner clarification: shift sharing must be configurable in Operational Rules. Existing allow_multiple_shifts_per_terminal controls count per till and does NOT configure cross-till sharing. Track separate operational-rule setting/check across applicable online/offline consumers; preserve current branch-wide sharing until the explicit setting is implemented, do not confuse it with multiple cashiers on one PC. No new rule/schema applied. FIN62 continues first and must preserve authorized shared-shift/refund paths.
+
+## 5 November — FIN62 implementation checkpoint and remaining gates
+
+Owner approved offline-history implementation/isolated tests and separately approved Operational Rules sharing-setting preparation/implementation. No live database upgrades, capability activation, main promotion or publication is authorized by these approvals. New sharing control must default ON, preserve current branch sharing and same-PC cashier handover, remain separate from multiple-shifts-per-terminal, and enforce online/offline using trusted terminal identity; independent beta batch still pending.
+
+PR391 published head dc28c542 passed all required CI including iOS, Android, Windows and security. Newer sources remain local pending next verified checkpoint. Root full suite after legacy VM fixture/scope assertion correction: 5,396 passed/7 skipped (663 suites pass/1 skipped). Root actual SQL Server operation-store 33 groups and real refund/closing six groups passed; Root actual PostgREST 14 named-RPC/access/hash groups passed. These are revision-scoped results, not final new-source release acceptance.
+
+Native optional/default-off implementation now includes exact Main drafting, safe existing numeric-count compatibility (exact boundary currency normalization; no binary arithmetic or imprecise-large-number acceptance), action-specific prepared author contexts, marker-derived exact historical replay, immutable financial operations/closing frontier, exact protected OPEN capture, strict metadata guards, foreign-terminal CLOUD_BASIS genesis and opaque Main HTTP→SQL witness/CT/pending-work checks. Local metadata 025/026 remain under preparation outside automatic migration discovery. 026 is changing for shared origin/observations, so older candidate hashes must NOT be applied.
+
+Prepared cloud ordered metadata, immutable baselines, guarded latest business publication and actual old graph writer composition are tested in isolated PostgreSQL. Root review reproduced a critical missing-business-publication prerequisite (metadata alone closed120 with no sales); preparation now denies this and preserves legitimate later published foreign sale/refund evidence. Global birth claims and indexed immutable publication/step records added; exact accepted retries remain separate from new permission checks. Private protected scopes remain empty and no activation API is enabled.
+
+Remaining FIN62 gates: ongoing OBSERVE refresh with actual MVCC source ordering and full signed own-pending-prefix merge (no reseed/reset/old-closing rewrite), normalized per-sale current stream state to eliminate quadratic JSONB rewrites, real web/Android live authorized v2 snapshot/correction/publication contexts without invoker/RLS bypass, final transport→actualSQL complete workflow/compatibility and capability rollout, exact consolidated cloud/local upgrade manifest, fresh final tests/build/CPU acceptance and beta integration. PR354 remains draft; its reported head metadata has lagged actual beta, so old green checks cannot certify the latest candidate. Do not silently omit any gate or mark production ready from unit counts.
+
+Separate observed risk: current terminal:read IPC exposes full decrypted binding proof to code in the trusted renderer; credentials alone cannot enroll an author key, existing key replacement is denied, but do not claim hardware/Main attestation from a registered public key. No IPC hardening or key changes authorized/applied in this work. Preserve Membership on hold and the separate deposit-drawer attribution follow-up.
+
+5 November counted-input compatibility clarification: existing web endpoint rounds NEW raw counted input to2dp, and legacy Main did likewise withbinaryMath. NewMain preservesboundarynormalization using approvedexactdecimalhalfaway rule before saving/signing. Stored/accepted counts andtargets remainstrictwholecent comparisons; neverround/repricehistory. Unsafe large JSNumbers stillrequireexactstring, negative rawinput rejectedbeforerounding.
+
+5 November continuation: root readiness/authorized live relay tests added; 272 focused tests across six suites passed outside Windows sandbox after sandbox temporary-file replacement failures, and TypeScript passed. Installed-but-unready financial adapter fails closed; only exact missing-RPC legacy capability may use old writer. Independent review found remaining live publication no-op query cost, Management scope parity, mixed native/web lineage and shared per-shift locking gaps; corrections/tests remain in preparation. SHIFT63 setting approval recorded separately; implementation waits behind FIN62 shared correctness review. No live DB application, beta merge, production promotion or publication this continuation.
+
+5 November owner says Do it after explicitremaininglist: complete administrator sale/tender/missed-bill compatibility, durable financial-noop pending-journal verification, independent SHIFT63 setting, and final regressions/beta integration. This authorizes scoped implementation/tests; final exact cloud/local database application and production/publication approvals remain separate. Root optionalSALEarraydefaults regression corrected; no production writes.
+
+5 November FIN62 native runtime continuation approved: prepare Main-private capability-gated assembly and isolated tests. Main currently leaves draft provider NULL and does not inject financial stores/validators into repositories/reader/push; this is an explicit remaining implementation gate. Proposed assembly binds one shared runtime to the actual project/backend, verified Operations terminal/branch, exact local025/026 metadata, database/profile/pool identity and an explicit server rollout capability. Schema existence alone never enables it; no renderer setter, live enrollment, production rollout, queue reset or configuration change is authorized. Legacy actions remain compatible; already-protected pending work must fail closed if capability is missing or changed. Exact server capability contract and final owner rollout approval remain pending. Native no-op checkpoint:42 owned LocalDB schema/capture/replay groups,20 owned PG/HTTP/SQL observation groups and23 pure tests passed; exact026 SHA25607228BC49DF9EEA461890939204DBE2C4427A38CDDDC80B466AD332BE93EB566; no liveDDL.
+
+5 November release-gate discovery: tested native/history modules were still default-off and Main factories/Push/reader/aggregate/refund were not assembled. Finish the already-approved explicit capability negotiation/runtime assembly before calling FIN62 implemented. Main-only vault must be separate from renderer-writable config; exact profile/project/registration/DB-GUID binding; no schema-presence activation. New capability preparation is read-only/defaultdisabled, optional on-demand per-shift authoritative legacy/required/unknown classification; private append-only rolloutapprovals stayEMPTY until separately reviewed owner rollout/allsharedbranchclient compatibility. Root capability/API/basis76unitchecks and actual disposablePostgREST24contractgroups pass (capabilityreadytrue usesexplicitfixturestand-in, notfullinstalledreadiness proof). No liveSQL/rolloutrows written.
+
+## 5 November — current FIN62/SHIFT63 release ledger (supersedes earlier pending checkpoints)
+
+- Implemented locally: Main-private capability/runtime assembly; complete saved
+  offline opening/sale/refund/closing history; source-ordered OBSERVE refresh;
+  exact durable CT/no-op proof; guarded live/admin compatibility; deterministic
+  cloud/local candidate manifest. No capability activation or real-data rewrite.
+- Verified:11 actual Main/LocalDB/HTTP/native PostgreSQL groups;397 independent
+  native unit tests across17 suites; eight local receipt/precision groups;
+  exact generated artifact native/PGlite preservation and rollback groups.
+  These do not certify the separate hosted nested-payment transport path.
+- Working: final nested JSON amount preservation through the actual endpoint,
+  full current-source regression suite, final scoped diff and PR391 code update.
+  Current published PR391 head remains dc28c542 until the new checkpoint is pushed;
+  its earlier green CI does not cover local continuation.
+- SHIFT63: implemented and committed8c10287c in draft PR392. Default-ON sharing
+  control and online/offline enforcement tested independently. Requires FIN62
+  integration, combined conflict resolution/testing, exact-head CI and local027.
+- Pending before release: publish verified PR391 checkpoint; exact-head CI391/392;
+  rehearse and test combined beta result; integrate both PRs into beta; verify
+  deployed affected paths/CPU; exact target/hash cloud/local approval and guarded
+  application; compatible client/cohort rollout review; refresh/check PR354 and
+  obtain its specific production promotion/release approval. No installer publish.
+- Owner reminder this continuation:391 and392 must precede production release.
+  Never overwrite newer features to resolve conflicts or infer safety from Git's
+  successful merge. Preserve checkout, permissions, queues and operator settings.
+- Retained separate tasks: booking-deposit drawer attribution; credential-entry
+  acceptance excluded/unverified; held359 historical repair; Membership ON HOLD.
+  No live database changes performed in this continuation.
+
+Final local checkpoint verification: full Vitest rerun5578passed/7skipped
+(673suitespassed/1skipped); TypeScript and production build passed. Scoped lint
+has0errors/15warnings; no warning was suppressed. Three stale source-contract
+assertions were updated for the explicit migration inventory, outbound alias and
+trusted financialJournal alias; all46affectedtests passed before the full rerun.
+Nested-payment precision now passes through the actual guarded endpoint with72
+handler/auth tests: large/12dp nested numbers preserved; duplicatekeys/depth/size,
+revoked identity and foreignbranch requests denied. Legacy transport unchanged.
+Exact generated cloud/local hashes remain unchanged and generatorcheck passes.
+Independent staged-file review found no accidental profile/key/credential files;
+private.tmp/buildoutputs excluded. Commit/push and exact-head CI remain separate
+from these local results. No live database application or production promotion.

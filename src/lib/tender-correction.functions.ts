@@ -12,7 +12,8 @@ export const correctSaleTender = createServerFn({ method: "POST" })
       if (scope.storeId && !sameBranchId(scope.storeId, data.storeId))
         return { ok: false as const, error: "The bill must belong to the administrator's branch." };
       const { serviceRest } = await import("@/core/api/pos-relay.server");
-      const response = await serviceRest("rpc/pos_admin_correct_tender", { method: "POST", body: JSON.stringify({ p_sale: data.saleId, p_store: data.storeId, p_method: data.method }) });
+      const financial = !!scope.appUserId && await (await import('./financial-live-readiness.server')).financialLiveAdapterReady();
+      const response = await serviceRest(financial ? "rpc/pos_live_financial_admin_correct_tender" : "rpc/pos_admin_correct_tender", { method: "POST", body: JSON.stringify({ p_sale: data.saleId, p_store: data.storeId, p_method: data.method, ...(financial ? { p_author: scope.appUserId, p_terminal: scope.terminalId ?? null } : {}) }) });
       if (!response.ok) return { ok: false as const, error: (await response.text()).slice(0, 400) };
       return { ok: true as const };
     } catch (error) { return { ok: false as const, error: (error as Error).message.slice(0, 400) }; }

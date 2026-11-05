@@ -1,0 +1,19 @@
+import {createRequire} from 'node:module';import {describe,it,expect} from 'vitest';const require=createRequire(import.meta.url);
+const {mergeFinancialObservation}=require('../../../electron/db/shift-financial-observations.cjs');
+const shift='11111111-1111-4111-8111-111111111111',a='22222222-2222-4222-8222-222222222222',b='33333333-3333-4333-8333-333333333333',op='44444444-4444-4444-8444-444444444444';
+const row=(id=a,patch:Record<string,unknown>={})=>({id,branchId:'A',shiftId:shift,totalAmount:'100.00',paymentType:'cash',paymentsJson:null,discountAmount:'0.00',isRefunded:false,rowVersion:'1',...patch});
+const basis=(inputs:unknown[])=>JSON.stringify({prototypeVersion:2,formula:'canonical-exact-decimal-v2',branchId:'A',shiftId:shift,openingFloat:'0',inputs});
+const version=(sequence:string,before:unknown,after:unknown,saleId=a)=>({saleId,operationId:op,sequence,before,after});
+const merge=(inputs:unknown[],versions:unknown[]=[],published:Record<string,string>={})=>mergeFinancialObservation({serverBasisJson:basis(inputs),versions,ownPublishedThrough:published});
+describe('verified complete observation prefix merge',()=>{
+ it('adopts untouched foreign rows without repricing any saved closing',()=>{expect(merge([row(a),row(b)]).facts).toEqual([row(a),row(b)]);});
+ it('keeps own unpublished SALE alongside a new foreign row',()=>{const result=merge([row(b)],[version('1',null,row(a))]);expect(result.facts).toEqual([row(a),row(b)]);expect(result.pendingFrom).toEqual({[a]:'1'});});
+ it('applies only successors after an actually seen own prefix',()=>{const refunded=row(a,{isRefunded:true,rowVersion:'2'}),result=merge([row(a)],[version('1',null,row(a)),version('3',row(a),refunded)]);expect(result.facts).toEqual([refunded]);expect(result.pendingFrom).toEqual({[a]:'3'});});
+ it('keeps authoritative raw S after fully seen prefixes including decimal scale and Unicode',()=>{const s=row(a,{totalAmount:'100.000000000000',paymentsJson:'[{"method":"cash","amount":100,"note":"鞋 🧾"}]',rowVersion:'9007199254740993'}),own=row(a,{paymentsJson:'[{"note":"鞋 🧾","method":"CASH","amount":"100.00"}]'});const result=merge([s],[version('1',null,own)]);expect(result.facts).toEqual([s]);expect(result.pendingFrom).toEqual({});});
+ it('retains old pending suffix on repeated observations',()=>{const refunded=row(a,{isRefunded:true,rowVersion:'2'}),versions=[version('1',null,row(a)),version('3',row(a),refunded)];const first=merge([row(a)],versions),again=merge([row(a)],versions);expect(again.pendingFrom).toEqual(first.pendingFrom);expect(again.computedMergedHash).toBe(first.computedMergedHash);});
+ it('retires only per-sale actual visible publications, never a global max',()=>{const result=merge([row(b,{totalAmount:'101'})],[version('1',null,row(a)),version('2',null,row(b),b)],{[b]:'2'});expect(result.pendingFrom).toEqual({[a]:'1'});expect(result.facts.find((v:{id:string})=>v.id===b)?.totalAmount).toBe('101');});
+ it('adopts a later foreign correction after actual own publication retired its prefix',()=>{const corrected=row(a,{totalAmount:'125.00'});expect(merge([corrected],[version('1',null,row(a))],{[a]:'1'}).facts).toEqual([corrected]);});
+ it('holds divergent same-sale changes rather than silently overwriting',()=>{expect(()=>merge([row(a,{totalAmount:'110'})],[version('1',null,row(a))])).toThrowError(expect.objectContaining({code:'EFINANCIAL_OBSERVATION_CONFLICT'}));});
+ it('holds broken immutable before/after chain and cross-branch data',()=>{expect(()=>merge([row(a)],[version('1',null,row(a)),version('2',row(a,{totalAmount:'1'}),row(a,{isRefunded:true}))])).toThrow();expect(()=>merge([row(a,{branchId:'B'})])).toThrow();});
+ it('rejects caller-shaped publication flags and duplicate versions',()=>{expect(()=>merge([],[],{[a]:'true'})).toThrow();expect(()=>merge([],[version('1',null,row(a)),version('1',null,row(a))])).toThrow();});
+});

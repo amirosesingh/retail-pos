@@ -1,0 +1,30 @@
+// Owned LocalDB transport receipt test. Never opens a saved POS configuration.
+const assert=require('node:assert/strict');const {randomUUID,generateKeyPairSync,sign,createHash}=require('node:crypto');const {readFileSync}=require('node:fs');
+const {createLocal}=require('./lib/shift-protocol-integration-fixture.cjs');const {ShiftFinancialOperations}=require('../electron/db/shift-financial-operations.cjs');const {AggregateRepository}=require('../electron/db/repositories/aggregates.cjs');const {ChangeReader}=require('../electron/sync/change-reader.cjs');const {financialOperationMessage}=require('../electron/security/financial-author-protocol.cjs');
+const hash=raw=>createHash('sha256').update(raw).digest('hex');
+async function main(){assert.deepEqual(process.argv.slice(2),['--run']);const branch='reader-fixture',terminal='terminal',local=await createLocal(branch);let passed=0;const {manager,registry}=local;
+ const pair=generateKeyPairSync('ed25519'),binding={version:1,algorithm:'Ed25519',keyId:randomUUID(),projectOrigin:'https://fixture.example',terminalId:terminal,authorId:randomUUID(),subject:'real.cashier'};
+ const author={assertCurrent(){},signFinancialOperation({payloadJson,...facts}){const fields={...binding,...facts,payloadHash:hash(payloadJson)};return{...fields,signature:sign(null,Buffer.from(financialOperationMessage(fields)),pair.privateKey).toString('base64url')};}};
+ const store=new ShiftFinancialOperations(manager,{enabled:true,resolveAuthor:async()=>author}),repository=new AggregateRepository(manager,local.repository,{financialOperations:store}),reader=new ChangeReader(manager,registry,{financialOperations:store});
+ const test=async(name,fn)=>{await fn();passed++;console.log('PASS '+name);};
+ try{
+  await manager.pool.request().batch(readFileSync('scripts/preparation/026_shift_financial_operations.sql','utf8'));
+  const shift=randomUUID(),sale=randomUUID(),openId=randomUUID(),saleOp=randomUUID();
+  await repository.commit('shift',{operationId:openId,branchId:branch,terminalId:terminal,permissions:{can_open_shift:true},operations:[{kind:'insert',table:'shifts',rows:[{id:shift,store_id:branch,terminal_id:terminal,status:'OPEN',state:'ACTIVE',opening_float:'1.005',row_version:1}]}]});
+  await repository.commit('sale',{operationId:saleOp,branchId:branch,terminalId:terminal,permissions:{can_process_sale:true},operations:[{kind:'insert',table:'sales',rows:[{id:sale,store_id:branch,shift_id:shift,total_amount:'12.50',discount_amount:'0',payment_type:'cash',is_refunded:false,row_version:1}]}]});
+  const originalPending=await reader.pendingAggregates(branch),opening=await reader.financialOpening(openId,branch,terminal);
+  await test('reads exact frozen opening independently of today parent state',async()=>{assert.equal(JSON.parse(JSON.parse(opening.openingJson).rowJson).opening_float,'1.005000000000');assert.equal(JSON.parse(opening.openingJson).rowHash,opening.rowHash);});
+  await test('does not expose events as uploadable until actual OPEN acknowledgement',async()=>{assert.deepEqual(await reader.financialHistory(branch,terminal),[]);assert.equal(await reader.financialHistoryReady(branch,terminal),false);});
+  await test('invalid opening ACK does not mark metadata or business journal accepted',async()=>{await assert.rejects(reader.acknowledgeFinancialOpening(opening,{status:'metadata'},branch,terminal),{code:'EFINANCIAL_HISTORY_UNCONFIRMED'});assert.equal((await reader.pendingAggregates(branch)).length,originalPending.length);});
+  await reader.acknowledgeFinancialOpening(opening,{ok:true},branch,terminal);let item;
+  await test('reads raw immutable original sale bytes and exact sequence',async()=>{const history=await reader.financialHistory(branch,terminal);assert.equal(history.length,1);item=history[0];assert.equal(item.sequence,'1');assert.equal(JSON.parse(item.payloadJson).changes[0].before,null);assert.equal(JSON.parse(item.payloadJson).changes[0].after.isRefunded,false);assert.equal(await reader.financialAggregateRequired(saleOp,branch,terminal),true);});
+  await test('invalid metadata ACK leaves every queue and receipt pending',async()=>{await assert.rejects(reader.acknowledgeFinancialHistory(item,{ok:true}),{code:'EFINANCIAL_HISTORY_UNCONFIRMED'});assert.equal((await reader.financialHistory(branch,terminal)).length,1);assert.equal((await reader.pendingAggregates(branch)).length,originalPending.length);});
+  const ack={status:'financial_metadata_recorded',operationId:item.operationId,payloadHash:item.payloadHash,sequence:'1',businessUploaded:false,shiftClosed:false};
+  await test('valid metadata ACK persists separately without clearing business work',async()=>{await reader.acknowledgeFinancialHistory(item,ack);assert.deepEqual(await reader.financialHistory(branch,terminal),[]);assert.equal(await reader.financialHistoryReady(branch,terminal),true);assert.equal((await reader.pendingAggregates(branch)).length,originalPending.length);});
+  await test('lost-response receipt retry is idempotent',async()=>{await reader.acknowledgeFinancialHistory(item,ack);assert.equal((await manager.pool.request().query("SELECT COUNT(*) n FROM dbo.local_operation_receipts WHERE operation_type=N'financial_history_registered';")).recordset[0].n,1);});
+  await test('same raw hash from another terminal cannot consume this stream ACK',async()=>{await assert.rejects(reader.acknowledgeFinancialHistory({...item,terminalId:'different-terminal'},ack),{code:'EFINANCIAL_HISTORY_INVALID'});});
+  await test('default-off reader does not query ledger metadata',async()=>{const off=new ChangeReader({pool:{request(){throw new Error('must not query');}}},registry);assert.equal(await off.financialOpening(openId,branch,terminal),null);assert.deepEqual(await off.financialHistory(branch,terminal),[]);assert.equal(await off.financialHistoryReady(branch,terminal),true);});
+  console.log(`PASS ${passed} owned LocalDB financial history reader groups`);
+ }finally{await local.close();}
+}
+main().catch(error=>{console.error(error);process.exitCode=1;});

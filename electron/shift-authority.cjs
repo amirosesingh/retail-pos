@@ -2,6 +2,12 @@ const crypto = require("node:crypto");
 const protocol = require("./security/shift-author-protocol.cjs");
 const { recordId } = require("./sync/uuid-fields.cjs");
 const permissions = {
+  FINANCIAL_OPEN: ["can_open_shift"],
+  FINANCIAL_SALE: ["can_process_sale"],
+  FINANCIAL_REFUND: ["can_process_refund"],
+  FINANCIAL_TENDER: ["can_edit_tenders"],
+  FINANCIAL_VOID: ["can_void_item"],
+  FINANCIAL_CONTEXT: [],
   START_CLOSE: ["can_close_shift"],
   ORIGINAL: ["can_shift_cash_count", "can_close_shift"],
   RECOUNT: ["can_shift_cash_recount"],
@@ -127,6 +133,17 @@ class ShiftAuthorAuthority {
     this.captures.add(capture);
     return Object.freeze(capture);
   }
+  captureFinancial(action) {
+    // Internal capture keys stay distinct from public signed operation actions.
+    // New financial paths must be deliberately added with their real permission.
+    if (!['OPEN','SALE','REFUND','TENDER','VOID'].includes(action)) fail('ESYNC_SHIFT_AUTHOR_INVALID');
+    return this.capture(`FINANCIAL_${action}`);
+  }
+  captureFinancialContext() {
+    // Prepare the stable identity/key before taking business locks. This grants
+    // no action: each real delta is checked against its own live flag at sign.
+    return this.capture('FINANCIAL_CONTEXT');
+  }
   query(transaction, statement, inputs = {}) {
     const request = new (this.connectionManager.sql().Request)(
       transaction ?? this.connectionManager.pool,
@@ -228,6 +245,52 @@ class ShiftAuthorAuthority {
           capture.assertCurrent();
           return proof;
         },
+        ...(['ORIGINAL', 'RECOUNT'].includes(capture.action) ? {
+          signFinancialBasis: (input) => {
+            capture.assertCurrent();
+            const fields = ['branchId', 'shiftId', 'intentId', 'action', 'graphPayloadHash', 'basisHash', 'serverBasisId', 'formula'];
+            if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length !== fields.length || fields.some(key => !Object.hasOwn(input, key)) ||
+                input.branchId !== capture.branchId || input.action !== capture.action) fail('ESYNC_SHIFT_AUTHOR_INVALID');
+            const proof = this.keys.signFinancialBasis(capture.binding, {
+              expectedKeyId: info.keyId, subject: capture.subject, ...input,
+            });
+            capture.assertCurrent();
+            return proof;
+          },
+          signOpeningFinancialBasis: (input) => {
+            capture.assertCurrent();
+            const fields = ['branchId', 'shiftId', 'intentId', 'action', 'graphPayloadHash', 'basisHash', 'openingOrigin', 'formula'];
+            if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length !== fields.length || fields.some(key => !Object.hasOwn(input, key)) ||
+                input.branchId !== capture.branchId || input.action !== capture.action) fail('ESYNC_SHIFT_AUTHOR_INVALID');
+            const proof = this.keys.signOpeningFinancialBasis(capture.binding, {
+              expectedKeyId: info.keyId, subject: capture.subject, ...input,
+            });
+            capture.assertCurrent();
+            return proof;
+          },
+        } : {}),
+        ...(capture.action.startsWith('FINANCIAL_') ? {
+          signFinancialOperation: (input) => {
+            capture.assertCurrent();
+            const fields = ['branchId', 'operationId', 'action', 'payloadJson'];
+            const actionFlags={OPEN:'can_open_shift',SALE:'can_process_sale',REFUND:'can_process_refund',TENDER:'can_edit_tenders',VOID:'can_void_item'};
+            if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length !== fields.length || fields.some(key => !Object.hasOwn(input, key)) ||
+                input.branchId !== capture.branchId || !Object.hasOwn(actionFlags,input.action) || (capture.action!=='FINANCIAL_CONTEXT'&&input.action !== capture.action.slice('FINANCIAL_'.length)) || typeof input.payloadJson !== 'string' || !input.payloadJson || Buffer.byteLength(input.payloadJson, 'utf8') > 6 * 1024 * 1024)
+              fail('ESYNC_SHIFT_AUTHOR_INVALID');
+            if(!this.session.hasPermission(actionFlags[input.action]))fail('PERMISSION_DENIED');
+            // The actual writer must supply and validate its immutable action
+            // payload in the same transaction. Signing is a necessary author
+            // check, not a substitute for row authorization or saved receipts.
+            const proof = this.keys.signFinancialOperation(capture.binding, {
+              expectedKeyId: info.keyId, subject: capture.subject, branchId: input.branchId,
+              operationId: input.operationId, action: input.action,
+              payloadHash: crypto.createHash('sha256').update(input.payloadJson, 'utf8').digest('hex'),
+            });
+            capture.assertCurrent();
+            if(!this.session.hasPermission(actionFlags[input.action]))fail('PERMISSION_DENIED');
+            return proof;
+          },
+        } : {}),
         save: async (transaction, attestation) => {
           capture.assertCurrent();
           await this.query(

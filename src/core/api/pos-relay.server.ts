@@ -498,6 +498,13 @@ export async function runRelayRpc(
         error: "You can only sell for your own branch.",
       };
     }
+    if(scope.appUserId){
+      const {financialLiveAdapterReady}=await import('@/lib/financial-live-readiness.server');
+      if(await financialLiveAdapterReady()){
+        const res=await serviceRest('rpc/pos_live_financial_sale',{method:'POST',body:JSON.stringify({p_author:scope.appUserId,p_branch:storeId,p_terminal:scope.terminalId??null,p_sale:op.args._sale,p_items:op.args._items??[],p_payments:op.args._payments??[],p_movements:op.args._movements??[],p_member:op.args._member??null,p_exchange_bill:op.args._exchange_bill??null})});
+        return res.ok?{ok:true}:{ok:false,error:(await res.text()).slice(0,400)};
+      }
+    }
     const res = await serviceRest("rpc/pos_sale_commit", {
       method: "POST",
       body: JSON.stringify(op.args),
@@ -591,6 +598,13 @@ export async function runRelayRpc(
             ? "p_verified_by"
             : null;
   const args = actorField ? { ...op.args, [actorField]: actor } : op.args;
+  if(op.fn==='sale_refund'&&scope.appUserId){
+    const {financialLiveAdapterReady}=await import('@/lib/financial-live-readiness.server');
+    if(await financialLiveAdapterReady()){
+      const res=await serviceRest('rpc/pos_live_financial_refund',{method:'POST',body:JSON.stringify({p_author:scope.appUserId,p_branch:storeId,p_terminal:scope.terminalId??null,p_sale_id:id,p_lines:op.args._lines??null,p_client_refund_id:op.args._client_refund_id??null,p_reason:op.args._reason??null})});
+      return res.ok?{ok:true}:{ok:false,error:(await res.text()).slice(0,400)};
+    }
+  }
   // Only the account resolved from the verified session may become the native
   // database actor. Renderer attribution/actor parameters are never forwarded.
   const nativeApproval = op.fn === "stock_transfer_approve";

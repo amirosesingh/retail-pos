@@ -205,6 +205,13 @@ async function main() {
       state: "ACTIVE",
       row_version: 99,
     });
+    // Real tender inputs for the fixture's established expected_cash=100.
+    // Earlier tests exercised only graph causality and omitted sales entirely.
+    const seedCashSale = async (target, amount) => insert("sales", {
+      id: randomUUID(), store_id: branch, shift_id: target, payment_type: "cash",
+      total_amount: amount, is_refunded: false, payments: "[]", row_version: 1,
+    });
+    await seedCashSale(shift, 100);
     await pool
       .request()
       .query(
@@ -653,6 +660,7 @@ async function main() {
                 shift_id: offlineShift,
                 bill_number: "isolated-offline-sale",
                 total_amount: 80,
+                payment_type: "cash",
                 row_version: 1,
                 created_at: raw,
               },
@@ -878,6 +886,7 @@ async function main() {
         ops[0].rows[0].client_key = `coverage-${index}`;
         return ops;
       };
+      await seedCashSale(target, 80);
       const first = closing(110, 8),
         time = first[0].rows[0].created_at;
       first[0].rows[0].kind = "ORIGINAL";
@@ -1068,6 +1077,7 @@ async function main() {
       const target = randomUUID(), eventId = randomUUID(), starterId = randomUUID(), time = "2026-11-02T08:00:00.000Z";
       const repository = new OperationsRepository(manager, registry), aggregate = new AggregateRepository(manager, repository);
       await aggregate.commit("shift", { branchId: branch, terminalId: "terminal", permissions: { can_open_shift: true }, operations: [{ kind: "insert", table: "shifts", rows: [{ id: target, store_id: branch, terminal_id: "terminal", opened_at: raw, opened_by_staff_id: "starter", opened_by_name: "starter", opening_float: 20, status: "OPEN", state: "ACTIVE" }] }] });
+      await seedCashSale(target, 80);
       let starterEpoch = 1;
       const makeStarter = () => new (require("../electron/shift-authority.cjs").ShiftAuthorAuthority)({ keys, connectionManager: manager,
         session: { identity: () => ({ source: "pos", authorId: starterId, canonicalSubject: "starter", branchId: branch }), epoch: () => starterEpoch, hasPermission: key => key === "can_close_shift" },
