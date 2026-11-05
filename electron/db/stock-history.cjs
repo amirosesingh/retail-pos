@@ -199,7 +199,7 @@ class StockHistoryStore{
    const cap=await this.capability(tx);
    if(!cap.available){await recheckRead();await tx.commit();return {status:'unavailable',reasons:[cap.reason],cutoff,timeZone:zone,branchId:branch,rows:[],next:null};}
    const request=this.request(tx).input('history_branch',branch).input('history_ticks',cutoffTicks).input('history_after',after).input('history_limit',limit+1);
-   const meta=(await request.query(`SELECT h.baseline_id,h.coverage_state,CONVERT(nvarchar(30),h.committed_cursor) committed_cursor,
+   const meta=(await request.query(`SELECT b.id baseline_id,h.coverage_state,CONVERT(nvarchar(30),h.committed_cursor) committed_cursor,
      CONVERT(nvarchar(30),h.local_committed_cursor) local_committed_cursor,CONVERT(nvarchar(30),h.coverage_generation) coverage_generation,
      CONVERT(nvarchar(30),h.coverage_from_ticks) coverage_from_ticks,CONVERT(nvarchar(30),h.coverage_through_ticks) coverage_through_ticks,
      b.cutoff_at_raw,CONVERT(nvarchar(30),b.cutoff_ticks) cutoff_ticks,b.captured_at_raw,CONVERT(nvarchar(30),b.source_cursor) source_cursor,b.expected_pairs,b.verification_state,
@@ -212,8 +212,13 @@ class StockHistoryStore{
      (SELECT COUNT_BIG(*) FROM dbo.stock_history_movements m WHERE m.store_id=h.store_id AND m.ingested_cursor<=h.committed_cursor
       AND m.effective_ticks<=CONVERT(decimal(20,0),@history_ticks)
       AND NOT EXISTS(SELECT 1 FROM dbo.stock_history_openings missing WHERE missing.baseline_id=b.id AND missing.store_id=h.store_id AND missing.product_id=m.product_id)) missing_opening_count,
-     (SELECT COUNT_BIG(*) FROM dbo.stock_history_openings o WHERE o.store_id=h.store_id AND o.baseline_id=h.baseline_id) actual_pairs
-     FROM dbo.stock_history_heads h WITH(HOLDLOCK) LEFT JOIN dbo.stock_history_baselines b ON b.id=h.baseline_id AND b.store_id=h.store_id
+     (SELECT COUNT_BIG(*) FROM dbo.stock_history_openings o WHERE o.store_id=h.store_id AND o.baseline_id=b.id) actual_pairs
+     FROM dbo.stock_history_heads h WITH(HOLDLOCK)
+     OUTER APPLY(SELECT TOP(1) prior.id FROM dbo.stock_history_baselines prior WITH(HOLDLOCK)
+      WHERE prior.store_id=h.store_id AND prior.verification_state=N'verified'
+       AND prior.cutoff_ticks<=CONVERT(decimal(20,0),@history_ticks)
+      ORDER BY prior.cutoff_ticks DESC,prior.id DESC) eligible
+     LEFT JOIN dbo.stock_history_baselines b ON b.id=COALESCE(eligible.id,h.baseline_id) AND b.store_id=h.store_id
      WHERE h.store_id=@history_branch;`)).recordset?.[0];
    const reasons=[];
    if(meta?.read_at&&contract.instant(cutoff)>contract.instant(meta.read_at))reasons.push('FUTURE_CUTOFF');

@@ -166,7 +166,11 @@ BEGIN
   RETURN jsonb_build_object('status','incomplete','reasons',reasons||'"NO_VERIFIED_OPENING"'::jsonb,
    'cutoff',p_cutoff,'timeZone',p_zone,'branchId',p_branch,'rows','[]'::jsonb,'next',NULL,'restatable',true);
  END IF;
- SELECT * INTO b FROM public.stock_history_baselines WHERE id=h.baseline_id AND store_id=p_branch;
+ -- A later verified opening must not erase an older supported date. Coverage
+ -- and late pre-opening evidence are still checked against the selected one.
+ SELECT * INTO b FROM public.stock_history_baselines WHERE store_id=p_branch AND verification_state='verified'
+  AND cutoff_ticks<=cutoff ORDER BY cutoff_ticks DESC,id DESC LIMIT 1;
+ IF NOT FOUND THEN SELECT * INTO b FROM public.stock_history_baselines WHERE id=h.baseline_id AND store_id=p_branch; END IF;
  IF NOT FOUND THEN RAISE EXCEPTION 'STOCK_HISTORY_INVALID_OPENING'; END IF;
  SELECT count(*) INTO actual_pairs FROM public.stock_history_openings WHERE baseline_id=b.id AND store_id=p_branch;
  IF b.verification_state<>'verified' OR b.expected_pairs<>actual_pairs THEN reasons:=reasons||'"UNVERIFIED_OPENING"'::jsonb; END IF;

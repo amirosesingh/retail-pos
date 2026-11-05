@@ -71,6 +71,19 @@ const migration=fs.readFileSync(path.join(__dirname,'../database/sqlserver/prepa
  const savedTicks=c.instant(saved);await pool.request().input('through',String(savedTicks)).query("UPDATE dbo.stock_history_heads SET coverage_through_ticks=CONVERT(decimal(20,0),@through);");
  page=await store.readPage({cutoff:saved,timeZone:'Asia/Brunei',limit:1});assert.equal(page.status,'complete');assert.equal(page.rows[0].quantity,'2');assert(page.next);const second=await store.readPage({cutoff:saved,timeZone:'Asia/Brunei',after:page.next,sourceRevision:page.sourceRevision,limit:1});assert.equal(second.rows[0].quantity,'0');assert.equal(second.next,null);pass('SQL exact effective cutoff, zero/archived opening identity and stable keyset pages');
  const before=await store.readPage({cutoff:c.utc(savedTicks-1n),timeZone:'Asia/Brunei'});assert.equal(before.rows[0].quantity,'3');pass('100ns cutoff does not include a later movement early');
+ const laterBaseline=randomUUID(),laterAt=c.utc(savedTicks+1n);
+ await pool.request().input('baseline',baseline).input('later',laterBaseline).input('at',laterAt).input('ticks',String(savedTicks+1n)).batch(`
+  INSERT dbo.stock_history_baselines(id,store_id,cutoff_at_raw,cutoff_ticks,captured_at_raw,captured_ticks,source_cursor,opening_kind,verification_state,expected_pairs,terminal_watermarks,verified_by,evidence_hash)
+   SELECT @later,store_id,@at,CONVERT(decimal(20,0),@ticks),@at,CONVERT(decimal(20,0),@ticks),1,opening_kind,verification_state,expected_pairs,terminal_watermarks,verified_by,evidence_hash FROM dbo.stock_history_baselines WHERE id=@baseline;
+  INSERT dbo.stock_history_openings(id,baseline_id,product_id,store_id,quantity,product_name,sku,barcode,owner_store_id)
+   SELECT NEWID(),@later,product_id,store_id,CASE WHEN product_id='${pid}' THEN 2 ELSE quantity END,product_name,sku,barcode,owner_store_id FROM dbo.stock_history_openings WHERE baseline_id=@baseline;
+  UPDATE dbo.stock_history_heads SET baseline_id=@later,coverage_generation=coverage_generation+1,coverage_through_ticks=CONVERT(decimal(20,0),@ticks);`);
+ const olderPage=await store.readPage({cutoff:saved,timeZone:'Asia/Brunei'});assert.equal(olderPage.status,'complete');assert.equal(olderPage.baselineAt,b);assert.equal(olderPage.rows[0].quantity,'2');
+ const laterPage=await store.readPage({cutoff:laterAt,timeZone:'Asia/Brunei'});assert.equal(laterPage.status,'complete');assert.equal(laterPage.baselineAt,laterAt);assert.equal(laterPage.rows[0].quantity,'2');
+ await pool.request().input('ticks',String(savedTicks+1n)).query('UPDATE dbo.stock_history_heads SET coverage_from_ticks=CONVERT(decimal(20,0),@ticks);');
+ assert((await store.readPage({cutoff:saved,timeZone:'Asia/Brunei'})).reasons.includes('INCOMPLETE_MOVEMENTS'));
+ await pool.request().input('ticks',String(c.instant(b))).query('UPDATE dbo.stock_history_heads SET coverage_from_ticks=CONVERT(decimal(20,0),@ticks);');
+ page=olderPage;pass('a later opening preserves older supported dates without fabricating missing movement coverage');
  const closedShift=randomUUID();await pool.request().input('shift',closedShift).batch("INSERT dbo.shifts(id,store_id,status,closed_at) VALUES(@shift,N'a',N'CLOSED','2026-11-05T01:00:00.0000001Z');");
  const closed=await store.readPage({cutoff:'2099-01-01T00:00:00Z',closedShiftId:closedShift,timeZone:'Asia/Brunei'});assert.equal(closed.cutoff,'2026-11-05T01:00:00.0000001Z');
  await pool.request().input('shift',closedShift).query("UPDATE dbo.shifts SET store_id=N'b' WHERE id=@shift;");await assert.rejects(store.readPage({cutoff:saved,closedShiftId:closedShift,timeZone:'Asia/Brunei'}),{code:'ESTOCK_HISTORY_SHIFT_UNAVAILABLE'});

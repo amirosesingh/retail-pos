@@ -5,6 +5,7 @@
 /database/sqlserver/prepared/026_shift_financial_operations.sql text eol=lf
 /docs/database/shift-financial-upgrade-manifest.json text eol=lf
 /supabase/migrations/20261105113916_stock_history_effective_ledger.sql text eol=lf
+/supabase/migrations/20261105172030_stock_history_accepted_effect_capture.sql text eol=lf
 /database/sqlserver/prepared/031_stock_history_effective_ledger.sql text eol=lf
 /database/sqlserver/retail-pos-existing-upgrade-1.4.82.sql text eol=lf
 /database/sqlserver/prepared/existing-upgrade-1.4.82.manifest.json text eol=lf

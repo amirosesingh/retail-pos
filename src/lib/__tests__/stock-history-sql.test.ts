@@ -130,4 +130,16 @@ describe('actual cloud stock-history SQL read and authorization',()=>{
   await db.exec('UPDATE stock_history_heads SET committed_cursor=2;');
   expect(await page()).toMatchObject({status:'incomplete',reasons:['BASELINE_PREHISTORY_CHANGED'],rows:[]});
  });
+ it('retains a supported older opening after a later opening becomes the head',async()=>{
+  await seed();const later='30000000-0000-4000-8000-000000000099',at='2026-11-05T02:00:00.0000000Z';
+  await db.query(`INSERT INTO stock_history_baselines SELECT $1,store_id,$2,$3,$2,$3,1,opening_kind,verification_state,expected_pairs,terminal_watermarks,verified_by,evidence_hash
+   FROM stock_history_baselines WHERE id=$4`,[later,at,String(c.instant(at)),baseline]);
+  await db.query(`INSERT INTO stock_history_openings SELECT gen_random_uuid(),$1,product_id,store_id,CASE WHEN product_id=$2 THEN 1 ELSE quantity END,product_name,sku,barcode,owner_store_id
+   FROM stock_history_openings WHERE baseline_id=$3`,[later,product,baseline]);
+  await db.query('UPDATE stock_history_heads SET baseline_id=$1,coverage_generation=coverage_generation+1',[later]);
+  expect(await page()).toMatchObject({status:'complete',baselineAt:start,rows:[{productId:product,quantity:'1'},{productId:archived,quantity:'0'}]});
+  expect(await page({at})).toMatchObject({status:'complete',baselineAt:at,rows:[{quantity:'1'},{quantity:'0'}]});
+  await db.query('UPDATE stock_history_heads SET coverage_from_ticks=$1',[String(c.instant(at))]);
+  expect(await page()).toMatchObject({status:'incomplete',reasons:['INCOMPLETE_MOVEMENTS'],rows:[]});
+ });
 });

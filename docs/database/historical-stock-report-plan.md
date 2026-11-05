@@ -321,3 +321,34 @@ capture/upload/ack coverage for every writer, eligible openings/cohort/clock/
 creation/retention evidence, complete full regression and installed acceptance.
 Capture remains uninstalled/null. No schema/baseline/business row, queue,
 checkpoint, registration, live configuration or permission grant was changed.
+
+## 6 November accepted-effect and eligible-opening checkpoint
+
+The native/cloud readers now choose the newest eligible verified opening at or
+before the requested instant, with the head opening only as an unsupported-date
+fallback. Existing coverage and late pre-opening checks still apply to that
+selected opening. A newer opening therefore does not erase an older supported
+date, and absent movement coverage cannot be inferred from the mere existence of
+an old opening. Page revisions include the actual selected opening.
+
+Unapplied draft `20261105172030_stock_history_accepted_effect_capture.sql` records
+only real product before/after branch quantities in private append-only metadata,
+including zero-stock creation/deletion where a branch key exists. It associates
+a delta receipt only after one unique same-transaction product/branch/quantity
+match. Receipt-only uploads, wrong branches/deltas, duplicate/reused sources and
+ambiguous candidates cannot certify an effect. Unsupported stock shapes or
+missing scoped cohort evidence create explicit gaps, preserving the business
+write. Actual effects invalidate the prior report head until complete ledger/
+cohort proof exists. It grants no API role direct metadata access or mutation and
+does not materialize/accept a historical movement by itself.
+
+The capture neither changes current business calculations nor fabricates an
+original author, offline physical time, baseline or complete coverage. Its clock
+grade deliberately remains unverified. It has no generic ledger upsert/RPC.
+All existing stock-writer paths pass through the actual products trigger when
+this future module is installed, but their domain-specific original-time/author
+bindings and complete existing single-lane upload/adoption remain pending.
+
+Verification at this checkpoint:61 PostgreSQL/canonical cases and27 actual
+uniquely owned disposable LocalDB groups pass, with fixtures cleaned. TypeScript,
+scoped lint and diff checks pass. No live schema/evidence/baseline was installed.
