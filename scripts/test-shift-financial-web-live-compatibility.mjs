@@ -43,4 +43,3 @@ for(const variant of ['canonical','actual','actual-crlf','tampered-permission','
  }finally{await close();}
 }
 console.log(`PASS ${groups} captured-source artifact groups`);
-
