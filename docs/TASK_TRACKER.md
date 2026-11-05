@@ -53,17 +53,16 @@ separate full Vitest run:5,848 passed/8 skipped/0 failed (5,856 total), plus
 TypeScript. All current required GitHub/platform/Workers checks pass. These
 results exclude the uncommitted adoption prototype and installed-device tests.
 
-Reviewed-adoption prototype:33 actual disposable SQL Server groups pass; one
-ordinary subsequent cloud-delta regression attempts a rounded decimal and rolls
-back as designed. No committed production damage was demonstrated. A separate
-owner approval for exact-witness-only changes in shared shift-graph.cjs and
-ShiftIntentStore.adopt is now received; implementation/tests are active under the
-narrow scope above. Independent review corrected unbounded OPEN timestamp changes and
-same-name-but-different CHECK constraints;17 focused tests pass. The complete
-opt-in SQL script still fails at the known ordinary-delta regression, with its
-transaction rolled back. Current prototype/DDL remains unactivated/unapplied;
-its separate draft preparation checkpoint must not be described as a working
-runtime adoption or complete warning fix.
+Reviewed-adoption prototype and exact-writer correction: the previously failing
+ordinary cloud-delta precision case is now fixed in the owner-approved two shared
+writers. All40 disposable SQL Server groups pass, including exact adoption,
+receipt normalization, six-table capturedV0 completion, subsequent note update,
+immutable history and genuine no-witness legacy behavior. Fifty-three focused
+tests, TypeScript/scoped lint and independent SQL40/focused29 review pass; runs
+overlap and are not summed. Independent review also corrected unbounded OPEN
+timestamp changes and exact CHECK definitions. Final integrated full regression
+is next. Prototype/runtime adoption remains unwired and schema unapplied; passing
+writer tests alone is not the complete affected-PC recovery or release acceptance.
 
 PR399 single sync-data lane is merged to beta596742141d33a1683f39990299ac7b7217259136.
 Exact source0d2dcf45 passed5,748 tests/7 skipped/0 failed plus109 focused checks,

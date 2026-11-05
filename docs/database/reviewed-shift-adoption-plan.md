@@ -61,25 +61,26 @@ retention, private-receipt normalization, pending work, unchanged records,
 rollback, OPEN handling and all-six-table captured-V0 recovery. None of these
 checks used POS_Local or production records.
 
-The subsequent ordinary note-update regression is intentionally failing. Existing
-`applyShiftGraphs` binds ordinary parsed numbers: it attempted to replace
+The earlier ordinary note-update regression exposed parsed-number binding in
+`applyShiftGraphs`: it attempted to replace
 `1234567890.123456789012` with `1234567890.123456716537`. Its readback rejected that
 write with `ESYNC_APPLY_DEFERRED`, and the fixture transaction rolled back.
-Therefore this prototype is not ready for activation. A reviewed exact-witness
-binding/comparison/readback correction in the normal graph writer is required;
-its current authorization, pending-work, immutable-history and no-delete guards
-must remain.
+The owner subsequently approved exact-witness binding/comparison/readback and
+baseline serialization in the two existing shared writers. That correction now
+passes the ordinary note-update case without rounding; its authorization,
+pending-work, immutable-history, no-delete and no-witness legacy guards remain.
 
 Independent review corrected two additional prototype guards: OPEN adoption now
 permits only exact timestamps or bounded SQL100ns-to-PostgreSQL-microsecond
 conversion, and all three actual SQL CHECK definitions must match. Same-name
 CHECK(1=1), six invalid OPEN timestamp cases and relevant pending work are denied
-before projection writes. Seventeen focused tests pass;33 actual disposable SQL
-groups pass before the unchanged known ordinary-delta regression fails and rolls
-back. The complete opt-in SQL script is therefore still failing, not green.
+before projection writes. The complete disposable SQL fixture now passes40 groups,
+including six-table gap completion and the later ordinary delta. The exact-writer
+focused run passes53 tests; the separate prototype authority tests remain part of
+their recorded coverage. Independent review reproduced40 SQL groups and29 focused
+tests without a blocker. Final full-suite and installed acceptance remain pending.
 
-Still required: the separately requested shared-writer correction approval,
-ordinary-delta regression correction, final integrated tests, exact-file/database
+Still required: final integrated tests, exact-file/database
 approval, runtime integration and actual device acceptance. Replay of an existing
 decision is historical no-write evidence, not proof of current convergence; fresh
 unchanged gap recovery must still prove every retained graph. No production-ready

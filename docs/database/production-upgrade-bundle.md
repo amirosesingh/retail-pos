@@ -146,7 +146,12 @@ adoption archives the exact before-image before changing its effective projectio
 Those operations must preserve accepted web corrections and pending work, and
 must not invent an original financial snapshot or cashier signature.
 
-Final gates: passing exact-writer/ordinary-delta SQL regression, complete runtime
+The approved exact-writer/ordinary-delta correction now passes40 actual disposable
+SQL groups and53 focused tests, including independent review. It changes no schema
+artifact above. Full integrated regression remains pending; this does not apply
+or approve any candidate or complete runtime adoption.
+
+Final gates: full integrated exact-writer regression, complete runtime
 adoption integration, independent allowed/denied/retry/rollback tests, compatible
 cloud/local sequence and fresh schema/grant checks, isolated upgrade tests, actual
 device acceptance, and separate exact-target application approval. Installer and

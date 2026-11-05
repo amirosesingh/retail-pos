@@ -102,8 +102,10 @@ Recovery PR395 remains draft. Its committed review/upload head c900679d passes
 runtime recovery. The owner approved audited actual-Administrator recovery when
 old financial snapshots are unavailable; preserve that provenance and all newer
 protected-shift checks. Reviewed local adoption remains an unactivated prototype.
-A subsequent ordinary-delta precision regression rolls back; shared exact-number
-writer correction awaits its separately requested approval. Never manually copy
+A subsequent ordinary-delta precision regression originally rolled back. The
+owner approved its exact-witness writer/baseline correction;40 actual disposable
+SQL groups and53 focused tests now pass with existing guards/legacy behavior.
+Full integrated regression and actual runtime adoption remain pending. Never manually copy
 retained closings into cloud records. Historical stock's quantity kernel is
 tested, but proven opening/movement storage, authorized loader and UI remain
 unfinished. Preserve these tasks and evidence in TASK_TRACKER.md.

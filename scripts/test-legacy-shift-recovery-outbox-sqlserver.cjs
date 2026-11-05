@@ -318,19 +318,68 @@ async function main() {
       assert.equal((await pool.request().query("SELECT COUNT(*) n FROM dbo.sync_checkpoints;")).recordset[0].n, 6);
     });
     await test("future ordinary note delta must preserve exact adopted money", async () => {
-      const before = JSON.parse(await graph(precisionShift))[0].rows[0].counted_cash, target = toCloud(await graph(precisionShift));
+      const before = JSON.parse(await graph(precisionShift))[0].rows[0], target = toCloud(await graph(precisionShift));
       target[0].rows[0].note = "A subsequent ordinary cloud note update"; target[0].rows[0].row_version = parseExactJson("2");
       const incoming = transport(precisionShift, target), parent = incoming.tables[0].rows[0];
       const prepared = await prepareShiftGraphs({ cloud: { shiftGraph: async () => incoming }, connectionManager: cm, branchId,
         changes: [{ table_name: "shifts", entity_id: JSON.stringify({ id: precisionShift }), row_data: parent, tombstone: false }] });
-      await atomic(async tx => {
-        try { await applyShiftGraphs({ transaction: tx, connectionManager: cm, registry, reader, branchId, prepared }); }
-        catch (error) {
-          const attempted = await new sql.Request(tx).input("id", precisionShift).query("SELECT CONVERT(nvarchar(100),counted_cash) counted_cash FROM dbo.shifts WHERE id=@id;");
-          error.fixtureExactBefore = before; error.fixtureAttemptedCash = attempted.recordset[0].counted_cash; throw error;
-        }
-      });
-      assert.equal(JSON.parse(await graph(precisionShift))[0].rows[0].counted_cash, before);
+      await atomic(tx => applyShiftGraphs({ transaction: tx, connectionManager: cm, registry, reader, branchId, prepared }));
+      const after = JSON.parse(await graph(precisionShift))[0].rows[0];
+      for (const key of ["counted_cash", "opened_at", "closed_at"]) assert.equal(after[key], before[key]);
+      const baseline = (await pool.request().input("id", precisionShift).query("SELECT graph_token,closed_at_raw,graph_json FROM dbo.pos_sync_shift_baselines WHERE shift_id=@id;")).recordset[0];
+      assert(baseline.graph_json.includes("1234567890.123456789012")); assert(baseline.graph_json.includes(".1234567"));
+      assert.equal(baseline.graph_token, incoming.graphToken); assert.equal(baseline.closed_at_raw, incoming.closedAtRaw);
+    });
+    const applyOrdinary = async incoming => {
+      const prepared = await prepareShiftGraphs({ cloud: { shiftGraph: async () => incoming }, connectionManager: cm, branchId,
+        changes: [{ table_name: "shifts", entity_id: JSON.stringify({ id: incoming.shiftId }), row_data: incoming.tables[0].rows[0], tombstone: false }] });
+      return atomic(tx => applyShiftGraphs({ transaction: tx, connectionManager: cm, registry, reader, branchId, prepared }));
+    };
+    await test("ordinary exact graph updates a mutable 100ns timestamp without touching money", async () => {
+      const before = JSON.parse(await graph(precisionShift))[0].rows[0], target = toCloud(await graph(precisionShift));
+      target[0].rows[0].opened_at = before.opened_at.replace(".1234567", ".1234566");
+      await applyOrdinary(transport(precisionShift, target));
+      const after = JSON.parse(await graph(precisionShift))[0].rows[0];
+      assert(after.opened_at.includes(".1234566")); assert.equal(after.counted_cash, before.counted_cash);
+    });
+    await test("immutable 100ns and sub-Number decimal changes roll back all ordinary graph writes", async () => {
+      await pool.request().input("id", precisionShift).query("WITH CHANGE_TRACKING_CONTEXT(0x434C4F5544) UPDATE dbo.shift_cash_counts SET created_at='2026-01-01T00:00:00.1234567+00:00' WHERE shift_id=@id;");
+      for (const change of [row => { row.created_at = "2026-01-01T00:00:00.1234566+00:00"; }, row => { row.counted_cash = parseExactJson("1234567890.123456789013"); }]) {
+        const before = await graph(precisionShift), target = toCloud(before); target[0].rows[0].note = "Must roll back parent edit"; change(target[1].rows[0]);
+        await assert.rejects(applyOrdinary(transport(precisionShift, target)), error => error.code === "ESYNC_APPLY_CONFLICT"); assert.equal(await graph(precisionShift), before);
+      }
+    });
+    await test("ordinary exact graph inserts new immutable history and preserves exact JSON, null and decimals", async () => {
+      const target = toCloud(await graph(precisionShift)), count = { ...target[1].rows[0], id: crypto.randomUUID(), kind: "RECOUNT", note: null };
+      const countTable = registry.tables.find(table => table.cloudTable === "shift_cash_counts");
+      const jsonColumn = countTable.columns.find(column => column.cloudType === "jsonb");
+      if (jsonColumn) count[jsonColumn.cloudColumn] = { amount: parseExactJson("1234567890.123456789012"), nullable: null };
+      target[1].rows.push(count); await applyOrdinary(transport(precisionShift, target));
+      const stored = JSON.parse(await graph(precisionShift))[1].rows.find(row => row.id.toLowerCase() === count.id);
+      assert.equal(stored.counted_cash, "1234567890.123456789012"); if (jsonColumn) assert(stored[jsonColumn.sqlServerColumn].includes("1234567890.123456789012"));
+    });
+    await test("exact download retains no-delete, branch, pending and decimal-overflow guards", async () => {
+      const before = await graph(precisionShift), target = toCloud(before); target[1].rows = target[1].rows.filter(row => row.kind !== "RECOUNT");
+      await assert.rejects(applyOrdinary(transport(precisionShift, target)), error => error.code === "ESYNC_APPLY_CONFLICT");
+      const foreign = toCloud(before); foreign[0].rows[0].store_id = crypto.randomUUID();
+      await assert.rejects(applyOrdinary(transport(precisionShift, foreign)), error => error.code === "SYNC_BRANCH_FORBIDDEN");
+      await pool.request().input("branch", branchId).input("id", precisionShift).query("INSERT dbo.pos_sync_shift_intents VALUES(NEWID(),@branch,@id,NULL);");
+      await assert.rejects(applyOrdinary(transport(precisionShift, toCloud(before))), error => error.code === "ELOCAL_UPLOAD_PENDING");
+      await pool.request().query("DELETE dbo.pos_sync_shift_intents;");
+      const overflow = toCloud(before); overflow[0].rows[0].opening_float = parseExactJson("123456789012345678901234567890.123456789012");
+      await assert.rejects(applyOrdinary(transport(precisionShift, overflow))); assert.equal(await graph(precisionShift), before);
+    });
+    await test("tampered private witness cannot downgrade to ordinary rounded application", async () => {
+      const before = await graph(precisionShift), incoming = transport(precisionShift, toCloud(before)); incoming.tables[0].rows[0].note = "Mutated after transport";
+      await assert.rejects(applyOrdinary(incoming), error => error.code === "ESYNC_GRAPH"); assert.equal(await graph(precisionShift), before);
+    });
+    await test("genuine no-witness ordinary graph keeps its existing compatible application path", async () => {
+      const c = await seed();
+      for (const name of TABLES) await pool.request().input("id", c.id).query(`WITH CHANGE_TRACKING_CONTEXT(0x434C4F5544) UPDATE dbo.[${name}] SET id=id WHERE ${name === "shifts" ? "id" : "shift_id"}=@id;`);
+      const incoming = JSON.parse(JSON.stringify(transport(c.id, toCloud(await graph(c.id))))); incoming.tables[0].rows[0].note = "Legacy no-witness note";
+      await applyOrdinary(incoming); assert.equal(JSON.parse(await graph(c.id))[0].rows[0].note, incoming.tables[0].rows[0].note);
+      const baseline = (await pool.request().input("id", c.id).query("SELECT graph_json FROM dbo.pos_sync_shift_baselines WHERE shift_id=@id;")).recordset[0].graph_json;
+      assert.equal(baseline, JSON.stringify(incoming));
     });
     console.log(`PASS ${passed} isolated SQL Server legacy recovery groups`);
   } finally {

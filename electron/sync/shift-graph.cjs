@@ -7,7 +7,7 @@ const {
 } = require("../db/shift-intents.cjs");
 const { recordId } = require("./uuid-fields.cjs");
 const { toLocalValue, toCloudRow } = require("./row-codec.cjs");
-const {witnessBytes,exactGraph}=require("./shift-recovery-exact.cjs");
+const {witnessBytes,exactGraph,exactRows,projection,decimal,instant,stringifyExactJson}=require("./shift-recovery-exact.cjs");
 const id = (value) => recordId(String(value ?? "").trim());
 const refuse = (message, code = "ESYNC_GRAPH") => {
   throw Object.assign(new Error(message), { code, table: "shifts" });
@@ -110,6 +110,9 @@ async function applyShiftGraphs({
   let applied = 0;
   for (const [shiftId, graph] of prepared.graphs) {
     const tables = validateGraph(graph, branchId, shiftId,{allowUnclosed:true});
+    const exact = exactGraph(graph, branchId, shiftId);
+    if (witnessBytes(graph) && !exact) refuse("The exact closing response changed before application.");
+    const exactTables = exact ? new Map(exact.tables.map(part => [part.table, part.rows])) : null;
     const parentTable = registry.tables.find((table) => table.cloudTable === "shifts");
     const parentChange = {
       entity_id: JSON.stringify({ id: shiftId }),
@@ -147,11 +150,11 @@ async function applyShiftGraphs({
       .filter((table) => GRAPH_TABLES.includes(table.cloudTable))
       .sort((a, b) => a.dependencyOrder - b.dependencyOrder);
     for (const table of ordered) {
-      const rows = tables.get(table.cloudTable),
+      const rows = (exactTables ?? tables).get(table.cloudTable),
         saved =
           (
             await query(
-              `SELECT * FROM dbo.[${table.sqlServerTable}] WITH(UPDLOCK,HOLDLOCK) WHERE ${table.cloudTable === "shifts" ? "id" : "shift_id"}=@shift;`,
+              `SELECT ${exact ? projection(table) : "*"} FROM dbo.[${table.sqlServerTable}]${exact ? " source" : ""} WITH(UPDLOCK,HOLDLOCK) WHERE ${table.cloudTable === "shifts" ? "id" : "shift_id"}=@shift;`,
               { shift: shiftId },
             )
           ).recordset ?? [];
@@ -170,12 +173,42 @@ async function applyShiftGraphs({
       ].includes(table.cloudTable);
       for (const row of rows) {
         const old = saved.find((item) => id(item.id) === id(row.id));
-        if (old && immutable && !sameRow(table, toCloudRow(table, old), row))
+        const equal = old && (exact ? exactRows(table, [old], [row]) : sameRow(table, toCloudRow(table, old), row));
+        if (old && immutable && !equal)
           refuse(
             "Saved immutable closing history differs from the cloud graph.",
             "ESYNC_APPLY_CONFLICT",
           );
-        if (old && sameRow(table, toCloudRow(table, old), row)) continue;
+        if (equal) continue;
+        if (exact) {
+          if (table.columns.some(column => !Object.hasOwn(row, column.cloudColumn))) refuse("The complete cloud graph omits registered facts.");
+          const request = new sql.Request(transaction), names = [];
+          for (const [index, column] of table.columns.entries()) {
+            if (old && column.sqlServerColumn !== "id" && exactRows({ ...table, columns: [column] }, [old], [row])) continue;
+            const storage = String(column.sqlServerType).toLowerCase(), type = String(column.cloudType).toLowerCase();
+            if (!/^[a-z_][a-z0-9_]*$/i.test(column.sqlServerColumn) || !/^(?:uniqueidentifier|bit|date|datetime2\(\d\)|datetimeoffset\(\d\)|nvarchar\((?:max|\d+)\)|varchar\((?:max|\d+)\)|(?:decimal|numeric)\(\d+,\s*\d+\)|bigint|int|smallint|tinyint|float|real|money|smallmoney)$/.test(storage)) refuse("The exact closing column type is unsupported.");
+            const value = row[column.cloudColumn], parameter = `v${index}`;
+            let text = value;
+            if (value !== null) {
+              if (/^(numeric|decimal|money|smallmoney|bigint|integer|smallint|real|double precision)/.test(type)) {
+                if (decimal(value) === undefined) refuse("A closing number has no exact source token.");
+                text = typeof value === "string" ? value : stringifyExactJson(value);
+              } else if (type === "jsonb" || type.endsWith("[]")) text = stringifyExactJson(value);
+              else if (type === "boolean") { if (typeof value !== "boolean") refuse("A closing boolean is invalid."); text = value ? "1" : "0"; }
+              else if (typeof value !== "string" || /^timestamp/.test(type) && instant(value) === undefined) refuse("A closing value has no exact source representation.");
+            }
+            request.input(parameter, sql.NVarChar(sql.MAX), text);
+            // Let text assignment reject overflow; an explicit text CAST could
+            // silently truncate it. Numeric/time casts retain their raw token.
+            names.push([column.sqlServerColumn, /^(?:n?varchar)/.test(storage) ? `@${parameter}` : `CONVERT(${storage},@${parameter})`]);
+          }
+          const source = names.map(([name, value]) => `${value} AS [${name}]`).join(",");
+          const updates = names.filter(([name]) => name !== "id").map(([name]) => `target.[${name}]=source.[${name}]`).join(",");
+          await request.query(`WITH CHANGE_TRACKING_CONTEXT(0x434C4F5544) MERGE dbo.[${table.sqlServerTable}] WITH(HOLDLOCK) target USING(SELECT ${source}) source ON target.id=source.id
+            ${old && !immutable ? `WHEN MATCHED THEN UPDATE SET ${updates}` : ""}
+            ${old ? "" : `WHEN NOT MATCHED THEN INSERT(${names.map(([name]) => `[${name}]`).join(",")}) VALUES(${names.map(([name]) => `source.[${name}]`).join(",")})`};`);
+          applied++; continue;
+        }
         const inputs = {},
           names = table.columns
             .filter((column) => Object.hasOwn(row, column.cloudColumn))
@@ -201,11 +234,11 @@ async function applyShiftGraphs({
       const confirmed =
         (
           await query(
-            `SELECT * FROM dbo.[${table.sqlServerTable}] WITH(UPDLOCK,HOLDLOCK) WHERE ${table.cloudTable === "shifts" ? "id" : "shift_id"}=@shift;`,
+            `SELECT ${exact ? projection(table) : "*"} FROM dbo.[${table.sqlServerTable}]${exact ? " source" : ""} WITH(UPDLOCK,HOLDLOCK) WHERE ${table.cloudTable === "shifts" ? "id" : "shift_id"}=@shift;`,
             { shift: shiftId },
           )
         ).recordset ?? [];
-      if (
+      if (exact ? !exactRows(table, confirmed, rows) : (
         confirmed.length !== rows.length ||
         rows.some(
           (row) =>
@@ -214,12 +247,13 @@ async function applyShiftGraphs({
                 id(savedRow.id) === id(row.id) && sameRow(table, toCloudRow(table, savedRow), row),
             ),
         )
-      )
+      ))
         refuse(
           "The local database did not confirm the complete cloud closing graph.",
           "ESYNC_APPLY_DEFERRED",
         );
     }
+    if (exact && exactGraph(graph, branchId, shiftId) !== exact) refuse("The exact closing response changed during application.");
     await store.adopt(transaction, graph);
   }
   return applied;

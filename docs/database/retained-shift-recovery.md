@@ -49,6 +49,16 @@ ShiftGapRecovery.finish and its captured V0, long-offline full workflow acceptan
 exact live-schema preflight and separate cloud/local application approval. This
 draft cannot yet be claimed to clear the affected PC's recovery warning.
 
+Latest precision checkpoint: the owner-approved existing graph writer and baseline
+store now consume the private verified exact response, use registered typed SQL
+binding/exact readback and preserve exact baseline JSON. Genuine no-witness legacy
+behavior and all pending/branch/immutable/no-delete guards remain. All40 actual
+disposable SQL groups and53 focused tests pass; independent review reproduced40
+SQL and29 focused checks. This fixes the previously failing later note update,
+not the still-unwired runtime adoption or any live operator database. Final
+integrated full regression, complete runtime acceptance and application approval
+remain separate gates.
+
 ## Confirmed failure
 
 Legacy closings can outlive SQL Server Change Tracking before an immutable
