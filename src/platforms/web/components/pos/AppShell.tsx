@@ -84,6 +84,8 @@ import { flushTicketDrafts } from "@/lib/session-draft";
 import { localDb } from "@/core/local-db/local-db";
 import { createLoginView } from "@/lib/login-view";
 import { startSyncEngine } from "@/lib/sync-engine";
+import { pageDataScope } from "@/lib/page-data-cache";
+import { useConfirmedPresentation } from "@/lib/use-confirmed-presentation";
 
 /** The only screens any signed-in account may open. Everything else must have
  *  an entry above — unknown paths are denied, never silently allowed. */
@@ -171,6 +173,12 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   // look like a failed activation.
   const startup = useStartupGate();
   const localStartupReady = useLocalStartupReady() && startup.registration === "registered";
+  // Retain only the shell, never a previous branch's business content or grant.
+  const shellScope = user ? JSON.stringify([pageDataScope(user), loginIdentity,
+    terminalStoreId, terminal.config?.tokenId ?? null]) : null;
+  const confirmedShell = useConfirmedPresentation(shellScope, true,
+    ready && dataReady && !settingsScopeLoading) === true;
+  const branchContentPending = !dataReady || settingsScopeLoading;
   const location = useLocation();
   const { visibleRoute } = useVisibility();
   const { cards: permittedSettings } = useSettingsNav();
@@ -390,7 +398,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
       <p>Sign in with an account permitted to use this management device. Your page and branch permissions still apply.</p>
       <Button onClick={() => void logout()}>Use another account</Button>
     </div>;
-  if (!dataReady) {
+  if (!dataReady && !confirmedShell) {
     if (loadPhase === "failed" || loadPhase === "stalled")
       return <div className="flex min-h-dvh items-center justify-center p-6">
         <div className="w-full max-w-md space-y-4 rounded-lg border border-border bg-surface-1 p-6 text-center">
@@ -402,7 +410,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
       </div>;
     return <TillLoader onRetry={retryLoad} />;
   }
-  if (settingsScopeLoading) {
+  if (settingsScopeLoading && !confirmedShell) {
     if (settingsScopeError)
       return <div className="flex min-h-dvh items-center justify-center p-6">
         <div className="w-full max-w-md space-y-4 rounded-lg border border-border bg-surface-1 p-6 text-center" role="alert">
@@ -540,11 +548,11 @@ function AppShellFrame({ children }: { children: ReactNode }) {
       <div className="pos-scaled flex h-dvh min-h-dvh flex-col overflow-hidden bg-background text-foreground">
         <DbConnectionModal />
         <CloudSetupGate />
-        {(loadPhase === "failed" || loadPhase === "stalled") && <div role="status" className="flex flex-wrap items-center justify-center gap-2 bg-warning/15 px-3 py-2 text-sm text-warning">
+        {!branchContentPending && (loadPhase === "failed" || loadPhase === "stalled") && <div role="status" className="flex flex-wrap items-center justify-center gap-2 bg-warning/15 px-3 py-2 text-sm text-warning">
           Showing the last loaded store data. Refresh has not completed.
           <Button variant="outline" size="sm" onClick={retryLoad}>Try again</Button>
         </div>}
-        <ShiftGuard>
+        <ShiftGuard scopePending={branchContentPending}>
           <div className="flex min-h-0 min-w-0 flex-1">
             {/* Desktop / tablet sidebar */}
             <aside
@@ -666,6 +674,25 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                 )}
               >
                 {(() => {
+                  // The surrounding shell remains stable during a view switch.
+                  // Protected routes/popups stay unmounted until both current
+                  // data and scoped settings are confirmed by their own readers.
+                  if (branchContentPending) {
+                    const failed = !dataReady
+                      ? loadPhase === "failed" || loadPhase === "stalled"
+                      : Boolean(settingsScopeError);
+                    const retry = !dataReady ? retryLoad : retrySettingsScope;
+                    return <section aria-label="Selected branch loading" aria-busy={!failed}
+                      className="flex min-h-64 items-center justify-center p-6">
+                      <div className="max-w-md space-y-3 text-center" role={failed ? "alert" : "status"}>
+                        <h1 className="text-lg font-semibold">{failed ? "Could not update this branch view" : `Loading ${currentStore.name || "selected branch"}…`}</h1>
+                        <p className="text-sm text-muted-foreground">{failed
+                          ? (!dataReady ? locationLoadError : settingsScopeError) || "The current branch data is not confirmed yet. Your saved work is unchanged."
+                          : "Updating the selected branch's data and settings."}</p>
+                        {failed && <Button onClick={retry}>Try again</Button>}
+                      </div>
+                    </section>;
+                  }
                   // Decided before the page body renders: no flash of protected data.
                   const required = requiredPermission(location.pathname);
                   const terminalManagement =

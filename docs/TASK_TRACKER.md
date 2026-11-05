@@ -5893,3 +5893,27 @@ actual Vite SSR failure/recovery and native/ESM signed-message/invalid-input
 parity for all four modules. TypeScript, scoped ESLint and diff checks pass.
 Independent agent source review found no blocker. Required CI and actual
 configured preview reload remain pending; no beta/main merge or publication.
+# VIEW77 — retain the shell during authorized branch changes, 6 November
+
+Owner reports full-page loading when selecting another branch/cluster and asks
+that only affected content refresh. Source confirms dataSnapshotReady correctly
+rejects the prior branch snapshot, but AppShell replaces the entire workspace
+while the new data/settings load. Preserve that read proof and all authorization.
+Keep only a previously confirmed same-account/session/database/permission shell;
+unmount protected page content while its current scope is unresolved. ShiftGuard
+must not offer opening/closing actions using unverified settings. Initial setup,
+sign-in, identity changes and revocation retain existing full startup gates.
+
+Isolated baseline beta91f4961a, codex/branch-switch-presentation-beta. Scope:
+AppShell presentation, ShiftGuard pending presentation, explicit branch-read
+loading/error status and focused lifecycle/permission tests. No query cadence,
+Membership dependency, business calculation, permission, database or queue change.
+Verify sidebar/header remain mounted, old-scope page/popups are absent, current
+data appears only after confirmation, errors/retry remain available, and denied
+normal-terminal switching stays denied. Targeted source revert is the rollback.
+
+Prepared verification:79 focused tests across seven lifecycle, stale-read,
+permission, registration and inventory-update suites pass. TypeScript/scoped
+ESLint/diff checks pass. Independent agent review found no authorization or write
+blocker; its retained-data-banner truthfulness nit is corrected. Actual mounted
+browser/portal verification, full regression and required beta CI remain pending.

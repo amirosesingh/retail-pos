@@ -1456,3 +1456,11 @@ hosting environment, not device overrides or hardcoded credentials. DEV76 extend
 the already existing development-only shared-protocol loader to its exact public
 financial/recovery companions after an actual local SSR failure; no wire behavior
 or deployed/native security protocol is changed.
+# 6 November — branch-view loading is local to the content area
+
+Retain the already confirmed shell for the same authenticated session, tenant,
+storage mode and permissions when an authorized user changes branch. This is
+presentation memory only: it must not declare the new branch snapshot/settings
+ready, render protected prior-branch content or permit opening/closing a shift
+before confirmation. Preserve normal-terminal locks, existing drafts and read
+generation guards. This does not authorize cross-branch reads or change sync.
