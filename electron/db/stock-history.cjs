@@ -123,6 +123,16 @@ class StockHistoryStore{
    await this.invalidateCoverage(tx,context.branchId,'UNVERIFIED_STOCK_SHAPE');
    CAPTURES.delete(token);return {captured:0,available:true,incomplete:true};
   }
+  // A prepared Main-only signer freezes proof in this original transaction.
+  // Missing enrollment/vault material keeps unsigned evidence for review;
+  // it must not fabricate the later uploading cashier or block offline sales.
+  if(saved.source?.author)rows=rows.map(row=>{
+   try{return Object.freeze({...row,author_proof_json:JSON.stringify(saved.source.author.signMovement(row))});}
+   catch(error){
+    if(!['ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING','ESYNC_SHIFT_AUTHOR_KEY_MISSING','ESYNC_SHIFT_AUTHOR_KEY_UNAVAILABLE','ESYNC_SHIFT_AUTHOR_VAULT_UNAVAILABLE','ESTOCK_AUTHOR_PERMISSION_REVOKED'].includes(error?.code))throw error;
+    return row;
+   }
+  });
   for(const branch of [...new Set(rows.map(row=>row.store_id))].sort()){
    await this.ensureHead(tx,branch);
    await this.insertMovements(tx,branch,rows.filter(row=>row.store_id===branch));
@@ -140,15 +150,18 @@ class StockHistoryStore{
   await this.request(tx).input('history_rows',payload).input('history_branch',branch)
    .input('history_upload_aggregate',contract.uploadAggregateId(rows[0].operation_id,branch)).query(`
    DECLARE @history_candidates table(id uniqueidentifier,operation_id uniqueidentifier,product_id uniqueidentifier,store_id nvarchar(128),terminal_id nvarchar(128),actor_id nvarchar(128),source_kind nvarchar(20),
-    quantity_delta decimal(38,0),effective_at_raw nvarchar(28),effective_ticks decimal(20,0),recorded_at_raw nvarchar(28),recorded_ticks decimal(20,0),product_name nvarchar(max),sku nvarchar(max),barcode nvarchar(max),clock_state nvarchar(16),payload_hash char(64),payload_json nvarchar(max));
+    quantity_delta decimal(38,0),effective_at_raw nvarchar(28),effective_ticks decimal(20,0),recorded_at_raw nvarchar(28),recorded_ticks decimal(20,0),product_name nvarchar(max),sku nvarchar(max),barcode nvarchar(max),clock_state nvarchar(16),payload_hash char(64),payload_json nvarchar(max),author_proof_json nvarchar(max));
    INSERT @history_candidates SELECT * FROM OPENJSON(@history_rows) WITH(
     id uniqueidentifier,operation_id uniqueidentifier,product_id uniqueidentifier,store_id nvarchar(128),terminal_id nvarchar(128),actor_id nvarchar(128),source_kind nvarchar(20),
-    quantity_delta decimal(38,0),effective_at_raw nvarchar(28),effective_ticks decimal(20,0),recorded_at_raw nvarchar(28),recorded_ticks decimal(20,0),product_name nvarchar(max),sku nvarchar(max),barcode nvarchar(max),clock_state nvarchar(16),payload_hash char(64),payload_json nvarchar(max));
+    quantity_delta decimal(38,0),effective_at_raw nvarchar(28),effective_ticks decimal(20,0),recorded_at_raw nvarchar(28),recorded_ticks decimal(20,0),product_name nvarchar(max),sku nvarchar(max),barcode nvarchar(max),clock_state nvarchar(16),payload_hash char(64),payload_json nvarchar(max),author_proof_json nvarchar(max));
    IF EXISTS(SELECT id FROM @history_candidates GROUP BY id HAVING COUNT(*)<>1) OR EXISTS(SELECT 1 FROM @history_candidates WHERE store_id<>@history_branch)
     THROW 51031,'STOCK_HISTORY_INVALID_BATCH',1;
    IF EXISTS(SELECT 1 FROM @history_candidates r JOIN dbo.stock_history_movements m WITH(UPDLOCK,HOLDLOCK) ON m.id=r.id
     WHERE m.payload_hash<>r.payload_hash OR DATALENGTH(m.payload_json)<>DATALENGTH(r.payload_json)
-     OR CONVERT(varbinary(max),m.payload_json)<>CONVERT(varbinary(max),r.payload_json)) THROW 51031,'STOCK_HISTORY_REPLAY_CONFLICT',1;
+     OR CONVERT(varbinary(max),m.payload_json)<>CONVERT(varbinary(max),r.payload_json)
+     OR (m.author_proof_json IS NULL AND r.author_proof_json IS NOT NULL) OR (m.author_proof_json IS NOT NULL AND r.author_proof_json IS NULL)
+     OR DATALENGTH(m.author_proof_json)<>DATALENGTH(r.author_proof_json)
+     OR CONVERT(varbinary(max),m.author_proof_json)<>CONVERT(varbinary(max),r.author_proof_json)) THROW 51031,'STOCK_HISTORY_REPLAY_CONFLICT',1;
    DELETE r FROM @history_candidates r WHERE EXISTS(SELECT 1 FROM dbo.stock_history_movements m WITH(UPDLOCK,HOLDLOCK) WHERE m.id=r.id);
    DECLARE @history_count bigint=(SELECT COUNT_BIG(*) FROM @history_candidates);
    DECLARE @history_position table([cursor] bigint);
@@ -157,10 +170,10 @@ class StockHistoryStore{
     OUTPUT inserted.local_committed_cursor INTO @history_position WHERE store_id=@history_branch;
    DECLARE @history_inserted table(id uniqueidentifier);
    INSERT dbo.stock_history_movements(id,operation_id,product_id,store_id,terminal_id,actor_id,source_kind,quantity_delta,effective_at_raw,effective_ticks,
-    recorded_at_raw,recorded_ticks,product_name,sku,barcode,clock_state,payload_hash,payload_json,local_cursor)
+    recorded_at_raw,recorded_ticks,product_name,sku,barcode,clock_state,payload_hash,payload_json,local_cursor,author_proof_json)
     OUTPUT inserted.id INTO @history_inserted
     SELECT id,operation_id,product_id,store_id,terminal_id,actor_id,source_kind,quantity_delta,effective_at_raw,effective_ticks,recorded_at_raw,recorded_ticks,
-     product_name,sku,barcode,clock_state,payload_hash,payload_json,(SELECT [cursor] FROM @history_position)-@history_count+ROW_NUMBER() OVER(ORDER BY id) FROM @history_candidates;
+     product_name,sku,barcode,clock_state,payload_hash,payload_json,(SELECT [cursor] FROM @history_position)-@history_count+ROW_NUMBER() OVER(ORDER BY id),author_proof_json FROM @history_candidates;
    INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id,entity_version,aggregate_id)
     SELECT N'stock_history_movements',CONCAT(N'{"id":"',CONVERT(nvarchar(36),r.id),N'"}'),N'insert',r.store_id,1,CONVERT(uniqueidentifier,@history_upload_aggregate)
     FROM @history_candidates r JOIN @history_inserted inserted ON inserted.id=r.id;

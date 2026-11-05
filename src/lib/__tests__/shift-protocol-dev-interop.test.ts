@@ -10,7 +10,7 @@ const root = process.cwd();
 const path = resolve(root, 'electron/security/shift-author-protocol.cjs');
 const native = createRequire(import.meta.url)(path);
 
-const companions = ['shift-financial-protocol.cjs', 'financial-author-protocol.cjs', 'legacy-shift-recovery-protocol.cjs'];
+const companions = ['shift-financial-protocol.cjs', 'financial-author-protocol.cjs', 'legacy-shift-recovery-protocol.cjs', 'stock-event-author-protocol.cjs'];
 
 it.each(companions)('keeps %s development interop bounded to its reviewed exports and dependency', async file => {
   const plugin = shiftProtocolDevInterop();
@@ -97,6 +97,11 @@ it('loads the actual financial and recovery protocol dependency graph with uncha
     'financial-author-protocol.cjs': [
       ['financialOperationMessage', [operation]], ['normalizeFinancialAttestation', [{ ...operation, signature }]],
     ],
+    'stock-event-author-protocol.cjs': [
+      ['unsignedStockEvent', [{ ...operation, movementId: uuid(8) }]],
+      ['stockEventMessage', [{ ...operation, movementId: uuid(8) }]],
+      ['normalizeStockEvent', [{ ...operation, movementId: uuid(8), signature }]],
+    ],
     'legacy-shift-recovery-protocol.cjs': [
       ['normalizeLegacyPayload', [payload]], ['unsignedLegacyRecovery', [recovery]],
       ['normalizeLegacyRecovery', [{ ...recovery, signature }]], ['legacyRecoveryMessage', [recovery]],
@@ -118,7 +123,7 @@ it('loads the actual financial and recovery protocol dependency graph with uncha
           expect(() => esm[name](...bad)).toThrow();
         }
       }
-      for (const name of ['ACTION', 'MAX_UPLOAD_BYTES']) if (name in nativeModule) expect(esm[name]).toEqual(nativeModule[name]);
+      for (const name of ['ACTION', 'ACTIONS', 'MAX_UPLOAD_BYTES']) if (name in nativeModule) expect(esm[name]).toEqual(nativeModule[name]);
     }
   } finally { await fixed.close(); }
 }, 30_000);

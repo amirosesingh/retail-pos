@@ -17,7 +17,7 @@ class StockHistoryOutbox{
   return this.transaction(async(tx,pool)=>{
    const cap=await this.store.capability(tx);if(!cap.available)contract.fail('ESTOCK_HISTORY_SCHEMA_UNAVAILABLE');
    const candidates=(await this.store.request(tx).input('stock_aggregate',aggregateId).input('stock_branch',branchId).query(`
-    SELECT TOP(128) j.change_id,m.id,DATALENGTH(m.payload_json) payload_size
+    SELECT TOP(128) j.change_id,m.id,DATALENGTH(m.payload_json) payload_size,DATALENGTH(m.author_proof_json) proof_size
     FROM dbo.sync_change_journal j WITH(UPDLOCK,HOLDLOCK)
     LEFT JOIN dbo.stock_history_movements m WITH(UPDLOCK,HOLDLOCK)
      ON m.id=TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(j.entity_id)=1 THEN j.entity_id ELSE N'{}' END,'$.id'))
@@ -28,7 +28,7 @@ class StockHistoryOutbox{
    for(const candidate of candidates){
     if(!candidate.id||!Number.isSafeInteger(Number(candidate.change_id))||candidate.payload_size==null)fail();
     // Conservative UTF-16→UTF-8 bound plus JSON string/envelope escaping.
-    const size=3*Number(candidate.payload_size)+256;
+    const size=3*(Number(candidate.payload_size)+Number(candidate.proof_size??0))+256;
     if(bytes+size>126976){if(!chosen.length)contract.fail('ESTOCK_HISTORY_OVERSIZED');break;}
     chosen.push(candidate);bytes+=size;
    }
@@ -36,12 +36,12 @@ class StockHistoryOutbox{
    const rows=(await request.query(`SELECT LOWER(CONVERT(nvarchar(36),id)) id,LOWER(CONVERT(nvarchar(36),operation_id)) operation_id,
     LOWER(CONVERT(nvarchar(36),product_id)) product_id,store_id,terminal_id,actor_id,source_kind,
     CONVERT(nvarchar(50),quantity_delta) quantity_delta,effective_at_raw,CONVERT(nvarchar(30),effective_ticks) effective_ticks,
-    recorded_at_raw,product_name,sku,barcode,clock_state,payload_hash,payload_json FROM dbo.stock_history_movements
+    recorded_at_raw,product_name,sku,barcode,clock_state,payload_hash,payload_json,author_proof_json FROM dbo.stock_history_movements
     WHERE id IN(${chosen.map((_,n)=>'@stock_id'+n).join(',')}) ORDER BY local_cursor;`)).recordset??[];
    if(rows.length!==new Set(chosen.map(row=>String(row.id).toLowerCase())).size)fail();
    if(rows.some(row=>contract.uploadAggregateId(row.operation_id,branchId)!==aggregateId))fail();
    const batch=Object.freeze({version:1,branchId,terminalId,rows:Object.freeze(rows.map(row=>stockHistoryUploadRow(row,{branchId,terminalId})))});
-   BATCHES.set(batch,{owner:this,pool,databaseKey:cap.databaseKey,aggregateId,
+   BATCHES.set(batch,{owner:this,pool,databaseKey:cap.databaseKey,aggregateId,proofs:new Map(rows.map(row=>[row.id,row.author_proof_json??null])),
     changes:chosen.map(row=>({changeId:Number(row.change_id),id:String(row.id).toLowerCase()}))});
    return batch;
   });
@@ -56,12 +56,14 @@ class StockHistoryOutbox{
     if(!expected||!changes.length)fail();
     const request=this.store.request(tx).input('stock_id',receipt.id).input('stock_json',expected.payloadJson).input('stock_hash',expected.payloadHash)
      .input('stock_cursor',receipt.ingestedCursor).input('stock_at',receipt.acceptedAt).input('stock_branch',batch.branchId).input('stock_terminal',batch.terminalId)
-     .input('stock_aggregate',captured.aggregateId);
+     .input('stock_aggregate',captured.aggregateId).input('stock_proof',captured.proofs.get(receipt.id));
     changes.forEach((row,n)=>request.input('stock_change'+n,row.changeId));
     await request.query(`IF NOT EXISTS(SELECT 1 FROM dbo.stock_history_movements WITH(UPDLOCK,HOLDLOCK)
       WHERE id=TRY_CONVERT(uniqueidentifier,@stock_id) AND store_id=@stock_branch AND terminal_id=@stock_terminal
        AND payload_hash COLLATE Latin1_General_100_BIN2=@stock_hash COLLATE Latin1_General_100_BIN2
        AND DATALENGTH(payload_json)=DATALENGTH(@stock_json) AND CONVERT(varbinary(max),payload_json)=CONVERT(varbinary(max),@stock_json)
+       AND ((author_proof_json IS NULL AND @stock_proof IS NULL) OR (DATALENGTH(author_proof_json)=DATALENGTH(@stock_proof)
+        AND CONVERT(varbinary(max),author_proof_json)=CONVERT(varbinary(max),@stock_proof)))
        AND (ingested_cursor IS NULL OR (ingested_cursor=CONVERT(bigint,@stock_cursor) AND ingested_at=CONVERT(datetimeoffset(7),@stock_at,127))))
       THROW 51031,'STOCK_HISTORY_ACK_UNCONFIRMED',1;
      IF (SELECT COUNT_BIG(*) FROM dbo.sync_change_journal WITH(UPDLOCK,HOLDLOCK)

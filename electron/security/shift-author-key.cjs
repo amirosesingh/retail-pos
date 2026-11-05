@@ -165,6 +165,21 @@ function createShiftAuthorKeys({ safeStorage, directory }) {
     if (!saved.enrolled) throw failure('ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING');
     return legacy.normalizeLegacyRecovery({ ...unsigned, signature: crypto.sign(null, Buffer.from(legacy.legacyRecoveryMessage(unsigned)), saved.privateKey).toString('base64url') });
   }
-  return { prepare, enrollment, signIntent, signClosingStart, signFinancialBasis, signOpeningFinancialBasis, signFinancialOperation, signLegacyRecovery, markEnrolled };
+  function signStockEvent(binding, input) {
+    const stock = require('./stock-event-author-protocol.cjs');
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw failure('ESTOCK_AUTHOR_INVALID');
+    const { expectedKeyId, ...facts } = input;
+    const fields = ['subject', 'branchId', 'operationId', 'movementId', 'action', 'payloadHash'];
+    if (Object.keys(facts).length !== fields.length || fields.some(key => !Object.hasOwn(facts, key))) throw failure('ESTOCK_AUTHOR_INVALID');
+    const keyId = expected({ expectedKeyId });
+    if (!keyId) throw failure('ESTOCK_AUTHOR_INVALID');
+    const parsedBinding = protocol.normalizeBinding(binding);
+    const unsigned = stock.unsignedStockEvent({ version: 1, algorithm: 'Ed25519', keyId, ...parsedBinding, ...facts });
+    // Exact existing enrolled material only. Signing cannot create/rotate a key.
+    const saved = load(parsedBinding, { expectedKeyId: keyId });
+    if (!saved.enrolled) throw failure('ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING');
+    return stock.normalizeStockEvent({ ...unsigned, signature: crypto.sign(null, Buffer.from(stock.stockEventMessage(unsigned)), saved.privateKey).toString('base64url') });
+  }
+  return { prepare, enrollment, signIntent, signClosingStart, signFinancialBasis, signOpeningFinancialBasis, signFinancialOperation, signLegacyRecovery, signStockEvent, markEnrolled };
 }
 module.exports = { createShiftAuthorKeys };

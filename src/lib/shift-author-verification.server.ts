@@ -3,6 +3,7 @@ import { serviceRest, verifyRelayCaller } from "@/core/api/pos-relay.server";
 import { resolveRelayScope } from "@/core/api/relay-policy.server";
 import { databaseAuthority } from "./desktop-database-authority.server";
 import { supabaseConfig } from "./external-supabase-config";
+import { canonicalBranchId } from "./branch-id";
 import type { VerifiedTerminalDescriptor } from "./terminal-binding.server";
 import { normalizeBinding, normalizeEnrollment, normalizeAttestation, normalizeClosingStart, enrollmentMessage, intentMessage, closingStartMessage } from "../../electron/security/shift-author-protocol.cjs";
 
@@ -13,6 +14,7 @@ type RegistryKey = { key_id: string; author_id: string; terminal_id: string; pro
 const encoder = new TextEncoder();
 // Request-local cryptographic key witness; grants are still read freshly.
 const verifiedAuthorKeys = new WeakMap<object,RegistryKey>();
+const verifiedStockKeys = new WeakMap<object,RegistryKey>();
 const requestSchema = z.object({
   sessionToken: z.string().min(1).max(400).optional(),
   cashierToken: z.string().min(1).max(2000).optional(),
@@ -164,6 +166,34 @@ export async function requireCurrentShiftAuthorPermission(attestation: unknown):
 }
 export async function shiftAuthorTerminalEnrolled(terminalId: string): Promise<boolean> {
   return (await registry({ projectOrigin: projectOrigin(), terminalId })).terminalEnrolled;
+}
+
+/** Dedicated stock domain only. Returns no key material or write capability. */
+export async function verifyStockEventRegistryProof(value: unknown) {
+  const { normalizeStockEvent, stockEventMessage } = await import("../../electron/security/stock-event-author-protocol.cjs");
+  let proof: ReturnType<typeof normalizeStockEvent>;
+  try { proof = normalizeStockEvent(value); } catch { return denied("ESTOCK_AUTHOR_INVALID"); }
+  if (proof.projectOrigin !== projectOrigin()) return denied("ESTOCK_AUTHOR_INVALID");
+  const key = (await registry(proof)).key;
+  if (!key || !matchingKey(key, proof)) return denied("ESTOCK_AUTHOR_INVALID");
+  const { signature, ...fields } = proof;
+  if (!await validSignature(key.public_key, signature, stockEventMessage(fields))) return denied("ESTOCK_AUTHOR_INVALID");
+  // Revoked history can still authenticate its exact accepted receipt. A new
+  // claim must separately pass current authority and actual-effect admission.
+  Object.freeze(proof);
+  verifiedStockKeys.set(proof, key);
+  return proof;
+}
+
+export async function readVerifiedStockEventAuthor(proof: Awaited<ReturnType<typeof verifyStockEventRegistryProof>>): Promise<ShiftAuthorAuthority> {
+  if (!verifiedStockKeys.has(proof)) return { allowed: false, code: "ESTOCK_AUTHOR_INVALID" };
+  const key = (await registry(proof)).key;
+  if (!key || !matchingKey(key, proof) || key.revoked_at !== null) return { allowed: false, code: "ESTOCK_AUTHOR_REVOKED" };
+  const authority = await databaseAuthority({ appUserId: proof.authorId }, { strictAvailability: true });
+  if (!authority?.authorId || !sameId(authority.authorId, proof.authorId) || authority.subject !== proof.subject)
+    return { allowed: false, code: "ESTOCK_AUTHOR_REVOKED" };
+  if (authority.branchId && canonicalBranchId(authority.branchId) !== canonicalBranchId(proof.branchId)) return { allowed: false, code: "ESTOCK_AUTHOR_BRANCH_FORBIDDEN" };
+  return { allowed: true, authority };
 }
 
 /** FIN62 foundation only: not routed and not sufficient mutation authorization.

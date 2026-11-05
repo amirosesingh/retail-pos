@@ -321,7 +321,7 @@
     "table_name": "stock_history_movements",
     "kind": "trigger",
     "object_name": "TR_stock_history_movement_immutable",
-    "object_hash": "60A8FFE1095740B5D3455F64E273DBC24F4DA532E9D2433641C0481FEF25C2C8"
+    "object_hash": "9A0C7ED2675BDA064B78B0BA1A656B7EE5EDC3673EB81114E50F131E1E017F71"
   },
   {
     "table_name": "stock_history_baselines",

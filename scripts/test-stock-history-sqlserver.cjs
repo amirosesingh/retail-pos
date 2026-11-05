@@ -5,7 +5,7 @@ const sql=require('mssql/msnodesqlv8');
 assert.deepEqual(process.argv.slice(2),['--run']);
 const suffix=randomUUID().replaceAll('-',''),instance='CodexStockHistory_'+suffix,database='StockHistoryFixture_'+suffix;
 const control=(...args)=>{const b=execFileSync('C:/Program Files/Microsoft SQL Server/170/Tools/Binn/SqlLocalDB.exe',args,{windowsHide:true,timeout:30000});return b.toString(b.includes(0)?'utf16le':'utf8').replace(/^\uFEFF/,'');};
-let owned=false,created=false,master,pool,server,groups=0;
+let owned=false,created=false,master,pool,server,proofDirectory,groups=0;
 const connect=name=>{assert(name==='master'||name===database);return new sql.ConnectionPool({connectionString:`Driver={ODBC Driver 18 for SQL Server};Server=${server};Database=${name};Trusted_Connection=Yes;Encrypt=No;TrustServerCertificate=Yes;`,pool:{min:0,max:3},requestTimeout:15000}).connect();};
 const pass=name=>{groups++;console.log('PASS '+name);};
 const {StockHistoryStore}=require('../electron/db/stock-history.cjs');
@@ -33,13 +33,14 @@ const migration=fs.readFileSync(path.join(__dirname,'../database/sqlserver/prepa
   const outcome=await store.finish(tx,token);if(failAfter)throw Object.assign(new Error('Synthetic failure'),{code:'FIXTURE'});return outcome;
  });
  assert.equal((await inTx(tx=>store.capability(tx))).available,false);pass('all-absent optional schema is unavailable without writes');
- await pool.request().batch(migration);await pool.request().batch(migration);store.invalidateCapability();
+ await pool.request().batch(migration);store.invalidateCapability();
  if(process.env.STOCK_HISTORY_SCHEMA_CAPTURE==='1'){
   const {catalogSql}=require('../electron/db/stock-history-schema-check.cjs');
   const objects=(await pool.request().query(catalogSql)).recordset;
   fs.writeFileSync(path.join(__dirname,'../electron/db/stock-history-schema-objects.json'),JSON.stringify(objects,null,2)+'\n');
   console.log('Captured fresh owned schema object fingerprints: '+objects.length);return;
  }
+ await pool.request().batch(migration);
  assert.equal((await inTx(tx=>store.capability(tx))).available,true);pass('prepared upgrade installs/replays exact physical schema');
  assert.equal((await pool.request().query('SELECT COUNT(*) n FROM dbo.products')).recordset[0].n,0);pass('upgrade creates no business/baseline rows');
  await pool.request().batch(`INSERT dbo.products(id,name,sku,barcode,stock_by_store) VALUES('${pid}',N'Fixture',N'SKU-1',N'0001',N'{"a":3,"b":1}'),('${zero}',N'Archived zero',N'SKU-2',N'0002',N'{"a":0}');`);
@@ -178,8 +179,34 @@ const migration=fs.readFileSync(path.join(__dirname,'../database/sqlserver/prepa
  const savedRefundMovement=(await pool.request().query('SELECT LOWER(CONVERT(nvarchar(36),movement_id)) movement FROM dbo.stock_delta_applied;')).recordset[0].movement;
  assert.deepEqual(JSON.parse(refundHistory[0].payload_json)[16],[['stock_delta_applied',savedRefundMovement,'2']]);
  pass('actual partial-refund writer captures its exact existing source receipt and stock effect once without changing refund arithmetic');
+ const {createShiftAuthorKeys}=require('../electron/security/shift-author-key.cjs');
+ proofDirectory=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'stock-history-author-fixture-'));
+ const keys=createShiftAuthorKeys({safeStorage:{isEncryptionAvailable:()=>true,encryptString:value=>Buffer.from(value),decryptString:value=>value.toString()},directory:()=>proofDirectory});
+ const authorId=randomUUID(),binding={projectOrigin:'https://stock.fixture',terminalId:'t',authorId},info=keys.prepare(binding);
+ keys.markEnrolled(binding,{keyId:info.keyId,publicKey:info.publicKey});context.actorId=authorId;
+ context.author={signMovement:row=>keys.signStockEvent(binding,{expectedKeyId:info.keyId,subject:'cashier-a',branchId:row.store_id,operationId:row.operation_id,movementId:row.id,action:'ADJUST',payloadHash:row.payload_hash})};
+ op.values.stock_by_store={a:(await stock()).a+1,b:1};const signedOperation=randomUUID();await capture({operationId:signedOperation});
+ const signedRow=(await pool.request().input('operation',signedOperation).query('SELECT * FROM dbo.stock_history_movements WHERE operation_id=@operation;')).recordset[0];
+ assert.equal(JSON.parse(signedRow.author_proof_json).authorId,authorId);assert.equal(JSON.parse(signedRow.author_proof_json).payloadHash,signedRow.payload_hash);
+ const signedAggregate=c.uploadAggregateId(signedOperation,'a'),signedBatch=await new StockHistoryOutbox(manager).pending(signedAggregate,'a','t');
+ assert.equal(signedBatch.rows[0].authorProofJson,signedRow.author_proof_json);
+ pass('original enrolled author proof and exact original bytes commit with actual stock and survive an outbox restart');
+ await assert.rejects(pool.request().input('operation',signedOperation).query(`UPDATE dbo.stock_history_movements
+  SET author_proof_json=REPLACE(author_proof_json,N'cashier-a',N'CASHIER-A'),ingested_cursor=40,ingested_at=SYSDATETIMEOFFSET() WHERE operation_id=@operation;`),error=>/STOCK_HISTORY_IMMUTABLE/.test(error.message));
+ pass('proof identity bytes cannot change during arrival acknowledgement even under case-insensitive SQL collation');
+ const proofFiles=fs.readdirSync(proofDirectory);assert.equal(proofFiles.length,1);fs.unlinkSync(path.join(proofDirectory,proofFiles[0]));
+ const beforeUnsigned=(await stock()).a;op.values.stock_by_store={a:beforeUnsigned+1,b:1};const missingKeyOperation=randomUUID();
+ assert.equal((await capture({operationId:missingKeyOperation})).captured,1);assert.equal((await stock()).a,beforeUnsigned+1);
+ const unsignedRow=(await pool.request().input('operation',missingKeyOperation).query('SELECT author_proof_json,ingested_cursor FROM dbo.stock_history_movements WHERE operation_id=@operation;')).recordset[0];
+ assert.equal(unsignedRow.author_proof_json,null);assert.equal(unsignedRow.ingested_cursor,null);assert.equal(fs.readdirSync(proofDirectory).length,0);
+ pass('missing author vault material retains unsigned review evidence without rolling back stock or replacing a key');
+ context.author={signMovement:()=>{throw Object.assign(new Error('Synthetic report-author permission change'),{code:'ESTOCK_AUTHOR_PERMISSION_REVOKED'});}};
+ const beforeRevoked=(await stock()).a;op.values.stock_by_store={a:beforeRevoked+1,b:1};const revokedOperation=randomUUID();await capture({operationId:revokedOperation});
+ assert.equal((await stock()).a,beforeRevoked+1);assert.equal((await pool.request().input('operation',revokedOperation).query('SELECT author_proof_json FROM dbo.stock_history_movements WHERE operation_id=@operation;')).recordset[0].author_proof_json,null);
+ pass('report-author permission loss retains review evidence without widening or overriding the actual business writer');
  console.log('PASS '+groups+' actual disposable stock-history SQL groups');
 }finally{
  await pool?.close().catch(()=>{});if(created)await master.request().batch('ALTER DATABASE ['+database+'] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;DROP DATABASE ['+database+'];');await master?.close().catch(()=>{});
  if(owned){control('stop',instance,'-k');control('delete',instance);}console.log('Cleaned uniquely owned stock-history LocalDB fixture');
+ if(proofDirectory){const resolved=path.resolve(proofDirectory),root=path.resolve(require('node:os').tmpdir());assert(resolved.startsWith(root+path.sep)&&path.basename(resolved).startsWith('stock-history-author-fixture-'));fs.rmSync(resolved,{recursive:true,force:true});}
 }})().catch(error=>{console.error(error);process.exitCode=1;});

@@ -24,7 +24,14 @@ function stockHistoryUploadRow(row,{branchId,terminalId}){
   const id=reference[0]+':'+reference[1];if(seen.has(id))fail();seen.add(id);
  }
  contract.quantity(value[17]);
- return Object.freeze({id:row.id,payloadHash:row.payload_hash,payloadJson:row.payload_json});
+ if(row.author_proof_json!=null){
+  let proof;try{proof=require('../security/stock-event-author-protocol.cjs').normalizeStockEvent(JSON.parse(row.author_proof_json));}catch{fail();}
+  const rule=require('../security/stock-event-author-protocol.cjs').ACTIONS[proof.action];
+  if(proof.movementId!==row.id||proof.operationId!==row.operation_id||proof.authorId!==row.actor_id||proof.branchId!==branchId||
+   proof.terminalId!==terminalId||proof.payloadHash!==row.payload_hash||rule.kind!==row.source_kind||Buffer.byteLength(row.author_proof_json,'utf8')>16384)fail();
+ }
+ return Object.freeze({id:row.id,payloadHash:row.payload_hash,payloadJson:row.payload_json,
+  ...(row.author_proof_json!=null?{authorProofJson:row.author_proof_json}:{})});
 }
 /** HTTP success alone cannot clear a local stock-history claim. */
 function assertStockHistoryAcknowledgement(batch,response){

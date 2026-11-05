@@ -71,6 +71,24 @@ while original timing/author evidence is missing.
 
 ## Required isolated checks
 
+Implemented source checkpoint (6 November): the dedicated wire domain,
+existing-enrolled-key-only signer, Main capture/context rechecks and current
+server original-author verifier are present. Frozen original proof bytes now
+persist with the optional SQL movement and journal in the original transaction
+and travel through the existing bounded lane/ACK. Missing vault material or
+stock-evidence signing authority retains unsigned review evidence without
+changing the actual business writer's admission or rolling back its stock.
+Inventory/report/export permissions are not required to record a permitted sale.
+The signature proves authorship and exact bytes, never physical clock time.
+
+Independent author/helper review passed 243 cases. One new-domain branch-code
+case-equivalence issue was corrected without changing existing author domains;
+UUID normalization is preserved. 33 actual disposable LocalDB groups passed,
+including proof/restart persistence, byte-immutable acknowledgements and missing
+key/authority retention. Hosted accepted-effect admission, exclusive consumption,
+Main activation and complete opening/cohort coverage remain pending. Draft031
+still stays outside the installer/consolidated update and is not a final file.
+
 - Cross-domain, wrong branch/terminal/project/author/key, changed hash/arrival
   time, malformed/oversized proof and signer injection are denied.
 - Existing enrolled key is reused unchanged; missing/unreadable/revoked key
