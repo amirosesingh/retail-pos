@@ -36,11 +36,12 @@ function createStockHistoryReader({manager,session,terminal,branch,isPosSender,c
           SELECT id,user_id,role,role_slug,permissions,is_active,store_id FROM dbo.app_users
           WHERE id=TRY_CONVERT(uniqueidentifier,@stock_actor);`);
         assertCurrent();
-        const person = result.recordset?.[0], role = String(person?.role_slug ?? person?.role ?? '').toLowerCase();
+        const person = result.recordset?.[0];
         if (!person || person.is_active !== true || identifier(String(person.id),true) !== authorId ||
             String(person.user_id).toLowerCase() !== String(actor.canonicalSubject ?? actor.subject).toLowerCase() ||
             (person.store_id != null && identifier(String(person.store_id)) !== branchId)) fail('PERMISSION_DENIED');
-        const access = permissions(person.permissions), owner = role === 'admin';
+        const owner = String(person.role ?? '').toLowerCase() === 'admin' || String(person.role_slug ?? '').toLowerCase() === 'admin';
+        const access = owner ? {} : permissions(person.permissions);
         const canViewInventory = owner || (access.can_view_inventory === true && access['page:inventory'] !== false);
         const canExportReports = owner || (access.can_export_reports === true && access['page:reports'] !== false);
         const canViewShiftHistory = owner || (access.can_shift_closing_history_view === true && access['page:shifts'] !== false);

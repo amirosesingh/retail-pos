@@ -412,3 +412,17 @@ The four unchanged failing suites passed all17 cases immediately with one worker
 including actual workerd wire/privacy admission. This is recorded as resource-
 sensitive local verification, not a single fully green full run. TypeScript and
 scoped lint passed. Required CI on the next frozen head remains mandatory.
+
+Independent read-only review of f2c65a14 and its narrow Administrator read-parity
+delta found no additional blocker in the optional upload/ACK/private capture
+paths. The reviewer independently reran69 cases across uploader, exact ACK,
+accepted effects, Main IPC and server-function suites; all passed. This verifies
+preparation only, not the still-missing original-author admission, exclusive
+effect consumption, cohort/baseline publication or activation.
+
+Native report admission now matches the existing cloud administrator rule:
+role=admin or role_slug=admin. An empty legacy slug or NULL staff-permission JSON
+does not incorrectly deny an already-current Administrator. Normal staff still
+need valid permission JSON; fresh SQL identity, terminal branch, POS frame,
+export/shift admission and post-await rechecks remain. Three new legacy-shape
+regressions plus44 combined Main/server/PostgreSQL read cases pass.

@@ -21,6 +21,11 @@ describe("Main-owned stock history read admission", () => {
     const f = fixture(); expect(await f.read("pos",request)).toMatchObject({ ok: true, page: { status: "unavailable", reasons: ["SCHEMA_NOT_INSTALLED"], rows: [] } });
     expect(f.counts()).toEqual({ reads: 2,touched: 1 }); expect(f.events).toEqual(["begin","commit"]);
   });
+  it.each([['admin',null],['admin',''],['staff','admin']])("preserves existing administrator role/slug authority for %s / %s without requiring staff permission JSON",async(role,slug)=>{
+    const f=fixture();f.person.role=role;f.person.role_slug=slug;f.person.permissions=null;
+    expect(await f.read('pos',{...request,export:true,closedShiftId:actorId})).toMatchObject({ok:false,code:'ESTOCK_HISTORY_SHIFT_UNAVAILABLE'});
+    expect(await f.read('pos',{...request,export:true})).toMatchObject({ok:true,page:{status:'unavailable'}});
+  });
   it("rejects other renderers before account reads or idle extension", async () => {
     const f = fixture(); expect(await f.read("customer",request)).toMatchObject({ ok: false,code: "PERMISSION_DENIED" }); expect(f.counts()).toEqual({ reads: 0,touched: 0 });
   });
