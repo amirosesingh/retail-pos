@@ -32,12 +32,17 @@ separate full Vitest run:5,848 passed/8 skipped/0 failed (5,856 total), plus
 TypeScript. All current required GitHub/platform/Workers checks pass. These
 results exclude the uncommitted adoption prototype and installed-device tests.
 
-Reviewed-adoption prototype:31 actual disposable SQL Server groups pass; one
+Reviewed-adoption prototype:33 actual disposable SQL Server groups pass; one
 ordinary subsequent cloud-delta regression attempts a rounded decimal and rolls
 back as designed. No committed production damage was demonstrated. A separate
 owner approval question is pending for exact-witness-only changes in shared
 shift-graph.cjs and ShiftIntentStore.adopt; do not edit those writers before the
-answer. Current prototype/DDL is not activated, applied or included in PR395.
+answer. Independent review also corrected unbounded OPEN timestamp changes and
+same-name-but-different CHECK constraints;17 focused tests pass. The complete
+opt-in SQL script still fails at the known ordinary-delta regression, with its
+transaction rolled back. Current prototype/DDL remains unactivated/unapplied;
+its separate draft preparation checkpoint must not be described as a working
+runtime adoption or complete warning fix.
 
 PR399 single sync-data lane is merged to beta596742141d33a1683f39990299ac7b7217259136.
 Exact source0d2dcf45 passed5,748 tests/7 skipped/0 failed plus109 focused checks,
@@ -94,6 +99,57 @@ acceptance. Actual cloud-correction adoption/final CT recovery remains unfinishe
 Owner requests production preparation incrementally alongside beta integration;
 keepPR400 scope/checklist current as independently tested fixes reach beta. This
 does not authorize its merge, live database application or installer publication.
+
+STOCK68 preparation is now draftPR401 at91e4e37e, integrated with beta59674214.
+Independent review corrected order-dependent intermediate overflow;32 kernel and
+4 adjustment tests pass, and the integrated kernel/adjustment/lane run passed55.
+Only five scoped preparation files are in that PR. No historical report route,
+ledger/schema, stock writer, data repair or complete-history claim is included.
+CI is running; the full report remains pending and PR400 lists that release gate.
+
+DASH69 investigation identified an existing shared Management-reader risk:
+the Management report converts SQL datetimeoffset(7) cursors through JavaScript
+Date milliseconds, which can skip submillisecond rows at a page boundary. Keep
+any future native adapter fail-closed when another page lacks exact cursor
+evidence; no partial result is a complete company total. A separate owner question
+for Main reader correction/real SQL boundary tests is pending; no Main edit made.
+Further review reproduced a session/branch handover race during its awaited read;
+that additional authorization finding needs separately scoped correction review.
+
+Controlling DASH69 scope correction: actual beta59674214 composition proves the
+original Business Board already uses cloud on Management (isOnlineOnly=true,
+effectiveDatabaseMode=online, localDb=null). The earlier concern that cloud routing
+removed an existing offline Board path was incorrect. Preserve the original auto
+reader in the UI/scopes/charts PR. Newly prepared native adapter/status/math code
+is unactivated and excluded from that PR; do not add shared Main metadata reads
+merely to complete this UI task. Cold-offline/PIN-only Management Board metadata
+is a preexisting unresolved capability gap, not a verified supported path. Main
+cursor/authorization corrections remain separate tasks. Final scoped UI review,
+full regression and deployed/installed acceptance remain pending.
+
+All-table follow-up: all11 non-id registry tables have declared-key generic
+local apply and canonical cloud apply/feed/delete paths. The verifier's marker
+skip is a structural assertion gap, not proof of missing synchronization.
+nav_pins has an ordinary id key despite sparse direct behavioral tests. Highest
+priority unresolved source candidates: whether the guarded native service path
+rejects pull-only secure_settings uploads/tombstones, and whether nav_pins keeps
+its established owner/company-admin rules under service-role sync. Source review
+alone does not establish deployed exposure. An agent is preparing isolated
+composed denial checks only; no app correction, permission change or live test
+is authorized by that investigation. Keep Membership unchanged.
+
+Five actual isolated HTTP/PostgreSQL follow-up observations completed. The
+secure_settings candidate is FALSIFIED: valid device push/tombstone return400
+SYNC_TABLE_FORBIDDEN, existing ciphertext is unchanged; invalid device returns401
+before RPC. The nav_pins ownership candidate is CONFIRMED IN CURRENT SOURCE:
+ordinary canonical RLS denies a non-admin foreign-owner write, while the actual
+terminal-only guarded sync/service-RPC path updates and deletes the foreign pin
+with200/readback. Impact shown is user-preference ownership only, not anonymous
+access, checkout, stock or financial mutation. Live deployed-definition parity is
+UNVERIFIED. No application/schema correction is authorized or applied. Keep as a
+separate scoped authorization finding; do not widen access or silently disable
+legitimate preference synchronization. Synthetic fixtures/results stay outside
+commits; temporary .tmp files must not be staged.
 
 ## 5 November sync coverage clarification and current work
 

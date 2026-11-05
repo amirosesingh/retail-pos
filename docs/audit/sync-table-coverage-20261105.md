@@ -134,6 +134,35 @@ All rows have **STR** structural metadata/schema tests. The group labels below i
 
 `docs/audit/system-sync-architecture.md` is dated 29 September and includes historical live-security/deployment findings and “repository complete” phase labels. Those are evidence for the recorded revision, not current database assertions. Neither file was blindly regenerated/overwritten here. A future approved documentation refresh should preserve dated historical findings and reconcile generated ownership/conflict descriptions with actual current validators.
 
+## Bounded execution follow-up
+
+At the recovery runtime checkpoint c900679d (documentation head667911f5), the
+registry verifier executed successfully. Its printed70 decisions remain the
+narrow structural assertions described above, not70 end-to-end workflows.
+Additional source tracing confirms all11 non-id tables use declared-key local
+apply/cloud feed/delete paths. The skipped marker assertions alone do not
+establish missing synchronization.
+
+Five owned isolated HTTP/PostgreSQL observations tested two candidates using the
+actual guarded relay and canonical service RPC. No live project was queried or
+changed by these checks:
+
+- `secure_settings`: valid-device upload and tombstone both returned400 /
+  `SYNC_TABLE_FORBIDDEN`; no insert or change to the seeded ciphertext. The earlier
+  suspicion based on the presence of generic SQL helpers was disproved.
+- Invalid device proof returned401 before any service RPC.
+- `nav_pins`: canonical ordinary-user RLS denied a foreign-owner write, while a
+  valid terminal-only sync request updated and deleted the foreign pin with200
+  and stored/deleted readback. This confirms a current-source ownership gap for
+  user preferences. It does not establish anonymous access, financial/stock
+  impact or parity with deployed live definitions. No correction is applied.
+
+Keep nav-pin correction as a separate authorization scope with authentic original
+author/owner evidence, legitimate offline retry and allowed/denied cases. Do not
+solve it by widening grants or silently disabling valid preference sync. Composite
+key round trips, the other table families and installed acceptance remain pending.
+Synthetic fixture data and security artifacts are excluded from commits.
+
 ## Deliberate exclusions and dependencies
 
 The 70 operational tables exclude cloud-only `user_sessions`, `sync_change_feed`, `sync_idempotency_receipts`, SKU number lease/state, and checked-online ledgers such as notification deliveries, sponsorship issue/policy and missed-bill entries (see `scripts/sqlserver-sync-policy.cjs`). New financial author/receipt/history metadata may have separate protected protocols; registry count alone is not their total count or an instruction to replicate them. SQL local migrations/checkpoints/jobs/conflicts/operation receipts/journal are synchronization infrastructure, not cloud business tables.

@@ -11,6 +11,9 @@ const { LegacyShiftRecoveryOutbox } = require("../electron/db/legacy-shift-recov
 const { LegacyShiftRecoveryAuthority } = require("../electron/legacy-shift-recovery-authority.cjs");
 const { LegacyShiftRecoveryService } = require("../electron/sync/legacy-shift-recovery-service.cjs");
 const { rememberGraph } = require("../electron/sync/shift-recovery-exact.cjs");
+const { parseExactJson, stringifyExactJson, isExactNumber, decimal, exactRows } = require("../electron/sync/shift-recovery-exact.cjs");
+const { ReviewedShiftAdoption } = require("../electron/sync/reviewed-shift-adoption.cjs");
+const { rememberLegacyRecoveryReceipt, assertLegacyRecoveryReceipt } = require("../electron/sync/legacy-shift-recovery-receipt.cjs");
 const { createShiftAuthorKeys } = require("../electron/security/shift-author-key.cjs");
 const { scopeHash } = require("../electron/shift-authority.cjs");
 const hash = text => crypto.createHash("sha256").update(text).digest("hex");
@@ -28,11 +31,11 @@ async function main() {
       if (!server) await new Promise(resolve => setTimeout(resolve, 100));
     }
     assert(server, "Owned private pipe unavailable: " + control("info", instance));
-    master = await connect("master"); await master.request().batch(`CREATE DATABASE [${database}];`); created = true;
+    master = await connect("master"); await master.request().batch(`CREATE DATABASE [${database}]; ALTER DATABASE [${database}] SET CHANGE_TRACKING=ON(CHANGE_RETENTION=2 DAYS,AUTO_CLEANUP=ON);`); created = true;
     pool = await connect(database); other = await connect(database);
     const all = loadRegistry(), registry = { ...all, tables: all.tables.filter(t => TABLES.includes(t.cloudTable)) };
     assert.equal(registry.tables.length, 6);
-    for (const name of TABLES) { const t = registry.tables.find(t => t.cloudTable === name); await pool.request().batch(`CREATE TABLE dbo.[${name}](${t.columns.map(c => `[${c.sqlServerColumn}] ${c.sqlServerType} ${c.sqlServerColumn === "id" ? "NOT NULL" : "NULL"}`).join(",")},PRIMARY KEY(id));`); }
+    for (const name of TABLES) { const t = registry.tables.find(t => t.cloudTable === name); await pool.request().batch(`CREATE TABLE dbo.[${name}](${t.columns.map(c => `[${c.sqlServerColumn}] ${c.sqlServerType} ${c.sqlServerColumn === "id" ? "NOT NULL" : "NULL"}`).join(",")},PRIMARY KEY(id)); ALTER TABLE dbo.[${name}] ENABLE CHANGE_TRACKING;`); }
     await pool.request().batch(fs.readFileSync(path.join(__dirname, "../docs/database/retained-shift-recovery-evidence.sql"), "utf8"));
     await pool.request().batch(fs.readFileSync(path.join(__dirname, "../docs/database/legacy-shift-recovery-outbox.sql"), "utf8"));
     await pool.request().batch("CREATE TABLE dbo.pos_sync_shift_author_keys(scope_hash char(64) PRIMARY KEY,project_origin nvarchar(2048),terminal_id nvarchar(128),author_id uniqueidentifier,key_id uniqueidentifier,public_key nvarchar(256));");
@@ -153,6 +156,182 @@ async function main() {
       await pool.request().query("ALTER INDEX UX_legacy_recovery_shift_scope ON dbo.pos_sync_shift_legacy_recoveries REBUILD;");
     });
     await test("disabled evidence foreign key fails exact schema preflight", async () => { await pool.request().query("ALTER TABLE dbo.pos_sync_shift_legacy_recoveries NOCHECK CONSTRAINT FK_legacy_recovery_evidence;"); await assert.rejects(atomic(tx => outbox.load(tx, scope, event.recoveryId)), e => e.code === "ELEGACY_RECOVERY_SCHEMA"); });
+    await pool.request().batch(`ALTER TABLE dbo.pos_sync_shift_legacy_recoveries WITH CHECK CHECK CONSTRAINT FK_legacy_recovery_evidence;
+      CREATE TABLE dbo.sync_change_journal(entity_type nvarchar(128),entity_id nvarchar(400),branch_id nvarchar(128),acknowledged_at datetimeoffset NULL);
+      CREATE TABLE dbo.pos_sync_shift_intents(intent_id uniqueidentifier PRIMARY KEY,branch_id nvarchar(128),shift_id uniqueidentifier,acknowledged_at datetimeoffset NULL);
+      CREATE TABLE dbo.pos_sync_shift_baselines(branch_id nvarchar(128),shift_id uniqueidentifier,graph_token char(64),closed_at_raw nvarchar(80),graph_json nvarchar(max),observation_generation uniqueidentifier,PRIMARY KEY(branch_id,shift_id));
+      CREATE TABLE dbo.sync_checkpoints(organization_id nvarchar(128),branch_id nvarchar(128),entity_type nvarchar(128),direction nvarchar(16),change_tracking_version bigint,committed_cursor nvarchar(400),updated_at datetimeoffset);
+      CREATE TABLE dbo.sales(id uniqueidentifier PRIMARY KEY,store_id nvarchar(128),shift_id uniqueidentifier);
+      ALTER TABLE dbo.shift_reconciliations ADD CONSTRAINT FK_fixture_recon_count FOREIGN KEY(count_id) REFERENCES dbo.shift_cash_counts(id);
+      ALTER TABLE dbo.shift_variance_alerts ADD CONSTRAINT FK_fixture_alert_recon FOREIGN KEY(reconciliation_id) REFERENCES dbo.shift_reconciliations(id);`);
+    await pool.request().batch(fs.readFileSync(path.join(__dirname, "../docs/database/reviewed-shift-adoption.sql"), "utf8"));
+    const toCloud = text => parseExactJson(text).map(part => { const table = registry.tables.find(t => t.cloudTable === part.table); return { table: part.table, rows: part.rows.map(row => Object.fromEntries(table.columns.map(column => {
+      let value = row[column.sqlServerColumn], type = column.cloudType;
+      if (value !== null && typeof value === "string" && (/^(numeric|decimal|money|smallmoney|bigint|integer|smallint|real|double precision)/.test(type) || type === "jsonb" || type.endsWith("[]"))) value = parseExactJson(value);
+      if (type === "boolean" && isExactNumber(value)) value = decimal(value) === "1e0";
+      if (type === "uuid" && typeof value === "string") value = value.toLowerCase();
+      return [column.cloudColumn, value];
+    }))) }; });
+    const transport = (shift, tables, token = "d".repeat(64)) => { const parent = tables.find(t => t.table === "shifts").rows[0]; const raw = stringifyExactJson({ ok: true, shiftGraphVersion: parseExactJson("1"), branchId, shiftId: shift, graphToken: token, closedAtRaw: parent.closed_at, tables }); return rememberGraph(JSON.parse(raw), raw, "1"); };
+    const captureAdoption = async (c, target) => atomic(tx => evidenceStore.capture(tx, { scope, shiftId: c.id, jobId: crypto.randomUUID(), localGraphText: c.localGraphText, cloudGraphText: stringifyExactJson(target) }));
+    const adopter = new ReviewedShiftAdoption({ connectionManager: cm, registry: all, evidenceStore, outbox, authority, assertScope, assertReceipt: assertLegacyRecoveryReceipt });
+    let precisionShift;
+    const adminPlan = async (c, target, reason = "Use the accepted cloud closing; preserve local claim in audit") => adopter.prepareAdmin({ scope, reviewer: await authority.prepare(authority.capture()), graph: transport(c.id, target), reason });
+    await test("reviewed competing ORIGINAL adoption archives the old graph and keeps one effective original", async () => {
+      const c = await seed(), target = toCloud(c.localGraphText), newCount = crypto.randomUUID(), newRecon = crypto.randomUUID();
+      for (const table of target) for (const row of table.rows) {
+        if (table.table === "shift_cash_counts") { row.id = newCount; row.counted_cash = parseExactJson("1234567890.123456789012"); }
+        if (table.table === "shift_reconciliations") { row.id = newRecon; row.count_id = newCount; row.counted_cash = parseExactJson("1234567890.123456789012"); row.expected_cash = row.counted_cash; }
+        if (table.table === "shift_variance_alerts") row.reconciliation_id = newRecon;
+        if (table.table === "shifts") for (const key of ["counted_cash", "final_counted_cash", "closing_float", "expected_cash"]) row[key] = parseExactJson("1234567890.123456789012");
+      }
+      const archived = await captureAdoption(c, target), plan = await adminPlan(c, target), decisionId = crypto.randomUUID();
+      await atomic(tx => adopter.apply(tx, { scope, plan, captureKey: archived.captureKey, decisionId }));
+      precisionShift = c.id;
+      const current = JSON.parse(await graph(c.id)); assert.equal(current[1].rows.length, 1); assert.equal(current[1].rows[0].id.toLowerCase(), newCount); assert.equal(current[1].rows[0].kind, "ORIGINAL");
+      assert.equal(current[0].rows[0].counted_cash, "1234567890.123456789012"); assert.equal((await atomic(tx => evidenceStore.load(tx, scope, archived.captureKey))).localGraphText, c.localGraphText);
+      const baseline = (await pool.request().input("id", c.id).query("SELECT graph_json FROM dbo.pos_sync_shift_baselines WHERE shift_id=@id;")).recordset[0].graph_json;
+      assert(baseline.includes("1234567890.123456789012")); assert.equal((await pool.request().query("SELECT COUNT(*) n FROM dbo.sync_checkpoints;")).recordset[0].n, 0);
+      assert.deepEqual(await atomic(tx => adopter.apply(tx, { scope, plan, captureKey: archived.captureKey, decisionId })), { decisionId, alreadyApplied: true, checkpointAdvanced: false });
+    });
+    await test("same-shift pending closing or sale work holds adoption, unrelated new sale does not", async () => {
+      const c = await seed(), target = toCloud(c.localGraphText); target[0].rows[0].note = "Accepted cloud correction";
+      const archived = await captureAdoption(c, target), plan = await adminPlan(c, target), values = { scope, plan, captureKey: archived.captureKey, decisionId: crypto.randomUUID() };
+      const sale = crypto.randomUUID(), otherShift = crypto.randomUUID();
+      await pool.request().input("id", sale).input("branch", branchId).input("shift", c.id).query("INSERT dbo.sales VALUES(@id,@branch,@shift); INSERT dbo.sync_change_journal VALUES('sales',CONCAT('{\"id\":\"',@id,'\"}'),@branch,NULL);");
+      await assert.rejects(atomic(tx => adopter.apply(tx, values)), e => e.code === "ELOCAL_UPLOAD_PENDING"); assert.equal(await graph(c.id), c.localGraphText);
+      await pool.request().input("id", sale).input("shift", otherShift).query("UPDATE dbo.sales SET shift_id=@shift WHERE id=@id;");
+      await atomic(tx => adopter.apply(tx, values)); assert(JSON.parse(await graph(c.id))[0].rows[0].note.includes("cloud"));
+      await pool.request().query("DELETE dbo.sync_change_journal;");
+    });
+    await test("local edit, forged decision and expired admin cannot authorize adoption", async () => {
+      const c = await seed(), target = toCloud(c.localGraphText); target[0].rows[0].note = "Cloud";
+      const archived = await captureAdoption(c, target), plan = await adminPlan(c, target), values = { scope, plan, captureKey: archived.captureKey, decisionId: crypto.randomUUID() };
+      await assert.rejects(atomic(tx => adopter.apply(tx, { ...values, plan: { mode: "ADMIN_ACCEPTED_CLOUD", shiftId: c.id } })), e => e.code === "EREVIEWED_APPROVAL_REQUIRED");
+      await pool.request().input("id", c.id).query("UPDATE dbo.shifts SET note='New unsaved local evolution' WHERE id=@id;");
+      await assert.rejects(atomic(tx => adopter.apply(tx, values)), e => e.code === "EREVIEWED_SOURCE_CHANGED"); epoch++;
+      await assert.rejects(atomic(tx => adopter.apply(tx, values))); assert(JSON.parse(await graph(c.id))[0].rows[0].note.includes("local"));
+    });
+    await test("failed transaction preserves all six tables and creates no decision/baseline", async () => {
+      const c = await seed(), target = toCloud(c.localGraphText); target[0].rows[0].note = "Cloud";
+      const archived = await captureAdoption(c, target), plan = await adminPlan(c, target), decisionId = crypto.randomUUID();
+      await assert.rejects(atomic(async tx => { await adopter.apply(tx, { scope, plan, captureKey: archived.captureKey, decisionId }); throw Error("rollback adoption fixture"); }), /rollback adoption/);
+      assert.equal(await graph(c.id), c.localGraphText); assert.equal((await pool.request().input("id", decisionId).query("SELECT decision_id FROM dbo.pos_shift_recovery_adoptions WHERE decision_id=@id;")).recordset.length, 0);
+    });
+    await test("unattributed closing journal and protected pending intent cannot be discarded", async () => {
+      const c = await seed(), target = toCloud(c.localGraphText); target[0].rows[0].note = "Accepted cloud";
+      const archived = await captureAdoption(c, target), plan = await adminPlan(c, target), values = { scope, plan, captureKey: archived.captureKey, decisionId: crypto.randomUUID() };
+      await pool.request().input("branch", branchId).input("key", JSON.stringify({ id: crypto.randomUUID() })).query("INSERT dbo.sync_change_journal VALUES('shift_cash_counts',@key,@branch,NULL);");
+      await assert.rejects(atomic(tx => adopter.apply(tx, values)), e => e.code === "ELOCAL_UPLOAD_PENDING");
+      await pool.request().query("DELETE dbo.sync_change_journal;");
+      await pool.request().input("branch", branchId).input("shift", c.id).query("INSERT dbo.pos_sync_shift_intents VALUES(NEWID(),@branch,@shift,NULL);");
+      await assert.rejects(atomic(tx => adopter.apply(tx, values)), e => e.code === "ELOCAL_UPLOAD_PENDING");
+      await pool.request().query("DELETE dbo.pos_sync_shift_intents;"); assert.equal(await graph(c.id), c.localGraphText);
+    });
+    await test("protected financial origin remains on its existing path without fabricated replacement", async () => {
+      const c = await seed(), target = toCloud(c.localGraphText); target[0].rows[0].note = "Accepted cloud";
+      const archived = await captureAdoption(c, target), plan = await adminPlan(c, target), values = { scope, plan, captureKey: archived.captureKey, decisionId: crypto.randomUUID() };
+      await pool.request().input("branch", branchId).input("shift", c.id).batch("CREATE TABLE dbo.pos_sync_shift_financial_origins(branch_id nvarchar(128),shift_id uniqueidentifier); INSERT dbo.pos_sync_shift_financial_origins VALUES(@branch,@shift);");
+      await assert.rejects(atomic(tx => adopter.apply(tx, values)), e => e.code === "EREVIEWED_FINANCIAL_PROTECTED"); assert.equal(await graph(c.id), c.localGraphText);
+      await pool.request().query("DROP TABLE dbo.pos_sync_shift_financial_origins;");
+    });
+    await test("disabled adoption evidence FK or trigger fails before effective projection writes", async () => {
+      const c = await seed(), target = toCloud(c.localGraphText); target[0].rows[0].note = "Accepted cloud";
+      const archived = await captureAdoption(c, target), plan = await adminPlan(c, target), values = { scope, plan, captureKey: archived.captureKey, decisionId: crypto.randomUUID() };
+      await pool.request().query("ALTER TABLE dbo.pos_shift_recovery_adoptions NOCHECK CONSTRAINT FK_reviewed_adoption_evidence;");
+      await assert.rejects(atomic(tx => adopter.apply(tx, values)), e => e.code === "EREVIEWED_ADOPTION_SCHEMA");
+      await pool.request().query("ALTER TABLE dbo.pos_shift_recovery_adoptions WITH CHECK CHECK CONSTRAINT FK_reviewed_adoption_evidence; DISABLE TRIGGER dbo.TR_reviewed_adoption_immutable ON dbo.pos_shift_recovery_adoptions;");
+      await assert.rejects(atomic(tx => adopter.apply(tx, values)), e => e.code === "EREVIEWED_ADOPTION_SCHEMA");
+      await pool.request().query("ENABLE TRIGGER dbo.TR_reviewed_adoption_immutable ON dbo.pos_shift_recovery_adoptions;"); assert.equal(await graph(c.id), c.localGraphText);
+    });
+    await test("same-name weakened CHECK constraints fail before projection writes", async () => {
+      const definitions=(await pool.request().query("SELECT name,definition FROM sys.check_constraints WHERE parent_object_id=OBJECT_ID('dbo.pos_shift_recovery_adoptions')")).recordset;
+      for(const item of definitions){
+        const c=await seed(),target=toCloud(c.localGraphText), archived=await captureAdoption(c,target),plan=adopter.prepareAdmin({scope,reviewer:await authority.prepare(authority.capture()),graph:transport(c.id,target),reason:"Reject changed constraint definitions"});
+        await pool.request().batch('ALTER TABLE dbo.pos_shift_recovery_adoptions DROP CONSTRAINT ['+item.name+']; ALTER TABLE dbo.pos_shift_recovery_adoptions ADD CONSTRAINT ['+item.name+'] CHECK(1=1);');
+        await assert.rejects(atomic(tx=>adopter.apply(tx,{scope,plan,captureKey:archived.captureKey,decisionId:crypto.randomUUID()})),e=>e.code==='EREVIEWED_ADOPTION_SCHEMA');
+        assert.equal(await graph(c.id),c.localGraphText);
+        await pool.request().batch('ALTER TABLE dbo.pos_shift_recovery_adoptions DROP CONSTRAINT ['+item.name+']; ALTER TABLE dbo.pos_shift_recovery_adoptions WITH CHECK ADD CONSTRAINT ['+item.name+'] CHECK '+item.definition+';');
+      }
+    });
+    await test("OPEN timestamp changes beyond microsecond quantization remain held", async () => {
+      for(const field of ['opened_at','created_at']) for(const timestamp of ['2026-01-02T00:00:00.123457+00:00','2026-01-01T00:00:00.123458+00:00','2026-01-01T00:00:00.1234568+00:00']){
+        const c=await seed();await pool.request().input('id',c.id).batch("DELETE dbo.shift_variance_alerts WHERE shift_id=@id;DELETE dbo.shift_reconciliations WHERE shift_id=@id;DELETE dbo.shift_cash_counts WHERE shift_id=@id;DELETE dbo.shift_close_events WHERE shift_id=@id;DELETE dbo.shift_notifications WHERE shift_id=@id;UPDATE dbo.shifts SET status='OPEN',state='ACTIVE',closed_at=NULL WHERE id=@id;");c.localGraphText=await graph(c.id);
+        const target=toCloud(c.localGraphText);target[0].rows[0][field]=timestamp;
+        const archived=await captureAdoption(c,target),plan=adopter.prepareAdmin({scope,reviewer:await authority.prepare(authority.capture()),graph:transport(c.id,target,null),reason:'Reject unproven opening timestamp drift'});
+        await assert.rejects(atomic(tx=>adopter.apply(tx,{scope,plan,captureKey:archived.captureKey,decisionId:crypto.randomUUID()})),e=>e.code==='EREVIEWED_OPEN_PRECISION_ONLY');assert.equal(await graph(c.id),c.localGraphText);
+      }
+    });
+    await test("OPEN precision adoption does not invent a closing baseline", async () => {
+      const c = await seed(); await pool.request().input("id", c.id).batch(`DELETE dbo.shift_variance_alerts WHERE shift_id=@id;DELETE dbo.shift_reconciliations WHERE shift_id=@id;DELETE dbo.shift_cash_counts WHERE shift_id=@id;DELETE dbo.shift_close_events WHERE shift_id=@id;DELETE dbo.shift_notifications WHERE shift_id=@id;
+        UPDATE dbo.shifts SET status='OPEN',state='ACTIVE',closed_at=NULL WHERE id=@id;`); c.localGraphText = await graph(c.id);
+      const target = toCloud(c.localGraphText); target[0].rows[0].opened_at = "2026-01-01T00:00:00.123457+00:00";
+      const archived = await captureAdoption(c, target), plan = adopter.prepareAdmin({ scope, reviewer: await authority.prepare(authority.capture()), graph: transport(c.id, target, null), reason: "Use verified cloud OPEN precision without closing it" });
+      await atomic(tx => adopter.apply(tx, { scope, plan, captureKey: archived.captureKey, decisionId: crypto.randomUUID() }));
+      assert.equal(JSON.parse(await graph(c.id))[0].rows[0].status, "OPEN"); assert.equal((await pool.request().input("id", c.id).query("SELECT shift_id FROM dbo.pos_sync_shift_baselines WHERE shift_id=@id;")).recordset.length, 0);
+    });
+    await test("accepted OPEN precision cannot reopen a retained CLOSED shift or replace business fields", async () => {
+      const c = await seed(), target = toCloud(c.cloudGraphText), archived = await captureAdoption(c, target);
+      const plan = adopter.prepareAdmin({ scope, reviewer: await authority.prepare(authority.capture()), graph: transport(c.id, target, null), reason: "An OPEN snapshot cannot reopen a closing" });
+      await assert.rejects(atomic(tx => adopter.apply(tx, { scope, plan, captureKey: archived.captureKey, decisionId: crypto.randomUUID() })), e => e.code === "EREVIEWED_OPEN_PRECISION_ONLY");
+      assert.equal(await graph(c.id), c.localGraphText);
+    });
+    await test("fresh private accepted receipt normalizes PG microseconds only after immutable ACK verification", async () => {
+      const c = await seed(), acceptedEvent = await approve(c), target = toCloud(c.localGraphText);
+      for (const part of target) for (const row of part.rows) for (const column of registry.tables.find(t => t.cloudTable === part.table).columns)
+        if (String(column.cloudType).startsWith("timestamp") && typeof row[column.cloudColumn] === "string") row[column.cloudColumn] = row[column.cloudColumn].replace(".1234567", ".123457");
+      const graphResponse = transport(c.id, target), acceptedText = stringifyExactJson(target), receiptRaw = stringifyExactJson({
+        version: parseExactJson("1"), recovery_id: acceptedEvent.recoveryId, payload_hash: acceptedEvent.payloadHash, evidence_hash: acceptedEvent.evidenceHash, cloud_witness_hash: acceptedEvent.cloudWitnessHash,
+        financial_verification: "UNVERIFIED_HISTORICAL", provenance: "ADMIN_REVIEWED_LEGACY", branch_id: branchId, terminal_id: terminalId, shift_id: c.id,
+        reviewer_id: acceptedEvent.proof.authorId, key_id: acceptedEvent.proof.keyId, accepted_token: "d".repeat(64), current_token: "d".repeat(64), superseded: false,
+        accepted_graph_text: acceptedText, accepted_graph_hash: hash(acceptedText), graph: { tables: target, graphToken: "d".repeat(64), closedAtRaw: target[0].rows[0].closed_at },
+        coverage: { version: parseExactJson("1"), mode: "matched_request_rows", tables: target.map(part => {
+          const fields = registry.tables.find(t => t.cloudTable === part.table).columns.map(c => c.cloudColumn), managed = fields.filter(f => ["row_version", "updated_at"].includes(f));
+          return { table: part.table, fields: fields.filter(f => !managed.includes(f)), serverManagedFields: managed,
+            rows: part.rows.map(row => ({ id: row.id, serverValues: Object.fromEntries(managed.map(f => [f, row[f]])) })) };
+        }) },
+      });
+      const privateReceipt = rememberLegacyRecoveryReceipt({ event: acceptedEvent, raw: receiptRaw, registry, assertCurrent: () => { assert.equal(cm.pool, pool); } });
+      const realOutbox = new LegacyShiftRecoveryOutbox({ connectionManager: cm, registry, evidenceStore, authority, assertScope, assertReceipt: assertLegacyRecoveryReceipt });
+      const actual = new ReviewedShiftAdoption({ connectionManager: cm, registry: all, evidenceStore, outbox: realOutbox, authority, assertScope, assertReceipt: assertLegacyRecoveryReceipt });
+      const plan = actual.prepareReceipt({ scope, event: acceptedEvent, witness: privateReceipt, graph: graphResponse });
+      const archived = await captureAdoption(c, target), decisionId = crypto.randomUUID();
+      await assert.rejects(atomic(tx => actual.apply(tx, { scope, plan, captureKey: archived.captureKey, decisionId })), e => e.code === "ELOCAL_UPLOAD_PENDING");
+      await atomic(tx => realOutbox.acknowledge(tx, { scope, recoveryId: acceptedEvent.recoveryId, witness: privateReceipt }));
+      await atomic(tx => actual.apply(tx, { scope, plan, captureKey: archived.captureKey, decisionId }));
+      assert(JSON.parse(await graph(c.id))[0].rows[0].closed_at.includes(".1234570"));
+      assert((await atomic(tx => evidenceStore.load(tx, scope, archived.captureKey))).localGraphText.includes(".1234567"));
+      assert.throws(() => actual.prepareReceipt({ scope, event: acceptedEvent, witness: { accepted: true }, graph: graphResponse }));
+    });
+    const { ChangeReader } = require("../electron/sync/change-reader.cjs"), { CheckpointRepository } = require("../electron/sync/checkpoints.cjs"), { ShiftGapRecovery } = require("../electron/sync/shift-gap-recovery.cjs");
+    const { prepareShiftGraphs, applyShiftGraphs } = require("../electron/sync/shift-graph.cjs");
+    const reader = new ChangeReader(cm, registry), checkpoints = new CheckpointRepository(cm);
+    const cloudCurrent = { terminalId: () => terminalId, backendUrl: () => "https://fixture.invalid", shiftGraph: async ({ shiftId }) => {
+      const tables = toCloud(await graph(shiftId)), parent = tables[0].rows[0]; return transport(shiftId, tables, parent.status === "CLOSED" ? "d".repeat(64) : null);
+    } };
+    await test("unchanged whole-branch gap recovery proves every retained graph before advancing captured V0", async () => {
+      for (const tableName of TABLES) {
+        const recovery = await new ShiftGapRecovery({ connectionManager: cm, registry, reader, checkpoints, branchId, tableName, cloud: cloudCurrent }).begin();
+        const captured = recovery.baseline; await recovery.proveMissing(cloudCurrent); const complete = await recovery.finish();
+        assert.equal(String(complete.currentVersion), captured); assert.equal(String((await checkpoints.get(branchId, tableName, "push")).change_tracking_version), captured);
+      }
+      assert.equal((await pool.request().query("SELECT COUNT(*) n FROM dbo.sync_checkpoints;")).recordset[0].n, 6);
+    });
+    await test("future ordinary note delta must preserve exact adopted money", async () => {
+      const before = JSON.parse(await graph(precisionShift))[0].rows[0].counted_cash, target = toCloud(await graph(precisionShift));
+      target[0].rows[0].note = "A subsequent ordinary cloud note update"; target[0].rows[0].row_version = parseExactJson("2");
+      const incoming = transport(precisionShift, target), parent = incoming.tables[0].rows[0];
+      const prepared = await prepareShiftGraphs({ cloud: { shiftGraph: async () => incoming }, connectionManager: cm, branchId,
+        changes: [{ table_name: "shifts", entity_id: JSON.stringify({ id: precisionShift }), row_data: parent, tombstone: false }] });
+      await atomic(async tx => {
+        try { await applyShiftGraphs({ transaction: tx, connectionManager: cm, registry, reader, branchId, prepared }); }
+        catch (error) {
+          const attempted = await new sql.Request(tx).input("id", precisionShift).query("SELECT CONVERT(nvarchar(100),counted_cash) counted_cash FROM dbo.shifts WHERE id=@id;");
+          error.fixtureExactBefore = before; error.fixtureAttemptedCash = attempted.recordset[0].counted_cash; throw error;
+        }
+      });
+      assert.equal(JSON.parse(await graph(precisionShift))[0].rows[0].counted_cash, before);
+    });
     console.log(`PASS ${passed} isolated SQL Server legacy recovery groups`);
   } finally {
     if (other) await other.close(); if (pool) await pool.close();
