@@ -70,7 +70,10 @@ export function ShopComparisonCharts({ rows, directory, selectedIds, showProfit,
         controls={<select aria-label="Financial chart measure" value={effectiveFinancialView} onChange={event => setFinancialView(event.target.value as typeof financialView)} className="h-8 rounded-md border border-input bg-background px-2 text-xs">
           {([['compare', 'Compare'], ['revenue', 'Revenue'], ['cost', 'Cost'], ['profit', 'Gross profit'], ['marginPct', 'Margin %']] as const)
             .filter(([value]) => showProfit || value === "revenue").map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-        </select>}>
+        </select>}
+        footer={showProfit && (effectiveFinancialView === "compare" || effectiveFinancialView === "marginPct") &&
+          <ul aria-label="Gross margin by shop" className="flex flex-wrap gap-x-4 gap-y-1">{financial.filter(row => Number.isFinite(row.marginPct)).map(row =>
+            <li key={row.id} className="min-w-0 break-words">{row.name} · <span className="numeric whitespace-nowrap">{row.marginPct.toFixed(1)}% margin</span></li>)}</ul>}>
         <ResponsiveContainer width="100%" height="100%"><ComposedChart data={financial}>
           <CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="name" fontSize={11} minTickGap={20} />
           <YAxis yAxisId="money" width={58} fontSize={11} tickFormatter={compactChartNumber} />

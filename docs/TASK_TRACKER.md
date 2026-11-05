@@ -6264,3 +6264,15 @@ React/Radix dialog groups passed again on these upgraded dependencies. The full
 new-head CI, final typecheck and platform checks are required before beta merge.
 Earlier actual native sale/restart evidence used the prior dependency install;
 do not mislabel that as another installed-application upgrade acceptance run.
+
+CHART72 refreshed58bdb12c (includes beta41500b9) full regression passed:
+6121tests/10skipped/0failed,712passingfiles plus1skipped, max2workers. The
+independent reviewer reran93focused tests and cleared the scalar completeness
+fix. Final display-only refinement adds actual per-shop margin% labels without
+hover in the existing fixed-height/scrollable footer, hidden without cost access;
+Dashboard's existing day/hour calculations are memoized on their real sales and
+product inputs. No financial formula or read changed. Actual Chrome1440/390
+passed again with an explicit55.6% label/cost-denial check;37 focused route,
+financial and chart regressions plus scoped lint passed. SQL hash921067FA…9FCB5
+and all authority code remain unchanged by these UI refinements. Final-head CI
+and separate exact-project migration approval/application remain pending.

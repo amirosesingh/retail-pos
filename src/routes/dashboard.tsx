@@ -146,6 +146,8 @@ function Dashboard() {
     return !sale.refunded && day >= revenueFrom && day <= revenueTo;
   }), [sales, revenueFrom, revenueTo]);
   const chartProfit = useMemo(() => profitOf(chartSales, state.products), [chartSales, state.products]);
+  const chartDays = useMemo(() => comparisonSalesDays(chartSales, state.products), [chartSales, state.products]);
+  const chartHours = useMemo(() => comparisonSalesHours(chartSales, state.products), [chartSales, state.products]);
 
   /** Revenue for the selected inclusive calendar range. */
   const daily = useMemo(() => dashboardDailyTrading(sales, sponsorship.rows, revenueFrom, revenueTo, includeSponsorship), [sales, sponsorship.rows, revenueFrom, revenueTo, includeSponsorship]);
@@ -153,7 +155,7 @@ function Dashboard() {
   const chartScope = authReady && user && storeIds.length > 0
     ? JSON.stringify([pageDataScope(user), storeIds, revenueFrom, revenueTo, effectiveTimeZone(), showCostMargin, includeSponsorship]) : null;
   const confirmedCharts = useConfirmedPresentation(chartScope, {
-    days: comparisonSalesDays(chartSales, state.products), hours: comparisonSalesHours(chartSales, state.products),
+    days: chartDays, hours: chartHours,
     profit: chartProfit, daily,
   }, !reportLoading && !reportError && inventoryReady && (!includeSponsorship || (!sponsorship.loading && !sponsorship.error)));
 

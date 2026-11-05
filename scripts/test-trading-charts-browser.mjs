@@ -52,6 +52,7 @@ try {
   await page.getByRole("button", { name: "Load", exact: true }).click();
   await cards.first().waitFor(); assert.equal(await cards.count(), 5);
   await page.locator(".recharts-surface").first().waitFor();
+  assert.equal(await page.getByRole("list", { name: "Gross margin by shop", exact: true }).textContent(), "Airport · 55.6% margin", "actual margin must be readable without hover");
   const measure = () => page.evaluate(() => {
     const cards = [...document.querySelectorAll('[data-trading-chart-card="fixed"]')].map(node => { const r = node.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; });
     const plots = [...document.querySelectorAll('[data-trading-chart-plot="fixed"]')].map(node => node.getBoundingClientRect().height);
@@ -90,6 +91,7 @@ try {
   await page.getByRole("button", { name: "Deny cost", exact: true }).click(); assert.equal(await cards.count(), 0);
   await page.getByRole("button", { name: "Load", exact: true }).click(); assert.equal(await cards.count(), 3);
   assert.equal(await page.getByRole("heading", { name: /Gross profit/ }).count(), 0);
+  assert.equal(await page.getByRole("list", { name: "Gross margin by shop", exact: true }).count(), 0);
   assert.deepEqual(await page.getByLabel("Financial chart measure").locator("option").allTextContents(), ["Revenue"]);
   await page.getByRole("button", { name: "Allow cost", exact: true }).click();
   await page.getByRole("button", { name: "Load", exact: true }).click();
