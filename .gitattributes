@@ -12,3 +12,4 @@
 /docs/database/retained-shift-recovery-evidence.sql text eol=lf
 /docs/database/legacy-shift-recovery-outbox.sql text eol=lf
 /docs/database/reviewed-shift-adoption.sql text eol=lf
+/supabase/migrations/20261105140417_isolate_refund_guard_table_fields.sql text eol=lf
