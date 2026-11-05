@@ -23,13 +23,26 @@ relative to beta3074. Fresh isolated Node22.22.2/npm11.4.2 installation passed
 (1063packages). TypeScript passed. All92 native Node checks passed, including
 actual Capgo valid/invalid local bundle packaging and updater/sync/database
 fixtures. The first restricted-temp run passed91/92 but Windows denied a fixture
-installer rename; the unchanged normal-temp rerun passed92/92. Full regression
-(two workers), full lint/advisory audit and unsigned no-publish Windows packaging
-are running, not passed claims. Desktop compilation completed and builder26.18
-started its package collection with npmRebuild=false. Record final results before
-recommending integration. Generated schema/report timestamps are incidental build
-output and must not enter the source PR. Database changes remain separately
-controlled. Membership remains ON HOLD.
+installer rename; the unchanged normal-temp rerun passed92/92. The restricted
+full run likewise failed on missing Vite SSR temp files/workerd fixture startup;
+the unchanged normal-access rerun passed5983 tests/10skipped/0failed across706
+files with two workers. Focused Query/Radix/startup/report/offline-checkout checks
+passed120 tests across15files. Full lint passed with0errors/27existing warnings.
+npm audit passed its high threshold:0high/0critical,19moderate/3low retained as
+advisory follow-up rather than a zero-warning claim.
+
+Unsigned Windows desktop build, NSIS installer/blockmap and full package smoke
+all passed with builder26.18.0, Electron44.9.1 and npmRebuild=false. The smoke
+verified ASAR integrity and the packaged SQL driver; signing/publication were
+disabled. The local acceptance installer hash is
+E493C3C7C0E869D4EB6827445D5AEAFE06D1F43CADBC96EE93A50AD955ADD088.
+This is a test artifact, not a release candidate containing pending payment fixes.
+Generated schema/report/route artifacts were inspected and restored after the
+build; no generated changes enter the PR. Registry changes were timestamps only;
+the existing source scanner reported two informational numeric-input observations
+in NotificationRulesPage, not a newly introduced dependency defect. Actual
+signed-in installed workflow checks remain separate. No remote integration,
+database application or native publication occurred. Membership remains ON HOLD.
 
 FIN62 cloud phase: PR391d15be0af allrequiredCIpassed. Ownerapproved exactdecimalv2 NEWactions only/final2dp halfawayzero; preserveoldacceptedhistory. Activeindependentnative/PGmath implementations, safecomplete-server-baseline receipts and financialauthor-domain foundation. Actualfinancialoperationauthor/writercapture and historical admission wiring remain open; no synthetic authorized flag/GUC or unverifiedclientrowlist may claim authority. All cloud/local DBapplication deferredEND exactbundleapproval. No finalcloudmigration applied or existingfinancialamountsrewritten.
 
