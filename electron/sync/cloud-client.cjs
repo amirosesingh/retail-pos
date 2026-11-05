@@ -64,7 +64,7 @@ function transportDiagnostic(error, payload, stage) {
     return {
       transportOperation: payload?.sqlServerPull ? "feed" : payload?.sqlServerBootstrap ? "bootstrap"
         : payload?.sqlServerShiftGraph ? "graph" : payload?.sqlServerCounts ? "count"
-          : payload?.sqlServerBatch || payload?.sqlServerAggregate || payload?.sqlServerLegacyRecovery ? "upload" : "other",
+          : payload?.sqlServerBatch || payload?.sqlServerAggregate || payload?.sqlServerLegacyRecovery || payload?.sqlServerStockHistory ? "upload" : "other",
       transportStage: stage,
       transportCode: own(error, "code") ?? own(own(error, "cause"), "code"),
       transportErrorName: own(error, "name") ?? (error instanceof TypeError ? "TypeError" : error instanceof Error ? "Error" : undefined),
@@ -211,7 +211,7 @@ class CloudClient {
       // Branch admission is control-plane metadata. Health/login/enrollment use
       // their existing separate paths and cannot wait behind data downloads.
       if (!operation && captured?.managementSyncBranches === true && Object.keys(captured).length === 1) return work();
-      const upload = captured?.sqlServerBatch || captured?.sqlServerAggregate || captured?.sqlServerFinancialEvent || captured?.sqlServerFinancialObservation || captured?.sqlServerLegacyRecovery;
+      const upload = captured?.sqlServerBatch || captured?.sqlServerAggregate || captured?.sqlServerFinancialEvent || captured?.sqlServerFinancialObservation || captured?.sqlServerLegacyRecovery || captured?.sqlServerStockHistory;
       return this.requestLane.run(upload ? "upload" : "download", Buffer.byteLength(capturedJson, "utf8"), work);
     } catch (error) { return Promise.reject(error); }
   }
@@ -388,6 +388,23 @@ class CloudClient {
     return this.shiftProtocolRequest({sqlServerFinancialObservation:{organizationId,branchId,operationJson}});
   }
   registerFinancialBoundary(batch) { return this.pushAggregate({...batch,registerFinancialBoundary:true}); }
+  pushStockHistory(batch){
+    const {identifier,fail}=require('../db/stock-history-contract.cjs');
+    const terminal=this.terminalStore.read()??{},branch=terminal.locationId??terminal.storeId??terminal.branchId;
+    if(!batch||batch.version!==1||identifier(batch.terminalId)!==recordId(this.terminalId())||
+      (branch!=null&&identifier(batch.branchId)!==recordId(String(branch)))||!Array.isArray(batch.rows)||!batch.rows.length||batch.rows.length>128)
+      fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
+    const rows=batch.rows.map(row=>{
+      if(!row||Object.keys(row).length!==3||!Object.hasOwn(row,'id')||!Object.hasOwn(row,'payloadHash')||!Object.hasOwn(row,'payloadJson')||
+        identifier(row.id,true)!==row.id||typeof row.payloadHash!=='string'||! /^[a-f0-9]{64}$/.test(row.payloadHash)||
+        typeof row.payloadJson!=='string'||createHash('sha256').update(row.payloadJson,'utf8').digest('hex')!==row.payloadHash)
+        fail('ESTOCK_HISTORY_ACK_UNCONFIRMED');
+      return{id:row.id,payloadHash:row.payloadHash,payloadJson:row.payloadJson};
+    });
+    const payload={version:1,branchId:identifier(batch.branchId),terminalId:identifier(batch.terminalId),rows};
+    if(Buffer.byteLength(JSON.stringify(payload),'utf8')>126976)fail('ESTOCK_HISTORY_OVERSIZED');
+    return this.request({sqlServerStockHistory:payload});
+  }
   pushAggregate(batch) {
     if((batch.registerFinancialBoundary!==undefined && (batch.registerFinancialBoundary!==true||!batch.shiftIntent||!batch.shiftFinancialBasis))||
       (batch.financialLedgerProjection!==undefined&&(batch.financialLedgerProjection!==true||batch.shiftIntent))||

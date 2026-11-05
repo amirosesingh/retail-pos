@@ -127,4 +127,45 @@ END $fn$;
 REVOKE ALL ON FUNCTION private.stock_history_capture_accepted_products() FROM PUBLIC,anon,authenticated,service_role;
 CREATE TRIGGER stock_history_accepted_products AFTER INSERT OR UPDATE OR DELETE ON public.products
  FOR EACH ROW EXECUTE FUNCTION private.stock_history_capture_accepted_products();
+
+-- Read-only candidate proof for the future guarded claim writer. It is neither
+-- upload admission nor an acknowledgement and is deliberately granted to no API
+-- role. Author/time/action checks and exclusive effect consumption remain needed.
+CREATE FUNCTION private.stock_history_match_effect_candidates(p_product uuid,p_branch text,p_quantity numeric,p_refs jsonb)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $fn$
+DECLARE ref jsonb;source uuid;effect record;ids uuid[]:=ARRAY[]::uuid[];seen text[]:=ARRAY[]::text[];
+ source_key text;groups jsonb:='{}'::jsonb;total numeric:=0;accepted timestamptz;
+BEGIN
+ IF p_product IS NULL OR p_branch IS NULL OR length(p_branch) NOT BETWEEN 1 AND 128
+  OR p_quantity IS NULL OR p_quantity=0 OR p_quantity<>trunc(p_quantity)
+  OR jsonb_typeof(p_refs) IS DISTINCT FROM 'array' THEN RAISE EXCEPTION 'STOCK_HISTORY_INVALID_SOURCE';END IF;
+ IF jsonb_array_length(p_refs) NOT BETWEEN 1 AND 2000 THEN RAISE EXCEPTION 'STOCK_HISTORY_SOURCE_NOT_ACCEPTED';END IF;
+ FOR ref IN SELECT value FROM jsonb_array_elements(p_refs) LOOP
+  IF jsonb_typeof(ref) IS DISTINCT FROM 'array' THEN RAISE EXCEPTION 'STOCK_HISTORY_INVALID_SOURCE';END IF;
+  IF jsonb_array_length(ref)<>3 OR jsonb_typeof(ref->0) IS DISTINCT FROM 'string' OR jsonb_typeof(ref->1) IS DISTINCT FROM 'string'
+   OR jsonb_typeof(ref->2) IS DISTINCT FROM 'string' OR ref->>0 NOT IN('item_activity_logs','stock_delta_applied')
+   OR ref->>1!~*'^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$' OR ref->>2!~'^-?(0|[1-9][0-9]{0,37})$'
+   THEN RAISE EXCEPTION 'STOCK_HISTORY_SOURCE_NOT_ACCEPTED';END IF;
+  source:=(ref->>1)::uuid;source_key:=(ref->>0)||':'||source;
+  IF source_key=ANY(seen) THEN RAISE EXCEPTION 'STOCK_HISTORY_INVALID_SOURCE';END IF;seen:=array_append(seen,source_key);
+  SELECT actual.* INTO effect FROM private.stock_history_source_receipts receipt
+   JOIN private.stock_history_effect_sources link ON link.movement_id=receipt.movement_id
+   JOIN private.stock_history_accepted_effects actual ON actual.id=link.effect_id
+   WHERE receipt.movement_id=source AND receipt.product_id=p_product AND receipt.store_id=p_branch AND receipt.quantity_delta=(ref->>2)::numeric
+    AND actual.product_id=p_product AND actual.store_id=p_branch AND actual.quantity_delta=receipt.quantity_delta;
+  IF NOT FOUND THEN RAISE EXCEPTION 'STOCK_HISTORY_SOURCE_NOT_ACCEPTED';END IF;
+  IF ref->>0='item_activity_logs' THEN
+   IF NOT EXISTS(SELECT 1 FROM public.item_activity_logs activity WHERE activity.id=source AND activity.product_id=p_product
+    AND activity.store_id=p_branch AND activity.quantity_delta=(ref->>2)::numeric) THEN RAISE EXCEPTION 'STOCK_HISTORY_SOURCE_NOT_ACCEPTED';END IF;
+  END IF;
+  groups:=jsonb_set(groups,ARRAY[ref->>0],to_jsonb(COALESCE((groups->>(ref->>0))::numeric,0)+(ref->>2)::numeric));
+  IF NOT effect.id=ANY(ids) THEN ids:=array_append(ids,effect.id);total:=total+effect.quantity_delta;END IF;
+  IF accepted IS NULL OR accepted<effect.accepted_at THEN accepted:=effect.accepted_at;END IF;
+ END LOOP;
+ IF total<>p_quantity OR EXISTS(SELECT 1 FROM jsonb_each_text(groups) entry WHERE entry.value::numeric<>p_quantity)
+  THEN RAISE EXCEPTION 'STOCK_HISTORY_SOURCE_NOT_ACCEPTED';END IF;
+ RETURN jsonb_build_object('effectIds',to_jsonb(ARRAY(SELECT id FROM unnest(ids) id ORDER BY id)),
+  'quantity',total::text,'acceptedAt',to_char(accepted AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US')||'0Z','timingState','unverified');
+END $fn$;
+REVOKE ALL ON FUNCTION private.stock_history_match_effect_candidates(uuid,text,numeric,jsonb) FROM PUBLIC,anon,authenticated,service_role;
 COMMIT;

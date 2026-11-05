@@ -352,3 +352,36 @@ bindings and complete existing single-lane upload/adoption remain pending.
 Verification at this checkpoint:61 PostgreSQL/canonical cases and27 actual
 uniquely owned disposable LocalDB groups pass, with fixtures cleaned. TypeScript,
 scoped lint and diff checks pass. No live schema/evidence/baseline was installed.
+
+## 6 November single-lane and refund-source checkpoint
+
+Metadata now has a deterministic separate journal aggregate for each original
+business operation/branch. It cannot be accidentally cleared by the ordinary
+business aggregate acknowledgement. A bounded optional PushWorker adapter sends
+the original frozen bytes through the existing CloudClient upload turn, then
+requires the exact SQL outbox owner to commit the matching proof. It creates no
+parallel engine, browser/file outbox or second connection lane. No Main factory
+installs this adapter yet, and the hosted endpoint has no stock-claim admission;
+it is preparation, not a working end-to-end upload.
+
+The actual native partial-refund writer now retains its existing delta-receipt
+references in capture. It does not recalculate or change the refund, stock,
+source ID, row versions or idempotent business receipt. A disposable actual SQL
+test verifies the remaining two units and their saved source are captured once.
+Unknown generic writers explicitly invalidate coverage rather than masquerade
+as a proved stock action.
+
+The private SQL matcher returns candidate effect IDs only for actual, uniquely
+linked accepted receipts and valid source representations. Matching quantities,
+scope and source groups must agree. It grants no API access, writes no historical
+movement, consumes no effect and issues no ACK. Original author/action/time
+admission and exclusive effect consumption are still required before enabling
+the real uploader. Unsupported source paths remain pending, never guessed.
+
+Verification:84 focused source/ACK/transport cases and29 actual uniquely owned
+disposable LocalDB groups pass; fixtures are cleaned. TypeScript and scoped lint
+have0 errors. The initial refund fixture attempts exposed only same-batch DDL
+compilation and driver UUID-case assumptions; tests now compare actual saved
+source IDs. Existing writer arithmetic was not altered. PR401 at bcc8d00b had all
+required CI and platform/Workers builds pass, with owner-deferred CodeRabbit
+skipped. Later source checkpoints require their own final CI and review.

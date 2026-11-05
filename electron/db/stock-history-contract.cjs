@@ -44,6 +44,7 @@ function stableId(parts){
   const hash=createHash('sha256').update(JSON.stringify(parts)).digest('hex');
   return `${hash.slice(0,8)}-${hash.slice(8,12)}-4${hash.slice(13,16)}-8${hash.slice(17,20)}-${hash.slice(20,32)}`;
 }
+function uploadAggregateId(operationId,branchId){return stableId(['stock-history.upload.v1',identifier(operationId,true),identifier(branchId)]);}
 function stockMap(input){
   if(typeof input==='string'){try{input=JSON.parse(input);}catch{fail('ESTOCK_HISTORY_STOCK_INVALID');}}
   if(input==null)input={};
@@ -108,4 +109,4 @@ function changes(context,before,after,sourceClaims=[]){
   }
   return result;
 }
-module.exports={TABLES,KINDS,identifier,quantity,instant,utc,canonicalInstant,stableId,stockMap,normalizeContext,movementPayload,movementFingerprint,changes,fail};
+module.exports={TABLES,KINDS,identifier,quantity,instant,utc,canonicalInstant,stableId,uploadAggregateId,stockMap,normalizeContext,movementPayload,movementFingerprint,changes,fail};

@@ -86,7 +86,7 @@ class StockHistoryStore{
   const capability=await this.capability(tx);if(!capability.available)return null;
   const observed=this.readContext?.(),source=observed?Object.freeze({...observed}):null;
   if(source&&(!source.key||source.branchId!==input.branchId||source.terminalId!==input.terminalId))contract.fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
-  const writerKnown=contract.KINDS.has(input.kind);
+  const writerKnown=contract.KINDS.has(input.kind)&&input.kind!=='general';
   const captureInput=Object.freeze({...input,kind:writerKnown?input.kind:'general',...(source?{actorId:source.actorId,clockState:source.clockState}:{})});
   contract.identifier(captureInput.operationId,true);contract.identifier(captureInput.branchId);contract.identifier(captureInput.terminalId);
   if(captureInput.effectiveAt)contract.instant(captureInput.effectiveAt);
@@ -133,9 +133,12 @@ class StockHistoryStore{
   CAPTURES.delete(token);return {captured:rows.length,available:true,incomplete:saved.products.unbounded||!saved.writerKnown};
  }
  async insertMovements(tx,branch,rows){
+  if(!rows.length)return;
+  if(rows.some(row=>row.operation_id!==rows[0].operation_id||row.store_id!==branch))contract.fail();
   const payload=JSON.stringify(rows.map(row=>({...row,recorded_ticks:String(contract.instant(row.recorded_at_raw))})));
   if(Buffer.byteLength(payload,'utf8')>6*1024*1024)contract.fail('ESTOCK_HISTORY_OVERSIZED');
-  await this.request(tx).input('history_rows',payload).input('history_branch',branch).query(`
+  await this.request(tx).input('history_rows',payload).input('history_branch',branch)
+   .input('history_upload_aggregate',contract.uploadAggregateId(rows[0].operation_id,branch)).query(`
    DECLARE @history_candidates table(id uniqueidentifier,operation_id uniqueidentifier,product_id uniqueidentifier,store_id nvarchar(128),terminal_id nvarchar(128),actor_id nvarchar(128),source_kind nvarchar(20),
     quantity_delta decimal(38,0),effective_at_raw nvarchar(28),effective_ticks decimal(20,0),recorded_at_raw nvarchar(28),recorded_ticks decimal(20,0),product_name nvarchar(max),sku nvarchar(max),barcode nvarchar(max),clock_state nvarchar(16),payload_hash char(64),payload_json nvarchar(max));
    INSERT @history_candidates SELECT * FROM OPENJSON(@history_rows) WITH(
@@ -159,7 +162,7 @@ class StockHistoryStore{
     SELECT id,operation_id,product_id,store_id,terminal_id,actor_id,source_kind,quantity_delta,effective_at_raw,effective_ticks,recorded_at_raw,recorded_ticks,
      product_name,sku,barcode,clock_state,payload_hash,payload_json,(SELECT [cursor] FROM @history_position)-@history_count+ROW_NUMBER() OVER(ORDER BY id) FROM @history_candidates;
    INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id,entity_version,aggregate_id)
-    SELECT N'stock_history_movements',CONCAT(N'{"id":"',CONVERT(nvarchar(36),r.id),N'"}'),N'insert',r.store_id,1,r.operation_id
+    SELECT N'stock_history_movements',CONCAT(N'{"id":"',CONVERT(nvarchar(36),r.id),N'"}'),N'insert',r.store_id,1,CONVERT(uniqueidentifier,@history_upload_aggregate)
     FROM @history_candidates r JOIN @history_inserted inserted ON inserted.id=r.id;
    UPDATE h SET coverage_state=N'incomplete',coverage_generation=coverage_generation+1 FROM dbo.stock_history_heads h
     JOIN dbo.stock_history_baselines b ON b.id=h.baseline_id AND b.store_id=h.store_id WHERE h.store_id=@history_branch

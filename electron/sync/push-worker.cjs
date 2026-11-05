@@ -229,7 +229,7 @@ function terminalWritableChanges(tableName, changes, { branchId = "", terminalId
 }
 
 class PushWorker {
-  constructor({ reader, cloud, checkpoints, registry, validateAuthor, validateClosingStart, validateFinancialBasis, financialHistoryEnabled=false, validateFinancialOperation }) {
+  constructor({ reader, cloud, checkpoints, registry, validateAuthor, validateClosingStart, validateFinancialBasis, financialHistoryEnabled=false, validateFinancialOperation,stockHistory=null }) {
     this.financialHistoryEnabled=financialHistoryEnabled===true;
     this.validateFinancialOperation=validateFinancialOperation;
     this.validateAuthor = validateAuthor;
@@ -239,6 +239,7 @@ class PushWorker {
     this.cloud = cloud;
     this.checkpoints = checkpoints;
     this.registry = registry;
+    this.stockHistory=stockHistory;
   }
   async retry(work) {
     for (let attempt = 1; attempt <= 5; attempt += 1) {
@@ -316,6 +317,12 @@ class PushWorker {
         originalIds.forEach(id => deferred.add(id)); continue;
       }
       try {
+      if(this.stockHistory?.accepts(aggregate)){
+        const result=await this.stockHistory.upload(aggregate,branchId,terminalId);
+        pushed+=result.acknowledged;
+        onProgress({direction:'push',table:'stock_history_movements',completed:result.acknowledged});
+        continue;
+      }
       const financialRequired=await this.reader.financialAggregateRequired?.(aggregate.aggregateId,branchId,terminalId)??false;
       const financialOpening=await this.reader.financialOpening?.(aggregate.aggregateId,branchId,terminalId)??null;
       if((financialRequired||financialOpening)&&!this.financialHistoryEnabled)throw Object.assign(new Error('The matching financial history capability is required. Saved work remains pending.'),{code:'EFINANCIAL_PROTOCOL_UNAVAILABLE',table:'shifts'});

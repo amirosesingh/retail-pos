@@ -5983,6 +5983,29 @@ actual cashier approved-payment acceptance remains pending that distinct fix.
 Report ordering compares instant milliseconds plus the remaining SQL 100 ns
 fraction, so mixed precision/offset strings sort correctly without rewriting
 raw timestamps or pagination cursors. Equal instants retain descending ID ties.
+
+## STOCK401 — resumed capture/ACK verification, 6 November
+
+Draft PR401 read/UI checkpoint68c36a07, metadata checkpoint5a7197ca and accepted
+cloud effect/eligible-opening checkpointbcc8d00b are committed and pushed. Latest
+beta79face20 is integrated via5f21a970 without conflicts. CI on bcc8d00b passes all
+required checks and platform/Workers builds; CodeRabbit remains owner-deferred.
+
+The next source checkpoint separates metadata journal aggregates, uses the
+existing PushWorker/CloudClient lane with exact original-byte ACK ownership,
+retains actual partial-refund source receipts and adds private read-only accepted
+effect matching.84 focused cases and29 actual disposable LocalDB groups pass;
+TypeScript/scoped lint0errors. It remains unactivated: no Main capture factory,
+stock-claim server admission, effect consumption, baseline or complete cohort
+proof exists yet. Author-domain preparation is a separate documented approval
+boundary; no key/security API changes were made.
+
+Next: independent exact-head review; finalize original-author/action and clock
+evidence, all source/cohort paths, guarded hosted acceptance/exclusive effect
+consumption and resumable downloads within the existing engine. Finish full and
+installed acceptance before merge. Exact draft cloud/local SQL changes and hashes
+must be shown before live application. Existing business data/checkout/permission
+grants, queues/checkpoints and Membership remain untouched.
 # DEV76 — complete shared protocol loading in local previews, 6 November
 
 The owner requested latest Electron and web previews side by side, then reported

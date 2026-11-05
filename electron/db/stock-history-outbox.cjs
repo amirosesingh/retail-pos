@@ -39,6 +39,7 @@ class StockHistoryOutbox{
     recorded_at_raw,product_name,sku,barcode,clock_state,payload_hash,payload_json FROM dbo.stock_history_movements
     WHERE id IN(${chosen.map((_,n)=>'@stock_id'+n).join(',')}) ORDER BY local_cursor;`)).recordset??[];
    if(rows.length!==new Set(chosen.map(row=>String(row.id).toLowerCase())).size)fail();
+   if(rows.some(row=>contract.uploadAggregateId(row.operation_id,branchId)!==aggregateId))fail();
    const batch=Object.freeze({version:1,branchId,terminalId,rows:Object.freeze(rows.map(row=>stockHistoryUploadRow(row,{branchId,terminalId})))});
    BATCHES.set(batch,{owner:this,pool,databaseKey:cap.databaseKey,aggregateId,
     changes:chosen.map(row=>({changeId:Number(row.change_id),id:String(row.id).toLowerCase()}))});

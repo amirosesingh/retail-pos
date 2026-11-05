@@ -34,7 +34,12 @@ class ReceiptRepository{
    if(saleResult.recordset[0].is_refunded)throw Object.assign(new Error("This receipt has already been refunded."),{code:"EALREADY"});
    const items=await new sql.Request(tx).input("sale",saleId).query("SELECT id,product_id,quantity,COALESCE(refunded_qty,0) refunded_qty FROM dbo.sale_items WITH(UPDLOCK,HOLDLOCK) WHERE sale_id=@sale ORDER BY id;");
    const stockScope=this.stockHistory?.readContext?.();
-   const stockCapture=this.stockHistory?await this.stockHistory.begin(tx,(items.recordset??[]).filter(item=>item.product_id).map(item=>({kind:'update',table:'products',match:{id:item.product_id},values:{stock_quantity:0}})),{
+   const stockCapture=this.stockHistory?await this.stockHistory.begin(tx,(items.recordset??[]).filter(item=>item.product_id).flatMap(item=>[
+    {kind:'update',table:'products',match:{id:item.product_id},values:{stock_quantity:0}},
+    // These are evidence references only. The existing refund loop below still
+    // owns every actual quantity/write/idempotency decision in this transaction.
+    {kind:'insert',table:'stock_delta_applied',rows:[{movement_id:stableUuid({refundId,itemId:item.id}),product_id:item.product_id,store_id:branchId}]},
+   ]),{
     operationId,branchId,terminalId:stockScope?.terminalId??financialContext?.terminalId,actorId:stockScope?.actorId,kind:'refund',
    }):null;
    const journal=async(table,key,operation="update")=>new sql.Request(tx).input("entity",table).input("entity_id",JSON.stringify(key)).input("operation",operation).input("branch",branchId).input("aggregate",operationId).query("INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id,entity_version,aggregate_id) VALUES(@entity,@entity_id,@operation,@branch,1,@aggregate);");

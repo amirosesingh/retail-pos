@@ -11,6 +11,7 @@ beforeAll(async()=>{
   CREATE TABLE terminal_tokens(id uuid PRIMARY KEY,location_id text,status text,revoked_at timestamptz,platform text,is_claimed boolean,management_sync_enabled boolean);
   CREATE TABLE products(id uuid PRIMARY KEY,name text,sku text,barcode text,owner_store_id text,stock_by_store jsonb,stock_quantity integer,price numeric);
   CREATE TABLE stock_delta_applied(movement_id uuid PRIMARY KEY,product_id uuid,store_id text,delta integer);
+  CREATE TABLE item_activity_logs(id uuid PRIMARY KEY,product_id uuid,store_id text,quantity_delta integer);
   CREATE TABLE shifts(id uuid PRIMARY KEY,store_id text,status text,closed_at timestamptz);
   CREATE TABLE stores(id text PRIMARY KEY);
   INSERT INTO products VALUES('${product}','Existing','0001','00001','a','{"a":3,"b":2}',5,19.95);
@@ -21,7 +22,7 @@ beforeAll(async()=>{
 },30000);
 afterAll(async()=>db?.close());
 beforeEach(async()=>{
- await db.exec(`TRUNCATE private.stock_history_effect_sources,private.stock_history_accepted_effects,private.stock_history_source_receipts,private.stock_history_capture_gaps,stock_delta_applied,stock_history_heads;
+ await db.exec(`TRUNCATE private.stock_history_effect_sources,private.stock_history_accepted_effects,private.stock_history_source_receipts,private.stock_history_capture_gaps,stock_delta_applied,item_activity_logs,stock_history_heads;
   UPDATE products SET stock_by_store='{"a":3,"b":2}',stock_quantity=5,price=19.95 WHERE id='${product}';
   DELETE FROM products WHERE id<>'${product}';
   TRUNCATE private.stock_history_effect_sources,private.stock_history_accepted_effects,private.stock_history_source_receipts,private.stock_history_capture_gaps;
@@ -46,6 +47,20 @@ describe('actual accepted cloud stock effects, without claiming original author/
   await db.exec(`INSERT INTO stock_delta_applied VALUES('${receipt}','${product}','a',-1);`);
   expect(await rows('stock_history_source_receipts')).toHaveLength(1);
   expect(await rows('stock_history_accepted_effects')).toHaveLength(0);expect(await rows('stock_history_effect_sources')).toHaveLength(0);
+ });
+ it('returns candidate effects only for exact accepted quantities, scope and real source representations',async()=>{
+  await sourceAndChange();const refs=[['stock_delta_applied',receipt,'-1']];
+  const query=async(delta=-1,branch='a',references=refs)=>(await db.query<{proof:Record<string,unknown>}>(
+   `SELECT private.stock_history_match_effect_candidates($1,$2,$3,$4::jsonb) proof`,[product,branch,delta,JSON.stringify(references)])).rows[0]!.proof;
+  const proof=await query();expect(proof).toMatchObject({quantity:'-1',timingState:'unverified'});expect(proof.effectIds).toHaveLength(1);
+  await expect(query(-2)).rejects.toThrow(/SOURCE_NOT_ACCEPTED/);await expect(query(-1,'b')).rejects.toThrow(/SOURCE_NOT_ACCEPTED/);
+  await expect(query(-1,'a',[['stock_delta_applied',product,'-1']])).rejects.toThrow(/SOURCE_NOT_ACCEPTED/);
+  await expect(query(-1,'a',[...refs,...refs])).rejects.toThrow(/INVALID_SOURCE/);
+  await expect(query(-1,'a',[['item_activity_logs',receipt,'-1']])).rejects.toThrow(/SOURCE_NOT_ACCEPTED/);
+  await db.exec(`INSERT INTO item_activity_logs VALUES('${receipt}','${product}','a',-1);`);
+  expect(await query(-1,'a',[...refs,['item_activity_logs',receipt,'-1']])).toMatchObject({effectIds:proof.effectIds,quantity:'-1'});
+  await expect(query(-1,'a',[['stock_adjustments',receipt,'-1']])).rejects.toThrow(/SOURCE_NOT_ACCEPTED/);
+  expect((await db.query('SELECT count(*)::int n FROM stock_history_movements')).rows[0]).toEqual({n:0});
  });
  it.each([['wrong branch','b',-1],['wrong delta','a',-2]] as const)('retains an unbound effect for %s',async(_,branch,delta)=>{
   await sourceAndChange(branch,delta);expect(await rows('stock_history_accepted_effects')).toHaveLength(1);
