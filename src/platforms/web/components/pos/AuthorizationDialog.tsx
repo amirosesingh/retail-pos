@@ -34,7 +34,7 @@ import {
   approvalReference,
   canAuthorizeAmount,
 } from "@/lib/authorization";
-import { verifyLocalApprovalPin } from "@/core/local-db/local-staff";
+import { authorizeOfflineDiscount, hasNativeOfflineDiscountCapability, verifyLocalApprovalPin } from "@/core/local-db/local-staff";
 import { normalizeSnapshot, snapshotFingerprint, type TicketSnapshot } from "@/lib/ticket-snapshot";
 import { syncNow } from "@/lib/sync-engine";
 import { approvalIdentity } from "@/lib/approval-identity";
@@ -101,6 +101,7 @@ export function AuthorizationDialog({
   const [busy, setBusy] = useState(false);
   const submitting = useRef(false);
   const currentPrompt = useRef(prompt);
+  const nativeRequest = useRef<{ prompt: AuthorizationPrompt; id: string } | null>(null);
   currentPrompt.current = prompt;
   const session = useAuthOptional();
   const me = session?.user ?? null;
@@ -109,6 +110,22 @@ export function AuthorizationDialog({
     if (!prompt) return false;
     const identity = approvalIdentity(tokenOnly, authorizerId, prompt.selfAuthorizer?.id);
     const expectedId = identity.authorizerId;
+    if (prompt.actionKey === "discount_over_limit" && prompt.payload?.["discount_scope"] === "ticket" && hasNativeOfflineDiscountCapability()) {
+      if (nativeRequest.current?.prompt !== prompt) nativeRequest.current = { prompt, id: newId() };
+      const result = await authorizeOfflineDiscount({
+        requestId: nativeRequest.current.id, actionKey: "discount_over_limit", branchId: prompt.storeId ?? "",
+        username: expectedId ?? "", credential: pin, selfAuthorization: identity.selfAuthorization, reason: note.trim(), snapshot: prompt.snapshot,
+        payload: prompt.payload, requestedAmount: prompt.requestedAmount ?? Number.NaN,
+      });
+      if (currentPrompt.current !== prompt) return false;
+      if (!result.ok || !result.authorizer) {
+        toast.error(result.error ?? "The approval could not be saved locally. Its bill remains unpaid.");
+        return false;
+      }
+      toast.success(`Approved offline by ${result.authorizer.name}`);
+      onFinish({ kind: "approved", grantToken: "", by: result.authorizer.name, authorizer: result.authorizer, offline: true });
+      return true;
+    }
     const result = await verifyLocalApprovalPin(expectedId, pin);
     if (currentPrompt.current !== prompt) return false;
     if (!result.ok) {

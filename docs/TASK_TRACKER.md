@@ -5761,3 +5761,115 @@ Actual new cashier approval test captured EPRIVILEGE at Main admission: generic
 Keep that boundary; a separate Main-owned verified-approval logging capability
 requires approval and tests. PR412 fixes only registered audit-payload shape;
 actual cashier approved-payment acceptance remains pending that distinct fix.
+
+## Native offline approval capability — proposal only, 5 November
+
+Status: INVESTIGATION / OWNER IMPLEMENTATION APPROVAL REQUIRED. PR412 is merged
+into beta at8633bb294fc3b3f0cde4392c4d926abb342bcff8, with exact tested-tree
+parity and passing platform/permission/Workers checks. Its helper-only correction
+must not be described as a fix for the separate cashier admission restriction.
+
+Confirmed device boundary: after the real local manager approval PIN verifies,
+AuthorizationDialog tries a generic authorization_log aggregate. Main's existing
+business:commit-aggregate admission requires Supervisor for general aggregates,
+so an ordinary cashier correctly receives EPRIVILEGE before the write handler.
+Do not remove that gate, temporarily elevate the requester, relabel the request
+as a sale, trust a renderer approval assertion, or grant arbitrary audit writes.
+
+Proposed smallest bounded implementation:
+1. Add a dedicated Main-owned offline approval operation, admitted only for an
+   already authenticated POS requester on the registered Operations terminal.
+   Capture and recheck the native session epoch, operator, terminal/branch,
+   backend/project and SQL pool/profile identity before and after every await.
+2. Reuse verifySyncedApprovalPin and its canonical account throttling, independent
+   approval PIN/TOTP, enabled credential, active account and branch-scope checks.
+   Main must validate current effective local branch/global rules and action
+   permission, roles/users, amount/ceiling, required reason and complete canonical
+   bill/action binding. Renderer-supplied role/permission/limit is not authority.
+   Share the existing pure policy implementation across Main/UI where necessary;
+   do not copy an approximate second business-rule formula.
+3. Main constructs one fixed authorization_log row from the verified requester,
+   actual approver and sealed terminal. Commit only that row through the existing
+   aggregate repository/journal/operation receipt, without widening generic IPC
+   permissions. Return the verified audit identity only after SQL acceptance.
+4. Bind a stable request UUID to the full public action/bill context. Freeze the
+   exact Main-generated audit row (including created_at) after verification;
+   identical lost-ack retries must reuse its exact payload, not consume a TOTP
+   twice or generate another audit. Bound any Main capability cache and its TTL.
+   After restart require credential verification anew, and check the existing
+   audit plus exact receipt/context before acknowledging the original operation.
+   An audit row alone is not proof of credential verification. Changed context,
+   requester, branch, policy, role revocation or receipt mismatch stays denied.
+5. Preserve awaited failure behavior and the unpaid/held ticket on rejection or
+   SQL rollback. This is a narrowly verified audit capability, not a promise of
+   new one-use financial-grant enforcement: the existing native financial grant
+   contract must be inspected and any additional enforcement scope approved.
+
+Expected source surfaces for review (not edited by this investigation):
+- New electron/offline-approval-service.cjs with injected verifier, trusted scope,
+  current-rule reader and existing transactional writer.
+- electron/main.cjs, electron/preload.cjs and electron/ipc-privilege.cjs for the
+  dedicated bounded IPC; preserve business:commit-aggregate's existing gate.
+- src/core/local-db/local-db.ts, src/core/local-db/local-staff.ts and
+  src/platforms/web/components/pos/AuthorizationDialog.tsx for the typed native
+  path; hosted/mobile approval behavior remains unchanged.
+- One shared pure policy module only if required to reuse the existing exact
+  rule/action-permission semantics, with native/browser parity tests.
+- Focused service/IPC/UI tests and an opt-in owned disposable SQL fixture.
+
+Required allowed/denied verification: genuine cashier requester plus permitted
+manager approval; Administrator parity; invalid/locked/missing PIN; independent
+login-PIN rejection; disabled/out-of-scope/revoked approver; missing reason,
+ceiling/mode/unsupported-action denial; modified bill and foreign branch/terminal
+claims; session/profile/policy change during I/O; unsolicited and replayed
+capabilities; identical lost acknowledgement and duplicate concurrent calls;
+TOTP retry without a second use; SQL rollback preserving ticket and no audit;
+one durable audit/journal/receipt; and real isolated Electron held20% approval
+then exactly one last-unit payment with unchanged foreign stock. Retest generic
+cashier arbitrary-audit denial, current checkout/replay/negative-stock setting,
+authorization rules and web/mobile behavior. No business POS_Local tests.
+
+No runtime implementation, new grants, database/schema application, production
+promotion or publication is authorized by this proposal. Existing schema appears
+sufficient; if implementation reveals an unavoidable schema or protocol change,
+present its exact scope separately before changing it. Membership remains ON HOLD.
+
+### Native offline ticket approval — owner implementation approval supersedes proposal
+
+Owner explicitly approved the separate Main-owned approval-save correction and
+isolated tests. Implemented only the capable Operations Electron complete-ticket
+discount_over_limit path; all other approval/platform paths remain unchanged.
+No generic cashier Supervisor gate, schema, configuration or financial-grant
+contract is widened. Strict native POS-main-frame admission precedes verifier,
+cache and SQL; denied display/child senders cannot refresh the global idle timer.
+Fresh requester and approver rows, current branch scope/credential switches,
+selected authorization rule and effective global/branch settings are checked and
+locked before the fixed audit/journal/receipt commit. Canonical UUID case and
+canonical username case are representational only; different IDs/branches deny.
+Ambiguous effective rules and duplicate canonical settings hold explicitly.
+
+Review findings corrected: unexpected-sender admission and idle touch; approver
+scope/PIN/TOTP revocation after verification; requester revocation during await;
+case-only UUID SQL fetch and JavaScript selection under BIN2; raw journal key
+bypassing the existing pending pull barrier; truncated author/reason inputs;
+platform/older-bridge routing and self-PIN identity; expired cache capacity; and
+foreign/ambiguous rule baselines. Existing calculation/normalization/privacy
+functions are reused exactly in packaged pure modules. No unrelated authorization
+types, ticket parsing, request models or route helpers were removed.
+
+Verification checkpoint: 58 new service/bridge tests; 73 existing policy/discount
+regressions; 19 actual owned CI-SQL and 20 BIN2 groups; six real React/Radix dialog
+groups. SQL composition includes real bcrypt approval verification, atomic audit,
+journal/receipt, restart/lost acknowledgement, current requester/approver denial,
+canonical ChangeReader identity and pending PullWorker barrier, and actual
+PushWorker snapshot retry/acknowledgement with a synthetic cloud adapter. It does
+not claim real hosted/Android credential acceptance or stronger inherited cloud
+log-content verification. All disposable fixtures were owner/GUID guarded and
+cleaned; the separate retained device-acceptance profile contains synthetic data.
+The earlier active-profile full-test EPERM was a test-inventory/Chromium-lock
+issue; final regression uses a clean checkout.
+
+Pending finalization: independently reviewed frozen source hashes; final full
+suite/platform CI; cold isolated Electron POS/display sender admission and final
+ordinary/manager-approved payment/restart readback; latest-beta integration. No
+production promotion, installer publication or real database repair included.

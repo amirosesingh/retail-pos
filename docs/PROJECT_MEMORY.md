@@ -1410,3 +1410,52 @@ a `general` audit aggregate requires Supervisor authority even after a manager's
 approval PIN verifies. That guarded refusal remains intact and needs a separately
 approved Main-owned approval capability; this helper patch does not grant it or
 claim to complete cashier approval/payment acceptance.
+
+PR412's helper-only payload fix merged to beta at8633bb294fc3b3f0cde4392c4d926abb342bcff8
+with exact tested-tree parity. A separate proposal in TASK_TRACKER describes a
+Main-owned verifier-backed offline approval audit capability. It requires owner
+implementation approval; it must preserve the generic Supervisor gate, native
+scope, existing credential and policy checks, durable audit-before-success, and
+lost-ack identity. No inferred authority from a renderer assertion or an existing
+audit row, no temporary requester elevation, and no schema/grant change is
+approved by the investigation. One-use audit logging must not be advertised as
+new financial-grant enforcement. Real cashier approved-payment acceptance remains
+pending that distinct gate correction and isolated device verification.
+
+## Native offline ticket approval — implementation approval and bounded fix
+
+The owner explicitly approved the separate Main-owned Electron approval-save
+correction and isolated/device tests on 5 November. This supersedes only the
+proposal's preparation-only boundary above; it does not approve a live database,
+production deployment, generic privilege expansion or installer publication.
+
+The dedicated capability supports only discount_over_limit with the complete
+current ticket discount review, on capable Operations Electron bridges. Android,
+Management and old bridges retain their existing paths. A real native denial
+never falls back. Main admits only its own POS main frame, then verifies the real
+approval PIN/TOTP using the existing verifier, current selected rule, effective
+global/branch settings, actual credential switches/approval scope and fresh local
+requester/approver identities and permissions. Unknown/ambiguous applicable rules
+or duplicate canonical UUID settings remain held. Generic cashier general writes
+still require Supervisor authority. Case-only UUID/username representations are
+normalized without treating arbitrary branch codes as interchangeable.
+
+The fixed audit, canonical JSON-key journal entry and stable local receipt commit
+atomically through existing Main-only transaction callbacks. Frozen identical
+retries reuse the audit; restart requires credential verification and exact prior
+audit/receipt evidence. Pending cloud rows cannot overwrite this new producer's
+unacknowledged audit. This is local verified audit acceptance, not a new financial
+grant protocol or strong content-readback guarantee for inherited cloud log sync.
+The existing generic cloud same-ID/different-content ON CONFLICT behavior remains
+a separate limitation; do not advertise that as fixed.
+
+Current verification: 58 new service/transport tests and 73 existing authority,
+discount and permission tests passed; actual owned SQL tests passed 19 CI and
+20 BIN2 groups, including uppercase IDs, duplicate-case settings, real PIN,
+transaction rollback, current revocation, journal pull barrier and lost-ACK
+PushWorker replay. Six actual shared React/Radix groups cover platform selection,
+no fallback, stable request identity and stale responses. A prior candidate also
+completed a real synthetic cashier/manager-PIN 20% last-unit payment with durable
+SQL readback. Final exact-head full regression, cold Electron sender/approval
+acceptance, beta CI and integration are still required before calling complete.
+No business POS_Local/ROSEGILL rows, grants, configuration or schema changed.
