@@ -33,8 +33,9 @@ const newId = () =>
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 /**
- * Write one governance row to the till's database, flagged as owed to the
- * cloud. The id is generated here so a later retry of the same action cannot
+ * Write one governance row to the till's database. Native writes are captured
+ * by the transactional sync journal; authorization tables have no sync-flag
+ * columns. The id is generated here so a later retry of the same action cannot
  * create a second copy centrally: the id is the key on both sides.
  */
 export async function parkGovernanceRow(
@@ -47,8 +48,9 @@ export async function parkGovernanceRow(
     id: row["id"] ?? newId(),
     created_at: row["created_at"] ?? new Date().toISOString(),
     ...row,
-    is_synced: 0,
-    sync_status: "pending",
+    ...(table === "authorization_log" || table === "authorization_requests"
+      ? {}
+      : { is_synced: 0, sync_status: "pending" }),
   };
   const op: SyncOp = { kind: "upsert", table, rows: [payload], onConflict: "id" };
   try {

@@ -5734,6 +5734,34 @@ passed after granting normal temporary-file access. Draft betaPR403 is open
 and labelled beta. Exact-head CI, beta integration and installed acceptance
 remain pending. The separate session-handover race is not fixed by this patch.
 Membership remains ON HOLD.
+
+## Offline approval audit persistence — approved narrow beta batch, 5 November
+
+- Owner explicitly approved correcting only helper-generated unsupported sync
+  flags for authorization_log/authorization_requests, plus isolated/device tests.
+- Actual Electron ordinary cashier and Administrator last-unit checkout passed;
+  actual over-limit manager PIN then failed when its audit reached the native
+  column validator. Both authorization tables lack the helper-added columns.
+- Implemented one conditional payload correction. Caller unknown fields still
+  fail native validation; no allowlist, role, approval-failure, Membership, schema
+  or other governance-helper behavior changed. Durable native journal remains.
+- Verification: 12 new actual OperationsRepository validator tests and 65 focused
+  approval/branch/PIN/checkout/shift-activity tests pass; TypeScript/scoped lint
+  and independent source review pass. A restricted-temp import failure was rerun
+  unchanged with normal temp access and all focused suites passed.
+- Pending: exact-head full-suite and CI, real manager approval PIN plus durable
+  audit/held-ticket payment readback, beta integration and production acceptance.
+  No production merge, installer publication or business database edit included.
+
+Final full regression: 5,960 passed / 10 skipped / 0 failed of 5,970, unchanged
+runtime in a clean exact-head checkout. The initial active Electron fixture
+profile caused only canonical inventory EPERM on locked Chromium blob storage.
+Actual new cashier approval test captured EPRIVILEGE at Main admission: generic
+`general` aggregate writes require Supervisor even after manager PIN verification.
+Keep that boundary; a separate Main-owned verified-approval logging capability
+requires approval and tests. PR412 fixes only registered audit-payload shape;
+actual cashier approved-payment acceptance remains pending that distinct fix.
+
 ## CHECKOUT74 — shared refund trigger record-field isolation, 5 November
 
 - Owner's urgent web-payment failure is confirmed by live metadata/logs: SQLSTATE
