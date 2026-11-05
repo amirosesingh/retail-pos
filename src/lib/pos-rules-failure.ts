@@ -39,3 +39,11 @@ export function classifyRulesFailure(message: string): RulesFailure {
   }
   return "unknown";
 }
+
+/** Only transport failures may queue a change; refusals/context changes may not. */
+export function isTransientRulesSaveFailure(error: unknown): boolean {
+  const value = error && typeof error === "object" ? error as { code?: unknown; status?: unknown; statusCode?: unknown; message?: unknown } : {};
+  if ([400, 401, 403, 409, 422].includes(Number(value.status ?? value.statusCode)) ||
+      ["RULES_CONTEXT_CHANGED", "FORBIDDEN", "UNAUTHORIZED", "IDENTITY", "EPRIVILEGE", "EAUTHORISATION", "STORE_FORBIDDEN", "42501", "STALE_RULES"].includes(String(value.code).toUpperCase())) return false;
+  return classifyRulesFailure(typeof value.message === "string" ? value.message : String(error)) === "network";
+}

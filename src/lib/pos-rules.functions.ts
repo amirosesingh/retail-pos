@@ -7,6 +7,7 @@ import { approvalMethods } from "./approval-credentials";
 const callerInput = z.object({
   accessToken: z.string().min(10).optional(),
   terminalToken: z.string().min(10).optional(),
+  deviceBindingProof: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
   cashierToken: z.string().min(10).optional(),
   sessionToken: z.string().min(10).optional(),
   storeId: z.string().max(64).optional(),
@@ -16,6 +17,10 @@ const ruleValue = z.union([z.boolean(), z.number()]);
 
 const saveInput = z.object({
   accessToken: z.string().min(10),
+  terminalToken: z.string().min(10).optional(),
+  deviceBindingProof: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
+  cashierToken: z.string().min(10).optional(),
+  sessionToken: z.string().min(10).optional(),
   storeId: z.string().max(64).optional(),
   patch: z.record(z.string(), ruleValue),
   expectedVersion: z.number().int().nonnegative(),
@@ -121,7 +126,7 @@ export const getPosRules = createServerFn({ method: "POST" })
         code: access.code,
         backend: base.source,
         backendError: base.error ?? "",
-        failure: access.code === "FORBIDDEN" ? ("permission" as const) : base.failure,
+        failure: access.code === "FORBIDDEN" ? ("permission" as const) : access.code === "UNAVAILABLE" ? ("network" as const) : base.failure,
         revision: base.revision,
         fetchedAt: base.fetchedAt,
         rowVersion: base.rowVersion,

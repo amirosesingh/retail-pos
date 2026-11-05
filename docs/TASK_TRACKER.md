@@ -15,6 +15,26 @@ FIN62 isolated SQL basis prototype: complete selected-branch/shift inputs and ex
 
 ## FIN62 — owner-approved shift financial/as-of validation correction
 
+## 5 November new owner decisions — supersedes pending questions below
+
+RECOVERY65: owner chose "Allow audited Administrator recovery". Implement a
+separate explicit recovery action for unverifiable old closings, requiring actual
+admin role/current scope, reason, immutable original/reviewer provenance and a
+fresh cloud-state compare-and-swap. Saved amounts remain labelled historical
+evidence with missing original financial snapshot; never fabricate strong
+ORIGINAL/FIN62 receipts. Protected/new financial cases remain denied. This is
+application implementation/isolated-test authority, not live database approval.
+
+STOCK68: owner chose "Actual stock at the selected time". Use original movement
+effective time, not upload arrival time; late uploads may revise the past report.
+Preserve arrival time separately. Need proven opening baseline/deduplicated
+movement coverage, branch/location scope and exact date/time/zone. Incomplete
+historical evidence stays explicit. No arbitrary old stock/valuation reconstruction.
+
+Current completed beta work: importsPR396, policiesPR397, documentationPR398,
+all required checks passed before merge. Latest beta a73f24e8 contains the
+permanent AGENTS rules; PR395 remains draft until runtime recovery is verified.
+
 ## RECOVERY65 and companion stabilization — 5 November
 
 Approved: implement application-driven retained-shift recovery and isolated tests;
@@ -85,6 +105,44 @@ runtime defect; do not expand PR397 or claim those paths verified from a keyword
 match. Trace them separately before proposing a scoped correction. Current
 rules get/save transport, branch/permission and offline-cache fixes remain the
 approved policy batch.
+## 5 November permanent-rule update and current task index
+
+Owner approved updating AGENTS.md without overwriting existing instructions.
+Added coordinated durable synchronization/long-offline safety, bounded scoped
+database calls, exact import values, evidence-based historical reporting,
+truthful progress and approved-scope autonomy. Preserve all existing beta-first,
+production/database approval, branch/cluster, iOS-key and Membership rules.
+This instruction batch changes only AGENTS.md and the existing memory/tracker.
+
+Current completed integration: PR396 import parsing/decimal/row mapping merged
+beta73c002ae; PR397 native proof, offline policy/cache/upgrade and truthful503
+handling merged beta e4be3768. Each exact head passed required checks; merge
+trees equal reviewed heads. Final combined regression5,729 passed/7 skipped.
+Installed Electron/mobile and original customer workbook acceptance remain
+unverified. Production PR354 is closed/merged and v1.4.81 is already published;
+do not reuse its approval for a new promotion or call new beta fixes published.
+
+Pending RECOVERY65 (draftPR395): full runtime durable recovery/evidence/CAS/
+acknowledgement integration and installed offline/reconnect verification. Older
+unsigned closings lack original financial snapshots; owner was asked whether an
+actual Administrator may attest them as explicitly unverified historical
+recovery. No such financial-admission exception is approved or implemented yet.
+No manual cloud copying, registration/checkpoint reset or queue clearing.
+
+Queued STOCK68: Inventory stock at selected date ANDtime/actual shift close,
+with explicit zone and truthful coverage. Existing movement history is not proven
+complete; no fabricated past quantities/current-price historical valuation.
+Owner was asked actual effective-time stock versus information known to cloud
+at that earlier time. This decision remains pending; core fixes take priority.
+
+Retain NATIVE-PROOF64: diagnostic preparation c7597596 on its separate branch is
+not installed/published or verified on the affected PC. Green reachability is
+not proof native device binding matches. A separate unverified follow-up traces
+other pos-rules pin/close validators' callers before declaring a defect.
+
+Membership and the separately tracked booking-deposit attribution correction
+remain on hold/pending respectively. New production promotion, exact database
+application and installer publication remain separate gates, not implied by CI.
 
 4 November: owner approved agents completing production checks and fixing authoritative shift-total/refund validation, preserving checkout/permissions. Exact local/cloud database changes must be shown before application; no live schema/data change is approved by preparation. Baseline beta68470185; isolated branch codex/shift-financial-validation-beta. Confirmed gap: graph/author validation proves internal consistency/actor, not expected tenders against authoritative sale inputs. Current mutable sale journal cannot reconstruct historical offline refund state. Do not compare old closing against current cloud totals or invent refund timestamps.
 
@@ -5162,6 +5220,47 @@ Remaining: independent readback/security review, commit these execution facts
 and final CI/beta integration of PR394, deployed/installed acceptance and separate
 compatible-client/cohort activation review. ProductionPR354 remains draft;
 no production merge, installer publication or automaticstable-release approval.
+## POLICY-65 — preserve native rule proofs and verified edit baselines
+
+5 November owner requested agents complete the remaining fixes and prepare independent beta PRs, including unreadable Electron Operational policies. Baseline beta `5e7327d5`; branch `codex/native-policy-proof-beta`. Preparation/implementation and isolated tests are authorized; no live database/configuration changes or production promotion.
+
+Confirmed: public rules read/save validators discard `deviceBindingProof`; direct read does likewise and direct save drops terminal/session context. This can reject valid native reads or discard normal-terminal scope. The editor also permits changing safety defaults before a verified baseline exists. Preserve proof verification, role/branch denials, Membership hold, settings inheritance and verified offline/pending edits. Acceptance: HTTP/direct proof parity, allowed/denied branch tests, no mutation from unverified defaults, and relevant regression checks. Active implementation; verification/PR integration pending.
+
+Implemented proof propagation, an editor/callback verified-baseline guard, and
+connection-bound confirmed capability caching. A same-revision capability change
+still updates the cache; successful saves that omit capability retain only the
+already verified value in the same context. Both confirmed and pending offline
+rules retain the verified capability. An old unscoped cache or a changed
+terminal/branch/backend/project cannot enable it. No live schema, settings,
+queue/checkpoint or registration change was performed. Initial proof/editor
+implementation passed full Vitest 5,636/7 skipped and TypeScript/lint. The final
+cache extension and save-context checks have focused provider/cache/queue tests.
+Saving rechecks current branch, terminal, connection and permission after async
+credential reads and around local storage; context/auth/permission failures are
+never requeued as network failures. A newer same-context pending cache takes
+precedence over an older confirmed memory entry without requiring restart.
+Final full-suite and installed Electron acceptance remain pending. No publication
+or production promotion.
+
+Final review corrected first-upgrade offline continuity: an exact nonempty
+terminal/branch-matched legacy cache retains operating values and pending state
+without becoming editable or claiming backend/project capability. It is never
+rewritten on read; actual online verification binds it even when the revision
+did not change. Backend path prefixes are part of the identity. Removed the
+provider's age-only pending abandonment; 90/365-day reconnect fixtures preserve
+unacknowledged edits when cloud values are unchanged. User handover invalidates
+in-flight saves. Independent review found no remaining blocker. Frozen final
+focused tests: 81 passed across seven files; scoped lint/diff checks passed.
+Final TypeScript/full-suite/CI and actual installed Electron acceptance remain
+pending. These source changes perform no live repair, reset or publication.
+
+The combined PR397 integration head4137b32e passed full Vitest5,727/7 skipped
+and TypeScript. A final confirmed status correction then preserves recognized
+typed terminal-registration unavailability as503/UNAVAILABLE, with a fixed public
+message and a network failure classification for direct reads. Actual identity
+denials remain401 and branch/permission denials403; an arbitrary error status
+cannot masquerade as this typed condition. No authorization bypass or new retry
+policy. That narrow correction requires the final focused/full/CI checks again.
 
 
 ## IMPORT65 — inventory workbook values and validation (5 November)

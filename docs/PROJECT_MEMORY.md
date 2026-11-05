@@ -12,6 +12,24 @@ Owner requires all proposed cloud/local database upgrades collected for exact fi
 The exact owner-approved service-only bounded feed RPC and PR384 are applied/deployed on beta. Existing selector/privacy grants and businessrecords are preserved; native continuation is bound to authenticated response metadata. Live147request sample all200/ok with no CPU-exceeded; CPU2–114ms/mean9.469 means NO guarantee allrequestsbelow10ms. Electronfeed131613→133184, all6shiftCTvalid; largebacklog stilldraining. Keep implemented/sample-verified status distinct from fullsync completion, production promotion or installerpublication. Supabase migrationtool ledger20261104042158 corresponds to approvedfile20261104040251, SHA83495D696622241ECA2A8D396234E2FD65EE7C7A3050E93E4280638D6530D59B; do not replay based solely on differing timestamps.
 # POS project memory
 
+## 5 November — approved legacy recovery and historical stock semantics
+
+Owner approved actual stock at the selected original movement time. Late offline
+uploads restate the applicable past stock position; cloud-arrival time is not
+the business cutoff. Preserve an additional recorded/received timestamp for audit,
+unique movement identity and truthful history coverage. This is a reporting
+decision, not approval to invent unavailable pre-baseline balances or prices.
+
+Owner approved audited Administrator recovery for old closings whose original
+financial snapshot is unavailable. Require an actual Administrator's explicit
+review, reason and immutable provenance stating administrator-reviewed historical
+recovery / original financial snapshot unavailable. Preserve original cashier
+details as historical claims, not new cashier signatures. Preserve later web
+corrections and reject changed cloud records. Never use this legacy path to bypass
+new protected-shift financial/author checks or grant broader roles permission.
+Implementation and isolated tests are approved; live schema/data application
+still needs exact-target/file review and separate approval.
+
 ## 5 November controlling sync and stabilization decisions
 
 Owner approved application recovery implementation and isolated tests, using
@@ -33,6 +51,33 @@ Owner explicitly authorized permanent AGENTS.md improvements. Routine approved
 implementation/review/PR work proceeds without redundant approval requests;
 exact live database changes and specific production promotion/publication remain
 separate approval boundaries. Membership stays on hold.
+## 5 November — controlling instructions and current integration status
+
+Owner explicitly approved permanent AGENTS.md improvements: one coordinated
+event/aggregate synchronization engine with durable local outbox, incremental
+downloads and resumable recovery snapshots; preserve long-offline pending work,
+offline checkout, permissions and original/admin-corrected histories. No version
+or device timestamp alone selects a winning record. Database calls, import
+accuracy, historical-report evidence and truthful progress rules are in AGENTS.md.
+Routine work within an approved batch proceeds without redundant approval asks;
+exact live database changes and specific production promotions remain separate.
+Membership stays on hold. Existing DEC-48 stock availability is preserved.
+
+Current verified GitHub state: PR354 is already merged and Retail1.4.81 was
+published on 5 November at11:01:30 Asia/Brunei. Its older draft/pending paragraphs
+below are historical checkpoints, not the current release state. New imports
+PR396 and native/offline policies PR397 are merged into beta e4be3768 only.
+Their merge trees match their reviewed heads; final combined policy/import
+regression passed5,729 tests/7 skipped, with required platform/hosting/permission
+checks passing. Installed-device acceptance remains unverified. These new fixes
+have not been promoted to main or published as new installers.
+
+Recovery PR395 remains draft: exact classification and append-only evidence
+preparation are tested but not full runtime recovery. Legacy financial recovery
+without its original snapshot needs the owner's rule decision; never manually
+copy it into cloud records. Historical date/time stock reporting is queued after
+the priority fixes and requires proven opening/movement coverage and time
+semantics. Preserve these unfinished tasks in TASK_TRACKER.md.
 
 Last reconciled: **2026-11-03, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
@@ -1134,6 +1179,27 @@ approval remain separate.
 Owner explicitly approved preparation and implementation of a separate sharing control. Preserve current behaviour by default: sharing ON. OFF limits normal registered tills' operating checkout shifts to their own terminal; multiple cashiers on one PC and authorized management reporting/corrections remain supported. Do not confuse this with allow_multiple_shifts_per_terminal. Independent branch codex/shift-sharing-rules-beta starts current beta68470185 in work/shift-sharing-rules-beta, not the unfinished FIN62 branch. Exact cloud/local schema changes remain unapplied and require final review. Scope: canonical scoped setting/save/reload/inheritance/cache, old-schema capability compatibility, trusted normal-terminal online/offline enforcement including direct APIs, and regression tests. Do not silently change existing rule values, widen management grants or show an unenforced checkbox. Old clients/unknown offline policy and pending sales require explicit rollout safeguards. No application code changed in this worktree yet; FIN62 remains first priority.
 
 SHIFT63 verified decision: sharing remainsON bydefault, nullablebranch inheritsglobal. OFFisnormal-tillownshift only, samePCcashierhandover andauthorizedManagement preserved. A validnativeproof/syncRPCdoesnotproveprecutoverhistory: enforceactualtillownership evennewnativeuploads; exactacceptedreceiptsmayACK, unknownlegacyworkholdsreviewwithoutdropping. OFFrequiresowner-reviewedcompleteFIN62PCcohort+pendingdrain/currentbuild/local027; noPCbranchesgainnoofflinecapability. Installationorderfinancial090000→sharing090100; reviewedSQL/localfileandhashes in docs/database/shift-branch-sharing-upgrade.md. No liveapplication oractivation; actualbrowser/phonecredentialchecks remainunverified. KeepMembershiponhold.
+## 5 November — POLICY-65 approval and invariants
+
+Owner authorized completing the Electron Operational policies correction with agents and preparing a separate beta PR. Preserve explicitly validated native device proof and terminal/session context through rules transport validation; never bypass terminal proof checks to make a read succeed. Safety-default/unavailable settings are not a verified editable baseline. Confirmed cached or pending offline rules remain editable under existing permissions. This batch makes no schema, grant, stored-setting or terminal-registration change. Membership remains on hold.
+
+The owner also requires the confirmed shift-sharing capability to survive offline
+use/restart. Cache that capability only after a verified rules reply and bind it
+to the registered terminal, branch, backend and database project addresses,
+including any normalized path prefix.
+Known connection-scope changes invalidate both cached rules and capability;
+legacy unscoped cache cannot claim the capability for a configured connection.
+Do not infer upgrade readiness from the sharing rule value. Keep current
+permissions, versioned saves and server-side capability/branch checks intact.
+
+During a first offline upgrade, an old unscoped cache may preserve operating
+values only when its nonempty terminal and branch exactly match. Label it
+LEGACY_CACHE: it is not verified for the configured connection, may not enable
+sharing capability or new edits, and is never rewritten/relabelled on read.
+Pending edits remain pending. A verified online reply establishes the new
+binding; known mismatched scopes remain rejected. Offline duration alone never
+abandons an unacknowledged rules edit. Current-user handover also invalidates an
+awaited save, even when both users have the same settings permission.
 
 
 ## IMPORT65 — preserve workbook values, 5 November
