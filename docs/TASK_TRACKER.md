@@ -5873,3 +5873,47 @@ Pending finalization: independently reviewed frozen source hashes; final full
 suite/platform CI; cold isolated Electron POS/display sender admission and final
 ordinary/manager-approved payment/restart readback; latest-beta integration. No
 production promotion, installer publication or real database repair included.
+
+### Native approval final amount binding — approved correction, 6 November
+
+Owner-authorized completion includes exact raw ticket evidence needed to validate
+manual discount amounts before existing audit normalization. The current
+checkpoint a4e1879a contains a confirmed new-capability gap: a forged bill base
+can understate the requested percentage. The current register also divides an
+item coupon by max(1, qty), which inflates the approval-context base for fractional
+quantities even though the actual stock/price writer uses the true quantity.
+
+This bounded correction adds raw coupon/discount type and manual/promotion
+context to the existing snapshot builder/types, validates every item and bill
+entry against that complete raw evidence in Main, and corrects only the existing
+approval-context denominator to actual nonzero quantity. Audit-normalized
+snapshots/fingerprints and checkout writer calculations remain unchanged. The
+existing pure r2/lineDiscountTotal bodies move verbatim to one packaged module
+and remain aliased from pos-types, with parity checks; no alternative formula,
+rule, grant or database object is added. Affected additions beyond the checkpoint
+are src/routes/index.tsx, src/lib/ticket-snapshot.ts, src/core/types/pos-types.ts,
+the pure shared math module/declaration and focused tests. Main service and the
+existing isolated SQL fixture also receive the complete evidence checks.
+
+Required verification includes the forged $20/$10 bill-base case, fractional
+qty0.5/price100/coupon20, amount/percent and combined discounts, bill promotions,
+signed exchange lines, sub-cent rounding, omitted/duplicate/tampered evidence,
+raw precision before normalization, unchanged audit privacy/fingerprint, and
+existing requester/approver/branch/retry denials. No real POS data, schema,
+permissions, checkout financial writer, Membership or deployment is changed.
+
+Amount-binding verification checkpoint: all105 service/bridge/cumulative/bill
+review tests and73 existing authorization/snapshot/pricing/tax/receipt tests pass;
+TypeScript passes and scoped lint has zero errors (existing fixture any warnings).
+The synthetic test originally lacked capturedAt, causing timestamp-only expected
+snapshot mismatches; adding its fixed original instant corrected the harness.
+Initial restricted-temp Vite cache ENOENT was rerun with normal temp access.
+Actual owned disposable SQL composition passes19 CI and20 BIN2 groups, including
+real approval PIN, lost-ACK/restart receipt checks, current revocation, canonical
+pending journal barrier, acknowledged upload and whole-transaction rollback.
+Both temporary database/instance pairs were GUID/owner guarded and cleaned.
+Independent read-only review additionally passed3,780 old/new money-helper parity
+cases,180 legitimate bills and900 tampered evidence variants, and reproduced
+whole-service forged-base denial plus actual fractional amount-limit enforcement.
+No remaining amount-binding blocker was reported. Final frozen-head/full CI and
+cold actual Main/preload device acceptance remain pending before beta completion.

@@ -111,18 +111,16 @@ class OfflineApprovalService {
   }
   async perform(request, scope, contextHash) {
     const shared = await authority; scope.assertCurrent();
-    request.snapshot = (await ticketPolicy).normalizeSnapshot(request.snapshot); scope.assertCurrent();
-    const { snapshot, payload } = request;
-    if (snapshot.ticketId !== snapshot.billNo || payload.bill_no !== snapshot.billNo) refuse("A discount approval must match one reserved bill number.");
-    if ((payload.transaction != null && payload.transaction !== snapshot.billNo) || (payload.approval_location != null && payload.approval_location !== "pos_register")) refuse("The approval context does not match this bill.");
-    // Reuse the exact existing ticket discount parser/formula and hosted line binding.
+    const ticket = await ticketPolicy; scope.assertCurrent();
+    const { payload } = request;
     if (payload.discount_scope !== "ticket") refuse("This native approval requires the complete ticket discount review.");
     const discounts = shared.ticketDiscounts(payload);
-    if (!discounts.length || discounts.some(entry => {
-      if (entry.index === -1) return entry.productId !== "";
-      const line = snapshot.lines[entry.index];
-      return !line || line.sku !== entry.productId || line.qty !== entry.qty || line.unitPrice !== entry.price || line.discount !== entry.value;
-    }) || request.requestedAmount !== shared.ticketDiscountApprovalPercent(discounts)) refuse("Discounts must match the exact items on this bill.");
+    const requiredPercent = ticket.nativeTicketDiscountPercent(request.snapshot, discounts);
+    if (requiredPercent === null || request.requestedAmount !== requiredPercent) refuse("Discounts must match the complete, exact bill and its coupon amounts.");
+    request.snapshot = ticket.normalizeSnapshot(request.snapshot); scope.assertCurrent();
+    const { snapshot } = request;
+    if (snapshot.ticketId !== snapshot.billNo || payload.bill_no !== snapshot.billNo) refuse("A discount approval must match one reserved bill number.");
+    if ((payload.transaction != null && payload.transaction !== snapshot.billNo) || (payload.approval_location != null && payload.approval_location !== "pos_register")) refuse("The approval context does not match this bill.");
     let saved = this.pending.get(request.requestId);
     if (saved && (saved.contextHash !== contextHash || saved.epoch !== scope.epoch)) refuse("The approval context changed. Request approval again.", "EIDEMPOTENCY");
     if (saved && saved.expires <= this.now()) { this.pending.delete(request.requestId); saved = null; }

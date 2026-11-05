@@ -1459,3 +1459,17 @@ completed a real synthetic cashier/manager-PIN 20% last-unit payment with durabl
 SQL readback. Final exact-head full regression, cold Electron sender/approval
 acceptance, beta CI and integration are still required before calling complete.
 No business POS_Local/ROSEGILL rows, grants, configuration or schema changed.
+
+## Native approval amount binding clarification — 6 November
+
+The final Main-owned approval capability must derive its percentage from the
+complete raw bill, never an untrusted discount denominator. Raw per-line coupon
+and discount type plus manual/promotion bill context may be carried by the
+existing snapshot solely for this check, before the unchanged audit privacy
+normalization/fingerprint. Correct the approval-context fractional-quantity
+coupon divisor to actual quantity, matching the actual existing line calculator;
+this changes neither checkout amounts nor configured authority. Preserve exact
+pricing helpers by verbatim shared extraction and alias/parity tests. Unknown,
+missing or inconsistent native evidence remains unpaid and denied. Existing
+Android/Management/older bridge paths and general cashier write gates stay
+unchanged. No live database or release approval is implied.

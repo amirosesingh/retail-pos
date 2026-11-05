@@ -3,12 +3,15 @@ import { describe, expect, it, vi } from "vitest";
 import { canAuthorizeAmount, defaultRule, normalizeRule, ticketDiscountApprovalPercent, ticketDiscounts } from "../authorization";
 import { DEFAULT_POS_RULES, normalizeRules } from "../pos-rules";
 import * as shared from "../../../electron/shared/approval-authority.mjs";
+import { cartTotals } from "../pos-store";
+import { lineDiscountTotal, r2, type CartLine } from "../../core/types/pos-types";
+import { normalizeSnapshot, snapshotFingerprint } from "../ticket-snapshot";
 const require = createRequire(import.meta.url);
 const { OfflineApprovalService, createOfflineApprovalHandler } = require("../../../electron/offline-approval-service.cjs");
 const requestId = "00000000-0000-4000-8000-000000000001", author = "00000000-0000-4000-8000-000000000002", requesterId = "00000000-0000-4000-8000-000000000003";
-const discounts = [{ index: -1, productId: "", name: "Bill", qty: 1, price: 20, type: "percent", value: 20, base: 20, requiresApproval: true }];
+const discounts = [{ index: -1, productId: "", name: "Bill", qty: 1, price: 0, type: "percent", value: 20, base: 20, requiresApproval: true }];
 function request() { return { requestId, actionKey: "discount_over_limit", registeredTerminalId: "terminal-a", branchId: "branch-a", username: "manager", credential: "fixture-approval-pin", reason: "Manager reviewed",
-  requestedAmount: 20, snapshot: { ticketId: "B-1", billNo: "B-1", storeId: "branch-a", terminalId: "renderer-display-id", lines: [{ sku: "SKU-1", qty: 1, unitPrice: 20, discount: 0, lineTotal: 20 }], subtotal: 20, discount: 4, tax: 0, serviceCharge: 0, total: 16 }, payload: { bill_no: "B-1", discount_scope: "ticket", requested_discounts: JSON.stringify(discounts) } }; }
+  requestedAmount: 20, snapshot: { ticketId: "B-1", billNo: "B-1", capturedAt: "2026-11-05T12:00:00.000Z", storeId: "branch-a", terminalId: "renderer-display-id", lines: [{ sku: "SKU-1", qty: 1, unitPrice: 20, discount: 0, discountType: "amount", couponDiscount: 0, lineTotal: 20 }], subtotal: 20, discount: 4, tax: 0, serviceCharge: 0, total: 16, cartDiscount: 20, cartDiscountType: "percent", promoDiscount: 0 }, payload: { bill_no: "B-1", discount_scope: "ticket", requested_discounts: JSON.stringify(discounts) } }; }
 function fixture(branchId = "branch-a") {
   let epoch = 1, clock = Date.parse("2026-11-05T12:00:00Z"); const saved = new Map<string, any>();
   const policy: any = { rule: { action_key: "discount_over_limit", scope_type: "branch", scope_id: branchId, mode: "pin", is_enabled: true, allowed_roles: '["manager","admin"]', allowed_user_ids: "[]", authority_limits: "{}", extra_authority: "{}", absolute_ceilings: "{}", require_reason: true },
@@ -134,7 +137,7 @@ describe("Main-owned offline discount approval", () => {
     const f = fixture(); expect(() => f.service.authorize({ ...request(), reason: "x".repeat(1001) })).toThrow(); expect(() => f.service.authorize({ ...request(), payload: { ...request().payload, card_number: "SYNTHETIC-CARD" } })).toThrow();
   });
   it("accepts all 300 visible lines but rejects 301 without clipping", async () => {
-    const f = fixture(), r = request(); r.snapshot.lines = Array.from({ length: 300 }, () => ({ sku: "S1", qty: 1, unitPrice: 1, discount: 0, lineTotal: 1 })); r.snapshot.subtotal = 300; r.snapshot.discount = 60; r.snapshot.total = 240;
+    const f = fixture(), r = request(); r.snapshot.lines = Array.from({ length: 300 }, () => ({ sku: "S1", qty: 1, unitPrice: 1, discount: 0, discountType: "amount", couponDiscount: 0, lineTotal: 1 })); r.snapshot.subtotal = 300; r.snapshot.discount = 60; r.snapshot.total = 240;
     r.payload.requested_discounts = JSON.stringify([{ ...discounts[0], base: 300 }]); await expect(f.service.authorize(r)).resolves.toMatchObject({ ok: true });
     expect(f.saved().row.detail.snapshot.lines).toHaveLength(300); expect(() => f.service.authorize({ ...r, requestId: requesterId, snapshot: { ...r.snapshot, lines: [...r.snapshot.lines, r.snapshot.lines[0]] } })).toThrow("300 lines");
   });
@@ -174,6 +177,83 @@ describe("shared exact policy parity", () => {
       expect((shared as any).canAuthorizeAmount(rule, { userId: "manager", role }, amount, 10)).toBe(canAuthorizeAmount(rule, { userId: "manager", role }, amount, 10));
     }
     expect(shared.ticketDiscounts(request().payload)).toEqual(ticketDiscounts(request().payload)); expect(shared.ticketDiscountApprovalPercent(discounts as any)).toBe(ticketDiscountApprovalPercent(discounts as any));
+  });
+});
+
+describe("native complete-bill amount evidence", () => {
+  function bill(inputs: Partial<CartLine>[], cartDiscount = 0, cartDiscountType: "amount" | "percent" = "amount", promoDiscount = 0) {
+    const lines = inputs.map((line, index) => ({ productId: `SKU-${index + 1}`, name: `Fixture ${index + 1}`, price: 20, qty: 1,
+      discount: 0, discountType: "amount" as const, couponDiscount: 0, taxRate: 0, ...line })) as CartLine[];
+    const totals = cartTotals(lines, cartDiscount, cartDiscountType, undefined, promoDiscount);
+    const r: any = request();
+    r.snapshot = { ...r.snapshot, subtotal: totals.subtotal, discount: totals.discount, tax: totals.tax, total: totals.total,
+      cartDiscount, cartDiscountType, promoDiscount, lines: lines.map(line => ({ sku: line.productId, qty: line.qty, unitPrice: line.price,
+        discount: line.discount, discountType: line.discountType, couponDiscount: line.couponDiscount,
+        lineTotal: r2(line.price * line.qty - Math.sign(line.qty) * lineDiscountTotal(line)) })) };
+    const entries: any[] = lines.flatMap((line, index) => line.discount > 0 && line.qty > 0
+      ? [{ index, productId: line.productId, name: line.name, qty: line.qty, price: line.price, type: line.discountType, value: line.discount,
+        base: Math.max(0, Math.abs(line.price) - Math.abs(line.couponDiscount || 0) / Math.abs(line.qty)), requiresApproval: true }] : []);
+    if (cartDiscount > 0) entries.push({ index: -1, productId: "", name: "Whole bill", qty: 1, price: 0,
+      type: cartDiscountType, value: cartDiscount, base: Math.max(0, r2(totals.subtotal - totals.lineDiscount)), requiresApproval: true });
+    r.payload.requested_discounts = JSON.stringify(entries); r.requestedAmount = ticketDiscountApprovalPercent(entries);
+    return { request: r, entries, lines };
+  }
+  it("rejects the reproduced $20/$10 forged bill denominator before PIN or writes", async () => {
+    const f = fixture(), { request: r, entries } = bill([{}], 10);
+    f.policy.rule.authority_limits = '{"role:manager":10}';
+    r.payload.requested_discounts = JSON.stringify([{ ...entries[0], base: 1000 }]); r.requestedAmount = 1;
+    await expect(f.service.authorize(r)).rejects.toThrow("exact bill"); expect(f.verify).not.toHaveBeenCalled(); expect(f.saved()).toBeNull();
+    const actual = bill([{}], 10).request;
+    await expect(f.service.authorize(actual)).rejects.toThrow("approval limit");
+    f.policy.rule.authority_limits = '{"role:manager":50}'; await expect(f.service.authorize(actual)).resolves.toMatchObject({ ok: true });
+    expect(f.saved().row.detail.requested_amount).toBe(50);
+  });
+  it("rejects a forged item denominator with a consistent renderer percentage", async () => {
+    const f = fixture(), { request: r, entries } = bill([{ discount: 10 }]);
+    r.payload.requested_discounts = JSON.stringify([{ ...entries[0], base: 1000 }]); r.requestedAmount = 1;
+    await expect(f.service.authorize(r)).rejects.toThrow("exact bill"); expect(f.verify).not.toHaveBeenCalled();
+  });
+  it("uses actual fractional-quantity coupon base for the manager's amount ceiling", async () => {
+    const f = fixture(), { request: r, entries } = bill([{ price: 100, qty: 0.5, couponDiscount: 20, discount: 10 }]);
+    expect(entries[0].base).toBe(60); expect(r.requestedAmount).toBeCloseTo(16.6666666667); expect(r.snapshot.lines[0].lineTotal).toBe(25);
+    const old = structuredClone(r); old.payload.requested_discounts = JSON.stringify([{ ...entries[0], base: 80 }]); old.requestedAmount = 12.5;
+    await expect(f.service.authorize(old)).rejects.toThrow("exact bill");
+    f.policy.rule.authority_limits = '{"role:manager":15}'; await expect(f.service.authorize(r)).rejects.toThrow("approval limit");
+    f.policy.rule.authority_limits = '{"role:manager":17}'; await expect(f.service.authorize(r)).resolves.toMatchObject({ ok: true });
+  });
+  it.each([
+    { name: "fractional percent coupon", lines: [{ price: 100, qty: 0.5, couponDiscount: 20, discount: 20, discountType: "percent" as const }], cart: 0, type: "amount" as const, promo: 0 },
+    { name: "three units with a subcent coupon", lines: [{ price: 33.33, qty: 3, couponDiscount: 0.014, discount: 7, discountType: "percent" as const }], cart: 2, type: "amount" as const, promo: 1.11 },
+    { name: "raw quantity and price beyond three decimals", lines: [{ price: 33.33333, qty: 0.33333333, couponDiscount: 0.014, discount: 0.12345 }], cart: 3, type: "percent" as const, promo: 0.27 },
+    { name: "global subtotal versus rounded lines", lines: [{ price: 0.33333, qty: 1 }, { price: 0.33333, qty: 1 }, { price: 0.33333, qty: 1 }], cart: 10, type: "percent" as const, promo: 0 },
+    { name: "signed exchange and ordinary item", lines: [{ price: 10, qty: -1, couponDiscount: 2, discount: 1 }, { price: 50, qty: 1, discount: 5 }], cart: 2, type: "amount" as const, promo: 1 },
+    { name: "zero quantity is never an item request", lines: [{ qty: 0, discount: 2 }, { price: 50, discount: 5 }], cart: 0, type: "amount" as const, promo: 0 },
+    { name: "promotion plus bill coupon does not become manual discount", lines: [{ price: 100, couponDiscount: 10, discount: 5 }], cart: 10, type: "percent" as const, promo: 12.34 },
+    { name: "fully discounted line plus bill", lines: [{ price: 20, discount: 100, discountType: "percent" as const }, { price: 30 }], cart: 5, type: "amount" as const, promo: 2 },
+  ])("keeps actual cartTotals and exact authority for $name", async ({ lines, cart, type, promo }) => {
+    const f = fixture(), { request: r } = bill(lines, cart, type, promo);
+    await expect(f.service.authorize(r)).resolves.toMatchObject({ ok: true });
+    expect(f.saved().row.detail.requested_amount).toBe(r.requestedAmount);
+    expect(f.saved().row.detail.snapshot).toEqual(normalizeSnapshot(r.snapshot));
+    expect(snapshotFingerprint(f.saved().row.detail.snapshot)).toBe(snapshotFingerprint(r.snapshot));
+    expect(f.saved().row.detail.snapshot).not.toHaveProperty("cartDiscount"); expect(f.saved().row.detail.snapshot.lines[0]).not.toHaveProperty("couponDiscount");
+  });
+  it.each(["omitted item", "omitted bill", "duplicate", "wrong type", "wrong bill quantity", "wrong bill price", "wrong coupon", "wrong promotion", "wrong subtotal", "wrong line total", "wrong discount total", "missing evidence"])("denies $0 without a credential attempt or write", async change => {
+    const f = fixture(), { request: r, entries } = bill([{ discount: 2 }], 2, "amount", 1);
+    if (change === "omitted item") entries.splice(0, 1);
+    if (change === "omitted bill") entries.splice(1, 1);
+    if (change === "duplicate") entries.push({ ...entries[0] });
+    if (change === "wrong type") entries[0].type = "percent";
+    if (change === "wrong bill quantity") entries[1].qty = 2;
+    if (change === "wrong bill price") entries[1].price = 20;
+    if (change === "wrong coupon") r.snapshot.lines[0].couponDiscount = 1;
+    if (change === "wrong promotion") r.snapshot.promoDiscount = 2;
+    if (change === "wrong subtotal") r.snapshot.subtotal += 1;
+    if (change === "wrong line total") r.snapshot.lines[0].lineTotal += 1;
+    if (change === "wrong discount total") r.snapshot.discount += 1;
+    if (change === "missing evidence") delete r.snapshot.cartDiscountType;
+    r.payload.requested_discounts = JSON.stringify(entries); r.requestedAmount = ticketDiscountApprovalPercent(entries);
+    await expect(f.service.authorize(r)).rejects.toThrow(); expect(f.verify).not.toHaveBeenCalled(); expect(f.store.persist).not.toHaveBeenCalled();
   });
 });
 describe("actual Main approval handler sender admission", () => {

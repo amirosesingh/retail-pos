@@ -1,3 +1,49 @@
+import { r2, lineDiscountTotal } from "./discount-math.mjs";
+import { ticketDiscountApprovalPercent } from "./approval-authority.mjs";
+
+/**
+ * Validate the complete raw native bill before the existing privacy projection.
+ * The caller's denominator is context, never independent approval authority.
+ * Audit normalization below deliberately keeps its existing byte semantics.
+ */
+export function nativeTicketDiscountPercent(snapshot, entries) {
+    if (!snapshot || !Array.isArray(snapshot.lines) || !snapshot.lines.length ||
+        ![snapshot.cartDiscount, snapshot.promoDiscount].every(Number.isFinite) ||
+        snapshot.cartDiscount < 0 || snapshot.promoDiscount < 0 ||
+        !["amount", "percent"].includes(snapshot.cartDiscountType)) return null;
+    const lineInputs = [];
+    const expected = [];
+    for (let index = 0; index < snapshot.lines.length; index++) {
+        const line = snapshot.lines[index];
+        if (!line || ![line.qty, line.unitPrice, line.discount, line.couponDiscount, line.lineTotal].every(Number.isFinite) ||
+            line.discount < 0 || !["amount", "percent"].includes(line.discountType)) return null;
+        const input = { price: line.unitPrice, qty: line.qty, discount: line.discount,
+            discountType: line.discountType, couponDiscount: line.couponDiscount };
+        if (line.lineTotal !== r2(input.price * input.qty - Math.sign(input.qty) * lineDiscountTotal(input))) return null;
+        lineInputs.push(input);
+        // Match the current register: returns/zero quantities request no item discount.
+        if (line.discount > 0 && line.qty > 0) expected.push({ index, productId: line.sku, qty: line.qty,
+            price: line.unitPrice, type: line.discountType, value: line.discount,
+            base: Math.max(0, Math.abs(line.unitPrice) - Math.abs(line.couponDiscount) / Math.abs(line.qty)) });
+    }
+    const subtotal = r2(lineInputs.reduce((sum, line) => sum + line.price * line.qty, 0));
+    const lineDiscount = r2(lineInputs.reduce((sum, line) => sum + lineDiscountTotal(line) * (line.qty < 0 ? -1 : 1), 0));
+    const base = r2(subtotal - lineDiscount);
+    // Same operations/order as cartTotals: automatic discounts remain separate
+    // from the manual discount that is being approved.
+    const billDiscount = r2(Math.min(Math.max(0, base), Math.max(0,
+        r2(snapshot.cartDiscountType === "percent" ? base * (snapshot.cartDiscount || 0) / 100 : snapshot.cartDiscount || 0) + Math.max(0, r2(snapshot.promoDiscount || 0)))));
+    if (snapshot.subtotal !== subtotal || snapshot.discount !== r2(lineDiscount + billDiscount)) return null;
+    if (snapshot.cartDiscount > 0) expected.push({ index: -1, productId: "", qty: 1, price: 0,
+        type: snapshot.cartDiscountType, value: snapshot.cartDiscount, base: Math.max(0, base) });
+    if (!expected.length || expected.length !== entries.length || new Set(entries.map(entry => entry.index)).size !== entries.length) return null;
+    if (expected.some(wanted => {
+        const actual = entries.find(entry => entry.index === wanted.index);
+        return !actual || Object.keys(wanted).some(key => actual[key] !== wanted[key]);
+    })) return null;
+    return ticketDiscountApprovalPercent(entries);
+}
+
 /** Exact existing bounded snapshot normalization/privacy projection; no I/O. */
 const num = (v) => {
     const n = Number(v);

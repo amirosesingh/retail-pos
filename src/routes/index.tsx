@@ -649,7 +649,7 @@ function Register() {
     try {
       let discounts: TicketDiscount[] = lines.flatMap((line,index) => {
         if (!line.discount || line.qty <= 0) return [];
-        const base = Math.max(0, Math.abs(line.price) - Math.abs(line.couponDiscount || 0) / Math.max(1,Math.abs(line.qty)));
+        const base = Math.max(0, Math.abs(line.price) - Math.abs(line.couponDiscount || 0) / Math.abs(line.qty));
         const entry: TicketDiscount = {index,productId:line.productId,name:line.name,qty:line.qty,price:line.price,
           type:line.discountType ?? "amount",value:line.discount,base,requiresApproval:false};
         return [entry];
@@ -1109,6 +1109,8 @@ function Register() {
             qty: l.qty,
             unitPrice: l.price,
             discount: l.discount ?? 0,
+            discountType: l.discountType ?? "amount",
+            couponDiscount: l.couponDiscount ?? 0,
             lineTotal: r2(l.price * l.qty - Math.sign(l.qty) * lineDiscountTotal(l)),
             priceOverridden: !!l.priceOverridden,
           })),
@@ -1117,6 +1119,9 @@ function Register() {
           tax: totals.tax ?? 0,
           serviceCharge: 0,
           total: totals.total,
+          cartDiscount,
+          cartDiscountType,
+          promoDiscount: r2(promo.promoDiscount + billCouponDiscount),
           member: member
             ? {
                 id: member.id,
