@@ -22,7 +22,7 @@ import { getPosCallerAuth } from "./pos-caller-auth";
 import { subscribeSettingsRefresh } from "./settings-refresh";
 import { readCachedRules, rulesCacheScope, writeCachedRules, type CachedRules } from "./pos-rules-cache";
 import { supabaseConfig } from "./external-supabase-config";
-import { rulesEqual, pendingExpired } from "./pos-rules-pending";
+import { rulesEqual } from "./pos-rules-pending";
 import { logRules } from "./pos-rules-log";
 import { terminalId } from "./activity-journal";
 import { serverOrigin, posFetch } from "./server-origin";
@@ -43,7 +43,7 @@ export type { RulesFailure as RulesFailureKind } from "./pos-rules-failure";
 
 /** Where the rules in use came from. */
 export type RulesSourceKind =
-  "DATABASE" | "LOCAL_PENDING" | "LAST_KNOWN_GOOD" | "DEFAULT_SAFETY" | "UNAVAILABLE";
+  "DATABASE" | "LOCAL_PENDING" | "LAST_KNOWN_GOOD" | "LEGACY_CACHE" | "DEFAULT_SAFETY" | "UNAVAILABLE";
 
 /** What the terminal is doing about them. */
 export type RulesStatus =
@@ -79,7 +79,7 @@ type Ctx = {
   usingDefaults: boolean;
   /** True when confirmed rules are in use but the last refresh failed. */
   degraded: boolean;
-  /** True when this terminal has never received verified branch rules. */
+  /** True when these values are not verified for the current connection. */
   notVerified: boolean;
   status: RulesStatus;
   statusText: string;
@@ -153,6 +153,7 @@ const lastGood = new Map<
     updatedAt: string | null;
     updatedBy: string | null;
     shiftSharingAvailable: boolean;
+    legacyScope: boolean;
   }
 >();
 
@@ -247,6 +248,7 @@ export function PosRulesProvider({
             updatedAt: stored.updatedAt ?? null,
             updatedBy: stored.updatedBy ?? null,
             shiftSharingAvailable: Boolean(cacheScope && stored.shiftSharingAvailable === true),
+            legacyScope: stored.legacyScope === true,
           };
           lastGood.set(memoryScope, cached);
         }
@@ -295,9 +297,9 @@ export function PosRulesProvider({
           shiftSharingAvailable: now.shiftSharingAvailable,
           usingDefaults: false,
           degraded: true,
-          notVerified: false,
+          notVerified: now.legacyScope,
           status: "DEGRADED",
-          source: "LAST_KNOWN_GOOD",
+          source: now.legacyScope ? "LEGACY_CACHE" : "LAST_KNOWN_GOOD",
           failure,
           backendError,
           revision: now.revision,
@@ -324,9 +326,9 @@ export function PosRulesProvider({
           shiftSharingAvailable: now.shiftSharingAvailable,
           usingDefaults: false,
           degraded: false,
-          notVerified: false,
+          notVerified: now.legacyScope,
           status: "PENDING_UPLOAD",
-          source: "LOCAL_PENDING",
+          source: now.legacyScope ? "LEGACY_CACHE" : "LOCAL_PENDING",
           failure: "none",
           backendError,
           revision: now.revision,
@@ -369,6 +371,7 @@ export function PosRulesProvider({
                 updatedAt: res.updatedAt ?? null,
                 updatedBy: res.updatedBy ?? null,
                 shiftSharingAvailable: Boolean(cacheScope && res.shiftSharingAvailable === true),
+                legacyScope: false,
               };
               lastGood.set(memoryScope, cached);
               await writeCachedRules({
@@ -397,23 +400,16 @@ export function PosRulesProvider({
               });
               cached = null;
               lastGood.delete(memoryScope);
-            } else if (pendingExpired(cached.at)) {
-              // Too old to keep holding the branch to it.
-              logRules("POS_RULES_PENDING_ABANDONED", {
-                platform,
-                terminal_id: me,
-                branch_id: scope,
-              });
-              cached = null;
-              lastGood.delete(memoryScope);
             } else {
+              // Offline duration is not proof of acceptance or rejection.
+              // Keep the saved pending edit until a verified result resolves it.
               lastGood.set(memoryScope, cached);
               return pendingHeld("");
             }
           }
           // A late answer must never put an older rule set back in place.
-          if (!cached || at >= cached.at) {
-            const changed = !cached || cached.revision !== revision || cached.shiftSharingAvailable !== (res.shiftSharingAvailable === true);
+          if (!cached || cached.legacyScope || at >= cached.at) {
+            const changed = !cached || cached.legacyScope || cached.revision !== revision || cached.shiftSharingAvailable !== (res.shiftSharingAvailable === true);
             lastGood.set(memoryScope, {
               rules,
               revision,
@@ -422,6 +418,7 @@ export function PosRulesProvider({
               updatedAt: res.updatedAt ?? null,
               updatedBy: res.updatedBy ?? null,
               shiftSharingAvailable: Boolean(cacheScope && res.shiftSharingAvailable === true),
+              legacyScope: false,
             });
             if (changed) {
               logRules("POS_RULES_REVISION_CHANGED", {
@@ -527,7 +524,9 @@ export function PosRulesProvider({
       degraded: query.data?.degraded ?? false,
       notVerified: query.data?.notVerified ?? false,
       status,
-      statusText: STATUS_TEXT[status] ?? "",
+      statusText: query.data?.source === "LEGACY_CACHE"
+        ? "Previous saved rules are preserved for offline operation. Connect to verify this database before editing; existing pending changes remain pending."
+        : STATUS_TEXT[status] ?? "",
       source: query.data?.source ?? "UNAVAILABLE",
       failure,
       failureText: FAILURE_TEXT[failure] ?? "",
@@ -557,6 +556,7 @@ export function PosRulesProvider({
           updatedBy: answer.updatedBy ?? null,
           shiftSharingAvailable: Boolean(cacheScope && (answer.shiftSharingAvailable === true ||
             answer.shiftSharingAvailable === undefined && lastGood.get(memoryScope)?.shiftSharingAvailable === true)),
+          legacyScope: false,
         };
         lastGood.set(memoryScope, saved);
         queryClient.setQueryData<Snapshot>(key, {

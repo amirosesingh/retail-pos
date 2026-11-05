@@ -5112,3 +5112,15 @@ never requeued as network failures. A newer same-context pending cache takes
 precedence over an older confirmed memory entry without requiring restart.
 Final full-suite and installed Electron acceptance remain pending. No publication
 or production promotion.
+
+Final review corrected first-upgrade offline continuity: an exact nonempty
+terminal/branch-matched legacy cache retains operating values and pending state
+without becoming editable or claiming backend/project capability. It is never
+rewritten on read; actual online verification binds it even when the revision
+did not change. Backend path prefixes are part of the identity. Removed the
+provider's age-only pending abandonment; 90/365-day reconnect fixtures preserve
+unacknowledged edits when cloud values are unchanged. User handover invalidates
+in-flight saves. Independent review found no remaining blocker. Frozen final
+focused tests: 81 passed across seven files; scoped lint/diff checks passed.
+Final TypeScript/full-suite/CI and actual installed Electron acceptance remain
+pending. These source changes perform no live repair, reset or publication.

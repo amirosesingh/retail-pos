@@ -1118,8 +1118,18 @@ Owner authorized completing the Electron Operational policies correction with ag
 
 The owner also requires the confirmed shift-sharing capability to survive offline
 use/restart. Cache that capability only after a verified rules reply and bind it
-to the registered terminal, branch, backend origin and database project origin.
+to the registered terminal, branch, backend and database project addresses,
+including any normalized path prefix.
 Known connection-scope changes invalidate both cached rules and capability;
 legacy unscoped cache cannot claim the capability for a configured connection.
 Do not infer upgrade readiness from the sharing rule value. Keep current
 permissions, versioned saves and server-side capability/branch checks intact.
+
+During a first offline upgrade, an old unscoped cache may preserve operating
+values only when its nonempty terminal and branch exactly match. Label it
+LEGACY_CACHE: it is not verified for the configured connection, may not enable
+sharing capability or new edits, and is never rewritten/relabelled on read.
+Pending edits remain pending. A verified online reply establishes the new
+binding; known mismatched scopes remain rejected. Offline duration alone never
+abandons an unacknowledged rules edit. Current-user handover also invalidates an
+awaited save, even when both users have the same settings permission.

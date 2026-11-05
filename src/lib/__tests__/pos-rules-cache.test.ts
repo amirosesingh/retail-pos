@@ -60,7 +60,7 @@ describe("last confirmed rules on the device", () => {
     await writeCachedRules({ ...entry, shiftSharingAvailable: true });
     expect((await readCachedRules("T-1", "bandar"))?.shiftSharingAvailable).toBe(false);
     const scope = rulesCacheScope("T-1", "bandar", "https://pos.test", "https://project.test");
-    expect(await readCachedRules("T-1", "bandar", scope)).toBeNull();
+    expect(await readCachedRules("T-1", "bandar", scope)).toMatchObject({ legacyScope: true, shiftSharingAvailable: false, cacheScope: undefined });
     await writeCachedRules({ ...entry, cacheScope: scope });
     expect((await readCachedRules("T-1", "bandar", scope))?.shiftSharingAvailable).toBe(false);
   });
@@ -71,5 +71,16 @@ describe("last confirmed rules on the device", () => {
     }
     expect(rulesCacheScope("T-1", "bandar", "https://POS.test/", "https://project.test/")).toBe(
       rulesCacheScope("T-1", "bandar", "https://pos.test", "https://project.test"));
+    expect(rulesCacheScope("T-1", "bandar", "https://pos.test/a", "https://project.test")).not.toBe(
+      rulesCacheScope("T-1", "bandar", "https://pos.test/b", "https://project.test"));
+  });
+  it("requires an exact nonempty terminal and branch for a legacy offline fallback", async () => {
+    const scope = rulesCacheScope("T-1", "bandar", "https://pos.test", "https://project.test");
+    for (const terminalId of ["", "another-terminal"]) {
+      await writeCachedRules({ ...entry, terminalId });
+      expect(await readCachedRules("T-1", "bandar", scope)).toBeNull();
+    }
+    await writeCachedRules({ ...entry, branchId: "" });
+    expect(await readCachedRules("T-1", "bandar", scope)).toBeNull();
   });
 });

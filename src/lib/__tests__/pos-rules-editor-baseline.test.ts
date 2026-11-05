@@ -7,6 +7,7 @@ const mock = vi.hoisted(() => ({
   source: "DATABASE", loading: false, usingDefaults: false, notVerified: false,
   permission: true, slots: [] as unknown[], cursor: 0,
   refs: [] as Array<{ current: unknown }>, refCursor: 0, branch: "branch", cacheScope: "verified-scope",
+  userId: "user-a",
   buttons: [] as Array<Record<string, unknown>>, switches: [] as Array<Record<string, unknown>>,
   queue: vi.fn(), auth: vi.fn(), refresh: vi.fn(), save: vi.fn(), fetch: vi.fn(),
 }));
@@ -33,7 +34,7 @@ vi.mock("@/lib/pos-rules.tsx", () => ({ usePosRules: () => ({
   cacheScope: mock.cacheScope,
   shiftSharingAvailable: true,
 }) }));
-vi.mock("@/lib/pos-auth", () => ({ useAuth: () => ({ isAdmin: false, can: () => mock.permission }) }));
+vi.mock("@/lib/pos-auth", () => ({ useAuth: () => ({ isAdmin: false, user: { staffId: mock.userId }, authUserId: mock.userId, terminalUser: null, can: () => mock.permission }) }));
 vi.mock("@/lib/pos-store", () => ({ usePos: () => ({ currentStore: { id: mock.branch, name: "Branch" } }) }));
 vi.mock("@/lib/pos-caller-auth", () => ({ getPosCallerAuth: mock.auth }));
 vi.mock("@/lib/pos-rules-client", () => ({ savePosRules: mock.save }));
@@ -73,11 +74,12 @@ const saveButton = () => mock.buttons.find(button => Array.isArray(button.childr
 beforeEach(() => {
   mock.source = "DATABASE"; mock.loading = false; mock.usingDefaults = false; mock.notVerified = false; mock.permission = true;
   mock.slots = []; mock.refs = []; mock.branch = "branch"; mock.cacheScope = "verified-scope";
+  mock.userId = "user-a";
   mock.auth.mockReset().mockResolvedValue({}); mock.queue.mockReset().mockResolvedValue(undefined);
   mock.refresh.mockReset().mockResolvedValue(undefined); mock.save.mockReset(); mock.fetch.mockReset();
 });
-it.each(["DEFAULT_SAFETY", "UNAVAILABLE"])("does not edit or save unverified %s defaults, even through a stale callback", async source => {
-  mock.source = source; mock.usingDefaults = true; mock.notVerified = true;
+it.each(["DEFAULT_SAFETY", "UNAVAILABLE", "LEGACY_CACHE"])("does not edit or save unverified %s defaults, even through a stale callback", async source => {
+  mock.source = source; mock.usingDefaults = source !== "LEGACY_CACHE"; mock.notVerified = source !== "LEGACY_CACHE";
   draw();
   expect(saveButton().disabled).toBe(true);
   expect(mock.switches.length).toBeGreaterThan(0);
@@ -106,13 +108,14 @@ it("does not widen editing permission for a verified cached configuration", () =
   mock.permission = false; mock.source = "LAST_KNOWN_GOOD"; draw();
   expect(saveButton()).toBeUndefined(); expect(mock.switches.every(switchProps => switchProps.disabled)).toBe(true);
 });
-it.each(["branch", "permission", "cacheScope"] as const)("does not save or queue after %s changes while credentials are loading", async field => {
+it.each(["branch", "permission", "cacheScope", "user"] as const)("does not save or queue after %s changes while credentials are loading", async field => {
   let resolve!: (value: object) => void;
   mock.auth.mockReturnValue(new Promise<object>(done => { resolve = done; }));
   draw(); const pending = (saveButton().onClick as () => Promise<void>)();
   if (field === "branch") mock.branch = "another-branch";
   if (field === "permission") mock.permission = false;
   if (field === "cacheScope") mock.cacheScope = "another-profile";
+  if (field === "user") mock.userId = "user-b";
   draw(); resolve({ accessToken: "staff-token" }); await pending;
   await new Promise(done => setTimeout(done, 0));
   expect(mock.queue).not.toHaveBeenCalled(); expect(mock.save).not.toHaveBeenCalled(); expect(mock.fetch).not.toHaveBeenCalled();

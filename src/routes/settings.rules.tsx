@@ -78,10 +78,11 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
   } = usePosRules();
 
   const { currentStore } = usePos();
-  const { isAdmin, can } = useAuth();
+  const { isAdmin, can, user, authUserId, terminalUser } = useAuth();
   const mayEdit = isAdmin || can("can_access_pos_settings");
   const mayEditRules = mayEdit && hasVerifiedRulesBaseline({ source, loading, usingDefaults, notVerified });
-  const contextKey = JSON.stringify([mayEditRules, currentStore.id, branchId, terminal, cacheScope]);
+  const contextKey = JSON.stringify([mayEditRules, authUserId, user?.staffId ?? null,
+    terminalUser?.cashierId ?? terminalUser?.userCode ?? null, currentStore.id, branchId, terminal, cacheScope]);
   const editContext = useRef(contextKey);
   const contextEpoch = useRef(0);
   if (editContext.current !== contextKey) {
@@ -314,6 +315,7 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
           <Button variant="outline" size="sm" disabled={checking || saving} onClick={() => void checkRulesNow()}><RefreshCw className={`size-4 ${checking ? "animate-spin" : ""}`} />{checking ? "Refreshing…" : "Refresh"}</Button>
         </div>
         {failureText && status !== "LIVE" && <p role="alert" className="text-sm text-destructive">Could not load current saved settings. Check the connection and reload.</p>}
+        {source === "LEGACY_CACHE" && <p role="status" className="text-sm text-muted-foreground">Previous saved rules are preserved for offline operation. Connect to verify this database before editing. Existing pending changes remain pending.</p>}
 
         <section className="rounded-lg border border-border bg-card px-5">
           <div className="flex items-center justify-between gap-3 border-b border-border/60 py-4">
