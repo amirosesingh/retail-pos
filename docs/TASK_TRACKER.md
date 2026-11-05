@@ -5252,7 +5252,11 @@ and31 additional focused checks passed. The first UI-only full run passed5767
 tests with7 skipped and1 failure: an existing test still required sliding graph
 rails, contrary to the latest owner decision. Only that existing expectation was
 corrected; its category/summary carousel assertions remain. Its focused five-suite
-rerun passed36 tests. Frozen-runtime full regression is running again; CI,
-deployed/installed acceptance, beta integration and production publication remain
-pending. An earlier prototype-era full run was interrupted after a review finding
-and is not final evidence.
+rerun passed36 tests. Final UI-only full regression passed5768 tests/7 skipped/
+0 failures of5775. Runtime feature headb91530314d2aa08e3f0b45ac999ce203d5bfd0ea
+is committed in draft betaPR402 (helper commita333e84c precedes the feature).
+Only14 reviewed files are included; temporary/native prototypes are excluded.
+CI, deployed/installed acceptance, beta integration and production publication
+remain pending. An earlier prototype-era full run was interrupted after a review
+finding and is not final evidence. Do not merge/publish on the strength of this
+local pass alone.

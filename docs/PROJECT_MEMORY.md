@@ -1200,3 +1200,11 @@ report-cursor limitation remain tracked gaps. The approved UI scope/series work
 does not claim to fix those preexisting capabilities or grant cross-branch access
 to normal terminals. Preserve exact existing financial formulas, sponsorship
 policy and explicit loading/error/source labels.
+
+DASH69 is prepared in draft betaPR402, runtime headb91530314d2aa08e3f0b45ac999ce203d5bfd0ea.
+Final full regression passed5768/7 skipped/0 failed of5775; focused UI/financial,
+TypeScript, lint, independent review and synthetic390/768/1440 chart checks passed.
+An obsolete graph-carousel test was updated to the latest in-place graph rule;
+its category rail assertions remain. The original analytics reader, checkout,
+permissions, Main/IPC and database sources are unchanged. CI/hosted/installed
+acceptance, beta merge and any production promotion/publication remain separate.
