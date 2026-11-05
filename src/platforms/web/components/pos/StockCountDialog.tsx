@@ -19,6 +19,7 @@ import * as XLSX from "xlsx";
 import { mergeStockCountRows, parseStockCountRow, stockCountTemplate } from "@/lib/stock-count-import";
 import { TablePagination, usePagination } from "./TablePagination";
 import { parseProductImportFile } from "./product-import-file";
+import { importSourceLine } from "@/lib/import-row-source";
 import { useImportWorksheet } from "./use-import-worksheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -603,18 +604,19 @@ export function StockCountDialog({
       for (const product of products)
         for (const value of productCodes(product)) if (!byCode.has(value)) byCode.set(value, product);
       raw.forEach((r, i) => {
+        const sourceLine = importSourceLine(r, i);
         const parsed = parseStockCountRow(r);
-        if (parsed.error !== undefined) return problems.push(`Row ${i + 2}: ${parsed.error}`);
+        if (parsed.error !== undefined) return problems.push(`Row ${sourceLine}: ${parsed.error}`);
         const { key, quantity: qty } = parsed;
         const p = byCode.get(normaliseCode(key));
-        if (!p) return problems.push(`Row ${i + 2}: "${key}" is not in the catalogue`);
+        if (!p) return problems.push(`Row ${sourceLine}: "${key}" is not in the catalogue`);
         imported.push(countedRow(p, qty));
       });
       setRows(previous => mergeStockCountRows(previous, imported));
       setErrors(problems);
       toast.success(`Imported ${raw.length - problems.length} row(s).`);
     } catch (error) {
-      if (session === sessionRef.current && openRef.current && (error as Error)?.name !== "AbortError") toast.error("That file could not be read. Use .xlsx or .csv.");
+      if (session === sessionRef.current && openRef.current && (error as Error)?.name !== "AbortError") toast.error(error instanceof Error ? error.message : "That file could not be read. Use .xlsx or .csv.");
     } finally {
       if (session === sessionRef.current) {
         importingRef.current = false;
