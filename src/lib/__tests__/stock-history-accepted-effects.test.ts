@@ -14,6 +14,8 @@ beforeAll(async()=>{
   CREATE TABLE item_activity_logs(id uuid PRIMARY KEY,product_id uuid,store_id text,quantity_delta integer);
   CREATE TABLE shifts(id uuid PRIMARY KEY,store_id text,status text,closed_at timestamptz);
   CREATE TABLE stores(id text PRIMARY KEY);
+  INSERT INTO stores VALUES('a'),('b');
+  INSERT INTO app_users VALUES('admin','admin','admin',NULL,true,'{}');
   INSERT INTO products VALUES('${product}','Existing','0001','00001','a','{"a":3,"b":2}',5,19.95);
   GRANT SELECT ON products TO service_role;`);
  await db.exec(prepared);await db.exec(capture);
@@ -22,10 +24,10 @@ beforeAll(async()=>{
 },30000);
 afterAll(async()=>db?.close());
 beforeEach(async()=>{
- await db.exec(`TRUNCATE private.stock_history_effect_sources,private.stock_history_accepted_effects,private.stock_history_source_receipts,private.stock_history_capture_gaps,stock_delta_applied,item_activity_logs,stock_history_heads;
+ await db.exec(`TRUNCATE private.stock_history_effect_coverage,private.stock_history_effect_sources,private.stock_history_accepted_effects,private.stock_history_source_receipts,private.stock_history_capture_gaps,stock_delta_applied,item_activity_logs,stock_history_heads,stock_history_openings,stock_history_baselines;
   UPDATE products SET stock_by_store='{"a":3,"b":2}',stock_quantity=5,price=19.95 WHERE id='${product}';
   DELETE FROM products WHERE id<>'${product}';
-  TRUNCATE private.stock_history_effect_sources,private.stock_history_accepted_effects,private.stock_history_source_receipts,private.stock_history_capture_gaps;
+  TRUNCATE private.stock_history_effect_coverage,private.stock_history_effect_sources,private.stock_history_accepted_effects,private.stock_history_source_receipts,private.stock_history_capture_gaps;
   INSERT INTO stock_history_heads(store_id) VALUES('a'),('b');`);
 });
 const rows=async(table:string)=>(await db.query<Record<string,unknown>>('SELECT * FROM private.'+table)).rows;
@@ -40,7 +42,8 @@ describe('actual accepted cloud stock effects, without claiming original author/
   expect(links).toEqual([{effect_id:effects[0]!.id,movement_id:receipt}]);
   expect((await db.query('SELECT price,stock_quantity FROM products')).rows[0]).toEqual({price:'19.95',stock_quantity:5});
   expect((await db.query('SELECT count(*)::int n FROM stock_history_movements')).rows[0]).toEqual({n:0});
-  expect((await db.query("SELECT coverage_state,coverage_generation::text generation FROM stock_history_heads WHERE store_id='a'")).rows[0]).toEqual({coverage_state:'incomplete',generation:'1'});
+  expect((await db.query("SELECT private.stock_history_capture_state('a') state")).rows[0]).toEqual({state:{revision:'1:0:0',unvalidatedEffects:'1',captureGaps:'0'}});
+  expect((await db.query("SELECT coverage_state,coverage_generation::text generation FROM stock_history_heads WHERE store_id='a'")).rows[0]).toEqual({coverage_state:'unverified',generation:'0'});
   expect((await db.query("SELECT coverage_state FROM stock_history_heads WHERE store_id='b'")).rows[0]).toEqual({coverage_state:'unverified'});
  });
  it('does not turn a source receipt alone into an actual movement',async()=>{
@@ -97,12 +100,23 @@ describe('actual accepted cloud stock effects, without claiming original author/
    await db.query(`UPDATE products SET stock_by_store=$1::jsonb WHERE id=$2`,[map,product]);
    expect((await rows('stock_history_capture_gaps'))[0]).toMatchObject({reason,product_id:product});
    expect((await db.query('SELECT stock_by_store FROM products')).rows[0]).toEqual({stock_by_store:JSON.parse(map)});
-   expect((await db.query("SELECT coverage_state FROM stock_history_heads WHERE store_id='a'")).rows[0]).toEqual({coverage_state:'incomplete'});
+   expect((await db.query<{state:{captureGaps:string}}>("SELECT private.stock_history_capture_state('a') state")).rows[0]!.state.captureGaps).toBe('1');
   });
  it('does not invent an empty-map product branch from ownership or aggregate stock',async()=>{
   await db.exec(`INSERT INTO products VALUES(gen_random_uuid(),'Unscoped',NULL,NULL,'a','{}',7,1);`);
   expect((await rows('stock_history_capture_gaps'))[0]).toMatchObject({reason:'MISSING_SCOPED_COHORT',store_id:null});
   expect(await rows('stock_history_accepted_effects')).toHaveLength(0);
+ });
+ it('an older complete reader head cannot silently omit a newly accepted unvalidated effect',async()=>{
+  const baseline='55555555-5555-4555-8555-555555555555',start='2026-11-05T00:00:00.0000000Z',cutoff='2026-11-05T01:00:00.0000000Z';
+  await db.exec(`INSERT INTO stock_history_baselines(id,store_id,cutoff_at_raw,cutoff_ticks,captured_at_raw,captured_ticks,source_cursor,opening_kind,verification_state,expected_pairs,terminal_watermarks,verified_by,evidence_hash)
+   VALUES('${baseline}','a','${start}',private.stock_history_ticks('${start}'),'${start}',private.stock_history_ticks('${start}'),0,'system_snapshot','verified',1,'{}','fixture','${'a'.repeat(64)}');
+   INSERT INTO stock_history_openings(id,baseline_id,product_id,store_id,quantity,product_name) VALUES(gen_random_uuid(),'${baseline}','${product}','a',3,'Existing');
+   UPDATE stock_history_heads SET baseline_id='${baseline}',coverage_state='complete',coverage_from_ticks=private.stock_history_ticks('${start}'),coverage_through_ticks=private.stock_history_ticks('${cutoff}') WHERE store_id='a';`);
+  const read=async()=>(await db.query<{page:Record<string,unknown>}>(`SELECT pos_stock_history_page('admin',NULL,'a','${cutoff}','Asia/Brunei',NULL,100,NULL,false,NULL) page`)).rows[0]!.page;
+  expect(await read()).toMatchObject({status:'complete',rows:[{quantity:'3'}]});await sourceAndChange();
+  expect(await read()).toMatchObject({status:'incomplete',reasons:['UNVALIDATED_STOCK_EFFECTS'],rows:[]});
+  expect((await db.query("SELECT coverage_state FROM stock_history_heads WHERE store_id='a'")).rows[0]).toEqual({coverage_state:'complete'});
  });
  it('keeps private evidence immutable and denies every API role direct writes/reads/execution',async()=>{
   await sourceAndChange();await expect(db.exec('UPDATE private.stock_history_accepted_effects SET quantity_delta=5')).rejects.toThrow(/IMMUTABLE/);

@@ -10,6 +10,7 @@ BEGIN
   OR to_regclass('private.stock_history_source_receipts') IS NOT NULL
   OR to_regclass('private.stock_history_effect_sources') IS NOT NULL
   OR to_regclass('private.stock_history_capture_gaps') IS NOT NULL
+  OR to_regclass('private.stock_history_effect_coverage') IS NOT NULL
   OR EXISTS(SELECT 1 FROM pg_trigger WHERE tgname IN('stock_history_accepted_products','stock_history_source_receipts'))
   THEN RAISE EXCEPTION 'STOCK_HISTORY_CAPTURE_EXISTING_SCHEMA_REVIEW_REQUIRED';END IF;
 END $guard$;
@@ -28,6 +29,7 @@ CREATE TABLE private.stock_history_accepted_effects(
  CHECK(operation<>'UPDATE' OR quantity_delta<>0),CHECK(length(store_id) BETWEEN 1 AND 128)
 );
 CREATE INDEX stock_history_effect_source_match ON private.stock_history_accepted_effects(transaction_id,product_id,store_id);
+CREATE INDEX stock_history_effect_branch ON private.stock_history_accepted_effects(store_id,id);
 CREATE TABLE private.stock_history_source_receipts(
  movement_id uuid PRIMARY KEY,transaction_id bigint NOT NULL,product_id uuid NOT NULL,store_id text NOT NULL,
  quantity_delta numeric(38,0) NOT NULL,accepted_at timestamptz NOT NULL DEFAULT clock_timestamp()
@@ -42,10 +44,19 @@ CREATE TABLE private.stock_history_capture_gaps(
  product_id uuid NOT NULL,store_id text,operation text NOT NULL,reason text NOT NULL,
  accepted_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
+CREATE INDEX stock_history_gap_branch ON private.stock_history_capture_gaps(store_id,id);
+-- Future admission/baseline routines must prove each association atomically.
+-- No API role can populate this table and this draft creates no coverage rows.
+CREATE TABLE private.stock_history_effect_coverage(
+ effect_id uuid PRIMARY KEY REFERENCES private.stock_history_accepted_effects(id),
+ movement_id uuid REFERENCES public.stock_history_movements(id),
+ baseline_id uuid REFERENCES public.stock_history_baselines(id),
+ CHECK((movement_id IS NOT NULL)::integer+(baseline_id IS NOT NULL)::integer=1)
+);
 DO $protect$
 DECLARE name text;
 BEGIN
- FOREACH name IN ARRAY ARRAY['stock_history_accepted_effects','stock_history_source_receipts','stock_history_effect_sources','stock_history_capture_gaps'] LOOP
+ FOREACH name IN ARRAY ARRAY['stock_history_accepted_effects','stock_history_source_receipts','stock_history_effect_sources','stock_history_capture_gaps','stock_history_effect_coverage'] LOOP
   EXECUTE format('ALTER TABLE private.%I ENABLE ROW LEVEL SECURITY',name);
   EXECUTE format('REVOKE ALL ON private.%I FROM PUBLIC,anon,authenticated,service_role',name);
   EXECUTE format('CREATE TRIGGER %I BEFORE UPDATE OR DELETE ON private.%I FOR EACH ROW EXECUTE FUNCTION private.stock_history_immutable()',name||'_immutable',name);
@@ -57,8 +68,6 @@ RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $fn$
 BEGIN
  INSERT INTO private.stock_history_capture_gaps(transaction_id,product_id,store_id,operation,reason)
  VALUES(txid_current(),p_product,p_branch,p_operation,p_reason);
- UPDATE public.stock_history_heads SET coverage_state='incomplete',coverage_generation=coverage_generation+1,updated_at=clock_timestamp()
- WHERE p_branch IS NULL OR store_id=p_branch;
 END $fn$;
 REVOKE ALL ON FUNCTION private.stock_history_capture_gap(uuid,text,text,text) FROM PUBLIC,anon,authenticated,service_role;
 
@@ -109,10 +118,6 @@ BEGIN
   INSERT INTO private.stock_history_accepted_effects(transaction_id,product_id,store_id,previous_quantity,next_quantity,quantity_delta,operation,product_snapshot)
    VALUES(txid_current(),(item->>'id')::uuid,branch,previous,next_value,delta,TG_OP,
     jsonb_build_object('name',item->'name','sku',item->'sku','barcode',item->'barcode','ownerStoreId',item->'owner_store_id')) RETURNING id INTO effect;
-  -- Until the complete accepted-effect set is linked to validated ledger facts
-  -- and cohort watermarks, an older head cannot claim it contains this write.
-  UPDATE public.stock_history_heads SET coverage_state='incomplete',coverage_generation=coverage_generation+1,updated_at=clock_timestamp()
-   WHERE store_id=branch;
   -- Two indistinguishable pending receipts are ambiguous; preserve both rather
   -- than pick one by timestamp/UUID and invent a source association.
   SELECT count(*),(array_agg(r.movement_id))[1] INTO matches,source FROM(
@@ -168,4 +173,18 @@ BEGIN
   'quantity',total::text,'acceptedAt',to_char(accepted AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US')||'0Z','timingState','unverified');
 END $fn$;
 REVOKE ALL ON FUNCTION private.stock_history_match_effect_candidates(uuid,text,numeric,jsonb) FROM PUBLIC,anon,authenticated,service_role;
+
+-- Append-only status avoids a shared report-head lock after business product
+-- locks. The reader checks this revision twice; it never certifies unlinked
+-- effects/gaps as complete just because its older head was previously complete.
+CREATE FUNCTION private.stock_history_capture_state(p_branch text) RETURNS jsonb
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $fn$
+ WITH effects AS(SELECT e.id,c.effect_id FROM private.stock_history_accepted_effects e
+  LEFT JOIN private.stock_history_effect_coverage c ON c.effect_id=e.id WHERE e.store_id=p_branch),
+ counts AS(SELECT count(*) total,count(effect_id) covered,count(*) FILTER(WHERE effect_id IS NULL) unvalidated FROM effects),
+ gaps AS(SELECT count(*) total FROM private.stock_history_capture_gaps WHERE store_id=p_branch OR store_id IS NULL)
+ SELECT jsonb_build_object('revision',counts.total::text||':'||counts.covered::text||':'||gaps.total::text,
+  'unvalidatedEffects',counts.unvalidated::text,'captureGaps',gaps.total::text) FROM counts,gaps
+ $fn$;
+REVOKE ALL ON FUNCTION private.stock_history_capture_state(text) FROM PUBLIC,anon,authenticated,service_role;
 COMMIT;

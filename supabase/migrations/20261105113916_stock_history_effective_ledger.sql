@@ -145,6 +145,7 @@ RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $fn$
 DECLARE h public.stock_history_heads%ROWTYPE;b public.stock_history_baselines%ROWTYPE;
  cutoff numeric;read_raw text;revision text;reasons jsonb:='[]'::jsonb;actual_pairs bigint;page jsonb;next_id uuid;
  candidate record;wire jsonb;page_rows jsonb[]:=ARRAY[]::jsonb[];page_bytes integer:=2;last_id uuid;balance numeric;
+ capture_state jsonb;capture_after jsonb;
 BEGIN
  PERFORM private.stock_history_authorize_read(p_actor,p_terminal,p_branch,COALESCE(p_export,false));
  IF p_limit NOT BETWEEN 1 AND 500 OR p_limit IS NULL OR p_zone IS NULL OR length(p_zone) NOT BETWEEN 1 AND 100
@@ -161,6 +162,11 @@ BEGIN
  cutoff:=private.stock_history_ticks(p_cutoff);
  read_raw:=to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US')||'0Z';
  IF cutoff>private.stock_history_ticks(read_raw) THEN reasons:=reasons||'"FUTURE_CUTOFF"'::jsonb; END IF;
+ IF to_regprocedure('private.stock_history_capture_state(text)') IS NOT NULL THEN
+  EXECUTE 'SELECT private.stock_history_capture_state($1)' INTO capture_state USING p_branch;
+  IF (capture_state->>'unvalidatedEffects')::bigint>0 THEN reasons:=reasons||'"UNVALIDATED_STOCK_EFFECTS"'::jsonb;END IF;
+  IF (capture_state->>'captureGaps')::bigint>0 THEN reasons:=reasons||'"CAPTURE_GAPS"'::jsonb;END IF;
+ END IF;
  SELECT * INTO h FROM public.stock_history_heads WHERE store_id=p_branch FOR SHARE;
  IF NOT FOUND OR h.baseline_id IS NULL THEN
   RETURN jsonb_build_object('status','incomplete','reasons',reasons||'"NO_VERIFIED_OPENING"'::jsonb,
@@ -183,7 +189,7 @@ BEGIN
   AND effective_ticks<=cutoff AND ingested_cursor<=h.committed_cursor AND clock_state<>'verified') THEN reasons:=reasons||'"CLOCK_UNVERIFIED"'::jsonb; END IF;
  IF EXISTS(SELECT 1 FROM public.stock_history_movements m WHERE m.store_id=p_branch AND m.effective_ticks<=cutoff AND m.ingested_cursor<=h.committed_cursor
   AND NOT EXISTS(SELECT 1 FROM public.stock_history_openings o WHERE o.baseline_id=b.id AND o.store_id=p_branch AND o.product_id=m.product_id)) THEN reasons:=reasons||'"MISSING_OPENING"'::jsonb; END IF;
- revision:='stock-history.v1:'||p_branch||':'||h.committed_cursor||':'||h.coverage_generation||':'||b.id;
+ revision:='stock-history.v1:'||p_branch||':'||h.committed_cursor||':'||h.coverage_generation||':'||b.id||':'||COALESCE(capture_state->>'revision','capture-uninstalled');
  IF p_source_revision IS NOT NULL AND p_source_revision IS DISTINCT FROM revision THEN RAISE EXCEPTION 'STOCK_HISTORY_SOURCE_CHANGED'; END IF;
  IF jsonb_array_length(reasons)>0 THEN
   RETURN jsonb_build_object('status',CASE WHEN reasons ? 'BEFORE_BASELINE' OR reasons ? 'FUTURE_CUTOFF' THEN 'unsupported' ELSE 'incomplete' END,
@@ -208,6 +214,10 @@ BEGIN
   page_rows:=array_append(page_rows,wire);last_id:=candidate.product_id;
  END LOOP;
  page:=to_jsonb(page_rows);
+ IF capture_state IS NOT NULL THEN
+  EXECUTE 'SELECT private.stock_history_capture_state($1)' INTO capture_after USING p_branch;
+  IF capture_state IS DISTINCT FROM capture_after THEN RAISE EXCEPTION 'STOCK_HISTORY_SOURCE_CHANGED';END IF;
+ END IF;
  RETURN jsonb_build_object('status','complete','reasons','[]'::jsonb,'cutoff',p_cutoff,'timeZone',p_zone,'branchId',p_branch,
   'baselineAt',b.cutoff_at_raw,'readAt',read_raw,'sourceRevision',revision,'pendingCount','0','restatable',true,'rows',page,'next',next_id);
 END $fn$;

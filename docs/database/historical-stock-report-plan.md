@@ -338,8 +338,10 @@ a delta receipt only after one unique same-transaction product/branch/quantity
 match. Receipt-only uploads, wrong branches/deltas, duplicate/reused sources and
 ambiguous candidates cannot certify an effect. Unsupported stock shapes or
 missing scoped cohort evidence create explicit gaps, preserving the business
-write. Actual effects invalidate the prior report head until complete ledger/
-cohort proof exists. It grants no API role direct metadata access or mutation and
+write. Actual effect/gap revisions prevent an older report head from certifying
+complete coverage until complete ledger/cohort proof exists. The capture uses
+append-only metadata, avoiding a shared report-head lock after product locks.
+It grants no API role direct metadata access or mutation and
 does not materialize/accept a historical movement by itself.
 
 The capture neither changes current business calculations nor fabricates an
@@ -385,3 +387,28 @@ compilation and driver UUID-case assumptions; tests now compare actual saved
 source IDs. Existing writer arithmetic was not altered. PR401 at bcc8d00b had all
 required CI and platform/Workers builds pass, with owner-deferred CodeRabbit
 skipped. Later source checkpoints require their own final CI and review.
+
+## Capture concurrency refinement — 6 November
+
+Self-review found that writing a shared report head after each product could
+introduce lock cycles across multi-product transactions. The draft capture now
+appends only effect/gap facts. A private state reader and the report's captured
+revision detect unvalidated effects/gaps; complete pages recheck that state before
+returning. An old complete head cannot suppress new unresolved accepted effects.
+Private effect-coverage links are reserved for future fully validated admission/
+baseline routines; no API grants or population function is added.
+
+Three concurrent groups passed on a uniquely owned loopback PostgreSQL18.6
+fixture: independent product writers added no report-head lock/contended wait,
+a held report-head read did not block stock capture, and rollback left no phantom
+metadata or altered quantities. The fixture was removed.51 focused accepted-effect,
+reader, upload and export cases passed after this refinement. This is not a claim
+of target PostgreSQL17 performance, completed cohort/author admission or deployed
+coverage. Full exact-head regression and independent review remain separate.
+
+The local full regression completed6,138 passes/10 skips with four fixture
+failures: three20-second loading/timeouts and one local workerd connection reset.
+The four unchanged failing suites passed all17 cases immediately with one worker,
+including actual workerd wire/privacy admission. This is recorded as resource-
+sensitive local verification, not a single fully green full run. TypeScript and
+scoped lint passed. Required CI on the next frozen head remains mandatory.
