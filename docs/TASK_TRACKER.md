@@ -5761,3 +5761,15 @@ Actual new cashier approval test captured EPRIVILEGE at Main admission: generic
 Keep that boundary; a separate Main-owned verified-approval logging capability
 requires approval and tests. PR412 fixes only registered audit-payload shape;
 actual cashier approved-payment acceptance remains pending that distinct fix.
+
+## CHECKOUT74 — shared refund trigger record-field isolation, 5 November
+
+- Owner's urgent web-payment failure is confirmed by live metadata/logs: SQLSTATE
+  42703 comes from guard_refund_fields while pos_sale_commit links an exchange.
+  sales correctly has is_refunded, not sale_items.refunded_qty. A combined AND
+  expression prepares the wrong record field before its table-name predicate.
+- Approved preparation is limited to nested table-specific IF blocks, unchanged
+  refund protections, a guarded additive migration, canonical source and isolated
+  checkout/refund regressions. Live application requires exact-project approval.
+- No columns, grants, triggers, business rows or operator settings may be changed.
+  Membership and unfinished stock-report work remain excluded.

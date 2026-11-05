@@ -259,6 +259,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261105063613_admin_attested_legacy_shift_recovery.sql",
       "supabase/migrations/20261105090000_shift_financial_known_history.sql",
       "supabase/migrations/20261105090100_branch_shift_sharing.sql",
+      "supabase/migrations/20261105140417_isolate_refund_guard_table_fields.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

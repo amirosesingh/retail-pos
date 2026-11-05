@@ -1410,3 +1410,10 @@ a `general` audit aggregate requires Supervisor authority even after a manager's
 approval PIN verifies. That guarded refusal remains intact and needs a separately
 approved Main-owned approval capability; this helper patch does not grant it or
 claim to complete cashier approval/payment acceptance.
+
+## CHECKOUT74 — web exchange payment preparation, 5 November
+
+The existing shared refund UPDATE trigger cannot reference another table's NEW
+or OLD fields inside a combined AND condition. Isolate each field expression in
+its own table-specific IF block, preserving refund authorization and both trusted
+exits. Prepare/test only; the exact live project/file needs separate approval.

@@ -4,3 +4,4 @@
 /database/sqlserver/prepared/025_shift_financial_bases.sql text eol=lf
 /database/sqlserver/prepared/026_shift_financial_operations.sql text eol=lf
 /docs/database/shift-financial-upgrade-manifest.json text eol=lf
+/supabase/migrations/20261105140417_isolate_refund_guard_table_fields.sql text eol=lf
