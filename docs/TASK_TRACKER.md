@@ -5785,6 +5785,10 @@ actual cashier approved-payment acceptance remains pending that distinct fix.
   checkout selection, pagination cursor, database records or permissions change.
 - Focused actual-hook and helper regressions plus TypeScript/lint are required.
   Installed Electron verification and automatic CI remain separate.
-- Frozen verification: 21 focused tests across five suites, TypeScript and scoped
+- Frozen verification: 23 focused tests across five suites, TypeScript and scoped
   ESLint pass. The initial restricted-temp history import hit known SSR-cache
   ENOENT; unchanged tests passed with normal temporary-file access.
+
+Report ordering compares instant milliseconds plus the remaining SQL 100 ns
+fraction, so mixed precision/offset strings sort correctly without rewriting
+raw timestamps or pagination cursors. Equal instants retain descending ID ties.

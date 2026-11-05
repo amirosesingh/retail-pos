@@ -56,6 +56,24 @@ describe("report-only shift timestamp normalization", () => {
     const result = mergeReportShiftRows([row("a", late), row("z", early), row("b", late)], [], branch, "", "", "UTC");
     expect(result.map(shift => [shift.id, shift.openedAt])).toEqual([["b", late], ["a", late], ["z", early]]);
   });
+  it("orders mixed millisecond and SQL 100 ns values by the instant rather than text precision", () => {
+    const precise = "2026-11-05T10:00:00.1234567Z";
+    const result = mergeReportShiftRows([
+      row("date", new Date("2026-11-05T10:00:00.123Z")),
+      row("exact", precise), row("next-ms", "2026-11-05T10:00:00.1240000Z"),
+    ], [], branch, "", "", "UTC");
+    expect(result.map(shift => shift.id)).toEqual(["next-ms", "exact", "date"]);
+    expect(result[1].openedAt).toBe(precise);
+  });
+  it("compares offsets and uses the existing ID tie-break for equal exact instants", () => {
+    const utc = "2026-11-05T10:00:00.1234567Z", offset = "2026-11-05T18:00:00.1234567+08:00";
+    const result = mergeReportShiftRows([
+      row("a", offset), row("b", utc), row("newer", "2026-11-05T09:00:00.1234567-02:00"),
+      row("older", "2026-11-05T18:00:00.1234566+08:00"),
+    ], [], branch, "", "", "UTC");
+    expect(result.map(shift => shift.id)).toEqual(["newer", "b", "a", "older"]);
+    expect(result.find(shift => shift.id === "a")?.openedAt).toBe(offset);
+  });
   it("replaces a matching snapshot row with its paged row using canonical UUID identity", () => {
     const key = "ABCDEF00-0000-4000-8000-000000000002";
     const result = mergeReportShiftRows([row(key, new Date("2026-11-05T10:00:00Z"))],
