@@ -15,6 +15,384 @@ FIN62 isolated SQL basis prototype: complete selected-branch/shift inputs and ex
 
 ## FIN62 — owner-approved shift financial/as-of validation correction
 
+## 5 November current integration and newly queued dashboard scope
+
+Latest owner release decision: FINISH DEVICE ACCEPTANCE FIRST, not approval to
+merge400. Owner explicitly requests offline recovery, historical stock report
+and one consolidated existing-data SQL upgrade completed before production.
+Continue necessary implementation/isolated tests under those existing feature
+batches with agents; present exact cloud/local database changes before any live
+application. Electron404 corrects the shared sale-saving path, including ordinary
+sales without an approval, but installed acceptance is not yet proven. Native
+testing must use an explicitly isolated database/profile, never real POS data.
+The next final release head/scope still requires exact owner approval.
+
+Current integration checkpoint: completed PRs396/397/398/399/402/403/404/405
+are merged to beta8b1cb17b04187fe468033c04c4383eecc691babb, exact reviewed tree
+57dbea4f321016c4ed95c753af10a6547d43fb88. Candidate1.4.82 metadata is consistent;
+no tag/installer has been published. Final reviewed-head CI passed5789 tests with
+9 skipped/0 failed. Both checkout and metadata automatic beta deployments passed.
+Production remains main3d9d314c/Retail1.4.81. Draft promotionPR400 contains55
+scoped files and no schema/data change; merge preview preserves the exact tree.
+The identical-tree postmerge Security rerun and exact owner release/installed-test
+disposition remain pending. Do not infer approval or call production updated.
+
+Separate pending work: draft395 runtime recovery/CT acceptance, draft401 stock
+historical storage/UI, consolidated guarded local recovery upgrade, installed
+acceptance, Management session handover, navigation-pin ownership and deposit
+attribution. Newly opened dependency PRs406–410 are unreviewed/excluded from400;
+held359 and Membership remain untouched. User clarified sale failure is Electron
+only while web succeeds:404 targets the local SQL aggregate path; installed PCs
+need a new native installer to receive it. No cloud ownership/stock repair follows.
+
+New production checkout refusal after approved discount: source mapping confirms
+SYNC_BRANCH_FORBIDDEN / products, not a PIN or network error. Relevant checkout,
+financial-stock policy and catalogue guards are unchanged between main3d9d314c,
+betaada83bb9 and the recovery precision checkpoint. Twenty-three actual isolated
+SQL cases reproduce a valid unowned legacy product losing stock-based catalogue
+eligibility when its last quantity becomes zero; aggregate post-write validation
+then rejects and rolls back the sale. Own/sibling/posted/cached catalogue proof
+cases pass; genuine foreign/ineligible preimages remain denied.
+
+Owner requested read-only tracing of the last two recent approvals. Exact pos
+project/org identity was verified; both STR1 approvals reference the same bill and
+were approved/consumed. One matching cloud product has no owner and STR1 stock1;
+this matches the reproduced condition, while exact cashier-PC local linkage is
+still unverified. No real records are copied into test fixtures. Owner now APPROVED
+the separate same-transaction preimage/postcondition checkout correction and
+isolated tests: existing aggregate repository plus focused tests, preserving
+strict financial-stock deltas and unchanged catalogue identity. No ownership
+assignment, stock repair, database/configuration changes or deployment covered.
+Use a separate beta branch/PR from betaada83bb9; no live product, stock, sales or
+configuration change was made.
+
+Checkout testing also confirmed a PREEXISTING financial replay gap on original
+beta and the scoped patch: an existing sale/item graph under a NEW aggregate
+operationId can deduct stock again if its stock preimage again matches (isolated
+restock reproduction). Same-operation exact receipt replay remains protected.
+Owner now APPROVED the additional aggregate-only replay guard and isolated tests:
+after exact accepted-operation receipt handling, before stock/financial capture/
+journal writes, lock normalized proposed new sale IDs deterministically and hold
+any existing sale without that aggregate's exact accepted receipt. No invented
+receipts, guessed partial recovery, financial-row rewrites or stock changes to
+real data. Preserve legitimate new sales, old original-bill exchange references,
+same-operation retries, branch rules and separate refund workflows. Code/tests
+only; no schema/configuration/data application or deployment. PR404 stays draft
+until this guard and final full/independent/CI checks pass.
+
+Negative-stock clarification: allowing negative quantity does not waive catalogue
+or branch authority. The last-unit failure is transient eligibility loss at zero,
+not a refusal from the negative-stock limit. Preserve the configured rule and test
+positive/zero/negative transitions with actual allowed/denied branch cases.
+
+Recovery completion within the ORIGINAL approved application-recovery batch:
+now that exact downloads pass the complete regression, reuse the existing Main
+authority/SQL service/IPC/preload/review UI for explicit Administrator cloud-choice
+and private-receipt convergence, bounded ACKed-but-not-adopted restart scanning,
+truthful pending stages, and a fresh existing six-table V0 proof after adoption.
+No new role, grant, business decision, manual cloud copy or checkpoint reset.
+
+Startup access investigation refined the first apparent blocker: existing
+/database-startup already bypasses the trading boot gate and mounts AuthProvider;
+it currently only exposes connection setup. Actual existing online/offline Main
+POS login handlers passed a synthetic connected-but-not-tradingReady test, so no
+backend auth relaxation is needed. Add a bounded ordinary Administrator sign-in/
+review section to that route using existing PrivilegeGate and Main POS authority;
+keep trading blocked, reject staff/emergency/stale identities, and preserve normal
+login navigation elsewhere. Do not change NativeBoot/root readiness/permissions
+or repurpose emergency sessions. If more shared auth semantics prove necessary,
+stop and present the additional scope. Runtime changes remain in the unmerged
+feature branch with isolated tests; no live metadata/activation/deployment.
+
+Recovery wiring review found three existing Main safety/status consumers still
+reading ordinary pending counts instead of the new combined upload/convergence
+count. Isolated extraction proves reassignment could pass and signed-out/offline
+shutdown could report zero with retained recovery work. Correct those three
+already-approved Main callsites and existing focused tests only; preserve the
+existing exit policy and authorization. This does not authorize a Change Tracking
+acceptance change. The exact all-six-table recovery test still holds older
+unproven CT entries, so this draft remains incomplete and excluded from production.
+
+Owner APPROVED two narrow code/isolated-test batches on5 November:
+1. Exact-witness-only correction in electron/sync/shift-graph.cjs and
+   electron/db/shift-intents.cjs plus focused tests. Preserve legacy no-witness
+   behavior and every branch/pending/immutable-history guard; no live database
+   changes, deployment or runtime adoption activation covered.
+2. Exact Management report pagination in
+   electron/db/repositories/management-reports.cjs plus focused tests. Preserve
+   current permission/completeness/cost/branch guards and every record across
+   submillisecond page boundaries. No schema/data changes or deployment covered.
+The separately found Management session-handover race and nav-pin ownership
+correction remain outside these approvals; prepare their scopes separately.
+
+Owner additionally requests production preparation side by side. Keep draftPR400
+current as scoped beta work is verified; this is not specific production merge
+or installer-publication approval. PR402 is merged betaada83bb9 with exact tree
+parity and live beta asset delivery verified. Postmerge Android's sole failed
+job hit an external Kotlin artifact HTTP504, not a compiler assertion; a bounded
+failed-job retry is appropriate without source/settings changes. Other recorded
+postmerge platform/Security/Workers checks passed. No production/installer/DB
+action performed by that merge.
+
+RECOVERY65 application checkpoint: missing-cloud legacy closing review/upload,
+Main-only actual-admin IPC, immutable SQL pending records, private verified
+receipt, duplicate-review uniqueness and truthful runtime status are implemented
+under verification. Targeted real PostgreSQL21 groups, real isolated SQL Server20
+groups, focused status/IPC/service/receipt102 tests and real React13 browser groups
+pass; separate runs overlap and must not be summed as unique coverage. Total-wire
+256KiB transport guard passes30 focused relay/receipt cases, with legacy ordinary
+sync limits/branch/authentication preserved. TypeScript/scoped lint checks passed
+before final UI lint-only cleanup. No live schema/data changes or publication.
+Core adoption/completion is still a separate unfinished prototype, not included
+in this checkpoint or claimed fixed. Exact committed head c900679d passed the
+separate full Vitest run:5,848 passed/8 skipped/0 failed (5,856 total), plus
+TypeScript. All current required GitHub/platform/Workers checks pass. These
+results exclude the uncommitted adoption prototype and installed-device tests.
+
+Reviewed-adoption prototype and exact-writer correction: the previously failing
+ordinary cloud-delta precision case is now fixed in the owner-approved two shared
+writers. All40 disposable SQL Server groups pass, including exact adoption,
+receipt normalization, six-table capturedV0 completion, subsequent note update,
+immutable history and genuine no-witness legacy behavior. Fifty-three focused
+tests, TypeScript/scoped lint and independent SQL40/focused29 review pass; runs
+overlap and are not summed. Independent review also corrected unbounded OPEN
+timestamp changes and exact CHECK definitions. Final integrated full regression
+is next. Prototype/runtime adoption remains unwired and schema unapplied; passing
+writer tests alone is not the complete affected-PC recovery or release acceptance.
+
+PR399 single sync-data lane is merged to beta596742141d33a1683f39990299ac7b7217259136.
+Exact source0d2dcf45 passed5,748 tests/7 skipped/0 failed plus109 focused checks,
+TypeScript/lint and all required CI/platform/Workers builds; merge tree parity
+passed. Installed acceptance/publication is separate. Production draftPR400 now
+tracks beta into main and is labelled production/awaiting-owner-approval; no
+promotion or installer publication is approved by creating it. PR354 is historical.
+
+Owner asked to inspect red production commit checks. PR400's12-commit check
+rollups show two CANCELLED older Security runs (7ffb9862/4137b32e), not failed
+assertions; later reviewed heads and merge commits pass. Current59674214 now
+passes all required production-draft checks, including Security and Workers.
+CodeRabbit remains skipped under the owner's earlier waiver. Do not erase old
+run history or skip required tests. Passing checks alone do not authorize
+production promotion, installers or live database application.
+
+DASH69 new request (separate from the nine-workstream stabilization progress):
+Live Dashboard selected branch only; Live Business Board company-wide comparison
+within authorized scope across clusters; All Shops cluster context, revenue/gross
+profit/line/bar charts with stable distinct shop colors and explicit filters.
+Read-only source audit found /dashboard uses allShopsScope while its inventory
+cards use currentStore; /analytics calls itself every-shop but companyStoreScope
+is selected cluster; All Shops currently keeps every authorized card visible and
+filters totals/bills by explicit cluster. Earlier owner decision719 preserves
+all cards, so a new question is pending whether cluster selection should filter
+cards AND charts or only totals/charts. Do not silently narrow/widen cards or
+permissions. Scope/chart proposal audit only until this decision is resolved;
+Membership stays on hold. Core recovery work continues independently.
+
+DASH69 card-loading refinement: start summary cards hidden until their requested
+scope has resolved data; then show qualifying values with the existing smooth
+animation and react to later updates without full-page reload. Preserve verified
+visible data during same-scope background refresh, distinguish errors/unknown
+from zero, and clear a prior scope immediately when switching branch/cluster.
+Keep meaningful negative financial/warning states and existing nonzero semantics;
+All Shops shop cards remain visible even with zero data in the chosen scope.
+Do not add chart sliding or invent animation-ready values from fallback defaults.
+
+DASH69 decision resolved: owner selected "Filter cards and charts by cluster;
+keep All clusters". This supersedes earlier719's always-visible-card behavior
+ONLY when an explicit cluster is selected. All clusters still shows every
+authorized shop including zero-data shops. Live Dashboard is selected branch;
+Live Business Board is all authorized company shops across clusters. Preserve
+normal-terminal branch locks, authorized management scope, existing revenue/
+sponsorship/refund/profit formulas and graph placement; stable shop colors,
+minimal desktop/mobile layout, no sliding/infinite behavior for charts.
+
+RECOVERY65 UI verification:13 isolated real-React/Chrome groups pass at1440/390,
+covering session changes, malformed replies, selected-shift binding, required
+reason, stable retry ID, explicit upgrade hold and pending-not-accepted wording.
+Fixtures used mock IPC/auth and blocked external network; not installed-device
+acceptance. Actual cloud-correction adoption/final CT recovery remains unfinished.
+
+Owner requests production preparation incrementally alongside beta integration;
+keepPR400 scope/checklist current as independently tested fixes reach beta. This
+does not authorize its merge, live database application or installer publication.
+
+STOCK68 preparation is now draftPR401 at91e4e37e, integrated with beta59674214.
+Independent review corrected order-dependent intermediate overflow;32 kernel and
+4 adjustment tests pass, and the integrated kernel/adjustment/lane run passed55.
+Only five scoped preparation files are in that PR. No historical report route,
+ledger/schema, stock writer, data repair or complete-history claim is included.
+CI is running; the full report remains pending and PR400 lists that release gate.
+
+DASH69 investigation identified an existing shared Management-reader risk:
+the Management report converts SQL datetimeoffset(7) cursors through JavaScript
+Date milliseconds, which can skip submillisecond rows at a page boundary. Keep
+any future native adapter fail-closed when another page lacks exact cursor
+evidence; no partial result is a complete company total. A separate owner question
+for Main reader correction/real SQL boundary tests is pending; no Main edit made.
+Further review reproduced a session/branch handover race during its awaited read;
+that additional authorization finding needs separately scoped correction review.
+
+Controlling DASH69 scope correction: actual beta59674214 composition proves the
+original Business Board already uses cloud on Management (isOnlineOnly=true,
+effectiveDatabaseMode=online, localDb=null). The earlier concern that cloud routing
+removed an existing offline Board path was incorrect. Preserve the original auto
+reader in the UI/scopes/charts PR. Newly prepared native adapter/status/math code
+is unactivated and excluded from that PR; do not add shared Main metadata reads
+merely to complete this UI task. Cold-offline/PIN-only Management Board metadata
+is a preexisting unresolved capability gap, not a verified supported path. Main
+cursor/authorization corrections remain separate tasks. Final scoped UI review,
+full regression and deployed/installed acceptance remain pending.
+
+All-table follow-up: all11 non-id registry tables have declared-key generic
+local apply and canonical cloud apply/feed/delete paths. The verifier's marker
+skip is a structural assertion gap, not proof of missing synchronization.
+nav_pins has an ordinary id key despite sparse direct behavioral tests. Highest
+priority unresolved source candidates: whether the guarded native service path
+rejects pull-only secure_settings uploads/tombstones, and whether nav_pins keeps
+its established owner/company-admin rules under service-role sync. Source review
+alone does not establish deployed exposure. An agent is preparing isolated
+composed denial checks only; no app correction, permission change or live test
+is authorized by that investigation. Keep Membership unchanged.
+
+Five actual isolated HTTP/PostgreSQL follow-up observations completed. The
+secure_settings candidate is FALSIFIED: valid device push/tombstone return400
+SYNC_TABLE_FORBIDDEN, existing ciphertext is unchanged; invalid device returns401
+before RPC. The nav_pins ownership candidate is CONFIRMED IN CURRENT SOURCE:
+ordinary canonical RLS denies a non-admin foreign-owner write, while the actual
+terminal-only guarded sync/service-RPC path updates and deletes the foreign pin
+with200/readback. Impact shown is user-preference ownership only, not anonymous
+access, checkout, stock or financial mutation. Live deployed-definition parity is
+UNVERIFIED. No application/schema correction is authorized or applied. Keep as a
+separate scoped authorization finding; do not widen access or silently disable
+legitimate preference synchronization. Synthetic fixtures/results stay outside
+commits; temporary .tmp files must not be staged.
+
+## 5 November sync coverage clarification and current work
+
+Owner explicitly confirmed: "All applicable tables; missing/changed records only."
+Full end-to-end coverage means each applicable table and its dependency, delete
+and recovery paths, not a repeated full-table refresh. Initial authorized baseline
+and expired-history snapshots remain distinct from ordinary incremental passes.
+Preserve Membership ON HOLD and existing per-table direction/privacy rules. Add a
+registry-to-runtime coverage review; do not silently enable excluded tables.
+
+Owner additionally selected one coordinated active data-sync request per terminal,
+with bounded/fair upload and download turns and events recording changed facts.
+Native durable pending operations remain in SQL Server, not an Electron file or
+browser outbox. A transient Main scheduling queue is not durable business storage.
+Keep authentication/control/health independent, SQL checkout local, and Supabase
+pool management unchanged. Implement in a separate focused beta PR (SYNC68),
+preserving all existing request/proof/batch/retry/cursor/acknowledgement behavior.
+Owner asked to avoid extra/duplicate previous code: reuse the current engine;
+add only necessary reviewed helpers/tests, and trace compatibility callers before
+removing old paths. No broad rewrite or second per-module sync implementation.
+
+Active work: RECOVERY65 server admission/receipt and native durable review outbox,
+then trusted Main/UI/automatic-sync integration and end-to-end regressions. Root's
+new relay integration plus existing native binding/causal regressions passed 59
+tests on 5 November. That proves isolated routing/denial behavior, not installed
+recovery or live database application. STOCK68 pure historical-quantity engine and
+coverage design runs separately. Electron process-role/resource investigation and
+all-table runtime coverage remain pending. No live database edits in this batch.
+
+Owner asked whether both-connected database differences cause crashes. Divergence
+is normal; observed evidence proves a recovery/loading block, not a process crash.
+Test differing local/cloud data without losing pending work or reloading the UI.
+Owner reported 3–5 or 14–15 Electron processes; inspect roles/windows and CPU/memory
+before classifying extra processes. A prior sanitized local scan found no running
+electron.exe; no remote process leak is verified and no process was stopped.
+
+## 5 November new owner decisions — supersedes pending questions below
+
+RECOVERY65: owner chose "Allow audited Administrator recovery". Implement a
+separate explicit recovery action for unverifiable old closings, requiring actual
+admin role/current scope, reason, immutable original/reviewer provenance and a
+fresh cloud-state compare-and-swap. Saved amounts remain labelled historical
+evidence with missing original financial snapshot; never fabricate strong
+ORIGINAL/FIN62 receipts. Protected/new financial cases remain denied. This is
+application implementation/isolated-test authority, not live database approval.
+
+STOCK68: owner chose "Actual stock at the selected time". Use original movement
+effective time, not upload arrival time; late uploads may revise the past report.
+Preserve arrival time separately. Need proven opening baseline/deduplicated
+movement coverage, branch/location scope and exact date/time/zone. Incomplete
+historical evidence stays explicit. No arbitrary old stock/valuation reconstruction.
+
+Current completed beta work: importsPR396, policiesPR397, documentationPR398,
+all required checks passed before merge. Latest beta a73f24e8 contains the
+permanent AGENTS rules; PR395 remains draft until runtime recovery is verified.
+
+## RECOVERY65 and companion stabilization — 5 November
+
+Approved: implement application-driven retained-shift recovery and isolated tests;
+use agents, preserve offline checkout, current permissions/branch restrictions,
+and all original/corrected closing histories. Owner rejected manual cloud copying.
+Worktree codex/retained-shift-recovery-beta starts origin/beta5e7327d5. Permanent
+AGENTS.md sync/database/import/report rules explicitly authorized for update.
+
+Read-only affected-PC evidence: DESKTOP-VIB2MIL/POS_Local GUID F4B03BDB-DE91-
+4582-B68E-186442172E95;29 parents/201 closing rows; CT49620 unchanged through
+export, min29490 above six upload checkpoints; no pending journal/intents/baselines
+or scoped orphans. Complete comparison:16 exact graphs;3 local CLOSED/cloud OPEN
+(2/3/4November);4 competing local/web chains;4 identical-child parent summary
+repairs;1 revision/update-clock difference;1 OPEN created_at precision difference.
+Those are classifications, not authority to overwrite or manufacture receipts.
+
+RECOVERY65 preparation checkpoint: draft PR395 created. Permanent rules and
+bounded classifier committed; 60 isolated classifier cases pass. Dedicated
+append-only evidence store and prepared (not installed) SQL pass 12 tests with
+real disposable LocalDB, including concurrency, rollback and restart readback.
+Existing runtime recovery passes 16 isolated SQL Server regression groups.
+Portable classifier/evidence tests are wired into Vitest. No business export is
+committed. This does NOT complete application recovery; modern author/financial
+guards still need an explicit reviewed legacy recovery flow and runtime wiring.
+
+Active RECOVERY65: bounded exact classification/tests, durable recovery evidence,
+authorized legacy-operation recovery/accepted-correction preservation, resume
+and long-offline/restart/lost-ack/denied-permission cases. Full runtime recovery
+is NOT complete. New necessary schemas remain preparation-only and must be shown
+with exact target/change before application. No live changes or deployment here.
+
+Parallel POLICY66: native rules request schemas strip valid device proof and one
+save schema drops terminal/session context; preserve proofs and existing guards.
+Prevent editing unverified fallback defaults while retaining verified offline
+cache/pending-edit support. Worktree native-policy-proof-beta; tests and beta PR
+pending. This is not approval to change operator policy values.
+
+Parallel IMPORT67: formatted Excel numeric amounts/decimals and row/header mapping
+need reproducible fixes. Preserve original values/identifier text, expose errors
+at original rows/columns, handle missing cells without shifting and test large
+synthetic workbooks. Column N's header is not yet supplied; do not invent it.
+Worktree inventory-import-values-beta; implementation/tests and beta PR pending.
+
+Queued STOCK68: historical stock at selected date/time/actual shift close inside
+Inventory. Audit found item_activity_logs/stock_delta_applied are not proven
+complete (refund/absolute-stock paths, retention and effective-vs-recorded time).
+Need verified baseline/movement coverage and time/valuation decisions. No fake
+historical report or zero-data fallback. Core three fixes take priority; retain
+this unfinished task. Membership remains on hold.
+
+Retained earlier work: NATIVE-PROOF64 diagnostic preparation remains on
+codex/native-terminal-proof-diagnostic-beta at c7597596. It is not installed,
+published or verified on the affected PC. Device-proof cause must not be declared
+fixed from a green reachability/registration-presence check. Preserve that
+separate task and its original no-registration-rewrite approval boundary.
+
+Pending business decision for RECOVERY65: old missing cloud closings have no
+original frozen financial basis. Existing ORIGINAL/RECOUNT signatures cannot
+honestly represent them. Asked owner whether an actual Administrator may attest
+the saved legacy graph with explicit unavailable-historical-snapshot provenance;
+new protected/FIN62-required writes remain excluded from any such exception.
+Until answered, no legacy financial-admission exception is implemented or applied.
+
+Nonblocking source-audit follow-up from POLICY66: other validators named pinInput
+and closeInput in pos-rules.functions.ts omit native proof/context fields, but
+their actual native callers are not traced. This is unverified, not a confirmed
+runtime defect; do not expand PR397 or claim those paths verified from a keyword
+match. Trace them separately before proposing a scoped correction. Current
+rules get/save transport, branch/permission and offline-cache fixes remain the
+approved policy batch.
+
 ## SQL72 — one guarded existing-database upgrade, preparation
 
 Owner requires one local SQL file for existing PCs and exact database changes

@@ -9,6 +9,8 @@ import {
 } from "@/core/local-db/db-mode";
 import { LocalDatabaseWizard } from "@/platforms/windows/components/LocalDatabaseWizard";
 import { checkHealth, cloudDiagnosis } from "@/core/activation/connection-health";
+import { StartupShiftRecoveryReview } from "@/platforms/windows/components/StartupShiftRecoveryReview";
+import { TerminalLogin } from "@/platforms/web/components/pos/TerminalLogin";
 
 type DatabaseState = {
   enabled?: boolean;
@@ -161,6 +163,8 @@ function DatabaseStartupPage() {
             {state.detail?.error ?? "Check that SQL Server is running and the saved server is reachable."}
           </div>
         </div>
+
+        <StartupShiftRecoveryReview connected={state.connected === true && !state.tradingReady && !applyingMigration} renderLogin={view => <TerminalLogin view={view} />} />
 
         <div className="grid gap-3 sm:grid-cols-2">
           <Button disabled={busy || restoring} onClick={() => void retry()}>

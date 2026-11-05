@@ -3,6 +3,7 @@ const { canonical } = require("./repositories/aggregates.cjs");
 const { toCloudRow } = require("../sync/row-codec.cjs");
 const { recordId } = require("../sync/uuid-fields.cjs");
 const { validateCoverage } = require("../sync/shift-coverage.cjs");
+const { exactGraph, witnessBytes, stringifyExactJson } = require("../sync/shift-recovery-exact.cjs");
 
 const GRAPH_TABLES = [
   "shifts",
@@ -628,6 +629,8 @@ class ShiftIntentStore {
     return covered;
   }
   async adopt(transaction, graph) {
+    const exact = exactGraph(graph, graph.branchId, graph.shiftId);
+    if (witnessBytes(graph) && !exact) fail("The exact closing response changed before baseline adoption.", "ESYNC_GRAPH");
     await this.query(
       transaction,
       `MERGE dbo.pos_sync_shift_baselines WITH(HOLDLOCK) target
@@ -640,7 +643,7 @@ class ShiftIntentStore {
         shift: id(graph.shiftId),
         token: graph.graphToken,
         closed: graph.closedAtRaw,
-        graph: JSON.stringify(graph),
+        graph: exact ? stringifyExactJson(exact) : JSON.stringify(graph),
         generation: randomUUID(),
       },
     );
