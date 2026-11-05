@@ -1208,3 +1208,20 @@ An obsolete graph-carousel test was updated to the latest in-place graph rule;
 its category rail assertions remain. The original analytics reader, checkout,
 permissions, Main/IPC and database sources are unchanged. CI/hosted/installed
 acceptance, beta merge and any production promotion/publication remain separate.
+## REPORT70 — exact read-only report pagination, 5 November
+
+Management sales/shift pages must preserve SQL Server datetimeoffset(7) precision
+in their descending timestamp/ID cursors. JavaScript Date milliseconds are not a
+safe pagination boundary. The approved correction selects an internal exact SQL
+string, strips it from business rows, and preserves current authorization,
+completeness and privacy behavior. Only isolated fixtures may be changed during
+testing; no production database or configuration change is authorized. Session
+handover authorization races require a separate correction plan/approval.
+
+REPORT70 source is frozen after51 focused tests across7 suites, TypeScript,
+scoped lint and independent review passed. An opt-in wrapper separately passed
+both tests and all13 actual disposable SQL Server groups. SQL style127 may omit
+zero fractions/use UTC Z; exact SQL timestamp equality is the pagination proof,
+not a mandatory seven-digit display format. Public business dates still use the
+previous serialization. Full regression/CI/beta integration and installed-device
+acceptance remain separate; this is not a session-handover authorization fix.
