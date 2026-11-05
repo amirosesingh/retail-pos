@@ -1,7 +1,9 @@
+import { TradingChartCard } from "@/platforms/web/components/pos/TradingChartLayout";
+import { TradingRangePresets } from "@/platforms/web/components/pos/TradingRangePresets";
 import { useConfirmedPresentation } from "@/lib/use-confirmed-presentation";
 import { dashboardPageStores } from "@/lib/dashboard-scope";
 import { ShopComparisonCharts } from "@/platforms/web/components/pos/ShopComparisonCharts";
-import { comparisonShopSeries } from "@/lib/shop-comparison";
+import { comparisonShopSeries, comparisonHeaderHours } from "@/lib/shop-comparison";
 import { HomeShortcuts } from "@/platforms/web/components/pos/HomeShortcuts";
 import { FinancialBreakdown, GrossProfitInfo } from "@/platforms/web/components/pos/FinancialInfo";
 import { SummaryCardRail } from "@/platforms/web/components/pos/SummaryCardRail";
@@ -17,10 +19,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
-  ComposedChart,
   Legend,
-  Line,
-  LineChart,
   Pie,
   PieChart,
   ResponsiveContainer,
@@ -86,21 +85,9 @@ function LiveBoard() {
 
   const [from, setFrom] = useState(shift(29));
   const [to, setTo] = useState(isoDay(new Date()));
-  const [preset, setPreset] = useState<"today" | "7" | "30" | "custom">("30");
   const [topBy, setTopBy] = useState<"revenue" | "units">("revenue");
-  const [grain, setGrain] = useState<"daily" | "monthly">("daily");
-  const [financialView, setFinancialView] = useState<
-    "compare" | "revenue" | "cost" | "profit" | "marginPct"
-  >("compare");
-  const effectiveFinancialView = showCostMargin ? financialView : "revenue";
   const [picked, setPicked] = useState<string[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-
-  const applyPreset = (p: "today" | "7" | "30") => {
-    setPreset(p);
-    setTo(isoDay(new Date()));
-    setFrom(p === "today" ? isoDay(new Date()) : shift(p === "7" ? 6 : 29));
-  };
 
   const query = useQuery({
     queryKey: ["analytics-board", pageDataScope(user), currentStore.id, stores.map(store => store.id).sort().join("|"), effectiveTimeZone(), from, to],
@@ -239,6 +226,11 @@ function LiveBoard() {
   const confirmedCards = useConfirmedPresentation(allowed ? JSON.stringify([pageDataScope(user), storeIds, from, to, effectiveTimeZone(), filter ? [...filter].sort() : null]) : null,
     summaryCards, !!data && !query.isLoading && !query.isError);
 
+  const confirmedBoard = useConfirmedPresentation(allowed && storeIds.length > 0
+    ? JSON.stringify([pageDataScope(user), storeIds, from, to, effectiveTimeZone(), filter ? [...filter].sort() : null, showCostMargin]) : null,
+    data, !!data && !query.isLoading && !query.isError);
+  const transactionHours = useMemo(() => comparisonHeaderHours(confirmedBoard?.bills ?? []), [confirmedBoard]);
+
   if (!allowed) {
     return (
       <AppShell>
@@ -268,18 +260,7 @@ function LiveBoard() {
           </div>
           <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
 <ReportFilters title="Live Business Board filters"><div className="flex flex-wrap items-end gap-4">
-          <div className="flex gap-1">
-            {(["today", "7", "30"] as const).map((p) => (
-              <Button
-                key={p}
-                size="sm"
-                variant={preset === p ? "default" : "outline"}
-                onClick={() => applyPreset(p)}
-              >
-                {p === "today" ? "Today" : p === "7" ? "7 days" : "30 days"}
-              </Button>
-            ))}
-          </div>
+          <TradingRangePresets today={isoDay(new Date())} from={from} to={to} onChange={range => { setFrom(range.from); setTo(range.to); }} />
           <div className="space-y-1">
             <Label className="text-xs">From</Label>
             <Input
@@ -287,7 +268,6 @@ function LiveBoard() {
               value={from}
               onChange={(e) => {
                 setFrom(e.target.value);
-                setPreset("custom");
               }}
               className="h-9 w-40"
             />
@@ -299,7 +279,6 @@ function LiveBoard() {
               value={to}
               onChange={(e) => {
                 setTo(e.target.value);
-                setPreset("custom");
               }}
               className="h-9 w-40"
             />
@@ -364,214 +343,32 @@ function LiveBoard() {
           </p>
         )}
 
-        {data && !empty && (
+        {confirmedBoard && !empty && (
           <>
-            <div aria-label="Business graphs" className="grid min-w-0 gap-4 xl:grid-cols-2">
-              <section className="min-w-0 rounded-lg border border-border bg-card p-4">
-                <h2 className="mb-3 min-h-36 text-sm font-semibold">Revenue share by shop</h2>
-                <ResponsiveContainer width="100%" height={270}>
-                  <PieChart>
-                    <Pie
-                      data={shops}
-                      dataKey="revenue"
-                      nameKey="name"
-                      innerRadius={70}
-                      outerRadius={92}
-                      paddingAngle={2}
-                    >
-                      {shops.map((s) => (
-                        <Cell key={s.storeId} fill={shopColors.get(canonicalBranchId(s.storeId)) ?? branchChartColor(s.storeId)} />
-                      ))}
-                    </Pie>
-                    <Tooltip formatter={(v) => money(Number(v ?? 0))} />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
-              </section>
-              <section className="min-w-0 rounded-lg border border-border bg-card p-4">
-                <div className="mb-3 flex min-h-36 flex-wrap content-start items-center justify-between gap-2">
-                  <div>
-                    <h2 className="text-sm font-semibold">Financial performance by shop</h2>
-                    <p className="text-xs text-muted-foreground">
-                      Compare related measures or inspect one measure on its own scale.
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-1">
-                    {(
-                      [
-                        ["compare", "Compare"],
-                        ["revenue", "Revenue"],
-                        ["cost", "Cost"],
-                        ["profit", "Profit"],
-                        ["marginPct", "Margin %"],
-                      ] as const
-                    ).filter(([value]) => showCostMargin || value === "revenue").map(([value, label]) => (
-                      <Button
-                        key={value}
-                        size="sm"
-                        variant={effectiveFinancialView === value ? "default" : "outline"}
-                        onClick={() => setFinancialView(value)}
-                      >
-                        {label}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-                <ResponsiveContainer width="100%" height={270}>
-                  {effectiveFinancialView === "compare" ? (
-                    <ComposedChart data={shops} barCategoryGap="28%">
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                      <XAxis dataKey="name" fontSize={11} interval={0} />
-                      <YAxis yAxisId="left" fontSize={11} width={70} />
-                      <YAxis
-                        yAxisId="right"
-                        orientation="right"
-                        fontSize={11}
-                        unit="%"
-                        domain={[0, 100]}
-                        width={44}
-                      />
-                      <Tooltip
-                        formatter={(v, key) =>
-                          key === "Margin %"
-                            ? `${Number(v ?? 0).toFixed(1)}%`
-                            : money(Number(v ?? 0))
-                        }
-                      />
-                      <Legend />
-                      <Bar
-                        yAxisId="left"
-                        dataKey="revenue"
-                        name="Revenue"
-                        fill={ANALYTICS_COLORS.revenue}
-                        maxBarSize={38}
-                        radius={[4, 4, 0, 0]}
-                      />
-                      <Bar
-                        yAxisId="left"
-                        dataKey="cost"
-                        name="Cost"
-                        fill={ANALYTICS_COLORS.cost}
-                        maxBarSize={38}
-                        radius={[4, 4, 0, 0]}
-                      />
-                      <Bar
-                        yAxisId="left"
-                        dataKey="profit"
-                        name="Profit"
-                        fill={ANALYTICS_COLORS.profit}
-                        maxBarSize={38}
-                        radius={[4, 4, 0, 0]}
-                      />
-                      <Line
-                        yAxisId="right"
-                        type="monotone"
-                        dataKey="marginPct"
-                        name="Margin %"
-                        stroke={ANALYTICS_COLORS.margin}
-                        strokeWidth={2}
-                        dot={{ r: 3 }}
-                      />
-                    </ComposedChart>
-                  ) : effectiveFinancialView === "marginPct" ? (
-                    <LineChart data={shops} margin={{ left: 8, right: 18 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                      <XAxis dataKey="name" fontSize={11} interval={0} />
-                      <YAxis domain={[0, 100]} unit="%" fontSize={11} width={48} />
-                      <Tooltip formatter={(value) => `${Number(value ?? 0).toFixed(1)}%`} />
-                      <Line
-                        type="monotone"
-                        dataKey="marginPct"
-                        name="Margin %"
-                        stroke={ANALYTICS_COLORS.margin}
-                        strokeWidth={3}
-                        dot={{ r: 4 }}
-                      />
-                    </LineChart>
-                  ) : (
-                    <BarChart data={shops} barCategoryGap="38%" margin={{ left: 8, right: 18 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                      <XAxis dataKey="name" fontSize={11} interval={0} />
-                      <YAxis fontSize={11} width={70} />
-                      <Tooltip formatter={(value) => money(Number(value ?? 0))} />
-                      <Bar
-                        dataKey={effectiveFinancialView}
-                        name={effectiveFinancialView[0].toUpperCase() + effectiveFinancialView.slice(1)}
-                        fill={
-                          effectiveFinancialView === "revenue"
-                            ? "var(--primary)"
-                            : effectiveFinancialView === "cost"
-                              ? "var(--muted-foreground)"
-                              : "var(--success)"
-                        }
-                        maxBarSize={56}
-                        radius={[5, 5, 0, 0]}
-                      />
-                    </BarChart>
-                  )}
-                </ResponsiveContainer>
-              </section>
-
-              <section className="min-w-0 rounded-lg border border-border bg-card p-4">
-                <h2 className="mb-3 min-h-36 text-sm font-semibold">Where the money went</h2>
-                <ResponsiveContainer width="100%" height={270}>
-                  <BarChart data={shops} barCategoryGap="30%">
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="name" fontSize={11} interval={0} />
-                    <YAxis fontSize={11} width={64} />
-                    <Tooltip formatter={(v) => money(Number(v ?? 0))} />
-                    <Legend />
-                    {showCostMargin && <Bar dataKey="profit" stackId="m" name="Kept as profit" fill={ANALYTICS_COLORS.profit} />}
-                    <Bar
-                      dataKey="itemDiscount"
-                      stackId="m"
-                      name="Item discounts"
-                      fill={ANALYTICS_COLORS.discount}
-                    />
-                    <Bar
-                      dataKey="billDiscount"
-                      stackId="m"
-                      name="Bill discounts"
-                      fill={ANALYTICS_COLORS.discount}
-                      fillOpacity={0.75}
-                    />
-                    <Bar dataKey="coupon" stackId="m" name="Coupons" fill="var(--warning)" />
-                    <Bar
-                      dataKey="focValue"
-                      stackId="m"
-                      name="Free items"
-                      fill={ANALYTICS_COLORS.discount}
-                      fillOpacity={0.45}
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
-              </section>
-
-            <section className="rounded-lg border border-border p-4">
-              <div className="mb-3 flex min-h-36 flex-wrap content-start items-center justify-between gap-2">
-                <h2 className="text-sm font-semibold">{showCostMargin ? "Revenue and profit trend" : "Revenue trend"}</h2>
-                <div className="flex gap-1">
-                  <Button
-                    size="sm"
-                    variant={grain === "daily" ? "default" : "outline"}
-                    onClick={() => setGrain("daily")}
-                  >
-                    Daily
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={grain === "monthly" ? "default" : "outline"}
-                    onClick={() => setGrain("monthly")}
-                  >
-                    Monthly
-                  </Button>
-                </div>
-              </div>
-              <ShopComparisonCharts rows={data?.storeDays ?? []} directory={allStores}
-                selectedIds={filter ? [...filter] : storeIds} showProfit={showCostMargin} grain={grain}
-                scopeLabel={filter ? "Selected authorized shops" : "All authorized company shops"} />
-            </section>
-            </div>
+            {confirmedBoard && <ShopComparisonCharts rows={confirmedBoard.storeDays} directory={allStores}
+              selectedIds={filter ? [...filter] : storeIds} showProfit={showCostMargin}
+              range={{ from, to }}
+              transactionHours={transactionHours} profitHours={confirmedBoard.hourlyRows ?? null}
+              hourlyError={showCostMargin && !confirmedBoard.hourlyRows ? (confirmedBoard.hourlyIssue ?? "A verified hourly cost report has not loaded.") : undefined}
+              financialRows={shops.map(shop => ({ ...shop, id: shop.storeId }))}
+              scopeLabel={filter ? "Selected authorized shops" : "All authorized company shops"}>
+              {shops.some(shop => Math.abs(shop.revenue) >= 0.005) && <TradingChartCard title="Revenue share by shop" description="Net revenue share for the selected authorized shops and dates.">
+                <ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={shops} dataKey="revenue" nameKey="name" innerRadius={64} outerRadius={88} paddingAngle={2}>
+                  {shops.map(shop => <Cell key={shop.storeId} fill={shopColors.get(canonicalBranchId(shop.storeId)) ?? branchChartColor(shop.storeId)} />)}
+                </Pie><Tooltip formatter={value => money(Number(value ?? 0))} /><Legend /></PieChart></ResponsiveContainer>
+              </TradingChartCard>}
+              {shops.some(shop => Math.abs(shop.givenAway) >= 0.005) && <TradingChartCard title="Where the money went" description="Discounts, coupons and free-item value are already reflected in revenue.">
+                <ResponsiveContainer width="100%" height="100%"><BarChart data={shops} barCategoryGap="30%">
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="name" fontSize={11} /><YAxis fontSize={11} width={58} />
+                  <Tooltip formatter={value => money(Number(value ?? 0))} /><Legend />
+                  {showCostMargin && <Bar dataKey="profit" stackId="giveaway" name="Kept as profit" fill={ANALYTICS_COLORS.profit} isAnimationActive={false} />}
+                  <Bar dataKey="itemDiscount" stackId="giveaway" name="Item discounts" fill={ANALYTICS_COLORS.discount} isAnimationActive={false} />
+                  <Bar dataKey="billDiscount" stackId="giveaway" name="Bill discounts" fill={ANALYTICS_COLORS.discount} fillOpacity={0.75} isAnimationActive={false} />
+                  <Bar dataKey="coupon" stackId="giveaway" name="Coupons" fill="var(--warning)" isAnimationActive={false} />
+                  <Bar dataKey="focValue" stackId="giveaway" name="Free items" fill={ANALYTICS_COLORS.discount} fillOpacity={0.45} isAnimationActive={false} />
+                </BarChart></ResponsiveContainer>
+              </TradingChartCard>}
+            </ShopComparisonCharts>}
             <div className="min-w-0">
               <section className="min-w-0 rounded-lg border border-border p-4 xl:col-span-7">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">

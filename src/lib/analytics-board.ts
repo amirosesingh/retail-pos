@@ -52,6 +52,9 @@ export type BoardData = {
   liveStoreIds: string[];
   /** Local SQL contains this terminal branch, not the full group. */
   localOnly?: boolean;
+  /** Actual authorized hourly cost facts; absence must not be inferred from daily totals. */
+  hourlyRows?: import("./shop-comparison").StoreHourRow[];
+  hourlyIssue?: string;
 };
 
 /** Current branch names win; sale snapshots only retain names for deleted branches. */
@@ -168,6 +171,8 @@ async function fetchBoardData(from: string, to: string, storeIds?: readonly stri
       storeNames: resolveStoreNames(directory.map(row => ({ id: row.id, name: row.name, code: row.code })), bills.map(row => ({ store_id: row.store_id, store_name_snapshot: row.store_name_snapshot }))),
       liveStoreIds: directory.filter(row => row.is_active !== false).map(row => canonicalBranchId(row.id)),
       localOnly: true,
+      ...(result.hourlyRows ? { hourlyRows: result.hourlyRows.filter(row => allowed(row.store_id)).map(row => ({ store_id: canonicalBranchId(row.store_id),
+        hour: n(row.hour), bills: n(row.bills), revenue: n(row.revenue), cost: n(row.cost), profit: n(row.profit) })) } : {}),
     };
   }
   const [storeRes, itemRes, billRes, directoryRes] = await Promise.all([

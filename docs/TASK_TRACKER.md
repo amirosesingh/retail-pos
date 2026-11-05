@@ -1,3 +1,41 @@
+## 6 November — CHART72 approved implementation
+
+Resume the approved chart consistency batch from clean beta3074a475 in separate
+codex/chart-consistency-beta. Preserve scopes and existing financial formulas:
+selected-branch Dashboard; selected-cluster/all-authorized All Shops; authorized
+company Board; normal terminal stays branch locked. New owner direction replaces
+graph horizontal/infinite scrolling with a hidden-scrollbar VERTICAL chart grid,
+two columns on large screens and one on phones, equal card/fixed plot heights.
+Separate revenue/profit shop-colored trends, daily/monthly grouping, Today/15/20
+day/custom date windows, cost+grossprofit stacked to revenue with Margin%, and
+actual transactions/profit by hour are in scope. Summary-card rails are unchanged.
+
+Inspection confirmed Dashboard and All Shops already have complete date-bounded
+sales and captured line costs, so their hourly charts need no extra reads.
+Board has daily aggregates and bill headers only; daily-cost apportionment would
+be false. Prepare any required bounded hourly aggregate and exact SQL separately,
+with existing account/terminal/branch/cost authorization and no live application.
+Coordinate native Main changes with the agent owning stock/recovery; do not edit
+shared Main concurrently. Use shared chart presentation, keep errors/incomplete
+data truthful, and test branch/cluster/range/cost denial, zero/loading states,
+small/large renders and existing checkout/report regressions. No financial writes,
+grants, operator configuration, deployment or production release is authorized by
+this preparation. Membership stays ON HOLD.
+
+CHART72 first source checkpoint: shared fixed-height vertical charts, separate
+shop revenue/profit trends and actual hourly grouping prepared. Dashboard and
+All Shops reuse their existing bounded complete receipts. Board transaction
+counts use actual bill times; hourly profit remains explicitly unavailable until
+its bounded cost read succeeds. Native SQL reuses #facts and never returns its
+private per-bill cost evidence; Main supplies/rechecks current cost authority and
+rejects session/branch handover. No renderer flag grants access. Existing scopes,
+daily calculations, financial comparison measure choices and sponsorship chart
+remain preserved. All Shops waits for actual lifetime totals/inventory readiness
+before showing shop cards, retaining the loaded zero-shop exception.48 focused
+scope/value/permission tests and TypeScript passed. Actual SQL, responsive
+rendering, full regression and cloud hourly read preparation remain pending.
+No live database or deployment occurred.
+
 FIN62 cloud phase: PR391d15be0af allrequiredCIpassed. Ownerapproved exactdecimalv2 NEWactions only/final2dp halfawayzero; preserveoldacceptedhistory. Activeindependentnative/PGmath implementations, safecomplete-server-baseline receipts and financialauthor-domain foundation. Actualfinancialoperationauthor/writercapture and historical admission wiring remain open; no synthetic authorized flag/GUC or unverifiedclientrowlist may claim authority. All cloud/local DBapplication deferredEND exactbundleapproval. No finalcloudmigration applied or existingfinancialamountsrewritten.
 
 FIN62 known-snapshot preparation verification: seven disposableLocalDB metadata-upgrade groups and20 SQLServer financial-basis groups passed, fixturescleaned. Independent review corrected IGNORE_DUP_KEY/physicalindex guard, canonicalUUIDtextorder, and transaction-preserving rejectedcaller behavior. Native prototype exposes expectedNativeRaw with scale12/formulaversion rather than claiming parity with PostgreSQL2dp wiremoney. Shared final monetary canonicalization/admission binding remain pending; no runtime activation or database application. Candidate025 hash updated in final-bundle document. Decision/preparationfiles are queued for PR391 update, not automatic migration discovery.
