@@ -1518,3 +1518,22 @@ hosting environment, not device overrides or hardcoded credentials. DEV76 extend
 the already existing development-only shared-protocol loader to its exact public
 financial/recovery companions after an actual local SSR failure; no wire behavior
 or deployed/native security protocol is changed.
+
+## Native approval release evidence — 6 November
+
+PR415's frozen approval runtime passed full6,064/10skip/0fail regression and all
+required remote checks. Actual owned Electron cashier/manager-PIN last-unit
+payment produced one durable16 sale/4 discount, one approval audit/journal/
+receipt, preserved all earlier fixture sales and foreign stock, and survived
+cold restart without duplication. Actual customer-display preload and generic
+cashier writes remain denied; no session elevation was used. Only the exact
+owner/GUID-verified synthetic profile was used, never real POS_Local/cloud data.
+
+This establishes the offline path only. Do not claim real hosted enrollment,
+Android credential acceptance, stronger inherited cloud audit-content ACKs or a
+fixed activity-log shutdown issue from that evidence. Earlier fixture windows
+were killed after failed close attempts; the initiating cause remains unknown.
+The final controlled fixture teardown exited0 after durable readback. The newer
+beta development-loader integration changes no approval/runtime bytes; require
+final-head CI before beta merge. Production and installer publication remain
+separately gated.

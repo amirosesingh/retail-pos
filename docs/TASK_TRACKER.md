@@ -6048,3 +6048,52 @@ actual Vite SSR failure/recovery and native/ESM signed-message/invalid-input
 parity for all four modules. TypeScript, scoped ESLint and diff checks pass.
 Independent agent source review found no blocker. Required CI and actual
 configured preview reload remain pending; no beta/main merge or publication.
+
+### Native approval final device acceptance and beta refresh — 6 November
+
+PR415 frozen runtime bdcd8f82b706b9a62ae38c802102fae2aceb3a46 passed all required
+remote checks (Role & permission, Android, Windows, iOS, labels and Workers;
+CodeRabbit skipped under the owner's instruction). Its clean exact-source full
+regression passed6,064 tests/10 skipped/zero failures of6,074. TypeScript and
+scoped lint passed with zero errors; actual SQL19 CI/20 BIN2 and six real shared
+React/Radix groups passed as recorded above.
+
+Final owned-device evidence used only synthetic database
+Retail_DeviceAcceptance_20261105_8b1cb17b_A1, GUID
+706e15a6-e274-41ec-a036-524b1cf553e7, with the pre-existing owner marker, sealed
+synthetic registration and dedicated test profile rechecked before actions.
+No real POS_Local or cloud business row was used. Actual cashier UI sign-in,
+20% manager approval PIN, Main-generated audit and a last-unit card payment all
+completed through the real Main/preload/register code. The one new bill is
+TSTA-WIN38-20261106-0001: total16, discount4, manager linked. Durable SQL readback
+shows seven sales/items/payments/sale receipts (the six earlier synthetic sales
+preserved), exactly one approval audit/journal/receipt for the new bill, own
+TEST-0001 stock1 to0, foreign fixture stock9 unchanged and zero active user
+transactions. A later cold restart/readback preserved those exact records with
+no duplicate or stock effect. Real post-restart Main PIN verification bound the
+fixture staff account; the hidden-window UI animation timings were not used to
+claim additional UI acceptance.
+
+The actual separate customer-display BrowserWindow/preload and the ordinary
+cashier generic aggregate both received EPRIVILEGE; the former returned the
+POS-window-only denial and did not change the Main session epoch. This confirms
+installed sender admission, while the isolated unit test retains its separate
+idle-timeout check. Only the signed-out/idle synthetic test app was then torn
+down; process exit0 was observed and all persisted evidence retained.
+
+Limits: the network-isolated synthetic profile is an offline acceptance test,
+not real hosted authorization/enrollment or Android credential acceptance. Two
+earlier visible fixture sessions received close attempts with activity-log flush
+errors and were then killed with exit1; the initiating cause is not established
+and is not represented as an approval-code crash or a resolved shutdown defect.
+Final payment SQL acceptance was confirmed before and after restart. The test
+harness's missing require/global, stale scratch commands, new-origin display-name
+preference and hidden-window animation waits were handled only in ignored test
+artifacts; no product guard, real queue, registration or permission was bypassed.
+
+Verified newer beta91f4961a was integrated at7e7dd2cd with no conflicts. It adds
+only the reviewed development-loader correction and its records/tests; the
+approval, checkout helper and native runtime bytes remain identical to bdcd8f82.
+All184 focused tests across ten approval/authority/pricing/tax/receipt/interop
+suites pass on that integration. Final pushed-head CI remains required; no
+production promotion, publication or operator database upgrade was performed.
