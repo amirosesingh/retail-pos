@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '..');
 const cloudPath = 'supabase/migrations/20261105090000_shift_financial_known_history.sql';
 const manifestPath = 'docs/database/shift-financial-upgrade-manifest.json';
+const targetPath = 'docs/database/shift-financial-upgrade-target.json';
 const modules = [
   ['shift-financial-math-postgres.sql', false],
   ['shift-financial-cloud-receipts.sql', false],
@@ -23,6 +24,19 @@ const modules = [
 const canonical = text => text.replaceAll('\r\n', '\n').trimEnd() + '\n';
 const sha256 = text => crypto.createHash('sha256').update(text, 'utf8').digest('hex').toUpperCase();
 const read = relative => canonical(fs.readFileSync(path.join(root, relative), 'utf8'));
+function validateReviewTarget(value) {
+  assert(value && typeof value === 'object' && !Array.isArray(value), 'Missing approval target');
+  assert.deepEqual(Object.keys(value).sort(), ['database','organizationId','project','projectId','url']);
+  assert(/^[a-z0-9]{20}$/.test(value.organizationId) && /^[a-z0-9]{20}$/.test(value.projectId), 'Invalid approval identity');
+  assert(typeof value.project === 'string' && value.project.length > 0 && value.project.length <= 128, 'Invalid project label');
+  assert.equal(value.database, 'postgres');
+  const url = new URL(value.url);
+  assert.equal(url.protocol, 'https:');
+  assert.equal(url.hostname, value.projectId + '.supabase.co');
+  assert.equal(url.origin, value.url, 'Approval URL must be a bare canonical origin');
+  assert(!url.username && !url.password && !url.port && !url.search && !url.hash, 'Invalid approval URL');
+  return value;
+}
 function moduleBody(text, wrapped) {
   const beginnings = [...text.matchAll(/^BEGIN;$/gm)], endings = [...text.matchAll(/^COMMIT;$/gm)];
   assert.equal(beginnings.length, wrapped ? 1 : 0, 'Unexpected transaction boundary');
@@ -81,7 +95,8 @@ function outputs() {
   const artifacts = [{ file: cloudPath, text: cloud.sql }, ...local.map(({file, text}) => ({file, text}))];
   const manifest = {
     status: 'candidate_not_approved_not_applied', encoding: 'UTF-8, LF, no BOM',
-    cloudTarget: { organizationId: 'bjxgimekljzlnwejuawj', project: 'pos', projectId: 'qhrufhtbeguxydenzfey', url: 'https://qhrufhtbeguxydenzfey.supabase.co', database: 'postgres' },
+    // Documentation input only: never used to connect or configure the app.
+    cloudTarget: validateReviewTarget(JSON.parse(read(targetPath))),
     localTarget: 'Identify and approve each actual SQL Server/database separately. Never infer it from this manifest.',
     sources: cloud.sources,
     artifacts: artifacts.map(({file, text}) => ({file, sha256: sha256(text), bytes: Buffer.byteLength(text, 'utf8')})),
@@ -98,4 +113,4 @@ if (require.main === module) {
     console.log(file + ' ' + sha256(text));
   }
 }
-module.exports = { renderCloudUpgrade, outputs };
+module.exports = { renderCloudUpgrade, outputs, validateReviewTarget };

@@ -32,6 +32,9 @@ scripts/preparation/025_shift_financial_bases.sql currently proposes ONLY dbo.po
 The historical hashes above are superseded by the UTF-8/LF artifacts in
 `shift-financial-upgrade-manifest.json`. Generate/check with
 `scripts/generate-shift-financial-upgrade.cjs --write` / `--check`.
+The explicit approval target is documentation input in
+`shift-financial-upgrade-target.json`; the generator validates it and never uses
+it for a connection. Application configuration remains operator/hosting supplied.
 
 | Artifact | Exact SHA256 |
 | --- | --- |
