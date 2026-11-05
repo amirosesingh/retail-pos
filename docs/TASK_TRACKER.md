@@ -395,6 +395,46 @@ approved policy batch.
 
 ## SQL72 — one guarded existing-database upgrade, preparation
 
+Latest owner scope: the urgent 1.4.82 deliverable is ONE plain local SQL Server
+PC upgrade file containing025–030 only. Unfinished stock031 is excluded and kept
+as a future separate upgrade. This does not authorize Supabase execution or any
+live PC update. Preserve populated installed025–027, migration records, pending
+queues/checkpoints, settings, permissions and all business values. Exact final
+artifact hash and actual PC target approval remain required before application.
+
+SQL72 now incorporates beta57fe48a4 at preparation headc3c1cddc. The only merge
+conflict was additive tracker text; both histories are retained. Frozen recovery
+and checkout runtime matches beta. Packaging-only catalogue capture on an owned
+full Retail fixture verified84 SQL tables including all70 registry/domain tables,
+then cross-checked existing runtime metadata preflights for025/026/028/029/030.
+The manifest retains engine/collation provenance, canonical source hashes,
+inherited versus explicit collations and semantic metadata without object IDs.
+Generic SQL recognition compares exact typed, binary-ordered catalogue fields.
+Only reviewed structural CRLF/LF variants outside quoted literals and generated
+constraint names are normalized; literal content and index key order stay exact.
+No original runtime validator/export was changed. Full inspectable catalogue rows
+and per-category SHA256 fingerprints are independently cross-checked.
+
+The standalone generated file is a preparation candidate, not yet accepted:
+full existing-data, installed-module rerun, corrupt/partial shape, late rollback
+and concurrent maintenance tests are running on uniquely owned LocalDB. An
+initial execution never started because automatic permission review timed out;
+the permitted retry started successfully. No operator database was accessed.
+
+Current one-file SHA256 is
+090F24031A07660C2D36512D2B38197A06491BB28408CCAAFDBB66FC400A4730.
+Packaging10/10, scoped lint and independent Ubuntu-LF/Windows-CJS-CRLF parity
+pass. Artifact/manifest and only5 additional actual source paths are LF-pinned;
+the original SQL source Git blobs are unchanged. Quoted CR reconstruction starts
+with explicit nvarchar(max) to prevent truncation. Final exact-byte acceptance
+passes28 full-schema SQL groups on CI/BIN2 defaults (including6002-character
+quoted-CR reconstruction), plus4 original transaction-composition groups. Every
+owned fixture was cleaned. The27-group predecessor is historical only. Initial
+typed comparisons hit the60-second fixture budget; binary JSON fingerprints
+reduce valid apply/rerun to about10/5 seconds without raising any timeout.
+Unknown/literal-case/Unicode/escape/NULL/index/trigger/owner differences remain
+reject cases; no weak or version-only skipping is introduced.
+
 Owner requires one local SQL file for existing PCs and exact database changes
 before live application. Separate branch codex/consolidated-sql-upgrade-1482-beta
 starts from beta8b1cb17b. Packaging must retain the reviewed financial/sharing

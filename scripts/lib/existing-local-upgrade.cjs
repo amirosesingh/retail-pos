@@ -3,9 +3,35 @@
 const assert = require("node:assert/strict");
 const { createHash } = require("node:crypto");
 const { SESSION_OPTIONS, TARGET_GUARD } = require("../../electron/db/installer-source.cjs");
-const canonical = text => String(text).replaceAll("\r\n", "\n").trimEnd() + "\n";
+function structuralNewlines(text,newline='\n'){
+ if(text===null)return null;assert(typeof text==='string');let output='',state='normal',depth=0;
+ for(let i=0;i<text.length;i++){
+  const c=text[i],next=text[i+1];
+  if(['single','double','bracket'].includes(state)){
+   output+=c;const end=state==='single'?"'":state==='double'?'"':']';
+   if(c===end){if(next===end){output+=next;i++;}else state='normal';}continue;
+  }
+  if(c==='\r'&&next==='\n'||c==='\n'){output+=newline;if(c==='\r')i++;if(state==='line')state='normal';continue;}
+  if(state==='line'){output+=c;continue;}
+  if(state==='block'){
+   if(c==='/'&&next==='*'){depth++;output+='/*';i++;}else if(c==='*'&&next==='/'){depth--;output+='*/';i++;if(!depth)state='normal';}else output+=c;continue;
+  }
+  if(c==='-'&&next==='-'){state='line';output+='--';i++;continue;}
+  if(c==='/'&&next==='*'){state='block';depth=1;output+='/*';i++;continue;}
+  if(c==="'")state='single';else if(c==='"')state='double';else if(c==='[')state='bracket';output+=c;
+ }
+ assert(!['single','double','bracket','block'].includes(state),'Unterminated SQL metadata source');return output;
+}
+const canonical = text => structuralNewlines(String(text)).trimEnd() + "\n";
 const digest = text => createHash("sha256").update(text, "utf8").digest("hex").toUpperCase();
 const literal = text => "N'" + text.replaceAll("'", "''") + "'";
+function executeSql(text) {
+  if (!text.includes("\r")) return "EXEC sys.sp_executesql " + literal(text) + ";";
+  // Keep the distributed file LF-only without changing a quoted CR byte in
+  // the reviewed module. MAX at the start prevents intermediate truncation.
+  const expression = "CONVERT(nvarchar(max),N'')+" + text.split("\r").map(literal).join("+NCHAR(13)+");
+  return "EXEC sys.sp_executesql " + literal("DECLARE @reviewedSource nvarchar(max)=" + expression + ";\nEXEC sys.sp_executesql @reviewedSource;") + ";";
+}
 
 function nestedModule(module) {
   assert(module && /^[0-9]{3}_[a-z0-9_]+$/.test(module.id), "Invalid upgrade module identity");
@@ -57,14 +83,15 @@ function renderExistingLocalUpgrade({ version, modules, coreValidation }) {
     " EXEC @metadataLock=sys.sp_getapplock @Resource=N'RetailExistingMetadataUpgrade',@LockMode='Exclusive',@LockOwner='Transaction',@LockTimeout=3000;",
     " IF @metadataLock<0 THROW 51028,'Another database update is running; no update was applied.',1;",
     " -- Validate the existing core before any new metadata is created.",
-    " EXEC sys.sp_executesql " + literal(coreValidation) + ";",
+    " " + executeSql(coreValidation),
     ...prepared.flatMap(module => [
       `-- Module ${module.id}; reviewed canonical LF source SHA256 ${module.canonicalHash}`,
       " IF @@TRANCOUNT<>1 OR XACT_STATE()<>1 THROW 51028,'Upgrade transaction ownership changed.',1;",
-      " EXEC sys.sp_executesql " + literal(module.body) + ";",
+      " " + executeSql(module.existingValidation ?
+        `IF NOT(${module.existsSql})\nBEGIN\n${executeSql(module.body)}\nEND;\n${module.existingValidation}` : module.body),
       " IF @@TRANCOUNT<>1 OR XACT_STATE()<>1 THROW 51028,'A metadata module did not complete its transaction.',1;",
     ]),
-    " EXEC sys.sp_executesql " + literal(coreValidation) + ";",
+    " " + executeSql(coreValidation),
     " COMMIT TRANSACTION;",
     ` SELECT CONVERT(nvarchar(128),SERVERPROPERTY('ServerName')) server_name,DB_NAME() database_name,CONVERT(varchar(36),database_guid) database_guid,N'${version}' application_version,N'Completed; no activation performed' result FROM sys.database_recovery_status WHERE database_id=DB_ID();`,
     "END TRY",
@@ -75,4 +102,4 @@ function renderExistingLocalUpgrade({ version, modules, coreValidation }) {
   ].join("\n"));
   return { sql, sha256: digest(sql), sources: prepared.map(({ id, rawHash, canonicalHash }) => ({ id, rawHash, canonicalHash })) };
 }
-module.exports = { canonical, digest, nestedModule, renderExistingLocalUpgrade };
+module.exports = { canonical, structuralNewlines, digest, nestedModule, renderExistingLocalUpgrade };
