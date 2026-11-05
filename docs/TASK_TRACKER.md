@@ -15,6 +15,45 @@ FIN62 isolated SQL basis prototype: complete selected-branch/shift inputs and ex
 
 ## FIN62 — owner-approved shift financial/as-of validation correction
 
+## 5 November permanent-rule update and current task index
+
+Owner approved updating AGENTS.md without overwriting existing instructions.
+Added coordinated durable synchronization/long-offline safety, bounded scoped
+database calls, exact import values, evidence-based historical reporting,
+truthful progress and approved-scope autonomy. Preserve all existing beta-first,
+production/database approval, branch/cluster, iOS-key and Membership rules.
+This instruction batch changes only AGENTS.md and the existing memory/tracker.
+
+Current completed integration: PR396 import parsing/decimal/row mapping merged
+beta73c002ae; PR397 native proof, offline policy/cache/upgrade and truthful503
+handling merged beta e4be3768. Each exact head passed required checks; merge
+trees equal reviewed heads. Final combined regression5,729 passed/7 skipped.
+Installed Electron/mobile and original customer workbook acceptance remain
+unverified. Production PR354 is closed/merged and v1.4.81 is already published;
+do not reuse its approval for a new promotion or call new beta fixes published.
+
+Pending RECOVERY65 (draftPR395): full runtime durable recovery/evidence/CAS/
+acknowledgement integration and installed offline/reconnect verification. Older
+unsigned closings lack original financial snapshots; owner was asked whether an
+actual Administrator may attest them as explicitly unverified historical
+recovery. No such financial-admission exception is approved or implemented yet.
+No manual cloud copying, registration/checkpoint reset or queue clearing.
+
+Queued STOCK68: Inventory stock at selected date ANDtime/actual shift close,
+with explicit zone and truthful coverage. Existing movement history is not proven
+complete; no fabricated past quantities/current-price historical valuation.
+Owner was asked actual effective-time stock versus information known to cloud
+at that earlier time. This decision remains pending; core fixes take priority.
+
+Retain NATIVE-PROOF64: diagnostic preparation c7597596 on its separate branch is
+not installed/published or verified on the affected PC. Green reachability is
+not proof native device binding matches. A separate unverified follow-up traces
+other pos-rules pin/close validators' callers before declaring a defect.
+
+Membership and the separately tracked booking-deposit attribution correction
+remain on hold/pending respectively. New production promotion, exact database
+application and installer publication remain separate gates, not implied by CI.
+
 4 November: owner approved agents completing production checks and fixing authoritative shift-total/refund validation, preserving checkout/permissions. Exact local/cloud database changes must be shown before application; no live schema/data change is approved by preparation. Baseline beta68470185; isolated branch codex/shift-financial-validation-beta. Confirmed gap: graph/author validation proves internal consistency/actor, not expected tenders against authoritative sale inputs. Current mutable sale journal cannot reconstruct historical offline refund state. Do not compare old closing against current cloud totals or invent refund timestamps.
 
 Approved business decisions: validate ORIGINAL closing using financial inputs at its saved point; each later administrator recount/correction uses its own saved financial boundary. Preserve all prior audit/accepted receipts and latest accepted authorized correction. Booking deposit/payment-when-received attribution is a SEPARATE pending correction, not part of FIN62. Preserve current tender formula and original-shift refund attribution in this batch; do not silently implement a new cash-flow allocation rule.
