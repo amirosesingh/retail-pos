@@ -7103,3 +7103,21 @@ zero-delta catalogue births, selected-baseline membership and time-grade limits.
 No frontier/publisher code or new signing purpose is activated. Root is reviewing
 practical accepted-ledger vs strict physical-clock completeness semantics and
 source-writer mapping.031 remains draft/outside consolidated SQL.
+
+STOCK401 next bounded preparation step: preserve the full original canonical
+source cohort when its known Main author cannot use the existing enrolled key
+or has lost the original action permission. Persist proof_json=NULL in the same
+original transaction; never re-sign it as a later uploader or grant acceptance.
+This changes only the cohort helper and isolated fixture, using existing optional
+031 columns/immutability. No schema, key/enrollment, business permission or ACK
+change. Unexpected/context/scope errors still abort; missing proof leaves report
+metadata pending and coverage incomplete. Current synthetic report UI passes all
+9 actual headless browser groups, including 1440/390 and scope revocation.
+
+Unsigned-source retention checkpoint: all65 actual disposable LocalDB groups,
+108 focused source/cohort tests, TypeScript and scoped lint pass. Missing enrolled
+key, lost original action permission and absent original cohort signer preserve
+the full original source manifest set/actor/time with proof_json=NULL. Restart
+cannot upload it as signed proof; the existing immutable trigger refuses later
+proof substitution. Unknown signer/context failures are not downgraded. No031
+DDL change, activation, key creation, business ACK change or real-data access.

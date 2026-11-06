@@ -366,6 +366,30 @@ const migration=fs.readFileSync(path.join(__dirname,'../database/sqlserver/prepa
  const changedSource=await restartedSources.sourceForBusiness(bulkOperation,'a','t',sourceBusinessBatch);
  await assert.rejects(restartedSources.acknowledgeSource(changedSource,{...sourceAck,stockSourceReceipts:[{...sourceAck.stockSourceReceipts[0],transactionId:'42'}]}));
  pass('source-retention restart/exact replay keeps one receipt; different transaction or scope cannot replace it or clear business work');
+ for(const mode of ['ESYNC_SHIFT_AUTHOR_KEY_MISSING','ESTOCK_AUTHOR_PERMISSION_REVOKED','absent-cohort-signer']){
+  const original=randomUUID(),source=randomUUID(),before=(await stock()).a;
+  const unavailable=()=>{throw Object.assign(new Error('Synthetic original proof unavailable'),{code:mode==='absent-cohort-signer'?'ESYNC_SHIFT_AUTHOR_KEY_UNAVAILABLE':mode});};
+  context.author={action:'ADJUST',signMovement:unavailable,...(mode==='absent-cohort-signer'?{}:{signSourceCohort:unavailable})};
+  await inTx(async tx=>{
+   const token=await store.begin(tx,[{kind:'update',table:'products',match:{id:pid},values:{stock_by_store:{a:before-1,b:1}}},
+    {kind:'insert',table:'stock_adjustments',rows:[{id:source,product_id:pid,store_id:'a',delta:-1}]}],{operationId:original,branchId:'a',terminalId:'t',kind:'stock'});
+   await new sql.Request(tx).input('source',source).input('stock',JSON.stringify({a:before-1,b:1})).batch(`INSERT dbo.stock_adjustments VALUES(@source,'${pid}',N'a',-1);UPDATE dbo.products SET stock_by_store=@stock WHERE id='${pid}';`);
+   assert.equal((await store.finish(tx,token)).captured,1);
+  });
+  assert.equal((await stock()).a,before-1);
+  const retained=(await pool.request().input('operation',original).query(`SELECT c.*,m.author_proof_json,m.ingested_cursor
+   FROM dbo.stock_history_source_cohorts c JOIN dbo.stock_history_movements m ON m.operation_id=c.operation_id WHERE c.operation_id=@operation;`)).recordset[0];
+  assert.equal(retained.proof_json,null);assert.equal(retained.author_proof_json,null);assert.equal(retained.ingested_cursor,null);
+  assert.equal(retained.accepted_batch_id,null);assert.equal(retained.actor_id,authorId);
+  const member=JSON.parse(retained.members_json)[0],manifest=await verifyStockSourceMembership(member,{root:retained.source_root,count:retained.source_count});
+  assert.equal(manifest.operationId,original);assert.equal(manifest.authorId,authorId);assert.deepEqual(manifest.document,{type:'stock_adjustments',id:source});
+  assert.deepEqual(manifest.sourceRefs,[['stock_adjustments',source,'-1']]);assert.equal(manifest.recordedAt,retained.recorded_at_raw);
+  const afterRestart=new StockHistoryOutbox(manager);
+  assert.equal(await afterRestart.sourceForBusiness(original,'a','t',randomUUID()),null);
+  const pending=await afterRestart.pending(c.uploadAggregateId(original,'a'),'a','t');assert.equal(pending.rows.length,1);assert.equal(pending.rows[0].sourceCohortJson,undefined);
+  await assert.rejects(pool.request().input('operation',original).input('proof',bulkCohort.proof_json).query('UPDATE dbo.stock_history_source_cohorts SET proof_json=@proof WHERE operation_id=@operation;'),error=>/STOCK_HISTORY_SOURCE_IMMUTABLE/.test(error.message));
+  pass('original full unsigned cohort retained without business rollback, later author substitution or false source ACK: '+mode);
+ }
  context.author=null;
  const cohortProduct=randomUUID(),cohortOperation=randomUUID();
  await pool.request().query("UPDATE dbo.stock_history_heads SET coverage_state=N'complete' WHERE store_id=N'a';");
