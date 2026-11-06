@@ -37,6 +37,16 @@ it('limits the serve transform to the canonical file and rejects changed export 
   expect(() => plugin.transform(`${source}\nmodule.exports = {};`, path)).toThrow('Unexpected shared shift protocol exports');
 });
 
+it.each(['\n','\r\n'])('admits only the reviewed complete stock frontier footer with %j checkout',async eol=>{
+  const plugin=shiftProtocolDevInterop();plugin.configResolved({root});
+  const file=resolve(root,'electron/security/stock-event-author-protocol.cjs');
+  const source=(await readFile(file,'utf8')).replaceAll('\r\n','\n').replaceAll('\n',eol);
+  expect(plugin.transform(source,file)?.code).toContain('unsignedStockCoverageFrontier,stockCoverageFrontierMessage,normalizeStockCoverageFrontierProof');
+  const footer=source.lastIndexOf('module.exports');
+  for(const changed of ['unsignedStockCoverageFrontier,','stockCoverageFrontierMessage,','normalizeStockCoverageFrontierProof'])
+    expect(()=>plugin.transform(source.slice(0,footer)+source.slice(footer).replace(changed,''),file)).toThrow('Unexpected shared shift protocol exports');
+});
+
 it('reproduces the real Vite SSR failure and preserves native protocol bytes after interop', async () => {
   const options = { configFile: false as const, root, logLevel: 'silent' as const,
     server: { middlewareMode: true, hmr: false as const, watch: null } };
@@ -87,6 +97,7 @@ it('loads the actual financial and recovery protocol dependency graph with uncha
   const opening = { ...openingFields, openingOrigin: { localAggregateId: uuid(8), rowHash: 'c'.repeat(64) } };
   const operation = { ...binding, operationId: uuid(9), action: 'SALE', payloadHash: 'd'.repeat(64) };
   const cohort={...binding,operationId:uuid(9),sourceDatabaseId:uuid(11),sourceSequence:'1',sourcePredecessorRoot:null,action:'ADJUST',sourceRoot:'a'.repeat(64),sourceCount:3};
+  const frontier={...binding,challengeId:uuid(12),frontierHash:'c'.repeat(64)};
   const recovery = { ...binding, shiftId: uuid(5), recoveryId: uuid(10), action: 'LEGACY_CLOSING_RECOVERY_V1', payloadHash: 'e'.repeat(64) };
   const payload = { version: 1, recoveryId: uuid(10), branchId: uuid(4), terminalId: uuid(2), shiftId: uuid(5), evidenceHash: 'f'.repeat(64), cloudWitnessHash: 'a'.repeat(64), reason: 'Review retained fixture closing', localGraphText: '[]', cloudGraphText: '[]', financialVerification: 'UNVERIFIED_HISTORICAL' };
   const signature = Buffer.alloc(64).toString('base64url');
@@ -103,6 +114,7 @@ it('loads the actual financial and recovery protocol dependency graph with uncha
       ['stockEventMessage', [{ ...operation, movementId: uuid(8) }]],
       ['normalizeStockEvent', [{ ...operation, movementId: uuid(8), signature }]],
       ['unsignedStockSourceCohort',[cohort]],['stockSourceCohortMessage',[cohort]],['normalizeStockSourceCohortProof',[{...cohort,signature}]],
+      ['unsignedStockCoverageFrontier',[frontier]],['stockCoverageFrontierMessage',[frontier]],['normalizeStockCoverageFrontierProof',[{...frontier,signature}]],
     ],
     'legacy-shift-recovery-protocol.cjs': [
       ['normalizeLegacyPayload', [payload]], ['unsignedLegacyRecovery', [recovery]],

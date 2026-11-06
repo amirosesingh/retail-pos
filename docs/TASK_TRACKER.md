@@ -7445,3 +7445,26 @@ window. Also prepare/test ONE transaction owner for the actual migration tool/
 ledger path before final hash review; current draft BEGIN/COMMIT wrappers must
 not be submitted blindly. No approved bytes may be stripped after approval.
 No data, stock, sales, permissions, queues, checkpoints or real keys changed.
+## 6 November — Stock PR401 exact-head CI correction
+
+Root delegated only the confirmed0a973684 CI failures after stock writer granted
+exclusive isolated ownership of the dev-interop helper and two boolean controls.
+Preserve the strict exact module/dependency/export boundary; recognize only the
+reviewed new stock frontier exports and structural LF/CRLF footer forms. Replace
+the arrival/period native checkboxes with the existing shared Switch, preserving
+default values, readiness, validation, label association, state invalidation and
+permissions. Update only affected browser selectors and focused regressions.
+No protocol-message/writer/SQL/key/grant or deployed-source changes. Stock writer
+owns integration and remote push after reviewing this separate commit. Required:
+real dev SSR/export/invalid-contract tests, shared-switch consistency, affected
+receiving/report UI cases and actual mounted14+19 groups, TSC/scoped lint.
+Verified on pinned Node22:67 tests across6 focused suites pass, including all
+three previously failed cases plus exact LF/CRLF/missing-export denial and native
+versus dev frontier-message byte parity. Actual mounted14 receiving and19 Stock
+report groups pass at1440/390 in light/dark with synthetic adapters; readiness,
+failed-save preservation, default values, scope loss, exact time and export
+denials stay intact. TSC/scoped ESLint pass; no source or test assertions are
+bypassed. Latest integrated401 full CI remains the stock writer's next gate.
+This integration is preservation only under the later owner deferral above.
+Stock401, all stock SQL/031 and activation/openings remain excluded from the
+current release. No new implementation or beta/production merge is authorized.

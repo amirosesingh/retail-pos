@@ -1,11 +1,13 @@
 import { resolve } from 'node:path';
 
 const authorNames = 'normalizeClosingStart, closingStartMessage, normalizeBinding, normalizeEnrollment, normalizeAttestation, enrollmentMessage, intentMessage';
+const stockNames = 'ACTIONS,unsignedStockEvent,stockEventMessage,normalizeStockEvent,unsignedStockSourceCohort,stockSourceCohortMessage,normalizeStockSourceCohortProof';
+const frontierNames = 'unsignedStockCoverageFrontier,stockCoverageFrontierMessage,normalizeStockCoverageFrontierProof';
 const contracts = [
   { file: 'shift-author-protocol.cjs', names: authorNames, footer: `module.exports = { ${authorNames} };`, bindingImport: false },
   { file: 'shift-financial-protocol.cjs', names: 'financialBasisMessage,normalizeFinancialBasisAttestation,openingFinancialBasisMessage,normalizeOpeningFinancialBasisAttestation', bindingImport: true },
   { file: 'financial-author-protocol.cjs', names: 'financialOperationMessage,normalizeFinancialAttestation', bindingImport: true },
-  { file: 'stock-event-author-protocol.cjs', names: 'ACTIONS,unsignedStockEvent,stockEventMessage,normalizeStockEvent,unsignedStockSourceCohort,stockSourceCohortMessage,normalizeStockSourceCohortProof', bindingImport: true },
+  { file: 'stock-event-author-protocol.cjs', names: `${stockNames},${frontierNames}`, footer: `module.exports={${stockNames},\n ${frontierNames}};`, bindingImport: true },
   { file: 'legacy-shift-recovery-protocol.cjs', names: 'ACTION, MAX_UPLOAD_BYTES, normalizeLegacyPayload, unsignedLegacyRecovery, normalizeLegacyRecovery, legacyRecoveryMessage, legacyRecoveryWire', bindingImport: true, spacedFooter: true },
 ];
 const normalizePath = value => value.replaceAll('\\', '/');
@@ -26,9 +28,12 @@ export function shiftProtocolDevInterop() {
     transform(source, id) {
       const contract = protocols.get(normalizePath(id.split('?')[0]));
       if (!contract) return null;
-      const footer = contract.footer ?? (contract.spacedFooter
+      const expectedFooter = contract.footer ?? (contract.spacedFooter
         ? `module.exports = { ${contract.names} };` : `module.exports={${contract.names}};`);
-      if (!source.trimEnd().endsWith(footer) || source.split('module.exports').length !== 2) {
+      // Permit the two structural checkout line endings, never a wildcard
+      // footer or a normalization of protocol source/literal contents.
+      const footer = [expectedFooter, expectedFooter.replaceAll('\n', '\r\n')].find(value => source.trimEnd().endsWith(value));
+      if (!footer || source.split('module.exports').length !== 2) {
         throw new Error('Unexpected shared shift protocol exports; review the development interop boundary.');
       }
       let body = source.slice(0, source.lastIndexOf(footer));

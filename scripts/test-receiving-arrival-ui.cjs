@@ -69,9 +69,9 @@ timeZone={m.zone} readCapability={f.readCapability} subscribeContext={subscribeA
       await page.route('**/*', route => route.request().url().startsWith(origin) ? route.continue() : route.abort());
       await page.goto(`${origin}/.tmp/receiving-arrival-ui/index.html`);
       if (dark) await page.evaluate(() => document.documentElement.classList.add('dark'));
-      await page.getByRole('checkbox', { name: 'Use the actual goods arrival time' }).waitFor(); return page;
+      await page.getByRole('switch', { name: 'Use the actual goods arrival time' }).waitFor(); return page;
     };
-    const check = page => page.getByRole('checkbox', { name: 'Use the actual goods arrival time' });
+    const check = page => page.getByRole('switch', { name: 'Use the actual goods arrival time' });
     const selectCustom = async page => { await check(page).check(); await page.getByLabel(/Actual arrival date and time/).fill('2026-11-06T09:02:03'); await page.getByLabel('Arrival-time reason').fill('Goods arrived before entry'); };
     const finalizeButton = page => page.getByRole('button', { name: 'Finalize fixture', exact: true });
     for (const width of [1440, 390]) for (const dark of [false, true]) {
@@ -153,7 +153,7 @@ timeZone={m.zone} readCapability={f.readCapability} subscribeContext={subscribeA
     }
     {
       const page = await fresh(); await selectCustom(page); await page.evaluate(() => window.fixture.set({ entry: 2, resumed: true }));
-      await page.waitForFunction(() => !document.querySelector('input[type=checkbox]').checked);
+      await page.waitForFunction(() => document.querySelector('[role=switch]')?.getAttribute('aria-checked') === 'false');
       assert.equal(await page.getByLabel('Arrival-time reason').count(), 0);
       passed++; console.log('PASS switching invoice drops prior arrival choice without autosave-ID coupling'); await page.close();
     }

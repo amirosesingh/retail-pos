@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Download, Loader2 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ThemedSelect } from "./ThemedSelect";
 import { useAuth } from "@/lib/pos-auth";
@@ -41,6 +42,7 @@ export function StockHistoryDialog({ open, onOpenChange, branchId, branchName }:
   const [value, setValue] = useState(() => stockDateTimeInput(new Date(), timeZone));
   const [mode, setMode] = useState("time"), [shiftId, setShiftId] = useState("");
   const [showPeriod, setShowPeriod] = useState(false);
+  const periodId = useId();
   const [choices, setChoices] = useState<StockTimeChoice[]>([]), [choice, setChoice] = useState("");
   const [page, setPage] = useState<StockHistoryPage | null>(null), [request, setRequest] = useState<StockHistoryRequest | null>(null);
   const [error, setError] = useState(""), [busy, setBusy] = useState(false), [exporting, setExporting] = useState(false);
@@ -138,8 +140,8 @@ export function StockHistoryDialog({ open, onOpenChange, branchId, branchName }:
             {shifts.error && <span role="alert" className="block text-xs text-destructive">{shifts.error}</span>}
           </Label>}
         </div>
-        {mode === "time" && <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1 size-4 shrink-0 accent-primary" checked={showPeriod}
-          onChange={event => { invalidate(); setShowPeriod(event.target.checked); }} /><span>Show inventory changes for this day<span className="block text-xs text-muted-foreground">Opening stock, stock in and stock out through the same selected time.</span></span></label>}
+        {mode === "time" && <div className="flex items-start gap-2 text-sm"><Switch id={periodId} className="mt-0.5" checked={showPeriod}
+          onCheckedChange={checked => { invalidate(); setShowPeriod(checked); }} /><Label htmlFor={periodId} className="block leading-normal">Show inventory changes for this day<span className="block text-xs text-muted-foreground">Opening stock, stock in and stock out through the same selected time.</span></Label></div>}
         <div className="flex flex-wrap gap-2"><Button disabled={shownBusy || shownExporting} onClick={() => void read()}>{shownBusy && <Loader2 className="size-4 animate-spin" />}Show stock</Button>
           {mayExport && <Button variant="outline" disabled={shownBusy || shownExporting || grade !== "verified" || visiblePage?.status !== "complete"} onClick={() => void download()}>{shownExporting ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}Export Excel</Button>}
         </div>

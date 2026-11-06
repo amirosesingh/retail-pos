@@ -47,7 +47,7 @@ window.fixture=f;function App(){const m=f.watch();useLayoutEffect(()=>{f.commits
   const fresh=async(width=390,dark=false,report=false)=>{const page=await browser.newPage({viewport:{width,height:840},colorScheme:dark?'dark':'light'});
    await page.route('**/*',route=>route.request().url().startsWith(origin)?route.continue():route.abort());await page.goto(origin+'/.tmp/stock-report-ui/index.html'+(report?'?report':''));
    if(dark)await page.evaluate(()=>document.documentElement.classList.add('dark'));await page.getByRole(report?'heading':'dialog',{name:report?'Stock report':/Stock report/}).waitFor();return page;};
-  const show=page=>page.getByRole('button',{name:'Show stock',exact:true}),explain=page=>page.getByRole('checkbox',{name:/Show inventory changes for this day/});
+  const show=page=>page.getByRole('button',{name:'Show stock',exact:true}),explain=page=>page.getByRole('switch',{name:/Show inventory changes for this day/});
   for(const width of[1440,390])for(const dark of[false,true]){
    const page=await fresh(width,dark);assert.equal(await page.evaluate(()=>window.fixture.calls.length),0);
    await page.getByLabel('Stock report date and time').fill('2026-11-06T08:00');await explain(page).check();await show(page).click();

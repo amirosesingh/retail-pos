@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch';
 import { stockTimeChoices } from '@/lib/stock-history-selection';
 
 type Capability = { ok: boolean; available?: boolean; reason?: string; code?: string; error?: string };
@@ -141,9 +142,9 @@ export const ReceivingArrivalFields = forwardRef<ReceivingArrivalHandle, Props>(
   try { if (dateTime) options = stockTimeChoices(dateTime, props.timeZone); } catch { /* Show validation on finalize. */ }
   return <section className="space-y-3 rounded-md border border-border p-3" aria-label="Goods arrival time">
     <div className="flex items-start gap-2">
-      <input id={`${id}-custom`} type="checkbox" className="mt-1 size-4 shrink-0 accent-primary"
+      <Switch id={`${id}-custom`} className="mt-0.5"
         checked={custom} disabled={props.disabled || (!custom && capability !== 'available')}
-        onChange={event => { selection.current++; setCustom(event.target.checked); setError(''); }} />
+        onCheckedChange={checked => { selection.current++; setCustom(checked); setError(''); }} />
       <div className="min-w-0 space-y-1">
         <Label htmlFor={`${id}-custom`}>Use the actual goods arrival time</Label>
         <p className="text-xs text-muted-foreground">Optional · otherwise stock uses its original save time. Invoice and entry dates stay separate.</p>
