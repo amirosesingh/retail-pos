@@ -1,3 +1,9 @@
+## 6 November — generator TEMP fixture dependency follow-up
+
+Exact PR428 f5ce739d passed the original full permission suite and native/Workers checks, then failed step15: notification parity copies the generator into TEMP but omits its new history helper and migration. Owner/root authorizes fixing every fixture with that same copied-generator dependency defect. Search all actual generator references first; modify only confirmed fixture manifests, retain actual generation and unchanged ownership/denial assertions. Verify the real TEMP invocation plus related canonical/notification checks. SQL/schema/migration bytes, production approval and sole-writer push ownership stay unchanged.
+
+Verified with pinned Node22.22.2: actual scripts/test-notification-upgrades.mjs now23passed/0failed; notification state plus history canonical and Management generation suites31passed; scoped ESLint and git diff --check pass. All generator references were inspected: only this notification harness copies it to TEMP; the others use repository-relative VM require or source inspection. Added only the helper and its existing migration input to the manifest; all parity/denial assertions remain. Exact-head full CI remains pending sole-writer integration.
+
 ## 6 November — CI failure repair for PR428 and infrastructure retry for PR400
 
 Owner explicitly requests a separate agent to investigate/fix failed PR checks and continue without CodeRabbit. Baseline ca09533b in isolated codex/ci-history-recovery-beta-20261106. Limit source correction to synthetic fixture role construction and deterministic canonical schema block regeneration; preserve the credential guard, all SQL definitions/grants, final hardening and exact migration bytes. Acceptance: existing secrets, Management graph generator, history SQL/canonical tests pass; exact updated PR head CI is separately verified. Coordinate integration with the automatic-history writer; no concurrent remote push.
