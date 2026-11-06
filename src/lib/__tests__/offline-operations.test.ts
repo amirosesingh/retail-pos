@@ -18,7 +18,9 @@ describe("offline terminal operations", () => {
     expect(main).toContain('function createWindows(initialRoute = "/")');
     const recovery = readFileSync("src/routes/database-startup.tsx", "utf8");
     expect(recovery).toContain("api?.subscribe(applyState)");
-    expect(recovery).toContain("if (next.tradingReady)");
+    expect(recovery).toContain('import { desktopStorageRoute } from "@/lib/desktop-storage-route";');
+    expect(recovery.match(/if \(desktopStorageRoute\(next\) === "local"\)/g)).toHaveLength(2);
+    expect(recovery).not.toContain("if (next.tradingReady)");
     expect(main).toContain("scheduleAutomaticSync(5_000)");
     expect(main).toContain("AUTO_SYNC_OK_MS = ACTIVITY_INTERVAL_MS");
     expect(main).toContain("scheduleAutomaticSync(250)");

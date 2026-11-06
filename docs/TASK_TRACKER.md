@@ -7157,3 +7157,12 @@ used. Default sandbox localhost access was refused; the explicitly scoped
 outside-sandbox run passed, then closed its owned browser and server. Syntax
 and lint pass. This is rendered application-fixture evidence, not installed
 production-PC acceptance. Final PR430 CI remains required.
+
+PR430 head645 CI: all platform/deployment checks passed; full regression had
+6408 passed, 11 skipped and one stale source-wiring assertion in
+offline-operations.test.ts expecting the removed `if (next.tradingReady)` branch.
+Update that test to require the shared route helper at both redirect sites and
+reject the old unsafe branch; retain every other offline/PIN/roster assertion.
+Actual snapshot and mounted tests already prove the behavior. The test-only
+correction passed 73 independent related cases, scoped lint and diff checks;
+runtime remains unchanged. Require fresh CI after the corrective test commit.
