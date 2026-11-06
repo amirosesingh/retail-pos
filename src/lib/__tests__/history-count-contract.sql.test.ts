@@ -19,14 +19,19 @@ describe("complete existing change-history sync count", () => {
     expect(sql).toContain("EXECUTE replace(definition,old_select,new_select)");
     expect(sql).toContain("HISTORY_COUNT_METADATA_CHANGED");
     expect(sql).toContain("HISTORY_COUNT_SELECTOR_CHANGED");
+    expect(sql).toContain("||pg_catalog.chr(10)");
+    const literals = [...sql.matchAll(/\$(old|new|history|sources)\$([\s\S]*?)\$\1\$/g)];
+    expect(literals.length).toBeGreaterThanOrEqual(6);
+    expect(literals.every(match => !/[\r\n]/.test(match[2]))).toBe(true);
     expect(sql).not.toMatch(/\b(?:UPDATE|DELETE|INSERT|TRUNCATE|GRANT|REVOKE)\s+(?:INTO\s+|FROM\s+|ON\s+)?public\./i);
     expect(sql).not.toMatch(/CREATE\s+(?:OR\s+REPLACE\s+)?TRIGGER|ALTER\s+TABLE|DISABLE\s+TRIGGER/i);
   });
 
-  it("passes actual captured-routine coverage, replay, denied-access and rollback scenarios", () => {
-    const output = execFileSync(process.execPath, ["scripts/test-history-count-contract.mjs"], {
+  it.each(["lf", "crlf"])("passes captured-routine coverage, replay, denied-access and rollback with %s artifact bytes", (format) => {
+    const output = execFileSync(process.execPath, ["scripts/test-history-count-contract.mjs", "--line-endings=" + format], {
       encoding: "utf8", windowsHide: true, timeout: 90_000,
     });
-    expect(output).toContain("PASS 20 isolated history count contract scenarios");
+    expect(output).toContain("Artifact line endings: " + format);
+    expect(output).toContain("PASS 21 isolated history count contract scenarios");
   }, 95_000);
 });

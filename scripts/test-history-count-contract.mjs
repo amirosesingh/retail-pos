@@ -4,11 +4,19 @@ import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
 const read = path => readFile(new URL('../' + path, import.meta.url), 'utf8');
-const migration = await read('supabase/migrations/20261106020500_complete_change_history_sync_count.sql');
+const sourceMigration = await read('supabase/migrations/20261106020500_complete_change_history_sync_count.sql');
 const capture = JSON.parse(await read('src/lib/__tests__/fixtures/history-count-contract-live-metadata.json'));
 const registry = JSON.parse(await read('database/sqlserver/schema-registry.json'));
 const native = process.argv.includes('--native');
-assert(process.argv.slice(2).every(value => value === '--native'));
+const args = process.argv.slice(2);
+assert(args.every(value => value === '--native' || /^--line-endings=(lf|crlf)$/.test(value)));
+assert.equal(new Set(args).size, args.length);
+const formatArgs = args.filter(value => value.startsWith('--line-endings='));
+assert(formatArgs.length <= 1);
+const format = formatArgs[0]?.split('=')[1] ?? 'working';
+const normalizeArtifact = (source, eol) => source.replaceAll('\r\n', '\n').replaceAll('\n', eol);
+const migration = format === 'working' ? sourceMigration : normalizeArtifact(sourceMigration, format === 'crlf' ? '\r\n' : '\n');
+console.log('Artifact line endings: ' + format);
 const factory = native ? await import('data:text/javascript;base64,' + Buffer.from(await read('scripts/test-seven-shift-summary-native.fixture.mjs') + '\nexport {createNativeFixture};').toString('base64')) : null;
 const db = native ? await factory.createNativeFixture() : new PGlite();
 if (native) {
@@ -107,6 +115,11 @@ try {
     assert.deepEqual(after.routines.filter(row => row.name !== 'pos_sync_counts'), original.routines.filter(row => row.name !== 'pos_sync_counts'));
   });
   await check('exact replay is a no-op without business or routine changes', async () => { const before = await state(); await db.exec(migration); assert.deepEqual(await state(), before); });
+  await check('replay from the other artifact line-ending format is the same no-op', async () => {
+    const before = await state();
+    await db.exec(normalizeArtifact(migration, migration.includes('\r\n') ? '\n' : '\r\n'));
+    assert.deepEqual(await state(), before);
+  });
   for (const [branch, terminal, pattern] of [['B', 'ops-A', /SYNC_BRANCH_FORBIDDEN/], ['B', 'management-A', /SYNC_BRANCH_FORBIDDEN/], ['A', 'unknown', /SYNC_TERMINAL_FORBIDDEN/]])
     await check('unchanged admission denies ' + terminal + '/' + branch, async () => { const before = await state(); await assert.rejects(counts(branch, terminal), pattern); assert.deepEqual(await state(), before); });
   await check('authorized management retains its existing granted branch read', async () => { assert.equal((await counts('B', 'management-all')).length, 70); });
