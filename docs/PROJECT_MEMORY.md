@@ -12,6 +12,20 @@ Owner requires all proposed cloud/local database upgrades collected for exact fi
 The exact owner-approved service-only bounded feed RPC and PR384 are applied/deployed on beta. Existing selector/privacy grants and businessrecords are preserved; native continuation is bound to authenticated response metadata. Live147request sample all200/ok with no CPU-exceeded; CPU2–114ms/mean9.469 means NO guarantee allrequestsbelow10ms. Electronfeed131613→133184, all6shiftCTvalid; largebacklog stilldraining. Keep implemented/sample-verified status distinct from fullsync completion, production promotion or installerpublication. Supabase migrationtool ledger20261104042158 corresponds to approvedfile20261104040251, SHA83495D696622241ECA2A8D396234E2FD65EE7C7A3050E93E4280638D6530D59B; do not replay based solely on differing timestamps.
 # POS project memory
 
+## 6 November — complete history-count coverage without changing audit scope
+
+The strict70-table reconciliation check exposed a confirmed central contract gap:
+the live four-argument count wrapper delegates69 registered tables and omits
+change_history. Prepare only an exact-source/metadata-guarded append of the missing
+count, preserving its existing all-history bootstrap predicate and service-only
+authorization. Do not weaken client completeness validation or fold the separately
+held broad audit-privacy review into this correction. The current21019 cloud and
+20799 local history totals are a net220 gap; a consistent UUID comparison is needed
+before classifying missing, local-only or divergent facts. Live history pull already
+supports UUID dispatch but its feed trigger is absent. Future trigger/recovery work
+requires its own concrete plan and exact database approval; no manual PC/cloud row
+copy, checkpoint reset or history omission is authorized.
+
 ## 6 November — existing-PC stock-history delivery
 
 Prepare one consolidated existing-data local SQL file, retaining the reviewed
