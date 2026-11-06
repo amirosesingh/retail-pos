@@ -7145,3 +7145,15 @@ write guards are unchanged. Twenty-eight related tests, syntax, lint and diff
 checks pass; root TypeScript and independent runtime review also pass. One
 existing isolated log-line test needed the newly explicit original-failure
 binding; its privacy assertions remain intact. No database operation was run.
+
+Rendered acceptance: root ran `node scripts/test-startup-shift-review-ui.cjs
+--run` using pinned Node22 and an owned headless browser/server. Twenty groups
+passed at 1440px and 390px: actual startup route, NativeBoot and Radix comparison
+dialog; actual schema-ready DatabaseService snapshot; retry/sign-in/completion;
+cashier, disconnected, migration and rejected-proof denial; identity-change
+removal of the prior comparison. The fixture aborts external traffic and asserts
+zero approval/adoption calls. No SQL, configured profile or real credentials are
+used. Default sandbox localhost access was refused; the explicitly scoped
+outside-sandbox run passed, then closed its owned browser and server. Syntax
+and lint pass. This is rendered application-fixture evidence, not installed
+production-PC acceptance. Final PR430 CI remains required.
