@@ -295,7 +295,7 @@ class PushWorker {
       }
     }
   }
-  async pushAggregates(branchId, batchSize, isolate = false, onProgress = () => {}, includeActivity = true) {
+  async pushAggregates(branchId, batchSize, isolate = false, onProgress = () => {}, includeActivity = true, stockHistoryBudget = null) {
     branchId = recordId(branchId);
     this.pushErrors = []; this.blockedTables = new Set();this.stockHistoryHolds=new Set();
     let pushed = 0;
@@ -318,6 +318,11 @@ class PushWorker {
       }
       try {
       if(this.stockHistory?.accepts(aggregate)){
+        // Background report evidence shares the normal upload lane, but may
+        // not monopolize it. This deferral is neither failure nor review.
+        // Final passes retain the existing complete drain and exact barriers.
+        if(stockHistoryBudget?.remaining===0){originalIds.forEach(id=>deferred.add(id));continue;}
+        if(stockHistoryBudget)stockHistoryBudget.remaining--;
         const result=await this.stockHistory.upload(aggregate,branchId,terminalId);
         if(result.held){
           if(result.held.fresh)for(const id of originalIds)await this.reader.failAggregate(id,{code:result.held.code,message:result.held.message,table:'stock_history_movements'});
@@ -503,12 +508,13 @@ class PushWorker {
     }
     return pushed;
   }
-  async run({ branchId, batchSize = 500, onProgress = () => {}, includeActivity = true }) {
+  async run({ branchId, batchSize = 500, onProgress = () => {}, includeActivity = true, final = false }) {
     branchId = recordId(branchId);
     if (!branchId) throw new Error("A branch is required for synchronization.");
     batchSize = Math.max(100, Math.min(2000, Number(batchSize) || 500));
     const terminalId = this.cloud.terminalId?.() ?? "";
-    let pushed = await this.pushAggregates(branchId, batchSize, true, onProgress, includeActivity);
+    const stockHistoryBudget=final?null:{remaining:1};
+    let pushed = await this.pushAggregates(branchId, batchSize, true, onProgress, includeActivity, stockHistoryBudget);
     const deferredTables = new Set();
     let financialCoverageAdvanced=false;
     // One lookup per pass instead of one SQL round trip for every table.
@@ -672,7 +678,7 @@ class PushWorker {
     // Exact acknowledged business CT rows may have been the only remaining
     // prerequisite. Drain that protected intent now, without another bootstrap
     // or a blind checkpoint advance. Ordinary legacy passes stay unchanged.
-    if(financialCoverageAdvanced)pushed+=await this.pushAggregates(branchId,batchSize,true,onProgress,includeActivity);
+    if(financialCoverageAdvanced)pushed+=await this.pushAggregates(branchId,batchSize,true,onProgress,includeActivity,stockHistoryBudget);
     if (this.pushErrors.length) throw Object.assign(this.pushErrors[0], {pushed, failures:this.pushErrors.length});
     return { pushed, deferredTables:[...deferredTables],...(this.stockHistoryHolds?.size?{heldStockHistoryAggregates:this.stockHistoryHolds.size}:{}) };
   }

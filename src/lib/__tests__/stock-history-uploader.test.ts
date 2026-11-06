@@ -19,6 +19,31 @@ function fixture(){
 }
 afterEach(()=>{vi.restoreAllMocks();vi.unstubAllGlobals();});
 describe('bounded history metadata adapter in the existing durable sync lane',()=>{
+ it.each([false,true])('shares one normal metadata quantum across both aggregate passes; final=%s keeps full drain',async final=>{
+  const f=fixture(),businessId='44444444-4444-4444-8444-444444444444';let pages=3,ordinary=true,window=true;
+  const business={aggregateId:businessId,changes:[{entity_type:'sales',entity_id:JSON.stringify({id:product}),operation:'insert',key:{id:product}}]};
+  const fail=vi.fn(),upload=vi.fn(async()=>{pages--;return{acknowledged:8};}),core=vi.fn(async()=>({ok:true}));
+  const reader={connectionManager:{pool:{}},pendingAggregates:async(_b:string,_l:number,excluded:string[])=>[...(pages?[f.aggregate]:[]),...(ordinary?[business]:[])].filter(item=>!excluded.includes(item.aggregateId)),
+   acknowledgeAggregate:vi.fn(async()=>{ordinary=false;}),failAggregate:fail,rows:async()=>[{id:product,store_id:branch}],
+   changedIds:async()=>{if(!window)return[];window=false;return[{operation:'U',key:{id:product},version:2}];},
+   acceptedFinancialBusinessChanges:async()=>new Set([product]),
+   pendingSummary:async()=>({pending:pages*8+(ordinary?1:0),failed:0,queuedTables:pages?[{table:'stock_history_movements',pending:pages*8,failed:0}]:[]})};
+  const table={sqlServerTable:'sales',cloudTable:'sales',scope:'branch',dependencyOrder:1,columns:[{sqlServerColumn:'id',cloudColumn:'id',primaryKey:true}]};
+  const worker=new PushWorker({reader,cloud:{terminalId:()=>terminal,pushAggregate:core},checkpoints:{list:async()=>[],save:vi.fn()},registry:{tables:[table]},
+   stockHistory:{accepts:(aggregate:typeof f.aggregate)=>aggregate.aggregateId===f.aggregate.aggregateId,upload}});
+  const spy=vi.spyOn(worker,'pushAggregates'),pull=vi.fn(async()=>({merged:1})),coordinator=new SyncCoordinator({pushWorker:worker,pullWorker:{run:pull}});
+  const result=final?await coordinator.runFinal({branchId:branch}):await coordinator.runNow({branchId:branch});
+  expect(result).toMatchObject({ok:true,pending:final?0:16,failed:0});expect(upload).toHaveBeenCalledTimes(final?3:1);
+  expect(core).toHaveBeenCalledTimes(1);expect(fail).not.toHaveBeenCalled();expect(spy).toHaveBeenCalledTimes(2);
+  const first=spy.mock.calls[0]![5],second=spy.mock.calls[1]![5];expect(first).toBe(second);
+  if(final){expect(result).toMatchObject({allUploaded:true});expect(first).toBeNull();expect(pull).not.toHaveBeenCalled();}
+  else{
+   expect(first).toEqual({remaining:0});expect(pull).toHaveBeenCalledTimes(1);
+   expect(await coordinator.runNow({branchId:branch})).toMatchObject({ok:true,pending:8,failed:0});
+   expect(await coordinator.runNow({branchId:branch})).toMatchObject({ok:true,pending:0,failed:0});
+   expect(upload).toHaveBeenCalledTimes(3);expect(core).toHaveBeenCalledTimes(1);expect(fail).not.toHaveBeenCalled();
+  }
+ });
  it('holds only explicit source/author review codes with bounded automatic cooldown and no ACK',async()=>{
   const f=fixture();let now=0;
   f.cloud.pushStockHistory.mockRejectedValue(Object.assign(new Error('Unproven source'),{code:'STOCK_HISTORY_SOURCE_ORIGIN_UNPROVEN',status:409}));

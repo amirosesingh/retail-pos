@@ -7121,3 +7121,35 @@ the full original source manifest set/actor/time with proof_json=NULL. Restart
 cannot upload it as signed proof; the existing immutable trigger refuses later
 proof substitution. Unknown signer/context failures are not downgraded. No031
 DDL change, activation, key creation, business ACK change or real-data access.
+
+STOCK401 root reviewed two bounded next scopes on6November. First, background
+metadata fairness changes only PushWorker.pushAggregates/run: one bounded≤8-row
+stock metadata page per normal coordinated pass, sharing the same budget across
+both existing aggregate calls. final:true keeps full draining; runFinal, the SQL
+review classifier and every caller remain unchanged. Untouched/healthy metadata
+stays pending, never failed/review-held merely because its turn is deferred.
+Second, complete original arrival metadata and the minimal frontier plan in
+stock-history-author-domain-plan.md using the existing enrolled key only.
+
+Recoverable baseline97d2d165 is committed/pushed. Approved frontier preparation
+files: existing stock-event-author-protocol.cjs/declarations, shift-author-key.cjs,
+stock-event-authority.cjs; NEW pure stock-coverage-frontier helper/declaration/tests
+and Main-owned stock-history-frontier runtime; optional031/schema/catalog guards;
+NEW service-only challenge/frontier/opening migration; existing stock uploader,
+CloudClient, sync endpoint admission, historical native/cloud reader and focused
+source/clock/cohort/rollback tests. No new signing enrollment, generic signer,
+business-write permission, live opening/activation, backfill or deployment.
+All shift/financial domain bytes and mandatory final barriers stay unchanged.
+Zero births use original cohort metadata, never invented quantity movements.
+Accepted-ledger completeness is distinct from every-writer completeness; unknown
+or offline writers, gaps and author/device-clock anomalies stay explicit. Root
+retains actual canonical writer reproduction and reviews any separate core defect.
+
+Background fairness checkpoint passes47 uploader/final-barrier cases and31
+native pipeline cases. One normal pass sends at most one bounded report-metadata
+page, even when exact financial CT acceptance causes the existing second
+aggregate call. Sales still upload and normal downloads proceed; remaining
+healthy metadata is visible pending with no manufactured failure/review status.
+Later normal passes continue the original evidence. final:true still drains all
+pages and requires the unchanged final barrier/real queue counts. No SQL journal,
+financial ACK, runFinal/classifier/caller or request-lane change.
