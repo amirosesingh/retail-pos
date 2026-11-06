@@ -8,10 +8,13 @@ function fixture() {
   const person: any = { id: actorId, user_id: "cashier", role: "staff", role_slug: "cashier", store_id: "a", is_active: true, permissions: { can_view_inventory: true } };
   const terminal: any = { tokenId: "terminal-a", deviceUse: "operations", locationId: "a" }, events: string[] = [];
   let afterRead: (() => void) | null = null;
-  const pool: any = { request: () => ({ input() { return this; }, async query() { reads++; const value = structuredClone(person); afterRead?.(); return { recordset: [value] }; } }) };
-  class Request { input() { return this; } async query(sql: string) { return { recordset: sql.includes("database_guid") ? [{ database_guid: databaseGuid, schema_generation: "24:absent" }] : [] }; } }
-  class Transaction { async begin() { events.push("begin"); } async commit() { events.push("commit"); } async rollback() { events.push("rollback"); } }
-  const manager = { pool, sql: () => ({ Request, Transaction }) }, session = { hasPosAuthority: () => active, epoch: () => epoch,
+  const pool: any = {config:{},acquire:(_parent:unknown,callback:(error:null,connection:object)=>void)=>callback(null,{}),release(){},
+    request: () => ({ input() { return this; }, async query() { reads++; const value = structuredClone(person); afterRead?.(); return { recordset: [value] }; } }) };
+  class Request { input() { return this; } async query(sql: string) {
+    if(sql.includes('stock-history-read:session'))return{recordset:[{transaction_count:0,session_options:0}]};
+    if(sql.includes('BEGIN TRANSACTION'))events.push('begin');if(sql.includes('COMMIT TRANSACTION'))events.push('commit');if(sql.includes('ROLLBACK TRANSACTION'))events.push('rollback');
+    return { recordset: sql.includes("database_guid") ? [{ database_guid: databaseGuid, schema_generation: "24:absent" }] : [] }; } }
+  const manager = { pool, sql: () => ({ Request }) }, session = { hasPosAuthority: () => active, epoch: () => epoch,
     identity: () => ({ authorId: actorId, subject: "cashier", canonicalSubject: "cashier", source: "pos" }), touch: () => { touched++; } };
   const read = createStockHistoryReader({ manager, session, terminal: () => terminal, branch: () => "a", isPosSender: (event: any) => event === "pos", context: () => ["https://fixture.invalid"] });
   return { read, person, terminal, manager, events, revoke: () => { active = false; epoch++; }, after: (fn: () => void) => { afterRead = fn; }, counts: () => ({ reads,touched }) };
@@ -47,6 +50,6 @@ describe("Main-owned stock history read admission", () => {
   });
   it("rechecks newly revoked SQL authority before returning even an unavailable result", async () => {
     const f = fixture(); f.after(() => { f.person.is_active = false; });
-    expect(await f.read("pos",request)).toMatchObject({ ok: false,code: "PERMISSION_DENIED" }); expect(f.events).toEqual(["begin","rollback"]);
+    expect(await f.read("pos",request)).toMatchObject({ ok: false,code: "PERMISSION_DENIED" }); expect(f.events).toEqual(["begin","commit"]);
   });
 });

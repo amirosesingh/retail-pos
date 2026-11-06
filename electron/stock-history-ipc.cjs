@@ -8,7 +8,7 @@ const permissions = value => {
   return value;
 };
 function safeRequest(value) {
-  const keys = new Set(['cutoff','timeZone','branchId','after','sourceRevision','limit','export','closedShiftId']);
+  const keys = new Set(['cutoff','timeZone','branchId','after','sourceRevision','limit','export','closedShiftId','periodStart']);
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !keys.has(key)) ||
       Buffer.byteLength(JSON.stringify(value), 'utf8') > 4096 || (value.export != null && typeof value.export !== 'boolean')) fail();
   return { ...value };

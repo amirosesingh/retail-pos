@@ -6,7 +6,7 @@ assert.deepEqual(process.argv.slice(2),['--run']);
 const suffix=randomUUID().replaceAll('-',''),instance='CodexStockHistory_'+suffix,database='StockHistoryFixture_'+suffix;
 const control=(...args)=>{const b=execFileSync('C:/Program Files/Microsoft SQL Server/170/Tools/Binn/SqlLocalDB.exe',args,{windowsHide:true,timeout:30000});return b.toString(b.includes(0)?'utf16le':'utf8').replace(/^\uFEFF/,'');};
 let owned=false,created=false,master,pool,server,proofDirectory,groups=0;
-const connect=name=>{assert(name==='master'||name===database);return new sql.ConnectionPool({connectionString:`Driver={ODBC Driver 18 for SQL Server};Server=${server};Database=${name};Trusted_Connection=Yes;Encrypt=No;TrustServerCertificate=Yes;`,pool:{min:0,max:3},requestTimeout:15000}).connect();};
+const connect=(name,max=3)=>{assert(name==='master'||name===database);return new sql.ConnectionPool({connectionString:`Driver={ODBC Driver 18 for SQL Server};Server=${server};Database=${name};Trusted_Connection=Yes;Encrypt=No;TrustServerCertificate=Yes;`,pool:{min:0,max},requestTimeout:15000}).connect();};
 const pass=name=>{groups++;console.log('PASS '+name);};
 const {StockHistoryStore}=require('../electron/db/stock-history.cjs');
 const c=require('../electron/db/stock-history-contract.cjs');
@@ -452,6 +452,8 @@ const migration=fs.readFileSync(path.join(__dirname,'../database/sqlserver/prepa
  assert.equal((await pool.request().query("SELECT coverage_state FROM dbo.stock_history_heads WHERE store_id=N'a';")).recordset[0].coverage_state,'incomplete');
  assert.equal((await pool.request().input('id',pid).query('SELECT COUNT(*) n FROM dbo.stock_history_openings WHERE product_id=@id;')).recordset[0].n>0,true);
  pass('an owner-only catalogue change is captured for cohort invalidation while original historical identity remains');
+ await require('./stock-history-period-sqlserver-cases.cjs')({pool,sql,pass});
+ await require('./stock-history-read-session-sqlserver-cases.cjs')({pool,sql,connect,database,pass});
  console.log('PASS '+groups+' actual disposable stock-history SQL groups');
 }finally{
  await pool?.close().catch(()=>{});if(created)await master.request().batch('ALTER DATABASE ['+database+'] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;DROP DATABASE ['+database+'];');await master?.close().catch(()=>{});

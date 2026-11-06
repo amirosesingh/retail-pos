@@ -18,13 +18,15 @@ export async function readStockHistoryPage(proof:CallerProof,input:StockHistoryR
  if(!branchId||((scope.storeId||!canCrossBranches(scope))&&(!scope.storeId||!sameBranchId(scope.storeId,branchId))))
   throw new Error('You can only read historical stock for your authorized branch.');
  const {serviceRest}=await import('@/core/api/pos-relay.server');
- const response=await serviceRest('rpc/pos_stock_history_page',{method:'POST',body:JSON.stringify({
+ const rpc=request.periodStart?'pos_stock_history_period_page':'pos_stock_history_page';
+ const response=await serviceRest('rpc/'+rpc,{method:'POST',body:JSON.stringify({
   p_actor:scope.staffUserId,p_terminal:scope.terminalId??null,p_branch:branchId,p_cutoff:request.cutoff,p_zone:request.timeZone,
   p_after:request.after??null,p_limit:request.limit??100,p_source_revision:request.sourceRevision??null,p_export:request.export??false,p_closed_shift:request.closedShiftId??null,
+  ...(request.periodStart?{p_period_start:request.periodStart}:{}),
  })});
  if(!response.ok){
   const error=await response.json().catch(()=>null) as {code?:string;message?:string}|null;
-  if(response.status===404&&error?.code==='PGRST202'&&error.message?.includes('pos_stock_history_page'))return{
+  if(response.status===404&&error?.code==='PGRST202'&&error.message?.includes(rpc))return{
    status:'unavailable',reasons:['SCHEMA_NOT_INSTALLED'],cutoff:request.cutoff,timeZone:request.timeZone,branchId,rows:[],next:null,
   };
   if(error?.message?.includes('STOCK_HISTORY_SOURCE_CHANGED'))throw Object.assign(new Error('Stock history changed. Refresh the report before continuing.'),{code:'ESTOCK_HISTORY_SOURCE_CHANGED'});
@@ -35,5 +37,6 @@ export async function readStockHistoryPage(proof:CallerProof,input:StockHistoryR
  }
  const page=checkedStockHistoryPage(await response.json(),branchId);
  if(!request.closedShiftId&&page.cutoff!==request.cutoff)throw new Error('The stock report cutoff changed unexpectedly.');
+ if(request.periodStart?(page.period?.start!==request.periodStart):page.period!==undefined)throw new Error('The stock report period changed unexpectedly.');
  return page;
 }

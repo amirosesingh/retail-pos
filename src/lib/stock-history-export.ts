@@ -14,7 +14,7 @@ export async function stockHistoryForExport(request: StockHistoryRequest,
     assertCurrent();
     if (page.status !== "complete") throw new Error("A complete verified stock report is required before export.");
     if (first && (page.sourceRevision !== first.sourceRevision || page.cutoff !== first.cutoff ||
-      page.branchId !== first.branchId || page.timeZone !== first.timeZone || page.baselineAt !== first.baselineAt))
+      page.branchId !== first.branchId || page.timeZone !== first.timeZone || page.baselineAt !== first.baselineAt||JSON.stringify(page.period)!==JSON.stringify(first.period)))
       throw new Error("Stock history changed during export. Refresh the report and try again.");
     first ??= page;
     for (const row of page.rows) {
@@ -36,11 +36,13 @@ export async function exportStockHistoryXlsx(page: StockHistoryPage, branchName:
     ["Cutoff (exact UTC)", page.cutoff], ["Business time zone", page.timeZone], ["Opening verified at", page.baselineAt ?? ""],
     ["Read at", page.readAt ?? ""], ["Source revision", page.sourceRevision ?? ""], ["Coverage", "Complete"],
     ["Meaning", "Original movement time; late offline uploads may restate this report. Quantities only."],
+    ...(page.period?[["Inventory movement interval starts",page.period.start],["Stock available through (inclusive)",page.period.through],["Whole calendar day",page.period.fullDay?"Yes":"No"]]:[]),
   ];
   XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet(metadata), "Report details");
   XLSX.utils.book_append_sheet(book, XLSX.utils.json_to_sheet(page.rows.map(row => ({
     Product: row.name, SKU: row.sku ?? "", Barcode: row.barcode ?? "", Quantity: row.quantity ?? "",
     "Negative stock": row.negative ? "Yes" : "No", "Product ID": row.productId, "Location ID": row.locationId,
+    ...(page.period?{"Opening stock":row.openingQuantity??"","Stock in":row.inQuantity??"","Stock out":row.outQuantity??""}:{}),
   }))), "Stock at time");
   // Identifiers and exact decimal(38,0) quantities remain strings in the workbook.
   assertCurrent();

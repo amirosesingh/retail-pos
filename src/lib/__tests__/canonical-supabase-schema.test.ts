@@ -268,6 +268,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261106020500_complete_change_history_sync_count.sql",
       "supabase/migrations/20261106035442_stock_history_original_source_receipts.sql",
       "supabase/migrations/20261106042742_stock_history_verified_source_membership.sql",
+      "supabase/migrations/20261106065813_stock_history_selected_time_period_reader.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

@@ -7308,3 +7308,59 @@ It returns bounded private evidence with coverageProven=false, never a signature
 acknowledgement or writer-completeness assertion. Independent117-case combined
 snapshot/frontier/date/receiving verification passed. Identity-only frontier
 signing is committed f3c62b5e; challenge/prefix/opening admission remains pending.
+
+Next necessary reader-only correction: replace draft StockHistoryStore.readPage's
+driver SERIALIZABLE transaction (which leaves isolation changed on a pooled
+connection) with the independently verified pinned-connection pattern. Scope:
+NEW stock-history-read-session.cjs plus Store.request/readPage, read-only SQL
+HOLDLOCK/NOWAIT hints and focused/disposable-reader tests. No business writer,
+queue, permission or schema change. Keep one transaction owner, refuse inherited
+or implicit caller transactions, yield to a contested writer, bound waits/reads
+and restore/release only the owned transaction. Materialize the bounded result,
+commit, then freshly recheck Main scope/permission before exposing it; never hold
+a report transaction while waiting for another pooled authority read. Baseline
+3859dbdc is recoverable; this is required report regression prevention, not a
+new shared business transaction abstraction.
+
+Provisional transport contract refinement before UI integration: optional coverage
+contains acceptedLedger=complete/incomplete, writers=confirmed/pending/unknown,
+balanceGrade=verified/recorded_provisional and timeGrade=recorded/author_entered/
+mixed. A non-complete page may expose numeric rows ONLY with explicit complete
+accepted-ledger/recorded-provisional evidence and unknown/pending writer coverage.
+Missing opening/effects/gaps continue to return no estimated numbers. This does
+not activate or infer that proof: current readers stay fail-closed until the
+publisher supplies it. Complete export stays status/coverage gated. Same-snapshot
+period terms remain optional; the primary quantity is exact selected-time stock.
+
+Delegated next UI boundary (baseline3859dbdc, after period-reader review):
+policy_implementation owns StockHistoryDialog.tsx, reports.inventory.tsx, only
+the /reports/inventory nav label and its expectation, plus focused/mounted new
+stock UI tests/script. Name this separate option Stock report; keep existing
+/reports/stock adjustments unchanged. Primary selected-time quantity stays exact;
+optional day explanation sends one periodStart plus the SAME inclusive cutoff.
+Saved shift mode remains source-resolved point-in-time. Display returned strings,
+never sum client pages. Explicit provisional accepted-ledger quantities carry the
+unknown-writer warning and remain ineligible for complete export. Scope/session/
+permission changes hide old protected data synchronously. Readers/types/SQL/Main
+stay owned by stock integration; no new query/permission/writer in this UI batch.
+
+Frontier admission implementation begins within the reviewed bounded purpose:
+CLI-created20261106073851_stock_history_coverage_frontiers.sql adds private
+append-only challenges/receipts, a bounded current registered-writer cohort and
+service-only issue/accept routines. Current account/key/terminal identity is
+rechecked independently of report-read or opening permission. Receipt replay
+requires exact original bytes; a new frontier requires the fresh nonce/current
+cohort and a complete independently accepted original source prefix. Pending/
+unsigned/unknown/clock anomalies are retained as explicit unconfirmed coverage,
+not stock authority. This does not publish an opening or activate capture. Owned
+fixtures will use real accepted source admission where available; no live calls,
+grants to public clients, business writes or new cryptographic domain.
+
+Selected-time reader checkpoint verification:94 focused hosted/native-IPC/
+canonical/period cases and31 provisional/export contract cases pass;78 actual
+disposable LocalDB groups pass and fixtures are cleaned. Unknown reader/helper
+source/ACL/path/volatility abort, outer failure fully rolls back, and repeated
+migration refuses to replace accepted helpers again. Independent bounded reader
+review found no confirmed blocker; provider/publisher concurrency and final
+hosted/installed acceptance remain pending. TypeScript and scoped lint pass
+(test-only explicit-any warnings remain). No SQL applied or opening published.

@@ -10,10 +10,13 @@ export type StockHistoryRequest={
  export?:boolean;
  /** Resolve the exact saved CLOSED instant at the authorized source. */
  closedShiftId?:string;
+ /** Optional same-day inventory movement explanation; cutoff remains inclusive. */
+ periodStart?:string;
 };
 export type StockHistoryRow={
  productId:string;locationId:string;name:string;sku:string|null;barcode:string|null;
  quantity:string|null;negative:boolean|null;
+ openingQuantity?:string|null;inQuantity?:string|null;outQuantity?:string|null;
 };
 export type StockHistoryPage={
  status:'unavailable'|'unsupported'|'incomplete'|'complete';
@@ -27,6 +30,10 @@ export type StockHistoryPage={
  sourceRevision?:string|null;
  pendingCount?:string;
  restatable?:true;
+ /** Accepted ledger and all-writer knowledge are separate. No clock proof. */
+ coverage?:{acceptedLedger:'complete'|'incomplete';writers:'confirmed'|'pending'|'unknown';
+  balanceGrade:'verified'|'recorded_provisional';timeGrade:'recorded'|'author_entered'|'mixed'};
+ period?:{start:string;endExclusive:string;through:string;fullDay:boolean};
  rows:StockHistoryRow[];
  next:string|null;
 };
@@ -44,6 +51,7 @@ export function stockHistoryExplanation(reason:string):string{
   case 'INCOMPLETE_MOVEMENTS':return 'Complete stock movement coverage has not been proved for this date and time.';
   case 'BASELINE_PREHISTORY_CHANGED':return 'A late movement predates the opening balance; it needs reconciliation before quantities can be shown.';
   case 'CLOCK_UNVERIFIED':return 'An original device clock is unverified; the exact historical timing needs review.';
+  case 'WRITER_COVERAGE_PENDING':case 'WRITER_COVERAGE_UNKNOWN':return 'Some terminals have not confirmed uploads; this recorded balance may change.';
   case 'UNVALIDATED_STOCK_EFFECTS':return 'Accepted stock changes are waiting for their original movement and coverage checks.';
   case 'CAPTURE_GAPS':return 'Some stock changes have incomplete history evidence and need review.';
   case 'MANAGEMENT_LOCAL_HISTORY_UNAVAILABLE':return 'Historical stock on a management terminal uses its authorized online report.';
