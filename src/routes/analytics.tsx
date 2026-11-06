@@ -139,6 +139,10 @@ function LiveBoard() {
   );
 
   const combinedCategories = useMemo(() => topCategories(itemRows, topBy, 10), [itemRows, topBy]);
+  const categoryShops = useMemo(() => {
+    const ids = new Set(itemRows.map(row => row.store_id ?? ""));
+    return shops.filter(shop => ids.has(shop.storeId));
+  }, [shops, itemRows]);
   const categoryItems = useMemo(
     () =>
       selectedCategory
@@ -369,8 +373,8 @@ function LiveBoard() {
                 </BarChart></ResponsiveContainer>
               </TradingChartCard>}
             </ShopComparisonCharts>}
-            <div className="min-w-0">
-              <section className="min-w-0 rounded-lg border border-border p-4 xl:col-span-7">
+            {combinedCategories.length > 0 && <div className="min-w-0">
+              <section className="min-w-0 rounded-lg border border-border p-4 xl:col-span-7 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <h2 className="text-sm font-semibold">Top categories — all shops combined</h2>
                   <div className="flex gap-1">
@@ -421,18 +425,13 @@ function LiveBoard() {
                     </button>
                   ))}
                 </SummaryCardRail>
-                  {!combinedCategories.length && (
-                    <p className="col-span-full py-8 text-center text-sm text-muted-foreground">
-                      No category sales in this range.
-                    </p>
-                  )}
               </section>
 
 
-            </div>
+            </div>}
 
-            {selectedCategory && (
-              <section className="rounded-lg border border-primary/40 bg-primary/5 p-4">
+            {selectedCategory && categoryItems.length > 0 && (
+              <section className="rounded-lg border border-primary/40 bg-primary/5 p-4 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <p className="text-[10px] font-semibold uppercase tracking-wide text-primary">
@@ -477,10 +476,10 @@ function LiveBoard() {
               </section>
             )}
 
-            <section className="rounded-lg border border-border p-4">
+            {categoryShops.length > 0 && <section className="rounded-lg border border-border p-4 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300">
               <h2 className="mb-3 text-sm font-semibold">Top categories per shop</h2>
               <SummaryCardRail label="Top categories per shop" desktopBehavior="finite-carousel">
-                  {shops.map((shop) => {
+                  {categoryShops.map((shop) => {
                     const rows = topCategories(
                       itemRows.filter((r) => (r.store_id ?? "") === shop.storeId),
                       topBy,
@@ -525,7 +524,7 @@ function LiveBoard() {
                     );
                   })}
               </SummaryCardRail>
-            </section>
+            </section>}
 
           </>
         )}
