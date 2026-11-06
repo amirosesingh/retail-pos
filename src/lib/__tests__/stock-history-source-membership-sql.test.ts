@@ -13,6 +13,13 @@ beforeEach(async()=>{
  UPDATE products SET stock_by_store='{"a":3,"b":2}';`);
 });
 describe('verified original membership needs its actual immutable accepted source and effect',()=>{
+ it.each(['config','grant','volatility'])('rejects unknown existing admission %s without weakening its guards',async mode=>{
+  await expect(createStockSourceAdmissionCloud({beforeMembership:async(db:{exec:(value:string)=>Promise<unknown>})=>{
+   await db.exec(mode==='config'?"ALTER FUNCTION pos_stock_history_accept_claims(text,text,text,jsonb) SET search_path=public":
+    mode==='grant'?"GRANT EXECUTE ON FUNCTION pos_stock_history_accept_claims(text,text,text,jsonb) TO anon":
+     'ALTER FUNCTION pos_stock_history_accept_claims(text,text,text,jsonb) STABLE');
+  }})).rejects.toThrow('STOCK_HISTORY_SOURCE_UNKNOWN_CLAIM_ROUTINE');
+ });
  it.each(['ADJUST','RECEIVE'])('admits %s only after actual same-transaction accepted business evidence without another stock write',async action=>{
   const op=await f.operation({action,quantity:action==='ADJUST'?'-1':'2'});
   expect(await op.upload()).toMatchObject({ok:true,stockSourceStatus:'captured_unverified'});

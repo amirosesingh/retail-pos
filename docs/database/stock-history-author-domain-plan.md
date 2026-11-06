@@ -143,3 +143,76 @@ was applied to a real database or included as final upgrade bytes.
 Original nonfinancial source acceptance uses a small optional signed cohort header on the existing ordinary aggregate request. A service-only wrapper delegates the exact unchanged operations and batch identity to the current writer, then records an append-only private witness of the original header, accepted operation bytes and actual same-transaction effect IDs. Missing/invalid metadata or old accepted receipts must retain an explicit hold; they cannot change the business ACK or reconstruct original evidence from later mutable rows. Each later bounded membership claim must match its signed original member, this immutable witness and the real accepted effect/source. Prefix acceptance is distinct from completeness publication. Existing financial/shift paths stay unchanged. No live application is authorized.
 
 Refined witness semantics: the accepted business batch owns one bounded private witness, independent of unverified header claims. Current author-registry outage must not lose the original accepted operation/effect evidence. The raw header remains UNVERIFIED and grants nothing. Full signature/current-permission/source validation happens before report movement admission, through an append-only verification receipt. Exact replay is keyed by actual accepted batch plus unchanged operations/header hashes; changed headers or old receipts lacking original evidence stay held. No original author, database generation or native operation identity is trusted merely because it appears in the raw header.
+
+
+## Coverage/frontier implementation plan — pending root scope review
+
+This section is a concrete remaining design, not an implemented or activated
+publisher. The current five-table031 is still a preparation checkpoint.
+
+A source cohort's sequence/root proves the original members of that operation.
+It does not prove that an offline terminal has no later unsent operation. A
+complete quantity interval therefore needs a fresh Main-owned frontier, not a
+heartbeat, highest row version, largest allocated feed cursor or cached count.
+
+Proposed dedicated `coverage_frontier.v1` purpose, using only the same existing
+enrolled Main key (no enrollment/rotation/generic signer), binds project,
+registered branch/terminal, actual database GUID, source protocol/writer policy
+revision, server challenge ID/nonce, exact last committed source sequence/root,
+local original-evidence generation, unsigned/unknown-source gap digest and
+counts, actual pending/failed business and source-metadata counts, and original
+SQL snapshot time. Main obtains these from one serializable scoped SQL read
+under the existing coordinator lease, captures the session/profile/pool epoch,
+signs only that owned result, and rechecks context after awaits. No renderer
+signing or caller-supplied frontier fields are exposed.
+
+The server challenge fixes the expected registered writer cohort and expiry.
+Admission verifies device branch/mode, enrolled signature, current real account,
+nonce/replay identity, database-generation streams and the exact accepted source
+prefix. A restored database's retained original stream must not be relabelled as
+the new GUID or dropped. An absent/offline/unverified writer remains unknown.
+Counts alone never establish that a prefix or original financial work was
+accepted. Accepted frontiers/verification receipts are append-only.
+
+Opening publication is an independently authorized operation. It must freeze all
+applicable product/location pairs including zero and archived products, retain
+original identity for later deletion/movement, bind the actual verified opening
+count/snapshot and every required writer frontier, and atomically publish exact
+effect-inclusion references, cohort manifest and head CAS. Changed/unknown source
+or cohort aborts. No current quantity is projected backwards into an older
+opening. An effect included only in a newer opening never certifies an older
+selected baseline. Existing capture gaps need an exact selected-baseline
+resolution/inclusion receipt; they are never erased or ignored by timestamp.
+
+Zero-delta catalogue creation needs its own signed original cohort member and
+acknowledgement even though it is not a quantity movement. The pure source
+cohort already represents zero; the current movement-only journal does not yet
+persist/upload such births. Reader membership must be cutoff-aware: products
+born after a past cutoff do not invalidate that earlier cohort, and catalogue
+deletions never cascade historical identity. No baseline is marked complete
+merely because current active products match a count.
+
+The new frontier cannot retroactively prove physical device clocks. Original
+movement/effective times remain author-claimed unless an approved independent
+time rule establishes otherwise. Root is reviewing whether complete accepted
+ledger coverage under declared original business-time semantics should be shown
+with that explicit time grade, or strict unverified-clock incompleteness should
+remain. Until decided, preserve the strict existing reader behavior. No old time,
+opening, author, accepted receipt or physical arrival is invented.
+
+Expected implementation scopes after review: existing stock-domain protocol and
+Main-only key helper; a narrow Main frontier runtime; optional031 frontier/cohort
+metadata and exact physical guards; service-only challenge/frontier/opening
+routines; existing coordinator lane/metadata adapter; native/cloud historical
+reader membership/revision and focused fixtures. Other financial/shift message
+bytes and mandatory acknowledgements remain unchanged. No new scheduler,
+Membership change, API grant, live opening or automatic activation is implied.
+
+Required acceptance: long offline and restart, missing/unsigned original source,
+multiple database generations, old/new baseline selection, late effective event,
+new zero product and archived/deleted identity, changed writer cohort, exact
+nonce/receipt replay, wrong branch/actor/project/key, revoked account, changed
+local pending work, concurrent publisher/effect/claim, actual schema24/30 without
+031, fixed resource bounds, and current checkout/permission regression. Final
+031/cloud hashes can be frozen only after these contracts and actual source
+workflows pass; all live database application remains separately approved.

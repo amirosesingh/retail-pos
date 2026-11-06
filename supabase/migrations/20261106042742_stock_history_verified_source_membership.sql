@@ -140,6 +140,10 @@ BEGIN
  body:=replace(before.prosrc,E'\r\n',E'\n');
  IF md5(body)<>'45ecf1d144d6af868ee21fe34a973c71' OR NOT before.prosecdef OR before.provolatile<>'v' OR before.prokind<>'f'
   OR before.proisstrict OR before.proleakproof OR before.proparallel<>'u' OR before.prorettype<>'jsonb'::regtype
+  OR before.proconfig IS DISTINCT FROM ARRAY['search_path=""']::text[]
+  OR NOT has_function_privilege('service_role',before.oid,'EXECUTE')
+  OR EXISTS(SELECT 1 FROM aclexplode(COALESCE(before.proacl,acldefault('f',before.proowner))) permission
+    WHERE permission.grantee NOT IN(before.proowner,(SELECT oid FROM pg_roles WHERE rolname='service_role')) OR permission.privilege_type<>'EXECUTE')
   OR before.proargnames IS DISTINCT FROM ARRAY['p_project','p_branch','p_terminal','p_rows']::text[]
   THEN RAISE EXCEPTION 'STOCK_HISTORY_SOURCE_UNKNOWN_CLAIM_ROUTINE';END IF;
  IF length(body)-length(replace(body,a,''))<>length(a) OR length(body)-length(replace(body,c,''))<>length(c)

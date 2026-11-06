@@ -7081,3 +7081,25 @@ authorized actual-arrival entry, metadata fairness/final-barrier review, final
 platform/hosted/installed acceptance. Do not mark031 final or include it in the
 consolidated updater yet. No live SQL, business repair, baseline, enrollment,
 Membership change, deployment or publication ran.
+
+STOCK401 source verification follow-up:16 isolated source-membership SQL cases
+now include unknown admission search_path/grant/volatility guards. Six additional
+actual loopback PostgreSQL18.6 groups pass for concurrent business-witness retry,
+member ACK replay, exclusive competing-effect consumption, case-distinct branch
+denial and actual optional-vs-core statement cancellation. The fixture ordinary
+delegate remains explicitly synthetic; no genuine writer acceptance is inferred.
+
+Current merged UI/source full Vitest run:6,837 passed,10 skipped,2 failures only
+in old route-guard expectations that predated the approved inventory-only Reports
+entry/helper. Those tests are now updated to require inventory permission only
+for /reports/inventory, test actual link-hub admission, and retain denial of
+Sales/Audit cards without their own permissions. All35 targeted route/navigation/
+native-report authorization cases pass after correction. No runtime permissions
+changed. Current-head CI will rerun; this is not a full-suite-pass claim yet.
+
+A concrete coverage/frontier proposal is appended to the existing stock-author
+plan for root scope review. It covers fresh Main snapshot/challenge/prefix proof,
+zero-delta catalogue births, selected-baseline membership and time-grade limits.
+No frontier/publisher code or new signing purpose is activated. Root is reviewing
+practical accepted-ledger vs strict physical-clock completeness semantics and
+source-writer mapping.031 remains draft/outside consolidated SQL.

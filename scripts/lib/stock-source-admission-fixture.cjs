@@ -6,7 +6,7 @@ const {readFileSync}=require('node:fs');
 const {randomUUID,generateKeyPairSync,sign}=require('node:crypto');
 const contract=require('../../electron/db/stock-history-contract.cjs');
 const protocol=require('../../electron/security/stock-event-author-protocol.cjs');
-async function createStockSourceAdmissionCloud({db=new PGlite()}={}){
+async function createStockSourceAdmissionCloud({db=new PGlite(),beforeMembership=null}={}){
  const author=randomUUID(),terminal=randomUUID(),key=randomUUID(),product=randomUUID(),database=randomUUID();
  const pair=generateKeyPairSync('ed25519'),project='https://stock.fixture';
  try{
@@ -54,7 +54,10 @@ async function createStockSourceAdmissionCloud({db=new PGlite()}={}){
  await db.query("INSERT INTO pos_sync_private.shift_author_keys VALUES($1,$2,$3,$4,$5,'original-cashier',NULL)",[key,author,terminal,project,pair.publicKey.export({type:'spki',format:'der'}).toString('base64url')]);
  for(const name of['20261105113916_stock_history_effective_ledger.sql','20261105172030_stock_history_accepted_effect_capture.sql',
   '20261105232647_stock_history_author_claim_admission.sql','20261106035442_stock_history_original_source_receipts.sql',
-  '20261106042742_stock_history_verified_source_membership.sql'])await db.exec(readFileSync('supabase/migrations/'+name,'utf8'));
+  '20261106042742_stock_history_verified_source_membership.sql']){
+  if(name==='20261106042742_stock_history_verified_source_membership.sql'&&beforeMembership)await beforeMembership(db);
+  await db.exec(readFileSync('supabase/migrations/'+name,'utf8'));
+ }
  const scalar=async(sql,args=[])=>(Object.values((await db.query(sql,args)).rows[0]))[0];
  async function operation({action='ADJUST',quantity='-1',sequence='1',predecessor=null}={}){
   const operationId=randomUUID(),activity=randomUUID(),document=randomUUID(),batch=randomUUID(),at='2026-11-06T01:02:03.1234567Z';
@@ -81,7 +84,8 @@ async function createStockSourceAdmissionCloud({db=new PGlite()}={}){
   const accept=(rows=[submission])=>scalar('SELECT pos_stock_history_accept_claims($1,$2,$3,$4::jsonb)',[project,'a',terminal,JSON.stringify(rows)]);
   return{row,operations,source,header,proof,submission,batch,upload,accept,before,after};
  }
- return{db,author,terminal,key,product,database,project,scalar,operation};
+ return{db,author,terminal,key,product,database,project,scalar,operation,
+  signFixtureStockProof:fields=>({...fields,signature:sign(null,Buffer.from(protocol.stockEventMessage(fields)),pair.privateKey).toString('base64url')})};
  }catch(error){await db.close();throw error;}
 }
 module.exports={createStockSourceAdmissionCloud};
