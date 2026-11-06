@@ -25330,8 +25330,19 @@ BEGIN
      OR EXISTS(SELECT 1 FROM unnest(p_store_ids) x WHERE NOT EXISTS(SELECT 1 FROM public.stores s WHERE s.id=x)) THEN
     RAISE EXCEPTION 'Choose a valid bounded date range and existing report branches' USING ERRCODE='22023';
   END IF;
-  SELECT coalesce((SELECT n.name FROM pg_catalog.pg_timezone_names n
-    WHERE n.name=(SELECT s.integration_settings->>'timeZone' FROM public.pos_settings s WHERE s.id=1)), 'UTC') INTO zone;
+  zone := (SELECT s.integration_settings->>'timeZone' FROM public.pos_settings s WHERE s.id=1);
+  IF zone IS NULL THEN
+    zone := 'UTC';
+  ELSIF zone IN ('UTC','Asia/Brunei') THEN
+    -- These exact existing names need one resolution, not every installed zone.
+    -- Other names keep their original catalogue membership and UTC fallback.
+    BEGIN
+      PERFORM pg_catalog.timezone(zone,pg_catalog.now());
+    EXCEPTION WHEN invalid_parameter_value THEN zone := 'UTC';
+    END;
+  ELSE
+    SELECT coalesce((SELECT n.name FROM pg_catalog.pg_timezone_names n WHERE n.name=zone), 'UTC') INTO zone;
+  END IF;
   WITH selected_bills AS MATERIALIZED (
       SELECT s.id,s.store_id,s.created_at,
         s.total_amount-coalesce(s.tax_amount,0)-coalesce(s.rounding_adjustment,0) AS net

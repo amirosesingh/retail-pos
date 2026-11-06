@@ -29,7 +29,23 @@ async function main() {
       GRANT SELECT ON ALL TABLES IN SCHEMA public TO service_role;
       CREATE FUNCTION fixture_set_rows() RETURNS TABLE(n integer) LANGUAGE sql STABLE AS $$SELECT generate_series(1,2400)$$;
       REVOKE ALL ON FUNCTION fixture_set_rows() FROM PUBLIC; GRANT EXECUTE ON FUNCTION fixture_set_rows() TO service_role;`);
-    query(fs.readFileSync("supabase/migrations/20261105170645_bounded_shop_hourly_report.sql", "utf8"));
+    const artifact=fs.readFileSync("supabase/migrations/20261105170645_bounded_shop_hourly_report.sql", "utf8").replaceAll('\r\n','\n');
+    query('CREATE TABLE fixture_hour_ledger(id integer PRIMARY KEY);INSERT INTO fixture_hour_ledger VALUES(1);');
+    for(const eol of ['LF','CRLF'])for(const stage of ['late DDL','ledger']){
+      const bytes=eol==='CRLF'?artifact.replaceAll('\n','\r\n'):artifact;
+      const fault=stage==='ledger'?'INSERT INTO fixture_hour_ledger VALUES(1);':'SELECT 1/0;';
+      assert.throws(()=>query('BEGIN;\n'+bytes+'\n'+fault+'\nCOMMIT;'));
+      query("DO $$ BEGIN IF to_regprocedure('public.pos_report_store_hours(date,date,text[])') IS NOT NULL OR (SELECT count(*) FROM fixture_hour_ledger)<>1 THEN RAISE EXCEPTION 'owned migration rollback failed';END IF;END $$;");
+      console.log('PASS actual '+eol+' tool-owned '+stage+' rollback leaves no function/partial grant');
+    }
+    query('BEGIN;\n'+artifact+'\nCOMMIT;');
+    query("DO $$ BEGIN IF has_function_privilege('anon','public.pos_report_store_hours(date,date,text[])','EXECUTE') OR has_function_privilege('authenticated','public.pos_report_store_hours(date,date,text[])','EXECUTE') OR NOT has_function_privilege('service_role','public.pos_report_store_hours(date,date,text[])','EXECUTE') THEN RAISE EXCEPTION 'hourly ACL changed';END IF;END $$;");
+    for(const zone of ['UTC','Asia/Brunei']){
+      query("UPDATE pos_settings SET integration_settings=jsonb_build_object('timeZone','"+zone+"');");
+      const plan=query("EXPLAIN(ANALYZE,BUFFERS,TIMING OFF) SELECT public.pos_report_store_hours('2026-11-01','2026-11-01',ARRAY(SELECT 'shop-'||n FROM generate_series(0,99)n));");
+      console.log('PERF actual '+zone+' 2400groups '+plan.split(/\r?\n/).filter(line=>/Execution Time:/.test(line)).join(' '));
+    }
+    query("UPDATE pos_settings SET integration_settings=jsonb_build_object('timeZone','UTC');");
     const config = path.join(directory, "postgrest.conf");
     fs.writeFileSync(config, `db-uri = "postgresql://postgres@127.0.0.1:${port}/postgres"\ndb-schemas = "public"\ndb-anon-role = "service_role"\ndb-max-rows = 1000\nserver-host = "127.0.0.1"\nserver-port = ${apiPort}\nlog-level = "error"\n`);
     log = fs.openSync(path.join(directory, "postgrest.log"), "a");
