@@ -165,20 +165,21 @@ operation evidence. Do not infer an author from a device timestamp or accept a
 caller-supplied actor. Most importantly, a missing cloud fact must not be fixed by
 silently marking it uploaded.
 
-## Central future-insert correction
+## Central read-only rollout
 
-Prepare one tightly guarded AFTER INSERT trigger/function using the existing
-canonical history event shape: original organization, global read-scope feed,
-UUID entity key, ordinary identity cursor, insert/row_version1/non-tombstone.
-Preserve the existing BEFORE immutable guard and current service exposure. Do not
-modify old history rows, seed all history events, regenerate the whole schema,
-change grants/privacy, or add UPDATE/DELETE helpers. Existing missing rows recover
-through each PC's index job; no manual per-PC/global exact-ID seed is the final
-design. The new RPC/trigger migration is applied centrally only after exact review.
+The earlier future-insert trigger proposal is superseded. This release adds only
+the two exact read RPCs; the actual deployed immutable trigger stays unchanged.
+It neither enables ordinary history delivery to older clients nor modifies old
+history rows, seeds events, changes grants/privacy, or adds mutable adapters.
+Fresh canonical assembly retires only its exact known generated history-feed
+trigger/helper binding and enables no replacement. Unknown definitions abort.
 
-Apply any approved three-product repair before this future trigger: its reviewed
-normal effect counts were captured without history feed events. Do not silently
-alter that repair or its trigger fingerprints to accommodate a new trigger.
+Each PC automatically recovers absent facts through its exact UUID index job.
+Completed checks become eligible after15 minutes plus0–60 seconds stable terminal
+jitter in the existing coordinated lane. A backlog/offline period can extend
+latency. There is no operator per-PC/global exact-ID seed or payload redownload
+for already-present facts. Future global feed activation requires a separately
+reviewed compatibility rollout. Existing guarded repair fingerprints are unchanged.
 
 ## Proposed implementation files for parent review
 
@@ -193,7 +194,8 @@ alter that repair or its trigger fingerprints to accommodate a new trigger.
 | `src/lib/sync-endpoint.server.ts` | Strict new read operation through the existing proof/branch/projection resolution |
 | `src/lib/management-replica.server.ts` | Admit only the new read under existing verified Management scope |
 | `src/lib/protected-history-reconciliation.server.ts` (new) | Bounded RPC response validation/forwarding, current authority and privacy checks |
-| CLI-created new cloud migration; `supabase/schema.sql`; `scripts/generate-supabase-sync-contract.cjs` | Service-only index/row reads, future-insert trigger and matching preserved canonical source |
+| `electron/sync/history-feed.cjs`; narrow `pull-worker.cjs` hooks | Exact hydration for legacy history hints before SQL; append-only inserts last in the same page/cursor transaction |
+| CLI-created new cloud migration; `supabase/schema.sql`; `scripts/generate-supabase-sync-contract.cjs` | Service-only index/row reads and matching preserved canonical source; no new history feed trigger |
 | Focused protocol/SQL/PostgREST/native/job/scope/CPU tests plus tracker/memory | Allowed/denied, failure, restart and regression evidence |
 
 If actual transport/status type declarations need another file, report that
@@ -222,10 +224,10 @@ not a claim that hundreds of PCs can never encounter an error.
 ## Prepared implementation and persisted-v1 handoff
 
 The parent reviewed and authorized the implementation plan. Draft PR428 now
-contains the service-only bounded reads and future INSERT feed proposal; native
-runtime integration is under isolated verification. No live migration has run.
-Current migration committed-LF SHA256 is
-`80BDFC48A78220A532FBF909F5B1E05F2C7188881401F8822ADF642EDCD40A88`.
+contains the service-only bounded reads and exact native feed hydration; the
+future INSERT feed proposal is excluded for old-client compatibility. No live
+migration has run. The old80BDFC48 migration hash is superseded; the final revised
+committed-file hash must be reviewed explicitly before any application.
 
 An existing interrupted `history_gap_recovery_v1` is retained intact. Only up to
 50 exact validated history-only IDs may be excluded from operational startup/job
@@ -253,3 +255,26 @@ still commit together. Actual single-session verification covers all five
 caller isolation levels, rollback/context loss, contention, real Main lease/GUID
 proof and disposal of an unverifiable owned transaction connection. This is a
 new-path correction only; no operator database/session defaults are changed.
+# 6 November controlling rollout refinement
+
+The current release installs the two protected read RPCs only. It does not
+install a new history feed trigger/helper: deployed older Electron clients parse
+ordinary history JSON through JavaScript Number and can permanently round an
+immutable fact. IDs-only generic rows are not a safe compatibility signal.
+Fresh canonical assembly removes only its recognized generated history-feed
+trigger and keeps the existing append-only guard. Actual deployed trigger state
+is unchanged by the reviewed migration.
+
+For native pages that already contain history feed entries, hydrate strict UUID
+IDs through the existing exact 15-string reader before opening the local SQL
+transaction. Recheck current scope/database and pending work, insert absent IDs
+only, preserve existing immutable facts, and save the ordinary page cursor in
+that same transaction. Other tables retain their current apply path.
+
+Automatic membership reconciliation remains the service path for this mixed
+fleet: completed checks become eligible after 15 minutes plus deterministic
+terminal jitter, using the existing coordinated scheduler and bounded quanta.
+This is not a payload redownload, a new timer or immediate notification. UUID
+membership alone is not full-row equality/provenance evidence; a backlog or
+offline PC can extend convergence beyond the eligibility interval. Any future
+global feed activation needs a separate compatible rollout and exact review.

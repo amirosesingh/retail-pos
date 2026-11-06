@@ -116,18 +116,8 @@ BEGIN
  RETURN v_result;
 END;
 $history_rows$;$rows_definition$;
- feed_ddl constant text := $feed_definition$CREATE OR REPLACE FUNCTION public.pos_sync_history_feed_insert_v1()
- RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $history_feed$
-BEGIN
- -- INSERT only. Existing immutable UPDATE/DELETE guards remain untouched.
- INSERT INTO public.sync_change_feed(organization_id,branch_id,terminal_id,table_name,entity_id,operation,row_version,tombstone)
- VALUES(NEW.organization_id,'global',NULL,'change_history',jsonb_build_object('id',NEW.id)::text,'insert',1,false);
- RETURN NULL;
-END;
-$history_feed$;$feed_definition$;
  entry jsonb; actual jsonb; signature text; ddl text; tag text; expected_body text; oid_value oid;
  installed integer; round integer;
- trigger_definition constant text := 'CREATE TRIGGER pos_history_feed_insert_v1 AFTER INSERT ON public.change_history FOR EACH ROW EXECUTE FUNCTION pos_sync_history_feed_insert_v1()';
 BEGIN
  IF current_user<>'postgres' THEN RAISE EXCEPTION 'HISTORY_INDEX_MIGRATION_OWNER'; END IF;
  PERFORM set_config('search_path','pg_catalog,public',true);
@@ -149,13 +139,12 @@ BEGIN
    THEN RAISE EXCEPTION 'HISTORY_INDEX_SHAPE_CHANGED'; END IF;
   IF NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='public.change_history'::regclass AND tgname='change_history_no_change' AND tgenabled='O'
     AND pg_get_triggerdef(oid)='CREATE TRIGGER change_history_no_change BEFORE DELETE OR UPDATE ON public.change_history FOR EACH ROW EXECUTE FUNCTION change_history_immutable()')
-   OR EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='public.change_history'::regclass AND NOT tgisinternal AND tgname NOT IN ('change_history_no_change','pos_history_feed_insert_v1'))
+   OR EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='public.change_history'::regclass AND NOT tgisinternal AND tgname<>'change_history_no_change')
    THEN RAISE EXCEPTION 'HISTORY_INDEX_TRIGGER_CHANGED'; END IF;
   installed:=0;
   FOR signature,ddl,tag IN VALUES
    ('public.pos_sync_history_index_v1(text,text,text,text,uuid,uuid,integer,boolean)',index_ddl,'$history_index$'),
-   ('public.pos_sync_history_rows_v1(text,text,text,jsonb,boolean,integer)',rows_ddl,'$history_rows$'),
-   ('public.pos_sync_history_feed_insert_v1()',feed_ddl,'$history_feed$')
+   ('public.pos_sync_history_rows_v1(text,text,text,jsonb,boolean,integer)',rows_ddl,'$history_rows$')
   LOOP
    -- Normalize only our NEW definitions, never an existing helper's pinned bytes.
    ddl:=replace(ddl,chr(13)||chr(10),chr(10));
@@ -168,11 +157,10 @@ BEGIN
       'result',pg_get_function_result(p.oid),'arguments',pg_get_function_arguments(p.oid),'cost',p.procost,'rows',p.prorows)
      INTO actual FROM pg_proc p WHERE p.oid=oid_value;
     IF actual IS DISTINCT FROM jsonb_build_object('body',expected_body,'owner','postgres','acl',jsonb_build_array('postgres=X/postgres','service_role=X/postgres'),
-      'config',jsonb_build_array('search_path=pg_catalog, public'),'definer',signature='public.pos_sync_history_feed_insert_v1()','strict',false,'volatility','v',
+      'config',jsonb_build_array('search_path=pg_catalog, public'),'definer',false,'strict',false,'volatility','v',
       'kind','f','parallel','u','leakproof',false,'returns_set',false,'support_absent',true,'language','plpgsql',
-      'result',CASE WHEN signature='public.pos_sync_history_feed_insert_v1()' THEN 'trigger' ELSE 'jsonb' END,
-      'arguments',CASE signature WHEN 'public.pos_sync_history_feed_insert_v1()' THEN ''
-       WHEN 'public.pos_sync_history_index_v1(text,text,text,text,uuid,uuid,integer,boolean)' THEN 'p_organization_id text, p_branch_id text, p_terminal_id text, p_action text, p_after_id uuid DEFAULT NULL::uuid, p_upper_id uuid DEFAULT NULL::uuid, p_limit integer DEFAULT 1000, p_keep_commerce boolean DEFAULT false'
+      'result','jsonb',
+      'arguments',CASE signature WHEN 'public.pos_sync_history_index_v1(text,text,text,text,uuid,uuid,integer,boolean)' THEN 'p_organization_id text, p_branch_id text, p_terminal_id text, p_action text, p_after_id uuid DEFAULT NULL::uuid, p_upper_id uuid DEFAULT NULL::uuid, p_limit integer DEFAULT 1000, p_keep_commerce boolean DEFAULT false'
        ELSE 'p_organization_id text, p_branch_id text, p_terminal_id text, p_ids jsonb, p_keep_commerce boolean DEFAULT false, p_max_bytes integer DEFAULT 2097152' END,
       'cost',100,'rows',0)
      THEN RAISE EXCEPTION 'HISTORY_INDEX_INSTALLED_CHANGED: %',signature; END IF;
@@ -180,28 +168,17 @@ BEGIN
    END IF;
   END LOOP;
   IF round=2 THEN
-   IF installed<>3 THEN RAISE EXCEPTION 'HISTORY_INDEX_INSTALL_INCOMPLETE'; END IF;
+   IF installed<>2 THEN RAISE EXCEPTION 'HISTORY_INDEX_INSTALL_INCOMPLETE'; END IF;
    EXIT;
   END IF;
-  IF installed=3 THEN
-   IF NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='public.change_history'::regclass AND tgname='pos_history_feed_insert_v1'
-    AND tgenabled='O' AND pg_get_triggerdef(oid)=trigger_definition) THEN RAISE EXCEPTION 'HISTORY_INDEX_REPLAY_TRIGGER_CHANGED'; END IF;
-   RETURN;
-  END IF;
-  IF installed<>0 OR EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='public.change_history'::regclass AND tgname='pos_history_feed_insert_v1')
-   THEN RAISE EXCEPTION 'HISTORY_INDEX_PARTIAL_INSTALL'; END IF;
+  IF installed=2 THEN RETURN; END IF;
+  IF installed<>0 THEN RAISE EXCEPTION 'HISTORY_INDEX_PARTIAL_INSTALL'; END IF;
   EXECUTE replace(index_ddl,chr(13)||chr(10),chr(10));
   EXECUTE replace(rows_ddl,chr(13)||chr(10),chr(10));
-  EXECUTE replace(feed_ddl,chr(13)||chr(10),chr(10));
   REVOKE ALL ON FUNCTION public.pos_sync_history_index_v1(text,text,text,text,uuid,uuid,integer,boolean) FROM PUBLIC,anon,authenticated,service_role;
   REVOKE ALL ON FUNCTION public.pos_sync_history_rows_v1(text,text,text,jsonb,boolean,integer) FROM PUBLIC,anon,authenticated,service_role;
-  REVOKE ALL ON FUNCTION public.pos_sync_history_feed_insert_v1() FROM PUBLIC,anon,authenticated,service_role;
   GRANT EXECUTE ON FUNCTION public.pos_sync_history_index_v1(text,text,text,text,uuid,uuid,integer,boolean) TO service_role;
   GRANT EXECUTE ON FUNCTION public.pos_sync_history_rows_v1(text,text,text,jsonb,boolean,integer) TO service_role;
-  GRANT EXECUTE ON FUNCTION public.pos_sync_history_feed_insert_v1() TO service_role;
-  CREATE TRIGGER pos_history_feed_insert_v1 AFTER INSERT ON public.change_history FOR EACH ROW EXECUTE FUNCTION public.pos_sync_history_feed_insert_v1();
-  IF NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='public.change_history'::regclass AND tgname='pos_history_feed_insert_v1'
-    AND tgenabled='O' AND pg_get_triggerdef(oid)=trigger_definition) THEN RAISE EXCEPTION 'HISTORY_INDEX_INSTALL_TRIGGER_CHANGED'; END IF;
  END LOOP;
 END;
 $automatic_history_index_upgrade$;

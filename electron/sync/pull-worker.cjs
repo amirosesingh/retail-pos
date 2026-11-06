@@ -3,6 +3,7 @@ const { readPage, MAX_PAGE_BYTES } = require("./page-policy.cjs");
 const { refreshTable } = require("../jobs/bootstrap.cjs");
 const {prepareShiftGraphs,applyShiftGraphs} = require("./shift-graph.cjs");
 const { posFeedFailed, posFeedCompleted } = require("./status-evidence.cjs");
+const {prepareHistoryFeed}=require('./history-feed.cjs');
 const SHIFT_GRAPH_TABLES = new Set(["shifts", "shift_cash_counts", "shift_reconciliations",
   "shift_close_events", "shift_notifications", "shift_variance_alerts"]);
 
@@ -114,9 +115,9 @@ class PullWorker {
     await this.conflicts?.reconcileAcknowledged?.();
     let checkpoint = await this.checkpoints.get(branchId, "__feed__", "pull");
     while (true) {
-      let prepared;
+      let prepared,history;
       const page = await readPage(async limit => {
-        prepared=null;
+        prepared=null;history=null;
         const downloaded=await this.cloud.pullBatch({ branchId, cursor: checkpoint?.committed_cursor ?? null, limit });
         if (typeof downloaded.continuation === "boolean" && (downloaded.count || downloaded.continuation)) {
           let previous = Number(checkpoint?.committed_cursor ?? 0);
@@ -133,6 +134,7 @@ class PullWorker {
         if(Buffer.byteLength(JSON.stringify(downloaded),"utf8")>MAX_PAGE_BYTES)
           throw Object.assign(new Error("Download exceeds the safe page size."),{code:"EOVERSIZED"});
         prepared=await prepareShiftGraphs({cloud:this.cloud,connectionManager:this.connectionManager,branchId,changes:[...downloaded.rows,...downloaded.tombstones]});
+        history=await prepareHistoryFeed({cloud:this.cloud,connectionManager:this.connectionManager,branchId,changes:[...downloaded.rows,...downloaded.tombstones]});
         return downloaded;
       },batchSize);
       const batch = page.batch;
@@ -162,13 +164,17 @@ class PullWorker {
             changes.map(change => String(change.entity_id)), transaction, { branchId, changes }));
         }
         for (const table of ordered) {
-          const result = await this.applyTable(transaction, table, batch.rows.filter((row) => row.table_name === table.cloudTable && !prepared.covers(row)), branchId, graphPending.get(table.cloudTable));
+          const result = await this.applyTable(transaction, table, batch.rows.filter((row) => row.table_name === table.cloudTable && !prepared.covers(row) && !history.covers(row)), branchId, graphPending.get(table.cloudTable));
           merged += result.applied; conflictCount += result.conflicts;
         }
         for (const table of [...ordered].reverse()) {
-          const result = await this.applyTable(transaction, table, batch.tombstones.filter((row) => row.table_name === table.cloudTable && !prepared.covers(row)), branchId, graphPending.get(table.cloudTable));
+          const result = await this.applyTable(transaction, table, batch.tombstones.filter((row) => row.table_name === table.cloudTable && !prepared.covers(row) && !history.covers(row)), branchId, graphPending.get(table.cloudTable));
           merged += result.applied; conflictCount += result.conflicts;
         }
+        // Business/closing writers acquire their rows before history/journal.
+        // Do not introduce a history→business lock order in mixed feed pages.
+        merged+=await history.apply(transaction);
+        await history.assert(transaction);
         await this.checkpoints.save(branchId, "__feed__", "pull", { committed_cursor: batch.cursor }, transaction);
         await transaction.commit();
       } catch (error) {

@@ -32,6 +32,9 @@ function retryDelay(job,terminalId){
  const exponent=Math.min(6,safe(job.retry_count??0)),jitter=parseInt(createHash('sha256').update(terminalId+':'+exponent).digest('hex').slice(0,4),16)%3000;
  return Math.min(300000,5000*2**exponent)+jitter;
 }
+// Existing coordinator eligibility only, not a separate timer/network loop.
+// Stable terminal jitter staggers fleet membership scans; payloads remain absent-only.
+function membershipInterval(terminalId){return 15*60*1000+parseInt(createHash('sha256').update('history-membership:'+terminalId).digest('hex').slice(0,8),16)%60000;}
 function safeMessage(code){
  if(code==='ELOCAL_PENDING_UNVERIFIED')return'Retained local history work needs verification before this page can advance. Existing records remain intact.';
  if(/^(?:HTTP_(?:429|500|502|503|504)|EAI_AGAIN|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EOFFLINE)$/.test(code))return'The central history service did not answer. Recovery will retry from its saved progress.';
@@ -188,7 +191,7 @@ class HistoryIndexRecovery {
   const scope=await this.capture(branchId,scopeTag);let job=await this.jobRepository.recovery(TYPE,scope.branchId,scope.terminalId);await this.check(scope);
   if(job&&job.organization_name===scope.hash){
    const p=decode(job,scope),finished=Date.parse(job.finished_at);
-   if(job.status==='completed'&&p.s==='done'&&!force&&Number.isFinite(finished)&&this.now()-finished<12*60*60*1000)
+   if(job.status==='completed'&&p.s==='done'&&!force&&Number.isFinite(finished)&&this.now()-finished>=0&&this.now()-finished<membershipInterval(scope.terminalId))
     return{completed:true,membershipOnly:true,job};
    if(job.status==='completed'&&p.s==='done')job=null;
    else if(job.next_retry_at&&Date.parse(job.next_retry_at)>this.now())return{pending:true,retrying:true,job};
@@ -212,4 +215,4 @@ class HistoryIndexRecovery {
   this.assert(scope);return{...result,membershipOnly:true};
  }
 }
-module.exports={TYPE,initial,cursor,encode,decode,retryDelay,HistoryIndexStore,HistoryIndexRecovery};
+module.exports={TYPE,initial,cursor,encode,decode,retryDelay,membershipInterval,HistoryIndexStore,HistoryIndexRecovery};

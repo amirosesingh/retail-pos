@@ -7008,3 +7008,50 @@ warnings at10:43/11:13 match the tool plus explicit file wrappers; desired sourc
 ACL/OID and both migration ledgers verified. No slot/restart/rollback action ran.
 Future migration payloads need one tested transaction owner and new exact approval
 when protected bytes change; do not reapply already committed files to clear logs.
+# 6 November — PR428 exact future history and mixed-client rollout refinement
+
+- Controlling owner-approved recovery refinement: preserve exact history evidence
+  in ordinary native feed pages through the existing 15-string history read
+  protocol and append-only SQL insert, committed atomically with the feed cursor.
+  Generic table application must never parse/rewrite these protected rows.
+- Baseline e4d5bb1221613a6397d9a2e08424dbeab975fde9. Independent owned
+  Worker/CloudClient/LocalDB reproduction confirmed bigint revision and nested
+  JSON rounding in both that client and deployed beta-base cf8a4847. The tested
+  timestamp remained exact; no additional timestamp-loss claim is inferred.
+- The unapproved/unapplied migration is refined to READ RPCs ONLY. Do not add
+  the new global history INSERT-feed trigger/helper to an old/new mixed fleet.
+  Fresh canonical assembly also retires only its known generated history-feed
+  trigger, retaining the immutable-history guard. No live trigger is changed.
+- Completed membership rechecks become 15 minutes plus deterministic fleet
+  jitter in the existing coordinated lane, not a new timer/core poll. UUID pages
+  are membership evidence only; payloads are fetched only for absent IDs. Until
+  every relevant client supports an exact feed, new history may wait for that
+  reconciliation and bounded recovery backlog; there is no immediate-feed claim.
+- Sole writer verify_cloud_recovery owns new history-feed helper/tests, narrow
+  PullWorker integration, membership cadence, existing migration/canonical
+  assembly and affected tests/docs. Other agent source is frozen; preserve the
+  unrelated dirty generated route tree. Stock401 remains deferred and untouched.
+- Acceptance: actual exact bigint/JSON/timestamps in future feed hydration;
+  immutable/pending rows retained; IDs/envelopes/chunks/scope/permission bounded;
+  SQL rows+cursor rollback/retry together; no generic immutable MERGE; migration
+  install adds no feed for old clients; single tool-owned transaction/ledger
+  rollback; canonical rerun parity; final CI and independent review required.
+- No live database application, registration/enrollment, queue/checkpoint reset,
+  installer publication or production promotion is authorized by this refinement.
+- Refined checkpoint: exact helper/actual PullWorker, completed-clock/15min
+  eligibility, read-only SQL/canonical and continuation/status suites pass.
+  Actual CloudClient+PullWorker disposable LocalDB8 groups passed and cleaned:
+  exact bigint/JSON/100ns, page/cursor rollback, uppercase pending journal,
+  immutable preservation/no payload re-fetch, context changes, lost notification
+  and cold restart, and real AggregateRepository product-save interleaving before
+  the exact append. The latter is a bounded transaction composition, not full
+  installed checkout/shift-closing acceptance. No generic history MERGE is used.
+- Independent SQL provider checks passed28 nativeLF groups including8 actual
+  PostgREST checks and27 nativeCRLF groups; tool-ledger failure/replay/denied
+  access preserve the immutable guard/business rows. Independent old cf8a4847
+  CloudClient through guarded Workerd receives the actual captured ordinary
+  product feed after read-only installation and no new history events. These are
+  isolated synthetic adapters, not hosted CPU/deployed fleet acceptance.
+- Canonical-only review tightened retirement to exact known enabled trigger
+  definition and helper body/metadata; disabled/WHEN/body/definer variants abort.
+  Latest-beta integration, full regression/CI and final independent review remain.

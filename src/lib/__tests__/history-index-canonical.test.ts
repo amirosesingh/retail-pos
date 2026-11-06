@@ -11,11 +11,13 @@ describe('preserved fresh-schema history contract assembly',()=>{
   const prior='-- prior unrelated definition\nCREATE TABLE existing_fixture(id int);\n';
   const result=withHistoryIndexContract(prior,migration);
   expect(result.startsWith(prior)).toBe(true);expect(result.split(begin)).toHaveLength(2);expect(result.split(end)).toHaveLength(2);
-  for(const name of ['index','rows','feed']){
+  for(const name of ['index','rows']){
    const definition=migration.replaceAll('\r\n','\n').split(`$${name}_definition$`)[1];
    expect(result).toContain(definition);
   }
   expect(result).not.toMatch(/sync_apply_change_history|sync_delete_change_history|DELETE FROM public.change_history/);
+  expect(result).not.toContain('pos_sync_history_feed_insert_v1');
+  expect(result).toContain('DROP TRIGGER IF EXISTS sync_feed_change ON public.change_history');
  });
  it('replaces only its own bounded block and remains idempotent across checkouts',()=>{
   const prior='-- preserve before\n'+begin+'\nold owned block\n'+end+'\n-- preserve after\n';
