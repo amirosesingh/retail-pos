@@ -14,6 +14,15 @@ no explicit nested BEGIN/COMMIT payload. Exact cloud target/hash approval remain
 separate. No live schema/data/configuration changes, per-PC manual repair,
 registration reset, queue clearing or mutable history writer is authorized.
 
+First checkpoint in progress: strict Main-only index/row protocol now passes25
+focused cases for bound scope, increasing/duplicate UUIDs, malformed progress,
+lossless bigint/JSON/timestamps and denied extra/private fields. This is not wired
+to sync yet. Current live read-validator, privacy-helper, immutable-guard and
+pull definitions were captured read-only before any proposed patch; schema-only
+fixtures contain no business rows. CLI created the pending migration file; its
+SQL/native/PostgREST tests, future-insert trigger, fair durable jobs and actual
+device acceptance are still pending. Keep the draft PR checklist explicit.
+
 Owner explicitly requires automatic recovery for hundreds of PCs after short or
 long offline periods, without per-PC manual SQL, UUID exports, repair scripts,
 registration/checkpoint resets or queue clearing. A centrally reviewed migration
