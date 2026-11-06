@@ -69,6 +69,21 @@ test("the standalone025–030 file is deterministic and carries no runtime/sourc
  assert.equal(built.sql.includes('\r'),false,'Distributed SQL is LF-only without normalizing SQL literal contents');
 });
 
+test("future031 entries cannot be silently omitted or reordered by the packager",()=>{
+ const {packageUpgrade,manifestPath}=require('./package-existing-local-upgrade.cjs');
+ const manifest=JSON.parse(readFileSync(manifestPath,'utf8'));
+ const baseline=packageUpgrade(manifest);
+ for(const modules of [
+  [...manifest.modules,{id:'031_unreviewed_stock_history_fixture'}],
+  manifest.modules.slice(0,-1),
+  [...manifest.modules,manifest.modules[0]],
+  [...manifest.modules].reverse(),
+ ])assert.throws(()=>packageUpgrade({...manifest,modules}),/Reviewed module set\/order changed/);
+ assert.throws(()=>packageUpgrade({...manifest,modules:null}),/Reviewed module manifest is missing/);
+ assert.equal(packageUpgrade(manifest).sha256,baseline.sha256,'Known025–030 artifact remains byte-identical');
+ assert.equal(baseline.sha256,'090F24031A07660C2D36512D2B38197A06491BB28408CCAAFDBB66FC400A4730');
+});
+
 test("catalogue recognition preserves literals and distinguishes inherited collation from explicit BIN2",()=>{
  const {validationSql,fields,manifestFingerprint,fingerprintAlgorithm}=require('./lib/local-upgrade-catalogue.cjs');
  const shape={selectors:{tables:['fixture']},...Object.fromEntries(Object.keys(fields).map(k=>[k,[]]))};

@@ -1,3 +1,26 @@
+## 6 November — next single-file existing-PC preparation (SQL73)
+
+The current reviewed standalone025–030 file remains unchanged at SHA256
+`090F24031A07660C2D36512D2B38197A06491BB28408CCAAFDBB66FC400A4730`.
+This preparation will append stock-history031 only after STOCK401 supplies its
+explicit final source/shape freeze. Its present draft is not a delivery file,
+not pinned in this bundle and not approved for execution.
+
+Reuse the existing generator and owned transaction: validate the reviewed core,
+recognize or create025–030, recognize/create the exact frozen031 metadata, verify
+all module/core shapes, then commit once. Unknown/partial shapes or a late error
+roll back the complete update. Keep existing sales/stock/settings/grants and all
+local pending evidence intact; no baseline/backfill, queue/checkpoint reset,
+connection change or business operation is part of the SQL file.
+
+Before delivering the replacement ONE plain SSMS file: record the frozen031
+source hash, runtime preflight parity and captured physical catalogue; test a
+known existing025–030 database gaining031, populated rerun, partial/unknown031
+rejection and late031 rollback on uniquely owned LocalDB. Preserve source literal
+bytes and exact metadata recognition under both reviewed collations. The final
+file/manifest/hash and exact selected PC/server/database require separate review
+before live execution. No final031 artifact or PR is published at this checkpoint.
+
 # Production upgrade bundle and application record
 
 Status: the exact approved files were applied to the named cloud project and one local database on 5 November. See [the application record](shift-financial-application-20261105.md). Other targets, rollout activation and publication remain unapproved. Historical candidate notes below are retained as evidence, not replay instructions.
