@@ -434,3 +434,67 @@ does not incorrectly deny an already-current Administrator. Normal staff still
 need valid permission JSON; fresh SQL identity, terminal branch, POS frame,
 export/shift admission and post-await rechecks remain. Three new legacy-shape
 regressions plus44 combined Main/server/PostgreSQL read cases pass.
+
+## 6 November recorded-opening preparation
+
+Baseline0a973684 is recoverable. CLI-created draft
+20261106085839_stock_history_recorded_openings.sql will prepare service-only
+opening preview/publication and a private append-only publication receipt. The
+actual current Administrator must separately pass existing inventory/scope read
+admission; a frontier signature grants no opening permission. This is a logical
+recorded system snapshot, never a physical count or fabricated earlier balance.
+No baseline is created by applying the migration or opening a report.
+
+The bounded candidate uses one SQL snapshot for authorized current catalogue
+pairs plus retained authorized opening identities, exact integer quantities,
+committed accepted-effect/gap state, source head and claimed-writer cohort. Zero,
+archived/deleted original identities remain present; current protected fields
+from another cluster cannot replace retained names. Unknown stock representation,
+capture gaps or unvalidated effects refuse publication. A reason and exact
+candidate digest are required. Publish uses the same metadata lock order as
+claim admission, takes no product lock, checks the candidate again and rolls back
+the whole metadata operation if source changes. Exact-ID retries acknowledge the
+original receipt only. Sales, stock, approvals, grants and business queues remain
+unchanged. All live opening/publication/activation remains separately excluded.
+
+The first verified opening supports its own instant and later dates, never older
+dates without evidence. Reader integration must distinguish accepted-ledger
+completeness from all-writer knowledge and label recorded/provisional timing.
+Registered retired/revoked writers cannot silently disappear from coverage;
+unknown web/mobile writers remain unknown. No complete export is enabled merely
+because a recorded balance reconciles. Late original-time movements can restate
+only where exact source/effect evidence proves they were not included in the
+selected opening; otherwise quantities stay incomplete.
+
+### Deferred next update — frozen source matrix
+
+The owner deferred401 on6 November. All factory/capture activation remains OFF;
+the states below describe preparation, not installed/live coverage.
+
+| Workflow | Prepared evidence/acceptance | Remaining state |
+| --- | --- | --- |
+| Native original sale | Main original proof + FIN62 birth/publication/effect admission exercised in isolated genuine fixtures | Final Main/coordinator wiring and installed acceptance pending |
+| Native refund | Real delta receipt/capture and stock leg verified | Protected original-refund financial/source admission adapter pending; hold an honest gap meanwhile |
+| Native adjustment | Genuine existing writer → original cohort/witness → exact accepted effect, including bulk8+2 | Wiring/activation and installed acceptance pending |
+| Native receiving | Genuine posted purchase-order/activity effect; original arrival option and scoped UI verified | Wiring/activation and installed acceptance pending |
+| Native product creation/import | Conservative nonzero first-create source path prepared | Zero birth/membership and existing-product import updates need exact source adapters; no generic upsert proof |
+| Native transfer dispatch/receive | Actual effect sensor covers accepted writes | Original document/direction/recipient adapter pending; unsupported proofs remain held |
+| Native product merge | Actual effect sensor covers accepted writes | Original merge/deletion membership adapter pending; retain original identities and explicit gaps |
+| Sponsorship/missed bill | Actual effect sensor covers accepted writes | Original authorized document/financial origin adapters pending; no inferred actor/time |
+| Web/mobile reads | Authorized point/period reader and shared UI prepared | Hosted/platform acceptance pending |
+| Web/mobile stock writes/custom arrival | Actual cloud effect sensor prepared | Trusted online original-author/time adapters pending; custom arrival unavailable explicitly |
+
+Remaining stages are finite:finish accepted source/membership adapters; verify
+opening/writer publication and timestamp semantics; integrate recorded/provisional
+reader plus real bounded movement details; wire Main and the existing single
+lane with missing031 compatibility; finish exact SQL/package/tool-transaction
+review and platform/device acceptance. Unknown legacy/offline evidence stays
+incomplete; a classifier/helper/CI pass is never an all-writer completeness claim.
+
+The current recorded-opening draft is deliberately UNCOMMITTED/UNAPPLIED. Root's
+MVCC-snapshot/time-boundary review is unresolved despite passing logical and
+concurrency fixtures; those fixtures do not certify an exact wall-clock stock
+cutoff. Migration tool/ledger transaction ownership is also pending. The next
+session must resolve both before freezing an applicable hash, not reuse these
+draft bytes as a production upgrade. All stock SQL/031 is excluded from this
+release and remains subject to exact-project owner approval.

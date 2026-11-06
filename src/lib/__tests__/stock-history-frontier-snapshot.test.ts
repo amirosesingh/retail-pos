@@ -3,17 +3,35 @@ import {createHash} from 'node:crypto';
 import {afterEach,describe,expect,it,vi} from 'vitest';
 const require=createRequire(import.meta.url);
 const {readStockHistoryFrontierSnapshot:read}=require('../../../electron/db/stock-history-frontier-snapshot.cjs');
+const {uploadAggregateId}=require('../../../electron/db/stock-history-contract.cjs');
 const shape=require('../../../electron/db/stock-history-schema.json'),objects=require('../../../electron/db/stock-history-schema-objects.json');
 const database='11111111-1111-4111-8111-111111111111',oldDatabase='22222222-2222-4222-8222-222222222222';
 const id=(n:number)=>`33333333-3333-4333-8333-${String(n).padStart(12,'0')}`;
 const hash=(text:string)=>createHash('sha256').update(text,'utf8').digest('hex');
 type Row=Record<string,unknown>;
+const identifier=(value:unknown)=>String(value).match(/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i)?String(value).toLowerCase():String(value);
+function sourceSummary(sources:Row[]){
+ const streams=new Map<string,Row[]>();for(const row of sources){const key=JSON.stringify([identifier(row.database_guid),identifier(row.terminal_id)]);streams.set(key,[...(streams.get(key)??[]),row]);}
+ return [...streams.values()].map(rows=>{rows.sort((a,b)=>BigInt(String(a.source_sequence))<BigInt(String(b.source_sequence))?-1:1);
+  const first=rows[0]!,last=rows.at(-1)!;return{database_id:identifier(first.database_guid),terminal_id:identifier(first.terminal_id),row_count:String(rows.length),
+   unique_count:String(new Set(rows.map(row=>row.source_sequence)).size),min_sequence:first.source_sequence,max_sequence:last.source_sequence,last_root:last.source_root,
+   accepted_count:String(rows.filter(row=>row.accepted_batch_id!==null).length),unsigned_count:String(rows.filter(row=>row.unsigned===1).length),
+   broken_count:String(rows.filter((row,index)=>BigInt(String(row.source_sequence))!==BigInt(index+1)||row.predecessor_root!==(index?rows[index-1]!.source_root:null)).length),
+   evidence_hash:hash(JSON.stringify(rows.map(row=>[row.id,row.operation_id,row.source_sequence,row.source_root,row.predecessor_root,row.payload_hash,row.unsigned,row.accepted_batch_id,row.accepted_transaction_id,row.accepted_at])))};});
+}
+function movementSummary(movements:Row[],sources:Row[]){
+ const streams=new Map<string,Row[]>();for(const row of movements){const key=identifier(row.terminal_id);streams.set(key,[...(streams.get(key)??[]),row]);}
+ return [...streams].map(([terminal,rows])=>({terminal_id:terminal,row_count:String(rows.length),accepted_count:String(rows.filter(row=>row.ingested_cursor!==null).length),
+  unsigned_count:String(rows.filter(row=>row.unsigned===1).length),missing_source_count:String(rows.filter(row=>!sources.some(source=>source.operation_id===row.operation_id&&identifier(source.terminal_id)===terminal&&identifier(source.store_id)===identifier(row.store_id))).length),
+  unknown_kind_count:String(rows.filter(row=>!['sale','refund','receiving','stock','product','transfer','sponsorship','missed_bill'].includes(String(row.source_kind))).length),
+  evidence_hash:hash(JSON.stringify([...rows].sort((a,b)=>String(a.id).localeCompare(String(b.id))).map(row=>[row.id,row.operation_id,row.product_id,row.payload_hash,row.unsigned,row.ingested_cursor])))}));
+}
 function fixture(){
  const proof='{"fixture":"店📦"}',sources:Row[]=[{id:id(1),operation_id:id(2),store_id:'a',terminal_id:'t',database_guid:database,
   source_sequence:'1',source_root:'a'.repeat(64),predecessor_root:null,payload_hash:'b'.repeat(64),proof_bytes:String(Buffer.byteLength(proof,'utf16le')),
-  unsigned:0,accepted_batch_id:null,accepted_transaction_id:null,accepted_at:null}];
+  unsigned:0,accepted_batch_id:null,accepted_transaction_id:null,accepted_at:null,upload_aggregate_id:uploadAggregateId(id(2),'a')}];
  const movements:Row[]=[{id:id(3),operation_id:id(2),product_id:id(4),store_id:'a',terminal_id:'t',source_kind:'stock',payload_hash:'c'.repeat(64),
-  proof_bytes:String(Buffer.byteLength(proof,'utf16le')),unsigned:0,ingested_cursor:null,upload_aggregate_id:id(5)}];
+  proof_bytes:String(Buffer.byteLength(proof,'utf16le')),unsigned:0,ingested_cursor:null,upload_aggregate_id:uploadAggregateId(id(2),'a')}];
  const journal:Row[]=[{change_id:'9007199254740993',entity_type:'sales',entity_id:JSON.stringify({id:id(6)}),operation:'insert',branch_id:'a',entity_version:'9007199254740994',aggregate_id:id(6),failed:0}];
  const heads:Row[]=[{store_id:'a',coverage_state:'complete',baseline_id:id(7),coverage_generation:'9007199254740993',baseline_state:'verified',baseline_hash:'d'.repeat(64)}];
  const state={transaction:'0',options:'0',capability:'ready',databaseId:database,observedAt:'2026-11-06T00:00:00.1234567Z',current:true,lease:true,
@@ -32,15 +50,22 @@ function fixture(){
    if(text.includes('stock-frontier:session'))recordset=[{transaction_count:state.transaction,session_options:state.options}];
    else if(text.includes('stock-frontier:begin'))state.transaction='1';
    else if(text.includes('COMMIT')||text.includes('ROLLBACK'))state.transaction='0';
-   else if(text.includes('database_guid')&&!text.includes('stock-frontier:sources'))recordset=[{database_guid:state.databaseId,schema_generation:'31:fixture'}];
+   else if(text.includes('database_guid')&&!text.includes('stock-frontier:'))recordset=[{database_guid:state.databaseId,schema_generation:'31:fixture'}];
    else if(text.includes('c.max_length [length]'))recordset=state.capability==='absent'?[]:state.capability==='partial'?shape.columns.filter((row:Row)=>row.table!=='stock_history_openings'):state.capability==='unknown'?shape.columns.slice(1):shape.columns;
    else if(text.includes('WITH objects AS'))recordset=objects;
    else if(text.includes('stock-frontier:head'))recordset=heads;
-   else if(text.includes('stock-frontier:sources'))recordset=sources;
-   else if(text.includes('stock-frontier:movements'))recordset=movements;
-   else if(text.includes('stock-frontier:journal'))recordset=journal;
-   else if(text.includes('stock-frontier:source-hashes'))recordset=sources.map(row=>({id:row.id,proof_hash:row.unsigned?null:hash(proof)}));
-   else if(text.includes('stock-frontier:movement-hashes'))recordset=movements.map(row=>({id:row.id,proof_hash:row.unsigned?null:hash(proof)}));
+   else if(text.includes('stock-frontier:source-summary'))recordset=sourceSummary(sources);
+   else if(text.includes('stock-frontier:movement-summary'))recordset=movementSummary(movements,sources);
+   else if(text.includes('stock-frontier:sources'))recordset=sources.filter(row=>row.accepted_batch_id===null||row.unsigned===1);
+   else if(text.includes('stock-frontier:movements'))recordset=movements.filter(row=>row.ingested_cursor===null||row.unsigned===1);
+   else if(text.includes('stock-frontier:journal'))recordset=journal.map(row=>{let referenced:unknown;try{referenced=JSON.parse(String(row.entity_id)).id;}catch{/* Unknown shape. */}
+    const records=row.entity_type==='stock_history_movements'?movements:row.entity_type==='stock_history_source_cohorts'?sources:[];
+    const record=records.find(record=>record.id===referenced&&identifier(record.store_id)===identifier(this.parameters.branch));
+    return{...row,reference_table:record?row.entity_type:null,reference_id:record?.id??null,reference_operation_id:record?.operation_id??null,
+     reference_store_id:record?.store_id??null,reference_terminal_id:record?.terminal_id??null,reference_upload_aggregate_id:record?.upload_aggregate_id??null,
+     reference_pending:record?(row.entity_type==='stock_history_movements'?record.ingested_cursor===null?1:0:record.accepted_batch_id===null?1:0):null};});
+   else if(text.includes('stock-frontier:source-hashes'))recordset=sources.filter(row=>row.accepted_batch_id===null||row.unsigned===1).map(row=>({id:row.id,proof_hash:row.unsigned?null:hash(proof)}));
+   else if(text.includes('stock-frontier:movement-hashes'))recordset=movements.filter(row=>row.ingested_cursor===null||row.unsigned===1).map(row=>({id:row.id,proof_hash:row.unsigned?null:hash(proof)}));
    else if(text.includes('stock-frontier:clock'))recordset=[{observed_at:state.observedAt}];
    else throw new Error('Unexpected SQL in fixture');
    state.afterQuery(text);return{recordset:structuredClone(recordset)};
@@ -96,7 +121,7 @@ describe('private bounded read-only native stock frontier snapshot',()=>{
  });
  it('treats orphan/failed metadata journal records as held evidence without exposing private errors',async()=>{
   const f=fixture();f.journal.push({...f.journal[0],change_id:'2',entity_type:'stock_history_movements',entity_id:JSON.stringify({id:id(99)}),failed:1});
-  const result=await f.run();expect(result.pending.metadata).toBe('3');expect(result.pending.business).toBe('1');
+  const result=await f.run();expect(result.pending.metadata).toBe('2');expect(result.pending.business).toBe('2');
   expect(result.blockers).toEqual(['HISTORY_UPLOAD_FAILED','ORPHAN_HISTORY_JOURNAL']);
  });
  it('does not treat an unrecognized local source writer as verified coverage',async()=>{
@@ -137,6 +162,48 @@ describe('private bounded read-only native stock frontier snapshot',()=>{
   const f=fixture();f.sources.splice(0,f.sources.length,...Array.from({length:2001},(_,index)=>({...f.sources[0],id:id(index+10)})));
   expect(await f.run()).toEqual({available:false,reason:'FRONTIER_EVIDENCE_OVERSIZED'});expect(f.commands.some(text=>text.includes('source-hashes'))).toBe(false);
   const bytes=fixture();bytes.sources[0]!.proof_bytes='9007199254740993';expect(await bytes.run()).toEqual({available:false,reason:'FRONTIER_EVIDENCE_OVERSIZED'});
+ });
+ it('does not spend the pending bound on2001 accepted immutable sources/movements',async()=>{
+  const f=fixture(),source=f.sources[0]!,movement=f.movements[0]!;
+  f.sources.splice(0,1,...Array.from({length:2001},(_,index)=>({...source,id:id(index+10),operation_id:id(index+3000),source_sequence:String(index+1),
+   predecessor_root:index?'a'.repeat(64):null,accepted_batch_id:id(index+6000),accepted_transaction_id:String(index+1),accepted_at:'2026-11-06T00:00:00.1234567Z',proof_bytes:'9007199254740993'})));
+  f.movements.splice(0,1,...f.sources.map((row,index)=>({...movement,id:id(index+9000),operation_id:row.operation_id,ingested_cursor:String(index+1),proof_bytes:'9007199254740993'})));
+  // Accepted proof bodies are never exported/hashed, so their legacy size cannot
+  // exhaust the bounded pending workload. One pending movement still references
+  // a real accepted source, which is absent from the detail query.
+  f.movements.push({...movement,id:id(15000),operation_id:f.sources[0]!.operation_id});
+  const first=await f.run();expect(first).toMatchObject({available:true,sourceSequence:'2001',pending:{metadata:'1',unsigned:'0',unknown:'0'}});
+  const details=f.commands.find(text=>text.includes('stock-frontier:source-hashes'))!;expect(details).toContain('accepted_batch_id IS NULL OR proof_json IS NULL');
+  f.sources.at(-1)!.source_root='e'.repeat(64);const changed=await f.run();expect(changed.sourceRoot).toBe('e'.repeat(64));expect(changed.sourceGeneration).not.toBe(first.sourceGeneration);
+  f.movements[0]!.ingested_cursor='9007199254740993';expect((await f.run()).sourceGeneration).not.toBe(changed.sourceGeneration);
+ });
+ it('retains ingested legacy/SALE missing-source and unknown-writer evidence outside the pending detail',async()=>{
+  const f=fixture();f.sources.splice(0);f.movements[0]!.ingested_cursor='9007199254740993';f.movements[0]!.source_kind='sale';
+  const sale=await f.run();expect(sale).toMatchObject({available:true,pending:{metadata:'0',unknown:'1'}});expect(sale.blockers).toContain('UNPROVEN_ORIGINAL_SOURCE');
+  f.movements[0]!.source_kind='general';const legacy=await f.run();expect(legacy.blockers).toEqual(['UNKNOWN_STOCK_WRITER','UNPROVEN_ORIGINAL_SOURCE']);
+  expect(legacy.sourceGeneration).not.toBe(sale.sourceGeneration);
+ });
+ it.each(['stock_history_movements','stock_history_source_cohorts'])('keeps an accepted %s with an unACKed journal pending rather than claiming allzero',async entity=>{
+  const f=fixture();f.sources[0]!.accepted_batch_id=id(20);f.sources[0]!.accepted_transaction_id='1';f.sources[0]!.accepted_at='2026-11-06T00:00:00.1234567Z';f.movements[0]!.ingested_cursor='1';f.journal.splice(0);
+  expect((await f.run()).pending).toEqual({business:'0',metadata:'0',unsigned:'0',unknown:'0'});
+  const row=entity==='stock_history_movements'?f.movements[0]!:f.sources[0]!;
+  f.journal.push({change_id:'1',entity_type:entity,entity_id:JSON.stringify({id:row.id}),operation:'insert',branch_id:'a',entity_version:'1',aggregate_id:row.upload_aggregate_id,failed:0});
+  const held=await f.run();expect(held.pending).toEqual({business:'1',metadata:'0',unsigned:'0',unknown:'1'});expect(held.blockers).toEqual(['ACKED_HISTORY_WITH_PENDING_JOURNAL']);
+ });
+ it.each(['aggregate','global','extra-key','duplicate-key','namespace','foreign-till'])('holds a substituted history journal %s as critical pending/unknown',async mode=>{
+  const f=fixture();f.sources[0]!.accepted_batch_id=id(20);f.sources[0]!.accepted_transaction_id='1';f.sources[0]!.accepted_at='2026-11-06T00:00:00.1234567Z';f.movements[0]!.ingested_cursor='1';f.journal.splice(0);
+  const row:Row={change_id:'1',entity_type:'stock_history_movements',entity_id:JSON.stringify({id:f.movements[0]!.id}),operation:'insert',branch_id:'a',entity_version:'1',aggregate_id:f.movements[0]!.upload_aggregate_id,failed:0};
+  if(mode==='aggregate')row.aggregate_id=id(99);if(mode==='global')row.branch_id='global';if(mode==='extra-key')row.entity_id=JSON.stringify({id:f.movements[0]!.id,other:'untrusted'});
+  if(mode==='duplicate-key')row.entity_id=`{"id":"${f.movements[0]!.id}","id":"${f.movements[0]!.id}"}`;
+  if(mode==='namespace')row.entity_type='stock_history_source_cohorts';if(mode==='foreign-till')f.movements[0]!.terminal_id='T';f.journal.push(row);
+  const result=await f.run();expect(result.pending.business).toBe('1');expect(BigInt(result.pending.unknown)).toBeGreaterThan(0n);
+  expect(result.blockers).toContain(mode==='namespace'?'ORPHAN_HISTORY_JOURNAL':'HISTORY_JOURNAL_BINDING_UNVERIFIED');
+ });
+ it('does not double-count correctly bound still-pending own metadata',async()=>{
+  const f=fixture();f.journal.splice(0);
+  for(const [index,entity,row]of [[1,'stock_history_movements',f.movements[0]!],[2,'stock_history_source_cohorts',f.sources[0]!]] as const)
+   f.journal.push({change_id:String(index),entity_type:entity,entity_id:JSON.stringify({id:row.id}),operation:'insert',branch_id:'a',entity_version:'1',aggregate_id:row.upload_aggregate_id,failed:0});
+  expect((await f.run()).pending).toEqual({business:'0',metadata:'2',unsigned:'0',unknown:'0'});
  });
  it('cleans a late pool acquisition exactly once after its bounded wait has expired',async()=>{
   vi.useFakeTimers();const f=fixture();let complete!:()=>void;

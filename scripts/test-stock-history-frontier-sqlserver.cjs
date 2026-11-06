@@ -73,14 +73,19 @@ async function source({sourceId=id(),operationId=operation,guid=databaseId,store
   UPDATE dbo.stock_history_heads SET coverage_state=N'complete',baseline_id=@baseline,coverage_from_ticks=CONVERT(decimal(20,0),@ticks),coverage_through_ticks=CONVERT(decimal(20,0),@ticks) WHERE store_id=N'a';`);
  await pool.request().query(`SET IDENTITY_INSERT dbo.sync_change_journal ON;INSERT dbo.sync_change_journal(change_id,entity_type,entity_id,operation,branch_id,entity_version,aggregate_id)
   VALUES(9007199254740993,N'sales',N'{"id":"${id()}"}',N'insert',N'a',9007199254740994,'${id()}');SET IDENTITY_INSERT dbo.sync_change_journal OFF;`);
- const before=await saved(),initial=await read(options());assert.equal(initial.available,true);assert.equal(initial.databaseId,databaseId);assert.equal(initial.sourceSequence,'1');assert.equal(initial.sourceRoot,root);
+ const capturedRows={};let fixtureQueryError;class CaptureRequest extends sql.Request{async query(text){try{const result=await super.query(text);const tag=/stock-frontier:([a-z-]+)/.exec(text)?.[1];if(tag)capturedRows[tag]=result.recordset;return result;}catch(error){fixtureQueryError=error.message;throw error;}}}
+ const before=await saved(),initial=await read({...options(),manager:{pool,sql:()=>({...sql,Request:CaptureRequest})}});assert.equal(initial.available,true,JSON.stringify({initial,fixtureQueryError}));assert.equal(initial.databaseId,databaseId);assert.equal(initial.sourceSequence,'1');assert.equal(initial.sourceRoot,root);
  assert.deepEqual(initial.pending,{business:'1',metadata:'2',unsigned:'0',unknown:'0'});assert.equal(initial.coverageProven,false);assert.equal(await saved(),before);
  const proofDigest=createHash('sha256').update(proof,'utf8').digest('hex');
- const journalEvidence=(await pool.request().query(`SELECT CONVERT(nvarchar(30),change_id) id,entity_type,entity_id,operation,branch_id,
-  CONVERT(nvarchar(30),entity_version) version,LOWER(CONVERT(nvarchar(36),aggregate_id)) aggregate_id,
-  CASE WHEN last_error IS NULL THEN 0 ELSE 1 END failed FROM dbo.sync_change_journal ORDER BY change_id;`)).recordset
-  .map(row=>[row.id,row.entity_type,row.entity_id,row.operation,row.branch_id,row.version,row.aggregate_id,row.failed===1]);
+ assert.equal(capturedRows['source-hashes'][0].proof_hash,proofDigest);assert.equal(capturedRows['movement-hashes'][0].proof_hash,proofDigest);
+ const journalEvidence=capturedRows.journal.map(row=>{
+  const fingerprint=[row.change_id,row.entity_type,row.entity_id,row.operation,row.branch_id,row.entity_version,row.aggregate_id,row.failed===1];
+  if(['stock_history_movements','stock_history_source_cohorts'].includes(row.entity_type))fingerprint.push([row.reference_table,row.reference_id,row.reference_operation_id,row.reference_store_id,row.reference_terminal_id,row.reference_upload_aggregate_id,row.reference_pending]);
+  return fingerprint;
+ }).sort((left,right)=>JSON.stringify(left)<JSON.stringify(right)?-1:JSON.stringify(left)>JSON.stringify(right)?1:0);
  const expectedGeneration=createHash('sha256').update(JSON.stringify(['stock-history.frontier-state.v1',initial.databaseKey,'a','t',
+  capturedRows['source-summary'].map(row=>[row.database_id,row.terminal_id,row.row_count,row.unique_count,row.min_sequence,row.max_sequence,row.last_root,row.accepted_count,row.unsigned_count,row.broken_count,row.evidence_hash]),
+  capturedRows['movement-summary'].map(row=>[row.terminal_id,row.row_count,row.accepted_count,row.unsigned_count,row.missing_source_count,row.unknown_kind_count,row.evidence_hash]),
   [[originalSourceId,operation,databaseId,'t','1',root,null,'b'.repeat(64),proofDigest,null,null,null]],
   [[movementId,operation,product,'t',movementHash,proofDigest,null]],journalEvidence]),'utf8').digest('hex');
  assert.equal(initial.sourceGeneration,expectedGeneration);
@@ -108,6 +113,16 @@ async function source({sourceId=id(),operationId=operation,guid=databaseId,store
  const uuidRead=await read({...options(),branchId:uuidBranch.toLowerCase()});assert.equal(uuidRead.available,true);assert.equal(uuidRead.sourceSequence,'1');assert.equal(uuidRead.pending.metadata,'1');
  const uuidUpper=await read({...options(),branchId:uuidBranch});assert.deepEqual(uuidUpper,{...uuidRead,observedAt:uuidUpper.observedAt});
  pass('UUID spelling is canonical without lowercasing or widening non-UUID branch codes');
+ const uuidTill='ABCDEF00-0000-4000-8000-000000000019',uuidOperation=id();
+ await source({store:'uuid-till-scope',till:uuidTill,operationId:uuidOperation});
+ await pool.request().input('operation',uuidOperation).input('terminal',uuidTill.toLowerCase()).query(`
+  INSERT dbo.stock_history_movements(id,operation_id,product_id,store_id,terminal_id,actor_id,source_kind,quantity_delta,effective_at_raw,effective_ticks,
+   recorded_at_raw,recorded_ticks,product_name,clock_state,payload_hash,payload_json,author_proof_json,ingested_cursor,ingested_at,local_cursor)
+  SELECT TOP(1) NEWID(),@operation,NEWID(),N'uuid-till-scope',@terminal,actor_id,source_kind,quantity_delta,effective_at_raw,effective_ticks,recorded_at_raw,recorded_ticks,product_name,clock_state,payload_hash,payload_json,N'{}',1,SYSDATETIMEOFFSET(),1
+  FROM dbo.stock_history_movements WHERE store_id=N'a';`);
+ const uuidTerminalRead=await read({...options(),branchId:'uuid-till-scope',terminalId:uuidTill.toLowerCase()});
+ assert.equal(uuidTerminalRead.sourceSequence,'1');assert(!uuidTerminalRead.blockers.includes('UNPROVEN_ORIGINAL_SOURCE'));assert(!uuidTerminalRead.blockers.includes('OTHER_TERMINAL_PENDING_SOURCE'));
+ pass('UUID-only till normalization matches original source evidence without treating case-sensitive codes as equal');
  await source({guid:id(),operationId:id(),sourceRoot:'e'.repeat(64)});
  const retained=await read(options());assert.equal(retained.sourceSequence,'1');assert(retained.blockers.includes('RETAINED_DATABASE_GENERATION'));
  await source({sequence:'3',previous:root,sourceRoot:'f'.repeat(64),operationId:id(),unsigned:true});
@@ -148,6 +163,77 @@ async function source({sourceId=id(),operationId=operation,guid=databaseId,store
  await pool.request().query('ALTER TABLE dbo.stock_history_source_cohorts DROP COLUMN fixture_unknown;');store.invalidateCapability();assert.equal((await read(options())).available,true);
  pass('partial/unknown031 rejected and exact restored shape revalidated without auto-upgrade');
  await require('./stock-frontier-runtime-sqlserver-cases.cjs')({pool,sql,saved,session,pass});
+ // Synthetic accepted metadata in this disposable database only. Thousands of
+ // finished rows (with large historical proof bodies) must not consume the
+ // bounded pending detail/hash budget or be exported as raw proof data.
+ const bulkBranch='bulk-scope',bulkTill='bulk',bulkBaseline=id();
+ const bulkData=Array.from({length:2001},(_,index)=>{const operation_id=id();return{n:index+1,id:id(),operation_id,movement_id:id(),aggregate_id:contract.uploadAggregateId(operation_id,bulkBranch)};});
+ await pool.request().input('database',databaseId).input('baseline',bulkBaseline).input('product',product).input('bulk_json',sql.NVarChar(sql.MAX),JSON.stringify(bulkData)).query(`
+  DECLARE @bulk table(n int NOT NULL PRIMARY KEY,id uniqueidentifier NOT NULL,operation_id uniqueidentifier NOT NULL,movement_id uniqueidentifier NOT NULL,aggregate_id uniqueidentifier NOT NULL);
+  INSERT @bulk SELECT n,id,operation_id,movement_id,aggregate_id FROM OPENJSON(@bulk_json) WITH(n int,id uniqueidentifier,operation_id uniqueidentifier,movement_id uniqueidentifier,aggregate_id uniqueidentifier);
+  INSERT dbo.stock_history_source_cohorts(id,operation_id,store_id,terminal_id,actor_id,action,source_root,source_count,database_guid,source_sequence,
+   predecessor_root,proof_json,members_json,payload_hash,upload_aggregate_id,accepted_batch_id,accepted_transaction_id,accepted_at,recorded_at_raw)
+  SELECT id,operation_id,N'bulk-scope',N'bulk',N'fixture',N'ADJUST',REPLICATE('a',64),1,@database,n,
+   CASE WHEN n=1 THEN NULL ELSE REPLICATE('a',64) END,CONVERT(nvarchar(max),N'{"fixture":"')+REPLICATE(CONVERT(nvarchar(max),N'x'),4096)+N'"}',N'[]',REPLICATE('b',64),aggregate_id,NEWID(),
+   CONVERT(bigint,9007199254740993)+n,CONVERT(datetimeoffset(7),N'2026-11-06T00:00:00.1234567Z',127),N'2026-11-06T00:00:00.1234567Z' FROM @bulk;
+  INSERT dbo.stock_history_movements(id,operation_id,product_id,store_id,terminal_id,actor_id,source_kind,quantity_delta,effective_at_raw,effective_ticks,
+   recorded_at_raw,recorded_ticks,product_name,clock_state,payload_hash,payload_json,author_proof_json,upload_aggregate_id,ingested_cursor,ingested_at,local_cursor)
+  SELECT movement_id,operation_id,@product,N'bulk-scope',N'bulk',N'fixture',N'stock',-1,N'2026-11-06T00:00:00.1234567Z',CONVERT(decimal(20,0),17939232001234567),
+   N'2026-11-06T00:00:00.1234567Z',CONVERT(decimal(20,0),17939232001234567),N'Fixture',N'unverified',REPLICATE('c',64),N'[]',
+   CONVERT(nvarchar(max),N'{"fixture":"')+REPLICATE(CONVERT(nvarchar(max),N'x'),4096)+N'"}',aggregate_id,CONVERT(bigint,9007199254740993)+n,CONVERT(datetimeoffset(7),N'2026-11-06T00:00:00.1234567Z',127),n FROM @bulk;
+  INSERT dbo.stock_history_baselines(id,store_id,cutoff_at_raw,cutoff_ticks,captured_at_raw,captured_ticks,source_cursor,opening_kind,verification_state,expected_pairs,terminal_watermarks,verified_by,evidence_hash)
+  SELECT @baseline,N'bulk-scope',cutoff_at_raw,cutoff_ticks,captured_at_raw,captured_ticks,source_cursor,opening_kind,verification_state,expected_pairs,terminal_watermarks,verified_by,evidence_hash
+  FROM dbo.stock_history_baselines WHERE id='${baseline}';
+  INSERT dbo.stock_history_heads(store_id,coverage_state,baseline_id,coverage_from_ticks,coverage_through_ticks) SELECT N'bulk-scope',N'complete',@baseline,coverage_from_ticks,coverage_through_ticks
+  FROM dbo.stock_history_heads WHERE store_id=N'a';`);
+ const bulkOptions=()=>({...options(),branchId:bulkBranch,terminalId:bulkTill}),bulkBefore=await saved(),summaryRows={};
+ class BulkRequest extends sql.Request{async query(text){const result=await super.query(text);const tag=/stock-frontier:([a-z-]+)/.exec(text)?.[1];if(tag)summaryRows[tag]=result.recordset;return result;}}
+ const bulkStart=Date.now(),large=await read({...bulkOptions(),manager:{pool,sql:()=>({...sql,Request:BulkRequest})}}),bulkMilliseconds=Date.now()-bulkStart;
+ assert.equal(large.available,true,JSON.stringify(large));assert.equal(large.sourceSequence,'2001');assert.deepEqual(large.pending,{business:'0',metadata:'0',unsigned:'0',unknown:'0'});
+ assert.equal(summaryRows.sources.length,0);assert.equal(summaryRows.movements.length,0);assert.equal(summaryRows['source-hashes'].length,0);assert.equal(summaryRows['movement-hashes'].length,0);
+ assert.equal(summaryRows['source-summary'].length,1);assert.equal(summaryRows['movement-summary'].length,1);assert.equal(large.coverageProven,false);assert.equal(await saved(),bulkBefore);
+ pass(`2001 accepted sources and2001 ingested movements with>16MiB proof bodies need no historical proof reads (${bulkMilliseconds}ms) and preserve all data/CT`);
+ for(const mode of ['accepted-movement','accepted-source','wrong-aggregate','global','extra-key','wrong-namespace']){
+  const entity=mode==='accepted-source'?'stock_history_source_cohorts':'stock_history_movements';
+  const actual=bulkData[0],reference=entity==='stock_history_source_cohorts'?actual.id:actual.movement_id;
+  const entityName=mode==='wrong-namespace'?'stock_history_source_cohorts':entity;
+  const entityKey=JSON.stringify({id:reference,...(mode==='extra-key'?{other:'untrusted'}:{})});
+  const row=(await pool.request().input('entity',entityName).input('key',entityKey).input('branch',mode==='global'?'global':bulkBranch).input('aggregate',mode==='wrong-aggregate'?id():actual.aggregate_id)
+   .query(`INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id,entity_version,aggregate_id)
+    OUTPUT CONVERT(nvarchar(30),inserted.change_id) change_id VALUES(@entity,@key,N'insert',@branch,1,@aggregate);`)).recordset[0];
+  const journalBefore=await saved(),held=await read(bulkOptions());assert.equal(held.available,true);assert.equal(held.pending.business,'1');assert.equal(held.pending.metadata,'0');assert.equal(held.pending.unknown,'1');assert.equal(await saved(),journalBefore);
+  assert(held.blockers.includes(mode.startsWith('accepted-')?'ACKED_HISTORY_WITH_PENDING_JOURNAL':mode==='wrong-namespace'?'ORPHAN_HISTORY_JOURNAL':'HISTORY_JOURNAL_BINDING_UNVERIFIED'));
+  await pool.request().input('id',row.change_id).query('DELETE dbo.sync_change_journal WHERE change_id=CONVERT(bigint,@id);');
+  assert.deepEqual((await read(bulkOptions())).pending,large.pending);
+ }
+ pass('healthy accepted prefix plus unACKed accepted-row/wrong namespace/aggregate/global/extra-key journal is critical pending/unknown, never silently allzero');
+ const bulkSource=(await pool.request().query("SELECT TOP(1) operation_id FROM dbo.stock_history_source_cohorts WHERE store_id=N'bulk-scope' ORDER BY source_sequence;")).recordset[0].operation_id;
+ const pendingMovement=id();
+ await pool.request().input('id',pendingMovement).input('operation',bulkSource).input('product',product).input('aggregate',contract.uploadAggregateId(String(bulkSource).toLowerCase(),bulkBranch)).query(`
+  INSERT dbo.stock_history_movements(id,operation_id,product_id,store_id,terminal_id,actor_id,source_kind,quantity_delta,effective_at_raw,effective_ticks,
+   recorded_at_raw,recorded_ticks,product_name,clock_state,payload_hash,payload_json,author_proof_json,upload_aggregate_id,local_cursor)
+  SELECT @id,@operation,NEWID(),store_id,terminal_id,actor_id,source_kind,quantity_delta,effective_at_raw,effective_ticks,recorded_at_raw,recorded_ticks,product_name,clock_state,payload_hash,payload_json,N'{}',@aggregate,2002
+  FROM dbo.stock_history_movements WHERE operation_id=@operation AND store_id=N'bulk-scope';
+  INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id,entity_version,aggregate_id)
+  SELECT N'stock_history_movements',N'{"id":"'+CONVERT(nvarchar(36),id)+N'"}',N'insert',N'bulk-scope',1,@aggregate
+  FROM dbo.stock_history_movements WHERE id=@id;`);
+ const tinyBefore=await saved(),tiny=await read(bulkOptions());assert.equal(tiny.available,true);assert.deepEqual(tiny.pending,{business:'0',metadata:'1',unsigned:'0',unknown:'0'});
+ assert.notEqual(tiny.sourceGeneration,large.sourceGeneration);assert.equal(await saved(),tinyBefore);
+ pass('tiny pending movement recognizes its accepted source and valid own unACKed metadata journal is not counted twice');
+ await source({store:bulkBranch,till:bulkTill,operationId:id(),sequence:'2002',previous:root,sourceRoot:'e'.repeat(64)});
+ const advanced=await read(bulkOptions());assert.equal(advanced.sourceSequence,'2002');assert.equal(advanced.sourceRoot,'e'.repeat(64));assert.notEqual(advanced.sourceGeneration,tiny.sourceGeneration);
+ await source({store:bulkBranch,till:bulkTill,operationId:id(),sequence:'2003',previous:root,sourceRoot:'f'.repeat(64)});
+ const mislinked=await read(bulkOptions());assert(mislinked.blockers.includes('BROKEN_SOURCE_PREFIX'));assert.equal(mislinked.pending.unknown,'1');
+ pass('aggregate digest and exact linked head advance, while a malformed predecessor remains unconfirmed after finished history grows');
+ const orphanOperation=id(),orphanMovement=id();
+ await pool.request().input('id',orphanMovement).input('operation',orphanOperation).query(`INSERT dbo.stock_history_movements(id,operation_id,product_id,store_id,terminal_id,actor_id,source_kind,quantity_delta,effective_at_raw,effective_ticks,
+  recorded_at_raw,recorded_ticks,product_name,clock_state,payload_hash,payload_json,author_proof_json,ingested_cursor,ingested_at,local_cursor)
+  SELECT TOP(1) @id,@operation,NEWID(),store_id,terminal_id,actor_id,N'sale',quantity_delta,effective_at_raw,effective_ticks,recorded_at_raw,recorded_ticks,product_name,clock_state,payload_hash,payload_json,N'{}',9007199254740993,ingested_at,2003
+  FROM dbo.stock_history_movements WHERE store_id=N'bulk-scope' AND ingested_at IS NOT NULL;`);
+ const orphan=await read(bulkOptions());assert(orphan.blockers.includes('UNPROVEN_ORIGINAL_SOURCE'));assert.equal(orphan.pending.unknown,'2');
+ const otherTill=await read({...bulkOptions(),terminalId:'Bulk'});assert.equal(otherTill.sourceSequence,'0');assert(otherTill.blockers.includes('OTHER_TERMINAL_PENDING_SOURCE'));
+ const otherBranch=await read({...bulkOptions(),branchId:'Bulk-scope'});assert.equal(otherBranch.sourceSequence,'0');assert.equal(otherBranch.pending.metadata,'0');
+ pass('accepted SALE without an original source stays unknown; large-history code casing never widens the original scope');
  await pool.request().input('database',databaseId).query(`INSERT dbo.stock_history_source_cohorts(id,operation_id,store_id,terminal_id,actor_id,action,source_root,source_count,database_guid,source_sequence,
   predecessor_root,proof_json,members_json,payload_hash,upload_aggregate_id,recorded_at_raw)
   SELECT TOP(2001) NEWID(),NEWID(),N'a',N'bulk',N'fixture',N'ADJUST',REPLICATE('a',64),1,@database,ROW_NUMBER()OVER(ORDER BY a.object_id,b.object_id),

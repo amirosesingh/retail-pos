@@ -7364,3 +7364,84 @@ migration refuses to replace accepted helpers again. Independent bounded reader
 review found no confirmed blocker; provider/publisher concurrency and final
 hosted/installed acceptance remain pending. TypeScript and scoped lint pass
 (test-only explicit-any warnings remain). No SQL applied or opening published.
+
+Frontier runtime preparation next: NEW stock-coverage-frontier-runtime.cjs owns
+current Main account/registered till/pool/epoch and the existing enrolled-key
+reference; no renderer supplies a snapshot or signing request. It obtains a
+bounded native snapshot, requests a challenge through the existing CloudClient
+lane, snapshots again after the network wait, signs only those typed private
+facts and rechecks source-generation/pending evidence before upload. No network
+wait occurs inside SQL. Missing031/key/account/lease or changed evidence returns
+unconfirmed metadata only; no stock/financial ACK, queue or opening is changed.
+The factory remains unwired until full source/publication acceptance; tests must
+prove stale profile/permission/lease rejection and ordinary work unaffected.
+
+Native frontier bounded-history refinement (baseline6ad1b17a, policy_implementation
+owns only stock-history-frontier-snapshot.cjs, its focused test and disposable
+SQL runner; preserve the writer's runtime hook). Finished immutable source and
+movement rows must not exhaust the pending-evidence2000-row bound. Use scoped
+SQL stream summaries with exact positive/unique sequence and predecessor-link
+checks; retain original GUID/till identities, accepted and unsigned counts and
+accepted-movement source anti-join diagnostics. Materialize/hash bounded pending
+or unsigned rows and unACKed journal evidence only. Bind exact summaries, head
+roots and pending hashes into the private generation; no complete coverage is
+inferred. Test >2000ACKed sources/movements plus small pending work, source links,
+missing accepted sources/legacy writers, retained generations/case scope,
+>2^53 values, all-five isolation/NOWAIT/context/rollback and unchanged data/CT.
+No schema, runtime signer, business writer, live data or activation changes.
+
+Snapshot refinement frozen for independent review:95 focused cases across five
+suites pass, including27 snapshot cases;28 actual uniquely owned LocalDB groups
+pass and are cleaned. 2001ACKed cohorts plus2001ingested movements with>16MiB
+historical proof bodies returned zero historical detail/proof-hash rows and
+completed the private observation in217ms (prior run233ms). Tiny pending work
+finds already accepted source rows, accepted SALE missing its original source
+stays unknown, and linked-prefix/case/UUID/retained-generation checks remain.
+All-five caller isolation, inherited/implicit refusal, NOWAIT real-writer win,
+context/lease loss, timeout rollback and unchanged data/CT are covered. TSC,
+scoped lint, CJS syntax and diff checks pass. The runtime fixture hook is retained.
+No coverage/opening publication or installed/live acceptance is claimed.
+
+Snapshot journal-binding correction before commit (policy_implementation owns the
+same3snapshot paths and this append): an unACKed history journal must never be
+suppressed merely because its referenced row exists. Read bounded exact row
+operation/branch/till/upload namespace and pending state; require a single-key
+UUID reference and deterministic original-operation aggregate. A valid own
+pending metadata row remains counted once. Wrong/global/extra-key/aggregate
+bindings, foreign tills and an alreadyACKed row with an unACKed journal remain
+critical pending/unknown evidence. No journal/ACK/queue writer changes. Add unit
+and actual LocalDB cases from a healthy accepted prefix with no other pending
+work, and retain all existing precision/isolation/NOWAIT/context/row-bound tests.
+
+Journal correction frozen:104 focused cases across five suites pass (36 snapshot
+cases), and29 actual disposable LocalDB groups pass/clean. A healthy accepted
+prefix with zero pending counts now reports critical business+unknown for each
+unACKed accepted movement/source, wrong aggregate/namespace, global branch or
+extra-key reference. Correct pending own metadata remains counted once. Scoped
+row-reference UNION uses explicit compatible BIN2 output collations; no database
+collation/configuration changes. Historical2001+2001 accepted-row observation
+remains bounded (241ms). TSC/lint/syntax checks pass. No ACK/journal mutation or
+runtime activation was added. Opening-publication test file remains unchanged.
+
+## 6 November owner deferral — STOCK401 next update only
+
+Owner explicitly moved the Stock report to the NEXT UPDATE. Stop new401
+implementation and preserve every checkpoint/unfinished file. Do not merge401,
+apply any stock cloud migration/031, activate capture, publish an opening or add
+stock SQL to the current production/consolidated local release. This supersedes
+the earlier instruction to finish401 for today's release;428/400 proceed apart.
+Pushed tested checkpoint at deferral:0a973684. The isolated completed CI correction
+3a4b7487 (strict development export footer + shared Switch controls) may be
+integrated as a preservation-only checkpoint after scoped review; no release
+approval follows. Finished snapshot refinement may likewise be committed after
+bounded verification. Preserve unfinished opening work unstaged with exact hashes.
+
+Opening draft has18 owned PGlite cases and13 actual PostgreSQL concurrency groups
+passing with fixtures cleaned, but it is NOT READY: root identified an unresolved
+MVCC snapshot versus wall-clock opening-cutoff boundary. The next session must
+test writers committing around both candidate reads/time/commit and establish an
+exact source-membership certificate or conservatively unsupported observation
+window. Also prepare/test ONE transaction owner for the actual migration tool/
+ledger path before final hash review; current draft BEGIN/COMMIT wrappers must
+not be submitted blindly. No approved bytes may be stripped after approval.
+No data, stock, sales, permissions, queues, checkpoints or real keys changed.
