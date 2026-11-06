@@ -7134,3 +7134,14 @@ non-migrating schema for the panel; it changes no Main authority or trading gate
 Root ran 85 focused tests in six suites, TypeScript and scoped lint successfully;
 independent review and 61 overlapping route/cache/state tests also passed.
 Actual mounted-panel checks and final Main reporting tests remain separate.
+
+Main reporting checkpoint: actual Main plus the real diagnostics writer/reader
+reproduced five failures in eight cases before the correction. Automatic gap
+reporting now waits for the existing recovery outcome, and the manual observer
+encloses its original synchronization plus recovery promise. Non-error progress
+does not clear old failures; unresolved recovery preserves its actual code and
+allowlisted private diagnostics. Requests, scheduling, lifecycle, branch and
+write guards are unchanged. Twenty-eight related tests, syntax, lint and diff
+checks pass; root TypeScript and independent runtime review also pass. One
+existing isolated log-line test needed the newly explicit original-failure
+binding; its privacy assertions remain intact. No database operation was run.

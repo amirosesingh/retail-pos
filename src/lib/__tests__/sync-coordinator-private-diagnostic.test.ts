@@ -35,11 +35,13 @@ describe("coordinator private transport diagnostics",()=>{
   const line=source.split("\n").find(line=>line.includes('if (!result.ok) diagnostics.logConnection("synchronization.automatic.failed"'))!;
   const logs:unknown[][]=[];
   const result=tagBootstrapDiagnostic({ok:false,code:"ESYNC",error:"fetch failed"},{...safe,secret:"never-export"});
-  new Function("result","diagnostics","syncRegistry",line)(result,{bootstrapDiagnostic,logConnection:(...args:unknown[])=>logs.push(args)},{tables:[{cloudTable:"products"}]});
+  const logFailure=new Function("result","failure","diagnostics","syncRegistry",line);
+  // Main retains the original private failure separately from its public result.
+  logFailure(result,result,{bootstrapDiagnostic,logConnection:(...args:unknown[])=>logs.push(args)},{tables:[{cloudTable:"products"}]});
   expect(logs).toHaveLength(1);expect(logs[0][0]).toBe("synchronization.automatic.failed");
   expect(logs[0][1]).toMatchObject({transportCode:"ECONNRESET",table:"products",bootstrapPhase:"download",category:"synchronization"});
   expect(JSON.stringify(logs)).not.toContain("never-export");
-  new Function("result","diagnostics","syncRegistry",line)({ok:true},{bootstrapDiagnostic,logConnection:(...args:unknown[])=>logs.push(args)},{tables:[]});
+  logFailure({ok:true},undefined,{bootstrapDiagnostic,logConnection:(...args:unknown[])=>logs.push(args)},{tables:[]});
   expect(logs).toHaveLength(1);
  });
 });
