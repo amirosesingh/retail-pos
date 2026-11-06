@@ -1717,3 +1717,20 @@ metadata integration needs its own reviewed activation/compatibility plan before
 implementation. The real affected PC still needs current read-only evidence.
 Automatic safe comparison is required; unproved historical financial actions
 still require the existing explicit, audited Administrator decision.
+
+## 7 November — automatic local recovery upgrade preparation approved
+
+Owner's “do it” approves implementation and isolated tests of the documented
+automatic recovery-metadata plan. Use current beta858f023f, which includes the
+verified PR430 startup/recovery-reporting fixes. Add only reviewed028–030 metadata
+automatically through guarded startup preparation, with exact schema/identity,
+backup, transaction and pending-work safety. Keep090F manual upgrade unchanged;
+025/026 financial activation, Stock031 and Membership remain excluded.
+
+Do not run the new automatic installer against real profiles/databases or deploy
+its DDL behavior yet. Exact final SQL/hash, target or rollout scope and backup/
+quiescence safeguards must be reviewed before live application. Production and
+installer publication retain their separate explicit owner approvals. True
+financial conflicts need the existing audited Administrator decision; schema
+installation must never invent proof, choose a timestamp winner, reset a cursor
+or acknowledge retained work.

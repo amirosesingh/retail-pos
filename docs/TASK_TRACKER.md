@@ -7166,3 +7166,63 @@ reject the old unsafe branch; retain every other offline/PIN/roster assertion.
 Actual snapshot and mounted tests already prove the behavior. The test-only
 correction passed 73 independent related cases, scoped lint and diff checks;
 runtime remains unchanged. Require fresh CI after the corrective test commit.
+
+## 7 November — approved automatic recovery-metadata implementation
+
+The owner asked whether the guarded automatic upgrade is recommended, then
+explicitly instructed “do it.” This approves implementation and isolated tests
+of docs/database/automatic-shift-recovery-metadata-plan.md. It does not approve
+live SQL execution, automatic DDL rollout to existing PCs, production promotion
+or installer publication. Present final exact SQL/hash and target/rollout with
+backup/quiescence evidence before those protected actions.
+
+New isolated branch codex/automatic-recovery-metadata-beta starts from current
+beta858f023fe543d2ae37e561eb6a42d647c62f301a. PR430 already merged there with
+6409 tests passing/11 skipped, exact-tree verification and successful beta-site
+deployment. Its startup admission and final-outcome reporting fixes are preserved.
+
+Scope: existing prepared028–030 recovery metadata only (four initially empty
+tables and their reviewed constraints/indexes/append-only guards), exact schema
+recognition, backup verification, one transaction owner, bounded exclusive
+startup installation, truthful status and existing recovery resumption. Keep
+the published090F local upgrade byte-identical. Financial025/026, Stock031,
+rollout activation, PINs, grants, settings, registration, queues and checkpoints
+are excluded. A completed metadata upgrade is not a recovered/acknowledged shift.
+
+File ownership: policy_implementation owns Main/database-service installer
+integration, new Main-only helper and runtime unit/integration tests;
+verify_cloud_recovery owns the recovery-only packager/artifact/read-only probe
+contract and owned SQL Server artifact tests; review_chore_prs independently
+reviews backup/transaction/scope/checkout safety and owns separate adversarial
+acceptance tests if needed. Agree artifact/probe interfaces before concurrent
+implementation. Root owns trackers, Git/PR and protected actions.
+
+Use uniquely owned disposable SQL fixtures only. Do not start this candidate with
+the real POS profile, reload it into a real database, inspect secrets or apply
+DDL through production connectors. Automatic application in the normal preview
+must remain excluded until exact-target approval. Preserve all existing qualified
+offline-checkout behavior when an optional upgrade is refused; incomplete or
+unproved recovery remains gated. The proposed side-by-side conflict chooser
+preserves both histories and requires an actual Administrator/reason; no generic
+raw overwrite or new financial correction authority is included in this batch.
+
+Implementation safety refinement: the candidate's Main-owned automatic-DDL
+policy stays disabled until the final artifact hash and live rollout are
+approved. Tests may inject a pinned approved policy only for owned fixtures;
+renderer/environment values cannot authorize DDL. Runtime, probe and installer
+still enforce database identity, exact schema and verified backup independently.
+The normal existing Electron preview remains on verified beta858, not this
+unapproved metadata-installation candidate.
+
+Package checkpoint: the recovery-only generator and three pinned artifacts are
+implemented. Initial installer SHA312B3B4C040336AE979C343283D138B5D6D8CA1C8D7C732CFF000BBE192C730B;
+probe0EE1FFB7CFFD8608728238BD06F3294EC0DA3EBDF3365F1308FD3C0498D26DE7;
+manifestA859B6BA780C08A6FCB16FF4FCBB273DDD4BDAC5C988870AF068DB560A9A7BB1.
+These are review checkpoints, not live approval. Six package checks and root's
+independent generator check pass. Twenty-four original actual LocalDB cases pass
+across CI and BIN2 collations, including wrong-target/caller-TX refusal, late
+rollback, unknown schema, safe whole-module prefixes and unchanged090F install
+followed by exact automatic no-op. That manual file leaves the core ledger24;
+unknown future ledger versions stay denied. All three exact LF hashes also
+survive an owned Windows autocrlf checkout. Populated-evidence/concurrency and
+actual runtime startup/backup/capability acceptance remain in progress.

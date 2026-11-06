@@ -1,6 +1,7 @@
 # Automatic local shift-recovery metadata — preparation plan
 
-Baseline: beta `2bbcf144b054ee2f47d0b9c35d38b2617ef7b6a4`.
+Implementation baseline: beta `858f023fe543d2ae37e561eb6a42d647c62f301a`.
+Owner approved implementation and isolated tests on 7 November 2026.
 This is not a live database or fleet rollout approval.
 
 ## Confirmed release gap
@@ -26,6 +27,10 @@ unverified until read-only inspection is available.
 - Include only existing prepared modules 028–030. Do not include financial
   modules 025/026, activate a financial rollout, change sharing policies, or
   include Stock report module 031.
+- Keep automatic DDL behind a Main-owned, artifact-pinned approval policy that
+  is disabled in the preparation candidate. Owned fixtures inject an approved
+  policy for end-to-end tests. A renderer value or environment variable cannot
+  approve a real database update. Final activation needs exact-file/rollout review.
 
 The exact SQL effects are four initially empty tables:
 

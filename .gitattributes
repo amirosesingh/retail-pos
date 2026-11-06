@@ -13,3 +13,6 @@
 /docs/database/legacy-shift-recovery-outbox.sql text eol=lf
 /docs/database/reviewed-shift-adoption.sql text eol=lf
 /supabase/migrations/20261105140417_isolate_refund_guard_table_fields.sql text eol=lf
+/database/sqlserver/recovery/shift-recovery-metadata.sql text eol=lf
+/database/sqlserver/recovery/shift-recovery-metadata-probe.sql text eol=lf
+/database/sqlserver/recovery/shift-recovery-metadata.manifest.json text eol=lf
