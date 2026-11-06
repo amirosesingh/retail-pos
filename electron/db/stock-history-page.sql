@@ -6,11 +6,12 @@ DECLARE @history_id uniqueidentifier,@history_name nvarchar(max),@history_sku nv
 DECLARE history_products CURSOR LOCAL FAST_FORWARD FOR
  SELECT TOP(@history_limit) o.product_id,o.product_name,o.sku,o.barcode,
   o.quantity+COALESCE((SELECT SUM(m.quantity_delta) FROM dbo.stock_history_movements m
-   WHERE m.store_id=o.store_id AND m.product_id=o.product_id
+   WHERE m.store_id=o.store_id AND CONVERT(varbinary(max),m.store_id)=CONVERT(varbinary(max),o.store_id) AND m.product_id=o.product_id
     AND m.effective_ticks>CONVERT(decimal(20,0),@history_baseline_ticks)
     AND m.effective_ticks<=CONVERT(decimal(20,0),@history_ticks)
     AND m.ingested_cursor<=CONVERT(bigint,@history_cursor)),0)
- FROM dbo.stock_history_openings o WHERE o.store_id=@history_branch AND o.baseline_id=@history_baseline
+ FROM dbo.stock_history_openings o WHERE o.store_id=@history_branch
+  AND CONVERT(varbinary(max),o.store_id)=CONVERT(varbinary(max),@history_branch) AND o.baseline_id=@history_baseline
   AND (@history_after IS NULL OR o.product_id>CONVERT(uniqueidentifier,@history_after)) ORDER BY o.product_id;
 OPEN history_products;
 FETCH NEXT FROM history_products INTO @history_id,@history_name,@history_sku,@history_barcode,@history_quantity;

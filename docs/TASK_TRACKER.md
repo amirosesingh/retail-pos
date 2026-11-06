@@ -6377,6 +6377,21 @@ activate a small-operation-only path or claim bulk completeness. Opening/cohort
 metadata, including zero-quantity membership, stays separate from physical stock
 movements; exact final local/cloud SQL bytes remain subject to end-of-batch owner
 review and approval before application.
+Bounded delegated digest implementation owns only three new files:
+`electron/shared/stock-source-cohort.mjs`, its `.d.mts` declaration and
+`src/lib/__tests__/stock-source-cohort.test.ts`. They build and verify bounded,
+domain-separated canonical source-manifest Merkle membership proofs. They expose
+no signing key, arbitrary signer, enrollment, business writer or admission API;
+an author signature still cannot prove the physical clock. The principal stock
+writer retains original transaction capture, key/proof integration, SQL/source
+admission, journals, exact ACK, coverage and activation responsibility.
+Next bounded metadata delegation may edit only prepared031, the stock-history
+schema column/object manifests, the stock-history physical-object checker and a
+new isolated cohort SQL fixture. It adds a separate append-only source-cohort
+metadata table for original digest/count, SQL lineage/sequence/predecessor,
+original proof/membership and exact acceptance fields. It adds no business FK,
+business-row backfill, activation, grant, connection change or live application.
+The principal writer retains Store/capture, key/server, outbox and sync wiring.
 Draft031 remains excluded from the existing installer/update; no live stock SQL,
 baseline, registration, permissions, queues, checkpoints or business rows changed.
 # DEV76 — complete shared protocol loading in local previews, 6 November
@@ -6599,3 +6614,46 @@ watermark details may change); final runtime preflight and populated-history
 fixture seed are requested at freeze. Next: capture and test that frozen source
 within the existing assembler, then create the concrete one-file beta PR.
 No operator SQL, configuration, queue/checkpoint or permission changes occurred.
+
+## STOCK401 — owner resumed all pending feature work, 6 November
+
+The owner explicitly resumed completing the retained historical stock report as
+an independent implementation stream. This supersedes the last Escape pause only
+for this approved source/test work. Preserve the dirty source-cohort protocol,
+signer, verifier and partial031 edits at local HEAD168f32f2; do not restart from
+an older checkout or discard the existing tested capture/ACK/read foundation.
+
+Remaining order: finalize the fifth append-only source-cohort metadata table and
+exact physical fingerprints; finish original transaction/cohort proof persistence,
+bounded membership upload, actual accepted source/effect validation and exact ACK;
+finish complete writer/cohort/opening coverage and truthful time grades; correct
+case-sensitive native scope and verify retained historical identities/date/time/
+shift-close/export and authorized actual-arrival selection. Integrate current beta
+additively at a safe committed checkpoint and update draftPR401 with scoped tests.
+
+No live cloud/local schema application, opening/baseline creation, business repair,
+real key enrollment/rotation, Membership change, production merge or publication
+is authorized by this resumption.031 remains draft and outside the consolidated
+SQL update until its final source/hash, side effects and tests are frozen for root
+review and separate exact-target owner approval. Unknown old/time/source evidence
+must remain incomplete; optional report metadata must preserve ordinary checkout
+and required financial/shift acknowledgement paths.
+
+STOCK401 resumed checkpoint: all five optional tables now have exact physical
+shape/object/collation evidence. The original56 object fingerprints are unchanged;
+20 cohort objects are appended. Native reader branch comparisons retain exact
+non-UUID code bytes under CI SQL defaults. Actual LocalDB acceptance now passes
+59 groups, including missing031 normal local-save compatibility, populated source
+cohort immutability/ACK/replay/rollback, exact-case denial and original-transaction
+enrolled cohort persistence. A new prepared trigger's fixed-width datetimeoffset
+binary conversion failed an exact ACK retry in the fixture; it now compares the
+full binary representation. No production database saw this draft.
+
+The original Main-author source cohort persists its full bounded membership,
+database GUID and sequence/predecessor in the business transaction; a later
+failure rolls back source/stock/movement/cohort together. This does NOT yet
+complete metadata upload/accepted nonfinancial source validation, prefix/opening
+publication, Main activation or installed acceptance.031 is still draft, not the
+consolidated upgrade. Focused author/stock/sync regression:366 tests/11 suites pass.
+
+Further current-source checks:60 actual disposable LocalDB groups pass, including a ten-product original operation's full signed cohort, gap-free sequence after rollback and existing eight-row upload boundary. TypeScript and scoped lint pass. Original author/stock/sync focused suites pass366/366. This is a prepared-source checkpoint only; accepted nonfinancial source admission, cohort transport/ACK, full coverage publication and activation remain pending.

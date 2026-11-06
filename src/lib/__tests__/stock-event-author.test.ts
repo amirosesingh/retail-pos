@@ -87,6 +87,25 @@ describe("dedicated stock author domain",()=>{
 });
 function unsignedFor(proof:Record<string,unknown>){const{signature:_signature,...fields}=proof;return fields;}
 describe("Main-owned stock author capture",()=>{
+ it('signs only a rebuilt original source cohort and rechecks the session after asynchronous hashing',async()=>{
+  const f=fixture('ADJUST'),prepared=await f.authority.prepare(f.authority.capture('ADJUST'));
+  const manifest={version:1,operationId:operation,action:'ADJUST',document:{type:'stock_adjustments',id:other},authorId:author,terminalId:'terminal-a',branchId:'a',productId:product,delta:'-1',effectiveAt:f.row.effective_at_raw,recordedAt:f.row.recorded_at_raw,sourceRefs:[]};
+  const input={operationId:operation,sourceDatabaseId:other,sourceSequence:'1',sourcePredecessorRoot:null,manifests:[manifest]};
+  const result=await prepared.signSourceCohort(input);expect(result.proof).toMatchObject({authorId:author,sourceCount:1,sourceSequence:'1',sourceDatabaseId:other});
+  const{signature,...facts}=result.proof;expect(verify(null,Buffer.from(protocol.stockSourceCohortMessage(facts)),{key:Buffer.from(f.info.publicKey,'base64url'),type:'spki',format:'der'},Buffer.from(signature,'base64url'))).toBe(true);
+  expect(Object.isFrozen(result.proof)).toBe(true);expect(result.members[0].root).toBe(result.proof.sourceRoot);
+  await expect(prepared.signSourceCohort({...input,sourceRoot:'a'.repeat(64)})).rejects.toMatchObject({code:'ESTOCK_AUTHOR_INVALID'});
+  const pending=prepared.signSourceCohort(input);f.context.epoch++;
+  await expect(pending).rejects.toMatchObject({code:'ESTOCK_AUTHOR_CHANGED'});
+ });
+ it('new source-cohort signing cannot load missing/other or unenrolled key material or accept a supplied digest',async()=>{
+  const f=fixture('ADJUST'),manifest={version:1,operationId:operation,action:'ADJUST',document:{type:'stock_adjustments',id:other},authorId:author,terminalId:'terminal-a',branchId:'a',productId:product,delta:'0',effectiveAt:f.row.effective_at_raw,recordedAt:f.row.recorded_at_raw,sourceRefs:[]};
+  const input={expectedKeyId:f.info.keyId,subject:'cashier-a',branchId:'a',operationId:operation,sourceDatabaseId:other,sourceSequence:'1',sourcePredecessorRoot:null,action:'ADJUST',manifests:[manifest]};
+  for(const patch of [{sourceRoot:'a'.repeat(64)},{sourceCount:1},{expectedKeyId:undefined},{expectedKeyId:other},{authorId:other},{operationId:other}])
+   await expect(f.keys.signStockSourceCohort(binding,{...input,...patch})).rejects.toThrow();
+  const file=join(f.directory,readdirSync(f.directory)[0]);unlinkSync(file);
+  await expect(f.keys.signStockSourceCohort(binding,input)).rejects.toThrow();expect(readdirSync(f.directory)).toHaveLength(0);
+ });
  it("uses an existing key reference and freezes real author evidence before another cashier uploads",async()=>{
   const f=fixture(),prepared=await f.authority.prepare(f.authority.capture("SALE")),proof=prepared.signMovement(f.row);
   expect(proof).toMatchObject({authorId:author,subject:"cashier-a",movementId:f.row.id,payloadHash:f.row.payload_hash});

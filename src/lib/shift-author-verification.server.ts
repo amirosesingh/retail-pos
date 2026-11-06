@@ -199,7 +199,20 @@ export async function verifyStockEventRegistryProof(value: unknown, request?:obj
   return proof;
 }
 
-export async function readVerifiedStockEventAuthor(proof: Awaited<ReturnType<typeof verifyStockEventRegistryProof>>,request?:object): Promise<ShiftAuthorAuthority> {
+/** Dedicated original source-cohort purpose in the existing stock domain. */
+export async function verifyStockSourceCohortRegistryProof(value:unknown,request?:object){
+  const {normalizeStockSourceCohortProof,stockSourceCohortMessage}=await import("../../electron/security/stock-event-author-protocol.cjs");
+  let proof:ReturnType<typeof normalizeStockSourceCohortProof>;
+  try{proof=normalizeStockSourceCohortProof(value);}catch{return denied("ESTOCK_AUTHOR_INVALID");}
+  if(proof.projectOrigin!==projectOrigin())return denied("ESTOCK_AUTHOR_INVALID");
+  const key=(await stockRegistry(proof,request)).key;
+  if(!key||!matchingKey(key,proof))return denied("ESTOCK_AUTHOR_INVALID");
+  const{signature,...fields}=proof;
+  if(!await validSignature(key.public_key,signature,stockSourceCohortMessage(fields)))return denied("ESTOCK_AUTHOR_INVALID");
+  Object.freeze(proof);verifiedStockKeys.set(proof,key);return proof;
+}
+
+export async function readVerifiedStockEventAuthor(proof: Awaited<ReturnType<typeof verifyStockEventRegistryProof>>|Awaited<ReturnType<typeof verifyStockSourceCohortRegistryProof>>,request?:object): Promise<ShiftAuthorAuthority> {
   if (!verifiedStockKeys.has(proof)) return { allowed: false, code: "ESTOCK_AUTHOR_INVALID" };
   const key = (await stockRegistry(proof,request)).key;
   if (!key || !matchingKey(key, proof) || key.revoked_at !== null) return { allowed: false, code: "ESTOCK_AUTHOR_REVOKED" };

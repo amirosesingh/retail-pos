@@ -10,8 +10,8 @@ BEGIN TRY
  IF OBJECT_ID(N'dbo.products',N'U') IS NULL OR OBJECT_ID(N'dbo.sync_change_journal',N'U') IS NULL
   THROW 51031,'Stock history requires the reviewed existing Retail business and sync schema.',1;
  DECLARE @stockHistoryPresent int=(SELECT COUNT(*) FROM sys.tables WHERE schema_id=SCHEMA_ID(N'dbo') AND name IN
-  (N'stock_history_heads',N'stock_history_baselines',N'stock_history_openings',N'stock_history_movements'));
- IF @stockHistoryPresent NOT IN(0,4) THROW 51031,'STOCK_HISTORY_PARTIAL_SCHEMA: stop for schema review.',1;
+  (N'stock_history_heads',N'stock_history_baselines',N'stock_history_openings',N'stock_history_movements',N'stock_history_source_cohorts'));
+ IF @stockHistoryPresent NOT IN(0,5) THROW 51031,'STOCK_HISTORY_PARTIAL_SCHEMA: stop for schema review.',1;
  IF OBJECT_ID(N'dbo.pos_schema_migrations',N'U') IS NOT NULL
  BEGIN
   IF EXISTS(SELECT 1 FROM dbo.pos_schema_migrations WHERE version=31 AND name<>N'stock_history_effective_ledger')
@@ -85,6 +85,34 @@ BEGIN TRY
     AND effective_ticks=DATEDIFF_BIG(SECOND,CONVERT(datetimeoffset(7),'1970-01-01T00:00:00Z',127),CONVERT(datetimeoffset(7),effective_at_raw,127))*CONVERT(bigint,10000000)+DATEPART(NANOSECOND,CONVERT(datetimeoffset(7),effective_at_raw,127))/100
     AND recorded_ticks=DATEDIFF_BIG(SECOND,CONVERT(datetimeoffset(7),'1970-01-01T00:00:00Z',127),CONVERT(datetimeoffset(7),recorded_at_raw,127))*CONVERT(bigint,10000000)+DATEPART(NANOSECOND,CONVERT(datetimeoffset(7),recorded_at_raw,127))/100)
   );
+  CREATE TABLE dbo.stock_history_source_cohorts(
+   id uniqueidentifier NOT NULL CONSTRAINT PK_stock_history_source_cohorts PRIMARY KEY,
+   operation_id uniqueidentifier NOT NULL,store_id nvarchar(128) COLLATE Latin1_General_100_BIN2 NOT NULL,
+   terminal_id nvarchar(128) COLLATE Latin1_General_100_BIN2 NOT NULL,
+   actor_id nvarchar(128) NULL,action nvarchar(32) NOT NULL,source_root char(64) NOT NULL,source_count int NOT NULL,
+   database_guid uniqueidentifier NOT NULL,source_sequence bigint NOT NULL,predecessor_root char(64) NULL,
+   proof_json nvarchar(max) NULL,members_json nvarchar(max) NOT NULL,payload_hash char(64) NOT NULL,
+   upload_aggregate_id uniqueidentifier NOT NULL,accepted_batch_id uniqueidentifier NULL,accepted_transaction_id bigint NULL,
+   accepted_at datetimeoffset(7) NULL,recorded_at_raw nvarchar(28) NOT NULL,
+   CONSTRAINT UQ_stock_history_source_operation UNIQUE(operation_id,store_id),
+   CONSTRAINT UQ_stock_history_source_sequence UNIQUE(database_guid,store_id,terminal_id,source_sequence),
+   CONSTRAINT CK_stock_history_source_action CHECK(action COLLATE Latin1_General_100_BIN2 IN
+    (N'RECEIVE',N'ADJUST',N'PRODUCT_CREATE',N'PRODUCT_MERGE',N'TRANSFER_DISPATCH',N'TRANSFER_RECEIVE',N'SPONSORSHIP_ISSUE',N'MISSED_BILL') AND DATALENGTH(action)=2*LEN(action)),
+   CONSTRAINT CK_stock_history_source_count CHECK(source_count BETWEEN 1 AND 2000),
+   CONSTRAINT CK_stock_history_source_hash CHECK(source_root NOT LIKE '%[^0-9a-f]%' COLLATE Latin1_General_100_BIN2
+    AND payload_hash NOT LIKE '%[^0-9a-f]%' COLLATE Latin1_General_100_BIN2),
+   CONSTRAINT CK_stock_history_source_predecessor CHECK(source_sequence>0 AND
+    ((source_sequence=1 AND predecessor_root IS NULL) OR (source_sequence>1 AND predecessor_root IS NOT NULL
+     AND predecessor_root NOT LIKE '%[^0-9a-f]%' COLLATE Latin1_General_100_BIN2))),
+   CONSTRAINT CK_stock_history_source_json CHECK(ISJSON(members_json)=1 AND LEFT(LTRIM(members_json),1)=N'['
+    AND (proof_json IS NULL OR (ISJSON(proof_json)=1 AND LEFT(LTRIM(proof_json),1)=N'{'))),
+   CONSTRAINT CK_stock_history_source_acceptance CHECK
+    ((accepted_batch_id IS NULL AND accepted_transaction_id IS NULL AND accepted_at IS NULL) OR
+     (accepted_batch_id IS NOT NULL AND accepted_transaction_id IS NOT NULL AND accepted_transaction_id>0 AND accepted_at IS NOT NULL)),
+   CONSTRAINT CK_stock_history_source_clock CHECK(DATALENGTH(recorded_at_raw)=56 AND
+    recorded_at_raw COLLATE Latin1_General_100_BIN2 LIKE N'[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9][0-9][0-9][0-9][0-9]Z'
+    AND TRY_CONVERT(datetimeoffset(7),recorded_at_raw,127) IS NOT NULL)
+  );
   CREATE INDEX IX_stock_history_movements_cutoff ON dbo.stock_history_movements(store_id,effective_ticks,local_cursor,product_id);
   CREATE INDEX IX_stock_history_openings_page ON dbo.stock_history_openings(store_id,baseline_id,product_id);
  END;
@@ -122,109 +150,143 @@ BEGIN TRY
  (N'stock_history_movements',N'author_proof_json',N'nvarchar',-1,0,0,1),
  (N'stock_history_movements',N'upload_aggregate_id',N'uniqueidentifier',16,0,0,1),
  (N'stock_history_movements',N'ingested_cursor',N'bigint',8,19,0,1),(N'stock_history_movements',N'ingested_at',N'datetimeoffset',10,34,7,1),
- (N'stock_history_movements',N'local_cursor',N'bigint',8,19,0,0);
+ (N'stock_history_movements',N'local_cursor',N'bigint',8,19,0,0),
+ (N'stock_history_source_cohorts',N'id',N'uniqueidentifier',16,0,0,0),(N'stock_history_source_cohorts',N'operation_id',N'uniqueidentifier',16,0,0,0),
+ (N'stock_history_source_cohorts',N'store_id',N'nvarchar',256,0,0,0),(N'stock_history_source_cohorts',N'terminal_id',N'nvarchar',256,0,0,0),
+ (N'stock_history_source_cohorts',N'actor_id',N'nvarchar',256,0,0,1),(N'stock_history_source_cohorts',N'action',N'nvarchar',64,0,0,0),
+ (N'stock_history_source_cohorts',N'source_root',N'char',64,0,0,0),(N'stock_history_source_cohorts',N'source_count',N'int',4,10,0,0),
+ (N'stock_history_source_cohorts',N'database_guid',N'uniqueidentifier',16,0,0,0),(N'stock_history_source_cohorts',N'source_sequence',N'bigint',8,19,0,0),
+ (N'stock_history_source_cohorts',N'predecessor_root',N'char',64,0,0,1),(N'stock_history_source_cohorts',N'proof_json',N'nvarchar',-1,0,0,1),
+ (N'stock_history_source_cohorts',N'members_json',N'nvarchar',-1,0,0,0),(N'stock_history_source_cohorts',N'payload_hash',N'char',64,0,0,0),
+ (N'stock_history_source_cohorts',N'upload_aggregate_id',N'uniqueidentifier',16,0,0,0),(N'stock_history_source_cohorts',N'accepted_batch_id',N'uniqueidentifier',16,0,0,1),
+ (N'stock_history_source_cohorts',N'accepted_transaction_id',N'bigint',8,19,0,1),(N'stock_history_source_cohorts',N'accepted_at',N'datetimeoffset',10,34,7,1),
+ (N'stock_history_source_cohorts',N'recorded_at_raw',N'nvarchar',56,0,0,0);
  IF EXISTS(SELECT * FROM @stockHistoryExpected EXCEPT SELECT t.name,c.name,ty.name,c.max_length,c.precision,c.scale,c.is_nullable
   FROM sys.tables t JOIN sys.columns c ON c.object_id=t.object_id JOIN sys.types ty ON ty.user_type_id=c.user_type_id
-  WHERE t.schema_id=SCHEMA_ID(N'dbo') AND t.name IN(N'stock_history_heads',N'stock_history_baselines',N'stock_history_openings',N'stock_history_movements'))
+  WHERE t.schema_id=SCHEMA_ID(N'dbo') AND t.name IN(N'stock_history_heads',N'stock_history_baselines',N'stock_history_openings',N'stock_history_movements',N'stock_history_source_cohorts'))
  OR EXISTS(SELECT t.name,c.name,ty.name,c.max_length,c.precision,c.scale,c.is_nullable
   FROM sys.tables t JOIN sys.columns c ON c.object_id=t.object_id JOIN sys.types ty ON ty.user_type_id=c.user_type_id
-  WHERE t.schema_id=SCHEMA_ID(N'dbo') AND t.name IN(N'stock_history_heads',N'stock_history_baselines',N'stock_history_openings',N'stock_history_movements')
+  WHERE t.schema_id=SCHEMA_ID(N'dbo') AND t.name IN(N'stock_history_heads',N'stock_history_baselines',N'stock_history_openings',N'stock_history_movements',N'stock_history_source_cohorts')
   EXCEPT SELECT * FROM @stockHistoryExpected)
   THROW 51031,'STOCK_HISTORY_UNKNOWN_SCHEMA: no existing shape was changed.',1;
 
 
  -- STOCK_HISTORY_OBJECT_GUARD_BEGIN
- IF @stockHistoryPresent=4
+ IF @stockHistoryPresent=5
  BEGIN
   DECLARE @stockHistoryObjects table(table_name sysname,kind nvarchar(32),object_name sysname,object_hash varchar(64));
   INSERT @stockHistoryObjects VALUES
- (N'stock_history_heads',N'check',N'CK_stock_history_heads_cursor','F934C35EC7C5CE86F7749AB37F0793D194BBE6E0E9C3059C43710CE02220FD12'),
- (N'stock_history_heads',N'check',N'CK_stock_history_heads_state','79BECD9A613A25FF618047652105FAAD581F18375201B2B855C53FA04BA72C78'),
- (N'stock_history_heads',N'check',N'CK_stock_history_heads_json','D768D3E329A175891F6A09AF234E0D8357E273A121C4116B7A9F6D82DF475E8B'),
- (N'stock_history_heads',N'check',N'CK_stock_history_heads_coverage','B55DE85EB4CEA8E8D1428EA0A7BDDDB9AE1CF9B188DE6A5653FE0D06938D1943'),
- (N'stock_history_baselines',N'check',N'CK_stock_history_baseline_source','FD076904B3CA7BD23B30F0468AE697E3E1E02DEB8CAA0D4B98E451C57DE82F01'),
- (N'stock_history_baselines',N'check',N'CK_stock_history_baseline_kind','0028DC711C921F1B6DD46556223B0FCD4E6F739E35E421A6AC2160EA21B5555F'),
- (N'stock_history_baselines',N'check',N'CK_stock_history_baseline_verified','1E2666D648B9115E48D6215753DF9D2E2F71CC7F9BED68EC57AC658CE569E90C'),
- (N'stock_history_baselines',N'check',N'CK_stock_history_baseline_json','D768D3E329A175891F6A09AF234E0D8357E273A121C4116B7A9F6D82DF475E8B'),
- (N'stock_history_baselines',N'check',N'CK_stock_history_baseline_hash','5D1A87B1497A61444AC66E5AC63B444638A789E568734E6CBEFC5B42823DDAEE'),
- (N'stock_history_baselines',N'check',N'CK_stock_history_baseline_clock','7F15BF66019C84DAB13F4113133AE04E155759495EB71DE2917EB2C8635B1AC0'),
- (N'stock_history_movements',N'check',N'CK_stock_history_movement_delta','A4300ECBD009185EABA2783349F3BE7927B06AD7B5CED0BDD053BB9FBD106938'),
- (N'stock_history_movements',N'check',N'CK_stock_history_movement_cursor','467B40C90898510A134CFACEF39AC076FC8C59E3DC5EA92134812180562461E9'),
- (N'stock_history_movements',N'check',N'CK_stock_history_movement_clockstate','C1A9BBCB015E6B25349F86B8FA9F50C02BA82215650FF5536F977A5F7FE5ABA7'),
- (N'stock_history_movements',N'check',N'CK_stock_history_movement_hash','337C2581E626929434C2BF1F7C3EF6BD5ABC3D35A6CB87661793E0F476B1F7F0'),
- (N'stock_history_movements',N'check',N'CK_stock_history_movement_json','9BD349A9380970F2701E88E241DA03B87972E513439EF620C68E1960257307D0'),
- (N'stock_history_movements',N'check',N'CK_stock_history_movement_clock','517189FB97EEC905E34C36D29874B405FF649A9E0F00183BDD45407352172DA2'),
- (N'stock_history_heads',N'default',N'DF_stock_history_heads_cursor','80435AD34717DF8FC1B860E898C08379C46A83928D59205675F5C3CD83F6885F'),
- (N'stock_history_heads',N'default',N'DF_stock_history_heads_generation','80435AD34717DF8FC1B860E898C08379C46A83928D59205675F5C3CD83F6885F'),
- (N'stock_history_heads',N'default',N'DF_stock_history_heads_state','173038A3D62958A2F1A0EBBB67CF2D85B81829A5ADB7E72C5D985ECA0A06FA53'),
- (N'stock_history_heads',N'default',N'DF_stock_history_heads_terminals','978CFFA940D0E7CEE40E4E2CFC60EA7325F97317E135029F4566B2A5AC297D5C'),
- (N'stock_history_heads',N'default',N'DF_stock_history_heads_updated','096818D93FB628B7CA954230703AA88D426B4BFC9B9AC6A28D8DDA30F02FF0AB'),
- (N'stock_history_heads',N'default',N'DF_stock_history_heads_local','80435AD34717DF8FC1B860E898C08379C46A83928D59205675F5C3CD83F6885F'),
- (N'stock_history_baselines',N'index',N'PK_stock_history_baselines','0AAF6492B5C53742C2A13DB17CB820200785DDB56BAF95867AA08993135012A2'),
- (N'stock_history_baselines',N'index',N'UQ_stock_history_baseline_store','6BFD486DE4368ECF509C5ACBFEE922AABCF4C75766F1455B2A08CD2F87A88E21'),
- (N'stock_history_heads',N'index',N'PK_stock_history_heads','0AAF6492B5C53742C2A13DB17CB820200785DDB56BAF95867AA08993135012A2'),
- (N'stock_history_movements',N'index',N'PK_stock_history_movements','0AAF6492B5C53742C2A13DB17CB820200785DDB56BAF95867AA08993135012A2'),
- (N'stock_history_movements',N'index',N'UQ_stock_history_movement_leg','6BFD486DE4368ECF509C5ACBFEE922AABCF4C75766F1455B2A08CD2F87A88E21'),
- (N'stock_history_movements',N'index',N'IX_stock_history_movements_cutoff','DAC99F1FE23182A2427D42DB8BC4D62991006B71D94C93478DEE418D22FE242F'),
- (N'stock_history_openings',N'index',N'PK_stock_history_openings','0AAF6492B5C53742C2A13DB17CB820200785DDB56BAF95867AA08993135012A2'),
- (N'stock_history_openings',N'index',N'UQ_stock_history_opening_pair','6BFD486DE4368ECF509C5ACBFEE922AABCF4C75766F1455B2A08CD2F87A88E21'),
- (N'stock_history_openings',N'index',N'IX_stock_history_openings_page','DAC99F1FE23182A2427D42DB8BC4D62991006B71D94C93478DEE418D22FE242F'),
- (N'stock_history_baselines',N'index-column',N'PK_stock_history_baselines:id','818D834556138D72D4961745E1BBFC8C789FB54910F82087A838CD97D5E33E69'),
- (N'stock_history_baselines',N'index-column',N'UQ_stock_history_baseline_store:store_id','818D834556138D72D4961745E1BBFC8C789FB54910F82087A838CD97D5E33E69'),
- (N'stock_history_baselines',N'index-column',N'UQ_stock_history_baseline_store:id','49BE5E1D6EDE8D06D7892EC3331DC844B27A61A2205BFBB354DA5A1352EABE5B'),
- (N'stock_history_heads',N'index-column',N'PK_stock_history_heads:store_id','818D834556138D72D4961745E1BBFC8C789FB54910F82087A838CD97D5E33E69'),
- (N'stock_history_movements',N'index-column',N'PK_stock_history_movements:id','818D834556138D72D4961745E1BBFC8C789FB54910F82087A838CD97D5E33E69'),
- (N'stock_history_movements',N'index-column',N'UQ_stock_history_movement_leg:operation_id','818D834556138D72D4961745E1BBFC8C789FB54910F82087A838CD97D5E33E69'),
- (N'stock_history_movements',N'index-column',N'UQ_stock_history_movement_leg:product_id','49BE5E1D6EDE8D06D7892EC3331DC844B27A61A2205BFBB354DA5A1352EABE5B'),
- (N'stock_history_movements',N'index-column',N'UQ_stock_history_movement_leg:store_id','A0EC67ED48C5FF1C54F30DEE3EBB5A2F03AD3EFA3861DE197FFFC504A7B45368'),
- (N'stock_history_movements',N'index-column',N'IX_stock_history_movements_cutoff:store_id','818D834556138D72D4961745E1BBFC8C789FB54910F82087A838CD97D5E33E69'),
- (N'stock_history_movements',N'index-column',N'IX_stock_history_movements_cutoff:effective_ticks','49BE5E1D6EDE8D06D7892EC3331DC844B27A61A2205BFBB354DA5A1352EABE5B'),
- (N'stock_history_movements',N'index-column',N'IX_stock_history_movements_cutoff:local_cursor','A0EC67ED48C5FF1C54F30DEE3EBB5A2F03AD3EFA3861DE197FFFC504A7B45368'),
- (N'stock_history_movements',N'index-column',N'IX_stock_history_movements_cutoff:product_id','7A11A082E7E685BE23EE6650B664550076489EFDE1366D238CA2AFD0AC4B2C0F'),
- (N'stock_history_openings',N'index-column',N'PK_stock_history_openings:id','818D834556138D72D4961745E1BBFC8C789FB54910F82087A838CD97D5E33E69'),
- (N'stock_history_openings',N'index-column',N'UQ_stock_history_opening_pair:baseline_id','818D834556138D72D4961745E1BBFC8C789FB54910F82087A838CD97D5E33E69'),
- (N'stock_history_openings',N'index-column',N'UQ_stock_history_opening_pair:product_id','49BE5E1D6EDE8D06D7892EC3331DC844B27A61A2205BFBB354DA5A1352EABE5B'),
- (N'stock_history_openings',N'index-column',N'UQ_stock_history_opening_pair:store_id','A0EC67ED48C5FF1C54F30DEE3EBB5A2F03AD3EFA3861DE197FFFC504A7B45368'),
- (N'stock_history_openings',N'index-column',N'IX_stock_history_openings_page:store_id','818D834556138D72D4961745E1BBFC8C789FB54910F82087A838CD97D5E33E69'),
- (N'stock_history_openings',N'index-column',N'IX_stock_history_openings_page:baseline_id','49BE5E1D6EDE8D06D7892EC3331DC844B27A61A2205BFBB354DA5A1352EABE5B'),
- (N'stock_history_openings',N'index-column',N'IX_stock_history_openings_page:product_id','A0EC67ED48C5FF1C54F30DEE3EBB5A2F03AD3EFA3861DE197FFFC504A7B45368'),
- (N'stock_history_openings',N'foreign-key',N'FK_stock_history_opening_baseline','4ADEEC1B15BE249B1C4A37646E113214EE632F6205FFA8ED6355A7EE17D5DFE4'),
- (N'stock_history_openings',N'foreign-key-column',N'FK_stock_history_opening_baseline:baseline_id','C853D5347D4C6621BD8F27ED3A32FCC2050B9CC84D5E54224C7D89631854179D'),
- (N'stock_history_openings',N'foreign-key-column',N'FK_stock_history_opening_baseline:store_id','12FD9F2951C0B32A035D9036A822A9E0B8365713D9BD39F6D5706C02A9002E93'),
- (N'stock_history_movements',N'trigger',N'TR_stock_history_movement_immutable','5149A62203909C26E515B0B119B1FDBE4E320615D6CBE8DD4C75B2CFE7DF34E5'),
- (N'stock_history_baselines',N'trigger',N'TR_stock_history_baseline_immutable','E19611E543A0B34E839DA84AC3AB6FEA5C4F4D65DF18028F22F1C28B90011763'),
- (N'stock_history_openings',N'trigger',N'TR_stock_history_opening_immutable','C628DA9CB7B67D0D18342D6A8D37459DAAF141FAF00BB6D25C5A263C091147B4');
+ (N'stock_history_heads',N'check',N'CK_stock_history_heads_cursor',N'F934C35EC7C5CE86F7749AB37F0793D194BBE6E0E9C3059C43710CE02220FD12'),
+ (N'stock_history_heads',N'check',N'CK_stock_history_heads_state',N'79BECD9A613A25FF618047652105FAAD581F18375201B2B855C53FA04BA72C78'),
+ (N'stock_history_heads',N'check',N'CK_stock_history_heads_json',N'D768D3E329A175891F6A09AF234E0D8357E273A121C4116B7A9F6D82DF475E8B'),
+ (N'stock_history_heads',N'check',N'CK_stock_history_heads_coverage',N'B55DE85EB4CEA8E8D1428EA0A7BDDDB9AE1CF9B188DE6A5653FE0D06938D1943'),
+ (N'stock_history_baselines',N'check',N'CK_stock_history_baseline_source',N'FD076904B3CA7BD23B30F0468AE697E3E1E02DEB8CAA0D4B98E451C57DE82F01'),
+ (N'stock_history_baselines',N'check',N'CK_stock_history_baseline_kind',N'0028DC711C921F1B6DD46556223B0FCD4E6F739E35E421A6AC2160EA21B5555F'),
+ (N'stock_history_baselines',N'check',N'CK_stock_history_baseline_verified',N'1E2666D648B9115E48D6215753DF9D2E2F71CC7F9BED68EC57AC658CE569E90C'),
+ (N'stock_history_baselines',N'check',N'CK_stock_history_baseline_json',N'D768D3E329A175891F6A09AF234E0D8357E273A121C4116B7A9F6D82DF475E8B'),
+ (N'stock_history_baselines',N'check',N'CK_stock_history_baseline_hash',N'5D1A87B1497A61444AC66E5AC63B444638A789E568734E6CBEFC5B42823DDAEE'),
+ (N'stock_history_baselines',N'check',N'CK_stock_history_baseline_clock',N'7F15BF66019C84DAB13F4113133AE04E155759495EB71DE2917EB2C8635B1AC0'),
+ (N'stock_history_movements',N'check',N'CK_stock_history_movement_delta',N'A4300ECBD009185EABA2783349F3BE7927B06AD7B5CED0BDD053BB9FBD106938'),
+ (N'stock_history_movements',N'check',N'CK_stock_history_movement_cursor',N'467B40C90898510A134CFACEF39AC076FC8C59E3DC5EA92134812180562461E9'),
+ (N'stock_history_movements',N'check',N'CK_stock_history_movement_clockstate',N'C1A9BBCB015E6B25349F86B8FA9F50C02BA82215650FF5536F977A5F7FE5ABA7'),
+ (N'stock_history_movements',N'check',N'CK_stock_history_movement_hash',N'337C2581E626929434C2BF1F7C3EF6BD5ABC3D35A6CB87661793E0F476B1F7F0'),
+ (N'stock_history_movements',N'check',N'CK_stock_history_movement_json',N'9BD349A9380970F2701E88E241DA03B87972E513439EF620C68E1960257307D0'),
+ (N'stock_history_movements',N'check',N'CK_stock_history_movement_clock',N'517189FB97EEC905E34C36D29874B405FF649A9E0F00183BDD45407352172DA2'),
+ (N'stock_history_source_cohorts',N'check',N'CK_stock_history_source_action',N'42090EF676F50B15275B8B303FA0FCFFEF4E897357DD0DFCA497513DD8A4D140'),
+ (N'stock_history_source_cohorts',N'check',N'CK_stock_history_source_count',N'09663A80312B355BFE070C898075ABD6475DDCD16FCAAC3D42C950EDF7E8786E'),
+ (N'stock_history_source_cohorts',N'check',N'CK_stock_history_source_hash',N'3FA76A5567253357CFB8AB9BAF10A177838C3C0A6830C8CBC564029F938E2148'),
+ (N'stock_history_source_cohorts',N'check',N'CK_stock_history_source_predecessor',N'961B72C75F1DF9B30B17F7E08B326BEA9E90CF48CF46E5B18DAF6A8EECFFE3D9'),
+ (N'stock_history_source_cohorts',N'check',N'CK_stock_history_source_json',N'F9E8A5117871A3451F7B90548B29280DAA218B3A65EB9CD8E6D2F1EBCBFB8DA8'),
+ (N'stock_history_source_cohorts',N'check',N'CK_stock_history_source_acceptance',N'38B89E40E611BAFE6867F74C59E7FE003753D098E26054A6BF84642ED9E25E05'),
+ (N'stock_history_source_cohorts',N'check',N'CK_stock_history_source_clock',N'576510E4F0B099A6A2D7F1F4E9E6E4EE6B0F0C00D36FA733C7B57A854FD236F7'),
+ (N'stock_history_heads',N'default',N'DF_stock_history_heads_cursor',N'80435AD34717DF8FC1B860E898C08379C46A83928D59205675F5C3CD83F6885F'),
+ (N'stock_history_heads',N'default',N'DF_stock_history_heads_generation',N'80435AD34717DF8FC1B860E898C08379C46A83928D59205675F5C3CD83F6885F'),
+ (N'stock_history_heads',N'default',N'DF_stock_history_heads_state',N'173038A3D62958A2F1A0EBBB67CF2D85B81829A5ADB7E72C5D985ECA0A06FA53'),
+ (N'stock_history_heads',N'default',N'DF_stock_history_heads_terminals',N'978CFFA940D0E7CEE40E4E2CFC60EA7325F97317E135029F4566B2A5AC297D5C'),
+ (N'stock_history_heads',N'default',N'DF_stock_history_heads_updated',N'096818D93FB628B7CA954230703AA88D426B4BFC9B9AC6A28D8DDA30F02FF0AB'),
+ (N'stock_history_heads',N'default',N'DF_stock_history_heads_local',N'80435AD34717DF8FC1B860E898C08379C46A83928D59205675F5C3CD83F6885F'),
+ (N'stock_history_baselines',N'index',N'PK_stock_history_baselines',N'0AAF6492B5C53742C2A13DB17CB820200785DDB56BAF95867AA08993135012A2'),
+ (N'stock_history_baselines',N'index',N'UQ_stock_history_baseline_store',N'6BFD486DE4368ECF509C5ACBFEE922AABCF4C75766F1455B2A08CD2F87A88E21'),
+ (N'stock_history_heads',N'index',N'PK_stock_history_heads',N'0AAF6492B5C53742C2A13DB17CB820200785DDB56BAF95867AA08993135012A2'),
+ (N'stock_history_movements',N'index',N'PK_stock_history_movements',N'0AAF6492B5C53742C2A13DB17CB820200785DDB56BAF95867AA08993135012A2'),
+ (N'stock_history_movements',N'index',N'UQ_stock_history_movement_leg',N'6BFD486DE4368ECF509C5ACBFEE922AABCF4C75766F1455B2A08CD2F87A88E21'),
+ (N'stock_history_movements',N'index',N'IX_stock_history_movements_cutoff',N'DAC99F1FE23182A2427D42DB8BC4D62991006B71D94C93478DEE418D22FE242F'),
+ (N'stock_history_openings',N'index',N'PK_stock_history_openings',N'0AAF6492B5C53742C2A13DB17CB820200785DDB56BAF95867AA08993135012A2'),
+ (N'stock_history_openings',N'index',N'UQ_stock_history_opening_pair',N'6BFD486DE4368ECF509C5ACBFEE922AABCF4C75766F1455B2A08CD2F87A88E21'),
+ (N'stock_history_openings',N'index',N'IX_stock_history_openings_page',N'DAC99F1FE23182A2427D42DB8BC4D62991006B71D94C93478DEE418D22FE242F'),
+ (N'stock_history_source_cohorts',N'index',N'PK_stock_history_source_cohorts',N'0AAF6492B5C53742C2A13DB17CB820200785DDB56BAF95867AA08993135012A2'),
+ (N'stock_history_source_cohorts',N'index',N'UQ_stock_history_source_sequence',N'6BFD486DE4368ECF509C5ACBFEE922AABCF4C75766F1455B2A08CD2F87A88E21'),
+ (N'stock_history_source_cohorts',N'index',N'UQ_stock_history_source_operation',N'6BFD486DE4368ECF509C5ACBFEE922AABCF4C75766F1455B2A08CD2F87A88E21'),
+ (N'stock_history_baselines',N'index-column',N'PK_stock_history_baselines:id',N'818D834556138D72D4961745E1BBFC8C789FB54910F82087A838CD97D5E33E69'),
+ (N'stock_history_baselines',N'index-column',N'UQ_stock_history_baseline_store:store_id',N'818D834556138D72D4961745E1BBFC8C789FB54910F82087A838CD97D5E33E69'),
+ (N'stock_history_baselines',N'index-column',N'UQ_stock_history_baseline_store:id',N'49BE5E1D6EDE8D06D7892EC3331DC844B27A61A2205BFBB354DA5A1352EABE5B'),
+ (N'stock_history_heads',N'index-column',N'PK_stock_history_heads:store_id',N'818D834556138D72D4961745E1BBFC8C789FB54910F82087A838CD97D5E33E69'),
+ (N'stock_history_movements',N'index-column',N'PK_stock_history_movements:id',N'818D834556138D72D4961745E1BBFC8C789FB54910F82087A838CD97D5E33E69'),
+ (N'stock_history_movements',N'index-column',N'UQ_stock_history_movement_leg:operation_id',N'818D834556138D72D4961745E1BBFC8C789FB54910F82087A838CD97D5E33E69'),
+ (N'stock_history_movements',N'index-column',N'UQ_stock_history_movement_leg:product_id',N'49BE5E1D6EDE8D06D7892EC3331DC844B27A61A2205BFBB354DA5A1352EABE5B'),
+ (N'stock_history_movements',N'index-column',N'UQ_stock_history_movement_leg:store_id',N'A0EC67ED48C5FF1C54F30DEE3EBB5A2F03AD3EFA3861DE197FFFC504A7B45368'),
+ (N'stock_history_movements',N'index-column',N'IX_stock_history_movements_cutoff:store_id',N'818D834556138D72D4961745E1BBFC8C789FB54910F82087A838CD97D5E33E69'),
+ (N'stock_history_movements',N'index-column',N'IX_stock_history_movements_cutoff:effective_ticks',N'49BE5E1D6EDE8D06D7892EC3331DC844B27A61A2205BFBB354DA5A1352EABE5B'),
+ (N'stock_history_movements',N'index-column',N'IX_stock_history_movements_cutoff:local_cursor',N'A0EC67ED48C5FF1C54F30DEE3EBB5A2F03AD3EFA3861DE197FFFC504A7B45368'),
+ (N'stock_history_movements',N'index-column',N'IX_stock_history_movements_cutoff:product_id',N'7A11A082E7E685BE23EE6650B664550076489EFDE1366D238CA2AFD0AC4B2C0F'),
+ (N'stock_history_openings',N'index-column',N'PK_stock_history_openings:id',N'818D834556138D72D4961745E1BBFC8C789FB54910F82087A838CD97D5E33E69'),
+ (N'stock_history_openings',N'index-column',N'UQ_stock_history_opening_pair:baseline_id',N'818D834556138D72D4961745E1BBFC8C789FB54910F82087A838CD97D5E33E69'),
+ (N'stock_history_openings',N'index-column',N'UQ_stock_history_opening_pair:product_id',N'49BE5E1D6EDE8D06D7892EC3331DC844B27A61A2205BFBB354DA5A1352EABE5B'),
+ (N'stock_history_openings',N'index-column',N'UQ_stock_history_opening_pair:store_id',N'A0EC67ED48C5FF1C54F30DEE3EBB5A2F03AD3EFA3861DE197FFFC504A7B45368'),
+ (N'stock_history_openings',N'index-column',N'IX_stock_history_openings_page:store_id',N'818D834556138D72D4961745E1BBFC8C789FB54910F82087A838CD97D5E33E69'),
+ (N'stock_history_openings',N'index-column',N'IX_stock_history_openings_page:baseline_id',N'49BE5E1D6EDE8D06D7892EC3331DC844B27A61A2205BFBB354DA5A1352EABE5B'),
+ (N'stock_history_openings',N'index-column',N'IX_stock_history_openings_page:product_id',N'A0EC67ED48C5FF1C54F30DEE3EBB5A2F03AD3EFA3861DE197FFFC504A7B45368'),
+ (N'stock_history_source_cohorts',N'index-column',N'PK_stock_history_source_cohorts:id',N'818D834556138D72D4961745E1BBFC8C789FB54910F82087A838CD97D5E33E69'),
+ (N'stock_history_source_cohorts',N'index-column',N'UQ_stock_history_source_sequence:database_guid',N'818D834556138D72D4961745E1BBFC8C789FB54910F82087A838CD97D5E33E69'),
+ (N'stock_history_source_cohorts',N'index-column',N'UQ_stock_history_source_sequence:store_id',N'49BE5E1D6EDE8D06D7892EC3331DC844B27A61A2205BFBB354DA5A1352EABE5B'),
+ (N'stock_history_source_cohorts',N'index-column',N'UQ_stock_history_source_sequence:terminal_id',N'A0EC67ED48C5FF1C54F30DEE3EBB5A2F03AD3EFA3861DE197FFFC504A7B45368'),
+ (N'stock_history_source_cohorts',N'index-column',N'UQ_stock_history_source_sequence:source_sequence',N'7A11A082E7E685BE23EE6650B664550076489EFDE1366D238CA2AFD0AC4B2C0F'),
+ (N'stock_history_source_cohorts',N'index-column',N'UQ_stock_history_source_operation:operation_id',N'818D834556138D72D4961745E1BBFC8C789FB54910F82087A838CD97D5E33E69'),
+ (N'stock_history_source_cohorts',N'index-column',N'UQ_stock_history_source_operation:store_id',N'49BE5E1D6EDE8D06D7892EC3331DC844B27A61A2205BFBB354DA5A1352EABE5B'),
+ (N'stock_history_openings',N'foreign-key',N'FK_stock_history_opening_baseline',N'4ADEEC1B15BE249B1C4A37646E113214EE632F6205FFA8ED6355A7EE17D5DFE4'),
+ (N'stock_history_openings',N'foreign-key-column',N'FK_stock_history_opening_baseline:baseline_id',N'C853D5347D4C6621BD8F27ED3A32FCC2050B9CC84D5E54224C7D89631854179D'),
+ (N'stock_history_openings',N'foreign-key-column',N'FK_stock_history_opening_baseline:store_id',N'12FD9F2951C0B32A035D9036A822A9E0B8365713D9BD39F6D5706C02A9002E93'),
+ (N'stock_history_baselines',N'trigger',N'TR_stock_history_baseline_immutable',N'E19611E543A0B34E839DA84AC3AB6FEA5C4F4D65DF18028F22F1C28B90011763'),
+ (N'stock_history_openings',N'trigger',N'TR_stock_history_opening_immutable',N'C628DA9CB7B67D0D18342D6A8D37459DAAF141FAF00BB6D25C5A263C091147B4'),
+ (N'stock_history_source_cohorts',N'trigger',N'TR_stock_history_source_immutable',N'03959CF762E2FB5CECE9363F15068507838541AE85CD2456F24A122A28413F74'),
+ (N'stock_history_movements',N'trigger',N'TR_stock_history_movement_immutable',N'5149A62203909C26E515B0B119B1FDBE4E320615D6CBE8DD4C75B2CFE7DF34E5'),
+ (N'stock_history_source_cohorts',N'column-collation',N'store_id',N'26CB7A75CD243536FD8A41E4DA9E95147F917A0B6C5BED0A98A07A9195D384DE'),
+ (N'stock_history_source_cohorts',N'column-collation',N'terminal_id',N'26CB7A75CD243536FD8A41E4DA9E95147F917A0B6C5BED0A98A07A9195D384DE');
   DECLARE @stockHistoryActualObjects table(table_name sysname,kind nvarchar(32),object_name sysname,object_hash varchar(64));
   INSERT @stockHistoryActualObjects EXEC sys.sp_executesql N'
 WITH objects AS(
  SELECT t.name table_name,N''check'' kind,c.name object_name,CONCAT(c.is_disabled,N''|'',c.is_not_trusted,N''|'',c.definition) definition
  FROM sys.tables t JOIN sys.check_constraints c ON c.parent_object_id=t.object_id
- WHERE t.schema_id=SCHEMA_ID(N''dbo'') AND t.name IN(N''stock_history_heads'',N''stock_history_baselines'',N''stock_history_openings'',N''stock_history_movements'')
+ WHERE t.schema_id=SCHEMA_ID(N''dbo'') AND t.name IN(N''stock_history_heads'',N''stock_history_baselines'',N''stock_history_openings'',N''stock_history_movements'',N''stock_history_source_cohorts'')
  UNION ALL
  SELECT t.name,N''default'',c.name,c.definition FROM sys.tables t JOIN sys.default_constraints c ON c.parent_object_id=t.object_id
- WHERE t.schema_id=SCHEMA_ID(N''dbo'') AND t.name IN(N''stock_history_heads'',N''stock_history_baselines'',N''stock_history_openings'',N''stock_history_movements'')
+ WHERE t.schema_id=SCHEMA_ID(N''dbo'') AND t.name IN(N''stock_history_heads'',N''stock_history_baselines'',N''stock_history_openings'',N''stock_history_movements'',N''stock_history_source_cohorts'')
  UNION ALL
  SELECT t.name,N''index'',i.name,CONCAT(i.is_unique,N''|'',i.is_primary_key,N''|'',i.type,N''|'',i.is_disabled,N''|'',COALESCE(i.filter_definition,N''''))
  FROM sys.tables t JOIN sys.indexes i ON i.object_id=t.object_id AND i.index_id>0
- WHERE t.schema_id=SCHEMA_ID(N''dbo'') AND t.name IN(N''stock_history_heads'',N''stock_history_baselines'',N''stock_history_openings'',N''stock_history_movements'')
+ WHERE t.schema_id=SCHEMA_ID(N''dbo'') AND t.name IN(N''stock_history_heads'',N''stock_history_baselines'',N''stock_history_openings'',N''stock_history_movements'',N''stock_history_source_cohorts'')
  UNION ALL
  SELECT t.name,N''index-column'',CONCAT(i.name,N'':'',c.name),CONCAT(ic.key_ordinal,N''|'',ic.is_descending_key,N''|'',ic.is_included_column)
  FROM sys.tables t JOIN sys.indexes i ON i.object_id=t.object_id AND i.index_id>0
  JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
- WHERE t.schema_id=SCHEMA_ID(N''dbo'') AND t.name IN(N''stock_history_heads'',N''stock_history_baselines'',N''stock_history_openings'',N''stock_history_movements'')
+ WHERE t.schema_id=SCHEMA_ID(N''dbo'') AND t.name IN(N''stock_history_heads'',N''stock_history_baselines'',N''stock_history_openings'',N''stock_history_movements'',N''stock_history_source_cohorts'')
  UNION ALL
  SELECT t.name,N''foreign-key'',f.name,CONCAT(f.is_disabled,N''|'',f.is_not_trusted,N''|'',f.delete_referential_action,N''|'',f.update_referential_action)
  FROM sys.tables t JOIN sys.foreign_keys f ON f.parent_object_id=t.object_id
- WHERE t.schema_id=SCHEMA_ID(N''dbo'') AND t.name IN(N''stock_history_heads'',N''stock_history_baselines'',N''stock_history_openings'',N''stock_history_movements'')
+ WHERE t.schema_id=SCHEMA_ID(N''dbo'') AND t.name IN(N''stock_history_heads'',N''stock_history_baselines'',N''stock_history_openings'',N''stock_history_movements'',N''stock_history_source_cohorts'')
  UNION ALL
  SELECT t.name,N''foreign-key-column'',CONCAT(f.name,N'':'',c.name),CONCAT(fc.constraint_column_id,N''|'',OBJECT_SCHEMA_NAME(fc.referenced_object_id),N''.'',OBJECT_NAME(fc.referenced_object_id),N''|'',r.name)
  FROM sys.tables t JOIN sys.foreign_keys f ON f.parent_object_id=t.object_id JOIN sys.foreign_key_columns fc ON fc.constraint_object_id=f.object_id
  JOIN sys.columns c ON c.object_id=fc.parent_object_id AND c.column_id=fc.parent_column_id JOIN sys.columns r ON r.object_id=fc.referenced_object_id AND r.column_id=fc.referenced_column_id
- WHERE t.schema_id=SCHEMA_ID(N''dbo'') AND t.name IN(N''stock_history_heads'',N''stock_history_baselines'',N''stock_history_openings'',N''stock_history_movements'')
+ WHERE t.schema_id=SCHEMA_ID(N''dbo'') AND t.name IN(N''stock_history_heads'',N''stock_history_baselines'',N''stock_history_openings'',N''stock_history_movements'',N''stock_history_source_cohorts'')
  UNION ALL
  SELECT t.name,N''trigger'',tr.name,CONCAT(tr.is_disabled,N''|'',REPLACE(m.definition,CHAR(13)+CHAR(10),CHAR(10)))
  FROM sys.tables t JOIN sys.triggers tr ON tr.parent_id=t.object_id JOIN sys.sql_modules m ON m.object_id=tr.object_id
- WHERE t.schema_id=SCHEMA_ID(N''dbo'') AND t.name IN(N''stock_history_heads'',N''stock_history_baselines'',N''stock_history_openings'',N''stock_history_movements'')
+ WHERE t.schema_id=SCHEMA_ID(N''dbo'') AND t.name IN(N''stock_history_heads'',N''stock_history_baselines'',N''stock_history_openings'',N''stock_history_movements'',N''stock_history_source_cohorts'')
+ UNION ALL
+ SELECT t.name,N''column-collation'',c.name,c.collation_name
+ FROM sys.tables t JOIN sys.columns c ON c.object_id=t.object_id
+ WHERE t.schema_id=SCHEMA_ID(N''dbo'') AND t.name=N''stock_history_source_cohorts'' AND c.name IN(N''store_id'',N''terminal_id'')
 )
 SELECT table_name,kind,object_name,CONVERT(varchar(64),HASHBYTES(''SHA2_256'',CONVERT(nvarchar(max),definition)),2) object_hash
 FROM objects';
@@ -252,6 +314,20 @@ FROM objects';
  BEGIN SET NOCOUNT ON; THROW 51031,''STOCK_HISTORY_IMMUTABLE'',1; END;');
  EXEC(N'CREATE OR ALTER TRIGGER dbo.TR_stock_history_opening_immutable ON dbo.stock_history_openings AFTER UPDATE,DELETE AS
  BEGIN SET NOCOUNT ON; THROW 51031,''STOCK_HISTORY_IMMUTABLE'',1; END;');
+ EXEC(N'CREATE OR ALTER TRIGGER dbo.TR_stock_history_source_immutable ON dbo.stock_history_source_cohorts AFTER UPDATE,DELETE AS
+ BEGIN SET NOCOUNT ON;
+  IF EXISTS(SELECT id FROM deleted EXCEPT SELECT id FROM inserted)
+   OR EXISTS(SELECT id,operation_id,CONVERT(varbinary(max),store_id),CONVERT(varbinary(max),terminal_id),CONVERT(varbinary(max),actor_id),
+      CONVERT(varbinary(max),action),CONVERT(varbinary(max),source_root),source_count,database_guid,source_sequence,CONVERT(varbinary(max),predecessor_root),
+      CONVERT(varbinary(max),proof_json),CONVERT(varbinary(max),members_json),CONVERT(varbinary(max),payload_hash),upload_aggregate_id,CONVERT(varbinary(max),recorded_at_raw) FROM deleted
+    EXCEPT SELECT id,operation_id,CONVERT(varbinary(max),store_id),CONVERT(varbinary(max),terminal_id),CONVERT(varbinary(max),actor_id),
+      CONVERT(varbinary(max),action),CONVERT(varbinary(max),source_root),source_count,database_guid,source_sequence,CONVERT(varbinary(max),predecessor_root),
+      CONVERT(varbinary(max),proof_json),CONVERT(varbinary(max),members_json),CONVERT(varbinary(max),payload_hash),upload_aggregate_id,CONVERT(varbinary(max),recorded_at_raw) FROM inserted)
+   OR EXISTS(SELECT 1 FROM inserted i JOIN deleted d ON i.id=d.id WHERE d.accepted_batch_id IS NOT NULL AND
+    (i.accepted_batch_id IS NULL OR i.accepted_batch_id<>d.accepted_batch_id OR i.accepted_transaction_id IS NULL OR i.accepted_transaction_id<>d.accepted_transaction_id
+     OR i.accepted_at IS NULL OR CONVERT(varbinary(max),i.accepted_at)<>CONVERT(varbinary(max),d.accepted_at)))
+   THROW 51031,''STOCK_HISTORY_SOURCE_IMMUTABLE'',1;
+ END;');
  IF OBJECT_ID(N'dbo.pos_schema_migrations',N'U') IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.pos_schema_migrations WHERE version=31)
   INSERT dbo.pos_schema_migrations(version,name) VALUES(31,N'stock_history_effective_ledger');
  IF @stockHistoryOwnsTransaction=1 COMMIT TRANSACTION;

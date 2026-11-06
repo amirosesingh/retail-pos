@@ -194,6 +194,25 @@ function createShiftAuthorKeys({ safeStorage, directory }) {
     if(Buffer.byteLength(JSON.stringify(result),'utf8')>16384)throw failure('ESTOCK_SOURCE_OVERSIZED');
     return result;
   }
-  return { prepare, enrollment, signIntent, signClosingStart, signFinancialBasis, signOpeningFinancialBasis, signFinancialOperation, signLegacyRecovery, signStockEvent, markEnrolled };
+  async function signStockSourceCohort(binding,input){
+    if(!input||typeof input!=='object'||Array.isArray(input))throw failure('ESTOCK_AUTHOR_INVALID');
+    const{expectedKeyId,manifests,...facts}=input;
+    const fields=['subject','branchId','operationId','sourceDatabaseId','sourceSequence','sourcePredecessorRoot','action'];
+    if(Object.keys(facts).length!==fields.length||fields.some(field=>!Object.hasOwn(facts,field)))throw failure('ESTOCK_AUTHOR_INVALID');
+    const keyId=expected({expectedKeyId});if(!keyId)throw failure('ESTOCK_AUTHOR_INVALID');
+    const parsedBinding=protocol.normalizeBinding(binding),stock=require('./stock-event-author-protocol.cjs');
+    // Build the bounded digest from canonical source rows, never a caller's
+    // arbitrary hash. The real repository must supply original-TX readbacks.
+    const{buildStockSourceCohort}=require('../shared/stock-source-cohort.mjs');
+    const cohort=await buildStockSourceCohort(manifests);
+    const unsigned=stock.unsignedStockSourceCohort({version:1,algorithm:'Ed25519',keyId,...parsedBinding,...facts,sourceRoot:cohort.root,sourceCount:cohort.count});
+    if(cohort.operationId!==unsigned.operationId||cohort.action!==unsigned.action||cohort.authorId!==unsigned.authorId||
+      cohort.terminalId!==unsigned.terminalId||cohort.branchId!==unsigned.branchId)throw failure('ESTOCK_AUTHOR_INVALID');
+    const saved=load(parsedBinding,{expectedKeyId:keyId});
+    if(!saved.enrolled)throw failure('ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING');
+    const proof=Object.freeze(stock.normalizeStockSourceCohortProof({...unsigned,signature:crypto.sign(null,Buffer.from(stock.stockSourceCohortMessage(unsigned)),saved.privateKey).toString('base64url')}));
+    return Object.freeze({proof,members:cohort.members});
+  }
+  return { prepare, enrollment, signIntent, signClosingStart, signFinancialBasis, signOpeningFinancialBasis, signFinancialOperation, signLegacyRecovery, signStockEvent, signStockSourceCohort, markEnrolled };
 }
 module.exports = { createShiftAuthorKeys };

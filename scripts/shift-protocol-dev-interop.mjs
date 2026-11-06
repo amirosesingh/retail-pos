@@ -5,7 +5,7 @@ const contracts = [
   { file: 'shift-author-protocol.cjs', names: authorNames, footer: `module.exports = { ${authorNames} };`, bindingImport: false },
   { file: 'shift-financial-protocol.cjs', names: 'financialBasisMessage,normalizeFinancialBasisAttestation,openingFinancialBasisMessage,normalizeOpeningFinancialBasisAttestation', bindingImport: true },
   { file: 'financial-author-protocol.cjs', names: 'financialOperationMessage,normalizeFinancialAttestation', bindingImport: true },
-  { file: 'stock-event-author-protocol.cjs', names: 'ACTIONS,unsignedStockEvent,stockEventMessage,normalizeStockEvent', bindingImport: true },
+  { file: 'stock-event-author-protocol.cjs', names: 'ACTIONS,unsignedStockEvent,stockEventMessage,normalizeStockEvent,unsignedStockSourceCohort,stockSourceCohortMessage,normalizeStockSourceCohortProof', bindingImport: true },
   { file: 'legacy-shift-recovery-protocol.cjs', names: 'ACTION, MAX_UPLOAD_BYTES, normalizeLegacyPayload, unsignedLegacyRecovery, normalizeLegacyRecovery, legacyRecoveryMessage, legacyRecoveryWire', bindingImport: true, spacedFooter: true },
 ];
 const normalizePath = value => value.replaceAll('\\', '/');

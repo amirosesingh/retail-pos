@@ -33,6 +33,20 @@ const migration=fs.readFileSync(path.join(__dirname,'../database/sqlserver/prepa
   const outcome=await store.finish(tx,token);if(failAfter)throw Object.assign(new Error('Synthetic failure'),{code:'FIXTURE'});return outcome;
  });
  assert.equal((await inTx(tx=>store.capability(tx))).available,false);pass('all-absent optional schema is unavailable without writes');
+ const oldProduct=randomUUID();
+ await pool.request().input('id',oldProduct).query("INSERT dbo.products(id,name,stock_by_store) VALUES(@id,N'Existing schema30 checkout product',N'{\"a\":2}');");
+ await inTx(async tx=>{
+  const token=await store.begin(tx,[{kind:'update',table:'products',match:{id:oldProduct},values:{stock_by_store:{a:1}}}],{operationId:randomUUID(),branchId:'a',terminalId:'t',kind:'sale'});
+  assert.equal(token,null);
+  await new sql.Request(tx).input('id',oldProduct).query("UPDATE dbo.products SET stock_by_store=N'{\"a\":1}' WHERE id=@id;");
+  assert.deepEqual(await store.finish(tx,token),{captured:0,available:false});
+ });
+ assert.equal((await pool.request().input('id',oldProduct).query('SELECT stock_by_store FROM dbo.products WHERE id=@id;')).recordset[0].stock_by_store,'{"a":1}');
+ const oldReport=await store.readPage({cutoff:'2026-11-05T01:00:00Z',timeZone:'Asia/Brunei'});
+ assert.equal(oldReport.status,'unavailable');assert.deepEqual(oldReport.reasons,['SCHEMA_NOT_INSTALLED']);
+ assert.equal((await pool.request().query('SELECT COUNT(*) n FROM dbo.sync_change_journal;')).recordset[0].n,0);
+ await pool.request().input('id',oldProduct).query('DELETE dbo.products WHERE id=@id;');
+ pass('existing schema without optional031 keeps normal local stock saves and truthful unavailable report without phantom pending metadata');
  await pool.request().batch(migration);store.invalidateCapability();
  if(process.env.STOCK_HISTORY_SCHEMA_CAPTURE==='1'){
   const {catalogSql}=require('../electron/db/stock-history-schema-check.cjs');
@@ -43,6 +57,7 @@ const migration=fs.readFileSync(path.join(__dirname,'../database/sqlserver/prepa
  await pool.request().batch(migration);
  assert.equal((await inTx(tx=>store.capability(tx))).available,true);pass('prepared upgrade installs/replays exact physical schema');
  assert.equal((await pool.request().query('SELECT COUNT(*) n FROM dbo.products')).recordset[0].n,0);pass('upgrade creates no business/baseline rows');
+ await require('./stock-history-cohort-sqlserver-cases.cjs')({pool,sql,migration,inTx,pass});
  await pool.request().batch(`INSERT dbo.products(id,name,sku,barcode,stock_by_store) VALUES('${pid}',N'Fixture',N'SKU-1',N'0001',N'{"a":3,"b":1}'),('${zero}',N'Archived zero',N'SKU-2',N'0002',N'{"a":0}');`);
  const first=await capture();assert.equal(first.captured,1);assert.deepEqual(await stock(),{a:2,b:1});
  let rows=(await pool.request().query('SELECT * FROM dbo.stock_history_movements')).recordset;
@@ -71,6 +86,10 @@ const migration=fs.readFileSync(path.join(__dirname,'../database/sqlserver/prepa
  // exact saved cutoff and at its preceding100ns, not a rounded Date boundary.
  const savedTicks=c.instant(saved);await pool.request().input('through',String(savedTicks)).query("UPDATE dbo.stock_history_heads SET coverage_through_ticks=CONVERT(decimal(20,0),@through);");
  page=await store.readPage({cutoff:saved,timeZone:'Asia/Brunei',limit:1});assert.equal(page.status,'complete');assert.equal(page.rows[0].quantity,'2');assert(page.next);const second=await store.readPage({cutoff:saved,timeZone:'Asia/Brunei',after:page.next,sourceRevision:page.sourceRevision,limit:1});assert.equal(second.rows[0].quantity,'0');assert.equal(second.next,null);pass('SQL exact effective cutoff, zero/archived opening identity and stable keyset pages');
+ const codeCaseReader=new StockHistoryStore(manager,{authorizeRead:async()=>({contextKey:'code-case',branchId:'A',canViewInventory:true})});
+ const codeCasePage=await codeCaseReader.readPage({cutoff:saved,timeZone:'Asia/Brunei'});
+ assert.equal(codeCasePage.status,'incomplete');assert.deepEqual(codeCasePage.rows,[]);assert(codeCasePage.reasons.includes('NO_VERIFIED_OPENING'));
+ pass('an authorized case-distinct branch code cannot read another branch opening, quantities or identities under CI SQL defaults');
  const before=await store.readPage({cutoff:c.utc(savedTicks-1n),timeZone:'Asia/Brunei'});assert.equal(before.rows[0].quantity,'3');pass('100ns cutoff does not include a later movement early');
  const laterBaseline=randomUUID(),laterAt=c.utc(savedTicks+1n);
  await pool.request().input('baseline',baseline).input('later',laterBaseline).input('at',laterAt).input('ticks',String(savedTicks+1n)).batch(`
@@ -261,7 +280,8 @@ const migration=fs.readFileSync(path.join(__dirname,'../database/sqlserver/prepa
  pass('stale queue summaries fail closed and review classification changes no data or acknowledgements');
  await pool.request().batch('CREATE TABLE dbo.stock_adjustments(id uniqueidentifier PRIMARY KEY,product_id uniqueidentifier,store_id nvarchar(128),delta int);');
  const freshInfo=keys.prepare(binding);keys.markEnrolled(binding,{keyId:freshInfo.keyId,publicKey:freshInfo.publicKey});
- context.author={action:'ADJUST',signMovement:(row,sourceManifestJson)=>keys.signStockEvent(binding,{expectedKeyId:freshInfo.keyId,subject:'cashier-a',branchId:row.store_id,operationId:row.operation_id,movementId:row.id,action:'ADJUST',payloadHash:row.payload_hash,...(sourceManifestJson?{sourceManifestJson}:{})})};
+ context.author={action:'ADJUST',signMovement:(row,sourceManifestJson)=>keys.signStockEvent(binding,{expectedKeyId:freshInfo.keyId,subject:'cashier-a',branchId:row.store_id,operationId:row.operation_id,movementId:row.id,action:'ADJUST',payloadHash:row.payload_hash,...(sourceManifestJson?{sourceManifestJson}:{})}),
+  signSourceCohort:input=>keys.signStockSourceCohort(binding,{...input,expectedKeyId:freshInfo.keyId,subject:'cashier-a',branchId:'a',action:'ADJUST'})};
  const adjustId=randomUUID(),adjustOperation=randomUUID(),adjustBefore=(await stock()).a;
  await inTx(async tx=>{
   const adjustments=[{kind:'update',table:'products',match:{id:pid},values:{stock_by_store:{a:adjustBefore-1,b:1}}},{kind:'insert',table:'stock_adjustments',rows:[{id:adjustId,product_id:pid,store_id:'a',delta:-1}]}];
@@ -274,6 +294,48 @@ const migration=fs.readFileSync(path.join(__dirname,'../database/sqlserver/prepa
  assert.equal(adjustmentProof.payloadHash,adjustmentRow.payload_hash);assert.deepEqual(sourceManifest.document,{type:'stock_adjustments',id:adjustId});
  assert.deepEqual(sourceManifest.sourceRefs,[['stock_adjustments',adjustId,'-1']]);assert.equal(sourceManifest.authorId,authorId);
  pass('original actual adjustment source manifest and enrolled author signature commit with the stock delta, without later reconstruction');
+ const savedCohort=(await pool.request().input('operation',adjustOperation).query(`SELECT *,CONVERT(nvarchar(30),source_sequence) sequence_text
+  FROM dbo.stock_history_source_cohorts WHERE operation_id=@operation;`)).recordset;
+ assert.equal(savedCohort.length,1);assert.equal(savedCohort[0].sequence_text,'1');assert.equal(savedCohort[0].predecessor_root,null);
+ const cohortProof=JSON.parse(savedCohort[0].proof_json),cohortMembers=JSON.parse(savedCohort[0].members_json);
+ assert.equal(cohortProof.authorId,authorId);assert.equal(cohortProof.sourceDatabaseId.toLowerCase(),String(savedCohort[0].database_guid).toLowerCase());
+ assert.equal(cohortProof.sourceRoot,savedCohort[0].source_root);assert.equal(cohortProof.sourceSequence,'1');
+ assert.equal(cohortMembers.length,1);assert.equal(cohortMembers[0].manifestJson,adjustmentProof.sourceManifestJson);
+ const {verifyStockSourceMembership}=require('../electron/shared/stock-source-cohort.mjs');
+ assert.deepEqual(await verifyStockSourceMembership(cohortMembers[0],{root:cohortProof.sourceRoot,count:cohortProof.sourceCount}),sourceManifest);
+ pass('original same-transaction source cohort freezes full membership, database generation and original enrolled author before any upload');
+ const rolledSource=randomUUID(),rolledOperation=randomUUID(),beforeRollbackStock=await stock();
+ await assert.rejects(inTx(async tx=>{
+  const token=await store.begin(tx,[{kind:'update',table:'products',match:{id:pid},values:{stock_by_store:{a:adjustBefore-2,b:1}}},
+   {kind:'insert',table:'stock_adjustments',rows:[{id:rolledSource,product_id:pid,store_id:'a',delta:-1}]}],{operationId:rolledOperation,branchId:'a',terminalId:'t',kind:'stock'});
+  await new sql.Request(tx).input('id',rolledSource).input('stock',JSON.stringify({a:adjustBefore-2,b:1})).batch(`INSERT dbo.stock_adjustments VALUES(@id,'${pid}',N'a',-1);UPDATE dbo.products SET stock_by_store=@stock WHERE id='${pid}';`);
+  await store.finish(tx,token);throw Object.assign(new Error('Synthetic post-cohort failure'),{code:'FIXTURE'});
+ }),{code:'FIXTURE'});
+ assert.deepEqual(await stock(),beforeRollbackStock);
+ const rolledCounts=(await pool.request().input('operation',rolledOperation).query(`SELECT
+  (SELECT COUNT(*) FROM dbo.stock_history_source_cohorts WHERE operation_id=@operation) cohorts,
+  (SELECT COUNT(*) FROM dbo.stock_history_movements WHERE operation_id=@operation) movements,
+  (SELECT COUNT(*) FROM dbo.stock_adjustments WHERE id='${rolledSource}') sources;`)).recordset[0];
+ assert.deepEqual(rolledCounts,{cohorts:0,movements:0,sources:0});
+ pass('failure after original source signing rolls back stock, source, complete cohort and pending movement together without a sequence hole');
+ const bulkOperation=randomUUID(),bulk=Array.from({length:10},()=>({id:randomUUID(),source:randomUUID()}));
+ for(const product of bulk)await pool.request().input('id',product.id).query("INSERT dbo.products(id,name,stock_by_store) VALUES(@id,N'Bulk source fixture',N'{\"a\":2}');");
+ const bulkOperations=[...bulk.map(product=>({kind:'update',table:'products',match:{id:product.id},values:{stock_by_store:{a:1}}})),
+  {kind:'insert',table:'stock_adjustments',rows:bulk.map(product=>({id:product.source,product_id:product.id,store_id:'a',delta:-1}))}];
+ await inTx(async tx=>{
+  const token=await store.begin(tx,bulkOperations,{operationId:bulkOperation,branchId:'a',terminalId:'t',kind:'stock'});
+  for(const product of bulk)await new sql.Request(tx).input('id',product.id).input('source',product.source).batch("UPDATE dbo.products SET stock_by_store=N'{\"a\":1}' WHERE id=@id;INSERT dbo.stock_adjustments VALUES(@source,@id,N'a',-1);");
+  assert.equal((await store.finish(tx,token)).captured,10);
+ });
+ const bulkCohort=(await pool.request().input('operation',bulkOperation).query('SELECT *,CONVERT(nvarchar(30),source_sequence) sequence_text FROM dbo.stock_history_source_cohorts WHERE operation_id=@operation;')).recordset[0];
+ assert.equal(bulkCohort.source_count,10);assert.equal(bulkCohort.sequence_text,'2');assert.equal(bulkCohort.predecessor_root,savedCohort[0].source_root);
+ const bulkProof=JSON.parse(bulkCohort.proof_json),bulkMembers=JSON.parse(bulkCohort.members_json);
+ assert.equal(bulkMembers.length,10);assert.equal(new Set(bulkMembers.map(member=>JSON.parse(member.manifestJson).productId)).size,10);
+ for(const member of bulkMembers)assert.equal((await verifyStockSourceMembership(member,{root:bulkProof.sourceRoot,count:10})).operationId,bulkOperation);
+ const bulkOutbox=new StockHistoryOutbox(manager),bulkPending=await bulkOutbox.pending(c.uploadAggregateId(bulkOperation,'a'),'a','t');
+ assert.equal(bulkPending.rows.length,8);assert.equal(bulkMembers.length,10);
+ assert.equal((await pool.request().input('operation',bulkOperation).query('SELECT COUNT(*) n FROM dbo.stock_history_movements WHERE operation_id=@operation;')).recordset[0].n,10);
+ pass('a ten-product original operation commits one full signed cohort and a gap-free predecessor while bounded eight-row uploads retain all ten source members');
  context.author=null;
  const cohortProduct=randomUUID(),cohortOperation=randomUUID();
  await pool.request().query("UPDATE dbo.stock_history_heads SET coverage_state=N'complete' WHERE store_id=N'a';");

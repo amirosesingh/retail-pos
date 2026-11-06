@@ -33,4 +33,32 @@ function normalizeStockEvent(input){
  if(bytes.length!==64||btoa(bytes).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')!==value.signature)invalid();
  const{signature,...fields}=value;return{...unsignedStockEvent(fields),signature};
 }
-module.exports={ACTIONS,unsignedStockEvent,stockEventMessage,normalizeStockEvent};
+const COHORT_FIELDS=['version','algorithm','keyId','projectOrigin','terminalId','authorId','subject','branchId','operationId','sourceDatabaseId','sourceSequence','sourcePredecessorRoot','action','sourceRoot','sourceCount'];
+function unsignedStockSourceCohort(input){
+ const value=exact(input,COHORT_FIELDS);
+ if(value.version!==1||value.algorithm!=='Ed25519'||!Object.hasOwn(ACTIONS,value.action)||['SALE','REFUND'].includes(value.action)||
+  typeof value.sourceRoot!=='string'||!/^[a-f0-9]{64}$/.test(value.sourceRoot)||!Number.isInteger(value.sourceCount)||value.sourceCount<1||value.sourceCount>2000)invalid();
+ if(typeof value.sourceSequence!=='string'||!/^[1-9]\d{0,18}$/.test(value.sourceSequence)||BigInt(value.sourceSequence)>9223372036854775807n||
+  (value.sourceSequence==='1'?value.sourcePredecessorRoot!==null:typeof value.sourcePredecessorRoot!=='string'||!/^[a-f0-9]{64}$/.test(value.sourcePredecessorRoot)))invalid();
+ let binding;try{binding=normalizeBinding({projectOrigin:value.projectOrigin,terminalId:value.terminalId,authorId:value.authorId});}catch{invalid();}
+ const branch=label(value.branchId,128);
+ return{version:1,algorithm:'Ed25519',keyId:uuid(value.keyId),...binding,subject:label(value.subject,200),
+  branchId:/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(branch)?branch.toLowerCase():branch,
+  operationId:uuid(value.operationId),sourceDatabaseId:uuid(value.sourceDatabaseId),sourceSequence:value.sourceSequence,sourcePredecessorRoot:value.sourcePredecessorRoot,
+  action:value.action,sourceRoot:value.sourceRoot,sourceCount:value.sourceCount};
+}
+function stockSourceCohortMessage(input){
+ const v=unsignedStockSourceCohort(input);
+ // Same approved stock domain, explicit purpose. Neither an ordinary stock
+ // movement nor a shift/financial proof can be replayed as a producer cohort.
+ return JSON.stringify(['retail-pos.stock-event.v1','source_cohort.v1',v.algorithm,v.projectOrigin,v.terminalId,v.authorId,v.keyId,
+  v.subject,v.branchId,v.operationId,v.sourceDatabaseId,v.sourceSequence,v.sourcePredecessorRoot,v.action,v.sourceRoot,v.sourceCount]);
+}
+function normalizeStockSourceCohortProof(input){
+ const value=exact(input,[...COHORT_FIELDS,'signature']);
+ if(typeof value.signature!=='string'||!/^[A-Za-z0-9_-]{86}$/.test(value.signature))invalid();
+ let bytes;try{bytes=atob(value.signature.replace(/-/g,'+').replace(/_/g,'/'));}catch{invalid();}
+ if(bytes.length!==64||btoa(bytes).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')!==value.signature)invalid();
+ const{signature,...fields}=value;return{...unsignedStockSourceCohort(fields),signature};
+}
+module.exports={ACTIONS,unsignedStockEvent,stockEventMessage,normalizeStockEvent,unsignedStockSourceCohort,stockSourceCohortMessage,normalizeStockSourceCohortProof};

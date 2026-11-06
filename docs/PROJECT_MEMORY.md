@@ -1657,3 +1657,11 @@ or infer physical clock/coverage from a signature. Optional history problems
 retain their evidence and honest status without failing an otherwise accepted
 business upload or weakening required financial acknowledgements. No live SQL,
 opening, enrollment or release is authorized by this implementation refinement.
+
+6 November STOCK401 resumption: the owner reactivated all pending historical-stock
+source/test implementation after the Escape pause. Preserve the retained cohort
+proof and partial fifth-table work; finalize exact physical metadata and accepted
+source/effect/cohort/opening coverage before factory activation or complete-history
+claims. Refresh beta without overwriting existing features. Exact cloud/local
+upgrade files still require final review/approval before application; no real
+enrollment, baseline, business repair, Membership or publication is included.

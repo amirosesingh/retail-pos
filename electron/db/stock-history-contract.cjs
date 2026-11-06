@@ -1,7 +1,7 @@
 const { createHash } = require('node:crypto');
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const KINDS = new Set(['sale','refund','receiving','stock','product','transfer','sponsorship','missed_bill','general']);
-const TABLES = ['stock_history_heads','stock_history_movements','stock_history_baselines','stock_history_openings'];
+const TABLES = ['stock_history_heads','stock_history_movements','stock_history_baselines','stock_history_openings','stock_history_source_cohorts'];
 function fail(code='ESTOCK_HISTORY_INVALID') {
   throw Object.assign(new Error('The stock-history evidence could not be verified.'), {code});
 }

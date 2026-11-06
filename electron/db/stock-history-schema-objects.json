@@ -96,6 +96,48 @@
     "object_hash": "517189FB97EEC905E34C36D29874B405FF649A9E0F00183BDD45407352172DA2"
   },
   {
+    "table_name": "stock_history_source_cohorts",
+    "kind": "check",
+    "object_name": "CK_stock_history_source_action",
+    "object_hash": "42090EF676F50B15275B8B303FA0FCFFEF4E897357DD0DFCA497513DD8A4D140"
+  },
+  {
+    "table_name": "stock_history_source_cohorts",
+    "kind": "check",
+    "object_name": "CK_stock_history_source_count",
+    "object_hash": "09663A80312B355BFE070C898075ABD6475DDCD16FCAAC3D42C950EDF7E8786E"
+  },
+  {
+    "table_name": "stock_history_source_cohorts",
+    "kind": "check",
+    "object_name": "CK_stock_history_source_hash",
+    "object_hash": "3FA76A5567253357CFB8AB9BAF10A177838C3C0A6830C8CBC564029F938E2148"
+  },
+  {
+    "table_name": "stock_history_source_cohorts",
+    "kind": "check",
+    "object_name": "CK_stock_history_source_predecessor",
+    "object_hash": "961B72C75F1DF9B30B17F7E08B326BEA9E90CF48CF46E5B18DAF6A8EECFFE3D9"
+  },
+  {
+    "table_name": "stock_history_source_cohorts",
+    "kind": "check",
+    "object_name": "CK_stock_history_source_json",
+    "object_hash": "F9E8A5117871A3451F7B90548B29280DAA218B3A65EB9CD8E6D2F1EBCBFB8DA8"
+  },
+  {
+    "table_name": "stock_history_source_cohorts",
+    "kind": "check",
+    "object_name": "CK_stock_history_source_acceptance",
+    "object_hash": "38B89E40E611BAFE6867F74C59E7FE003753D098E26054A6BF84642ED9E25E05"
+  },
+  {
+    "table_name": "stock_history_source_cohorts",
+    "kind": "check",
+    "object_name": "CK_stock_history_source_clock",
+    "object_hash": "576510E4F0B099A6A2D7F1F4E9E6E4EE6B0F0C00D36FA733C7B57A854FD236F7"
+  },
+  {
     "table_name": "stock_history_heads",
     "kind": "default",
     "object_name": "DF_stock_history_heads_cursor",
@@ -184,6 +226,24 @@
     "kind": "index",
     "object_name": "IX_stock_history_openings_page",
     "object_hash": "DAC99F1FE23182A2427D42DB8BC4D62991006B71D94C93478DEE418D22FE242F"
+  },
+  {
+    "table_name": "stock_history_source_cohorts",
+    "kind": "index",
+    "object_name": "PK_stock_history_source_cohorts",
+    "object_hash": "0AAF6492B5C53742C2A13DB17CB820200785DDB56BAF95867AA08993135012A2"
+  },
+  {
+    "table_name": "stock_history_source_cohorts",
+    "kind": "index",
+    "object_name": "UQ_stock_history_source_sequence",
+    "object_hash": "6BFD486DE4368ECF509C5ACBFEE922AABCF4C75766F1455B2A08CD2F87A88E21"
+  },
+  {
+    "table_name": "stock_history_source_cohorts",
+    "kind": "index",
+    "object_name": "UQ_stock_history_source_operation",
+    "object_hash": "6BFD486DE4368ECF509C5ACBFEE922AABCF4C75766F1455B2A08CD2F87A88E21"
   },
   {
     "table_name": "stock_history_baselines",
@@ -300,6 +360,48 @@
     "object_hash": "A0EC67ED48C5FF1C54F30DEE3EBB5A2F03AD3EFA3861DE197FFFC504A7B45368"
   },
   {
+    "table_name": "stock_history_source_cohorts",
+    "kind": "index-column",
+    "object_name": "PK_stock_history_source_cohorts:id",
+    "object_hash": "818D834556138D72D4961745E1BBFC8C789FB54910F82087A838CD97D5E33E69"
+  },
+  {
+    "table_name": "stock_history_source_cohorts",
+    "kind": "index-column",
+    "object_name": "UQ_stock_history_source_sequence:database_guid",
+    "object_hash": "818D834556138D72D4961745E1BBFC8C789FB54910F82087A838CD97D5E33E69"
+  },
+  {
+    "table_name": "stock_history_source_cohorts",
+    "kind": "index-column",
+    "object_name": "UQ_stock_history_source_sequence:store_id",
+    "object_hash": "49BE5E1D6EDE8D06D7892EC3331DC844B27A61A2205BFBB354DA5A1352EABE5B"
+  },
+  {
+    "table_name": "stock_history_source_cohorts",
+    "kind": "index-column",
+    "object_name": "UQ_stock_history_source_sequence:terminal_id",
+    "object_hash": "A0EC67ED48C5FF1C54F30DEE3EBB5A2F03AD3EFA3861DE197FFFC504A7B45368"
+  },
+  {
+    "table_name": "stock_history_source_cohorts",
+    "kind": "index-column",
+    "object_name": "UQ_stock_history_source_sequence:source_sequence",
+    "object_hash": "7A11A082E7E685BE23EE6650B664550076489EFDE1366D238CA2AFD0AC4B2C0F"
+  },
+  {
+    "table_name": "stock_history_source_cohorts",
+    "kind": "index-column",
+    "object_name": "UQ_stock_history_source_operation:operation_id",
+    "object_hash": "818D834556138D72D4961745E1BBFC8C789FB54910F82087A838CD97D5E33E69"
+  },
+  {
+    "table_name": "stock_history_source_cohorts",
+    "kind": "index-column",
+    "object_name": "UQ_stock_history_source_operation:store_id",
+    "object_hash": "49BE5E1D6EDE8D06D7892EC3331DC844B27A61A2205BFBB354DA5A1352EABE5B"
+  },
+  {
     "table_name": "stock_history_openings",
     "kind": "foreign-key",
     "object_name": "FK_stock_history_opening_baseline",
@@ -318,12 +420,6 @@
     "object_hash": "12FD9F2951C0B32A035D9036A822A9E0B8365713D9BD39F6D5706C02A9002E93"
   },
   {
-    "table_name": "stock_history_movements",
-    "kind": "trigger",
-    "object_name": "TR_stock_history_movement_immutable",
-    "object_hash": "5149A62203909C26E515B0B119B1FDBE4E320615D6CBE8DD4C75B2CFE7DF34E5"
-  },
-  {
     "table_name": "stock_history_baselines",
     "kind": "trigger",
     "object_name": "TR_stock_history_baseline_immutable",
@@ -334,5 +430,29 @@
     "kind": "trigger",
     "object_name": "TR_stock_history_opening_immutable",
     "object_hash": "C628DA9CB7B67D0D18342D6A8D37459DAAF141FAF00BB6D25C5A263C091147B4"
+  },
+  {
+    "table_name": "stock_history_source_cohorts",
+    "kind": "trigger",
+    "object_name": "TR_stock_history_source_immutable",
+    "object_hash": "03959CF762E2FB5CECE9363F15068507838541AE85CD2456F24A122A28413F74"
+  },
+  {
+    "table_name": "stock_history_movements",
+    "kind": "trigger",
+    "object_name": "TR_stock_history_movement_immutable",
+    "object_hash": "5149A62203909C26E515B0B119B1FDBE4E320615D6CBE8DD4C75B2CFE7DF34E5"
+  },
+  {
+    "table_name": "stock_history_source_cohorts",
+    "kind": "column-collation",
+    "object_name": "store_id",
+    "object_hash": "26CB7A75CD243536FD8A41E4DA9E95147F917A0B6C5BED0A98A07A9195D384DE"
+  },
+  {
+    "table_name": "stock_history_source_cohorts",
+    "kind": "column-collation",
+    "object_name": "terminal_id",
+    "object_hash": "26CB7A75CD243536FD8A41E4DA9E95147F917A0B6C5BED0A98A07A9195D384DE"
   }
 ]

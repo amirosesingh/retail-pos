@@ -57,7 +57,7 @@ class StockHistoryStore{
     WHERE t.schema_id=SCHEMA_ID(N'dbo') AND t.name IN(${tableList});`);
   this.assertCurrent();if(this.manager.pool!==pool)contract.fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
   const rows=result.recordset??[],count=new Set(rows.map(row=>row.table)).size;
-  let value=count===0?unavailable('SCHEMA_NOT_INSTALLED'):count!==4?unavailable('PARTIAL_SCHEMA'):
+  let value=count===0?unavailable('SCHEMA_NOT_INSTALLED'):count!==contract.TABLES.length?unavailable('PARTIAL_SCHEMA'):
     !physicalShape(rows)?unavailable('UNKNOWN_SCHEMA'):null;
   if(value==null){const objects=(await this.request(tx).query(catalogSql)).recordset??[];
    value=physicalObjects(objects,schemaObjects)?Object.freeze({available:true,databaseKey:identity}):unavailable('UNKNOWN_SCHEMA');}
@@ -128,18 +128,30 @@ class StockHistoryStore{
   // A prepared Main-only signer freezes proof in this original transaction.
   // Missing enrollment/vault material keeps unsigned evidence for review;
   // it must not fabricate the later uploading cashier or block offline sales.
+  const sourceManifests=[];
   if(saved.source?.author){const signed=[];for(const row of rows){
    try{
     const sourceManifestJson=await require('./stock-source-capture.cjs').sourceManifestForMovement({
      action:saved.source.author.action,row,operations:saved.sourceOperations,before:saved.before,after,claims,request:()=>this.request(tx)});
+    sourceManifests.push(sourceManifestJson);
     this.assertCurrent();if(saved.source&&this.readContext?.()?.key!==saved.source.key)contract.fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
     signed.push(Object.freeze({...row,author_proof_json:JSON.stringify(saved.source.author.signMovement(row,sourceManifestJson??undefined))}));
    }
    catch(error){
     if(!['ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING','ESYNC_SHIFT_AUTHOR_KEY_MISSING','ESYNC_SHIFT_AUTHOR_KEY_UNAVAILABLE','ESYNC_SHIFT_AUTHOR_VAULT_UNAVAILABLE','ESTOCK_AUTHOR_PERMISSION_REVOKED','ESTOCK_SOURCE_OVERSIZED'].includes(error?.code))throw error;
+    if(sourceManifests.length<signed.length+1)sourceManifests.push(null);
     signed.push(row);
    }
   }rows=signed;}
+  try{
+   await require('./stock-history-cohort.cjs').persistSourceCohort(this,tx,{rows,manifests:sourceManifests,author:saved.source?.author,
+    databaseKey:saved.databaseKey,assertCurrent:()=>{this.assertCurrent();if(saved.source&&this.readContext?.()?.key!==saved.source.key)contract.fail('ESTOCK_HISTORY_CONTEXT_CHANGED');}});
+  }catch(error){
+   if(!['ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING','ESYNC_SHIFT_AUTHOR_KEY_MISSING','ESYNC_SHIFT_AUTHOR_KEY_UNAVAILABLE','ESYNC_SHIFT_AUTHOR_VAULT_UNAVAILABLE',
+    'ESTOCK_AUTHOR_PERMISSION_REVOKED','ESTOCK_SOURCE_OVERSIZED','ESTOCK_SOURCE_COHORT_OVERSIZED'].includes(error?.code))throw error;
+   // Preserve original movement/source review evidence; never replace its
+   // author at retry or fail ordinary checkout because its vault is unavailable.
+  }
   for(const branch of [...new Set(rows.map(row=>row.store_id))].sort()){
    await this.ensureHead(tx,branch);
    await this.insertMovements(tx,branch,rows.filter(row=>row.store_id===branch));
@@ -218,7 +230,7 @@ class StockHistoryStore{
    if(closedShift){
     const shift=(await this.request(tx).input('history_shift',closedShift).input('history_branch',branch).query(`
       SELECT CONVERT(nvarchar(40),SWITCHOFFSET(CONVERT(datetimeoffset(7),closed_at),'+00:00'),127) closed_at
-      FROM dbo.shifts WITH(HOLDLOCK) WHERE id=CONVERT(uniqueidentifier,@history_shift) AND store_id=@history_branch
+      FROM dbo.shifts WITH(HOLDLOCK) WHERE id=CONVERT(uniqueidentifier,@history_shift) AND store_id=@history_branch AND CONVERT(varbinary(max),store_id)=CONVERT(varbinary(max),@history_branch)
        AND closed_at IS NOT NULL AND LOWER(status) IN(N'closed',N'completed');`)).recordset?.[0];
     if(!shift?.closed_at)contract.fail('ESTOCK_HISTORY_SHIFT_UNAVAILABLE');cutoff=contract.canonicalInstant(shift.closed_at);
    }
@@ -231,22 +243,22 @@ class StockHistoryStore{
      CONVERT(nvarchar(30),h.coverage_from_ticks) coverage_from_ticks,CONVERT(nvarchar(30),h.coverage_through_ticks) coverage_through_ticks,
      b.cutoff_at_raw,CONVERT(nvarchar(30),b.cutoff_ticks) cutoff_ticks,b.captured_at_raw,CONVERT(nvarchar(30),b.source_cursor) source_cursor,b.expected_pairs,b.verification_state,
      CONVERT(nvarchar(40),SYSUTCDATETIME(),127)+N'Z' read_at,
-     (SELECT COUNT_BIG(*) FROM dbo.stock_history_movements m WHERE m.store_id=h.store_id AND m.ingested_cursor IS NULL) pending_count,
-     (SELECT COUNT_BIG(*) FROM dbo.stock_history_movements m WHERE m.store_id=h.store_id AND m.ingested_cursor<=h.committed_cursor
+     (SELECT COUNT_BIG(*) FROM dbo.stock_history_movements m WHERE m.store_id=h.store_id AND CONVERT(varbinary(max),m.store_id)=CONVERT(varbinary(max),h.store_id) AND m.ingested_cursor IS NULL) pending_count,
+     (SELECT COUNT_BIG(*) FROM dbo.stock_history_movements m WHERE m.store_id=h.store_id AND CONVERT(varbinary(max),m.store_id)=CONVERT(varbinary(max),h.store_id) AND m.ingested_cursor<=h.committed_cursor
       AND m.effective_ticks>b.cutoff_ticks AND m.effective_ticks<=CONVERT(decimal(20,0),@history_ticks) AND m.clock_state<>N'verified') uncertain_count,
-     (SELECT COUNT_BIG(*) FROM dbo.stock_history_movements m WHERE m.store_id=h.store_id AND m.ingested_cursor<=h.committed_cursor
+     (SELECT COUNT_BIG(*) FROM dbo.stock_history_movements m WHERE m.store_id=h.store_id AND CONVERT(varbinary(max),m.store_id)=CONVERT(varbinary(max),h.store_id) AND m.ingested_cursor<=h.committed_cursor
       AND m.ingested_cursor>b.source_cursor AND m.effective_ticks<=b.cutoff_ticks) baseline_changed_count,
-     (SELECT COUNT_BIG(*) FROM dbo.stock_history_movements m WHERE m.store_id=h.store_id AND m.ingested_cursor<=h.committed_cursor
+     (SELECT COUNT_BIG(*) FROM dbo.stock_history_movements m WHERE m.store_id=h.store_id AND CONVERT(varbinary(max),m.store_id)=CONVERT(varbinary(max),h.store_id) AND m.ingested_cursor<=h.committed_cursor
       AND m.effective_ticks<=CONVERT(decimal(20,0),@history_ticks)
-      AND NOT EXISTS(SELECT 1 FROM dbo.stock_history_openings missing WHERE missing.baseline_id=b.id AND missing.store_id=h.store_id AND missing.product_id=m.product_id)) missing_opening_count,
-     (SELECT COUNT_BIG(*) FROM dbo.stock_history_openings o WHERE o.store_id=h.store_id AND o.baseline_id=b.id) actual_pairs
+      AND NOT EXISTS(SELECT 1 FROM dbo.stock_history_openings missing WHERE missing.baseline_id=b.id AND missing.store_id=h.store_id AND CONVERT(varbinary(max),missing.store_id)=CONVERT(varbinary(max),h.store_id) AND missing.product_id=m.product_id)) missing_opening_count,
+     (SELECT COUNT_BIG(*) FROM dbo.stock_history_openings o WHERE o.store_id=h.store_id AND CONVERT(varbinary(max),o.store_id)=CONVERT(varbinary(max),h.store_id) AND o.baseline_id=b.id) actual_pairs
      FROM dbo.stock_history_heads h WITH(HOLDLOCK)
      OUTER APPLY(SELECT TOP(1) prior.id FROM dbo.stock_history_baselines prior WITH(HOLDLOCK)
-      WHERE prior.store_id=h.store_id AND prior.verification_state=N'verified'
+      WHERE prior.store_id=h.store_id AND CONVERT(varbinary(max),prior.store_id)=CONVERT(varbinary(max),h.store_id) AND prior.verification_state=N'verified'
        AND prior.cutoff_ticks<=CONVERT(decimal(20,0),@history_ticks)
       ORDER BY prior.cutoff_ticks DESC,prior.id DESC) eligible
-     LEFT JOIN dbo.stock_history_baselines b ON b.id=COALESCE(eligible.id,h.baseline_id) AND b.store_id=h.store_id
-     WHERE h.store_id=@history_branch;`)).recordset?.[0];
+     LEFT JOIN dbo.stock_history_baselines b ON b.id=COALESCE(eligible.id,h.baseline_id) AND b.store_id=h.store_id AND CONVERT(varbinary(max),b.store_id)=CONVERT(varbinary(max),h.store_id)
+     WHERE h.store_id=@history_branch AND CONVERT(varbinary(max),h.store_id)=CONVERT(varbinary(max),@history_branch);`)).recordset?.[0];
    const reasons=[];
    if(meta?.read_at&&contract.instant(cutoff)>contract.instant(meta.read_at))reasons.push('FUTURE_CUTOFF');
    if(!meta?.baseline_id||!meta.cutoff_at_raw)reasons.push('NO_VERIFIED_OPENING');

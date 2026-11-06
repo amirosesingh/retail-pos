@@ -1,4 +1,4 @@
-import { ACTIONS, normalizeStockEvent, type StockEventProof } from "../../electron/security/stock-event-author-protocol.cjs";
+import { ACTIONS, normalizeStockEvent, type StockEventProof, type StockSourceCohortProof } from "../../electron/security/stock-event-author-protocol.cjs";
 import type { VerifiedTerminalDescriptor } from "./terminal-binding.server";
 import { stockInstant, canonicalStockInstant } from "./stock-as-of";
 import { ShiftAuthorError, verifyStockEventRegistryProof, readVerifiedStockEventAuthor } from "./shift-author-verification.server";
@@ -65,7 +65,7 @@ export async function verifyStockEventAuthor(input: { proof: unknown; payloadJso
 
 /** New metadata needs current original-author rights plus the exact accepted
  * source workflow/effect. A background uploader is never the original author. */
-export async function readStockEventAuthorPermission(proof: StockEventProof,request?:object) {
+export async function readStockEventAuthorPermission(proof: StockEventProof|StockSourceCohortProof,request?:object) {
   const current = await readVerifiedStockEventAuthor(proof,request);
   if (!current.allowed) return current;
   const rule = ACTIONS[proof.action];

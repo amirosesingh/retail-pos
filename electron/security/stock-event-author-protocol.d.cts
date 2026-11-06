@@ -4,3 +4,7 @@ export const ACTIONS:Readonly<Record<StockEventAction,{readonly kind:string;read
 export function unsignedStockEvent(input:unknown):Omit<StockEventProof,'signature'>;
 export function stockEventMessage(input:unknown):string;
 export function normalizeStockEvent(input:unknown):StockEventProof;
+export type StockSourceCohortProof={version:1;algorithm:'Ed25519';keyId:string;projectOrigin:string;terminalId:string;authorId:string;subject:string;branchId:string;operationId:string;sourceDatabaseId:string;sourceSequence:string;sourcePredecessorRoot:string|null;action:Exclude<StockEventAction,'SALE'|'REFUND'>;sourceRoot:string;sourceCount:number;signature:string};
+export function unsignedStockSourceCohort(input:unknown):Omit<StockSourceCohortProof,'signature'>;
+export function stockSourceCohortMessage(input:unknown):string;
+export function normalizeStockSourceCohortProof(input:unknown):StockSourceCohortProof;

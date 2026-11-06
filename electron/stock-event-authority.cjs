@@ -64,6 +64,14 @@ class StockEventAuthority{
     const proof=this.keys.signStockEvent(capture.binding,{expectedKeyId:keyId,subject:capture.subject,branchId:capture.branchId,
      operationId:row.operation_id,movementId:upload.id,action:capture.action,payloadHash:upload.payloadHash,...(sourceManifestJson!=null?{sourceManifestJson}:{})});
     capture.assertCurrent();return proof;
+   },signSourceCohort:async input=>{
+    capture.assertCurrent();
+    if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).length!==5||
+      ['operationId','sourceDatabaseId','sourceSequence','sourcePredecessorRoot','manifests'].some(field=>!Object.hasOwn(input,field)))fail('ESTOCK_AUTHOR_INVALID');
+    const result=await this.keys.signStockSourceCohort(capture.binding,{expectedKeyId:keyId,subject:capture.subject,branchId:capture.branchId,
+      action:capture.action,operationId:input.operationId,sourceDatabaseId:input.sourceDatabaseId,sourceSequence:input.sourceSequence,
+      sourcePredecessorRoot:input.sourcePredecessorRoot,manifests:input.manifests});
+    capture.assertCurrent();return result;
    }});
  }
  validatePending(value){
