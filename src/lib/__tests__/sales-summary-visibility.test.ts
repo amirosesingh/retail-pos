@@ -5,9 +5,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const fixture = vi.hoisted(() => ({
   totals: { bills: 0, net: 0, collected: 0, discounts: 0, tax: 0 }, loading: false, error: "",
 }));
+vi.mock("@/lib/pos-auth",()=>({useAuth:()=>({ready:true,user:{staffId:"admin",permissions:{}},can:()=>true})}));
+vi.mock("@/lib/page-data-cache",()=>({pageDataScope:()=>["test",1]}));
 vi.mock("@/lib/pos-store", () => ({
+  usePosOptional:()=>({ready:true,currentStore:{id:"a"}}),
   money: (value: number) => value.toFixed(2),
-  usePos: () => ({ state: { sales: [], products: [], settings: { integrations: {} } }, stores: [{ id: "a" }] }),
+  usePos: () => ({ currentStore:{id:"a"},state: { sales: [], products: [], settings: { integrations: {} } }, stores: [{ id: "a" }] }),
 }));
 vi.mock("@/lib/sales-report-context", () => ({
   useSalesReportFilters: () => ({ from: "2026-10-01", to: "2026-10-30", storeId: "a", cashier: "all", q: "" }),

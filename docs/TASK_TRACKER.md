@@ -6772,6 +6772,179 @@ scope. Full Windows run:6167 passed/10 skipped, with sandboxed workerd startup
 and a CRLF-only test assertion failing. The three isolated suites reran24/24
 outside the process sandbox after normalizing both compared test strings; no
 migration bytes changed. Final merged-tree CI and local runtime acceptance remain.
+
+## CHART80 — softer consistent charts and confirmed summary presentation, 6 November
+
+Owner explicitly requested a separate presentation-only batch: consistent compact
+chart frames, vertical scrolling without a visible scrollbar, rounded graph ends
+and joins, and smooth summary reveal only after current database/scope data is
+confirmed. Latest style steering means clean and uncluttered, not tiny controls
+or reduced readability. Keep meaningful negatives and the approved All Shops
+zero-valued directory exception. Continue a separate HMR web preview at8083
+alongside existing beta web8082 and Electron8080; root owns those server processes.
+
+Recoverable baseline: freshly fetched beta0b6f00b1, including chartPR419 and
+empty-panelPR421. Branch codex/chart-softness-loading-beta, isolated worktree
+work/chart-softness-loading-beta. Its package-lock matches the existing verified
+dependency tree; use a junction without changing packages or running profiles.
+
+Planned source: TradingChartLayout.tsx, ShopComparisonCharts.tsx, report-kit.tsx,
+the chart/summary portions of dashboard.tsx, analytics.tsx, reports.analytics.tsx
+and the existing report StatCard consumers (activity, business, catalogue,
+coupons, sales, stock and voids), plus styles.css and focused presentation tests.
+Reuse confirmed-presentation, SummaryCardRail motion and reduced-motion handling.
+Use explicit raw numeric visibility rather than parsing formatted currency.
+Preserve same-scope confirmed content through refresh/errors and hide on identity,
+permission, branch or report-range changes. Keep errors and loading status honest.
+Before touching an additional shared loader/status helper, establish its precise
+read-only presentation need; an array alone is not proof of completed loading.
+
+Do not alter providers, database calls/cadence, financial formulas, permissions,
+Membership, business data or configuration. Test initial unresolved/zero/negative
+and newly nonzero cards; confirmed refresh/error and scope/permission changes;
+desktop/mobile equal frames, readable labels, scroll/touch/keyboard access and
+reduced-motion rendering. Root will independently review the frozen diff before
+CI/beta integration. No merge, deployment, installer or production publication is
+authorized by this preparation. Targeted rollback is a revert of this UI batch.
+
+Root approved the necessary read-only audit presentation witness/export in
+src/lib/audit-log.ts after reviewing the plan. Capture current actor/session/
+database mode/backend scope before the existing read and publish a witness only
+after a matching successful result; keep prior same-scope confirmed cards on
+refresh failure and reject stale-scope readiness. No query, hydration default,
+timer, stored row, upload or authorization behavior may change. Audit reads that
+have never confirmed stay visibly unconfirmed, rather than becoming zero totals.
+
+CHART80 live preview correction: active UI web port8083 PID192228 uses the existing operator .env.local unmodified; no secret values read/copied/logged. Extra web8082/failed8083 instance stopped by root; normal Electron8080 PID173936 preserved. Initial inventory values at identical ~55.4% ratio were AnimatedMetric's650ms zero-to-value interpolation, not evidence of a partial database snapshot. Owner-approved presentation correction displays exact resolved values immediately; existing card arrival motion remains. Workspace numeric cards formerly rendered seeded values while unresolved; they now wait for existing readers. Query cadence/providers remain unchanged.
+
+CHART80 verification checkpoint:117/117 focused tests in14 suites pass, including
+audit stale-actor/session/backend responses, refresh-error witness retention,
+current-scope report state, money/count zero rules, meaningful negatives, workspace
+permission and inventory summaries, existing chart values and summary motion.
+TSC and scoped ESLint pass with0errors/0warnings. Actual isolated Chrome fixtures
+pass at1440px and390px: equal416px frames/224px plots, two/one columns, hidden
+vertical scrollbar with keyboard access, exact initial inventory values, mounted
+metric gates for database/report/audit and scope/permission changes, failed-refresh
+retention, reduced motion, actual Reports Analytics route with four bounded cards,
+all ten top items retained by scrolling, and rounded monthly line. No external
+network requests, profiles, credentials, database reads or writes used by fixtures.
+Full-suite CI and independent final review remain pending.
+
+Coverage boundary: transfer metrics depend on a separate secondary read with no
+exported completion witness. Core POS readiness is intentionally NOT claimed as
+transfer confirmation; that domain remains a separately tracked presentation
+follow-up. Audit-only web summaries likewise do not enable hydration or pretend
+the current bounded read is complete historical coverage. A missing witness is
+shown as unconfirmed; existing report tables/data are preserved. No Membership
+change, checkout code, permissions, schema or operator settings changed.
+
+CHART80 owner refinement supersedes the earlier two-column graph layout: use ONE
+vertical stack on desktop and phone, equal compact frames and hidden scrollbar.
+Sales value including sponsorship goes first when the current saved policy
+includes it; revenue and gross profit share ONE graph with distinct series.
+Preserve all existing queries, totals, metric permissions, grouping and selected
+branch scope. Root approved necessary pure presentation color allocation over
+the FULL already-authorized directory before selection/ranking/date changes:
+12 clearly separated categorical hue families, never paired light/dark shades.
+Allocate both revenue/profit identities regardless current cost grant; include
+clear metric+shop labels and dash/marker differentiation. Over12 series remain
+visible with explicit labels/styles; finite colors and directory-membership
+changes cannot provide an unlimited immutable identity registry.
+
+Independent review found two introduced dependency regressions: workspace cards
+must retain same-scope confirmed values through failed refresh; verified sales
+metrics must not depend on a separate sponsorship read. Correct using existing
+confirmed-presentation state only, without new reads. Reports Analytics must
+retain confirmed DATA, not freeze its parent-owned Daily/Monthly or Revenue/Units
+controls. Add mounted successful→failed→control-change regressions. Prior117/
+Chrome2-column results are historical preparation evidence, not final-head proof.
+
+CHART80 LATEST owner correction supersedes BOTH earlier vertical layouts:
+"I want graphs scrollable HORIZONTALLY. By mistake told vertically. All graph
+cards same size." Use a finite native horizontal swipe/scroll rail, hidden bar,
+equal responsive card width/height and fixed plot. No infinite duplication or
+new dependency. Preserve sponsorship-first, combined revenue/gross-profit,
+12 categorical hue allocation, all data/controls and reduced-motion support.
+Update actual browser acceptance to horizontal overflow and keyboard/touch
+access; obsolete vertical/two-column assertions are not final acceptance.
+
+CHART80 latest owner interaction refinement: keep the finite horizontal chart
+rail, add small Previous/Next controls and mouse drag plus native touch swipe.
+Dragging must ignore controls/links/form fields and tooltip content; no global
+DOM handlers or business-action interference. Investigate the actual clicked
+Recharts black focus/selection rectangle in a synthetic screenshot/computed
+style before applying scoped styling; preserve keyboard focus and useful
+tooltips. No data/provider/query changes. This supersedes the earlier freeze
+only for these explicit presentation interactions; rerun actual browser tests.
+
+CHART80 renewed final source checkpoint:122/122 tests in15 focused suites pass
+after the horizontal/combined-graph refinement and all independently reproduced
+card/fragment/control corrections. Final TSC/scoped ESLint0errors/0warnings.
+Actual Chrome1440/390 verifies one finite horizontal rail with equal responsive
+card width/416px height and224px plot, Previous/Next edge state, mouse drag,
+native touch swipe, keyboard scrolling, hidden bar and no page overflow.
+Pointer-click reproduced black SVG UA focus outline (auto5px); scoped pointer
+focus now has no outline while actual keyboard Tab retains a2px ring. Useful
+chart tooltips remain. Today has visible actual revenue/profit points; two shops
+produce four distinct categorical hues; denied profit is absent from lines and
+legend; the existing sales-value graph goes first. Independent review corrected
+workspace refresh retention/current hide+policy gates, independent sponsorship
+readiness, unique ancestor card keys, and data-only Analytics retention so its
+controls remain responsive after failures. Both synthetic browser scripts pass
+these actual mounted paths without profiles/backends/business data.
+
+The earlier obsolete full run recorded6181passed/10skipped/15failed:13 failures
+were fixtures missing the newly used auth/scope context (corrected and focused
+rerun passed); two workerd process-sandbox failures are being rerun outside that
+sandbox. Exact final full CI and renewed independent final browser review remain
+pending. Keep those limits distinct from tested affected paths. No DB/provider/
+query/timer/cadence, checkout, financial formula, permissions or Membership edits.
+
+CHART80 latest owner polish: Dashboard heading becomes "Trending graphs";
+heading, displayed dates and the three connected Period/Daily-Monthly/Line-Bar
+controls remain mounted together while a new date-window read is pending.
+Grouping/type are local presentation only; no new requests/cadence changes.
+Today summary retains its own authority/branch/day/timezone/policy identity
+rather than invalidating when unrelated graph-window dates change. Rail arrows
+float at the vertical midpoint of the WHOLE strip's left/right edges, disappear
+at edges/no overflow and remeasure on scroll/resize/content. No boxed outer
+container, no per-card arrow or business DOM listener. Prior88 full-suite run
+is pre-polish evidence; refresh PR427/checks after this narrow UI-only delta.
+
+CHART80 owner theme refinement: transparent point tooltip (no opaque box, border
+or shadow), colored marker with theme-foreground names/values, readable ticks,
+legends and native controls in light/dark. Reuse Recharts interaction/formatter
+contracts in one scoped wrapper; the existing ChartTooltipContent requires an
+unrelated ChartContainer context, so do not introduce that container or a portal.
+Plot transitions hold only bound DATA/config for120ms same-authority exit, hide
+unconfirmed plots, then300ms enter. Reduced motion is immediate; authority changes
+are synchronous drops, timers cancel on latest selection/unmount. No artificial
+zero rows or altered finance/query/permission logic.
+
+CHART80 final polish implementation: graph content transitions use exact semantic
+keys over bounded prepared plot DTOs/config (24hour/731day/2400month buckets by
+selected series, top10items and authorized shop summaries), never object identity
+or raw transaction-history serialization. Identical cloned data stays ready;
+changed values/config animate, rapid selections cancel stale timers, mismatched
+confirmed target keys stay hidden and authority changes drop old plots before
+effects. Waiting states hide numeric plot footers; Today KPIs remain independent.
+One shared transparent tooltip preserves formatter and labelFormatter, actual
+zero values, theme-foreground text/colored dots and existing Recharts interaction.
+Board giveaway measures now have five distinct colors without opacity variants;
+actual light/dark Board rendering and cost-denied removal pass. Rail arrows
+measure the actual CSS gap (including root15px scale), are centered on the whole
+strip, hide at edges and preserve keyboard focus when an edge button disappears.
+
+Current affected verification:134focused cases across18suites (one new assertion
+was corrected to distinguish a colored indicator background from text color);
+TSC/scoped ESLint0errors/0warnings. Both synthetic Chrome scripts pass actual
+Dashboard stable Today KPI/control DOM, connected3selectors and unchanged read
+keys for local grouping/type, graph-only pending/rapid date changes, real pixel
+entry animations, waiting-footer truth, scope/permission drops, Board5colors,
+transparent light/dark tooltips, font-scale arrows, mouse/touch/keyboard. This
+latest source still requires its own final CI/independent QA after integration;
+88f2a47b's6200passed/10skipped full-suite result is pre-polish evidence only.
+
 # SYNC79 — three retained product projections, 6 November
 
 Owner approves using the existing event/acknowledgement/baseline approach,

@@ -7,6 +7,7 @@ import { replayOrder, stamp } from "./activity-journal";
 import { isTerminalApp } from "@/platform-config/platform";
 import { localDb } from "@/core/local-db/local-db";
 import {auditDetails,normalizeCachedAuditRows} from "./audit-row-normalization";
+import { pageDataScope } from "./page-data-cache";
 
 /**
  * Business-language activity groups.
@@ -229,6 +230,9 @@ let loaded = false;
 let sqlHistoryLoaded = false;
 let historyInFlight: string | null = null;
 let historyError = "";
+let historyPresentation: { scope: string; revision: number } | null = null;
+let historyPresentationRevision = 0;
+let historyPresentationErrorScope: string | null = null;
 const listeners = new Set<() => void>();
 
 let actor = {
@@ -238,6 +242,9 @@ let actor = {
   storeId: null as string | null,
   authUserId: null as string | null,
 };
+const auditHistoryPresentationScope = () => JSON.stringify([
+  pageDataScope({ staffId: actor.staffId, role: actor.role }), actor.storeId, actor.authUserId,
+]);
 
 /** Tell the logger which employee is currently on the terminal. */
 export const setAuditActor = (next: Partial<typeof actor>) => {
@@ -247,6 +254,8 @@ export const setAuditActor = (next: Partial<typeof actor>) => {
     sqlLogs = [];
     historyError = "";
     sqlHistoryLoaded = false;
+    historyPresentation = null;
+    historyPresentationErrorScope = null;
     refreshVisibleLogs();
     listeners.forEach(listener => listener());
   }
@@ -543,6 +552,7 @@ async function dbRouterAuditHistory(): Promise<void> {
   const scope = `${actor.staffId}|${actor.storeId}|${actor.authUserId}|${actor.role}`;
   if (historyInFlight === scope || !hasSignedInIdentity()) return;
   historyInFlight = scope;
+  const presentationScope = auditHistoryPresentationScope();
   try {
     const rows = await db.queryAuditLogs(2000);
     if (scope !== `${actor.staffId}|${actor.storeId}|${actor.authUserId}|${actor.role}`) return;
@@ -582,12 +592,19 @@ async function dbRouterAuditHistory(): Promise<void> {
       });
     sqlLogs = mapped;
     refreshVisibleLogs();
+    // Observe only the existing read. A response from another session/database
+    // can never establish current summary readiness, even if its actor matches.
+    if (presentationScope === auditHistoryPresentationScope()) {
+      historyPresentation = { scope: presentationScope, revision: ++historyPresentationRevision };
+      historyPresentationErrorScope = null;
+    }
     listeners.forEach((listener) => listener());
   } catch (error) {
     // Keep visible cached events, but tell the reader that history is incomplete.
     if (scope === `${actor.staffId}|${actor.storeId}|${actor.authUserId}|${actor.role}`) {
       sqlHistoryLoaded = false;
       historyError = error instanceof Error ? error.message : "Saved audit history could not be loaded.";
+      if (presentationScope === auditHistoryPresentationScope()) historyPresentationErrorScope = presentationScope;
       listeners.forEach(listener => listener());
     }
   } finally {
@@ -597,6 +614,16 @@ async function dbRouterAuditHistory(): Promise<void> {
 
 export function useAuditHistoryError() {
   return useSyncExternalStore(logger.subscribe, () => historyError, () => "");
+}
+
+/** Read-only presentation evidence. This hook starts no read or refresh timer. */
+export function useAuditHistoryPresentation() {
+  return useSyncExternalStore(logger.subscribe, () => {
+    const scope = auditHistoryPresentationScope();
+    return JSON.stringify({ scope, revision: historyPresentation?.scope === scope ? historyPresentation.revision : 0,
+      ready: hasSignedInIdentity() && sqlHistoryLoaded && historyPresentation?.scope === scope,
+      error: historyPresentationErrorScope === scope ? historyError : "" });
+  }, () => "");
 }
 
 export function useSyncState() {

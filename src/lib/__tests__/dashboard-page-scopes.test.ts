@@ -40,7 +40,7 @@ vi.mock("@/platforms/web/components/pos/HomeShortcuts", () => ({ HomeShortcuts: 
 vi.mock("@/platforms/web/components/pos/CashierBillList", () => ({ CashierBillList: () => null }));
 vi.mock("@/platforms/web/components/pos/InventorySummaryCards", () => ({ InventorySummaryCards: () => null }));
 vi.mock("@/platforms/web/components/pos/ReportReceiptLink", () => ({ ReportReceiptLink: () => null }));
-vi.mock("@/platforms/web/components/pos/ShopComparisonCharts", () => ({ ShopComparisonCharts: ({ selectedIds }: { selectedIds: string[] }) => h("div", { "data-comparison-shops": selectedIds.join("|") }) }));
+vi.mock("@/platforms/web/components/pos/ShopComparisonCharts", () => ({ TradingGraphControls:()=>null, ShopComparisonCharts: ({ selectedIds }: { selectedIds: string[] }) => h("div", { "data-comparison-shops": selectedIds.join("|") }) }));
 vi.mock("@/components/ui/table", () => {
   const Part = ({ children }: { children?: ReactNode }) => h("div", null, children);
   return { Table: Part, TableHeader: Part, TableBody: Part, TableRow: Part, TableHead: Part, TableCell: Part };

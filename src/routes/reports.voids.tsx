@@ -1,3 +1,4 @@
+import { ConfirmedMetricCards } from "@/platforms/web/components/pos/ConfirmedMetricCards";
 import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
@@ -8,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
-import { useAuditLogs, type AuditLog } from "@/lib/audit-log";
+import { useAuditHistoryPresentation, useAuditLogs, type AuditLog } from "@/lib/audit-log";
 import { describeLog } from "@/lib/audit-format";
 import { money, usePos } from "@/lib/pos-store";
 import {
@@ -83,6 +84,7 @@ const approverOf = (l: AuditLog) => {
 
 function VoidsReport() {
   const logs = useAuditLogs();
+  const auditWitness = useAuditHistoryPresentation();
   const { stores } = usePos();
   const init = defaultRange(30);
   const [from, setFrom] = useState(init.from);
@@ -227,12 +229,12 @@ function VoidsReport() {
           </div>
         </ReportHeader>
 
-        <div className="summary-grid grid gap-4 sm:grid-cols-4">
-          <StatCard label="Events" value={String(rows.length)} />
-          <StatCard label="Cart voids" value={String(voids)} />
-          <StatCard label="Refunds" value={String(refunds)} />
-          <StatCard label="Value removed" value={money(totalValue)} />
-        </div>
+        <ConfirmedMetricCards label="Void and refund totals" scope={JSON.stringify([from,to,kind,staff,q])} ready={true} auditWitness={auditWitness}>
+          <StatCard label="Events" metricValue={rows.length} value={String(rows.length)} />
+          <StatCard label="Cart voids" metricValue={voids} value={String(voids)} />
+          <StatCard label="Refunds" metricValue={refunds} value={String(refunds)} />
+          <StatCard label="Value removed" metricValue={totalValue} moneyValue value={money(totalValue)} />
+        </ConfirmedMetricCards>
 
         <div className="rounded-2xl border border-border bg-card">
           <div className="border-b border-border px-4 py-2 text-sm font-medium">Per person</div>

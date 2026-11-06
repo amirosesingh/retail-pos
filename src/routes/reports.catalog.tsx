@@ -1,3 +1,4 @@
+import { ConfirmedMetricCards } from "@/platforms/web/components/pos/ConfirmedMetricCards";
 import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
@@ -7,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
-import { useAuditLogs } from "@/lib/audit-log";
+import { useAuditHistoryPresentation, useAuditLogs } from "@/lib/audit-log";
 import { describeLog } from "@/lib/audit-format";
 import {
   ReportHeader,
@@ -38,6 +39,7 @@ export const Route = createFileRoute("/reports/catalog")({
 
 function CatalogReport() {
   const logs = useAuditLogs();
+  const auditWitness = useAuditHistoryPresentation();
   const init = defaultRange(90);
   const [from, setFrom] = useState(init.from);
   const [to, setTo] = useState(init.to);
@@ -97,12 +99,12 @@ function CatalogReport() {
           </div>
         </ReportHeader>
 
-        <div className="summary-grid grid gap-4 sm:grid-cols-4">
-          <StatCard label="Changes" value={String(rows.length)} />
-          <StatCard label="Products added" value={String(created)} />
-          <StatCard label="Price edits" value={String(priced)} />
-          <StatCard label="Stock movements" value={String(stocked)} />
-        </div>
+        <ConfirmedMetricCards label="Catalogue activity totals" scope={JSON.stringify([from,to,q])} ready={true} auditWitness={auditWitness}>
+          <StatCard label="Changes" metricValue={rows.length} value={String(rows.length)} />
+          <StatCard label="Products added" metricValue={created} value={String(created)} />
+          <StatCard label="Price edits" metricValue={priced} value={String(priced)} />
+          <StatCard label="Stock movements" metricValue={stocked} value={String(stocked)} />
+        </ConfirmedMetricCards>
 
         <div className="rounded-2xl border border-border bg-card">
           <Table tableId="routes/reports.catalog#1">

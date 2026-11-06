@@ -1,5 +1,6 @@
-import { ShopComparisonCharts } from "@/platforms/web/components/pos/ShopComparisonCharts";
-import { TradingChartCard } from "@/platforms/web/components/pos/TradingChartLayout";
+import { ShopComparisonCharts, TradingGraphControls } from "@/platforms/web/components/pos/ShopComparisonCharts";
+import { useChartTransition } from "@/lib/use-chart-transition";
+import { TradingTooltip, ChartPlotStage, TradingChartCard } from "@/platforms/web/components/pos/TradingChartLayout";
 import { comparisonSalesDays, comparisonSalesHours } from "@/lib/shop-comparison";
 import { useConfirmedPresentation } from "@/lib/use-confirmed-presentation";
 import { pageDataScope } from "@/lib/page-data-cache";
@@ -19,11 +20,12 @@ import { salesReconciliation } from "@/lib/sales-reconciliation";
 import { InventorySummaryCards } from "@/platforms/web/components/pos/InventorySummaryCards";
 import { SummaryCardRail } from "@/platforms/web/components/pos/SummaryCardRail";
 import {
+  Bar,
+  BarChart,
   CartesianGrid,
   Line,
   LineChart,
   ResponsiveContainer,
-  Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
@@ -88,6 +90,8 @@ function Dashboard() {
 
   const [today, setToday] = useState(() => posDayKey());
   const [revenuePeriod, setRevenuePeriod] = useState<"1" | "7" | "14" | "15" | "20" | "30" | "90" | "month" | "custom">("14");
+  const [chartGrouping, setChartGrouping] = useState<"daily" | "monthly">("daily");
+  const [chartKind, setChartKind] = useState<"line" | "bar">("line");
   const [drawerColumnsTarget, setDrawerColumnsTarget] = useState<HTMLElement | null>(null);
   const [splitColumnsTarget, setSplitColumnsTarget] = useState<HTMLElement | null>(null);
   const [customFrom, setCustomFrom] = useState(() => shiftCalendarDay(posDayKey(), -13));
@@ -149,15 +153,19 @@ function Dashboard() {
   const chartDays = useMemo(() => comparisonSalesDays(chartSales, state.products), [chartSales, state.products]);
   const chartHours = useMemo(() => comparisonSalesHours(chartSales, state.products), [chartSales, state.products]);
 
-  /** Revenue for the selected inclusive calendar range. */
-  const daily = useMemo(() => dashboardDailyTrading(sales, sponsorship.rows, revenueFrom, revenueTo, includeSponsorship), [sales, sponsorship.rows, revenueFrom, revenueTo, includeSponsorship]);
-
   const chartScope = authReady && user && storeIds.length > 0
     ? JSON.stringify([pageDataScope(user), storeIds, revenueFrom, revenueTo, effectiveTimeZone(), showCostMargin, includeSponsorship]) : null;
-  const confirmedCharts = useConfirmedPresentation(chartScope, {
-    days: chartDays, hours: chartHours,
-    profit: chartProfit, daily,
-  }, !reportLoading && !reportError && inventoryReady && (!includeSponsorship || (!sponsorship.loading && !sponsorship.error)));
+  const chartData = useMemo(()=>({days:chartDays,hours:chartHours,profit:chartProfit,dailySales:chartSales,sponsorshipRows:sponsorship.rows,range:{from:revenueFrom,to:revenueTo}}),[chartDays,chartHours,chartProfit,chartSales,sponsorship.rows,revenueFrom,revenueTo]);
+  const confirmedCharts = useConfirmedPresentation(chartScope,chartData,
+    !reportLoading && !reportError && inventoryReady && (!includeSponsorship || (!sponsorship.loading && !sponsorship.error)));
+  const chartAuthority=authReady&&user&&storeIds.length>0?JSON.stringify([pageDataScope(user),storeIds,effectiveTimeZone(),showCostMargin,includeSponsorship]):null;
+  const chartFrame=useConfirmedPresentation(chartAuthority,confirmedCharts,!!confirmedCharts);
+  const firstPlot=useMemo(()=>chartFrame?({key:JSON.stringify([chartFrame.range,chartGrouping,chartKind]),value:{daily:dashboardDailyTrading(chartFrame.dailySales,chartFrame.sponsorshipRows,chartFrame.range.from,chartFrame.range.to,includeSponsorship,chartGrouping),kind:chartKind,range:chartFrame.range}}):null,[chartFrame,chartGrouping,chartKind,includeSponsorship]);
+  const firstPlotSnapshot=useMemo(()=>firstPlot?{...firstPlot,signature:JSON.stringify(firstPlot.value)}:null,[firstPlot]);
+  const firstTransition=useChartTransition(chartAuthority,JSON.stringify([{from:revenueFrom,to:revenueTo},chartGrouping,chartKind]),firstPlotSnapshot);
+  const graphDaily=firstTransition.data?.daily??firstPlot?.value.daily??[];
+  const firstKind=firstTransition.data?.kind??chartKind;
+  const graphFinancial=useMemo(()=>chartFrame&&dashboardStore?[{id:dashboardStore.id,name:dashboardStore.name,revenue:chartFrame.profit.revenue,cost:chartFrame.profit.cogs,profit:chartFrame.profit.profit,marginPct:chartFrame.profit.marginPct}]:[],[chartFrame,dashboardStore]);
 
   const todayDrawer = useMemo(() => drawer.filter(
     (d) => posDayKey(d.at) === today && storeIds.some(id => sameBranchId(d.storeId, id)),
@@ -205,7 +213,7 @@ function Dashboard() {
     todayDrawer.length !== 0 && <Kpi key="drawer" label="No-sale drawer opens" value={String(todayDrawer.length)} />,
   ].filter(Boolean);
   const confirmedCards = useConfirmedPresentation(
-    authReady && user && storeIds.length > 0 ? JSON.stringify([pageDataScope(user), storeIds, today, readFrom, readTo, effectiveTimeZone(), includeSponsorship]) : null,
+    authReady && user && storeIds.length > 0 ? JSON.stringify([pageDataScope(user), storeIds, today, effectiveTimeZone(), includeSponsorship]) : null,
     summaryCards, inventoryReady && !reportLoading && !reportError &&
       (!includeSponsorship || (!sponsorship.loading && !sponsorship.error)));
 
@@ -245,11 +253,12 @@ function Dashboard() {
 
         <DisplayElement name="dashboard.tradingGraphs"><section aria-label="Live dashboard graphs" className="min-w-0">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-sm font-semibold">Trading graphs</h2>
+            <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1"><h2 className="text-sm font-semibold">Trending graphs</h2>
+              <span className="text-xs text-muted-foreground">{revenueFrom} to {revenueTo}</span></div>
               <div className="flex flex-wrap items-center gap-2">
                 <select aria-label="Trading graphs period" value={revenuePeriod}
                   onChange={(event) => setRevenuePeriod(event.target.value as typeof revenuePeriod)}
-                  className="h-8 rounded-md border border-input bg-background px-2 text-xs">
+                  className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground">
                   <option value="1">Today</option>
                   <option value="7">7 days</option>
                   <option value="15">15 days</option>
@@ -260,27 +269,29 @@ function Dashboard() {
                   <option value="month">This month</option>
                   <option value="custom">Custom dates</option>
                 </select>
+                <TradingGraphControls grouping={chartGrouping} kind={chartKind} onGroupingChange={setChartGrouping} onKindChange={setChartKind} />
                 {revenuePeriod === "custom" && <>
                   <Input aria-label="Graphs from date" type="date" value={customFrom} onChange={(event) => setCustomFrom(event.target.value)} className="h-8 w-36 text-xs" />
                   <Input aria-label="Graphs to date" type="date" value={customTo} onChange={(event) => setCustomTo(event.target.value)} className="h-8 w-36 text-xs" />
                 </>}
               </div>
           </div>
-          <p className="mb-3 text-xs text-muted-foreground">{revenueFrom} to {revenueTo} · applies to all trading graphs</p>
-          {confirmedCharts && <ShopComparisonCharts rows={confirmedCharts.days} directory={reportStores}
-            selectedIds={storeIds} showProfit={showCostMargin} scopeLabel={scopeLabel} range={{ from: revenueFrom, to: revenueTo }}
-            transactionHours={confirmedCharts.hours} profitHours={confirmedCharts.hours}
-            financialRows={dashboardStore ? [{ id: dashboardStore.id, name: dashboardStore.name,
-              revenue: confirmedCharts.profit.revenue, cost: confirmedCharts.profit.cogs,
-              profit: confirmedCharts.profit.profit, marginPct: confirmedCharts.profit.marginPct }] : []}>
-            {confirmedCharts.daily.some(row => Math.abs(row.total) >= 0.005) && <TradingChartCard
+          {!confirmedCharts && <p role="status" className="mb-3 text-sm text-muted-foreground">{reportError ? "Graphs could not be refreshed for these dates." : "Loading graphs for the selected dates…"}</p>}
+          {chartFrame && <ShopComparisonCharts rows={chartFrame.days} directory={state.stores}
+            selectedIds={storeIds} childrenFirst showToolbar={false} controls={{grouping:chartGrouping,kind:chartKind,onGroupingChange:setChartGrouping,onKindChange:setChartKind}} showProfit={showCostMargin} scopeLabel={scopeLabel} range={chartFrame.range} requestedRange={{from:revenueFrom,to:revenueTo}}
+            transactionHours={chartFrame.hours} profitHours={chartFrame.hours}
+            financialRows={graphFinancial}>
+            {graphDaily.some(row => Math.abs(row.total) >= 0.005) && <TradingChartCard
               title={includeSponsorship ? "Sales value including sponsorship" : "Sales collected"}
               description={includeSponsorship ? "Sponsorship is product value, not money collected." : "Final collected bill totals for the selected dates."}>
-              <ResponsiveContainer width="100%" height="100%"><LineChart data={confirmedCharts.daily}>
+              <ChartPlotStage phase={firstTransition.phase} stamp={firstTransition.stamp} previousLabel={firstTransition.data?`${firstTransition.data.range.from} to ${firstTransition.data.range.to}`:undefined}><ResponsiveContainer width="100%" height="100%">{firstKind === "bar" ? <BarChart data={graphDaily}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" /><XAxis dataKey="day" fontSize={11} />
-                <YAxis fontSize={11} /><Tooltip /><Line type="monotone" dataKey="total"
-                  name={includeSponsorship ? "Sales value" : "Sales collected"} stroke="var(--primary)" strokeWidth={2.5} dot={false} isAnimationActive={false} />
-              </LineChart></ResponsiveContainer>
+                <YAxis fontSize={11} /><TradingTooltip /><Bar dataKey="total" name={includeSponsorship ? "Sales value" : "Sales collected"} fill="var(--primary)" radius={4} isAnimationActive={false} />
+              </BarChart> : <LineChart data={graphDaily}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" /><XAxis dataKey="day" fontSize={11} />
+                <YAxis fontSize={11} /><TradingTooltip /><Line strokeLinecap="round" strokeLinejoin="round" type="monotone" dataKey="total"
+                  name={includeSponsorship ? "Sales value" : "Sales collected"} stroke="var(--primary)" strokeWidth={2.5} dot={graphDaily.length === 1 ? {r:3} : false} isAnimationActive={false} />
+              </LineChart>}</ResponsiveContainer></ChartPlotStage>
             </TradingChartCard>}
           </ShopComparisonCharts>}
         </section></DisplayElement>
