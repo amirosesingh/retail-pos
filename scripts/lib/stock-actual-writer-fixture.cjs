@@ -7,8 +7,8 @@ const schema=()=>read('supabase/schema.sql').replaceAll('\r\n','\n');
 function stockFunction(name){const source=schema(),start=source.lastIndexOf('CREATE OR REPLACE FUNCTION public.'+name+'(');assert(start>=0,name);
  const tail=source.slice(start),tag=tail.match(/\bAS\s+(\$[\w]*\$)/i)?.[1];assert(tag,name);const end=tail.indexOf(tag+';',tail.indexOf(tag)+tag.length);assert(end>0,name);return tail.slice(0,end+tag.length+1);}
 function table(name){const source=schema(),start=source.indexOf('CREATE TABLE IF NOT EXISTS public.'+name+' (');assert(start>=0,name);return source.slice(start,source.indexOf('\n);',start)+3);}
-async function createActualStockWriter({capturedAdjustment=false,sourceAdmission=false}={}){
- const f=await createFullFinancialCloud({actualSaleDefinition:true});
+async function createActualStockWriter({capturedAdjustment=false,sourceAdmission=false,db:providedDb}={}){
+ const f=await createFullFinancialCloud({actualSaleDefinition:true,...(providedDb?{db:providedDb}:{})});
  try{
   const{db}=f;
   for(const name of ['stock_adjustments','purchase_orders','purchase_order_items']){await db.exec(table(name));await db.exec('ALTER TABLE '+name+' ADD PRIMARY KEY(id);');}
@@ -68,6 +68,6 @@ async function installSourceAdmission(f){
    upload:()=>scalar('SELECT public.pos_sync_push_stock_source_aggregate($1,\'default\',\'A\',$2,$3::jsonb,$4,$5::jsonb)',[batch,terminal,JSON.stringify(operations),project,JSON.stringify([{proofJson:raw}])]),
    accept:()=>scalar('SELECT public.pos_stock_history_accept_claims($1,\'A\',$2,$3::jsonb)',[project,terminal,JSON.stringify([submission])])};
  }
- return{sourceOperation};
+ return{sourceOperation,stockSourceFixture:{key,pair,database,project}};
 }
 module.exports={createActualStockWriter,stockFunction};

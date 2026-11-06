@@ -147,6 +147,7 @@ async function source({sourceId=id(),operationId=operation,guid=databaseId,store
  await pool.request().query('ALTER TABLE dbo.stock_history_source_cohorts ADD fixture_unknown int NULL;');store.invalidateCapability();assert.deepEqual(await read(options()),{available:false,reason:'UNKNOWN_SCHEMA'});
  await pool.request().query('ALTER TABLE dbo.stock_history_source_cohorts DROP COLUMN fixture_unknown;');store.invalidateCapability();assert.equal((await read(options())).available,true);
  pass('partial/unknown031 rejected and exact restored shape revalidated without auto-upgrade');
+ await require('./stock-frontier-runtime-sqlserver-cases.cjs')({pool,sql,saved,session,pass});
  await pool.request().input('database',databaseId).query(`INSERT dbo.stock_history_source_cohorts(id,operation_id,store_id,terminal_id,actor_id,action,source_root,source_count,database_guid,source_sequence,
   predecessor_root,proof_json,members_json,payload_hash,upload_aggregate_id,recorded_at_raw)
   SELECT TOP(2001) NEWID(),NEWID(),N'a',N'bulk',N'fixture',N'ADJUST',REPLICATE('a',64),1,@database,ROW_NUMBER()OVER(ORDER BY a.object_id,b.object_id),
