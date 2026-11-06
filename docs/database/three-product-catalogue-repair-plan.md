@@ -57,8 +57,10 @@ replay the earlier 594-product repair.
 The current ordinary new-product save and import paths already call
 `branchOwnsNewCatalogue` and stamp the creating branch for grouped/private NEW
 catalogues. Existing-product edits deliberately do not guess a missing original
-owner. The existing cloud sync assignment preserves a repaired owner when an
-older upload omits it or sends NULL/blank. Thus the investigated three records
+owner. Canonical/native code already preserves a repaired owner against
+NULL/blank legacy uploads, but the captured live cloud routine does not yet
+have that protection. The separately prepared upgrade below must be approved
+and applied before the three-row repair. Thus the investigated three records
 are a legacy ownership gap; no current new-product stamping regression has been
 established by this investigation. Other positive ownerless legacy products can
 reach the same condition later and need a separate provenance review, not a
