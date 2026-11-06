@@ -12,6 +12,190 @@ Owner requires all proposed cloud/local database upgrades collected for exact fi
 The exact owner-approved service-only bounded feed RPC and PR384 are applied/deployed on beta. Existing selector/privacy grants and businessrecords are preserved; native continuation is bound to authenticated response metadata. Live147request sample all200/ok with no CPU-exceeded; CPU2–114ms/mean9.469 means NO guarantee allrequestsbelow10ms. Electronfeed131613→133184, all6shiftCTvalid; largebacklog stilldraining. Keep implemented/sample-verified status distinct from fullsync completion, production promotion or installerpublication. Supabase migrationtool ledger20261104042158 corresponds to approvedfile20261104040251, SHA83495D696622241ECA2A8D396234E2FD65EE7C7A3050E93E4280638D6530D59B; do not replay based solely on differing timestamps.
 # POS project memory
 
+## 6 November — chart and summary presentation refinement
+
+Owner requests clean, compact, readable chart frames with soft graph ends/joins,
+hidden-bar HORIZONTAL finite scrolling/swiping and smooth confirmed-data summary reveals.
+The latest owner correction explicitly supersedes earlier vertical/two-column
+chart layouts: all graph cards use the same responsive width, height and plot. Unknown
+initial values stay hidden; meaningful negatives remain, and All Shops retains
+its zero-valued directory entries. Preserve current branch/identity/permissions,
+same-scope confirmed refresh/error behavior and reduced-motion support. This is
+Point tooltips use transparent backgrounds with theme-foreground labels/values
+and colored indicators; preserve mouse/keyboard interaction and readable axes
+in light/dark themes. Plot-only transitions never fabricate numeric zeros.
+This is presentation only: no provider, query cadence, financial calculation, database or Membership
+changes. Root keeps a separate HMR preview alongside existing web and Electron.
+
+## 6 November — complete history-count coverage without changing audit scope
+
+The strict70-table reconciliation check exposed a confirmed central contract gap:
+the live four-argument count wrapper delegates69 registered tables and omits
+change_history. Prepare only an exact-source/metadata-guarded append of the missing
+count, preserving its existing all-history bootstrap predicate and service-only
+authorization. Do not weaken client completeness validation or fold the separately
+held broad audit-privacy review into this correction. The current21019 cloud and
+20799 local history totals are a net220 gap; a consistent UUID comparison is needed
+before classifying missing, local-only or divergent facts. Live history pull already
+supports UUID dispatch but its feed trigger is absent. Future trigger/recovery work
+requires its own concrete plan and exact database approval; no manual PC/cloud row
+copy, checkpoint reset or history omission is authorized.
+
+## 6 November — existing-PC stock-history delivery
+
+Prepare one consolidated existing-data local SQL file, retaining the reviewed
+025–030 transaction/shape guards and appending031 only after the stock-history
+writer explicitly freezes its source. The currently released preparation artifact
+090F24031A07660C2D36512D2B38197A06491BB28408CCAAFDBB66FC400A4730
+is not silently extended with unfinished metadata. Preserve existing records,
+grants, local pending work and operator configuration; unknown/partial shapes
+fail closed and the complete update rolls back on failure. No live application
+or publication is authorized by preparation; exact file/target review remains.
+
+
+## 6 November — consistent trading charts
+
+Cards must remain hidden until their current branch/cluster/range read is
+actually confirmed. Preserve same-scope confirmed cards during background
+refresh with truthful stale/error status; scope/identity/cost-permission changes
+hide the previous scope immediately. Preserve meaningful negative values and the
+loaded All Shops zero-shop-directory exception. Historical chart color/layout directions below are SUPERSEDED by CHART80 on
+6 November: use the full existing authorized directory to allocate12 categorical
+hues before selection/rank/date, and a finite HORIZONTAL rail. Directory membership
+changes can change color assignments; over-capacity series retain labels/styles.
+No infinite duplication.
+
+
+SUPERSEDED historical direction (retained as history, not an active rule):
+equal-height chart cards and fixed plot heights
+on Dashboard, All Shops and Live Business Board, in a vertically scrollable
+area with its scrollbar hidden. Use two columns on large screens and one on a
+phone; charts are never infinite/horizontal carousels. Separate revenue and
+gross-profit trends (now combined under CHART80), retain a stable vivid color for each authorized shop, and
+offer daily/monthly grouping plus Today,15days,20days and custom dates. The
+financial comparison stacks cost plus gross profit to revenue and labels margin
+as a percentage; it must not stack revenue a second time.
+
+Dashboard remains the selected registered/authorized branch, All Shops follows
+its selected cluster (or explicit all authorized clusters), and Business Board
+uses only its authorized company directory. Existing financial, refund,
+sponsorship and export rules remain unchanged. Hourly figures must use actual
+saved sales/cost evidence, never apportion daily profit into hours. Reuse existing
+bounded sales on Dashboard/All Shops; prepare a bounded authorized Board hourly
+read separately if required. Any new database routine remains preparation only
+until exact-target/file approval. Membership remains ON HOLD.
+
+## 6 November — dependency integration is beta first
+
+The owner requests the latest local Electron preview and prompt integration of
+completed chore/version PRs into beta. This does not approve main promotion or
+native publication. Retail version1.4.82 is already prepared; dependency PRs406
+through410 do not increment the application version. Recheck their combination
+with actual current beta before merge: the original green dependency checks use
+the older beta4e9a854a, while the reviewed destination is3074a475. Preserve source
+commit attribution, resolve only necessary dependency-lock conflicts, and keep
+payment/recovery source and all operator profiles/databases untouched. Use a
+fresh isolated dependency tree rather than changing the running Electron's
+shared node_modules. Record runtime/package acceptance separately from CI.
+
+## 5 November all-table synchronization clarification
+
+Dashboard decision69: Live Dashboard selected operating branch; Live Business
+Board company-wide across authorized shops/clusters; All Shops cards/charts
+follow the explicit cluster filter, with All clusters showing every authorized
+shop including zero-data shops. This supersedes the earlier always-visible-card
+rule only for a selected cluster. Never expand management grants or normal till
+branch access. Use consistent shop series/colors and existing financial formulas.
+
+The owner confirmed "All applicable tables; missing/changed records only."
+Cover each applicable table, dependency group, tombstone and recovery path within
+the one coordinated sync pipeline. This does not authorize repeated full-table
+downloads, changes to per-table access/direction or activation of Membership.
+Initial authorized baselines and scoped expired-history recovery snapshots remain
+required where saved progress cannot safely support incremental downloads.
+Owner selected one coordinated active data-sync lane per terminal with bounded
+upload/download turns. SQL Server remains the native durable business/pending
+operation store; Electron Main coordinates requests, while protected device keys
+stay in their existing OS vault. Reuse existing sync code, preserve independent
+authentication/control/health and do not change Supabase connection pool settings.
+
+## 5 November — approved legacy recovery and historical stock semantics
+
+Owner approved actual stock at the selected original movement time. Late offline
+uploads restate the applicable past stock position; cloud-arrival time is not
+the business cutoff. Preserve an additional recorded/received timestamp for audit,
+unique movement identity and truthful history coverage. This is a reporting
+decision, not approval to invent unavailable pre-baseline balances or prices.
+
+Owner approved audited Administrator recovery for old closings whose original
+financial snapshot is unavailable. Require an actual Administrator's explicit
+review, reason and immutable provenance stating administrator-reviewed historical
+recovery / original financial snapshot unavailable. Preserve original cashier
+details as historical claims, not new cashier signatures. Preserve later web
+corrections and reject changed cloud records. Never use this legacy path to bypass
+new protected-shift financial/author checks or grant broader roles permission.
+Implementation and isolated tests are approved; live schema/data application
+still needs exact-target/file review and separate approval.
+
+## 5 November controlling sync and stabilization decisions
+
+Owner approved application recovery implementation and isolated tests, using
+agents, not manual local-to-cloud closing repairs. Use the existing coordinated
+event/aggregate sync engine with a transactional durable outbox, incremental
+downloads and resumable recovery snapshots. Preserve long-offline pending work,
+original closings and later administrator corrections; versions or device clocks
+alone never determine the winning closing. Runtime progress/errors must reflect
+actual committed/acknowledged work. No registration, queue or checkpoint reset.
+
+Priority is sync recovery, Electron policy loading/sharing enforcement and Excel
+import correctness first, with separate focused beta PRs as they pass checks.
+Historical stock reporting follows evidence/accuracy decisions: selected date
+and exact time, including raw shift closed_at. Existing movement history is not
+proven complete, and historical valuation cannot be inferred from current prices.
+Do not fabricate past balances or promise production readiness before acceptance.
+
+Owner explicitly authorized permanent AGENTS.md improvements. Routine approved
+implementation/review/PR work proceeds without redundant approval requests;
+exact live database changes and specific production promotion/publication remain
+separate approval boundaries. Membership stays on hold.
+## 5 November — controlling instructions and current integration status
+
+Owner explicitly approved permanent AGENTS.md improvements: one coordinated
+event/aggregate synchronization engine with durable local outbox, incremental
+downloads and resumable recovery snapshots; preserve long-offline pending work,
+offline checkout, permissions and original/admin-corrected histories. No version
+or device timestamp alone selects a winning record. Database calls, import
+accuracy, historical-report evidence and truthful progress rules are in AGENTS.md.
+Routine work within an approved batch proceeds without redundant approval asks;
+exact live database changes and specific production promotions remain separate.
+Membership stays on hold. Existing DEC-48 stock availability is preserved.
+
+Current verified GitHub state: PR354 is already merged and Retail1.4.81 was
+published on 5 November at11:01:30 Asia/Brunei. Its older draft/pending paragraphs
+below are historical checkpoints, not the current release state. New imports
+PR396 and native/offline policies PR397 are merged into beta e4be3768 only.
+Their merge trees match their reviewed heads; final combined policy/import
+regression passed5,729 tests/7 skipped, with required platform/hosting/permission
+checks passing. Installed-device acceptance remains unverified. These new fixes
+have not been promoted to main or published as new installers.
+
+PR399 single sync-data lane and PR398 permanent rules are also merged; current
+beta is59674214. Production draftPR400 tracks these reviewed beta changes and
+passes required checks; no new production promotion/installers are authorized.
+
+Recovery PR395 remains draft. Its committed review/upload head c900679d passes
+5,848 full-suite tests/8 skipped/0 failed and required CI, not full installed
+runtime recovery. The owner approved audited actual-Administrator recovery when
+old financial snapshots are unavailable; preserve that provenance and all newer
+protected-shift checks. Reviewed local adoption remains an unactivated prototype.
+A subsequent ordinary-delta precision regression originally rolled back. The
+owner approved its exact-witness writer/baseline correction;40 actual disposable
+SQL groups and53 focused tests now pass with existing guards/legacy behavior.
+Full integrated regression and actual runtime adoption remain pending. Never manually copy
+retained closings into cloud records. Historical stock's quantity kernel is
+tested, but proven opening/movement storage, authorized loader and UI remain
+unfinished. Preserve these tasks and evidence in TASK_TRACKER.md.
+
 Last reconciled: **2026-11-03, Asia/Brunei**. This is approved architecture and
 decision memory, not a claim that all implementation conforms to it.
 
@@ -1112,3 +1296,407 @@ approval remain separate.
 Owner explicitly approved preparation and implementation of a separate sharing control. Preserve current behaviour by default: sharing ON. OFF limits normal registered tills' operating checkout shifts to their own terminal; multiple cashiers on one PC and authorized management reporting/corrections remain supported. Do not confuse this with allow_multiple_shifts_per_terminal. Independent branch codex/shift-sharing-rules-beta starts current beta68470185 in work/shift-sharing-rules-beta, not the unfinished FIN62 branch. Exact cloud/local schema changes remain unapplied and require final review. Scope: canonical scoped setting/save/reload/inheritance/cache, old-schema capability compatibility, trusted normal-terminal online/offline enforcement including direct APIs, and regression tests. Do not silently change existing rule values, widen management grants or show an unenforced checkbox. Old clients/unknown offline policy and pending sales require explicit rollout safeguards. No application code changed in this worktree yet; FIN62 remains first priority.
 
 SHIFT63 verified decision: sharing remainsON bydefault, nullablebranch inheritsglobal. OFFisnormal-tillownshift only, samePCcashierhandover andauthorizedManagement preserved. A validnativeproof/syncRPCdoesnotproveprecutoverhistory: enforceactualtillownership evennewnativeuploads; exactacceptedreceiptsmayACK, unknownlegacyworkholdsreviewwithoutdropping. OFFrequiresowner-reviewedcompleteFIN62PCcohort+pendingdrain/currentbuild/local027; noPCbranchesgainnoofflinecapability. Installationorderfinancial090000→sharing090100; reviewedSQL/localfileandhashes in docs/database/shift-branch-sharing-upgrade.md. No liveapplication oractivation; actualbrowser/phonecredentialchecks remainunverified. KeepMembershiponhold.
+## 5 November — POLICY-65 approval and invariants
+
+Owner authorized completing the Electron Operational policies correction with agents and preparing a separate beta PR. Preserve explicitly validated native device proof and terminal/session context through rules transport validation; never bypass terminal proof checks to make a read succeed. Safety-default/unavailable settings are not a verified editable baseline. Confirmed cached or pending offline rules remain editable under existing permissions. This batch makes no schema, grant, stored-setting or terminal-registration change. Membership remains on hold.
+
+The owner also requires the confirmed shift-sharing capability to survive offline
+use/restart. Cache that capability only after a verified rules reply and bind it
+to the registered terminal, branch, backend and database project addresses,
+including any normalized path prefix.
+Known connection-scope changes invalidate both cached rules and capability;
+legacy unscoped cache cannot claim the capability for a configured connection.
+Do not infer upgrade readiness from the sharing rule value. Keep current
+permissions, versioned saves and server-side capability/branch checks intact.
+
+During a first offline upgrade, an old unscoped cache may preserve operating
+values only when its nonempty terminal and branch exactly match. Label it
+LEGACY_CACHE: it is not verified for the configured connection, may not enable
+sharing capability or new edits, and is never rewritten/relabelled on read.
+Pending edits remain pending. A verified online reply establishes the new
+binding; known mismatched scopes remain rejected. Offline duration alone never
+abandons an unacknowledged rules edit. Current-user handover also invalidates an
+awaited save, even when both users have the same settings permission.
+
+
+## IMPORT65 — preserve workbook values, 5 November
+
+Inventory import reads stored cell values, not Excel presentation strings. Do not rewrite the operator workbook or execute formulas. Decimal prices/costs remain unrounded during parsing/review. Percentage-formatted numeric amount/tax cells are ambiguous for percentage-point fields and require an explicit plain value; do not multiply by formatting silently. Numeric barcode/SKU values of more than 15 digits may already be irreversibly rounded by Excel and must be supplied as original Text values. Preserve leading zeros in Text codes. Reject duplicate normalized headers, contradictory populated amount aliases and populated unnamed columns instead of shifting/mixing data. Preserve original physical Excel row numbers in errors. Invalid nonblank amounts remain invalid; only genuinely blank fields may use the existing catalogue/default fallback. Inventory/purchasing quantity rules, save batches, permissions and branch/cluster ownership remain unchanged.
+
+Textual import amounts must also survive decimal serialization into the existing JavaScript-number product contract unchanged. Reject an amount whose normalized decimal identity differs from Number.toString() (for example 9007199254740993), without imposing a two-decimal limit or rejecting ordinary 0.1 solely for binary approximation. Already-rounded numeric Excel cell values cannot be reconstructed; never claim otherwise. Existing supported separator conventions remain unchanged.
+
+IMPORT65 is prepared in beta PR396, runtime commit 7ffb9862d039941946d9a67b0dce2673a44f47c3. Final frozen-source full regression passed 5,660 tests with 7 skipped and 0 failed; 91 focused importer tests, TypeScript, scoped lint and diff checks passed. This is source/isolated-fixture verification only. The exact customer workbook symptom, installed Electron/mobile decimal-entry interaction and deployed beta acceptance remain unverified. No production import, database/schema/registration/permission change or publication was performed by this batch.
+
+
+## SYNC68 — single data request lane, 5 November
+
+Owner requires one coordinated sync-data HTTP lane within the terminal's existing Main sync client, with fair bounded upload/download page scheduling. Electron durable pending business storage remains SQL Server only; a transient in-memory request scheduler is not a browser/file business outbox. Auth, registration/admission and health control requests remain independent. Preserve existing atomic batch groups, acknowledgements, request timeouts, permissions and checkout. Capture source identity at enqueue and verify before sending/accepting; changing backend/project/terminal/SQL profile may not relabel queued work. This does not imply one physical Supabase database connection or change pool/billing settings.
+
+SYNC68 source preparation passed109 focused actual-client/scheduler tests and the full frozen-source regression (5,748 passed/7 skipped/0 failed,5,755 total), TypeScript/scoped lint/diff checks. It changes no durable SQL outbox/retry/acknowledgement/permission behavior. Installed/deployed acceptance and production promotion are not established by these tests. Exact operation/proof payloads, branch/profile/project guards, independent health/admission and original request deadlines remain required.
+## DASH69 — owner page-scope correction, 5 November
+
+Latest approved rule: Live Dashboard is selected operating branch only; Live
+Business Board is all authorized company shops across clusters. All Shops cards
+and period charts obey its explicit selected cluster, with All clusters showing
+all authorized shops including zero-valued shops. This supersedes the former
+always-visible all-cluster card rule; normal terminal/user authorization remains
+the outer boundary. Preserve financial formulas and distinct collections versus
+net revenue/sponsorship labels. Stable shop identities drive comparison colors;
+charts are responsive in place, never sliding/infinite. Unknown summary values
+must not flash as zero or temporary cards; confirmed same-scope values survive
+background refresh, errors stay visible and losses remain meaningful. No database,
+role, configuration, checkout or publication change follows from this UI batch.
+
+DASH69 preserves the original Business Board data reader. Source review corrected
+an earlier assumption: Management's business mode was already online-only, so
+that page already used cloud auto reads. A prepared native Management projection
+is parked outside active source and must not be published implicitly. Existing
+cold-offline/PIN-only Board metadata readiness and the separate Main precise
+report-cursor limitation remain tracked gaps. The approved UI scope/series work
+does not claim to fix those preexisting capabilities or grant cross-branch access
+to normal terminals. Preserve exact existing financial formulas, sponsorship
+policy and explicit loading/error/source labels.
+
+DASH69 is prepared in draft betaPR402, runtime headb91530314d2aa08e3f0b45ac999ce203d5bfd0ea.
+Final full regression passed5768/7 skipped/0 failed of5775; focused UI/financial,
+TypeScript, lint, independent review and synthetic390/768/1440 chart checks passed.
+An obsolete graph-carousel test was updated to the latest in-place graph rule;
+its category rail assertions remain. The original analytics reader, checkout,
+permissions, Main/IPC and database sources are unchanged. CI/hosted/installed
+acceptance, beta merge and any production promotion/publication remain separate.
+
+## Current completed beta batch and release boundary, 5 November
+
+Completed imports, native policy/proof loading, permanent rules, single data lane,
+dashboard/chart scope, precise Management cursors, Electron last-unit/replay guards
+and1.4.82 version metadata are integrated through PRs396–399/402–405 at beta
+8b1cb17b04187fe468033c04c4383eecc691babb. Reviewed and merged trees match exactly;
+final reviewed-head CI passed5789/9skipped/0failed and beta delivery passed.
+Production remains1.4.81 on main3d9d314c. PR400 proposes only these completed
+changes, with no database execution or new schema requirement. Exact promotion
+and automatic publication approval, remaining merged-head checks and installed
+acceptance/disposition are separate. Do not treat the latest generic status or
+merge request as approval for unpublished scope.
+
+Keep recovery395/CT safeguards, historical-stock401 storage/UI, guarded consolidated
+local recovery upgrade, Management handover/navigation-pin follow-ups and deposits
+tracked separately; new dependency PRs406–410 are unreviewed. Membership remains
+ON HOLD. The reproduced sale-completion refusal is in Electron's local aggregate
+path; web uses a different path. The native fix requires a new installed build,
+not merely a website deployment, and performs no ownership or stock data repair.
+
+### 2026-11-05 — prepared last-unit checkout branch correction
+
+Owner approved a narrow checkout-code correction and isolated tests only. In a
+multi-cluster catalogue, an unowned legacy product can be readable solely because
+it has nonzero stock in the registered branch/cluster. Saving a valid last-unit
+sale removed that transient proof and the aggregate post-write catalogue check
+then rejected its own update with `SYNC_BRANCH_FORBIDDEN` / `products`.
+
+The scoped correction captures the eligible product under the existing serializable
+transaction's row/range locks for strict Main-validated sale-stock updates only.
+After the update it requires one affected row, unchanged catalogue/ownership facts
+and the existing own-branch stock-delta equation against actual persisted values.
+Only stock and existing SQL archive/clock fields may change. General product writes,
+other-branch stock, permissions and catalogue policy remain unchanged. No schema,
+configuration or business-record repair is required by this patch.
+
+Verification: 43 focused tests and 39 uniquely owned disposable SQL Server groups
+passed, including actual complete commits, manager-authorization metadata present/
+absent, last unit/negative-to-zero, provenance/foreign denials, tamper rollback,
+concurrent sales, row locks, retry, same-operation replay and the real archive
+lifecycle trigger. These tests do not constitute installed cashier UI acceptance.
+A separate preexisting issue was reproduced: reusing an already saved sale/item
+identity under a NEW aggregate operation ID can deduct refilled stock again, on
+both original beta owned products and the scoped patch. It remains separately
+tracked; this patch does not claim comprehensive sale-identity idempotency.
+Live incident linkage still requires the affected local row/configuration evidence.
+No database changes, production deployment or installer publication were performed.
+
+### 2026-11-05 — separately approved existing-sale replay guard
+
+Owner subsequently approved the extra replay correction and isolated tests in the
+same checkout batch. After the exact accepted operation-receipt replay check and
+before any stock, financial metadata or journal writes, the repository locks new
+sale INSERT/UPSERT identities in deterministic order. Supported rows and values
+forms are both covered. Duplicate normalized identities are rejected. A saved
+sale without this exact operation receipt is held for reconciliation rather than
+having its stock effects guessed, including a legacy partial header. The response
+does not identify another branch. Legitimate original-bill references/authorized
+exchange-link UPDATEs and dedicated refund paths keep their existing validation.
+
+The negative-stock configuration, branch assignments, product ownership, prices,
+SKU, permissions and database schema remain unchanged. Administrator status does
+not widen branch stock access. At the current frozen source, 49 focused tests and
+53 actual disposable SQL groups pass, including current Main Administrator policy
+writing exactly one header/item/payment/receipt and four journal entries across a
+retry. New-operation-ID replays, mixed rows/values forms, partial/foreign headers
+and competing same-sale operations are denied before stock. The final expanded
+full regression and independent review are pending; the earlier 5,777-pass full
+run covered the last-unit-only source. An intervening expanded run was canceled
+after a review found the now-fixed values-form gap and is not final evidence.
+
+## REPORT70 — exact read-only report pagination, 5 November
+
+Management sales/shift pages must preserve SQL Server datetimeoffset(7) precision
+in their descending timestamp/ID cursors. JavaScript Date milliseconds are not a
+safe pagination boundary. The approved correction selects an internal exact SQL
+string, strips it from business rows, and preserves current authorization,
+completeness and privacy behavior. Only isolated fixtures may be changed during
+testing; no production database or configuration change is authorized. Session
+handover authorization races require a separate correction plan/approval.
+
+REPORT70 source is frozen after51 focused tests across7 suites, TypeScript,
+scoped lint and independent review passed. An opt-in wrapper separately passed
+both tests and all13 actual disposable SQL Server groups. SQL style127 may omit
+zero fractions/use UTC Z; exact SQL timestamp equality is the pagination proof,
+not a mandatory seven-digit display format. Public business dates still use the
+previous serialization. Final normal-temp full regression passed5775 tests with
+8 skipped/0 failed of5783 on runtime head422daaf7; an initial sandbox-cache import
+failure was rerun without source changes. Draft betaPR403 is open; exact-head CI,
+beta integration and installed-device acceptance remain separate. This is not a
+session-handover authorization fix.
+
+## RELEASE71 — proposed 1.4.82 metadata, 5 November
+
+SQL72's urgent manual PC deliverable is one standalone existing-database SQL file
+for completed025–030 only; stock031 and Supabase application are excluded. It
+must recognize schema24 plus installed canonical metadata, preserve all existing
+rows/permissions/queues/checkpoints/settings and roll back the entire batch on
+unknown or partial objects. It must not replay the full installer, rewrite archive
+flags, switch databases, activate a rollout or change connection settings. Source
+capture, test fixtures and packaging never authorize a live operator target.
+
+SQL72 now emits `database/sqlserver/retail-pos-existing-upgrade-1.4.82.sql`
+without runtime/source dependencies; current SHA256
+090F24031A07660C2D36512D2B38197A06491BB28408CCAAFDBB66FC400A4730.
+Exact typed/binary JSON catalogue guards recognize only reviewed schema24 plus
+canonical installed module shapes. Preserve SQL literal bytes while recognizing
+reviewed structural LF/CRLF variants; never globally normalize definition strings.
+Scoped LF attributes preserve emitted/source provenance hashes across checkouts.
+Final tests pass10 packaging,28 full-Retail actual SQL and4 original composition
+groups; all owned fixtures cleaned, no operator connection. Installed target
+approval/application, device acceptance, beta CI/integration and publication stay
+separate. Unfinished stock031 and Supabase execution are excluded.
+
+Retail 1.4.81 is already published; do not overwrite or retag it. Prepare 1.4.82
+on beta with matching package, application, SQL artifact labels and iOS marketing
+version/build metadata. These edits must preserve SQL semantics, dependencies,
+signing identities and private keys. Metadata preparation does not publish a
+release or authorize database execution. Main promotion can trigger automatic
+platform publication, so require the exact final scope, acceptance evidence and
+owner approval before that promotion. Unfinished recovery and stock-report work
+remain in their separate draft PRs; do not imply they are released.
+
+## Offline approval audit persistence — 5 November
+
+Owner approved a separate narrow helper correction after actual isolated Electron
+acceptance found that a valid manager approval PIN could not persist its audit.
+`parkGovernanceRow` added `is_synced` and `sync_status` to authorization_log and
+authorization_requests, although neither registered native table has these
+columns. Omit only these helper-invented fields for those two tables; preserve
+caller-supplied unknown fields so native validation still rejects them. Keep
+approval authority, awaited audit/failure behavior, native allowlists and every
+other governance path unchanged. Accepted native writes already enter the
+transactional journal. No schema/configuration/permission change is required.
+
+The narrow patch passes 12 actual native-validator cases and 65 focused approval,
+branch, PIN, checkout and shift-activity regressions, TypeScript and scoped lint.
+Independent review reproduced all 12 new cases without a blocker. Installed
+manager-PIN/payment verification and final full-suite/CI remain separate. Tests
+use only uniquely owned synthetic databases/profiles; no business data or live
+ROSEGILL enrollment is used. Online approval remains unverified without an
+isolated HTTPS authority. Membership remains unchanged and ON HOLD.
+
+Final unchanged-source regression passed 5,960 tests, 10 skipped, zero failures
+of 5,970 in a clean exact-head checkout. An earlier active-profile run hit only
+Chromium blob-storage EPERM during the canonical SQL inventory; no application
+logic failed. Actual cashier device testing exposed a separate preexisting gate:
+a `general` audit aggregate requires Supervisor authority even after a manager's
+approval PIN verifies. That guarded refusal remains intact and needs a separately
+approved Main-owned approval capability; this helper patch does not grant it or
+claim to complete cashier approval/payment acceptance.
+
+PR412's helper-only payload fix merged to beta at8633bb294fc3b3f0cde4392c4d926abb342bcff8
+with exact tested-tree parity. A separate proposal in TASK_TRACKER describes a
+Main-owned verifier-backed offline approval audit capability. It requires owner
+implementation approval; it must preserve the generic Supervisor gate, native
+scope, existing credential and policy checks, durable audit-before-success, and
+lost-ack identity. No inferred authority from a renderer assertion or an existing
+audit row, no temporary requester elevation, and no schema/grant change is
+approved by the investigation. One-use audit logging must not be advertised as
+new financial-grant enforcement. Real cashier approved-payment acceptance remains
+pending that distinct gate correction and isolated device verification.
+
+## Native offline ticket approval — implementation approval and bounded fix
+
+The owner explicitly approved the separate Main-owned Electron approval-save
+correction and isolated/device tests on 5 November. This supersedes only the
+proposal's preparation-only boundary above; it does not approve a live database,
+production deployment, generic privilege expansion or installer publication.
+
+The dedicated capability supports only discount_over_limit with the complete
+current ticket discount review, on capable Operations Electron bridges. Android,
+Management and old bridges retain their existing paths. A real native denial
+never falls back. Main admits only its own POS main frame, then verifies the real
+approval PIN/TOTP using the existing verifier, current selected rule, effective
+global/branch settings, actual credential switches/approval scope and fresh local
+requester/approver identities and permissions. Unknown/ambiguous applicable rules
+or duplicate canonical UUID settings remain held. Generic cashier general writes
+still require Supervisor authority. Case-only UUID/username representations are
+normalized without treating arbitrary branch codes as interchangeable.
+
+The fixed audit, canonical JSON-key journal entry and stable local receipt commit
+atomically through existing Main-only transaction callbacks. Frozen identical
+retries reuse the audit; restart requires credential verification and exact prior
+audit/receipt evidence. Pending cloud rows cannot overwrite this new producer's
+unacknowledged audit. This is local verified audit acceptance, not a new financial
+grant protocol or strong content-readback guarantee for inherited cloud log sync.
+The existing generic cloud same-ID/different-content ON CONFLICT behavior remains
+a separate limitation; do not advertise that as fixed.
+
+Current verification: 58 new service/transport tests and 73 existing authority,
+discount and permission tests passed; actual owned SQL tests passed 19 CI and
+20 BIN2 groups, including uppercase IDs, duplicate-case settings, real PIN,
+transaction rollback, current revocation, journal pull barrier and lost-ACK
+PushWorker replay. Six actual shared React/Radix groups cover platform selection,
+no fallback, stable request identity and stale responses. A prior candidate also
+completed a real synthetic cashier/manager-PIN 20% last-unit payment with durable
+SQL readback. Final exact-head full regression, cold Electron sender/approval
+acceptance, beta CI and integration are still required before calling complete.
+No business POS_Local/ROSEGILL rows, grants, configuration or schema changed.
+
+## Native approval amount binding clarification — 6 November
+
+The final Main-owned approval capability must derive its percentage from the
+complete raw bill, never an untrusted discount denominator. Raw per-line coupon
+and discount type plus manual/promotion bill context may be carried by the
+existing snapshot solely for this check, before the unchanged audit privacy
+normalization/fingerprint. Correct the approval-context fractional-quantity
+coupon divisor to actual quantity, matching the actual existing line calculator;
+this changes neither checkout amounts nor configured authority. Preserve exact
+pricing helpers by verbatim shared extraction and alias/parity tests. Unknown,
+missing or inconsistent native evidence remains unpaid and denied. Existing
+Android/Management/older bridge paths and general cashier write gates stay
+unchanged. No live database or release approval is implied.
+## CHECKOUT74 — web exchange payment preparation, 5 November
+
+The existing shared refund UPDATE trigger cannot reference another table's NEW
+or OLD fields inside a combined AND condition. Isolate each field expression in
+its own table-specific IF block, preserving refund authorization and both trusted
+exits. Prepare/test only; the exact live project/file needs separate approval.
+
+## SHIFT75 — report presentation date contract, 5 November
+
+Native snapshot timestamps may arrive as Date objects even though Shift's public
+openedAt type is string. Normalize only those report-display Date values; preserve
+existing SQL/cloud strings byte-for-byte, including seven fractional digits.
+Do not alter active-shift selection, exact cursors, saved times or authorization.
+The actual Operations snapshot returns raw shift recordsets (unlike its other
+codec-normalized tables); paged history already normalizes opened_at. The report
+adapter therefore handles native Date seeds without changing those shared paths.
+# 6 November — latest local preview continuity
+
+Keep latest merged beta Electron and web previews running beside each other.
+Reload integrated runtime changes safely; preserve unsaved checkout, SQL settings,
+sealed registration and pending work. Website local startup must use the existing
+hosting environment, not device overrides or hardcoded credentials. DEV76 extends
+the already existing development-only shared-protocol loader to its exact public
+financial/recovery companions after an actual local SSR failure; no wire behavior
+or deployed/native security protocol is changed.
+# 6 November — branch-view loading is local to the content area
+
+Retain the already confirmed shell for the same authenticated session, tenant,
+storage mode and permissions when an authorized user changes branch. This is
+presentation memory only: it must not declare the new branch snapshot/settings
+ready, render protected prior-branch content or permit opening/closing a shift
+before confirmation. Preserve normal-terminal locks, existing drafts and read
+generation guards. This does not authorize cross-branch reads or change sync.
+
+## Native approval release evidence — 6 November
+
+PR415's frozen approval runtime passed full6,064/10skip/0fail regression and all
+required remote checks. Actual owned Electron cashier/manager-PIN last-unit
+payment produced one durable16 sale/4 discount, one approval audit/journal/
+receipt, preserved all earlier fixture sales and foreign stock, and survived
+cold restart without duplication. Actual customer-display preload and generic
+cashier writes remain denied; no session elevation was used. Only the exact
+owner/GUID-verified synthetic profile was used, never real POS_Local/cloud data.
+
+This establishes the offline path only. Do not claim real hosted enrollment,
+Android credential acceptance, stronger inherited cloud audit-content ACKs or a
+fixed activity-log shutdown issue from that evidence. Earlier fixture windows
+were killed after failed close attempts; the initiating cause remains unknown.
+The final controlled fixture teardown exited0 after durable readback. The newer
+beta development-loader integration changes no approval/runtime bytes; require
+final-head CI before beta merge. Production and installer publication remain
+separately gated.
+
+VIEW77 mounted acceptance uses the actual shell/shift guard and shared Radix
+portals with isolated scoped providers. Retaining the shell does not retain a
+previous branch page: both data and settings must confirm before mounting its
+protected content. Recheck identity/profile/permission changes with the full
+startup gate; do not infer backend access from these presentation fixtures.
+## 6 November — automatic reconciliation before intervention
+
+Owner wants sync to attempt safe resolution of ERECONCILE first and surface a
+review request only when it remains unresolved. Use complete scoped comparisons,
+the existing authorized sync lane and bounded affected-table recovery. Missing
+counts are unknown, never matched; count equality is not financial/history proof.
+Preserve retained local work, checkout, permissions and Membership's current hold.
+No count difference authorizes deleting records, resetting checkpoints or manual
+cloud copying. Live data/schema changes still require exact-target approval.
+## 6 November — causal comparison and three-product repair preparation
+
+Owner accepts using original operation history and the last confirmed sync
+state together with dates. A newest timestamp/version alone cannot choose a
+financial or stock winner. Three retained STR1 unit balances now have matching
+accepted cloud sale movements proving cloud0. Prepare a guarded ownership-only
+repair that restores catalogue visibility, then use normal sync; exact live
+changes still require owner review/approval before application. No manual stock
+copy, duplicate movement, queue/checkpoint reset or permission change.
+
+## 6 November — three legacy owners protected and normally adopted
+
+Exact approved SYNC79 cloud files applied: owner-preservation guard ledger20261106024316,
+then three-row STR1 owner-only repair OWNERSHIP3-STR1-20261106. All before/after,
+stock0/SKU/price/archive and3history/4feed/1audit checks passed. Existing local
+Electron normal sync adopted all three with no local maintenance/reset. A higher
+version or later timestamp alone did not authorize this repair; original receiving
+and accepted sale/delta evidence did. Do not replay this manifest for other records.
+COUNT79/history feed/recovery, historical stock report and final release acceptance
+remain pending independently. Live grants, operator configuration and Membership
+were not changed.
+
+## 6 November — automatic fleet recovery and UI isolation
+
+Owner explicitly requires automatic application recovery for hundreds of PCs,
+including short/long offline periods; no manual history/count SQL per PC as the
+final workflow. Central reviewed schema upgrades remain one-time gated work.
+Reuse the durable coordinated sync engine and scope-bound jobs, preserve offline
+SQL work/admin corrections and exact operation receipts, and avoid simultaneous
+fleet retries. Count equality is not row equality; allocated feed maxima are not
+commit-order fences. Graph period/group/type controls must stay separate from
+checkout and business sync, preserving navigation and scoped progress.
+
+Current UI correction supersedes earlier vertical instructions: finite horizontal
+chart strip with equal cards, distinct categorical colors, sponsorship first and
+combined revenue/profit. Centered whole-strip edge arrows hide when that direction
+cannot scroll. Current UI implementation/review remains in separate PR427.
+## 6 November — exact history and older-client rollout
+
+PR428 ordinary native history hints must hydrate through the exact15-string
+read adapter, preserve existing immutable/pending facts, and commit new inserts
+with the same feed-page cursor. Other tables keep their current path. Insert
+history after ordinary/graph page writes to preserve business-before-evidence
+lock order. Exact payloads and current source are rechecked outside/inside SQL.
+
+The unapplied migration is READ-RPC-ONLY: no new global history feed trigger or
+helper for older binaries, which reproduce irreversible bigint/JSON rounding in
+their generic feed codec. Fresh canonical assembly retires only its recognized
+generated history-feed trigger; retain the immutable guard. Scope/privacy/grants
+and business writers stay unchanged. Completed UUID-membership rechecks use the
+existing coordinated lane after15 minutes plus stable0–60s terminal jitter, with
+no timer/core-poll change or existing-payload redownload. Counts/membership do not
+certify full-row equality or repair previously divergent immutable facts. Grouped
+exact database approval is still required. Stock401/local031 remain deferred.

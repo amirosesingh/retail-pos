@@ -377,6 +377,10 @@ export type LocalSyncStatus = {
 };
 
 export type PosBridge = {
+  authorizeOfflineDiscount?: (value: {
+    requestId: string; actionKey: "discount_over_limit"; registeredTerminalId: string; branchId: string;
+    username: string; credential: string; selfAuthorization?: boolean; reason: string; snapshot: unknown; payload: Record<string, string | number | boolean | null>; requestedAmount: number;
+  }) => Promise<{ ok: boolean; auditId?: string; replayed?: boolean; authorizer?: { id: string; name: string; role: string }; error?: string; code?: string }>;
   /** Close only the Electron window that sent the request. */
   closeWindow?: () => Promise<unknown>;
   onBeforeClose?: (flush: () => Promise<void>) => () => void;
@@ -660,7 +664,7 @@ export type PosBridge = {
     code?: string;
   }>;
   /** Main-process notification emitted after a durable local aggregate commit. */
-  analytics?: (from: string, to: string, timeZone?: string) => Promise<{ ok: boolean; error?: string; storeDays?: LocalSaleRow[]; itemDays?: LocalSaleRow[]; bills?: LocalSaleRow[]; directory?: LocalSaleRow[] }>;
+  analytics?: (from: string, to: string, timeZone?: string) => Promise<{ ok: boolean; error?: string; storeDays?: LocalSaleRow[]; itemDays?: LocalSaleRow[]; bills?: LocalSaleRow[]; directory?: LocalSaleRow[]; hourlyRows?: LocalSaleRow[] }>;
   managementReport?: (options: { kind: "sales" | "totals" | "shifts"; storeIds: string[]; from: string; to: string; zone: string; cursor?: { ts: string; id: string } | null; limit?: number; includeProfit?: boolean; shiftId?: string }) => Promise<{
     ok: boolean; complete?: boolean; source?: string; code?: string; error?: string; rows?: LocalSaleRow[]; storeTotals?: LocalSaleRow[]; hasMore?: boolean; cursor?: { ts: string; id: string } | null;
   }>;

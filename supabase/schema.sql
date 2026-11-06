@@ -12323,13 +12323,16 @@ BEGIN
   IF auth.uid() IS NULL THEN
     RETURN NEW; -- trusted server paths (service role) do their own checks
   END IF;
-  IF TG_TABLE_NAME = 'sale_items'
-     AND NEW.refunded_qty IS DISTINCT FROM OLD.refunded_qty THEN
-    RAISE EXCEPTION 'Refunded quantity can only be changed by processing a refund';
+  -- Prepare each record-field expression only for its own trigger table.
+  IF TG_TABLE_NAME = 'sale_items' THEN
+    IF NEW.refunded_qty IS DISTINCT FROM OLD.refunded_qty THEN
+      RAISE EXCEPTION 'Refunded quantity can only be changed by processing a refund';
+    END IF;
   END IF;
-  IF TG_TABLE_NAME = 'sales'
-     AND coalesce(NEW.is_refunded, false) IS DISTINCT FROM coalesce(OLD.is_refunded, false) THEN
-    RAISE EXCEPTION 'A bill can only be marked refunded by processing a refund';
+  IF TG_TABLE_NAME = 'sales' THEN
+    IF coalesce(NEW.is_refunded, false) IS DISTINCT FROM coalesce(OLD.is_refunded, false) THEN
+      RAISE EXCEPTION 'A bill can only be marked refunded by processing a refund';
+    END IF;
   END IF;
   RETURN NEW;
 END;
@@ -24694,6 +24697,191 @@ REVOKE ALL ON FUNCTION public.pos_sync_feed_page_v1(text,text,text,bigint,boolea
 GRANT EXECUTE ON FUNCTION public.pos_sync_feed_page_v1(text,text,text,bigint,boolean,integer) TO service_role;
 -- PROTECTED_FEED_PAGE_END
 
+-- AUTOMATIC_HISTORY_RECONCILE_BEGIN
+-- Fresh canonical installation: no legacy audit rows are rewritten or seeded.
+DO $history_index_canonical$
+DECLARE
+ expected_shape constant jsonb := $history_shape$[{"name":"id","type":"uuid","not_null":true},{"name":"organization_id","type":"text","not_null":true},{"name":"entity_type","type":"text","not_null":true},{"name":"entity_id","type":"text","not_null":true},{"name":"action","type":"text","not_null":true},{"name":"old_value","type":"jsonb","not_null":false},{"name":"new_value","type":"jsonb","not_null":false},{"name":"revision","type":"bigint","not_null":true},{"name":"scope_type","type":"text","not_null":true},{"name":"scope_id","type":"text","not_null":false},{"name":"changed_by","type":"text","not_null":false},{"name":"source_application","type":"text","not_null":true},{"name":"device_id","type":"text","not_null":false},{"name":"terminal_id","type":"text","not_null":false},{"name":"server_timestamp","type":"timestamp with time zone","not_null":true}]$history_shape$;
+ index_ddl constant text := $canonical_index$CREATE OR REPLACE FUNCTION public.pos_sync_history_index_v1(
+ p_organization_id text,p_branch_id text,p_terminal_id text,p_action text,
+ p_after_id uuid DEFAULT NULL,p_upper_id uuid DEFAULT NULL,p_limit integer DEFAULT 1000,
+ p_keep_commerce boolean DEFAULT false
+) RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog,public AS $history_index$
+DECLARE
+ v_upper uuid:=p_upper_id; v_ids jsonb:='[]'::jsonb; v_next uuid; v_more boolean:=false;
+ v_count text; v_result jsonb;
+BEGIN
+ PERFORM public.pos_sync_validate_read_scope(p_organization_id,p_branch_id,p_terminal_id);
+ -- Runtime accepts only the same reviewed projection with LF/CRLF storage,
+ -- and the captured-live/current-canonical immutable helper body forms.
+ -- The migration's existing-source preflight below remains byte-exact.
+ IF NOT EXISTS(SELECT 1 FROM pg_proc p WHERE p.oid=to_regprocedure('public.pos_sync_history_project_v1(jsonb,text,boolean)')
+  AND md5(replace(p.prosrc,chr(13)||chr(10),chr(10)))='a5be97695f3e105ebde271e2f017ddee'
+  AND pg_get_userbyid(p.proowner)='postgres' AND p.prorettype='jsonb'::regtype AND p.prolang=(SELECT oid FROM pg_language WHERE lanname='plpgsql')
+  AND NOT p.prosecdef AND p.proisstrict AND p.provolatile='i' AND p.proconfig=ARRAY['search_path=pg_catalog'])
+ OR NOT EXISTS(SELECT 1 FROM pg_proc p WHERE p.oid=to_regprocedure('public.change_history_immutable()')
+  AND replace(p.prosrc,chr(13)||chr(10),chr(10)) IN (chr(10)||'BEGIN RAISE EXCEPTION ''change_history is append-only''; END ',' BEGIN RAISE EXCEPTION ''change_history is append-only''; END ')
+  AND pg_get_userbyid(p.proowner)='postgres' AND p.prorettype='trigger'::regtype AND p.prolang=(SELECT oid FROM pg_language WHERE lanname='plpgsql')
+  AND NOT p.prosecdef AND NOT p.proisstrict AND p.provolatile='v' AND p.proconfig=ARRAY['search_path=public, pg_temp'])
+ OR NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='public.change_history'::regclass AND tgname='change_history_no_change' AND tgenabled='O'
+  AND pg_get_triggerdef(oid)='CREATE TRIGGER change_history_no_change BEFORE DELETE OR UPDATE ON public.change_history FOR EACH ROW EXECUTE FUNCTION change_history_immutable()')
+ THEN RAISE EXCEPTION 'HISTORY_INDEX_UNSUPPORTED_SOURCE'; END IF;
+ IF p_action IS NULL OR p_action NOT IN ('begin','page','finish') OR p_limit IS NULL OR p_limit<1 OR p_limit>1000 OR p_keep_commerce IS NULL
+ OR (p_action='begin' AND (p_after_id IS NOT NULL OR p_upper_id IS NOT NULL))
+ OR (p_action='page' AND (p_upper_id IS NULL OR p_after_id>p_upper_id))
+ OR (p_action='finish' AND p_after_id IS NOT NULL)
+ THEN RAISE EXCEPTION USING ERRCODE='22023',MESSAGE='HISTORY_INDEX_INVALID_ARGUMENT'; END IF;
+ IF p_action='begin' THEN SELECT h.id INTO v_upper FROM public.change_history h ORDER BY h.id DESC LIMIT 1; END IF;
+ IF p_action='finish' THEN
+  SELECT count(*)::text INTO v_count FROM public.change_history h WHERE v_upper IS NOT NULL AND h.id<=v_upper;
+ ELSE
+  WITH candidates AS MATERIALIZED (
+   SELECT h.id FROM public.change_history h WHERE v_upper IS NOT NULL AND h.id<=v_upper AND (p_after_id IS NULL OR h.id>p_after_id)
+   ORDER BY h.id LIMIT p_limit+1
+  ), selected AS (SELECT id FROM candidates ORDER BY id LIMIT p_limit)
+  SELECT COALESCE((SELECT jsonb_agg(id::text ORDER BY id) FROM selected),'[]'::jsonb),(SELECT count(*) FROM candidates)>p_limit
+   INTO v_ids,v_more;
+  IF v_more THEN v_next:=(v_ids->>-1)::uuid; END IF;
+ END IF;
+ v_result:=jsonb_build_object('protocol','history-index-v1','projection','history-project-v1:a5be97695f3e105ebde271e2f017ddee',
+  'organization_id',p_organization_id,'branch_id',p_branch_id,'terminal_id',p_terminal_id,'keep_commerce',p_keep_commerce,
+  'action',p_action,'upper_id',v_upper,'after_id',p_after_id,'ids',v_ids,'next_id',v_next,'complete',NOT v_more,'range_count',v_count);
+ IF octet_length(v_result::text)>131072 THEN RAISE EXCEPTION 'HISTORY_INDEX_OVERSIZED'; END IF;
+ PERFORM set_config('response.headers',jsonb_build_array(
+  jsonb_build_object('X-POS-History-Reconcile-Version','1'),jsonb_build_object('X-POS-History-Reconcile-Kind','index'),
+  jsonb_build_object('X-POS-History-Reconcile-Bytes',octet_length(v_result::text)::text),
+  jsonb_build_object('X-POS-History-Reconcile-Rows',jsonb_array_length(v_ids)::text))::text,true);
+ RETURN v_result;
+END;
+$history_index$;$canonical_index$;
+ rows_ddl constant text := $canonical_rows$CREATE OR REPLACE FUNCTION public.pos_sync_history_rows_v1(
+ p_organization_id text,p_branch_id text,p_terminal_id text,p_ids jsonb,
+ p_keep_commerce boolean DEFAULT false,p_max_bytes integer DEFAULT 2097152
+) RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog,public AS $history_rows$
+DECLARE
+ v_id text; v_raw public.change_history%ROWTYPE; v_projected jsonb; v_wire jsonb;
+ v_rows jsonb:='[]'::jsonb; v_candidate jsonb; v_result jsonb; v_remaining jsonb; v_count integer:=0; v_bytes integer;
+BEGIN
+ PERFORM public.pos_sync_validate_read_scope(p_organization_id,p_branch_id,p_terminal_id);
+ IF NOT EXISTS(SELECT 1 FROM pg_proc p WHERE p.oid=to_regprocedure('public.pos_sync_history_project_v1(jsonb,text,boolean)')
+  AND md5(replace(p.prosrc,chr(13)||chr(10),chr(10)))='a5be97695f3e105ebde271e2f017ddee'
+  AND pg_get_userbyid(p.proowner)='postgres' AND p.prorettype='jsonb'::regtype AND p.prolang=(SELECT oid FROM pg_language WHERE lanname='plpgsql')
+  AND NOT p.prosecdef AND p.proisstrict AND p.provolatile='i' AND p.proconfig=ARRAY['search_path=pg_catalog'])
+ OR NOT EXISTS(SELECT 1 FROM pg_proc p WHERE p.oid=to_regprocedure('public.change_history_immutable()')
+  AND replace(p.prosrc,chr(13)||chr(10),chr(10)) IN (chr(10)||'BEGIN RAISE EXCEPTION ''change_history is append-only''; END ',' BEGIN RAISE EXCEPTION ''change_history is append-only''; END ')
+  AND pg_get_userbyid(p.proowner)='postgres' AND p.prorettype='trigger'::regtype AND p.prolang=(SELECT oid FROM pg_language WHERE lanname='plpgsql')
+  AND NOT p.prosecdef AND NOT p.proisstrict AND p.provolatile='v' AND p.proconfig=ARRAY['search_path=public, pg_temp'])
+ OR NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='public.change_history'::regclass AND tgname='change_history_no_change' AND tgenabled='O'
+  AND pg_get_triggerdef(oid)='CREATE TRIGGER change_history_no_change BEFORE DELETE OR UPDATE ON public.change_history FOR EACH ROW EXECUTE FUNCTION change_history_immutable()')
+ THEN RAISE EXCEPTION 'HISTORY_INDEX_UNSUPPORTED_SOURCE'; END IF;
+ IF p_ids IS NULL OR jsonb_typeof(p_ids)<>'array' OR jsonb_array_length(p_ids)<1 OR jsonb_array_length(p_ids)>10
+ OR p_keep_commerce IS NULL OR p_max_bytes IS NULL OR p_max_bytes<1024 OR p_max_bytes>2097152
+ THEN RAISE EXCEPTION USING ERRCODE='22023',MESSAGE='HISTORY_ROWS_INVALID_ARGUMENT'; END IF;
+ IF EXISTS(SELECT 1 FROM jsonb_array_elements(p_ids) x(value) WHERE jsonb_typeof(value)<>'string'
+   OR (value#>>'{}')!~'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+ OR (SELECT count(DISTINCT value) FROM jsonb_array_elements(p_ids))<>jsonb_array_length(p_ids)
+ THEN RAISE EXCEPTION USING ERRCODE='22023',MESSAGE='HISTORY_ROWS_INVALID_IDS'; END IF;
+ FOR v_id IN SELECT value FROM jsonb_array_elements_text(p_ids) LOOP
+  SELECT * INTO v_raw FROM public.change_history WHERE id=v_id::uuid;
+  IF NOT FOUND THEN RAISE EXCEPTION 'HISTORY_INDEX_ROW_MISSING'; END IF;
+  IF NOT isfinite(v_raw.server_timestamp) OR v_raw.server_timestamp<'0001-01-01T00:00:00Z'::timestamptz
+   OR v_raw.server_timestamp>'9999-12-31T23:59:59.999999Z'::timestamptz
+   THEN RAISE EXCEPTION 'HISTORY_ROWS_TIMESTAMP_UNSUPPORTED'; END IF;
+  v_projected:=public.pos_sync_history_project_v1(to_jsonb(v_raw),'change_history',p_keep_commerce);
+  v_wire:=(v_projected-'old_value'-'new_value'-'revision'-'server_timestamp')||jsonb_build_object(
+   'old_value_json',CASE WHEN v_projected->'old_value'='null'::jsonb THEN NULL ELSE (v_projected->'old_value')::text END,
+   'new_value_json',CASE WHEN v_projected->'new_value'='null'::jsonb THEN NULL ELSE (v_projected->'new_value')::text END,
+   'revision',v_raw.revision::text,
+   'server_timestamp',to_char(v_raw.server_timestamp AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US')||'0Z');
+  SELECT COALESCE(jsonb_agg(value ORDER BY ordinality),'[]'::jsonb) INTO v_remaining
+   FROM jsonb_array_elements(p_ids) WITH ORDINALITY x(value,ordinality) WHERE ordinality>v_count+1;
+  v_candidate:=jsonb_build_object('protocol','history-rows-v1','projection','history-project-v1:a5be97695f3e105ebde271e2f017ddee',
+   'organization_id',p_organization_id,'branch_id',p_branch_id,'terminal_id',p_terminal_id,'keep_commerce',p_keep_commerce,
+   'requested_ids',p_ids,'rows',v_rows||jsonb_build_array(v_wire),'remaining_ids',v_remaining);
+  v_bytes:=octet_length(v_candidate::text);
+  IF v_bytes>p_max_bytes AND v_count>0 THEN EXIT; END IF;
+  IF v_bytes>5242880 THEN RAISE EXCEPTION USING ERRCODE='54000',MESSAGE='HISTORY_ROWS_SINGLE_ROW_TOO_LARGE'; END IF;
+  v_result:=v_candidate;v_rows:=v_rows||jsonb_build_array(v_wire);v_count:=v_count+1;
+  IF v_bytes>p_max_bytes THEN EXIT; END IF;
+ END LOOP;
+ IF v_result IS NULL THEN RAISE EXCEPTION 'HISTORY_ROWS_EMPTY'; END IF;
+ PERFORM set_config('response.headers',jsonb_build_array(
+  jsonb_build_object('X-POS-History-Reconcile-Version','1'),
+  jsonb_build_object('X-POS-History-Reconcile-Kind','rows'),
+  jsonb_build_object('X-POS-History-Reconcile-Bytes',octet_length(v_result::text)::text),
+  jsonb_build_object('X-POS-History-Reconcile-Rows',v_count::text))::text,true);
+ RETURN v_result;
+END;
+$history_rows$;$canonical_rows$;
+ actual jsonb; signature text; ddl text; tag text; oid_value oid; installed integer:=0;
+BEGIN
+ IF current_user<>'postgres' THEN RAISE EXCEPTION 'HISTORY_INDEX_MIGRATION_OWNER'; END IF;
+ PERFORM set_config('search_path','pg_catalog,public',true);
+ LOCK TABLE public.change_history IN SHARE ROW EXCLUSIVE MODE NOWAIT;
+ IF NOT EXISTS(SELECT 1 FROM pg_proc p WHERE p.oid=to_regprocedure('public.pos_sync_history_project_v1(jsonb,text,boolean)')
+  AND md5(replace(p.prosrc,chr(13)||chr(10),chr(10)))='a5be97695f3e105ebde271e2f017ddee'
+  AND pg_get_userbyid(p.proowner)='postgres' AND p.prorettype='jsonb'::regtype AND p.prolang=(SELECT oid FROM pg_language WHERE lanname='plpgsql')
+  AND NOT p.prosecdef AND p.proisstrict AND p.provolatile='i' AND p.proconfig=ARRAY['search_path=pg_catalog'])
+ OR NOT EXISTS(SELECT 1 FROM pg_proc p WHERE p.oid=to_regprocedure('public.change_history_immutable()')
+  AND replace(p.prosrc,chr(13)||chr(10),chr(10)) IN (chr(10)||'BEGIN RAISE EXCEPTION ''change_history is append-only''; END ',' BEGIN RAISE EXCEPTION ''change_history is append-only''; END ')
+  AND pg_get_userbyid(p.proowner)='postgres' AND p.prorettype='trigger'::regtype AND p.prolang=(SELECT oid FROM pg_language WHERE lanname='plpgsql')
+  AND NOT p.prosecdef AND NOT p.proisstrict AND p.provolatile='v' AND p.proconfig=ARRAY['search_path=public, pg_temp'])
+ OR NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='public.change_history'::regclass AND tgname='change_history_no_change' AND tgenabled='O'
+  AND pg_get_triggerdef(oid)='CREATE TRIGGER change_history_no_change BEFORE DELETE OR UPDATE ON public.change_history FOR EACH ROW EXECUTE FUNCTION change_history_immutable()')
+ THEN RAISE EXCEPTION 'HISTORY_INDEX_UNSUPPORTED_SOURCE'; END IF;
+ SELECT jsonb_agg(jsonb_build_object('name',a.attname,'type',format_type(a.atttypid,a.atttypmod),'not_null',a.attnotnull) ORDER BY a.attnum)
+  INTO actual FROM pg_attribute a WHERE a.attrelid='public.change_history'::regclass AND a.attnum>0 AND NOT a.attisdropped;
+ IF actual IS DISTINCT FROM expected_shape OR NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='public.change_history'::regclass AND tgname='change_history_no_change' AND tgenabled='O')
+  THEN RAISE EXCEPTION 'HISTORY_INDEX_CANONICAL_SHAPE'; END IF;
+ IF EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='public.change_history'::regclass AND NOT tgisinternal
+  AND tgname NOT IN ('change_history_no_change','sync_feed_change'))
+  OR EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='public.change_history'::regclass AND tgname='sync_feed_change'
+   AND (tgfoid IS DISTINCT FROM to_regprocedure('public.sync_feed_change_history()')::oid OR tgenabled<>'O'
+    OR pg_get_triggerdef(oid)<>'CREATE TRIGGER sync_feed_change AFTER INSERT OR DELETE OR UPDATE ON public.change_history FOR EACH ROW EXECUTE FUNCTION sync_feed_change_history()'
+    OR NOT EXISTS(SELECT 1 FROM pg_proc p WHERE p.oid=tgfoid
+     AND md5(replace(p.prosrc,chr(13)||chr(10),chr(10)))='f9317de3f340884d1320a156560acf8c'
+     AND pg_get_userbyid(p.proowner)='postgres' AND p.prosecdef AND NOT p.proisstrict AND p.provolatile='v'
+     AND p.proconfig=ARRAY['search_path=public, pg_temp'] AND p.prorettype='trigger'::regtype
+     AND p.prokind='f' AND p.proparallel='u' AND NOT p.proleakproof AND NOT p.proretset AND p.prosupport=0
+     AND p.prolang=(SELECT oid FROM pg_language WHERE lanname='plpgsql') AND p.procost=100 AND p.prorows=0
+     AND pg_get_function_arguments(p.oid)=''
+     AND (SELECT jsonb_agg(v::text ORDER BY v::text) FROM unnest(p.proacl)v) IN
+      (jsonb_build_array('postgres=X/postgres'),jsonb_build_array('postgres=X/postgres','service_role=X/postgres')))))
+  THEN RAISE EXCEPTION 'HISTORY_INDEX_CANONICAL_TRIGGER'; END IF;
+ FOR signature,ddl,tag IN VALUES
+  ('public.pos_sync_history_index_v1(text,text,text,text,uuid,uuid,integer,boolean)',index_ddl,'$history_index$'),
+  ('public.pos_sync_history_rows_v1(text,text,text,jsonb,boolean,integer)',rows_ddl,'$history_rows$')
+ LOOP
+  oid_value:=to_regprocedure(signature);
+  IF oid_value IS NOT NULL THEN
+   IF NOT EXISTS(SELECT 1 FROM pg_proc p WHERE p.oid=oid_value AND replace(p.prosrc,chr(13)||chr(10),chr(10))=split_part(replace(ddl,chr(13)||chr(10),chr(10)),tag,2)
+    AND pg_get_userbyid(p.proowner)='postgres' AND NOT p.prosecdef AND NOT p.proisstrict
+    AND p.provolatile='v' AND p.proconfig=ARRAY['search_path=pg_catalog, public']
+    AND p.prorettype='jsonb'::regtype
+    AND p.prokind='f' AND p.proparallel='u' AND NOT p.proleakproof AND NOT p.proretset AND p.prosupport=0
+    AND p.prolang=(SELECT oid FROM pg_language WHERE lanname='plpgsql') AND p.procost=100 AND p.prorows=0
+    AND pg_get_function_arguments(p.oid)=CASE signature WHEN 'public.pos_sync_history_index_v1(text,text,text,text,uuid,uuid,integer,boolean)' THEN 'p_organization_id text, p_branch_id text, p_terminal_id text, p_action text, p_after_id uuid DEFAULT NULL::uuid, p_upper_id uuid DEFAULT NULL::uuid, p_limit integer DEFAULT 1000, p_keep_commerce boolean DEFAULT false'
+      ELSE 'p_organization_id text, p_branch_id text, p_terminal_id text, p_ids jsonb, p_keep_commerce boolean DEFAULT false, p_max_bytes integer DEFAULT 2097152' END
+    AND (SELECT jsonb_agg(v::text ORDER BY v::text) FROM unnest(p.proacl)v)=jsonb_build_array('postgres=X/postgres','service_role=X/postgres'))
+    THEN RAISE EXCEPTION 'HISTORY_INDEX_CANONICAL_EXISTING_CHANGED'; END IF;
+   installed:=installed+1;
+  END IF;
+ END LOOP;
+ IF installed NOT IN (0,2) THEN RAISE EXCEPTION 'HISTORY_INDEX_PARTIAL_INSTALL'; END IF;
+ EXECUTE replace(index_ddl,chr(13)||chr(10),chr(10));
+ EXECUTE replace(rows_ddl,chr(13)||chr(10),chr(10));
+ REVOKE ALL ON FUNCTION public.pos_sync_history_index_v1(text,text,text,text,uuid,uuid,integer,boolean) FROM PUBLIC,anon,authenticated,service_role;
+ REVOKE ALL ON FUNCTION public.pos_sync_history_rows_v1(text,text,text,jsonb,boolean,integer) FROM PUBLIC,anon,authenticated,service_role;
+ GRANT EXECUTE ON FUNCTION public.pos_sync_history_index_v1(text,text,text,text,uuid,uuid,integer,boolean) TO service_role;
+ GRANT EXECUTE ON FUNCTION public.pos_sync_history_rows_v1(text,text,text,jsonb,boolean,integer) TO service_role;
+ -- Fresh-schema safety: do not activate lossy full-history feed delivery to
+ -- older binaries. Retire only the known generated trigger; reads use the
+ -- exact ID reconciliation protocol. Live migration does not change triggers.
+ DROP TRIGGER IF EXISTS sync_feed_change ON public.change_history;
+END;
+$history_index_canonical$;
+-- AUTOMATIC_HISTORY_RECONCILE_END
+
 -- Final public-schema privilege hardening after notification rule definitions.
 DO $notification_hardening$
 DECLARE routine record;
@@ -24966,3 +25154,219 @@ END $contracts$;
 COMMIT;
 
 -- SHIFT63_BRANCH_SHARING_END
+
+-- LEGACY_SHIFT_RECOVERY_BEGIN
+-- PREPARED ONLY: exact-project approval is required before live application.
+-- Dedicated admin-reviewed legacy admission; normal ORIGINAL/FIN62 guards unchanged.
+BEGIN;
+CREATE TABLE pos_sync_private.legacy_shift_recovery_receipts(
+ recovery_id uuid PRIMARY KEY,organization_id text NOT NULL,branch_id text NOT NULL,terminal_id text NOT NULL,shift_id uuid NOT NULL,
+ payload_hash text NOT NULL CHECK(payload_hash~'^[a-f0-9]{64}$'),evidence_hash text NOT NULL CHECK(evidence_hash~'^[a-f0-9]{64}$'),
+ cloud_witness_hash text NOT NULL CHECK(cloud_witness_hash~'^[a-f0-9]{64}$'),payload_json text NOT NULL,attestation jsonb NOT NULL,
+ reviewer_id uuid NOT NULL,reviewer_subject text NOT NULL,reason text NOT NULL CHECK(length(btrim(reason)) BETWEEN 3 AND 400),
+ financial_verification text NOT NULL CHECK(financial_verification='UNVERIFIED_HISTORICAL'),
+ accepted_graph jsonb NOT NULL,accepted_token text NOT NULL,coverage jsonb NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),
+ CHECK(octet_length(convert_to(payload_json,'UTF8'))<=262144)
+);
+ALTER TABLE pos_sync_private.legacy_shift_recovery_receipts ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON pos_sync_private.legacy_shift_recovery_receipts FROM PUBLIC,anon,authenticated,service_role;
+CREATE TRIGGER legacy_shift_recovery_receipt_immutable BEFORE UPDATE OR DELETE ON pos_sync_private.legacy_shift_recovery_receipts
+ FOR EACH ROW EXECUTE FUNCTION pos_sync_private.receipt_immutable();
+CREATE INDEX legacy_shift_recovery_shift ON pos_sync_private.legacy_shift_recovery_receipts(branch_id,shift_id);
+
+CREATE FUNCTION public.pos_sync_recover_legacy_closing(p_organization_id text,p_branch_id text,p_terminal_id text,p_payload_json text,p_attestation jsonb,p_authority jsonb)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog SET timezone='UTC' AS $fn$
+DECLARE payload jsonb;raw_graph jsonb;witness jsonb;graph jsonb:='[]'::jsonb;part jsonb;r jsonb;typed jsonb;parent public.shifts%ROWTYPE;
+ incoming public.shifts%ROWTYPE;registered pos_sync_private.shift_author_keys%ROWTYPE;person public.app_users%ROWTYPE;
+ prior pos_sync_private.legacy_shift_recovery_receipts%ROWTYPE;recovery uuid;sid uuid;hash text;local_hash text;witness_hash text;
+ table_name text;names text[];provided text[];rows_json jsonb;current_graph jsonb;token text;coverage jsonb;capability jsonb;affected integer;
+ fields text[]:=ARRAY['status','state','closed_at','closed_by_name','closed_by_staff_id','closed_by_role','counted_cash','counted_card','counted_digital',
+ 'expected_cash','expected_card','expected_digital','closing_float','final_counted_cash','variance_cash','variance_card','variance_digital','variance_total','variance_status','close_reason','closing_started_at','closing_started_by'];
+ assignments text;current_setting_branch text;previous_shift_writer text;protected boolean;target_recon jsonb;
+BEGIN
+ IF auth.role() IS DISTINCT FROM 'service_role' THEN RAISE EXCEPTION 'SYNC_FORBIDDEN';END IF;
+ PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id);
+ IF p_payload_json IS NULL OR octet_length(convert_to(p_payload_json,'UTF8'))>262144 THEN RAISE EXCEPTION 'LEGACY_RECOVERY_OVERSIZED';END IF;
+ payload:=p_payload_json::jsonb;
+ IF jsonb_typeof(payload) IS DISTINCT FROM 'object' OR payload->>'version' IS DISTINCT FROM '1' OR
+  (SELECT array_agg(key ORDER BY key) FROM jsonb_object_keys(payload) key) IS DISTINCT FROM
+  ARRAY['branchId','cloudGraphText','cloudWitnessHash','evidenceHash','financialVerification','localGraphText','reason','recoveryId','shiftId','terminalId','version']::text[] OR
+  payload->>'branchId' IS DISTINCT FROM p_branch_id OR payload->>'terminalId' IS DISTINCT FROM p_terminal_id OR
+  payload->>'financialVerification' IS DISTINCT FROM 'UNVERIFIED_HISTORICAL' OR length(btrim(payload->>'reason')) NOT BETWEEN 3 AND 400
+ THEN RAISE EXCEPTION 'LEGACY_RECOVERY_INVALID';END IF;
+ recovery:=(payload->>'recoveryId')::uuid;sid:=(payload->>'shiftId')::uuid;
+ hash:=encode(sha256(convert_to(p_payload_json,'UTF8')),'hex');
+ local_hash:=encode(sha256(convert_to(payload->>'localGraphText','UTF8')),'hex');
+ witness_hash:=encode(sha256(convert_to(payload->>'cloudGraphText','UTF8')),'hex');
+ IF payload->>'evidenceHash' IS DISTINCT FROM local_hash OR payload->>'cloudWitnessHash' IS DISTINCT FROM witness_hash OR
+  p_attestation->>'version' IS DISTINCT FROM '1' OR p_attestation->>'algorithm' IS DISTINCT FROM 'Ed25519' OR
+  p_attestation->>'action' IS DISTINCT FROM 'LEGACY_CLOSING_RECOVERY_V1' OR p_attestation->>'terminalId' IS DISTINCT FROM p_terminal_id OR
+  p_attestation->>'branchId' IS DISTINCT FROM p_branch_id OR p_attestation->>'shiftId' IS DISTINCT FROM sid::text OR
+  p_attestation->>'recoveryId' IS DISTINCT FROM recovery::text OR p_attestation->>'payloadHash' IS DISTINCT FROM hash
+ THEN RAISE EXCEPTION 'LEGACY_RECOVERY_INVALID';END IF;
+ PERFORM pg_advisory_xact_lock(hashtextextended('legacy-shift-recovery:'||recovery::text,0));
+ PERFORM pg_advisory_xact_lock(hashtextextended('pos-sync-shift:'||sid::text,0));
+ SELECT * INTO registered FROM pos_sync_private.shift_author_keys WHERE key_id=(p_attestation->>'keyId')::uuid AND author_id=(p_attestation->>'authorId')::uuid
+  AND terminal_id=p_terminal_id AND project_origin=p_attestation->>'projectOrigin' AND subject=p_attestation->>'subject' FOR SHARE NOWAIT;
+ IF NOT FOUND THEN RAISE EXCEPTION 'LEGACY_RECOVERY_AUTHOR_INVALID';END IF;
+ SELECT * INTO prior FROM pos_sync_private.legacy_shift_recovery_receipts WHERE recovery_id=recovery;
+ IF FOUND THEN
+  IF ROW(prior.organization_id,prior.branch_id,prior.terminal_id,prior.shift_id,prior.payload_hash) IS DISTINCT FROM ROW(p_organization_id,p_branch_id,p_terminal_id,sid,hash) OR
+   convert_to(prior.payload_json,'UTF8') IS DISTINCT FROM convert_to(p_payload_json,'UTF8') OR prior.attestation IS DISTINCT FROM p_attestation
+  THEN RAISE EXCEPTION 'LEGACY_RECOVERY_REPLAY_MISMATCH';END IF;
+  current_graph:=pos_sync_private.shift_graph(sid);PERFORM pos_sync_private.validate_graph(current_graph,p_branch_id,sid,true);
+  token:=pos_sync_private.graph_token(current_graph);
+  RETURN jsonb_build_object('version',1,'recovery_id',recovery,'payload_hash',hash,'evidence_hash',local_hash,'cloud_witness_hash',witness_hash,
+    'branch_id',p_branch_id,'terminal_id',p_terminal_id,'shift_id',sid,'reviewer_id',registered.author_id,'key_id',registered.key_id,
+    'accepted_graph_text',prior.accepted_graph::text,'accepted_graph_hash',encode(sha256(convert_to(prior.accepted_graph::text,'UTF8')),'hex'),
+    'financial_verification','UNVERIFIED_HISTORICAL','provenance','ADMIN_REVIEWED_LEGACY','accepted_token',prior.accepted_token,'current_token',token,
+    'superseded',prior.accepted_token<>token,'coverage',prior.coverage,'graph',jsonb_build_object('tables',current_graph,'graphToken',token,'closedAtRaw',current_graph->0->'rows'->0->'closed_at'));
+ END IF;
+ IF p_authority->'allowed' IS DISTINCT FROM 'true'::jsonb OR p_authority->>'authorId' IS DISTINCT FROM registered.author_id::text OR
+  p_authority->>'subject' IS DISTINCT FROM registered.subject OR registered.revoked_at IS NOT NULL THEN RAISE EXCEPTION 'LEGACY_RECOVERY_ADMIN_REQUIRED';END IF;
+ SELECT * INTO person FROM public.app_users WHERE id=registered.author_id FOR SHARE NOWAIT;
+ IF NOT FOUND OR person.is_active IS DISTINCT FROM true OR person.user_id IS DISTINCT FROM registered.subject OR
+  NOT(COALESCE(person.role::text,'')='admin' OR COALESCE(person.role_slug,'')='admin') OR (person.store_id IS NOT NULL AND person.store_id IS DISTINCT FROM p_branch_id)
+ THEN RAISE EXCEPTION 'LEGACY_RECOVERY_ADMIN_REQUIRED';END IF;
+ IF NOT EXISTS(SELECT 1 FROM public.terminal_tokens WHERE id::text=p_terminal_id AND location_id=p_branch_id AND platform='pc'
+  AND status IN('active','used') AND revoked_at IS NULL AND (is_claimed OR claimed_at IS NOT NULL)) THEN RAISE EXCEPTION 'SYNC_TERMINAL_SCOPE_FORBIDDEN';END IF;
+ -- Never convert a new protected/approved-rollout action into weaker legacy recovery.
+ IF to_regclass('fin62_history_preparation.protected_shifts') IS NULL OR to_regclass('fin62_rollout_preparation.approvals') IS NULL OR to_regprocedure('public.pos_sync_financial_capability(text,text,text,uuid)') IS NULL
+ THEN RAISE EXCEPTION 'LEGACY_RECOVERY_FINANCIAL_STATE_UNKNOWN';END IF;
+ -- Prevent protection/rollout activation changing admission while this short
+ -- transaction applies the reviewed historical graph. No sales table locks.
+ LOCK TABLE fin62_history_preparation.protected_shifts IN SHARE MODE NOWAIT;
+ LOCK TABLE fin62_rollout_preparation.approvals IN SHARE MODE NOWAIT;
+ EXECUTE 'SELECT EXISTS(SELECT 1 FROM fin62_history_preparation.protected_shifts WHERE shift_id=$1)' INTO protected USING sid;
+ IF protected THEN RAISE EXCEPTION 'LEGACY_RECOVERY_FINANCIAL_REQUIRED';END IF;
+ capability:=public.pos_sync_financial_capability(p_organization_id,p_branch_id,p_terminal_id,sid);
+ IF capability->>'mode' IS DISTINCT FROM 'disabled' OR capability->>'shiftMode' IS DISTINCT FROM 'legacy' THEN RAISE EXCEPTION 'LEGACY_RECOVERY_FINANCIAL_REQUIRED';END IF;
+ SELECT * INTO parent FROM public.shifts WHERE id=sid AND store_id=p_branch_id FOR UPDATE NOWAIT;
+ IF NOT FOUND OR parent.terminal_id IS DISTINCT FROM p_terminal_id OR parent.status IS DISTINCT FROM 'OPEN' OR parent.state IS DISTINCT FROM 'ACTIVE' OR parent.closed_at IS NOT NULL
+ THEN RAISE EXCEPTION 'LEGACY_RECOVERY_CLOUD_CHANGED';END IF;
+ current_graph:=pos_sync_private.shift_graph(sid);witness:=(payload->>'cloudGraphText')::jsonb;
+ IF witness IS DISTINCT FROM current_graph OR EXISTS(SELECT 1 FROM jsonb_array_elements(current_graph) x WHERE x->>'table'<>'shifts' AND jsonb_array_length(x->'rows')<>0) OR
+  EXISTS(SELECT 1 FROM pos_sync_private.shift_intent_receipts WHERE shift_id=sid) OR EXISTS(SELECT 1 FROM pos_sync_private.shift_author_receipts WHERE shift_id=sid) OR
+  EXISTS(SELECT 1 FROM pos_sync_private.legacy_shift_recovery_receipts WHERE shift_id=sid)
+ THEN RAISE EXCEPTION 'LEGACY_RECOVERY_CLOUD_CHANGED';END IF;
+ raw_graph:=(payload->>'localGraphText')::jsonb;
+ IF jsonb_typeof(raw_graph) IS DISTINCT FROM 'array' OR jsonb_array_length(raw_graph)<>6 THEN RAISE EXCEPTION 'LEGACY_RECOVERY_GRAPH_INVALID';END IF;
+ FOR table_name IN SELECT unnest(ARRAY['shifts','shift_cash_counts','shift_reconciliations','shift_close_events','shift_notifications','shift_variance_alerts']) LOOP
+  IF (SELECT count(*) FROM jsonb_array_elements(raw_graph) x WHERE x->>'table'=table_name)<>1 THEN RAISE EXCEPTION 'LEGACY_RECOVERY_GRAPH_INVALID';END IF;
+  SELECT x->'rows' INTO rows_json FROM jsonb_array_elements(raw_graph) x WHERE x->>'table'=table_name;
+  IF jsonb_typeof(rows_json) IS DISTINCT FROM 'array' OR jsonb_array_length(rows_json)>2000 THEN RAISE EXCEPTION 'LEGACY_RECOVERY_GRAPH_INVALID';END IF;
+  SELECT array_agg(attname::text ORDER BY attname) INTO names FROM pg_attribute WHERE attrelid=to_regclass(format('public.%I',table_name)) AND attnum>0 AND NOT attisdropped;
+  typed:='[]';
+  FOR r IN SELECT value FROM jsonb_array_elements(rows_json) LOOP
+   SELECT array_agg(key ORDER BY key) INTO provided FROM jsonb_object_keys(r) key;
+   IF provided IS DISTINCT FROM names THEN RAISE EXCEPTION 'LEGACY_RECOVERY_GRAPH_INVALID';END IF;
+   EXECUTE format('SELECT to_jsonb(jsonb_populate_record(NULL::public.%I,$1))',table_name) INTO r USING r;
+   IF r->>'store_id' IS DISTINCT FROM p_branch_id OR (table_name<>'shifts' AND r->>'shift_id' IS DISTINCT FROM sid::text) OR
+    (r?'terminal_id' AND r->>'terminal_id' IS DISTINCT FROM p_terminal_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN';END IF;
+   IF table_name<>'shifts' THEN
+    EXECUTE format('SELECT count(*) FROM public.%I WHERE id=$1',table_name) INTO affected USING (r->>'id')::uuid;
+    IF affected<>0 THEN RAISE EXCEPTION 'LEGACY_RECOVERY_CHILD_EXISTS';END IF;
+   END IF;
+   typed:=typed||jsonb_build_array(r);
+  END LOOP;
+  graph:=graph||jsonb_build_array(jsonb_build_object('table',table_name,'rows',typed));
+ END LOOP;
+ PERFORM pos_sync_private.validate_graph(graph,p_branch_id,sid,true);
+ IF jsonb_array_length(graph->1->'rows')<>1 OR graph->1->'rows'->0->>'kind' IS DISTINCT FROM 'ORIGINAL' OR
+  EXISTS(SELECT 1 FROM jsonb_array_elements(graph->3->'rows') e WHERE e->>'event' NOT IN('closing_started','cash_count_submitted','reconciled'))
+ THEN RAISE EXCEPTION 'LEGACY_RECOVERY_GRAPH_INVALID';END IF;
+ FOR target_recon IN SELECT value FROM jsonb_array_elements(graph->2->'rows') LOOP
+  PERFORM pos_sync_private.validate_target(graph->1->'rows'->0,target_recon);
+ END LOOP;
+ incoming:=jsonb_populate_record(NULL::public.shifts,graph->0->'rows'->0);
+ IF (to_jsonb(incoming)-fields-ARRAY['row_version','updated_at']) IS DISTINCT FROM (to_jsonb(parent)-fields-ARRAY['row_version','updated_at'])
+ THEN RAISE EXCEPTION 'LEGACY_RECOVERY_OPEN_FACTS_CHANGED';END IF;
+ -- This dedicated, current-admin-reviewed typed writer does not call or disable
+ -- generic ORIGINAL-author helpers. Existing trigger/FIN62 protections still run.
+ current_setting_branch:=current_setting('pos.branch_id',true);PERFORM set_config('pos.branch_id',p_branch_id,true);
+ FOR part IN SELECT value FROM jsonb_array_elements(graph) WHERE value->>'table'<>'shifts' LOOP
+  table_name:=part->>'table';
+  EXECUTE format('INSERT INTO public.%I SELECT * FROM jsonb_populate_recordset(NULL::public.%I,$1)',table_name,table_name) USING part->'rows';
+ END LOOP;
+ SELECT string_agg(format('%I=proposed.%I',field,field),',') INTO assignments FROM unnest(fields) field;
+ -- Same existing typed-writer admission used by the normal shift routines,
+ -- scoped only after this RPC's fresh administrator/scope/CAS/legacy checks.
+ -- Do not modify or disable shifts_guard_client_writes or any FIN62 trigger.
+ previous_shift_writer:=current_setting('pos.shift_fn',true);PERFORM set_config('pos.shift_fn','on',true);
+ EXECUTE 'UPDATE public.shifts target SET '||assignments||' FROM jsonb_populate_record(NULL::public.shifts,$1) proposed WHERE target.id=$2 AND target.store_id=$3' USING to_jsonb(incoming),sid,p_branch_id;
+ GET DIAGNOSTICS affected=ROW_COUNT;
+ PERFORM set_config('pos.shift_fn',COALESCE(previous_shift_writer,''),true);
+ IF affected<>1 THEN RAISE EXCEPTION 'LEGACY_RECOVERY_APPLY_UNCONFIRMED';END IF;
+ PERFORM set_config('pos.branch_id',COALESCE(current_setting_branch,''),true);
+ current_graph:=pos_sync_private.shift_graph(sid);PERFORM pos_sync_private.validate_graph(current_graph,p_branch_id,sid,true);
+ token:=pos_sync_private.graph_token(current_graph);coverage:=pos_sync_private.request_coverage(graph,current_graph);
+ INSERT INTO pos_sync_private.legacy_shift_recovery_receipts(recovery_id,organization_id,branch_id,terminal_id,shift_id,payload_hash,evidence_hash,cloud_witness_hash,
+  payload_json,attestation,reviewer_id,reviewer_subject,reason,financial_verification,accepted_graph,accepted_token,coverage)
+ VALUES(recovery,p_organization_id,p_branch_id,p_terminal_id,sid,hash,local_hash,witness_hash,p_payload_json,p_attestation,registered.author_id,registered.subject,payload->>'reason',
+  'UNVERIFIED_HISTORICAL',current_graph,token,coverage);
+ RETURN jsonb_build_object('version',1,'recovery_id',recovery,'payload_hash',hash,'evidence_hash',local_hash,'cloud_witness_hash',witness_hash,
+  'branch_id',p_branch_id,'terminal_id',p_terminal_id,'shift_id',sid,'reviewer_id',registered.author_id,'key_id',registered.key_id,
+  'accepted_graph_text',current_graph::text,'accepted_graph_hash',encode(sha256(convert_to(current_graph::text,'UTF8')),'hex'),
+  'financial_verification','UNVERIFIED_HISTORICAL','provenance','ADMIN_REVIEWED_LEGACY','accepted_token',token,'current_token',token,'superseded',false,
+  'coverage',coverage,'graph',jsonb_build_object('tables',current_graph,'graphToken',token,'closedAtRaw',current_graph->0->'rows'->0->'closed_at'));
+END $fn$;
+REVOKE ALL ON FUNCTION public.pos_sync_recover_legacy_closing(text,text,text,text,jsonb,jsonb) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.pos_sync_recover_legacy_closing(text,text,text,text,jsonb,jsonb) TO service_role;
+NOTIFY pgrst,'reload schema';
+COMMIT;
+-- LEGACY_SHIFT_RECOVERY_END
+
+-- Bounded hourly trading read (20261105170645; application scope admission required).
+CREATE FUNCTION public.pos_report_store_hours(p_from date, p_to date, p_store_ids text[])
+RETURNS jsonb
+LANGUAGE plpgsql STABLE SECURITY INVOKER SET search_path = pg_catalog
+AS $report$
+DECLARE zone text; result jsonb;
+BEGIN
+  IF p_from IS NULL OR p_to IS NULL OR NOT isfinite(p_from) OR NOT isfinite(p_to)
+     OR p_from > p_to OR p_to - p_from >= 3660
+     OR cardinality(p_store_ids) IS NULL OR cardinality(p_store_ids) NOT BETWEEN 1 AND 100
+     OR EXISTS(SELECT 1 FROM unnest(p_store_ids) x WHERE x IS NULL OR btrim(x) = '' OR length(x) > 64)
+     OR EXISTS(SELECT 1 FROM unnest(p_store_ids) x WHERE NOT EXISTS(SELECT 1 FROM public.stores s WHERE s.id=x)) THEN
+    RAISE EXCEPTION 'Choose a valid bounded date range and existing report branches' USING ERRCODE='22023';
+  END IF;
+  zone := (SELECT s.integration_settings->>'timeZone' FROM public.pos_settings s WHERE s.id=1);
+  IF zone IS NULL THEN
+    zone := 'UTC';
+  ELSIF zone IN ('UTC','Asia/Brunei') THEN
+    -- These exact existing names need one resolution, not every installed zone.
+    -- Other names keep their original catalogue membership and UTC fallback.
+    BEGIN
+      PERFORM pg_catalog.timezone(zone,pg_catalog.now());
+    EXCEPTION WHEN invalid_parameter_value THEN zone := 'UTC';
+    END;
+  ELSE
+    SELECT coalesce((SELECT n.name FROM pg_catalog.pg_timezone_names n WHERE n.name=zone), 'UTC') INTO zone;
+  END IF;
+  WITH selected_bills AS MATERIALIZED (
+      SELECT s.id,s.store_id,s.created_at,
+        s.total_amount-coalesce(s.tax_amount,0)-coalesce(s.rounding_adjustment,0) AS net
+      FROM public.sales s
+      WHERE s.store_id=ANY(p_store_ids) AND NOT coalesce(s.is_refunded,false)
+        AND s.created_at >= (p_from::timestamp AT TIME ZONE zone)
+        AND s.created_at < ((p_to+1)::timestamp AT TIME ZONE zone)
+    ), costs AS (
+      SELECT si.sale_id,sum(round((coalesce(si.unit_cost,p.cost_price,0)*si.quantity)::numeric,2)) AS amount
+      FROM selected_bills b JOIN public.sale_items si ON si.sale_id=b.id
+      LEFT JOIN public.products p ON p.id=si.product_id GROUP BY si.sale_id
+    ), hours AS (
+    SELECT b.store_id,extract(hour FROM b.created_at AT TIME ZONE zone)::integer AS hour,count(*) AS bills,
+      round(sum(b.net)::numeric,2) AS revenue,round(sum(coalesce(c.amount,0))::numeric,2) AS cost,
+      round(sum(b.net-coalesce(c.amount,0))::numeric,2) AS profit
+    FROM selected_bills b LEFT JOIN costs c ON c.sale_id=b.id
+    GROUP BY b.store_id,extract(hour FROM b.created_at AT TIME ZONE zone)::integer
+  ) SELECT jsonb_build_object('version',1,'complete',true,'from',p_from,'to',p_to,'store_ids',to_jsonb(p_store_ids),
+      'row_count',count(*),'rows',coalesce(jsonb_agg(to_jsonb(h) ORDER BY h.store_id,h.hour),'[]'::jsonb))
+    INTO result FROM hours h;
+  RETURN result;
+END;
+$report$;
+REVOKE ALL ON FUNCTION public.pos_report_store_hours(date,date,text[]) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.pos_report_store_hours(date,date,text[]) TO service_role;
+COMMENT ON FUNCTION public.pos_report_store_hours(date,date,text[]) IS
+  'Service-only bounded report read. The application verifies current staff, cost permission and fixed-terminal/management branch scope before and after this read. One scalar JSON envelope avoids PostgREST row caps; maximum 100 branches x 24 hours. No writes.';

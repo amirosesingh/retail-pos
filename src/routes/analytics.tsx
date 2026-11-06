@@ -1,4 +1,9 @@
-import { companyStoreScope } from "@/lib/company-store-scope";
+import { TradingTooltip, TradingChartCard } from "@/platforms/web/components/pos/TradingChartLayout";
+import { TradingRangePresets } from "@/platforms/web/components/pos/TradingRangePresets";
+import { useConfirmedPresentation } from "@/lib/use-confirmed-presentation";
+import { dashboardPageStores } from "@/lib/dashboard-scope";
+import { ShopComparisonCharts } from "@/platforms/web/components/pos/ShopComparisonCharts";
+import { comparisonShopSeries, comparisonHeaderHours } from "@/lib/shop-comparison";
 import { HomeShortcuts } from "@/platforms/web/components/pos/HomeShortcuts";
 import { FinancialBreakdown, GrossProfitInfo } from "@/platforms/web/components/pos/FinancialInfo";
 import { SummaryCardRail } from "@/platforms/web/components/pos/SummaryCardRail";
@@ -14,14 +19,10 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
-  ComposedChart,
   Legend,
-  Line,
-  LineChart,
   Pie,
   PieChart,
   ResponsiveContainer,
-  Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
@@ -39,10 +40,8 @@ import {
   shopSlices,
   topCategories,
   topItems,
-  trendSeries,
   type ItemDayRow,
 } from "@/lib/analytics-board";
-import { AnalyticsCardRail } from "@/platforms/web/components/pos/AnalyticsCardRail";
 import { canonicalBranchId } from "@/lib/branch-id";
 
 export const Route = createFileRoute("/analytics")({
@@ -74,10 +73,10 @@ const hasMoney = (value: number) => Number.isFinite(value) && Math.abs(value) >=
 function LiveBoard() {
   const { allStores: directoryStores, currentStore } = usePos();
   const { can, isAdmin, user, terminalStoreId, canSwitchStores } = useAuth();
-  const stores = useMemo(() => companyStoreScope(directoryStores, terminalStoreId || user?.storeId || currentStore.id,
-    !canSwitchStores || !!terminalStoreId || !!user?.storeId),
+  const stores = useMemo(() => dashboardPageStores(directoryStores, currentStore.id, terminalStoreId, user?.storeId, canSwitchStores, "company"),
   [directoryStores, terminalStoreId, user?.storeId, currentStore.id, canSwitchStores]);
   const allStores = stores;
+  const shopColors = useMemo(() => new Map(comparisonShopSeries(allStores).map(shop => [shop.id, shop.color])), [allStores]);
   const storeIds = useMemo(() => stores.map(store => store.id), [stores]);
   const allowed = isAdmin || can("can_view_sales_reports");
   const canExport = can("can_export_reports");
@@ -85,25 +84,13 @@ function LiveBoard() {
 
   const [from, setFrom] = useState(shift(29));
   const [to, setTo] = useState(isoDay(new Date()));
-  const [preset, setPreset] = useState<"today" | "7" | "30" | "custom">("30");
   const [topBy, setTopBy] = useState<"revenue" | "units">("revenue");
-  const [grain, setGrain] = useState<"daily" | "monthly">("daily");
-  const [financialView, setFinancialView] = useState<
-    "compare" | "revenue" | "cost" | "profit" | "marginPct"
-  >("compare");
-  const effectiveFinancialView = showCostMargin ? financialView : "revenue";
   const [picked, setPicked] = useState<string[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
-  const applyPreset = (p: "today" | "7" | "30") => {
-    setPreset(p);
-    setTo(isoDay(new Date()));
-    setFrom(p === "today" ? isoDay(new Date()) : shift(p === "7" ? 6 : 29));
-  };
-
   const query = useQuery({
     queryKey: ["analytics-board", pageDataScope(user), currentStore.id, stores.map(store => store.id).sort().join("|"), effectiveTimeZone(), from, to],
-    queryFn: () => fetchBoard(from, to, storeIds),
+    queryFn: () => fetchBoard(from, to, storeIds, { includeHourlyProfit: showCostMargin }),
     enabled: allowed && storeIds.length > 0,
     meta: {
       tables: [
@@ -151,6 +138,10 @@ function LiveBoard() {
   );
 
   const combinedCategories = useMemo(() => topCategories(itemRows, topBy, 10), [itemRows, topBy]);
+  const categoryShops = useMemo(() => {
+    const ids = new Set(itemRows.map(row => row.store_id ?? ""));
+    return shops.filter(shop => ids.has(shop.storeId));
+  }, [shops, itemRows]);
   const categoryItems = useMemo(
     () =>
       selectedCategory
@@ -163,17 +154,6 @@ function LiveBoard() {
         : [],
     [itemRows, selectedCategory, topBy],
   );
-  const trend = useMemo(
-    () =>
-      data
-        ? trendSeries(
-            data.storeDays.filter((r) => !filter || filter.has(r.store_id ?? "")),
-            grain,
-          )
-        : [],
-    [data, filter, grain],
-  );
-
   const totals = useMemo(() => {
     const revenue = shops.reduce((a, s) => a + s.revenue, 0);
     const cost = shops.reduce((a, s) => a + s.cost, 0);
@@ -225,20 +205,7 @@ function LiveBoard() {
       ]),
     ]);
 
-  if (!allowed) {
-    return (
-      <AppShell>
-        <div className="p-6">
-          <p className="text-sm text-muted-foreground">
-            You do not have permission to view sales reporting.
-          </p>
-        </div>
-      </AppShell>
-    );
-  }
-
-  const summaryReady = !!data && !query.isLoading && !query.isError;
-  const empty = summaryReady && shops.length === 0;
+  const empty = !!data && shops.length === 0;
   const giveawayInfo = <FinancialBreakdown rows={[
     ["Item discounts", money(totals.itemDiscount)],
     ["Bill discounts", money(totals.billDiscount)],
@@ -259,6 +226,29 @@ function LiveBoard() {
     hasMoney(totals.perMonth) && <StatCard key="month" label="Avg / month" value={money(totals.perMonth)} hint="Across the range" info={<FinancialBreakdown rows={[["Net revenue", money(totals.revenue)], ["Trading months", String(totals.months)], ["Average per month", money(totals.perMonth)]]}><p>Net revenue ÷ trading months represented in this report.</p></FinancialBreakdown>} />,
     !hasMoney(totals.revenue) && totals.bills !== 0 && <StatCard key="bills" label="Bills" value={String(totals.bills)} hint="Completed bills" />,
   ].filter(Boolean);
+  const confirmedCards = useConfirmedPresentation(allowed ? JSON.stringify([pageDataScope(user), storeIds, from, to, effectiveTimeZone(), filter ? [...filter].sort() : null]) : null,
+    summaryCards, !!data && !query.isLoading && !query.isError);
+
+  const confirmedBoard = useConfirmedPresentation(allowed && storeIds.length > 0
+    ? JSON.stringify([pageDataScope(user), storeIds, from, to, effectiveTimeZone(), filter ? [...filter].sort() : null, showCostMargin]) : null,
+    data, !!data && !query.isLoading && !query.isError);
+  const graphAuthority=allowed&&storeIds.length>0?JSON.stringify([pageDataScope(user),storeIds,effectiveTimeZone(),filter?[...filter].sort():null,showCostMargin]):null;
+  const graphPayload=useMemo(()=>confirmedBoard?{board:confirmedBoard,shops:shopSlices(confirmedBoard,nameOf,filter),range:{from,to}}:null,[confirmedBoard,nameOf,filter,from,to]);
+  const graphFrame=useConfirmedPresentation(graphAuthority,graphPayload,!!confirmedBoard);
+  const transactionHours = useMemo(() => comparisonHeaderHours(graphFrame?.board.bills ?? []), [graphFrame]);
+  const graphFinancial=useMemo(()=>graphFrame?.shops.map(shop=>({...shop,id:shop.storeId}))??[],[graphFrame]);
+
+  if (!allowed) {
+    return (
+      <AppShell>
+        <div className="p-6">
+          <p className="text-sm text-muted-foreground">
+            You do not have permission to view sales reporting.
+          </p>
+        </div>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell>
@@ -272,23 +262,12 @@ function LiveBoard() {
             <p className="text-sm text-muted-foreground page-description">
               {data?.localOnly
                 ? "This terminal’s branch — reports calculated from local SQL Server. Group-wide reports are available on the web."
-                : "Selected company’s shops combined — categories, item drilldown and revenue share. Updates when trading data changes."}
+                : "All authorized company shops across clusters — categories, item drilldown and revenue share. Updates when trading data changes."}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
 <ReportFilters title="Live Business Board filters"><div className="flex flex-wrap items-end gap-4">
-          <div className="flex gap-1">
-            {(["today", "7", "30"] as const).map((p) => (
-              <Button
-                key={p}
-                size="sm"
-                variant={preset === p ? "default" : "outline"}
-                onClick={() => applyPreset(p)}
-              >
-                {p === "today" ? "Today" : p === "7" ? "7 days" : "30 days"}
-              </Button>
-            ))}
-          </div>
+          <TradingRangePresets today={isoDay(new Date())} from={from} to={to} onChange={range => { setFrom(range.from); setTo(range.to); }} />
           <div className="space-y-1">
             <Label className="text-xs">From</Label>
             <Input
@@ -296,7 +275,6 @@ function LiveBoard() {
               value={from}
               onChange={(e) => {
                 setFrom(e.target.value);
-                setPreset("custom");
               }}
               className="h-9 w-40"
             />
@@ -308,7 +286,6 @@ function LiveBoard() {
               value={to}
               onChange={(e) => {
                 setTo(e.target.value);
-                setPreset("custom");
               }}
               className="h-9 w-40"
             />
@@ -356,8 +333,9 @@ function LiveBoard() {
           <AnalyticsErrorPanel error={query.error} onRetry={() => void query.refetch()} />
         )}
 
-        {summaryReady && (summaryCards.length ? <SummaryCardRail label="Business totals">
-          {summaryCards}
+        {query.isError && confirmedCards && <p role="status" className="text-xs text-muted-foreground">Showing last confirmed summary; the refresh did not complete.</p>}
+        {confirmedCards && (confirmedCards.length ? <SummaryCardRail label="Business totals">
+          {confirmedCards}
         </SummaryCardRail> : !empty && <p role="status" className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">No financial totals to show for these shops and dates.</p>)}
 
         {query.isLoading && (
@@ -372,238 +350,36 @@ function LiveBoard() {
           </p>
         )}
 
-        {!empty && !query.isLoading && (
+            {graphFrame && <ShopComparisonCharts rows={graphFrame.board.storeDays} directory={allStores}
+              selectedIds={filter ? [...filter] : storeIds} showProfit={showCostMargin}
+              range={graphFrame.range} requestedRange={{from,to}}
+              transactionHours={transactionHours} profitHours={graphFrame.board.hourlyRows ?? null}
+              hourlyError={showCostMargin && !graphFrame.board.hourlyRows ? (graphFrame.board.hourlyIssue ?? "A verified hourly cost report has not loaded.") : undefined}
+              financialRows={graphFinancial}
+              scopeLabel={filter ? "Selected authorized shops" : "All authorized company shops"}>
+              {graphFrame.shops.some(shop => Math.abs(shop.revenue) >= 0.005) && <TradingChartCard title="Revenue share by shop" description="Net revenue share for the selected authorized shops and dates.">
+                <ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={graphFrame.shops} dataKey="revenue" nameKey="name" innerRadius={64} outerRadius={88} paddingAngle={2} cornerRadius={4}>
+                  {graphFrame.shops.map(shop => <Cell key={shop.storeId} fill={shopColors.get(canonicalBranchId(shop.storeId)) ?? branchChartColor(shop.storeId)} />)}
+                </Pie><TradingTooltip formatter={value => money(Number(value ?? 0))} /><Legend /></PieChart></ResponsiveContainer>
+              </TradingChartCard>}
+              {graphFrame.shops.some(shop => Math.abs(shop.givenAway) >= 0.005) && <TradingChartCard title="Where the money went" description="Discounts, coupons and free-item value are already reflected in revenue.">
+                <ResponsiveContainer width="100%" height="100%"><BarChart data={graphFrame.shops} barCategoryGap="30%">
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="name" fontSize={11} /><YAxis fontSize={11} width={58} />
+                  <TradingTooltip formatter={value => money(Number(value ?? 0))} /><Legend />
+                  {showCostMargin && <Bar dataKey="profit" stackId="giveaway" name="Kept as profit" fill="var(--analytics-profit)" isAnimationActive={false} radius={4} />}
+                  <Bar dataKey="itemDiscount" stackId="giveaway" name="Item discounts" fill="var(--analytics-revenue)" isAnimationActive={false} radius={4} />
+                  <Bar dataKey="billDiscount" stackId="giveaway" name="Bill discounts" fill="var(--analytics-cost)" isAnimationActive={false} radius={4} />
+                  <Bar dataKey="coupon" stackId="giveaway" name="Coupons" fill="var(--analytics-discount)" isAnimationActive={false} radius={4} />
+                  <Bar dataKey="focValue" stackId="giveaway" name="Free items" fill="var(--analytics-margin)" isAnimationActive={false} radius={4} />
+                </BarChart></ResponsiveContainer>
+              </TradingChartCard>}
+            </ShopComparisonCharts>}
+
+        {confirmedBoard && !empty && (
           <>
-            <AnalyticsCardRail title="Business graphs">
-              <section className="min-w-0 rounded-lg border border-border bg-card p-4">
-                <h2 className="mb-3 min-h-36 text-sm font-semibold">Revenue share by shop</h2>
-                <ResponsiveContainer width="100%" height={270}>
-                  <PieChart>
-                    <Pie
-                      data={shops}
-                      dataKey="revenue"
-                      nameKey="name"
-                      innerRadius={70}
-                      outerRadius={92}
-                      paddingAngle={2}
-                    >
-                      {shops.map((s) => (
-                        <Cell key={s.storeId} fill={branchChartColor(s.storeId)} />
-                      ))}
-                    </Pie>
-                    <Tooltip formatter={(v) => money(Number(v ?? 0))} />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
-              </section>
-              <section className="min-w-0 rounded-lg border border-border bg-card p-4">
-                <div className="mb-3 flex min-h-36 flex-wrap content-start items-center justify-between gap-2">
-                  <div>
-                    <h2 className="text-sm font-semibold">Financial performance by shop</h2>
-                    <p className="text-xs text-muted-foreground">
-                      Compare related measures or inspect one measure on its own scale.
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-1">
-                    {(
-                      [
-                        ["compare", "Compare"],
-                        ["revenue", "Revenue"],
-                        ["cost", "Cost"],
-                        ["profit", "Profit"],
-                        ["marginPct", "Margin %"],
-                      ] as const
-                    ).filter(([value]) => showCostMargin || value === "revenue").map(([value, label]) => (
-                      <Button
-                        key={value}
-                        size="sm"
-                        variant={effectiveFinancialView === value ? "default" : "outline"}
-                        onClick={() => setFinancialView(value)}
-                      >
-                        {label}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-                <ResponsiveContainer width="100%" height={270}>
-                  {effectiveFinancialView === "compare" ? (
-                    <ComposedChart data={shops} barCategoryGap="28%">
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                      <XAxis dataKey="name" fontSize={11} interval={0} />
-                      <YAxis yAxisId="left" fontSize={11} width={70} />
-                      <YAxis
-                        yAxisId="right"
-                        orientation="right"
-                        fontSize={11}
-                        unit="%"
-                        domain={[0, 100]}
-                        width={44}
-                      />
-                      <Tooltip
-                        formatter={(v, key) =>
-                          key === "Margin %"
-                            ? `${Number(v ?? 0).toFixed(1)}%`
-                            : money(Number(v ?? 0))
-                        }
-                      />
-                      <Legend />
-                      <Bar
-                        yAxisId="left"
-                        dataKey="revenue"
-                        name="Revenue"
-                        fill={ANALYTICS_COLORS.revenue}
-                        maxBarSize={38}
-                        radius={[4, 4, 0, 0]}
-                      />
-                      <Bar
-                        yAxisId="left"
-                        dataKey="cost"
-                        name="Cost"
-                        fill={ANALYTICS_COLORS.cost}
-                        maxBarSize={38}
-                        radius={[4, 4, 0, 0]}
-                      />
-                      <Bar
-                        yAxisId="left"
-                        dataKey="profit"
-                        name="Profit"
-                        fill={ANALYTICS_COLORS.profit}
-                        maxBarSize={38}
-                        radius={[4, 4, 0, 0]}
-                      />
-                      <Line
-                        yAxisId="right"
-                        type="monotone"
-                        dataKey="marginPct"
-                        name="Margin %"
-                        stroke={ANALYTICS_COLORS.margin}
-                        strokeWidth={2}
-                        dot={{ r: 3 }}
-                      />
-                    </ComposedChart>
-                  ) : effectiveFinancialView === "marginPct" ? (
-                    <LineChart data={shops} margin={{ left: 8, right: 18 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                      <XAxis dataKey="name" fontSize={11} interval={0} />
-                      <YAxis domain={[0, 100]} unit="%" fontSize={11} width={48} />
-                      <Tooltip formatter={(value) => `${Number(value ?? 0).toFixed(1)}%`} />
-                      <Line
-                        type="monotone"
-                        dataKey="marginPct"
-                        name="Margin %"
-                        stroke={ANALYTICS_COLORS.margin}
-                        strokeWidth={3}
-                        dot={{ r: 4 }}
-                      />
-                    </LineChart>
-                  ) : (
-                    <BarChart data={shops} barCategoryGap="38%" margin={{ left: 8, right: 18 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                      <XAxis dataKey="name" fontSize={11} interval={0} />
-                      <YAxis fontSize={11} width={70} />
-                      <Tooltip formatter={(value) => money(Number(value ?? 0))} />
-                      <Bar
-                        dataKey={effectiveFinancialView}
-                        name={effectiveFinancialView[0].toUpperCase() + effectiveFinancialView.slice(1)}
-                        fill={
-                          effectiveFinancialView === "revenue"
-                            ? "var(--primary)"
-                            : effectiveFinancialView === "cost"
-                              ? "var(--muted-foreground)"
-                              : "var(--success)"
-                        }
-                        maxBarSize={56}
-                        radius={[5, 5, 0, 0]}
-                      />
-                    </BarChart>
-                  )}
-                </ResponsiveContainer>
-              </section>
 
-              <section className="min-w-0 rounded-lg border border-border bg-card p-4">
-                <h2 className="mb-3 min-h-36 text-sm font-semibold">Where the money went</h2>
-                <ResponsiveContainer width="100%" height={270}>
-                  <BarChart data={shops} barCategoryGap="30%">
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="name" fontSize={11} interval={0} />
-                    <YAxis fontSize={11} width={64} />
-                    <Tooltip formatter={(v) => money(Number(v ?? 0))} />
-                    <Legend />
-                    {showCostMargin && <Bar dataKey="profit" stackId="m" name="Kept as profit" fill={ANALYTICS_COLORS.profit} />}
-                    <Bar
-                      dataKey="itemDiscount"
-                      stackId="m"
-                      name="Item discounts"
-                      fill={ANALYTICS_COLORS.discount}
-                    />
-                    <Bar
-                      dataKey="billDiscount"
-                      stackId="m"
-                      name="Bill discounts"
-                      fill={ANALYTICS_COLORS.discount}
-                      fillOpacity={0.75}
-                    />
-                    <Bar dataKey="coupon" stackId="m" name="Coupons" fill="var(--warning)" />
-                    <Bar
-                      dataKey="focValue"
-                      stackId="m"
-                      name="Free items"
-                      fill={ANALYTICS_COLORS.discount}
-                      fillOpacity={0.45}
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
-              </section>
-
-            <section className="rounded-lg border border-border p-4">
-              <div className="mb-3 flex min-h-36 flex-wrap content-start items-center justify-between gap-2">
-                <h2 className="text-sm font-semibold">{showCostMargin ? "Revenue and profit trend" : "Revenue trend"}</h2>
-                <div className="flex gap-1">
-                  <Button
-                    size="sm"
-                    variant={grain === "daily" ? "default" : "outline"}
-                    onClick={() => setGrain("daily")}
-                  >
-                    Daily
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={grain === "monthly" ? "default" : "outline"}
-                    onClick={() => setGrain("monthly")}
-                  >
-                    Monthly
-                  </Button>
-                </div>
-              </div>
-              <ResponsiveContainer width="100%" height={270}>
-                <LineChart data={trend}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="label" fontSize={11} />
-                  <YAxis fontSize={11} />
-                  <Tooltip formatter={(v) => money(Number(v ?? 0))} />
-                  <Legend />
-                  <Line
-                    type="monotone"
-                    dataKey="revenue"
-                    name="Revenue"
-                    stroke={ANALYTICS_COLORS.revenue}
-                    strokeWidth={2}
-                    dot={false}
-                  />
-                  {showCostMargin && <Line
-                    type="monotone"
-                    dataKey="profit"
-                    name="Profit"
-                    stroke={ANALYTICS_COLORS.profit}
-                    strokeWidth={2}
-                    dot={false}
-                  />}
-                </LineChart>
-              </ResponsiveContainer>
-            </section>
-            </AnalyticsCardRail>
-            <div className="min-w-0">
-              <section className="min-w-0 rounded-lg border border-border p-4 xl:col-span-7">
+            {combinedCategories.length > 0 && <div className="min-w-0">
+              <section className="min-w-0 rounded-lg border border-border p-4 xl:col-span-7 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <h2 className="text-sm font-semibold">Top categories — all shops combined</h2>
                   <div className="flex gap-1">
@@ -654,35 +430,20 @@ function LiveBoard() {
                     </button>
                   ))}
                 </SummaryCardRail>
-                  {!combinedCategories.length && (
-                    <p className="col-span-full py-8 text-center text-sm text-muted-foreground">
-                      No category sales in this range.
-                    </p>
-                  )}
               </section>
 
 
-            </div>
+            </div>}
 
-            {selectedCategory && (
-              <section className="rounded-lg border border-primary/40 bg-primary/5 p-4">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-primary">
-                      Category opened
-                    </p>
-                    <h2 className="flex items-center gap-2 text-sm font-semibold">
-                      <Package className="size-4 text-primary" /> Items in {selectedCategory}
-                    </h2>
-                  </div>
-                  <Button size="sm" variant="ghost" onClick={() => setSelectedCategory(null)}>
-                    <X className="size-4" /> Close items
-                  </Button>
-                </div>
+            {selectedCategory && categoryItems.length > 0 && (
+              <TradingChartCard title={<span className="flex items-center gap-2"><Package className="size-4 text-primary" />Items in {selectedCategory}</span>}
+                description="Category opened · all matching items remain available by scrolling."
+                controls={<Button size="sm" variant="ghost" onClick={() => setSelectedCategory(null)}><X className="size-4" /> Close items</Button>}>
+                <div className="trading-chart-scroll h-full overflow-y-auto overscroll-contain" tabIndex={0} aria-label={`Items in ${selectedCategory}`}>
                 {categoryItems.length ? (
                   <ResponsiveContainer
                     width="100%"
-                    height={Math.min(360, Math.max(220, categoryItems.length * 30))}
+                    height={Math.max(224, categoryItems.length * 30)}
                   >
                     <BarChart
                       data={categoryItems}
@@ -692,14 +453,14 @@ function LiveBoard() {
                       <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                       <XAxis type="number" fontSize={11} />
                       <YAxis type="category" dataKey="name" width={130} fontSize={11} />
-                      <Tooltip
+                      <TradingTooltip
                         formatter={(value) =>
                           topBy === "revenue"
                             ? money(Number(value ?? 0))
                             : `${Number(value ?? 0)} units`
                         }
                       />
-                      <Bar dataKey={topBy} fill="var(--pos-pay)" radius={[0, 5, 5, 0]} />
+                      <Bar dataKey={topBy} fill="var(--pos-pay)" radius={[0, 5, 5, 0]} isAnimationActive={false} />
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
@@ -707,13 +468,14 @@ function LiveBoard() {
                     No items were sold in this category for the selected range.
                   </p>
                 )}
-              </section>
+                </div>
+              </TradingChartCard>
             )}
 
-            <section className="rounded-lg border border-border p-4">
+            {categoryShops.length > 0 && <section className="rounded-lg border border-border p-4 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300">
               <h2 className="mb-3 text-sm font-semibold">Top categories per shop</h2>
               <SummaryCardRail label="Top categories per shop" desktopBehavior="finite-carousel">
-                  {shops.map((shop) => {
+                  {categoryShops.map((shop) => {
                     const rows = topCategories(
                       itemRows.filter((r) => (r.store_id ?? "") === shop.storeId),
                       topBy,
@@ -758,7 +520,7 @@ function LiveBoard() {
                     );
                   })}
               </SummaryCardRail>
-            </section>
+            </section>}
 
           </>
         )}

@@ -64,11 +64,8 @@ const TEMPLATE_ROWS = [
 const PREVIEW_LIMIT = 100;
 
 const sourceBarcode = (row: Record<string, unknown>) => {
-  for (const [header, value] of Object.entries(row)) {
-    if (["barcode", "sku", "code"].includes(header.trim().toLowerCase().replace(/\s+/g, "_")))
-      return String(value ?? "").trim();
-  }
-  return "";
+  const fields = new Map(Object.entries(row).map(([header, value]) => [header.trim().toLowerCase().replace(/\s+/g, "_"), value]));
+  return ["barcode", "sku", "code"].map(key => String(fields.get(key) ?? "").trim()).find(Boolean) ?? "";
 };
 
 function templateSheet(quantityRequired: boolean) {
@@ -167,7 +164,7 @@ export function BulkImportDialog({
       setProgress(percent);
       setProgressLabel(label);
     }, chooseWorksheet).catch(error => {
-      if (error?.name !== "AbortError") toast.error("Could not read that file — use the .xlsx or .csv template");
+      if (error?.name !== "AbortError") toast.error(error instanceof Error ? error.message : "Could not read that file — use the .xlsx or .csv template");
       return null;
     });
     if (!records) {
@@ -651,17 +648,12 @@ export function BulkImportDialog({
                           />
                         </TableCell>
                         <TableCell>
-                          <Input
+                          <ImportMoneyInput
                             className="numeric h-8 w-20 text-right"
                             inputMode="decimal"
-                            value={r.taxRate ?? ""}
+                            value={r.taxRate}
                             aria-invalid={r.missingFields.includes("taxRate")}
-                            onChange={(event) =>
-                              patchRow(r.line, {
-                                taxRate:
-                                  event.target.value === "" ? null : Number(event.target.value),
-                              })
-                            }
+                            onValueChange={(value) => patchRow(r.line, { taxRate: value })}
                           />
                         </TableCell>
                         <TableCell>

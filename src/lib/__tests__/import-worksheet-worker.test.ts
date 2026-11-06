@@ -31,3 +31,11 @@ it("rejects a sheet not present in the workbook without returning rows", () => {
   expect(messages.some(message => message.type === "error")).toBe(true);
   expect(messages.some(message => message.type === "rows")).toBe(false);
 });
+it("transfers more than two full chunks without moving row values or dropping decimal amounts", () => {
+  const book = XLSX.utils.book_new();
+  const values = Array.from({ length: 10_001 }, (_, i) => ({ barcode: `00${i}`, name: `Item ${i}`, price: 12.3456, cost: 6.125 }));
+  XLSX.utils.book_append_sheet(book, XLSX.utils.json_to_sheet(values), "Products");
+  worker.onmessage({ data: { name: "large.xlsx", buffer: XLSX.write(book, { type: "array", bookType: "xlsx" }) } });
+  expect(messages.filter(message => message.type === "rows").map(message => message.rows?.length)).toEqual([5000, 5000, 1]);
+  expect(messages.flatMap(message => message.rows ?? [])).toEqual(values);
+});

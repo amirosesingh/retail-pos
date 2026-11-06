@@ -1,3 +1,4 @@
+import { ConfirmedMetricCards } from "@/platforms/web/components/pos/ConfirmedMetricCards";
 import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
 import { PAGE_DATA_CACHE, pageDataScope } from "@/lib/page-data-cache";
 import { useAuth } from "@/lib/pos-auth";
@@ -210,16 +211,16 @@ function StockReport() {
           </p>
         )}
 
-        <div className="summary-grid grid gap-4 sm:grid-cols-4">
-          <StatCard label="Adjustments" value={String(rows.length)} />
-          <StatCard label="Units over" value={`+${over}`} />
-          <StatCard label="Units short" value={String(short)} />
+        <ConfirmedMetricCards label="Stock adjustment totals" scope={JSON.stringify([from,to,store,query,reason,direction,reportZone,storeIds.slice().sort()])} ready={history.isSuccess && !history.error}>
+          <StatCard label="Adjustments" metricValue={rows.length} value={String(rows.length)} />
+          <StatCard label="Units over" metricValue={over} value={`+${over}`} />
+          <StatCard label="Units short" metricValue={short} value={String(short)} />
           <StatCard
-            label="Cost impact"
+            label="Cost impact" metricValue={showCostMargin ? impact : 0} moneyValue
             value={showCostMargin ? money(impact) : "Restricted"}
             hint={`${state.products.length} products in catalog`}
           />
-        </div>
+        </ConfirmedMetricCards>
 
         <div className="rounded-2xl border border-border bg-card">
           <Table tableId="routes/reports.stock#1" loading={history.isPending}>

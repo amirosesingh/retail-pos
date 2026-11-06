@@ -52,6 +52,7 @@ class ShiftGapRecovery {
     this.retained=new Set(this.initial.filter(r=>r.table_name==='shifts').map(r=>recordId(r.id)));return this;
   });}
   requiresExact(shift){return this.retained.has(recordId(shift));}
+  async prepareGraph(graph){this.assertScope();const proof=await this.reader.prepareReviewedShiftCoverage?.(graph,this.branchId);this.assertScope();return proof??null;}
   beforePage(prepared,rows,table){this.assertScope();for(const row of rows){const shift=recordId(table.cloudTable==='shifts'?row.id:row.shift_id);if(this.retained.has(shift)&&!prepared.graphs.has(shift))fail('A retained closing page has no fresh complete graph proof.');}}
   note(transaction,shiftId,graph){
     this.assertScope();
@@ -63,7 +64,7 @@ class ShiftGapRecovery {
   async proveMissing(cloud){for(const id of [...this.retained].sort())if(!this.covered.has(id)){
     this.assertScope();
     const prepared=await prepareShiftGraphs({cloud,connectionManager:this.connectionManager,branchId:this.branchId,
-      changes:[{table_name:'shifts',entity_id:JSON.stringify({id}),tombstone:false}]});
+      changes:[{table_name:'shifts',entity_id:JSON.stringify({id}),tombstone:false}],recovery:this});
     let tx;await this.atomic(async transaction=>{tx=transaction;await applyShiftGraphs({transaction,connectionManager:this.connectionManager,registry:this.registry,reader:this.reader,branchId:this.branchId,prepared,recovery:this});});
     this.committed(tx);
   }}

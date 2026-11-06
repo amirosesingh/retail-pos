@@ -1,3 +1,8 @@
+import { TradingRangePresets } from "@/platforms/web/components/pos/TradingRangePresets";
+import { useConfirmedPresentation } from "@/lib/use-confirmed-presentation";
+import { pageDataScope } from "@/lib/page-data-cache";
+import { ShopComparisonCharts } from "@/platforms/web/components/pos/ShopComparisonCharts";
+import { comparisonSalesDays, comparisonSalesHours } from "@/lib/shop-comparison";
 import { receiptAdjustmentLabel } from "@/lib/report-display";
 import { companyStoreScope } from "@/lib/company-store-scope";
 import { allShopsScope, allShopsTotalsScope, shopClusterKey } from "@/lib/all-shops-scope";
@@ -6,7 +11,7 @@ import { FinancialBreakdown, FinancialInfoTip, GrossProfitInfo, SalesTotalInfo }
 import { salesReconciliation } from "@/lib/sales-reconciliation";
 import { SummaryCardRail } from "@/platforms/web/components/pos/SummaryCardRail";
 import { HomeShortcuts } from "@/platforms/web/components/pos/HomeShortcuts";
-import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
+import { effectiveTimeZone, formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { inventoryMetrics, isLowStock } from "@/lib/inventory-metrics";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState, type ReactNode } from "react";
@@ -90,7 +95,7 @@ function AllShops() {
   const showMoney = isAdmin || can("can_view_sales_reports");
   const showCostMargin = isAdmin || can("can_view_cost_margin");
   const canExport = can("can_export_reports");
-  const storeIds = useMemo(() => stores.map((store) => store.id), [stores]);
+  const storeIds = useMemo(() => totalStores.map((store) => store.id), [totalStores]);
   const periodStoreIds = useMemo(() => totalStores.map(store=>store.id),[totalStores]);
   const today = isoDay(new Date());
   const [from, setFrom] = useState(today);
@@ -106,7 +111,7 @@ function AllShops() {
     [state.products, stockStores, catalogueVisibleAt],
   );
 
-  const perStore = stores.map((store) => {
+  const perStore = totalStores.map((store) => {
     const totals = lifetime.totals?.[canonicalBranchId(store.id)];
     const shift = state.shifts.find(
       (s) => sameBranchId(s.storeId, store.id) && s.status !== "CLOSED" && !s.closedAt,
@@ -145,6 +150,21 @@ function AllShops() {
     };
   }, [history.sales, state.products, totalStores, from, to]);
   const billPager = usePagination(live.feed, 25);
+  const confirmedLive = useConfirmedPresentation(isAdmin && periodStoreIds.length > 0 ? JSON.stringify([pageDataScope(user), periodStoreIds, from, to, effectiveTimeZone()]) : null,
+    live, inventoryReady && !history.loading && !history.error);
+  const graphAuthority=isAdmin&&periodStoreIds.length>0?JSON.stringify([pageDataScope(user),periodStoreIds,effectiveTimeZone(),showCostMargin]):null;
+  const graphPayload=useMemo(()=>confirmedLive?{live:confirmedLive,products:state.products,range:{from,to}}:null,[confirmedLive,state.products,from,to]);
+  const graphFrame=useConfirmedPresentation(graphAuthority,graphPayload,!!confirmedLive);
+  const comparisonFeed = graphFrame?.live.feed;
+  const comparisonDays = useMemo(() => comparisonSalesDays(comparisonFeed ?? [], graphFrame?.products ?? []), [comparisonFeed, graphFrame]);
+
+  const comparisonHours = useMemo(() => comparisonSalesHours(comparisonFeed ?? [], graphFrame?.products ?? []), [comparisonFeed, graphFrame]);
+  const comparisonFinancial = useMemo(() => totalStores.map(store => {
+    const totals = profitOf((comparisonFeed ?? []).filter(sale => sameBranchId(sale.storeId, store.id)), graphFrame?.products ?? []);
+    return { id: store.id, name: store.name, revenue: totals.revenue, cost: totals.cogs, profit: totals.profit, marginPct: totals.marginPct };
+  }), [totalStores, comparisonFeed, graphFrame]);
+  const confirmedShops = useConfirmedPresentation(stores.length > 0 ? JSON.stringify([pageDataScope(user), storeIds, today, showMoney, showCostMargin]) : null,
+    perStore, inventoryReady && (!showMoney || (!lifetime.loading && !lifetime.error && !!lifetime.totals)));
 
   const rows = state.products.filter((p) => {
     if (!stockStores.some((s2) => catalogueVisibleAt(p, s2.id))) return false;
@@ -192,13 +212,14 @@ function AllShops() {
           </div>
           <div>
             <p className="text-sm text-muted-foreground page-description">
-              Shop cards show sales and profit to date through {today}. The date filters apply to sales performance and bills below, using the store time zone. Stock and shifts show the current state; stock export stays within the selected cluster.
+              Shop cards follow the selected cluster and show sales and profit to date through {today}. The date filters apply to sales performance and bills below, using the store time zone. Stock and shifts show the current state; the stock table/export use the operating branch’s cluster.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
             <ReportFilters title="All Shops filters">
               {isAdmin && (
                 <div className="flex flex-wrap gap-3">
+                  <TradingRangePresets today={today} from={from} to={to} onChange={range => { setFrom(range.from); setTo(range.to); }} />
                   <label className="space-y-1 text-sm">
                     <span>From</span>
                     <Input
@@ -272,6 +293,7 @@ function AllShops() {
             {history.loading ? "Loading sales for the selected dates…" : "Updating sales…"}
           </p>
         )}
+        {history.error && confirmedLive && <p role="status" className="text-xs text-muted-foreground">Showing last confirmed period summary; the refresh did not complete.</p>}
         {lifetime.error && <p role="alert" className="rounded-lg border border-destructive/40 p-3 text-sm text-destructive">Could not refresh shop totals: {lifetime.error}</p>}
         {lifetime.loading && <p role="status" className="text-sm text-muted-foreground">Loading shop totals to date…</p>}
         {!stores.length && (
@@ -280,8 +302,14 @@ function AllShops() {
           </p>
         )}
 
-        <SummaryCardRail label="Shop summaries">
-          {perStore.map((s) => (
+        <label className="flex flex-wrap items-center gap-2 text-sm">Shops and period charts
+          <select aria-label="Cluster for shop cards and charts" value={selectedCluster} onChange={event => setTotalsSelection(event.target.value)} className="h-9 max-w-full rounded-md border border-border bg-background px-2">
+            {unrestrictedManagement && <option value="all">All authorized clusters</option>}
+            {clusterOptions.map(option => <option key={option.key} value={option.key}>{option.label}</option>)}
+          </select>
+        </label>
+        {confirmedShops && <SummaryCardRail label="Shop summaries">
+          {confirmedShops.map((s) => (
             <div key={s.store.id} className="min-w-0 rounded-lg border border-border bg-card p-4 [overflow-wrap:anywhere]">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
@@ -314,7 +342,7 @@ function AllShops() {
               )}
             </div>
           ))}
-        </SummaryCardRail>
+        </SummaryCardRail>}
 
         {isAdmin && (
           <section className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
@@ -325,21 +353,20 @@ function AllShops() {
               </span>
             </div>
             <div className="flex flex-wrap items-center gap-3 text-sm">
-              <label className="flex items-center gap-2">Totals and bills
-                <select aria-label="Cluster for totals and bills" value={selectedCluster} onChange={event=>setTotalsSelection(event.target.value)} className="h-9 max-w-full rounded-md border border-border bg-background px-2">
-                  {unrestrictedManagement && <option value="all">All authorized clusters</option>}
-                  {clusterOptions.map(option=><option key={option.key} value={option.key}>{option.label}</option>)}
-                </select>
-              </label>
-              <span className="text-xs text-muted-foreground">{from} to {to} · Shop cards remain separate.</span>
+              <span className="text-xs text-muted-foreground">{from} to {to} · Shop cards and charts follow this cluster selection; card amounts remain lifetime totals.</span>
             </div>
             <p className="text-xs text-muted-foreground">Net sales exclude tax and are before saved receipt adjustments. Collected is the final bill total after those adjustments. Refunded bills are excluded.</p>
-            <SummaryCardRail label="Selected-period shop totals">
-              <Kpi label="Net sales before adjustments · selected dates" value={money(live.revenue)} info={!history.loading && !history.error && <SalesTotalInfo totals={live.totals} adjustmentLabel={receiptAdjustmentLabel(live.feed)} />} />
-              <Kpi label="Gross profit" value={money(live.profit)} info={<GrossProfitInfo revenue={live.revenue} cost={live.cost} profit={live.profit} />} />
-              <Kpi label="Bills" value={String(live.bills)} />
-              <Kpi label="Average basket · net sales" value={money(live.basket)} info={<FinancialBreakdown rows={[["Net sales", money(live.revenue)], ["Completed bills", String(live.bills)], ["Average basket", money(live.basket)]]}><p>Net sales ÷ completed bills for the selected dates.</p></FinancialBreakdown>} />
-            </SummaryCardRail>
+            {confirmedLive && <SummaryCardRail label="Selected-period shop totals">
+              {Math.abs(confirmedLive.revenue) >= 0.005 && <Kpi label="Net sales before adjustments · selected dates" value={money(confirmedLive.revenue)} info={<SalesTotalInfo totals={confirmedLive.totals} adjustmentLabel={receiptAdjustmentLabel(confirmedLive.feed)} />} />}
+              {showCostMargin && Math.abs(confirmedLive.profit) >= 0.005 && <Kpi label="Gross profit" value={money(confirmedLive.profit)} info={<GrossProfitInfo revenue={confirmedLive.revenue} cost={confirmedLive.cost} profit={confirmedLive.profit} />} />}
+              {confirmedLive.bills > 0 && <Kpi label="Bills" value={String(confirmedLive.bills)} />}
+              {Math.abs(confirmedLive.basket) >= 0.005 && <Kpi label="Average basket · net sales" value={money(confirmedLive.basket)} info={<FinancialBreakdown rows={[["Net sales", money(confirmedLive.revenue)], ["Completed bills", String(confirmedLive.bills)], ["Average basket", money(confirmedLive.basket)]]}><p>Net sales ÷ completed bills for the selected dates.</p></FinancialBreakdown>} />}
+            </SummaryCardRail>}
+            {graphFrame && <ShopComparisonCharts rows={comparisonDays} directory={state.stores}
+              selectedIds={periodStoreIds} showProfit={showCostMargin}
+              range={graphFrame.range} requestedRange={{from,to}}
+              transactionHours={comparisonHours} profitHours={comparisonHours} financialRows={comparisonFinancial}
+              scopeLabel={selectedCluster === "all" ? "All authorized clusters" : "Selected cluster"} />}
             <div className="overflow-auto rounded-md border border-border bg-card">
               <Table tableId="routes/all-shops#1">
                 <TableHeader>

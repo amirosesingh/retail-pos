@@ -1,3 +1,26 @@
+## 6 November — next single-file existing-PC preparation (SQL73)
+
+The current reviewed standalone025–030 file remains unchanged at SHA256
+`090F24031A07660C2D36512D2B38197A06491BB28408CCAAFDBB66FC400A4730`.
+This preparation will append stock-history031 only after STOCK401 supplies its
+explicit final source/shape freeze. Its present draft is not a delivery file,
+not pinned in this bundle and not approved for execution.
+
+Reuse the existing generator and owned transaction: validate the reviewed core,
+recognize or create025–030, recognize/create the exact frozen031 metadata, verify
+all module/core shapes, then commit once. Unknown/partial shapes or a late error
+roll back the complete update. Keep existing sales/stock/settings/grants and all
+local pending evidence intact; no baseline/backfill, queue/checkpoint reset,
+connection change or business operation is part of the SQL file.
+
+Before delivering the replacement ONE plain SSMS file: record the frozen031
+source hash, runtime preflight parity and captured physical catalogue; test a
+known existing025–030 database gaining031, populated rerun, partial/unknown031
+rejection and late031 rollback on uniquely owned LocalDB. Preserve source literal
+bytes and exact metadata recognition under both reviewed collations. The final
+file/manifest/hash and exact selected PC/server/database require separate review
+before live execution. No final031 artifact or PR is published at this checkpoint.
+
 # Production upgrade bundle and application record
 
 Status: the exact approved files were applied to the named cloud project and one local database on 5 November. See [the application record](shift-financial-application-20261105.md). Other targets, rollout activation and publication remain unapproved. Historical candidate notes below are retained as evidence, not replay instructions.
@@ -106,3 +129,133 @@ files on the single approved local database. The section above records the
 earlier preparation boundary; the dated application record is authoritative for
 what ran. Do not rerun installed metadata or bulk-push timestamped migrations
 without reviewing the recorded repository-file/live-ledger correspondence.
+
+## Next legacy-recovery preparation — NOT approved for application
+
+The owner approved the narrow exact-witness download correction and Management
+pagination code/isolated tests on5 November. Neither approval applies these
+schema candidates, activates local adoption, enrolls real keys or publishes a
+release. The already-applied financial/sharing files above are not replay steps
+for this new preparation. Current recovery preparation checkpoint:5c5ce06b.
+
+Proposed cloud target remains ROSEGILL / rosegill0011@gmail.com's Org
+(`bjxgimekljzlnwejuawj`) / pos (`qhrufhtbeguxydenzfey`), database `postgres`,
+https://qhrufhtbeguxydenzfey.supabase.co. No fresh live-definition preflight or
+application has been performed for this candidate. Exact local server/database/
+GUID/schema identity must be verified separately for every existing PC; historical
+machine names or a beta application label are not proof of the current target.
+
+| Candidate artifact / order within its database | Exact current SHA256 | Change on schema application |
+| --- | --- | --- |
+| Cloud: `supabase/migrations/20261105063613_admin_attested_legacy_shift_recovery.sql` | `145FDD86BBF6E2D7B4CB6CB9B9E0D72639329ED24979357AEAE2C724BA43EC2E` | New private append-only receipt table, index/trigger and service-only `pos_sync_recover_legacy_closing(text,text,text,text,jsonb,jsonb)`; deny direct table access. No business rows rewritten. |
+| Local1: `docs/database/retained-shift-recovery-evidence.sql` | `E3727FE62A276C1EAF200F8783B289D5BE745F2E95D563CDA850EEE9F8CAADCD` | New immutable `dbo.pos_shift_recovery_evidence`, bounded raw before-images, scope index/checks/trigger. Empty on application. |
+| Local2: `docs/database/legacy-shift-recovery-outbox.sql` | `08917EE9041033A68A81751D6409B0BB60E7E0D1D3878DCF577EA64D0B6C5307` | New immutable `dbo.pos_sync_shift_legacy_recoveries` and `dbo.pos_sync_shift_legacy_recovery_receipts`, identity/scope indexes and evidence/receipt relationships. Empty on application. |
+| Local3: `docs/database/reviewed-shift-adoption.sql` | `5EE385C20BE5C3A79C0F0CBB91D0D4294EF17D0CB8B350201C23B4B65BF4CE92` | New immutable `dbo.pos_shift_recovery_adoptions` decision archive, evidence relationship, uniqueness and exact constraints. The unapplied identity index includes decision_id so distinct explicit reviews can remain append-only. Empty on application. |
+
+These are reviewed-source hashes for preparation, not final apply instructions.
+The existing files each own a transaction and abort on unexpected existing
+objects. A final single local existing-database upgrade file must be generated,
+reviewed and tested for atomicity and recognized already-installed shapes before
+being offered to an operator. Do not naively concatenate/replay these separate
+transactions or run a full installer. Their final consolidated bytes/hash and
+per-PC target preflight still require owner review before application.
+
+Schema application alone creates no closing, sale, stock adjustment, signature,
+recovery approval, receipt, adoption decision or checkpoint advance. Later actual
+application use is distinct: an authenticated Administrator may explicitly review
+a missing historical closing under the approved provenance rule; the cloud routine
+rechecks current authority and complete OPEN compare-and-swap. Reviewed local
+adoption archives the exact before-image before changing its effective projection.
+Those operations must preserve accepted web corrections and pending work, and
+must not invent an original financial snapshot or cashier signature.
+
+The later recovery wiring/CT-proof preparation now passes59 actual disposable
+SQL groups and135 focused tests. Current real Administrator review or a fresh
+private accepted receipt is required for reviewed no-write recovery coverage;
+persisted decision rows alone grant no authority. The captured-V0 six-table
+completion case passes. A fresh accepted-original snapshot can prove the narrow
+restart/later-web-correction chain; unprovable intermediate histories stay for
+explicit review. The Local3 index change above permits permanent distinct review
+decisions and requires exact file review before application. Full integrated
+regression on current beta remains pending; none of this applies or approves
+these candidates or activates a production recovery.
+
+Final gates: full integrated exact-writer regression, complete runtime
+adoption integration, independent allowed/denied/retry/rollback tests, compatible
+cloud/local sequence and fresh schema/grant checks, isolated upgrade tests, actual
+device acceptance, and separate exact-target application approval. Installer and
+production publication remain separately unapproved. Never delete immutable
+evidence/pending history as a rollback after accepted operations exist; preserve
+records and prepare a targeted forward correction.
+
+## SQL72 — one local existing-database file for1.4.82
+
+The urgent local-PC deliverable is
+[`database/sqlserver/retail-pos-existing-upgrade-1.4.82.sql`](../../database/sqlserver/retail-pos-existing-upgrade-1.4.82.sql).
+It is one plain SSMS batch and needs no accompanying scripts, manifest, Node,
+connection string or source files to run. It is a prepared artifact, **not an
+instruction or approval to execute it on any PC**. Supabase upgrades and the
+unfinished historical-stock031 source are excluded.
+
+Current artifact SHA256:
+`090F24031A07660C2D36512D2B38197A06491BB28408CCAAFDBB66FC400A4730`.
+The file uses LF bytes; its Git attributes pin those bytes on Windows and CI.
+The reviewed source files have scoped LF attributes too, without source-blob
+changes. SQL literal contents are preserved: only structural newline variants
+outside quoted literals are recognized. An embedded CR is reconstructed with
+`NCHAR(13)` and an explicit `nvarchar(max)` concatenation, never rewritten as LF.
+
+| Included module, applied in this order only if absent | Canonical reviewed source SHA256 | Possible new objects |
+| --- | --- | --- |
+|025 financial bases | `2C6E250D04855B86447603763C1A9304241D99D77814040756AB9AA67CB77897` |2 immutable financial-basis/proof tables |
+|026 financial operations | `26A55BC6FD352083AA388283F093212E9C74081E9C96FE87A79E71288AE235FA` |8 financial-history metadata tables |
+|027 branch sharing | `E0E9A77D847A08961BAA1EB7D75C67F971960E086FA286A7891FC424DE93F359` |Nullable `pos_store_settings.allow_branch_shift_sharing`; existing settings remain unchanged |
+|028 recovery evidence | `E3727FE62A276C1EAF200F8783B289D5BE745F2E95D563CDA850EEE9F8CAADCD` |Immutable evidence table |
+|029 recovery outbox | `08917EE9041033A68A81751D6409B0BB60E7E0D1D3878DCF577EA64D0B6C5307` |2 immutable pending/accepted recovery metadata tables |
+|030 reviewed adoption | `5EE385C20BE5C3A79C0F0CBB91D0D4294EF17D0CB8B350201C23B4B65BF4CE92` |Immutable adoption-decision table; identity index includes `decision_id` |
+
+Across absent modules this creates14 empty metadata tables,22 indexes,36 CHECKs,
+3 foreign keys,14 immutability triggers and4 ownership properties, plus the one
+nullable sharing column. Already-installed recognized objects and all their rows
+are retained exactly. No business rows, migration-ledger records, financial
+evidence, accepted history, stock, prices, sales, shifts, registration, queues,
+checkpoints, settings or permission grants are rewritten. No feature is activated.
+
+Recognition checks the reviewed schema24 physical catalogue (84 managed tables,
+including all70 registered/domain tables) and each included module's exact
+columns, types, nullability, defaults, explicit/inherited collations, constraints,
+ordered/index options, foreign keys, trigger source/options and ownership marks.
+Typed, binary-ordered SQL JSON fingerprints cover every inspected field and NULL
+explicitly; the full inspectable manifest is retained in
+`database/sqlserver/prepared/existing-upgrade-1.4.82.manifest.json`. Its capture
+provenance is SQL Server17.0.1145.4 Express64, default
+`SQL_Latin1_General_CP1_CI_AS`. A schema24 receipt plus correct physical objects is
+required; historic receipts1–23 are not artificially required. Extra unrelated
+operator tables are preserved but not certified. Arbitrary custom/core or older
+schemas and old experimental030 indexes are unsupported and abort safely.
+
+One owned outer transaction and a bounded upgrade lock cover the whole batch.
+Module transactions remain balanced. A partial namespace, unrecognized existing
+shape, failed new module or final core mismatch rolls back every change in the
+batch. It rejects caller transactions before changing their session error mode.
+It does not replay the installer, repair archive flags, switch/create databases,
+change database/connection settings, increase timeouts, or repair unknown shapes.
+
+Validation checkpoint:10 pure packaging tests, scoped lint and deterministic
+Ubuntu-LF/Windows-CJS-CRLF packaging parity pass. The final exact-byte full-Retail
+LocalDB matrix passes28 groups, and the original minimal-core atomic-composition
+fixture passes4 groups. Both fixtures were cleaned. The full matrix covers
+CI/BIN2 collations, all old-table/permission snapshots, installed025–027 rows,
+rerun, malformed/partial objects, literal/case/Unicode/escape/NULL distinctions,
+index order/filter, immutability/ownership, concurrent maintenance, late rollback
+and6002-character quoted-CR reconstruction. The earlier27-group predecessor run
+is historical evidence only. No application/runtime source was changed bySQL72.
+Actual operator-device/schema acceptance, exact per-PC server/database/GUID
+approval, maintenance closure and backup remain separate before application.
+No operator database was used by capture or tests. Installed-device recovery,
+beta/main promotion and release publication remain separately tracked.
+
+For maintainers, `node scripts/package-existing-local-upgrade.cjs --check`
+verifies exact generated bytes without a database. `--write` regenerates them
+from the reviewed manifest/source. Only the generated `.sql` is the operator
+download; the manifest and helper/test scripts are maintainer evidence.

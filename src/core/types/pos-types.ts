@@ -1,3 +1,5 @@
+import { r2 as sharedR2, lineDiscountTotal as sharedLineDiscountTotal } from "../../../electron/shared/discount-math.mjs";
+
 export type Store = {
   id: string;
   code: string;
@@ -191,7 +193,7 @@ export type CartLine = {
 export type DiscountType = "amount" | "percent";
 
 /** Round to cents without float drift. */
-export const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+export const r2 = sharedR2;
 
 /** The parts of a line that decide what money comes off it. */
 export type DiscountableLine = Pick<CartLine, "price" | "discount" | "discountType"> &
@@ -222,17 +224,7 @@ export const lineUnitDiscount = (l: DiscountableLine) => {
  * Whole-line discount, rounded once so a percentage does not drift a cent per
  * unit on prices like 33.33 × 3. This is what the ticket totals use.
  */
-export const lineDiscountTotal = (l: DiscountableLine) => {
-  const qty = Math.abs(l.qty ?? 1);
-  const gross = Math.abs(l.price) * qty;
-  const coupon = Math.min(gross, Math.abs(l.couponDiscount || 0));
-  const after = gross - coupon;
-  const own =
-    l.discountType === "percent"
-      ? (after * Math.min(100, Math.max(0, l.discount || 0))) / 100
-      : Math.min(after, Math.max(0, l.discount || 0) * qty);
-  return r2(Math.min(gross, coupon + own));
-};
+export const lineDiscountTotal = sharedLineDiscountTotal;
 
 /**
  * A payment method is a code from the configurable payment-types list, so an

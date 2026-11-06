@@ -54,6 +54,132 @@
   first. These rules apply equally to beta and production PRs and do not replace
   the separate explicit approval required for each production promotion.
 
+## Durable synchronization and long-offline integrity
+
+- Use one coordinated synchronization pipeline: transactional local outbox,
+  acknowledged event/aggregate uploads, incremental downloads and bounded,
+  resumable recovery snapshots. Reuse the existing engine and contracts rather
+  than introducing a competing sync system for each module. Different domain
+  operations may require different validators and atomic dependency groups.
+- Save a local business operation and its durable pending upload evidence in
+  the same transaction. Keep pending operations until verified server acceptance;
+  retries and lost acknowledgements must not duplicate sales, payments, stock
+  movements or closing actions. A network success alone is not acceptance.
+- Pending offline work must survive restart, slow connectivity and long offline
+  periods. Change Tracking expiry and history-retention policies must not erase,
+  acknowledge or overwrite unsynchronized work. Test expired-history recovery
+  separately from normal short-disconnect retries. Do not promise unlimited
+  offline operation without checking storage capacity and credential/policy rules.
+- Synchronize missing or actually changed facts. Avoid rewriting identical rows,
+  advancing versions unnecessarily or restarting completed downloads. Use bounded
+  pages and durable progress; only advance a checkpoint after its required data
+  and acknowledgement/proof have committed. Revalidate scope and pending changes
+  before trusting a saved cursor or recovery plan after a restart.
+- Versions and timestamps support concurrency checks; neither the highest version
+  nor newest device timestamp alone establishes authority. Preserve original shift
+  closings and authorized corrections from web or native terminals. Retained
+  legacy work with missing evidence needs explicit recovery provenance; never
+  fabricate an original author's signature, accepted receipt or cloud baseline.
+- Classify exact matches, missing operations, validated cloud evolution and true
+  conflicts before recovery writes. Keep both histories for competing closings
+  and require an authorized decision where no safe causal winner can be proved.
+  Never fix recovery by resetting registration/checkpoints, clearing pending work,
+  weakening branch/author checks or ad-hoc manual copying into production.
+  Separately approved, guarded maintenance remains subject to exact-target review.
+- Automatically retry transient failures with bounded requests and controlled
+  backoff, without overlapping identical work. Display actual upload/download,
+  retry, paused, review-required and failed states. Do not hide a failure, report
+  "up to date" with pending work, or repeatedly present a recoverable condition as
+  an unexplained error. Revoked permissions hold work for review, not silent loss.
+
+## Fleet recovery, checkout and presentation isolation
+
+- Routine recovery must run through the application for every applicable table.
+  A PC reconnecting after a short or long offline period must not depend on an
+  operator running per-PC history/count SQL. Use the existing durable jobs,
+  validated incremental cursors and bounded resumable recovery. Classify missing,
+  matching, pending and conflicting facts; counts alone do not prove equality.
+- Keep recovery progress bound to the actual database/profile, registration and
+  authorized scope. One PC's completion does not certify another PC. Coordinate
+  shared workers, use bounded concurrency and staggered retries, and preserve
+  pending work through interruption, expired history and lost acknowledgements.
+  A feed's maximum allocated sequence alone is not a commit-order snapshot fence.
+- Electron business writes remain atomic with their SQL Server pending evidence.
+  Web and mobile use their existing platform adapters under the same authorized,
+  idempotent operation contracts. Do not introduce a competing queue or force
+  desktop storage assumptions onto another platform. Enforce current branch,
+  author, approval and permission checks in the authoritative writer.
+- Confirm sale/payment success only after the authoritative commit is verified.
+  An uncertain response must retry or read back the same operation identity,
+  preserving the accepted receipt and preventing a second charge, sale or stock
+  deduction. Preserve exact financial evidence, refunds, original shift closings
+  and later authorized corrections; a newer clock/version alone cannot replace
+  them. Never silently acknowledge unavailable or unverified historical work.
+- Graph controls, sorting and presentation changes must not restart business
+  synchronization, reset cursors, clear caches/queues, change registration or
+  reload the entire application. Grouping/chart-kind changes use confirmed data
+  already read; a genuinely new range uses the existing bounded report reader.
+  Preserve the navigation and controls, show scoped progress, reject stale
+  responses, and hide old protected data on authority/scope changes. Do not weaken
+  authentication or completeness gates merely to remove a loading indicator.
+- Test short/long offline periods, multiple PCs with different retained work,
+  restart/lost-ack retries, concurrent administrator corrections, denied/revoked
+  access and the actual platform adapters before claiming recovery complete.
+  Keep one-time reviewed schema upgrades separate from normal automatic recovery.
+
+## Database calls, imports and historical evidence
+
+- Resolve database/backend configuration from the existing trusted operator or
+  hosting configuration. Preserve terminal identity, branch/warehouse/cluster
+  scope and current authorization on every affected online, local and offline
+  path. Do not fall back to another database or untrusted request identity.
+- Parameterize SQL values and restrict dynamic identifiers to the reviewed
+  schema/registry. Use the configured connection pool with bounded concurrency;
+  avoid duplicate in-flight reads and unnecessary polling. A terminal is not
+  equivalent to one physical PostgreSQL connection. Do not change pool limits,
+  operator connection settings or billing to conceal a query/sync defect.
+- Use exactly one transaction owner for a migration execution path. Inspect and
+  test the provider/tool wrapper before submitting SQL containing BEGIN/COMMIT.
+  Prepare tool-compatible, hash-pinned payloads with rollback and ledger-failure
+  checks; never silently strip owner-approved bytes. Changed protected payloads
+  require renewed exact-file approval. Verify source, grants and ledger before
+  responding to transaction warnings; do not blindly reapply a committed upgrade.
+- Preserve timeout/network errors separately from authentication/permission
+  denials and business conflicts. Do not count connectivity failures as wrong PIN
+  attempts or substitute empty/default settings as successfully loaded data.
+  Block edits based on unverified safety defaults; preserve verified offline
+  cached/pending settings according to existing policy.
+  Upgrades must not silently replace previously matched offline operating rules
+  with defaults. Preserve a safe read-only legacy transition until connection
+  binding is verified; never use it to enable new privileges or unsupported rules.
+- Spreadsheet imports must preserve valid numeric amounts, decimals and identifier
+  text; workbook styling alone must not change their meaning. Do not silently
+  strip arbitrary characters into valid numbers, round/truncate amounts, shift
+  columns when cells are blank, or discard leading zeros in identifiers. Report
+  ambiguous/invalid values by original row and column before saving. Use preview,
+  bounded batches and regression tests with real synthetic workbooks; never
+  rewrite the operator's source workbook merely to clear formatting.
+- Historical reports must use the requested branch/location and exact date/time
+  cutoff with an explicit timezone. A shift-closing shortcut uses the saved actual
+  closing instant. Prove opening balances and complete, deduplicated movements;
+  report incomplete coverage rather than inventing historical stock or valuation
+  from today's quantities/prices. Resolve effective-time versus recorded-time
+  semantics before implementing historical reconstruction.
+
+## Approved-scope autonomy and release evidence
+
+- Continue routine implementation, relevant tests, agent review and beta PR updates
+  within an approved batch without repeatedly requesting the same permission.
+  Ask only for missing business decisions, materially new scope or a separately
+  protected action. Approval is not implied by elapsed time or a passing test.
+- Keep focused fixes in separate beta PRs with current heads and honest status.
+  Do not call a classifier, prepared migration, passing CI or published installer
+  a completed end-to-end recovery. Track implementation, regression tests, beta
+  acceptance, database application and production publication separately.
+- Preserve the existing exact-target database and specific production-promotion
+  approval requirements. General instructions to finish quickly do not authorize
+  live data repairs, billing changes, security bypasses or unreviewed releases.
+
 ## Supabase configuration (do not regress)
 
 `supabaseConfig()` in `src/lib/external-supabase-config.ts` is the single
@@ -128,6 +254,11 @@ that device builds require. The guard lives in
   branch. Another branch's protected warehouses or inventory require an
   explicitly approved cross-branch workflow. Do not infer an independent
   warehouse ACL or new access entitlement from the location hierarchy.
+- Preserve the approved DEC-48 exception in project memory: a normal terminal
+  may view positive available stock at other active locations in its own cluster
+  through the authorized availability workflow. This grants no operating-branch
+  switch, other-branch write access or cross-cluster catalogue visibility. SKU
+  allocation remains global; per-location quantities remain distinct.
 - Shared physical SQL storage grants no shared access. Management replication
   stores only its configured authorized scope. Preserve original business,
   branch, warehouse, terminal and user attribution where applicable through

@@ -3,7 +3,7 @@ const path = require("node:path");
 const fs = require("node:fs");
 const os = require("node:os");
 const net = require("node:net");
-const { randomUUID } = require("node:crypto");
+const { randomUUID, createHash } = require("node:crypto");
 const { spawn } = require("node:child_process");
 const { app, BrowserWindow, ipcMain, screen, dialog, session, shell, safeStorage, Menu } = require("electron");
 
@@ -29,6 +29,7 @@ const { BackupService } = require("./db/backup.cjs");
 const { JobRepository } = require("./jobs/repository.cjs");
 const { JobManager } = require("./jobs/manager.cjs");
 const { LocalDataLifecycle } = require("./jobs/lifecycle.cjs");
+const { reconciliationError, MEMBERSHIP_TABLES } = require("./sync/reconciliation.cjs");
 const { loadRegistry } = require("./db/schema-registry.cjs");
 const { CheckpointRepository } = require("./sync/checkpoints.cjs");
 const { ChangeReader } = require("./sync/change-reader.cjs");
@@ -79,15 +80,44 @@ const shiftAuthority = new (require("./shift-authority.cjs").ShiftAuthorAuthorit
   terminal:()=>terminalStore.read(),project:()=>cloudCredentials.read({strict:true})?.url,
   branch:()=>localBranchId(),isManagementDevice:()=>isManagementDevice(),backendUrl:()=>authorizationServerUrl(),
 });
-const changeReader = new ChangeReader(databaseManager, syncRegistry);
+const changeReader = new ChangeReader(databaseManager, syncRegistry, {reviewedShiftRecovery:{
+  prepare:graph=>legacyShiftRecovery?.prepareCoverage(graph),
+  verify:(tx,token,graph,branch)=>legacyShiftRecovery.verifyCoverage(tx,token,graph,branch),
+}});
 const conflictRepository = new ConflictRepository(databaseManager);
 const legacyPushWorker = new PushWorker({ reader:changeReader,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,validateAuthor:proof=>shiftAuthority.validatePending(proof),validateClosingStart:proof=>shiftAuthority.validatePendingClosingStart(proof) });
-const syncCoordinator = new SyncCoordinator({
-  pushWorker: {reader:changeReader,run:options=>shiftFinancialRuntime.runPush(options)},
-  pullWorker: new PullWorker({ connectionManager:databaseManager,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,reader:changeReader,conflicts:conflictRepository,publish:publishBusinessChange }),
-  publish: (state) => { for (const win of BrowserWindow.getAllWindows()) win.webContents.send("sync:state",state); },
+let legacyShiftRecovery;
+const legacyRecoveryRuntime = require("./sync/legacy-shift-recovery-runtime.cjs").createLegacyShiftRecoveryRuntime({
+  reader:changeReader,recovery:()=>legacyShiftRecovery,enabled:supportsLegacyShiftRecovery,activeBranch:localBranchId,
+  captureSource:()=>{
+    const pool=databaseManager.pool;
+    const identity=()=>JSON.stringify([databaseManager.profile,terminalStore.read(),authorizationServerUrl(),cloudCredentials.read()?.url??null]);
+    const expected=identity();
+    return ()=>{if(databaseManager.pool!==pool||identity()!==expected)throw Object.assign(new Error("The configured sync source changed. Saved work remains pending."),{code:"SYNC_BRANCH_FORBIDDEN",table:"shifts"});};
+  },
 });
-const localDataLifecycle = new LocalDataLifecycle({ connectionManager:databaseManager,databaseService,jobManager,jobRepository,registry:syncRegistry,cloud:syncCloud,syncCoordinator,checkpoints:syncCheckpoints,reader:changeReader,publish:publishBusinessChange });
+const syncCoordinator = new SyncCoordinator({
+  pushWorker: {reader:legacyRecoveryRuntime.reader,run:options=>legacyRecoveryRuntime.run(options,value=>shiftFinancialRuntime.runPush(value))},
+  pullWorker: new PullWorker({ connectionManager:databaseManager,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,reader:changeReader,conflicts:conflictRepository,publish:publishBusinessChange }),
+  publish: (state) => { for (const win of BrowserWindow.getAllWindows()) win.webContents.send("sync:state",legacyRecoveryRuntime.status(state)); },
+});
+// Main-private ownership evidence for retaining, not executing, an interrupted
+// history-only v1 job. No renderer flag or job timestamp can supply this proof.
+async function ownsHistoryRecoveryExecution({jobId,source,requestParent=null}={}){
+  const same=()=>{
+    if(app.hasSingleInstanceLock()!==true||syncCoordinator.ownsExclusive()!==true||!source||source.pool!==databaseManager.pool)return false;
+    const current=syncCloud.requestContext(false),running=jobManager.running;
+    return current.pool===source.pool&&current.fingerprint===source.fingerprint&&recordId(syncCloud.terminalId())===source.terminalId&&
+      (!running||running.job_type==='history_index_recovery_v1'&&recordId(running.job_id)===recordId(jobId));
+  };
+  try{
+    if(!same()||typeof source.databaseGuid!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(source.databaseGuid))return false;
+    const request=requestParent?new(databaseManager.sql().Request)(requestParent):source.pool.request();
+    const result=await request.query('SELECT LOWER(CONVERT(nvarchar(36),database_guid)) database_guid FROM sys.database_recovery_status WHERE database_id=DB_ID();');
+    return same()&&result.recordset?.length===1&&result.recordset[0].database_guid===source.databaseGuid;
+  }catch{return false;}
+}
+const localDataLifecycle = new LocalDataLifecycle({ connectionManager:databaseManager,databaseService,jobManager,jobRepository,registry:syncRegistry,cloud:syncCloud,syncCoordinator,checkpoints:syncCheckpoints,reader:changeReader,publish:publishBusinessChange,historyExecutionProof:ownsHistoryRecoveryExecution });
 const managementReplica = new (require("./sync/management-replica.cjs").ManagementReplica)({ cloud:syncCloud, databaseService, connectionManager:databaseManager, lifecycle:localDataLifecycle, jobs:jobRepository, coordinator:syncCoordinator });
 const mainTelemetry = createTelemetry({ databaseService,syncCoordinator,jobRepository,configStore,terminalStore,app });
 const operationsRepository = new OperationsRepository(databaseManager, syncRegistry);
@@ -103,6 +133,51 @@ const shiftFinancialRuntime = new (require('./db/shift-financial-runtime.cjs').S
   legacy:{aggregate:aggregateRepository,receipts:receiptRepository,journal:shiftSyncJournal,push:legacyPushWorker},
 });
 const authorizationRulesRepository = new AuthorizationRulesRepository(databaseManager);
+const { OfflineApprovalService, OfflineApprovalStore } = require("./offline-approval-service.cjs");
+const offlineApprovalService = new OfflineApprovalService({
+  captureScope: () => {
+    const identity = adminSession.identity(), terminal = terminalStore.read();
+    if (!adminSession.hasPosAuthority() || !adminSession.hasPermission("can_process_sale") || !identity?.authorId || isManagementDevice() || !databaseManager.pool || !databaseService.snapshot().tradingReady || !terminal?.tokenId || !localBranchId())
+      throw Object.assign(new Error("Sign in on the registered branch terminal before approving a bill."), { code: "EPRIVILEGE" });
+    adminSession.touch();
+    const pool = databaseManager.pool, epoch = adminSession.epoch();
+    const stamp = () => JSON.stringify([adminSession.identity(), adminSession.epoch(), terminalStore.read(), databaseManager.profile, authorizationServerUrl(), cloudCredentials.read()?.url]);
+    const expected = stamp();
+    const assertCurrent = () => { if (databaseManager.pool !== pool || stamp() !== expected) throw Object.assign(new Error("The signed-in operator or terminal changed. Request approval again."), { code: "EAPPROVAL_CONTEXT" }); };
+    return { branchId: localBranchId(), terminalId: recordId(terminal.tokenId), requester: identity.canonicalSubject ?? identity.subject, requesterId: recordId(identity.authorId), epoch, assertCurrent };
+  },
+  verify: (username, pin, scope) => verifySyncedApprovalPin(databaseManager.pool, username, pin, scope.branchId,
+    { verifyTotp: approvalTokenVerifier.verify, identifyTotp: approvalTokenVerifier.identify, prepareTotp: approvalTokenVerifier.prepare }),
+  store: new OfflineApprovalStore(databaseManager, operationsRepository),
+});
+const legacyRecoveryAuthority = new (require("./legacy-shift-recovery-authority.cjs").LegacyShiftRecoveryAuthority)({
+  keys:shiftAuthorKeys,session:adminSession,connectionManager:databaseManager,
+  terminal:()=>terminalStore.read(),project:()=>cloudCredentials.read({strict:true})?.url,
+  branch:()=>localBranchId(),isManagementDevice:()=>isManagementDevice(),backendUrl:()=>authorizationServerUrl(),
+});
+const recoveryScope = (tx, value) => legacyShiftRecovery?.assertScope(tx, value) === true;
+const recoveryEvidence = new (require("./db/shift-recovery-evidence.cjs").ShiftRecoveryEvidenceStore)({
+  connectionManager:databaseManager,registry:syncRegistry,assertScope:recoveryScope,
+});
+const recoveryOutbox = new (require("./db/legacy-shift-recovery-outbox.cjs").LegacyShiftRecoveryOutbox)({
+  connectionManager:databaseManager,registry:syncRegistry,evidenceStore:recoveryEvidence,authority:legacyRecoveryAuthority,
+  assertScope:recoveryScope,assertReceipt:require("./sync/legacy-shift-recovery-receipt.cjs").assertLegacyRecoveryReceipt,
+});
+legacyShiftRecovery = new (require("./sync/legacy-shift-recovery-service.cjs").LegacyShiftRecoveryService)({
+  connectionManager:databaseManager,registry:syncRegistry,cloud:syncCloud,evidenceStore:recoveryEvidence,outbox:recoveryOutbox,authority:legacyRecoveryAuthority,
+  adopter:new (require("./sync/reviewed-shift-adoption.cjs").ReviewedShiftAdoption)({
+    connectionManager:databaseManager,registry:syncRegistry,evidenceStore:recoveryEvidence,outbox:recoveryOutbox,authority:legacyRecoveryAuthority,
+    assertScope:recoveryScope,assertReceipt:require("./sync/legacy-shift-recovery-receipt.cjs").assertLegacyRecoveryReceipt,
+  }),
+  readContext:()=>{
+    const binding = require("./verified-activation.cjs").binding(terminalStore.read());
+    if (!binding || binding.mode !== "operations" || binding.platform !== "pc" || isManagementDevice())
+      throw Object.assign(new Error("Saved closing recovery requires its registered Operations terminal."),{code:"SYNC_BRANCH_FORBIDDEN"});
+    const source = syncCloud.financialBasisIdentity(localBranchId(),"00000000-0000-0000-0000-000000000000").identity;
+    const hash = value => createHash("sha256").update(JSON.stringify(value),"utf8").digest("hex");
+    return {branchId:source.branchId,terminalId:source.terminalId,backendOriginHash:hash([source.backend,source.projectOrigin]),profileKey:hash(source)};
+  },
+});
 
 function publishBusinessChange(change){
   for(const win of BrowserWindow.getAllWindows()){
@@ -137,6 +212,10 @@ const approvalTokenVerifier = createApprovalTokenVerifier({
 });
 
 function isManagementDevice(){const t=terminalStore.read();return Boolean(t?.tokenId&&t.deviceUse==="management"&&!t.locationId&&!t.storeId&&!t.branchId);}
+function supportsLegacyShiftRecovery(){
+  const binding=require("./verified-activation.cjs").binding(terminalStore.read());
+  return Boolean(databaseManager.pool && binding?.mode==="operations" && binding.platform==="pc" && !isManagementDevice());
+}
 const activationBoundary = require("./verified-activation.cjs");
 function localBranchId(){
   if(isManagementDevice())return null;
@@ -155,7 +234,7 @@ async function assertSafeRegistrationChange(config){
   // Management can have pending work from several branches in the same SQL
   // store. Inspect all unacknowledged work rather than treating null as a
   // branch or preventing a legitimate replacement activation forever.
-  const summary=branch?await changeReader.pendingSummary(branch):{
+  const summary=branch?await legacyRecoveryRuntime.reader.pendingSummary(branch):{
     pending:Number((await databaseManager.pool.request().query("SELECT COUNT_BIG(*) pending FROM dbo.sync_change_journal WHERE acknowledged_at IS NULL;")).recordset?.[0]?.pending??0),failed:0,
   };
   const conflicts=await conflictRepository.unresolved();
@@ -307,6 +386,7 @@ const AUTO_SYNC_RETRY_MS = 60_000;
 const AUTO_VERIFY_MS = 15 * 60_000;
 const SHUTDOWN_SYNC_TIMEOUT_MS = 120_000;
 const automaticSyncScheduler = require("./sync/scheduler.cjs").createSyncScheduler(runAutomaticSync);
+const historyCadence = new (require('./sync/history-cadence.cjs').HistoryCadence)();
 let automaticSyncQueued = false;
 let lastAutomaticVerification = 0;
 let terminalIdentityPausedSync = false;
@@ -314,16 +394,26 @@ let lastActivityFlush = 0;
 function scheduleLocalChanges(operations) {
   scheduleAutomaticSync(activityOnly(operations) ? ACTIVITY_INTERVAL_MS : 250);
 }
-function scheduleAutomaticSync(delay = AUTO_SYNC_OK_MS) {
+function scheduleAutomaticSync(delay = AUTO_SYNC_OK_MS,{historyContinuation=false}={}) {
   if (quitting) return;
+  // Every ordinary/unknown notification requests a real core pass. Only this
+  // Main-owned continuation marker may reuse the existing history quantum.
+  if(!historyContinuation)historyCadence.requestCore();
   if (syncCoordinator.running && delay <= 250) automaticSyncQueued = true;
   automaticSyncScheduler.schedule(delay);
 }
 async function runAutomaticSync() {
   if(isManagementDevice()){
-    try { await managementReplica.run(); }
-    catch(error) { diagnostics.logConnection("synchronization.management.failed", { category:"synchronization", message:String(error?.message??error) }); }
-    finally { if(terminalStore.read()?.tokenId && !terminalIdentityPausedSync) scheduleAutomaticSync(AUTO_SYNC_RETRY_MS); }
+    const decision=historyCadence.decision(),revision=historyCadence.beginCore();
+    if(decision==='wait'){scheduleAutomaticSync(historyCadence.nextDelay(),{historyContinuation:true});return;}
+    try { const result=await managementReplica.run({historyOnly:decision==='history'});
+      if(decision==='core')historyCadence.finishCore(revision,{ok:result.ok,nextMs:AUTO_SYNC_RETRY_MS});
+      if(result.history)historyCadence.historyOutcome(result.history);
+      else if(decision==='history')historyCadence.historyFailure();
+    }
+    catch(error) { if(decision==='core')historyCadence.finishCore(revision,{ok:false,nextMs:AUTO_SYNC_RETRY_MS});else historyCadence.historyFailure();
+      diagnostics.logConnection("synchronization.management.failed", { category:"synchronization", message:String(error?.message??error) }); }
+    finally { if(terminalStore.read()?.tokenId && !terminalIdentityPausedSync) scheduleAutomaticSync(historyCadence.nextDelay(),{historyContinuation:true}); }
     return;
   }
   const databaseState=databaseService.snapshot();
@@ -346,6 +436,14 @@ async function runAutomaticSync() {
     scheduleAutomaticSync(250);
     return;
   }
+  const decision=historyCadence.decision();
+  if(decision==='wait'){scheduleAutomaticSync(historyCadence.nextDelay(),{historyContinuation:true});return;}
+  if(decision==='history'){
+    try{historyCadence.historyOutcome(await localDataLifecycle.historyStep(localBranchId()));}
+    catch(error){historyCadence.historyFailure();recordFault('sync.history-recovery',error);}
+    scheduleAutomaticSync(historyCadence.nextDelay(),{historyContinuation:true});return;
+  }
+  const coreRevision=historyCadence.beginCore();
   automaticSyncQueued = false;
   void approvalTokenVerifier.refresh();
   const includeActivity = Date.now() - lastActivityFlush >= ACTIVITY_INTERVAL_MS;
@@ -361,12 +459,18 @@ async function runAutomaticSync() {
     }
   }
   if (result.ok) diagnostics.logConnection("synchronization.automatic.succeeded", { category:"synchronization", stage:"automatic", state:"ready" });
+  historyCadence.finishCore(coreRevision,{ok:result.ok,nextMs:result.ok?Math.max(250,AUTO_SYNC_OK_MS-(Date.now()-lastActivityFlush)):AUTO_SYNC_RETRY_MS});
+  if(result.ok){
+    try{historyCadence.historyOutcome(await localDataLifecycle.historyStep(localBranchId()));}
+    catch(error){historyCadence.historyFailure();recordFault('sync.history-recovery',error);}
+  }
   if (result.ok && Date.now() - lastAutomaticVerification >= AUTO_VERIFY_MS) {
     lastAutomaticVerification = Date.now();
-    void localDataLifecycle.reconcile(localBranchId(), Number(databaseConfig.profile()?.retentionDays)||90)
+    void localDataLifecycle.reconcileAndRecover(localBranchId(), Number(databaseConfig.profile()?.retentionDays)||90)
+      .then(differences=>{const unresolved=differences.filter(row=>!MEMBERSHIP_TABLES.has(row.table)&&!(row.table==='change_history'&&localDataLifecycle.historyPending(localBranchId())));if(unresolved.length)throw reconciliationError(unresolved);})
       .catch((error) => recordFault("sync.verify-counts", error));
   }
-  scheduleAutomaticSync(automaticSyncQueued ? 250 : result.ok ? Math.max(250, AUTO_SYNC_OK_MS - (Date.now() - lastActivityFlush)) : AUTO_SYNC_RETRY_MS);
+  scheduleAutomaticSync(automaticSyncQueued ? 250 : historyCadence.nextDelay(),{historyContinuation:true});
 }
 function stopAutomaticSync() {
   automaticSyncScheduler.stop();
@@ -402,7 +506,7 @@ async function flushSyncBeforeShutdown({ allowSignedOutExit = false } = {}) {
       run: async () => {
         const settled = await settleWithin(() => require('./sync/shutdown-sync.cjs').runShutdownSync({
           health: () => syncCloud.health({ timeoutMs: 8000 }),
-          pendingSummary: () => changeReader.pendingSummary(branchId),
+          pendingSummary: () => legacyRecoveryRuntime.reader.pendingSummary(branchId),
           run: () => syncCoordinator.runFinal({branchId,batchSize:500}),
           signedOut: !adminSession.hasPosAuthority(),
           allowSignedOutExit,
@@ -432,7 +536,7 @@ async function synchronizeClosingShifts(shiftId = null) {
       return { ok: false, code: "ELOCALDB", error: "The local database is not ready." };
     const healthResult = await syncCloud.health({ timeoutMs: SHUTDOWN_SYNC_TIMEOUT_MS });
     if (!healthResult.online) {
-      const remaining = await changeReader.pendingSummary(branchId);
+      const remaining = await legacyRecoveryRuntime.reader.pendingSummary(branchId);
       return { ok: false, offline: true, ...remaining, code:"EOFFLINE", error:"The shift is saved locally but has not been acknowledged by the cloud. Reconnect and retry synchronization before closing." };
     }
     if (!healthResult.ready)
@@ -2071,7 +2175,13 @@ function registerIpc() {
   ipcMain.handle("business:analytics", (_e, from, to, timeZone) => guard.guarded(async () => {
     if (!adminSession.hasPosAuthority() || !adminSession.hasPermission("can_view_sales_reports"))
       return { ok: false, code: "PERMISSION_DENIED", error: "Sales report permission is required." };
-    return readAnalytics(databaseManager, authorizedLocalBranch(), guard.text(from, { name: "from date", max: 10 }), guard.text(to, { name: "to date", max: 10 }), guard.text(timeZone || "UTC", { name: "time zone", max: 80 }));
+    const readEpoch = adminSession.epoch(), branch = authorizedLocalBranch();
+    const result = await readAnalytics(databaseManager, branch, guard.text(from, { name: "from date", max: 10 }), guard.text(to, { name: "to date", max: 10 }), guard.text(timeZone || "UTC", { name: "time zone", max: 80 }), {
+      canViewHourlyCost: () => adminSession.epoch() === readEpoch && adminSession.hasPosAuthority() && adminSession.hasPermission("can_view_cost_margin"),
+    });
+    if (adminSession.epoch() !== readEpoch || !adminSession.hasPosAuthority() || !adminSession.hasPermission("can_view_sales_reports") || authorizedLocalBranch() !== branch)
+      return { ok: false, code: "PERMISSION_DENIED", error: "Report authority changed. Sign in and refresh the report." };
+    return result;
   }));
   ipcMain.handle("business:query", (_e, table, options) => guard.guarded(async () => {
     try {
@@ -2141,7 +2251,14 @@ function registerIpc() {
   }));
   ipcMain.handle("jobs:get-active", async () => databaseManager.isConnected() ? jobRepository.active() : null);
   ipcMain.handle("jobs:get-history", async (_e, limit) => databaseManager.isConnected() ? jobRepository.history(Number(limit)||50) : []);
-  ipcMain.handle("sync:get-status", () => syncCoordinator.refresh(localBranchId()));
+  ipcMain.handle("sync:get-status", async () => legacyRecoveryRuntime.status(await syncCoordinator.refresh(localBranchId())));
+  require("./sync/legacy-shift-recovery-ipc.cjs").installLegacyShiftRecoveryIpc({
+    ipcMain,service:legacyShiftRecovery,session:adminSession,
+    // Reuse the existing coordinator/lifecycle retry. It creates fresh gap
+    // proofs after adoption; a saved decision never resets a checkpoint.
+    onAdoptCommitted:()=>{automaticSyncQueued=true;scheduleAutomaticSync(250);},
+    isPosSender:event=>event.sender===mainWindow?.webContents && event.senderFrame===event.sender.mainFrame,
+  });
   ipcMain.handle("sync:run-now", (_e, options) => guard.guarded(async()=>{const input=guard.options(options,{name:"sync options"});const branchId=localBranchId();if(!branchId)throw Object.assign(new Error("The terminal branch is not configured."),{code:"EBRANCH"});const result=await observedDatabaseOperation("synchronization","manual",() => syncCoordinator.runNow({...input,branchId}));return result.code==="ECHANGEGAP"?prepareLocalData({force:true}):result;}));
   ipcMain.handle("sync:finalize-shift-close", (_e, shiftId) => guard.guarded(() =>
     synchronizeClosingShifts(guard.uuid(shiftId, { name: "shift id" })),
@@ -2237,6 +2354,20 @@ function registerIpc() {
       return {ok:false,reason:"unavailable",error:String(error?.message??error)};
     }
   });
+  ipcMain.handle("approval:authorize-offline-discount", require("./offline-approval-service.cjs").createOfflineApprovalHandler({
+    isPosSender: event => event.sender === mainWindow?.webContents && event.senderFrame === event.sender.mainFrame,
+    authorize: value => guard.guarded(async () => {
+    try {
+      const result = await closeWriteBarrier.run(() => offlineApprovalService.authorize(value));
+      scheduleLocalChanges([{ table: "authorization_log" }]);
+      return result;
+    } catch (error) {
+      recordFault("approval.offline-save", error);
+      const allowed = new Set(["EAPPROVAL", "EAPPROVAL_POLICY", "EAPPROVAL_BUSY", "EAPPROVAL_CONTEXT", "EIDEMPOTENCY", "EPRIVILEGE", "SYNC_BRANCH_FORBIDDEN"]);
+      return { ok: false, code: allowed.has(error?.code) ? error.code : "EAPPROVAL_SAVE", error: allowed.has(error?.code) ? error.message : "The approval could not be saved locally. Its bill remains unpaid." };
+    }
+    }),
+  }));
   ipcMain.handle("auth:cashier-login", (_e, value) => guard.guarded(async () => {
     const current=captureSessionAdoption();
     const input = guard.options(value, { name: "cashier sign in", max: 2 });

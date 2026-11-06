@@ -1,0 +1,15 @@
+import {describe,it,expect} from 'vitest';
+const {legacyEvidence}=require('../../../electron/sync/history-index-legacy.cjs');
+const id=(n:number)=>'aaaaaaaa-aaaa-4aaa-8aaa-'+String(n).padStart(12,'0'),branch=id(9000),terminal=id(9001);
+const cloud={backendUrl:()=> 'https://owned-fixture.invalid',terminalId:()=>terminal};
+function row(n=1){const metadata={job_id:id(n),job_type:'history_gap_recovery_v1',status:'interrupted',organization_id:'default',organization_name:cloud.backendUrl(),branch_id:branch,terminal_id:terminal,
+ phase:'hr:page:1',current_table:'change_history',dependency_index:90,last_committed_cursor:'opaque-old-cursor',completed_rows:10,completed_bytes:100,batch_number:1,retry_count:0,
+ started_at:'2026-11-06T01:02:03.1234560+00:00',updated_at:'2026-11-06T01:02:03.1234560+00:00'};return{...metadata,started_at:new Date(metadata.started_at),updated_at:new Date(metadata.updated_at),__history_legacy_json:JSON.stringify(metadata)};}
+const evidence=(rows:ReturnType<typeof row>[],ownsExecution=true)=>legacyEvidence({rows,cloud,branchId:branch,terminalId:terminal,ownsExecution});
+describe('bound, read-only legacy history handoff evidence',()=>{
+ it('preserves the full SQL100ns metadata rather than JS Date precision',()=>{const before=row(),after={...before,__history_legacy_json:before.__history_legacy_json.replaceAll('.1234560','.1234561')};expect(after.updated_at.getTime()).toBe(before.updated_at.getTime());expect(evidence([before]).hash).not.toBe(evidence([after]).hash);expect(evidence([before]).ids).toEqual([before.job_id]);expect(evidence([before])).not.toHaveProperty('__history_legacy_json');});
+ it('requires Main-owned execution proof when any saved v1 row is exempted',()=>{expect(()=>evidence([row()],false)).toThrow();expect(evidence([],false).ids).toEqual([]);});
+ it('rejects unknown backend, job kind, phase, terminal, duplicate and overflow rows',()=>{for(const patch of [{organization_name:'https://other.invalid'},{job_type:'unknown'}, {phase:'unknown'}, {terminal_id:id(99)}, {last_committed_cursor:''}]){const original=row(),metadata={...JSON.parse(original.__history_legacy_json),...patch},value={...original,...patch,__history_legacy_json:JSON.stringify(metadata)};expect(()=>evidence([value])).toThrow();}expect(()=>evidence([row(),row()])).toThrow();expect(()=>evidence(Array.from({length:51},(_,n)=>row(n+1)))).toThrow();expect(evidence(Array.from({length:50},(_,n)=>row(n+1))).ids).toHaveLength(50);});
+ it('rejects a fake SQL projection that does not match returned scalar fields',()=>{const value=row();value.status='running';expect(()=>evidence([value])).toThrow();const malformed=row();malformed.__history_legacy_json='null';expect(()=>evidence([malformed])).toThrow();});
+ it('does not expose raw job metadata, backend, cursor or errors in a refusal',()=>{try{evidence([row()],false);throw Error('expected refusal');}catch(error){expect(String(error)).not.toContain(cloud.backendUrl());expect(String(error)).not.toContain('opaque-old');}});
+});

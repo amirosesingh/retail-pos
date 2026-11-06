@@ -52,6 +52,9 @@ export type BoardData = {
   liveStoreIds: string[];
   /** Local SQL contains this terminal branch, not the full group. */
   localOnly?: boolean;
+  /** Actual authorized hourly cost facts; absence must not be inferred from daily totals. */
+  hourlyRows?: import("./shop-comparison").StoreHourRow[];
+  hourlyIssue?: string;
 };
 
 /** Current branch names win; sale snapshots only retain names for deleted branches. */
@@ -141,10 +144,10 @@ function classify(source: string, sqlFile: string, message: string): BoardIssue 
   };
 }
 
-export function fetchBoard(from: string, to: string, storeIds?: readonly string[]): Promise<BoardData> {
-  return fetchBoardData(from, to, storeIds);
+export function fetchBoard(from: string, to: string, storeIds?: readonly string[], options: { includeHourlyProfit?: boolean } = {}): Promise<BoardData> {
+  return fetchBoardData(from, to, storeIds, options);
 }
-async function fetchBoardData(from: string, to: string, storeIds?: readonly string[]): Promise<BoardData> {
+async function fetchBoardData(from: string, to: string, storeIds?: readonly string[], options: { includeHourlyProfit?: boolean } = {}): Promise<BoardData> {
   const scopeIds = storeIds === undefined ? null : [...new Set(storeIds.filter(Boolean).map(canonicalBranchId))];
   if (scopeIds && !scopeIds.length) return { storeDays: [], itemDays: [], bills: [], storeNames: {}, liveStoreIds: [] };
   const allowed = (id: unknown) => !scopeIds || scopeIds.includes(canonicalBranchId(id));
@@ -168,6 +171,8 @@ async function fetchBoardData(from: string, to: string, storeIds?: readonly stri
       storeNames: resolveStoreNames(directory.map(row => ({ id: row.id, name: row.name, code: row.code })), bills.map(row => ({ store_id: row.store_id, store_name_snapshot: row.store_name_snapshot }))),
       liveStoreIds: directory.filter(row => row.is_active !== false).map(row => canonicalBranchId(row.id)),
       localOnly: true,
+      ...(result.hourlyRows ? { hourlyRows: result.hourlyRows.filter(row => allowed(row.store_id)).map(row => ({ store_id: canonicalBranchId(row.store_id),
+        hour: n(row.hour), bills: n(row.bills), revenue: n(row.revenue), cost: n(row.cost), profit: n(row.profit) })) } : {}),
     };
   }
   const [storeRes, itemRes, billRes, directoryRes] = await Promise.all([
@@ -196,7 +201,21 @@ async function fetchBoardData(from: string, to: string, storeIds?: readonly stri
     issues.push(classify("stores", "supabase/schema.sql", directoryRes.error.message));
   if (issues.length) throw new BoardError(issues);
 
+  let hourly: Pick<BoardData, "hourlyRows" | "hourlyIssue"> = {};
+  if (options.includeHourlyProfit && scopeIds?.length) {
+    try {
+      const [{ loadHourlyTrading }, { hostedFunction }, { getPosCallerAuth }] = await Promise.all([
+        import("./trading-hours.functions"), import("./hosted-function-client"), import("./pos-caller-auth"),
+      ]);
+      hourly = await hostedFunction("trading-hours.loadHourlyTrading", loadHourlyTrading)({
+        data: { ...await getPosCallerAuth(), from, to, storeIds: scopeIds },
+      }).then(result => ({ hourlyRows: result.rows }));
+    } catch (error) {
+      hourly = { hourlyIssue: error instanceof Error ? error.message : "Hourly profit could not be verified." };
+    }
+  }
   return {
+    ...hourly,
     storeDays: (storeRes.data ?? []).map((r) => ({
       sale_day: String(r.sale_day),
       sale_month: String(r.sale_month ?? String(r.sale_day).slice(0, 7)),

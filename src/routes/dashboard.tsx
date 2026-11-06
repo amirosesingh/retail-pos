@@ -1,3 +1,9 @@
+import { ShopComparisonCharts, TradingGraphControls } from "@/platforms/web/components/pos/ShopComparisonCharts";
+import { useChartTransition } from "@/lib/use-chart-transition";
+import { TradingTooltip, ChartPlotStage, TradingChartCard } from "@/platforms/web/components/pos/TradingChartLayout";
+import { comparisonSalesDays, comparisonSalesHours } from "@/lib/shop-comparison";
+import { useConfirmedPresentation } from "@/lib/use-confirmed-presentation";
+import { pageDataScope } from "@/lib/page-data-cache";
 import { receiptAdjustmentLabel } from "@/lib/report-display";
 import {useSponsorshipTotals} from "@/lib/use-sponsorship-totals";
 import { CashierBillList } from "@/platforms/web/components/pos/CashierBillList";
@@ -7,7 +13,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useReportSales } from "@/lib/use-report-sales";
 import { dashboardDailyTrading } from "@/lib/dashboard-trading";
-import { allShopsScope } from "@/lib/all-shops-scope";
+import { dashboardPageStores } from "@/lib/dashboard-scope";
 import { terminalRuntimePlatform } from "@/core/activation/terminal-platform";
 import { FinancialBreakdown, FinancialInfoTip, GrossProfitInfo, SalesTotalInfo } from "@/platforms/web/components/pos/FinancialInfo";
 import { salesReconciliation } from "@/lib/sales-reconciliation";
@@ -20,7 +26,6 @@ import {
   Line,
   LineChart,
   ResponsiveContainer,
-  Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
@@ -28,7 +33,6 @@ import { AlertTriangle } from "lucide-react";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Carousel, CarouselContent, CarouselItem } from "@/components/ui/carousel";
 import { Separator } from "@/components/ui/separator";
 import {
   Table,
@@ -40,9 +44,9 @@ import {
 } from "@/components/ui/table";
 import { money, usePos } from "@/lib/pos-store";
 import { useDrawerEvents } from "@/lib/drawer-events";
-import { hourlyProfit, profitOf } from "@/core/pricing/profit";
+import { profitOf } from "@/core/pricing/profit";
 import { paymentsLabel } from "@/core/types/pos-types";
-import { formatTime, posDayKey, posHour, shiftCalendarDay } from "@/lib/time-zone";
+import { effectiveTimeZone, formatTime, posDayKey, shiftCalendarDay } from "@/lib/time-zone";
 import { defaultReviewThresholds } from "@/lib/pos-seed";
 import { sameBranchId } from "@/lib/branch-id";
 import { cashierReviewTotals, hasSplitPayments } from "@/lib/cashier-review";
@@ -77,7 +81,7 @@ const hasMoney = (value: number) => Number.isFinite(value) && Math.abs(value) >=
 
 function Dashboard() {
   const { state, currentStore, ready: inventoryReady, loadPhase } = usePos();
-  const { can, canSwitchStores, terminalStoreId, user } = useAuth();
+  const { ready: authReady, can, canSwitchStores, terminalStoreId, user } = useAuth();
   const { visible } = useVisibility();
   const showCostMargin = can("can_view_cost_margin");
   const showStockValue = showCostMargin && visible("inventory.stockValue");
@@ -85,7 +89,9 @@ function Dashboard() {
   const thresholds = defaultReviewThresholds;
 
   const [today, setToday] = useState(() => posDayKey());
-  const [revenuePeriod, setRevenuePeriod] = useState<"7" | "14" | "30" | "90" | "month" | "custom">("14");
+  const [revenuePeriod, setRevenuePeriod] = useState<"1" | "7" | "14" | "15" | "20" | "30" | "90" | "month" | "custom">("14");
+  const [chartGrouping, setChartGrouping] = useState<"daily" | "monthly">("daily");
+  const [chartKind, setChartKind] = useState<"line" | "bar">("line");
   const [drawerColumnsTarget, setDrawerColumnsTarget] = useState<HTMLElement | null>(null);
   const [splitColumnsTarget, setSplitColumnsTarget] = useState<HTMLElement | null>(null);
   const [customFrom, setCustomFrom] = useState(() => shiftCalendarDay(posDayKey(), -13));
@@ -96,10 +102,10 @@ function Dashboard() {
     window.addEventListener("focus", refresh);
     return () => { window.clearInterval(timer); window.removeEventListener("focus", refresh); };
   }, []);
-  const unrestrictedManagement = canSwitchStores && !terminalStoreId && !user?.storeId;
-  const reportStores = useMemo(() => allShopsScope(state.stores, terminalStoreId || user?.storeId || currentStore.id, unrestrictedManagement), [state.stores, terminalStoreId, user?.storeId, currentStore.id, unrestrictedManagement]);
+  const reportStores = useMemo(() => dashboardPageStores(state.stores, currentStore.id, terminalStoreId, user?.storeId, canSwitchStores, "branch"), [state.stores, terminalStoreId, user?.storeId, currentStore.id, canSwitchStores]);
   const storeIds = useMemo(() => reportStores.map(store => store.id), [reportStores]);
-  const scopeLabel = unrestrictedManagement ? "All authorized shops" : reportStores[0]?.name || currentStore.name;
+  const dashboardStore = reportStores[0];
+  const scopeLabel = dashboardStore?.name || "Selected branch unavailable";
   const cloudHome = terminalRuntimePlatform() === "web";
   const revenueFrom = useMemo(() => {
     if (revenuePeriod === "custom") {
@@ -135,8 +141,8 @@ function Dashboard() {
   const refunds = useMemo(() => todaySales.filter((s) => s.refunded), [todaySales]);
   const catalogueVisible = useMemo(() => createCatalogueVisibility(state.settings, state.stores, state.transfers), [state.settings, state.stores, state.transfers]);
   const stock = useMemo(
-    () => inventoryMetrics(state.products.filter(product => catalogueVisible(product, currentStore.id)), currentStore.id),
-    [state.products, catalogueVisible, currentStore.id],
+    () => inventoryMetrics(dashboardStore ? state.products.filter(product => catalogueVisible(product, dashboardStore.id)) : [], dashboardStore?.id ?? ""),
+    [state.products, catalogueVisible, dashboardStore],
   );
 
   const chartSales = useMemo(() => sales.filter(sale => {
@@ -144,27 +150,22 @@ function Dashboard() {
     return !sale.refunded && day >= revenueFrom && day <= revenueTo;
   }), [sales, revenueFrom, revenueTo]);
   const chartProfit = useMemo(() => profitOf(chartSales, state.products), [chartSales, state.products]);
+  const chartDays = useMemo(() => comparisonSalesDays(chartSales, state.products), [chartSales, state.products]);
+  const chartHours = useMemo(() => comparisonSalesHours(chartSales, state.products), [chartSales, state.products]);
 
-  /** Revenue against gross profit, hour by hour in the selected range. */
-  const profitByHour = useMemo(
-    () => hourlyProfit(chartSales, state.products, posHour),
-    [chartSales, state.products],
-  );
-
-  /** Revenue for the selected inclusive calendar range. */
-  const daily = useMemo(() => dashboardDailyTrading(sales, sponsorship.rows, revenueFrom, revenueTo, includeSponsorship), [sales, sponsorship.rows, revenueFrom, revenueTo, includeSponsorship]);
-
-  /** Transactions per hour across the selected calendar range. */
-  const hourly = useMemo(() => {
-    const hours = Array.from({ length: 24 }, (_, h) => ({ hour: `${h}:00`, bills: 0, value: 0 }));
-    chartSales.forEach((s) => {
-      const h = posHour(s.createdAt);
-      hours[h]!.bills += 1;
-      hours[h]!.value = Number((hours[h]!.value + s.total).toFixed(2));
-    });
-    return hours;
-  }, [chartSales]);
-  const peak = hourly.reduce((a, h) => (h.bills > a.bills ? h : a), hourly[0]!);
+  const chartScope = authReady && user && storeIds.length > 0
+    ? JSON.stringify([pageDataScope(user), storeIds, revenueFrom, revenueTo, effectiveTimeZone(), showCostMargin, includeSponsorship]) : null;
+  const chartData = useMemo(()=>({days:chartDays,hours:chartHours,profit:chartProfit,dailySales:chartSales,sponsorshipRows:sponsorship.rows,range:{from:revenueFrom,to:revenueTo}}),[chartDays,chartHours,chartProfit,chartSales,sponsorship.rows,revenueFrom,revenueTo]);
+  const confirmedCharts = useConfirmedPresentation(chartScope,chartData,
+    !reportLoading && !reportError && inventoryReady && (!includeSponsorship || (!sponsorship.loading && !sponsorship.error)));
+  const chartAuthority=authReady&&user&&storeIds.length>0?JSON.stringify([pageDataScope(user),storeIds,effectiveTimeZone(),showCostMargin,includeSponsorship]):null;
+  const chartFrame=useConfirmedPresentation(chartAuthority,confirmedCharts,!!confirmedCharts);
+  const firstPlot=useMemo(()=>chartFrame?({key:JSON.stringify([chartFrame.range,chartGrouping,chartKind]),value:{daily:dashboardDailyTrading(chartFrame.dailySales,chartFrame.sponsorshipRows,chartFrame.range.from,chartFrame.range.to,includeSponsorship,chartGrouping),kind:chartKind,range:chartFrame.range}}):null,[chartFrame,chartGrouping,chartKind,includeSponsorship]);
+  const firstPlotSnapshot=useMemo(()=>firstPlot?{...firstPlot,signature:JSON.stringify(firstPlot.value)}:null,[firstPlot]);
+  const firstTransition=useChartTransition(chartAuthority,JSON.stringify([{from:revenueFrom,to:revenueTo},chartGrouping,chartKind]),firstPlotSnapshot);
+  const graphDaily=firstTransition.data?.daily??firstPlot?.value.daily??[];
+  const firstKind=firstTransition.data?.kind??chartKind;
+  const graphFinancial=useMemo(()=>chartFrame&&dashboardStore?[{id:dashboardStore.id,name:dashboardStore.name,revenue:chartFrame.profit.revenue,cost:chartFrame.profit.cogs,profit:chartFrame.profit.profit,marginPct:chartFrame.profit.marginPct}]:[],[chartFrame,dashboardStore]);
 
   const todayDrawer = useMemo(() => drawer.filter(
     (d) => posDayKey(d.at) === today && storeIds.some(id => sameBranchId(d.storeId, id)),
@@ -193,8 +194,13 @@ function Dashboard() {
     });
   }, [todaySales, todayDrawer, thresholds]);
 
-  const flagged = cashiers.filter((c) => c.flags.length);
-  const summaryReady = inventoryReady && !reportLoading && !reportError;
+  const activityScope = authReady && user && storeIds.length > 0
+    ? JSON.stringify([pageDataScope(user), storeIds, today, effectiveTimeZone()]) : null;
+  const confirmedActivity = useConfirmedPresentation(activityScope, { cashiers, todaySales, splitSales },
+    inventoryReady && !reportLoading && !reportError);
+  // Drawer events are actual locally saved events, not a paged sales read.
+  const confirmedDrawer = useConfirmedPresentation(activityScope, todayDrawer, inventoryReady);
+  const flagged = confirmedActivity?.cashiers.filter((c) => c.flags.length) ?? [];
   const summaryCards = [
     includeSponsorship && !sponsorship.loading && !sponsorship.error && hasMoney(todaySponsorship) && hasMoney(revenue + todaySponsorship) && <Kpi key="daily-value" label="Sales value with sponsorship · not collections" value={money(revenue + todaySponsorship)} highlight info={can("can_view_sales_reports") && <SalesTotalInfo totals={todayTotals} adjustmentLabel={receiptAdjustmentLabel(live)} sponsorshipValue={todaySponsorship} />} />,
     includeSponsorship && !sponsorship.loading && !sponsorship.error && hasMoney(todaySponsorship) && <Kpi key="sponsorship" label="Sponsorship value included" value={money(todaySponsorship)} info={<FinancialBreakdown rows={[["Sponsorship value", money(todaySponsorship)]]}><p>Included under the saved daily-sales policy. Stock value is separate from customer payments.</p></FinancialBreakdown>} />,
@@ -206,6 +212,10 @@ function Dashboard() {
     refunds.length !== 0 && <Kpi key="refunds" label="Refunds" value={`${refunds.length} · ${money(refunds.reduce((a, s) => a + Math.abs(s.total), 0))}`} />,
     todayDrawer.length !== 0 && <Kpi key="drawer" label="No-sale drawer opens" value={String(todayDrawer.length)} />,
   ].filter(Boolean);
+  const confirmedCards = useConfirmedPresentation(
+    authReady && user && storeIds.length > 0 ? JSON.stringify([pageDataScope(user), storeIds, today, effectiveTimeZone(), includeSponsorship]) : null,
+    summaryCards, inventoryReady && !reportLoading && !reportError &&
+      (!includeSponsorship || (!sponsorship.loading && !sponsorship.error)));
 
   return (
     <AppShell>
@@ -222,136 +232,71 @@ function Dashboard() {
 
 
         {reportError && <p role="alert" className="rounded-lg border border-destructive/40 p-3 text-sm text-destructive">Report incomplete: {reportError}</p>}
+        {reportError && confirmedActivity && (confirmedActivity.cashiers.length > 0 || confirmedActivity.splitSales.length > 0) && <p role="status" className="text-xs text-muted-foreground">Showing last confirmed activity; the sales refresh did not complete.</p>}
+        {(reportError || (includeSponsorship && sponsorship.error)) && confirmedCards && <p role="status" className="text-xs text-muted-foreground">Showing last confirmed summary; the refresh did not complete.</p>}
         {reportLoading && <p role="status" className="text-sm text-muted-foreground">Loading the complete sales history for these shops…</p>}
         {includeSponsorship && sponsorship.loading && <p role="status" className="text-sm text-muted-foreground">Sponsorship values are loading; the combined summary is not complete yet.</p>}
         {includeSponsorship && sponsorship.error && <p role="alert" className="rounded-lg border border-destructive/40 p-3 text-sm text-destructive">Sponsorship totals could not be loaded. Sales collections remain separate.</p>}
-        <DisplayElement name="dashboard.revenueSummary">{summaryReady && (summaryCards.length ? <SummaryCardRail label="Revenue summary">
-          {summaryCards}
+        <DisplayElement name="dashboard.revenueSummary">{confirmedCards && (confirmedCards.length ? <SummaryCardRail label="Revenue summary">
+          {confirmedCards}
         </SummaryCardRail> : <p role="status" className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">No trading totals to show today.</p>)}</DisplayElement>
 
         <DisplayElement name="dashboard.inventorySummary"><section className="rounded-lg border border-border bg-card p-4">
           <div className="mb-3">
-            <h2 className="text-sm font-semibold">Inventory position · {currentStore.name}</h2>
+            <h2 className="text-sm font-semibold">Inventory position · {scopeLabel}</h2>
             <p className="text-xs text-muted-foreground">
               Current active catalogue and on-hand value at this branch.
             </p>
           </div>
-          <InventorySummaryCards metrics={stock} ready={inventoryReady} loadPhase={loadPhase} showStockValue={showStockValue} showPotentialProfit />
+          <InventorySummaryCards metrics={stock} ready={inventoryReady && !!dashboardStore} loadPhase={loadPhase} showStockValue={showStockValue} showPotentialProfit />
         </section></DisplayElement>
 
-        <DisplayElement name="dashboard.tradingGraphs"><Carousel
-          opts={{ align: "start", containScroll: "trimSnaps" }}
-          aria-label="Live dashboard graphs"
-          // Keep arrow keys inside charts available for Recharts data-point navigation.
-          // Touch/pointer dragging moves between cards without navigation buttons.
-          onKeyDownCapture={() => undefined}
-          className="min-w-0"
-        >
+        <DisplayElement name="dashboard.tradingGraphs"><section aria-label="Live dashboard graphs" className="min-w-0">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-sm font-semibold">Trading graphs</h2>
+            <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1"><h2 className="text-sm font-semibold">Trending graphs</h2>
+              <span className="text-xs text-muted-foreground">{revenueFrom} to {revenueTo}</span></div>
               <div className="flex flex-wrap items-center gap-2">
                 <select aria-label="Trading graphs period" value={revenuePeriod}
                   onChange={(event) => setRevenuePeriod(event.target.value as typeof revenuePeriod)}
-                  className="h-8 rounded-md border border-input bg-background px-2 text-xs">
+                  className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground">
+                  <option value="1">Today</option>
                   <option value="7">7 days</option>
+                  <option value="15">15 days</option>
+                  <option value="20">20 days</option>
                   <option value="14">14 days</option>
                   <option value="30">30 days</option>
                   <option value="90">90 days</option>
                   <option value="month">This month</option>
                   <option value="custom">Custom dates</option>
                 </select>
+                <TradingGraphControls grouping={chartGrouping} kind={chartKind} onGroupingChange={setChartGrouping} onKindChange={setChartKind} />
                 {revenuePeriod === "custom" && <>
                   <Input aria-label="Graphs from date" type="date" value={customFrom} onChange={(event) => setCustomFrom(event.target.value)} className="h-8 w-36 text-xs" />
                   <Input aria-label="Graphs to date" type="date" value={customTo} onChange={(event) => setCustomTo(event.target.value)} className="h-8 w-36 text-xs" />
                 </>}
               </div>
           </div>
-          <p className="mb-3 text-xs text-muted-foreground">{revenueFrom} to {revenueTo} · applies to all trading graphs</p>
-          <CarouselContent className="touch-pan-y">
-          <CarouselItem className="basis-[92%] sm:basis-3/4 lg:basis-[48%] 2xl:basis-1/3">
-          <section className="flex h-88 min-w-0 flex-col rounded-lg border border-border bg-card p-4">
-            <h2 className="mb-3 shrink-0 text-sm font-semibold">{includeSponsorship ? "Sales value including sponsorship" : "Sales collected"}</h2>
-            {includeSponsorship && <p className="mb-2 text-xs text-muted-foreground">Sponsorship is product value, not money collected.</p>}
-            <div className="min-h-0 min-w-0 flex-1">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={daily}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                  <XAxis dataKey="day" fontSize={11} stroke="var(--muted-foreground)" />
-                  <YAxis fontSize={11} stroke="var(--muted-foreground)" />
-                  <Tooltip />
-                  <Line
-                    type="monotone"
-                    dataKey="total"
-                    name={includeSponsorship ? "Sales value" : "Sales collected"}
-                    stroke="var(--primary)"
-                    strokeWidth={2}
-                    dot={false}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </section>
-          </CarouselItem>
+          {!confirmedCharts && <p role="status" className="mb-3 text-sm text-muted-foreground">{reportError ? "Graphs could not be refreshed for these dates." : "Loading graphs for the selected dates…"}</p>}
+          {chartFrame && <ShopComparisonCharts rows={chartFrame.days} directory={state.stores}
+            selectedIds={storeIds} childrenFirst showToolbar={false} controls={{grouping:chartGrouping,kind:chartKind,onGroupingChange:setChartGrouping,onKindChange:setChartKind}} showProfit={showCostMargin} scopeLabel={scopeLabel} range={chartFrame.range} requestedRange={{from:revenueFrom,to:revenueTo}}
+            transactionHours={chartFrame.hours} profitHours={chartFrame.hours}
+            financialRows={graphFinancial}>
+            {graphDaily.some(row => Math.abs(row.total) >= 0.005) && <TradingChartCard
+              title={includeSponsorship ? "Sales value including sponsorship" : "Sales collected"}
+              description={includeSponsorship ? "Sponsorship is product value, not money collected." : "Final collected bill totals for the selected dates."}>
+              <ChartPlotStage phase={firstTransition.phase} stamp={firstTransition.stamp} previousLabel={firstTransition.data?`${firstTransition.data.range.from} to ${firstTransition.data.range.to}`:undefined}><ResponsiveContainer width="100%" height="100%">{firstKind === "bar" ? <BarChart data={graphDaily}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" /><XAxis dataKey="day" fontSize={11} />
+                <YAxis fontSize={11} /><TradingTooltip /><Bar dataKey="total" name={includeSponsorship ? "Sales value" : "Sales collected"} fill="var(--primary)" radius={4} isAnimationActive={false} />
+              </BarChart> : <LineChart data={graphDaily}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" /><XAxis dataKey="day" fontSize={11} />
+                <YAxis fontSize={11} /><TradingTooltip /><Line strokeLinecap="round" strokeLinejoin="round" type="monotone" dataKey="total"
+                  name={includeSponsorship ? "Sales value" : "Sales collected"} stroke="var(--primary)" strokeWidth={2.5} dot={graphDaily.length === 1 ? {r:3} : false} isAnimationActive={false} />
+              </LineChart>}</ResponsiveContainer></ChartPlotStage>
+            </TradingChartCard>}
+          </ShopComparisonCharts>}
+        </section></DisplayElement>
 
-          <CarouselItem className="basis-[92%] sm:basis-3/4 lg:basis-[48%] 2xl:basis-1/3">
-          <section className="flex h-88 min-w-0 flex-col rounded-lg border border-border bg-card p-4">
-            <h2 className="mb-3 min-h-10 shrink-0 text-sm font-semibold">
-              Transactions by hour · peak {peak.bills > 0 ? peak.hour : "—"}
-            </h2>
-            <div className="min-h-0 min-w-0 flex-1">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={hourly}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                  <XAxis
-                    dataKey="hour"
-                    fontSize={10}
-                    interval={2}
-                    stroke="var(--muted-foreground)"
-                  />
-                  <YAxis fontSize={11} allowDecimals={false} stroke="var(--muted-foreground)" />
-                  <Tooltip />
-                  <Bar dataKey="bills" fill="var(--primary)" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </section>
-          </CarouselItem>
-
-        {showCostMargin && <CarouselItem className="basis-[92%] sm:basis-3/4 lg:basis-[48%] 2xl:basis-1/3">
-          <section className="flex h-88 min-w-0 flex-col rounded-lg border border-border bg-card p-4">
-          <h2 className="mb-3 min-h-10 shrink-0 text-sm font-semibold">
-            Profit by hour · gross profit {money(chartProfit.profit)}
-            <FinancialInfoTip label="Selected-period gross profit"><GrossProfitInfo revenue={chartProfit.revenue} cost={chartProfit.cogs} profit={chartProfit.profit} marginPct={chartProfit.marginPct} /></FinancialInfoTip>
-          </h2>
-          <div className="min-h-0 min-w-0 flex-1">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={profitByHour}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                <XAxis dataKey="hour" fontSize={10} interval={2} stroke="var(--muted-foreground)" />
-                <YAxis fontSize={11} stroke="var(--muted-foreground)" />
-                <Tooltip />
-                <Bar
-                  dataKey="revenue"
-                  name="Revenue"
-                  fill="var(--muted-foreground)"
-                  radius={[4, 4, 0, 0]}
-                />
-                <Bar
-                  dataKey="profit"
-                  name="Gross profit"
-                  fill="var(--primary)"
-                  radius={[4, 4, 0, 0]}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </section>
-          </CarouselItem>}
-
-          </CarouselContent>
-        </Carousel></DisplayElement>
-
-        <DisplayElement name="dashboard.cashierReview"><section className="rounded-lg border border-border bg-card">
+        <DisplayElement name="dashboard.cashierReview">{confirmedActivity && confirmedActivity.cashiers.length > 0 && <section className="rounded-lg border border-border bg-card motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300">
           <div className="flex items-center gap-2 px-5 py-3">
             <AlertTriangle className="size-4 text-warning" />
             <h2 className="text-sm font-semibold">Cashier review · today</h2>
@@ -367,13 +312,13 @@ function Dashboard() {
           </p>
           <Separator />
           <div className="divide-y divide-border" aria-busy={reportLoading}>
-            {cashiers.map((c) => (
+            {confirmedActivity.cashiers.map((c) => (
               <article key={c.name} className="space-y-4 p-4 sm:p-5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-sm font-semibold">{c.name}</h3>
                   {c.flags.length > 0 && <span className="text-xs text-destructive">Cashier review flag: {c.flags.join(" · ")}</span>}
                 </div>
-                <CashierBillList sales={todaySales} cashier={c.name} />
+                <CashierBillList sales={confirmedActivity.todaySales} cashier={c.name} />
                 <dl className="grid grid-cols-2 gap-3">
                   <div><dt className="text-xs text-muted-foreground">Cashier total · completed bills</dt><dd className="numeric text-base font-semibold">{money(c.revenue)}</dd></div>
                   <div><dt className="text-xs text-muted-foreground">Cashier discount · completed bills</dt><dd className="numeric text-base font-semibold">{money(c.discount)} <span className="text-xs font-normal">({c.discountPct.toFixed(1)}%)</span></dd></div>
@@ -389,14 +334,13 @@ function Dashboard() {
                 </details>
               </article>
             ))}
-            {!cashiers.length && <p className="p-6 text-center text-sm text-muted-foreground">{reportLoading ? "Loading cashier review…" : "No trading recorded today."}</p>}
           </div>
-        </section></DisplayElement>
+        </section>}</DisplayElement>
 
-        <DisplayElement name="dashboard.drawerHistory"><section className="rounded-lg border border-border bg-card">
+        <DisplayElement name="dashboard.drawerHistory">{confirmedDrawer && confirmedDrawer.length > 0 && <section className="rounded-lg border border-border bg-card motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300">
           <div className="flex items-center justify-between gap-2 px-5 py-3"><h2 className="min-w-0 flex-1 text-sm font-semibold">Cash drawer opens without a sale</h2><div ref={setDrawerColumnsTarget} className="ml-auto flex shrink-0 items-center justify-end" /></div>
           <Separator />
-          <Table tableId="routes/dashboard#1" loading={reportLoading} controlsTarget={drawerColumnsTarget}>
+          <Table tableId="routes/dashboard#1" loading={!inventoryReady} controlsTarget={drawerColumnsTarget}>
             <TableHeader>
               <TableRow>
                 <TableHead>When</TableHead>
@@ -407,7 +351,7 @@ function Dashboard() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {todayDrawer.map((d) => (
+              {confirmedDrawer.map((d) => (
                 <TableRow key={d.id}>
                   <TableCell className="text-muted-foreground">{formatTime(d.at)}</TableCell>
                   <TableCell>
@@ -419,18 +363,11 @@ function Dashboard() {
                   <TableCell className="text-muted-foreground">{d.approvedBy ?? "—"}</TableCell>
                 </TableRow>
               ))}
-              {!todayDrawer.length && (
-                <TableRow>
-                  <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">
-                    The drawer has not been opened outside a sale today.
-                  </TableCell>
-                </TableRow>
-              )}
             </TableBody>
           </Table>
-        </section></DisplayElement>
+        </section>}</DisplayElement>
 
-        <DisplayElement name="dashboard.splitPayments"><section className="rounded-lg border border-border bg-card">
+        <DisplayElement name="dashboard.splitPayments">{confirmedActivity && confirmedActivity.splitSales.length > 0 && <section className="rounded-lg border border-border bg-card motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300">
           <div className="flex items-center justify-between gap-2 px-5 pt-3"><h2 className="min-w-0 flex-1 text-sm font-semibold">Split payments today</h2><div ref={setSplitColumnsTarget} className="ml-auto flex shrink-0 items-center justify-end" /></div>
           <p className="px-5 pb-3 pt-1 text-xs text-muted-foreground">Bills paid in two or more parts, such as cash and card.</p>
           <Separator />
@@ -444,7 +381,7 @@ function Dashboard() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {splitSales.map((s) => (
+              {confirmedActivity.splitSales.map((s) => (
                 <TableRow key={s.id}>
                   <TableCell className="numeric">{s.receiptNo}</TableCell>
                   <TableCell className="text-muted-foreground">{formatTime(s.createdAt)}</TableCell>
@@ -452,16 +389,9 @@ function Dashboard() {
                   <TableCell className="numeric text-right">{money(s.total)}</TableCell>
                 </TableRow>
               ))}
-              {!splitSales.length && (
-                <TableRow>
-                  <TableCell colSpan={4} className="py-10 text-center text-muted-foreground">
-                    No split-tender bills today.
-                  </TableCell>
-                </TableRow>
-              )}
             </TableBody>
           </Table>
-        </section></DisplayElement>
+        </section>}</DisplayElement>
       </div>
     </AppShell>
   );

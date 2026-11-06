@@ -14,6 +14,8 @@ import { SellingShortcuts } from "./SellingShortcuts";
 import { FinancialInfoTip, SalesTotalInfo } from "./FinancialInfo";
 import { salesReconciliation } from "@/lib/sales-reconciliation";
 import { SummaryCardRail } from "./SummaryCardRail";
+import { pageDataScope } from "@/lib/page-data-cache";
+import { useConfirmedPresentation } from "@/lib/use-confirmed-presentation";
 
 import {
   Activity,
@@ -71,7 +73,7 @@ const ACTIONS: WorkspaceAction[] = [
 export function TerminalWorkspaceHome() {
   const { state, currentStore, ready: inventoryReady, loadPhase } = usePos();
   const { shift: viewedShift, checked: shiftChecked, error: shiftError } = useViewedBranchShift();
-  const { can, user } = useAuth();
+  const { can, user, ready: authReady } = useAuth();
   const { visible, visibleRoute } = useVisibility();
   const visibleActions = ACTIONS.filter(
     (action) =>
@@ -132,7 +134,7 @@ export function TerminalWorkspaceHome() {
                 hint={shiftError ? "Reconnecting — showing last known status" : viewedShift ? viewedShift.cashier : !shiftChecked ? "Checking selected branch" : "No open shift at this branch"}
               />
             ),
-    bills: can("can_view_sales_reports") && visible("workspace.todayBills") && (!salesSummaryReady || todaySales.length > 0) && (
+    bills: inventoryReady && can("can_view_sales_reports") && visible("workspace.todayBills") && salesSummaryReady && todaySales.length > 0 && (
               <Metric
                 key="bills"
                 label="Today's bills"
@@ -142,7 +144,7 @@ export function TerminalWorkspaceHome() {
                 hint={error ? "Could not refresh totals" : loading ? "Updating…" : "Current branch"}
               />
             ),
-    revenue: can("can_view_sales_reports") && visible("workspace.todayRevenue") && (!revenueSummaryReady || Math.abs(todayRevenue + sponsorship.total) >= 0.005) && (
+    revenue: inventoryReady && can("can_view_sales_reports") && visible("workspace.todayRevenue") && revenueSummaryReady && Math.abs(todayRevenue + sponsorship.total) >= 0.005 && (
               <Metric
                 key="revenue"
                 label={includeSponsorship?"Today's sales summary":"Today's revenue"}
@@ -166,15 +168,15 @@ export function TerminalWorkspaceHome() {
                 }
               />
             ),
-    stock: can("can_view_inventory") && visible("workspace.lowStock") && (!inventoryReady || mainStockAlert) && (
+    stock: can("can_view_inventory") && visible("workspace.lowStock") && inventoryReady && mainStockAlert && (
               <Metric
                 key="stock"
                 icon={Boxes}
                 tone={mainStockAlert?.label === "Negative stock" ? "text-destructive bg-destructive/10" : "text-warning bg-warning/10"}
-                label={!inventoryReady ? "Stock" : <>{mainStockAlert.label} <StockExplanation><span className="block">Low stock means positive stock at or below reorder level.</span>{stockAlerts.map(alert => <span key={alert.label} className="block">{alert.value.toLocaleString()} {alert.label.toLowerCase()}</span>)}</StockExplanation></>}
-                value={!inventoryReady ? (loadPhase === "failed" ? "Unavailable" : "Loading…") : <AnimatedMetric value={mainStockAlert.value} />}
+                label={<>{mainStockAlert.label} <StockExplanation><span className="block">Low stock means positive stock at or below reorder level.</span>{stockAlerts.map(alert => <span key={alert.label} className="block">{alert.value.toLocaleString()} {alert.label.toLowerCase()}</span>)}</StockExplanation></>}
+                value={<AnimatedMetric value={mainStockAlert.value} />}
                 hint={
-                  !inventoryReady ? (loadPhase === "failed" ? "Catalogue could not be loaded" : "Loading branch inventory") : <>
+                  <>
                     <span className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-border/60 pt-2">
                       {activeProducts > 0 && <span>
                         Active{" "}
@@ -193,6 +195,15 @@ export function TerminalWorkspaceHome() {
                 }
               />
             ),
+  };
+  const metricScope = authReady && user ? JSON.stringify([pageDataScope(user), currentStore.id, todayKey, businessTimeZone]) : null;
+  const confirmedBills = useConfirmedPresentation(metricScope, metrics.bills, inventoryReady && salesSummaryReady);
+  const confirmedRevenue = useConfirmedPresentation(metricScope ? JSON.stringify([metricScope, includeSponsorship]) : null, metrics.revenue, inventoryReady && revenueSummaryReady);
+  const confirmedStock = useConfirmedPresentation(metricScope, metrics.stock, inventoryReady);
+  const currentMetrics = { ...metrics,
+    bills: can("can_view_sales_reports") && visible("workspace.todayBills") ? confirmedBills : null,
+    revenue: can("can_view_sales_reports") && visible("workspace.todayRevenue") ? confirmedRevenue : null,
+    stock: can("can_view_inventory") && visible("workspace.lowStock") ? confirmedStock : null,
   };
 
   const actions = (
@@ -272,8 +283,11 @@ export function TerminalWorkspaceHome() {
             </div>
           </header>
 
-          {Object.values(metrics).some(Boolean) && <SummaryCardRail label="Workspace overview" className="selling-overview" desktopClassName="lg:flex lg:flex-wrap" desktopItemClassName="lg:flex-[1_1_13rem]">
-            {(["shift", "bills", "revenue", "stock"] as const).filter(key => metrics[key]).map(key => metrics[key])}
+          {can("can_view_sales_reports") && (loading || error || (includeSponsorship && (sponsorship.loading || sponsorship.error))) &&
+            <p role={error || sponsorship.error ? "alert" : "status"} className="text-sm text-muted-foreground">{error || sponsorship.error ? "Could not refresh totals" : "Updating…"}</p>}
+          {can("can_view_inventory") && !inventoryReady && <p role={loadPhase === "failed" ? "alert" : "status"} className="text-sm text-muted-foreground">{loadPhase === "failed" ? "Catalogue could not be loaded" : "Loading branch inventory…"}</p>}
+          {Object.values(currentMetrics).some(Boolean) && <SummaryCardRail label="Workspace overview" className="selling-overview" desktopClassName="lg:flex lg:flex-wrap" desktopItemClassName="lg:flex-[1_1_13rem]">
+            {(["shift", "bills", "revenue", "stock"] as const).filter(key => currentMetrics[key]).map(key => currentMetrics[key])}
           </SummaryCardRail>}
 
           {actions}

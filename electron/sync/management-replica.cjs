@@ -7,15 +7,16 @@ class ManagementReplica {
     this.retryAt = 0;
   }
   resetRetry() { this.failures = 0; this.retryAt = 0; }
-  run() {
-    if (this.active) return this.active;
+  run({historyOnly=false}={}) {
+    if (this.active) return !historyOnly&&this.activeHistoryOnly?this.active.catch(()=>undefined).then(()=>this.run()):this.active;
     if (Date.now() < this.retryAt) return Promise.resolve({ ok: false, deferred: true });
     const queued=this.databaseService.beginStartupActivity?.()??{finish:()=>{}};
     let queuedError;
     let queuedComplete=false;
     let queuedPaused=false;
-    this.active = this.coordinator.withExclusive(() => this.download()).then(result => {
-      queuedComplete=Boolean(result.ok&&!result.skipped);
+    this.activeHistoryOnly=historyOnly;
+    this.active = this.coordinator.withExclusive(() => historyOnly?this.downloadHistory():this.download()).then(result => {
+      queuedComplete=Boolean(result.ok&&!result.skipped&&(!historyOnly||result.history?.completed||result.history?.status==='completed'));
       queuedPaused=Boolean(result.paused);
       if (result.ok) this.resetRetry();
       return result;
@@ -27,8 +28,25 @@ class ManagementReplica {
       const cap = Math.min(900_000, 60_000 * 2 ** Math.min(this.failures++, 4));
       this.retryAt = permanent ? Infinity : Date.now() + cap / 2 + Math.random() * cap / 2;
       throw error;
-    }).finally(() => { queued.finish(queuedError,{complete:queuedComplete,paused:queuedPaused});this.active = null; });
+    }).finally(() => { queued.finish(queuedError,{complete:queuedComplete,paused:queuedPaused});this.active = null;this.activeHistoryOnly=false; });
     return this.active;
+  }
+  branches(scope){
+    if(!scope?.ok||!Array.isArray(scope.branches)||scope.branches.some(row=>typeof row?.id!=='string'||!row.id.trim()||row.id.length>128))throw new Error('Invalid management synchronization scope');
+    const {recordId}=require('./uuid-fields.cjs');return[...new Set(scope.branches.map(row=>recordId(row.id)))].sort();
+  }
+  async historyStep(branches,onActivity=()=>{}){
+    if(!branches.length||typeof this.lifecycle.historyStep!=='function')return{completed:true,skipped:true};
+    const scopeTag=require('node:crypto').createHash('sha256').update(JSON.stringify(branches)).digest('hex');
+    return this.lifecycle.historyStep(branches[0],{scopeTag,onActivity});
+  }
+  async downloadHistory(){
+    if(this.coordinator.paused)return{ok:false,paused:true,code:'ESYNC_PAUSED'};
+    const state=this.databaseService.snapshot();if(!state.enabled||!state.configured)return{ok:true,skipped:true};
+    if(!this.connectionManager.isConnected())return{ok:false,error:'Local SQL Server is not ready for management downloads.'};
+    const scope=await this.cloud.managementBranches(),branches=this.branches(scope);
+    if(this.coordinator.paused)return{ok:false,paused:true,code:'ESYNC_PAUSED'};
+    const history=await this.historyStep(branches);return{ok:true,branches:branches.length,history};
   }
   async download() {
     if (this.coordinator.paused) return { ok: false, paused: true, code: "ESYNC_PAUSED" };
@@ -44,8 +62,7 @@ class ManagementReplica {
     try {
     activity.report({phase:"authorizing"});
     const scope = await this.cloud.managementBranches();
-    if (!scope.ok || !Array.isArray(scope.branches)) throw new Error("Invalid management synchronization scope");
-    const branches = [...new Set(scope.branches.map(row => row.id).filter(id => typeof id === "string" && id.trim()))];
+    const branches = this.branches(scope);
     for (const branchId of branches) {
       if (this.coordinator.paused) return { ok: false, paused: true, code: "ESYNC_PAUSED" };
       const historyDays = 7300;
@@ -60,8 +77,9 @@ class ManagementReplica {
         code: result.code, status: result.credentialsInvalid ? 403 : undefined,
       });
     }
+    const history=await this.historyStep(branches,activity.report);
     completed=true;
-    return { ok: true, branches: branches.length };
+    return { ok: true, branches: branches.length,history };
     }catch(error){startupError=error;throw error;}
     finally{activity.finish(startupError,{complete:completed,paused:!completed&&this.coordinator.paused});}
   }

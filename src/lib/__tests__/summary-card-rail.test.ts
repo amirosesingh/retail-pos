@@ -101,7 +101,7 @@ describe("manual summary card rails", () => {
     expect(fixture.options).toMatchObject({ active: false, loop: false });
   });
 
-  it("retains finite desktop category carousels without changing graph rails", () => {
+  it("retains finite desktop category carousels while page graphs stay in place", () => {
     fixture.geometry = { width: 1200, windowWidth: 1400, minCardWidth: 208 };
     const html = render([card("One"), card("Two")], { desktopBehavior: "finite-carousel" });
     expect(fixture.options).toMatchObject({ active: true, loop: false, containScroll: "trimSnaps" });
@@ -110,12 +110,15 @@ describe("manual summary card rails", () => {
     render([card("One"), card("Two"), card("Three")], { desktopBehavior: "finite-carousel" });
     expect(fixture.options?.loop).toBe(true);
     expect(2 * fixture.slideWidths[0]).toBeGreaterThan(1200);
-    const graphs = readFileSync("src/platforms/web/components/pos/AnalyticsCardRail.tsx", "utf8");
-    expect(graphs).toContain('opts={{ align: "start", containScroll: "trimSnaps" }}');
-    expect(graphs).not.toContain("loop:");
+    const graphs = readFileSync("src/routes/analytics.tsx", "utf8");
+    expect(graphs).not.toContain("<AnalyticsCardRail");
+    expect(graphs).toContain("<ShopComparisonCharts");
+    const layout = readFileSync("src/platforms/web/components/pos/TradingChartLayout.tsx", "utf8");
+    expect(layout).toContain("overflow-y-auto");
+    expect(layout).not.toContain("<Carousel");
     const dashboard = readFileSync("src/routes/dashboard.tsx", "utf8");
-    expect(dashboard).toContain('<DisplayElement name="dashboard.tradingGraphs"><Carousel');
-    expect(dashboard).toContain('opts={{ align: "start", containScroll: "trimSnaps" }}');
+    expect(dashboard).toContain('<DisplayElement name="dashboard.tradingGraphs"><section');
+    expect(dashboard).not.toContain("<Carousel");
   });
 
   it("only handles root-focused arrows, respects child controls and reduced motion", () => {
@@ -159,7 +162,7 @@ describe("manual summary card rails", () => {
       ["src/platforms/web/components/pos/InventorySummaryCards.tsx", ["Inventory metrics"]],
     ] as const) {
       const source = readFileSync(path, "utf8");
-      for (const label of labels) expect(source).toContain(`<SummaryCardRail label="${label}"`);
+      for (const label of labels) expect(source).toMatch(new RegExp(`<(?:SummaryCardRail|ConfirmedMetricCards) label="${label}"`));
     }
     const inventory = readFileSync("src/routes/inventory.tsx", "utf8");
     expect(inventory).toContain("<InventorySummaryCards");

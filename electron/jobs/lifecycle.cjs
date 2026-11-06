@@ -1,7 +1,8 @@
 const historyRecovery = require("../sync/history-recovery.cjs");
+const historyIndex = require('../sync/history-index-recovery.cjs');
 const { runBootstrap, refreshTable } = require("./bootstrap.cjs");
 const { runRetention } = require("./retention.cjs");
-const { localTableCounts } = require("../sync/reconciliation.cjs");
+const { localTableCounts, validatedCloudCounts, reconciliationError, MEMBERSHIP_TABLES } = require("../sync/reconciliation.cjs");
 const { verifyTables } = require("../sync/verifier.cjs");
 const { recordId } = require("../sync/uuid-fields.cjs");
 const { binding } = require("../verified-activation.cjs");
@@ -9,9 +10,31 @@ const {ShiftGapRecovery,TABLES:SHIFT_GRAPH_TABLES}=require('../sync/shift-gap-re
 const { reportActivity } = require("../db/startup-activity.cjs");
 
 class LocalDataLifecycle {
-  constructor({connectionManager,databaseService,jobManager,jobRepository,registry,cloud,syncCoordinator,checkpoints,reader,publish=()=>{}}){
+  constructor({connectionManager,databaseService,jobManager,jobRepository,registry,cloud,syncCoordinator,checkpoints,reader,publish=()=>{},historyExecutionProof=()=>false}){
     Object.assign(this,{connectionManager,databaseService,jobManager,jobRepository,registry,cloud,syncCoordinator,checkpoints,reader,publish});
+    this.historyIndexRecovery=new historyIndex.HistoryIndexRecovery({connectionManager,cloud,jobRepository,jobManager,executionProof:historyExecutionProof,
+      onApplied:({branchId})=>this.publish({kind:'general',branchId,source:'cloud',tables:['change_history']})});
   }
+  historyIndexAvailable(){return typeof this.cloud.historyIndex==='function'&&typeof this.cloud.historyMissingRows==='function'&&typeof this.cloud.requestContext==='function';}
+  async historyStep(branchId,{force=false,scopeTag='',onActivity=()=>{}}={}){
+    if(this.syncCoordinator.paused||this.jobManager.paused)return{pending:true,paused:true};
+    if(!this.historyIndexAvailable())throw Object.assign(new Error('The protected history recovery protocol is unavailable. Saved work remains pending.'),{code:'EHISTORY_INDEX_UNAVAILABLE',table:'change_history'});
+    const source=this.cloud.requestContext(false),prior=this.historyRecoveryIdentity;
+    const samePrior=prior&&prior.pool===source.pool&&prior.fingerprint===source.fingerprint&&prior.scopeTag===scopeTag&&this.historyRecoveryState?.branchId===branchId;
+    this.historyIndexRecovery.onActivity=onActivity;
+    const result=await this.historyIndexRecovery.step({branchId,force,scopeTag});
+    const current=this.cloud.requestContext(false);
+    if(current.pool!==source.pool||current.fingerprint!==source.fingerprint)throw Object.assign(new Error('The database or terminal changed during history recovery.'),{code:'ESYNC_REQUEST_CONTEXT_CHANGED',table:'change_history'});
+    const waiting=result.busy||result.paused,previous=samePrior?this.historyRecoveryState:null;
+    const status=result.status??result.job?.status??(result.completed?'completed':result.paused?'paused':result.retrying?'retrying':'queued');
+    this.historyRecoveryState={branchId,status,pending:Boolean(result.pending),membershipOnly:true,jobId:result.job_id??result.job?.job_id??previous?.jobId??null,
+      completedRows:Number(result.completed_rows??result.job?.completed_rows??previous?.completedRows??0),code:waiting?previous?.code??null:result.error_code??result.job?.error_code??null,error:waiting?previous?.error??null:result.error_message??result.job?.error_message??null,
+      nextRetryAt:result.next_retry_at??result.job?.next_retry_at??null};
+    this.historyRecoveryIdentity={pool:source.pool,fingerprint:source.fingerprint,scopeTag};
+    this.syncCoordinator.recordHistoryRecovery?.(this.historyRecoveryState);
+    return result;
+  }
+  historyPending(branchId){try{const source=this.cloud.requestContext(false),identity=this.historyRecoveryIdentity;return Boolean(identity&&identity.pool===source.pool&&identity.fingerprint===source.fingerprint&&this.historyRecoveryState?.branchId===branchId&&this.historyRecoveryState.pending);}catch{return false;}}
   bootstrapType(historyDays){return `bootstrap_${historyDays}`;}
   cacheIdentity(branchId,historyDays){
     const state=this.databaseService?.snapshot?.();
@@ -33,14 +56,32 @@ class LocalDataLifecycle {
   async cachedSnapshotReady(branchId,historyDays,historyJob=null){
     const identity=this.cacheIdentity(branchId,historyDays);
     if(!identity)return false;
-    const completed=await this.jobRepository.startupSnapshot(this.bootstrapType(historyDays),branchId,historyJob?.job_id??null);
-    if(!completed||await this.jobRepository.hasOtherActiveJobs(historyJob?.job_id??null))return false;
+    let indexProof=null;
+    let legacyProof=null;
+    if(!historyJob&&this.historyIndexAvailable()){
+      // Existing operational-cache readiness must not acquire a new GUID/read
+      // permission dependency when there is no pending history job to exempt.
+      const candidate=await this.jobRepository.recovery(historyIndex.TYPE,branchId,this.cloud.terminalId());
+      if(candidate&&candidate.status!=='completed'){
+        indexProof=await this.historyIndexRecovery.current(branchId);
+        historyJob=indexProof?.job??null;
+      }
+      const old=await this.jobRepository.legacyHistory?.(branchId,this.cloud.terminalId())??[];
+      if(old.length)legacyProof=indexProof?.scope??await this.historyIndexRecovery.capture(branchId);
+    }else if(historyJob?.job_type===historyIndex.TYPE){
+      indexProof=await this.historyIndexRecovery.current(branchId);
+      if(indexProof?.job.job_id!==historyJob.job_id)return false;
+    }
+    const allowedLegacyIds=(indexProof?.scope??legacyProof)?.legacyIds??[];
+    const completed=await this.jobRepository.startupSnapshot(this.bootstrapType(historyDays),branchId,historyJob?.job_id??null,allowedLegacyIds);
+    if(!completed||await this.jobRepository.hasOtherActiveJobs(historyJob?.job_id??null,{allowedLegacyIds}))return false;
     const result=await identity.pool.request().input("branch",String(branchId))
       .query("SELECT TOP (1) id FROM dbo.stores WHERE id=@branch;");
     if(!result.recordset?.length)return false;
-    if(historyJob){
-      const expected=historyRecovery.scope(this.cloud,branchId,historyDays);
-      historyRecovery.decode(await this.jobRepository.get(historyJob.job_id),expected);
+    if(historyJob||legacyProof){
+      const expected=indexProof?.scope??legacyProof??historyRecovery.scope(this.cloud,branchId,historyDays);
+      const decode=indexProof?historyIndex.decode:historyRecovery.decode;
+      if(historyJob)decode(await this.jobRepository.get(historyJob.job_id),expected);
       const tables=this.registry.tables.filter(table=>table.direction!=="pull"&&table.sqlServerTable!=="change_history"&&table.columns.some(column=>column.primaryKey));
       // This exemption is for audit history only. Operational tables must not
       // require their own recovery before an existing snapshot can be exposed.
@@ -61,8 +102,9 @@ class LocalDataLifecycle {
       }
       // Recheck scope and baseline after metadata reads; a profile change while
       // awaiting SQL must not publish readiness from an obsolete connection.
-      historyRecovery.decode(await this.jobRepository.get(historyJob.job_id),expected);
-      await historyRecovery.retained(this.connectionManager,null,historyRecovery.decode(historyJob,expected).baseline);
+      if(historyJob)decode(await this.jobRepository.get(historyJob.job_id),expected);
+      if(indexProof||legacyProof)await this.historyIndexRecovery.check(indexProof?.scope??legacyProof);
+      else await historyRecovery.retained(this.connectionManager,null,historyRecovery.decode(historyJob,expected).baseline);
     }
     if(!this.sameCacheIdentity(identity,branchId,historyDays))return false;
     this.cachedReadyProof={...identity,branchId,historyDays};
@@ -81,7 +123,7 @@ class LocalDataLifecycle {
   async recoverChangeTrackingGap(branchId,historyDays,tableName,onActivity=()=>{}){
     const table=this.registry.tables.find(candidate=>candidate.sqlServerTable===tableName);
     if(!table)throw Object.assign(new Error(`The expired Change Tracking table ${tableName} is not registered.`),{code:"ESCHEMA_REGISTRY"});
-    if(table.sqlServerTable==="change_history"&&table.cloudTable==="change_history")return historyRecovery.recover(this,branchId,historyDays,refreshTable,onActivity);
+    if(table.sqlServerTable==="change_history"&&table.cloudTable==="change_history")return this.historyStep(branchId,{onActivity});
     if(SHIFT_GRAPH_TABLES.includes(table.sqlServerTable)){
       const recovery=await new ShiftGapRecovery({connectionManager:this.connectionManager,registry:this.registry,reader:this.reader,checkpoints:this.checkpoints,branchId,tableName:table.sqlServerTable,cloud:this.cloud,historyDays}).begin();
       const refreshed=await refreshTable({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName:table.cloudTable,diagnosticOrigin:'gap_recovery',recovery,onActivity});
@@ -153,15 +195,21 @@ class LocalDataLifecycle {
     reportActivity(onActivity,{phase:"retaining"});
     await this.retain(branchId,historyDays);
     reportActivity(onActivity,{phase:"checking"});
-    const differences=await this.reconcile(branchId,historyDays);
-    if(differences.length)throw Object.assign(new Error(`Final reconciliation found ${differences.length} table differences.`),{code:"ERECONCILE",differences});
-    this.databaseService.markReady({phase:"ready",branchId,historyDays});
-    return{ok:true,branchId,historyDays,differences:[]};
+    const differences=await this.reconcileAndRecover(branchId,historyDays,onActivity);
+    const blockers=differences.filter(row=>row.table!=='change_history'||!this.historyPending(branchId));
+    if(blockers.length)throw reconciliationError(blockers);
+    if(this.historyPending(branchId)){
+      if(!await this.cachedSnapshotReady(branchId,historyDays))throw reconciliationError(differences);
+      this.databaseService.markReady({phase:'history_recovery',syncReady:false,branchId,historyDays});
+    }else this.databaseService.markReady({phase:"ready",branchId,historyDays});
+    return{ok:true,branchId,historyDays,differences,historyPending:this.historyPending(branchId)};
   }
-  async reconcile(branchId,historyDays=90){
+  async reconcile(branchId,historyDays=90,{publish=true}={}){
+    const identity=this.reconciliationIdentity(branchId,historyDays);
     const terminalId=this.cloud.terminalId?.()??"";
     const [local,cloudRows]=await Promise.all([localTableCounts(this.connectionManager,this.registry,branchId,historyDays,terminalId),this.cloud.counts({branchId,historyDays})]);
-    const cloud=Object.fromEntries((Array.isArray(cloudRows)?cloudRows:[]).map(row=>[row.table_name,String(row.row_count??"0")]));
+    const cloud=validatedCloudCounts(this.registry,cloudRows);
+    this.assertReconciliationIdentity(identity,branchId,historyDays);
     const verifiedAt=new Date().toISOString();
     const tables=this.registry.tables.filter(table=>cloud[table.cloudTable]!==undefined).map(table=>({
       table:table.cloudTable,
@@ -171,8 +219,84 @@ class LocalDataLifecycle {
       verified:false,
       comparedAt:verifiedAt,
     }));
-    this.syncCoordinator.recordVerification({comparedAt:verifiedAt,verified:false,tables});
+    this.lastCountReport={comparedAt:verifiedAt,verified:false,tables};
+    if(publish)this.syncCoordinator.recordVerification(this.lastCountReport);
     return tables.filter(table=>table.status!=="SYNCED");
+  }
+  reconciliationIdentity(branchId,historyDays){
+    const terminal=this.cloud.terminalStore?.read?.();
+    if(terminal){
+      const registered=binding(terminal);
+      if(registered?.mode!=="operations"||registered.branchId!==recordId(String(branchId)))
+        throw Object.assign(new Error("The synchronization scope changed; retry with the registered branch."),{code:"EBRANCH"});
+    }
+    const source=this.cloud.requestContext?.(false);
+    return {pool:this.connectionManager.pool,profile:JSON.stringify(this.databaseService?.snapshot?.()?.profile),
+      scope:JSON.stringify([branchId,historyDays,source?.fingerprint??[this.cloud.backendUrl?.(),this.cloud.terminalId?.()]]),
+      registration:JSON.stringify(terminal?[terminal.deviceUse,terminal.locationId,terminal.storeId,terminal.branchId]:null)};
+  }
+  assertReconciliationIdentity(identity,branchId,historyDays){
+    const now=this.reconciliationIdentity(branchId,historyDays);
+    if(Object.keys(identity).some(key=>identity[key]!==now[key]))
+      throw Object.assign(new Error("The database or terminal scope changed during reconciliation. Retry on the current connection."),{code:"ERECONCILE_SCOPE"});
+  }
+  async reconcileAndRecover(branchId,historyDays=90,onActivity=()=>{}){
+    const identity=this.reconciliationIdentity(branchId,historyDays);
+    const check=()=>this.assertReconciliationIdentity(identity,branchId,historyDays);
+    let differences=await this.reconcile(branchId,historyDays,{publish:false});
+    check();
+    if(differences.some(row=>row.table==='change_history')&&this.historyIndexAvailable()){
+      await this.historyStep(branchId,{force:true,onActivity});check();
+      differences=await this.reconcile(branchId,historyDays,{publish:false});check();
+    }
+    if(!differences.length||differences.every(row=>MEMBERSHIP_TABLES.has(row.table)||row.table==='change_history'&&this.historyPending(branchId))){
+      if(this.lastCountReport)this.syncCoordinator.recordVerification(this.lastCountReport);
+      return differences;
+    }
+    // One bounded attempt for an unchanged cohort; never repeat a full bootstrap
+    // on every startup retry. This evidence authorizes no deletion or ACK.
+    const fingerprint=JSON.stringify(differences.map(({table,local,cloud})=>[table,local,cloud]).sort());
+    const prior=this.lastReconciliationAttempt;
+    if(prior&&Object.keys(identity).every(key=>identity[key]===prior.identity[key])&&prior.fingerprint===fingerprint&&Date.now()-prior.at<300000){
+      this.syncCoordinator.recordVerification(this.lastCountReport);return differences;
+    }
+    const catchUp=async()=>{
+      check();reportActivity(onActivity,{phase:"checking"});
+      const result=await this.syncCoordinator.runNow({branchId,batchSize:10});check();
+      if(!result.ok)throw Object.assign(new Error(result.error??"Synchronization will retry before reconciliation can finish."),{code:result.code??"ESYNC"});
+      if(result.credentialsInvalid||result.lastError&&!result.historyHoldOnly)
+        throw Object.assign(new Error(result.lastError??"Synchronization authorization must be verified before reconciliation."),{code:result.credentialsInvalid?"EAUTH":"ESYNC"});
+      if(result.deferredTables?.length||result.deferredLocalChanges||result.deferredHeldDeletion||Number(result.pending??0)>0||Number(result.failed??0)>0||Number(result.conflicts??0)>0)
+        throw Object.assign(new Error("Reconciliation is waiting for existing local work to be accepted. Pending work is retained."),{code:"ESYNC_PENDING"});
+    };
+    await catchUp();
+    differences=await this.reconcile(branchId,historyDays,{publish:false});check();
+    // Large historical recovery belongs to the existing resumable job path.
+    // Do not monopolize the upload lane with a repeated full-table snapshot.
+    const attempted=new Set();
+    for(;;){
+      const missing=new Set(differences.filter(row=>!MEMBERSHIP_TABLES.has(row.table)&&!(row.table==='change_history'&&this.historyIndexAvailable())&&!attempted.has(row.table)&&BigInt(row.cloud)>BigInt(row.local)&&BigInt(row.cloud)<=100n).map(row=>row.table));
+      const tables=this.registry.tables.filter(table=>missing.has(table.cloudTable)).sort((a,b)=>a.dependencyOrder-b.dependencyOrder||a.cloudTable.localeCompare(b.cloudTable)).slice(0,4);
+      if(!tables.length)break;
+      for(const table of tables){
+        check();attempted.add(table.cloudTable);let pages=0;
+        await refreshTable({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName:table.cloudTable,onActivity,
+          progress:{beforeDownload:async()=>{check();if(pages>=10)throw Object.assign(new Error("Automatic reconciliation reached its safe page limit. Saved work is retained; review the remaining table differences."),{code:"ERECONCILE_BUDGET"});},
+            beforeApply:async()=>{check();pages++;},
+            save:async(_transaction,page)=>{check();if(page.completed>100)throw Object.assign(new Error("The table changed during recovery; automatic reconciliation stopped at its safe row limit."),{code:"ERECONCILE_BUDGET"});},committed:async()=>check()}});
+        check();
+      }
+      // Give normal uploads/downloads a turn between small recovery groups.
+      // Each table is attempted once, so a fifth safe table is processed rather
+      // than prematurely presented as a manual conflict or retried forever.
+      await catchUp();
+      differences=await this.reconcile(branchId,historyDays,{publish:false});check();
+    }
+    check();this.syncCoordinator.recordVerification(this.lastCountReport);
+    this.lastReconciliationAttempt={identity,fingerprint,at:Date.now()};
+    // Local-greater rows are never pruned: absence from an authorized snapshot
+    // does not prove whether retained offline work may be discarded.
+    return differences;
   }
   async repair(branchId,historyDays=90,tableNames=[]){
     const allowed=new Set(this.registry.tables.map(table=>table.cloudTable));
@@ -180,7 +304,10 @@ class LocalDataLifecycle {
     if(!requested.length)return this.reconcile(branchId,historyDays);
     const pushed=await this.syncCoordinator.runNow({branchId,batchSize:10});
     if(!pushed.ok)throw Object.assign(new Error(pushed.error??"Synchronization failed before repair."),{code:pushed.code??"ESYNC"});
-    for(const tableName of requested)await refreshTable({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName});
+    for(const tableName of requested){
+      if(tableName==='change_history')await this.historyStep(branchId,{force:true});
+      else await refreshTable({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName});
+    }
     const pulled=await this.syncCoordinator.runNow({branchId,batchSize:10});
     if(!pulled.ok)throw Object.assign(new Error(pulled.error??"Synchronization failed after repair."),{code:pulled.code??"ESYNC"});
     return this.reconcile(branchId,historyDays);
@@ -195,7 +322,7 @@ class LocalDataLifecycle {
   }
 }
 // Every lifecycle entry shares the same lease as manual/automatic sync.
-for (const name of ["ensure", "bootstrap", "retain", "repair", "verify", "recoverChangeTrackingGap", "pushWithGapRecovery"]) {
+for (const name of ["ensure", "bootstrap", "retain", "repair", "verify", "reconcile", "reconcileAndRecover", "recoverChangeTrackingGap", "pushWithGapRecovery", "historyStep"]) {
   const work = LocalDataLifecycle.prototype[name];
   LocalDataLifecycle.prototype[name] = function(...args) {
     return this.syncCoordinator.withExclusive

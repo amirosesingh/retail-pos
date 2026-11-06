@@ -12,6 +12,21 @@ const { policy } = require("./conflicts.cjs");
 const { toLocalValue } = require("./row-codec.cjs");
 const { tagBootstrapDiagnostic } = require("../diagnostics.cjs");
 const {boundedText,rememberGraph} = require("./shift-recovery-exact.cjs");
+const { SyncRequestLane } = require("./request-lane.cjs");
+
+function governanceRequest(payload) {
+  const tables = new Set(["pos_settings", "pos_store_settings", "authorization_actions", "authorization_action_history"]);
+  const field = row => String(row?.scope ?? "").toLowerCase() === "global" &&
+    String(row?.scope_id ?? "") === "" && String(row?.key ?? "").startsWith("pos_field:");
+  const shared = operation => operation?.table === "settings_scoped" &&
+    ((operation.rows ?? []).some(field) || (operation.changes ?? []).some(change => {
+      if (field(change?.key)) return true;
+      try { return field(JSON.parse(change?.entityId ?? change?.entity_id)); } catch { return false; }
+    }));
+  return tables.has(payload?.sqlServerBatch?.table) || shared(payload?.sqlServerBatch) ||
+    Boolean(payload?.sqlServerAggregate?.operations?.some(operation => tables.has(operation.table) || shared(operation)));
+}
+const requestContextChanged = () => Object.assign(new Error("The terminal or database connection changed during synchronization. Saved local work remains pending."), { code: "ESYNC_REQUEST_CONTEXT_CHANGED" });
 // Compare effective persisted assignments, not SQL's case/space-insensitive text
 // equality or row versions alone. Unknown registry types retain the old update.
 function changedAssignments(assignments, columns) {
@@ -37,6 +52,7 @@ function changedAssignments(assignments, columns) {
 }
 // Main-private transport evidence: body flags cannot authorize partial feed pages.
 const feedContinuation = new WeakMap();
+const legacyRecoveryResponses = new WeakMap();
 
 function transportDiagnostic(error, payload, stage) {
   // Read data descriptors only: foreign errors must not run getters or leak
@@ -46,9 +62,9 @@ function transportDiagnostic(error, payload, stage) {
   };
   try {
     return {
-      transportOperation: payload?.sqlServerPull ? "feed" : payload?.sqlServerBootstrap ? "bootstrap"
+      transportOperation: payload?.sqlServerPull ? "feed" : payload?.sqlServerBootstrap || payload?.sqlServerHistoryReconcile ? "bootstrap"
         : payload?.sqlServerShiftGraph ? "graph" : payload?.sqlServerCounts ? "count"
-          : payload?.sqlServerBatch || payload?.sqlServerAggregate ? "upload" : "other",
+          : payload?.sqlServerBatch || payload?.sqlServerAggregate || payload?.sqlServerLegacyRecovery ? "upload" : "other",
       transportStage: stage,
       transportCode: own(error, "code") ?? own(own(error, "cause"), "code"),
       transportErrorName: own(error, "name") ?? (error instanceof TypeError ? "TypeError" : error instanceof Error ? "Error" : undefined),
@@ -118,6 +134,7 @@ class CloudClient {
     this.connectionManager = connectionManager;
     this.financialBasisContext=financialBasisContext;
     this.authorizationProof = null;
+    this.requestLane = new SyncRequestLane();
   }
   setAuthorizationProof(proof) {
     this.authorizationProof = proof && typeof proof === "object" ? { ...proof } : null;
@@ -160,11 +177,49 @@ class CloudClient {
       error: ready ? null : data?.error ?? data?.message ?? "The hosted POS backend cannot reach the central database.",
     };
   }
-  async request(payload, operation = "") {
-    const terminal = this.terminalStore.read() ?? {};
+  requestContext(governance = false) {
+    const saved = this.terminalStore?.read() ?? {};
+    const terminal = Object.fromEntries(["tokenId", "branchId", "storeId", "locationId", "deviceUse", "deviceType", "deviceBindingProof", "deviceClaimProof"]
+      .map(key => [key, saved[key]]));
+    const profile = this.connectionManager?.profile;
+    const selectors = profile ? Object.fromEntries(["id", "host", "instanceName", "port", "database", "authMode", "username", "encrypt", "trustServerCertificate"].map(key => [key, profile[key]])) : null;
+    const project = this.financialBasisContext?.();
+    const source = { terminal, base: this.backendUrl(), profile: selectors,
+      project: project ? { projectOrigin: project.projectOrigin, branchId: project.branchId } : null,
+      personProof: governance ? { ...(this.authorizationProof ?? {}) } : {} };
+    return { ...source, fingerprint: createHash("sha256").update(JSON.stringify(source)).digest("hex"), pool: this.connectionManager?.pool ?? null };
+  }
+  assertRequestContext(source, governance, payload) {
+    const current = this.requestContext(governance);
+    if (current.pool !== source.pool || current.fingerprint !== source.fingerprint) {
+      // Existing financial witness callers depend on their precise refusal;
+      // scheduling must not replace that protocol with a generic sync error.
+      if (payload?.sqlServerFinancialBasis || payload?.sqlServerFinancialCapability) financialBasisFailure();
+      throw requestContextChanged();
+    }
+  }
+  request(payload, operation = "") {
+    try {
+      // Capture values when queued. Never send a caller's old work with a new
+      // terminal, SQL profile, backend, project or governance operator's proof.
+      const capturedJson = JSON.stringify(payload), captured = JSON.parse(capturedJson);
+      const governance = governanceRequest(captured), source = this.requestContext(governance);
+      const work = () => {
+        this.assertRequestContext(source, governance, captured);
+        return this.performRequest(captured, operation, source, governance);
+      };
+      // Branch admission is control-plane metadata. Health/login/enrollment use
+      // their existing separate paths and cannot wait behind data downloads.
+      if (!operation && captured?.managementSyncBranches === true && Object.keys(captured).length === 1) return work();
+      const upload = captured?.sqlServerBatch || captured?.sqlServerAggregate || captured?.sqlServerFinancialEvent || captured?.sqlServerFinancialObservation || captured?.sqlServerLegacyRecovery;
+      return this.requestLane.run(upload ? "upload" : "download", Buffer.byteLength(capturedJson, "utf8"), work);
+    } catch (error) { return Promise.reject(error); }
+  }
+  async performRequest(payload, operation, source, governance) {
+    const terminal = source.terminal;
     // An empty config-store value must not mask the HTTPS recovery copy sealed
     // with the terminal activation (nullish coalescing treats "" as present).
-    const base = this.backendUrl();
+    const base = source.base;
     const terminalToken = String(terminal.tokenId ?? "").trim();
     if (!base)
       throw Object.assign(
@@ -189,33 +244,17 @@ class CloudClient {
       );
     // The OS-sealed activation token is authoritative. Put it last so no
     // caller-supplied payload can replace the device identity or its branch.
-    const governanceTables = new Set([
-      "pos_settings",
-      "pos_store_settings",
-      "authorization_actions",
-      "authorization_action_history",
-    ]);
-    const sharedPosField = (row) => String(row?.scope ?? "").toLowerCase() === "global" &&
-      String(row?.scope_id ?? "") === "" && String(row?.key ?? "").startsWith("pos_field:");
-    const hasSharedPosField = (operation) => operation?.table === "settings_scoped" &&
-      ((operation.rows ?? []).some(sharedPosField) ||
-        (operation.changes ?? []).some((change) => {
-          if (sharedPosField(change?.key)) return true;
-          try { return sharedPosField(JSON.parse(change?.entityId ?? change?.entity_id)); }
-          catch { return false; }
-        }));
-    const governance =
-      governanceTables.has(payload?.sqlServerBatch?.table) ||
-      hasSharedPosField(payload?.sqlServerBatch) ||
-      payload?.sqlServerAggregate?.operations?.some((operation) =>
-        governanceTables.has(operation.table) || hasSharedPosField(operation),
-      );
-    const personProof = governance ? (this.authorizationProof ?? {}) : {};
+    const personProof = governance ? source.personProof : {};
     const suffix = operation ? `?operation=${encodeURIComponent(operation)}` : "";
     const outbound=normalizeSyncPayload(payload);
     // UUID cleanup is for ordinary rows, never for already-signed labels.
     // Raw JSON and proof objects remain exactly those captured by Main.
     if(payload?.sqlServerFinancialEvent)outbound.sqlServerFinancialEvent={...outbound.sqlServerFinancialEvent,operationJson:payload.sqlServerFinancialEvent.operationJson,proof:payload.sqlServerFinancialEvent.proof};
+    if (payload?.sqlServerLegacyRecovery) outbound.sqlServerLegacyRecovery = {
+      ...payload.sqlServerLegacyRecovery,
+      payloadJson: payload.sqlServerLegacyRecovery.payloadJson,
+      attestation: payload.sqlServerLegacyRecovery.attestation,
+    };
     const financialAggregate=payload?.sqlServerAggregate;
     if(financialAggregate&&(financialAggregate.shiftFinancialBasis||financialAggregate.shiftFinancialOpening||financialAggregate.registerFinancialBoundary===true)){
       for(const key of['shiftAuthor','shiftClosingStart','shiftFinancialBasis','shiftFinancialOpening'])if(financialAggregate[key]!==undefined)outbound.sqlServerAggregate[key]=financialAggregate[key];
@@ -225,16 +264,30 @@ class CloudClient {
     let bodyReadError;
     let nonJsonResponse = false;
     let exactGraphBody;
+    let legacyRecoveryBody;
     let transportStage = "fetch";
+    const requestBody = JSON.stringify({ ...outbound, ...personProof, terminalToken: recordId(terminalToken), deviceBindingProof:terminal.deviceBindingProof, ...(terminal.deviceUse === "management" ? { deviceClaimProof: terminal.deviceClaimProof } : {}) });
+    if (payload?.sqlServerLegacyRecovery && Buffer.byteLength(requestBody, "utf8") > require("../security/legacy-shift-recovery-protocol.cjs").MAX_UPLOAD_BYTES)
+      throw Object.assign(new Error("The reviewed closing exceeds the bounded recovery upload. Its saved evidence remains available for review."), { code:"ELEGACY_RECOVERY_OVERSIZED", table:"shifts" });
     try { response = await fetch(`${base}/api/v1/pos/sync${suffix}`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...outbound, ...personProof, terminalToken: recordId(terminalToken), deviceBindingProof:terminal.deviceBindingProof, ...(terminal.deviceUse === "management" ? { deviceClaimProof: terminal.deviceClaimProof } : {}) }),
-      signal: AbortSignal.timeout(30_000),
+      headers: { "content-type": "application/json", ...(payload?.sqlServerLegacyRecovery ? { "x-pos-legacy-recovery": "1" } : {}) },
+      body: requestBody,
+      signal: AbortSignal.timeout(payload?.sqlServerHistoryReconcile ? 12_000 : 30_000),
     });
       transportStage = "body";
       try {
-        if(payload?.sqlServerShiftGraph && response.ok && typeof response.text==="function"){
+        if(payload?.sqlServerHistoryReconcile&&response.ok){
+          const kind=payload.sqlServerHistoryReconcile.action==='rows'?'rows':'index';
+          const max=kind==='rows'?5*1024*1024:128*1024;
+          const text=await boundedText(response,max);
+          if(response.headers?.get?.('X-POS-History-Reconcile-Version')!=='1'||response.headers?.get?.('X-POS-History-Reconcile-Kind')!==kind)
+            throw Object.assign(new Error('The protected history read capability could not be verified.'),{code:'EHISTORY_INDEX_PROTOCOL',table:'change_history'});
+          data=JSON.parse(text);
+        } else if (payload?.sqlServerLegacyRecovery && response.ok) {
+          legacyRecoveryBody = await boundedText(response, require("./legacy-shift-recovery-receipt.cjs").MAX_RESPONSE_BYTES);
+          data = JSON.parse(legacyRecoveryBody);
+        } else if(payload?.sqlServerShiftGraph && response.ok && typeof response.text==="function"){
           exactGraphBody=await boundedText(response);
           data=JSON.parse(exactGraphBody);
         }else data = await response.json();
@@ -267,7 +320,12 @@ class CloudClient {
         ...(bodyReadError ? { cause: bodyReadError } : {}),
       }), { httpStatus: response.status, nonJsonResponse });
     }
-    const normalized=normalizeSyncPayload(data);
+    this.assertRequestContext(source, governance, payload);
+    // Versioned history rows already contain exact JSON/decimal text. Generic
+    // entity-key JSON parsing would round its evidence before validation.
+    const normalized=payload?.sqlServerHistoryReconcile?data:normalizeSyncPayload(data);
+    if (legacyRecoveryBody !== undefined && normalized && typeof normalized === "object")
+      legacyRecoveryResponses.set(normalized, legacyRecoveryBody);
     if (payload?.sqlServerPull) {
       const projection = response.headers?.get?.("X-POS-Feed-Projection") ?? null;
       const continuation = response.headers?.get?.("X-POS-Feed-Continue") ?? null;
@@ -366,6 +424,27 @@ class CloudClient {
   shiftGraph({organizationId="default",branchId,shiftId}) {
     return this.shiftProtocolRequest({sqlServerShiftGraph:{organizationId,branchId,shiftId}});
   }
+  async pushLegacyRecovery(event) {
+    const source = this.financialBasisIdentity(event.branchId, event.shiftId);
+    const assertCurrent = () => {
+      const current = this.financialBasisIdentity(event.branchId, event.shiftId);
+      if (current.pool !== source.pool || current.manager !== source.manager ||
+          JSON.stringify(current.identity) !== JSON.stringify(source.identity)) financialBasisFailure();
+    };
+    const { normalizeLegacyPayload, normalizeLegacyRecovery } = require("../security/legacy-shift-recovery-protocol.cjs");
+    const payload = normalizeLegacyPayload(JSON.parse(event.payloadJson)), proof = normalizeLegacyRecovery(event.proof);
+    if (financialBasisHash(event.payloadJson) !== event.payloadHash || proof.payloadHash !== event.payloadHash ||
+        payload.branchId !== source.identity.branchId || proof.terminalId !== source.identity.terminalId ||
+        proof.projectOrigin !== source.identity.projectOrigin) financialBasisFailure();
+    assertCurrent();
+    const result = await this.shiftProtocolRequest({ sqlServerLegacyRecovery: {
+      organizationId: "default", branchId: event.branchId, payloadJson: event.payloadJson, attestation: proof,
+    } });
+    assertCurrent();
+    const { rememberLegacyRecoveryReceipt } = require("./legacy-shift-recovery-receipt.cjs");
+    return rememberLegacyRecoveryReceipt({ event, raw: legacyRecoveryResponses.get(result),
+      registry: require("../db/schema-registry.cjs").loadRegistry(), assertCurrent });
+  }
   async shiftProtocolRequest(payload) {
     try{return await this.request(payload);}
     catch(error){
@@ -411,6 +490,17 @@ class CloudClient {
   }
   counts({ organizationId = "default", branchId, historyDays = 90 }) {
     return this.request({ sqlServerCounts: { organizationId, branchId, historyDays } });
+  }
+  async historyIndex({organizationId='default',branchId,action='begin',afterId=null,upperId=null,keepCommerce}) {
+    const terminalId=this.terminalId();
+    const read={organizationId,branchId,action,...(action==='page'?{afterId,upperId}:action==='finish'?{upperId}:{})};
+    const value=await this.request({sqlServerHistoryReconcile:read});
+    return require('./history-index-protocol.cjs').normalizeIndex(value,{organizationId,branchId,terminalId,keepCommerce},{action,afterId,upperId});
+  }
+  async historyMissingRows({organizationId='default',branchId,ids,keepCommerce}) {
+    const terminalId=this.terminalId();
+    const value=await this.request({sqlServerHistoryReconcile:{organizationId,branchId,action:'rows',ids}});
+    return require('./history-index-protocol.cjs').normalizeRows(value,{organizationId,branchId,terminalId,keepCommerce},ids);
   }
   membershipDirectory({ afterRevision = 0, limit = 500 } = {}) {
     return this.request({ afterRevision:Number(afterRevision)||0, limit }, "membership_directory");
