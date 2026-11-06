@@ -24,6 +24,20 @@ same-scope confirmed refresh/error behavior and reduced-motion support. This is
 presentation only: no provider, query cadence, calculation, database or Membership
 changes. Root keeps a separate HMR preview alongside existing web and Electron.
 
+## 6 November — complete history-count coverage without changing audit scope
+
+The strict70-table reconciliation check exposed a confirmed central contract gap:
+the live four-argument count wrapper delegates69 registered tables and omits
+change_history. Prepare only an exact-source/metadata-guarded append of the missing
+count, preserving its existing all-history bootstrap predicate and service-only
+authorization. Do not weaken client completeness validation or fold the separately
+held broad audit-privacy review into this correction. The current21019 cloud and
+20799 local history totals are a net220 gap; a consistent UUID comparison is needed
+before classifying missing, local-only or divergent facts. Live history pull already
+supports UUID dispatch but its feed trigger is absent. Future trigger/recovery work
+requires its own concrete plan and exact database approval; no manual PC/cloud row
+copy, checkpoint reset or history omission is authorized.
+
 ## 6 November — existing-PC stock-history delivery
 
 Prepare one consolidated existing-data local SQL file, retaining the reviewed

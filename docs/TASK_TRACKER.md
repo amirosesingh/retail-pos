@@ -1,3 +1,81 @@
+## 6 November — COUNT80 count-artifact line-ending correction
+
+Separate beta correction from c77beecc after merged COUNT79 reproduced
+HISTORY_COUNT_UNEXPECTED_CHANGE on a fresh Windows CRLF checkout. Its multiline
+new_select dollar literal embedded the checkout's CRLF bytes while the unchanged
+new-body hash correctly required the reviewed LF replacement; the transaction
+rolled back. No live count migration has run. Keep its existing filename, exact
+old-source/metadata guards and f5a899 new-body hash. Construct only the replacement
+from single-line literals joined by explicit LF characters. Test the complete
+captured-definition scenario group using both LF and CRLF artifact bytes, including
+cross-format replay and denied/source-drift/rollback parity on PGlite and native
+PostgreSQL. Inspect all other hash-sensitive literals for checkout dependence.
+No source variants, hash relaxation, live schema/data changes or deployment.
+
+Verification: complete21-scenario groups pass with LF and CRLF artifact bytes in
+both PGlite and native PostgreSQL18.6, including cross-format replay. Focused
+Vitest/canonical inventory31 passed. Other guarded old/new/history/sources dollar
+literals are single-line and explicitly checked. The prepared committed-LF-file
+SHA256 is now731375F0F4E03520A7C648DFE790FF05AC97FA455A57CF1E3032B0D0748B9DF7;
+this supersedes COUNT79's288F artifact bytes, not its unchanged reviewed f5a899
+resulting routine body. Exact-head CI, fresh preflight and exact-target database
+application approval remain separate; no live count migration has run. Root's
+independent source review passed the exact four-file correction before commit.
+
+## 6 November — COUNT79 complete the existing history-count contract
+
+Separate preparation-only branch from beta0b6f00b1. Actual Electron's normal feed
+succeeds, but strict reconciliation correctly refuses the incomplete central
+count contract: the registry contains70 tables, while live counts delegates69
+and omits change_history. Old comparison silently ignored this missing coverage.
+Live bootstrap_scoped89cc3af4 already admits history using WHERE true with no date
+cutoff; registry retention=current and local comparison=1=1 agree. Preserve this
+existing authorization/retention contract, including its separately held broad
+audit-privacy review, rather than relaxing client validation or inventing scope.
+
+Owner authorizes recommended sync corrections with exact database changes shown
+before application. Prepare one CLI-created additive migration pinning the exact
+four-argument counts wrapper6547d32e, scoped delegatec08c4bf2, bootstrap history
+selector/body and routine metadata. Append exactly one current-history count;
+preserve OIDs, validators, voucher semantics, ACLs and all existing count rows.
+No business-row writes, data repair, feed trigger, backfill or live application.
+Focused isolated tests use schema-only captures and synthetic records, with
+allowed/denied branch/terminal/role, full count coverage, replay, unknown source/
+metadata/selector rollback and existing history-retention parity. No operator
+profile/SQL Server database is used.
+
+Read-only current evidence: cloud history21019, root's local count20799. The220
+net count gap needs a separate UUID comparison; it does not prove exactly220
+missing rows or exclude local-only facts. This is separate from the three-product repair. Actual change_history
+has only its immutable UPDATE/DELETE guard, no sync-feed routine/AFTER trigger,
+and zero history feed entries. Count completion exposes that gap; it does not
+recover history or authorize the separately pending feed/recovery implementation.
+Keep three-product ownership and stale-owner protection in their independent PR;
+no STOCK401, Membership or deferred audit-scope changes. Final artifact/hash,
+isolated tests, independent review/CI and exact-target approval remain required.
+
+6 November prepared verification: the count migration passes20 scenarios using
+the captured routine definitions in both PGlite and a uniquely owned native
+PostgreSQL18.6 fixture; the latter was cleaned after completion. Coverage includes
+all70 unique registry counts, unchanged earlier69 rows, unchanged global vouchers,
+history/retention parity, preserved OID/ACL/attributes, denied branch/terminal/role,
+exact replay, source/metadata drift and late transactional rollback. Focused
+Vitest plus canonical inventory:30 passed. Scoped ESLint and TypeScript noEmit
+passed. Authorization adapters are controlled synthetic fixtures, not deployed
+device/RLS acceptance. No live migration ran; no local POS profile was opened.
+
+Root independent review reran20 PGlite and20 native scenarios with no blocker.
+Prepared migration SHA256:
+288F86855B5A7735BF9FCC3601D3A840781BB5F6759AE1C6FCFA17D79D3DC173.
+The separate beta PR remains draft/preparation-only until exact-head CI, fresh
+live-definition preflight and the owner's exact-target application approval.
+
+Fresh read-only dispatch inspection also confirms live pos_sync_pull already has
+the change_history UUID selector. The protected feed page delegates it and the
+unchanged privacy projector. An absent history trigger, not absent pull dispatch,
+explains why no new history invalidations exist; implementing/backfilling that
+separate change remains pending a concrete plan and exact database approval.
+
 ## 6 November — SYNC75 recovered POS-feed failure status
 
 Owner asks to fix the continuing fetch-failed notice without resetting queues,
