@@ -1623,3 +1623,15 @@ accepted cloud sale movements proving cloud0. Prepare a guarded ownership-only
 repair that restores catalogue visibility, then use normal sync; exact live
 changes still require owner review/approval before application. No manual stock
 copy, duplicate movement, queue/checkpoint reset or permission change.
+
+## 6 November — three legacy owners protected and normally adopted
+
+Exact approved SYNC79 cloud files applied: owner-preservation guard ledger20261106024316,
+then three-row STR1 owner-only repair OWNERSHIP3-STR1-20261106. All before/after,
+stock0/SKU/price/archive and3history/4feed/1audit checks passed. Existing local
+Electron normal sync adopted all three with no local maintenance/reset. A higher
+version or later timestamp alone did not authorize this repair; original receiving
+and accepted sale/delta evidence did. Do not replay this manifest for other records.
+COUNT79/history feed/recovery, historical stock report and final release acceptance
+remain pending independently. Live grants, operator configuration and Membership
+were not changed.

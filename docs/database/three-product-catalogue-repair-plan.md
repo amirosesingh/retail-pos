@@ -1,7 +1,9 @@
 # Three STR1 product catalogue differences — repair preparation
 
-Status: tested repair preparation; no live application approval or repair yet.
-The exact prepared files and hashes are recorded below. This document is not
+Status: exact owner-approved guard and three-row repair applied on 6 November;
+cloud readback and ordinary local Electron adoption verified. History-table
+completion and final release acceptance remain separate.
+The exact applied files and hashes are recorded below. This document is not
 executable SQL. The root agent owns the repair file, fresh captures and final
 application proposal.
 
@@ -170,3 +172,32 @@ rejecting subsequent legitimate edits. Do not clear normal feed history, reverse
 accepted sales or blindly restore a backup. No checkout/permission rollout,
 unrelated historical-stock-report change or installer publication is authorized
 by this repair preparation.
+
+## Applied checkpoint — 6 November
+
+The owner approved both exact hashes after checks. Required CI passed at
+`b440aae2b1643defdf5f04916aeec5e72228979e`; fresh target health, identity,
+routine/OID/ACL and all three full before-image fingerprints matched. The guard
+was applied first through migration ledger `20261106024316`, preserving OID26279,
+the existing grants/security mode and all product values. Its readback body MD5
+is `a076aea59e1cc926542052040f20465e`.
+
+The exact guarded repair then committed. Readback confirmed only ownership and
+normal row version/time changes, versions9/12/11, unchanged stock0, SKU, prices
+and archive state, three product histories, three product-feed events and one
+maintenance audit with its branch feed. Product events164989–164991 and audit
+event164992 are durable. STR1 and BET2 catalogue predicates both admit all three;
+no other active cluster exists in this current live directory, so foreign-cluster
+denials remain isolated-test evidence rather than a claimed live user test.
+
+The existing local Electron app was closed and reopened against unchanged merged
+beta source/profile and the existing SQL connection. Its ordinary synchronization
+advanced the existing feed cursor164856→165028 without resetting it. SELECT-only,
+GUID-guarded readback of LAPTOP-N0QBONGL\\LCRPOS / POS_Local / database GUID
+CEAFA630-D613-423C-8997-8A31DF70C506 confirmed all three owners, stock0, archive1
+and versions9/12/11. No manual local product write, extra deduction, queue clearing
+or registration/configuration change was performed. Private before/after evidence
+is retained under the ignored `.tmp` application proof. This proves these three
+normal product downloads, not complete history synchronization or checkout
+acceptance for the eventual release. Do not replay or extend this repair to other
+records without a separately reviewed manifest.

@@ -6537,3 +6537,17 @@ three-row repair SHA E6F3D4C4C3C36D7A2ADF1E200338CF236DCDFB4F014870BF0DA5574D484
 No live migration or repair has run. Exact-head CI, owner application approval
 and real normal-sync adoption remain. History count/feed gap is separately
 prepared; no claim of all-table convergence or production readiness.
+
+## SYNC79 applied checkpoint — 6 November
+
+Owner explicitly approved both frozen exact files after final CI/fresh preflight.
+Cloud owner guard SHA5669C64B22FDFE3ADDDBCE7DCBDE807EABB5099655626CD1E68C9EEE5A98CB35
+applied first, ledger20261106024316, sameOID26279/grants/security; bodyMD5a076aea59e1cc926542052040f20465e.
+Repair SHAE6F3D4C4C3C36D7A2ADF1E200338CF236DCDFB4F014870BF0DA5574D484CBAB0
+then assigned only the three proven STR1 owners. Exact afterimages/stock0/SKU/prices/
+archive preservation,3histories/4feeds/1audit verified. Ordinary existing Electron
+sync subsequently adopted owners/stock0/archive1/versions9,12,11; existing cursor
+164856→165028. GUID-guarded SELECT-only local verification; no manual local repair,
+reset, queue clearing or extra movement. Full history convergence remains separate.
+Next: integrate exact prepared artifact/evidence through beta after final-head CI,
+complete COUNT79/history recovery and UI/report/release gates. No main/publication.
