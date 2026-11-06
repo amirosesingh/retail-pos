@@ -1,3 +1,39 @@
+## 6 November — HIST81 automatic fleet history reconciliation
+
+Implementation is now authorized within the owner's explicit automatic fleet
+recovery scope, after root review of the concrete plan. Refresh beta c79893c3
+before source edits and preserve COUNT80/product guards. First independently
+reviewable checkpoint: strict exact-value protocol plus service-only UUID index/
+missing-row functions and INSERT-only feed invalidation, tested in disposable
+PostgreSQL/PostgREST. Then wire existing durable jobs and one sync lane; generic
+JobManager pending-step behavior must opt in so existing callers are unchanged.
+Completion proves ID membership only, never financial/payload equality or an
+upload CT baseline. Preserve pending/local-only/divergent legacy work. New cloud
+DDL is one atomic migration statement owned by the migration tool's transaction;
+no explicit nested BEGIN/COMMIT payload. Exact cloud target/hash approval remains
+separate. No live schema/data/configuration changes, per-PC manual repair,
+registration reset, queue clearing or mutable history writer is authorized.
+
+Owner explicitly requires automatic recovery for hundreds of PCs after short or
+long offline periods, without per-PC manual SQL, UUID exports, repair scripts,
+registration/checkpoint resets or queue clearing. A centrally reviewed migration
+may be applied once. The earlier manual evidence/seed proposal is diagnostic
+preparation only, not the final fleet design. Prepare a concrete automatic plan
+from beta c77beecc, keeping COUNT80/PR426 frozen and depending on its correction.
+
+Reuse the one durable sync lane, transactional jobs/checkpoints and current
+authorization/privacy proofs: future immutable inserts use incremental feed;
+missing retained records use bounded/resumable authorized UUID/index comparison
+and fetch only missing records. Each PC keeps independently scoped progress and
+pending offline work. Do not treat matching counts or newest revision/time as
+equality/authority. Retry transient failures with controlled jitter; classify
+local-only/divergent/uncertain legacy work for review without overwriting it.
+Large-table auto-recovery must reuse existing history resume infrastructure and
+bounded requests, not disable the existing100-row safety limit globally. Inspect
+existing contracts and send the exact proposed files/protocol/risks before code.
+All live DDL/application remains separately approved. Do not enable unreviewed
+mutable history apply/delete helpers or change deferred audit privacy/Membership.
+
 ## 6 November — COUNT79 complete the existing history-count contract
 
 Separate preparation-only branch from beta0b6f00b1. Actual Electron's normal feed
