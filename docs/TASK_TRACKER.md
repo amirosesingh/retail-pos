@@ -7153,3 +7153,88 @@ healthy metadata is visible pending with no manufactured failure/review status.
 Later normal passes continue the original evidence. final:true still drains all
 pages and requires the unchanged final barrier/real queue counts. No SQL journal,
 financial ACK, runFinal/classifier/caller or request-lane change.
+
+Canonical initialization parity scope approved by root: replace ONLY
+supabase/schema.sql's stale insert-only sync_apply_stock_adjustments body with
+the existing generator's already-deployed INSERT-returning-only stock_apply_delta
+implementation. Read-only live definition MD5 6a15a6bc26a10fad7a3cee04c2c47637
+confirmed current live adjustment quantity behavior correct; this is a fresh-
+schema source drift fix, not a new live business rule/migration or historical
+backfill. Root's isolated canonical/live comparison verified receiving/refund
+stock legs. Add genuine writer replay/denial/rollback/source-effect tests; do not
+invent effects or modify old accepted adjustments. History writer informed of
+this single canonical hunk; no whole schema regeneration.
+
+The stock adjustment diagnosis is corrected after mandatory live-definition
+comparison: deployed ROSEGILL already applies only newly inserted adjustment
+deltas correctly; the generator matches it, while canonical schema.sql was
+stale. Root explicitly approved one canonical helper parity fix plus genuine
+fresh-schema/current-live source tests. This is not a production stock defect or
+new cloud rule; no live migration/backfill is needed. The schema-only captured
+function fixture includes only definition/MD5/ACL/config and no business data.
+
+Root delegated receiving UI owns only src/routes/purchasing.tsx, NEW pure
+ReceivingArrivalFields.tsx and focused mounted/browser tests. Preserve existing
+invoiceDate/entryDate. Read the dedicated Main capability only when the entry
+opens; current scope/session change invalidates availability/old values. Default
+is undefined/original save time. Custom original arrival needs POS-timezone date,
+time and reason; retained on failed save and blocks finalizing if capability
+becomes unavailable, never silently drops. Pass same StockArrival for a new or
+resumed draft's finalize. Already-posted correction UI is unchanged. Main remains
+authoritative. Stock agent owns capability/API/runtime, root owns these UI paths;
+no real transactions or profile changes.
+
+6November owner refinement: Reports needs a separately discoverable Stock report
+showing selected branch/day per product Opening + Stock in − Stock out = closing,
+while preserving exact-time and saved shift-close choices. This uses original
+movement/arrival effective times, including late offline arrivals, with legitimate
+adjustment/transfer directions and explicit gaps. One authorized revision/snapshot
+must own all four terms; never derive them from current quantity, truncated client
+pages or two racing point-in-time reads.
+
+Planned compatible read extension: optional periodStart inclusive plus requested
+cutoff as endExclusive; source chooses actual through=min(endExclusive−100ns,
+readAt). Response adds period{start,endExclusive,through,fullDay}; daily rows add
+openingQuantity/inQuantity/outQuantity, and quantity remains closing. All integer
+quantities stay strings. One baseline before the start, source cursor and revision
+cover every term/page. Current day remains explicitly partial-day. Old as-of and
+saved shift-close contracts stay unchanged. Exact IANA calendar-day validation
+handles23/25-hour DST days; source decides read time and completeness, not the
+renderer. Root remains assignment/monitoring only per latest owner instruction;
+its prior receiving UI ownership is released with no source edits.
+
+Current checkpoint verification:337 cases in14 focused suites pass, plus67
+actual disposable LocalDB groups. Genuine fresh-canonical/current-live writer
+coverage includes9 cases;8 more actual writer→original UNVERIFIED witness→signed
+member→real source/effect admission cases pass. Those paths do not rewrite stock
+at report admission. ADJUST has no invented activity row; RECEIVE preserves its
+existing deferred-local-stock behavior. Current new claim permission denial,
+exact accepted retry after revocation and old receipt/no-reconstruction remain.
+The canonical parity edit is one function only; no live migration is required.
+
+Explicit receiving arrival capability is Main-owned and current-SQL-authorized,
+including receiver-without-report-permissions. It stays unavailable until both
+original capture runtime and exact optional031 are ready. Default saves remain
+compatible without031; explicit time input cannot be silently dropped. Actual
+receiving repository tests prove immutable reason/time, exact retry, changed-
+reason denial and full rollback on missing original source. No invoice-date,
+stock formula, sale/refund/shift receipt or existing data change.
+
+The pure bounded frontier contract now passes33 tests. It only represents exact
+source prefix/gap/pending/challenge data; no signature, accepted prefix, clock
+certainty or every-writer completeness is inferred. Signing, publication and
+actual capture activation remain pending. All031/cloud stock files remain draft
+and excluded from the consolidated local updater pending final acceptance.
+
+Daily helper delegation before edits: policy_implementation owns ONLY NEW
+ electron/shared/stock-report-day.mjs and declaration,
+ src/lib/stock-day-summary.ts and src/lib/__tests__/stock-day-summary.test.ts.
+Pure calculateStockDaySummary(StockAsOfInput,periodStart) interprets input.cutoff
+as requested endExclusive, clamps through to readAt, and uses the same authorized
+arrays/revision and existing kernel validation. Baseline must precede day start;
+unknown/gaps/missing openings make ALL four quantities null. Opening derives from
+closing−in+out with exact bounded BigInt; no database reads/client-page sums.
+Loader owns historical product membership. Date helper handles actual IANA day
+boundaries including23/25h and midnight transitions; a skipped or noncontiguous
+historical date is explicitly unsupported instead of including another day.
+Stock agent retains all readers/SQL/types/validation/Main/runtime/UI ownership.
