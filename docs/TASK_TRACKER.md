@@ -6483,3 +6483,45 @@ scope. Full Windows run:6167 passed/10 skipped, with sandboxed workerd startup
 and a CRLF-only test assertion failing. The three isolated suites reran24/24
 outside the process sandbox after normalizing both compared test strings; no
 migration bytes changed. Final merged-tree CI and local runtime acceptance remain.
+# SYNC79 — three retained product projections, 6 November
+
+Owner approves using the existing event/acknowledgement/baseline approach,
+agent investigation, repair preparation and resumed Electron verification.
+Exact live changes must be presented before application; no new live repair is
+approved yet. Baseline beta0b6f00b1. Preserve checkout, permissions, offline work,
+all unrelated features and Membership hold. Historical report401 stays preserved.
+
+Read-only investigation identifies three STR1 ownerless products: SKU178089,
+SKU178321 and SKU177040. The local copy retains1 from12October. Cloud has a
+received+1 and an accepted5November sale-1 for each; matching movement receipts
+exist locally/cloud. Cloud zero is supported by business actions, not merely a
+newer timestamp. Once the ownerless product reaches zero, catalogue visibility
+excludes its full row, leaving an ID-only/null global invalidation; consuming that
+invalidation cannot update the stale local balance. It must not be treated as an
+instruction to delete the row or upload the stale unit.
+
+Prepare the smallest supported repair: assign only the three proven original
+STR1 catalogue owners from NULL to STR1, preserving cloud stock0 and every other
+business field. Reuse the guarded22-row repair pattern with new exact IDs,
+full-row/metadata/provenance guards, independent synthetic/native PostgreSQL
+tests, one honest maintenance receipt and normal history/feed effects. Show the
+exact target, file/hash, rows and effects for separate owner approval. Normal
+authorized sync must then adopt the already-accepted zero balance; no manual
+local stock copy, duplicate sale/adjustment, queue clear or checkpoint reset.
+
+Acceptance: unchanged cloud stock/SKU/prices/status/grants; same-cluster archived
+visibility and foreign-cluster denial; normal local adoption after safe pending
+checks; current Electron administrator login, SQL/cloud connectivity and truthful
+upload/download status. Unknown/busy/changed records abort. Existing new-product
+owner stamping and owner-preserving uploads must continue passing regressions.
+
+Protection preflight: the canonical/native source already preserves an existing
+owner against stale NULL/blank uploads, but the live sync_apply_products routine
+still has the older EXCLUDED.owner_store_id assignment; the prepared29October
+upgrade was not applied. This did not cause these three original NULL owners,
+but could undo a repair on a later legacy upload. Within the owner's existing
+owner-preservation/sync-recovery request, prepare a source/ACL-pinned additive
+guard changing only that assignment, test actual captured routine/denied scopes,
+and present its exact migration/hash separately with the three-row repair.
+No routine, grant, schema or business row has been changed live. Apply protection
+before any approved owner repair; abort unknown source or metadata.

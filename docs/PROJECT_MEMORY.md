@@ -1614,3 +1614,12 @@ counts are unknown, never matched; count equality is not financial/history proof
 Preserve retained local work, checkout, permissions and Membership's current hold.
 No count difference authorizes deleting records, resetting checkpoints or manual
 cloud copying. Live data/schema changes still require exact-target approval.
+## 6 November — causal comparison and three-product repair preparation
+
+Owner accepts using original operation history and the last confirmed sync
+state together with dates. A newest timestamp/version alone cannot choose a
+financial or stock winner. Three retained STR1 unit balances now have matching
+accepted cloud sale movements proving cloud0. Prepare a guarded ownership-only
+repair that restores catalogue visibility, then use normal sync; exact live
+changes still require owner review/approval before application. No manual stock
+copy, duplicate movement, queue/checkpoint reset or permission change.
