@@ -1,3 +1,45 @@
+## 6 November — SYNC75 recovered POS-feed failure status
+
+Owner asks to fix the continuing fetch-failed notice without resetting queues,
+registration or permissions, and to surface only failures that cannot recover.
+This is a separate status-only beta batch from cfae0756; UI74 remains in PR421.
+Actual read-only Coordinator + PullWorker reproduction proved a feed EAI_AGAIN
+failure remains in lastError after two successful normal POS feed reads because
+the separate Membership directory reports deferred. The automatic success log
+correctly resolves the old diagnostic event, while the panel still reports one
+current error from coordinator.lastError. Membership remains ON HOLD: preserve
+its reads, deferral notice, dependencies and retry behavior without modification.
+
+Plan before implementation: add private in-process evidence of the existing POS
+feed's failed/complete boundary; classify coordinator status failures by that
+proven domain. Clear a feed failure only after a complete matching-branch feed,
+even if the unrelated Membership directory remains deferred. Keep unknown/full
+download, skipped scope, credential, push/activity and actual local-pending
+barriers unresolved until their own work succeeds. Existing clearing also ignores
+deferredLocalChanges/deferredHeldDeletion, so partial feed work must not establish
+new successful-completion evidence. No upload/download request, retries, data
+application, acknowledgements, queue/checkpoint, schema, settings or permission
+behavior may change. The evidence is presentation status only, not authorization.
+
+Acceptance: actual classes with synthetic cloud/checkpoint/SQL adapters for feed
+failure then Membership-deferred success, repeated failures, incomplete/pending
+feed, branch/direction/activity mismatch, unknown/membership failures and current
+credential denial. Verify existing status summaries and diagnostic classification,
+and preserve Membership's notice. No live profile, business DB or network writes.
+Prepare a separate beta PR after scoped tests, TSC and independent review; exact
+head CI/deployed acceptance remain required before merge. No publication or DB
+application is included.
+
+SYNC75 verification checkpoint:141 Vitest checks across seven actual-class/status/
+checkpoint suites and31 native sync-pipeline tests pass on pinned Node22.22.2;
+TypeScript and scoped ESLint pass. The synthetic adapters make no network calls
+or business/checkpoint writes. Tests prove EAI_AGAIN recovery despite a separate
+Membership deferral, continued real errors, branch/direction/activity mismatch,
+unknown and Membership metadata failures, credential status, pending local rows
+and held tombstones, and forged/copied/serialized/wrong-branch evidence rejection.
+The private evidence changes no serialized worker result or permission grant.
+Independent exact-head review and beta CI/deployed acceptance remain pending.
+
 ## 6 November — UI74 confirmed-empty Dashboard activity panels
 
 Owner's existing ALL-cards rule covers the three confirmed empty Dashboard
