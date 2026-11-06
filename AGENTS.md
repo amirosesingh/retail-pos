@@ -92,6 +92,41 @@
   "up to date" with pending work, or repeatedly present a recoverable condition as
   an unexplained error. Revoked permissions hold work for review, not silent loss.
 
+## Fleet recovery, checkout and presentation isolation
+
+- Routine recovery must run through the application for every applicable table.
+  A PC reconnecting after a short or long offline period must not depend on an
+  operator running per-PC history/count SQL. Use the existing durable jobs,
+  validated incremental cursors and bounded resumable recovery. Classify missing,
+  matching, pending and conflicting facts; counts alone do not prove equality.
+- Keep recovery progress bound to the actual database/profile, registration and
+  authorized scope. One PC's completion does not certify another PC. Coordinate
+  shared workers, use bounded concurrency and staggered retries, and preserve
+  pending work through interruption, expired history and lost acknowledgements.
+  A feed's maximum allocated sequence alone is not a commit-order snapshot fence.
+- Electron business writes remain atomic with their SQL Server pending evidence.
+  Web and mobile use their existing platform adapters under the same authorized,
+  idempotent operation contracts. Do not introduce a competing queue or force
+  desktop storage assumptions onto another platform. Enforce current branch,
+  author, approval and permission checks in the authoritative writer.
+- Confirm sale/payment success only after the authoritative commit is verified.
+  An uncertain response must retry or read back the same operation identity,
+  preserving the accepted receipt and preventing a second charge, sale or stock
+  deduction. Preserve exact financial evidence, refunds, original shift closings
+  and later authorized corrections; a newer clock/version alone cannot replace
+  them. Never silently acknowledge unavailable or unverified historical work.
+- Graph controls, sorting and presentation changes must not restart business
+  synchronization, reset cursors, clear caches/queues, change registration or
+  reload the entire application. Grouping/chart-kind changes use confirmed data
+  already read; a genuinely new range uses the existing bounded report reader.
+  Preserve the navigation and controls, show scoped progress, reject stale
+  responses, and hide old protected data on authority/scope changes. Do not weaken
+  authentication or completeness gates merely to remove a loading indicator.
+- Test short/long offline periods, multiple PCs with different retained work,
+  restart/lost-ack retries, concurrent administrator corrections, denied/revoked
+  access and the actual platform adapters before claiming recovery complete.
+  Keep one-time reviewed schema upgrades separate from normal automatic recovery.
+
 ## Database calls, imports and historical evidence
 
 - Resolve database/backend configuration from the existing trusted operator or
@@ -103,6 +138,12 @@
   avoid duplicate in-flight reads and unnecessary polling. A terminal is not
   equivalent to one physical PostgreSQL connection. Do not change pool limits,
   operator connection settings or billing to conceal a query/sync defect.
+- Use exactly one transaction owner for a migration execution path. Inspect and
+  test the provider/tool wrapper before submitting SQL containing BEGIN/COMMIT.
+  Prepare tool-compatible, hash-pinned payloads with rollback and ledger-failure
+  checks; never silently strip owner-approved bytes. Changed protected payloads
+  require renewed exact-file approval. Verify source, grants and ledger before
+  responding to transaction warnings; do not blindly reapply a committed upgrade.
 - Preserve timeout/network errors separately from authentication/permission
   denials and business conflicts. Do not count connectivity failures as wrong PIN
   attempts or substitute empty/default settings as successfully loaded data.

@@ -12,6 +12,20 @@ Owner requires all proposed cloud/local database upgrades collected for exact fi
 The exact owner-approved service-only bounded feed RPC and PR384 are applied/deployed on beta. Existing selector/privacy grants and businessrecords are preserved; native continuation is bound to authenticated response metadata. Live147request sample all200/ok with no CPU-exceeded; CPU2–114ms/mean9.469 means NO guarantee allrequestsbelow10ms. Electronfeed131613→133184, all6shiftCTvalid; largebacklog stilldraining. Keep implemented/sample-verified status distinct from fullsync completion, production promotion or installerpublication. Supabase migrationtool ledger20261104042158 corresponds to approvedfile20261104040251, SHA83495D696622241ECA2A8D396234E2FD65EE7C7A3050E93E4280638D6530D59B; do not replay based solely on differing timestamps.
 # POS project memory
 
+## 6 November — complete history-count coverage without changing audit scope
+
+The strict70-table reconciliation check exposed a confirmed central contract gap:
+the live four-argument count wrapper delegates69 registered tables and omits
+change_history. Prepare only an exact-source/metadata-guarded append of the missing
+count, preserving its existing all-history bootstrap predicate and service-only
+authorization. Do not weaken client completeness validation or fold the separately
+held broad audit-privacy review into this correction. The current21019 cloud and
+20799 local history totals are a net220 gap; a consistent UUID comparison is needed
+before classifying missing, local-only or divergent facts. Live history pull already
+supports UUID dispatch but its feed trigger is absent. Future trigger/recovery work
+requires its own concrete plan and exact database approval; no manual PC/cloud row
+copy, checkpoint reset or history omission is authorized.
+
 ## 6 November — existing-PC stock-history delivery
 
 Prepare one consolidated existing-data local SQL file, retaining the reviewed
@@ -1665,3 +1679,49 @@ source/effect/cohort/opening coverage before factory activation or complete-hist
 claims. Refresh beta without overwriting existing features. Exact cloud/local
 upgrade files still require final review/approval before application; no real
 enrollment, baseline, business repair, Membership or publication is included.
+## 6 November — automatic reconciliation before intervention
+
+Owner wants sync to attempt safe resolution of ERECONCILE first and surface a
+review request only when it remains unresolved. Use complete scoped comparisons,
+the existing authorized sync lane and bounded affected-table recovery. Missing
+counts are unknown, never matched; count equality is not financial/history proof.
+Preserve retained local work, checkout, permissions and Membership's current hold.
+No count difference authorizes deleting records, resetting checkpoints or manual
+cloud copying. Live data/schema changes still require exact-target approval.
+## 6 November — causal comparison and three-product repair preparation
+
+Owner accepts using original operation history and the last confirmed sync
+state together with dates. A newest timestamp/version alone cannot choose a
+financial or stock winner. Three retained STR1 unit balances now have matching
+accepted cloud sale movements proving cloud0. Prepare a guarded ownership-only
+repair that restores catalogue visibility, then use normal sync; exact live
+changes still require owner review/approval before application. No manual stock
+copy, duplicate movement, queue/checkpoint reset or permission change.
+
+## 6 November — three legacy owners protected and normally adopted
+
+Exact approved SYNC79 cloud files applied: owner-preservation guard ledger20261106024316,
+then three-row STR1 owner-only repair OWNERSHIP3-STR1-20261106. All before/after,
+stock0/SKU/price/archive and3history/4feed/1audit checks passed. Existing local
+Electron normal sync adopted all three with no local maintenance/reset. A higher
+version or later timestamp alone did not authorize this repair; original receiving
+and accepted sale/delta evidence did. Do not replay this manifest for other records.
+COUNT79/history feed/recovery, historical stock report and final release acceptance
+remain pending independently. Live grants, operator configuration and Membership
+were not changed.
+
+## 6 November — automatic fleet recovery and UI isolation
+
+Owner explicitly requires automatic application recovery for hundreds of PCs,
+including short/long offline periods; no manual history/count SQL per PC as the
+final workflow. Central reviewed schema upgrades remain one-time gated work.
+Reuse the durable coordinated sync engine and scope-bound jobs, preserve offline
+SQL work/admin corrections and exact operation receipts, and avoid simultaneous
+fleet retries. Count equality is not row equality; allocated feed maxima are not
+commit-order fences. Graph period/group/type controls must stay separate from
+checkout and business sync, preserving navigation and scoped progress.
+
+Current UI correction supersedes earlier vertical instructions: finite horizontal
+chart strip with equal cards, distinct categorical colors, sponsorship first and
+combined revenue/profit. Centered whole-strip edge arrows hide when that direction
+cannot scroll. Current UI implementation/review remains in separate PR427.

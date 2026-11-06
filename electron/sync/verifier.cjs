@@ -1,5 +1,5 @@
 const { createHash } = require("node:crypto");
-const { scopedWhere } = require("../db/branch-scope.cjs");
+const { comparisonWhere } = require("../db/branch-scope.cjs");
 const { toCloudRow } = require("./row-codec.cjs");
 
 const MOD = 1n << 256n;
@@ -79,7 +79,7 @@ async function localSignature({ connectionManager, registry, table, branchId, hi
   for (;;) {
     const request = connectionManager.pool.request().input("branch", String(branchId)).input("terminal", String(terminalId ?? "")).input("cutoff", cutoff).input("limit", PAGE);
     if (cursor) primary.forEach((column, index) => request.input(`cursor${index}`, cursor[column.sqlServerColumn]));
-    const scope = scopedWhere(registry, table, { historyDays, alias: "source" });
+    const scope = comparisonWhere(registry, table, { historyDays, alias: "source" });
     const after = cursor ? ` AND (${keyset(primary)})` : "";
     const order = primary.map((column) => `source.[${column.sqlServerColumn}]`).join(",");
     const result = await request.query(`SELECT TOP (@limit) source.* FROM dbo.[${table.sqlServerTable}] source WHERE ${scope}${after} ORDER BY ${order};`);
