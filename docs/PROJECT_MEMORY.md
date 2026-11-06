@@ -21,7 +21,10 @@ chart layouts: all graph cards use the same responsive width, height and plot. U
 initial values stay hidden; meaningful negatives remain, and All Shops retains
 its zero-valued directory entries. Preserve current branch/identity/permissions,
 same-scope confirmed refresh/error behavior and reduced-motion support. This is
-presentation only: no provider, query cadence, calculation, database or Membership
+Point tooltips use transparent backgrounds with theme-foreground labels/values
+and colored indicators; preserve mouse/keyboard interaction and readable axes
+in light/dark themes. Plot-only transitions never fabricate numeric zeros.
+This is presentation only: no provider, query cadence, financial calculation, database or Membership
 changes. Root keeps a separate HMR preview alongside existing web and Electron.
 
 ## 6 November — complete history-count coverage without changing audit scope
@@ -56,16 +59,19 @@ Cards must remain hidden until their current branch/cluster/range read is
 actually confirmed. Preserve same-scope confirmed cards during background
 refresh with truthful stale/error status; scope/identity/cost-permission changes
 hide the previous scope immediately. Preserve meaningful negative values and the
-loaded All Shops zero-shop-directory exception. Shop chart color depends only
-on canonical shop identity so Dashboard, filtered cluster and company views do
-not recolor it. Charts use a finite vertical grid, never an infinite carousel.
+loaded All Shops zero-shop-directory exception. Historical chart color/layout directions below are SUPERSEDED by CHART80 on
+6 November: use the full existing authorized directory to allocate12 categorical
+hues before selection/rank/date, and a finite HORIZONTAL rail. Directory membership
+changes can change color assignments; over-capacity series retain labels/styles.
+No infinite duplication.
 
 
-Owner-approved chart direction: equal-height chart cards and fixed plot heights
+SUPERSEDED historical direction (retained as history, not an active rule):
+equal-height chart cards and fixed plot heights
 on Dashboard, All Shops and Live Business Board, in a vertically scrollable
 area with its scrollbar hidden. Use two columns on large screens and one on a
 phone; charts are never infinite/horizontal carousels. Separate revenue and
-gross-profit trends, retain a stable vivid color for each authorized shop, and
+gross-profit trends (now combined under CHART80), retain a stable vivid color for each authorized shop, and
 offer daily/monthly grouping plus Today,15days,20days and custom dates. The
 financial comparison stacks cost plus gross profit to revenue and labels margin
 as a percentage; it must not stack revenue a second time.

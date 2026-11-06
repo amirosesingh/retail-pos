@@ -6688,3 +6688,48 @@ rerun passed); two workerd process-sandbox failures are being rerun outside that
 sandbox. Exact final full CI and renewed independent final browser review remain
 pending. Keep those limits distinct from tested affected paths. No DB/provider/
 query/timer/cadence, checkout, financial formula, permissions or Membership edits.
+
+CHART80 latest owner polish: Dashboard heading becomes "Trending graphs";
+heading, displayed dates and the three connected Period/Daily-Monthly/Line-Bar
+controls remain mounted together while a new date-window read is pending.
+Grouping/type are local presentation only; no new requests/cadence changes.
+Today summary retains its own authority/branch/day/timezone/policy identity
+rather than invalidating when unrelated graph-window dates change. Rail arrows
+float at the vertical midpoint of the WHOLE strip's left/right edges, disappear
+at edges/no overflow and remeasure on scroll/resize/content. No boxed outer
+container, no per-card arrow or business DOM listener. Prior88 full-suite run
+is pre-polish evidence; refresh PR427/checks after this narrow UI-only delta.
+
+CHART80 owner theme refinement: transparent point tooltip (no opaque box, border
+or shadow), colored marker with theme-foreground names/values, readable ticks,
+legends and native controls in light/dark. Reuse Recharts interaction/formatter
+contracts in one scoped wrapper; the existing ChartTooltipContent requires an
+unrelated ChartContainer context, so do not introduce that container or a portal.
+Plot transitions hold only bound DATA/config for120ms same-authority exit, hide
+unconfirmed plots, then300ms enter. Reduced motion is immediate; authority changes
+are synchronous drops, timers cancel on latest selection/unmount. No artificial
+zero rows or altered finance/query/permission logic.
+
+CHART80 final polish implementation: graph content transitions use exact semantic
+keys over bounded prepared plot DTOs/config (24hour/731day/2400month buckets by
+selected series, top10items and authorized shop summaries), never object identity
+or raw transaction-history serialization. Identical cloned data stays ready;
+changed values/config animate, rapid selections cancel stale timers, mismatched
+confirmed target keys stay hidden and authority changes drop old plots before
+effects. Waiting states hide numeric plot footers; Today KPIs remain independent.
+One shared transparent tooltip preserves formatter and labelFormatter, actual
+zero values, theme-foreground text/colored dots and existing Recharts interaction.
+Board giveaway measures now have five distinct colors without opacity variants;
+actual light/dark Board rendering and cost-denied removal pass. Rail arrows
+measure the actual CSS gap (including root15px scale), are centered on the whole
+strip, hide at edges and preserve keyboard focus when an edge button disappears.
+
+Current affected verification:134focused cases across18suites (one new assertion
+was corrected to distinguish a colored indicator background from text color);
+TSC/scoped ESLint0errors/0warnings. Both synthetic Chrome scripts pass actual
+Dashboard stable Today KPI/control DOM, connected3selectors and unchanged read
+keys for local grouping/type, graph-only pending/rapid date changes, real pixel
+entry animations, waiting-footer truth, scope/permission drops, Board5colors,
+transparent light/dark tooltips, font-scale arrows, mouse/touch/keyboard. This
+latest source still requires its own final CI/independent QA after integration;
+88f2a47b's6200passed/10skipped full-suite result is pre-polish evidence only.

@@ -1,4 +1,4 @@
-import { TradingChartCard } from "@/platforms/web/components/pos/TradingChartLayout";
+import { TradingTooltip, TradingChartCard } from "@/platforms/web/components/pos/TradingChartLayout";
 import { TradingRangePresets } from "@/platforms/web/components/pos/TradingRangePresets";
 import { useConfirmedPresentation } from "@/lib/use-confirmed-presentation";
 import { dashboardPageStores } from "@/lib/dashboard-scope";
@@ -23,7 +23,6 @@ import {
   Pie,
   PieChart,
   ResponsiveContainer,
-  Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
@@ -233,7 +232,11 @@ function LiveBoard() {
   const confirmedBoard = useConfirmedPresentation(allowed && storeIds.length > 0
     ? JSON.stringify([pageDataScope(user), storeIds, from, to, effectiveTimeZone(), filter ? [...filter].sort() : null, showCostMargin]) : null,
     data, !!data && !query.isLoading && !query.isError);
-  const transactionHours = useMemo(() => comparisonHeaderHours(confirmedBoard?.bills ?? []), [confirmedBoard]);
+  const graphAuthority=allowed&&storeIds.length>0?JSON.stringify([pageDataScope(user),storeIds,effectiveTimeZone(),filter?[...filter].sort():null,showCostMargin]):null;
+  const graphPayload=useMemo(()=>confirmedBoard?{board:confirmedBoard,shops:shopSlices(confirmedBoard,nameOf,filter),range:{from,to}}:null,[confirmedBoard,nameOf,filter,from,to]);
+  const graphFrame=useConfirmedPresentation(graphAuthority,graphPayload,!!confirmedBoard);
+  const transactionHours = useMemo(() => comparisonHeaderHours(graphFrame?.board.bills ?? []), [graphFrame]);
+  const graphFinancial=useMemo(()=>graphFrame?.shops.map(shop=>({...shop,id:shop.storeId}))??[],[graphFrame]);
 
   if (!allowed) {
     return (
@@ -347,32 +350,34 @@ function LiveBoard() {
           </p>
         )}
 
-        {confirmedBoard && !empty && (
-          <>
-            {confirmedBoard && <ShopComparisonCharts rows={confirmedBoard.storeDays} directory={allStores}
+            {graphFrame && <ShopComparisonCharts rows={graphFrame.board.storeDays} directory={allStores}
               selectedIds={filter ? [...filter] : storeIds} showProfit={showCostMargin}
-              range={{ from, to }}
-              transactionHours={transactionHours} profitHours={confirmedBoard.hourlyRows ?? null}
-              hourlyError={showCostMargin && !confirmedBoard.hourlyRows ? (confirmedBoard.hourlyIssue ?? "A verified hourly cost report has not loaded.") : undefined}
-              financialRows={shops.map(shop => ({ ...shop, id: shop.storeId }))}
+              range={graphFrame.range} requestedRange={{from,to}}
+              transactionHours={transactionHours} profitHours={graphFrame.board.hourlyRows ?? null}
+              hourlyError={showCostMargin && !graphFrame.board.hourlyRows ? (graphFrame.board.hourlyIssue ?? "A verified hourly cost report has not loaded.") : undefined}
+              financialRows={graphFinancial}
               scopeLabel={filter ? "Selected authorized shops" : "All authorized company shops"}>
-              {shops.some(shop => Math.abs(shop.revenue) >= 0.005) && <TradingChartCard title="Revenue share by shop" description="Net revenue share for the selected authorized shops and dates.">
-                <ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={shops} dataKey="revenue" nameKey="name" innerRadius={64} outerRadius={88} paddingAngle={2} cornerRadius={4}>
-                  {shops.map(shop => <Cell key={shop.storeId} fill={shopColors.get(canonicalBranchId(shop.storeId)) ?? branchChartColor(shop.storeId)} />)}
-                </Pie><Tooltip formatter={value => money(Number(value ?? 0))} /><Legend /></PieChart></ResponsiveContainer>
+              {graphFrame.shops.some(shop => Math.abs(shop.revenue) >= 0.005) && <TradingChartCard title="Revenue share by shop" description="Net revenue share for the selected authorized shops and dates.">
+                <ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={graphFrame.shops} dataKey="revenue" nameKey="name" innerRadius={64} outerRadius={88} paddingAngle={2} cornerRadius={4}>
+                  {graphFrame.shops.map(shop => <Cell key={shop.storeId} fill={shopColors.get(canonicalBranchId(shop.storeId)) ?? branchChartColor(shop.storeId)} />)}
+                </Pie><TradingTooltip formatter={value => money(Number(value ?? 0))} /><Legend /></PieChart></ResponsiveContainer>
               </TradingChartCard>}
-              {shops.some(shop => Math.abs(shop.givenAway) >= 0.005) && <TradingChartCard title="Where the money went" description="Discounts, coupons and free-item value are already reflected in revenue.">
-                <ResponsiveContainer width="100%" height="100%"><BarChart data={shops} barCategoryGap="30%">
+              {graphFrame.shops.some(shop => Math.abs(shop.givenAway) >= 0.005) && <TradingChartCard title="Where the money went" description="Discounts, coupons and free-item value are already reflected in revenue.">
+                <ResponsiveContainer width="100%" height="100%"><BarChart data={graphFrame.shops} barCategoryGap="30%">
                   <CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="name" fontSize={11} /><YAxis fontSize={11} width={58} />
-                  <Tooltip formatter={value => money(Number(value ?? 0))} /><Legend />
-                  {showCostMargin && <Bar dataKey="profit" stackId="giveaway" name="Kept as profit" fill={ANALYTICS_COLORS.profit} isAnimationActive={false} radius={4} />}
-                  <Bar dataKey="itemDiscount" stackId="giveaway" name="Item discounts" fill={ANALYTICS_COLORS.discount} isAnimationActive={false} radius={4} />
-                  <Bar dataKey="billDiscount" stackId="giveaway" name="Bill discounts" fill={ANALYTICS_COLORS.discount} fillOpacity={0.75} isAnimationActive={false} radius={4} />
-                  <Bar dataKey="coupon" stackId="giveaway" name="Coupons" fill="var(--warning)" isAnimationActive={false} radius={4} />
-                  <Bar dataKey="focValue" stackId="giveaway" name="Free items" fill={ANALYTICS_COLORS.discount} fillOpacity={0.45} isAnimationActive={false} radius={4} />
+                  <TradingTooltip formatter={value => money(Number(value ?? 0))} /><Legend />
+                  {showCostMargin && <Bar dataKey="profit" stackId="giveaway" name="Kept as profit" fill="var(--analytics-profit)" isAnimationActive={false} radius={4} />}
+                  <Bar dataKey="itemDiscount" stackId="giveaway" name="Item discounts" fill="var(--analytics-revenue)" isAnimationActive={false} radius={4} />
+                  <Bar dataKey="billDiscount" stackId="giveaway" name="Bill discounts" fill="var(--analytics-cost)" isAnimationActive={false} radius={4} />
+                  <Bar dataKey="coupon" stackId="giveaway" name="Coupons" fill="var(--analytics-discount)" isAnimationActive={false} radius={4} />
+                  <Bar dataKey="focValue" stackId="giveaway" name="Free items" fill="var(--analytics-margin)" isAnimationActive={false} radius={4} />
                 </BarChart></ResponsiveContainer>
               </TradingChartCard>}
             </ShopComparisonCharts>}
+
+        {confirmedBoard && !empty && (
+          <>
+
             {combinedCategories.length > 0 && <div className="min-w-0">
               <section className="min-w-0 rounded-lg border border-border p-4 xl:col-span-7 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -448,7 +453,7 @@ function LiveBoard() {
                       <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                       <XAxis type="number" fontSize={11} />
                       <YAxis type="category" dataKey="name" width={130} fontSize={11} />
-                      <Tooltip
+                      <TradingTooltip
                         formatter={(value) =>
                           topBy === "revenue"
                             ? money(Number(value ?? 0))

@@ -9,7 +9,7 @@ import { chromium } from "@playwright/test";
 assert.deepEqual(process.argv.slice(2), ["--run"]);
 const root = process.cwd(), fixture = resolve(root, ".tmp/trading-chart-browser");
 await mkdir(fixture, { recursive: true });
-await writeFile(resolve(fixture, "money.ts"), `export const money=(value:number)=>'B$'+value.toFixed(2);`);
+await writeFile(resolve(fixture, "money.ts"), `export const money=(value:number)=>'B$'+value.toFixed(2);export const useAuth=()=>({ready:true,user:{staffId:'fixture',permissions:{}}});export const pageDataScope=()=>['fixture'];`);
 await writeFile(resolve(fixture, "index.html"), `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root"></div><script type="module" src="/fixture.tsx"></script></body></html>`);
 await writeFile(resolve(fixture, "fixture.tsx"), `
 import React,{useState} from 'react';import{createRoot}from'react-dom/client';
@@ -38,7 +38,7 @@ let server, browser;
 try {
   server = await createServer({ configFile: false, envDir: false, root: fixture,
     cacheDir: resolve(fixture, "vite-cache"), plugins: [tailwind(), react()],
-    resolve: { alias: [{ find: "@/lib/pos-store", replacement: resolve(fixture, "money.ts") }, { find: "@", replacement: resolve(root, "src") }] },
+    resolve: { alias: [ ...["@/lib/pos-store","@/lib/pos-auth","@/lib/page-data-cache"].map(find=>({find,replacement:resolve(fixture,"money.ts")})), { find: "@", replacement: resolve(root, "src") }] },
     server: { host: "127.0.0.1", port: 0, fs: { allow: [resolve(root, "../.."), root, fixture] } },
   });
   await server.listen(); const url = server.resolvedUrls.local[0];
@@ -63,6 +63,14 @@ try {
   await page.locator(".recharts-surface").first().click({position:{x:150,y:70}});
   console.log("Synthetic clicked chart focus:",await page.evaluate(()=>{const element=document.activeElement;const style=getComputedStyle(element);return{tag:element.tagName,classes:element.getAttribute("class"),outlineStyle:style.outlineStyle,outlineColor:style.outlineColor,outlineWidth:style.outlineWidth,focusVisible:element.matches(":focus-visible")};}));
   assert.equal(await page.locator(".recharts-surface").first().evaluate(node=>getComputedStyle(node).outlineStyle),"none","pointer chart focus must not draw the black UA box");
+  const tip=page.getByRole("tooltip");await tip.waitFor();
+  for(const dark of [false,true]){
+    await page.evaluate(dark=>document.documentElement.classList.toggle('dark',dark),dark);
+    await page.waitForFunction(()=>{const tick=document.querySelector('.recharts-cartesian-axis-tick-value'),probe=document.createElement('span');probe.style.color='var(--muted-foreground)';document.body.append(probe);const same=getComputedStyle(tick).fill===getComputedStyle(probe).color;probe.remove();return same;});
+    const theme=await tip.evaluate(node=>{const style=getComputedStyle(node);const tick=document.querySelector('.recharts-cartesian-axis-tick-value');const probe=document.createElement('span');probe.style.color='var(--muted-foreground)';document.body.append(probe);const expected=getComputedStyle(probe).color;probe.remove();return{background:style.backgroundColor,border:style.borderStyle,shadow:style.boxShadow,color:style.color,foreground:getComputedStyle(document.body).color,tick:getComputedStyle(tick).fill,expected};});
+    assert.equal(theme.background,'rgba(0, 0, 0, 0)');assert.equal(theme.border,'none');assert.equal(theme.shadow,'none');assert.equal(theme.color,theme.foreground);assert.equal(theme.tick,theme.expected);
+  }
+  await page.evaluate(()=>document.documentElement.classList.remove('dark'));
   await cards.filter({has:page.getByRole("heading",{name:"Revenue and gross profit",exact:true})}).locator("header").focus();
   await page.keyboard.press("Tab");
   assert(await page.locator(".recharts-surface").first().evaluate(node=>node.matches(":focus-visible")),"actual keyboard Tab reaches the chart");
@@ -84,9 +92,16 @@ try {
   const viewport=page.getByRole("region",{name:"Airport trading graphs",exact:true});
   const next=page.getByRole("button",{name:"Next graph: Airport trading graphs",exact:true});
   const previous=page.getByRole("button",{name:"Previous graph: Airport trading graphs",exact:true});
-  assert(await previous.isDisabled());assert(await next.isEnabled());
+  assert.equal(await previous.count(),0);assert(await next.isEnabled());
+  const nextBox=await next.boundingBox(),railBox=await viewport.boundingBox();
+  assert(Math.abs(nextBox.y+nextBox.height/2-railBox.y-railBox.height/2)<1,"whole-strip arrow is vertically centered");
   await next.click();assert(await viewport.evaluate(node=>node.scrollLeft>0));
   await previous.click();assert.equal(await viewport.evaluate(node=>node.scrollLeft),0);
+  await page.evaluate(()=>document.documentElement.style.fontSize='15px');
+  const scaledStep=await cards.first().evaluate(node=>node.getBoundingClientRect().width+Number.parseFloat(getComputedStyle(node.parentElement).columnGap));
+  await next.click();assert(Math.abs(await viewport.evaluate(node=>node.scrollLeft)-scaledStep)<1,'arrow step uses actual scaled gap');
+  await previous.click();await page.evaluate(()=>document.documentElement.style.fontSize='');
+
   const box=await viewport.boundingBox();
   await page.mouse.move(box.x+350,box.y+150);await page.mouse.down();await page.mouse.move(box.x+120,box.y+150,{steps:8});await page.mouse.up();
   assert(await viewport.evaluate(node=>node.scrollLeft>100),"mouse drag moves only this chart rail");

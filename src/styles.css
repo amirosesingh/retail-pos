@@ -1124,6 +1124,10 @@ html, main, .pos-popup-surface, .overflow-auto, .overflow-y-auto, .overflow-x-au
 .trading-chart-surface .recharts-area-curve { stroke-linecap: round; stroke-linejoin: round; }
 .trading-chart-surface .recharts-surface:focus:not(:focus-visible) { outline: none; }
 .trading-chart-surface .recharts-surface:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.trading-chart-surface .recharts-cartesian-axis-tick-value { fill: var(--muted-foreground); }
+.trading-chart-surface .recharts-cartesian-axis-line,
+.trading-chart-surface .recharts-cartesian-axis-tick-line { stroke: var(--muted-foreground); }
+.trading-chart-surface .recharts-legend-item-text { color: var(--foreground) !important; }
 
 /* Keep dashboard swipe rows clear of the global desktop scrollbar theme. */
 .dashboard-swipe-row {

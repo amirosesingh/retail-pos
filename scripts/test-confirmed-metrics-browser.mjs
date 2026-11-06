@@ -10,14 +10,25 @@ assert.deepEqual(process.argv.slice(2), ["--run"]);
 const root = process.cwd(), fixture = resolve(root, ".tmp/confirmed-metrics-browser");
 await mkdir(fixture, { recursive: true });
 await writeFile(resolve(fixture, "context.ts"), `
+const directory=[{id:'A',name:'Airport'}],products=[],empty=[];
+const reportRows=Array.from({length:2},(_,n)=>({id:'sale'+n,storeId:'A',receiptNo:'R1',cashier:'Fixture',createdAt:new Date(Date.now()-n*7*86400000).toISOString(),subtotal:100,discount:10,tax:0,total:90,paid:90,change:0,method:'cash',lines:Array.from({length:10},(_,i)=>({productId:'p'+i,name:'Item '+i,qty:1,price:10,cost:3,discount:1,taxRate:0}))}));
 export const money=(v:number)=>'B$'+v.toFixed(2);
-export const useAuth=()=>({ready:window.fixture.auth,user:window.fixture.user,can:()=>true});
+export const useAuth=()=>({ready:window.fixture.auth,user:window.fixture.user,can:(flag:string)=>flag!=='can_view_cost_margin'||window.fixture.user?.permissions.cost!==false,canSwitchStores:true,terminalStoreId:null});
 export const usePosOptional=()=>({ready:window.fixture.database,currentStore:{id:window.fixture.branch,name:'Airport'}});
-export const usePos=()=>({...usePosOptional(),stores:[{id:'A',name:'Airport'}],state:{products:[],sales:[],stores:[{id:'A',name:'Airport'}],transfers:[],settings:{integrations:{includeSponsorshipInDailySales:window.fixture.includeSponsor}}}});
-export const useReportSales=()=>({sales:Array.from({length:2},(_,n)=>({id:'sale'+n,storeId:'A',receiptNo:'R1',createdAt:new Date(Date.now()-n*7*86400000).toISOString(),subtotal:100,discount:10,tax:0,total:90,paid:90,change:0,method:'cash',lines:Array.from({length:10},(_,i)=>({productId:'p'+i,name:'Item '+i,qty:1,price:10,cost:3,discount:1,taxRate:0}))})),loading:!window.fixture.ready,error:window.fixture.reportError||''});
-export const useSponsorshipTotals=()=>({total:25,loading:!!window.fixture.sponsorLoading,error:window.fixture.sponsorError||'',rows:[]});
+export const usePos=()=>({...usePosOptional(),stores:directory,allStores:directory,state:{products,sales:empty,stores:directory,transfers:empty,settings:{integrations:{includeSponsorshipInDailySales:window.fixture.includeSponsor}}}});
+export const useReportSales=(_seed,ids,from,to)=>{if(window.fixture.trackRequests){const key=JSON.stringify([ids,from,to]);if(window.fixture.lastRequestKey!==key){if(window.fixture.lastRequestKey)window.fixture.ready=false;window.fixture.lastRequestKey=key;window.fixture.readRequests.push(key);}}return{sales:reportRows,loading:!window.fixture.ready,error:window.fixture.reportError||''}};
+export const useSponsorshipTotals=()=>({total:25,loading:!!window.fixture.sponsorLoading,error:window.fixture.sponsorError||'',rows:empty});
+const boardData={storeDays:[{store_id:'A',sale_day:new Date().toISOString().slice(0,10),sale_month:new Date().toISOString().slice(0,7),revenue:100,cost:40,profit:60,bills:1,discount:20,foc_value:5,units:3}],itemDays:[],bills:[{store_id:'A',store_name:'Airport',created_at:new Date().toISOString(),total:100,discount_amount:40,coupon_discount:5}],storeNames:{A:'Airport'},liveStoreIds:['A'],hourlyRows:[]};
+export const useQuery=()=>({data:boardData,isLoading:false,isFetching:false,isError:false,error:null,refetch:()=>{}});
+export const PAGE_DATA_CACHE={};
+export const localDb=()=>null,effectiveDatabaseMode=()=>'online';
+export const loadHourlyTrading=()=>{throw new Error('Unexpected hourly backend fixture call')},hostedFunction=()=>{throw new Error('Unexpected hosted fixture call')},getPosCallerAuth=()=>{throw new Error('Unexpected credential fixture call')};
+export const supabaseExternal=new Proxy({}, {get(){throw new Error('Unexpected backend request in fixture')}});
+export const useDrawerEvents=()=>empty;
+export const terminalRuntimePlatform=()=>'web';
+export const HomeShortcuts=()=>null,CashierBillList=()=>null;
 export const useViewedBranchShift=()=>({shift:null,checked:true,error:false});
-export const useVisibility=()=>({visible:(key:string)=>!window.fixture.hidden?.includes(key),visibleRoute:()=>true});
+export const useVisibility=()=>({visible:(key:string)=>(!window.fixture.showDashboard||['dashboard.revenueSummary','dashboard.tradingGraphs'].includes(key))&&!window.fixture.hidden?.includes(key),visibleRoute:()=>true});
 export const SellingShortcuts=()=>null;
 export const SalesReportWorkspace=()=>null,ReportReceiptLink=()=>null;
 export const useSalesReportContext=()=>null;
@@ -37,6 +48,8 @@ import{InventorySummaryCards}from'@/platforms/web/components/pos/InventorySummar
 import{Route as AnalyticsRoute}from'@/routes/reports.analytics';
 import{TerminalWorkspaceHome}from'@/platforms/web/components/pos/TerminalWorkspaceHome';
 import{BillsReport}from'@/routes/reports.sales';
+import{Route as DashboardRoute}from'@/routes/dashboard';
+import{Route as BoardRoute}from'@/routes/analytics';
 const initial={auth:true,database:false,user:{staffId:'admin',permissions:{cost:true}},branch:'A',epoch:1,backend:'one',ready:false,value:9,profit:-3,range:'today',revision:0,auditScope:'audit-A',auditReady:false,error:''};
 window.fixture={...initial};function Fixture(){const[,render]=useState(0);window.update=(patch)=>{Object.assign(window.fixture,patch);render(v=>v+1)};const f=window.fixture;
 const witness=JSON.stringify({scope:f.auditScope,revision:f.revision,ready:f.auditReady,error:f.error});
@@ -49,13 +62,13 @@ return <main className="max-w-5xl space-y-4 p-4"><h1>Confirmed metric acceptance
 <StatCard label="Events" metricValue={7} value="7"/></ConfirmedMetricCards>
 <InventorySummaryCards ready={f.database} metrics={{products:1535,categories:41,lowStock:1245,negativeStock:0,outOfStock:0,units:2186.125,costValue:0,retailValue:0,potentialProfit:0}} showStockValue={false}/>
 {f.showReport&&React.createElement(AnalyticsRoute.options.component)}
-{f.showWorkspace&&<TerminalWorkspaceHome/>}{f.showBills&&<BillsReport/>}
+{f.showWorkspace&&<TerminalWorkspaceHome/>}{f.showBills&&<BillsReport/>}{f.showDashboard&&React.createElement(DashboardRoute.options.component)}{f.showBoard&&React.createElement(BoardRoute.options.component)}
 </main>};createRoot(document.getElementById('root')).render(<Fixture/>);`);
 let server, browser;
 try {
   server = await createServer({ configFile: false, envDir: false, root: fixture,
     cacheDir: resolve(fixture, "vite-cache"), plugins: [tailwind(), react()],
-    resolve: { alias: ["@/lib/pos-auth", "@/lib/pos-store", "@/lib/page-data-cache", "@/lib/notify", "@/components/ui/table", "./AppShell", "@/platforms/web/components/pos/AppShell", "@/lib/use-report-sales", "@tanstack/react-router", "@/lib/use-sponsorship-totals", "@/lib/use-viewed-branch-shift", "@/lib/ui-visibility", "./SellingShortcuts", "@/platforms/web/components/pos/SalesReportWorkspace", "@/platforms/web/components/pos/ReportReceiptLink", "@/lib/sales-report-context"].map(find => ({ find, replacement: resolve(fixture, "context.ts") })).concat([{ find: "@", replacement: resolve(root, "src") }]) },
+    resolve: { alias: ["@/lib/pos-auth", "@/lib/pos-store", "@/lib/page-data-cache", "@/lib/notify", "@/components/ui/table", "./AppShell", "@/platforms/web/components/pos/AppShell", "@/lib/use-report-sales", "@tanstack/react-router", "@/lib/use-sponsorship-totals", "@/lib/use-viewed-branch-shift", "@/lib/ui-visibility", "./SellingShortcuts", "@/platforms/web/components/pos/SalesReportWorkspace", "@/platforms/web/components/pos/ReportReceiptLink", "@/lib/sales-report-context", "@/lib/drawer-events", "@/core/activation/terminal-platform", "@/platforms/web/components/pos/HomeShortcuts", "@/platforms/web/components/pos/CashierBillList", "@tanstack/react-query", "@/core/local-db/local-db", "@/core/local-db/db-mode", "@/integrations/supabase/external-client", "./trading-hours.functions", "./hosted-function-client", "./pos-caller-auth"].map(find => ({ find, replacement: resolve(fixture, "context.ts") })).concat([{ find: "@", replacement: resolve(root, "src") }]) },
     server: { host: "127.0.0.1", port: 0, fs: { allow: [resolve(root, "../.."), root, fixture] } },
   });
   await server.listen(); const url = server.resolvedUrls.local[0];
@@ -132,6 +145,36 @@ try {
   await update({sponsorLoading:false,sponsorError:"Unavailable"});assert((await bills.textContent()).includes("Total collected"));
   await update({sponsorError:""});assert((await bills.textContent()).includes("Sales value with sponsorship"));
   await update({sponsorError:"Unavailable",reportError:"Offline"});assert((await bills.textContent()).includes("Sales value with sponsorship"));
+  await page.emulateMedia({reducedMotion:"no-preference"});
+  await update({showBills:false,showDashboard:true,includeSponsor:false,ready:true,reportError:'',trackRequests:true,lastRequestKey:null,readRequests:[],hidden:[]});
+  const graphHeading=page.getByRole('heading',{name:'Trending graphs',exact:true});await graphHeading.waitFor();
+  const collected=page.getByText('Sales collected today',{exact:true}),period=page.getByLabel('Trading graphs period',{exact:true}),grouping=page.getByLabel('Shop chart grouping',{exact:true}),kind=page.getByLabel('Shop comparison chart',{exact:true});
+  await collected.waitFor();const originalKpi=await collected.elementHandle(),originalPeriod=await period.elementHandle(),originalHeading=await graphHeading.elementHandle();
+  const requestCount=()=>page.evaluate(()=>window.fixture.readRequests.length);
+  assert.equal(await requestCount(),1);
+  await grouping.selectOption('monthly');await kind.selectOption('bar');assert.equal(await requestCount(),1,'presentation controls do not request another report');
+  await period.selectOption('7');assert.equal(await requestCount(),2);assert(await collected.isVisible(),'Today KPI stays visible during graph-only request');
+  assert(await originalKpi.evaluate(node=>node.isConnected));assert(await originalPeriod.evaluate(node=>node.isConnected));assert(await originalHeading.evaluate(node=>node.isConnected));
+  assert.equal(await grouping.inputValue(),'monthly');assert.equal(await kind.inputValue(),'bar');
+  await period.selectOption('30');assert.equal(await requestCount(),3);
+  await page.waitForFunction(()=>[...document.querySelectorAll('[data-chart-phase]')].every(node=>node.getAttribute('data-chart-phase')==='waiting'));
+  assert(await collected.isVisible());assert.equal(await page.getByRole('list',{name:'Gross margin by shop',exact:true}).count(),0,'pending graph range does not label old margin as current');await update({ready:true});
+  assert(await page.locator('[data-chart-phase="enter"]').count(),"confirmed plots enter visually without interpolating values");
+  assert(await page.evaluate(()=>document.getAnimations().some(animation=>animation.effect?.getKeyframes().some(frame=>String(frame.transform).includes('scaleY')))),"actual graph pixels animate");
+  await page.waitForFunction(()=>[...document.querySelectorAll('[data-chart-phase]')].every(node=>node.getAttribute('data-chart-phase')==='ready'));
+  assert.equal(await grouping.inputValue(),'monthly');assert.equal(await kind.inputValue(),'bar');assert.equal(await requestCount(),3);
+  await update({user:{staffId:'cashier',permissions:{cost:false}},auth:false});
+  assert.equal(await page.locator('[data-trading-chart-card]').count(),0,'sign-out drops protected graphs immediately');
+  await update({showDashboard:false,showBoard:true,auth:true,user:{staffId:'admin',permissions:{cost:true}},ready:true,trackRequests:false});
+  const giveaways=page.locator('[data-trading-chart-card]').filter({has:page.getByRole('heading',{name:'Where the money went',exact:true})});await giveaways.waitFor();
+  await page.waitForFunction(()=>[...document.querySelectorAll('[data-chart-phase]')].every(node=>node.getAttribute('data-chart-phase')==='ready'));
+  for(const dark of [false,true]){
+    await page.evaluate(dark=>document.documentElement.classList.toggle('dark',dark),dark);
+    const fills=await giveaways.locator('.recharts-bar').evaluateAll(nodes=>nodes.map(node=>getComputedStyle(node.querySelector('.recharts-rectangle')).fill));
+    assert.equal(fills.length,5);assert.equal(new Set(fills).size,5,'actual Board giveaway measures use five distinct colors in either theme');
+  }
+  await update({user:{staffId:'admin',permissions:{cost:false}}});
+  assert.equal(await giveaways.locator('.recharts-bar').count(),4,'cost denial removes the profit stack immediately');
   assert.deepEqual(errors, []); assert.deepEqual(unexpected, []);
   console.log("PASS mounted Chrome metric gates: database/report/audit confirmation, exact first values, zero/negative cards, refresh/error retention, date/branch/session/backend/permission invalidation, reduced motion and 390px layout.");
 } finally { await browser?.close(); await server?.close(); }

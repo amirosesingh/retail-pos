@@ -1,3 +1,4 @@
+import { useChartTransition } from "@/lib/use-chart-transition";
 import { useAuth } from "@/lib/pos-auth";
 import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
 import { createFileRoute } from "@tanstack/react-router";
@@ -12,11 +13,10 @@ import {
   Pie,
   PieChart,
   ResponsiveContainer,
-  Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
-import { TradingChartCard, TradingChartGrid } from "@/platforms/web/components/pos/TradingChartLayout";
+import { ChartPlotScope, TradingTooltip, TradingChartCard, TradingChartGrid } from "@/platforms/web/components/pos/TradingChartLayout";
 import { ConfirmedMetricCards } from "@/platforms/web/components/pos/ConfirmedMetricCards";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Button } from "@/components/ui/button";
@@ -85,7 +85,8 @@ function AnalyticsBoard() {
   );
   const [trend, setTrend] = useState<"daily" | "monthly">("daily");
   const reportScope = authReady && user ? JSON.stringify([pageDataScope(user), stores.map(store => store.id).sort(), from, to]) : null;
-  const confirmedReport = useConfirmedPresentation(reportScope, { sales: history.sales, products: state.products }, databaseReady && !history.loading && !history.error);
+  const reportData=useMemo(()=>({sales:history.sales,products:state.products}),[history.sales,state.products]);
+  const confirmedReport = useConfirmedPresentation(reportScope, reportData, databaseReady && !history.loading && !history.error);
   const shopColors = useMemo(() => new Map(comparisonShopSeries(state.stores ?? stores).map(shop => [shop.id, shop.color])), [state.stores, stores]);
 
 
@@ -94,8 +95,8 @@ function AnalyticsBoard() {
     [confirmedReport, from, to],
   );
   const lines = useMemo(() => soldLines(bills, confirmedReport?.products ?? []), [bills, confirmedReport]);
-  const totals = sumLines(lines);
-  const savings = savingsOf(bills, lines);
+  const totals = useMemo(()=>sumLines(lines),[lines]);
+  const savings = useMemo(()=>savingsOf(bills, lines),[bills,lines]);
   const storeName = useCallback(
     (id: string) => branchDisplayName(stores, id, "Unassigned branch"),
     [stores],
@@ -152,6 +153,14 @@ function AnalyticsBoard() {
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([label, value]) => ({ label, value: Math.round(value * 100) / 100 }));
   }, [bills, trend]);
+
+  const graphAuthority=authReady&&user?JSON.stringify([pageDataScope(user),stores.map(store=>store.id).sort(),showCostMargin]):null;
+  const graphTarget=JSON.stringify([{from,to},topBy,trend]);
+  const graphRaw=useMemo(()=>({topItems,byStore,series,savings,topBy,trend,range:{from,to}}),[topItems,byStore,series,savings,topBy,trend,from,to]);
+  const graphFrame=useConfirmedPresentation(graphAuthority,graphRaw,!!confirmedReport);
+  const graphIncoming=useMemo(()=>confirmedReport?{key:graphTarget,value:graphRaw,signature:JSON.stringify(graphRaw)}:null,[confirmedReport,graphTarget,graphRaw]);
+  const graphTransition=useChartTransition(graphAuthority,graphTarget,graphIncoming);
+  const graphs=graphTransition.data??graphFrame;
 
   const dayCount = new Set(bills.map((s) => isoDay(new Date(s.createdAt)))).size || 1;
   const monthCount = new Set(bills.map((s) => monthKey(s.createdAt))).size || 1;
@@ -253,9 +262,9 @@ function AnalyticsBoard() {
               <StatCard tone="discount" label="Coupons & vouchers" metricValue={savings.coupon} moneyValue value={money(savings.coupon)} />
               <StatCard tone="discount" label="Free items" metricValue={savings.focValue} moneyValue value={money(savings.focValue)} />
             </ConfirmedMetricCards>
-        {confirmedReport && <>
+        {graphs && <ChartPlotScope phase={graphTransition.phase} stamp={graphTransition.stamp} previousLabel={graphTransition.data?`${graphTransition.data.range.from} to ${graphTransition.data.range.to}`:undefined}>
         <TradingChartGrid label="Business analytics graphs">
-          {topItems.length > 0 && <TradingChartCard title="Top selling items" controls={<div className="flex gap-1">
+          {graphs.topItems.length > 0 && <TradingChartCard title="Top selling items" controls={<div className="flex gap-1">
                 <Button
                   size="sm"
                   variant={topBy === "revenue" ? "default" : "outline"}
@@ -274,10 +283,10 @@ function AnalyticsBoard() {
             <div className="trading-chart-scroll h-full overflow-y-auto overscroll-contain" tabIndex={0} aria-label="Top selling items chart">
             <ResponsiveContainer
               width="100%"
-              height={Math.max(240, topItems.length * 36)}
+              height={Math.max(240, graphs.topItems.length * 36)}
               minWidth={0}
             >
-              <BarChart data={topItems} layout="vertical" margin={{ left: 24, right: 16 }}>
+              <BarChart data={graphs.topItems} layout="vertical" margin={{ left: 24, right: 16 }}>
                 <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" horizontal={false} />
                 <XAxis
                   type="number"
@@ -297,18 +306,18 @@ function AnalyticsBoard() {
                     String(value).length > 18 ? String(value).slice(0, 17) + "…" : String(value)
                   }
                 />
-                <Tooltip
+                <TradingTooltip
                   contentStyle={tooltipStyle}
                   itemStyle={{ color: "var(--card-foreground)" }}
                   formatter={(v) =>
-                    topBy === "revenue" ? money(Number(v ?? 0)) : `${Number(v ?? 0)} units`
+                    graphs.topBy === "revenue" ? money(Number(v ?? 0)) : `${Number(v ?? 0)} units`
                   }
                 />
                 <Bar
                   isAnimationActive={false}
-                  name={topBy === "revenue" ? "Net revenue" : "Units sold"}
-                  dataKey={topBy}
-                  fill={topBy === "revenue" ? ANALYTICS_COLORS.revenue : ANALYTICS_COLORS.units}
+                  name={graphs.topBy === "revenue" ? "Net revenue" : "Units sold"}
+                  dataKey={graphs.topBy}
+                  fill={graphs.topBy === "revenue" ? ANALYTICS_COLORS.revenue : ANALYTICS_COLORS.units}
                   radius={[0, 5, 5, 0]}
                 />
               </BarChart>
@@ -316,11 +325,11 @@ function AnalyticsBoard() {
             </div>
 
           </TradingChartCard>}
-          {byStore.some(shop => Math.abs(shop.revenue) >= 0.005) && <TradingChartCard title="Revenue by shop" footer={<><p className="mb-2 text-xs text-muted-foreground">
+          {graphs.byStore.some(shop => Math.abs(shop.revenue) >= 0.005) && <TradingChartCard title="Revenue by shop" footer={<><p className="mb-2 text-xs text-muted-foreground">
               Colors identify branches and stay the same when their ranking changes.
             </p>
             <ul tabIndex={0} aria-label="Shop revenue shares" className=" space-y-2 text-xs">
-              {byStore.map((shop) => (
+              {graphs.byStore.map((shop) => (
                 <li key={shop.id} className="flex min-w-0 items-start gap-2">
                   <span
                     className="mt-1.5 size-2.5 shrink-0 rounded-full"
@@ -335,7 +344,7 @@ function AnalyticsBoard() {
               <PieChart>
                 <Pie
                   isAnimationActive={false}
-                  data={byStore}
+                  data={graphs.byStore}
                   dataKey="revenue"
                   nameKey="name"
                   innerRadius={60}
@@ -343,11 +352,11 @@ function AnalyticsBoard() {
                   paddingAngle={2}
                   cornerRadius={4}
                 >
-                  {byStore.map((s) => (
+                  {graphs.byStore.map((s) => (
                     <Cell key={s.id} fill={shopColors.get(canonicalBranchId(s.id))} />
                   ))}
                 </Pie>
-                <Tooltip
+                <TradingTooltip
                   contentStyle={tooltipStyle}
                   itemStyle={{ color: "var(--card-foreground)" }}
                   formatter={(v) => money(Number(v ?? 0))}
@@ -355,7 +364,7 @@ function AnalyticsBoard() {
               </PieChart>
             </ResponsiveContainer>
           </TradingChartCard>}
-          {series.some(row => Math.abs(row.value) >= 0.005) && <TradingChartCard title={trend === "daily" ? "Daily revenue" : "Monthly revenue"} controls={<div className="flex gap-1">
+          {graphs.series.some(row => Math.abs(row.value) >= 0.005) && <TradingChartCard title={trend === "daily" ? "Daily revenue" : "Monthly revenue"} controls={<div className="flex gap-1">
               <Button
                 size="sm"
                 variant={trend === "daily" ? "default" : "outline"}
@@ -372,8 +381,8 @@ function AnalyticsBoard() {
               </Button>
             </div>}>
           <ResponsiveContainer width="100%" height="100%">
-            {trend === "daily" ? (
-              <BarChart data={series}>
+            {graphs.trend === "daily" ? (
+              <BarChart data={graphs.series}>
                 <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
                 <XAxis
                   dataKey="label"
@@ -389,7 +398,7 @@ function AnalyticsBoard() {
                   tickLine={false}
                   axisLine={false}
                 />
-                <Tooltip
+                <TradingTooltip
                   contentStyle={tooltipStyle}
                   itemStyle={{ color: "var(--card-foreground)" }}
                   formatter={(v) => money(Number(v ?? 0))}
@@ -403,7 +412,7 @@ function AnalyticsBoard() {
                 />
               </BarChart>
             ) : (
-              <LineChart data={series}>
+              <LineChart data={graphs.series}>
                 <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
                 <XAxis
                   dataKey="label"
@@ -419,7 +428,7 @@ function AnalyticsBoard() {
                   tickLine={false}
                   axisLine={false}
                 />
-                <Tooltip
+                <TradingTooltip
                   contentStyle={tooltipStyle}
                   itemStyle={{ color: "var(--card-foreground)" }}
                   formatter={(v) => money(Number(v ?? 0))}
@@ -438,14 +447,14 @@ function AnalyticsBoard() {
             )}
           </ResponsiveContainer>
           </TradingChartCard>}
-          {Math.abs(savings.total) >= 0.005 && <TradingChartCard title="What we gave away" description="Discounts, coupons and free items for the selected dates.">
+          {Math.abs(graphs.savings.total) >= 0.005 && <TradingChartCard title="What we gave away" description="Discounts, coupons and free items for the selected dates.">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
                 data={[
-                  { label: "Item", value: savings.lineDiscount },
-                  { label: "Bill", value: savings.billDiscount },
-                  { label: "Coupons", value: savings.coupon },
-                  { label: "Free items", value: savings.focValue },
+                  { label: "Item", value: graphs.savings.lineDiscount },
+                  { label: "Bill", value: graphs.savings.billDiscount },
+                  { label: "Coupons", value: graphs.savings.coupon },
+                  { label: "Free items", value: graphs.savings.focValue },
                 ]}
               >
                 <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
@@ -463,7 +472,7 @@ function AnalyticsBoard() {
                   tickLine={false}
                   axisLine={false}
                 />
-                <Tooltip
+                <TradingTooltip
                   contentStyle={tooltipStyle}
                   itemStyle={{ color: "var(--card-foreground)" }}
                   formatter={(v) => money(Number(v ?? 0))}
@@ -474,12 +483,12 @@ function AnalyticsBoard() {
                   dataKey="value"
                   fill={ANALYTICS_COLORS.discount}
                   radius={[5, 5, 0, 0]}
-                />
+                >{[ANALYTICS_COLORS.revenue,ANALYTICS_COLORS.cost,ANALYTICS_COLORS.discount,ANALYTICS_COLORS.margin].map((color,index)=><Cell key={index} fill={color}/>)}</Bar>
               </BarChart>
             </ResponsiveContainer>
           </TradingChartCard>}
         </TradingChartGrid>
-        </>}
+        </ChartPlotScope>}
         <div>
           <section className="min-w-0 rounded-2xl border border-border bg-card p-4">
             <h2 className="mb-3 text-sm font-semibold">Profit by shop</h2>

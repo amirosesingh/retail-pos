@@ -152,14 +152,17 @@ function AllShops() {
   const billPager = usePagination(live.feed, 25);
   const confirmedLive = useConfirmedPresentation(isAdmin && periodStoreIds.length > 0 ? JSON.stringify([pageDataScope(user), periodStoreIds, from, to, effectiveTimeZone()]) : null,
     live, inventoryReady && !history.loading && !history.error);
-  const comparisonFeed = confirmedLive?.feed;
-  const comparisonDays = useMemo(() => comparisonSalesDays(comparisonFeed ?? [], state.products), [comparisonFeed, state.products]);
+  const graphAuthority=isAdmin&&periodStoreIds.length>0?JSON.stringify([pageDataScope(user),periodStoreIds,effectiveTimeZone(),showCostMargin]):null;
+  const graphPayload=useMemo(()=>confirmedLive?{live:confirmedLive,products:state.products,range:{from,to}}:null,[confirmedLive,state.products,from,to]);
+  const graphFrame=useConfirmedPresentation(graphAuthority,graphPayload,!!confirmedLive);
+  const comparisonFeed = graphFrame?.live.feed;
+  const comparisonDays = useMemo(() => comparisonSalesDays(comparisonFeed ?? [], graphFrame?.products ?? []), [comparisonFeed, graphFrame]);
 
-  const comparisonHours = useMemo(() => comparisonSalesHours(comparisonFeed ?? [], state.products), [comparisonFeed, state.products]);
+  const comparisonHours = useMemo(() => comparisonSalesHours(comparisonFeed ?? [], graphFrame?.products ?? []), [comparisonFeed, graphFrame]);
   const comparisonFinancial = useMemo(() => totalStores.map(store => {
-    const totals = profitOf((comparisonFeed ?? []).filter(sale => sameBranchId(sale.storeId, store.id)), state.products);
+    const totals = profitOf((comparisonFeed ?? []).filter(sale => sameBranchId(sale.storeId, store.id)), graphFrame?.products ?? []);
     return { id: store.id, name: store.name, revenue: totals.revenue, cost: totals.cogs, profit: totals.profit, marginPct: totals.marginPct };
-  }), [totalStores, comparisonFeed, state.products]);
+  }), [totalStores, comparisonFeed, graphFrame]);
   const confirmedShops = useConfirmedPresentation(stores.length > 0 ? JSON.stringify([pageDataScope(user), storeIds, today, showMoney, showCostMargin]) : null,
     perStore, inventoryReady && (!showMoney || (!lifetime.loading && !lifetime.error && !!lifetime.totals)));
 
@@ -353,19 +356,17 @@ function AllShops() {
               <span className="text-xs text-muted-foreground">{from} to {to} · Shop cards and charts follow this cluster selection; card amounts remain lifetime totals.</span>
             </div>
             <p className="text-xs text-muted-foreground">Net sales exclude tax and are before saved receipt adjustments. Collected is the final bill total after those adjustments. Refunded bills are excluded.</p>
-            {confirmedLive && <>
-            <SummaryCardRail label="Selected-period shop totals">
+            {confirmedLive && <SummaryCardRail label="Selected-period shop totals">
               {Math.abs(confirmedLive.revenue) >= 0.005 && <Kpi label="Net sales before adjustments · selected dates" value={money(confirmedLive.revenue)} info={<SalesTotalInfo totals={confirmedLive.totals} adjustmentLabel={receiptAdjustmentLabel(confirmedLive.feed)} />} />}
               {showCostMargin && Math.abs(confirmedLive.profit) >= 0.005 && <Kpi label="Gross profit" value={money(confirmedLive.profit)} info={<GrossProfitInfo revenue={confirmedLive.revenue} cost={confirmedLive.cost} profit={confirmedLive.profit} />} />}
               {confirmedLive.bills > 0 && <Kpi label="Bills" value={String(confirmedLive.bills)} />}
               {Math.abs(confirmedLive.basket) >= 0.005 && <Kpi label="Average basket · net sales" value={money(confirmedLive.basket)} info={<FinancialBreakdown rows={[["Net sales", money(confirmedLive.revenue)], ["Completed bills", String(confirmedLive.bills)], ["Average basket", money(confirmedLive.basket)]]}><p>Net sales ÷ completed bills for the selected dates.</p></FinancialBreakdown>} />}
-            </SummaryCardRail>
-            <ShopComparisonCharts rows={comparisonDays} directory={state.stores}
+            </SummaryCardRail>}
+            {graphFrame && <ShopComparisonCharts rows={comparisonDays} directory={state.stores}
               selectedIds={periodStoreIds} showProfit={showCostMargin}
-              range={{ from, to }}
+              range={graphFrame.range} requestedRange={{from,to}}
               transactionHours={comparisonHours} profitHours={comparisonHours} financialRows={comparisonFinancial}
-              scopeLabel={selectedCluster === "all" ? "All authorized clusters" : "Selected cluster"} />
-            </>}
+              scopeLabel={selectedCluster === "all" ? "All authorized clusters" : "Selected cluster"} />}
             <div className="overflow-auto rounded-md border border-border bg-card">
               <Table tableId="routes/all-shops#1">
                 <TableHeader>
