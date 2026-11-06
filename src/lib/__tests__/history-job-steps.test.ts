@@ -21,4 +21,8 @@ describe('explicit opt-in bounded background job steps',()=>{
  it('refuses unproven or malformed completion and preserves an actual failed state',async()=>{for(const outcome of [undefined,{pending:'true'},{pending:true,status:'completed'}]){const h=harness();await expect(h.manager.runStep('history_index_v1',async()=>outcome)).rejects.toMatchObject({code:'EJOB_STEP_INVALID'});expect([...h.jobs.values()][0].status).toBe('failed');expect(h.manager.running).toBe(null);}});
  it('retains manual pause and never invokes the automatic handler',async()=>{const h=harness();h.manager.pause();let calls=0;expect(await h.manager.runStep('history_index_v1',async()=>{calls++;return{completed:true};})).toMatchObject({pending:true,paused:true});expect(calls).toBe(0);expect(h.manager.paused).toBe(true);expect(h.jobs.size).toBe(0);});
  it('does not adopt, complete or modify another running job',async()=>{const h=harness();h.manager.running={job_id:'unrelated',status:'running'};let calls=0;expect(await h.manager.runStep('history_index_v1',async()=>{calls++;return{completed:true};})).toMatchObject({pending:true,busy:true});expect(calls).toBe(0);expect(h.manager.running).toEqual({job_id:'unrelated',status:'running'});expect(h.jobs.size).toBe(0);});
+ it('does not write completion or failure into a changed database/profile',async()=>{const h=harness();let bound=true;
+  await expect(h.manager.runStep('history_index_v1',async()=>{bound=false;return{completed:true};},null,{}, {checkpointAllowed:()=>bound})).rejects.toMatchObject({code:'ESYNC_REQUEST_CONTEXT_CHANGED'});
+  expect([...h.jobs.values()][0].status).toBe('running');expect(h.events.some(x=>x.status==='completed'||x.status==='failed')).toBe(false);expect(h.manager.running).toBe(null);
+ });
 });

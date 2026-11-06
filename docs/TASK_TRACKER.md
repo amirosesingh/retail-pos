@@ -38,6 +38,26 @@ canonical/SQL assembly pass39. TypeScript and scoped lint pass. This is disposab
 evidence only, not actual device recovery or hosted CPU acceptance. Independent
 review, durable runtime jobs, final CI and exact live approval remain pending.
 
+Runtime preparation dependency review: root explicitly approved the necessary
+history-only ECHANGEGAP hold in PushWorker/coordinator/lifecycle and same-job
+Management scheduling. This must retain journal and push CT checkpoint, remain
+held in final allUploaded/close checks, and never soften other-table or401/403/
+proof failures. Management stays pullOnly and schedules once per verified scope,
+not per shop. The durable job uses the actual database GUID plus current trusted
+request fingerprint/pool; opt-in JobManager checkpoints must stop on identity
+changes rather than writing a previous job into a newly selected database. ID
+membership still authorizes no push baseline or accepted author/payload proof.
+
+Native job preparation checkpoint: actual JobManager plus the missing-only class
+pass29 focused cases; the actual append-only SQL Server store passes10 owned
+LocalDB groups. Durable rows/cursor rollback, cold pool resume, exact15-column
+values, lost response, byte prefix, retained divergent/currently arriving rows,
+pending/unknown keys, CLOUD CT context and unchanged journal/feed/push checkpoints
+are covered. Per-step identity changes suppress stale-database status writes.
+The class is not yet scheduled by startup/periodic/Management runtime. Push hold,
+coordinator/final-close truth and startup qualification remain separate local work,
+then require combined regression and independent review. No live database touched.
+
 Owner explicitly requires automatic recovery for hundreds of PCs after short or
 long offline periods, without per-PC manual SQL, UUID exports, repair scripts,
 registration/checkpoint resets or queue clearing. A centrally reviewed migration

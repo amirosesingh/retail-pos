@@ -28,17 +28,19 @@ class JobManager {
   }
   async run(type, handler, existing = null, metadata = {}, options = {}) {
     if (this.running) return this.running;
+    const allowed=()=>options.pendingStep!==true||typeof options.checkpointAllowed!=="function"||options.checkpointAllowed()===true;
+    const assertAllowed=()=>{if(!allowed())throw Object.assign(new Error("The background recovery database or terminal changed; its saved work remains pending."),{code:"ESYNC_REQUEST_CONTEXT_CHANGED"});};
     const job = existing ?? { job_id: randomUUID(), job_type: type, status: "queued", organization_id: metadata.organizationId ?? null, organization_name: metadata.organizationName ?? null, branch_id: metadata.branchId ?? null, branch_name: metadata.branchName ?? null, branch_code: metadata.branchCode ?? null, terminal_id: metadata.terminalId ?? null, terminal_name: metadata.terminalName ?? null, phase: "starting", current_table: null, dependency_index: 0, last_committed_cursor: null, completed_rows: 0, estimated_total_rows: metadata.estimatedTotalRows ?? null, completed_bytes: 0, batch_number: 0, batch_size: 500, retry_count: 0, next_retry_at: null };
-    if (!existing) await this.repository.create(job);
+    assertAllowed();if (!existing) await this.repository.create(job);
     this.running = job; if (options.pendingStep !== true) this.paused = false;
     try {
       const starting = options.pendingStep === true ? { status: "running", finished_at: null }
         : { status: "running", finished_at: null, error_code: null, error_message: null };
-      await this.repository.checkpoint(job.job_id, starting);
+      assertAllowed();await this.repository.checkpoint(job.job_id, starting);
       if (options.pendingStep === true) Object.assign(job, starting);
       const outcome = await handler({
         job,
-        checkpoint: async (patch, transaction = null) => { Object.assign(job, patch); await this.repository.checkpoint(job.job_id, patch, transaction); this.emit(job); },
+        checkpoint: async (patch, transaction = null) => { assertAllowed();Object.assign(job, patch); await this.repository.checkpoint(job.job_id, patch, transaction); this.emit(job); },
         shouldPause: () => this.paused,
         waitWhilePaused: async () => this.waitWhilePaused(job, async (patch) => { Object.assign(job, patch); await this.repository.checkpoint(job.job_id, patch); this.emit(job, true); }),
         maxBytes: this.maxBytes,
@@ -48,7 +50,7 @@ class JobManager {
           const status = outcome.status ?? "queued";
           if (!["queued", "retrying", "paused", "interrupted"].includes(status))
             throw Object.assign(new Error("The background recovery step returned an invalid pending state."), { code: "EJOB_STEP_INVALID" });
-          await this.repository.checkpoint(job.job_id, { status, finished_at: null });
+          assertAllowed();await this.repository.checkpoint(job.job_id, { status, finished_at: null });
           this.emit({ ...job, status, finished_at: null }, true);
           return { ...job, status, pending: true };
         }
@@ -56,20 +58,20 @@ class JobManager {
           throw Object.assign(new Error("The background recovery step did not confirm completion."), { code: "EJOB_STEP_INVALID" });
       }
       const resolved = options.pendingStep === true ? { error_code: null, error_message: null, next_retry_at: null } : {};
-      await this.repository.checkpoint(job.job_id, { status: "completed", finished_at: new Date(), ...resolved });
+      assertAllowed();await this.repository.checkpoint(job.job_id, { status: "completed", finished_at: new Date(), ...resolved });
       this.emit({ ...job, status: "completed", finished_at: new Date(), ...resolved }, true);
       return { ...job, status: "completed", ...resolved };
     } catch (error) {
-      await this.repository.checkpoint(job.job_id, { status: "failed", finished_at: new Date(), error_code: error?.code ?? "EJOB", error_message: String(error?.message ?? error).slice(0, 1000) });
+      if(allowed())await this.repository.checkpoint(job.job_id, { status: "failed", finished_at: new Date(), error_code: error?.code ?? "EJOB", error_message: String(error?.message ?? error).slice(0, 1000) });
       throw error;
     } finally { this.running = null; }
   }
   // Opt-in bounded quanta only. Ordinary run/runPaged callers keep their
   // existing completion contract, and an unrelated active job is never adopted.
-  async runStep(type, handler, existing = null, metadata = {}) {
+  async runStep(type, handler, existing = null, metadata = {}, options = {}) {
     if (this.running) return { pending: true, busy: true, code: "EJOB_BUSY" };
     if (this.paused) return { pending: true, paused: true, code: "EJOB_PAUSED" };
-    return this.run(type, handler, existing, metadata, { pendingStep: true });
+    return this.run(type, handler, existing, metadata, { pendingStep: true,checkpointAllowed:options.checkpointAllowed });
   }
   async runPaged(type, { fetchPage, processPage, metadata = {}, existing = null }) {
     return this.run(type, async (context) => {
