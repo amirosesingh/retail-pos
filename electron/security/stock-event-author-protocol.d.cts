@@ -8,3 +8,7 @@ export type StockSourceCohortProof={version:1;algorithm:'Ed25519';keyId:string;p
 export function unsignedStockSourceCohort(input:unknown):Omit<StockSourceCohortProof,'signature'>;
 export function stockSourceCohortMessage(input:unknown):string;
 export function normalizeStockSourceCohortProof(input:unknown):StockSourceCohortProof;
+export type StockCoverageFrontierProof={version:1;algorithm:'Ed25519';keyId:string;projectOrigin:string;terminalId:string;authorId:string;subject:string;branchId:string;challengeId:string;frontierHash:string;signature:string};
+export function unsignedStockCoverageFrontier(input:unknown):Omit<StockCoverageFrontierProof,'signature'>;
+export function stockCoverageFrontierMessage(input:unknown):string;
+export function normalizeStockCoverageFrontierProof(input:unknown):StockCoverageFrontierProof;

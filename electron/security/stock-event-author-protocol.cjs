@@ -61,4 +61,25 @@ function normalizeStockSourceCohortProof(input){
  if(bytes.length!==64||btoa(bytes).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')!==value.signature)invalid();
  const{signature,...fields}=value;return{...unsignedStockSourceCohort(fields),signature};
 }
-module.exports={ACTIONS,unsignedStockEvent,stockEventMessage,normalizeStockEvent,unsignedStockSourceCohort,stockSourceCohortMessage,normalizeStockSourceCohortProof};
+const FRONTIER_FIELDS=['version','algorithm','keyId','projectOrigin','terminalId','authorId','subject','branchId','challengeId','frontierHash'];
+function unsignedStockCoverageFrontier(input){
+ const value=exact(input,FRONTIER_FIELDS);
+ if(value.version!==1||value.algorithm!=='Ed25519'||typeof value.frontierHash!=='string'||!/^[a-f0-9]{64}$/.test(value.frontierHash))invalid();
+ let binding;try{binding=normalizeBinding({projectOrigin:value.projectOrigin,terminalId:value.terminalId,authorId:value.authorId});}catch{invalid();}
+ const branch=label(value.branchId,128);
+ return{version:1,algorithm:'Ed25519',keyId:uuid(value.keyId),...binding,subject:label(value.subject,200),
+  branchId:/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(branch)?branch.toLowerCase():branch,challengeId:uuid(value.challengeId),frontierHash:value.frontierHash};
+}
+function stockCoverageFrontierMessage(input){
+ const v=unsignedStockCoverageFrontier(input);
+ return JSON.stringify(['retail-pos.stock-event.v1','coverage_frontier.v1',v.algorithm,v.projectOrigin,v.terminalId,v.authorId,v.keyId,v.subject,v.branchId,v.challengeId,v.frontierHash]);
+}
+function normalizeStockCoverageFrontierProof(input){
+ const value=exact(input,[...FRONTIER_FIELDS,'signature']);
+ if(typeof value.signature!=='string'||!/^[A-Za-z0-9_-]{86}$/.test(value.signature))invalid();
+ let bytes;try{bytes=atob(value.signature.replace(/-/g,'+').replace(/_/g,'/'));}catch{invalid();}
+ if(bytes.length!==64||btoa(bytes).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')!==value.signature)invalid();
+ const{signature,...fields}=value;return{...unsignedStockCoverageFrontier(fields),signature};
+}
+module.exports={ACTIONS,unsignedStockEvent,stockEventMessage,normalizeStockEvent,unsignedStockSourceCohort,stockSourceCohortMessage,normalizeStockSourceCohortProof,
+ unsignedStockCoverageFrontier,stockCoverageFrontierMessage,normalizeStockCoverageFrontierProof};

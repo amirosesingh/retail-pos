@@ -213,6 +213,21 @@ function createShiftAuthorKeys({ safeStorage, directory }) {
     const proof=Object.freeze(stock.normalizeStockSourceCohortProof({...unsigned,signature:crypto.sign(null,Buffer.from(stock.stockSourceCohortMessage(unsigned)),saved.privateKey).toString('base64url')}));
     return Object.freeze({proof,members:cohort.members});
   }
-  return { prepare, enrollment, signIntent, signClosingStart, signFinancialBasis, signOpeningFinancialBasis, signFinancialOperation, signLegacyRecovery, signStockEvent, signStockSourceCohort, markEnrolled };
+  function signStockCoverageFrontier(binding,input){
+    if(!input||typeof input!=='object'||Array.isArray(input))throw failure('ESTOCK_AUTHOR_INVALID');
+    const{expectedKeyId,...facts}=input,fields=['subject','branchId','frontierJson'];
+    if(Object.keys(facts).length!==fields.length||fields.some(field=>!Object.hasOwn(facts,field))||typeof facts.frontierJson!=='string'||Buffer.byteLength(facts.frontierJson,'utf8')>8192)throw failure('ESTOCK_AUTHOR_INVALID');
+    const keyId=expected({expectedKeyId});if(!keyId)throw failure('ESTOCK_AUTHOR_INVALID');
+    const parsedBinding=protocol.normalizeBinding(binding),stock=require('./stock-event-author-protocol.cjs');
+    const{stockCoverageFrontierJson}=require('../shared/stock-coverage-frontier.mjs');let frontier;
+    try{frontier=JSON.parse(facts.frontierJson);if(stockCoverageFrontierJson(frontier)!==facts.frontierJson)throw new Error('Noncanonical frontier');}
+    catch{throw failure('ESTOCK_AUTHOR_INVALID');}
+    if(frontier.projectOrigin!==parsedBinding.projectOrigin||frontier.authorId!==parsedBinding.authorId||frontier.terminalId!==parsedBinding.terminalId||frontier.branchId!==facts.branchId)throw failure('ESTOCK_AUTHOR_INVALID');
+    const unsigned=stock.unsignedStockCoverageFrontier({version:1,algorithm:'Ed25519',keyId,...parsedBinding,subject:facts.subject,branchId:facts.branchId,
+      challengeId:frontier.challengeId,frontierHash:crypto.createHash('sha256').update(facts.frontierJson,'utf8').digest('hex')});
+    const saved=load(parsedBinding,{expectedKeyId:keyId});if(!saved.enrolled)throw failure('ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING');
+    return Object.freeze(stock.normalizeStockCoverageFrontierProof({...unsigned,signature:crypto.sign(null,Buffer.from(stock.stockCoverageFrontierMessage(unsigned)),saved.privateKey).toString('base64url')}));
+  }
+  return { prepare, enrollment, signIntent, signClosingStart, signFinancialBasis, signOpeningFinancialBasis, signFinancialOperation, signLegacyRecovery, signStockEvent, signStockSourceCohort, signStockCoverageFrontier, markEnrolled };
 }
 module.exports = { createShiftAuthorKeys };

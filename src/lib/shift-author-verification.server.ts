@@ -212,7 +212,21 @@ export async function verifyStockSourceCohortRegistryProof(value:unknown,request
   Object.freeze(proof);verifiedStockKeys.set(proof,key);return proof;
 }
 
-export async function readVerifiedStockEventAuthor(proof: Awaited<ReturnType<typeof verifyStockEventRegistryProof>>|Awaited<ReturnType<typeof verifyStockSourceCohortRegistryProof>>,request?:object): Promise<ShiftAuthorAuthority> {
+/** Typed coverage metadata only; never grants a business write or proves that
+ * the prefix/cohort is accepted. SQL validates the challenge/source separately. */
+export async function verifyStockCoverageFrontierRegistryProof(value:unknown,request?:object){
+  const{normalizeStockCoverageFrontierProof,stockCoverageFrontierMessage}=await import('../../electron/security/stock-event-author-protocol.cjs');
+  let proof:ReturnType<typeof normalizeStockCoverageFrontierProof>;
+  try{proof=normalizeStockCoverageFrontierProof(value);}catch{return denied('ESTOCK_AUTHOR_INVALID');}
+  if(proof.projectOrigin!==projectOrigin())return denied('ESTOCK_AUTHOR_INVALID');
+  const key=(await stockRegistry(proof,request)).key;
+  if(!key||!matchingKey(key,proof)||canonicalBranchId(key.terminal_id)!==canonicalBranchId(proof.terminalId))return denied('ESTOCK_AUTHOR_INVALID');
+  const{signature,...fields}=proof;
+  if(!await validSignature(key.public_key,signature,stockCoverageFrontierMessage(fields)))return denied('ESTOCK_AUTHOR_INVALID');
+  Object.freeze(proof);verifiedStockKeys.set(proof,key);return proof;
+}
+
+export async function readVerifiedStockEventAuthor(proof: Awaited<ReturnType<typeof verifyStockEventRegistryProof>>|Awaited<ReturnType<typeof verifyStockSourceCohortRegistryProof>>|Awaited<ReturnType<typeof verifyStockCoverageFrontierRegistryProof>>,request?:object): Promise<ShiftAuthorAuthority> {
   if (!verifiedStockKeys.has(proof)) return { allowed: false, code: "ESTOCK_AUTHOR_INVALID" };
   const key = (await stockRegistry(proof,request)).key;
   if (!key || !matchingKey(key, proof) || key.revoked_at !== null) return { allowed: false, code: "ESTOCK_AUTHOR_REVOKED" };
