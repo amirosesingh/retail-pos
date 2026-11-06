@@ -6827,3 +6827,24 @@ warnings at10:43/11:13 match the tool plus explicit file wrappers; desired sourc
 ACL/OID and both migration ledgers verified. No slot/restart/rollback action ran.
 Future migration payloads need one tested transaction owner and new exact approval
 when protected bytes change; do not reapply already committed files to clear logs.
+## 6 November — bounded hourly read timezone performance
+
+Root reviewed the owned-provider evidence and authorized a separate minimal
+current-beta correction after the Stock report was explicitly deferred. Preserve
+all financial/range/scope/grant behavior and existing accepted-zone/UTC fallback.
+Only exact existing UTC and Asia/Brunei names use bounded direct resolution;
+NULL still falls back to UTC and every other string retains catalogue membership.
+No new default/configuration, case/abbreviation/POSIX acceptance, session SET or
+permission change. Refine only the unapplied hourly migration and matching
+canonical function, focused SQL/provider/rollback tests and evidence. Migration
+bytes/hash must be shown again before any live application. Never change428's
+frozen source or migration;031/Stock report stays out of this production release.
+Verification:66 focused SQL/privilege/scope/Board/native-hour cases pass, including
+11 direct comparisons against original catalogue/fallback semantics. Actual
+owned PostgreSQL18.6/PostgREST passes LF/CRLF late-DDL and ledger-failure rollback,
+unchanged service-only ACL and complete1008/2400 scalar groups; fixtures closed.
+Unchanged original full report measured213–244ms on the owned provider; prototype
+same-backend UTC18–25ms/Brunei13–23ms, committed-candidate cold reads25–37ms.
+Other names retain their original lookup cost/meaning. These are local provider
+measurements, not livePG17 or Worker CPU. TSC passes; full exact-head CI/regression,
+independent review and new exact-file application approval remain mandatory.
