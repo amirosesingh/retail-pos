@@ -43,6 +43,26 @@ describe("service-only bounded hourly report (actual PostgreSQL SQL)", () => {
       if (zone === "America/New_York") expect(await call()).toEqual([]);
     });
   }
+  it.each([null,"","utc","asia/brunei","Etc/UTC","GMT+08","EST5EDT","PST","America/New_York","UTC","Asia/Brunei"])("preserves exact catalogue membership/fallback for configured %j",async configured=>{
+    await db.exec("RESET ROLE");await db.query("UPDATE pos_settings SET integration_settings=jsonb_build_object('timeZone',$1::text)",[configured]);
+    await db.exec("INSERT INTO sales VALUES('s','A','2026-11-01T00:30Z',10,0,0,false);");
+    const expected=(await db.query<{hour:number}>("SELECT extract(hour FROM '2026-11-01T00:30Z'::timestamptz AT TIME ZONE coalesce((SELECT name FROM pg_catalog.pg_timezone_names WHERE name=$1::text),'UTC'))::integer AS hour",[configured])).rows[0]!.hour;
+    await db.exec("SET ROLE service_role");expect(await call('2026-10-30','2026-11-03')).toEqual([{store_id:'A',hour:expected,bills:1,revenue:10,cost:0,profit:10}]);
+  });
+  it.each(['LF','CRLF'])("tool-owned %s late DDL/ledger failures roll back the function and grants",async format=>{
+    await db.exec("RESET ROLE;CREATE TABLE IF NOT EXISTS fixture_hour_ledger(id integer PRIMARY KEY);INSERT INTO fixture_hour_ledger VALUES(1) ON CONFLICT DO NOTHING;");
+    const metadata=()=>db.query("SELECT oid,pg_get_functiondef(oid) definition,proacl::text acl,proowner::text owner,proconfig,prosecdef,provolatile FROM pg_proc WHERE oid='public.pos_report_store_hours(date,date,text[])'::regprocedure");
+    const before=await metadata();
+    const bytes=format==='CRLF'?migration.replaceAll('\n','\r\n'):migration;
+    for(const fault of ['SELECT 1/0;','INSERT INTO fixture_hour_ledger VALUES(1);']){
+      await db.exec('BEGIN;DROP FUNCTION public.pos_report_store_hours(date,date,text[]);');
+      await db.exec(bytes);await expect(db.exec(fault)).rejects.toThrow();await db.exec('ROLLBACK');
+      expect(await metadata()).toEqual(before);
+      const definition=(await db.query<{source:string}>("SELECT pg_get_functiondef('public.pos_report_store_hours(date,date,text[])'::regprocedure) source")).rows[0]!.source;
+      expect(definition).toContain("zone IN ('UTC','Asia/Brunei')");await db.exec('SET ROLE service_role');expect(await call()).toEqual([]);await db.exec('RESET ROLE');
+    }
+    await db.exec('SET ROLE service_role');
+  });
   it("preserves signed exchange/FOC/captured-zero costs, excludes refunded bills and foreign branches", async () => {
     await db.exec(`RESET ROLE;
       INSERT INTO sales VALUES('normal','A','2026-11-01T00:01Z',90,0,0,false),('return','A','2026-11-01T00:02Z',-20,0,0,false),
