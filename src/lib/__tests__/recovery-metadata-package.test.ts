@@ -33,6 +33,8 @@ describe("recovery-only packaged metadata contract", () => {
     expect(new Set(manifest.prefixes.map((row: { schemaFingerprint: string }) => row.schemaFingerprint)).size).toBe(4);
     expect(installer).toContain("@expectedDatabaseGuid"); expect(installer).toContain("@expectedSchemaFingerprint");
     expect(installer).toContain("@LockTimeout=3000");
+    const executable = installer.split("\n").filter((line: string) => line.trim() && !line.trimStart().startsWith("--")).join("\n");
+    expect(executable).toMatch(/^IF @@TRANCOUNT<>0 BEGIN RAISERROR/);
     const attributes = readFileSync(".gitattributes", "utf8");
     for (const file of [manifest.installer.file, manifest.probe.file, "shift-recovery-metadata.manifest.json"]) {
       expect(attributes.split(/\r?\n/)).toContain(`/database/sqlserver/recovery/${file} text eol=lf`);

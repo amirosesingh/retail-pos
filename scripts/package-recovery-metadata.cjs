@@ -68,9 +68,14 @@ function packageRecoveryMetadata(saved = JSON.parse(fs.readFileSync(manifestPath
   const final = " SELECT CONVERT(nvarchar(128),SERVERPROPERTY('ServerName')) server_name,DB_NAME() database_name,CONVERT(varchar(36),database_guid) database_guid,N'1.4.82' application_version,N'Completed; no activation performed' result FROM sys.database_recovery_status WHERE database_id=DB_ID();";
   assert.equal(installer.split(final).length, 2);
   installer = installer.replace(final, " " + exec(probe));
-  installer = canonical("-- RECOVERY-ONLY028-030: requires Main's verified backup, dedicated connection and exact target parameters.\n" +
+  const callerGuard = "IF @@TRANCOUNT<>0 BEGIN RAISERROR('Run this update outside an existing transaction.',16,1); RETURN; END;";
+  assert.equal(installer.split(callerGuard).length, 2);
+  // RAISERROR+RETURN must be first, before any THROW or SET: THROW honors an
+  // existing caller's XACT_ABORT and could otherwise roll back unrelated work.
+  installer = installer.replace(callerGuard, callerGuard + "\n" +
     "IF @expectedDatabaseGuid IS NULL OR @expectedSchemaFingerprint IS NULL OR DATALENGTH(@expectedSchemaFingerprint)<>64 OR @expectedSchemaFingerprint COLLATE Latin1_General_100_BIN2 LIKE '%[^0-9A-F]%' THROW 51028,'Exact recovery metadata target parameters are required.',1;\n" +
-    "IF (@@OPTIONS&2)=2 THROW 51028,'Recovery metadata requires a dedicated connection without implicit transactions.',1;\n" + installer);
+    "IF (@@OPTIONS&2)=2 THROW 51028,'Recovery metadata requires a dedicated connection without implicit transactions.',1;");
+  installer = canonical("-- RECOVERY-ONLY028-030: requires Main's verified backup, dedicated connection and exact target parameters.\n" + installer);
   const manifest = { format: FORMAT, coreSchemaVersion: 24,
     installer: { file: "shift-recovery-metadata.sql", sha256: digest(installer) },
     probe: { file: "shift-recovery-metadata-probe.sql", sha256: digest(probe) },

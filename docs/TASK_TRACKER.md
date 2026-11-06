@@ -7226,3 +7226,17 @@ followed by exact automatic no-op. That manual file leaves the core ledger24;
 unknown future ledger versions stay denied. All three exact LF hashes also
 survive an owned Windows autocrlf checkout. Populated-evidence/concurrency and
 actual runtime startup/backup/capability acceptance remain in progress.
+
+Caller-transaction guard refinement: actual isolated SQL reproduced that the
+initial312B preparation artifact could abort an unrelated XACT_ABORTON caller
+transaction on invalid target parameters before its ambient-transaction guard.
+The dedicated Main path already refused inherited transactions, but the artifact
+also needs that defense. Its original safe RAISERROR/RETURN guard now executes
+before all parameter/implicit-session THROW checks. Actual caller sentinels now
+retain count1/state1 and their pending row on refusal. No operator work was used.
+New preparation installer SHA CD7AA9591B257F91372FB092990202E4D5E8E89450F39F4A3BC4D6D55CCDE62A;
+manifest6F35A244E975A1E98CB13D43261BF9CC46DB9DAB1DFD23C304DF8325E3E93817;
+probe stays0EE1FFB7CFFD8608728238BD06F3294EC0DA3EBDF3365F1308FD3C0498D26DE7.
+The old312B artifact was never live-approved or applied. The090F manual upgrade
+remains byte-identical. Pure6/root generator/Windows checkout checks pass on new
+bytes; final full native and composed runtime acceptance is still running.

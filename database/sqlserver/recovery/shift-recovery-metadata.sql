@@ -1,12 +1,12 @@
 -- RECOVERY-ONLY028-030: requires Main's verified backup, dedicated connection and exact target parameters.
-IF @expectedDatabaseGuid IS NULL OR @expectedSchemaFingerprint IS NULL OR DATALENGTH(@expectedSchemaFingerprint)<>64 OR @expectedSchemaFingerprint COLLATE Latin1_General_100_BIN2 LIKE '%[^0-9A-F]%' THROW 51028,'Exact recovery metadata target parameters are required.',1;
-IF (@@OPTIONS&2)=2 THROW 51028,'Recovery metadata requires a dedicated connection without implicit transactions.',1;
 -- Retail 1.4.82: ONE existing-database metadata upgrade; PREPARATION ONLY.
 -- Do not apply until this exact file and the actual server/database are approved.
 -- Close Retail safely and obtain the required backup before operator application.
 -- Select the existing Retail database in SSMS. No USE/CREATE DATABASE is run.
 -- No business backfill, stock adjustment, queue/checkpoint reset or activation.
 IF @@TRANCOUNT<>0 BEGIN RAISERROR('Run this update outside an existing transaction.',16,1); RETURN; END;
+IF @expectedDatabaseGuid IS NULL OR @expectedSchemaFingerprint IS NULL OR DATALENGTH(@expectedSchemaFingerprint)<>64 OR @expectedSchemaFingerprint COLLATE Latin1_General_100_BIN2 LIKE '%[^0-9A-F]%' THROW 51028,'Exact recovery metadata target parameters are required.',1;
+IF (@@OPTIONS&2)=2 THROW 51028,'Recovery metadata requires a dedicated connection without implicit transactions.',1;
 SET ANSI_NULLS ON; SET QUOTED_IDENTIFIER ON; SET ANSI_PADDING ON; SET ANSI_WARNINGS ON; SET ARITHABORT ON; SET CONCAT_NULL_YIELDS_NULL ON; SET NUMERIC_ROUNDABORT OFF; SET XACT_ABORT ON;
 SET NOCOUNT ON;
 BEGIN TRY

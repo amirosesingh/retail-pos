@@ -3,7 +3,7 @@
   "coreSchemaVersion": 24,
   "installer": {
     "file": "shift-recovery-metadata.sql",
-    "sha256": "312B3B4C040336AE979C343283D138B5D6D8CA1C8D7C732CFF000BBE192C730B"
+    "sha256": "CD7AA9591B257F91372FB092990202E4D5E8E89450F39F4A3BC4D6D55CCDE62A"
   },
   "probe": {
     "file": "shift-recovery-metadata-probe.sql",
