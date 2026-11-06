@@ -1605,3 +1605,12 @@ portals with isolated scoped providers. Retaining the shell does not retain a
 previous branch page: both data and settings must confirm before mounting its
 protected content. Recheck identity/profile/permission changes with the full
 startup gate; do not infer backend access from these presentation fixtures.
+## 6 November — automatic reconciliation before intervention
+
+Owner wants sync to attempt safe resolution of ERECONCILE first and surface a
+review request only when it remains unresolved. Use complete scoped comparisons,
+the existing authorized sync lane and bounded affected-table recovery. Missing
+counts are unknown, never matched; count equality is not financial/history proof.
+Preserve retained local work, checkout, permissions and Membership's current hold.
+No count difference authorizes deleting records, resetting checkpoints or manual
+cloud copying. Live data/schema changes still require exact-target approval.

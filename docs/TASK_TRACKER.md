@@ -6404,3 +6404,40 @@ watermark details may change); final runtime preflight and populated-history
 fixture seed are requested at freeze. Next: capture and test that frozen source
 within the existing assembler, then create the concrete one-file beta PR.
 No operator SQL, configuration, queue/checkpoint or permission changes occurred.
+# SYNC78 — automatic guarded reconciliation, 6 November
+
+Owner requests that sync handle a count difference automatically before asking
+for intervention. Baseline beta2c51e338; scope: local comparison predicates,
+counts/signatures, lifecycle recovery, existing periodic caller and focused
+native/SQL tests. Preserve upload/write predicates and all pending-work/shift
+guards. Reuse one coordinator lease, a bounded catch-up and affected-table
+snapshot only when cloud has more rows, followed by a complete fresh comparison.
+Never delete local-greater rows, clear queues or reset checkpoints. A persistent
+or unsafe difference becomes an actionable review result after the attempt;
+network/authorization failures retain their actual classification. Membership
+dependencies/reads remain unchanged and are excluded from new automatic repair.
+
+Confirmed read-only evidence: POS_Local GUID CEAFA630-D613-423C-8997-8A31DF70C506
+has2169 products under the old ownership comparison,2166 under catalogue reads,
+versus2163 in the authorized cloud catalogue. Six retained ownerless products
+are outside the current cloud catalogue; three remain locally visible. Counts
+alone do not establish authority to discard them. Source and synthetic regression
+verification precede beta integration; no live database repair is authorized.
+Rollback: revert the scoped code commit; retain all business data and evidence.
+
+Implementation checkpoint: one unchanged, unresolved cohort gets a guarded
+incremental catch-up first. Small missing tables (central count at most100) use
+existing snapshot/pending/shift guards, at most4 tables per turn and10 pages per
+table; normal sync runs between turns and each table is attempted once. Large
+history uses its existing resumable recovery path, not a new full-download loop.
+Local-greater rows stay retained for review. Scope is checked before counts,
+each page apply and commit; count coverage must be complete/unique/exact.
+No new Membership repair, query dependency, checkpoint reset or database upgrade.
+
+Prepared verification:35 new lifecycle/count/scope/budget tests;54 native
+pipeline/startup/event groups;18 real SQL Server #temp groups (76 queries across
+two collations) exercise actual count/signature selections and unchanged write
+scope. Full Windows run:6167 passed/10 skipped, with sandboxed workerd startup
+and a CRLF-only test assertion failing. The three isolated suites reran24/24
+outside the process sandbox after normalizing both compared test strings; no
+migration bytes changed. Final merged-tree CI and local runtime acceptance remain.

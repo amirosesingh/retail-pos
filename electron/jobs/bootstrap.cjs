@@ -40,6 +40,7 @@ async function refreshTable({registry,cloud,connectionManager,branchId,historyDa
   let completed=progress?.completed??0;let cursor=progress?.cursor??null;let size=100;
   let diagnosticPhase="download";
   try{do{
+    await progress?.beforeDownload?.();
     diagnosticPhase="download";
     reportActivity(onActivity,{phase:"downloading",table:table.cloudTable,processedRows:completed});
     const page=await snapshotPage({cloud,connectionManager,table,branchId,historyDays,cursor,size,rowFilter,recovery});const batch=page.batch;size=page.nextLimit;

@@ -29,6 +29,7 @@ const { BackupService } = require("./db/backup.cjs");
 const { JobRepository } = require("./jobs/repository.cjs");
 const { JobManager } = require("./jobs/manager.cjs");
 const { LocalDataLifecycle } = require("./jobs/lifecycle.cjs");
+const { reconciliationError, MEMBERSHIP_TABLES } = require("./sync/reconciliation.cjs");
 const { loadRegistry } = require("./db/schema-registry.cjs");
 const { CheckpointRepository } = require("./sync/checkpoints.cjs");
 const { ChangeReader } = require("./sync/change-reader.cjs");
@@ -425,7 +426,8 @@ async function runAutomaticSync() {
   if (result.ok) diagnostics.logConnection("synchronization.automatic.succeeded", { category:"synchronization", stage:"automatic", state:"ready" });
   if (result.ok && Date.now() - lastAutomaticVerification >= AUTO_VERIFY_MS) {
     lastAutomaticVerification = Date.now();
-    void localDataLifecycle.reconcile(localBranchId(), Number(databaseConfig.profile()?.retentionDays)||90)
+    void localDataLifecycle.reconcileAndRecover(localBranchId(), Number(databaseConfig.profile()?.retentionDays)||90)
+      .then(differences=>{const unresolved=differences.filter(row=>!MEMBERSHIP_TABLES.has(row.table));if(unresolved.length)throw reconciliationError(unresolved);})
       .catch((error) => recordFault("sync.verify-counts", error));
   }
   scheduleAutomaticSync(automaticSyncQueued ? 250 : result.ok ? Math.max(250, AUTO_SYNC_OK_MS - (Date.now() - lastActivityFlush)) : AUTO_SYNC_RETRY_MS);

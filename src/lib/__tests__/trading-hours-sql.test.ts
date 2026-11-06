@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { PGlite } from "@electric-sql/pglite";
 import { readFileSync } from "node:fs";
-const migration = readFileSync("supabase/migrations/20261105170645_bounded_shop_hourly_report.sql", "utf8");
+const migration = readFileSync("supabase/migrations/20261105170645_bounded_shop_hourly_report.sql", "utf8").replaceAll("\r\n", "\n");
 const schema = readFileSync("supabase/schema.sql", "utf8");
 let db: PGlite;
 const envelope = async (from = "2026-11-01", to = from, stores: (string | null)[] | null = ["A"]) =>
