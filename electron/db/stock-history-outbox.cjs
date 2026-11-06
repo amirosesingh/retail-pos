@@ -2,6 +2,7 @@ const {StockHistoryStore}=require('./stock-history.cjs');
 const contract=require('./stock-history-contract.cjs');
 const {stockHistoryUploadRow,assertStockHistoryAcknowledgement}=require('../sync/stock-history-ack.cjs');
 const BATCHES=new WeakMap();
+const SOURCE_BATCHES=new WeakMap();
 const fail=()=>contract.fail('ESTOCK_HISTORY_ACK_UNCONFIRMED');
 /** Optional metadata in the existing SQL journal. No file/browser queue exists. */
 class StockHistoryOutbox{
@@ -11,6 +12,51 @@ class StockHistoryOutbox{
   const sql=this.manager.sql(),tx=new sql.Transaction(pool);await tx.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
   try{const value=await work(tx,pool);this.assertCurrent();if(pool!==this.manager.pool)fail();await tx.commit();return value;}
   catch(error){await Promise.resolve(tx.rollback()).catch(()=>{});throw error;}
+ }
+ async sourceForBusiness(operationId,branchId,terminalId,batchId){
+  operationId=contract.identifier(operationId,true);branchId=contract.identifier(branchId);terminalId=contract.identifier(terminalId);
+  batchId=contract.identifier(batchId,true);
+  return this.transaction(async(tx,pool)=>{
+   const cap=await this.store.capability(tx);if(!cap.available)return null;
+   const rows=(await this.store.request(tx).input('source_operation',operationId).input('source_branch',branchId).input('source_terminal',terminalId).query(`
+    SELECT LOWER(CONVERT(nvarchar(36),id)) id,proof_json,payload_hash,source_root,source_count,
+     LOWER(CONVERT(nvarchar(36),database_guid)) database_guid,CONVERT(nvarchar(30),source_sequence) source_sequence
+    FROM dbo.stock_history_source_cohorts WITH(HOLDLOCK) WHERE operation_id=CONVERT(uniqueidentifier,@source_operation)
+     AND store_id=@source_branch AND terminal_id=@source_terminal;`)).recordset??[];
+   if(!rows.length)return null;if(rows.length!==1)fail();
+   const row=rows[0];if(row.proof_json==null)return null;
+   const proof=require('../security/stock-event-author-protocol.cjs').normalizeStockSourceCohortProof(JSON.parse(row.proof_json));
+   if(proof.operationId!==operationId||proof.branchId!==branchId||proof.terminalId!==terminalId||proof.sourceRoot!==row.source_root||
+    proof.sourceCount!==row.source_count||proof.sourceDatabaseId!==row.database_guid||proof.sourceSequence!==row.source_sequence)fail();
+   const batch=Object.freeze({cohorts:Object.freeze([Object.freeze({proofJson:row.proof_json})])});
+   SOURCE_BATCHES.set(batch,{owner:this,pool,databaseKey:cap.databaseKey,row,proof,branchId,terminalId,batchId});return batch;
+  });
+ }
+ async acknowledgeSource(batch,response){
+  const saved=SOURCE_BATCHES.get(batch);if(!saved||saved.owner!==this||saved.pool!==this.manager.pool)fail();
+  // Older/held source metadata is not a failed business ACK. Its original
+  // movement journal remains pending and may never be cleared by this method.
+  if(response?.stockSourceStatus!=='captured_unverified')return{acknowledged:0};
+  const receipts=response.stockSourceReceipts;if(!Array.isArray(receipts)||receipts.length!==1)fail();
+  const receipt=receipts[0],hash=require('node:crypto').createHash('sha256').update(saved.row.proof_json,'utf8').digest('hex');
+  if(!receipt||receipt.state!=='unverified'||receipt.proofHash!==hash||receipt.batchId!==saved.batchId)fail();
+  const batchId=contract.identifier(receipt.batchId,true);contract.instant(receipt.acceptedAt);
+  if(typeof receipt.transactionId!=='string'||! /^[1-9]\d{0,18}$/.test(receipt.transactionId)||BigInt(receipt.transactionId)>9223372036854775807n)fail();
+  return this.transaction(async tx=>{
+   const cap=await this.store.capability(tx);if(!cap.available||cap.databaseKey!==saved.databaseKey)fail();
+   await this.store.request(tx).input('source_id',saved.row.id).input('source_proof',saved.row.proof_json).input('source_hash',saved.row.payload_hash)
+    .input('source_batch',batchId).input('source_transaction',receipt.transactionId).input('source_at',contract.canonicalInstant(receipt.acceptedAt)).query(`
+    IF NOT EXISTS(SELECT 1 FROM dbo.stock_history_source_cohorts WITH(UPDLOCK,HOLDLOCK) WHERE id=CONVERT(uniqueidentifier,@source_id)
+     AND payload_hash COLLATE Latin1_General_100_BIN2=@source_hash COLLATE Latin1_General_100_BIN2
+     AND CONVERT(varbinary(max),proof_json)=CONVERT(varbinary(max),@source_proof)
+     AND (accepted_batch_id IS NULL OR (accepted_batch_id=CONVERT(uniqueidentifier,@source_batch)
+      AND accepted_transaction_id=CONVERT(bigint,@source_transaction) AND accepted_at=CONVERT(datetimeoffset(7),@source_at,127))))
+      THROW 51031,'STOCK_HISTORY_SOURCE_ACK_UNCONFIRMED',1;
+    UPDATE dbo.stock_history_source_cohorts SET accepted_batch_id=CONVERT(uniqueidentifier,@source_batch),
+     accepted_transaction_id=CONVERT(bigint,@source_transaction),accepted_at=CONVERT(datetimeoffset(7),@source_at,127)
+     WHERE id=CONVERT(uniqueidentifier,@source_id) AND accepted_batch_id IS NULL;`);
+   SOURCE_BATCHES.delete(batch);return{acknowledged:1};
+  });
  }
  async pending(aggregateId,branchId,terminalId){
   aggregateId=contract.identifier(aggregateId,true);branchId=contract.identifier(branchId);terminalId=contract.identifier(terminalId);
@@ -40,9 +86,36 @@ class StockHistoryOutbox{
     WHERE id IN(${chosen.map((_,n)=>'@stock_id'+n).join(',')}) ORDER BY local_cursor;`)).recordset??[];
    if(rows.length!==new Set(chosen.map(row=>String(row.id).toLowerCase())).size)fail();
    if(rows.some(row=>contract.uploadAggregateId(row.operation_id,branchId)!==aggregateId))fail();
-   const batch=Object.freeze({version:1,branchId,terminalId,rows:Object.freeze(rows.map(row=>stockHistoryUploadRow(row,{branchId,terminalId})))});
+   const operationIds=[...new Set(rows.map(row=>row.operation_id))];if(operationIds.length!==1)fail();
+   const source=(await this.store.request(tx).input('source_operation',operationIds[0]).input('source_branch',branchId).input('source_terminal',terminalId).query(`
+    SELECT proof_json,members_json,LOWER(CONVERT(nvarchar(36),accepted_batch_id)) accepted_batch_id
+    FROM dbo.stock_history_source_cohorts WITH(HOLDLOCK) WHERE operation_id=CONVERT(uniqueidentifier,@source_operation)
+     AND store_id=@source_branch AND terminal_id=@source_terminal AND accepted_batch_id IS NOT NULL;`)).recordset?.[0];
+   const members=new Map();
+   if(source){
+    if(typeof source.proof_json!=='string'||typeof source.members_json!=='string'||Buffer.byteLength(source.members_json,'utf8')>12*1024*1024)fail();
+    const proof=require('../security/stock-event-author-protocol.cjs').normalizeStockSourceCohortProof(JSON.parse(source.proof_json)),all=JSON.parse(source.members_json);
+    if(proof.operationId!==operationIds[0]||proof.branchId!==branchId||proof.terminalId!==terminalId||!Array.isArray(all)||all.length!==proof.sourceCount)fail();
+    for(const member of all){
+     const manifest=JSON.parse(member.manifestJson);
+     if(member.root!==proof.sourceRoot||member.count!==proof.sourceCount||members.has(manifest.productId))fail();
+     members.set(manifest.productId,{proofJson:source.proof_json,member,sourceBatchId:source.accepted_batch_id});
+    }
+   }
+   const wires=rows.map(row=>{
+    const wire=stockHistoryUploadRow(row,{branchId,terminalId}),source=members.get(row.product_id);
+    if(!source)return wire;const sourceCohortJson=JSON.stringify(source);
+    if(Buffer.byteLength(sourceCohortJson,'utf8')>65536)contract.fail('ESTOCK_HISTORY_OVERSIZED');
+    return Object.freeze({...wire,sourceCohortJson});
+   });
+   let batch;
+   do{batch=Object.freeze({version:1,branchId,terminalId,rows:Object.freeze([...wires])});
+    if(Buffer.byteLength(JSON.stringify(batch),'utf8')<=126976)break;
+    if(wires.length===1)contract.fail('ESTOCK_HISTORY_OVERSIZED');wires.pop();
+   }while(wires.length);
+   const selected=new Set(batch.rows.map(row=>row.id));
    BATCHES.set(batch,{owner:this,pool,databaseKey:cap.databaseKey,aggregateId,proofs:new Map(rows.map(row=>[row.id,row.author_proof_json??null])),
-    changes:chosen.map(row=>({changeId:Number(row.change_id),id:String(row.id).toLowerCase()}))});
+    changes:chosen.filter(row=>selected.has(String(row.id).toLowerCase())).map(row=>({changeId:Number(row.change_id),id:String(row.id).toLowerCase()}))});
    return batch;
   });
  }

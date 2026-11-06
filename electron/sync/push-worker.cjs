@@ -457,15 +457,19 @@ class PushWorker {
           openingSidecar={openingJson:verified.openingJson,proof:verified.proof};
         }
         const batchId = stableUuid({ branchId, aggregateId: aggregate.aggregateId, operations });
+        const stockSource=!financialRequired&&!openingSidecar&&originalIds.length===1
+          ?await this.stockHistory?.prepareBusiness?.(originalIds[0],branchId,terminalId,batchId):null;
         const financialCoverageToken=financialRequired?this.reader.prepareFinancialBusinessCoverage?.({operations,batchId,branchId,terminalId}):null;
         const acknowledged = await this.retry(() =>
-          this.cloud.pushAggregate({ batchId, branchId, operations,...(openingSidecar?{shiftFinancialOpening:openingSidecar}:{}),...(financialRequired?{financialLedgerProjection:true}:{}) }),
+          this.cloud.pushAggregate({ batchId, branchId, operations,...(openingSidecar?{shiftFinancialOpening:openingSidecar}:{}),...(financialRequired?{financialLedgerProjection:true}:{}),
+            ...(stockSource?{stockSourceCohorts:stockSource.cohorts}:{}) }),
         );
         if (!acknowledged?.ok)
           throw new Error(acknowledged?.error ?? "Cloud did not acknowledge the aggregate.");
         assertShiftClosureAcknowledgement(acknowledged, operations, branchId);
         if(financialRequired)await this.reader.acknowledgeFinancialBusinessRows?.({token:financialCoverageToken,operations,batchId,acknowledgement:acknowledged,branchId,terminalId});
         if(financialOpening){if(typeof this.reader.acknowledgeFinancialOpening!=='function')throw Object.assign(new Error('The opening acknowledgement cannot be persisted.'),{code:'EFINANCIAL_HISTORY_UNCONFIRMED',table:'shifts'});await this.reader.acknowledgeFinancialOpening(financialOpening,acknowledged,branchId,terminalId);}
+        if(stockSource)await this.stockHistory.acknowledgeBusiness(stockSource,acknowledged);
         for (const id of originalIds) await this.reader.acknowledgeAggregate(id);
         pushed += aggregate.changes.length;
         onProgress({ direction: "push", table: operations.map(op => op.table).join(", "), completed: aggregate.changes.length });

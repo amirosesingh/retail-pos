@@ -9,6 +9,7 @@ vi.mock('../session-verify.server',()=>({branchExists:async()=>true}));
 vi.mock('../desktop-database-authority.server',()=>({databaseAuthority:h.authority}));
 vi.mock('../external-supabase-config',()=>({supabaseConfig:()=>({url:'https://stock.fixture',key:'fixture'}),runtimeEnvValue:()=>undefined}));
 import { handleSyncRequest } from '../sync-endpoint.server';
+import {buildStockSourceCohort} from '../../../electron/shared/stock-source-cohort.mjs';
 const require=createRequire(import.meta.url),contract=require('../../../electron/db/stock-history-contract.cjs'),protocol=require('../../../electron/security/stock-event-author-protocol.cjs');
 const author='10000000-0000-4000-8000-000000000001',keyId='10000000-0000-4000-8000-000000000002',product='20000000-0000-4000-8000-000000000001';
 const pair=generateKeyPairSync('ed25519'),descriptor={id:'terminal-a',branchId:'a',mode:'operations',platform:'pc'};
@@ -21,6 +22,28 @@ function row(index=1){
 }
 const upload=(rows=[row()])=>({version:1,branchId:'a',terminalId:'terminal-a',rows});
 const call=(batch=upload(),extra={})=>handleSyncRequest(new Request('https://pos.fixture/api/v1/pos/sync',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({terminalToken:'terminal-a',deviceBindingProof:'a'.repeat(64),sqlServerStockHistory:batch,...extra})}));
+async function adjustmentCohort(count=10){
+ const operation='30000000-0000-4000-8000-000000000099',database='50000000-0000-4000-8000-000000000001',batch='60000000-0000-4000-8000-000000000001';
+ const rows=Array.from({length:count},(_,index)=>{
+  const productId=`20000000-0000-4000-8000-${String(index+1).padStart(12,'0')}`,sourceId=`70000000-0000-4000-8000-${String(index+1).padStart(12,'0')}`;
+  const row=contract.changes(contract.normalizeContext({operationId:operation,branchId:'a',terminalId:'terminal-a',actorId:author,kind:'stock'},at),
+   [{id:productId,name:'Fixture',stock_by_store:{a:3}}],[{id:productId,name:'Fixture',stock_by_store:{a:2}}],
+   [{table:'stock_adjustments',id:sourceId,productId,branchId:'a',delta:'-1'}])[0];
+  const manifest={version:1 as const,operationId:operation,action:'ADJUST' as const,document:{type:'stock_adjustments' as const,id:sourceId},authorId:author,terminalId:'terminal-a',branchId:'a',
+   productId,delta:'-1',effectiveAt:row.effective_at_raw,recordedAt:row.recorded_at_raw,sourceRefs:row.source_refs};
+  return{row,manifest};
+ });
+ const cohort=await buildStockSourceCohort(rows.map(value=>value.manifest)),common={version:1,algorithm:'Ed25519',keyId,projectOrigin:'https://stock.fixture',terminalId:'terminal-a',authorId:author,subject:'original-a',branchId:'a',operationId:operation,action:'ADJUST'};
+ const facts={...common,sourceDatabaseId:database,sourceSequence:'1',sourcePredecessorRoot:null,sourceRoot:cohort.root,sourceCount:count};
+ const proofJson=JSON.stringify({...facts,signature:sign(null,Buffer.from(protocol.stockSourceCohortMessage(facts)),pair.privateKey).toString('base64url')});
+ return rows.map(({row})=>{
+  const member=cohort.members.find(value=>JSON.parse(value.manifestJson).productId===row.product_id)!;
+  const fields={...common,movementId:row.id,payloadHash:row.payload_hash,sourceManifestJson:member.manifestJson};
+  return{id:row.id,payloadHash:row.payload_hash,payloadJson:row.payload_json,
+   authorProofJson:JSON.stringify({...fields,signature:sign(null,Buffer.from(protocol.stockEventMessage(fields)),pair.privateKey).toString('base64url')}),
+   sourceCohortJson:JSON.stringify({proofJson,member,sourceBatchId:batch})};
+ });
+}
 beforeEach(()=>{
  h.caller.mockReset().mockResolvedValue({kind:'terminal',storeId:'a',terminal:descriptor});
  h.authority.mockReset().mockResolvedValue({authorId:author,subject:'original-a',branchId:'a',level:'staff',permissions:{can_process_sale:true}});
@@ -33,6 +56,26 @@ beforeEach(()=>{
  });
 });
 describe('shared authenticated relay stock-history admission composition',()=>{
+ it('verifies real original cohort signatures and every eight-plus-two member without another registry or authority lane',async()=>{
+  const rows=await adjustmentCohort();h.authority.mockResolvedValue({authorId:author,subject:'original-a',branchId:'a',level:'staff',permissions:{can_adjust_stock:true}});
+  expect((await call(upload(rows.slice(0,8)))).status).toBe(200);
+  const first=JSON.parse(String(h.rest.mock.calls.find(([path])=>path==='rpc/pos_stock_history_accept_claims')![1].body));
+  expect(first.p_rows).toHaveLength(8);expect(first.p_rows[0]).toMatchObject({authorState:{allowed:true},sourceState:{verified:true,timeGrade:'author_claimed',sourceBatchId:'60000000-0000-4000-8000-000000000001'}});
+  expect(first.p_rows[0].sourceCohortJson).toBe(rows[0]!.sourceCohortJson);
+  expect(h.rest.mock.calls.filter(([path])=>path==='rpc/pos_shift_author_key')).toHaveLength(1);expect(h.authority).toHaveBeenCalledTimes(1);
+  expect((await call(upload(rows.slice(8)))).status).toBe(200);
+  expect(h.rest.mock.calls.filter(([path])=>path==='rpc/pos_stock_history_accept_claims')).toHaveLength(2);
+ });
+ it.each(['member','signed-count','source-authority'])('rejects forged cohort %s before metadata admission',async mode=>{
+  const rows=await adjustmentCohort(1),row=rows[0]!,envelope=JSON.parse(row.sourceCohortJson);
+  h.authority.mockResolvedValue({authorId:author,subject:'original-a',branchId:'a',level:'staff',permissions:{can_adjust_stock:true}});
+  if(mode==='member')envelope.member.manifestJson=envelope.member.manifestJson.replace('"-1"','"-2"');
+  if(mode==='signed-count'){const header=JSON.parse(envelope.proofJson);header.sourceCount=2;envelope.proofJson=JSON.stringify(header);}
+  if(mode==='source-authority')(row as Record<string,unknown>).sourceState={verified:true};
+  row.sourceCohortJson=JSON.stringify(envelope);
+  const response=await call(upload(rows));expect(response.status).toBeGreaterThanOrEqual(400);
+  expect(h.rest.mock.calls.some(([path])=>path==='rpc/pos_stock_history_accept_claims')).toBe(false);
+ });
  it('uses the original signed author under terminal-only background transport and deduplicates identical request reads',async()=>{
   const response=await call(upload([row(1),row(2)]));expect(response.status).toBe(200);expect(await response.json()).toMatchObject({ok:true,receipts:[{ingestedCursor:'1'},{ingestedCursor:'2'}]});
   expect(h.authority).toHaveBeenCalledTimes(1);expect(h.authority).toHaveBeenCalledWith({appUserId:author},{strictAvailability:true});

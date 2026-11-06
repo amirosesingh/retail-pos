@@ -6,7 +6,7 @@ import { stockInstant } from "./stock-as-of";
 import { verifyStockEventAuthor, readStockEventAuthorPermission } from "./stock-event-author-verification.server";
 import { ShiftAuthorError, createStockEventVerificationRequest } from "./shift-author-verification.server";
 
-export type StockHistoryUpload={version:1;branchId:string;terminalId:string;rows:Array<{id:string;payloadHash:string;payloadJson:string;authorProofJson?:string}>};
+export type StockHistoryUpload={version:1;branchId:string;terminalId:string;rows:Array<{id:string;payloadHash:string;payloadJson:string;authorProofJson?:string;sourceCohortJson?:string}>};
 const encoder=new TextEncoder();
 const failure=(code:string,message:string,status=409):never=>{throw new ShiftAuthorError(code,message,status);};
 /** Called only after the shared relay has verified the paired terminal. It
@@ -30,7 +30,12 @@ export async function acceptStockHistoryUpload(input:StockHistoryUpload,terminal
   // SQL independently rechecks current registry/account rights for NEW claims.
   // False authority can acknowledge an exact already-accepted receipt only.
   const authorState=await readStockEventAuthorPermission(checked.proof,verificationRequest);
-  rows.push({...row,authorState});
+  let sourceState;
+  if(row.sourceCohortJson!==undefined){
+   const {verifyStockSourceMovement}=await import('./stock-source-movement.server');
+   sourceState=await verifyStockSourceMovement({sourceCohortJson:row.sourceCohortJson,checked,terminal,branchId:input.branchId},verificationRequest);
+  }
+  rows.push({...row,authorState,...(sourceState?{sourceState}:{})});
  }
  let response:Response;
  try{response=await serviceRest("rpc/pos_stock_history_accept_claims",{method:"POST",body:JSON.stringify({p_project:new URL(supabaseConfig().url).origin,p_branch:input.branchId,p_terminal:terminal.id,p_rows:rows})});}

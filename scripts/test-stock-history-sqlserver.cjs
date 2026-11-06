@@ -336,6 +336,36 @@ const migration=fs.readFileSync(path.join(__dirname,'../database/sqlserver/prepa
  assert.equal(bulkPending.rows.length,8);assert.equal(bulkMembers.length,10);
  assert.equal((await pool.request().input('operation',bulkOperation).query('SELECT COUNT(*) n FROM dbo.stock_history_movements WHERE operation_id=@operation;')).recordset[0].n,10);
  pass('a ten-product original operation commits one full signed cohort and a gap-free predecessor while bounded eight-row uploads retain all ten source members');
+ const sourceBusinessBatch=randomUUID(),sourceBatch=await bulkOutbox.sourceForBusiness(bulkOperation,'a','t',sourceBusinessBatch);
+ assert.equal(sourceBatch.cohorts[0].proofJson,bulkCohort.proof_json);
+ assert.equal(await bulkOutbox.sourceForBusiness(bulkOperation,'A','t',sourceBusinessBatch),null);
+ assert.equal(await bulkOutbox.sourceForBusiness(bulkOperation,'a','T',sourceBusinessBatch),null);
+ const sourceAck={ok:true,stockSourceStatus:'captured_unverified',stockSourceReceipts:[{
+  proofHash:require('node:crypto').createHash('sha256').update(bulkCohort.proof_json,'utf8').digest('hex'),state:'unverified',
+  batchId:sourceBusinessBatch,transactionId:'9007199254740993',acceptedAt:'2026-11-06T02:00:00.1234567Z'}]};
+ const unacceptedMovements=(await pool.request().input('operation',bulkOperation).query('SELECT COUNT(*) n FROM dbo.stock_history_movements WHERE operation_id=@operation AND ingested_cursor IS NULL;')).recordset[0].n;
+ assert.deepEqual(await bulkOutbox.acknowledgeSource(sourceBatch,{ok:true,stockSourceStatus:'held',stockSourceReceipts:[]}),{acknowledged:0});
+ await assert.rejects(bulkOutbox.acknowledgeSource({...sourceBatch},sourceAck),{code:'ESTOCK_HISTORY_ACK_UNCONFIRMED'});
+ await assert.rejects(bulkOutbox.acknowledgeSource(sourceBatch,{...sourceAck,stockSourceReceipts:[{...sourceAck.stockSourceReceipts[0],proofHash:'c'.repeat(64)}]}),{code:'ESTOCK_HISTORY_ACK_UNCONFIRMED'});
+ await assert.rejects(bulkOutbox.acknowledgeSource(sourceBatch,{...sourceAck,stockSourceReceipts:[{...sourceAck.stockSourceReceipts[0],batchId:randomUUID()}]}),{code:'ESTOCK_HISTORY_ACK_UNCONFIRMED'});
+ assert.deepEqual(await bulkOutbox.acknowledgeSource(sourceBatch,sourceAck),{acknowledged:1});
+ const originalMembershipPage=await bulkOutbox.pending(c.uploadAggregateId(bulkOperation,'a'),'a','t');
+ assert.equal(originalMembershipPage.rows.length,8);
+ for(const memberRow of originalMembershipPage.rows){
+  const envelope=JSON.parse(memberRow.sourceCohortJson);
+  assert.equal(envelope.proofJson,bulkCohort.proof_json);assert.equal(envelope.sourceBatchId,sourceBusinessBatch);
+  assert.equal(JSON.parse(envelope.member.manifestJson).productId,JSON.parse(memberRow.payloadJson)[3]);
+  assert.equal(envelope.member.count,10);
+ }
+ const sourceReceipt=(await pool.request().input('operation',bulkOperation).query('SELECT CONVERT(nvarchar(30),accepted_transaction_id) exact_transaction FROM dbo.stock_history_source_cohorts WHERE operation_id=@operation;')).recordset[0];
+ assert.equal(sourceReceipt.exact_transaction,'9007199254740993');
+ assert.equal((await pool.request().input('operation',bulkOperation).query('SELECT COUNT(*) n FROM dbo.stock_history_movements WHERE operation_id=@operation AND ingested_cursor IS NULL;')).recordset[0].n,unacceptedMovements);
+ pass('exact private source-retention ACK binds original proof and preserves all ten pending movement claims; raw witness establishes no report or financial acceptance');
+ const restartedSources=new StockHistoryOutbox(manager),repeatSource=await restartedSources.sourceForBusiness(bulkOperation,'a','t',sourceBusinessBatch);
+ assert.deepEqual(await restartedSources.acknowledgeSource(repeatSource,sourceAck),{acknowledged:1});
+ const changedSource=await restartedSources.sourceForBusiness(bulkOperation,'a','t',sourceBusinessBatch);
+ await assert.rejects(restartedSources.acknowledgeSource(changedSource,{...sourceAck,stockSourceReceipts:[{...sourceAck.stockSourceReceipts[0],transactionId:'42'}]}));
+ pass('source-retention restart/exact replay keeps one receipt; different transaction or scope cannot replace it or clear business work');
  context.author=null;
  const cohortProduct=randomUUID(),cohortOperation=randomUUID();
  await pool.request().query("UPDATE dbo.stock_history_heads SET coverage_state=N'complete' WHERE store_id=N'a';");

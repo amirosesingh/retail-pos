@@ -266,6 +266,8 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261105232647_stock_history_author_claim_admission.sql",
       "supabase/migrations/20261106015347_guard_existing_product_owner_during_native_sync.sql",
       "supabase/migrations/20261106020500_complete_change_history_sync_count.sql",
+      "supabase/migrations/20261106035442_stock_history_original_source_receipts.sql",
+      "supabase/migrations/20261106042742_stock_history_verified_source_membership.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
@@ -282,6 +284,10 @@ describe("canonical Supabase SQL", () => {
     expect(read("supabase/schema.sql")).not.toContain("CREATE TABLE private.stock_history_accepted_effects");
     expect(read("supabase/migrations/20261105232647_stock_history_author_claim_admission.sql")).toContain("STOCK401 DRAFT");
     expect(read("supabase/schema.sql")).not.toContain("CREATE FUNCTION public.pos_stock_history_accept_claims");
+    expect(read("supabase/migrations/20261106035442_stock_history_original_source_receipts.sql")).toContain("STOCK401 DRAFT preparation only");
+    expect(read("supabase/schema.sql")).not.toContain("CREATE TABLE private.stock_history_original_sources");
+    expect(read("supabase/migrations/20261106042742_stock_history_verified_source_membership.sql")).toContain("STOCK401 DRAFT preparation only");
+    expect(read("supabase/schema.sql")).not.toContain("CREATE TABLE private.stock_history_source_claim_verifications");
   });
 
   it('retains the reviewed shift-sharing upgrade exactly in canonical SQL', () => {

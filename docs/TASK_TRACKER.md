@@ -6865,3 +6865,46 @@ warnings at10:43/11:13 match the tool plus explicit file wrappers; desired sourc
 ACL/OID and both migration ledgers verified. No slot/restart/rollback action ran.
 Future migration payloads need one tested transaction owner and new exact approval
 when protected bytes change; do not reapply already committed files to clear logs.
+
+STOCK401 original-witness refinement approved by root under the owner's existing pending-evidence/checkout-preservation contract: capture only after the actual unchanged business writer accepts; key the private immutable witness by the server-observed accepted business batch, registered branch/terminal, exact accepted operation hash and actual same-transaction effect IDs. Raw source headers are explicitly UNVERIFIED, including during registry outage or missing/revoked/forged proof. They establish no author, membership, permission, report movement, prefix, coverage or financial ACK. Later claim admission must verify the full signature, current original action permission and accepted source/effect membership and append a separate verification receipt. Do not rewrite raw evidence or reconstruct missing original evidence from later mutable rows. Missing/capture failures retain explicit pending status and preserve the business ACK. No live SQL or activation.
+
+
+STOCK401 original-source milestone (prepared, not activated): optional cohort
+headers travel with the exact unchanged ordinary business aggregate in the same
+existing upload lane. A service-only wrapper captures one immutable UNVERIFIED
+private witness per actual accepted business batch: registered scope, unchanged
+operation hash, bounded fixed-whitelist saved-source field readbacks, and real
+same-transaction effect IDs. Raw forged/missing proof establishes no author or
+report authority. Registry outage does not erase this accepted-business evidence.
+Old receipts cannot reconstruct originals from later mutable rows.
+
+Independent review found two preparation defects, both fixed before activation:
+optional query_canceled/assert_failure now stays inside the metadata savepoint
+(ordinary business cancellation still propagates); source-retention ACK binds the
+actual content-derived business batch, not any receipt with the same proof hash.
+The original movement journal and required financial ACK stay separate/pending.
+Only an exact PGRST202 missing-wrapper response falls back to the unchanged
+ordinary writer; permission/conflict/network responses never change admission.
+
+The later member path verifies the real original stock/cohort signatures, signed
+count/root, every Merkle member, exact row fields and current original action
+permission. SQL then requires immutable actual accepted source/effect evidence
+before admitting ADJUST/RECEIVE and conservative direct PRODUCT_CREATE, appending
+a separate verification receipt. A submitted ON-CONFLICT row differing from its
+actual saved readback is rejected. Exact accepted retries survive permission
+revocation; changed envelopes cannot replace history. Clock stays author_claimed/
+unverified and coverage stays incomplete. Unsupported workflows remain held.
+
+Current verification:618 tests/23 suites, TypeScript and scoped lint pass;62
+actual disposable LocalDB groups pass, including original10-member cohorts,
+8-row bounded transport, >2^53 exact source receipt, wrong-batch denial and no
+movement/business journal ACK by the source-retention path. Source SQL cases
+compose real PostgreSQL validators/effect triggers with an explicitly synthetic
+ordinary writer; genuine canonical nonfinancial writer acceptance remains a gate.
+
+Still essential: all remaining source workflows, atomic verified opening/cohort/
+prefix publication and truthful clock coverage, Main activation/resumable reads,
+authorized actual-arrival entry, metadata fairness/final-barrier review, final
+platform/hosted/installed acceptance. Do not mark031 final or include it in the
+consolidated updater yet. No live SQL, business repair, baseline, enrollment,
+Membership change, deployment or publication ran.

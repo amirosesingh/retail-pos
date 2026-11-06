@@ -2,12 +2,21 @@ const contract=require('../db/stock-history-contract.cjs');
 const TABLE='stock_history_movements';
 const fail=()=>contract.fail('ESTOCK_HISTORY_ACK_UNCONFIRMED');
 const HELD_CODES=new Set(['STOCK_HISTORY_SOURCE_ORIGIN_UNPROVEN','STOCK_HISTORY_SOURCE_NOT_ACCEPTED','STOCK_HISTORY_EFFECT_ALREADY_CONSUMED',
- 'STOCK_HISTORY_AUTHOR_PERMISSION_REVOKED','STOCK_HISTORY_AUTHOR_REQUIRED','ESTOCK_HISTORY_AUTHOR_REQUIRED','ESTOCK_AUTHOR_PERMISSION_REVOKED','ESTOCK_AUTHOR_INVALID']);
+ 'STOCK_HISTORY_AUTHOR_PERMISSION_REVOKED','STOCK_HISTORY_AUTHOR_REQUIRED','ESTOCK_HISTORY_AUTHOR_REQUIRED','ESTOCK_AUTHOR_PERMISSION_REVOKED','ESTOCK_AUTHOR_INVALID','ESTOCK_HISTORY_OVERSIZED','ESTOCK_SOURCE_COHORT_OVERSIZED']);
 /** Optional metadata adapter in the existing PushWorker; not a second engine.
  * No factory activates it before accepted-effect/author admission is ready. */
 class StockHistoryUploader{
  constructor({outbox,cloud,assertCurrent=()=>{},now=()=>performance.now()}){Object.assign(this,{outbox,cloud,assertCurrent,now});this.holds=new Map();}
  accepts(aggregate){return aggregate?.changes?.some(change=>change.entity_type===TABLE)===true;}
+ async prepareBusiness(aggregateId,branchId,terminalId,batchId){
+  try{this.assertCurrent();const batch=await this.outbox.sourceForBusiness(aggregateId,branchId,terminalId,batchId);this.assertCurrent();return batch;}
+  catch{return null;} // Optional report evidence never changes core upload admission.
+ }
+ async acknowledgeBusiness(batch,response){
+  if(!batch)return;
+  try{this.assertCurrent();await this.outbox.acknowledgeSource(batch,response);this.assertCurrent();}
+  catch{/* Its original movement remains pending; required business/financial ACKs are separate. */}
+ }
  async reviewHeldCount(remaining,branchId,terminalId){this.assertCurrent();const count=await this.outbox.reviewHeldCount(remaining,branchId,terminalId);this.assertCurrent();return count;}
  async upload(aggregate,branchId,terminalId){
   try{
