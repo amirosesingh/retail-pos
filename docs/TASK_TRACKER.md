@@ -1,3 +1,155 @@
+## 6 November — SYNC75 recovered POS-feed failure status
+
+Owner asks to fix the continuing fetch-failed notice without resetting queues,
+registration or permissions, and to surface only failures that cannot recover.
+This is a separate status-only beta batch from cfae0756; UI74 remains in PR421.
+Actual read-only Coordinator + PullWorker reproduction proved a feed EAI_AGAIN
+failure remains in lastError after two successful normal POS feed reads because
+the separate Membership directory reports deferred. The automatic success log
+correctly resolves the old diagnostic event, while the panel still reports one
+current error from coordinator.lastError. Membership remains ON HOLD: preserve
+its reads, deferral notice, dependencies and retry behavior without modification.
+
+Plan before implementation: add private in-process evidence of the existing POS
+feed's failed/complete boundary; classify coordinator status failures by that
+proven domain. Clear a feed failure only after a complete matching-branch feed,
+even if the unrelated Membership directory remains deferred. Keep unknown/full
+download, skipped scope, credential, push/activity and actual local-pending
+barriers unresolved until their own work succeeds. Existing clearing also ignores
+deferredLocalChanges/deferredHeldDeletion, so partial feed work must not establish
+new successful-completion evidence. No upload/download request, retries, data
+application, acknowledgements, queue/checkpoint, schema, settings or permission
+behavior may change. The evidence is presentation status only, not authorization.
+
+Acceptance: actual classes with synthetic cloud/checkpoint/SQL adapters for feed
+failure then Membership-deferred success, repeated failures, incomplete/pending
+feed, branch/direction/activity mismatch, unknown/membership failures and current
+credential denial. Verify existing status summaries and diagnostic classification,
+and preserve Membership's notice. No live profile, business DB or network writes.
+Prepare a separate beta PR after scoped tests, TSC and independent review; exact
+head CI/deployed acceptance remain required before merge. No publication or DB
+application is included.
+
+SYNC75 verification checkpoint:141 Vitest checks across seven actual-class/status/
+checkpoint suites and31 native sync-pipeline tests pass on pinned Node22.22.2;
+TypeScript and scoped ESLint pass. The synthetic adapters make no network calls
+or business/checkpoint writes. Tests prove EAI_AGAIN recovery despite a separate
+Membership deferral, continued real errors, branch/direction/activity mismatch,
+unknown and Membership metadata failures, credential status, pending local rows
+and held tombstones, and forged/copied/serialized/wrong-branch evidence rejection.
+The private evidence changes no serialized worker result or permission grant.
+Independent exact-head review and beta CI/deployed acceptance remain pending.
+
+## 6 November — UI74 confirmed-empty Dashboard activity panels
+
+Owner's existing ALL-cards rule covers the three confirmed empty Dashboard
+frames still rendered after CHART72: Cashier review, drawer opens without a sale,
+and split payments. Fix only those presentation conditions and the same explicit
+empty-category frames on Business Board, from clean betaca93ee76. Preserve All
+Shops' loaded zero-shop directory exception, financial formulas, actions and all
+queries/permissions. New frames reveal with the existing reduced-motion-aware
+entry animation only after actual current-scope data is confirmed.
+
+Inspection: sales/cashier/split data comes from useReportSales, which exposes
+initial loading, refresh and errors; drawer events come from the existing
+synchronous saved-event cache, filtered by current branch/business day. That
+feed is not a complete SQL/cloud history read or a newly persisted Electron
+history cache and must not be described as one.
+Use existing confirmed-presentation snapshots scoped to current identity,
+branch/day/timezone, retaining same-scope known rows on failed refresh and hiding
+old rows on scope change. Keep errors/status truthful; never treat an error as
+an empty success. Board category panels stay behind its existing confirmed read
+and appear only when their scoped item rows exist. No provider/auth/DB edits.
+
+Acceptance: actual mounted React at1440/390 for unknown seeded data, confirmed
+empty, positive arrival, same-scope refresh/error retention, positive departure,
+branch/identity scope and real actions/columns; preserve normal-terminal scope
+and error messages. Focused route/financial/report regressions and final beta PR
+checks required. No operator data or live database execution is authorized.
+
+UI74 verification: the actual mounted Dashboard and Business Board pass at
+1440px and 390px with controlled report/auth/provider snapshots and real tables,
+receipt dialogs and column-menu portals. Unknown seeded data and confirmed-empty
+frames stay hidden; actual rows reveal with the existing motion, including
+free/refunded-bill records. Same-scope sales refresh failure retains the last
+confirmed activity with an explicit status; empty departure and identity/branch
+changes remove the panels and their popups. Native normal-terminal branch lock,
+bill search, receipt opening/closing, column controls and Board category drilldown
+remain exercised. No remote requests, operator preference writes, document
+reloads or real business data. Screenshots inspected at both responsive widths.
+Commands: pinned Node22 runs scripts/test-dashboard-activity-panels-browser.cjs
+--run; eight focused Vitest files pass52 tests, including category/trading/scope/
+timezone regressions; tsc --noEmit and scoped ESLint pass.
+The shared hourly-chart wording now says reported item cost, matching the
+preserved unit-cost/current-product-cost fallback. Queries, calculations and DB
+objects are unchanged. Final beta PR CI/deployed acceptance remain separate.
+
+## 6 November — SQL73 existing-PC stock-history bundle preparation
+
+Owner requires ONE existing-data PC SQL upgrade file for the upcoming approved
+stock report, without replaying the installer or damaging production records.
+Prepare in separate codex/existing-stock-history-upgrade-beta from beta99064909.
+This supersedes SQL72's temporary031 exclusion only AFTER the STOCK401 writer
+explicitly freezes its reviewed031 source/shape; do not pin or ship the current
+unfinished draft. Existing025–030 artifact090F2403…A4730 remains unchanged and
+valid for its reviewed scope. No live SQL, installer publication or promotion.
+
+Plan: preserve the current schema24/core hash guard, known installed025–030
+recognition and source hashes; append the frozen031 metadata as the final module
+in the same owned transaction/maintenance lock. Capture its exact table, column,
+constraint/index/FK/trigger/owner shapes on a uniquely owned LocalDB fixture,
+verify runtime schema parity, then generate the single file. Fresh/unknown core,
+partial/unknown031 shapes or changed sources abort; recognized reruns preserve
+all populated metadata and business values. No stock openings/backfill/activation,
+permissions, settings, queue/checkpoint or registration changes are authorized.
+
+Preparation inspection found a packaging gap: an extra031 entry in the manifest
+is currently ignored and still emits the025–030 hash. Require exact source/module
+set and ordering before generation so a future manifest cannot silently omit its
+last upgrade. This support-only correction does not change the existing SQL
+artifact. Focus on new031 append success/idempotence/partial-shape/late rollback
+and populated-data/grant preservation once frozen; do not rerun unchanged32
+SQL72 cases without a relevant change. No final artifact PR until concrete031 is
+reviewable; exact file hash and actual PC/server/database approval before use.
+
+## 6 November — CHART72 approved implementation
+
+Resume the approved chart consistency batch from clean beta3074a475 in separate
+codex/chart-consistency-beta. Preserve scopes and existing financial formulas:
+selected-branch Dashboard; selected-cluster/all-authorized All Shops; authorized
+company Board; normal terminal stays branch locked. New owner direction replaces
+graph horizontal/infinite scrolling with a hidden-scrollbar VERTICAL chart grid,
+two columns on large screens and one on phones, equal card/fixed plot heights.
+Separate revenue/profit shop-colored trends, daily/monthly grouping, Today/15/20
+day/custom date windows, cost+grossprofit stacked to revenue with Margin%, and
+actual transactions/profit by hour are in scope. Summary-card rails are unchanged.
+
+Inspection confirmed Dashboard and All Shops already have complete date-bounded
+sales and captured line costs, so their hourly charts need no extra reads.
+Board has daily aggregates and bill headers only; daily-cost apportionment would
+be false. Prepare any required bounded hourly aggregate and exact SQL separately,
+with existing account/terminal/branch/cost authorization and no live application.
+Coordinate native Main changes with the agent owning stock/recovery; do not edit
+shared Main concurrently. Use shared chart presentation, keep errors/incomplete
+data truthful, and test branch/cluster/range/cost denial, zero/loading states,
+small/large renders and existing checkout/report regressions. No financial writes,
+grants, operator configuration, deployment or production release is authorized by
+this preparation. Membership stays ON HOLD.
+
+CHART72 first source checkpoint: shared fixed-height vertical charts, separate
+shop revenue/profit trends and actual hourly grouping prepared. Dashboard and
+All Shops reuse their existing bounded complete receipts. Board transaction
+counts use actual bill times; hourly profit remains explicitly unavailable until
+its bounded cost read succeeds. Native SQL reuses #facts and never returns its
+private per-bill cost evidence; Main supplies/rechecks current cost authority and
+rejects session/branch handover. No renderer flag grants access. Existing scopes,
+daily calculations, financial comparison measure choices and sponsorship chart
+remain preserved. All Shops waits for actual lifetime totals/inventory readiness
+before showing shop cards, retaining the loaded zero-shop exception.48 focused
+scope/value/permission tests and TypeScript passed. Actual SQL, responsive
+rendering, full regression and cloud hourly read preparation remain pending.
+No live database or deployment occurred.
+
 ## 6 November — isolated dependency integration verification
 
 The owner asks that completed chore/version bumps be checked and integrated into
@@ -6214,6 +6366,17 @@ deleted and owner-only product changes invalidate old historical cohort coverage
 Remaining: bounded original producer witness/admission for every nonfinancial
 writer, Main factory activation only after that proof, complete opening/cohort/
 accepted-prefix publication, full hosted/device acceptance and final SQL bundle.
+Refined approved implementation choice: use one original operation/cohort digest
+and later bounded membership/effect proofs inside the same dedicated stock
+signature domain. Construct it from the actual original transaction, author and
+exact scoped rows; never accept a generic supplied digest, repurpose a renderer
+signer or enroll/rotate keys. This avoids verifying thousands of signatures in
+one bulk-import business request. Missing/invalid optional history evidence must
+remain held without failing the otherwise authorized business upload. Do not
+activate a small-operation-only path or claim bulk completeness. Opening/cohort
+metadata, including zero-quantity membership, stays separate from physical stock
+movements; exact final local/cloud SQL bytes remain subject to end-of-batch owner
+review and approval before application.
 Draft031 remains excluded from the existing installer/update; no live stock SQL,
 baseline, registration, permissions, queues, checkpoints or business rows changed.
 # DEV76 — complete shared protocol loading in local previews, 6 November
@@ -6260,6 +6423,75 @@ permission, registration and inventory-update suites pass. TypeScript/scoped
 ESLint/diff checks pass. Independent agent review found no authorization or write
 blocker; its retained-data-banner truthfulness nit is corrected. Actual mounted
 browser/portal verification, full regression and required beta CI remain pending.
+
+CHART72 second checkpoint: beta79face20 is integrated at5e9d7efb, preserving the
+completed dependency integration and development protocol fix. The chart color
+now depends only on canonical branch identity, preserving each shop between
+single-branch, cluster and company views. The actual Chrome1440/390px fixture
+passed equal448px cards/fixed256px plots, two/one columns, vertical keyboard
+scrolling, hidden scrollbar, no horizontal overflow, first-read hiding,
+same-scope refresh/error retention, scope-change hiding, meaningful negative
+profit, cost denial, in-place line/bar/month selection and15/20day presets.
+It found the existing global thin-scrollbar style overriding layered utilities;
+a narrowly scoped chart class now preserves the requested hidden scrollbar.
+
+The additional hourly read is prepared, NOT applied. Candidate
+supabase/migrations/20261105170645_bounded_shop_hourly_report.sql SHA256(LF)
+158948DA41505425E3D79BD97160A274B9C8706115D40CEF5C318C803CA1806F adds only public.pos_report_store_hours(date,date,text[]) as
+STABLE SECURITY INVOKER, fixed pg_catalog search path, service_role EXECUTE only.
+It aggregates actual selected sales and existing captured/fallback line costs by
+saved business timezone/hour, bounds100existing branches/3660days and returns at
+most2400aggregate rows. No record/policy/existing routine or existing grant is
+rewritten. Fresh server staff/report/cost and fixed-terminal/management scope
+checks run before and after the read; revocation/account handover returns no
+private result. Until its exact-project review/application, Business Board keeps
+daily/transaction graphs and truthfully reports unavailable hourly profit.
+No extra raw sale lines are downloaded. Dashboard/All Shops reuse existing
+complete bounded receipts; native SQL reuses existing#facts in one query and
+returns only aggregated hours to the renderer after Main's current checks.
+
+Actual disposable PostgreSQL18.6 passed21cases (financial/timezone/refund/signed
+cost/captured-zero/caller-role bounds and unknown-routine collision). Actual
+uniquely owned SQLServer LocalDB passed hourly/daily parity, branch/date limits,
+refund/signed/FOC/zero-cost behavior and denied forged-cost flag, then cleaned up.
+Focused60tests and scoped lint passed. Full regression found the expected new
+migration-inventory assertion, canonical source line-ending preservation and an
+obsolete inline-grid assertion; these were corrected without changing existing
+SQL definitions or loosening its privacy checks. Full final-tree rerun/type and
+independent source review remain required. No live database, queue/checkpoint,
+checkout, permission grant, operator profile, deployment or publication changed.
+
+CHART72 final-source verification at12ee262557ade7140d569147291e559b95a69dfa:
+FULL Node22.22.2/npm11.4.2 Vitest6037passed/10skipped/0failed,710passingfiles
+plus1skipped, max2workers. TypeScript passed. All scoped lint passes, including
+the last added board/security/SQL tests. Final committed migration reran all21
+actual PostgreSQL18.6 scenarios successfully; disposable LocalDB and settled
+actual Chrome1440/390px acceptance passed. All test processes/owned fixtures are
+finished/cleaned; screenshots/logs remain only in ignored .tmp. Existing source
+SQL bytes/guards are preserved. Draft betaPR419 is open/labeledbeta; CI and
+independent review remain pending. No merge, deployment, database application or
+installer publication occurred. Exact candidate SHA256(LF) is
+158948DA41505425E3D79BD97160A274B9C8706115D40CEF5C318C803CA1806F.
+The hourly routine would need separate approval against ROSEGILL→
+rosegill0011@gmail.com's Org(bjxgimekljzlnwejuawj)→pos(qhrufhtbeguxydenzfey),
+postgres,https://qhrufhtbeguxydenzfey.supabase.co before live application.
+
+CHART72 completeness correction: independent review found that a SETOF hourly
+RPC could silently truncate1008groups at PostgREST's default1000row cap. The
+still-unapplied candidate now returns ONE scalar JSON envelope from the same SQL
+snapshot, with version/complete/date/selected-branch binding and exact row_count.
+The server checks the exact envelope keys, complete===true, safe-integer count
+matching rows<=2400, unique authorized shop/hour rows and current authority before
+and after the read. No shop/history restriction, API max_rows setting or grant
+was weakened; cross-page snapshot races are avoided rather than tolerated.
+New candidate SHA256(LF) supersedes158948DA…1806F:
+921067FA9C5EA4F2F4F46A5B2D25976B11C73218AEB60DC5FB69B5B814D9FCB5.
+Actual isolated PostgreSQL18.6 passed22cases. Actual PostgREST with max_rows1000
+first reproduced SETOF truncation, then returned all1008 and2400 scalar-envelope
+hourly groups with correct sums and metadata. All77 focused regressions,
+TypeScript and scoped lint passed. No live database application occurred. Final
+combined beta/source regression and independent re-review are required before
+integration; root owns live approval/promotion.
 
 ### Native approval final device acceptance and beta refresh — 6 November
 
@@ -6324,6 +6556,18 @@ new-head CI, final typecheck and platform checks are required before beta merge.
 Earlier actual native sale/restart evidence used the prior dependency install;
 do not mislabel that as another installed-application upgrade acceptance run.
 
+CHART72 refreshed58bdb12c (includes beta41500b9) full regression passed:
+6121tests/10skipped/0failed,712passingfiles plus1skipped, max2workers. The
+independent reviewer reran93focused tests and cleared the scalar completeness
+fix. Final display-only refinement adds actual per-shop margin% labels without
+hover in the existing fixed-height/scrollable footer, hidden without cost access;
+Dashboard's existing day/hour calculations are memoized on their real sales and
+product inputs. No financial formula or read changed. Actual Chrome1440/390
+passed again with an explicit55.6% label/cost-denial check;37 focused route,
+financial and chart regressions plus scoped lint passed. SQL hash921067FA…9FCB5
+and all authority code remain unchanged by these UI refinements. Final-head CI
+and separate exact-project migration approval/application remain pending.
+
 ### VIEW77 mounted-browser acceptance and current-beta refresh — 6 November
 
 The pre-refresh full suite passed 6,000 tests / 10 skipped / zero failures.
@@ -6345,3 +6589,13 @@ of backend admission; the existing branch/authority regressions remain required.
 No browser exceptions, remote requests or full-document reloads occurred.
 Final exact-head CI and beta integration remain; actual SQL, registration,
 checkout data, pending work and Membership were untouched.
+
+SQL73 support checkpoint: only the packager's manifest-set/order validation and
+its focused test changed; all11 packaging tests, exact existing-artifact--check,
+scoped lint and diff checks pass. Existing file SHA090F2403…A4730 is unchanged.
+No031 draft was copied, no fresh manifest/artifact emitted and no old32 engine
+cases rerun. The STOCK401 writer confirms031 remains unstable (publisher/cohort/
+watermark details may change); final runtime preflight and populated-history
+fixture seed are requested at freeze. Next: capture and test that frozen source
+within the existing assembler, then create the concrete one-file beta PR.
+No operator SQL, configuration, queue/checkpoint or permission changes occurred.

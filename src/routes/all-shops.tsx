@@ -1,7 +1,8 @@
+import { TradingRangePresets } from "@/platforms/web/components/pos/TradingRangePresets";
 import { useConfirmedPresentation } from "@/lib/use-confirmed-presentation";
 import { pageDataScope } from "@/lib/page-data-cache";
 import { ShopComparisonCharts } from "@/platforms/web/components/pos/ShopComparisonCharts";
-import { comparisonSalesDays } from "@/lib/shop-comparison";
+import { comparisonSalesDays, comparisonSalesHours } from "@/lib/shop-comparison";
 import { receiptAdjustmentLabel } from "@/lib/report-display";
 import { companyStoreScope } from "@/lib/company-store-scope";
 import { allShopsScope, allShopsTotalsScope, shopClusterKey } from "@/lib/all-shops-scope";
@@ -150,9 +151,17 @@ function AllShops() {
   }, [history.sales, state.products, totalStores, from, to]);
   const billPager = usePagination(live.feed, 25);
   const confirmedLive = useConfirmedPresentation(isAdmin && periodStoreIds.length > 0 ? JSON.stringify([pageDataScope(user), periodStoreIds, from, to, effectiveTimeZone()]) : null,
-    live, !history.loading && !history.error);
+    live, inventoryReady && !history.loading && !history.error);
   const comparisonFeed = confirmedLive?.feed;
   const comparisonDays = useMemo(() => comparisonSalesDays(comparisonFeed ?? [], state.products), [comparisonFeed, state.products]);
+
+  const comparisonHours = useMemo(() => comparisonSalesHours(comparisonFeed ?? [], state.products), [comparisonFeed, state.products]);
+  const comparisonFinancial = useMemo(() => totalStores.map(store => {
+    const totals = profitOf((comparisonFeed ?? []).filter(sale => sameBranchId(sale.storeId, store.id)), state.products);
+    return { id: store.id, name: store.name, revenue: totals.revenue, cost: totals.cogs, profit: totals.profit, marginPct: totals.marginPct };
+  }), [totalStores, comparisonFeed, state.products]);
+  const confirmedShops = useConfirmedPresentation(stores.length > 0 ? JSON.stringify([pageDataScope(user), storeIds, today, showMoney, showCostMargin]) : null,
+    perStore, inventoryReady && (!showMoney || (!lifetime.loading && !lifetime.error && !!lifetime.totals)));
 
   const rows = state.products.filter((p) => {
     if (!stockStores.some((s2) => catalogueVisibleAt(p, s2.id))) return false;
@@ -207,6 +216,7 @@ function AllShops() {
             <ReportFilters title="All Shops filters">
               {isAdmin && (
                 <div className="flex flex-wrap gap-3">
+                  <TradingRangePresets today={today} from={from} to={to} onChange={range => { setFrom(range.from); setTo(range.to); }} />
                   <label className="space-y-1 text-sm">
                     <span>From</span>
                     <Input
@@ -295,8 +305,8 @@ function AllShops() {
             {clusterOptions.map(option => <option key={option.key} value={option.key}>{option.label}</option>)}
           </select>
         </label>
-        <SummaryCardRail label="Shop summaries">
-          {perStore.map((s) => (
+        {confirmedShops && <SummaryCardRail label="Shop summaries">
+          {confirmedShops.map((s) => (
             <div key={s.store.id} className="min-w-0 rounded-lg border border-border bg-card p-4 [overflow-wrap:anywhere]">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
@@ -329,7 +339,7 @@ function AllShops() {
               )}
             </div>
           ))}
-        </SummaryCardRail>
+        </SummaryCardRail>}
 
         {isAdmin && (
           <section className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
@@ -345,13 +355,15 @@ function AllShops() {
             <p className="text-xs text-muted-foreground">Net sales exclude tax and are before saved receipt adjustments. Collected is the final bill total after those adjustments. Refunded bills are excluded.</p>
             {confirmedLive && <>
             <SummaryCardRail label="Selected-period shop totals">
-              <Kpi label="Net sales before adjustments · selected dates" value={money(confirmedLive.revenue)} info={<SalesTotalInfo totals={confirmedLive.totals} adjustmentLabel={receiptAdjustmentLabel(confirmedLive.feed)} />} />
-              <Kpi label="Gross profit" value={money(confirmedLive.profit)} info={<GrossProfitInfo revenue={confirmedLive.revenue} cost={confirmedLive.cost} profit={confirmedLive.profit} />} />
-              <Kpi label="Bills" value={String(confirmedLive.bills)} />
-              <Kpi label="Average basket · net sales" value={money(confirmedLive.basket)} info={<FinancialBreakdown rows={[["Net sales", money(confirmedLive.revenue)], ["Completed bills", String(confirmedLive.bills)], ["Average basket", money(confirmedLive.basket)]]}><p>Net sales ÷ completed bills for the selected dates.</p></FinancialBreakdown>} />
+              {Math.abs(confirmedLive.revenue) >= 0.005 && <Kpi label="Net sales before adjustments · selected dates" value={money(confirmedLive.revenue)} info={<SalesTotalInfo totals={confirmedLive.totals} adjustmentLabel={receiptAdjustmentLabel(confirmedLive.feed)} />} />}
+              {showCostMargin && Math.abs(confirmedLive.profit) >= 0.005 && <Kpi label="Gross profit" value={money(confirmedLive.profit)} info={<GrossProfitInfo revenue={confirmedLive.revenue} cost={confirmedLive.cost} profit={confirmedLive.profit} />} />}
+              {confirmedLive.bills > 0 && <Kpi label="Bills" value={String(confirmedLive.bills)} />}
+              {Math.abs(confirmedLive.basket) >= 0.005 && <Kpi label="Average basket · net sales" value={money(confirmedLive.basket)} info={<FinancialBreakdown rows={[["Net sales", money(confirmedLive.revenue)], ["Completed bills", String(confirmedLive.bills)], ["Average basket", money(confirmedLive.basket)]]}><p>Net sales ÷ completed bills for the selected dates.</p></FinancialBreakdown>} />}
             </SummaryCardRail>
             <ShopComparisonCharts rows={comparisonDays} directory={stores}
               selectedIds={periodStoreIds} showProfit={showCostMargin}
+              range={{ from, to }}
+              transactionHours={comparisonHours} profitHours={comparisonHours} financialRows={comparisonFinancial}
               scopeLabel={selectedCluster === "all" ? "All authorized clusters" : "Selected cluster"} />
             </>}
             <div className="overflow-auto rounded-md border border-border bg-card">

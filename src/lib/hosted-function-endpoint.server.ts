@@ -2,6 +2,7 @@ import { z } from "zod";
 
 // Explicit operations only: no caller-controlled module imports or arbitrary RPCs.
 const handlers: Record<string, (data: unknown) => Promise<unknown>> = Object.freeze({
+  "trading-hours.loadHourlyTrading": async (data) => (await import("./trading-hours.functions")).loadHourlyTrading({ data: data as never }),
   "sponsorship.loadSponsorshipDailyValues": async (data) => (await import("./sponsorship.functions")).loadSponsorshipDailyValues({data:data as never}),
   "sponsorship.getSponsorshipAccess": async (data) => (await import("./sponsorship.functions")).getSponsorshipAccess({data:data as never}),
   "sponsorship.getSponsorshipDirectPolicy": async (data) => (await import("./sponsorship.functions")).getSponsorshipDirectPolicy({data:data as never}),

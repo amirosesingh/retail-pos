@@ -1117,6 +1117,10 @@ html, main, .pos-popup-surface, .overflow-auto, .overflow-y-auto, .overflow-x-au
   }
 }
 
+/* Keep chart reading areas clear of the global desktop scrollbar theme. */
+.trading-chart-scroll { scrollbar-width: none; }
+.trading-chart-scroll::-webkit-scrollbar { display: none; }
+
 /* Keep dashboard swipe rows clear of the global desktop scrollbar theme. */
 .dashboard-swipe-row {
   scrollbar-width: none;

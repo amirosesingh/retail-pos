@@ -261,6 +261,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261105090100_branch_shift_sharing.sql",
       "supabase/migrations/20261105113916_stock_history_effective_ledger.sql",
       "supabase/migrations/20261105140417_isolate_refund_guard_table_fields.sql",
+      "supabase/migrations/20261105170645_bounded_shop_hourly_report.sql",
       "supabase/migrations/20261105172030_stock_history_accepted_effect_capture.sql",
       "supabase/migrations/20261105232647_stock_history_author_claim_admission.sql",
       "supabase/reset.sql",

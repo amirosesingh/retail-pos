@@ -2138,7 +2138,13 @@ function registerIpc() {
   ipcMain.handle("business:analytics", (_e, from, to, timeZone) => guard.guarded(async () => {
     if (!adminSession.hasPosAuthority() || !adminSession.hasPermission("can_view_sales_reports"))
       return { ok: false, code: "PERMISSION_DENIED", error: "Sales report permission is required." };
-    return readAnalytics(databaseManager, authorizedLocalBranch(), guard.text(from, { name: "from date", max: 10 }), guard.text(to, { name: "to date", max: 10 }), guard.text(timeZone || "UTC", { name: "time zone", max: 80 }));
+    const readEpoch = adminSession.epoch(), branch = authorizedLocalBranch();
+    const result = await readAnalytics(databaseManager, branch, guard.text(from, { name: "from date", max: 10 }), guard.text(to, { name: "to date", max: 10 }), guard.text(timeZone || "UTC", { name: "time zone", max: 80 }), {
+      canViewHourlyCost: () => adminSession.epoch() === readEpoch && adminSession.hasPosAuthority() && adminSession.hasPermission("can_view_cost_margin"),
+    });
+    if (adminSession.epoch() !== readEpoch || !adminSession.hasPosAuthority() || !adminSession.hasPermission("can_view_sales_reports") || authorizedLocalBranch() !== branch)
+      return { ok: false, code: "PERMISSION_DENIED", error: "Report authority changed. Sign in and refresh the report." };
+    return result;
   }));
   ipcMain.handle("business:query", (_e, table, options) => guard.guarded(async () => {
     try {
