@@ -87,7 +87,7 @@ CREATE TRIGGER stock_history_source_receipts AFTER INSERT ON public.stock_delta_
 CREATE FUNCTION private.stock_history_capture_accepted_products() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $fn$
 DECLARE before_map jsonb:='{}'::jsonb;after_map jsonb:='{}'::jsonb;item jsonb;branch text;
- before_text text;after_text text;previous numeric;next_value numeric;delta numeric;effect uuid;source uuid;matches integer;
+ before_text text;after_text text;previous numeric;next_value numeric;delta numeric;
 BEGIN
  IF TG_OP<>'INSERT' THEN before_map:=COALESCE(OLD.stock_by_store,'{}'::jsonb);END IF;
  IF TG_OP<>'DELETE' THEN after_map:=COALESCE(NEW.stock_by_store,'{}'::jsonb);item:=to_jsonb(NEW);
@@ -117,21 +117,40 @@ BEGIN
   IF TG_OP='UPDATE' AND delta=0 THEN CONTINUE;END IF;
   INSERT INTO private.stock_history_accepted_effects(transaction_id,product_id,store_id,previous_quantity,next_quantity,quantity_delta,operation,product_snapshot)
    VALUES(txid_current(),(item->>'id')::uuid,branch,previous,next_value,delta,TG_OP,
-    jsonb_build_object('name',item->'name','sku',item->'sku','barcode',item->'barcode','ownerStoreId',item->'owner_store_id')) RETURNING id INTO effect;
-  -- Two indistinguishable pending receipts are ambiguous; preserve both rather
-  -- than pick one by timestamp/UUID and invent a source association.
-  SELECT count(*),(array_agg(r.movement_id))[1] INTO matches,source FROM(
-   SELECT candidate.movement_id FROM private.stock_history_source_receipts candidate
-    WHERE candidate.transaction_id=txid_current() AND candidate.product_id=(item->>'id')::uuid
-     AND candidate.store_id=branch AND candidate.quantity_delta=delta
-     AND NOT EXISTS(SELECT 1 FROM private.stock_history_effect_sources used WHERE used.movement_id=candidate.movement_id) LIMIT 2) r;
-  IF matches=1 AND delta<>0 THEN INSERT INTO private.stock_history_effect_sources VALUES(effect,source);END IF;
+    jsonb_build_object('name',item->'name','sku',item->'sku','barcode',item->'barcode','ownerStoreId',item->'owner_store_id'));
  END LOOP;
  RETURN NULL;
 END $fn$;
 REVOKE ALL ON FUNCTION private.stock_history_capture_accepted_products() FROM PUBLIC,anon,authenticated,service_role;
 CREATE TRIGGER stock_history_accepted_products AFTER INSERT OR UPDATE OR DELETE ON public.products
  FOR EACH ROW EXECUTE FUNCTION private.stock_history_capture_accepted_products();
+
+-- Decide only after the entire original transaction is known. Receipts may be
+-- written before or after products; a later equal receipt must not turn an
+-- earlier arbitrary association into false provenance. Ambiguous groups stay
+-- unlinked. No stock arithmetic, business order or shared report lock changes.
+CREATE FUNCTION private.stock_history_link_committed_sources() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $fn$
+DECLARE product uuid:=NEW.product_id;branch text:=NEW.store_id;delta numeric:=NEW.quantity_delta;
+ source uuid;effect uuid;sources integer;effects integer;
+BEGIN
+ IF delta=0 THEN RETURN NULL;END IF;
+ SELECT count(*),(array_agg(candidate.movement_id))[1] INTO sources,source FROM(
+  SELECT receipt.movement_id FROM private.stock_history_source_receipts receipt
+   WHERE receipt.transaction_id=txid_current() AND receipt.product_id=product AND receipt.store_id=branch AND receipt.quantity_delta=delta
+    AND NOT EXISTS(SELECT 1 FROM private.stock_history_effect_sources used WHERE used.movement_id=receipt.movement_id) LIMIT 2) candidate;
+ SELECT count(*),(array_agg(candidate.id))[1] INTO effects,effect FROM(
+  SELECT actual.id FROM private.stock_history_accepted_effects actual
+   WHERE actual.transaction_id=txid_current() AND actual.product_id=product AND actual.store_id=branch AND actual.quantity_delta=delta
+    AND NOT EXISTS(SELECT 1 FROM private.stock_history_effect_sources used WHERE used.effect_id=actual.id) LIMIT 2) candidate;
+ IF sources=1 AND effects=1 THEN INSERT INTO private.stock_history_effect_sources VALUES(effect,source);END IF;
+ RETURN NULL;
+END $fn$;
+REVOKE ALL ON FUNCTION private.stock_history_link_committed_sources() FROM PUBLIC,anon,authenticated,service_role;
+CREATE CONSTRAINT TRIGGER stock_history_effect_source_link AFTER INSERT ON private.stock_history_accepted_effects
+ DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION private.stock_history_link_committed_sources();
+CREATE CONSTRAINT TRIGGER stock_history_receipt_effect_link AFTER INSERT ON private.stock_history_source_receipts
+ DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION private.stock_history_link_committed_sources();
 
 -- Read-only candidate proof for the future guarded claim writer. It is neither
 -- upload admission nor an acknowledgement and is deliberately granted to no API

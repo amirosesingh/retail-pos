@@ -275,6 +275,10 @@ export function ShiftCloseDialog({
       description: synchronized.error + " Your data remains saved on this terminal. Retry from Sync status.",
       duration: 10000,
     });
+    else if (synchronized.reportHistoryPending) toast.info("Shift synchronized · stock history needs review", {
+      description: "The shift transactions are acknowledged. Stock-report evidence remains saved for review; not all uploads are complete.",
+      duration: 10000,
+    });
     else toast.success(printed.ok ? "Shift closed · Z report sent to printer" : "Shift closed");
     setStep("done");
     onOpenChange(false);

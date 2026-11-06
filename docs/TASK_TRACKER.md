@@ -6141,6 +6141,16 @@ raw timestamps or pagination cursors. Equal instants retain descending ID ties.
 
 ## STOCK401 — resumed capture/ACK verification, 6 November
 
+Approved integration safeguard: optional report-history metadata must not block
+an otherwise acknowledged shift closing or safe shutdown, and must not claim
+that every upload finished. The final barrier may exempt only source/author-review
+rows tied to their immutable dedicated metadata aggregate in the physical SQL
+schema. Unknown, legacy, audit, sales, shift and mixed aggregates remain critical;
+the actual pending/failed counts and report-history review status remain visible.
+No row acknowledgement, queue clearing, checkpoint reset or weaker closing-graph
+proof is permitted. Verify actual SQL classification and every final-barrier
+caller, cooldown/restart, network/auth failures and forged metadata markers.
+
 Owner now explicitly approved the dedicated stock-event author-proof implementation
 and isolated tests described in `docs/database/stock-history-author-domain-plan.md`.
 This supersedes that document's preparation-only security deferral. Reuse only
@@ -6150,6 +6160,18 @@ exact ACK, source/cohort and opening coverage before activation. Signatures neve
 prove physical device time. Add Reports → Inventory → Stock at time through the
 same scoped reader/dialog as Inventory; preserve its existing shortcut and do not
 describe discoverability as completed historical coverage.
+
+The remaining source-origin work is part of that approved stock-domain batch.
+One bounded delegated implementation owns only three new files:
+`electron/shared/stock-source-manifest.mjs`, its `.d.mts` declaration, and
+`src/lib/__tests__/stock-source-manifest.test.ts`. They canonicalize a strict
+original operation/action/document/author/terminal/branch/product/delta/time and
+source-reference manifest. They grant no permission, prove no actual effect or
+clock, and expose no signer or key. The principal stock writer retains all
+Main/capture/SQL/relay integration and actual domain/source-admission checks.
+Zero is allowed in this pure representation for cohort creation evidence; it
+does not bypass the existing nonzero movement rule. No live database, enrollment,
+activation or deployment action is authorized by this delegation.
 
 Reports discoverability checkpoint: `/reports/inventory` is listed as Inventory ·
 Stock at time in Reports and uses the same dialog/reader/current branch as the
@@ -6179,6 +6201,21 @@ consumption and resumable downloads within the existing engine. Finish full and
 installed acceptance before merge. Exact draft cloud/local SQL changes and hashes
 must be shown before live application. Existing business data/checkout/permission
 grants, queues/checkpoints and Membership remain untouched.
+
+Latest reviewed STOCK401 checkpoint: 561 focused tests/25 suites, TypeScript and
+scoped lint pass. Forty-five actual uniquely owned disposable SQL Server groups
+and five actual existing protected financial/business SALE groups pass. Independent
+review reran 216 tests, SQL45 and genuine SALE5 and found no remaining blocker in
+the reviewed narrow hold/source-proof/capture delta after two corrections: exact
+case-sensitive exemption scope and full-queue snapshot parity. The critical shift
+ACK remains unchanged; review-only metadata stays pending with honest counts.
+Original adjustment manifest/signature now commits with actual stock; zero/new,
+deleted and owner-only product changes invalidate old historical cohort coverage.
+Remaining: bounded original producer witness/admission for every nonfinancial
+writer, Main factory activation only after that proof, complete opening/cohort/
+accepted-prefix publication, full hosted/device acceptance and final SQL bundle.
+Draft031 remains excluded from the existing installer/update; no live stock SQL,
+baseline, registration, permissions, queues, checkpoints or business rows changed.
 # DEV76 — complete shared protocol loading in local previews, 6 November
 
 The owner requested latest Electron and web previews side by side, then reported

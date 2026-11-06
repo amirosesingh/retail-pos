@@ -3,6 +3,7 @@ import type { VerifiedTerminalDescriptor } from "./terminal-binding.server";
 import { stockInstant, canonicalStockInstant } from "./stock-as-of";
 import { ShiftAuthorError, verifyStockEventRegistryProof, readVerifiedStockEventAuthor } from "./shift-author-verification.server";
 import { canonicalBranchId } from "./branch-id";
+import { normalizeStockSourceManifest, stockSourceManifestJson, type StockSourceManifest } from "../../electron/shared/stock-source-manifest.mjs";
 
 const encoder = new TextEncoder();
 const denied = (): never => { throw new ShiftAuthorError("ESTOCK_AUTHOR_INVALID", "The original stock-event author could not be verified."); };
@@ -40,7 +41,7 @@ export function stockEventClaim(payloadJson: string): StockEventClaim {
 
 /** This verifies authorship, not accepted stock effects, permission to mutate
  * stock, complete history, nor the physical accuracy of a device clock. */
-export async function verifyStockEventAuthor(input: { proof: unknown; payloadJson: string; terminal: VerifiedTerminalDescriptor; branchId: string }) {
+export async function verifyStockEventAuthor(input: { proof: unknown; payloadJson: string; terminal: VerifiedTerminalDescriptor; branchId: string },request?:object) {
   let normalized: StockEventProof;
   try { normalized = normalizeStockEvent(input.proof); } catch { return denied(); }
   const claim = stockEventClaim(input.payloadJson);
@@ -48,16 +49,24 @@ export async function verifyStockEventAuthor(input: { proof: unknown; payloadJso
       normalized.terminalId !== input.terminal.id || canonicalBranchId(normalized.branchId) !== canonicalBranchId(input.terminal.branchId) || canonicalBranchId(normalized.branchId) !== canonicalBranchId(input.branchId) ||
       normalized.terminalId !== claim.terminalId || normalized.branchId !== claim.branchId || normalized.authorId !== claim.authorId ||
       normalized.operationId !== claim.operationId || normalized.movementId !== claim.id || ACTIONS[normalized.action].kind !== claim.kind) return denied();
+  let source:StockSourceManifest|undefined;
+  if(normalized.sourceManifestJson!=null){
+    try{source=normalizeStockSourceManifest(JSON.parse(normalized.sourceManifestJson));}catch{return denied();}
+    if(stockSourceManifestJson(source)!==normalized.sourceManifestJson||source.operationId!==claim.operationId||source.action!==normalized.action||
+      source.authorId!==claim.authorId||source.terminalId!==claim.terminalId||source.branchId!==claim.branchId||source.productId!==claim.productId||
+      source.delta!==claim.quantity||source.effectiveAt!==claim.effectiveAt||source.recordedAt!==claim.recordedAt||
+      JSON.stringify(source.sourceRefs)!==JSON.stringify(claim.refs))return denied();
+  }
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256",encoder.encode(input.payloadJson)));
   if (normalized.payloadHash !== Array.from(digest,byte => byte.toString(16).padStart(2,"0")).join("")) return denied();
-  const proof = await verifyStockEventRegistryProof(normalized);
-  return { proof, claim, timeGrade: "author_claimed" as const };
+  const proof = await verifyStockEventRegistryProof(normalized,request);
+  return { proof, claim, ...(source?{source}:{}), timeGrade: "author_claimed" as const };
 }
 
 /** New metadata needs current original-author rights plus the exact accepted
  * source workflow/effect. A background uploader is never the original author. */
-export async function readStockEventAuthorPermission(proof: StockEventProof) {
-  const current = await readVerifiedStockEventAuthor(proof);
+export async function readStockEventAuthorPermission(proof: StockEventProof,request?:object) {
+  const current = await readVerifiedStockEventAuthor(proof,request);
   if (!current.allowed) return current;
   const rule = ACTIONS[proof.action];
   const allowed = current.authority.level === "admin" || (!rule.adminOnly && rule.permissions.every(flag => current.authority.permissions[flag] === true));

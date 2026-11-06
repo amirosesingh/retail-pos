@@ -6,7 +6,8 @@ vi.mock("@/core/api/pos-relay.server",()=>({serviceRest:mocks.rest,verifyRelayCa
 vi.mock("../desktop-database-authority.server",()=>({databaseAuthority:mocks.authority}));
 vi.mock("../external-supabase-config",()=>({supabaseConfig:()=>({url:"https://stock.fixture",key:"fixture"}),runtimeEnvValue:()=>undefined}));
 import { verifyStockEventAuthor, readStockEventAuthorPermission, stockEventClaim } from "../stock-event-author-verification.server";
-import { readVerifiedStockEventAuthor } from "../shift-author-verification.server";
+import { createStockEventVerificationRequest, readVerifiedStockEventAuthor } from "../shift-author-verification.server";
+import { stockSourceManifestJson } from '../../../electron/shared/stock-source-manifest.mjs';
 const require=createRequire(import.meta.url),contract=require("../../../electron/db/stock-history-contract.cjs"),protocol=require("../../../electron/security/stock-event-author-protocol.cjs");
 const author="10000000-0000-4000-8000-000000000001",keyId="10000000-0000-4000-8000-000000000002",operation="20000000-0000-4000-8000-000000000001",product="30000000-0000-4000-8000-000000000001";
 const pair=generateKeyPairSync("ed25519"),publicKey=pair.publicKey.export({type:"spki",format:"der"}).toString("base64url");
@@ -24,6 +25,28 @@ beforeEach(()=>{
  mocks.rest.mockReset().mockImplementation(async()=>Response.json({terminal_enrolled:true,key}));mocks.authority.mockReset().mockImplementation(async()=>person);
 });
 describe("stock-domain signature and original actor verification",()=>{
+ it('verifies signed canonical source bytes while retaining author-claimed time and separate actual-effect admission',async()=>{
+  const value=JSON.parse(movement().payload_json);value[7]='stock';const raw=JSON.stringify(value);
+  const source=stockSourceManifestJson({version:1,operationId:operation,action:'ADJUST',document:{type:'stock_adjustments',id:product},authorId:author,terminalId:'terminal-a',branchId:'a',productId:product,delta:'-1',effectiveAt:value[9],recordedAt:value[11],sourceRefs:[]});
+  const result=await verifyStockEventAuthor({proof:proof(raw,{action:'ADJUST',sourceManifestJson:source}),payloadJson:raw,terminal,branchId:'a'});
+  expect(result.source).toMatchObject({document:{type:'stock_adjustments',id:product},productId:product,delta:'-1'});expect(result.timeGrade).toBe('author_claimed');
+  expect(await readStockEventAuthorPermission(result.proof)).toMatchObject({allowed:false}); // Sale permission is not adjustment permission.
+ });
+ it.each(['operationId','action','authorId','terminalId','branchId','productId','delta','effectiveAt','recordedAt','sourceRefs','noncanonical','unsigned-change'])('rejects substituted signed-source %s',async field=>{
+  const value=JSON.parse(movement().payload_json);value[7]='stock';const raw=JSON.stringify(value);
+  const source:Record<string,unknown>={version:1,operationId:operation,action:'ADJUST',document:{type:'stock_adjustments',id:product},authorId:author,terminalId:'terminal-a',branchId:'a',productId:product,delta:'-1',effectiveAt:value[9],recordedAt:value[11],sourceRefs:[]};
+  if(['operationId','authorId','productId'].includes(field))source[field]=keyId;
+  if(field==='action'){source.action='PRODUCT_CREATE';source.document={type:'products',id:product};}
+  if(field==='terminalId'||field==='branchId')source[field]='other';
+  if(field==='delta')source.delta='-2';
+  if(field==='effectiveAt')source.effectiveAt='2026-11-05T00:00:00.0000000Z';
+  if(field==='recordedAt')source.recordedAt='2026-11-07T00:00:00.0000000Z';
+  if(field==='sourceRefs')source.sourceRefs=[['stock_adjustments',keyId,'-1']];
+  let sourceRaw=stockSourceManifestJson(source)+(field==='noncanonical'?' ':'');
+  const supplied=proof(raw,{action:'ADJUST',sourceManifestJson:sourceRaw});
+  if(field==='unsigned-change'){sourceRaw=sourceRaw.replace(product,keyId);Object.assign(supplied,{sourceManifestJson:sourceRaw});}
+  await expect(verifyStockEventAuthor({proof:supplied,payloadJson:raw,terminal,branchId:'a'})).rejects.toMatchObject({code:'ESTOCK_AUTHOR_INVALID'});
+ });
  it("authenticates exact original bytes without asserting physical clock or stock-effect acceptance",async()=>{
   const result=await check();expect(result.claim).toMatchObject({authorId:author,quantity:"-1",localDelta:"-1"});expect(result.timeGrade).toBe("author_claimed");
   expect(await readStockEventAuthorPermission(result.proof)).toMatchObject({allowed:true});
@@ -43,6 +66,19 @@ describe("stock-domain signature and original actor verification",()=>{
  });
  it("does not let an arbitrary normalized proof call current authority without prior crypto verification",async()=>{
   expect(await readVerifiedStockEventAuthor(proof(movement().payload_json) as never)).toMatchObject({allowed:false,code:"ESTOCK_AUTHOR_INVALID"});expect(mocks.authority).not.toHaveBeenCalled();
+ });
+ it("coalesces identical reads only inside one private bounded request and verifies every signature",async()=>{
+  const token=createStockEventVerificationRequest(),raw=movement().payload_json;
+  for(let n=0;n<2;n++){
+   const result=await verifyStockEventAuthor({proof:proof(raw),payloadJson:raw,terminal,branchId:'a'},token);
+   expect(await readStockEventAuthorPermission(result.proof,token)).toMatchObject({allowed:true});
+  }
+  expect(mocks.rest).toHaveBeenCalledTimes(1);expect(mocks.authority).toHaveBeenCalledTimes(1);
+  person.permissions={};const next=createStockEventVerificationRequest(),fresh=await verifyStockEventAuthor({proof:proof(raw),payloadJson:raw,terminal,branchId:'a'},next);
+  expect(await readStockEventAuthorPermission(fresh.proof,next)).toMatchObject({allowed:false});expect(mocks.authority).toHaveBeenCalledTimes(2);
+  const forged={...proof(raw),signature:'A'.repeat(86)};
+  await expect(verifyStockEventAuthor({proof:forged,payloadJson:raw,terminal,branchId:'a'},token)).rejects.toThrow();
+  await expect(verifyStockEventAuthor({proof:proof(raw),payloadJson:raw,terminal,branchId:'a'},{})).rejects.toThrow();
  });
  it.each(["revoked","inactive","permission","branch","subject","recycled"])('keeps verified accepted history but denies a new claim for %s',async kind=>{
   const result=await check();

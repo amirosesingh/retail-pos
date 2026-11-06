@@ -169,16 +169,30 @@ function createShiftAuthorKeys({ safeStorage, directory }) {
     const stock = require('./stock-event-author-protocol.cjs');
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw failure('ESTOCK_AUTHOR_INVALID');
     const { expectedKeyId, ...facts } = input;
-    const fields = ['subject', 'branchId', 'operationId', 'movementId', 'action', 'payloadHash'];
+    const fields = ['subject', 'branchId', 'operationId', 'movementId', 'action', 'payloadHash', ...(Object.hasOwn(facts, 'sourceManifestJson') ? ['sourceManifestJson'] : [])];
     if (Object.keys(facts).length !== fields.length || fields.some(key => !Object.hasOwn(facts, key))) throw failure('ESTOCK_AUTHOR_INVALID');
     const keyId = expected({ expectedKeyId });
     if (!keyId) throw failure('ESTOCK_AUTHOR_INVALID');
     const parsedBinding = protocol.normalizeBinding(binding);
     const unsigned = stock.unsignedStockEvent({ version: 1, algorithm: 'Ed25519', keyId, ...parsedBinding, ...facts });
+    if (unsigned.sourceManifestJson != null) {
+      // A source claim is signed only as a canonical, action-scoped stock
+      // manifest. This is not an arbitrary text or general-purpose signer.
+      const { stockSourceManifestJson } = require('../shared/stock-source-manifest.mjs');
+      let manifest;
+      try { manifest = JSON.parse(unsigned.sourceManifestJson); }
+      catch { throw failure('ESTOCK_AUTHOR_INVALID'); }
+      if (stockSourceManifestJson(manifest) !== unsigned.sourceManifestJson ||
+        manifest.operationId !== unsigned.operationId || manifest.action !== unsigned.action ||
+        manifest.authorId !== unsigned.authorId || manifest.terminalId !== unsigned.terminalId || manifest.branchId !== unsigned.branchId)
+        throw failure('ESTOCK_AUTHOR_INVALID');
+    }
     // Exact existing enrolled material only. Signing cannot create/rotate a key.
     const saved = load(parsedBinding, { expectedKeyId: keyId });
     if (!saved.enrolled) throw failure('ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING');
-    return stock.normalizeStockEvent({ ...unsigned, signature: crypto.sign(null, Buffer.from(stock.stockEventMessage(unsigned)), saved.privateKey).toString('base64url') });
+    const result=stock.normalizeStockEvent({ ...unsigned, signature: crypto.sign(null, Buffer.from(stock.stockEventMessage(unsigned)), saved.privateKey).toString('base64url') });
+    if(Buffer.byteLength(JSON.stringify(result),'utf8')>16384)throw failure('ESTOCK_SOURCE_OVERSIZED');
+    return result;
   }
   return { prepare, enrollment, signIntent, signClosingStart, signFinancialBasis, signOpeningFinancialBasis, signFinancialOperation, signLegacyRecovery, signStockEvent, markEnrolled };
 }

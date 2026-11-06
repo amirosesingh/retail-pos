@@ -22,7 +22,7 @@ function productsIn(operations){
     }
     if(op.table!=='products')continue;
     const rows=op.rows??(op.values?[op.values]:[]);
-    const stockWrite=['insert','upsert','delete'].includes(op.kind)||Object.hasOwn(op.values??{},'stock_by_store')||Object.hasOwn(op.values??{},'stock_quantity');
+    const stockWrite=['insert','upsert','delete'].includes(op.kind)||['stock_by_store','stock_quantity','owner_store_id'].some(column=>Object.hasOwn(op.values??{},column));
     if(!stockWrite)continue;
     const candidates=['insert','upsert'].includes(op.kind)?rows:[op.match??{}];
     for(const row of candidates){
@@ -92,7 +92,9 @@ class StockHistoryStore{
   if(captureInput.effectiveAt)contract.instant(captureInput.effectiveAt);
   const before=await this.snapshot(tx,products.ids),beforeSources=await this.sources(tx,products.refs);this.assertCurrent();
   if(source&&this.readContext?.()?.key!==source.key)contract.fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
-  const token=Object.freeze({});CAPTURES.set(token,{tx,pool:this.manager.pool,databaseKey:capability.databaseKey,input:captureInput,products,before,beforeSources,source,writerKnown});
+  const sourceOperations=operations.map(op=>Object.freeze({kind:op.kind,table:op.table,
+   rows:Object.freeze((op.rows??[op.values??{}]).map(row=>Object.freeze({id:row.id??op.match?.id})))}));
+  const token=Object.freeze({});CAPTURES.set(token,{tx,pool:this.manager.pool,databaseKey:capability.databaseKey,input:captureInput,products,before,beforeSources,source,writerKnown,sourceOperations});
   return token;
  }
  async invalidateCoverage(tx,branch,reason){
@@ -126,21 +128,30 @@ class StockHistoryStore{
   // A prepared Main-only signer freezes proof in this original transaction.
   // Missing enrollment/vault material keeps unsigned evidence for review;
   // it must not fabricate the later uploading cashier or block offline sales.
-  if(saved.source?.author)rows=rows.map(row=>{
-   try{return Object.freeze({...row,author_proof_json:JSON.stringify(saved.source.author.signMovement(row))});}
-   catch(error){
-    if(!['ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING','ESYNC_SHIFT_AUTHOR_KEY_MISSING','ESYNC_SHIFT_AUTHOR_KEY_UNAVAILABLE','ESYNC_SHIFT_AUTHOR_VAULT_UNAVAILABLE','ESTOCK_AUTHOR_PERMISSION_REVOKED'].includes(error?.code))throw error;
-    return row;
+  if(saved.source?.author){const signed=[];for(const row of rows){
+   try{
+    const sourceManifestJson=await require('./stock-source-capture.cjs').sourceManifestForMovement({
+     action:saved.source.author.action,row,operations:saved.sourceOperations,before:saved.before,after,claims,request:()=>this.request(tx)});
+    this.assertCurrent();if(saved.source&&this.readContext?.()?.key!==saved.source.key)contract.fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
+    signed.push(Object.freeze({...row,author_proof_json:JSON.stringify(saved.source.author.signMovement(row,sourceManifestJson??undefined))}));
    }
-  });
+   catch(error){
+    if(!['ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING','ESYNC_SHIFT_AUTHOR_KEY_MISSING','ESYNC_SHIFT_AUTHOR_KEY_UNAVAILABLE','ESYNC_SHIFT_AUTHOR_VAULT_UNAVAILABLE','ESTOCK_AUTHOR_PERMISSION_REVOKED','ESTOCK_SOURCE_OVERSIZED'].includes(error?.code))throw error;
+    signed.push(row);
+   }
+  }rows=signed;}
   for(const branch of [...new Set(rows.map(row=>row.store_id))].sort()){
    await this.ensureHead(tx,branch);
    await this.insertMovements(tx,branch,rows.filter(row=>row.store_id===branch));
   }
   if(saved.products.unbounded)await this.invalidateCoverage(tx,context.branchId,'UNBOUNDED_STOCK_WRITE');
   if(!saved.writerKnown)await this.invalidateCoverage(tx,context.branchId,'UNVERIFIED_STOCK_WRITER');
+  const previous=new Map(saved.before.map(product=>[String(product.id).toLowerCase(),product])),currentProducts=new Map(after.map(product=>[String(product.id).toLowerCase(),product]));
+  const cohortChanged=previous.size!==currentProducts.size||[...previous].some(([id,product])=>!currentProducts.has(id)||
+   (product.owner_store_id??null)!==(currentProducts.get(id).owner_store_id??null));
+  if(cohortChanged)await this.invalidateCoverage(tx,context.branchId,'STOCK_PRODUCT_COHORT_CHANGED');
   this.assertCurrent();if(saved.source&&this.readContext?.()?.key!==saved.source.key)contract.fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
-  CAPTURES.delete(token);return {captured:rows.length,available:true,incomplete:saved.products.unbounded||!saved.writerKnown};
+  CAPTURES.delete(token);return {captured:rows.length,available:true,incomplete:saved.products.unbounded||!saved.writerKnown||cohortChanged};
  }
  async insertMovements(tx,branch,rows){
   if(!rows.length)return;
@@ -170,10 +181,10 @@ class StockHistoryStore{
     OUTPUT inserted.local_committed_cursor INTO @history_position WHERE store_id=@history_branch;
    DECLARE @history_inserted table(id uniqueidentifier);
    INSERT dbo.stock_history_movements(id,operation_id,product_id,store_id,terminal_id,actor_id,source_kind,quantity_delta,effective_at_raw,effective_ticks,
-    recorded_at_raw,recorded_ticks,product_name,sku,barcode,clock_state,payload_hash,payload_json,local_cursor,author_proof_json)
+    recorded_at_raw,recorded_ticks,product_name,sku,barcode,clock_state,payload_hash,payload_json,local_cursor,author_proof_json,upload_aggregate_id)
     OUTPUT inserted.id INTO @history_inserted
     SELECT id,operation_id,product_id,store_id,terminal_id,actor_id,source_kind,quantity_delta,effective_at_raw,effective_ticks,recorded_at_raw,recorded_ticks,
-     product_name,sku,barcode,clock_state,payload_hash,payload_json,(SELECT [cursor] FROM @history_position)-@history_count+ROW_NUMBER() OVER(ORDER BY id),author_proof_json FROM @history_candidates;
+     product_name,sku,barcode,clock_state,payload_hash,payload_json,(SELECT [cursor] FROM @history_position)-@history_count+ROW_NUMBER() OVER(ORDER BY id),author_proof_json,CONVERT(uniqueidentifier,@history_upload_aggregate) FROM @history_candidates;
    INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id,entity_version,aggregate_id)
     SELECT N'stock_history_movements',CONCAT(N'{"id":"',CONVERT(nvarchar(36),r.id),N'"}'),N'insert',r.store_id,1,CONVERT(uniqueidentifier,@history_upload_aggregate)
     FROM @history_candidates r JOIN @history_inserted inserted ON inserted.id=r.id;

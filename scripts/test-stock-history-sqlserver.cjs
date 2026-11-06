@@ -204,6 +204,102 @@ const migration=fs.readFileSync(path.join(__dirname,'../database/sqlserver/prepa
  const beforeRevoked=(await stock()).a;op.values.stock_by_store={a:beforeRevoked+1,b:1};const revokedOperation=randomUUID();await capture({operationId:revokedOperation});
  assert.equal((await stock()).a,beforeRevoked+1);assert.equal((await pool.request().input('operation',revokedOperation).query('SELECT author_proof_json FROM dbo.stock_history_movements WHERE operation_id=@operation;')).recordset[0].author_proof_json,null);
  pass('report-author permission loss retains review evidence without widening or overriding the actual business writer');
+ const multiProducts=Array.from({length:10},()=>randomUUID()),multiOperation=randomUUID();
+ await pool.request().input('ids',JSON.stringify(multiProducts)).query(`INSERT dbo.products(id,name,stock_by_store) SELECT CONVERT(uniqueidentifier,value),N'Batch fixture',N'{"a":3}' FROM OPENJSON(@ids);`);
+ await inTx(async tx=>{
+  const operations=multiProducts.map(id=>({kind:'update',table:'products',match:{id},values:{stock_by_store:{a:2}}}));
+  const token=await store.begin(tx,operations,{operationId:multiOperation,branchId:'a',terminalId:'t',kind:'stock'});
+  await new sql.Request(tx).input('ids',JSON.stringify(multiProducts)).query(`UPDATE p SET stock_by_store=N'{"a":2}' FROM dbo.products p JOIN OPENJSON(@ids) ids ON p.id=CONVERT(uniqueidentifier,ids.value);`);
+  assert.equal((await store.finish(tx,token)).captured,10);
+ });
+ const multiAggregate=c.uploadAggregateId(multiOperation,'a'),firstReader=new StockHistoryOutbox(manager),firstPage=await firstReader.pending(multiAggregate,'a','t');
+ assert.equal(firstPage.rows.length,8);const restartedReader=new StockHistoryOutbox(manager),retryPage=await restartedReader.pending(multiAggregate,'a','t');
+ assert.deepEqual(retryPage,firstPage);pass('a ten-product operation uploads only eight original claims and repeats the same unacknowledged page after restart');
+ let nextPosition=100;const pageAck=page=>({ok:true,version:1,branchId:'a',terminalId:'t',receipts:page.rows.map(row=>({id:row.id,payloadHash:row.payloadHash,ingestedCursor:String(nextPosition++),acceptedAt,effectIds:[randomUUID()]}))});
+ assert.deepEqual(await restartedReader.acknowledge(retryPage,pageAck(retryPage)),{acknowledged:8});
+ const lastPage=await restartedReader.pending(multiAggregate,'a','t');assert.equal(lastPage.rows.length,2);assert(lastPage.rows.every(row=>!firstPage.rows.some(first=>first.id===row.id)));
+ assert.deepEqual(await restartedReader.acknowledge(lastPage,pageAck(lastPage)),{acknowledged:2});assert.equal(await restartedReader.pending(multiAggregate,'a','t'),null);
+ assert.equal((await pool.request().input('ids',JSON.stringify(multiProducts)).query(`SELECT COUNT(*) n FROM dbo.products p JOIN OPENJSON(@ids) ids ON p.id=CONVERT(uniqueidentifier,ids.value) WHERE JSON_VALUE(stock_by_store,'$.a')=N'2';`)).recordset[0].n,10);
+ pass('partial exact acknowledgements preserve the remaining two claims and never reapply business stock');
+ const heldMessage='Stock history needs source/author review (STOCK_HISTORY_SOURCE_ORIGIN_UNPROVEN).';
+ const heldAggregate=c.uploadAggregateId(revokedOperation,'a'),queue=new ChangeReader(manager);
+ await pool.request().input('aggregate',heldAggregate).input('message',heldMessage).query('UPDATE dbo.sync_change_journal SET last_error=@message WHERE aggregate_id=@aggregate;');
+ const heldReader=new StockHistoryOutbox(manager),summary=()=>queue.pendingSummary('a');
+ assert.equal(await heldReader.reviewHeldCount(await summary(),'a','t'),1);
+ assert.equal(await new StockHistoryOutbox(manager).reviewHeldCount(await summary(),'a','t'),1);
+ assert.equal(await heldReader.reviewHeldCount(await summary(),'a','other-terminal'),0);
+ assert.equal(await heldReader.reviewHeldCount(await summary(),'A','t'),0);
+ assert.equal(await heldReader.reviewHeldCount(await summary(),'a','T'),0);
+ pass('durable exact metadata identity remains review-held after restart and is terminal-scoped');
+ await assert.rejects(pool.request().input('aggregate',randomUUID()).input('operation',revokedOperation).query('UPDATE dbo.stock_history_movements SET upload_aggregate_id=@aggregate WHERE operation_id=@operation;'),error=>/STOCK_HISTORY_IMMUTABLE/.test(error.message));
+ pass('business-journal renaming cannot change the immutable metadata aggregate identity');
+ const fakeAggregate=randomUUID(),fakeId=randomUUID();
+ await pool.request().input('aggregate',fakeAggregate).input('entity',JSON.stringify({id:fakeId})).input('message',heldMessage).query(`INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id,entity_version,aggregate_id,last_error)
+  VALUES(N'stock_history_movements',@entity,N'insert',N'a',1,@aggregate,@message);`);
+ assert.equal(await heldReader.reviewHeldCount(await summary(),'a','t'),1);
+ await pool.request().input('aggregate',fakeAggregate).input('entity',JSON.stringify({id:signedRow.id})).query('UPDATE dbo.sync_change_journal SET entity_id=@entity WHERE aggregate_id=@aggregate;');
+ assert.equal(await heldReader.reviewHeldCount(await summary(),'a','t'),1);
+ pass('forged review text/table names and unknown movement IDs remain critical');
+ const mixedId=randomUUID();
+ await pool.request().input('aggregate',heldAggregate).input('entity',JSON.stringify({id:mixedId})).input('message',heldMessage).query(`INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id,entity_version,aggregate_id,last_error)
+  VALUES(N'audit_logs',@entity,N'insert',N'other-branch',1,@aggregate,@message);`);
+ assert.equal(await heldReader.reviewHeldCount(await summary(),'a','t'),0);
+ await pool.request().input('aggregate',heldAggregate).query("DELETE dbo.sync_change_journal WHERE aggregate_id=@aggregate AND entity_type=N'audit_logs';");
+ assert.equal(await heldReader.reviewHeldCount(await summary(),'a','t'),1);
+ pass('any mixed business row keeps its entire aggregate critical even under another branch');
+ const staleSummary=await summary();staleSummary.queuedTables.find(row=>row.table==='stock_history_movements').failed++;
+ assert.equal(await heldReader.reviewHeldCount(staleSummary,'a','t'),0);
+ const beforeCoreSummary=await summary(),newCoreAggregate=randomUUID();
+ await pool.request().input('aggregate',newCoreAggregate).input('entity',JSON.stringify({id:randomUUID()})).query(`INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id,entity_version,aggregate_id)
+  VALUES(N'sales',@entity,N'insert',N'a',1,@aggregate);`);
+ assert.equal(await heldReader.reviewHeldCount(beforeCoreSummary,'a','t'),0);
+ assert.equal(await heldReader.reviewHeldCount(await summary(),'a','t'),1);
+ pass('a core sale committed between summary and classifier cannot be waived by the extra metadata read');
+ const beforeHeldStock=await stock(),beforeHeldCount=(await pool.request().query('SELECT COUNT(*) n FROM dbo.sync_change_journal WHERE acknowledged_at IS NULL;')).recordset[0].n;
+ await heldReader.reviewHeldCount(await summary(),'a','t');
+ assert.deepEqual(await stock(),beforeHeldStock);assert.equal((await pool.request().query('SELECT COUNT(*) n FROM dbo.sync_change_journal WHERE acknowledged_at IS NULL;')).recordset[0].n,beforeHeldCount);
+ pass('stale queue summaries fail closed and review classification changes no data or acknowledgements');
+ await pool.request().batch('CREATE TABLE dbo.stock_adjustments(id uniqueidentifier PRIMARY KEY,product_id uniqueidentifier,store_id nvarchar(128),delta int);');
+ const freshInfo=keys.prepare(binding);keys.markEnrolled(binding,{keyId:freshInfo.keyId,publicKey:freshInfo.publicKey});
+ context.author={action:'ADJUST',signMovement:(row,sourceManifestJson)=>keys.signStockEvent(binding,{expectedKeyId:freshInfo.keyId,subject:'cashier-a',branchId:row.store_id,operationId:row.operation_id,movementId:row.id,action:'ADJUST',payloadHash:row.payload_hash,...(sourceManifestJson?{sourceManifestJson}:{})})};
+ const adjustId=randomUUID(),adjustOperation=randomUUID(),adjustBefore=(await stock()).a;
+ await inTx(async tx=>{
+  const adjustments=[{kind:'update',table:'products',match:{id:pid},values:{stock_by_store:{a:adjustBefore-1,b:1}}},{kind:'insert',table:'stock_adjustments',rows:[{id:adjustId,product_id:pid,store_id:'a',delta:-1}]}];
+  const token=await store.begin(tx,adjustments,{operationId:adjustOperation,branchId:'a',terminalId:'t',kind:'stock'});
+  await new sql.Request(tx).input('id',adjustId).input('stock',JSON.stringify({a:adjustBefore-1,b:1})).batch(`INSERT dbo.stock_adjustments VALUES(@id,'${pid}',N'a',-1);UPDATE dbo.products SET stock_by_store=@stock WHERE id='${pid}';`);
+  assert.equal((await store.finish(tx,token)).captured,1);
+ });
+ const adjustmentRow=(await pool.request().input('operation',adjustOperation).query('SELECT author_proof_json,payload_hash FROM dbo.stock_history_movements WHERE operation_id=@operation;')).recordset[0];
+ const adjustmentProof=JSON.parse(adjustmentRow.author_proof_json),sourceManifest=JSON.parse(adjustmentProof.sourceManifestJson);
+ assert.equal(adjustmentProof.payloadHash,adjustmentRow.payload_hash);assert.deepEqual(sourceManifest.document,{type:'stock_adjustments',id:adjustId});
+ assert.deepEqual(sourceManifest.sourceRefs,[['stock_adjustments',adjustId,'-1']]);assert.equal(sourceManifest.authorId,authorId);
+ pass('original actual adjustment source manifest and enrolled author signature commit with the stock delta, without later reconstruction');
+ context.author=null;
+ const cohortProduct=randomUUID(),cohortOperation=randomUUID();
+ await pool.request().query("UPDATE dbo.stock_history_heads SET coverage_state=N'complete' WHERE store_id=N'a';");
+ await inTx(async tx=>{
+  const token=await store.begin(tx,[{kind:'insert',table:'products',rows:[{id:cohortProduct}]}],{operationId:cohortOperation,branchId:'a',terminalId:'t',kind:'product'});
+  await new sql.Request(tx).input('id',cohortProduct).query("INSERT dbo.products(id,name,stock_by_store) VALUES(@id,N'New zero product',N'{\"a\":0}');");
+  assert.deepEqual(await store.finish(tx,token),{captured:0,available:true,incomplete:true});
+ });
+ assert.equal((await pool.request().query("SELECT coverage_state FROM dbo.stock_history_heads WHERE store_id=N'a';")).recordset[0].coverage_state,'incomplete');
+ pass('a newly created zero-stock product invalidates old cohort coverage instead of disappearing from a complete report');
+ const openingRows=(await pool.request().input('id',zero).query('SELECT COUNT(*) n FROM dbo.stock_history_openings WHERE product_id=@id;')).recordset[0].n;
+ await inTx(async tx=>{
+  const token=await store.begin(tx,[{kind:'delete',table:'products',match:{id:zero}}],{operationId:randomUUID(),branchId:'a',terminalId:'t',kind:'product'});
+  await new sql.Request(tx).input('id',zero).query('DELETE dbo.products WHERE id=@id;');assert.equal((await store.finish(tx,token)).incomplete,true);
+ });
+ assert.equal((await pool.request().input('id',zero).query('SELECT COUNT(*) n FROM dbo.stock_history_openings WHERE product_id=@id;')).recordset[0].n,openingRows);
+ pass('catalogue deletion retains historical opening identity and invalidates membership coverage without a blocking history FK');
+ await pool.request().query("UPDATE dbo.stock_history_heads SET coverage_state=N'complete' WHERE store_id=N'a';");
+ await inTx(async tx=>{
+  const token=await store.begin(tx,[{kind:'update',table:'products',match:{id:pid},values:{owner_store_id:'b'}}],{operationId:randomUUID(),branchId:'a',terminalId:'t',kind:'product'});
+  await new sql.Request(tx).input('id',pid).query("UPDATE dbo.products SET owner_store_id=N'b' WHERE id=@id;");
+  assert.equal((await store.finish(tx,token)).incomplete,true);
+ });
+ assert.equal((await pool.request().query("SELECT coverage_state FROM dbo.stock_history_heads WHERE store_id=N'a';")).recordset[0].coverage_state,'incomplete');
+ assert.equal((await pool.request().input('id',pid).query('SELECT COUNT(*) n FROM dbo.stock_history_openings WHERE product_id=@id;')).recordset[0].n>0,true);
+ pass('an owner-only catalogue change is captured for cohort invalidation while original historical identity remains');
  console.log('PASS '+groups+' actual disposable stock-history SQL groups');
 }finally{
  await pool?.close().catch(()=>{});if(created)await master.request().batch('ALTER DATABASE ['+database+'] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;DROP DATABASE ['+database+'];');await master?.close().catch(()=>{});

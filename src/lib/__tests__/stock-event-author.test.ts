@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { generateKeyPairSync, sign, verify, createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
+import { stockSourceManifestJson } from '../../../electron/shared/stock-source-manifest.mjs';
 const require = createRequire(import.meta.url);
 const protocol = require("../../../electron/security/stock-event-author-protocol.cjs");
 const { createShiftAuthorKeys } = require("../../../electron/security/shift-author-key.cjs");
@@ -17,7 +18,7 @@ const pair = generateKeyPairSync("ed25519");
 const signed = () => ({ ...unsigned, signature:sign(null,Buffer.from(protocol.stockEventMessage(unsigned)),pair.privateKey).toString("base64url") });
 const directories: string[] = [];
 afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory,{recursive:true,force:true}); });
-function fixture() {
+function fixture(action='SALE') {
  const directory=mkdtempSync(join(tmpdir(),"stock-author-fixture-"));directories.push(directory);
  const safeStorage={isEncryptionAvailable:()=>true,encryptString:(value:string)=>Buffer.from(value),decryptString:(value:Buffer)=>value.toString()};
  const keys=createShiftAuthorKeys({safeStorage,directory:()=>directory}),info=keys.prepare(binding);
@@ -27,12 +28,39 @@ function fixture() {
  const queries:string[]=[];
  class Request { input(){return this;} async query(sql:string){queries.push(sql);return{recordset:context.rows};} }
  const permissionCalls:string[]=[];
- const manager={pool:{},sql:()=>({Request})},session={identity:()=>person,epoch:()=>context.epoch,hasPermission:(flag:string)=>{permissionCalls.push(flag);return context.permission&&flag==='can_process_sale';}};
+ const manager={pool:{},sql:()=>({Request})},session={identity:()=>person,epoch:()=>context.epoch,hasPermission:(flag:string)=>{permissionCalls.push(flag);return context.permission&&protocol.ACTIONS[action].permissions.includes(flag);}};
  const authority=new StockEventAuthority({keys,session,connectionManager:manager,terminal:()=>context.terminal,project:()=>context.project,branch:()=>context.branch,context:()=>context.profile});
- const row=contract.changes(contract.normalizeContext({operationId:operation,branchId:"a",terminalId:"terminal-a",actorId:author,kind:"sale"},"2026-11-06T00:00:00.1234567Z"),[{id:product,name:"Fixture",stock_by_store:{a:2}}],[{id:product,name:"Fixture",stock_by_store:{a:1}}])[0];
+ const row=contract.changes(contract.normalizeContext({operationId:operation,branchId:"a",terminalId:"terminal-a",actorId:author,kind:protocol.ACTIONS[action].kind},"2026-11-06T00:00:00.1234567Z"),[{id:product,name:"Fixture",stock_by_store:{a:2}}],[{id:product,name:"Fixture",stock_by_store:{a:1}}])[0];
  return{directory,keys,info,person,context,queries,manager,authority,row,safeStorage,permissionCalls};
 }
 describe("dedicated stock author domain",()=>{
+ it('preserves the original no-manifest wire bytes and signs the canonical source in the same dedicated domain',async()=>{
+  const f=fixture('ADJUST'),prepared=await f.authority.prepare(f.authority.capture('ADJUST'));
+  const source={version:1,operationId:operation,action:'ADJUST',document:{type:'stock_adjustments',id:other},authorId:author,terminalId:'terminal-a',branchId:'a',productId:product,delta:'-1',effectiveAt:f.row.effective_at_raw,recordedAt:f.row.recorded_at_raw,sourceRefs:[]};
+  const raw=stockSourceManifestJson(source),proof=prepared.signMovement(f.row,raw),{signature,...facts}=proof;
+  expect(proof.sourceManifestJson).toBe(raw);expect(protocol.normalizeStockEvent(proof)).toEqual(proof);
+  expect(verify(null,Buffer.from(protocol.stockEventMessage(facts)),{key:Buffer.from(f.info.publicKey,'base64url'),type:'spki',format:'der'},Buffer.from(signature,'base64url'))).toBe(true);
+  expect(protocol.stockEventMessage(unsigned)).toBe(JSON.stringify(['retail-pos.stock-event.v1','Ed25519',binding.projectOrigin,binding.terminalId,author,other,'cashier-a','a',operation,product,'SALE','a'.repeat(64)]));
+  const changed={...facts,sourceManifestJson:raw.replace(other,product)};
+  expect(verify(null,Buffer.from(protocol.stockEventMessage(changed)),{key:Buffer.from(f.info.publicKey,'base64url'),type:'spki',format:'der'},Buffer.from(signature,'base64url'))).toBe(false);
+ });
+ it.each(['operationId','action','authorId','terminalId','branchId','productId','delta','effectiveAt','recordedAt','sourceRefs','noncanonical'])('does not sign source evidence with mismatched %s',async field=>{
+  const f=fixture('ADJUST'),prepared=await f.authority.prepare(f.authority.capture('ADJUST'));
+  const value:Record<string,unknown>={version:1,operationId:operation,action:'ADJUST',document:{type:'stock_adjustments',id:other},authorId:author,terminalId:'terminal-a',branchId:'a',productId:product,delta:'-1',effectiveAt:f.row.effective_at_raw,recordedAt:f.row.recorded_at_raw,sourceRefs:[]};
+  if(['operationId','authorId','productId'].includes(field))value[field]=other;
+  if(field==='action'){value.action='PRODUCT_CREATE';value.document={type:'products',id:other};}
+  if(field==='terminalId'||field==='branchId')value[field]='other';
+  if(field==='delta')value.delta='-2';
+  if(field==='effectiveAt')value.effectiveAt='2026-11-05T00:00:00.0000000Z';
+  if(field==='recordedAt')value.recordedAt='2026-11-07T00:00:00.0000000Z';
+  if(field==='sourceRefs')value.sourceRefs=[['stock_adjustments',other,'-1']];
+  const raw=stockSourceManifestJson(value)+(field==='noncanonical'?' ':'');
+  expect(()=>prepared.signMovement(f.row,raw)).toThrow();
+ });
+ it('the Main key API rejects arbitrary and mismatched source claims before loading key material',()=>{
+  const f=fixture(),fields={expectedKeyId:f.info.keyId,subject:'cashier-a',branchId:'a',operationId:operation,movementId:product,action:'ADJUST',payloadHash:'a'.repeat(64)};
+  for(const raw of ['arbitrary','{}',JSON.stringify({version:1}),'x'.repeat(16385)])expect(()=>f.keys.signStockEvent(binding,{...fields,sourceManifestJson:raw})).toThrow();
+ });
  it("binds original author, domain, action, movement and exact hash",()=>{
   const proof=signed();expect(protocol.normalizeStockEvent(proof)).toEqual(proof);
   for(const patch of [{projectOrigin:"https://other.fixture"},{terminalId:"other"},{authorId:other},{keyId:author},{subject:"cashier-b"},{branchId:"b"},{operationId:other},{movementId:other},{action:"REFUND"},{payloadHash:"b".repeat(64)}])

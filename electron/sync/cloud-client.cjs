@@ -392,7 +392,7 @@ class CloudClient {
     const {identifier,fail}=require('../db/stock-history-contract.cjs');
     const terminal=this.terminalStore.read()??{},branch=terminal.locationId??terminal.storeId??terminal.branchId;
     if(!batch||batch.version!==1||identifier(batch.terminalId)!==recordId(this.terminalId())||
-      (branch!=null&&identifier(batch.branchId)!==recordId(String(branch)))||!Array.isArray(batch.rows)||!batch.rows.length||batch.rows.length>128)
+      (branch!=null&&identifier(batch.branchId)!==recordId(String(branch)))||!Array.isArray(batch.rows)||!batch.rows.length||batch.rows.length>8)
       fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
     const rows=batch.rows.map(row=>{
       if(!row||Object.keys(row).length!==(Object.hasOwn(row,'authorProofJson')?4:3)||!Object.hasOwn(row,'id')||!Object.hasOwn(row,'payloadHash')||!Object.hasOwn(row,'payloadJson')||

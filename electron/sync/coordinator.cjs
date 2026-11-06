@@ -88,7 +88,16 @@ class SyncCoordinator {
     const remaining=reader?.pendingSummary
       ? await reader.pendingSummary(options.branchId)
       : { pending:0,failed:0 };
-    if(Number(remaining.pending??0)>0||Number(remaining.failed??0)>0){
+    const pending=Number(remaining.pending??0),failed=Number(remaining.failed??0),total=pending+failed;
+    if(!Number.isSafeInteger(pending)||pending<0||!Number.isSafeInteger(failed)||failed<0||!Number.isSafeInteger(total))
+      return {...result,...remaining,ok:false,code:"ESYNC_PENDING",error:"Pending transaction status could not be verified."};
+    let reportHistoryPending=0;
+    if(total>0&&this.pushWorker?.stockHistory?.reviewHeldCount){
+      try{const reviewed=await this.pushWorker.stockHistory.reviewHeldCount(remaining,options.branchId,this.pushWorker.cloud?.terminalId?.()??'');
+        if(Number.isSafeInteger(reviewed)&&reviewed>0&&reviewed<=total)reportHistoryPending=reviewed;
+      }catch{/* Unknown schema/context/metadata remains critical; never guess. */}
+    }
+    if(total-reportHistoryPending>0){
       return {
         ...result,
         ...remaining,
@@ -97,7 +106,7 @@ class SyncCoordinator {
         error:"Required local transactions are still waiting for central acknowledgement.",
       };
     }
-    return { ...result, ...remaining, final:true };
+    return { ...result, ...remaining, final:true,allUploaded:total===0,...(reportHistoryPending?{reportHistoryPending}: {}) };
   }
   async runOnce(options = {}) {
     this.running=true;

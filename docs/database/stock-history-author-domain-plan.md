@@ -89,6 +89,45 @@ key/authority retention. Hosted accepted-effect admission, exclusive consumption
 Main activation and complete opening/cohort coverage remain pending. Draft031
 still stays outside the installer/consolidated update and is not a final file.
 
+Further isolated checkpoint (6 November): 45 actual disposable SQL Server groups
+now pass, including immutable dedicated upload identity, restart/lost ACK,
+eight-plus-two bounded pages and strict final-barrier review classification.
+The final barrier may finish an otherwise accepted shift while reporting
+`allUploaded:false`, exact pending/failed counts and `reportHistoryPending`.
+Unknown, mixed, legacy and all financial rows remain critical. The optional
+metadata hold changes no acknowledgement, queue, checkpoint or closing proof.
+Independent review reproduced and corrected two narrow issues before this
+checkpoint: the classifier now rechecks all queue totals in its serializable
+transaction, and the exemption uses exact branch/terminal/table/kind bytes under
+case-insensitive SQL defaults. Changed core queues and differently cased branch
+codes therefore remain critical. New zero products, deletion and owner-only
+changes invalidate old cohort coverage and retain historical identity.
+
+Five actual protected-sale cloud fixture groups exercise the existing enrolled
+author, financial opening/event, actual sale/item/activity writer, same-transaction
+stock effect/publication and exact stock metadata receipt. This is stronger than
+the separate minimal-origin unit fixtures; neither is production acceptance or
+complete source/cohort coverage. Request-local read coalescing preserves every
+signature check and fresh current-author checks on the next request.
+
+The dedicated stock signature also binds an optional canonical original source
+manifest. No-manifest stock messages and existing financial/shift domains retain
+their exact bytes. Main and server match original action, operation, author,
+terminal, branch, product, quantity, original times and source references. This
+protects a claim's integrity only. The server still requires the actual accepted
+workflow/effect; a signature alone never creates a report movement or certifies
+clock/coverage. Posted receiving reads the real `purchase_orders` storage and its
+saved activity; invoice dates are not substituted for physical movement time.
+Ambiguous or unsupported source paths remain held, and no Main factory is active.
+
+Current source verification: 561 focused stock/author/shift/sync tests in 25 suites,
+TypeScript and scoped lint pass. The independent reviewer separately reran 216
+tests, all 45 actual disposable SQL Server groups and all five genuine protected
+SALE groups with no remaining blocker in the reviewed delta. Nonfinancial cloud
+origin admission, Main activation, complete opening/cohort/prefix publication,
+hosted CPU and installed end-to-end acceptance remain outstanding. No draft SQL
+was applied to a real database or included as final upgrade bytes.
+
 - Cross-domain, wrong branch/terminal/project/author/key, changed hash/arrival
   time, malformed/oversized proof and signer injection are denied.
 - Existing enrolled key is reused unchanged; missing/unreadable/revoked key

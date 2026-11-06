@@ -4,6 +4,7 @@ const require=createRequire(import.meta.url),c=require('../../../electron/db/sto
 const {stockHistoryUploadRow,assertStockHistoryAcknowledgement}=require('../../../electron/sync/stock-history-ack.cjs');
 const {StockHistoryUploader}=require('../../../electron/sync/stock-history-uploader.cjs');
 const {PushWorker}=require('../../../electron/sync/push-worker.cjs'),{CloudClient}=require('../../../electron/sync/cloud-client.cjs');
+const {SyncCoordinator}=require('../../../electron/sync/coordinator.cjs');
 const terminal='11111111-1111-4111-8111-111111111111',operation='22222222-2222-4222-8222-222222222222',product='33333333-3333-4333-8333-333333333333';
 const branch='branch-a',at='2026-11-06T00:00:00.1234567Z';
 function fixture(){
@@ -18,6 +19,28 @@ function fixture(){
 }
 afterEach(()=>{vi.restoreAllMocks();vi.unstubAllGlobals();});
 describe('bounded history metadata adapter in the existing durable sync lane',()=>{
+ it('holds only explicit source/author review codes with bounded automatic cooldown and no ACK',async()=>{
+  const f=fixture();let now=0;
+  f.cloud.pushStockHistory.mockRejectedValue(Object.assign(new Error('Unproven source'),{code:'STOCK_HISTORY_SOURCE_ORIGIN_UNPROVEN',status:409}));
+  const uploader=new StockHistoryUploader({outbox:f.outbox,cloud:f.cloud,now:()=>now});
+  expect(await uploader.upload(f.aggregate,branch,terminal)).toMatchObject({held:{fresh:true,code:'STOCK_HISTORY_SOURCE_ORIGIN_UNPROVEN'}});
+  expect(await uploader.upload(f.aggregate,branch,terminal)).toMatchObject({held:{fresh:false}});expect(f.cloud.pushStockHistory).toHaveBeenCalledTimes(1);
+  now=300001;expect(await uploader.upload(f.aggregate,branch,terminal)).toMatchObject({held:{fresh:true}});expect(f.cloud.pushStockHistory).toHaveBeenCalledTimes(2);expect(f.outbox.acknowledge).not.toHaveBeenCalled();
+ });
+ it('lets core push/pull complete while exact SQL queue counts still expose held report work',async()=>{
+  const f=fixture(),failed=vi.fn(),reader={connectionManager:{pool:{}},pendingAggregates:async(_branch:string,_limit:number,excluded:string[])=>excluded.includes(f.aggregate.aggregateId)?[]:[f.aggregate],
+   failAggregate:failed,pendingSummary:async()=>({pending:0,failed:1,queuedTables:[{table:'stock_history_movements',pending:0,failed:1,error:'Source review required'}]})};
+  f.cloud.pushStockHistory.mockRejectedValue(Object.assign(new Error('Unproven source'),{code:'STOCK_HISTORY_SOURCE_ORIGIN_UNPROVEN',status:409}));
+  const cloud={...f.cloud,terminalId:()=>terminal},worker=new PushWorker({reader,cloud,checkpoints:{},registry:{tables:[]},stockHistory:new StockHistoryUploader({outbox:f.outbox,cloud})});
+  const pull=vi.fn(async()=>({merged:3})),coordinator=new SyncCoordinator({pushWorker:worker,pullWorker:{run:pull}});
+  const result=await coordinator.runNow({branchId:branch});expect(result).toMatchObject({ok:true,heldStockHistoryAggregates:1,pending:0,failed:1,lastError:null,credentialsInvalid:false,merged:3});
+  expect(pull).toHaveBeenCalledTimes(1);expect(failed).toHaveBeenCalledTimes(1);expect(f.outbox.acknowledge).not.toHaveBeenCalled();
+  expect(await coordinator.runNow({branchId:branch})).toMatchObject({ok:true,failed:1});expect(f.cloud.pushStockHistory).toHaveBeenCalledTimes(1);expect(failed).toHaveBeenCalledTimes(1);
+ });
+ it.each([{code:'SESSION_INVALID',status:401},{code:'SYNC_BRANCH_FORBIDDEN',status:403},{code:'ETIMEDOUT',status:0},{code:'HTTP_503',status:503}])('does not hide terminal/network failures %j as source review',async error=>{
+  const f=fixture();f.cloud.pushStockHistory.mockRejectedValue(Object.assign(new Error('Transport failure'),error));
+  await expect(f.adapter.upload(f.aggregate,branch,terminal)).rejects.toMatchObject(error);expect(f.outbox.acknowledge).not.toHaveBeenCalled();
+ });
  it('keeps original SQL batch ownership through exact acceptance',async()=>{
   const f=fixture();expect(await f.adapter.upload(f.aggregate,branch,terminal)).toEqual({acknowledged:1});
   expect(f.outbox.pending).toHaveBeenCalledWith(f.aggregate.aggregateId,branch,terminal);expect(f.cloud.pushStockHistory).toHaveBeenCalledWith(f.batch);

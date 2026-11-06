@@ -27,6 +27,7 @@ beforeEach(async()=>{
  await db.exec(`TRUNCATE private.stock_history_effect_coverage,private.stock_history_effect_sources,private.stock_history_accepted_effects,private.stock_history_source_receipts,private.stock_history_capture_gaps,stock_delta_applied,item_activity_logs,stock_history_heads,stock_history_openings,stock_history_baselines;
   UPDATE products SET stock_by_store='{"a":3,"b":2}',stock_quantity=5,price=19.95 WHERE id='${product}';
   DELETE FROM products WHERE id<>'${product}';
+  SET CONSTRAINTS ALL IMMEDIATE;
   TRUNCATE private.stock_history_effect_coverage,private.stock_history_effect_sources,private.stock_history_accepted_effects,private.stock_history_source_receipts,private.stock_history_capture_gaps;
   INSERT INTO stock_history_heads(store_id) VALUES('a'),('b');`);
 });
@@ -73,6 +74,16 @@ describe('actual accepted cloud stock effects, without claiming original author/
   await db.exec(`BEGIN;INSERT INTO stock_delta_applied VALUES('${receipt}','${product}','a',-1),(gen_random_uuid(),'${product}','a',-1);
    UPDATE products SET stock_by_store='{"a":2,"b":2}' WHERE id='${product}';COMMIT;`);
   expect(await rows('stock_history_accepted_effects')).toHaveLength(1);expect(await rows('stock_history_effect_sources')).toHaveLength(0);
+ });
+ it('links a unique receipt written after its actual product change in the same committed transaction',async()=>{
+  await db.exec(`BEGIN;UPDATE products SET stock_by_store='{"a":2,"b":2}' WHERE id='${product}';
+   INSERT INTO stock_delta_applied VALUES('${receipt}','${product}','a',-1);COMMIT;`);
+  const effects=await rows('stock_history_accepted_effects');expect(await rows('stock_history_effect_sources')).toEqual([{effect_id:effects[0]!.id,movement_id:receipt}]);
+ });
+ it('holds both equal late receipts instead of certifying the first arbitrary post-effect row',async()=>{
+  await db.exec(`BEGIN;UPDATE products SET stock_by_store='{"a":2,"b":2}' WHERE id='${product}';
+   INSERT INTO stock_delta_applied VALUES('${receipt}','${product}','a',-1);INSERT INTO stock_delta_applied VALUES(gen_random_uuid(),'${product}','a',-1);COMMIT;`);
+  expect(await rows('stock_history_source_receipts')).toHaveLength(2);expect(await rows('stock_history_effect_sources')).toHaveLength(0);
  });
  it('cannot reuse a receipt from an earlier transaction or a prior actual effect',async()=>{
   await sourceAndChange();await db.exec(`UPDATE products SET stock_by_store='{"a":1,"b":2}' WHERE id='${product}';`);

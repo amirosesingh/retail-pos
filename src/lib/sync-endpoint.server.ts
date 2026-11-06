@@ -77,6 +77,9 @@ const bodySchema = z.object({
     })
     .optional(),
   sqlServerAggregate: syncAggregateSchema.optional(),
+  sqlServerStockHistory:z.object({version:z.literal(1),branchId:z.string().min(1).max(128),terminalId:z.string().min(1).max(128),
+    rows:z.array(z.object({id:z.string().uuid(),payloadHash:z.string().regex(/^[a-f0-9]{64}$/),payloadJson:z.string().min(2).max(126976),authorProofJson:z.string().min(2).max(16384).optional()}).strict()).min(1).max(8),
+  }).strict().optional(),
   sqlServerLegacyRecovery: z.object({
     organizationId: z.string().min(1).max(128),
     branchId: z.string().min(1).max(128),
@@ -231,8 +234,8 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       });
       exactFinancialOperations = true;
     }
-    if(body.sqlServerLegacyRecovery||body.sqlServerFinancialCapability||body.sqlServerFinancialEvent||body.sqlServerFinancialBasis||body.sqlServerFinancialObservation||body.sqlServerAggregate?.registerFinancialBoundary||body.sqlServerAggregate?.shiftFinancialOpening||body.sqlServerAggregate?.financialLedgerProjection){
-      const operations=[body.managementSyncBranches,body.ops?.length,body.read,body.sqlServerBatch,body.sqlServerAggregate,body.sqlServerLegacyRecovery,body.sqlServerFinancialCapability,body.sqlServerFinancialEvent,body.sqlServerFinancialBasis,body.sqlServerFinancialObservation,body.sqlServerShiftGraph,body.sqlServerPull,body.sqlServerBootstrap,body.sqlServerCounts,body.sqlServerTelemetry,body.oldReceipt];
+    if(body.sqlServerStockHistory||body.sqlServerLegacyRecovery||body.sqlServerFinancialCapability||body.sqlServerFinancialEvent||body.sqlServerFinancialBasis||body.sqlServerFinancialObservation||body.sqlServerAggregate?.registerFinancialBoundary||body.sqlServerAggregate?.shiftFinancialOpening||body.sqlServerAggregate?.financialLedgerProjection){
+      const operations=[body.managementSyncBranches,body.ops?.length,body.read,body.sqlServerBatch,body.sqlServerAggregate,body.sqlServerStockHistory,body.sqlServerLegacyRecovery,body.sqlServerFinancialCapability,body.sqlServerFinancialEvent,body.sqlServerFinancialBasis,body.sqlServerFinancialObservation,body.sqlServerShiftGraph,body.sqlServerPull,body.sqlServerBootstrap,body.sqlServerCounts,body.sqlServerTelemetry,body.oldReceipt];
       if(operations.filter(Boolean).length!==1)throw new Error('Mixed financial metadata request');
     }
   } catch (error) {
@@ -256,6 +259,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     !body.read &&
     !body.sqlServerBatch &&
     !body.sqlServerAggregate &&
+    !body.sqlServerStockHistory &&
     !body.sqlServerLegacyRecovery &&
     !body.sqlServerFinancialEvent &&
     !body.sqlServerFinancialBasis &&
@@ -319,6 +323,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     const signedFinancialEventProof=body.sqlServerFinancialEvent?.proof;
     const signedFinancialOpening=body.sqlServerAggregate?.shiftFinancialOpening;
     const signedRecovery=body.sqlServerLegacyRecovery;
+    const signedStockHistory=body.sqlServerStockHistory;
     body = alignVerifiedScopeIds(body, scope);
     if (signedAuthor && body.sqlServerAggregate) body.sqlServerAggregate.shiftAuthor = signedAuthor;
     if (signedStart && body.sqlServerAggregate) body.sqlServerAggregate.shiftClosingStart = signedStart;
@@ -328,6 +333,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     // Recovery labels and raw graph text were signed by Main. Scope alignment
     // must never edit those bytes; the verifier checks them against the binding.
     if(signedRecovery)body.sqlServerLegacyRecovery=signedRecovery;
+    if(signedStockHistory)body.sqlServerStockHistory=signedStockHistory;
   } catch (e) {
     if ((e as { status?: number }).status === 503)
       return Response.json({ ok: false, code: "SERVICE_UNAVAILABLE", error: "Registration verification is temporarily unavailable." }, { status: 503 });
@@ -337,6 +343,16 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     );
   }
 
+  if(body.sqlServerStockHistory){
+    if(!verifiedTerminal||!scope.terminalId)return Response.json({ok:false,code:"TERMINAL_REQUIRED",error:"A verified terminal is required."},{status:403});
+    try{
+      const {acceptStockHistoryUpload}=await import("./stock-history-upload.server");
+      return Response.json(await acceptStockHistoryUpload(body.sqlServerStockHistory,verifiedTerminal));
+    }catch(error){
+      const known=error&&typeof error==="object"&&"status"in error&&"code"in error;
+      return Response.json({ok:false,code:known?error.code:"ESTOCK_HISTORY_UNAVAILABLE",error:"Stock history remains pending; no stock was changed."},{status:known?Number(error.status):503});
+    }
+  }
   if (body.managementSyncBranches) {
     if (!scope.managementReplica) return Response.json({ ok: false, error: "Management registration required" }, { status: 403 });
     const { serviceRest } = await import("@/core/api/pos-relay.server");

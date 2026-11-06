@@ -71,6 +71,7 @@ BEGIN TRY
    product_name nvarchar(max) NOT NULL,sku nvarchar(max) NULL,barcode nvarchar(max) NULL,
    clock_state nvarchar(16) NOT NULL,payload_hash char(64) NOT NULL,payload_json nvarchar(max) NOT NULL,
    author_proof_json nvarchar(max) NULL,
+   upload_aggregate_id uniqueidentifier NULL,
    ingested_cursor bigint NULL,ingested_at datetimeoffset(7) NULL,local_cursor bigint NOT NULL,
    CONSTRAINT UQ_stock_history_movement_leg UNIQUE(operation_id,product_id,store_id),
    CONSTRAINT CK_stock_history_movement_delta CHECK(quantity_delta<>0),
@@ -119,6 +120,7 @@ BEGIN TRY
  (N'stock_history_movements',N'clock_state',N'nvarchar',32,0,0,0),(N'stock_history_movements',N'payload_hash',N'char',64,0,0,0),
  (N'stock_history_movements',N'payload_json',N'nvarchar',-1,0,0,0),
  (N'stock_history_movements',N'author_proof_json',N'nvarchar',-1,0,0,1),
+ (N'stock_history_movements',N'upload_aggregate_id',N'uniqueidentifier',16,0,0,1),
  (N'stock_history_movements',N'ingested_cursor',N'bigint',8,19,0,1),(N'stock_history_movements',N'ingested_at',N'datetimeoffset',10,34,7,1),
  (N'stock_history_movements',N'local_cursor',N'bigint',8,19,0,0);
  IF EXISTS(SELECT * FROM @stockHistoryExpected EXCEPT SELECT t.name,c.name,ty.name,c.max_length,c.precision,c.scale,c.is_nullable
@@ -189,7 +191,7 @@ BEGIN TRY
  (N'stock_history_openings',N'foreign-key',N'FK_stock_history_opening_baseline','4ADEEC1B15BE249B1C4A37646E113214EE632F6205FFA8ED6355A7EE17D5DFE4'),
  (N'stock_history_openings',N'foreign-key-column',N'FK_stock_history_opening_baseline:baseline_id','C853D5347D4C6621BD8F27ED3A32FCC2050B9CC84D5E54224C7D89631854179D'),
  (N'stock_history_openings',N'foreign-key-column',N'FK_stock_history_opening_baseline:store_id','12FD9F2951C0B32A035D9036A822A9E0B8365713D9BD39F6D5706C02A9002E93'),
- (N'stock_history_movements',N'trigger',N'TR_stock_history_movement_immutable','9A0C7ED2675BDA064B78B0BA1A656B7EE5EDC3673EB81114E50F131E1E017F71'),
+ (N'stock_history_movements',N'trigger',N'TR_stock_history_movement_immutable','5149A62203909C26E515B0B119B1FDBE4E320615D6CBE8DD4C75B2CFE7DF34E5'),
  (N'stock_history_baselines',N'trigger',N'TR_stock_history_baseline_immutable','E19611E543A0B34E839DA84AC3AB6FEA5C4F4D65DF18028F22F1C28B90011763'),
  (N'stock_history_openings',N'trigger',N'TR_stock_history_opening_immutable','C628DA9CB7B67D0D18342D6A8D37459DAAF141FAF00BB6D25C5A263C091147B4');
   DECLARE @stockHistoryActualObjects table(table_name sysname,kind nvarchar(32),object_name sysname,object_hash varchar(64));
@@ -237,8 +239,8 @@ FROM objects';
  EXEC(N'CREATE OR ALTER TRIGGER dbo.TR_stock_history_movement_immutable ON dbo.stock_history_movements AFTER UPDATE,DELETE AS
  BEGIN SET NOCOUNT ON;
   IF EXISTS(SELECT id FROM deleted EXCEPT SELECT id FROM inserted)
-   OR EXISTS(SELECT id,operation_id,product_id,store_id,terminal_id,actor_id,source_kind,quantity_delta,effective_at_raw,effective_ticks,recorded_at_raw,recorded_ticks,product_name,sku,barcode,clock_state,payload_hash,payload_json,local_cursor FROM deleted
-    EXCEPT SELECT id,operation_id,product_id,store_id,terminal_id,actor_id,source_kind,quantity_delta,effective_at_raw,effective_ticks,recorded_at_raw,recorded_ticks,product_name,sku,barcode,clock_state,payload_hash,payload_json,local_cursor FROM inserted)
+   OR EXISTS(SELECT id,operation_id,product_id,store_id,terminal_id,actor_id,source_kind,quantity_delta,effective_at_raw,effective_ticks,recorded_at_raw,recorded_ticks,product_name,sku,barcode,clock_state,payload_hash,payload_json,local_cursor,upload_aggregate_id FROM deleted
+    EXCEPT SELECT id,operation_id,product_id,store_id,terminal_id,actor_id,source_kind,quantity_delta,effective_at_raw,effective_ticks,recorded_at_raw,recorded_ticks,product_name,sku,barcode,clock_state,payload_hash,payload_json,local_cursor,upload_aggregate_id FROM inserted)
    OR EXISTS(SELECT 1 FROM inserted i JOIN deleted d ON i.id=d.id WHERE
     (i.author_proof_json IS NULL AND d.author_proof_json IS NOT NULL) OR (i.author_proof_json IS NOT NULL AND d.author_proof_json IS NULL)
     OR DATALENGTH(i.author_proof_json)<>DATALENGTH(d.author_proof_json)

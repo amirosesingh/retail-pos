@@ -297,7 +297,7 @@ class PushWorker {
   }
   async pushAggregates(branchId, batchSize, isolate = false, onProgress = () => {}, includeActivity = true) {
     branchId = recordId(branchId);
-    this.pushErrors = []; this.blockedTables = new Set();
+    this.pushErrors = []; this.blockedTables = new Set();this.stockHistoryHolds=new Set();
     let pushed = 0;
     const terminalId = this.cloud.terminalId?.() ?? "";
     await this.registerFinancialHistory(branchId,terminalId,onProgress);
@@ -319,6 +319,11 @@ class PushWorker {
       try {
       if(this.stockHistory?.accepts(aggregate)){
         const result=await this.stockHistory.upload(aggregate,branchId,terminalId);
+        if(result.held){
+          if(result.held.fresh)for(const id of originalIds)await this.reader.failAggregate(id,{code:result.held.code,message:result.held.message,table:'stock_history_movements'});
+          originalIds.forEach(id=>{deferred.add(id);this.stockHistoryHolds.add(id);});
+          continue; // A truthful own-domain hold does not block core trading.
+        }
         pushed+=result.acknowledged;
         onProgress({direction:'push',table:'stock_history_movements',completed:result.acknowledged});
         continue;
@@ -665,7 +670,7 @@ class PushWorker {
     // or a blind checkpoint advance. Ordinary legacy passes stay unchanged.
     if(financialCoverageAdvanced)pushed+=await this.pushAggregates(branchId,batchSize,true,onProgress,includeActivity);
     if (this.pushErrors.length) throw Object.assign(this.pushErrors[0], {pushed, failures:this.pushErrors.length});
-    return { pushed, deferredTables:[...deferredTables] };
+    return { pushed, deferredTables:[...deferredTables],...(this.stockHistoryHolds?.size?{heldStockHistoryAggregates:this.stockHistoryHolds.size}:{}) };
   }
 }
 module.exports = { PushWorker, collapseChanges, rowsForBranch, terminalWritableChanges, batchAuditAggregates };

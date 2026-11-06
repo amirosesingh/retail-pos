@@ -15,6 +15,7 @@ const encoder = new TextEncoder();
 // Request-local cryptographic key witness; grants are still read freshly.
 const verifiedAuthorKeys = new WeakMap<object,RegistryKey>();
 const verifiedStockKeys = new WeakMap<object,RegistryKey>();
+const stockVerificationRequests = new WeakMap<object, { keys: Map<string,Promise<Awaited<ReturnType<typeof registry>>>>; authors: Map<string,Promise<Awaited<ReturnType<typeof databaseAuthority>>>> }>();
 const requestSchema = z.object({
   sessionToken: z.string().min(1).max(400).optional(),
   cashierToken: z.string().min(1).max(2000).optional(),
@@ -168,13 +169,26 @@ export async function shiftAuthorTerminalEnrolled(terminalId: string): Promise<b
   return (await registry({ projectOrigin: projectOrigin(), terminalId })).terminalEnrolled;
 }
 
+/** One bounded upload can reuse identical CURRENT registry/account reads. The
+ * cache is request-local/private; it never accepts caller-supplied key material,
+ * survives a request, replaces signature checks or bypasses SQL's fresh locks. */
+export function createStockEventVerificationRequest(): object {
+  const token=Object.freeze({});stockVerificationRequests.set(token,{keys:new Map(),authors:new Map()});return token;
+}
+async function stockRegistry(binding: {projectOrigin:string;terminalId:string;authorId:string;keyId:string},request?:object){
+  if(!request)return registry(binding);
+  const cache=stockVerificationRequests.get(request);if(!cache)return denied("ESTOCK_AUTHOR_INVALID");
+  const id=JSON.stringify([binding.projectOrigin,binding.terminalId,binding.authorId,binding.keyId]);
+  if(!cache.keys.has(id))cache.keys.set(id,registry(binding));return cache.keys.get(id)!;
+}
+
 /** Dedicated stock domain only. Returns no key material or write capability. */
-export async function verifyStockEventRegistryProof(value: unknown) {
+export async function verifyStockEventRegistryProof(value: unknown, request?:object) {
   const { normalizeStockEvent, stockEventMessage } = await import("../../electron/security/stock-event-author-protocol.cjs");
   let proof: ReturnType<typeof normalizeStockEvent>;
   try { proof = normalizeStockEvent(value); } catch { return denied("ESTOCK_AUTHOR_INVALID"); }
   if (proof.projectOrigin !== projectOrigin()) return denied("ESTOCK_AUTHOR_INVALID");
-  const key = (await registry(proof)).key;
+  const key = (await stockRegistry(proof,request)).key;
   if (!key || !matchingKey(key, proof)) return denied("ESTOCK_AUTHOR_INVALID");
   const { signature, ...fields } = proof;
   if (!await validSignature(key.public_key, signature, stockEventMessage(fields))) return denied("ESTOCK_AUTHOR_INVALID");
@@ -185,11 +199,14 @@ export async function verifyStockEventRegistryProof(value: unknown) {
   return proof;
 }
 
-export async function readVerifiedStockEventAuthor(proof: Awaited<ReturnType<typeof verifyStockEventRegistryProof>>): Promise<ShiftAuthorAuthority> {
+export async function readVerifiedStockEventAuthor(proof: Awaited<ReturnType<typeof verifyStockEventRegistryProof>>,request?:object): Promise<ShiftAuthorAuthority> {
   if (!verifiedStockKeys.has(proof)) return { allowed: false, code: "ESTOCK_AUTHOR_INVALID" };
-  const key = (await registry(proof)).key;
+  const key = (await stockRegistry(proof,request)).key;
   if (!key || !matchingKey(key, proof) || key.revoked_at !== null) return { allowed: false, code: "ESTOCK_AUTHOR_REVOKED" };
-  const authority = await databaseAuthority({ appUserId: proof.authorId }, { strictAvailability: true });
+  const cache=request?stockVerificationRequests.get(request):null;
+  if(request&&!cache)return {allowed:false,code:"ESTOCK_AUTHOR_INVALID"};
+  if(cache&&!cache.authors.has(proof.authorId))cache.authors.set(proof.authorId,databaseAuthority({appUserId:proof.authorId},{strictAvailability:true}));
+  const authority=cache?await cache.authors.get(proof.authorId)!:await databaseAuthority({ appUserId: proof.authorId }, { strictAvailability: true });
   if (!authority?.authorId || !sameId(authority.authorId, proof.authorId) || authority.subject !== proof.subject)
     return { allowed: false, code: "ESTOCK_AUTHOR_REVOKED" };
   if (authority.branchId && canonicalBranchId(authority.branchId) !== canonicalBranchId(proof.branchId)) return { allowed: false, code: "ESTOCK_AUTHOR_BRANCH_FORBIDDEN" };

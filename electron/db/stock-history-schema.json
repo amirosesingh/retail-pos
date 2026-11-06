@@ -462,6 +462,15 @@
     },
     {
       "table": "stock_history_movements",
+      "column": "upload_aggregate_id",
+      "type": "uniqueidentifier",
+      "length": 16,
+      "precision": 0,
+      "scale": 0,
+      "nullable": true
+    },
+    {
+      "table": "stock_history_movements",
       "column": "ingested_cursor",
       "type": "bigint",
       "length": 8,

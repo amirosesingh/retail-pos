@@ -18,15 +18,16 @@ function exact(value,keys){if(!value||typeof value!=='object'||Array.isArray(val
 function uuid(value){if(typeof value!=='string'||!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value))invalid();return value.toLowerCase();}
 function label(value,max){if(typeof value!=='string'||!value||value!==value.trim()||value.length>max||/[\u0000-\u001f\u007f]/u.test(value))invalid();return value;}
 function unsignedStockEvent(input){
- const value=exact(input,FIELDS);
+ const hasSource=!!input&&Object.hasOwn(input,'sourceManifestJson'),value=exact(input,hasSource?[...FIELDS,'sourceManifestJson']:FIELDS);
  if(value.version!==1||value.algorithm!=='Ed25519'||!Object.hasOwn(ACTIONS,value.action)||typeof value.payloadHash!=='string'||!/^[a-f0-9]{64}$/.test(value.payloadHash))invalid();
+ if(hasSource&&(typeof value.sourceManifestJson!=='string'||!value.sourceManifestJson||new TextEncoder().encode(value.sourceManifestJson).length>16384))invalid();
  let binding;try{binding=normalizeBinding({projectOrigin:value.projectOrigin,terminalId:value.terminalId,authorId:value.authorId});}catch{invalid();}
  return{version:1,algorithm:'Ed25519',keyId:uuid(value.keyId),...binding,subject:label(value.subject,200),branchId:label(value.branchId,128),
-  operationId:uuid(value.operationId),movementId:uuid(value.movementId),action:value.action,payloadHash:value.payloadHash};
+  operationId:uuid(value.operationId),movementId:uuid(value.movementId),action:value.action,payloadHash:value.payloadHash,...(hasSource?{sourceManifestJson:value.sourceManifestJson}:{})};
 }
-function stockEventMessage(input){const v=unsignedStockEvent(input);return JSON.stringify(['retail-pos.stock-event.v1',v.algorithm,v.projectOrigin,v.terminalId,v.authorId,v.keyId,v.subject,v.branchId,v.operationId,v.movementId,v.action,v.payloadHash]);}
+function stockEventMessage(input){const v=unsignedStockEvent(input);return JSON.stringify(['retail-pos.stock-event.v1',v.algorithm,v.projectOrigin,v.terminalId,v.authorId,v.keyId,v.subject,v.branchId,v.operationId,v.movementId,v.action,v.payloadHash,...(v.sourceManifestJson==null?[]:[['source_manifest.v1',v.sourceManifestJson]])]);}
 function normalizeStockEvent(input){
- const value=exact(input,[...FIELDS,'signature']);
+ const value=exact(input,[...FIELDS,...(input&&Object.hasOwn(input,'sourceManifestJson')?['sourceManifestJson']:[]),'signature']);
  if(typeof value.signature!=='string'||!/^[A-Za-z0-9_-]{86}$/.test(value.signature))invalid();
  let bytes;try{bytes=atob(value.signature.replace(/-/g,'+').replace(/_/g,'/'));}catch{invalid();}
  if(bytes.length!==64||btoa(bytes).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')!==value.signature)invalid();

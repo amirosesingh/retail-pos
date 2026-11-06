@@ -431,6 +431,8 @@ export type PosBridge = {
         offline?: boolean;
         pushed?: number;
         merged?: number;
+        allUploaded?: boolean;
+        reportHistoryPending?: number;
         error?: string;
         code?: string;
       }

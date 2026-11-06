@@ -262,6 +262,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261105113916_stock_history_effective_ledger.sql",
       "supabase/migrations/20261105140417_isolate_refund_guard_table_fields.sql",
       "supabase/migrations/20261105172030_stock_history_accepted_effect_capture.sql",
+      "supabase/migrations/20261105232647_stock_history_author_claim_admission.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
@@ -276,6 +277,8 @@ describe("canonical Supabase SQL", () => {
     expect(read("supabase/migrations/20261105172030_stock_history_accepted_effect_capture.sql"))
       .toContain("STOCK401 DRAFT preparation only");
     expect(read("supabase/schema.sql")).not.toContain("CREATE TABLE private.stock_history_accepted_effects");
+    expect(read("supabase/migrations/20261105232647_stock_history_author_claim_admission.sql")).toContain("STOCK401 DRAFT");
+    expect(read("supabase/schema.sql")).not.toContain("CREATE FUNCTION public.pos_stock_history_accept_claims");
   });
 
   it('retains the reviewed shift-sharing upgrade exactly in canonical SQL', () => {

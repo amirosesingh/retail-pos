@@ -49,12 +49,20 @@ class StockEventAuthority{
   const info=this.keys.prepare(capture.binding,{expectedKeyId:keyId});
   if(!info.enrolled||info.keyId!==keyId||info.publicKey!==row.public_key)fail('ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING');
   capture.assertCurrent();return Object.freeze({binding:capture.binding,subject:capture.subject,branchId:capture.branchId,keyId,
-   assertCurrent:capture.assertCurrent,signMovement:row=>{
+   action:capture.action,assertCurrent:capture.assertCurrent,signMovement:(row,sourceManifestJson)=>{
     capture.assertCurrent();
     const upload=stockHistoryUploadRow(row,{branchId:capture.branchId,terminalId:capture.binding.terminalId});
     if(row.actor_id!==capture.binding.authorId||row.source_kind!==protocol.ACTIONS[capture.action].kind)fail('ESTOCK_AUTHOR_INVALID');
+    if(sourceManifestJson!=null){
+     const{stockSourceManifestJson}=require('./shared/stock-source-manifest.mjs');let source;
+     try{source=JSON.parse(sourceManifestJson);}catch{fail('ESTOCK_AUTHOR_INVALID');}
+     if(stockSourceManifestJson(source)!==sourceManifestJson||source.operationId!==row.operation_id||source.action!==capture.action||
+      source.authorId!==row.actor_id||source.branchId!==row.store_id||source.terminalId!==row.terminal_id||source.productId!==row.product_id||
+      source.delta!==String(row.quantity_delta)||source.effectiveAt!==row.effective_at_raw||source.recordedAt!==row.recorded_at_raw||
+      JSON.stringify(source.sourceRefs)!==JSON.stringify(row.source_refs??[]))fail('ESTOCK_AUTHOR_INVALID');
+    }
     const proof=this.keys.signStockEvent(capture.binding,{expectedKeyId:keyId,subject:capture.subject,branchId:capture.branchId,
-     operationId:row.operation_id,movementId:upload.id,action:capture.action,payloadHash:upload.payloadHash});
+     operationId:row.operation_id,movementId:upload.id,action:capture.action,payloadHash:upload.payloadHash,...(sourceManifestJson!=null?{sourceManifestJson}:{})});
     capture.assertCurrent();return proof;
    }});
  }
