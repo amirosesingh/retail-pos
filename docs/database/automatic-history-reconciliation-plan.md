@@ -218,3 +218,38 @@ exact migration(s), SHA256, exact project, metadata effects and compatibility
 order separately before application. Merge/deployment/installed acceptance remain
 distinct from passing isolated tests. Unknown conflicts require truthful review,
 not a claim that hundreds of PCs can never encounter an error.
+
+## Prepared implementation and persisted-v1 handoff
+
+The parent reviewed and authorized the implementation plan. Draft PR428 now
+contains the service-only bounded reads and future INSERT feed proposal; native
+runtime integration is under isolated verification. No live migration has run.
+Current migration committed-LF SHA256 is
+`80BDFC48A78220A532FBF909F5B1E05F2C7188881401F8822ADF642EDCD40A88`.
+
+An existing interrupted `history_gap_recovery_v1` is retained intact. Only up to
+50 exact validated history-only IDs may be excluded from operational startup/job
+barriers, after Main proves its current single-instance/exclusive-lane ownership,
+secure registration/backend/profile, database GUID and exact running index-job
+identity. The default allowlist is empty; an actually executing old handler,
+unknown job, wrong source or missing proof remains blocked. The exact SQL-rendered
+job metadata (including seven fractional timestamp digits) is hashed privately
+into the new scope and locked/rechecked in every page transaction. This reads no
+old cursor as a new cursor, invokes no old recovery helper, changes no old row or
+upload checkpoint, and fabricates no completion or acceptance proof.
+
+A real prior-app page save, interruption, upgrade and restart passes on owned
+LocalDB. A100ns-only metadata mutation aborts before insert/progress commit. If a
+metadata change leaves an earlier index job unbound, its startup barrier remains
+for review even if a fresh membership pass finishes; membership does not grant
+permission to discard retained jobs. First setup, restore and operational CT
+failures retain their original gates. Existing missing or divergent local upload
+evidence remains explicit review-required, never automatically acknowledged.
+
+The new page transaction pins one existing pooled connection without changing
+its isolation/options or introducing a pool. It refuses inherited/implicit
+transactions and uses explicit locked row/key ranges; page inserts and progress
+still commit together. Actual single-session verification covers all five
+caller isolation levels, rollback/context loss, contention, real Main lease/GUID
+proof and disposal of an unverifiable owned transaction connection. This is a
+new-path correction only; no operator database/session defaults are changed.

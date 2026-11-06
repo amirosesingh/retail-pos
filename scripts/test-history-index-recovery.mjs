@@ -99,6 +99,16 @@ try{
     await assert.rejects(rows([id(1)]),/HISTORY_INDEX_UNSUPPORTED_SOURCE/);
    }finally{await db.exec('ROLLBACK');}assert.deepEqual(await state(),before);
   });
+  await check('unknown helper whitespace including SQL literal content is never normalized into an admitted body',async()=>{
+   const before=await state(),f=capture.functions.find(f=>f.signature==='change_history_immutable()'),match=f.definition.match(/AS (\$\w*\$)([\s\S]*?)\1/);
+   for(const body of [match[2].replace('append-only','append-only '),' '+match[2]]){
+    await db.exec('BEGIN');try{
+     await db.exec(f.definition.replace(match[0],()=> 'AS '+literal(body)));
+     await db.exec('SAVEPOINT before_read');await assert.rejects(index(),/HISTORY_INDEX_UNSUPPORTED_SOURCE/);await db.exec('ROLLBACK TO SAVEPOINT before_read');
+     await assert.rejects(db.exec(migration),/HISTORY_INDEX_SOURCE_CHANGED/);
+    }finally{await db.exec('ROLLBACK');}
+   }assert.deepEqual(await state(),before);
+  });
   if(native)await check('busy history writers abort migration NOWAIT without any partial schema or data change',async()=>{
    await uninstall();const before=await state();await db.testContention(migration,id(1));assert.deepEqual(await state(),before);await db.exec(migration);
   });

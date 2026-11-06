@@ -34,7 +34,7 @@ function normalizeIndex(value, expected, request) {
     value.after_id!==null&&(value.upper_id===null||value.after_id>value.upper_id))throw failure();
   if(request.action==='finish') {
     if(value.ids.length||value.next_id!==null||!value.complete||value.after_id!==null||typeof value.range_count!=='string'||
-      !/^(?:0|[1-9][0-9]*)$/.test(value.range_count)||BigInt(value.range_count)>9223372036854775807n)throw failure();
+      value.range_count.length>19||!/^(?:0|[1-9][0-9]*)$/.test(value.range_count)||BigInt(value.range_count)>9223372036854775807n)throw failure();
   } else {
     if(value.range_count!==null)throw failure();
     let previous=value.after_id;

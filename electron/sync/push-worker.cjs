@@ -494,6 +494,7 @@ class PushWorker {
     const terminalId = this.cloud.terminalId?.() ?? "";
     let pushed = await this.pushAggregates(branchId, batchSize, true, onProgress, includeActivity);
     const deferredTables = new Set();
+    let historyUploadHeld=null;
     let financialCoverageAdvanced=false;
     // One lookup per pass instead of one SQL round trip for every table.
     const savedCheckpoints = this.checkpoints.list
@@ -647,6 +648,13 @@ class PushWorker {
         live = [];
       }
       } catch(error) {
+        if(error?.code==='ECHANGEGAP'&&error.table==='change_history'&&table.sqlServerTable==='change_history'&&table.cloudTable==='change_history'){
+          // Missing-only cloud membership is not proof that local authored
+          // history was accepted. Retain its CT checkpoint/journal and let
+          // other eligible tables proceed; final upload checks remain held.
+          historyUploadHeld={code:'ECHANGEGAP',table:'change_history',message:'Retained local history uploads need verification. History downloads and other eligible uploads can continue.'};
+          continue;
+        }
         if (error?.code === "ECHANGEGAP" || [401,403].includes(Number(error?.status))) throw error;
         this.blockedTables.add(table.sqlServerTable);
         this.pushErrors.push(Object.assign(error, {table: error.table ?? table.cloudTable}));
@@ -658,7 +666,7 @@ class PushWorker {
     // or a blind checkpoint advance. Ordinary legacy passes stay unchanged.
     if(financialCoverageAdvanced)pushed+=await this.pushAggregates(branchId,batchSize,true,onProgress,includeActivity);
     if (this.pushErrors.length) throw Object.assign(this.pushErrors[0], {pushed, failures:this.pushErrors.length});
-    return { pushed, deferredTables:[...deferredTables] };
+    return { pushed, deferredTables:[...deferredTables],...(historyUploadHeld?{historyUploadHeld,allUploaded:false}:{}) };
   }
 }
 module.exports = { PushWorker, collapseChanges, rowsForBranch, terminalWritableChanges, batchAuditAggregates };

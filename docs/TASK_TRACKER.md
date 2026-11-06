@@ -72,6 +72,93 @@ The class is not yet scheduled by startup/periodic/Management runtime. Push hold
 coordinator/final-close truth and startup qualification remain separate local work,
 then require combined regression and independent review. No live database touched.
 
+Runtime wiring checkpoint in verification: one existing Main timer now separates
+history continuations from due core work; all ordinary/unknown hints keep core
+priority and its activity/connection deadlines. Management uses the same job once
+per freshly admitted sorted branch set, never a per-shop uploader. New optional
+nativeSyncSummary historyRecovery presentation is a necessary status dependency:
+show actual pending/retry download work between quanta while preserving real
+errors, disabled/pause, unknown counts and pending uploads. It grants no readiness,
+new read or upload ACK. History-only expired push CT remains explicitly held and
+cannot pass final allUploaded/close gates; neither index completion nor local-only
+facts reset a journal, feed cursor or push baseline. A qualified operational cache
+may remain usable; first-time/unknown/restore and wrong-scope gates remain.
+
+Actual disposable SQL Server verification now passes17 groups, adding startup/
+restore/forged-cursor gates, real concurrent journal lock exclusion, lost committed
+readback and two independent owned PC databases. Current runtime source still
+requires final focused/full tests and independent review. The last PUSHED checkpoint
+52c18862 passed all required CI/Workers:6296 tests passed/11 skipped; both prior CI
+fixture failures are corrected. That result is not evidence for the new local
+runtime head. Prepared migration bytes remain80BDFC48A78220A532FBF909F5B1E05F2C7188881401F8822ADF642EDCD40A88;
+new helper-literal whitespace denial tests change only fixture coverage. No live
+application, beta merge, deployed CPU/device acceptance or production approval.
+
+Actual caller review added two bounded acceptances:10 mounted1440/390 NativeBoot/
+AppShell groups preserve page/dialog/unsaved input through24 genuine Management
+activity quanta, while cold/restore/profile/revocation gates still block. Twelve
+owned actual Main/SQL/HTTP/PostgreSQL groups preserve local closing, central
+closure upload and exact original replay under the history-only upload hold.
+Its final full-upload guard remains false. Necessary shutdown dependency: classify
+the new explicit EHISTORY_UPLOAD_REVIEW alongside existing non-retryable holds,
+so shutdown does not immediately repeat an already-known review condition3times.
+This changes neither save/ACK rules nor ordinary transient/authentication retries.
+
+Persisted-v1 compatibility finding reproduced in an owned LocalDB: a valid
+interrupted history_gap_recovery_v1 opaque cursor blocked both the new index job
+and an otherwise qualified cache. Root approved a narrow handoff preparation:
+classify at most50 exact existing history-only job rows with current bound source
+and Main single-instance+coordinator ownership proof; defaultempty allowlist with
+no proof. Bind their exact SQL FOR JSON metadata, including100ns timestamps, into
+the new job scope hash, re-lock/recheck each commit, and exclude only those IDs
+from active/startup barriers. Preserve every old row/status/cursor/error/baseline;
+no old helper execution, CT/feed/journal change or completed-marker fabrication.
+Unknown/executing/different-scope rows and operational restore/bootstrap remain
+gated. Required: actual persisted-v1 upgrade/restart, metadata100ns mutation and
+combined execution/source proof true/false tests before final freeze.
+
+Compatibility verification now passes23 owned actual SQL Server groups: a real
+prior-app page transaction saves an opaque v1 cursor, interruption persists it,
+the new job resumes missing-only work after a cold pool restart, and every old
+job JSON value plus CT/feed checkpoint stays unchanged. Missing Main proof,
+executing legacy work, wrong backend/unknown job, defaultempty/overflow IDs and
+a100ns-only metadata change remain held. Main's private callback rechecks actual
+single-instance and coordinator lease ownership, secure profile/registration
+fingerprint, exact executing new-job ID and fresh database GUID before/after its
+await. It is not an IPC authority. SQL metadata hashes/raw JSON are never logged.
+Five pure legacy-proof tests and three actual Main callback cases pass;168
+focused tests pass and TSC passes. Metadata-set mutation does not authorize
+discarding an earlier now-unbound index job: membership can finish but that
+retained startup barrier still needs review. Valid unchanged v1 upgrade does not
+have that barrier. Final full-suite and independent review remain in progress.
+
+Provider review found the NEW history-page Transaction.begin(SERIALIZABLE) left
+the same msnodesqlv8 pooled session at SERIALIZABLE after commit. Correct only
+this new path: pin a publicly acquired Request connection, refuse inherited or
+implicit transactions, own BEGIN/COMMIT/rollback, and rely on the existing
+UPDLOCK/HOLDLOCK resource ranges without any session SET. Restore/verify its own
+transaction count before release; if rollback cannot be verified, close and
+invalidate only that owned driver handle. Main's GUID callback uses that same
+pinned parent, avoiding another-connection deadlock with a max1 pool. Actual13
+owned single-session groups pass all5 isolation levels, unchanged options/
+lock timeout/deadlock priority, commit/rollback/lost-BEGIN/context failure,
+contention with the writer retained, inherited/implicit refusal, actual Main
+callback inside/outside the real coordinator lease, and failed-rollback discard.
+The23 recovery/upgrade groups also pass on this corrected path. Before this
+narrow correction the full runtime suite passed6354/10skipped; final exact-source
+full regression, TSC/lint and independent review remain gates, not assumed pass.
+
+Frozen corrected runtime verification: full pinned-Node22 Vitest with2workers
+passes6354 tests/10skipped (734 files passed/1 skipped), no failures/unhandled
+errors; TSC passes, scoped ESLint has0errors (18 pre-existing fixture any warnings)
+and diff checks pass. Actual owned tests:23 SQL Server recovery/v1 groups,13
+single-session preservation groups,27 native PostgreSQL18.6 CRLF groups; prior
+actual PostgREST8cases, mounted1440/390 startup10groups and actual Main closing12
+groups remain relevant unchanged-path evidence. All owned active fixtures are
+closed. Installed beta/hosted CPU, exact-head CI, independent final review and
+the separately approved central migration remain pending; no real profile,
+database, registration, queue, checkpoint, permissions or production was changed.
+
 Owner explicitly requires automatic recovery for hundreds of PCs after short or
 long offline periods, without per-PC manual SQL, UUID exports, repair scripts,
 registration/checkpoint resets or queue clearing. A centrally reviewed migration

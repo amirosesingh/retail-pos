@@ -33,7 +33,7 @@ describe("qualified startup snapshot", () => {
   it("releases an existing snapshot during only validated audit recovery, without cursor writes", async () => {
     const h = fixture(); await h.lifecycle.releaseHistoryCache("branch", 90, h.job);
     expect(h.service.markReady).toHaveBeenCalledExactlyOnceWith({ phase: "history_recovery", syncReady: false, branchId: "branch", historyDays: 90 });
-    expect(h.repository.hasOtherActiveJobs).toHaveBeenCalledWith("history");
+    expect(h.repository.hasOtherActiveJobs).toHaveBeenCalledWith("history",{allowedLegacyIds:[]});
     expect(h.query.mock.calls.every(([sql]) => !/UPDATE|INSERT|MERGE|DELETE/.test(sql))).toBe(true);
     expect(h.lifecycle.preserveCachedReady()).toBe(true);
   });
@@ -41,7 +41,7 @@ describe("qualified startup snapshot", () => {
     const h = fixture(); h.bounds[0].checkpoint_version = 1;
     expect(await h.lifecycle.cachedSnapshotReady("branch", 90)).toBe(true);
     expect(h.query.mock.calls.some(([sql]) => sql.includes("OPENJSON"))).toBe(false);
-    expect(h.repository.hasOtherActiveJobs).toHaveBeenCalledWith(null);
+    expect(h.repository.hasOtherActiveJobs).toHaveBeenCalledWith(null,{allowedLegacyIds:[]});
   });
   it.each(["backend", "terminal"])("fails closed for invalid ordinary-cache %s identity", async kind => {
     const h = fixture();

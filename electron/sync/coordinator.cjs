@@ -18,7 +18,9 @@ class SyncCoordinator {
   unresolved() { return this.unresolvedFailures??=new Map(); }
   publishFailureStatus(branchId) {
     const failures=[...this.unresolved().values()].filter(failure=>failure.branchId===String(branchId??""));
-    this.status.lastError=failures.length?[...new Set(failures.map(failure=>failure.error))].join(" "):null;
+    const history=(this.historyHolds??=new Map()).get(String(branchId??''))??null;
+    this.status.historyUploadHeld=history;
+    this.status.lastError=[...new Set([...failures.map(failure=>failure.error),...(history?[history.message]:[])])].join(' ')||null;
     this.status.credentialsInvalid=failures.some(failure=>failure.credentialsInvalid);
   }
   rememberFailure(error,options,direction) {
@@ -30,7 +32,7 @@ class SyncCoordinator {
     // Bound entries by actual work scope, never an arbitrary error message.
     const key=JSON.stringify([branchId,direction,includeActivity,skipMembership,domain]),previous=this.unresolved().get(key);
     const denied=!authorHold(error)&&(status===401||status===403||code==="HTTP_401"||code==="HTTP_403");
-    this.unresolved().set(key,{branchId,direction,includeActivity,skipMembership,domain,error:message,credentialsInvalid:Boolean(previous?.credentialsInvalid||denied)});
+    this.unresolved().set(key,{branchId,direction,includeActivity,skipMembership,domain,table,error:message,credentialsInvalid:Boolean(previous?.credentialsInvalid||denied)});
     this.publishFailureStatus(branchId);
     return message;
   }
@@ -42,6 +44,7 @@ class SyncCoordinator {
     const pendingFeed=Boolean(result?.deferredLocalChanges||result?.deferredHeldDeletion);
     for(const [key,failure] of this.unresolved()) {
       if(failure.branchId!==String(options.branchId??"")||failure.direction!==direction||failure.includeActivity&&options.includeActivity===false)continue;
+      if(direction==='push'&&result?.historyUploadHeld&&(!failure.table||failure.table==='change_history'||failure.table==='transaction batch'))continue;
       if(direction==="pull"&&failure.domain==="pos_feed") {
         if(!deferredTables&&!pendingFeed&&posFeedEvidence(result,options.branchId)==="complete")this.unresolved().delete(key);
         continue;
@@ -60,6 +63,7 @@ class SyncCoordinator {
     try { return await syncLease.run(this, work); } finally { release(); }
   }
   runPush(options) { return this.withExclusive(() => this.pushWorker.run(options)); }
+  ownsExclusive(){return syncLease.getStore()===this;}
 
   async refresh(branchId) {
     try {
@@ -96,6 +100,7 @@ class SyncCoordinator {
     // unrelated history must not turn an acknowledged close into a failure.
     const result=await this.runNow({ ...options, includeActivity:true, final:true, pushOnly:true });
     if(!result.ok)return result;
+    if(result.historyUploadHeld)return{...result,ok:false,allUploaded:false,code:'EHISTORY_UPLOAD_REVIEW',error:result.historyUploadHeld.message};
     if(result.deferredTables?.length)return {...result,ok:false,code:"ESYNC_AUTH_PENDING",error:`Settings changes still need an authorized sign-in: ${result.deferredTables.join(", ")}.`};
     const reader=this.pushWorker?.reader;
     const remaining=reader?.pendingSummary
@@ -132,7 +137,10 @@ class SyncCoordinator {
     try {
       this.status.phase="pushing"; this.publish(this.snapshot());
       let pushError = null; let pushed = {};
-      try { if (!options.pullOnly) { pushed=await this.pushWorker.run(workerOptions); this.status.lastPushAt=new Date().toISOString();this.clearSuccessfulFailures(options,"push",pushed);this.publishFailureStatus(options.branchId); } }
+      try { if (!options.pullOnly) { pushed=await this.pushWorker.run(workerOptions); this.status.lastPushAt=new Date().toISOString();
+        if(pushed?.historyUploadHeld)(this.historyHolds??=new Map()).set(String(options.branchId??''),pushed.historyUploadHeld);
+        else (this.historyHolds??=new Map()).delete(String(options.branchId??''));
+        this.clearSuccessfulFailures(options,"push",pushed);this.publishFailureStatus(options.branchId); } }
       catch(error) { pushError=error;this.rememberFailure(error,options,"push"); }
       if (pushError && (pushError.code === "ECHANGEGAP" || (!authorHold(pushError)&&[401,403].includes(Number(pushError.status))))) throw pushError;
       let pulled = {};
@@ -145,7 +153,7 @@ class SyncCoordinator {
       this.status.pushed=Number(pushed.pushed??this.status.pushed); this.status.merged=Number(pulled.merged??this.status.merged);
       if (pushError) { failedDirection="push"; throw pushError; }
       this.status.phase="idle"; this.publishFailureStatus(options.branchId);
-      result={ ok:true,...pushed,...pulled };
+      result={ ok:true,...pushed,...pulled,historyHoldOnly:Boolean(this.status.historyUploadHeld&&![...this.unresolved().values()].some(failure=>failure.branchId===String(options.branchId??''))) };
     } catch(error) {
       const failedTable=String(error?.table??error?.detail??"").trim();
       this.status.phase="idle";
@@ -163,5 +171,6 @@ class SyncCoordinator {
   pause(){this.paused=true;this.publish(this.snapshot());return this.snapshot();}
   resume(){this.paused=false;this.publish(this.snapshot());return this.snapshot();}
   recordVerification(report){this.status.lastComparedAt=report.comparedAt??new Date().toISOString();this.status.lastVerifiedAt=report.verified?this.status.lastComparedAt:this.status.lastVerifiedAt;this.status.tables=report.tables??[];this.publish(this.snapshot());return this.snapshot();}
+  recordHistoryRecovery(state){this.status.historyRecovery={...state};this.publish(this.snapshot());return this.snapshot();}
 }
 module.exports = { SyncCoordinator };

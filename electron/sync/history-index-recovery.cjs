@@ -5,6 +5,7 @@ const {PROJECTION,MAX_INDEX,MAX_ROWS,normalizeIndex,normalizeRows}=require('./hi
 const {recordId}=require('./uuid-fields.cjs');
 const {binding}=require('../verified-activation.cjs');
 const {reportActivity}=require('../db/startup-activity.cjs');
+const {legacyEvidence}=require('./history-index-legacy.cjs');
 const TYPE='history_index_recovery_v1',UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const fail=(message,code='EHISTORY_INDEX_PROGRESS')=>{throw Object.assign(new Error(message),{code,table:'change_history'});};
 const integer=value=>{const text=String(value??'');if(!/^(0|[1-9][0-9]*)$/.test(text)||text.length>19||BigInt(text)>9223372036854775807n)fail('Saved history membership progress is invalid.');return text;};
@@ -31,8 +32,13 @@ function retryDelay(job,terminalId){
  const exponent=Math.min(6,safe(job.retry_count??0)),jitter=parseInt(createHash('sha256').update(terminalId+':'+exponent).digest('hex').slice(0,4),16)%3000;
  return Math.min(300000,5000*2**exponent)+jitter;
 }
+function safeMessage(code){
+ if(code==='ELOCAL_PENDING_UNVERIFIED')return'Retained local history work needs verification before this page can advance. Existing records remain intact.';
+ if(/^(?:HTTP_(?:429|500|502|503|504)|EAI_AGAIN|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EOFFLINE)$/.test(code))return'The central history service did not answer. Recovery will retry from its saved progress.';
+ return'History recovery could not be verified. Existing records and committed progress remain intact.';
+}
 class HistoryIndexStore {
- constructor(connectionManager,repository){Object.assign(this,{connectionManager,repository});}
+ constructor(connectionManager){this.connectionManager=connectionManager;}
  request(tx=null){return tx?new(this.connectionManager.sql().Request)(tx):this.connectionManager.pool.request();}
  async guid(tx=null){
   const result=await this.request(tx).query('SELECT LOWER(CONVERT(nvarchar(36),database_guid)) database_guid FROM sys.database_recovery_status WHERE database_id=DB_ID();');
@@ -66,13 +72,36 @@ class HistoryIndexStore {
     VALUES(CONVERT(uniqueidentifier,@id),@organization_id,@entity_type,@entity_id,@action,@old_value,@new_value,CONVERT(bigint,@revision),@scope_type,@scope_id,@changed_by,@source_application,@device_id,@terminal_id,CONVERT(datetimeoffset(7),@server_timestamp,127));`);
  }
  async transaction(handler){
-  const sql=this.connectionManager.sql(),tx=new sql.Transaction(this.connectionManager.pool);await tx.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
-  try{const value=await handler(tx);await tx.commit();return value;}catch(error){await Promise.resolve(tx.rollback()).catch(()=>undefined);throw error;}
+  // msnodesqlv8 Transaction.begin sets isolation on the pooled session and
+  // does not restore it. Pin one public Request connection instead; each
+  // participating data read already takes explicit UPDLOCK,HOLDLOCK ranges.
+  const sql=this.connectionManager.sql(),pool=this.connectionManager.pool;
+  const lease=await new Promise((resolve,reject)=>pool.acquire(new sql.Request(pool),(error,connection,config)=>error?reject(error):resolve({connection,config})));
+  let active=false,beginAttempted=false,discard=false;
+  const tx={config:lease.config,connected:true,
+   acquire(_request,callback){if(active)return queueMicrotask(()=>callback(Object.assign(new Error('A history transaction request is already active.'),{code:'EREQINPROG'})));active=true;queueMicrotask(()=>callback(null,lease.connection,lease.config));},
+   release(connection){if(connection===lease.connection)active=false;}};
+  const query=text=>this.request(tx).query(text);
+  try{
+   // No FROM: an inherited IMPLICIT_TRANSACTIONS setting must not start a
+   // transaction merely while checking whether this helper can own one.
+   const guard=(await query('SELECT @@TRANCOUNT transactions,@@OPTIONS options;')).recordset?.[0];
+   if(!guard||Number(guard.transactions)!==0||(Number(guard.options)&2)!==0)fail('The history page cannot own this SQL session transaction.','EHISTORY_INDEX_TRANSACTION');
+   beginAttempted=true;await query('BEGIN TRANSACTION;');
+   const value=await handler(tx);
+   const committed=(await query("IF @@TRANCOUNT<>1 THROW 51000,'History page transaction ownership changed.',1;COMMIT TRANSACTION;SELECT @@TRANCOUNT transactions;")).recordset?.[0];
+   if(Number(committed?.transactions)!==0)fail('The history page commit could not be verified.','EHISTORY_INDEX_TRANSACTION');
+   beginAttempted=false;return value;
+  }finally{
+   if(beginAttempted){try{const restored=(await query('IF @@TRANCOUNT>0 ROLLBACK TRANSACTION;SELECT @@TRANCOUNT transactions;')).recordset?.[0];if(Number(restored?.transactions)!==0)discard=true;}catch{discard=true;}}
+   try{if(discard){lease.connection.hasError=true;await new Promise(resolve=>lease.connection.close(()=>resolve()));}}
+   finally{pool.release(lease.connection);}
+  }
  }
 }
 class HistoryIndexRecovery {
- constructor({connectionManager,cloud,jobRepository,jobManager,store=null,now=()=>Date.now(),onActivity=()=>{}}){
-  Object.assign(this,{connectionManager,cloud,jobRepository,jobManager,now,onActivity});this.store=store??new HistoryIndexStore(connectionManager,jobRepository);
+ constructor({connectionManager,cloud,jobRepository,jobManager,store=null,now=()=>Date.now(),onActivity=()=>{},onApplied=()=>{},executionProof=()=>false}){
+  Object.assign(this,{connectionManager,cloud,jobRepository,jobManager,now,onActivity,onApplied,executionProof});this.store=store??new HistoryIndexStore(connectionManager);
  }
  source(branchId){
   const source=this.cloud.requestContext?.(false),terminalId=recordId(this.cloud.terminalId?.()),branch=recordId(String(branchId??''));
@@ -84,20 +113,35 @@ class HistoryIndexRecovery {
  }
  same(scope){try{if(scope.invalidated)return false;const current=this.source(scope.branchId);return current.pool===scope.pool&&current.fingerprint===scope.fingerprint&&current.terminalId===scope.terminalId;}catch{return false;}}
  assert(scope){if(!this.same(scope))fail('The database or terminal changed during history recovery.','ESYNC_REQUEST_CONTEXT_CHANGED');}
- async capture(branchId){
-  const scope=this.source(branchId),databaseGuid=await this.store.guid();this.assert(scope);
-  return{...scope,databaseGuid,hash:'hi1:'+createHash('sha256').update(JSON.stringify([TYPE,PROJECTION,scope.fingerprint,databaseGuid])).digest('hex')};
+ async capture(branchId,scopeTag=''){
+  if(scopeTag!==''&&!/^[0-9a-f]{64}$/.test(scopeTag))fail('The authorized history scope is invalid.','EHISTORY_INDEX_SCOPE');
+  const scope={...this.source(branchId),databaseGuid:await this.store.guid()};this.assert(scope);
+  const legacy=await this.legacy(scope);
+  return{...scope,legacyHash:legacy.hash,legacyIds:legacy.ids,hash:'hi1:'+createHash('sha256').update(JSON.stringify([TYPE,PROJECTION,scope.fingerprint,scope.databaseGuid,scopeTag,legacy.hash])).digest('hex')};
  }
- async check(scope,tx=null){this.assert(scope);if(await this.store.guid(tx)!==scope.databaseGuid){scope.invalidated=true;fail('The local database changed during history recovery.','EHISTORY_INDEX_SCOPE');}this.assert(scope);}
- async commit(scope,job,context,next,handler=async()=>({})){const prior=token(job);
+ async legacy(scope,tx=null){
+  this.assert(scope);const rows=await this.jobRepository.legacyHistory?.(scope.branchId,scope.terminalId,tx)??[];this.assert(scope);
+  const current=this.jobManager.running,own=!current||current.job_type===TYPE&&recordId(current.job_id)===recordId(scope.indexJobId);
+  const ownsExecution=rows.length&&own?await this.executionProof({jobId:scope.indexJobId??null,source:scope,requestParent:tx}):false;this.assert(scope);
+  return legacyEvidence({rows,cloud:this.cloud,branchId:scope.branchId,terminalId:scope.terminalId,ownsExecution});
+ }
+ async current(branchId,scopeTag=''){
+  const scope=await this.capture(branchId,scopeTag),job=await this.jobRepository.recovery(TYPE,scope.branchId,scope.terminalId);await this.check(scope);
+  if(!job||job.organization_name!==scope.hash)return null;decode(job,scope);scope.indexJobId=job.job_id;return{job,scope};
+ }
+ async check(scope,tx=null){this.assert(scope);if(await this.store.guid(tx)!==scope.databaseGuid){scope.invalidated=true;fail('The local database changed during history recovery.','EHISTORY_INDEX_SCOPE');}
+  const legacy=await this.legacy(scope,tx);if(legacy.hash!==scope.legacyHash){scope.invalidated=true;fail('Retained history job metadata changed during recovery.','EHISTORY_INDEX_SCOPE');}this.assert(scope);}
+ async commit(scope,job,context,next,handler=async()=>({})){const prior=token(job);let applied=0;
   await this.store.transaction(async tx=>{
    await this.check(scope,tx);const saved=await this.jobRepository.get(job.job_id,tx);decode(saved,scope);
    if(token(saved)!==prior)fail('Another history recovery step advanced this job.','EHISTORY_INDEX_CONFLICT');
-   const extra=await handler(tx,saved);await this.check(scope,tx);
+   const extra=await handler(tx,saved);applied=extra.completed_rows===undefined?0:safe(extra.completed_rows)-safe(saved.completed_rows);await this.check(scope,tx);
    await this.jobRepository.checkpoint(job.job_id,{last_committed_cursor:encode(next),phase:next.s==='done'?'membership_complete':next.s==='finish'?'confirming_membership':'history_index',
     error_code:null,error_message:null,next_retry_at:null,retry_count:0,...extra},tx);
   });
-  await this.check(scope);Object.assign(job,await this.jobRepository.get(job.job_id));decode(job,scope);this.assert(scope);
+  await this.check(scope);
+  if(applied>0)reportActivity(this.onApplied,{branchId:scope.branchId,table:'change_history',rows:applied});
+  Object.assign(job,await this.jobRepository.get(job.job_id));decode(job,scope);this.assert(scope);
   Object.assign(context.job,job);this.jobManager.emit(context.job);
  }
  async quantum(scope,job,context){
@@ -138,9 +182,10 @@ class HistoryIndexRecovery {
   });
   return{pending:true};
  }
- async step({branchId,force=false}={}){
-  if(this.jobManager.running||this.jobManager.paused)return{pending:true,busy:true};
-  const scope=await this.capture(branchId);let job=await this.jobRepository.recovery(TYPE,scope.branchId,scope.terminalId);await this.check(scope);
+ async step({branchId,force=false,scopeTag=''}={}){
+  if(this.jobManager.paused)return{pending:true,paused:true};
+  if(this.jobManager.running)return{pending:true,busy:true};
+  const scope=await this.capture(branchId,scopeTag);let job=await this.jobRepository.recovery(TYPE,scope.branchId,scope.terminalId);await this.check(scope);
   if(job&&job.organization_name===scope.hash){
    const p=decode(job,scope),finished=Date.parse(job.finished_at);
    if(job.status==='completed'&&p.s==='done'&&!force&&Number.isFinite(finished)&&this.now()-finished<12*60*60*1000)
@@ -148,17 +193,19 @@ class HistoryIndexRecovery {
    if(job.status==='completed'&&p.s==='done')job=null;
    else if(job.next_retry_at&&Date.parse(job.next_retry_at)>this.now())return{pending:true,retrying:true,job};
   }else job=null; // Preserve another bound job; never relabel its evidence.
+  if(await this.jobRepository.hasOtherActiveJobs?.(job?.job_id??null,{ignoreHistoryIndex:true,allowedLegacyIds:scope.legacyIds})){this.assert(scope);return{pending:true,busy:true};}
   if(!job){
    job={job_id:randomUUID(),job_type:TYPE,status:'queued',organization_id:scope.organizationId,organization_name:scope.hash,branch_id:scope.branchId,branch_name:null,branch_code:null,terminal_id:scope.terminalId,terminal_name:null,
     phase:'history_index',current_table:'change_history',dependency_index:0,last_committed_cursor:encode(initial()),completed_rows:0,estimated_total_rows:null,completed_bytes:0,batch_number:0,batch_size:MAX_INDEX,retry_count:0,next_retry_at:null};
    this.assert(scope);await this.jobRepository.create(job);this.assert(scope);
   }
+  scope.indexJobId=job.job_id;
   const result=await this.jobManager.runStep(TYPE,async context=>{
    try{return await this.quantum(scope,job,context);}catch(error){
-    if(!this.same(scope))throw error;const code=String(error?.code??'EHISTORY_INDEX_RECOVERY'),status=Number(error?.status??error?.statusCode??0);
+    if(!this.same(scope))throw error;const rawCode=String(error?.code??''),code=/^[A-Z][A-Z0-9_]{0,63}$/.test(rawCode)?rawCode:'EHISTORY_INDEX_RECOVERY',status=Number(error?.status??error?.statusCode??0);
     if([401,403].includes(status)||/AUTH|PERMISSION|PRIVILEGE|SCOPE|CONTEXT_CHANGED/.test(code))throw error;
     const retry=safe(job.retry_count??0)+1;
-    await context.checkpoint({error_code:code.slice(0,64),error_message:String(error?.message??'History recovery remains pending.').slice(0,1000),retry_count:retry,next_retry_at:new Date(this.now()+retryDelay(job,scope.terminalId)),status:'retrying'});
+    await context.checkpoint({error_code:code,error_message:safeMessage(code),retry_count:retry,next_retry_at:new Date(this.now()+retryDelay(job,scope.terminalId)),status:'retrying'});
     return{pending:true,status:'retrying'};
    }
   },job,{}, {checkpointAllowed:()=>this.same(scope)});

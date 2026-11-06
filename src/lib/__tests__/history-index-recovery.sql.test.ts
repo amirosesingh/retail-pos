@@ -16,6 +16,6 @@ describe('automatic history read/INSERT-feed preparation',()=>{
  });
  it.each(['lf','crlf'])('passes captured actual routines, privacy, denied scope and ledger rollback using %s bytes',(format)=>{
   const output=execFileSync(process.execPath,['scripts/test-history-index-recovery.mjs','--line-endings='+format],{encoding:'utf8',windowsHide:true,timeout:90000});
-  expect(output).toContain('PASS 25 isolated automatic history SQL groups (PGlite, '+format+')');
+  expect(output).toContain('PASS 26 isolated automatic history SQL groups (PGlite, '+format+')');
  },95000);
 });

@@ -101,7 +101,23 @@ const syncCoordinator = new SyncCoordinator({
   pullWorker: new PullWorker({ connectionManager:databaseManager,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,reader:changeReader,conflicts:conflictRepository,publish:publishBusinessChange }),
   publish: (state) => { for (const win of BrowserWindow.getAllWindows()) win.webContents.send("sync:state",legacyRecoveryRuntime.status(state)); },
 });
-const localDataLifecycle = new LocalDataLifecycle({ connectionManager:databaseManager,databaseService,jobManager,jobRepository,registry:syncRegistry,cloud:syncCloud,syncCoordinator,checkpoints:syncCheckpoints,reader:changeReader,publish:publishBusinessChange });
+// Main-private ownership evidence for retaining, not executing, an interrupted
+// history-only v1 job. No renderer flag or job timestamp can supply this proof.
+async function ownsHistoryRecoveryExecution({jobId,source,requestParent=null}={}){
+  const same=()=>{
+    if(app.hasSingleInstanceLock()!==true||syncCoordinator.ownsExclusive()!==true||!source||source.pool!==databaseManager.pool)return false;
+    const current=syncCloud.requestContext(false),running=jobManager.running;
+    return current.pool===source.pool&&current.fingerprint===source.fingerprint&&recordId(syncCloud.terminalId())===source.terminalId&&
+      (!running||running.job_type==='history_index_recovery_v1'&&recordId(running.job_id)===recordId(jobId));
+  };
+  try{
+    if(!same()||typeof source.databaseGuid!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(source.databaseGuid))return false;
+    const request=requestParent?new(databaseManager.sql().Request)(requestParent):source.pool.request();
+    const result=await request.query('SELECT LOWER(CONVERT(nvarchar(36),database_guid)) database_guid FROM sys.database_recovery_status WHERE database_id=DB_ID();');
+    return same()&&result.recordset?.length===1&&result.recordset[0].database_guid===source.databaseGuid;
+  }catch{return false;}
+}
+const localDataLifecycle = new LocalDataLifecycle({ connectionManager:databaseManager,databaseService,jobManager,jobRepository,registry:syncRegistry,cloud:syncCloud,syncCoordinator,checkpoints:syncCheckpoints,reader:changeReader,publish:publishBusinessChange,historyExecutionProof:ownsHistoryRecoveryExecution });
 const managementReplica = new (require("./sync/management-replica.cjs").ManagementReplica)({ cloud:syncCloud, databaseService, connectionManager:databaseManager, lifecycle:localDataLifecycle, jobs:jobRepository, coordinator:syncCoordinator });
 const mainTelemetry = createTelemetry({ databaseService,syncCoordinator,jobRepository,configStore,terminalStore,app });
 const operationsRepository = new OperationsRepository(databaseManager, syncRegistry);
@@ -370,6 +386,7 @@ const AUTO_SYNC_RETRY_MS = 60_000;
 const AUTO_VERIFY_MS = 15 * 60_000;
 const SHUTDOWN_SYNC_TIMEOUT_MS = 120_000;
 const automaticSyncScheduler = require("./sync/scheduler.cjs").createSyncScheduler(runAutomaticSync);
+const historyCadence = new (require('./sync/history-cadence.cjs').HistoryCadence)();
 let automaticSyncQueued = false;
 let lastAutomaticVerification = 0;
 let terminalIdentityPausedSync = false;
@@ -377,16 +394,26 @@ let lastActivityFlush = 0;
 function scheduleLocalChanges(operations) {
   scheduleAutomaticSync(activityOnly(operations) ? ACTIVITY_INTERVAL_MS : 250);
 }
-function scheduleAutomaticSync(delay = AUTO_SYNC_OK_MS) {
+function scheduleAutomaticSync(delay = AUTO_SYNC_OK_MS,{historyContinuation=false}={}) {
   if (quitting) return;
+  // Every ordinary/unknown notification requests a real core pass. Only this
+  // Main-owned continuation marker may reuse the existing history quantum.
+  if(!historyContinuation)historyCadence.requestCore();
   if (syncCoordinator.running && delay <= 250) automaticSyncQueued = true;
   automaticSyncScheduler.schedule(delay);
 }
 async function runAutomaticSync() {
   if(isManagementDevice()){
-    try { await managementReplica.run(); }
-    catch(error) { diagnostics.logConnection("synchronization.management.failed", { category:"synchronization", message:String(error?.message??error) }); }
-    finally { if(terminalStore.read()?.tokenId && !terminalIdentityPausedSync) scheduleAutomaticSync(AUTO_SYNC_RETRY_MS); }
+    const decision=historyCadence.decision(),revision=historyCadence.beginCore();
+    if(decision==='wait'){scheduleAutomaticSync(historyCadence.nextDelay(),{historyContinuation:true});return;}
+    try { const result=await managementReplica.run({historyOnly:decision==='history'});
+      if(decision==='core')historyCadence.finishCore(revision,{ok:result.ok,nextMs:AUTO_SYNC_RETRY_MS});
+      if(result.history)historyCadence.historyOutcome(result.history);
+      else if(decision==='history')historyCadence.historyFailure();
+    }
+    catch(error) { if(decision==='core')historyCadence.finishCore(revision,{ok:false,nextMs:AUTO_SYNC_RETRY_MS});else historyCadence.historyFailure();
+      diagnostics.logConnection("synchronization.management.failed", { category:"synchronization", message:String(error?.message??error) }); }
+    finally { if(terminalStore.read()?.tokenId && !terminalIdentityPausedSync) scheduleAutomaticSync(historyCadence.nextDelay(),{historyContinuation:true}); }
     return;
   }
   const databaseState=databaseService.snapshot();
@@ -409,6 +436,14 @@ async function runAutomaticSync() {
     scheduleAutomaticSync(250);
     return;
   }
+  const decision=historyCadence.decision();
+  if(decision==='wait'){scheduleAutomaticSync(historyCadence.nextDelay(),{historyContinuation:true});return;}
+  if(decision==='history'){
+    try{historyCadence.historyOutcome(await localDataLifecycle.historyStep(localBranchId()));}
+    catch(error){historyCadence.historyFailure();recordFault('sync.history-recovery',error);}
+    scheduleAutomaticSync(historyCadence.nextDelay(),{historyContinuation:true});return;
+  }
+  const coreRevision=historyCadence.beginCore();
   automaticSyncQueued = false;
   void approvalTokenVerifier.refresh();
   const includeActivity = Date.now() - lastActivityFlush >= ACTIVITY_INTERVAL_MS;
@@ -424,13 +459,18 @@ async function runAutomaticSync() {
     }
   }
   if (result.ok) diagnostics.logConnection("synchronization.automatic.succeeded", { category:"synchronization", stage:"automatic", state:"ready" });
+  historyCadence.finishCore(coreRevision,{ok:result.ok,nextMs:result.ok?Math.max(250,AUTO_SYNC_OK_MS-(Date.now()-lastActivityFlush)):AUTO_SYNC_RETRY_MS});
+  if(result.ok){
+    try{historyCadence.historyOutcome(await localDataLifecycle.historyStep(localBranchId()));}
+    catch(error){historyCadence.historyFailure();recordFault('sync.history-recovery',error);}
+  }
   if (result.ok && Date.now() - lastAutomaticVerification >= AUTO_VERIFY_MS) {
     lastAutomaticVerification = Date.now();
     void localDataLifecycle.reconcileAndRecover(localBranchId(), Number(databaseConfig.profile()?.retentionDays)||90)
-      .then(differences=>{const unresolved=differences.filter(row=>!MEMBERSHIP_TABLES.has(row.table));if(unresolved.length)throw reconciliationError(unresolved);})
+      .then(differences=>{const unresolved=differences.filter(row=>!MEMBERSHIP_TABLES.has(row.table)&&!(row.table==='change_history'&&localDataLifecycle.historyPending(localBranchId())));if(unresolved.length)throw reconciliationError(unresolved);})
       .catch((error) => recordFault("sync.verify-counts", error));
   }
-  scheduleAutomaticSync(automaticSyncQueued ? 250 : result.ok ? Math.max(250, AUTO_SYNC_OK_MS - (Date.now() - lastActivityFlush)) : AUTO_SYNC_RETRY_MS);
+  scheduleAutomaticSync(automaticSyncQueued ? 250 : historyCadence.nextDelay(),{historyContinuation:true});
 }
 function stopAutomaticSync() {
   automaticSyncScheduler.stop();

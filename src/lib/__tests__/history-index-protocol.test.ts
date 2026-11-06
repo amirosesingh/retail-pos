@@ -12,6 +12,7 @@ type MutableRows={rows:Record<string,unknown>[];remaining_ids:unknown};
 describe('Main-only bounded history reconciliation protocol',()=>{
  it('accepts strictly scoped increasing UUID pages without treating counts as payload proof',()=>{const result=normalizeIndex(page(),scope,{action:'begin'});expect(result.ids).toEqual([id(1),id(2)]);expect(Object.isFrozen(result.ids)).toBe(true);});
  it('accepts finish cardinality only as exact decimal text',()=>{const value={...page(),action:'finish',ids:[],next_id:null,complete:true,range_count:'9007199254740993'};expect(normalizeIndex(value,scope,{action:'finish',upperId:id(3)}).range_count).toBe('9007199254740993');});
+ it('rejects an oversized cardinality before bigint conversion',()=>{const value={...page(),action:'finish',ids:[],next_id:null,complete:true,range_count:'9'.repeat(100000)};expect(()=>normalizeIndex(value,scope,{action:'finish',upperId:id(3)})).toThrow();});
  it('keeps exact bigint, JSON numeric text, UTC precision and existing UUID normalization',()=>{const result=normalizeRows(batch(),scope,[id(1),id(2)]);expect(result.rows[0]).toMatchObject({revision:'9007199254740993',new_value_json:row().new_value_json,server_timestamp:row().server_timestamp,entity_id:id(20)});});
  for(const [label,mutate] of Object.entries({
   branch:(v:MutablePage):unknown=>v.branch_id='other',terminal:(v:MutablePage):unknown=>v.terminal_id='other',projection:(v:MutablePage):unknown=>v.projection='unknown',privacy:(v:MutablePage):unknown=>v.keep_commerce=true,

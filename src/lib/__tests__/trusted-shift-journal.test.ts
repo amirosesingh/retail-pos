@@ -460,11 +460,11 @@ describe("protected shift closing durable journal", () => {
     expect(h.data().tables.shifts[0]).toMatchObject({ counted_cash: 90, closed_by_name: "fixture approver" });
   });
 
-  it("uploads a complete protected closure before the unrelated expired-history failure", async () => {
+  it("uploads a complete protected closure while retaining the unrelated expired-history hold", async () => {
     const h = fixture();
     await h.writer.apply("Closing shift cash count", closeOperations(), h.scope);
     const f = workerFixture(h);
-    await expect(f.worker.run({ branchId: branch, includeActivity: false })).rejects.toMatchObject({ code: "ECHANGEGAP" });
+    await expect(f.worker.run({ branchId: branch, includeActivity: false })).resolves.toMatchObject({ allUploaded:false,historyUploadHeld:{code:'ECHANGEGAP',table:'change_history'} });
     expect(f.uploaded).toHaveLength(1);
     expect(f.uploaded[0].operations).toBeUndefined();
     const operations = JSON.parse(String((f.uploaded[0].shiftIntent as Row).payloadJson)).operations as { table: string; rows: Row[] }[];
@@ -486,7 +486,7 @@ describe("protected shift closing durable journal", () => {
     await old.repository.apply("prior protected close", closeOperations(), old.scope);
     await commitNextOpening(old);
     const previous = workerFixture(old);
-    await expect(previous.worker.run({ branchId: branch, includeActivity: false })).rejects.toMatchObject({ code: "ECHANGEGAP" });
+    await expect(previous.worker.run({ branchId: branch, includeActivity: false })).resolves.toMatchObject({ allUploaded:false,historyUploadHeld:{code:'ECHANGEGAP',table:'change_history'} });
     expect(old.data().tables.shifts[0].status).toBe("CLOSED");
     expect(previous.cloudRows.get(shiftId)?.status).toBe("OPEN");
     expect(previous.cloudRows.get(uuid(98))?.status).toBe("OPEN");
@@ -495,7 +495,7 @@ describe("protected shift closing durable journal", () => {
     await fixed.writer.apply("Closing shift cash count", closeOperations(), fixed.scope);
     await commitNextOpening(fixed);
     const current = workerFixture(fixed);
-    await expect(current.worker.run({ branchId: branch, includeActivity: false })).rejects.toMatchObject({ code: "ECHANGEGAP" });
+    await expect(current.worker.run({ branchId: branch, includeActivity: false })).resolves.toMatchObject({ allUploaded:false,historyUploadHeld:{code:'ECHANGEGAP',table:'change_history'} });
     expect(current.cloudRows.get(shiftId)?.status).toBe("CLOSED");
     expect(current.cloudRows.get(uuid(98))?.status).toBe("OPEN");
   });
@@ -504,7 +504,7 @@ describe("protected shift closing durable journal", () => {
     const h = fixture();
     await h.writer.apply("Closing shift cash count", closeOperations(), h.scope);
     const f = workerFixture(h, false);
-    await expect(f.worker.run({ branchId: branch, includeActivity: false })).rejects.toMatchObject({ code: "ECHANGEGAP" });
+    await expect(f.worker.run({ branchId: branch, includeActivity: false })).rejects.toMatchObject({ code: "ESHIFT_CLOSURE_UNCONFIRMED",table:'shifts' });
     expect(h.data().journal.every(row => !row.acknowledged_at)).toBe(true);
     expect(h.data().journal.some(row => String(row.last_error).includes("not confirmed"))).toBe(true);
   });
