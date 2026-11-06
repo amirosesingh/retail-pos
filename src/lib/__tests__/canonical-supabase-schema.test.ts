@@ -261,6 +261,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261105090100_branch_shift_sharing.sql",
       "supabase/migrations/20261105140417_isolate_refund_guard_table_fields.sql",
       "supabase/migrations/20261105170645_bounded_shop_hourly_report.sql",
+      "supabase/migrations/20261106015347_guard_existing_product_owner_during_native_sync.sql",
       "supabase/migrations/20261106020500_complete_change_history_sync_count.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
