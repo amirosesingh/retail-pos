@@ -666,6 +666,10 @@ const finalHardening = schema.lastIndexOf("-- Final public-schema privilege hard
 if (finalHardening < 0) throw new Error("Missing final privilege hardening boundary");
 schema = `${schema.slice(0, finalHardening).trimEnd()}\n\n${causalBegin}\n${causalMigration.trim()}\n${causalEnd}\n\n${authorBegin}\n${authorRegistry.trim()}\n${authorEnforcement.trim()}\n${authorEnd}\n\n${correctionBegin}\n${correctionMigration.trim()}\n${correctionEnd}\n\n${startBegin}\n${startMigration.trim()}\n${startEnd}\n\n${graphReadBegin}\n${graphReadMigration.trim()}\n${graphReadEnd}\n\n${schema.slice(finalHardening).trim()}\n`;
 schema = schema.replace("-- Final public-schema privilege hardening after notification rule definitions.", `${historyPageBegin}\n${historyPageMigration.trim()}\n${historyPageEnd}\n\n${historyProjectionBegin}\n${historyProjectionMigration.trim()}\n${historyProjectionEnd}\n\n-- Final public-schema privilege hardening after notification rule definitions.`);
+// Reapply the reviewed append-only history read/feed component after legacy
+// generation. Never replace the rest of the schema with a separate checkout.
+schema = require("./history-index-canonical.cjs").withHistoryIndexContract(schema,
+  fs.readFileSync(path.join(root, "supabase", "migrations", "20261106042139_automatic_history_index_recovery.sql"), "utf8"));
 fs.writeFileSync(schemaPath, schema);
 console.log(`Supabase sync contract generated for ${tables.length} keyed tables`);
 

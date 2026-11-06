@@ -118,6 +118,12 @@ const bodySchema = z.object({
       historyDays: z.number().int().min(30).max(7300),
     })
     .optional(),
+  sqlServerHistoryReconcile: z.discriminatedUnion('action',[
+    z.object({action:z.literal('begin'),organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128)}).strict(),
+    z.object({action:z.literal('page'),organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128),afterId:z.string().uuid().nullable(),upperId:z.string().uuid()}).strict(),
+    z.object({action:z.literal('finish'),organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128),upperId:z.string().uuid().nullable()}).strict(),
+    z.object({action:z.literal('rows'),organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128),ids:z.array(z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)).min(1).max(10).refine(ids=>new Set(ids).size===ids.length)}).strict(),
+  ]).optional(),
   sqlServerTelemetry: z
     .object({
       terminal_id: z.string().min(1).max(128),
@@ -231,8 +237,8 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       });
       exactFinancialOperations = true;
     }
-    if(body.sqlServerLegacyRecovery||body.sqlServerFinancialCapability||body.sqlServerFinancialEvent||body.sqlServerFinancialBasis||body.sqlServerFinancialObservation||body.sqlServerAggregate?.registerFinancialBoundary||body.sqlServerAggregate?.shiftFinancialOpening||body.sqlServerAggregate?.financialLedgerProjection){
-      const operations=[body.managementSyncBranches,body.ops?.length,body.read,body.sqlServerBatch,body.sqlServerAggregate,body.sqlServerLegacyRecovery,body.sqlServerFinancialCapability,body.sqlServerFinancialEvent,body.sqlServerFinancialBasis,body.sqlServerFinancialObservation,body.sqlServerShiftGraph,body.sqlServerPull,body.sqlServerBootstrap,body.sqlServerCounts,body.sqlServerTelemetry,body.oldReceipt];
+    if(body.sqlServerHistoryReconcile||body.sqlServerLegacyRecovery||body.sqlServerFinancialCapability||body.sqlServerFinancialEvent||body.sqlServerFinancialBasis||body.sqlServerFinancialObservation||body.sqlServerAggregate?.registerFinancialBoundary||body.sqlServerAggregate?.shiftFinancialOpening||body.sqlServerAggregate?.financialLedgerProjection){
+      const operations=[body.managementSyncBranches,body.ops?.length,body.read,body.sqlServerBatch,body.sqlServerAggregate,body.sqlServerLegacyRecovery,body.sqlServerFinancialCapability,body.sqlServerFinancialEvent,body.sqlServerFinancialBasis,body.sqlServerFinancialObservation,body.sqlServerShiftGraph,body.sqlServerPull,body.sqlServerBootstrap,body.sqlServerCounts,body.sqlServerHistoryReconcile,body.sqlServerTelemetry,body.oldReceipt];
       if(operations.filter(Boolean).length!==1)throw new Error('Mixed financial metadata request');
     }
   } catch (error) {
@@ -265,6 +271,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     !body.sqlServerPull &&
     !body.sqlServerBootstrap &&
     !body.sqlServerCounts &&
+    !body.sqlServerHistoryReconcile &&
     !body.sqlServerTelemetry &&
     !body.oldReceipt
   )
@@ -405,6 +412,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     body.sqlServerPull ||
     body.sqlServerBootstrap ||
     body.sqlServerCounts ||
+    body.sqlServerHistoryReconcile ||
     body.oldReceipt
   ) {
     const branchId =
@@ -419,6 +427,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       body.sqlServerPull?.branchId ??
       body.sqlServerBootstrap?.branchId ??
       body.sqlServerCounts?.branchId ??
+      body.sqlServerHistoryReconcile?.branchId ??
       body.oldReceipt?.branchId ??
       "";
     const terminalSync = Boolean(
@@ -432,7 +441,8 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       body.sqlServerShiftGraph ||
       body.sqlServerPull ||
       body.sqlServerBootstrap ||
-      body.sqlServerCounts,
+      body.sqlServerCounts ||
+      body.sqlServerHistoryReconcile,
     );
     if (terminalSync && !scope.terminalId)
       return Response.json(
@@ -466,6 +476,12 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
         },
         { status: 403 },
       );
+    if(body.sqlServerHistoryReconcile){
+      const {commerceSyncIsolationReady}=await import('./commerce-sync-readiness.server');
+      const keepCommerce=scope.managementReplica===true||scope.managementDevice===true||!(await commerceSyncIsolationReady());
+      const {protectedHistoryReconciliation}=await import('./protected-history-reconciliation.server');
+      return protectedHistoryReconciliation({read:body.sqlServerHistoryReconcile,terminalId:scope.terminalId??'',keepCommerce,signal:request.signal});
+    }
     try {
       const { assertStoreSyncScope } = await import("./store-sync-scope.server");
       assertStoreSyncScope(branchId, body.sqlServerBatch ? [body.sqlServerBatch] : body.sqlServerAggregate?.operations ?? []);

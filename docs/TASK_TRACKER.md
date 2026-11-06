@@ -23,6 +23,21 @@ fixtures contain no business rows. CLI created the pending migration file; its
 SQL/native/PostgREST tests, future-insert trigger, fair durable jobs and actual
 device acceptance are still pending. Keep the draft PR checklist explicit.
 
+RPC preparation checkpoint: CLI-created20261106042139 is one DO statement with
+three new service-only functions and an INSERT-only feed trigger. It backfills no
+history and changes no existing helper/grant. Latest captured-routine tests pass
+25 PGlite groups in each LF/CRLF form,26 native PG18.6 CRLF groups and27 native LF
+groups including8 actual PostgREST16.5 cases. These cover the1000-row set cap versus
+complete2007-ID scalar pages, exact bigint/JSON/100ns values, current privacy and
+denied/revoked scope, byte prefixes/hard limits, source/shape/grant guards, real
+writer contention, replay, late DDL rollback and tool-ledger rollback. Fresh-schema
+assembly preserves final privilege hardening and guards the two observed immutable
+helper formatting variants; live migration preflight stays byte-exact. The native
+read transport/actual relay and bounded response validator pass50 focused tests;
+canonical/SQL assembly pass39. TypeScript and scoped lint pass. This is disposable
+evidence only, not actual device recovery or hosted CPU acceptance. Independent
+review, durable runtime jobs, final CI and exact live approval remain pending.
+
 Owner explicitly requires automatic recovery for hundreds of PCs after short or
 long offline periods, without per-PC manual SQL, UUID exports, repair scripts,
 registration/checkpoint resets or queue clearing. A centrally reviewed migration

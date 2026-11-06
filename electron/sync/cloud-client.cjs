@@ -62,7 +62,7 @@ function transportDiagnostic(error, payload, stage) {
   };
   try {
     return {
-      transportOperation: payload?.sqlServerPull ? "feed" : payload?.sqlServerBootstrap ? "bootstrap"
+      transportOperation: payload?.sqlServerPull ? "feed" : payload?.sqlServerBootstrap || payload?.sqlServerHistoryReconcile ? "bootstrap"
         : payload?.sqlServerShiftGraph ? "graph" : payload?.sqlServerCounts ? "count"
           : payload?.sqlServerBatch || payload?.sqlServerAggregate || payload?.sqlServerLegacyRecovery ? "upload" : "other",
       transportStage: stage,
@@ -273,11 +273,18 @@ class CloudClient {
       method: "POST",
       headers: { "content-type": "application/json", ...(payload?.sqlServerLegacyRecovery ? { "x-pos-legacy-recovery": "1" } : {}) },
       body: requestBody,
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(payload?.sqlServerHistoryReconcile ? 12_000 : 30_000),
     });
       transportStage = "body";
       try {
-        if (payload?.sqlServerLegacyRecovery && response.ok) {
+        if(payload?.sqlServerHistoryReconcile&&response.ok){
+          const kind=payload.sqlServerHistoryReconcile.action==='rows'?'rows':'index';
+          const max=kind==='rows'?5*1024*1024:128*1024;
+          const text=await boundedText(response,max);
+          if(response.headers?.get?.('X-POS-History-Reconcile-Version')!=='1'||response.headers?.get?.('X-POS-History-Reconcile-Kind')!==kind)
+            throw Object.assign(new Error('The protected history read capability could not be verified.'),{code:'EHISTORY_INDEX_PROTOCOL',table:'change_history'});
+          data=JSON.parse(text);
+        } else if (payload?.sqlServerLegacyRecovery && response.ok) {
           legacyRecoveryBody = await boundedText(response, require("./legacy-shift-recovery-receipt.cjs").MAX_RESPONSE_BYTES);
           data = JSON.parse(legacyRecoveryBody);
         } else if(payload?.sqlServerShiftGraph && response.ok && typeof response.text==="function"){
@@ -314,7 +321,9 @@ class CloudClient {
       }), { httpStatus: response.status, nonJsonResponse });
     }
     this.assertRequestContext(source, governance, payload);
-    const normalized=normalizeSyncPayload(data);
+    // Versioned history rows already contain exact JSON/decimal text. Generic
+    // entity-key JSON parsing would round its evidence before validation.
+    const normalized=payload?.sqlServerHistoryReconcile?data:normalizeSyncPayload(data);
     if (legacyRecoveryBody !== undefined && normalized && typeof normalized === "object")
       legacyRecoveryResponses.set(normalized, legacyRecoveryBody);
     if (payload?.sqlServerPull) {
@@ -481,6 +490,17 @@ class CloudClient {
   }
   counts({ organizationId = "default", branchId, historyDays = 90 }) {
     return this.request({ sqlServerCounts: { organizationId, branchId, historyDays } });
+  }
+  async historyIndex({organizationId='default',branchId,action='begin',afterId=null,upperId=null,keepCommerce}) {
+    const terminalId=this.terminalId();
+    const read={organizationId,branchId,action,...(action==='page'?{afterId,upperId}:action==='finish'?{upperId}:{})};
+    const value=await this.request({sqlServerHistoryReconcile:read});
+    return require('./history-index-protocol.cjs').normalizeIndex(value,{organizationId,branchId,terminalId,keepCommerce},{action,afterId,upperId});
+  }
+  async historyMissingRows({organizationId='default',branchId,ids,keepCommerce}) {
+    const terminalId=this.terminalId();
+    const value=await this.request({sqlServerHistoryReconcile:{organizationId,branchId,action:'rows',ids}});
+    return require('./history-index-protocol.cjs').normalizeRows(value,{organizationId,branchId,terminalId,keepCommerce},ids);
   }
   membershipDirectory({ afterRevision = 0, limit = 500 } = {}) {
     return this.request({ afterRevision:Number(afterRevision)||0, limit }, "membership_directory");
