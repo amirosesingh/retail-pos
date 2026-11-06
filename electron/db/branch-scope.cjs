@@ -89,6 +89,20 @@ function dateColumn(table) {
   return ["created_at", "paid_at", "occurred_at", "updated_at"].find((name) => names.has(name)) ?? null;
 }
 
+// Download verification must compare the same catalogue as the cloud reader.
+// Keep the upload/write predicate (and legacy receiving read exception) intact.
+function comparisonBranchPredicate(registry, table, alias = "source") {
+  if (table?.cloudTable === "products" && columnNames(table).has("owner_store_id"))
+    return catalogueReadPredicate(registry, alias);
+  const link = table?.cloudTable === "product_barcodes" ? "product_id"
+    : table?.cloudTable === "promotions" ? "foc_product_id" : null;
+  if (!link) return branchPredicate(registry, table, alias);
+  const product = registry.tables.find(candidate => candidate.cloudTable === "products");
+  if (!product || !columnNames(table).has(link)) return "1=0";
+  const related = `EXISTS (SELECT 1 FROM dbo.[${product.sqlServerTable}] catalogue_product WHERE catalogue_product.[id]=${alias}.[${link}] AND ${catalogueReadPredicate(registry, "catalogue_product")})`;
+  return link === "foc_product_id" ? `(${alias}.[${link}] IS NULL OR ${related})` : related;
+}
+
 function settingsScopePredicate(table, alias = "source") {
   if (!["settings_overrides", "settings_scoped"].includes(table?.cloudTable)) return null;
   return `(lower(${alias}.[scope])='global' OR (lower(${alias}.[scope])='branch' AND ${alias}.[scope_id]=@branch) OR (lower(${alias}.[scope])='cluster' AND EXISTS (SELECT 1 FROM dbo.[stores] scoped_store WHERE scoped_store.[id]=@branch AND COALESCE(NULLIF(scoped_store.[group_id],''),'default')=${alias}.[scope_id])) OR (lower(${alias}.[scope])='terminal' AND ${alias}.[scope_id]=@terminal))`;
@@ -100,10 +114,11 @@ function governanceScopePredicate(table, alias = "source") {
   return `(lower(${alias}.[scope_type])='global' OR (lower(${alias}.[scope_type])='branch' AND ${alias}.[scope_id]=@branch) OR (lower(${alias}.[scope_type])='cluster' AND EXISTS (SELECT 1 FROM dbo.[stores] scoped_store WHERE scoped_store.[id]=@branch AND COALESCE(NULLIF(scoped_store.[group_id],''),'default')=${alias}.[scope_id])))`;
 }
 
-function scopedWhere(
+function buildScopedWhere(
   registry,
   table,
   { historyDays = 90, alias = "source" } = {},
+  predicate = branchPredicate,
 ) {
   const clauses = [];
   // These reserved keys are native-only lockout counters. They deliberately
@@ -114,7 +129,7 @@ function scopedWhere(
     settingsScopePredicate(table, alias) ?? governanceScopePredicate(table, alias);
   if (explicitScope) clauses.push(explicitScope);
   else {
-    const branch = branchPredicate(registry, table, alias);
+    const branch = predicate(registry, table, alias);
     if (branch) clauses.push(branch);
   }
   const date = table?.retentionClass === "historical" ? dateColumn(table) : null;
@@ -122,8 +137,16 @@ function scopedWhere(
   return clauses.length ? clauses.join(" AND ") : "1=1";
 }
 
+function scopedWhere(registry, table, options) {
+  return buildScopedWhere(registry, table, options);
+}
+function comparisonWhere(registry, table, options) {
+  return buildScopedWhere(registry, table, options, comparisonBranchPredicate);
+}
+
 module.exports = {
   branchPredicate,
+  comparisonWhere,
   dateColumn,
   governanceScopePredicate,
   rendererReadBranchPredicate,

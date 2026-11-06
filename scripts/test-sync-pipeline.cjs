@@ -174,7 +174,7 @@ test("new PCs bootstrap while registered PCs reuse their completed bootstrap", a
   const { LocalDataLifecycle }=require("../electron/jobs/lifecycle.cjs");
   for(const completed of [false,true]) {
     let bootstraps=0;
-    const lifecycle=new LocalDataLifecycle({registry:{tables:[]},cloud:{},jobRepository:{active:async()=>null,completed:async()=>completed},databaseService:{transition(){},markReady(){}},syncCoordinator:{runNow:async()=>({ok:true})}});
+    const lifecycle=new LocalDataLifecycle({connectionManager:{pool:{}},registry:{tables:[]},cloud:{},jobRepository:{active:async()=>null,completed:async()=>completed},databaseService:{transition(){},markReady(){}},syncCoordinator:{runNow:async()=>({ok:true})}});
     lifecycle.pushWithGapRecovery=async()=>({recovered:[]});
     lifecycle.bootstrap=async()=>{bootstraps++;};lifecycle.retain=async()=>{};lifecycle.reconcile=async()=>[];
     await lifecycle.ensure({branchId:"B1"});assert.equal(bootstraps,completed?0:1);
