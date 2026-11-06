@@ -1,5 +1,6 @@
 const { AsyncLocalStorage } = require("node:async_hooks");
 const { bootstrapDiagnostic, tagBootstrapDiagnostic } = require("../diagnostics.cjs");
+const { posFeedEvidence } = require("./status-evidence.cjs");
 function retainDiagnostic(target, source) {
   const { bootstrapPhase: phase, bootstrapOrigin: origin, ...fields } = bootstrapDiagnostic(source, []);
   try {
@@ -25,18 +26,30 @@ class SyncCoordinator {
     const message=table&&!raw.includes(table)?`${raw} (table: ${table})`:raw;
     const code=String(error?.code??"ESYNC"),status=Number(error?.status??error?.statusCode??0);
     const branchId=String(options.branchId??""),includeActivity=direction==="push"&&options.includeActivity!==false,skipMembership=direction==="pull"&&Boolean(options.skipMembership);
+    const domain=direction==="pull"&&posFeedEvidence(error,branchId)==="failed"?"pos_feed":"unspecified";
     // Bound entries by actual work scope, never an arbitrary error message.
-    const key=JSON.stringify([branchId,direction,includeActivity,skipMembership]),previous=this.unresolved().get(key);
+    const key=JSON.stringify([branchId,direction,includeActivity,skipMembership,domain]),previous=this.unresolved().get(key);
     const denied=!authorHold(error)&&(status===401||status===403||code==="HTTP_401"||code==="HTTP_403");
-    this.unresolved().set(key,{branchId,direction,includeActivity,skipMembership,error:message,credentialsInvalid:Boolean(previous?.credentialsInvalid||denied)});
+    this.unresolved().set(key,{branchId,direction,includeActivity,skipMembership,domain,error:message,credentialsInvalid:Boolean(previous?.credentialsInvalid||denied)});
     this.publishFailureStatus(branchId);
     return message;
   }
   clearSuccessfulFailures(options,direction,result) {
-    // Deferred tables did not receive a verified successful pass. Status must
-    // not turn that partial outcome into acknowledgement of an older failure.
-    if(result?.deferredTables?.length||result?.membershipDeferred)return;
-    for(const [key,failure] of this.unresolved())if(failure.branchId===String(options.branchId??"")&&failure.direction===direction&&(!failure.includeActivity||options.includeActivity!==false)&&(direction!=="pull"||failure.skipMembership||!options.skipMembership))this.unresolved().delete(key);
+    // A deferred Membership read is not a POS-feed failure. Only the worker's
+    // private matching-branch completion evidence can resolve that domain;
+    // unknown/full-scope failures still require their full successful pass.
+    const deferredTables=Boolean(result?.deferredTables?.length);
+    const pendingFeed=Boolean(result?.deferredLocalChanges||result?.deferredHeldDeletion);
+    for(const [key,failure] of this.unresolved()) {
+      if(failure.branchId!==String(options.branchId??"")||failure.direction!==direction||failure.includeActivity&&options.includeActivity===false)continue;
+      if(direction==="pull"&&failure.domain==="pos_feed") {
+        if(!deferredTables&&!pendingFeed&&posFeedEvidence(result,options.branchId)==="complete")this.unresolved().delete(key);
+        continue;
+      }
+      if(deferredTables||pendingFeed||result?.membershipDeferred)continue;
+      if(direction==="pull"&&!failure.skipMembership&&options.skipMembership)continue;
+      this.unresolved().delete(key);
+    }
   }
   async withExclusive(work) {
     if (syncLease.getStore() === this) return work();
