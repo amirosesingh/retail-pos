@@ -11,6 +11,7 @@ import { LocalDatabaseWizard } from "@/platforms/windows/components/LocalDatabas
 import { checkHealth, cloudDiagnosis } from "@/core/activation/connection-health";
 import { StartupShiftRecoveryReview } from "@/platforms/windows/components/StartupShiftRecoveryReview";
 import { TerminalLogin } from "@/platforms/web/components/pos/TerminalLogin";
+import { desktopStorageRoute } from "@/lib/desktop-storage-route";
 
 type DatabaseState = {
   enabled?: boolean;
@@ -54,7 +55,7 @@ function DatabaseStartupPage() {
     const applyState = (next: DatabaseState) => {
       if (!live) return;
       setState(next);
-      if (next.tradingReady) {
+      if (desktopStorageRoute(next) === "local") {
         window.sessionStorage.removeItem(ONLINE_STARTUP_OVERRIDE);
         void navigate({ to: "/" });
       }
@@ -80,7 +81,7 @@ function DatabaseStartupPage() {
     try {
       const next = await database()!.retryStartup();
       setState(next);
-      if (next.tradingReady) {
+      if (desktopStorageRoute(next) === "local") {
         window.sessionStorage.removeItem(ONLINE_STARTUP_OVERRIDE);
         await navigate({ to: "/" });
       } else {
@@ -164,7 +165,7 @@ function DatabaseStartupPage() {
           </div>
         </div>
 
-        <StartupShiftRecoveryReview connected={state.connected === true && !state.tradingReady && !applyingMigration} renderLogin={view => <TerminalLogin view={view} />} />
+        <StartupShiftRecoveryReview connected={state.connected === true && state.tradingReady === true && !migrationRequired && !applyingMigration} renderLogin={view => <TerminalLogin view={view} />} />
 
         <div className="grid gap-3 sm:grid-cols-2">
           <Button disabled={busy || restoring} onClick={() => void retry()}>

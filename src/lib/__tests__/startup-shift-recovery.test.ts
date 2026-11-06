@@ -7,6 +7,7 @@ const require = createRequire(import.meta.url);
 const session = require("../../../electron/admin-session.cjs"), guard = require("../../../electron/ipc-guard.cjs");
 const { installLegacyShiftRecoveryIpc, CHANNELS } = require("../../../electron/sync/legacy-shift-recovery-ipc.cjs");
 const { install } = require("../../../electron/ipc-privilege.cjs");
+const { DatabaseService } = require("../../../electron/db/service.cjs");
 const branch = "00000000-0000-4000-8000-000000000001", author = "00000000-0000-4000-8000-000000000002";
 type Element = { type: string | ((props: Record<string, unknown>) => Element); props: Record<string, unknown> };
 type Owner = { index: number; effects: number; slots: unknown[]; deps: Array<unknown[] | undefined>; cleanups: Array<unknown> };
@@ -33,7 +34,13 @@ function fixture() {
   };
   const jsx = (type: Element["type"], props: Element["props"]) => ({ type, props: props ?? {} });
   const authState = () => { const person = session.identity(); return { ready: true, user: person ? { staffId: person.authorId } : null, isAdmin: person?.source === "pos" && person?.level === "admin", authUserId: person?.authorId, logout: async () => session.clear() }; };
-  const navigate = vi.fn(), dbState = { enabled: true, connected: true, configured: true, tradingReady: false, state: "enabled_bootstrapping", detail: { error: "Retained shifts need review" } };
+  const navigate = vi.fn(({ to }: { to: string }) => { pathname = to; });
+  const databaseListeners = new Set<(value: object) => void>();
+  let sqlConnected = true;
+  const databaseService = new DatabaseService({ secureConfig: { enabled: () => true, profile: () => ({ database: "owned-startup-fixture" }) },
+    manager: { isConnected: () => sqlConnected }, publish: (value: object) => { for (const listener of databaseListeners) listener(value); } });
+  databaseService.validated = true;
+  databaseService.transition("enabled_bootstrapping", { code: "ELOCAL_PENDING_UNVERIFIED", error: "Retained shifts need review" });
   const modules: Record<string, unknown> = {
     react, "react/jsx-runtime": { jsx, jsxs: jsx, Fragment: "fragment" },
     "@tanstack/react-router": { useLocation: ({ select }: { select: (value: { pathname: string }) => unknown }) => select({ pathname }), useNavigate: () => navigate, createFileRoute: () => (options: object) => options },
@@ -45,30 +52,43 @@ function fixture() {
     "./LegacyShiftRecoveryReview": { LegacyShiftRecoveryReview: () => jsx("review-saved-closings", {}) },
     "@/lib/recovery-route": { isRecoveryPath: (path: string) => path === "/recovery" },
     "@/components/shared/TillLoader": { TillLoader: () => jsx("trading-blocked", {}) },
-    "@/lib/desktop-storage-route": { desktopStorageRoute: () => "pending" }, "@/core/local-db/db-mode": { setStartupOnlineMode() {}, LOCAL_DATABASE_SETTINGS_REQUEST: "fixture-sql-settings", ONLINE_STARTUP_OVERRIDE: "fixture-online" },
+    "@/core/local-db/db-mode": { setStartupOnlineMode() {}, LOCAL_DATABASE_SETTINGS_REQUEST: "fixture-sql-settings", ONLINE_STARTUP_OVERRIDE: "fixture-online" },
     "@/lib/desktop-startup-progress": { observeDesktopStartup: () => () => {}, startupPresentation: () => ({}) }, "sonner": { toast: { dismiss() {} } },
     "@/platforms/windows/components/LocalDatabaseWizard": { LocalDatabaseWizard: () => jsx("connection-wizard", {}) },
     "@/core/activation/connection-health": { checkHealth: async () => ({ cloud: true }), cloudDiagnosis: () => ({ issue: "none" }) },
   };
-  const load = (path: string) => { const compiled = ts.transpileModule(readFileSync(path, "utf8"), { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, module = { exports: {} }; runInNewContext(compiled, { module, exports: module.exports, require: (name: string) => { if (!(name in modules)) throw Error("Unexpected UI dependency " + name); return modules[name]; }, navigator: { onLine: true }, window: { sqlAdmin: { adminStatus: async () => session.status() }, sessionStorage: { getItem: () => null, removeItem() {} }, pos: { database: { getState: async () => dbState, subscribe: () => () => {} } }, addEventListener() {}, removeEventListener() {} } }); return module.exports as Record<string, (props: Record<string, unknown>) => Element>; };
+  const retryStartup = vi.fn(async () => databaseService.snapshot());
+  const load = (path: string) => { const compiled = ts.transpileModule(readFileSync(path, "utf8"), { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, module = { exports: {} }; runInNewContext(compiled, { module, exports: module.exports, require: (name: string) => { if (!(name in modules)) throw Error("Unexpected UI dependency " + name); return modules[name]; }, navigator: { onLine: true }, window: { sqlAdmin: { adminStatus: async () => session.status() }, sessionStorage: { getItem: () => null, removeItem() {} }, pos: { database: { getState: async () => databaseService.snapshot(), retryStartup, subscribe: (listener: (value: object) => void) => { databaseListeners.add(listener); return () => databaseListeners.delete(listener); } } }, addEventListener() {}, removeEventListener() {} } }); return module.exports as Record<string, (props: Record<string, unknown>) => Element>; };
+  modules["@/lib/desktop-storage-route"] = load("src/lib/desktop-storage-route.ts");
   const Startup = load("src/platforms/windows/components/StartupShiftRecoveryReview.tsx").StartupShiftRecoveryReview;
   modules["@/platforms/windows/components/StartupShiftRecoveryReview"] = { StartupShiftRecoveryReview: Startup };
   const Route = load("src/routes/database-startup.tsx").Route as unknown as { component: (props: Record<string, unknown>) => Element };
   const Boot = load("src/platforms/windows/components/DatabaseBoot.tsx").NativeBoot;
+  const buttons = new Map<string, () => Promise<void>>();
   const renderNode = (node: unknown): string => {
     if (!node || typeof node === "boolean") return ""; if (Array.isArray(node)) return node.map(renderNode).join(""); if (typeof node !== "object") return String(node);
     const item = node as Element; if (typeof item.type === "function") { const previous = owner; owner = owners.get(item.type) ?? { index: 0, effects: 0, slots: [], deps: [], cleanups: [] }; owner.index = 0; owner.effects = 0; owners.set(item.type, owner); const result = renderNode(item.type(item.props)); owner = previous; return result; }
-    return `<${item.type}>${renderNode(item.props.children)}</${item.type}>`;
+    const contents = renderNode(item.props.children);
+    if (item.type === "button" && typeof item.props.onClick === "function") buttons.set(contents.replace(/<[^>]*>/g, ""), item.props.onClick as () => Promise<void>);
+    return `<${item.type}>${contents}</${item.type}>`;
   };
   const render = async () => { let result = ""; for (let attempt = 0; attempt < 5; attempt++) { result = renderNode(jsx(Boot, { children: jsx(Route.component, {}) })); for (const effect of effects.splice(0)) effect(); await Promise.resolve(); await Promise.resolve(); } return result; };
-  return { render, route: (value: string) => { pathname = value; }, login: () => handlers.get("auth:cashier-login")(event, { username: "fixture.admin", pin: "0000" }),
+  return { render, navigate, retry: () => buttons.get("Retry local database")!(), retryStartup, snapshot: () => databaseService.snapshot(),
+    database: (value: { validated?: boolean; connected?: boolean; state?: string; detail?: object }) => {
+      if (value.validated !== undefined) databaseService.validated = value.validated;
+      if (value.connected !== undefined) sqlConnected = value.connected;
+      databaseService.transition(value.state ?? databaseService.state, value.detail ?? databaseService.detail);
+    },
+    route: (value: string) => { pathname = value; }, login: () => handlers.get("auth:cashier-login")(event, { username: "fixture.admin", pin: "0000" }),
     review: () => handlers.get(CHANNELS.list)(event, {}), list, account, manager, fetch, deferVerification: (value: Promise<{ ok: boolean }>) => { verification = value; } };
 }
 afterEach(() => { session.clear(); session.clearRecovery(); });
 
 describe("held startup review with actual native POS identity admission", () => {
   it("offers ordinary sign-in on the existing startup route while normal trading remains gated", async () => {
-    const f = fixture(); expect(await f.render()).toContain("ordinary-pos-login"); f.route("/"); expect(await f.render()).toContain("trading-blocked");
+    const f = fixture(); expect(f.snapshot()).toMatchObject({ state: "enabled_bootstrapping", connected: true, tradingReady: true });
+    expect(await f.render()).toContain("ordinary-pos-login"); expect(f.navigate).not.toHaveBeenCalled();
+    f.route("/"); expect(await f.render()).toContain("trading-blocked");
     expect(await f.review()).toMatchObject({ ok: false }); expect(f.list).not.toHaveBeenCalled();
   });
   it("actual verified Main Admin admission opens review on startup but does not release the trading gate", async () => {
@@ -89,5 +109,26 @@ describe("held startup review with actual native POS identity admission", () => 
   it("backend terminal-proof denial cannot be promoted to a startup reviewer", async () => {
     const f = fixture(); f.fetch.mockResolvedValueOnce(Response.json({ ok: false, error: "Registration denied" }, { status: 403 }));
     expect(await f.login()).toMatchObject({ ok: false }); expect(session.identity()).toBeNull(); expect(await f.render()).toContain("ordinary-pos-login"); expect(await f.review()).toMatchObject({ ok: false });
+  });
+  it.each([
+    { validated: false, state: "enabled_validating", detail: { status: "migration_required" } },
+    { validated: false, state: "enabled_validating", detail: { status: "applying_migration" } },
+    { validated: true, state: "enabled_bootstrapping", detail: { status: "applying_migration" } },
+    { connected: false },
+  ])("does not offer review against disconnected, unvalidated or migrating SQL: %j", async value => {
+    const f = fixture(); f.database(value); await f.login();
+    expect(await f.render()).not.toContain("review-saved-closings");
+    expect(await f.render()).not.toContain("ordinary-pos-login"); expect(f.navigate).not.toHaveBeenCalled();
+    expect(f.list).not.toHaveBeenCalled();
+  });
+  it("leaves recovery only after the existing storage route confirms completed startup", async () => {
+    const f = fixture(); await f.login(); expect(await f.render()).toContain("review-saved-closings");
+    f.database({ state: "enabled_ready", detail: {} }); await f.render();
+    expect(f.navigate).toHaveBeenCalledWith({ to: "/" });
+  });
+  it("keeps a schema-ready retained-shift failure on recovery after a manual retry", async () => {
+    const f = fixture(); await f.login(); expect(await f.render()).toContain("review-saved-closings");
+    await f.retry(); await f.render(); expect(f.retryStartup).toHaveBeenCalledOnce();
+    expect(f.navigate).not.toHaveBeenCalled(); expect(await f.render()).toContain("review-saved-closings");
   });
 });

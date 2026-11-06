@@ -1700,3 +1700,20 @@ existing coordinated lane after15 minutes plus stable0–60s terminal jitter, wi
 no timer/core-poll change or existing-payload redownload. Counts/membership do not
 certify full-row equality or repair previously divergent immutable facts. Grouped
 exact database approval is still required. Stock401/local031 remain deferred.
+
+## 6 November — installed 1.4.82 shift expiry follow-up
+
+Owner reports shifts ECHANGEGAP on installed production 1.4.82 and asks for
+automatic database recovery. Investigate/correct through current beta, preserving
+offline closings and later authorized corrections. Do not call publication a
+completed recovery on every PC. No new live database application or production
+promotion is authorized by this report; show exact required changes first.
+
+Release-source inspection confirms normal managed migrations stop at024;
+025–030 are optional metadata in the consolidated upgrade, not automatically
+installed by 1.4.82. Also fix the narrow startup recovery-panel admission mismatch
+without weakening trading readiness or Administrator/branch checks. Automatic
+metadata integration needs its own reviewed activation/compatibility plan before
+implementation. The real affected PC still needs current read-only evidence.
+Automatic safe comparison is required; unproved historical financial actions
+still require the existing explicit, audited Administrator decision.
