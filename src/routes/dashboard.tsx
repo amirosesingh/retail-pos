@@ -186,7 +186,13 @@ function Dashboard() {
     });
   }, [todaySales, todayDrawer, thresholds]);
 
-  const flagged = cashiers.filter((c) => c.flags.length);
+  const activityScope = authReady && user && storeIds.length > 0
+    ? JSON.stringify([pageDataScope(user), storeIds, today, effectiveTimeZone()]) : null;
+  const confirmedActivity = useConfirmedPresentation(activityScope, { cashiers, todaySales, splitSales },
+    inventoryReady && !reportLoading && !reportError);
+  // Drawer events are actual locally saved events, not a paged sales read.
+  const confirmedDrawer = useConfirmedPresentation(activityScope, todayDrawer, inventoryReady);
+  const flagged = confirmedActivity?.cashiers.filter((c) => c.flags.length) ?? [];
   const summaryCards = [
     includeSponsorship && !sponsorship.loading && !sponsorship.error && hasMoney(todaySponsorship) && hasMoney(revenue + todaySponsorship) && <Kpi key="daily-value" label="Sales value with sponsorship · not collections" value={money(revenue + todaySponsorship)} highlight info={can("can_view_sales_reports") && <SalesTotalInfo totals={todayTotals} adjustmentLabel={receiptAdjustmentLabel(live)} sponsorshipValue={todaySponsorship} />} />,
     includeSponsorship && !sponsorship.loading && !sponsorship.error && hasMoney(todaySponsorship) && <Kpi key="sponsorship" label="Sponsorship value included" value={money(todaySponsorship)} info={<FinancialBreakdown rows={[["Sponsorship value", money(todaySponsorship)]]}><p>Included under the saved daily-sales policy. Stock value is separate from customer payments.</p></FinancialBreakdown>} />,
@@ -218,6 +224,7 @@ function Dashboard() {
 
 
         {reportError && <p role="alert" className="rounded-lg border border-destructive/40 p-3 text-sm text-destructive">Report incomplete: {reportError}</p>}
+        {reportError && confirmedActivity && (confirmedActivity.cashiers.length > 0 || confirmedActivity.splitSales.length > 0) && <p role="status" className="text-xs text-muted-foreground">Showing last confirmed activity; the sales refresh did not complete.</p>}
         {(reportError || (includeSponsorship && sponsorship.error)) && confirmedCards && <p role="status" className="text-xs text-muted-foreground">Showing last confirmed summary; the refresh did not complete.</p>}
         {reportLoading && <p role="status" className="text-sm text-muted-foreground">Loading the complete sales history for these shops…</p>}
         {includeSponsorship && sponsorship.loading && <p role="status" className="text-sm text-muted-foreground">Sponsorship values are loading; the combined summary is not complete yet.</p>}
@@ -278,7 +285,7 @@ function Dashboard() {
           </ShopComparisonCharts>}
         </section></DisplayElement>
 
-        <DisplayElement name="dashboard.cashierReview"><section className="rounded-lg border border-border bg-card">
+        <DisplayElement name="dashboard.cashierReview">{confirmedActivity && confirmedActivity.cashiers.length > 0 && <section className="rounded-lg border border-border bg-card motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300">
           <div className="flex items-center gap-2 px-5 py-3">
             <AlertTriangle className="size-4 text-warning" />
             <h2 className="text-sm font-semibold">Cashier review · today</h2>
@@ -294,13 +301,13 @@ function Dashboard() {
           </p>
           <Separator />
           <div className="divide-y divide-border" aria-busy={reportLoading}>
-            {cashiers.map((c) => (
+            {confirmedActivity.cashiers.map((c) => (
               <article key={c.name} className="space-y-4 p-4 sm:p-5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-sm font-semibold">{c.name}</h3>
                   {c.flags.length > 0 && <span className="text-xs text-destructive">Cashier review flag: {c.flags.join(" · ")}</span>}
                 </div>
-                <CashierBillList sales={todaySales} cashier={c.name} />
+                <CashierBillList sales={confirmedActivity.todaySales} cashier={c.name} />
                 <dl className="grid grid-cols-2 gap-3">
                   <div><dt className="text-xs text-muted-foreground">Cashier total · completed bills</dt><dd className="numeric text-base font-semibold">{money(c.revenue)}</dd></div>
                   <div><dt className="text-xs text-muted-foreground">Cashier discount · completed bills</dt><dd className="numeric text-base font-semibold">{money(c.discount)} <span className="text-xs font-normal">({c.discountPct.toFixed(1)}%)</span></dd></div>
@@ -316,14 +323,13 @@ function Dashboard() {
                 </details>
               </article>
             ))}
-            {!cashiers.length && <p className="p-6 text-center text-sm text-muted-foreground">{reportLoading ? "Loading cashier review…" : "No trading recorded today."}</p>}
           </div>
-        </section></DisplayElement>
+        </section>}</DisplayElement>
 
-        <DisplayElement name="dashboard.drawerHistory"><section className="rounded-lg border border-border bg-card">
+        <DisplayElement name="dashboard.drawerHistory">{confirmedDrawer && confirmedDrawer.length > 0 && <section className="rounded-lg border border-border bg-card motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300">
           <div className="flex items-center justify-between gap-2 px-5 py-3"><h2 className="min-w-0 flex-1 text-sm font-semibold">Cash drawer opens without a sale</h2><div ref={setDrawerColumnsTarget} className="ml-auto flex shrink-0 items-center justify-end" /></div>
           <Separator />
-          <Table tableId="routes/dashboard#1" loading={reportLoading} controlsTarget={drawerColumnsTarget}>
+          <Table tableId="routes/dashboard#1" loading={!inventoryReady} controlsTarget={drawerColumnsTarget}>
             <TableHeader>
               <TableRow>
                 <TableHead>When</TableHead>
@@ -334,7 +340,7 @@ function Dashboard() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {todayDrawer.map((d) => (
+              {confirmedDrawer.map((d) => (
                 <TableRow key={d.id}>
                   <TableCell className="text-muted-foreground">{formatTime(d.at)}</TableCell>
                   <TableCell>
@@ -346,18 +352,11 @@ function Dashboard() {
                   <TableCell className="text-muted-foreground">{d.approvedBy ?? "—"}</TableCell>
                 </TableRow>
               ))}
-              {!todayDrawer.length && (
-                <TableRow>
-                  <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">
-                    The drawer has not been opened outside a sale today.
-                  </TableCell>
-                </TableRow>
-              )}
             </TableBody>
           </Table>
-        </section></DisplayElement>
+        </section>}</DisplayElement>
 
-        <DisplayElement name="dashboard.splitPayments"><section className="rounded-lg border border-border bg-card">
+        <DisplayElement name="dashboard.splitPayments">{confirmedActivity && confirmedActivity.splitSales.length > 0 && <section className="rounded-lg border border-border bg-card motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300">
           <div className="flex items-center justify-between gap-2 px-5 pt-3"><h2 className="min-w-0 flex-1 text-sm font-semibold">Split payments today</h2><div ref={setSplitColumnsTarget} className="ml-auto flex shrink-0 items-center justify-end" /></div>
           <p className="px-5 pb-3 pt-1 text-xs text-muted-foreground">Bills paid in two or more parts, such as cash and card.</p>
           <Separator />
@@ -371,7 +370,7 @@ function Dashboard() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {splitSales.map((s) => (
+              {confirmedActivity.splitSales.map((s) => (
                 <TableRow key={s.id}>
                   <TableCell className="numeric">{s.receiptNo}</TableCell>
                   <TableCell className="text-muted-foreground">{formatTime(s.createdAt)}</TableCell>
@@ -379,16 +378,9 @@ function Dashboard() {
                   <TableCell className="numeric text-right">{money(s.total)}</TableCell>
                 </TableRow>
               ))}
-              {!splitSales.length && (
-                <TableRow>
-                  <TableCell colSpan={4} className="py-10 text-center text-muted-foreground">
-                    No split-tender bills today.
-                  </TableCell>
-                </TableRow>
-              )}
             </TableBody>
           </Table>
-        </section></DisplayElement>
+        </section>}</DisplayElement>
       </div>
     </AppShell>
   );

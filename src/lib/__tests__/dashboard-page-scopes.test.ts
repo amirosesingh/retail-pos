@@ -1,20 +1,23 @@
 import { createElement as h, type ComponentType, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Sale } from "@/core/types/pos-types";
+import type { DrawerEvent } from "@/lib/drawer-events";
 
 const fixture = vi.hoisted(() => ({ branch: "A", terminal: null as string | null, assigned: null as string | null,
-  switchStores: true, cost: true, management: false, loading: false, error: "", boardIds: [] as string[], lifetimeIds: [] as string[], salesIds: [] as string[] }));
+  switchStores: true, cost: true, management: false, loading: false, error: "", inventoryReady: true,
+  sales: [] as Sale[], drawer: [] as DrawerEvent[], boardIds: [] as string[], lifetimeIds: [] as string[], salesIds: [] as string[] }));
 const stores = [{ id: "A", code: "A", name: "Airport", groupId: "one" },
   { id: "A2", code: "A2", name: "Town", groupId: "one" }, { id: "B", code: "B", name: "Riverside", groupId: "two" }];
 vi.mock("@/lib/pos-auth", () => ({ useAuth: () => ({ ready: true, isAdmin: true,
   user: { staffId: "test", role: "admin", storeId: fixture.assigned, permissions: {} }, terminalStoreId: fixture.terminal,
   canSwitchStores: fixture.switchStores, can: (flag: string) => flag !== "can_view_cost_margin" || fixture.cost }) }));
 vi.mock("@/lib/pos-store", () => ({ money: (value: number) => value.toFixed(2), stockAt: () => 0, usePos: () => ({
-  ready: true, loadPhase: "ready", currentStore: stores.find(store => store.id === fixture.branch), stores, allStores: stores,
+  ready: fixture.inventoryReady, loadPhase: fixture.inventoryReady ? "ready" : "loading", currentStore: stores.find(store => store.id === fixture.branch), stores, allStores: stores,
   state: { stores, products: [], sales: [], transfers: [], shifts: [], settings: { integrations: {} } },
 }) }));
 vi.mock("@/lib/use-report-sales", () => ({ useReportSales: (_seed: unknown, ids: string[]) => {
-  fixture.salesIds = ids; return { sales: [], loading: fixture.loading, error: fixture.error, refreshing: false };
+  fixture.salesIds = ids; return { sales: fixture.sales.filter(sale => ids.includes(sale.storeId)), loading: fixture.loading, error: fixture.error, refreshing: false };
 } }));
 vi.mock("@/lib/use-all-shops-lifetime", () => ({ useAllShopsLifetime: (ids: string[]) => {
   fixture.lifetimeIds = ids; return { totals: Object.fromEntries(ids.map(id => [id, { revenue: 0, profit: 0, bills: 0 }])), loading: false, error: "" };
@@ -22,7 +25,7 @@ vi.mock("@/lib/use-all-shops-lifetime", () => ({ useAllShopsLifetime: (ids: stri
 vi.mock("@/lib/management-device", () => ({ isManagementDevice: () => fixture.management }));
 vi.mock("@/core/local-db/local-db", () => ({ localDb: () => null }));
 vi.mock("@/lib/use-sponsorship-totals", () => ({ useSponsorshipTotals: () => ({ rows: [], loading: false, error: false }) }));
-vi.mock("@/lib/drawer-events", () => ({ useDrawerEvents: () => [] }));
+vi.mock("@/lib/drawer-events", () => ({ useDrawerEvents: () => fixture.drawer }));
 vi.mock("@/lib/ui-visibility", () => ({ useVisibility: () => ({ visible: () => true }) }));
 vi.mock("@/lib/page-data-cache", () => ({ PAGE_DATA_CACHE: {}, pageDataScope: () => ["scope"] }));
 vi.mock("@/core/activation/terminal-platform", () => ({ terminalRuntimePlatform: () => "web" }));
@@ -51,7 +54,8 @@ import { Route as Board } from "@/routes/analytics";
 import { Route as AllShops } from "@/routes/all-shops";
 const render = (route: { options: { component?: unknown } }) => renderToStaticMarkup(h(route.options.component as ComponentType));
 beforeEach(() => { fixture.branch = "A"; fixture.terminal = null; fixture.assigned = null; fixture.switchStores = true;
-  fixture.cost = true; fixture.management = false; fixture.loading = false; fixture.error = ""; });
+  fixture.cost = true; fixture.management = false; fixture.loading = false; fixture.error = "";
+  fixture.inventoryReady = true; fixture.sales = []; fixture.drawer = []; });
 
 describe("dashboard page adapter scope and zero cards", () => {
   it("requests only the selected branch on Dashboard and keeps its graphs in place", () => {
@@ -89,5 +93,41 @@ describe("dashboard page adapter scope and zero cards", () => {
     fixture.loading = false; fixture.error = "Unavailable";
     expect(render(AllShops)).toContain("Could not refresh trading data");
     expect(render(AllShops)).not.toContain('aria-label="Selected-period shop totals"');
+  });
+  it("does not render confirmed-empty Dashboard activity or Board category frames", () => {
+    const dashboard = render(Dashboard), board = render(Board);
+    for (const title of ["Cashier review · today", "Cash drawer opens without a sale", "Split payments today"])
+      expect(dashboard).not.toContain(title);
+    expect(board).not.toContain("Top categories — all shops combined");
+    expect(board).not.toContain("Top categories per shop");
+  });
+  it("waits for real current-scope reads, then preserves free/refunded bills and actual drawer events", () => {
+    const at = new Date().toISOString();
+    fixture.sales = [{ id: "bill", receiptNo: "TEST", shiftId: "shift", storeId: "A", createdAt: at, cashier: "Fixture", subtotal: 0, total: 0, discount: 0, tax: 0,
+      paid: 2, change: 2, method: "split", memberId: null, pointsEarned: 0,
+      lines: [], payments: [{ id: "p1", method: "cash", amount: 1 }, { id: "p2", method: "card", amount: 1 }] }];
+    fixture.drawer = [{ id: "drawer", at, storeId: "A", terminalId: null, shiftId: null, staffId: "staff", staffName: "Fixture", role: "cashier", reason: "Synthetic count", note: "", approvedBy: null }];
+    fixture.inventoryReady = false;
+    for (const title of ["Cashier review · today", "Cash drawer opens without a sale", "Split payments today"])
+      expect(render(Dashboard)).not.toContain(title);
+    fixture.inventoryReady = true; fixture.loading = true;
+    const pending = render(Dashboard);
+    expect(pending).not.toContain("Cashier review · today"); expect(pending).not.toContain("Split payments today");
+    expect(pending).toContain("Cash drawer opens without a sale");
+    fixture.loading = false;
+    const ready = render(Dashboard);
+    for (const title of ["Cashier review · today", "Cash drawer opens without a sale", "Split payments today"]) expect(ready).toContain(title);
+    fixture.sales[0] = { ...fixture.sales[0]!, refunded: true, total: -10 };
+    expect(render(Dashboard)).toContain("Cashier review · today"); expect(render(Dashboard)).not.toContain("Split payments today");
+    fixture.branch = "B"; expect(render(Dashboard)).not.toContain("Synthetic count");
+  });
+  it("keeps a sales-read error truthful without suppressing independently saved drawer events", () => {
+    fixture.error = "Scoped read denied";
+    fixture.drawer = [{ id: "drawer", at: new Date().toISOString(), storeId: "A", staffName: "Fixture", role: "cashier", reason: "Synthetic count" } as DrawerEvent];
+    const html = render(Dashboard);
+    expect(html).toContain("Report incomplete: Scoped read denied");
+    expect(html).toContain("Cash drawer opens without a sale");
+    expect(html).not.toContain("Cashier review · today");
+    expect(html).not.toContain("No trading recorded today");
   });
 });

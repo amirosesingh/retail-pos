@@ -40,6 +40,50 @@ and held tombstones, and forged/copied/serialized/wrong-branch evidence rejectio
 The private evidence changes no serialized worker result or permission grant.
 Independent exact-head review and beta CI/deployed acceptance remain pending.
 
+## 6 November — UI74 confirmed-empty Dashboard activity panels
+
+Owner's existing ALL-cards rule covers the three confirmed empty Dashboard
+frames still rendered after CHART72: Cashier review, drawer opens without a sale,
+and split payments. Fix only those presentation conditions and the same explicit
+empty-category frames on Business Board, from clean betaca93ee76. Preserve All
+Shops' loaded zero-shop directory exception, financial formulas, actions and all
+queries/permissions. New frames reveal with the existing reduced-motion-aware
+entry animation only after actual current-scope data is confirmed.
+
+Inspection: sales/cashier/split data comes from useReportSales, which exposes
+initial loading, refresh and errors; drawer events come from the existing
+synchronous saved-event cache, filtered by current branch/business day. That
+feed is not a complete SQL/cloud history read or a newly persisted Electron
+history cache and must not be described as one.
+Use existing confirmed-presentation snapshots scoped to current identity,
+branch/day/timezone, retaining same-scope known rows on failed refresh and hiding
+old rows on scope change. Keep errors/status truthful; never treat an error as
+an empty success. Board category panels stay behind its existing confirmed read
+and appear only when their scoped item rows exist. No provider/auth/DB edits.
+
+Acceptance: actual mounted React at1440/390 for unknown seeded data, confirmed
+empty, positive arrival, same-scope refresh/error retention, positive departure,
+branch/identity scope and real actions/columns; preserve normal-terminal scope
+and error messages. Focused route/financial/report regressions and final beta PR
+checks required. No operator data or live database execution is authorized.
+
+UI74 verification: the actual mounted Dashboard and Business Board pass at
+1440px and 390px with controlled report/auth/provider snapshots and real tables,
+receipt dialogs and column-menu portals. Unknown seeded data and confirmed-empty
+frames stay hidden; actual rows reveal with the existing motion, including
+free/refunded-bill records. Same-scope sales refresh failure retains the last
+confirmed activity with an explicit status; empty departure and identity/branch
+changes remove the panels and their popups. Native normal-terminal branch lock,
+bill search, receipt opening/closing, column controls and Board category drilldown
+remain exercised. No remote requests, operator preference writes, document
+reloads or real business data. Screenshots inspected at both responsive widths.
+Commands: pinned Node22 runs scripts/test-dashboard-activity-panels-browser.cjs
+--run; eight focused Vitest files pass52 tests, including category/trading/scope/
+timezone regressions; tsc --noEmit and scoped ESLint pass.
+The shared hourly-chart wording now says reported item cost, matching the
+preserved unit-cost/current-product-cost fallback. Queries, calculations and DB
+objects are unchanged. Final beta PR CI/deployed acceptance remain separate.
+
 ## 6 November — SQL73 existing-PC stock-history bundle preparation
 
 Owner requires ONE existing-data PC SQL upgrade file for the upcoming approved
@@ -67,6 +111,7 @@ artifact. Focus on new031 append success/idempotence/partial-shape/late rollback
 and populated-data/grant preservation once frozen; do not rerun unchanged32
 SQL72 cases without a relevant change. No final artifact PR until concrete031 is
 reviewable; exact file hash and actual PC/server/database approval before use.
+
 ## 6 November — CHART72 approved implementation
 
 Resume the approved chart consistency batch from clean beta3074a475 in separate
