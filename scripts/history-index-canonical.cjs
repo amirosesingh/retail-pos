@@ -82,7 +82,11 @@ function withHistoryIndexContract(schema, migration) {
   if (schema.includes(begin)) {
     if (schema.split(begin).length !== 2 || schema.split(end).length !== 2 || schema.indexOf(end) < schema.indexOf(begin))
       throw new Error("The canonical history contract boundary changed.");
-    schema = schema.slice(0, schema.indexOf(begin)) + schema.slice(schema.indexOf(end) + end.length);
+    // Legacy contracts are relocated before this block is replaced. Collapse
+    // only the separators left at its removal boundary so repeated generation
+    // cannot accumulate their blank lines ahead of the relocated contracts.
+    schema = schema.slice(0, schema.indexOf(begin)).trimEnd() + "\n\n"
+      + schema.slice(schema.indexOf(end) + end.length).trimStart();
   } else if (schema.includes(end)) throw new Error("The canonical history contract boundary changed.");
   const block=historyIndexCanonicalBlock(migration),hardening=schema.lastIndexOf('-- Final public-schema privilege hardening');
   // Keep the existing final privilege closure after every function definition.

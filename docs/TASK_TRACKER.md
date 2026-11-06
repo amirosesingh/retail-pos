@@ -1,3 +1,11 @@
+## 6 November — CI failure repair for PR428 and infrastructure retry for PR400
+
+Owner explicitly requests a separate agent to investigate/fix failed PR checks and continue without CodeRabbit. Baseline ca09533b in isolated codex/ci-history-recovery-beta-20261106. Limit source correction to synthetic fixture role construction and deterministic canonical schema block regeneration; preserve the credential guard, all SQL definitions/grants, final hardening and exact migration bytes. Acceptance: existing secrets, Management graph generator, history SQL/canonical tests pass; exact updated PR head CI is separately verified. Coordinate integration with the automatic-history writer; no concurrent remote push.
+
+Verification: pinned Node22.22.2 with the existing read-only chore dependency tree passes46 tests across secrets, Management graph SQL/generation, history canonical/API/protocol and both25-group LF/CRLF PGlite fixtures. Scoped ESLint and git diff --check pass. First cold parallel local secrets scan timed out at20seconds; serial default-timeout rerun and full focused rerun pass. Complete generator outputs repeat byte-identically over three runs; no generated schema is committed because separate inherited stock canonical drift belongs to root. PR400 targeted retry completed successfully as job127735089204 (same run42161706683). Exact-head PR428 CI remains pending integration by its sole branch writer.
+
+PR400 current cf8a4847 Android compile failed only while fetching Maven artifacts with HTTP429; retry exactly job127708672069 once. Draft/awaiting-owner-approval and production/publication boundaries remain unchanged. No live database, operator profile, registration, queues, billing, permissions or Membership change.
+
 ## 6 November — HIST81 automatic fleet history reconciliation
 
 Implementation is now authorized within the owner's explicit automatic fleet

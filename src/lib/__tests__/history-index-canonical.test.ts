@@ -24,6 +24,14 @@ describe('preserved fresh-schema history contract assembly',()=>{
   expect(withHistoryIndexContract(result,migration)).toBe(result);
   expect(historyIndexCanonicalBlock(migration.replaceAll('\r\n','\n').replaceAll('\n','\r\n'))).toBe(historyIndexCanonicalBlock(migration));
  });
+ it('removes relocated-contract separators without changing adjacent definitions',()=>{
+  const before='-- existing feed\nSELECT 1;',after='-- relocated authority contract\nSELECT 2;';
+  const prior=before+'\n'.repeat(18)+begin+'\nold owned block\n'+end+'\n\n'+after+'\n\n-- Final public-schema privilege hardening\nREVOKE ALL ON SCHEMA public FROM PUBLIC;\n';
+  const result=withHistoryIndexContract(prior,migration);
+  expect(result.startsWith(before+'\n\n'+after+'\n\n'+begin)).toBe(true);
+  expect(withHistoryIndexContract(result,migration)).toBe(result);
+  expect(result.endsWith('-- Final public-schema privilege hardening\nREVOKE ALL ON SCHEMA public FROM PUBLIC;\n')).toBe(true);
+ });
  it.each([begin, end, `${begin}\n${begin}\n${end}`, `${end}\n${begin}`])('refuses malformed owned boundaries',value=>{
   expect(()=>withHistoryIndexContract(value,migration)).toThrow();
  });
