@@ -456,6 +456,8 @@ export type PosBridge = {
     operationId?: string;
     branchId?: string;
     operations: SyncOp[];
+    /** Optional original arrival; current receiving permission/capability required in Main. */
+    stockArrival?: {effectiveAt:string;reason:string};
   }) => Promise<{ ok: boolean; replayed?: boolean; operationId?: string; error?: string; code?: string; stage?: string | null; table?: string | null; sqlNumber?: number | null; sqlDetail?: string | null }>;
   connect: (
     config: LocalDbConfig,
@@ -672,6 +674,7 @@ export type PosBridge = {
     ok: boolean; complete?: boolean; source?: string; code?: string; error?: string; rows?: LocalSaleRow[]; storeTotals?: LocalSaleRow[]; hasMore?: boolean; cursor?: { ts: string; id: string } | null;
   }>;
   stockHistory?: (request:StockHistoryRequest)=>Promise<{ok:boolean;page?:StockHistoryPage;code?:string;error?:string}>;
+  stockArrivalCapability?: ()=>Promise<{ok:boolean;available?:boolean;reason?:string;code?:string;error?:string}>;
   onReadProgress?: (cb: (progress: { table: string; completed: number }) => void) => () => void;
   onBusinessChanged?: (
     cb: (change: {

@@ -137,7 +137,7 @@ function aggregate(value) {
   // those rows before they can reach SQL Server, so validate this envelope
   // explicitly and leave every nested write to `writeOps()` below.
   const input = plainObject(value, { name: "business aggregate" });
-  const allowed = new Set(["kind", "operationId", "branchId", "operations"]);
+  const allowed = new Set(["kind", "operationId", "branchId", "operations", "stockArrival"]);
   const fields = Object.keys(input);
   if (fields.length > allowed.size || fields.some((field) => !allowed.has(field)))
     throw new BadArg("The business aggregate contains an unexpected setting.");
@@ -159,6 +159,12 @@ function aggregate(value) {
     ].includes(kind)
   )
     throw new BadArg("Unsupported aggregate kind.");
+  let stockArrival;
+  if (input.stockArrival !== undefined) {
+    if (kind !== "receiving") throw new BadArg("An arrival time belongs only to receiving stock.");
+    try { stockArrival = require("./stock-arrival.cjs").normalizeStockArrival(input.stockArrival); }
+    catch { throw new BadArg("Enter a valid goods-arrival time and explanation."); }
+  }
   return {
     kind,
     operationId:
@@ -168,6 +174,7 @@ function aggregate(value) {
     branchId:
       input.branchId === undefined ? undefined : text(input.branchId, { name: "branch", max: 128 }),
     operations: writeOps(input.operations, { max: 200 }),
+    ...(stockArrival ? { stockArrival } : {}),
   };
 }
 

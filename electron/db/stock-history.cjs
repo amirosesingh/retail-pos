@@ -132,7 +132,8 @@ class StockHistoryStore{
   if(saved.source?.author){const signed=[];for(const row of rows){
    try{
     const sourceManifestJson=await require('./stock-source-capture.cjs').sourceManifestForMovement({
-     action:saved.source.author.action,row,operations:saved.sourceOperations,before:saved.before,after,claims,request:()=>this.request(tx)});
+     action:saved.source.author.action,row,operations:saved.sourceOperations,before:saved.before,after,claims,request:()=>this.request(tx),
+     ...(context.arrivalReason!==undefined?{arrivalReason:context.arrivalReason}:{})});
     sourceManifests.push(sourceManifestJson);
     this.assertCurrent();if(saved.source&&this.readContext?.()?.key!==saved.source.key)contract.fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
     signed.push(Object.freeze({...row,author_proof_json:JSON.stringify(saved.source.author.signMovement(row,sourceManifestJson??undefined))}));
@@ -143,8 +144,9 @@ class StockHistoryStore{
     signed.push(row);
    }
   }rows=signed;}
+  let sourceCohort;
   try{
-   await require('./stock-history-cohort.cjs').persistSourceCohort(this,tx,{rows,manifests:sourceManifests,author:saved.source?.author,
+   sourceCohort=await require('./stock-history-cohort.cjs').persistSourceCohort(this,tx,{rows,manifests:sourceManifests,author:saved.source?.author,
     databaseKey:saved.databaseKey,assertCurrent:()=>{this.assertCurrent();if(saved.source&&this.readContext?.()?.key!==saved.source.key)contract.fail('ESTOCK_HISTORY_CONTEXT_CHANGED');}});
   }catch(error){
    if(!['ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING','ESYNC_SHIFT_AUTHOR_KEY_MISSING','ESYNC_SHIFT_AUTHOR_KEY_UNAVAILABLE','ESYNC_SHIFT_AUTHOR_VAULT_UNAVAILABLE',
@@ -152,6 +154,7 @@ class StockHistoryStore{
    // Preserve original movement/source review evidence; never replace its
    // author at retry or fail ordinary checkout because its vault is unavailable.
   }
+  if(context.arrivalReason!==undefined&&!sourceCohort)contract.fail('ESTOCK_ARRIVAL_SOURCE_REQUIRED');
   for(const branch of [...new Set(rows.map(row=>row.store_id))].sort()){
    await this.ensureHead(tx,branch);
    await this.insertMovements(tx,branch,rows.filter(row=>row.store_id===branch));

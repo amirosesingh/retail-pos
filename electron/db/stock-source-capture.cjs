@@ -9,7 +9,7 @@ function records(operations,table){
 }
 function id(value){try{return contract.identifier(value,true);}catch{return null;}}
 function sameRefs(left,right){return JSON.stringify(left)===JSON.stringify(right);}
-async function sourceManifestForMovement({action,row,operations,before,after,claims,request}){
+async function sourceManifestForMovement({action,row,operations,before,after,claims,request,arrivalReason}){
  let document;
  if(action==='ADJUST'){
   const refs=(row.source_refs??[]).filter(ref=>ref[0]==='stock_adjustments');
@@ -41,7 +41,7 @@ async function sourceManifestForMovement({action,row,operations,before,after,cla
  const {stockSourceManifestJson}=require('../shared/stock-source-manifest.mjs');
  const json=stockSourceManifestJson({version:1,operationId:row.operation_id,action,document,authorId:row.actor_id,terminalId:row.terminal_id,
   branchId:row.store_id,productId:row.product_id,delta:String(row.quantity_delta),effectiveAt:row.effective_at_raw,
-  recordedAt:row.recorded_at_raw,sourceRefs:row.source_refs??[]});
+  recordedAt:row.recorded_at_raw,sourceRefs:row.source_refs??[],...(arrivalReason!==undefined?{arrivalReason}:{})});
  if(!sameRefs(JSON.parse(json).sourceRefs,row.source_refs??[]))return null;
  return json;
 }

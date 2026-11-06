@@ -26,9 +26,7 @@ function exact(value, fields) {
     || Object.keys(value).length !== fields.length || fields.some(key => !Object.hasOwn(value, key))) fail();
   return value;
 }
-function identifier(value, requireUuid = false) {
-  if (typeof value !== 'string' || !value || value.trim() !== value || value.length > 128
-    || /[\u0000-\u001f\u007f]/u.test(value) || (requireUuid && !UUID.test(value))) fail();
+function unicodeText(value) {
   // Do not sign strings PostgreSQL cannot represent as valid UTF-8.
   for (let index = 0; index < value.length; index++) {
     const unit = value.charCodeAt(index);
@@ -37,6 +35,11 @@ function identifier(value, requireUuid = false) {
       if (!(next >= 0xdc00 && next <= 0xdfff)) fail();
     } else if (unit >= 0xdc00 && unit <= 0xdfff) fail();
   }
+}
+function identifier(value, requireUuid = false) {
+  if (typeof value !== 'string' || !value || value.trim() !== value || value.length > 128
+    || /[\u0000-\u001f\u007f]/u.test(value) || (requireUuid && !UUID.test(value))) fail();
+  unicodeText(value);
   return UUID.test(value) ? value.toLowerCase() : value;
 }
 function integer(value) {
@@ -74,8 +77,13 @@ const compare = (left, right) => left < right ? -1 : left > right ? 1 : 0;
 /** A zero delta can describe source/cohort evidence; it is not admission of a
  * zero-delta movement, which the separate movement validator still rejects. */
 export function normalizeStockSourceManifest(input) {
-  const value = exact(input, FIELDS);
+  const hasArrivalReason = Boolean(input && typeof input === 'object' && Object.hasOwn(input, 'arrivalReason'));
+  const value = exact(input, hasArrivalReason ? [...FIELDS, 'arrivalReason'] : FIELDS);
   if (value.version !== 1 || typeof value.action !== 'string' || !Object.hasOwn(STOCK_SOURCE_ACTIONS, value.action)) fail();
+  if (hasArrivalReason && (value.action !== 'RECEIVE' || typeof value.arrivalReason !== 'string'
+    || !value.arrivalReason || value.arrivalReason.trim() !== value.arrivalReason || value.arrivalReason.length > 500
+    || /[\u0000-\u001f\u007f]/u.test(value.arrivalReason))) fail();
+  if (hasArrivalReason) unicodeText(value.arrivalReason);
   const document = exact(value.document, ['type', 'id']);
   if (document.type !== STOCK_SOURCE_ACTIONS[value.action]) fail();
   const delta = integer(value.delta), effective = instant(value.effectiveAt), recorded = instant(value.recordedAt);
@@ -104,6 +112,7 @@ export function normalizeStockSourceManifest(input) {
     effectiveAt: canonicalInstant(effective),
     recordedAt: canonicalInstant(recorded),
     sourceRefs: Object.freeze(sourceRefs),
+    ...(hasArrivalReason ? { arrivalReason: value.arrivalReason } : {}),
   });
   if (encoder.encode(JSON.stringify(result)).length > 16384) fail('ESTOCK_SOURCE_OVERSIZED');
   return result;

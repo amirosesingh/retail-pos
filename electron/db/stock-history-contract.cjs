@@ -63,10 +63,15 @@ function normalizeContext(value,recordedAt){
   // Main supplies an explicit arrival time only after the existing action
   // authorization; a renderer cannot select this internal context directly.
   if(instant(effective)>instant(recorded))fail('ESTOCK_HISTORY_FUTURE');
+  let arrivalReason;
+  if(value.arrivalReason!==undefined){
+    if(value.kind!=='receiving'||!value.effectiveAt)fail('ESTOCK_ARRIVAL_INVALID');
+    arrivalReason=require('../stock-arrival.cjs').normalizeStockArrival({effectiveAt:effective,reason:value.arrivalReason}).reason;
+  }
   return Object.freeze({operationId:identifier(value.operationId,true),branchId:identifier(value.branchId),
     terminalId:identifier(value.terminalId),actorId:value.actorId==null?null:identifier(value.actorId),
     kind:value.kind,effectiveAt:effective,effectiveTicks:String(instant(effective)),recordedAt:recorded,
-    clockState:value.clockState==='verified'?'verified':'unverified'});
+    clockState:value.clockState==='verified'?'verified':'unverified',...(arrivalReason!==undefined?{arrivalReason}:{})});
 }
 function movementPayload(row){
   return JSON.stringify([1,row.id,row.operation_id,row.product_id,row.store_id,

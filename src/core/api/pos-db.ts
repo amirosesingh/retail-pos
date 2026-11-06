@@ -2276,18 +2276,19 @@ async function runBatchLive(context: string, ops: SyncOp[], report?: (completed:
  * Callers await this before printing, clearing the cart or starting the next
  * action — nothing moves on while the data is still only in memory.
  */
-export function commitOps(context: string, ops: SyncOp[]): Promise<CommitTarget> {
+export type StockArrival = Readonly<{effectiveAt:string;reason:string}>;
+export function commitOps(context: string, ops: SyncOp[], options?: {stockArrival?:StockArrival}): Promise<CommitTarget> {
   return withDataTask(context, async task => {
     const total = commitRowCount(ops);
     task?.report(0,total);
     if ((total ?? 0) >= 200 || ops.length >= 25) await yieldToUi();
-    const target = await commitOpsInternal(context, normalizeUuidFields(ops),task?.report);
+    const target = await commitOpsInternal(context, normalizeUuidFields(ops),task?.report,options);
     if (target !== "offline" && total !== null) task?.report(total,total);
     return target;
   });
 }
 
-async function commitOpsInternal(context: string, ops: SyncOp[], report?: (completed: number, total: number | null) => void): Promise<CommitTarget> {
+async function commitOpsInternal(context: string, ops: SyncOp[], report?: (completed: number, total: number | null) => void, options?: {stockArrival?:StockArrival}): Promise<CommitTarget> {
   if (!ops.length) return noteCommitTarget("cloud");
   // A packaged or browser till may carry an encrypted tenant override. Never
   // let an early write resolve the client against the build-time tenant first.
@@ -2300,6 +2301,7 @@ async function commitOpsInternal(context: string, ops: SyncOp[], report?: (compl
   const { ops: cloudOps, deltas } = withRelativeStock(ops);
 
   const local = localDb();
+  if(options?.stockArrival&&!local?.commitAggregate)throw Object.assign(new Error("Separate arrival times are not available on this device yet. The receiving invoice has not been saved."),{code:"ESTOCK_ARRIVAL_UNAVAILABLE"});
   if (local?.writeBatch) {
     const state = await local.database?.getState?.().catch(() => null);
     if (state?.enabled && state?.connected && (state.tradingReady ?? state.connected)) {
@@ -2369,6 +2371,7 @@ async function commitOpsInternal(context: string, ops: SyncOp[], report?: (compl
                 kind: aggregateKind,
                 branchId: branchId || undefined,
                 operations: ops,
+                ...(options?.stockArrival?{stockArrival:options.stockArrival}:{}),
               })
             : await local.writeBatch(context, ops);
       if (!stored.ok) {
@@ -2389,6 +2392,7 @@ async function commitOpsInternal(context: string, ops: SyncOp[], report?: (compl
     }
   }
 
+  if(options?.stockArrival)throw Object.assign(new Error("Connect this terminal's local database before saving a separate arrival time. The receiving invoice has not been saved."),{code:"ESTOCK_ARRIVAL_UNAVAILABLE"});
   const operational = ops.every((op) => isOperationalTable(op.table));
   // Browser/Capacitor has no SQL Server. Keep only this pending batch in
   // IndexedDB before starting the network request, then remove it immediately
@@ -2845,6 +2849,7 @@ export const db = {
     inv: ReceivingInvoice,
     movementStoreId?: string | null,
     updateProductPrices = false,
+    stockArrival?: StockArrival,
   ) =>
     commitOps("Saving receiving invoice", [
       { kind: "upsert", table: "purchase_orders", rows: [invoiceRow(inv)] },
@@ -2859,7 +2864,7 @@ export const db = {
         : []),
       ...receivingActivityOps(inv, movementStoreId),
       ...receivingPriceOps(inv, updateProductPrices),
-    ]),
+    ],stockArrival?{stockArrival}:undefined),
 
   /**
    * Save corrections to an existing invoice in place. Removed lines are
@@ -2872,6 +2877,7 @@ export const db = {
     movementStoreId?: string | null,
     correction?: { previous: ReceivingInvoice; attemptId: string },
     updateProductPrices = false,
+    stockArrival?: StockArrival,
   ) =>
     commitOps("Updating receiving invoice", [
       { kind: "upsert", table: "purchase_orders", rows: [invoiceRow(inv)] },
@@ -2893,7 +2899,7 @@ export const db = {
         ? receivingCorrectionOps(inv, correction.previous, correction.attemptId)
         : receivingActivityOps(inv, movementStoreId)),
       ...receivingPriceOps(inv, updateProductPrices),
-    ]),
+    ],stockArrival?{stockArrival}:undefined),
 
   /**
    * Autosave an unfinished receiving order. Same rows as a finalized one, but

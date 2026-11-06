@@ -21,6 +21,8 @@ export type StockSourceManifest = Readonly<{
   effectiveAt: string;
   recordedAt: string;
   sourceRefs: readonly StockSourceReference[];
+  /** Original authorized receiving-time explanation; absence preserves v1 bytes. */
+  arrivalReason?: string;
 }>;
 export const STOCK_SOURCE_ACTIONS: Readonly<Record<StockSourceAction, StockSourceDocumentType>>;
 export function normalizeStockSourceManifest(input: unknown): StockSourceManifest;

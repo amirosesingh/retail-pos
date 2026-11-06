@@ -140,4 +140,15 @@ describe('canonical immutable original stock-source claims', () => {
       '0001-01-01T00:00:00+14:00', '9999-12-31T23:59:59-14:00',
     ]) expect(() => normalizeStockSourceManifest({ ...input, effectiveAt })).toThrow();
   });
+  it('binds an explicit original receiving explanation without changing absent-field bytes or granting clock proof',()=>{
+    const input={...fixture(),action:'RECEIVE',document:{type:'receivings',id:uid(2)}};
+    const original=stockSourceManifestJson(input),reason='Goods arrived before invoice entry 📦';
+    expect(JSON.parse(original)).not.toHaveProperty('arrivalReason');
+    const changed=stockSourceManifestJson({...input,arrivalReason:reason});
+    expect(changed).not.toBe(original);expect(JSON.parse(changed).arrivalReason).toBe(reason);
+    expect(stockSourceManifestJson(JSON.parse(changed))).toBe(changed);expect(JSON.parse(changed)).not.toHaveProperty('clockVerified');
+    expect(()=>stockSourceManifestJson({...fixture(),arrivalReason:reason})).toThrow();
+    for(const arrivalReason of [null,undefined,'',' x','x ','x\ny','x'.repeat(501),'x'.repeat(129)+'\ud800'])
+      expect(()=>stockSourceManifestJson({...input,arrivalReason})).toThrow();
+  });
 });

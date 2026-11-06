@@ -42,6 +42,11 @@ const migration=fs.readFileSync(path.join(__dirname,'../database/sqlserver/prepa
   assert.deepEqual(await store.finish(tx,token),{captured:0,available:false});
  });
  assert.equal((await pool.request().input('id',oldProduct).query('SELECT stock_by_store FROM dbo.products WHERE id=@id;')).recordset[0].stock_by_store,'{"a":1}');
+ const {AggregateRepository:PreUpgradeAggregate}=require('../electron/db/repositories/aggregates.cjs'),{OperationsRepository:PreUpgradeOperations}=require('../electron/db/repositories/operations.cjs');
+ const beforeUpgradeAggregate=new PreUpgradeAggregate(manager,new PreUpgradeOperations(manager,require('../electron/db/schema-registry.cjs').loadRegistry(),{stockHistory:store}));
+ await assert.rejects(beforeUpgradeAggregate.commit('receiving',{branchId:'a',terminalId:'t',stockArrival:{effectiveAt:'2000-01-01T00:00:00Z',reason:'Original goods arrival'},
+  operations:[{kind:'update',table:'products',match:{id:oldProduct},values:{stock_by_store:{a:9}}}]}),{code:'ESTOCK_HISTORY_SCHEMA_REQUIRED'});
+ assert.equal((await pool.request().input('id',oldProduct).query('SELECT stock_by_store FROM dbo.products WHERE id=@id;')).recordset[0].stock_by_store,'{"a":1}');
  const oldReport=await store.readPage({cutoff:'2026-11-05T01:00:00Z',timeZone:'Asia/Brunei'});
  assert.equal(oldReport.status,'unavailable');assert.deepEqual(oldReport.reasons,['SCHEMA_NOT_INSTALLED']);
  assert.equal((await pool.request().query('SELECT COUNT(*) n FROM dbo.sync_change_journal;')).recordset[0].n,0);
@@ -390,6 +395,37 @@ const migration=fs.readFileSync(path.join(__dirname,'../database/sqlserver/prepa
   await assert.rejects(pool.request().input('operation',original).input('proof',bulkCohort.proof_json).query('UPDATE dbo.stock_history_source_cohorts SET proof_json=@proof WHERE operation_id=@operation;'),error=>/STOCK_HISTORY_SOURCE_IMMUTABLE/.test(error.message));
   pass('original full unsigned cohort retained without business rollback, later author substitution or false source ACK: '+mode);
  }
+ await pool.request().batch(`ALTER TABLE dbo.item_activity_logs ADD reference nvarchar(128);
+  CREATE TABLE dbo.purchase_orders(id uniqueidentifier PRIMARY KEY,store_id nvarchar(128),status nvarchar(32),reference nvarchar(128),po_number nvarchar(128),row_version bigint);`);
+ context.author={action:'RECEIVE',signMovement:(row,sourceManifestJson)=>keys.signStockEvent(binding,{expectedKeyId:freshInfo.keyId,subject:'cashier-a',branchId:row.store_id,operationId:row.operation_id,movementId:row.id,action:'RECEIVE',payloadHash:row.payload_hash,...(sourceManifestJson?{sourceManifestJson}:{})}),
+  signSourceCohort:input=>keys.signStockSourceCohort(binding,{...input,expectedKeyId:freshInfo.keyId,subject:'cashier-a',branchId:'a',action:'RECEIVE'})};
+ const arrivalInvoice=randomUUID(),arrivalActivity=randomUUID(),arrivalOperation=randomUUID(),arrivalBefore=(await stock()).a;
+ const arrivalAt='2000-01-01T00:00:00.1234567Z',arrivalReason='Goods arrived before invoice entry 📦';
+ const arrivalOperations=[{kind:'upsert',table:'purchase_orders',rows:[{id:arrivalInvoice,store_id:'a',status:'posted',reference:'ORIGINAL-GRN',po_number:'PO-1'}]},
+  {kind:'upsert',table:'item_activity_logs',rows:[{id:arrivalActivity,product_id:pid,store_id:'a',quantity_delta:2,activity_type:'receive',row_version:1,reference:'ORIGINAL-GRN',created_at:'2020-01-01T00:00:00Z'}]}];
+ const arrivalAggregate={operationId:arrivalOperation,branchId:'a',terminalId:'t',operations:arrivalOperations,stockArrival:{effectiveAt:arrivalAt,reason:arrivalReason},
+  ...aggregatePolicy('receiving',arrivalOperations,{source:'pos',level:'staff',subject:authorId,permissions:{can_receive_purchase_order:true}})};
+ assert.equal((await aggregate.commit('receiving',arrivalAggregate)).replayed,false);
+ assert.equal((await aggregate.commit('receiving',arrivalAggregate)).replayed,true);
+ await assert.rejects(aggregate.commit('receiving',{...arrivalAggregate,stockArrival:{effectiveAt:arrivalAt,reason:'Changed retry reason'}}),error=>error.code==='EIDEMPOTENCY'||error.code==='ESQLSERVER_WRITE');
+ const arrivalSaved=(await pool.request().input('operation',arrivalOperation).query(`SELECT c.members_json,c.proof_json,m.effective_at_raw,m.recorded_at_raw
+  FROM dbo.stock_history_source_cohorts c JOIN dbo.stock_history_movements m ON m.operation_id=c.operation_id WHERE c.operation_id=@operation;`)).recordset[0];
+ const arrivalManifest=JSON.parse(JSON.parse(arrivalSaved.members_json)[0].manifestJson);
+ assert.equal(arrivalSaved.effective_at_raw,arrivalAt);assert.equal(arrivalManifest.arrivalReason,arrivalReason);
+ assert.equal(arrivalManifest.effectiveAt,arrivalAt);assert.equal(arrivalManifest.recordedAt,arrivalSaved.recorded_at_raw);
+ assert.notEqual(arrivalManifest.effectiveAt,arrivalManifest.recordedAt);assert.equal(JSON.parse(arrivalSaved.proof_json).action,'RECEIVE');
+ assert.equal((await stock()).a,arrivalBefore);
+ pass('actual receiving aggregate binds original arrival/reason and exact retries without changing deferred stock, invoice or upload time');
+ const missingSourceOperation=randomUUID(),beforeMissingArrival=await stock();
+ await assert.rejects(inTx(async tx=>{
+  const token=await store.begin(tx,[{kind:'update',table:'products',match:{id:pid},values:{stock_by_store:{a:arrivalBefore+3,b:1}}}],
+   {operationId:missingSourceOperation,branchId:'a',terminalId:'t',kind:'receiving',effectiveAt:arrivalAt,arrivalReason});
+  await new sql.Request(tx).input('stock',JSON.stringify({a:arrivalBefore+3,b:1})).query(`UPDATE dbo.products SET stock_by_store=@stock WHERE id='${pid}';`);
+  await store.finish(tx,token);
+ }),{code:'ESTOCK_ARRIVAL_SOURCE_REQUIRED'});
+ assert.deepEqual(await stock(),beforeMissingArrival);
+ assert.equal((await pool.request().input('operation',missingSourceOperation).query('SELECT COUNT(*) n FROM dbo.stock_history_movements WHERE operation_id=@operation;')).recordset[0].n,0);
+ pass('entered arrival cannot silently disappear when original receiving evidence is unavailable; original transaction fully rolls back');
  context.author=null;
  const cohortProduct=randomUUID(),cohortOperation=randomUUID();
  await pool.request().query("UPDATE dbo.stock_history_heads SET coverage_state=N'complete' WHERE store_id=N'a';");
