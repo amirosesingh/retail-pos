@@ -56,6 +56,13 @@ describe("automatic reconciliation uses the existing guarded sync lane",()=>{
     expect(reconciliationError(differences).message).toContain("products (local 3, cloud 2)");
     await f.lifecycle.reconcileAndRecover("branch",90);expect(f.push).toHaveBeenCalledTimes(1);
   });
+  it("does not reuse a recovery cooldown for another history range",async()=>{
+    const f=fixture();f.local.products=3;
+    Object.assign(f.cloud,{requestContext:()=>({fingerprint:"same-device-and-project",pool:f.connectionManager.pool})});
+    await f.lifecycle.reconcileAndRecover("branch",90);
+    await f.lifecycle.reconcileAndRecover("branch",7300);
+    expect(f.push).toHaveBeenCalledTimes(2);
+  });
   it("preserves unacknowledged rows and never reports their incomplete snapshot as matched",async()=>{
     const f=fixture();f.pending.add('["unused"]');
     // Pending evidence uses the real entity-key shape constructed by refreshTable.

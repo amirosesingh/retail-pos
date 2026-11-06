@@ -186,7 +186,7 @@ class LocalDataLifecycle {
     }
     const source=this.cloud.requestContext?.(false);
     return {pool:this.connectionManager.pool,profile:JSON.stringify(this.databaseService?.snapshot?.()?.profile),
-      scope:source?.fingerprint??JSON.stringify([branchId,historyDays,this.cloud.backendUrl?.(),this.cloud.terminalId?.()]),
+      scope:JSON.stringify([branchId,historyDays,source?.fingerprint??[this.cloud.backendUrl?.(),this.cloud.terminalId?.()]]),
       registration:JSON.stringify(terminal?[terminal.deviceUse,terminal.locationId,terminal.storeId,terminal.branchId]:null)};
   }
   assertReconciliationIdentity(identity,branchId,historyDays){
