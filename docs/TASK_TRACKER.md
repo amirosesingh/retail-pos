@@ -7077,3 +7077,92 @@ same-backend UTC18–25ms/Brunei13–23ms, committed-candidate cold reads25–37
 Other names retain their original lookup cost/meaning. These are local provider
 measurements, not livePG17 or Worker CPU. TSC passes; full exact-head CI/regression,
 independent review and new exact-file application approval remain mandatory.
+
+## 6 November — post-release automatic shift recovery investigation
+
+Retail 1.4.82 is published at v1.4.82/980d6b2f after the explicitly approved
+PR400 promotion. The owner now reports ECHANGEGAP for shifts in the installed
+production 1.4.82 app and requests automatic database recovery. New beta baseline:
+2bbcf144b054ee2f47d0b9c35d38b2617ef7b6a4, isolated branch
+codex/automatic-shift-recovery-beta. Preserve every existing checkout, permission,
+saved closing, administrator correction, queue and checkpoint. No production
+promotion, publication, live DDL/data repair or operator-setting change is part
+of this investigation/correction.
+
+Three agents independently check runtime evidence, source recovery admission and
+release upgrade coverage. Initial confirmed source gaps: packaged managed
+upgrades enumerate 001–024 only, so installing 1.4.82 alone does not install the
+optional 025–030 recovery metadata; and the startup recovery-review widget is
+hidden by schema-derived tradingReady even while the data recovery gate blocks
+the page. Neither is yet certified as this affected PC's current blocker.
+
+Implement and isolate-test only the narrow recovery-review admission correction
+under the owner's existing recovery implementation request. Keep actual
+Administrator/Operations identity, branch, current source and migration guards;
+never make incomplete data tradable or auto-approve an old closing. Runtime
+writer: verify_cloud_recovery owns the startup gate/helper and focused tests.
+Root owns tracker/memory and final reconciliation. Independent reviewer:
+review_chore_prs; policy_implementation obtains safe read-only diagnostics.
+
+The same recovery correction also covers truthful initial-gap diagnostics:
+automaticSync currently logs synchronization.automatic.failed before attempting
+the existing scoped recovery. Reproduce this sequence and change only its
+reporting order: publish recovery progress, retain final unresolved failure and
+actual recovery success, without clearing old logs or changing requests, cadence,
+queues or checkpoints. policy_implementation owns this narrow Main/helper/tests
+scope; verify_cloud_recovery retains exclusive ownership of startup UI files.
+
+Prepare a separate exact automatic-metadata-upgrade plan before changing the
+managed installer: inspect all 025–030 dependencies, schema manifests, transaction
+ownership and rollout/financial activation behavior. Do not silently enable
+financial/proof rules or bypass unknown/partial schema checks. Any required live
+database action must be presented with exact target, SQL, hash and effects first.
+Routine CT expiry should trigger bounded scoped recovery; genuine unproven
+legacy closings require the already-approved audited Administrator review.
+
+Affected production PC status remains pending read-only UltraViewer inspection;
+the available local-preview logs show old Nov4 shift warnings and successful
+Nov6 readiness, which does not establish the affected PC's current state.
+Stock401/local031 and cashier shutdown activity logging remain next-release work.
+
+Startup UI verification checkpoint: the actual DatabaseService snapshot has
+schema-derived tradingReady=true while enabled_bootstrapping still maps to
+desktopStorageRoute='pending'. The old panel predicate hid Administrator review
+and both subscription/retry paths redirected too early. The narrow correction
+reuses desktopStorageRoute for those redirects and requires connected, validated,
+non-migrating schema for the panel; it changes no Main authority or trading gate.
+Root ran 85 focused tests in six suites, TypeScript and scoped lint successfully;
+independent review and 61 overlapping route/cache/state tests also passed.
+Actual mounted-panel checks and final Main reporting tests remain separate.
+
+Main reporting checkpoint: actual Main plus the real diagnostics writer/reader
+reproduced five failures in eight cases before the correction. Automatic gap
+reporting now waits for the existing recovery outcome, and the manual observer
+encloses its original synchronization plus recovery promise. Non-error progress
+does not clear old failures; unresolved recovery preserves its actual code and
+allowlisted private diagnostics. Requests, scheduling, lifecycle, branch and
+write guards are unchanged. Twenty-eight related tests, syntax, lint and diff
+checks pass; root TypeScript and independent runtime review also pass. One
+existing isolated log-line test needed the newly explicit original-failure
+binding; its privacy assertions remain intact. No database operation was run.
+
+Rendered acceptance: root ran `node scripts/test-startup-shift-review-ui.cjs
+--run` using pinned Node22 and an owned headless browser/server. Twenty groups
+passed at 1440px and 390px: actual startup route, NativeBoot and Radix comparison
+dialog; actual schema-ready DatabaseService snapshot; retry/sign-in/completion;
+cashier, disconnected, migration and rejected-proof denial; identity-change
+removal of the prior comparison. The fixture aborts external traffic and asserts
+zero approval/adoption calls. No SQL, configured profile or real credentials are
+used. Default sandbox localhost access was refused; the explicitly scoped
+outside-sandbox run passed, then closed its owned browser and server. Syntax
+and lint pass. This is rendered application-fixture evidence, not installed
+production-PC acceptance. Final PR430 CI remains required.
+
+PR430 head645 CI: all platform/deployment checks passed; full regression had
+6408 passed, 11 skipped and one stale source-wiring assertion in
+offline-operations.test.ts expecting the removed `if (next.tradingReady)` branch.
+Update that test to require the shared route helper at both redirect sites and
+reject the old unsafe branch; retain every other offline/PIN/roster assertion.
+Actual snapshot and mounted tests already prove the behavior. The test-only
+correction passed 73 independent related cases, scoped lint and diff checks;
+runtime remains unchanged. Require fresh CI after the corrective test commit.

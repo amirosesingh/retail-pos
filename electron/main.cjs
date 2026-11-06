@@ -449,15 +449,20 @@ async function runAutomaticSync() {
   const includeActivity = Date.now() - lastActivityFlush >= ACTIVITY_INTERVAL_MS;
   let result = await syncCoordinator.runNow({ branchId: localBranchId(), batchSize: 500, includeActivity });
   if (result.ok && includeActivity) lastActivityFlush = Date.now();
-  if (!result.ok) diagnostics.logConnection("synchronization.automatic.failed", { category:"synchronization", stage:result.stage??"automatic", code:result.code??"ESYNC", message:result.error??result.message??"Automatic synchronization failed.", ...diagnostics.bootstrapDiagnostic(result,syncRegistry.tables.map(table=>table.cloudTable)) });
+  let failure = result;
   if (result.code === "ECHANGEGAP") {
+    // The scoped lifecycle owns recovery. A gap is not the final outcome while
+    // it is running; activity reports its real download/apply progress.
+    diagnostics.logConnection("synchronization.automatic.recovering", { category:"synchronization", stage:"automatic", state:"recovering", ...diagnostics.bootstrapDiagnostic(result,syncRegistry.tables.map(table=>table.cloudTable)) });
     try {
       await prepareLocalData({ force: true });
       result = { ok: true };
     } catch (error) {
-      result = { ok: false, error: String(error?.message ?? error) };
+      failure = error;
+      result = { ok: false, code:error?.code??"EBOOTSTRAP", error: String(error?.message ?? error) };
     }
   }
+  if (!result.ok) diagnostics.logConnection("synchronization.automatic.failed", { category:"synchronization", stage:result.stage??"automatic", code:result.code??"ESYNC", message:result.error??result.message??"Automatic synchronization failed.", ...diagnostics.bootstrapDiagnostic(failure,syncRegistry.tables.map(table=>table.cloudTable)) });
   if (result.ok) diagnostics.logConnection("synchronization.automatic.succeeded", { category:"synchronization", stage:"automatic", state:"ready" });
   historyCadence.finishCore(coreRevision,{ok:result.ok,nextMs:result.ok?Math.max(250,AUTO_SYNC_OK_MS-(Date.now()-lastActivityFlush)):AUTO_SYNC_RETRY_MS});
   if(result.ok){
@@ -2259,7 +2264,17 @@ function registerIpc() {
     onAdoptCommitted:()=>{automaticSyncQueued=true;scheduleAutomaticSync(250);},
     isPosSender:event=>event.sender===mainWindow?.webContents && event.senderFrame===event.sender.mainFrame,
   });
-  ipcMain.handle("sync:run-now", (_e, options) => guard.guarded(async()=>{const input=guard.options(options,{name:"sync options"});const branchId=localBranchId();if(!branchId)throw Object.assign(new Error("The terminal branch is not configured."),{code:"EBRANCH"});const result=await observedDatabaseOperation("synchronization","manual",() => syncCoordinator.runNow({...input,branchId}));return result.code==="ECHANGEGAP"?prepareLocalData({force:true}):result;}));
+  ipcMain.handle("sync:run-now", (_e, options) => guard.guarded(async()=>{
+    const input=guard.options(options,{name:"sync options"});
+    const branchId=localBranchId();
+    if(!branchId)throw Object.assign(new Error("The terminal branch is not configured."),{code:"EBRANCH"});
+    return observedDatabaseOperation("synchronization","manual",async()=>{
+      const result=await syncCoordinator.runNow({...input,branchId});
+      if(result.code!=="ECHANGEGAP")return result;
+      diagnostics.logConnection("synchronization.manual.recovering", { category:"synchronization", stage:"manual", state:"recovering", ...diagnostics.bootstrapDiagnostic(result,syncRegistry.tables.map(table=>table.cloudTable)) });
+      return prepareLocalData({force:true});
+    });
+  }));
   ipcMain.handle("sync:finalize-shift-close", (_e, shiftId) => guard.guarded(() =>
     synchronizeClosingShifts(guard.uuid(shiftId, { name: "shift id" })),
   ));
