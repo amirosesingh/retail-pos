@@ -1683,3 +1683,20 @@ Current UI correction supersedes earlier vertical instructions: finite horizonta
 chart strip with equal cards, distinct categorical colors, sponsorship first and
 combined revenue/profit. Centered whole-strip edge arrows hide when that direction
 cannot scroll. Current UI implementation/review remains in separate PR427.
+## 6 November — exact history and older-client rollout
+
+PR428 ordinary native history hints must hydrate through the exact15-string
+read adapter, preserve existing immutable/pending facts, and commit new inserts
+with the same feed-page cursor. Other tables keep their current path. Insert
+history after ordinary/graph page writes to preserve business-before-evidence
+lock order. Exact payloads and current source are rechecked outside/inside SQL.
+
+The unapplied migration is READ-RPC-ONLY: no new global history feed trigger or
+helper for older binaries, which reproduce irreversible bigint/JSON rounding in
+their generic feed codec. Fresh canonical assembly retires only its recognized
+generated history-feed trigger; retain the immutable guard. Scope/privacy/grants
+and business writers stay unchanged. Completed UUID-membership rechecks use the
+existing coordinated lane after15 minutes plus stable0–60s terminal jitter, with
+no timer/core-poll change or existing-payload redownload. Counts/membership do not
+certify full-row equality or repair previously divergent immutable facts. Grouped
+exact database approval is still required. Stock401/local031 remain deferred.

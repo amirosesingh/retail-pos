@@ -121,20 +121,17 @@ describe("actual bootstrap, prefetch and expired-history boundaries", () => {
     expect(h.cloud.bootstrapPage.mock.calls.map(call => call[0].table)).toEqual(["pos_settings", "settings_scoped"]);
     expect(h.commit).toHaveBeenCalledTimes(1);expect(push).not.toHaveBeenCalled();expect(h.checkpoints.save).not.toHaveBeenCalled();
   });
-  it("labels targeted gap recovery without advancing the expired cursor on a failed download", async () => {
+  it("labels non-history targeted gap recovery without advancing the expired cursor on a failed download", async () => {
     const h = sqlHarness(), failure = httpError();h.cloud.bootstrapPage.mockRejectedValue(failure);
-    // Gap recovery now durably creates a scoped job before downloading. Keep
-    // this fixture faithful to that infrastructure while asserting the original
-    // transport error and unchanged Change Tracking checkpoint.
-    const jobs = new Map<string, { job_id: string; [key: string]: unknown }>();
-    const jobRepository = { recovery: async () => null, create: async (value: { job_id: string; [key: string]: unknown }) => { jobs.set(value.job_id, structuredClone(value)); }, get: async (id: string) => structuredClone(jobs.get(id)), checkpoint: async (id: string, patch: object) => { const saved = jobs.get(id); if (!saved) throw new Error("Missing fixture job"); Object.assign(saved, structuredClone(patch)); } };
-    const { JobManager } = require("../../../electron/jobs/manager.cjs");
-    Object.assign(h.cloud, { terminalId: () => "terminal-fixture", backendUrl: () => "https://pos.fixture" });
-    h.connectionManager.pool.request = () => ({ query: vi.fn(async () => ({ recordset: [{ current_version: 42, min_valid_version: 0 }] })) });
-    const lifecycle = new LocalDataLifecycle({ ...h, registry, jobRepository, jobManager: new JobManager(jobRepository), reader: { unacknowledged: async () => [] }, syncCoordinator: {} });
-    await expect(lifecycle.recoverChangeTrackingGap("branch-fixture", 90, "change_history")).rejects.toBe(failure);
-    expect(bootstrapDiagnostic(failure, names)).toEqual({ table: "change_history", bootstrapPhase: "download", bootstrapOrigin: "gap_recovery" });
+    const lifecycle = new LocalDataLifecycle({ ...h, registry:{tables:[...registry.tables,table('audit_logs',3)]}, reader: { unacknowledged: async () => [] }, syncCoordinator: {} });
+    await expect(lifecycle.recoverChangeTrackingGap("branch-fixture", 90, "audit_logs")).rejects.toBe(failure);
+    expect(bootstrapDiagnostic(failure, [...names,'audit_logs'])).toEqual({ table: "audit_logs", bootstrapPhase: "download", bootstrapOrigin: "gap_recovery" });
     expect(h.checkpoints.save).not.toHaveBeenCalled();expect(h.begin).not.toHaveBeenCalled();
+  });
+  it('never falls back to an opaque snapshot/CT baseline when the missing-only history protocol is unavailable',async()=>{
+    const h=sqlHarness(),lifecycle=new LocalDataLifecycle({...h,registry,jobManager:{paused:false},syncCoordinator:{}});
+    await expect(lifecycle.recoverChangeTrackingGap('branch-fixture',90,'change_history')).rejects.toMatchObject({code:'EHISTORY_INDEX_UNAVAILABLE',table:'change_history'});
+    expect(h.cloud.bootstrapPage).not.toHaveBeenCalled();expect(h.checkpoints.save).not.toHaveBeenCalled();expect(h.begin).not.toHaveBeenCalled();
   });
   it.each(["primitive", "frozen", "hostile getter", "hostile proxy"])("never replaces a %s error to obtain breadcrumbs", async kind => {
     const h = sqlHarness();const failure = kind === "primitive" ? "original failure" : kind === "frozen" ? Object.freeze(httpError()) : kind === "hostile getter" ? Object.defineProperty(httpError(), "bootstrapDiagnostic", { get: () => { throw Error("PRIVATE getter"); } }) : new Proxy(httpError(), { getOwnPropertyDescriptor: () => { throw Error("PRIVATE proxy"); }, defineProperty: () => { throw Error("PRIVATE proxy"); } });

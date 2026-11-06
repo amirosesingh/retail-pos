@@ -263,6 +263,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261105170645_bounded_shop_hourly_report.sql",
       "supabase/migrations/20261106015347_guard_existing_product_owner_during_native_sync.sql",
       "supabase/migrations/20261106020500_complete_change_history_sync_count.sql",
+      "supabase/migrations/20261106042139_automatic_history_index_recovery.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

@@ -6,7 +6,7 @@ async function finishShutdownSync({ run, progress = () => {}, sleep = ms => new 
     try { result = await run(); }
     catch (error) { result = { ok: false, code: error?.code, error: String(error?.message ?? error) }; }
     if (result?.ok) return result;
-    if (result?.timedOut || ['ELOCALDB','ECHANGEGAP','ESYNC_AUTH_PENDING','EPRIVILEGE','HTTP_401','HTTP_403'].includes(result?.code) || result?.credentialsInvalid || attempt === 3)
+    if (result?.timedOut || ['ELOCALDB','ECHANGEGAP','EHISTORY_UPLOAD_REVIEW','ESYNC_AUTH_PENDING','EPRIVILEGE','HTTP_401','HTTP_403'].includes(result?.code) || result?.credentialsInvalid || attempt === 3)
       return result ?? { ok: false, error: 'Synchronization did not return an acknowledgement.' };
     progress({ active: true, attempt, message: 'Synchronization was interrupted. Retrying automatically…' });
     await sleep(attempt * 1000);

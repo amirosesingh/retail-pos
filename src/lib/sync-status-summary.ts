@@ -10,6 +10,7 @@ export type NativeSyncSnapshot = {
   phase?: unknown;
   running?: boolean;
   paused?: boolean;
+  historyRecovery?: unknown;
 };
 
 export type NativeDatabaseSnapshot = {
@@ -81,6 +82,14 @@ export function nativeSyncSummary(
     state: "checking", label: snapshot.phase === "pulling" ? "Receiving updates" : snapshot.phase === "pushing" ? "Sending updates" : "Synchronizing",
     detail: "Native synchronization is running. Its final result is not yet confirmed.", pending,
   };
+  const history=snapshot.historyRecovery&&typeof snapshot.historyRecovery==='object'&&!Array.isArray(snapshot.historyRecovery)
+    ?snapshot.historyRecovery as Record<string,unknown>:null;
+  if(history?.pending===true&&history.membershipOnly===true&&pending===0&&failed===0&&conflicts===0){
+    const saved=count(history.completedRows),warning=typeof history.error==='string'?history.error.trim():'';
+    return{state:warning?'degraded':'checking',label:warning?'History recovery waiting':'Recovering history',pending,
+      detail:[warning,saved?`${saved} missing history record${saved===1?' has':'s have'} been saved locally.`:'Checking retained history for missing records.',
+        'Recovery continues from saved progress. This does not acknowledge retained local uploads.'].filter(Boolean).join(' ')};
+  }
   if (pending === null || failed === null || conflicts === null) return {
     state: "checking", label: "Checking synchronization", pending,
     detail: "The native journal queue and error counts have not all been confirmed.",

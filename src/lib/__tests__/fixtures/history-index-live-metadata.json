@@ -1,0 +1,151 @@
+{
+  "note": "Schema-only live definitions captured read-only 6 November. No business rows or credentials. Actual captured validator/projection/immutable functions; fixture data is synthetic.",
+  "functions": [
+    {
+      "acl": "{=X/postgres,postgres=X/postgres,service_role=X/postgres}",
+      "owner": "postgres",
+      "config": [
+        "search_path=public, pg_temp"
+      ],
+      "strict": false,
+      "definer": false,
+      "body_md5": "afb25551c3fcc2f598a60faf262cd4d3",
+      "signature": "change_history_immutable()",
+      "definition": "CREATE OR REPLACE FUNCTION public.change_history_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\n SET search_path TO 'public', 'pg_temp'\nAS $function$\r\nBEGIN RAISE EXCEPTION 'change_history is append-only'; END $function$\n",
+      "volatility": "v",
+      "definition_md5": "578cf538eeb44be63e0fe9fec2d98a89"
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "owner": "postgres",
+      "config": [
+        "search_path=pg_catalog"
+      ],
+      "strict": true,
+      "definer": false,
+      "body_md5": "a5be97695f3e105ebde271e2f017ddee",
+      "signature": "pos_sync_history_project_v1(jsonb,text,boolean)",
+      "definition": "CREATE OR REPLACE FUNCTION public.pos_sync_history_project_v1(p_value jsonb, p_table text DEFAULT ''::text, p_keep_commerce boolean DEFAULT false)\n RETURNS jsonb\n LANGUAGE plpgsql\n IMMUTABLE STRICT\n SET search_path TO 'pg_catalog'\nAS $function$\nDECLARE\n  v_row jsonb := p_value;\n  v_context text := p_table;\n  v_result jsonb := '{}'::jsonb;\n  v_price jsonb;\n  v_remove text[];\n  v_number double precision;\nBEGIN\n  -- The former Worker parsed JSON numbers before serializing the response.\n  -- JSON.stringify maps non-finite JavaScript numbers to null. Preserve that\n  -- transport behavior for valid PostgreSQL numeric values beyond float8.\n  IF pg_catalog.jsonb_typeof(p_value) = 'number' AND pg_catalog.abs((p_value::text)::numeric) > 1 THEN\n    BEGIN\n      v_number := (p_value::text)::double precision;\n    EXCEPTION WHEN numeric_value_out_of_range THEN RETURN 'null'::jsonb;\n    END;\n  END IF;\n  IF pg_catalog.jsonb_typeof(p_value) = 'array' THEN\n    IF NOT pg_catalog.jsonb_path_exists(p_value,'strict $[*] ? (@.type() == \"object\" || @.type() == \"array\" || (@.type() == \"number\" && (@ > 1e308 || @ < -1e308)))') THEN\n      RETURN p_value;\n    END IF;\n    SELECT COALESCE(pg_catalog.jsonb_agg(CASE pg_catalog.jsonb_typeof(a.value)\n      WHEN 'object' THEN public.pos_sync_history_project_v1(a.value,p_table,p_keep_commerce)\n      WHEN 'array' THEN public.pos_sync_history_project_v1(a.value,p_table,p_keep_commerce)\n      WHEN 'number' THEN CASE WHEN a.value>'1e308'::jsonb OR a.value<'-1e308'::jsonb\n        THEN public.pos_sync_history_project_v1(a.value,p_table,p_keep_commerce) ELSE a.value END\n      ELSE a.value END ORDER BY a.ordinality),'[]'::jsonb)\n      INTO v_result FROM pg_catalog.jsonb_array_elements(p_value) WITH ORDINALITY AS a(value,ordinality);\n    RETURN v_result;\n  END IF;\n  IF pg_catalog.jsonb_typeof(p_value) <> 'object' THEN RETURN p_value; END IF;\n  IF NOT p_keep_commerce\n     AND (p_table = 'settings_scoped' OR v_row->>'table_name' = 'settings_scoped')\n     AND pg_catalog.jsonb_typeof(v_row->'key') = 'string'\n     AND pg_catalog.left(v_row->>'key',14) = 'product_price:'\n     AND pg_catalog.jsonb_typeof(v_row->'value') IN ('object','array') THEN\n    IF pg_catalog.jsonb_typeof(v_row->'value') = 'array' THEN\n      SELECT COALESCE(pg_catalog.jsonb_object_agg((a.ordinality-1)::text,a.value),'{}'::jsonb)\n        INTO v_price FROM pg_catalog.jsonb_array_elements(v_row->'value') WITH ORDINALITY AS a(value,ordinality);\n    ELSE v_price := (v_row->'value') - 'ecom_price'; END IF;\n    v_row := pg_catalog.jsonb_set(v_row,ARRAY['value'],v_price,false);\n  END IF;\n  IF pg_catalog.jsonb_typeof(v_row->'table_name') = 'string' THEN v_context := v_row->>'table_name'; END IF;\n  v_remove:=CASE WHEN v_context='terminal_tokens' THEN ARRAY['claim_secret_hash','claim_proof','claimed_proof_hash']::text[] ELSE ARRAY[]::text[] END;\n  IF NOT p_keep_commerce THEN\n    v_remove:=v_remove||ARRAY['ecommerceEnabled']::text[];\n    IF v_context='products' THEN v_remove:=v_remove||ARRAY['ecom_price','ecom_visible','ecom_enabled','is_published']::text[]; END IF;\n  END IF;\n  -- Reuse untouched maps, including their large enclosing images. Materialize\n  -- projections once and aggregate only changed children, never every key.\n  IF pg_catalog.jsonb_path_exists(v_row,'strict $.* ? (@.type() == \"object\" || @.type() == \"array\" || (@.type() == \"number\" && (@ > 1e308 || @ < -1e308)))') THEN\n    WITH children AS MATERIALIZED (\n      SELECT e.key,e.value FROM pg_catalog.jsonb_each(v_row) AS e\n      WHERE NOT(e.key=ANY(v_remove)) AND CASE pg_catalog.jsonb_typeof(e.value)\n        WHEN 'object' THEN true WHEN 'array' THEN true\n        WHEN 'number' THEN e.value>'1e308'::jsonb OR e.value<'-1e308'::jsonb ELSE false END\n    ), projected AS MATERIALIZED (\n      SELECT key,value,public.pos_sync_history_project_v1(value,v_context,p_keep_commerce) AS next_value FROM children\n    ) SELECT pg_catalog.jsonb_object_agg(key,next_value) INTO v_result FROM projected WHERE next_value IS DISTINCT FROM value;\n    IF v_result IS NOT NULL THEN v_row:=v_row||v_result; END IF;\n  END IF;\n  IF NOT v_row ?| v_remove THEN RETURN v_row; END IF;\n  v_result:=v_row-v_remove;\n  RETURN v_result;\nEND;\n$function$\n",
+      "volatility": "i",
+      "definition_md5": "4633e04e150c350518938f2ba661fca1"
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "owner": "postgres",
+      "config": [
+        "search_path=public, pg_temp"
+      ],
+      "strict": false,
+      "definer": true,
+      "body_md5": "ffabe2f9bc0ed2d49e42b3b4b2674b7b",
+      "signature": "pos_sync_pull(text,text,text,bigint,integer)",
+      "definition": "CREATE OR REPLACE FUNCTION public.pos_sync_pull(p_organization_id text, p_branch_id text, p_terminal_id text, p_after_cursor bigint DEFAULT 0, p_limit integer DEFAULT 500)\n RETURNS TABLE(cursor bigint, table_name text, entity_id text, operation text, row_version bigint, tombstone boolean, row_data jsonb)\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'public', 'pg_temp'\nAS $function$\nDECLARE v_me public.app_users%ROWTYPE;\nBEGIN PERFORM public.pos_sync_validate_read_scope(p_organization_id,p_branch_id,p_terminal_id); IF auth.role()<>'service_role' THEN SELECT * INTO v_me FROM public.app_users WHERE auth_user_id=auth.uid() AND is_active=true LIMIT 1;\n IF v_me.id IS NULL OR NOT (v_me.role='admin' OR COALESCE((v_me.permissions->>'can_manage_sync_backup')::boolean,false)) THEN RAISE EXCEPTION 'SYNC_FORBIDDEN'; END IF;\n IF NOT (v_me.role='admin' OR v_me.store_id IS NULL OR v_me.store_id=p_branch_id) THEN RAISE EXCEPTION 'SYNC_BRANCH_FORBIDDEN'; END IF; END IF;\n -- cluster-catalogue-read-filter\n RETURN QUERY WITH feed_page AS MATERIALIZED (\n  SELECT candidate.cursor,candidate.table_name,candidate.entity_id,candidate.operation,candidate.row_version,candidate.tombstone\n  FROM (SELECT DISTINCT unnest(ARRAY[p_branch_id,'global']) AS branch_id) scopes\n  CROSS JOIN LATERAL (\n   (SELECT c.cursor,c.table_name,c.entity_id,c.operation,c.row_version,c.tombstone\n    FROM public.sync_change_feed c\n    WHERE c.organization_id=p_organization_id AND c.branch_id=scopes.branch_id\n      AND c.terminal_id IS NULL AND c.cursor>p_after_cursor\n    ORDER BY c.cursor LIMIT LEAST(GREATEST(p_limit,10),2000))\n   UNION ALL\n   (SELECT c.cursor,c.table_name,c.entity_id,c.operation,c.row_version,c.tombstone\n    FROM public.sync_change_feed c\n    WHERE c.organization_id=p_organization_id AND c.branch_id=scopes.branch_id\n      AND c.terminal_id=p_terminal_id AND c.terminal_id IS NOT NULL AND c.cursor>p_after_cursor\n    ORDER BY c.cursor LIMIT LEAST(GREATEST(p_limit,10),2000))\n  ) candidate\n  ORDER BY candidate.cursor LIMIT LEAST(GREATEST(p_limit,10),2000)\n )\n SELECT f.cursor,f.table_name,f.entity_id,f.operation,f.row_version,f.tombstone,CASE f.table_name WHEN 'coupon_campaigns' THEN (SELECT to_jsonb(x) FROM public.\"coupon_campaigns\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'shifts' THEN (SELECT to_jsonb(x) FROM public.\"shifts\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'issued_vouchers' THEN (SELECT to_jsonb(x) FROM public.\"issued_vouchers\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'activity_events' THEN (SELECT to_jsonb(x) FROM public.\"activity_events\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'app_users' THEN (SELECT to_jsonb(x) FROM public.\"app_users\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'audit_logs' THEN (SELECT to_jsonb(x) FROM public.\"audit_logs\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'booking_payments' THEN (SELECT to_jsonb(x) FROM public.\"booking_payments\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'bookings' THEN (SELECT to_jsonb(x) FROM public.\"bookings\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'branch_telemetry' THEN (SELECT to_jsonb(x) FROM public.\"branch_telemetry\" x WHERE x.\"terminal_id\"=((f.entity_id::jsonb)->>'terminal_id') LIMIT 1)\n    WHEN 'cashiers' THEN (SELECT to_jsonb(x) FROM public.\"cashiers\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'coupon_events' THEN (SELECT to_jsonb(x) FROM public.\"coupon_events\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'drawer_events' THEN (SELECT to_jsonb(x) FROM public.\"drawer_events\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'held_orders' THEN (SELECT to_jsonb(x) FROM public.\"held_orders\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id') LIMIT 1)\n    WHEN 'integration_settings' THEN (SELECT to_jsonb(x) FROM public.\"integration_settings\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'item_activity_logs' THEN (SELECT to_jsonb(x) FROM public.\"item_activity_logs\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'member_verifications' THEN (SELECT to_jsonb(x) FROM public.\"member_verifications\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'members' THEN (SELECT to_jsonb(x) - ARRAY['auth_user_id']::text[] FROM public.\"members\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'membership_tiers' THEN (SELECT to_jsonb(x) FROM public.\"membership_tiers\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'offline_sync_audit_log' THEN (SELECT to_jsonb(x) FROM public.\"offline_sync_audit_log\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'payment_transactions' THEN (SELECT to_jsonb(x) FROM public.\"payment_transactions\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'payment_types' THEN (SELECT to_jsonb(x) FROM public.\"payment_types\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'pin_attempts' THEN (SELECT to_jsonb(x) FROM public.\"pin_attempts\" x WHERE x.\"key\"=((f.entity_id::jsonb)->>'key') LIMIT 1)\n    WHEN 'pos_settings' THEN (SELECT to_jsonb(x) FROM public.\"pos_settings\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::integer LIMIT 1)\n    WHEN 'product_barcodes' THEN (SELECT to_jsonb(x) FROM public.\"product_barcodes\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid AND public.product_available_in_catalogue(x.product_id,p_branch_id) LIMIT 1)\n    WHEN 'product_categories' THEN (SELECT to_jsonb(x) FROM public.\"product_categories\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'products' THEN (SELECT to_jsonb(x) FROM public.\"products\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid AND public.product_available_in_catalogue(x.id,p_branch_id) LIMIT 1)\n    WHEN 'promotions' THEN (SELECT to_jsonb(x) FROM public.\"promotions\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid AND (x.foc_product_id IS NULL OR public.product_available_in_catalogue(x.foc_product_id,p_branch_id)) LIMIT 1)\n    WHEN 'public_flags' THEN (SELECT to_jsonb(x) FROM public.\"public_flags\" x WHERE x.\"key\"=((f.entity_id::jsonb)->>'key') LIMIT 1)\n    WHEN 'purchase_order_items' THEN (SELECT to_jsonb(x) FROM public.\"purchase_order_items\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'purchase_orders' THEN (SELECT to_jsonb(x) FROM public.\"purchase_orders\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'sale_items' THEN (SELECT to_jsonb(x) FROM public.\"sale_items\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'sales' THEN (SELECT to_jsonb(x) FROM public.\"sales\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'secure_settings' THEN (SELECT to_jsonb(x) FROM public.\"secure_settings\" x WHERE x.\"key\"=((f.entity_id::jsonb)->>'key') LIMIT 1)\n    WHEN 'security_findings' THEN (SELECT to_jsonb(x) FROM public.\"security_findings\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'settings_locks' THEN (SELECT to_jsonb(x) FROM public.\"settings_locks\" x WHERE x.\"section\"=((f.entity_id::jsonb)->>'section') LIMIT 1)\n    WHEN 'settings_overrides' THEN (SELECT to_jsonb(x) FROM public.\"settings_overrides\" x WHERE x.\"scope\"=((f.entity_id::jsonb)->>'scope') AND x.\"scope_id\"=((f.entity_id::jsonb)->>'scope_id') AND x.\"section\"=((f.entity_id::jsonb)->>'section') LIMIT 1)\n    WHEN 'shift_sessions' THEN (SELECT to_jsonb(x) FROM public.\"shift_sessions\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'sku_audit' THEN (SELECT to_jsonb(x) FROM public.\"sku_audit\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'staff_roles' THEN (SELECT to_jsonb(x) FROM public.\"staff_roles\" x WHERE x.\"slug\"=((f.entity_id::jsonb)->>'slug') LIMIT 1)\n    WHEN 'stock_adjustments' THEN (SELECT to_jsonb(x) FROM public.\"stock_adjustments\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'stock_delta_applied' THEN (SELECT to_jsonb(x) FROM public.\"stock_delta_applied\" x WHERE x.\"movement_id\"=((f.entity_id::jsonb)->>'movement_id')::uuid LIMIT 1)\n    WHEN 'stock_transfer_items' THEN (SELECT to_jsonb(x) FROM public.\"stock_transfer_items\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'stock_transfers' THEN (SELECT to_jsonb(x) FROM public.\"stock_transfers\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'stores' THEN (SELECT to_jsonb(x) FROM public.\"stores\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id') LIMIT 1)\n    WHEN 'suppliers' THEN (SELECT to_jsonb(x) FROM public.\"suppliers\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'sync_metadata' THEN (SELECT to_jsonb(x) FROM public.\"sync_metadata\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'system_audit_logs' THEN (SELECT to_jsonb(x) FROM public.\"system_audit_logs\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'terminal_commands' THEN (SELECT to_jsonb(x) FROM public.\"terminal_commands\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'terminal_tokens' THEN (SELECT to_jsonb(x) FROM public.\"terminal_tokens\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'uom_units' THEN (SELECT to_jsonb(x) FROM public.\"uom_units\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'user_roles' THEN (SELECT to_jsonb(x) FROM public.\"user_roles\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'whatsapp_queue' THEN (SELECT to_jsonb(x) FROM public.\"whatsapp_queue\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'terminal_recovery_secrets' THEN (SELECT to_jsonb(x) FROM public.\"terminal_recovery_secrets\" x WHERE x.\"terminal_token_id\"=((f.entity_id::jsonb)->>'terminal_token_id')::uuid LIMIT 1)\n    WHEN 'pos_store_settings' THEN (SELECT to_jsonb(x) FROM public.\"pos_store_settings\" x WHERE x.\"store_id\"=((f.entity_id::jsonb)->>'store_id') LIMIT 1)\n    WHEN 'settings_scoped' THEN (SELECT to_jsonb(x) FROM public.\"settings_scoped\" x WHERE x.\"scope\"=((f.entity_id::jsonb)->>'scope') AND x.\"scope_id\"=((f.entity_id::jsonb)->>'scope_id') AND x.\"key\"=((f.entity_id::jsonb)->>'key') LIMIT 1)\n    WHEN 'stock_count_drafts' THEN (SELECT to_jsonb(x) FROM public.\"stock_count_drafts\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'authorization_actions' THEN (SELECT to_jsonb(x) FROM public.\"authorization_actions\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'authorization_action_history' THEN (SELECT to_jsonb(x) FROM public.\"authorization_action_history\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'authorization_requests' THEN (SELECT to_jsonb(x) FROM public.\"authorization_requests\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'authorization_log' THEN (SELECT to_jsonb(x) FROM public.\"authorization_log\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'record_edits' THEN (SELECT to_jsonb(x) FROM public.\"record_edits\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'shift_cash_counts' THEN (SELECT to_jsonb(x) FROM public.\"shift_cash_counts\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'shift_close_events' THEN (SELECT to_jsonb(x) FROM public.\"shift_close_events\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'shift_reconciliations' THEN (SELECT to_jsonb(x) FROM public.\"shift_reconciliations\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'shift_variance_alerts' THEN (SELECT to_jsonb(x) FROM public.\"shift_variance_alerts\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'shift_notifications' THEN (SELECT to_jsonb(x) FROM public.\"shift_notifications\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'entity_status_history' THEN (SELECT to_jsonb(x) FROM public.\"entity_status_history\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'nav_pins' THEN (SELECT to_jsonb(x) FROM public.\"nav_pins\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1)\n    WHEN 'store_groups' THEN (SELECT to_jsonb(x) FROM public.\"store_groups\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id') LIMIT 1)\n    WHEN 'change_history' THEN (SELECT to_jsonb(x) FROM public.\"change_history\" x WHERE x.\"id\"=((f.entity_id::jsonb)->>'id')::uuid LIMIT 1) ELSE NULL END\n FROM feed_page f ORDER BY f.cursor;\nEND $function$\n",
+      "volatility": "v",
+      "definition_md5": "e3171846683edb5d58c7a5291526555a"
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "owner": "postgres",
+      "config": [
+        "search_path=public, pg_temp"
+      ],
+      "strict": false,
+      "definer": true,
+      "body_md5": "b1f4340e62c8fce3f4f0b3b4310a0dc6",
+      "signature": "pos_sync_validate_read_scope(text,text,text)",
+      "definition": "CREATE OR REPLACE FUNCTION public.pos_sync_validate_read_scope(p_organization_id text, p_branch_id text, p_terminal_id text)\n RETURNS void\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'public', 'pg_temp'\nAS $function$\nBEGIN\n IF auth.role()='service_role' AND p_organization_id='default'\n AND EXISTS(SELECT 1 FROM public.stores WHERE id=p_branch_id)\n AND EXISTS(SELECT 1 FROM public.terminal_tokens WHERE id::text=p_terminal_id\n   AND platform='pc' AND location_id IS NULL AND management_sync_enabled\n   AND is_claimed AND status IN ('active','used') AND revoked_at IS NULL) THEN RETURN; END IF;\n PERFORM public.pos_sync_validate_scope(p_organization_id,p_branch_id,p_terminal_id);\nEND $function$\n",
+      "volatility": "v",
+      "definition_md5": "99b7c7e0758c07c45f1abeaec2f40526"
+    },
+    {
+      "body_md5": "9d8c4cc3256bec428e451b9d38e4ba3f",
+      "signature": "pos_sync_validate_scope(text,text,text)",
+      "definition": "CREATE OR REPLACE FUNCTION public.pos_sync_validate_scope(p_organization_id text, p_branch_id text, p_terminal_id text)\n RETURNS void\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'public', 'pg_temp'\nAS $function$\r\nBEGIN\r\n IF p_organization_id IS DISTINCT FROM 'default' THEN RAISE EXCEPTION 'SYNC_ORGANIZATION_FORBIDDEN'; END IF;\r\n IF NULLIF(btrim(p_branch_id),'') IS NULL OR NULLIF(btrim(p_terminal_id),'') IS NULL THEN RAISE EXCEPTION 'SYNC_TERMINAL_REQUIRED'; END IF;\r\n IF NOT EXISTS(SELECT 1 FROM public.terminal_tokens t WHERE t.id::text=p_terminal_id AND t.location_id=p_branch_id AND t.status IN ('active','used') AND t.revoked_at IS NULL) THEN RAISE EXCEPTION 'SYNC_TERMINAL_SCOPE_FORBIDDEN'; END IF;\r\nEND $function$\n",
+      "definition_md5": "6e95ef6efb223c611d6f1bfcc76e6287"
+    }
+  ],
+  "history_shape": [
+    {
+      "name": "id",
+      "type": "uuid",
+      "not_null": true
+    },
+    {
+      "name": "organization_id",
+      "type": "text",
+      "not_null": true
+    },
+    {
+      "name": "entity_type",
+      "type": "text",
+      "not_null": true
+    },
+    {
+      "name": "entity_id",
+      "type": "text",
+      "not_null": true
+    },
+    {
+      "name": "action",
+      "type": "text",
+      "not_null": true
+    },
+    {
+      "name": "old_value",
+      "type": "jsonb",
+      "not_null": false
+    },
+    {
+      "name": "new_value",
+      "type": "jsonb",
+      "not_null": false
+    },
+    {
+      "name": "revision",
+      "type": "bigint",
+      "not_null": true
+    },
+    {
+      "name": "scope_type",
+      "type": "text",
+      "not_null": true
+    },
+    {
+      "name": "scope_id",
+      "type": "text",
+      "not_null": false
+    },
+    {
+      "name": "changed_by",
+      "type": "text",
+      "not_null": false
+    },
+    {
+      "name": "source_application",
+      "type": "text",
+      "not_null": true
+    },
+    {
+      "name": "device_id",
+      "type": "text",
+      "not_null": false
+    },
+    {
+      "name": "terminal_id",
+      "type": "text",
+      "not_null": false
+    },
+    {
+      "name": "server_timestamp",
+      "type": "timestamp with time zone",
+      "not_null": true
+    }
+  ],
+  "history_triggers": [
+    {
+      "name": "change_history_no_change",
+      "enabled": "O",
+      "definition": "CREATE TRIGGER change_history_no_change BEFORE DELETE OR UPDATE ON public.change_history FOR EACH ROW EXECUTE FUNCTION change_history_immutable()"
+    }
+  ]
+}

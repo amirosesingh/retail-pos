@@ -7,6 +7,7 @@ const { readPage } = require("../../../electron/sync/page-policy.cjs");
 const { refreshTable, runBootstrap } = require("../../../electron/jobs/bootstrap.cjs");
 const { JobManager } = require("../../../electron/jobs/manager.cjs");
 const { LocalDataLifecycle } = require("../../../electron/jobs/lifecycle.cjs");
+const legacyHistorySnapshot = require("../../../electron/sync/history-recovery.cjs");
 const { tagBootstrapDiagnostic } = require("../../../electron/diagnostics.cjs");
 type PageInput = { table: string; branchId: string; historyDays: number; cursor: string | null; limit: number };
 const proof = "a".repeat(64);
@@ -52,7 +53,9 @@ afterEach(() => { vi.unstubAllGlobals();vi.useRealTimers();vi.restoreAllMocks();
 
 describe("audit-only bounded bootstrap downloads", () => {
   it("downloads all253 audit rows in pages≤100 with lossless opaque cursors and one final CT baseline", async () => {
-    const h = harness();expect(await h.lifecycle.recoverChangeTrackingGap("branch-fixture", 90, "change_history")).toMatchObject({ completed: 253, currentVersion: 99 });
+    // Preserve the legacy opaque-snapshot contract separately. New application
+    // recovery uses the missing-only index job and never obtains a CT ACK here.
+    const h = harness();expect(await legacyHistorySnapshot.recover(h.lifecycle,"branch-fixture",90,refreshTable)).toMatchObject({ completed: 253, currentVersion: 99 });
     expect(h.inputs.map(input => input.limit)).toEqual([100, 100, 100]);
     expect(h.inputs.map(input => input.cursor)).toEqual([null, JSON.stringify({ id: rows[99].id }), JSON.stringify({ id: rows[199].id })]);
     expect(h.applied).toEqual(rows.map(row => row.id));expect(new Set(h.applied).size).toBe(253);
@@ -72,7 +75,7 @@ describe("audit-only bounded bootstrap downloads", () => {
   it("retries trusted non-JSON503 twice at the same cursor before any apply, then finishes losslessly", async () => {
     vi.useFakeTimers();const h = harness();const normal = h.fetch.getMockImplementation()!;
     h.fetch.mockImplementation(async (url, init) => h.inputs.length < 2 ? (() => { const body = JSON.parse(String(init.body));h.requests.push(body);h.inputs.push(body.sqlServerBootstrap);return new Response("<html>unavailable</html>", { status: 503 }); })() : normal(url, init));
-    const pending = h.lifecycle.recoverChangeTrackingGap("branch-fixture", 90, "change_history");
+    const pending = legacyHistorySnapshot.recover(h.lifecycle,"branch-fixture",90,refreshTable);
     await vi.advanceTimersByTimeAsync(249);expect(h.inputs.map(input => input.limit)).toEqual([100]);expect(h.begin).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);expect(h.inputs.map(input => input.limit)).toEqual([100, 50]);expect(h.begin).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(499);expect(h.fetch).toHaveBeenCalledTimes(2);await vi.advanceTimersByTimeAsync(1);
@@ -82,7 +85,7 @@ describe("audit-only bounded bootstrap downloads", () => {
   });
   it("exhausts exactly two smaller-page503 retries and preserves the last error with no transaction/baseline", async () => {
     vi.useFakeTimers();const h = harness("change_history", () => new Response("<html>unavailable</html>", { status: 503 }));
-    const pending = rejected(h.lifecycle.recoverChangeTrackingGap("branch-fixture", 90, "change_history"));await vi.advanceTimersByTimeAsync(750);const failure = await pending;
+    const pending = rejected(legacyHistorySnapshot.recover(h.lifecycle,"branch-fixture",90,refreshTable));await vi.advanceTimersByTimeAsync(750);const failure = await pending;
     expect(failure).toBe(h.failures[2]);expect(failure).toMatchObject({ code: "HTTP_503", status: 503, message: "HTTP 503" });
     expect(h.inputs.map(input => [input.limit, input.cursor])).toEqual([[100, null], [50, null], [25, null]]);
     expect(h.begin).not.toHaveBeenCalled();expect(h.cloud.applyLocalBatch).not.toHaveBeenCalled();expect(h.checkpoints.save).not.toHaveBeenCalled();expect(vi.getTimerCount()).toBe(0);
