@@ -1,4 +1,4 @@
-import { posDateTimeInput, posDateTimeToIso, posDayKey } from "@/lib/time-zone";
+import { effectiveTimeZone, posDateTimeInput, posDateTimeToIso, posDayKey } from "@/lib/time-zone";
 import { formatTime as systemTime } from "@/lib/time-zone";
 import { formatDateTime as posDisplayDateTime } from "@/lib/time-zone";
 import { DataProgress } from "@/components/shared/DataProgress";
@@ -70,7 +70,8 @@ import {
 import { resolveByBarcode } from "@/lib/product-lookup";
 import { locationPath, primarySub, routingTargets } from "@/lib/locations";
 import { receivingLocation } from "@/lib/receiving-location";
-import { effectiveDatabaseMode } from "@/core/local-db/db-mode";
+import { effectiveDatabaseMode, subscribeDatabaseMode } from "@/core/local-db/db-mode";
+import { localDb } from "@/core/local-db/local-db";
 import { canonicalBranchId } from "@/lib/branch-id";
 import { Badge } from "@/components/ui/badge";
 import { canEditPosted, nextStockRef } from "@/lib/stock-ref";
@@ -98,6 +99,41 @@ import { activeBranchId } from "@/lib/active-branch";
 import { cachedSuppliers, loadSuppliers, type Supplier } from "@/lib/suppliers";
 import type { Product } from "@/core/types/pos-types";
 import { recordActivity } from "@/lib/activity-events";
+import { ReceivingArrivalFields, type ReceivingArrivalHandle } from "@/platforms/web/components/pos/ReceivingArrivalFields";
+import { readTerminalConfig, subscribeTerminalConfig } from "@/core/activation/terminal-tokens";
+import { subscribeCloudKeys } from "@/lib/secure-cloud-config";
+import { sessionEpoch } from "@/lib/session-epoch";
+import { serverOrigin } from "@/lib/server-origin";
+import { supabaseConfig } from "@/lib/external-supabase-config";
+
+async function readArrivalCapability() {
+  const bridge = localDb();
+  return bridge?.stockArrivalCapability ? bridge.stockArrivalCapability() : { ok: false, available: false };
+}
+function arrivalConnectionKey() {
+  const terminal = readTerminalConfig();
+  let project = '';
+  try { project = supabaseConfig().url; } catch { /* Missing configuration is not capability. */ }
+  return JSON.stringify([sessionEpoch(), serverOrigin(), project, terminal?.tokenId,
+    terminal?.locationId, terminal?.deviceUse, effectiveDatabaseMode()]);
+}
+function subscribeArrivalContext(changed: (kind: 'scope' | 'readiness') => void) {
+  const offTerminal = subscribeTerminalConfig(() => changed('scope'));
+  const offCloud = subscribeCloudKeys(() => changed('scope'));
+  const offMode = subscribeDatabaseMode(() => changed('scope'));
+  let ready: boolean | null = null;
+  // Reuse published readiness, without polling or reading connection credentials.
+  // Main alone can bind the real pool/profile; no public profile generation exists.
+  const offDatabase = localDb()?.database?.subscribe?.(status => {
+    const blockedState = typeof status.state === 'string' && ['disabled', 'enabled_unconfigured', 'enabled_connecting',
+      'enabled_validating', 'enabled_degraded', 'enabled_error'].includes(status.state);
+    if (!blockedState && typeof status.connected !== 'boolean' && typeof status.tradingReady !== 'boolean' && typeof status.enabled !== 'boolean') return;
+    const next = !blockedState && status.connected !== false && status.tradingReady !== false && status.enabled !== false;
+    if (!next && ready !== false) changed('readiness');
+    ready = next;
+  });
+  return () => { offTerminal(); offCloud(); offMode(); offDatabase?.(); };
+}
 
 export const Route = createFileRoute("/purchasing")({
   head: () => ({
@@ -152,7 +188,7 @@ function Purchasing() {
     void myServerId().then(setMeId);
   }, []);
   const { state, currentStore, allStores, upsertProduct, moveStock, syncProducts } = usePos();
-  const { can, user, isAdmin } = useAuth();
+  const { can, user, isAdmin, authUserId, appUser, terminalUser } = useAuth();
   const [invoiceNo, setInvoiceNo] = useState("");
   const [supplier, setSupplier] = useState("");
   const [invoiceDate, setInvoiceDate] = useState(today());
@@ -166,6 +202,8 @@ function Purchasing() {
   const [saving, setSaving] = useState(false);
   const [finalizeStage, setFinalizeStage] = useState("");
   const [entryOpen, setEntryOpen] = useState(false);
+  const [arrivalEntryKey, setArrivalEntryKey] = useState(() => crypto.randomUUID());
+  const arrivalFields = useRef<ReceivingArrivalHandle>(null);
   const [editing, setEditing] = useState<ReceivingInvoice | null>(null);
   const [removedLineIds, setRemovedLineIds] = useState<string[]>([]);
   const [savingEdit, setSavingEdit] = useState(false);
@@ -200,6 +238,11 @@ function Purchasing() {
   const receivingBranchId = localReceiving
     ? canonicalBranchId(activeBranchId(currentStore.id))
     : currentStore.id || activeBranchId(currentStore.id);
+  const arrivalTimeZone = effectiveTimeZone();
+  const arrivalIdentity = JSON.stringify([receivingBranchId, currentStore.id, user?.staffId,
+    authUserId, appUser?.id, terminalUser?.cashierId, can('can_receive_purchase_order'), arrivalTimeZone]);
+  const arrivalIdentityRef = useRef(arrivalIdentity); arrivalIdentityRef.current = arrivalIdentity;
+  const currentArrivalScopeKey = () => JSON.stringify([arrivalIdentityRef.current, arrivalConnectionKey()]);
   const hub = useMemo(
     () => receivingLocation(allStores, currentStore, localReceiving, receivingBranchId),
     [allStores, currentStore, localReceiving, receivingBranchId],
@@ -469,6 +512,7 @@ function Purchasing() {
 
   /** Load a saved draft back into the form for more items or invoices. */
   function resumeDraft(inv: ReceivingInvoice) {
+    setArrivalEntryKey(crypto.randomUUID());
     setEntryOpen(true);
     setOpenDraftId(inv.id);
     setReference(inv.reference);
@@ -495,6 +539,7 @@ function Purchasing() {
 
   /** Clear the form back to a fresh entry without touching what is stored. */
   function clearForm() {
+    setArrivalEntryKey(crypto.randomUUID());
     finalizeAttempt.current = null;
     setOpenDraftId(null);
     setReference(null);
@@ -690,6 +735,9 @@ function Purchasing() {
     if (!supplier.trim()) return toast.error("Supplier name is required");
     if (!lines.length) return toast.error("Scan at least one item into the invoice");
     if (saving || finalizingRef.current) return;
+    const arrivalReview = arrivalFields.current;
+    if (!arrivalReview) return toast.error('The receiving options are not ready. Reopen this entry.');
+    const assertArrivalEntry = arrivalReview.checkpoint();
 
     finalizingRef.current = true;
     setSaving(true);
@@ -742,7 +790,11 @@ function Purchasing() {
       // stamped with it and committed alongside the invoice.
       const mayUpdateCataloguePrices = can("can_edit_product_price");
       setFinalizeStage(`Saving ${invoice.lines.length.toLocaleString()} invoice lines and their stock movements…`);
+      assertArrivalEntry();
+      const arrival = await arrivalReview.prepare();
       await yieldToUi();
+      assertArrivalEntry();
+      arrival?.assertCurrent();
       if (wasDraft)
         await db.updateReceivingInvoice(
           invoice,
@@ -750,7 +802,9 @@ function Purchasing() {
           hubId,
           undefined,
           mayUpdateCataloguePrices,
+          ...(arrival?.stockArrival ? [arrival.stockArrival] as const : []),
         );
+      else if (arrival?.stockArrival) await db.commitReceivingInvoice(invoice, hubId, mayUpdateCataloguePrices, arrival.stockArrival);
       else await db.commitReceivingInvoice(invoice, hubId, mayUpdateCataloguePrices);
 
       setFinalizeStage("The invoice is stored. Preparing the receipt and put-away list…");
@@ -1065,6 +1119,11 @@ function Purchasing() {
                   />
                 </div>
               </div>
+
+              <ReceivingArrivalFields key={arrivalEntryKey} ref={arrivalFields}
+                scopeKey={currentArrivalScopeKey()} currentScopeKey={currentArrivalScopeKey}
+                timeZone={arrivalTimeZone} readCapability={readArrivalCapability}
+                subscribeContext={subscribeArrivalContext} disabled={saving} />
 
               <Separator />
 

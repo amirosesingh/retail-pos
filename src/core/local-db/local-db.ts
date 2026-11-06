@@ -416,6 +416,8 @@ export type PosBridge = {
   }) => Promise<{ ok: boolean; eventId?: string; error?: string; code?: string }>;
   database?: {
     getState: () => Promise<{ enabled: boolean; configured?: boolean; connected: boolean; tradingReady?: boolean; state: string }>;
+    /** Existing native database:state notifications; consumers need not inspect configuration. */
+    subscribe?: (callback:(state:{enabled?:boolean;configured?:boolean;connected?:boolean;tradingReady?:boolean;state?:string})=>void)=>()=>void;
   };
   telemetry?: {
     presence: (value: { sessionStatus: "signed_in" | "idle"; staffName: string | null; staffRole: string | null }) => Promise<{ ok: boolean }>;
