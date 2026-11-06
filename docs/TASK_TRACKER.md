@@ -10,8 +10,9 @@ entry animation only after actual current-scope data is confirmed.
 
 Inspection: sales/cashier/split data comes from useReportSales, which exposes
 initial loading, refresh and errors; drawer events come from the existing
-synchronous durable event store, filtered by current branch/business day. That
-store is not a complete cloud history read and must not be described as one.
+synchronous saved-event cache, filtered by current branch/business day. That
+feed is not a complete SQL/cloud history read or a newly persisted Electron
+history cache and must not be described as one.
 Use existing confirmed-presentation snapshots scoped to current identity,
 branch/day/timezone, retaining same-scope known rows on failed refresh and hiding
 old rows on scope change. Keep errors/status truthful; never treat an error as
