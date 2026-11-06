@@ -90,7 +90,7 @@ window.fixture=f;function App(){const m=f.watch();return location.search==='?rep
       const page=await browser.newPage({viewport:{width,height:840}});
       await page.route("**/*",route=>route.request().url().startsWith(origin)?route.continue():route.abort());
       await page.goto(origin+"/.tmp/stock-history-ui/index.html?report");
-      await page.getByRole("heading",{name:"Inventory · Stock at time"}).waitFor();
+      await page.getByRole("heading",{name:"Stock report"}).waitFor();
       assert.equal(await page.evaluate(()=>window.fixture.calls.length),0);
       await page.getByRole("button",{name:"Select date and time"}).click();
       await page.getByRole("dialog").waitFor();await page.getByRole("button",{name:"Show stock",exact:true}).click();

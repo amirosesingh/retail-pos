@@ -8,7 +8,7 @@ describe("navigation grouping", () => {
   });
   it("makes historical inventory discoverable in Reports with its existing inventory permission", () => {
     const entry = navGroups.find(group => group.id === "reports")?.items.find(item => item.to === "/reports/inventory");
-    expect(entry?.label).toBe("Inventory · Stock at time");
+    expect(entry?.label).toBe("Stock report");
     expect(entry?.flag).toBe("can_view_inventory");
     expect(routePermissionForPath("/reports/inventory")).toBe("can_view_inventory");
     expect(routePermissionForPath("/reports/stock")).toBe("can_view_sales_reports");

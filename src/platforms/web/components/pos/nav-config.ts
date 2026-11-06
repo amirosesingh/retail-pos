@@ -375,7 +375,7 @@ const originalGroups: NavGroup[] = [
       },
       {
         to: "/reports/inventory",
-        label: "Inventory · Stock at time",
+        label: "Stock report",
         icon: CalendarClock,
         flag: "can_view_inventory",
         keywords: "historical stock summary inventory quantity selected date time shift closing",
