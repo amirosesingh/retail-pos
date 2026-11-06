@@ -7238,3 +7238,73 @@ Loader owns historical product membership. Date helper handles actual IANA day
 boundaries including23/25h and midnight transitions; a skipped or noncontiguous
 historical date is explicitly unsupported instead of including another day.
 Stock agent retains all readers/SQL/types/validation/Main/runtime/UI ownership.
+
+Owner's latest clarification supersedes the earlier endExclusive-as-cutoff plan:
+PRIMARY Stock report means Stock available at the selected DATE AND TIME.
+Existing cutoff remains an exact inclusive instant in EVERY mode, including the
+saved shift-close shortcut. Optional periodStart adds inventory opening/in/out
+explanations for that same day/time; it never reinterprets cutoff, silently clamps
+it or includes later movements. A full-day request explicitly selects the last
+100ns before the next actual IANA day. Future selected instants remain unsupported.
+Use clear Stock available / Stock in / Stock out labels, not ambiguous cash/shift
+opening/closing language. Policy helper agent was notified before freeze and now
+keeps the original kernel cutoff unchanged. All terms share one revision/snapshot;
+real original movement details require their own complete authorized pagination.
+
+Daily helper files are frozen for stock-agent independent review. Root now
+assigned policy_implementation the next exact boundary: src/routes/purchasing.tsx,
+NEW ReceivingArrivalFields.tsx and focused mounted/browser tests only, baseline
+3df731bb arrival capability/API (current pushed b2934b8d). Root is assignment/
+monitoring only; stock agent has made no purchasing/component edits. The helper
+agent leaves its four daily files unstaged for stock-agent final commits, and
+cannot edit readers/types/SQL/Main or the frozen helper paths during UI work.
+
+Owner coordination rule: agents own bounded implementation/testing; root assigns
+and monitors, retaining cross-feature review, exact database review/application
+and final integration/release gates. Investigate/fix a newly failed required check
+promptly; canceled/superseded historical badges are not rewritten. No change to
+the separate exact production promotion/installer authorization rules.
+
+New original frontier purpose passed162 relevant tests; independent read-only
+review reran173 and found no confirmed blocker in its crypto/identity boundary.
+Existing10 stock protocol functions,17 verifier bodies and18 key-method bodies
+remain unchanged by AST parity review. New typed Main-only signing uses only the
+existing expected enrolled key and canonical frontier hash, with no generic
+signer/IPC/enrollment. Server verifies original current account/scope, and labels
+time author_claimed. Nonce/prefix/cohort/opening admission is still separate.
+
+Corrected receiving UI independently passes14 actual mounted browser groups and
+161 related tests. Review fixed two preparation defects: real database:state is
+the readiness channel, not sync progress; optional readiness changes block only
+selected custom arrival and preserve default receiving's existing path. New and
+resumed invoices, failed-save/retry preservation, scope change and repeated local
+time are covered. No actual database/profile/transaction test was run on a real
+terminal. Primary selected-date/time report remains the owner requirement.
+
+Publication/read policy resolved by root under owner's restatable original-time
+rule: a PROVEN complete accepted ledger/opening/effect snapshot may display
+PROVISIONAL RECORDED stock when offline/unknown writer frontiers remain. Overall
+status must not silently become complete. Separate ledger/writer coverage and
+explicit warning: some terminals have not confirmed uploads; recorded balance
+may change. Gaps/missing opening/effects still mean null quantities. Complete/
+financial export gate is unchanged; provisional report is never operational
+stock/checkout/permission authority. Timestamp grade distinguishes recorded vs
+author-entered values and never claims physical-clock certainty.
+
+Native period read now passes70 actual disposable LocalDB groups, including
+one exact snapshot/revision for opening/in/out/selected-time quantity, archived/
+zero original identities, >2^53 strings,100ns boundaries and late backdated
+restatement. Additional115 reader/export/kernel/permission cases pass. Hosted
+calendar admission will use bounded named-zone conversions, not timezone-view
+scans or Worker Intl loops. The read-only pinned session pattern is being
+verified independently before replacing draft report transaction isolation.
+
+The private frontier snapshot helper is frozen after21 actual owned LocalDB
+groups and72 focused cases, with fixtures cleaned and TypeScript/lint passing.
+It uses one pinned read-only transaction with HOLDLOCK/NOWAIT and no session SET,
+preserving all five caller isolation levels and yielding to contested business
+work. UUID spelling is canonicalized only for UUIDs; branch/till codes stay exact.
+It returns bounded private evidence with coverageProven=false, never a signature,
+acknowledgement or writer-completeness assertion. Independent117-case combined
+snapshot/frontier/date/receiving verification passed. Identity-only frontier
+signing is committed f3c62b5e; challenge/prefix/opening admission remains pending.
