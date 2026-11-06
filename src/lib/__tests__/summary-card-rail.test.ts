@@ -162,7 +162,7 @@ describe("manual summary card rails", () => {
       ["src/platforms/web/components/pos/InventorySummaryCards.tsx", ["Inventory metrics"]],
     ] as const) {
       const source = readFileSync(path, "utf8");
-      for (const label of labels) expect(source).toContain(`<SummaryCardRail label="${label}"`);
+      for (const label of labels) expect(source).toMatch(new RegExp(`<(?:SummaryCardRail|ConfirmedMetricCards) label="${label}"`));
     }
     const inventory = readFileSync("src/routes/inventory.tsx", "utf8");
     expect(inventory).toContain("<InventorySummaryCards");

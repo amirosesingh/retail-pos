@@ -71,9 +71,20 @@ describe("per-shop chart values and identity", () => {
     expect(new Set(series.map(shop => shop.color)).size).toBe(2);
     expect(new Set(series.map(shop => shop.name)).size).toBe(2);
     expect(comparisonShopSeries([...directory].reverse())).toEqual(series);
-    for (const shop of series) expect(comparisonShopSeries(directory.filter(row => row.id === shop.id))[0].color).toBe(shop.color);
+    // Every surface supplies the full existing authorized directory; selection
+    // never reallocates colors. Directory membership changes are a stated limit.
     const company = comparisonShopSeries(stores);
-    for (const shop of company) expect(comparisonShopSeries(stores.filter(row => row.id === shop.id))[0].color).toBe(shop.color);
+    for (const shop of company) {
+      const filteredPoints = comparisonPoints([day(shop.id)], company, [shop.id], "revenue", "daily");
+      expect(filteredPoints[0]).toHaveProperty(shop.key);
+      expect(comparisonShopSeries([...stores].reverse()).find(row=>row.id===shop.id)?.color).toBe(shop.color);
+    }
+    const twelve = comparisonShopSeries(Array.from({length:12},(_,index)=>({id:String(index),name:String(index)})));
+    expect(new Set(twelve.map(shop=>shop.color)).size).toBe(12);
+    expect(twelve.every(shop=>shop.color!==shop.profitColor)).toBe(true);
+    const two = comparisonShopSeries(directory);
+    expect(new Set(two.flatMap(shop=>[shop.color,shop.profitColor])).size).toBe(4);
+
   });
   it("aggregates long ranges monthly without truncating any revenue", () => {
     const rows = Array.from({ length: 800 }, (_, index) => day("A", 1, 0, new Date(Date.UTC(2020, 0, index + 1)).toISOString().slice(0, 10)));

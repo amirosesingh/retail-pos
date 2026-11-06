@@ -12,6 +12,18 @@ Owner requires all proposed cloud/local database upgrades collected for exact fi
 The exact owner-approved service-only bounded feed RPC and PR384 are applied/deployed on beta. Existing selector/privacy grants and businessrecords are preserved; native continuation is bound to authenticated response metadata. Live147request sample all200/ok with no CPU-exceeded; CPU2–114ms/mean9.469 means NO guarantee allrequestsbelow10ms. Electronfeed131613→133184, all6shiftCTvalid; largebacklog stilldraining. Keep implemented/sample-verified status distinct from fullsync completion, production promotion or installerpublication. Supabase migrationtool ledger20261104042158 corresponds to approvedfile20261104040251, SHA83495D696622241ECA2A8D396234E2FD65EE7C7A3050E93E4280638D6530D59B; do not replay based solely on differing timestamps.
 # POS project memory
 
+## 6 November — chart and summary presentation refinement
+
+Owner requests clean, compact, readable chart frames with soft graph ends/joins,
+hidden-bar HORIZONTAL finite scrolling/swiping and smooth confirmed-data summary reveals.
+The latest owner correction explicitly supersedes earlier vertical/two-column
+chart layouts: all graph cards use the same responsive width, height and plot. Unknown
+initial values stay hidden; meaningful negatives remain, and All Shops retains
+its zero-valued directory entries. Preserve current branch/identity/permissions,
+same-scope confirmed refresh/error behavior and reduced-motion support. This is
+presentation only: no provider, query cadence, calculation, database or Membership
+changes. Root keeps a separate HMR preview alongside existing web and Electron.
+
 ## 6 November — existing-PC stock-history delivery
 
 Prepare one consolidated existing-data local SQL file, retaining the reviewed

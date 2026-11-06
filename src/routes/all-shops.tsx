@@ -360,7 +360,7 @@ function AllShops() {
               {confirmedLive.bills > 0 && <Kpi label="Bills" value={String(confirmedLive.bills)} />}
               {Math.abs(confirmedLive.basket) >= 0.005 && <Kpi label="Average basket · net sales" value={money(confirmedLive.basket)} info={<FinancialBreakdown rows={[["Net sales", money(confirmedLive.revenue)], ["Completed bills", String(confirmedLive.bills)], ["Average basket", money(confirmedLive.basket)]]}><p>Net sales ÷ completed bills for the selected dates.</p></FinancialBreakdown>} />}
             </SummaryCardRail>
-            <ShopComparisonCharts rows={comparisonDays} directory={stores}
+            <ShopComparisonCharts rows={comparisonDays} directory={state.stores}
               selectedIds={periodStoreIds} showProfit={showCostMargin}
               range={{ from, to }}
               transactionHours={comparisonHours} profitHours={comparisonHours} financialRows={comparisonFinancial}

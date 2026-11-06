@@ -16,12 +16,17 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { AnalyticsCardRail } from "@/platforms/web/components/pos/AnalyticsCardRail";
+import { TradingChartCard, TradingChartGrid } from "@/platforms/web/components/pos/TradingChartLayout";
+import { ConfirmedMetricCards } from "@/platforms/web/components/pos/ConfirmedMetricCards";
 import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { Button } from "@/components/ui/button";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { money, usePos } from "@/lib/pos-store";
 import { savingsOf, soldLines, sumLines } from "@/lib/sales-analytics";
+import { pageDataScope } from "@/lib/page-data-cache";
+import { useConfirmedPresentation } from "@/lib/use-confirmed-presentation";
+import { canonicalBranchId } from "@/lib/branch-id";
+import { comparisonShopSeries } from "@/lib/shop-comparison";
 import { useReportSales } from "@/lib/use-report-sales";
 import { saleNetRevenue } from "@/core/pricing/profit";
 import {
@@ -32,7 +37,7 @@ import {
   isoDay,
 } from "@/platforms/web/components/pos/report-kit";
 import { branchDisplayName } from "@/lib/human-readable";
-import { ANALYTICS_COLORS, branchChartColor, compactChartNumber } from "@/lib/analytics-design";
+import { ANALYTICS_COLORS, compactChartNumber } from "@/lib/analytics-design";
 
 export const Route = createFileRoute("/reports/analytics")({
   head: () => ({
@@ -65,9 +70,9 @@ const tooltipStyle = {
 };
 
 function AnalyticsBoard() {
-  const { can } = useAuth();
+  const { can, ready: authReady, user } = useAuth();
   const showCostMargin = can('can_view_cost_margin');
-  const { state, stores } = usePos();
+  const { state, stores, ready: databaseReady } = usePos();
   const init = defaultRange(30);
   const [from, setFrom] = useState(init.from);
   const [to, setTo] = useState(init.to);
@@ -79,12 +84,16 @@ function AnalyticsBoard() {
     to,
   );
   const [trend, setTrend] = useState<"daily" | "monthly">("daily");
+  const reportScope = authReady && user ? JSON.stringify([pageDataScope(user), stores.map(store => store.id).sort(), from, to]) : null;
+  const confirmedReport = useConfirmedPresentation(reportScope, { sales: history.sales, products: state.products }, databaseReady && !history.loading && !history.error);
+  const shopColors = useMemo(() => new Map(comparisonShopSeries(state.stores ?? stores).map(shop => [shop.id, shop.color])), [state.stores, stores]);
+
 
   const bills = useMemo(
-    () => history.sales.filter((s) => inRange(s.createdAt, from, to) && !s.refunded),
-    [history.sales, from, to],
+    () => (confirmedReport?.sales ?? []).filter((s) => inRange(s.createdAt, from, to) && !s.refunded),
+    [confirmedReport, from, to],
   );
-  const lines = useMemo(() => soldLines(bills, state.products), [bills, state.products]);
+  const lines = useMemo(() => soldLines(bills, confirmedReport?.products ?? []), [bills, confirmedReport]);
   const totals = sumLines(lines);
   const savings = savingsOf(bills, lines);
   const storeName = useCallback(
@@ -165,38 +174,38 @@ function AnalyticsBoard() {
         ) : null}
         {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
-        <div className="summary-grid grid grid-cols-2 gap-3 lg:grid-cols-5">
+        <ConfirmedMetricCards label="Business analytics totals" scope={JSON.stringify([from,to,stores.map(store=>store.id).sort()])} ready={!history.loading && !history.error}>
           <StatCard
             tone="revenue"
-            label="Revenue"
+            label="Revenue" metricValue={revenue} moneyValue
             value={money(revenue)}
             hint={`${bills.length} completed bills · before tax`}
           />
           <StatCard
-            label="Avg / day"
+            label="Avg / day" metricValue={revenue / dayCount} moneyValue
             tone="revenue"
             value={money(revenue / dayCount)}
             hint={`${dayCount} trading days`}
           />
           <StatCard
-            label="Avg / month"
+            label="Avg / month" metricValue={revenue / monthCount} moneyValue
             tone="revenue"
             value={money(revenue / monthCount)}
             hint={`${monthCount} months`}
           />
           <StatCard
-            label="Gross profit"
+            label="Gross profit" metricValue={showCostMargin ? totals.profit : 0} moneyValue
             tone={showCostMargin && totals.profit < 0 ? "loss" : "profit"}
             value={showCostMargin ? money(totals.profit) : "Restricted"}
             hint={showCostMargin ? `${totals.marginPct.toFixed(1)}% margin` : "Cost-view permission required"}
           />
           <StatCard
-            label="Given away"
+            label="Given away" metricValue={savings.total} moneyValue
             tone="discount"
             value={money(savings.total)}
             hint="Discounts, coupons and free items"
           />
-        </div>
+        </ConfirmedMetricCards>
 
         <section
           aria-label="Analytics color meanings"
@@ -230,11 +239,23 @@ function AnalyticsBoard() {
           </p>
         )}
 
-        <AnalyticsCardRail title="Business analytics graphs">
-          <section className="flex min-w-0 flex-col rounded-2xl border border-border bg-card p-4">
-            <div className="mb-3 flex min-h-20 flex-wrap content-start items-center justify-between gap-3">
-              <h2 className="text-sm font-semibold">Top selling items</h2>
-              <div className="flex gap-1">
+        <ConfirmedMetricCards label="Discount and giveaway totals" scope={JSON.stringify([from,to,stores.map(store=>store.id).sort()])} ready={!history.loading && !history.error}>
+              <StatCard
+                tone="discount"
+                label="Item discounts" metricValue={savings.lineDiscount} moneyValue
+                value={money(savings.lineDiscount)}
+              />
+              <StatCard
+                tone="discount"
+                label="Bill discounts" metricValue={savings.billDiscount} moneyValue
+                value={money(savings.billDiscount)}
+              />
+              <StatCard tone="discount" label="Coupons & vouchers" metricValue={savings.coupon} moneyValue value={money(savings.coupon)} />
+              <StatCard tone="discount" label="Free items" metricValue={savings.focValue} moneyValue value={money(savings.focValue)} />
+            </ConfirmedMetricCards>
+        {confirmedReport && <>
+        <TradingChartGrid label="Business analytics graphs">
+          {topItems.length > 0 && <TradingChartCard title="Top selling items" controls={<div className="flex gap-1">
                 <Button
                   size="sm"
                   variant={topBy === "revenue" ? "default" : "outline"}
@@ -249,9 +270,8 @@ function AnalyticsBoard() {
                 >
                   Units
                 </Button>
-              </div>
-            </div>
-            <div className="no-scrollbar h-80 overflow-y-auto overscroll-contain" tabIndex={0} aria-label="Top selling items chart">
+              </div>}>
+            <div className="trading-chart-scroll h-full overflow-y-auto overscroll-contain" tabIndex={0} aria-label="Top selling items chart">
             <ResponsiveContainer
               width="100%"
               height={Math.max(240, topItems.length * 36)}
@@ -294,23 +314,37 @@ function AnalyticsBoard() {
               </BarChart>
             </ResponsiveContainer>
             </div>
-          </section>
 
-          <section className="flex min-w-0 flex-col rounded-2xl border border-border bg-card p-4">
-            <h2 className="mb-3 min-h-20 text-sm font-semibold">Revenue by shop</h2>
-            <ResponsiveContainer width="100%" height={240} minWidth={0}>
+          </TradingChartCard>}
+          {byStore.some(shop => Math.abs(shop.revenue) >= 0.005) && <TradingChartCard title="Revenue by shop" footer={<><p className="mb-2 text-xs text-muted-foreground">
+              Colors identify branches and stay the same when their ranking changes.
+            </p>
+            <ul tabIndex={0} aria-label="Shop revenue shares" className=" space-y-2 text-xs">
+              {byStore.map((shop) => (
+                <li key={shop.id} className="flex min-w-0 items-start gap-2">
+                  <span
+                    className="mt-1.5 size-2.5 shrink-0 rounded-full"
+                    style={{ background: shopColors.get(canonicalBranchId(shop.id)) }}
+                  />
+                  <span className="min-w-0 flex-1 break-words">{shop.name}</span>
+                  <span className="shrink-0 tabular-nums">{money(shop.revenue)} · {shop.sharePct.toFixed(1)}%</span>
+                </li>
+              ))}
+            </ul></>}>
+            <ResponsiveContainer width="100%" height="100%" minWidth={0}>
               <PieChart>
                 <Pie
                   isAnimationActive={false}
                   data={byStore}
                   dataKey="revenue"
                   nameKey="name"
-                  innerRadius={70}
-                  outerRadius={110}
+                  innerRadius={60}
+                  outerRadius={88}
                   paddingAngle={2}
+                  cornerRadius={4}
                 >
                   {byStore.map((s) => (
-                    <Cell key={s.id} fill={branchChartColor(s.id)} />
+                    <Cell key={s.id} fill={shopColors.get(canonicalBranchId(s.id))} />
                   ))}
                 </Pie>
                 <Tooltip
@@ -320,29 +354,8 @@ function AnalyticsBoard() {
                 />
               </PieChart>
             </ResponsiveContainer>
-            <p className="mb-2 text-xs text-muted-foreground">
-              Colors identify branches and stay the same when their ranking changes.
-            </p>
-            <ul tabIndex={0} aria-label="Shop revenue shares" className="no-scrollbar max-h-24 overflow-y-auto space-y-2 text-xs">
-              {byStore.map((shop) => (
-                <li key={shop.id} className="flex min-w-0 items-start gap-2">
-                  <span
-                    className="mt-1.5 size-2.5 shrink-0 rounded-full"
-                    style={{ background: branchChartColor(shop.id) }}
-                  />
-                  <span className="min-w-0 flex-1 break-words">{shop.name}</span>
-                  <span className="shrink-0 tabular-nums">{money(shop.revenue)} · {shop.sharePct.toFixed(1)}%</span>
-                </li>
-              ))}
-            </ul>
-          </section>
-
-        <section className="flex min-w-0 flex-col rounded-2xl border border-border bg-card p-4">
-          <div className="mb-3 flex min-h-20 flex-wrap content-start items-center justify-between gap-3">
-            <h2 className="text-sm font-semibold">
-              {trend === "daily" ? "Daily revenue" : "Monthly revenue"}
-            </h2>
-            <div className="flex gap-1">
+          </TradingChartCard>}
+          {series.some(row => Math.abs(row.value) >= 0.005) && <TradingChartCard title={trend === "daily" ? "Daily revenue" : "Monthly revenue"} controls={<div className="flex gap-1">
               <Button
                 size="sm"
                 variant={trend === "daily" ? "default" : "outline"}
@@ -357,9 +370,8 @@ function AnalyticsBoard() {
               >
                 Monthly
               </Button>
-            </div>
-          </div>
-          <ResponsiveContainer width="100%" height={320}>
+            </div>}>
+          <ResponsiveContainer width="100%" height="100%">
             {trend === "daily" ? (
               <BarChart data={series}>
                 <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
@@ -419,33 +431,15 @@ function AnalyticsBoard() {
                   name="Net revenue"
                   isAnimationActive={false}
                   strokeWidth={2}
+                  strokeLinecap="round" strokeLinejoin="round"
                   dot={false}
                 />
               </LineChart>
             )}
           </ResponsiveContainer>
-        </section>
-
-        </AnalyticsCardRail>
-
-        <div className="grid gap-4 lg:grid-cols-2">
-          <section className="min-w-0 rounded-2xl border border-border bg-card p-4">
-            <h2 className="mb-3 text-sm font-semibold">What we gave away</h2>
-            <div className="summary-grid grid gap-3 sm:grid-cols-2">
-              <StatCard
-                tone="discount"
-                label="Item discounts"
-                value={money(savings.lineDiscount)}
-              />
-              <StatCard
-                tone="discount"
-                label="Bill discounts"
-                value={money(savings.billDiscount)}
-              />
-              <StatCard tone="discount" label="Coupons & vouchers" value={money(savings.coupon)} />
-              <StatCard tone="discount" label="Free items" value={money(savings.focValue)} />
-            </div>
-            <ResponsiveContainer width="100%" height={200}>
+          </TradingChartCard>}
+          {Math.abs(savings.total) >= 0.005 && <TradingChartCard title="What we gave away" description="Discounts, coupons and free items for the selected dates.">
+            <ResponsiveContainer width="100%" height="100%">
               <BarChart
                 data={[
                   { label: "Item", value: savings.lineDiscount },
@@ -483,8 +477,10 @@ function AnalyticsBoard() {
                 />
               </BarChart>
             </ResponsiveContainer>
-          </section>
-
+          </TradingChartCard>}
+        </TradingChartGrid>
+        </>}
+        <div>
           <section className="min-w-0 rounded-2xl border border-border bg-card p-4">
             <h2 className="mb-3 text-sm font-semibold">Profit by shop</h2>
             <Table tableId="routes/reports.analytics#1" loading={history.loading}>

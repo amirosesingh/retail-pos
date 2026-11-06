@@ -12,11 +12,11 @@ const hasValue = (data: readonly ComparisonPoint[], keys: readonly string[]) =>
 
 /** Presentation of already confirmed, authorized rows; controls issue no database reads. */
 export function ShopComparisonCharts({ rows, directory, selectedIds, showProfit, grain = "daily", scopeLabel,
-  transactionHours, profitHours, hourlyError, financialRows, range, children }:
+  transactionHours, profitHours, hourlyError, financialRows, range, children, childrenFirst = false }:
   { rows: readonly StoreDayRow[]; directory: readonly ComparisonShop[]; selectedIds: readonly string[];
     showProfit: boolean; grain?: "daily" | "monthly"; scopeLabel: string;
     transactionHours?: readonly StoreHourRow[]; profitHours?: readonly StoreHourRow[] | null;
-    hourlyError?: string; financialRows?: readonly FinancialShopRow[]; range?: { from: string; to: string }; children?: ReactNode }) {
+    hourlyError?: string; financialRows?: readonly FinancialShopRow[]; range?: { from: string; to: string }; children?: ReactNode; childrenFirst?: boolean }) {
   const [grouping, setGrouping] = useState(grain);
   const [kind, setKind] = useState<"line" | "bar">("line");
   const [financialView, setFinancialView] = useState<"compare" | "revenue" | "cost" | "profit" | "marginPct">("compare");
@@ -28,6 +28,12 @@ export function ShopComparisonCharts({ rows, directory, selectedIds, showProfit,
   const keys = shown.map(shop => shop.key);
   const revenue = useMemo(() => comparisonPoints(rows, series, selectedIds, "revenue", effectiveGrain, range), [rows, series, selectedIds, effectiveGrain, range]);
   const profit = useMemo(() => comparisonPoints(rows, series, selectedIds, "profit", effectiveGrain, range), [rows, series, selectedIds, effectiveGrain, range]);
+  const financialTrend = useMemo(() => {
+    const profits = new Map(profit.map(point => [point.label, point]));
+    return revenue.map(point => ({ ...point, ...(showProfit ? Object.fromEntries(
+      series.map(shop => [`${shop.key}_profit`, profits.get(point.label)?.[shop.key] ?? 0]),
+    ) : {}) }));
+  }, [revenue, profit, series, showProfit]);
   const transactions = useMemo(() => comparisonHourPoints(transactionHours ?? [], series, selectedIds, "bills"), [transactionHours, series, selectedIds]);
   const hourlyProfit = useMemo(() => comparisonHourPoints(profitHours ?? [], series, selectedIds, "profit"), [profitHours, series, selectedIds]);
   const financial = (financialRows ?? []).filter(row => selected.has(canonicalBranchId(row.id)));
@@ -42,9 +48,9 @@ export function ShopComparisonCharts({ rows, directory, selectedIds, showProfit,
   const plot = (data: ComparisonPoint[], hourly = false, counts = false) =>
     <ResponsiveContainer width="100%" height="100%">
       {hourly || kind === "bar" ? <BarChart data={data}>{axes(hourly, counts)}{shown.map(shop =>
-        <Bar key={shop.id} dataKey={shop.key} name={shop.name} fill={shop.color} maxBarSize={28} isAnimationActive={false} />)}</BarChart>
+        <Bar key={shop.id} dataKey={shop.key} name={shop.name} fill={shop.color} radius={4} maxBarSize={28} isAnimationActive={false} />)}</BarChart>
         : <LineChart data={data}>{axes()}{shown.map(shop =>
-          <Line key={shop.id} dataKey={shop.key} name={shop.name} stroke={shop.color} strokeWidth={2.5} dot={false} isAnimationActive={false} />)}</LineChart>}
+          <Line key={shop.id} type="monotone" dataKey={shop.key} name={shop.name} stroke={shop.color} strokeDasharray={shop.revenueDash} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" dot={false} isAnimationActive={false} />)}</LineChart>}
     </ResponsiveContainer>;
   const revenueVisible = hasValue(revenue, keys), profitVisible = showProfit && hasValue(profit, keys);
   const transactionsVisible = !!transactionHours && hasValue(transactions, keys);
@@ -52,7 +58,7 @@ export function ShopComparisonCharts({ rows, directory, selectedIds, showProfit,
   const description = `${scopeLabel} · ${effectiveGrain === "daily" ? "Daily" : "Monthly"}${effectiveGrain !== grouping ? " (long range)" : ""} · net sales exclude tax and rounding`;
   return <section className="min-w-0 space-y-3" aria-label="Shop comparison charts">
     <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-      <p className="text-muted-foreground">{scopeLabel} · Scroll vertically for more graphs.</p>
+      <p className="text-muted-foreground">{scopeLabel} · Swipe or scroll horizontally for more graphs.</p>
       <div className="flex flex-wrap gap-2">
         <select aria-label="Shop chart grouping" value={grouping} onChange={event => setGrouping(event.target.value as "daily" | "monthly")} className="h-9 rounded-md border border-input bg-background px-2 text-xs">
           <option value="daily">Daily</option><option value="monthly">Monthly</option>
@@ -64,8 +70,22 @@ export function ShopComparisonCharts({ rows, directory, selectedIds, showProfit,
     </div>
     {showProfit && hourlyError && <p role="status" className="text-xs text-muted-foreground">Hourly gross profit unavailable: {hourlyError} Daily figures remain separate.</p>}
     <TradingChartGrid label={`${scopeLabel} trading graphs`}>
-      {revenueVisible && <TradingChartCard title="Revenue trend" description={description} footer={legend}>{plot(revenue)}</TradingChartCard>}
-      {profitVisible && <TradingChartCard title="Gross profit trend" description={description} footer={legend}>{plot(profit)}</TradingChartCard>}
+      {childrenFirst && children}
+      {(revenueVisible || profitVisible) && <TradingChartCard title={showProfit ? "Revenue and gross profit" : "Revenue trend"} description={description}
+        footer={<ul aria-label="Revenue and profit series" className="flex flex-wrap gap-x-4 gap-y-2">{shown.flatMap(shop => [
+          <li key={`${shop.id}:revenue`} className="flex min-w-0 items-center gap-1.5"><span aria-hidden="true" className="size-2.5 shrink-0 rounded-full" style={{backgroundColor:shop.color}} />{shop.name} · Revenue</li>,
+          ...(showProfit ? [<li key={`${shop.id}:profit`} className="flex min-w-0 items-center gap-1.5"><span aria-hidden="true" className="size-2.5 shrink-0 rounded-sm" style={{backgroundColor:shop.profitColor}} />{shop.name} · Gross profit</li>] : []),
+        ])}</ul>}>
+        <ResponsiveContainer width="100%" height="100%">
+          {kind === "bar" ? <BarChart data={financialTrend}>{axes()}{shown.flatMap(shop => [
+            <Bar key={`${shop.id}:revenue`} dataKey={shop.key} name={`${shop.name} · Revenue`} fill={shop.color} radius={4} maxBarSize={28} isAnimationActive={false} />,
+            ...(showProfit ? [<Bar key={`${shop.id}:profit`} dataKey={`${shop.key}_profit`} name={`${shop.name} · Gross profit`} fill={shop.profitColor} radius={4} maxBarSize={28} isAnimationActive={false} />] : []),
+          ])}</BarChart> : <LineChart data={financialTrend}>{axes()}{shown.flatMap(shop => [
+            <Line key={`${shop.id}:revenue`} type="monotone" dataKey={shop.key} name={`${shop.name} · Revenue`} stroke={shop.color} strokeDasharray={shop.revenueDash} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" dot={financialTrend.length === 1 ? {r:3} : false} isAnimationActive={false} />,
+            ...(showProfit ? [<Line key={`${shop.id}:profit`} type="monotone" dataKey={`${shop.key}_profit`} name={`${shop.name} · Gross profit`} stroke={shop.profitColor} strokeDasharray={shop.profitDash ?? "6 3"} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" dot={financialTrend.length === 1 ? {r:3} : false} isAnimationActive={false} />] : []),
+          ])}</LineChart>}
+        </ResponsiveContainer>
+      </TradingChartCard>}
       {financialVisible && <TradingChartCard title="Financial performance by shop" description={showProfit ? "Cost + gross profit = net revenue. Margin % uses the right axis." : "Net revenue for the selected shops and dates."}
         controls={<select aria-label="Financial chart measure" value={effectiveFinancialView} onChange={event => setFinancialView(event.target.value as typeof financialView)} className="h-8 rounded-md border border-input bg-background px-2 text-xs">
           {([['compare', 'Compare'], ['revenue', 'Revenue'], ['cost', 'Cost'], ['profit', 'Gross profit'], ['marginPct', 'Margin %']] as const)
@@ -79,17 +99,17 @@ export function ShopComparisonCharts({ rows, directory, selectedIds, showProfit,
           <YAxis yAxisId="money" width={58} fontSize={11} tickFormatter={compactChartNumber} />
           {showProfit && (effectiveFinancialView === "compare" || effectiveFinancialView === "marginPct") && <YAxis yAxisId="margin" orientation="right" unit="%" width={44} fontSize={11} />}
           <Tooltip formatter={(value, name) => name === "Margin %" ? `${Number(value ?? 0).toFixed(1)}%` : money(Number(value ?? 0))} />
-          {effectiveFinancialView === "compare" ? <><Bar yAxisId="money" dataKey="cost" stackId="net-revenue" name="Cost" fill={ANALYTICS_COLORS.cost} maxBarSize={40} isAnimationActive={false} />
-            <Bar yAxisId="money" dataKey="profit" stackId="net-revenue" name="Gross profit" fill={ANALYTICS_COLORS.profit} maxBarSize={40} isAnimationActive={false} />
-            <Line yAxisId="margin" dataKey="marginPct" name="Margin %" stroke={ANALYTICS_COLORS.margin} strokeWidth={2.5} dot={{ r: 3 }} isAnimationActive={false} /></>
-            : effectiveFinancialView === "marginPct" ? <Line yAxisId="margin" dataKey="marginPct" name="Margin %" stroke={ANALYTICS_COLORS.margin} strokeWidth={2.5} dot={{ r: 3 }} isAnimationActive={false} />
+          {effectiveFinancialView === "compare" ? <><Bar yAxisId="money" dataKey="cost" stackId="net-revenue" name="Cost" fill={ANALYTICS_COLORS.cost} radius={4} maxBarSize={40} isAnimationActive={false} />
+            <Bar yAxisId="money" dataKey="profit" stackId="net-revenue" name="Gross profit" fill={ANALYTICS_COLORS.profit} radius={4} maxBarSize={40} isAnimationActive={false} />
+            <Line yAxisId="margin" type="monotone" dataKey="marginPct" name="Margin %" stroke={ANALYTICS_COLORS.margin} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" dot={{ r: 3 }} isAnimationActive={false} /></>
+            : effectiveFinancialView === "marginPct" ? <Line yAxisId="margin" type="monotone" dataKey="marginPct" name="Margin %" stroke={ANALYTICS_COLORS.margin} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" dot={{ r: 3 }} isAnimationActive={false} />
               : <Bar yAxisId="money" dataKey={effectiveFinancialView} name={effectiveFinancialView === "profit" ? "Gross profit" : effectiveFinancialView === "cost" ? "Cost" : "Net revenue"}
-                fill={effectiveFinancialView === "profit" ? ANALYTICS_COLORS.profit : effectiveFinancialView === "cost" ? ANALYTICS_COLORS.cost : ANALYTICS_COLORS.revenue} maxBarSize={40} isAnimationActive={false} />}
+                fill={effectiveFinancialView === "profit" ? ANALYTICS_COLORS.profit : effectiveFinancialView === "cost" ? ANALYTICS_COLORS.cost : ANALYTICS_COLORS.revenue} radius={4} maxBarSize={40} isAnimationActive={false} />}
         </ComposedChart></ResponsiveContainer>
       </TradingChartCard>}
       {transactionsVisible && <TradingChartCard title="Transactions by hour" description={`${scopeLabel} · completed bills by actual trading hour across the selected dates`} footer={legend}>{plot(transactions, true, true)}</TradingChartCard>}
       {hourlyProfitVisible && <TradingChartCard title="Gross profit by hour" description={`${scopeLabel} · net revenue less reported item cost, by recorded trading hour`} footer={legend}>{plot(hourlyProfit, true)}</TradingChartCard>}
-      {children}
+      {!childrenFirst && children}
     </TradingChartGrid>
     {!revenueVisible && !profitVisible && !financialVisible && !transactionsVisible && !hourlyProfitVisible && !children &&
       <p role="status" className="text-sm text-muted-foreground">No trading values to graph in this scope and date range.</p>}

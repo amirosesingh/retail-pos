@@ -1,3 +1,4 @@
+import { ConfirmedMetricCards } from "@/platforms/web/components/pos/ConfirmedMetricCards";
 import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
@@ -7,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
-import { useAuditLogs } from "@/lib/audit-log";
+import { useAuditHistoryPresentation, useAuditLogs } from "@/lib/audit-log";
 import { describeLog } from "@/lib/audit-format";
 import {
   ReportHeader,
@@ -40,6 +41,7 @@ const REGISTER = new Set(["sale", "payment", "refund", "drawer", "discount"]);
 
 function ActivityReport() {
   const logs = useAuditLogs();
+  const auditWitness = useAuditHistoryPresentation();
   const init = defaultRange(7);
   const [from, setFrom] = useState(init.from);
   const [to, setTo] = useState(init.to);
@@ -99,12 +101,12 @@ function ActivityReport() {
           </div>
         </ReportHeader>
 
-        <div className="summary-grid grid gap-4 sm:grid-cols-4">
-          <StatCard label="Events" value={String(rows.length)} />
-          <StatCard label="Orders held" value={String(count(/hold/i))} />
-          <StatCard label="Carts voided" value={String(count(/void/i))} />
-          <StatCard label="Bills split" value={String(count(/split/i))} />
-        </div>
+        <ConfirmedMetricCards label="Register activity totals" scope={JSON.stringify([from,to,q])} ready={true} auditWitness={auditWitness}>
+          <StatCard label="Events" metricValue={rows.length} value={String(rows.length)} />
+          <StatCard label="Orders held" metricValue={count(/hold/i)} value={String(count(/hold/i))} />
+          <StatCard label="Carts voided" metricValue={count(/void/i)} value={String(count(/void/i))} />
+          <StatCard label="Bills split" metricValue={count(/split/i)} value={String(count(/split/i))} />
+        </ConfirmedMetricCards>
 
         <div className="rounded-2xl border border-border bg-card">
           <Table tableId="routes/reports.activity#1">

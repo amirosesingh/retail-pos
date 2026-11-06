@@ -1,3 +1,4 @@
+import { ConfirmedMetricCards } from "@/platforms/web/components/pos/ConfirmedMetricCards";
 import { formatDate as posDisplayDate } from "@/lib/time-zone";
 import { PAGE_DATA_CACHE, pageDataScope } from "@/lib/page-data-cache";
 import { useAuth } from "@/lib/pos-auth";
@@ -286,16 +287,16 @@ function BusinessReport() {
         ) : null}
         {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
-        <div className="summary-grid grid gap-4 sm:grid-cols-4">
-          <StatCard label="Revenue" value={money(totals.revenue)} />
-          <StatCard label="Gross profit" value={showCostMargin ? money(totals.profit) : "Restricted"} />
-          <StatCard label="Margin" value={showCostMargin ? `${totals.margin.toFixed(1)}%` : "Restricted"} />
+        <ConfirmedMetricCards label="Business report totals" scope={JSON.stringify([from,to,storeId,reportStoreIds.slice().sort()])} ready={!history.loading && !history.error}>
+          <StatCard label="Revenue" metricValue={totals.revenue} moneyValue value={money(totals.revenue)} />
+          <StatCard label="Gross profit" metricValue={showCostMargin ? totals.profit : 0} moneyValue value={showCostMargin ? money(totals.profit) : "Restricted"} />
+          <StatCard label="Margin" metricValue={showCostMargin ? totals.margin : 0} value={showCostMargin ? `${totals.margin.toFixed(1)}%` : "Restricted"} />
           <StatCard
-            label="Slow movers"
+            label="Slow movers" metricValue={totals.slow}
             value={String(totals.slow)}
             hint="More than 60 days of stock cover at the current selling rate"
           />
-        </div>
+        </ConfirmedMetricCards>
 
         <div className="rounded-2xl border border-border bg-card">
           {view === "products" ? (

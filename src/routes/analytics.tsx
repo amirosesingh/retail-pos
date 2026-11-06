@@ -357,7 +357,7 @@ function LiveBoard() {
               financialRows={shops.map(shop => ({ ...shop, id: shop.storeId }))}
               scopeLabel={filter ? "Selected authorized shops" : "All authorized company shops"}>
               {shops.some(shop => Math.abs(shop.revenue) >= 0.005) && <TradingChartCard title="Revenue share by shop" description="Net revenue share for the selected authorized shops and dates.">
-                <ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={shops} dataKey="revenue" nameKey="name" innerRadius={64} outerRadius={88} paddingAngle={2}>
+                <ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={shops} dataKey="revenue" nameKey="name" innerRadius={64} outerRadius={88} paddingAngle={2} cornerRadius={4}>
                   {shops.map(shop => <Cell key={shop.storeId} fill={shopColors.get(canonicalBranchId(shop.storeId)) ?? branchChartColor(shop.storeId)} />)}
                 </Pie><Tooltip formatter={value => money(Number(value ?? 0))} /><Legend /></PieChart></ResponsiveContainer>
               </TradingChartCard>}
@@ -365,11 +365,11 @@ function LiveBoard() {
                 <ResponsiveContainer width="100%" height="100%"><BarChart data={shops} barCategoryGap="30%">
                   <CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="name" fontSize={11} /><YAxis fontSize={11} width={58} />
                   <Tooltip formatter={value => money(Number(value ?? 0))} /><Legend />
-                  {showCostMargin && <Bar dataKey="profit" stackId="giveaway" name="Kept as profit" fill={ANALYTICS_COLORS.profit} isAnimationActive={false} />}
-                  <Bar dataKey="itemDiscount" stackId="giveaway" name="Item discounts" fill={ANALYTICS_COLORS.discount} isAnimationActive={false} />
-                  <Bar dataKey="billDiscount" stackId="giveaway" name="Bill discounts" fill={ANALYTICS_COLORS.discount} fillOpacity={0.75} isAnimationActive={false} />
-                  <Bar dataKey="coupon" stackId="giveaway" name="Coupons" fill="var(--warning)" isAnimationActive={false} />
-                  <Bar dataKey="focValue" stackId="giveaway" name="Free items" fill={ANALYTICS_COLORS.discount} fillOpacity={0.45} isAnimationActive={false} />
+                  {showCostMargin && <Bar dataKey="profit" stackId="giveaway" name="Kept as profit" fill={ANALYTICS_COLORS.profit} isAnimationActive={false} radius={4} />}
+                  <Bar dataKey="itemDiscount" stackId="giveaway" name="Item discounts" fill={ANALYTICS_COLORS.discount} isAnimationActive={false} radius={4} />
+                  <Bar dataKey="billDiscount" stackId="giveaway" name="Bill discounts" fill={ANALYTICS_COLORS.discount} fillOpacity={0.75} isAnimationActive={false} radius={4} />
+                  <Bar dataKey="coupon" stackId="giveaway" name="Coupons" fill="var(--warning)" isAnimationActive={false} radius={4} />
+                  <Bar dataKey="focValue" stackId="giveaway" name="Free items" fill={ANALYTICS_COLORS.discount} fillOpacity={0.45} isAnimationActive={false} radius={4} />
                 </BarChart></ResponsiveContainer>
               </TradingChartCard>}
             </ShopComparisonCharts>}
@@ -431,24 +431,14 @@ function LiveBoard() {
             </div>}
 
             {selectedCategory && categoryItems.length > 0 && (
-              <section className="rounded-lg border border-primary/40 bg-primary/5 p-4 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-primary">
-                      Category opened
-                    </p>
-                    <h2 className="flex items-center gap-2 text-sm font-semibold">
-                      <Package className="size-4 text-primary" /> Items in {selectedCategory}
-                    </h2>
-                  </div>
-                  <Button size="sm" variant="ghost" onClick={() => setSelectedCategory(null)}>
-                    <X className="size-4" /> Close items
-                  </Button>
-                </div>
+              <TradingChartCard title={<span className="flex items-center gap-2"><Package className="size-4 text-primary" />Items in {selectedCategory}</span>}
+                description="Category opened · all matching items remain available by scrolling."
+                controls={<Button size="sm" variant="ghost" onClick={() => setSelectedCategory(null)}><X className="size-4" /> Close items</Button>}>
+                <div className="trading-chart-scroll h-full overflow-y-auto overscroll-contain" tabIndex={0} aria-label={`Items in ${selectedCategory}`}>
                 {categoryItems.length ? (
                   <ResponsiveContainer
                     width="100%"
-                    height={Math.min(360, Math.max(220, categoryItems.length * 30))}
+                    height={Math.max(224, categoryItems.length * 30)}
                   >
                     <BarChart
                       data={categoryItems}
@@ -465,7 +455,7 @@ function LiveBoard() {
                             : `${Number(value ?? 0)} units`
                         }
                       />
-                      <Bar dataKey={topBy} fill="var(--pos-pay)" radius={[0, 5, 5, 0]} />
+                      <Bar dataKey={topBy} fill="var(--pos-pay)" radius={[0, 5, 5, 0]} isAnimationActive={false} />
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
@@ -473,7 +463,8 @@ function LiveBoard() {
                     No items were sold in this category for the selected range.
                   </p>
                 )}
-              </section>
+                </div>
+              </TradingChartCard>
             )}
 
             {categoryShops.length > 0 && <section className="rounded-lg border border-border p-4 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300">

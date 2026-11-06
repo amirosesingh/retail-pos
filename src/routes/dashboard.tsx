@@ -267,8 +267,8 @@ function Dashboard() {
               </div>
           </div>
           <p className="mb-3 text-xs text-muted-foreground">{revenueFrom} to {revenueTo} · applies to all trading graphs</p>
-          {confirmedCharts && <ShopComparisonCharts rows={confirmedCharts.days} directory={reportStores}
-            selectedIds={storeIds} showProfit={showCostMargin} scopeLabel={scopeLabel} range={{ from: revenueFrom, to: revenueTo }}
+          {confirmedCharts && <ShopComparisonCharts rows={confirmedCharts.days} directory={state.stores}
+            selectedIds={storeIds} childrenFirst showProfit={showCostMargin} scopeLabel={scopeLabel} range={{ from: revenueFrom, to: revenueTo }}
             transactionHours={confirmedCharts.hours} profitHours={confirmedCharts.hours}
             financialRows={dashboardStore ? [{ id: dashboardStore.id, name: dashboardStore.name,
               revenue: confirmedCharts.profit.revenue, cost: confirmedCharts.profit.cogs,
@@ -278,7 +278,7 @@ function Dashboard() {
               description={includeSponsorship ? "Sponsorship is product value, not money collected." : "Final collected bill totals for the selected dates."}>
               <ResponsiveContainer width="100%" height="100%"><LineChart data={confirmedCharts.daily}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" /><XAxis dataKey="day" fontSize={11} />
-                <YAxis fontSize={11} /><Tooltip /><Line type="monotone" dataKey="total"
+                <YAxis fontSize={11} /><Tooltip /><Line strokeLinecap="round" strokeLinejoin="round" type="monotone" dataKey="total"
                   name={includeSponsorship ? "Sales value" : "Sales collected"} stroke="var(--primary)" strokeWidth={2.5} dot={false} isAnimationActive={false} />
               </LineChart></ResponsiveContainer>
             </TradingChartCard>}

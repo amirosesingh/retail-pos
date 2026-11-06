@@ -1,18 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const h=vi.hoisted(()=>({query:vi.fn(),cleanups:[] as (()=>void)[]}));
+const h=vi.hoisted(()=>({query:vi.fn(),cleanups:[] as (()=>void)[],database:"A",epoch:0}));
 vi.mock("react",()=>({useEffect:(fn:()=>void|(()=>void))=>{const cleanup=fn();if(cleanup)h.cleanups.push(cleanup);},useSyncExternalStore:(_subscribe:unknown,snapshot:()=>unknown)=>snapshot()}));
 vi.mock("@/core/api/pos-db",()=>({db:{queryAuditLogs:h.query}}));
+vi.mock("../page-data-cache",()=>({pageDataScope:(user:{staffId?:string;role?:string})=>[h.epoch,h.database,user.staffId,user.role]}));
 vi.mock("../session-presence",()=>({hasSignedInIdentity:()=>true}));
 vi.mock("../business-storage",()=>({readBusinessValue:()=>null,writeBusinessValue:vi.fn()}));
 vi.mock("../activity-journal",()=>({replayOrder:(v:unknown)=>v,stamp:vi.fn()}));
 vi.mock("@/platform-config/platform",()=>({isTerminalApp:()=>false}));
 vi.mock("@/core/local-db/local-db",()=>({localDb:()=>null}));
-import { logger, setAuditActor, useAuditLogs, useAuditHistoryError } from "../audit-log";
+import { logger, setAuditActor, useAuditLogs, useAuditHistoryError, useAuditHistoryPresentation } from "../audit-log";
 // eslint-disable-next-line react-hooks/rules-of-hooks -- Deterministic hook dispatcher for history tests.
 const read=()=>useAuditLogs(true);
+// eslint-disable-next-line react-hooks/rules-of-hooks -- Same deterministic hook dispatcher.
+const witness=()=>JSON.parse(useAuditHistoryPresentation());
 const flush=async()=>{await Promise.resolve();await Promise.resolve();};
 beforeEach(()=>{
-  vi.useFakeTimers();h.query.mockReset();h.query.mockResolvedValue([]);
+  vi.useFakeTimers();h.database="A";h.epoch=0;h.query.mockReset();h.query.mockResolvedValue([]);
   vi.stubGlobal("window",{setInterval,removeEventListener:vi.fn(),addEventListener:vi.fn()});
   vi.stubGlobal("document",{visibilityState:"visible"});
   setAuditActor({staffId:crypto.randomUUID(),storeId:"a",role:"admin"});
@@ -35,4 +38,22 @@ describe("saved audit history",()=>{
     h.query.mockRejectedValue(new Error("Unavailable"));read();await flush();
     expect(useAuditHistoryError()).toBe("Unavailable");
   });
+  it.each(["database","epoch"] as const)("does not certify a late same-actor response after %s changes",async(key)=>{
+    let finish:(v:unknown)=>void=()=>{};h.query.mockReturnValue(new Promise(resolve=>{finish=resolve;}));
+    read();expect(witness().ready).toBe(false);
+    if(key==="database")h.database="B";else h.epoch++;
+    finish([]);await flush();expect(witness().ready).toBe(false);expect(witness().revision).toBe(0);
+    h.query.mockResolvedValue([]);await vi.advanceTimersByTimeAsync(30_000);
+    expect(witness().ready).toBe(true);expect(witness().revision).toBeGreaterThan(0);
+  });
+  it("exposes failed-refresh truth without discarding the last confirmed witness",async()=>{
+    read();await flush();const initial=witness();expect(initial.ready).toBe(true);
+    h.query.mockRejectedValue(new Error("Refresh unavailable"));await vi.advanceTimersByTimeAsync(30_000);
+    expect(witness()).toEqual({...initial,ready:false,error:"Refresh unavailable"});
+    setAuditActor({storeId:"other"});expect(witness()).toMatchObject({ready:false,revision:0,error:""});
+  });
+  it("does not start a web history read just for presentation evidence",()=>{
+    useAuditLogs(false);expect(witness()).toMatchObject({ready:false,revision:0});expect(h.query).not.toHaveBeenCalled();
+  });
+
 });
