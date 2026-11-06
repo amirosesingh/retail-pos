@@ -12,9 +12,10 @@ DECLARE
  old_hash constant text := '6547d32e1e59640659427bae27ed357f';
  new_hash constant text := 'f5a89946adfbd7611366a7cf3b860b8e';
  old_select constant text := $old$SELECT 'issued_vouchers'::text,count(*)::bigint FROM public.issued_vouchers;$old$;
- new_select constant text := $new$SELECT 'issued_vouchers'::text,count(*)::bigint FROM public.issued_vouchers
-    UNION ALL
-    SELECT 'change_history'::text,count(*)::bigint FROM public.change_history;$new$;
+ -- Keep replacement bytes identical in LF and CRLF artifact checkouts.
+ new_select constant text := $new$SELECT 'issued_vouchers'::text,count(*)::bigint FROM public.issued_vouchers$new$||pg_catalog.chr(10)
+    ||$new$    UNION ALL$new$||pg_catalog.chr(10)
+    ||$new$    SELECT 'change_history'::text,count(*)::bigint FROM public.change_history;$new$;
  history_case constant text := $history$WHEN 'change_history' THEN SELECT COALESCE(jsonb_agg(to_jsonb(page.row_data) ORDER BY page.cursor),'[]'::jsonb),max(page.cursor) INTO v_rows,v_cursor FROM (SELECT jsonb_build_object('id',x."id")::text cursor,x row_data FROM public."change_history" x WHERE (true)  AND (p_after_cursor IS NULL OR x."id">((p_after_cursor::jsonb)->>'id')::uuid) ORDER BY x."id" LIMIT LEAST(GREATEST(p_limit,10),2000)) page;$history$;
  expected jsonb; actual jsonb; body text; definition text; original_body text;
  wrapper_body text; wrapper_oid oid; routine_oid oid; round integer; replay boolean;

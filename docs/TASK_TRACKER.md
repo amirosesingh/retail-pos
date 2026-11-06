@@ -1,3 +1,27 @@
+## 6 November — COUNT80 count-artifact line-ending correction
+
+Separate beta correction from c77beecc after merged COUNT79 reproduced
+HISTORY_COUNT_UNEXPECTED_CHANGE on a fresh Windows CRLF checkout. Its multiline
+new_select dollar literal embedded the checkout's CRLF bytes while the unchanged
+new-body hash correctly required the reviewed LF replacement; the transaction
+rolled back. No live count migration has run. Keep its existing filename, exact
+old-source/metadata guards and f5a899 new-body hash. Construct only the replacement
+from single-line literals joined by explicit LF characters. Test the complete
+captured-definition scenario group using both LF and CRLF artifact bytes, including
+cross-format replay and denied/source-drift/rollback parity on PGlite and native
+PostgreSQL. Inspect all other hash-sensitive literals for checkout dependence.
+No source variants, hash relaxation, live schema/data changes or deployment.
+
+Verification: complete21-scenario groups pass with LF and CRLF artifact bytes in
+both PGlite and native PostgreSQL18.6, including cross-format replay. Focused
+Vitest/canonical inventory31 passed. Other guarded old/new/history/sources dollar
+literals are single-line and explicitly checked. The prepared committed-LF-file
+SHA256 is now731375F0F4E03520A7C648DFE790FF05AC97FA455A57CF1E3032B0D0748B9DF7;
+this supersedes COUNT79's288F artifact bytes, not its unchanged reviewed f5a899
+resulting routine body. Exact-head CI, fresh preflight and exact-target database
+application approval remain separate; no live count migration has run. Root's
+independent source review passed the exact four-file correction before commit.
+
 ## 6 November — COUNT79 complete the existing history-count contract
 
 Separate preparation-only branch from beta0b6f00b1. Actual Electron's normal feed
