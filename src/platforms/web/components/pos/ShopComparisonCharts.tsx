@@ -88,7 +88,7 @@ export function ShopComparisonCharts({ rows, directory, selectedIds, showProfit,
         </ComposedChart></ResponsiveContainer>
       </TradingChartCard>}
       {transactionsVisible && <TradingChartCard title="Transactions by hour" description={`${scopeLabel} · completed bills by actual trading hour across the selected dates`} footer={legend}>{plot(transactions, true, true)}</TradingChartCard>}
-      {hourlyProfitVisible && <TradingChartCard title="Gross profit by hour" description={`${scopeLabel} · actual net revenue less captured cost, by trading hour`} footer={legend}>{plot(hourlyProfit, true)}</TradingChartCard>}
+      {hourlyProfitVisible && <TradingChartCard title="Gross profit by hour" description={`${scopeLabel} · net revenue less reported item cost, by recorded trading hour`} footer={legend}>{plot(hourlyProfit, true)}</TradingChartCard>}
       {children}
     </TradingChartGrid>
     {!revenueVisible && !profitVisible && !financialVisible && !transactionsVisible && !hourlyProfitVisible && !children &&
