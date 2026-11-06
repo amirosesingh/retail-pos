@@ -46,6 +46,8 @@ contextBridge.exposeInMainWorld("pos", {
   snapshot: (options) => invoke("business:snapshot", options),
   analytics: (from, to, timeZone) => invoke("business:analytics", from, to, timeZone),
   managementReport: (options) => invoke("business:management-report", options),
+  stockHistory: (request) => invoke("business:stock-history", request),
+  stockArrivalCapability: () => invoke("business:stock-arrival-capability"),
   query: (table, options) => invoke("business:query", table, options),
   saveAuthorizationRule: (value) => invoke("business:save-authorization-rule", value),
   shiftExpectedTotals: (shiftId) => invoke("business:shift-expected", shiftId),

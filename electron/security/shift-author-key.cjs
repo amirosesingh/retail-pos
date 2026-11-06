@@ -165,6 +165,69 @@ function createShiftAuthorKeys({ safeStorage, directory }) {
     if (!saved.enrolled) throw failure('ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING');
     return legacy.normalizeLegacyRecovery({ ...unsigned, signature: crypto.sign(null, Buffer.from(legacy.legacyRecoveryMessage(unsigned)), saved.privateKey).toString('base64url') });
   }
-  return { prepare, enrollment, signIntent, signClosingStart, signFinancialBasis, signOpeningFinancialBasis, signFinancialOperation, signLegacyRecovery, markEnrolled };
+  function signStockEvent(binding, input) {
+    const stock = require('./stock-event-author-protocol.cjs');
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw failure('ESTOCK_AUTHOR_INVALID');
+    const { expectedKeyId, ...facts } = input;
+    const fields = ['subject', 'branchId', 'operationId', 'movementId', 'action', 'payloadHash', ...(Object.hasOwn(facts, 'sourceManifestJson') ? ['sourceManifestJson'] : [])];
+    if (Object.keys(facts).length !== fields.length || fields.some(key => !Object.hasOwn(facts, key))) throw failure('ESTOCK_AUTHOR_INVALID');
+    const keyId = expected({ expectedKeyId });
+    if (!keyId) throw failure('ESTOCK_AUTHOR_INVALID');
+    const parsedBinding = protocol.normalizeBinding(binding);
+    const unsigned = stock.unsignedStockEvent({ version: 1, algorithm: 'Ed25519', keyId, ...parsedBinding, ...facts });
+    if (unsigned.sourceManifestJson != null) {
+      // A source claim is signed only as a canonical, action-scoped stock
+      // manifest. This is not an arbitrary text or general-purpose signer.
+      const { stockSourceManifestJson } = require('../shared/stock-source-manifest.mjs');
+      let manifest;
+      try { manifest = JSON.parse(unsigned.sourceManifestJson); }
+      catch { throw failure('ESTOCK_AUTHOR_INVALID'); }
+      if (stockSourceManifestJson(manifest) !== unsigned.sourceManifestJson ||
+        manifest.operationId !== unsigned.operationId || manifest.action !== unsigned.action ||
+        manifest.authorId !== unsigned.authorId || manifest.terminalId !== unsigned.terminalId || manifest.branchId !== unsigned.branchId)
+        throw failure('ESTOCK_AUTHOR_INVALID');
+    }
+    // Exact existing enrolled material only. Signing cannot create/rotate a key.
+    const saved = load(parsedBinding, { expectedKeyId: keyId });
+    if (!saved.enrolled) throw failure('ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING');
+    const result=stock.normalizeStockEvent({ ...unsigned, signature: crypto.sign(null, Buffer.from(stock.stockEventMessage(unsigned)), saved.privateKey).toString('base64url') });
+    if(Buffer.byteLength(JSON.stringify(result),'utf8')>16384)throw failure('ESTOCK_SOURCE_OVERSIZED');
+    return result;
+  }
+  async function signStockSourceCohort(binding,input){
+    if(!input||typeof input!=='object'||Array.isArray(input))throw failure('ESTOCK_AUTHOR_INVALID');
+    const{expectedKeyId,manifests,...facts}=input;
+    const fields=['subject','branchId','operationId','sourceDatabaseId','sourceSequence','sourcePredecessorRoot','action'];
+    if(Object.keys(facts).length!==fields.length||fields.some(field=>!Object.hasOwn(facts,field)))throw failure('ESTOCK_AUTHOR_INVALID');
+    const keyId=expected({expectedKeyId});if(!keyId)throw failure('ESTOCK_AUTHOR_INVALID');
+    const parsedBinding=protocol.normalizeBinding(binding),stock=require('./stock-event-author-protocol.cjs');
+    // Build the bounded digest from canonical source rows, never a caller's
+    // arbitrary hash. The real repository must supply original-TX readbacks.
+    const{buildStockSourceCohort}=require('../shared/stock-source-cohort.mjs');
+    const cohort=await buildStockSourceCohort(manifests);
+    const unsigned=stock.unsignedStockSourceCohort({version:1,algorithm:'Ed25519',keyId,...parsedBinding,...facts,sourceRoot:cohort.root,sourceCount:cohort.count});
+    if(cohort.operationId!==unsigned.operationId||cohort.action!==unsigned.action||cohort.authorId!==unsigned.authorId||
+      cohort.terminalId!==unsigned.terminalId||cohort.branchId!==unsigned.branchId)throw failure('ESTOCK_AUTHOR_INVALID');
+    const saved=load(parsedBinding,{expectedKeyId:keyId});
+    if(!saved.enrolled)throw failure('ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING');
+    const proof=Object.freeze(stock.normalizeStockSourceCohortProof({...unsigned,signature:crypto.sign(null,Buffer.from(stock.stockSourceCohortMessage(unsigned)),saved.privateKey).toString('base64url')}));
+    return Object.freeze({proof,members:cohort.members});
+  }
+  function signStockCoverageFrontier(binding,input){
+    if(!input||typeof input!=='object'||Array.isArray(input))throw failure('ESTOCK_AUTHOR_INVALID');
+    const{expectedKeyId,...facts}=input,fields=['subject','branchId','frontierJson'];
+    if(Object.keys(facts).length!==fields.length||fields.some(field=>!Object.hasOwn(facts,field))||typeof facts.frontierJson!=='string'||Buffer.byteLength(facts.frontierJson,'utf8')>8192)throw failure('ESTOCK_AUTHOR_INVALID');
+    const keyId=expected({expectedKeyId});if(!keyId)throw failure('ESTOCK_AUTHOR_INVALID');
+    const parsedBinding=protocol.normalizeBinding(binding),stock=require('./stock-event-author-protocol.cjs');
+    const{stockCoverageFrontierJson}=require('../shared/stock-coverage-frontier.mjs');let frontier;
+    try{frontier=JSON.parse(facts.frontierJson);if(stockCoverageFrontierJson(frontier)!==facts.frontierJson)throw new Error('Noncanonical frontier');}
+    catch{throw failure('ESTOCK_AUTHOR_INVALID');}
+    if(frontier.projectOrigin!==parsedBinding.projectOrigin||frontier.authorId!==parsedBinding.authorId||frontier.terminalId!==parsedBinding.terminalId||frontier.branchId!==facts.branchId)throw failure('ESTOCK_AUTHOR_INVALID');
+    const unsigned=stock.unsignedStockCoverageFrontier({version:1,algorithm:'Ed25519',keyId,...parsedBinding,subject:facts.subject,branchId:facts.branchId,
+      challengeId:frontier.challengeId,frontierHash:crypto.createHash('sha256').update(facts.frontierJson,'utf8').digest('hex')});
+    const saved=load(parsedBinding,{expectedKeyId:keyId});if(!saved.enrolled)throw failure('ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING');
+    return Object.freeze(stock.normalizeStockCoverageFrontierProof({...unsigned,signature:crypto.sign(null,Buffer.from(stock.stockCoverageFrontierMessage(unsigned)),saved.privateKey).toString('base64url')}));
+  }
+  return { prepare, enrollment, signIntent, signClosingStart, signFinancialBasis, signOpeningFinancialBasis, signFinancialOperation, signLegacyRecovery, signStockEvent, signStockSourceCohort, signStockCoverageFrontier, markEnrolled };
 }
 module.exports = { createShiftAuthorKeys };

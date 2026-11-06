@@ -1,6 +1,8 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { canOpenReportsHub, canSeeNavigationItem, navGroups, routePermissionForPath } from "@/platforms/web/components/pos/nav-config";
+import type { PermissionFlag } from "@/lib/pos-auth";
 
 const ROUTES_DIR = join(process.cwd(), "src/routes");
 const APP_SHELL = readFileSync(join(process.cwd(), "src/platforms/web/components/pos/AppShell.tsx"), "utf8");
@@ -142,7 +144,7 @@ describe("route guards", () => {
     expect(APP_SHELL).toContain('return <PermissionDenied flag={required === "unknown" ? null : required} />');
   });
 
-  it("every report screen requires the sales-reports permission in the sidebar", () => {
+  it("every report screen retains its own sales, audit or historical-inventory permission", () => {
     // Entries span several lines, so check each `{ ... }` block that points at
     // a report screen. `hubTo` is the section landing page, not an entry.
     const entries = NAV.split("{").filter(
@@ -150,6 +152,11 @@ describe("route guards", () => {
     );
     expect(entries.length).toBeGreaterThan(0);
     for (const entry of entries) {
+      if (entry.includes('to: "/reports/inventory"')) {
+        expect(entry).toContain('flag: "can_view_inventory"');
+        expect(routePermissionForPath("/reports/inventory")).toBe("can_view_inventory");
+        continue;
+      }
       const gated =
         entry.includes('flag: "can_view_sales_reports"') ||
         entry.includes('flag: "can_view_audit_trail"');
@@ -157,11 +164,20 @@ describe("route guards", () => {
     }
   });
 
-  it("lets audit-only staff open the reports centre without exposing sales reports", () => {
+  it("lets audit-only or inventory-only staff open only their authorized report links", () => {
     expect(APP_SHELL).toContain('location.pathname === "/reports"');
-    expect(APP_SHELL).toMatch(
-      /reportsHome[\s\S]{0,500}?can\("can_view_sales_reports"\) \|\| can\("can_view_audit_trail"\)/,
-    );
+    expect(APP_SHELL).toMatch(/reportsHome\s*\? canOpenReportsHub\(can\)/);
+    const reports=navGroups.find(group=>group.id==="reports")!;
+    for(const permission of ["can_view_audit_trail","can_view_inventory"] as const){
+      const can=(flag:PermissionFlag)=>flag===permission;
+      expect(canOpenReportsHub(can)).toBe(true);
+      expect(canSeeNavigationItem(reports.items.find(item=>item.to==="/reports")!,can,false,()=>true)).toBe(true);
+      const visible=reports.items.filter(item=>item.to!==reports.hubTo&&canSeeNavigationItem(item,can,false,()=>true));
+      expect(visible.length).toBeGreaterThan(0);
+      for(const item of visible)expect(item.flag).toBe(permission);
+      expect(visible.some(item=>item.flag==="can_view_sales_reports")).toBe(false);
+    }
+    expect(canOpenReportsHub(()=>false)).toBe(false);
     expect(readFileSync(join(ROUTES_DIR, "reports.index.tsx"), "utf8")).toContain(
       '<SectionHub groupId="reports" />',
     );

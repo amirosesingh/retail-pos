@@ -64,7 +64,7 @@ function transportDiagnostic(error, payload, stage) {
     return {
       transportOperation: payload?.sqlServerPull ? "feed" : payload?.sqlServerBootstrap ? "bootstrap"
         : payload?.sqlServerShiftGraph ? "graph" : payload?.sqlServerCounts ? "count"
-          : payload?.sqlServerBatch || payload?.sqlServerAggregate || payload?.sqlServerLegacyRecovery ? "upload" : "other",
+          : payload?.sqlServerBatch || payload?.sqlServerAggregate || payload?.sqlServerLegacyRecovery || payload?.sqlServerStockHistory || payload?.sqlServerStockFrontier ? "upload" : "other",
       transportStage: stage,
       transportCode: own(error, "code") ?? own(own(error, "cause"), "code"),
       transportErrorName: own(error, "name") ?? (error instanceof TypeError ? "TypeError" : error instanceof Error ? "Error" : undefined),
@@ -211,7 +211,7 @@ class CloudClient {
       // Branch admission is control-plane metadata. Health/login/enrollment use
       // their existing separate paths and cannot wait behind data downloads.
       if (!operation && captured?.managementSyncBranches === true && Object.keys(captured).length === 1) return work();
-      const upload = captured?.sqlServerBatch || captured?.sqlServerAggregate || captured?.sqlServerFinancialEvent || captured?.sqlServerFinancialObservation || captured?.sqlServerLegacyRecovery;
+      const upload = captured?.sqlServerBatch || captured?.sqlServerAggregate || captured?.sqlServerFinancialEvent || captured?.sqlServerFinancialObservation || captured?.sqlServerLegacyRecovery || captured?.sqlServerStockHistory || captured?.sqlServerStockFrontier;
       return this.requestLane.run(upload ? "upload" : "download", Buffer.byteLength(capturedJson, "utf8"), work);
     } catch (error) { return Promise.reject(error); }
   }
@@ -388,7 +388,64 @@ class CloudClient {
     return this.shiftProtocolRequest({sqlServerFinancialObservation:{organizationId,branchId,operationJson}});
   }
   registerFinancialBoundary(batch) { return this.pushAggregate({...batch,registerFinancialBoundary:true}); }
+  requestStockFrontierChallenge(batch){return this.stockFrontierRequest('challenge',batch);}
+  acceptStockFrontier(batch){return this.stockFrontierRequest('accept',batch);}
+  stockFrontierRequest(action,batch){
+    const{identifier,fail}=require('../db/stock-history-contract.cjs'),terminal=this.terminalStore.read()??{},branch=terminal.locationId??terminal.storeId??terminal.branchId;
+    const fields=action==='challenge'?['branchId','terminalId','challengeId','authorId','keyId']:['branchId','terminalId','frontierJson','proofJson'];
+    if(!batch||typeof batch!=='object'||Array.isArray(batch)||Object.keys(batch).length!==fields.length||fields.some(field=>!Object.hasOwn(batch,field))||
+      identifier(batch.terminalId)!==recordId(this.terminalId())||branch==null||identifier(batch.branchId)!==recordId(String(branch)))fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
+    const payload={version:1,action,branchId:identifier(batch.branchId),terminalId:identifier(batch.terminalId)};
+    if(action==='challenge'){
+      for(const name of['challengeId','authorId','keyId'])payload[name]=identifier(batch[name],true);
+    }else{
+      if(typeof batch.frontierJson!=='string'||typeof batch.proofJson!=='string'||Buffer.byteLength(batch.frontierJson,'utf8')>8192||Buffer.byteLength(batch.proofJson,'utf8')>8192)fail('ESTOCK_AUTHOR_INVALID');
+      const{stockCoverageFrontierJson}=require('../shared/stock-coverage-frontier.mjs');
+      let frontier,proof;try{frontier=JSON.parse(batch.frontierJson);proof=require('../security/stock-event-author-protocol.cjs').normalizeStockCoverageFrontierProof(JSON.parse(batch.proofJson));
+        if(stockCoverageFrontierJson(frontier)!==batch.frontierJson)fail('ESTOCK_AUTHOR_INVALID');}catch{fail('ESTOCK_AUTHOR_INVALID');}
+      if(frontier.branchId!==payload.branchId||frontier.terminalId!==payload.terminalId||proof.branchId!==payload.branchId||proof.terminalId!==payload.terminalId||
+        proof.authorId!==frontier.authorId||proof.challengeId!==frontier.challengeId||proof.projectOrigin!==frontier.projectOrigin||
+        proof.frontierHash!==createHash('sha256').update(batch.frontierJson,'utf8').digest('hex'))fail('ESTOCK_AUTHOR_INVALID');
+      Object.assign(payload,{frontierJson:batch.frontierJson,proofJson:batch.proofJson});
+    }
+    return this.request({sqlServerStockFrontier:payload});
+  }
+  pushStockHistory(batch){
+    const {identifier,fail}=require('../db/stock-history-contract.cjs');
+    const terminal=this.terminalStore.read()??{},branch=terminal.locationId??terminal.storeId??terminal.branchId;
+    if(!batch||batch.version!==1||identifier(batch.terminalId)!==recordId(this.terminalId())||
+      (branch!=null&&identifier(batch.branchId)!==recordId(String(branch)))||!Array.isArray(batch.rows)||!batch.rows.length||batch.rows.length>8)
+      fail('ESTOCK_HISTORY_CONTEXT_CHANGED');
+    const rows=batch.rows.map(row=>{
+      if(!row||Object.keys(row).length!==(3+(Object.hasOwn(row,'authorProofJson')?1:0)+(Object.hasOwn(row,'sourceCohortJson')?1:0))||!Object.hasOwn(row,'id')||!Object.hasOwn(row,'payloadHash')||!Object.hasOwn(row,'payloadJson')||
+        identifier(row.id,true)!==row.id||typeof row.payloadHash!=='string'||! /^[a-f0-9]{64}$/.test(row.payloadHash)||
+        typeof row.payloadJson!=='string'||createHash('sha256').update(row.payloadJson,'utf8').digest('hex')!==row.payloadHash)
+        fail('ESTOCK_HISTORY_ACK_UNCONFIRMED');
+      if(Object.hasOwn(row,'authorProofJson')){
+        if(typeof row.authorProofJson!=='string'||Buffer.byteLength(row.authorProofJson,'utf8')>16384)fail('ESTOCK_AUTHOR_INVALID');
+        let proof;try{proof=require('../security/stock-event-author-protocol.cjs').normalizeStockEvent(JSON.parse(row.authorProofJson));}catch{fail('ESTOCK_AUTHOR_INVALID');}
+        if(proof.movementId!==row.id||proof.payloadHash!==row.payloadHash||proof.branchId!==batch.branchId||proof.terminalId!==batch.terminalId)fail('ESTOCK_AUTHOR_INVALID');
+      }
+      if(Object.hasOwn(row,'sourceCohortJson')&&(typeof row.sourceCohortJson!=='string'||Buffer.byteLength(row.sourceCohortJson,'utf8')>65536))fail('ESTOCK_AUTHOR_INVALID');
+      return{id:row.id,payloadHash:row.payloadHash,payloadJson:row.payloadJson,...(Object.hasOwn(row,'authorProofJson')?{authorProofJson:row.authorProofJson}:{}),
+        ...(Object.hasOwn(row,'sourceCohortJson')?{sourceCohortJson:row.sourceCohortJson}:{})};
+    });
+    const payload={version:1,branchId:identifier(batch.branchId),terminalId:identifier(batch.terminalId),rows};
+    if(Buffer.byteLength(JSON.stringify(payload),'utf8')>126976)fail('ESTOCK_HISTORY_OVERSIZED');
+    return this.request({sqlServerStockHistory:payload});
+  }
   pushAggregate(batch) {
+    if(batch.stockSourceCohorts!==undefined){
+      if(batch.shiftIntent||batch.shiftFinancialBasis||batch.shiftFinancialOpening||batch.financialLedgerProjection||batch.registerFinancialBoundary||
+        !Array.isArray(batch.stockSourceCohorts)||batch.stockSourceCohorts.length<1||batch.stockSourceCohorts.length>8)
+        throw Object.assign(new Error('The optional stock source evidence is not valid for this business group.'),{code:'ESTOCK_AUTHOR_INVALID'});
+      for(const entry of batch.stockSourceCohorts){
+        if(!entry||Object.keys(entry).length!==1||typeof entry.proofJson!=='string'||Buffer.byteLength(entry.proofJson,'utf8')>8192)
+          throw Object.assign(new Error('The optional stock source evidence is invalid.'),{code:'ESTOCK_AUTHOR_INVALID'});
+        const proof=require('../security/stock-event-author-protocol.cjs').normalizeStockSourceCohortProof(JSON.parse(entry.proofJson));
+        if(proof.branchId!==batch.branchId||proof.terminalId!==recordId(this.terminalId()))throw Object.assign(new Error('The original stock source scope changed.'),{code:'ESTOCK_AUTHOR_INVALID'});
+      }
+    }
     if((batch.registerFinancialBoundary!==undefined && (batch.registerFinancialBoundary!==true||!batch.shiftIntent||!batch.shiftFinancialBasis))||
       (batch.financialLedgerProjection!==undefined&&(batch.financialLedgerProjection!==true||batch.shiftIntent))||
       (batch.shiftFinancialOpening!==undefined&&(!batch.shiftFinancialOpening||batch.shiftIntent||typeof batch.shiftFinancialOpening.openingJson!=="string"||!batch.shiftFinancialOpening.proof)))
@@ -408,6 +465,7 @@ class CloudClient {
         ...(batch.registerFinancialBoundary===true?{registerFinancialBoundary:true}:{}),
         ...(batch.financialLedgerProjection===true?{financialLedgerProjection:true}:{}),
         ...(batch.shiftFinancialOpening!==undefined?{shiftFinancialOpening:{openingJson:batch.shiftFinancialOpening.openingJson,proof:batch.shiftFinancialOpening.proof}}:{}),
+        ...(batch.stockSourceCohorts!==undefined?{stockSourceCohorts:batch.stockSourceCohorts.map(entry=>({proofJson:entry.proofJson}))}:{}),
       },
     };
     return batch.shiftIntent ? this.shiftProtocolRequest(payload) : this.request(payload);

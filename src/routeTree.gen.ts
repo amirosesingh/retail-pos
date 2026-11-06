@@ -55,6 +55,7 @@ import { Route as ReportsBusinessRouteImport } from './routes/reports.business'
 import { Route as ReportsCatalogRouteImport } from './routes/reports.catalog'
 import { Route as ReportsCouponsRouteImport } from './routes/reports.coupons'
 import { Route as ReportsHistoryRouteImport } from './routes/reports.history'
+import { Route as ReportsInventoryRouteImport } from './routes/reports.inventory'
 import { Route as ReportsItemsRouteImport } from './routes/reports.items'
 import { Route as ReportsNotificationsRouteImport } from './routes/reports.notifications'
 import { Route as ReportsPaymentsRouteImport } from './routes/reports.payments'
@@ -361,6 +362,11 @@ const ReportsCouponsRoute = ReportsCouponsRouteImport.update({
 const ReportsHistoryRoute = ReportsHistoryRouteImport.update({
   id: '/reports/history',
   path: '/reports/history',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReportsInventoryRoute = ReportsInventoryRouteImport.update({
+  id: '/reports/inventory',
+  path: '/reports/inventory',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ReportsItemsRoute = ReportsItemsRouteImport.update({
@@ -799,6 +805,7 @@ export interface FileRoutesByFullPath {
   '/reports/catalog': typeof ReportsCatalogRoute
   '/reports/coupons': typeof ReportsCouponsRoute
   '/reports/history': typeof ReportsHistoryRoute
+  '/reports/inventory': typeof ReportsInventoryRoute
   '/reports/items': typeof ReportsItemsRoute
   '/reports/notifications': typeof ReportsNotificationsRoute
   '/reports/payments': typeof ReportsPaymentsRoute
@@ -924,6 +931,7 @@ export interface FileRoutesByTo {
   '/reports/catalog': typeof ReportsCatalogRoute
   '/reports/coupons': typeof ReportsCouponsRoute
   '/reports/history': typeof ReportsHistoryRoute
+  '/reports/inventory': typeof ReportsInventoryRoute
   '/reports/items': typeof ReportsItemsRoute
   '/reports/notifications': typeof ReportsNotificationsRoute
   '/reports/payments': typeof ReportsPaymentsRoute
@@ -1050,6 +1058,7 @@ export interface FileRoutesById {
   '/reports/catalog': typeof ReportsCatalogRoute
   '/reports/coupons': typeof ReportsCouponsRoute
   '/reports/history': typeof ReportsHistoryRoute
+  '/reports/inventory': typeof ReportsInventoryRoute
   '/reports/items': typeof ReportsItemsRoute
   '/reports/notifications': typeof ReportsNotificationsRoute
   '/reports/payments': typeof ReportsPaymentsRoute
@@ -1177,6 +1186,7 @@ export interface FileRouteTypes {
     | '/reports/catalog'
     | '/reports/coupons'
     | '/reports/history'
+    | '/reports/inventory'
     | '/reports/items'
     | '/reports/notifications'
     | '/reports/payments'
@@ -1302,6 +1312,7 @@ export interface FileRouteTypes {
     | '/reports/catalog'
     | '/reports/coupons'
     | '/reports/history'
+    | '/reports/inventory'
     | '/reports/items'
     | '/reports/notifications'
     | '/reports/payments'
@@ -1427,6 +1438,7 @@ export interface FileRouteTypes {
     | '/reports/catalog'
     | '/reports/coupons'
     | '/reports/history'
+    | '/reports/inventory'
     | '/reports/items'
     | '/reports/notifications'
     | '/reports/payments'
@@ -1553,6 +1565,7 @@ export interface RootRouteChildren {
   ReportsCatalogRoute: typeof ReportsCatalogRoute
   ReportsCouponsRoute: typeof ReportsCouponsRoute
   ReportsHistoryRoute: typeof ReportsHistoryRoute
+  ReportsInventoryRoute: typeof ReportsInventoryRoute
   ReportsItemsRoute: typeof ReportsItemsRoute
   ReportsNotificationsRoute: typeof ReportsNotificationsRoute
   ReportsPaymentsRoute: typeof ReportsPaymentsRoute
@@ -1955,6 +1968,13 @@ declare module '@tanstack/react-router' {
       path: '/reports/history'
       fullPath: '/reports/history'
       preLoaderRoute: typeof ReportsHistoryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/reports/inventory': {
+      id: '/reports/inventory'
+      path: '/reports/inventory'
+      fullPath: '/reports/inventory'
+      preLoaderRoute: typeof ReportsInventoryRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/reports/items': {
@@ -2555,6 +2575,7 @@ const rootRouteChildren: RootRouteChildren = {
   ReportsCatalogRoute: ReportsCatalogRoute,
   ReportsCouponsRoute: ReportsCouponsRoute,
   ReportsHistoryRoute: ReportsHistoryRoute,
+  ReportsInventoryRoute: ReportsInventoryRoute,
   ReportsItemsRoute: ReportsItemsRoute,
   ReportsNotificationsRoute: ReportsNotificationsRoute,
   ReportsPaymentsRoute: ReportsPaymentsRoute,

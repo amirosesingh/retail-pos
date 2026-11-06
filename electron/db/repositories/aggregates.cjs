@@ -41,10 +41,11 @@ function branchFor(operation, fallback) {
 }
 
 class AggregateRepository {
-  constructor(connectionManager, operationsRepository, {financialOperations=null} = {}) {
+  constructor(connectionManager, operationsRepository, {financialOperations=null,stockHistory=operationsRepository.stockHistory??null} = {}) {
     this.connectionManager = connectionManager;
     this.operationsRepository = operationsRepository;
     this.financialOperations = financialOperations;
+    this.stockHistory = stockHistory;
   }
 
   async assertBranch(transaction, table, record, match, branchId, financialStock = false) {
@@ -128,9 +129,15 @@ class AggregateRepository {
     aggregate = normalizeUuidFields(aggregate);
     if (!AGGREGATE_KINDS.has(kind)) throw new Error("Unsupported aggregate type.");
     const operations = this.operationsRepository.validate(aggregate?.operations);
+    let stockArrival;
+    if(aggregate.stockArrival!==undefined){
+      if(kind!=="receiving")throw Object.assign(new Error("An arrival time belongs only to receiving stock."),{code:"ESTOCK_ARRIVAL_INVALID"});
+      stockArrival=require("../../stock-arrival.cjs").normalizeStockArrival(aggregate.stockArrival);
+      if(!this.stockHistory)throw Object.assign(new Error("Update stock history before entering a separate arrival time. The receiving invoice has not been saved."),{code:"ESTOCK_HISTORY_SCHEMA_REQUIRED"});
+    }
     const operationId = aggregate?.operationId || stableUuid({ kind, operations });
     if (!/^[0-9a-f-]{36}$/i.test(operationId)) throw new Error("A stable aggregate UUID is required.");
-    const payloadHash = createHash("sha256").update(JSON.stringify(canonical({ kind, operations }))).digest("hex");
+    const payloadHash = createHash("sha256").update(JSON.stringify(canonical({ kind, operations,...(stockArrival?{stockArrival}:{}) }))).digest("hex");
     const financialStore=this.financialOperations?.enabled===true?this.financialOperations:null;
     const financialContext=financialStore?await financialStore.prepareContext({branchId:aggregate.branchId,terminalId:aggregate.terminalId,operationId,kind}):null;
     const sql = this.connectionManager.sql();
@@ -194,6 +201,13 @@ class AggregateRepository {
           const token=await financialStore.captureMutation(transaction,{branchId:aggregate.branchId,terminalId:aggregate.terminalId,shiftId:shiftId||null,operationId,action,preparedContext:financialContext,saleIds:[...sales]});financialTokens.push(token);
         }
       }
+      // Keep the existing shift/financial-head lock order before product locks.
+      const stockCapture=this.stockHistory?await this.stockHistory.begin(transaction,operations,{
+        operationId,branchId:aggregate.branchId,terminalId:aggregate.terminalId,
+        actorId:aggregate.activityOperator?.subject,kind,
+        ...(stockArrival?{effectiveAt:stockArrival.effectiveAt,arrivalReason:stockArrival.reason}:{}),
+      }):null;
+      if(stockArrival&&stockCapture==null)throw Object.assign(new Error("The stock-history update is not available. The receiving invoice has not been saved."),{code:"ESTOCK_HISTORY_SCHEMA_REQUIRED"});
       const newOpenings = new Set();
       for (const operation of operations) {
         stage = "business rows";
@@ -268,6 +282,7 @@ class AggregateRepository {
         for(const shiftId of newOpenings){await store.freezeOpening(transaction,operationId,aggregate.branchId,shiftId,{exactFinancial:financialStore!==null});if(financialStore)await financialStore.finalizeOpening(transaction,openingTokens.get(shiftId));}
       }
       for(const token of financialTokens)await financialStore.finalizeMutation(transaction,token);
+      if(this.stockHistory)await this.stockHistory.finish(transaction,stockCapture);
       tableName = "local_operation_receipts";
       await new sql.Request(transaction)
         .input("operation_id", sql.UniqueIdentifier, operationId)
@@ -280,7 +295,8 @@ class AggregateRepository {
       return { ok: true, operationId, replayed: false, affected };
     } catch (error) {
       await Promise.resolve(transaction.rollback()).catch(() => undefined);
-      if (["EIDEMPOTENCY", "EEXISTING_SALE_RECONCILIATION", "EBRANCH", "EBRANCH_SCOPE", "SYNC_BRANCH_FORBIDDEN", "EEXCHANGE_STATE", "EPRODUCT_STATE", "PERMISSION_DENIED", "ESHIFT_TERMINAL"].includes(error?.code))
+      if (["EIDEMPOTENCY", "EEXISTING_SALE_RECONCILIATION", "EBRANCH", "EBRANCH_SCOPE", "SYNC_BRANCH_FORBIDDEN", "EEXCHANGE_STATE", "EPRODUCT_STATE", "PERMISSION_DENIED", "ESHIFT_TERMINAL",
+        "ESTOCK_ARRIVAL_INVALID","ESTOCK_ARRIVAL_SOURCE_REQUIRED","ESTOCK_HISTORY_SCHEMA_REQUIRED","ESTOCK_HISTORY_FUTURE"].includes(error?.code))
         throw error;
       const target = tableName ? ` while writing ${tableName}` : "";
       const native = error?.originalError?.info ?? error?.originalError ?? error;

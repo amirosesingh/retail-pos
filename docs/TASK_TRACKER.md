@@ -5943,6 +5943,14 @@ Verification: 91 focused tests in five suites pass, including actual worker chun
 IMPORT65 / PR396 final frozen-source verification: runtime commit 7ffb9862d039941946d9a67b0dce2673a44f47c3 passed the complete bounded Vitest run (5,660 passed / 7 skipped / 0 failed, 5,667 tests). The final 91 focused tests, TypeScript, scoped lint and diff checks passed. This supersedes only the earlier pending final-suite status; retain the recorded initial environmental failures. Real customer workbook, installed Electron/mobile decimal entry and hosted beta acceptance remain unverified. No database/schema/registration/permission change, live import, production promotion or publication occurred.
 
 
+## STOCK68 — effective-time historical quantity report (5 November)
+
+Owner approved stock-at-selected-date-and-time inside Inventory, including mid-shift and actual shift closing. Controlling decision: actual operational stock by original effective time; late offline uploads may restate prior reports. Preserve arrival time separately. Current evidence is incomplete: native refunds/absolute product writes lack a complete activity log, history can be retained only90days, and stock_delta_applied.applied_at is arrival time. Never claim arbitrary past balances from current stock or incomplete logs.
+
+Scope now: bounded pure quantity engine and synthetic tests, explicit verified-baseline/complete-movement coverage contract, exact selected absolute cutoff/timezone and actual raw shift.closed_at helper, concrete writer/ledger/authorized-loader integration plan. No UI declaration of complete historical coverage, shared stock writer changes, database migrations/application, stock/sales/permissions changes or real fixtures in commits. Baseline beta a73f24e8; separate codex/historical-stock-report-beta.
+
+STOCK68 first bounded preparation implemented: exact signed-integer quantity engine with100ns absolute cutoffs, complete-scope baseline/coverage contract, movement-ID replay protection, late-effective arrival restatement and explicit missing/unsupported coverage. Raw shift closing shortcut never rounds saved time. Independent review corrected an order-dependent intermediate overflow;32 kernel plus4 existing adjustment tests now pass. TypeScript/scoped lint/diff checks pass. recordedAt means committed arrival at this report source; original device recording is separate. No report route, stock writer, SQL schema, permission or data changed. Remaining: explicit ledger/writer preparation scope; exact database plan/approval; authoritative coverage activation; bounded authorized report adapter; responsive Inventory view/export and installed verification. See database/historical-stock-report-plan.md. No full-suite claim or release readiness.
+
 ## SYNC68 — one coordinated HTTP data lane per terminal (5 November)
 
 Owner explicitly requested one existing sync pipeline for all applicable missing/changed table data: one active sync-data HTTP request, bounded atomic uploads/download pages scheduled fairly, local checkout unaffected. Control/authentication/registration/health remain independent. No claim of one physical Supabase/pool connection.
@@ -6092,6 +6100,62 @@ and labelled beta. Exact-head CI, beta integration and installed acceptance
 remain pending. The separate session-handover race is not fixed by this patch.
 Membership remains ON HOLD.
 
+## STOCK401 — draft foundation checkpoint, 5 November
+
+6 November owner steering supersedes the deferral recorded below: resume and
+complete historical-stock reporting, retaining exact database review before any
+application. Baseline7721cbd integrated with beta3074 as d290964; documentation and
+attribute conflicts preserved both sides. WORKING: bounded authorized date/time
+and closed-shift report read/Main/Inventory UI/export checkpoint. NEXT: actual
+accepted-effect writer capture and single-lane sync acknowledgements, complete
+coverage/opening evidence and independent/full/device checks. An unavailable-only
+screen is not completion. No live database, baseline, stock or permission edits;
+Membership remains ON HOLD. See the resumed plan for file scopes and rollback.
+
+READ/UI CHECKPOINT IMPLEMENTED (not final report completion): Inventory dialog,
+business-zone/DST and exact source closed cutoff, current SQL/Main POS/branch
+admission, optional Management online read, byte-bounded pages and exact scoped
+Excel export.107 focused tests/20 actual disposable LocalDB groups/7 actual
+React-Radix desktop+phone groups and TypeScript pass. Scoped lint0errors/5test
+warnings. Independent review/full acceptance and the actual capture/sync/coverage
+tasks above remain outstanding. No capture activation or real DB change.
+
+Owner approved the historical stock implementation/preparation scope and actual
+goods-arrival meaning (default original Main/save instant; authorized explicit
+arrival separate from invoice date). Preserve offline checkout, all existing
+stock arithmetic, permissions and current device configuration. Do not infer
+past balances from current product quantities or arrival/row-version clocks.
+
+Latest owner priority defers this unfinished draft behind urgent completed-fix
+production preparation. PR401 remains DRAFT/unmerged; prepared031 is excluded
+from the urgent local SQL72 bundle025–030. No live stock DDL/data/activation,
+production promotion or publication has run or is authorized here.
+
+Completed preparation: four-table cloud/local contract; exact native physical
+shape/object guards; stable immutable JSON/source-leg protocol; optional atomic
+capture hooks (null by default, no Main wiring); own-branch read prototype,
+current-account/terminal/export admission and exact source CLOSED-shift cutoff;
+typed client/server contract. Receiving prototype freezes a pending physical
+intent where the existing local path defers actual stock application to cloud.
+It does not change that stock arithmetic or claim accepted history prematurely.
+
+Verified:81 focused tests across five suites, including15 actual isolated
+PostgreSQL admission/read cases;20 actual uniquely owned disposable LocalDB groups;
+TypeScript/scoped lint/diff checks. No full regression, real PostgREST/hosted CPU,
+Main/installed workflow, complete historical data or report-UI acceptance claim.
+
+PENDING: actual effect-bound cloud upload/acknowledgement and native source identity;
+every writer/creation/merge path; optional registry/engine integration in the one
+durable lane; exact original actor/backdate authority (terminal-only sync is not
+fresh staff proof); eligible historical openings/cohort watermarks, byte bounds
+and safe new-product coverage; Main/IPC; Inventory UI/export; independent/full/
+beta/device acceptance and exact-target database approval. Unknown provenance is
+incomplete, not an invented provisional quantity. No baseline is established.
+
+Resume details and file scope are in
+`docs/database/historical-stock-report-plan.md`, STOCK401 foundation checkpoint.
+Do not apply the draft cloud migration or prepared031 before final exact-file
+review. Recovery, Membership and urgent production scopes remain separate.
 ## Offline approval audit persistence — approved narrow beta batch, 5 November
 
 - Owner explicitly approved correcting only helper-generated unsupported sync
@@ -6304,6 +6368,110 @@ cold actual Main/preload device acceptance remain pending before beta completion
 Report ordering compares instant milliseconds plus the remaining SQL 100 ns
 fraction, so mixed precision/offset strings sort correctly without rewriting
 raw timestamps or pagination cursors. Equal instants retain descending ID ties.
+
+## STOCK401 — resumed capture/ACK verification, 6 November
+
+Approved integration safeguard: optional report-history metadata must not block
+an otherwise acknowledged shift closing or safe shutdown, and must not claim
+that every upload finished. The final barrier may exempt only source/author-review
+rows tied to their immutable dedicated metadata aggregate in the physical SQL
+schema. Unknown, legacy, audit, sales, shift and mixed aggregates remain critical;
+the actual pending/failed counts and report-history review status remain visible.
+No row acknowledgement, queue clearing, checkpoint reset or weaker closing-graph
+proof is permitted. Verify actual SQL classification and every final-barrier
+caller, cooldown/restart, network/auth failures and forged metadata markers.
+
+Owner now explicitly approved the dedicated stock-event author-proof implementation
+and isolated tests described in `docs/database/stock-history-author-domain-plan.md`.
+This supersedes that document's preparation-only security deferral. Reuse only
+existing enrolled Main-owned keys; no generic signer, enrollment, rotation, live
+SQL application or deployment is included. Finish accepted-effect consumption,
+exact ACK, source/cohort and opening coverage before activation. Signatures never
+prove physical device time. Add Reports → Inventory → Stock at time through the
+same scoped reader/dialog as Inventory; preserve its existing shortcut and do not
+describe discoverability as completed historical coverage.
+
+The remaining source-origin work is part of that approved stock-domain batch.
+One bounded delegated implementation owns only three new files:
+`electron/shared/stock-source-manifest.mjs`, its `.d.mts` declaration, and
+`src/lib/__tests__/stock-source-manifest.test.ts`. They canonicalize a strict
+original operation/action/document/author/terminal/branch/product/delta/time and
+source-reference manifest. They grant no permission, prove no actual effect or
+clock, and expose no signer or key. The principal stock writer retains all
+Main/capture/SQL/relay integration and actual domain/source-admission checks.
+Zero is allowed in this pure representation for cohort creation evidence; it
+does not bypass the existing nonzero movement rule. No live database, enrollment,
+activation or deployment action is authorized by this delegation.
+
+Reports discoverability checkpoint: `/reports/inventory` is listed as Inventory ·
+Stock at time in Reports and uses the same dialog/reader/current branch as the
+Inventory shortcut. Five navigation tests, nine actual React/Radix browser groups
+(1440/390px), TypeScript and scoped lint pass. Synthetic transport only; no real
+database/profile was used. Prior frozen head722744f8 passed all required CI and
+platform/Workers builds (CodeRabbit owner-deferred). Capture/admission/coverage
+remain unfinished; this entry is not available in a published release yet.
+
+Draft PR401 read/UI checkpoint68c36a07, metadata checkpoint5a7197ca and accepted
+cloud effect/eligible-opening checkpointbcc8d00b are committed and pushed. Latest
+beta79face20 is integrated via5f21a970 without conflicts. CI on bcc8d00b passes all
+required checks and platform/Workers builds; CodeRabbit remains owner-deferred.
+
+The next source checkpoint separates metadata journal aggregates, uses the
+existing PushWorker/CloudClient lane with exact original-byte ACK ownership,
+retains actual partial-refund source receipts and adds private read-only accepted
+effect matching.84 focused cases and29 actual disposable LocalDB groups pass;
+TypeScript/scoped lint0errors. It remains unactivated: no Main capture factory,
+stock-claim server admission, effect consumption, baseline or complete cohort
+proof exists yet. Author-domain preparation is a separate documented approval
+boundary; no key/security API changes were made.
+
+Next: independent exact-head review; finalize original-author/action and clock
+evidence, all source/cohort paths, guarded hosted acceptance/exclusive effect
+consumption and resumable downloads within the existing engine. Finish full and
+installed acceptance before merge. Exact draft cloud/local SQL changes and hashes
+must be shown before live application. Existing business data/checkout/permission
+grants, queues/checkpoints and Membership remain untouched.
+
+Latest reviewed STOCK401 checkpoint: 561 focused tests/25 suites, TypeScript and
+scoped lint pass. Forty-five actual uniquely owned disposable SQL Server groups
+and five actual existing protected financial/business SALE groups pass. Independent
+review reran 216 tests, SQL45 and genuine SALE5 and found no remaining blocker in
+the reviewed narrow hold/source-proof/capture delta after two corrections: exact
+case-sensitive exemption scope and full-queue snapshot parity. The critical shift
+ACK remains unchanged; review-only metadata stays pending with honest counts.
+Original adjustment manifest/signature now commits with actual stock; zero/new,
+deleted and owner-only product changes invalidate old historical cohort coverage.
+Remaining: bounded original producer witness/admission for every nonfinancial
+writer, Main factory activation only after that proof, complete opening/cohort/
+accepted-prefix publication, full hosted/device acceptance and final SQL bundle.
+Refined approved implementation choice: use one original operation/cohort digest
+and later bounded membership/effect proofs inside the same dedicated stock
+signature domain. Construct it from the actual original transaction, author and
+exact scoped rows; never accept a generic supplied digest, repurpose a renderer
+signer or enroll/rotate keys. This avoids verifying thousands of signatures in
+one bulk-import business request. Missing/invalid optional history evidence must
+remain held without failing the otherwise authorized business upload. Do not
+activate a small-operation-only path or claim bulk completeness. Opening/cohort
+metadata, including zero-quantity membership, stays separate from physical stock
+movements; exact final local/cloud SQL bytes remain subject to end-of-batch owner
+review and approval before application.
+Bounded delegated digest implementation owns only three new files:
+`electron/shared/stock-source-cohort.mjs`, its `.d.mts` declaration and
+`src/lib/__tests__/stock-source-cohort.test.ts`. They build and verify bounded,
+domain-separated canonical source-manifest Merkle membership proofs. They expose
+no signing key, arbitrary signer, enrollment, business writer or admission API;
+an author signature still cannot prove the physical clock. The principal stock
+writer retains original transaction capture, key/proof integration, SQL/source
+admission, journals, exact ACK, coverage and activation responsibility.
+Next bounded metadata delegation may edit only prepared031, the stock-history
+schema column/object manifests, the stock-history physical-object checker and a
+new isolated cohort SQL fixture. It adds a separate append-only source-cohort
+metadata table for original digest/count, SQL lineage/sequence/predecessor,
+original proof/membership and exact acceptance fields. It adds no business FK,
+business-row backfill, activation, grant, connection change or live application.
+The principal writer retains Store/capture, key/server, outbox and sync wiring.
+Draft031 remains excluded from the existing installer/update; no live stock SQL,
+baseline, registration, permissions, queues, checkpoints or business rows changed.
 # DEV76 — complete shared protocol loading in local previews, 6 November
 
 The owner requested latest Electron and web previews side by side, then reported
@@ -6524,6 +6692,49 @@ watermark details may change); final runtime preflight and populated-history
 fixture seed are requested at freeze. Next: capture and test that frozen source
 within the existing assembler, then create the concrete one-file beta PR.
 No operator SQL, configuration, queue/checkpoint or permission changes occurred.
+
+## STOCK401 — owner resumed all pending feature work, 6 November
+
+The owner explicitly resumed completing the retained historical stock report as
+an independent implementation stream. This supersedes the last Escape pause only
+for this approved source/test work. Preserve the dirty source-cohort protocol,
+signer, verifier and partial031 edits at local HEAD168f32f2; do not restart from
+an older checkout or discard the existing tested capture/ACK/read foundation.
+
+Remaining order: finalize the fifth append-only source-cohort metadata table and
+exact physical fingerprints; finish original transaction/cohort proof persistence,
+bounded membership upload, actual accepted source/effect validation and exact ACK;
+finish complete writer/cohort/opening coverage and truthful time grades; correct
+case-sensitive native scope and verify retained historical identities/date/time/
+shift-close/export and authorized actual-arrival selection. Integrate current beta
+additively at a safe committed checkpoint and update draftPR401 with scoped tests.
+
+No live cloud/local schema application, opening/baseline creation, business repair,
+real key enrollment/rotation, Membership change, production merge or publication
+is authorized by this resumption.031 remains draft and outside the consolidated
+SQL update until its final source/hash, side effects and tests are frozen for root
+review and separate exact-target owner approval. Unknown old/time/source evidence
+must remain incomplete; optional report metadata must preserve ordinary checkout
+and required financial/shift acknowledgement paths.
+
+STOCK401 resumed checkpoint: all five optional tables now have exact physical
+shape/object/collation evidence. The original56 object fingerprints are unchanged;
+20 cohort objects are appended. Native reader branch comparisons retain exact
+non-UUID code bytes under CI SQL defaults. Actual LocalDB acceptance now passes
+59 groups, including missing031 normal local-save compatibility, populated source
+cohort immutability/ACK/replay/rollback, exact-case denial and original-transaction
+enrolled cohort persistence. A new prepared trigger's fixed-width datetimeoffset
+binary conversion failed an exact ACK retry in the fixture; it now compares the
+full binary representation. No production database saw this draft.
+
+The original Main-author source cohort persists its full bounded membership,
+database GUID and sequence/predecessor in the business transaction; a later
+failure rolls back source/stock/movement/cohort together. This does NOT yet
+complete metadata upload/accepted nonfinancial source validation, prefix/opening
+publication, Main activation or installed acceptance.031 is still draft, not the
+consolidated upgrade. Focused author/stock/sync regression:366 tests/11 suites pass.
+
+Further current-source checks:60 actual disposable LocalDB groups pass, including a ten-product original operation's full signed cohort, gap-free sequence after rollback and existing eight-row upload boundary. TypeScript and scoped lint pass. Original author/stock/sync focused suites pass366/366. This is a prepared-source checkpoint only; accepted nonfinancial source admission, cohort transport/ACK, full coverage publication and activation remain pending.
 # SYNC78 — automatic guarded reconciliation, 6 November
 
 Owner requests that sync handle a count difference automatically before asking
@@ -6827,3 +7038,433 @@ warnings at10:43/11:13 match the tool plus explicit file wrappers; desired sourc
 ACL/OID and both migration ledgers verified. No slot/restart/rollback action ran.
 Future migration payloads need one tested transaction owner and new exact approval
 when protected bytes change; do not reapply already committed files to clear logs.
+
+STOCK401 original-witness refinement approved by root under the owner's existing pending-evidence/checkout-preservation contract: capture only after the actual unchanged business writer accepts; key the private immutable witness by the server-observed accepted business batch, registered branch/terminal, exact accepted operation hash and actual same-transaction effect IDs. Raw source headers are explicitly UNVERIFIED, including during registry outage or missing/revoked/forged proof. They establish no author, membership, permission, report movement, prefix, coverage or financial ACK. Later claim admission must verify the full signature, current original action permission and accepted source/effect membership and append a separate verification receipt. Do not rewrite raw evidence or reconstruct missing original evidence from later mutable rows. Missing/capture failures retain explicit pending status and preserve the business ACK. No live SQL or activation.
+
+
+STOCK401 original-source milestone (prepared, not activated): optional cohort
+headers travel with the exact unchanged ordinary business aggregate in the same
+existing upload lane. A service-only wrapper captures one immutable UNVERIFIED
+private witness per actual accepted business batch: registered scope, unchanged
+operation hash, bounded fixed-whitelist saved-source field readbacks, and real
+same-transaction effect IDs. Raw forged/missing proof establishes no author or
+report authority. Registry outage does not erase this accepted-business evidence.
+Old receipts cannot reconstruct originals from later mutable rows.
+
+Independent review found two preparation defects, both fixed before activation:
+optional query_canceled/assert_failure now stays inside the metadata savepoint
+(ordinary business cancellation still propagates); source-retention ACK binds the
+actual content-derived business batch, not any receipt with the same proof hash.
+The original movement journal and required financial ACK stay separate/pending.
+Only an exact PGRST202 missing-wrapper response falls back to the unchanged
+ordinary writer; permission/conflict/network responses never change admission.
+
+The later member path verifies the real original stock/cohort signatures, signed
+count/root, every Merkle member, exact row fields and current original action
+permission. SQL then requires immutable actual accepted source/effect evidence
+before admitting ADJUST/RECEIVE and conservative direct PRODUCT_CREATE, appending
+a separate verification receipt. A submitted ON-CONFLICT row differing from its
+actual saved readback is rejected. Exact accepted retries survive permission
+revocation; changed envelopes cannot replace history. Clock stays author_claimed/
+unverified and coverage stays incomplete. Unsupported workflows remain held.
+
+Current verification:618 tests/23 suites, TypeScript and scoped lint pass;62
+actual disposable LocalDB groups pass, including original10-member cohorts,
+8-row bounded transport, >2^53 exact source receipt, wrong-batch denial and no
+movement/business journal ACK by the source-retention path. Source SQL cases
+compose real PostgreSQL validators/effect triggers with an explicitly synthetic
+ordinary writer; genuine canonical nonfinancial writer acceptance remains a gate.
+
+Still essential: all remaining source workflows, atomic verified opening/cohort/
+prefix publication and truthful clock coverage, Main activation/resumable reads,
+authorized actual-arrival entry, metadata fairness/final-barrier review, final
+platform/hosted/installed acceptance. Do not mark031 final or include it in the
+consolidated updater yet. No live SQL, business repair, baseline, enrollment,
+Membership change, deployment or publication ran.
+
+STOCK401 source verification follow-up:16 isolated source-membership SQL cases
+now include unknown admission search_path/grant/volatility guards. Six additional
+actual loopback PostgreSQL18.6 groups pass for concurrent business-witness retry,
+member ACK replay, exclusive competing-effect consumption, case-distinct branch
+denial and actual optional-vs-core statement cancellation. The fixture ordinary
+delegate remains explicitly synthetic; no genuine writer acceptance is inferred.
+
+Current merged UI/source full Vitest run:6,837 passed,10 skipped,2 failures only
+in old route-guard expectations that predated the approved inventory-only Reports
+entry/helper. Those tests are now updated to require inventory permission only
+for /reports/inventory, test actual link-hub admission, and retain denial of
+Sales/Audit cards without their own permissions. All35 targeted route/navigation/
+native-report authorization cases pass after correction. No runtime permissions
+changed. Current-head CI will rerun; this is not a full-suite-pass claim yet.
+
+A concrete coverage/frontier proposal is appended to the existing stock-author
+plan for root scope review. It covers fresh Main snapshot/challenge/prefix proof,
+zero-delta catalogue births, selected-baseline membership and time-grade limits.
+No frontier/publisher code or new signing purpose is activated. Root is reviewing
+practical accepted-ledger vs strict physical-clock completeness semantics and
+source-writer mapping.031 remains draft/outside consolidated SQL.
+
+STOCK401 next bounded preparation step: preserve the full original canonical
+source cohort when its known Main author cannot use the existing enrolled key
+or has lost the original action permission. Persist proof_json=NULL in the same
+original transaction; never re-sign it as a later uploader or grant acceptance.
+This changes only the cohort helper and isolated fixture, using existing optional
+031 columns/immutability. No schema, key/enrollment, business permission or ACK
+change. Unexpected/context/scope errors still abort; missing proof leaves report
+metadata pending and coverage incomplete. Current synthetic report UI passes all
+9 actual headless browser groups, including 1440/390 and scope revocation.
+
+Unsigned-source retention checkpoint: all65 actual disposable LocalDB groups,
+108 focused source/cohort tests, TypeScript and scoped lint pass. Missing enrolled
+key, lost original action permission and absent original cohort signer preserve
+the full original source manifest set/actor/time with proof_json=NULL. Restart
+cannot upload it as signed proof; the existing immutable trigger refuses later
+proof substitution. Unknown signer/context failures are not downgraded. No031
+DDL change, activation, key creation, business ACK change or real-data access.
+
+STOCK401 root reviewed two bounded next scopes on6November. First, background
+metadata fairness changes only PushWorker.pushAggregates/run: one bounded≤8-row
+stock metadata page per normal coordinated pass, sharing the same budget across
+both existing aggregate calls. final:true keeps full draining; runFinal, the SQL
+review classifier and every caller remain unchanged. Untouched/healthy metadata
+stays pending, never failed/review-held merely because its turn is deferred.
+Second, complete original arrival metadata and the minimal frontier plan in
+stock-history-author-domain-plan.md using the existing enrolled key only.
+
+Recoverable baseline97d2d165 is committed/pushed. Approved frontier preparation
+files: existing stock-event-author-protocol.cjs/declarations, shift-author-key.cjs,
+stock-event-authority.cjs; NEW pure stock-coverage-frontier helper/declaration/tests
+and Main-owned stock-history-frontier runtime; optional031/schema/catalog guards;
+NEW service-only challenge/frontier/opening migration; existing stock uploader,
+CloudClient, sync endpoint admission, historical native/cloud reader and focused
+source/clock/cohort/rollback tests. No new signing enrollment, generic signer,
+business-write permission, live opening/activation, backfill or deployment.
+All shift/financial domain bytes and mandatory final barriers stay unchanged.
+Zero births use original cohort metadata, never invented quantity movements.
+Accepted-ledger completeness is distinct from every-writer completeness; unknown
+or offline writers, gaps and author/device-clock anomalies stay explicit. Root
+retains actual canonical writer reproduction and reviews any separate core defect.
+
+Background fairness checkpoint passes47 uploader/final-barrier cases and31
+native pipeline cases. One normal pass sends at most one bounded report-metadata
+page, even when exact financial CT acceptance causes the existing second
+aggregate call. Sales still upload and normal downloads proceed; remaining
+healthy metadata is visible pending with no manufactured failure/review status.
+Later normal passes continue the original evidence. final:true still drains all
+pages and requires the unchanged final barrier/real queue counts. No SQL journal,
+financial ACK, runFinal/classifier/caller or request-lane change.
+
+Canonical initialization parity scope approved by root: replace ONLY
+supabase/schema.sql's stale insert-only sync_apply_stock_adjustments body with
+the existing generator's already-deployed INSERT-returning-only stock_apply_delta
+implementation. Read-only live definition MD5 6a15a6bc26a10fad7a3cee04c2c47637
+confirmed current live adjustment quantity behavior correct; this is a fresh-
+schema source drift fix, not a new live business rule/migration or historical
+backfill. Root's isolated canonical/live comparison verified receiving/refund
+stock legs. Add genuine writer replay/denial/rollback/source-effect tests; do not
+invent effects or modify old accepted adjustments. History writer informed of
+this single canonical hunk; no whole schema regeneration.
+
+The stock adjustment diagnosis is corrected after mandatory live-definition
+comparison: deployed ROSEGILL already applies only newly inserted adjustment
+deltas correctly; the generator matches it, while canonical schema.sql was
+stale. Root explicitly approved one canonical helper parity fix plus genuine
+fresh-schema/current-live source tests. This is not a production stock defect or
+new cloud rule; no live migration/backfill is needed. The schema-only captured
+function fixture includes only definition/MD5/ACL/config and no business data.
+
+Root delegated receiving UI owns only src/routes/purchasing.tsx, NEW pure
+ReceivingArrivalFields.tsx and focused mounted/browser tests. Preserve existing
+invoiceDate/entryDate. Read the dedicated Main capability only when the entry
+opens; current scope/session change invalidates availability/old values. Default
+is undefined/original save time. Custom original arrival needs POS-timezone date,
+time and reason; retained on failed save and blocks finalizing if capability
+becomes unavailable, never silently drops. Pass same StockArrival for a new or
+resumed draft's finalize. Already-posted correction UI is unchanged. Main remains
+authoritative. Stock agent owns capability/API/runtime, root owns these UI paths;
+no real transactions or profile changes.
+
+6November owner refinement: Reports needs a separately discoverable Stock report
+showing selected branch/day per product Opening + Stock in − Stock out = closing,
+while preserving exact-time and saved shift-close choices. This uses original
+movement/arrival effective times, including late offline arrivals, with legitimate
+adjustment/transfer directions and explicit gaps. One authorized revision/snapshot
+must own all four terms; never derive them from current quantity, truncated client
+pages or two racing point-in-time reads.
+
+Planned compatible read extension: optional periodStart inclusive plus requested
+cutoff as endExclusive; source chooses actual through=min(endExclusive−100ns,
+readAt). Response adds period{start,endExclusive,through,fullDay}; daily rows add
+openingQuantity/inQuantity/outQuantity, and quantity remains closing. All integer
+quantities stay strings. One baseline before the start, source cursor and revision
+cover every term/page. Current day remains explicitly partial-day. Old as-of and
+saved shift-close contracts stay unchanged. Exact IANA calendar-day validation
+handles23/25-hour DST days; source decides read time and completeness, not the
+renderer. Root remains assignment/monitoring only per latest owner instruction;
+its prior receiving UI ownership is released with no source edits.
+
+Current checkpoint verification:337 cases in14 focused suites pass, plus67
+actual disposable LocalDB groups. Genuine fresh-canonical/current-live writer
+coverage includes9 cases;8 more actual writer→original UNVERIFIED witness→signed
+member→real source/effect admission cases pass. Those paths do not rewrite stock
+at report admission. ADJUST has no invented activity row; RECEIVE preserves its
+existing deferred-local-stock behavior. Current new claim permission denial,
+exact accepted retry after revocation and old receipt/no-reconstruction remain.
+The canonical parity edit is one function only; no live migration is required.
+
+Explicit receiving arrival capability is Main-owned and current-SQL-authorized,
+including receiver-without-report-permissions. It stays unavailable until both
+original capture runtime and exact optional031 are ready. Default saves remain
+compatible without031; explicit time input cannot be silently dropped. Actual
+receiving repository tests prove immutable reason/time, exact retry, changed-
+reason denial and full rollback on missing original source. No invoice-date,
+stock formula, sale/refund/shift receipt or existing data change.
+
+The pure bounded frontier contract now passes33 tests. It only represents exact
+source prefix/gap/pending/challenge data; no signature, accepted prefix, clock
+certainty or every-writer completeness is inferred. Signing, publication and
+actual capture activation remain pending. All031/cloud stock files remain draft
+and excluded from the consolidated local updater pending final acceptance.
+
+Daily helper delegation before edits: policy_implementation owns ONLY NEW
+ electron/shared/stock-report-day.mjs and declaration,
+ src/lib/stock-day-summary.ts and src/lib/__tests__/stock-day-summary.test.ts.
+Pure calculateStockDaySummary(StockAsOfInput,periodStart) interprets input.cutoff
+as requested endExclusive, clamps through to readAt, and uses the same authorized
+arrays/revision and existing kernel validation. Baseline must precede day start;
+unknown/gaps/missing openings make ALL four quantities null. Opening derives from
+closing−in+out with exact bounded BigInt; no database reads/client-page sums.
+Loader owns historical product membership. Date helper handles actual IANA day
+boundaries including23/25h and midnight transitions; a skipped or noncontiguous
+historical date is explicitly unsupported instead of including another day.
+Stock agent retains all readers/SQL/types/validation/Main/runtime/UI ownership.
+
+Owner's latest clarification supersedes the earlier endExclusive-as-cutoff plan:
+PRIMARY Stock report means Stock available at the selected DATE AND TIME.
+Existing cutoff remains an exact inclusive instant in EVERY mode, including the
+saved shift-close shortcut. Optional periodStart adds inventory opening/in/out
+explanations for that same day/time; it never reinterprets cutoff, silently clamps
+it or includes later movements. A full-day request explicitly selects the last
+100ns before the next actual IANA day. Future selected instants remain unsupported.
+Use clear Stock available / Stock in / Stock out labels, not ambiguous cash/shift
+opening/closing language. Policy helper agent was notified before freeze and now
+keeps the original kernel cutoff unchanged. All terms share one revision/snapshot;
+real original movement details require their own complete authorized pagination.
+
+Daily helper files are frozen for stock-agent independent review. Root now
+assigned policy_implementation the next exact boundary: src/routes/purchasing.tsx,
+NEW ReceivingArrivalFields.tsx and focused mounted/browser tests only, baseline
+3df731bb arrival capability/API (current pushed b2934b8d). Root is assignment/
+monitoring only; stock agent has made no purchasing/component edits. The helper
+agent leaves its four daily files unstaged for stock-agent final commits, and
+cannot edit readers/types/SQL/Main or the frozen helper paths during UI work.
+
+Owner coordination rule: agents own bounded implementation/testing; root assigns
+and monitors, retaining cross-feature review, exact database review/application
+and final integration/release gates. Investigate/fix a newly failed required check
+promptly; canceled/superseded historical badges are not rewritten. No change to
+the separate exact production promotion/installer authorization rules.
+
+New original frontier purpose passed162 relevant tests; independent read-only
+review reran173 and found no confirmed blocker in its crypto/identity boundary.
+Existing10 stock protocol functions,17 verifier bodies and18 key-method bodies
+remain unchanged by AST parity review. New typed Main-only signing uses only the
+existing expected enrolled key and canonical frontier hash, with no generic
+signer/IPC/enrollment. Server verifies original current account/scope, and labels
+time author_claimed. Nonce/prefix/cohort/opening admission is still separate.
+
+Corrected receiving UI independently passes14 actual mounted browser groups and
+161 related tests. Review fixed two preparation defects: real database:state is
+the readiness channel, not sync progress; optional readiness changes block only
+selected custom arrival and preserve default receiving's existing path. New and
+resumed invoices, failed-save/retry preservation, scope change and repeated local
+time are covered. No actual database/profile/transaction test was run on a real
+terminal. Primary selected-date/time report remains the owner requirement.
+
+Publication/read policy resolved by root under owner's restatable original-time
+rule: a PROVEN complete accepted ledger/opening/effect snapshot may display
+PROVISIONAL RECORDED stock when offline/unknown writer frontiers remain. Overall
+status must not silently become complete. Separate ledger/writer coverage and
+explicit warning: some terminals have not confirmed uploads; recorded balance
+may change. Gaps/missing opening/effects still mean null quantities. Complete/
+financial export gate is unchanged; provisional report is never operational
+stock/checkout/permission authority. Timestamp grade distinguishes recorded vs
+author-entered values and never claims physical-clock certainty.
+
+Native period read now passes70 actual disposable LocalDB groups, including
+one exact snapshot/revision for opening/in/out/selected-time quantity, archived/
+zero original identities, >2^53 strings,100ns boundaries and late backdated
+restatement. Additional115 reader/export/kernel/permission cases pass. Hosted
+calendar admission will use bounded named-zone conversions, not timezone-view
+scans or Worker Intl loops. The read-only pinned session pattern is being
+verified independently before replacing draft report transaction isolation.
+
+The private frontier snapshot helper is frozen after21 actual owned LocalDB
+groups and72 focused cases, with fixtures cleaned and TypeScript/lint passing.
+It uses one pinned read-only transaction with HOLDLOCK/NOWAIT and no session SET,
+preserving all five caller isolation levels and yielding to contested business
+work. UUID spelling is canonicalized only for UUIDs; branch/till codes stay exact.
+It returns bounded private evidence with coverageProven=false, never a signature,
+acknowledgement or writer-completeness assertion. Independent117-case combined
+snapshot/frontier/date/receiving verification passed. Identity-only frontier
+signing is committed f3c62b5e; challenge/prefix/opening admission remains pending.
+
+Next necessary reader-only correction: replace draft StockHistoryStore.readPage's
+driver SERIALIZABLE transaction (which leaves isolation changed on a pooled
+connection) with the independently verified pinned-connection pattern. Scope:
+NEW stock-history-read-session.cjs plus Store.request/readPage, read-only SQL
+HOLDLOCK/NOWAIT hints and focused/disposable-reader tests. No business writer,
+queue, permission or schema change. Keep one transaction owner, refuse inherited
+or implicit caller transactions, yield to a contested writer, bound waits/reads
+and restore/release only the owned transaction. Materialize the bounded result,
+commit, then freshly recheck Main scope/permission before exposing it; never hold
+a report transaction while waiting for another pooled authority read. Baseline
+3859dbdc is recoverable; this is required report regression prevention, not a
+new shared business transaction abstraction.
+
+Provisional transport contract refinement before UI integration: optional coverage
+contains acceptedLedger=complete/incomplete, writers=confirmed/pending/unknown,
+balanceGrade=verified/recorded_provisional and timeGrade=recorded/author_entered/
+mixed. A non-complete page may expose numeric rows ONLY with explicit complete
+accepted-ledger/recorded-provisional evidence and unknown/pending writer coverage.
+Missing opening/effects/gaps continue to return no estimated numbers. This does
+not activate or infer that proof: current readers stay fail-closed until the
+publisher supplies it. Complete export stays status/coverage gated. Same-snapshot
+period terms remain optional; the primary quantity is exact selected-time stock.
+
+Delegated next UI boundary (baseline3859dbdc, after period-reader review):
+policy_implementation owns StockHistoryDialog.tsx, reports.inventory.tsx, only
+the /reports/inventory nav label and its expectation, plus focused/mounted new
+stock UI tests/script. Name this separate option Stock report; keep existing
+/reports/stock adjustments unchanged. Primary selected-time quantity stays exact;
+optional day explanation sends one periodStart plus the SAME inclusive cutoff.
+Saved shift mode remains source-resolved point-in-time. Display returned strings,
+never sum client pages. Explicit provisional accepted-ledger quantities carry the
+unknown-writer warning and remain ineligible for complete export. Scope/session/
+permission changes hide old protected data synchronously. Readers/types/SQL/Main
+stay owned by stock integration; no new query/permission/writer in this UI batch.
+
+Frontier admission implementation begins within the reviewed bounded purpose:
+CLI-created20261106073851_stock_history_coverage_frontiers.sql adds private
+append-only challenges/receipts, a bounded current registered-writer cohort and
+service-only issue/accept routines. Current account/key/terminal identity is
+rechecked independently of report-read or opening permission. Receipt replay
+requires exact original bytes; a new frontier requires the fresh nonce/current
+cohort and a complete independently accepted original source prefix. Pending/
+unsigned/unknown/clock anomalies are retained as explicit unconfirmed coverage,
+not stock authority. This does not publish an opening or activate capture. Owned
+fixtures will use real accepted source admission where available; no live calls,
+grants to public clients, business writes or new cryptographic domain.
+
+Selected-time reader checkpoint verification:94 focused hosted/native-IPC/
+canonical/period cases and31 provisional/export contract cases pass;78 actual
+disposable LocalDB groups pass and fixtures are cleaned. Unknown reader/helper
+source/ACL/path/volatility abort, outer failure fully rolls back, and repeated
+migration refuses to replace accepted helpers again. Independent bounded reader
+review found no confirmed blocker; provider/publisher concurrency and final
+hosted/installed acceptance remain pending. TypeScript and scoped lint pass
+(test-only explicit-any warnings remain). No SQL applied or opening published.
+
+Frontier runtime preparation next: NEW stock-coverage-frontier-runtime.cjs owns
+current Main account/registered till/pool/epoch and the existing enrolled-key
+reference; no renderer supplies a snapshot or signing request. It obtains a
+bounded native snapshot, requests a challenge through the existing CloudClient
+lane, snapshots again after the network wait, signs only those typed private
+facts and rechecks source-generation/pending evidence before upload. No network
+wait occurs inside SQL. Missing031/key/account/lease or changed evidence returns
+unconfirmed metadata only; no stock/financial ACK, queue or opening is changed.
+The factory remains unwired until full source/publication acceptance; tests must
+prove stale profile/permission/lease rejection and ordinary work unaffected.
+
+Native frontier bounded-history refinement (baseline6ad1b17a, policy_implementation
+owns only stock-history-frontier-snapshot.cjs, its focused test and disposable
+SQL runner; preserve the writer's runtime hook). Finished immutable source and
+movement rows must not exhaust the pending-evidence2000-row bound. Use scoped
+SQL stream summaries with exact positive/unique sequence and predecessor-link
+checks; retain original GUID/till identities, accepted and unsigned counts and
+accepted-movement source anti-join diagnostics. Materialize/hash bounded pending
+or unsigned rows and unACKed journal evidence only. Bind exact summaries, head
+roots and pending hashes into the private generation; no complete coverage is
+inferred. Test >2000ACKed sources/movements plus small pending work, source links,
+missing accepted sources/legacy writers, retained generations/case scope,
+>2^53 values, all-five isolation/NOWAIT/context/rollback and unchanged data/CT.
+No schema, runtime signer, business writer, live data or activation changes.
+
+Snapshot refinement frozen for independent review:95 focused cases across five
+suites pass, including27 snapshot cases;28 actual uniquely owned LocalDB groups
+pass and are cleaned. 2001ACKed cohorts plus2001ingested movements with>16MiB
+historical proof bodies returned zero historical detail/proof-hash rows and
+completed the private observation in217ms (prior run233ms). Tiny pending work
+finds already accepted source rows, accepted SALE missing its original source
+stays unknown, and linked-prefix/case/UUID/retained-generation checks remain.
+All-five caller isolation, inherited/implicit refusal, NOWAIT real-writer win,
+context/lease loss, timeout rollback and unchanged data/CT are covered. TSC,
+scoped lint, CJS syntax and diff checks pass. The runtime fixture hook is retained.
+No coverage/opening publication or installed/live acceptance is claimed.
+
+Snapshot journal-binding correction before commit (policy_implementation owns the
+same3snapshot paths and this append): an unACKed history journal must never be
+suppressed merely because its referenced row exists. Read bounded exact row
+operation/branch/till/upload namespace and pending state; require a single-key
+UUID reference and deterministic original-operation aggregate. A valid own
+pending metadata row remains counted once. Wrong/global/extra-key/aggregate
+bindings, foreign tills and an alreadyACKed row with an unACKed journal remain
+critical pending/unknown evidence. No journal/ACK/queue writer changes. Add unit
+and actual LocalDB cases from a healthy accepted prefix with no other pending
+work, and retain all existing precision/isolation/NOWAIT/context/row-bound tests.
+
+Journal correction frozen:104 focused cases across five suites pass (36 snapshot
+cases), and29 actual disposable LocalDB groups pass/clean. A healthy accepted
+prefix with zero pending counts now reports critical business+unknown for each
+unACKed accepted movement/source, wrong aggregate/namespace, global branch or
+extra-key reference. Correct pending own metadata remains counted once. Scoped
+row-reference UNION uses explicit compatible BIN2 output collations; no database
+collation/configuration changes. Historical2001+2001 accepted-row observation
+remains bounded (241ms). TSC/lint/syntax checks pass. No ACK/journal mutation or
+runtime activation was added. Opening-publication test file remains unchanged.
+
+## 6 November owner deferral — STOCK401 next update only
+
+Owner explicitly moved the Stock report to the NEXT UPDATE. Stop new401
+implementation and preserve every checkpoint/unfinished file. Do not merge401,
+apply any stock cloud migration/031, activate capture, publish an opening or add
+stock SQL to the current production/consolidated local release. This supersedes
+the earlier instruction to finish401 for today's release;428/400 proceed apart.
+Pushed tested checkpoint at deferral:0a973684. The isolated completed CI correction
+3a4b7487 (strict development export footer + shared Switch controls) may be
+integrated as a preservation-only checkpoint after scoped review; no release
+approval follows. Finished snapshot refinement may likewise be committed after
+bounded verification. Preserve unfinished opening work unstaged with exact hashes.
+
+Opening draft has18 owned PGlite cases and13 actual PostgreSQL concurrency groups
+passing with fixtures cleaned, but it is NOT READY: root identified an unresolved
+MVCC snapshot versus wall-clock opening-cutoff boundary. The next session must
+test writers committing around both candidate reads/time/commit and establish an
+exact source-membership certificate or conservatively unsupported observation
+window. Also prepare/test ONE transaction owner for the actual migration tool/
+ledger path before final hash review; current draft BEGIN/COMMIT wrappers must
+not be submitted blindly. No approved bytes may be stripped after approval.
+No data, stock, sales, permissions, queues, checkpoints or real keys changed.
+## 6 November — Stock PR401 exact-head CI correction
+
+Root delegated only the confirmed0a973684 CI failures after stock writer granted
+exclusive isolated ownership of the dev-interop helper and two boolean controls.
+Preserve the strict exact module/dependency/export boundary; recognize only the
+reviewed new stock frontier exports and structural LF/CRLF footer forms. Replace
+the arrival/period native checkboxes with the existing shared Switch, preserving
+default values, readiness, validation, label association, state invalidation and
+permissions. Update only affected browser selectors and focused regressions.
+No protocol-message/writer/SQL/key/grant or deployed-source changes. Stock writer
+owns integration and remote push after reviewing this separate commit. Required:
+real dev SSR/export/invalid-contract tests, shared-switch consistency, affected
+receiving/report UI cases and actual mounted14+19 groups, TSC/scoped lint.
+Verified on pinned Node22:67 tests across6 focused suites pass, including all
+three previously failed cases plus exact LF/CRLF/missing-export denial and native
+versus dev frontier-message byte parity. Actual mounted14 receiving and19 Stock
+report groups pass at1440/390 in light/dark with synthetic adapters; readiness,
+failed-save preservation, default values, scope loss, exact time and export
+denials stay intact. TSC/scoped ESLint pass; no source or test assertions are
+bypassed. Latest integrated401 full CI remains the stock writer's next gate.
+This integration is preservation only under the later owner deferral above.
+Stock401, all stock SQL/031 and activation/openings remain excluded from the
+current release. No new implementation or beta/production merge is authorized.

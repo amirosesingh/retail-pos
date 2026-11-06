@@ -16,7 +16,7 @@ const sources = Object.fromEntries(["src/platforms/web/components/pos/AppShell.t
 function fixture() {
   const state = { ready: true, settingsPending: false, phase: "ready", error: "", branch: "A",
     actor: "one", tenant: "one", mode: "online", epoch: 1, permitted: true, authenticated: true,
-    activeShift: null as null | { state: string }, checked: true };
+    activeShift: null as null | { state: string }, checked: true, path: "/reports/sales", flags: null as null | Record<string,boolean> };
   const user = () => state.authenticated ? { staffId: state.actor, email: "fixture@example.invalid", name: "Fixture", role: "admin", permissions: { report: state.permitted } } : null;
   let active = owner();
   const shellOwner = owner(), guardOwner = owner(), generic = new Map<string, Record<string, unknown>>();
@@ -38,7 +38,7 @@ function fixture() {
       activeShift: state.activeShift, shiftChecked: state.checked, shiftReadError: null, openShift,
     }) },
     "@/lib/pos-auth": { useAuth: () => ({ ready: true, user: user(), authUserId: state.authenticated ? state.actor : null,
-      isAdmin: false, canSwitchStores: true, can: () => state.permitted, terminalStoreId: null }) },
+      isAdmin: false, canSwitchStores: true, can: (flag:string) => state.flags ? state.flags[flag] === true : state.permitted, terminalStoreId: null }) },
     "@/lib/page-data-cache": { pageDataScope: () => [state.actor, state.tenant, state.mode, state.epoch, state.permitted] },
     "@/hooks/use-mobile": { useIsMobile: () => false },
     "@/lib/branding": { useBranding: () => ({ company: "Fixture" }), isDesktop: () => false },
@@ -51,10 +51,11 @@ function fixture() {
     "@/platforms/web/components/pos/settings/use-settings-nav": { useSettingsNav: () => ({ cards: [] }) },
     "@/platforms/web/components/pos/SidebarNav": { useSidebarCollapsed: () => [false, noop] },
     "@/lib/ui-visibility": { useVisibility: () => ({ visibleRoute: () => true }) },
-    "@tanstack/react-router": { useLocation: () => ({ pathname: "/reports/sales" }), useNavigate: () => noop },
+    "@tanstack/react-router": { useLocation: () => ({ pathname: state.path }), useNavigate: () => noop },
     "@/lib/locations": { activeLocations: (rows: unknown[]) => rows },
     "@/lib/utils": { cn: (...values: unknown[]) => values.filter(Boolean).join(" ") },
-    "@/platforms/web/components/pos/nav-config": { routePermissionForPath: () => "can_view_sales_reports" },
+    "@/platforms/web/components/pos/nav-config": { routePermissionForPath: (path:string) => path === "/reports/inventory" ? "can_view_inventory" : path === "/reports/history" ? "can_view_audit_trail" : "can_view_sales_reports",
+      canOpenReportsHub: (can:(flag:string)=>boolean) => ["can_view_sales_reports","can_view_audit_trail","can_view_inventory"].some(can) },
   });
   const load = (path: string): Record<string, (...args: never[]) => Node> => {
     const module = { exports: {} };
@@ -83,6 +84,12 @@ function fixture() {
 }
 
 describe("authorized branch-view presentation", () => {
+  it("allows inventory-only Reports hub and historical route without granting Sales/Audit pages", () => {
+    const f=fixture();f.state.flags={can_view_inventory:true};
+    for(const path of ["/reports","/reports/","/reports/inventory"]){f.state.path=path;expect(f.find(f.shell(),node=>node===f.child)).toBe(f.child);}
+    for(const path of ["/reports/sales","/reports/history"]){f.state.path=path;expect(f.find(f.shell(),node=>node===f.child)).toBeUndefined();}
+    f.state.flags={};f.state.path="/reports";expect(f.find(f.shell(),node=>node===f.child)).toBeUndefined();
+  });
   it("keeps the shell while the new branch data/settings are unconfirmed, without old protected content", () => {
     const f = fixture();
     expect(f.find(f.shell(), n => n === f.child)).toBe(f.child);

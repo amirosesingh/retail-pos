@@ -229,7 +229,7 @@ function terminalWritableChanges(tableName, changes, { branchId = "", terminalId
 }
 
 class PushWorker {
-  constructor({ reader, cloud, checkpoints, registry, validateAuthor, validateClosingStart, validateFinancialBasis, financialHistoryEnabled=false, validateFinancialOperation }) {
+  constructor({ reader, cloud, checkpoints, registry, validateAuthor, validateClosingStart, validateFinancialBasis, financialHistoryEnabled=false, validateFinancialOperation,stockHistory=null }) {
     this.financialHistoryEnabled=financialHistoryEnabled===true;
     this.validateFinancialOperation=validateFinancialOperation;
     this.validateAuthor = validateAuthor;
@@ -239,6 +239,7 @@ class PushWorker {
     this.cloud = cloud;
     this.checkpoints = checkpoints;
     this.registry = registry;
+    this.stockHistory=stockHistory;
   }
   async retry(work) {
     for (let attempt = 1; attempt <= 5; attempt += 1) {
@@ -294,9 +295,9 @@ class PushWorker {
       }
     }
   }
-  async pushAggregates(branchId, batchSize, isolate = false, onProgress = () => {}, includeActivity = true) {
+  async pushAggregates(branchId, batchSize, isolate = false, onProgress = () => {}, includeActivity = true, stockHistoryBudget = null) {
     branchId = recordId(branchId);
-    this.pushErrors = []; this.blockedTables = new Set();
+    this.pushErrors = []; this.blockedTables = new Set();this.stockHistoryHolds=new Set();
     let pushed = 0;
     const terminalId = this.cloud.terminalId?.() ?? "";
     await this.registerFinancialHistory(branchId,terminalId,onProgress);
@@ -316,6 +317,22 @@ class PushWorker {
         originalIds.forEach(id => deferred.add(id)); continue;
       }
       try {
+      if(this.stockHistory?.accepts(aggregate)){
+        // Background report evidence shares the normal upload lane, but may
+        // not monopolize it. This deferral is neither failure nor review.
+        // Final passes retain the existing complete drain and exact barriers.
+        if(stockHistoryBudget?.remaining===0){originalIds.forEach(id=>deferred.add(id));continue;}
+        if(stockHistoryBudget)stockHistoryBudget.remaining--;
+        const result=await this.stockHistory.upload(aggregate,branchId,terminalId);
+        if(result.held){
+          if(result.held.fresh)for(const id of originalIds)await this.reader.failAggregate(id,{code:result.held.code,message:result.held.message,table:'stock_history_movements'});
+          originalIds.forEach(id=>{deferred.add(id);this.stockHistoryHolds.add(id);});
+          continue; // A truthful own-domain hold does not block core trading.
+        }
+        pushed+=result.acknowledged;
+        onProgress({direction:'push',table:'stock_history_movements',completed:result.acknowledged});
+        continue;
+      }
       const financialRequired=await this.reader.financialAggregateRequired?.(aggregate.aggregateId,branchId,terminalId)??false;
       const financialOpening=await this.reader.financialOpening?.(aggregate.aggregateId,branchId,terminalId)??null;
       if((financialRequired||financialOpening)&&!this.financialHistoryEnabled)throw Object.assign(new Error('The matching financial history capability is required. Saved work remains pending.'),{code:'EFINANCIAL_PROTOCOL_UNAVAILABLE',table:'shifts'});
@@ -445,15 +462,19 @@ class PushWorker {
           openingSidecar={openingJson:verified.openingJson,proof:verified.proof};
         }
         const batchId = stableUuid({ branchId, aggregateId: aggregate.aggregateId, operations });
+        const stockSource=!financialRequired&&!openingSidecar&&originalIds.length===1
+          ?await this.stockHistory?.prepareBusiness?.(originalIds[0],branchId,terminalId,batchId):null;
         const financialCoverageToken=financialRequired?this.reader.prepareFinancialBusinessCoverage?.({operations,batchId,branchId,terminalId}):null;
         const acknowledged = await this.retry(() =>
-          this.cloud.pushAggregate({ batchId, branchId, operations,...(openingSidecar?{shiftFinancialOpening:openingSidecar}:{}),...(financialRequired?{financialLedgerProjection:true}:{}) }),
+          this.cloud.pushAggregate({ batchId, branchId, operations,...(openingSidecar?{shiftFinancialOpening:openingSidecar}:{}),...(financialRequired?{financialLedgerProjection:true}:{}),
+            ...(stockSource?{stockSourceCohorts:stockSource.cohorts}:{}) }),
         );
         if (!acknowledged?.ok)
           throw new Error(acknowledged?.error ?? "Cloud did not acknowledge the aggregate.");
         assertShiftClosureAcknowledgement(acknowledged, operations, branchId);
         if(financialRequired)await this.reader.acknowledgeFinancialBusinessRows?.({token:financialCoverageToken,operations,batchId,acknowledgement:acknowledged,branchId,terminalId});
         if(financialOpening){if(typeof this.reader.acknowledgeFinancialOpening!=='function')throw Object.assign(new Error('The opening acknowledgement cannot be persisted.'),{code:'EFINANCIAL_HISTORY_UNCONFIRMED',table:'shifts'});await this.reader.acknowledgeFinancialOpening(financialOpening,acknowledged,branchId,terminalId);}
+        if(stockSource)await this.stockHistory.acknowledgeBusiness(stockSource,acknowledged);
         for (const id of originalIds) await this.reader.acknowledgeAggregate(id);
         pushed += aggregate.changes.length;
         onProgress({ direction: "push", table: operations.map(op => op.table).join(", "), completed: aggregate.changes.length });
@@ -487,12 +508,13 @@ class PushWorker {
     }
     return pushed;
   }
-  async run({ branchId, batchSize = 500, onProgress = () => {}, includeActivity = true }) {
+  async run({ branchId, batchSize = 500, onProgress = () => {}, includeActivity = true, final = false }) {
     branchId = recordId(branchId);
     if (!branchId) throw new Error("A branch is required for synchronization.");
     batchSize = Math.max(100, Math.min(2000, Number(batchSize) || 500));
     const terminalId = this.cloud.terminalId?.() ?? "";
-    let pushed = await this.pushAggregates(branchId, batchSize, true, onProgress, includeActivity);
+    const stockHistoryBudget=final?null:{remaining:1};
+    let pushed = await this.pushAggregates(branchId, batchSize, true, onProgress, includeActivity, stockHistoryBudget);
     const deferredTables = new Set();
     let financialCoverageAdvanced=false;
     // One lookup per pass instead of one SQL round trip for every table.
@@ -656,9 +678,9 @@ class PushWorker {
     // Exact acknowledged business CT rows may have been the only remaining
     // prerequisite. Drain that protected intent now, without another bootstrap
     // or a blind checkpoint advance. Ordinary legacy passes stay unchanged.
-    if(financialCoverageAdvanced)pushed+=await this.pushAggregates(branchId,batchSize,true,onProgress,includeActivity);
+    if(financialCoverageAdvanced)pushed+=await this.pushAggregates(branchId,batchSize,true,onProgress,includeActivity,stockHistoryBudget);
     if (this.pushErrors.length) throw Object.assign(this.pushErrors[0], {pushed, failures:this.pushErrors.length});
-    return { pushed, deferredTables:[...deferredTables] };
+    return { pushed, deferredTables:[...deferredTables],...(this.stockHistoryHolds?.size?{heldStockHistoryAggregates:this.stockHistoryHolds.size}:{}) };
   }
 }
 module.exports = { PushWorker, collapseChanges, rowsForBranch, terminalWritableChanges, batchAuditAggregates };

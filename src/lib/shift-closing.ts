@@ -17,7 +17,7 @@ export type ShiftCloseStep =
   | { ok: false; error: string; queued?: boolean };
 
 export type ShiftCloseSyncResult =
-  | { ok: true; offline?: boolean; pending?: number; pushed?: number; merged?: number }
+  | { ok: true; offline?: boolean; pending?: number; failed?: number; pushed?: number; merged?: number; allUploaded?: boolean; reportHistoryPending?: number }
   | { ok: false; error: string; code?: string };
 
 const fail = (e: unknown, fallback: string): ShiftCloseStep => ({
@@ -56,8 +56,11 @@ export async function synchronizeShiftClose(shiftId: string): Promise<ShiftClose
       ok: true,
       offline: result.offline,
       pending: result.pending,
+      failed: result.failed,
       pushed: result.pushed,
       merged: result.merged,
+      allUploaded: result.allUploaded,
+      reportHistoryPending: result.reportHistoryPending,
     };
   } catch (e) {
     return fail(e, "Shift synchronization failed.") as ShiftCloseSyncResult;

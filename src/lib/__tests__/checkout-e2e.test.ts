@@ -112,6 +112,15 @@ describe("checkout commit", () => {
   });
   afterEach(() => setPreferredDatabaseMode("local"));
 
+  it("passes optional original arrival only with the receiving aggregate and leaves default business rows unchanged", async () => {
+    const op={kind:"upsert" as const,table:"purchase_orders",rows:[{id:"11111111-1111-4111-8111-111111111111",store_id:"store-1",status:"posted"}]};
+    const stockArrival={effectiveAt:"2026-11-06T00:00:00.1234567Z",reason:"Goods arrived before invoice entry"};
+    await expect(commitOps("Saving receiving invoice",[op],{stockArrival})).resolves.toBe("local");
+    expect(localAggregate).toHaveBeenLastCalledWith({kind:"receiving",branchId:"store-1",operations:[op],stockArrival});
+    await expect(commitOps("Saving receiving invoice",[op])).resolves.toBe("local");
+    expect(localAggregate).toHaveBeenLastCalledWith({kind:"receiving",branchId:"store-1",operations:[op]});expect(live).not.toHaveBeenCalled();
+  });
+
   it("commits restored stock, its audit movement and posted draft in one Electron transaction", async () => {
     platform.offlineFirst = true;
     const product: Product = { id: "p1", name: "Shirt", sku: "S1", barcode: "10001", category: "Clothes", cost: 25, price: 50, reorderLevel: 1, taxRate: 0, stockByStore: { "store-1": 1 }, archived: false };

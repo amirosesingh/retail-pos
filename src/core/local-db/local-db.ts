@@ -1,4 +1,5 @@
 import { effectiveDatabaseMode } from "./db-mode";
+import type {StockHistoryRequest,StockHistoryPage} from '@/lib/stock-history-report';
 import { isManagementDevice } from "@/lib/management-device";
 /**
  * Bridge to the Windows desktop shell's local Microsoft SQL Server database.
@@ -415,6 +416,8 @@ export type PosBridge = {
   }) => Promise<{ ok: boolean; eventId?: string; error?: string; code?: string }>;
   database?: {
     getState: () => Promise<{ enabled: boolean; configured?: boolean; connected: boolean; tradingReady?: boolean; state: string }>;
+    /** Existing native database:state notifications; consumers need not inspect configuration. */
+    subscribe?: (callback:(state:{enabled?:boolean;configured?:boolean;connected?:boolean;tradingReady?:boolean;state?:string})=>void)=>()=>void;
   };
   telemetry?: {
     presence: (value: { sessionStatus: "signed_in" | "idle"; staffName: string | null; staffRole: string | null }) => Promise<{ ok: boolean }>;
@@ -430,6 +433,8 @@ export type PosBridge = {
         offline?: boolean;
         pushed?: number;
         merged?: number;
+        allUploaded?: boolean;
+        reportHistoryPending?: number;
         error?: string;
         code?: string;
       }
@@ -453,6 +458,8 @@ export type PosBridge = {
     operationId?: string;
     branchId?: string;
     operations: SyncOp[];
+    /** Optional original arrival; current receiving permission/capability required in Main. */
+    stockArrival?: {effectiveAt:string;reason:string};
   }) => Promise<{ ok: boolean; replayed?: boolean; operationId?: string; error?: string; code?: string; stage?: string | null; table?: string | null; sqlNumber?: number | null; sqlDetail?: string | null }>;
   connect: (
     config: LocalDbConfig,
@@ -668,6 +675,8 @@ export type PosBridge = {
   managementReport?: (options: { kind: "sales" | "totals" | "shifts"; storeIds: string[]; from: string; to: string; zone: string; cursor?: { ts: string; id: string } | null; limit?: number; includeProfit?: boolean; shiftId?: string }) => Promise<{
     ok: boolean; complete?: boolean; source?: string; code?: string; error?: string; rows?: LocalSaleRow[]; storeTotals?: LocalSaleRow[]; hasMore?: boolean; cursor?: { ts: string; id: string } | null;
   }>;
+  stockHistory?: (request:StockHistoryRequest)=>Promise<{ok:boolean;page?:StockHistoryPage;code?:string;error?:string}>;
+  stockArrivalCapability?: ()=>Promise<{ok:boolean;available?:boolean;reason?:string;code?:string;error?:string}>;
   onReadProgress?: (cb: (progress: { table: string; completed: number }) => void) => () => void;
   onBusinessChanged?: (
     cb: (change: {

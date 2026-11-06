@@ -259,16 +259,37 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261105063613_admin_attested_legacy_shift_recovery.sql",
       "supabase/migrations/20261105090000_shift_financial_known_history.sql",
       "supabase/migrations/20261105090100_branch_shift_sharing.sql",
+      "supabase/migrations/20261105113916_stock_history_effective_ledger.sql",
       "supabase/migrations/20261105140417_isolate_refund_guard_table_fields.sql",
       "supabase/migrations/20261105170645_bounded_shop_hourly_report.sql",
+      "supabase/migrations/20261105172030_stock_history_accepted_effect_capture.sql",
+      "supabase/migrations/20261105232647_stock_history_author_claim_admission.sql",
       "supabase/migrations/20261106015347_guard_existing_product_owner_during_native_sync.sql",
       "supabase/migrations/20261106020500_complete_change_history_sync_count.sql",
+      "supabase/migrations/20261106035442_stock_history_original_source_receipts.sql",
+      "supabase/migrations/20261106042742_stock_history_verified_source_membership.sql",
+      "supabase/migrations/20261106065813_stock_history_selected_time_period_reader.sql",
+      "supabase/migrations/20261106073851_stock_history_coverage_frontiers.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",
       "supabase/sql/trigger_sync_upgrade.sql",
       "supabase/sql/verify_purchase_order_uuid_sync.sql",
     ]);
+  });
+  it("keeps unfinished stock-history preparation outside the canonical installer", () => {
+    expect(read("supabase/migrations/20261105113916_stock_history_effective_ledger.sql"))
+      .toContain("STOCK401 DRAFT preparation only");
+    expect(read("supabase/schema.sql")).not.toContain("CREATE TABLE IF NOT EXISTS public.stock_history_heads");
+    expect(read("supabase/migrations/20261105172030_stock_history_accepted_effect_capture.sql"))
+      .toContain("STOCK401 DRAFT preparation only");
+    expect(read("supabase/schema.sql")).not.toContain("CREATE TABLE private.stock_history_accepted_effects");
+    expect(read("supabase/migrations/20261105232647_stock_history_author_claim_admission.sql")).toContain("STOCK401 DRAFT");
+    expect(read("supabase/schema.sql")).not.toContain("CREATE FUNCTION public.pos_stock_history_accept_claims");
+    expect(read("supabase/migrations/20261106035442_stock_history_original_source_receipts.sql")).toContain("STOCK401 DRAFT preparation only");
+    expect(read("supabase/schema.sql")).not.toContain("CREATE TABLE private.stock_history_original_sources");
+    expect(read("supabase/migrations/20261106042742_stock_history_verified_source_membership.sql")).toContain("STOCK401 DRAFT preparation only");
+    expect(read("supabase/schema.sql")).not.toContain("CREATE TABLE private.stock_history_source_claim_verifications");
   });
 
   it('retains the reviewed shift-sharing upgrade exactly in canonical SQL', () => {

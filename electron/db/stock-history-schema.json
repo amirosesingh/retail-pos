@@ -1,0 +1,671 @@
+{
+  "version": 1,
+  "columns": [
+    {
+      "table": "stock_history_heads",
+      "column": "store_id",
+      "type": "nvarchar",
+      "length": 256,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_heads",
+      "column": "committed_cursor",
+      "type": "bigint",
+      "length": 8,
+      "precision": 19,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_heads",
+      "column": "coverage_generation",
+      "type": "bigint",
+      "length": 8,
+      "precision": 19,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_heads",
+      "column": "coverage_state",
+      "type": "nvarchar",
+      "length": 32,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_heads",
+      "column": "baseline_id",
+      "type": "uniqueidentifier",
+      "length": 16,
+      "precision": 0,
+      "scale": 0,
+      "nullable": true
+    },
+    {
+      "table": "stock_history_heads",
+      "column": "coverage_from_ticks",
+      "type": "decimal",
+      "length": 13,
+      "precision": 20,
+      "scale": 0,
+      "nullable": true
+    },
+    {
+      "table": "stock_history_heads",
+      "column": "coverage_through_ticks",
+      "type": "decimal",
+      "length": 13,
+      "precision": 20,
+      "scale": 0,
+      "nullable": true
+    },
+    {
+      "table": "stock_history_heads",
+      "column": "terminal_watermarks",
+      "type": "nvarchar",
+      "length": -1,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_heads",
+      "column": "updated_at",
+      "type": "datetimeoffset",
+      "length": 10,
+      "precision": 34,
+      "scale": 7,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_heads",
+      "column": "local_committed_cursor",
+      "type": "bigint",
+      "length": 8,
+      "precision": 19,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_baselines",
+      "column": "id",
+      "type": "uniqueidentifier",
+      "length": 16,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_baselines",
+      "column": "store_id",
+      "type": "nvarchar",
+      "length": 256,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_baselines",
+      "column": "cutoff_at_raw",
+      "type": "nvarchar",
+      "length": 56,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_baselines",
+      "column": "cutoff_ticks",
+      "type": "decimal",
+      "length": 13,
+      "precision": 20,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_baselines",
+      "column": "captured_at_raw",
+      "type": "nvarchar",
+      "length": 56,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_baselines",
+      "column": "captured_ticks",
+      "type": "decimal",
+      "length": 13,
+      "precision": 20,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_baselines",
+      "column": "source_cursor",
+      "type": "bigint",
+      "length": 8,
+      "precision": 19,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_baselines",
+      "column": "opening_kind",
+      "type": "nvarchar",
+      "length": 40,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_baselines",
+      "column": "verification_state",
+      "type": "nvarchar",
+      "length": 32,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_baselines",
+      "column": "expected_pairs",
+      "type": "int",
+      "length": 4,
+      "precision": 10,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_baselines",
+      "column": "terminal_watermarks",
+      "type": "nvarchar",
+      "length": -1,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_baselines",
+      "column": "verified_by",
+      "type": "nvarchar",
+      "length": 256,
+      "precision": 0,
+      "scale": 0,
+      "nullable": true
+    },
+    {
+      "table": "stock_history_baselines",
+      "column": "evidence_hash",
+      "type": "char",
+      "length": 64,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_openings",
+      "column": "id",
+      "type": "uniqueidentifier",
+      "length": 16,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_openings",
+      "column": "baseline_id",
+      "type": "uniqueidentifier",
+      "length": 16,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_openings",
+      "column": "product_id",
+      "type": "uniqueidentifier",
+      "length": 16,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_openings",
+      "column": "store_id",
+      "type": "nvarchar",
+      "length": 256,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_openings",
+      "column": "quantity",
+      "type": "decimal",
+      "length": 17,
+      "precision": 38,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_openings",
+      "column": "product_name",
+      "type": "nvarchar",
+      "length": -1,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_openings",
+      "column": "sku",
+      "type": "nvarchar",
+      "length": -1,
+      "precision": 0,
+      "scale": 0,
+      "nullable": true
+    },
+    {
+      "table": "stock_history_openings",
+      "column": "barcode",
+      "type": "nvarchar",
+      "length": -1,
+      "precision": 0,
+      "scale": 0,
+      "nullable": true
+    },
+    {
+      "table": "stock_history_openings",
+      "column": "owner_store_id",
+      "type": "nvarchar",
+      "length": 256,
+      "precision": 0,
+      "scale": 0,
+      "nullable": true
+    },
+    {
+      "table": "stock_history_movements",
+      "column": "id",
+      "type": "uniqueidentifier",
+      "length": 16,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_movements",
+      "column": "operation_id",
+      "type": "uniqueidentifier",
+      "length": 16,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_movements",
+      "column": "product_id",
+      "type": "uniqueidentifier",
+      "length": 16,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_movements",
+      "column": "store_id",
+      "type": "nvarchar",
+      "length": 256,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_movements",
+      "column": "terminal_id",
+      "type": "nvarchar",
+      "length": 256,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_movements",
+      "column": "actor_id",
+      "type": "nvarchar",
+      "length": 256,
+      "precision": 0,
+      "scale": 0,
+      "nullable": true
+    },
+    {
+      "table": "stock_history_movements",
+      "column": "source_kind",
+      "type": "nvarchar",
+      "length": 40,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_movements",
+      "column": "quantity_delta",
+      "type": "decimal",
+      "length": 17,
+      "precision": 38,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_movements",
+      "column": "effective_at_raw",
+      "type": "nvarchar",
+      "length": 56,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_movements",
+      "column": "effective_ticks",
+      "type": "decimal",
+      "length": 13,
+      "precision": 20,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_movements",
+      "column": "recorded_at_raw",
+      "type": "nvarchar",
+      "length": 56,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_movements",
+      "column": "recorded_ticks",
+      "type": "decimal",
+      "length": 13,
+      "precision": 20,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_movements",
+      "column": "product_name",
+      "type": "nvarchar",
+      "length": -1,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_movements",
+      "column": "sku",
+      "type": "nvarchar",
+      "length": -1,
+      "precision": 0,
+      "scale": 0,
+      "nullable": true
+    },
+    {
+      "table": "stock_history_movements",
+      "column": "barcode",
+      "type": "nvarchar",
+      "length": -1,
+      "precision": 0,
+      "scale": 0,
+      "nullable": true
+    },
+    {
+      "table": "stock_history_movements",
+      "column": "clock_state",
+      "type": "nvarchar",
+      "length": 32,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_movements",
+      "column": "payload_hash",
+      "type": "char",
+      "length": 64,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_movements",
+      "column": "payload_json",
+      "type": "nvarchar",
+      "length": -1,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_movements",
+      "column": "author_proof_json",
+      "type": "nvarchar",
+      "length": -1,
+      "precision": 0,
+      "scale": 0,
+      "nullable": true
+    },
+    {
+      "table": "stock_history_movements",
+      "column": "upload_aggregate_id",
+      "type": "uniqueidentifier",
+      "length": 16,
+      "precision": 0,
+      "scale": 0,
+      "nullable": true
+    },
+    {
+      "table": "stock_history_movements",
+      "column": "ingested_cursor",
+      "type": "bigint",
+      "length": 8,
+      "precision": 19,
+      "scale": 0,
+      "nullable": true
+    },
+    {
+      "table": "stock_history_movements",
+      "column": "ingested_at",
+      "type": "datetimeoffset",
+      "length": 10,
+      "precision": 34,
+      "scale": 7,
+      "nullable": true
+    },
+    {
+      "table": "stock_history_movements",
+      "column": "local_cursor",
+      "type": "bigint",
+      "length": 8,
+      "precision": 19,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_source_cohorts",
+      "column": "id",
+      "type": "uniqueidentifier",
+      "length": 16,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_source_cohorts",
+      "column": "operation_id",
+      "type": "uniqueidentifier",
+      "length": 16,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_source_cohorts",
+      "column": "store_id",
+      "type": "nvarchar",
+      "length": 256,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_source_cohorts",
+      "column": "terminal_id",
+      "type": "nvarchar",
+      "length": 256,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_source_cohorts",
+      "column": "actor_id",
+      "type": "nvarchar",
+      "length": 256,
+      "precision": 0,
+      "scale": 0,
+      "nullable": true
+    },
+    {
+      "table": "stock_history_source_cohorts",
+      "column": "action",
+      "type": "nvarchar",
+      "length": 64,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_source_cohorts",
+      "column": "source_root",
+      "type": "char",
+      "length": 64,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_source_cohorts",
+      "column": "source_count",
+      "type": "int",
+      "length": 4,
+      "precision": 10,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_source_cohorts",
+      "column": "database_guid",
+      "type": "uniqueidentifier",
+      "length": 16,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_source_cohorts",
+      "column": "source_sequence",
+      "type": "bigint",
+      "length": 8,
+      "precision": 19,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_source_cohorts",
+      "column": "predecessor_root",
+      "type": "char",
+      "length": 64,
+      "precision": 0,
+      "scale": 0,
+      "nullable": true
+    },
+    {
+      "table": "stock_history_source_cohorts",
+      "column": "proof_json",
+      "type": "nvarchar",
+      "length": -1,
+      "precision": 0,
+      "scale": 0,
+      "nullable": true
+    },
+    {
+      "table": "stock_history_source_cohorts",
+      "column": "members_json",
+      "type": "nvarchar",
+      "length": -1,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_source_cohorts",
+      "column": "payload_hash",
+      "type": "char",
+      "length": 64,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_source_cohorts",
+      "column": "upload_aggregate_id",
+      "type": "uniqueidentifier",
+      "length": 16,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    },
+    {
+      "table": "stock_history_source_cohorts",
+      "column": "accepted_batch_id",
+      "type": "uniqueidentifier",
+      "length": 16,
+      "precision": 0,
+      "scale": 0,
+      "nullable": true
+    },
+    {
+      "table": "stock_history_source_cohorts",
+      "column": "accepted_transaction_id",
+      "type": "bigint",
+      "length": 8,
+      "precision": 19,
+      "scale": 0,
+      "nullable": true
+    },
+    {
+      "table": "stock_history_source_cohorts",
+      "column": "accepted_at",
+      "type": "datetimeoffset",
+      "length": 10,
+      "precision": 34,
+      "scale": 7,
+      "nullable": true
+    },
+    {
+      "table": "stock_history_source_cohorts",
+      "column": "recorded_at_raw",
+      "type": "nvarchar",
+      "length": 56,
+      "precision": 0,
+      "scale": 0,
+      "nullable": false
+    }
+  ]
+}

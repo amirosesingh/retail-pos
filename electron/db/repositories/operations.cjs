@@ -52,9 +52,10 @@ function columnValueForSql(table, name, value) {
 }
 
 class OperationsRepository {
-  constructor(connectionManager, registry = loadRegistry()) {
+  constructor(connectionManager, registry = loadRegistry(), {stockHistory=null}={}) {
     this.connectionManager = connectionManager;
     this.registry = registry;
+    this.stockHistory = stockHistory;
     this.tables = new Map((registry.tables ?? []).map((table) => [table.sqlServerTable, table]));
     this.cloudTables = new Map((registry.tables ?? []).map((table) => [table.cloudTable, table]));
   }
@@ -186,8 +187,13 @@ class OperationsRepository {
         await transaction.commit();
         return {ok:true,context:String(context ?? "").slice(0,160),affected:0,replayed:true};
       }
+      const history=this.stockHistory?await this.stockHistory.begin(transaction,ops,{
+        operationId:require('node:crypto').randomUUID(),branchId:scope.branchId,terminalId:scope.terminalId,
+        actorId:scope.activityOperator?.subject,kind:scope.productWriteKind??'general',
+      }):null;
       for (const op of ops) affected += await this.applyOperation(transaction, op, scope);
       if (beforeCommit) await beforeCommit(transaction, ops);
+      if(this.stockHistory)await this.stockHistory.finish(transaction,history);
       finalize();
       await transaction.commit();
       return { ok: true, context: String(context ?? "").slice(0, 160), affected };

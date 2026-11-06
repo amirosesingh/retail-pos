@@ -155,7 +155,7 @@ export function SystemStatusBadge({
               <div className="flex justify-between gap-3">
                 <dt className="text-muted-foreground">Synchronization</dt>
                 <dd className="font-medium">
-                  {status.syncing ? (status.syncPhase === "pulling" ? "Receiving updates" : "Sending updates") : status.lastError ? "Needs attention" : status.pending ? "Waiting to send" : status.lastSyncAt ? "Up to date" : "Waiting for first sync"}
+                  {status.syncing ? (status.syncPhase === "pulling" ? "Receiving updates" : "Sending updates") : status.lastError || status.failed ? "Needs attention" : status.pending ? "Waiting to send" : status.lastSyncAt ? "Up to date" : "Waiting for first sync"}
                 </dd>
               </div>
               <div className="flex justify-between gap-3">

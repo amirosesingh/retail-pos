@@ -1,6 +1,6 @@
 const { stableUuid }=require("./aggregates.cjs");
 class ReceiptRepository{
- constructor(connectionManager,cloud,{financialOperations=null}={}){this.connectionManager=connectionManager;this.cloud=cloud;this.financialOperations=financialOperations;}
+ constructor(connectionManager,cloud,{financialOperations=null,stockHistory=null}={}){this.connectionManager=connectionManager;this.cloud=cloud;this.financialOperations=financialOperations;this.stockHistory=stockHistory;}
  async aggregate(sale){const [items,payments]=await Promise.all([this.connectionManager.pool.request().input("sale",sale.id).query("SELECT * FROM dbo.sale_items WHERE sale_id=@sale ORDER BY created_at,id;"),this.connectionManager.pool.request().input("sale",sale.id).query("SELECT * FROM dbo.payment_transactions WHERE sale_id=@sale ORDER BY created_at,id;")]);return{sale,items:items.recordset??[],payments:payments.recordset??[]};}
  async materialize(remote,branchId){if(!remote?.sale||String(remote.sale.store_id)!==String(branchId))throw Object.assign(new Error("The receipt does not belong to this branch."),{code:"ERECEIPT_BRANCH"});const registry=require("../schema-registry.cjs").loadRegistry();const byName=new Map(registry.tables.map(table=>[table.cloudTable,table]));const sql=this.connectionManager.sql();const tx=new sql.Transaction(this.connectionManager.pool);await tx.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);try{if(remote.sale.corrected_at){await new sql.Request(tx).input("sale",remote.sale.id).input("version",Number(remote.sale.row_version??0)).input("ids",JSON.stringify((remote.items??[]).map(item=>item.id))).query("IF EXISTS(SELECT 1 FROM dbo.sales WITH(UPDLOCK,HOLDLOCK) WHERE id=@sale AND (row_version>@version OR is_refunded=1)) THROW 51024,'Sync the local refund or newer bill before refreshing its correction.',1; WITH CHANGE_TRACKING_CONTEXT (0x434C4F5544) DELETE FROM dbo.sale_items WHERE sale_id=@sale AND CONVERT(nvarchar(36),id) NOT IN (SELECT value FROM OPENJSON(@ids));");}for(const [name,rows] of [["sales",[remote.sale]],["sale_items",remote.items??[]],["payment_transactions",remote.payments??[]]]){if(rows.length)await this.cloud.applyLocalBatch(tx,byName.get(name),{rows:rows.map(row=>({row_data:row})),tombstones:[]});}await tx.commit();}catch(error){await Promise.resolve(tx.rollback()).catch(()=>undefined);throw error;}}
  async findExact(value,branchId,proof={}){const result=await this.connectionManager.pool.request().input("value",value).input("branch",branchId).query(`SELECT TOP(1)* FROM dbo.sales WHERE store_id=@branch AND (CONVERT(nvarchar(128),id)=@value OR bill_number=@value OR CONVERT(nvarchar(128),client_transaction_id)=@value);`);if(result.recordset?.[0]&&!proof.refresh)return{source:"local",...await this.aggregate(result.recordset[0])};let remote;try{remote=await this.cloud.oldReceipt(value,branchId,proof);}catch(error){const denied=["PERMISSION_DENIED","SESSION_INVALID","STORE_FORBIDDEN"].includes(error?.code);throw Object.assign(new Error(denied?String(error.message):"This receipt is outside local history. Connect to the internet to retrieve and refund it."),{code:denied?error.code:"EONLINE_REQUIRED",cause:error});}if(!remote)return null;await this.materialize(remote,branchId);return{source:"cloud",...remote};}
@@ -33,6 +33,15 @@ class ReceiptRepository{
    if(financialToken)financial.assertCurrent(tx,financialToken);
    if(saleResult.recordset[0].is_refunded)throw Object.assign(new Error("This receipt has already been refunded."),{code:"EALREADY"});
    const items=await new sql.Request(tx).input("sale",saleId).query("SELECT id,product_id,quantity,COALESCE(refunded_qty,0) refunded_qty FROM dbo.sale_items WITH(UPDLOCK,HOLDLOCK) WHERE sale_id=@sale ORDER BY id;");
+   const stockScope=this.stockHistory?.readContext?.();
+   const stockCapture=this.stockHistory?await this.stockHistory.begin(tx,(items.recordset??[]).filter(item=>item.product_id).flatMap(item=>[
+    {kind:'update',table:'products',match:{id:item.product_id},values:{stock_quantity:0}},
+    // These are evidence references only. The existing refund loop below still
+    // owns every actual quantity/write/idempotency decision in this transaction.
+    {kind:'insert',table:'stock_delta_applied',rows:[{movement_id:stableUuid({refundId,itemId:item.id}),product_id:item.product_id,store_id:branchId}]},
+   ]),{
+    operationId,branchId,terminalId:stockScope?.terminalId??financialContext?.terminalId,actorId:stockScope?.actorId,kind:'refund',
+   }):null;
    const journal=async(table,key,operation="update")=>new sql.Request(tx).input("entity",table).input("entity_id",JSON.stringify(key)).input("operation",operation).input("branch",branchId).input("aggregate",operationId).query("INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id,entity_version,aggregate_id) VALUES(@entity,@entity_id,@operation,@branch,1,@aggregate);");
    for(const item of items.recordset??[]){const qty=Math.max(0,Number(item.quantity)-Number(item.refunded_qty));if(!qty)continue;
     await new sql.Request(tx).input("id",item.id).input("qty",qty).query("UPDATE dbo.sale_items SET refunded_qty=COALESCE(refunded_qty,0)+@qty,row_version=COALESCE(row_version,0)+1 WHERE id=@id;");
@@ -42,6 +51,7 @@ class ReceiptRepository{
    }
    await new sql.Request(tx).input("sale",saleId).query("UPDATE dbo.sales SET is_refunded=1,row_version=COALESCE(row_version,0)+1 WHERE id=@sale;");
    await journal("sales",{id:saleId});
+   if(this.stockHistory)await this.stockHistory.finish(tx,stockCapture);
    if(financialToken){await financial.finalizeMutation(tx,financialToken);financial.assertCurrent(tx,financialToken);}
    await new sql.Request(tx).input("refund",operationId).input("sale",saleId).input("reason",reason).query("INSERT dbo.local_operation_receipts(operation_id,operation_type,entity_id,note) VALUES(@refund,'refund',CONVERT(nvarchar(128),@sale),@reason);");
    if(financialToken)financial.assertCurrent(tx,financialToken);

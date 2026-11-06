@@ -2125,6 +2125,18 @@ function registerIpc() {
     const snapshot = await operationsRepository.snapshot(authorizedLocalBranch(), terminalStore.read()?.tokenId ?? null, { salesOnly: options?.salesOnly === true, onProgress: (progress) => { if (!_e.sender.isDestroyed()) _e.sender.send("business:read-progress", progress); } });
     return require("./read-snapshot-policy.cjs").filterSnapshot({ ...snapshot, shifts: (snapshot.shifts ?? []).map(redactShiftRow) }, adminSession);
   }));
+  require("./stock-history-ipc.cjs").registerStockHistoryRead({
+    ipcMain, manager:databaseManager, session:adminSession, terminal:()=>terminalStore.read(),
+    branch:()=>authorizedLocalBranch(), context:()=>[authorizationServerUrl(),cloudCredentials.read()?.url],
+    isPosSender:event=>event.sender===mainWindow?.webContents&&event.senderFrame===event.sender.mainFrame,
+  });
+  // This stays unavailable until the reviewed original-source runtime is
+  // activated. An installed optional schema alone is not capture readiness.
+  require("./stock-arrival-ipc.cjs").registerStockArrivalCapability({
+    ipcMain,manager:databaseManager,session:adminSession,terminal:()=>terminalStore.read(),branch:()=>authorizedLocalBranch(),
+    context:()=>[authorizationServerUrl(),cloudCredentials.read()?.url],
+    isPosSender:event=>event.sender===mainWindow?.webContents&&event.senderFrame===event.sender.mainFrame,
+  });
   ipcMain.handle("business:management-report", (_e, options) => guard.guarded(async () => {
     try {
       const safe = guard.options(options, { name: "management report", max: 10 });
