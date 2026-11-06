@@ -21,6 +21,6 @@ describe("three-product ownership-only recovery artifact", () => {
     const output=execFileSync(process.execPath,["scripts/test-three-product-ownership-repair.mjs"],{
       encoding:"utf8",windowsHide:true,timeout:95000,maxBuffer:1024*1024,
     });
-    expect(output).toContain("PASS 24 isolated ownership3");
+    expect(output).toContain("PASS 25 isolated ownership3");
   },100000);
 });

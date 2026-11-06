@@ -76,6 +76,7 @@ BEGIN
   END LOOP;
   IF (SELECT count(*) FROM public.item_activity_logs a WHERE a.product_id IN (SELECT (v->>'id')::uuid FROM jsonb_array_elements(manifest) v))<>6 OR
      (SELECT count(*) FROM public.stock_delta_applied d WHERE d.product_id IN (SELECT (v->>'id')::uuid FROM jsonb_array_elements(manifest) v))<>6 THEN RAISE EXCEPTION 'OWNERSHIP3_SOURCE_PROOF_CHANGED';END IF;
+  IF EXISTS(SELECT 1 FROM public.purchase_order_items i JOIN public.purchase_orders po ON po.id=i.po_id WHERE i.product_id IN (SELECT (v->>'id')::uuid FROM jsonb_array_elements(manifest) v) AND po.store_id IS DISTINCT FROM branch) THEN RAISE EXCEPTION 'OWNERSHIP3_COMPETING_RECEIVING';END IF;
   -- Revalidate provenance instead of assigning products solely from stock state.
   IF EXISTS(SELECT 1 FROM public.products p JOIN jsonb_array_elements(manifest) m ON p.id=(m->>'id')::uuid WHERE p.stock_quantity IS DISTINCT FROM 0 OR p.stock_by_store IS DISTINCT FROM jsonb_build_object(branch,0) OR p.stock_by_store IS DISTINCT FROM public.canonical_stock_by_store(p.stock_by_store) OR p.catalogue_store_ids IS DISTINCT FROM public.received_product_catalogue_stores(p.id) OR p.deleted_at IS NOT NULL OR NOT EXISTS(SELECT 1 FROM public.sale_items i JOIN public.sales s ON s.id=i.sale_id WHERE i.product_id=p.id AND s.store_id=branch) OR EXISTS(SELECT 1 FROM public.sale_items i JOIN public.sales s ON s.id=i.sale_id WHERE i.product_id=p.id AND s.store_id IS DISTINCT FROM branch)) THEN RAISE EXCEPTION 'OWNERSHIP3_PROVENANCE_CHANGED';END IF;
   IF NOT replay THEN

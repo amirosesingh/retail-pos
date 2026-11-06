@@ -93,6 +93,7 @@ try{
   ['missing accepted deduction',`DELETE FROM stock_delta_applied WHERE movement_id='${provenance[0].sale}'`,/SOURCE_PROOF_CHANGED/],
   ['unposted original receiving',`UPDATE purchase_orders SET status='draft'`,/SOURCE_PROOF_CHANGED/],
   ['changed receiving quantity',`UPDATE purchase_order_items SET quantity_received=2`,/SOURCE_PROOF_CHANGED/],
+  ['competing foreign receiving',`INSERT INTO purchase_orders VALUES('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee','10000000-0000-4000-8000-000000000011','SYNTHETIC-FOREIGN-RECEIVE','posted');INSERT INTO purchase_order_items VALUES('ffffffff-ffff-4fff-8fff-ffffffffffff','eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee','${manifest[0].id}',1);`,/COMPETING_RECEIVING/],
   ['branch cluster',`UPDATE stores SET group_id='foreign' WHERE id='${branch}'`,/BRANCH_CHANGED/],
   ['disabled trigger','ALTER TABLE products DISABLE TRIGGER products_row_version',/TRIGGER_CHANGED/],
   ['altered function',"ALTER FUNCTION public.products_bump_row_version() SET statement_timeout='1s'",/ROUTINE_CHANGED/],

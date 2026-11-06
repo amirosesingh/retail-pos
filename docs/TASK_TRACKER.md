@@ -6525,3 +6525,15 @@ guard changing only that assignment, test actual captured routine/denied scopes,
 and present its exact migration/hash separately with the three-row repair.
 No routine, grant, schema or business row has been changed live. Apply protection
 before any approved owner repair; abort unknown source or metadata.
+
+SYNC79 verification checkpoint:25 captured-trigger PGlite +26 actual native
+PostgreSQL repair scenarios pass, including competing foreign receiving, exact
+replay/rollback and real lock contention. Actual CloudClient/PullWorker/PushWorker
+SQL Server adoption passes6 groups with exact archive timestamps and protected
+pending edits. Owner-retention guard passes61 PGlite +61 native cases,29 existing
+checks and independent review; TypeScript/lint pass. Required first upgrade SHA
+5669C64B22FDFE3ADDDBCE7DCBDE807EABB5099655626CD1E68C9EEE5A98CB35;
+three-row repair SHA E6F3D4C4C3C36D7A2ADF1E200338CF236DCDFB4F014870BF0DA5574D484CBAB0.
+No live migration or repair has run. Exact-head CI, owner application approval
+and real normal-sync adoption remain. History count/feed gap is separately
+prepared; no claim of all-table convergence or production readiness.
