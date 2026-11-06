@@ -8,7 +8,8 @@ import { pageForRoute, pageEnabled } from "../permission-pages";
 import { canSeeNavigationItem, routePermissionForPath } from "@/platforms/web/components/pos/nav-config";
 import { shouldOpenRegister } from "../terminal-workspace";
 const fixture = vi.hoisted(() => ({ permissions: {} as Record<string, boolean>, hidden: [] as string[], desktop: false, products: [] as Product[], ready: true, sales: [] as Sale[], loading: false, error: "" }));
-vi.mock("@/lib/pos-auth", () => ({ useAuth: () => ({ isAdmin: false, isSupervisor: false, isWarehouse: false, can: (key: string) => fixture.permissions[key] === true }) }));
+vi.mock("@/lib/page-data-cache",()=>({pageDataScope:(user:{staffId?:string;permissions?:unknown})=>[user.staffId,user.permissions]}));
+vi.mock("@/lib/pos-auth", () => ({ useAuth: () => ({ ready:true,user:{staffId:"cashier",role:"cashier",permissions:fixture.permissions},isAdmin: false, isSupervisor: false, isWarehouse: false, can: (key: string) => fixture.permissions[key] === true }) }));
 vi.mock("@/lib/pos-store", () => ({ usePos: () => ({ ready: fixture.ready, loadPhase: fixture.ready ? "ready" : "loading", currentStore: { id: "branch-a", name: "Branch A" }, state: { sales: [], products: fixture.products, stores: [{ id: "branch-a", groupId: "shoes" }, { id: "branch-b", groupId: "clothes" }], transfers: [], settings: { integrations: {} } } }) }));
 vi.mock("@/lib/management-device", () => ({ isManagementDevice: () => false }));
 vi.mock("@/platform-config/platform", () => ({ isElectron: () => fixture.desktop }));
@@ -106,7 +107,7 @@ describe("restricted Retail workspace", () => {
     expect(free).toContain("Today&#x27;s bills");
     expect(free).not.toContain("Today&#x27;s revenue");
   });
-  it("keeps loading and failed trading summaries visible rather than claiming zero activity", () => {
+  it("keeps loading and failure status outside hidden unconfirmed trading cards", () => {
     fixture.permissions.can_view_sales_reports = true;
     fixture.loading = true;
     expect(renderToStaticMarkup(h(TerminalWorkspaceHome))).toContain("Updating…");
@@ -151,7 +152,7 @@ describe("restricted Retail workspace", () => {
     fixture.products = [];
     const loading = renderToStaticMarkup(h(TerminalWorkspaceHome));
     expect(loading).toContain("Loading branch inventory");
-    expect(loading).toContain("Loading…");
+    expect(loading).not.toContain("Explain low-stock figures");
   });
   it("renders the cashier selling link without exposing revenue or reporting actions", () => {
     const html = renderToStaticMarkup(h(TerminalWorkspaceHome));

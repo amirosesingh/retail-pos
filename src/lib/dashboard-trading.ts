@@ -8,8 +8,9 @@ export function dashboardDailyTrading(
   from: string,
   to: string,
   includeSponsorship: boolean,
+  grain: "daily" | "monthly" = "daily",
 ) {
-  const monthly = (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000 >= 731;
+  const monthly = grain === "monthly" || (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000 >= 731;
   const key = (day: string) => monthly ? day.slice(0, 7) : day;
   const buckets = new Map<string, { sales: number; sponsorship: number }>();
   if (!monthly) for (let day = from, count = 0; day <= to && count <= 731; day = shiftCalendarDay(day, 1), count++) buckets.set(day, { sales: 0, sponsorship: 0 });

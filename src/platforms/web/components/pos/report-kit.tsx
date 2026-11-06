@@ -32,6 +32,7 @@ import {
 import { SlidersHorizontal } from "lucide-react";
 import { ANALYTICS_COLORS, type AnalyticsTone } from "@/lib/analytics-design";
 import { FinancialInfoTip } from "./FinancialInfo";
+import { hasSummaryMetric } from "@/lib/summary-metric-visibility";
 
 export function ReportFilters({
   children,
@@ -281,13 +282,18 @@ export function StatCard({
   hint,
   tone,
   info,
+  metricValue,
+  moneyValue = false,
 }: {
   label: string;
   value: string;
   hint?: string;
   tone?: AnalyticsTone;
   info?: ReactNode;
+  metricValue?: number;
+  moneyValue?: boolean;
 }) {
+  if (metricValue !== undefined && !hasSummaryMetric(metricValue, moneyValue)) return null;
   return (
     <div
       className="summary-card report-stat min-w-0 rounded-2xl border border-border bg-card p-5"

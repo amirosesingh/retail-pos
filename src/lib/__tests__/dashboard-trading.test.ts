@@ -21,3 +21,10 @@ it("groups long chart selections by month instead of losing records after the ol
   const result = dashboardDailyTrading([sale(10, "2022-01-01T12:00:00Z"), sale(20, "2026-10-26T12:00:00Z")], [], "2022-01-01", "2026-10-26", false);
   expect(result).toEqual([{ day: "2022-01", sales: 10, sponsorship: 0, total: 10 }, { day: "2026-10", sales: 20, sponsorship: 0, total: 20 }]);
 });
+
+it("monthly display grouping preserves existing sales and sponsorship sums without changing default daily results",()=>{
+  setPosTimeZone("UTC");const sales=[sale(10,"2026-10-31T12:00:00Z"),sale(20,"2026-11-01T12:00:00Z")];
+  const sponsors=[{day:"2026-11-01",value:7}];
+  expect(dashboardDailyTrading(sales,sponsors,"2026-10-31","2026-11-01",true,"monthly")).toEqual([{day:"2026-10",sales:10,sponsorship:0,total:10},{day:"2026-11",sales:20,sponsorship:7,total:27}]);
+  expect(dashboardDailyTrading(sales,sponsors,"2026-10-31","2026-11-01",true,"daily")).toEqual(dashboardDailyTrading(sales,sponsors,"2026-10-31","2026-11-01",true));
+});
