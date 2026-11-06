@@ -1,3 +1,6 @@
+import { useAuth } from "@/lib/pos-auth";
+import { pageDataScope } from "@/lib/page-data-cache";
+import { useConfirmedPresentation } from "@/lib/use-confirmed-presentation";
 import { reportSponsorshipStores, receiptAdjustmentLabel } from "@/lib/report-display";
 import { FinancialBreakdown, FinancialInfoTip, SalesTotalInfo } from "@/platforms/web/components/pos/FinancialInfo";
 import {useSponsorshipTotals} from "@/lib/use-sponsorship-totals";
@@ -13,7 +16,7 @@ import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/compon
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { money, usePos } from "@/lib/pos-store";
 import { salesReconciliation } from "@/lib/sales-reconciliation";
-import { SummaryCardRail } from "@/platforms/web/components/pos/SummaryCardRail";
+import { ConfirmedMetricCards } from "@/platforms/web/components/pos/ConfirmedMetricCards";
 import { paymentsLabel, methodLabel } from "@/core/types/pos-types";
 import { useReportSales } from "@/lib/use-report-sales";
 import {
@@ -51,7 +54,8 @@ function SalesReportPage() {
 }
 
 export function BillsReport() {
-  const { state, stores } = usePos();
+  const { state, stores, currentStore } = usePos();
+  const { ready: authReady, user } = useAuth();
   const init = defaultRange();
   const { from, setFrom, to, setTo, storeId, cashier, q } = useSalesReportFilters(init);
   const shared = useSalesReportContext();
@@ -66,6 +70,9 @@ export function BillsReport() {
   const includeSponsorship=state.settings.integrations.includeSponsorshipInDailySales===true;
   const sponsorship=useSponsorshipTotals(reportSponsorshipStores(storeId,stores.map(store=>store.id),shared?.reportStoreIds),from,to,includeSponsorship&&cashier==="all"&&!q);
   const showSponsorship=includeSponsorship&&cashier==="all"&&!q;
+  const sponsorshipScope = authReady && user && showSponsorship ? JSON.stringify([pageDataScope(user),currentStore.id,from,to,storeId,shared?.reportStoreIds ?? stores.map(store=>store.id).sort()]) : null;
+  const confirmedSponsorship = useConfirmedPresentation(sponsorshipScope,sponsorship.total,!sponsorship.loading&&!sponsorship.error);
+
   const products = useMemo(
     () => new Map(state.products.map((product) => [product.id, product])),
     [state.products],
@@ -132,17 +139,18 @@ export function BillsReport() {
         ) : null}
         {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
-        {!history.loading && !history.error && <SummaryCardRail label="Sales report totals">
+        <ConfirmedMetricCards label="Sales report totals" scope={JSON.stringify([from,to,storeId,cashier,q,showSponsorship,shared?.reportStoreIds ?? stores.map(store=>store.id).sort()])} ready={!history.loading && !history.error}>
           {totals.bills !== 0 && <SalesStatCard label="Completed bills" value={String(totals.bills)} />}
-          {showSponsorship && !sponsorship.loading && !sponsorship.error && sponsorship.total > 0 && <>
-            <SalesStatCard label="Sales value with sponsorship · not collections" value={money(totals.collected + sponsorship.total)} info={<SalesTotalInfo totals={totals} adjustmentLabel={receiptAdjustmentLabel(rows)} sponsorshipValue={sponsorship.total} />} />
-            <SalesStatCard label="Sponsorship value included" value={money(sponsorship.total)} info={<FinancialBreakdown rows={[["Sponsorship value", money(sponsorship.total)]]}><p>Included under the saved daily-sales policy. Stock value is separate from customer payments.</p></FinancialBreakdown>} />
+          {showSponsorship && confirmedSponsorship !== null && confirmedSponsorship > 0 && <>
+            <SalesStatCard label="Sales value with sponsorship · not collections" value={money(totals.collected + confirmedSponsorship)} info={<SalesTotalInfo totals={totals} adjustmentLabel={receiptAdjustmentLabel(rows)} sponsorshipValue={confirmedSponsorship} />} />
+            <SalesStatCard label="Sponsorship value included" value={money(confirmedSponsorship)} info={<FinancialBreakdown rows={[["Sponsorship value", money(confirmedSponsorship)]]}><p>Included under the saved daily-sales policy. Stock value is separate from customer payments.</p></FinancialBreakdown>} />
           </>}
           {Math.abs(totals.net) >= 0.005 && <SalesStatCard label="Net sales before receipt adjustments (ex tax)" value={money(totals.net)} info={<SalesTotalInfo totals={totals} adjustmentLabel={receiptAdjustmentLabel(rows)} />} />}
           {Math.abs(totals.collected) >= 0.005 && <SalesStatCard label="Total collected · without sponsorship" value={money(totals.collected)} info={<SalesTotalInfo totals={totals} adjustmentLabel={receiptAdjustmentLabel(rows)} />} />}
           {Math.abs(totals.discounts) >= 0.005 && <SalesStatCard label="Discounts given" value={money(totals.discounts)} info={<SalesTotalInfo totals={totals} adjustmentLabel={receiptAdjustmentLabel(rows)} />} />}
           {Math.abs(totals.tax) >= 0.005 && <SalesStatCard label="Tax collected" value={money(totals.tax)} info={<SalesTotalInfo totals={totals} adjustmentLabel={receiptAdjustmentLabel(rows)} />} />}
-        </SummaryCardRail>}
+        </ConfirmedMetricCards>
+        {showSponsorship && sponsorship.loading && <p role="status" className="text-sm text-muted-foreground">Sponsorship values are loading; customer payment totals are shown separately.</p>}
         {showSponsorship && sponsorship.error && <p role="alert" className="text-sm text-destructive">Sponsorship values could not be refreshed. Customer payment totals are shown separately.</p>}
 
         <div className="rounded-2xl border border-border bg-card">

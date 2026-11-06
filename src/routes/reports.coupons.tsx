@@ -1,3 +1,4 @@
+import { ConfirmedMetricCards } from "@/platforms/web/components/pos/ConfirmedMetricCards";
 import { ReportTable as Table } from "@/platforms/web/components/pos/report-kit";
 import { ReportReceiptLink } from "@/platforms/web/components/pos/ReportReceiptLink";
 import { createFileRoute } from "@tanstack/react-router";
@@ -11,7 +12,7 @@ import { ThemedSelect } from "@/platforms/web/components/pos/ThemedSelect";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TablePagination, usePagination } from "@/platforms/web/components/pos/TablePagination";
 import { money, usePos } from "@/lib/pos-store";
-import { useAuditLogs } from "@/lib/audit-log";
+import { useAuditHistoryPresentation, useAuditLogs } from "@/lib/audit-log";
 import { useReportSales } from "@/lib/use-report-sales";
 import {
   ReportHeader,
@@ -59,6 +60,7 @@ const UNATTRIBUTED = "Unattributed";
 function CouponReport() {
   const { state, stores } = usePos();
   const logs = useAuditLogs();
+  const auditWitness = useAuditHistoryPresentation();
   const init = defaultRange();
   const [from, setFrom] = useState(init.from);
   const [to, setTo] = useState(init.to);
@@ -299,15 +301,15 @@ function CouponReport() {
         ) : null}
         {history.error ? <p className="text-sm text-destructive">{history.error}</p> : null}
 
-        <div className="summary-grid grid gap-4 sm:grid-cols-3">
-          <StatCard label="Coupon events" value={String(rows.length)} />
-          <StatCard label="Coupons redeemed" value={String(redeemed.length)} />
+        <ConfirmedMetricCards label="Coupon report totals" scope={JSON.stringify([from,to,codeQuery,partner,scope,status,staff,store,reportStoreIds.slice().sort()])} ready={!history.loading && !history.error} auditWitness={auditWitness}>
+          <StatCard label="Coupon events" metricValue={rows.length} value={String(rows.length)} />
+          <StatCard label="Coupons redeemed" metricValue={redeemed.length} value={String(redeemed.length)} />
           <StatCard
-            label="Value given away"
+            label="Value given away" metricValue={redeemed.reduce((a,r)=>a+r.value,0)} moneyValue
             value={money(redeemed.reduce((a, r) => a + r.value, 0))}
             hint={partner === ALL ? "Across every partner" : `Partner: ${partner}`}
           />
-        </div>
+        </ConfirmedMetricCards>
 
         {byCode.length > 0 && (
           <div className="rounded-2xl border border-border bg-card">

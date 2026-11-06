@@ -13,17 +13,17 @@ export function comparisonShopSeries(directory: readonly ComparisonShop[]) {
     .filter(([id]) => id).sort(([a], [b]) => a.localeCompare(b));
   const names = new Map<string, number>();
   for (const [, shop] of shops) names.set(shop.name, (names.get(shop.name) ?? 0) + 1);
-  return shops.map(([id, shop], index) => {
-    // Identity alone determines color. Resolving collisions against a filtered
-    // directory would recolor a branch between Dashboard and the company Board.
-    let hash = 2166136261;
-    for (const char of `branch:${id}`) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
-    hash ^= hash >>> 16; hash = Math.imul(hash, 0x7feb352d);
-    hash ^= hash >>> 15; hash = Math.imul(hash, 0x846ca68b); hash ^= hash >>> 16;
-    const hue = ((hash >>> 0) % 3600000) / 10000;
-    const color = `oklch(var(--analytics-category-lightness) 0.2 ${hue})`;
-    return { id, name: (names.get(shop.name) ?? 0) > 1 ? `${shop.name} · ${id}` : shop.name, key: `shop${index}`, color };
-  });
+  // Allocate the full authorized directory before filtering. Twelve categorical
+  // hue families avoid adjacent hash shades; larger directories retain all
+  // series and use labels/dashes. Membership changes can change assignments.
+  const hues = [255, 45, 135, 315, 195, 15, 105, 285, 165, 345, 75, 225];
+  const color = (index: number) => `oklch(var(--analytics-category-lightness) 0.18 ${hues[index % hues.length]})`;
+  const dash = (index: number) => index < hues.length ? undefined : ["8 3", "2 3", "8 3 2 3", "14 3"][(Math.floor(index / hues.length) - 1) % 4];
+  return shops.map(([id, shop], index) => ({ id,
+    name: (names.get(shop.name) ?? 0) > 1 ? `${shop.name} · ${id}` : shop.name,
+    key: `shop${index}`, color: color(index), profitColor: color(index + (shops.length % hues.length || 1)),
+    revenueDash: dash(index), profitDash: dash(index + shops.length),
+  }));
 }
 
 export type StoreHourRow = { store_id: string; hour: number; bills: number; revenue: number; cost: number; profit: number };
