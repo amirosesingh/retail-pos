@@ -41,6 +41,34 @@ The shared hourly-chart wording now says reported item cost, matching the
 preserved unit-cost/current-product-cost fallback. Queries, calculations and DB
 objects are unchanged. Final beta PR CI/deployed acceptance remain separate.
 
+## 6 November — SQL73 existing-PC stock-history bundle preparation
+
+Owner requires ONE existing-data PC SQL upgrade file for the upcoming approved
+stock report, without replaying the installer or damaging production records.
+Prepare in separate codex/existing-stock-history-upgrade-beta from beta99064909.
+This supersedes SQL72's temporary031 exclusion only AFTER the STOCK401 writer
+explicitly freezes its reviewed031 source/shape; do not pin or ship the current
+unfinished draft. Existing025–030 artifact090F2403…A4730 remains unchanged and
+valid for its reviewed scope. No live SQL, installer publication or promotion.
+
+Plan: preserve the current schema24/core hash guard, known installed025–030
+recognition and source hashes; append the frozen031 metadata as the final module
+in the same owned transaction/maintenance lock. Capture its exact table, column,
+constraint/index/FK/trigger/owner shapes on a uniquely owned LocalDB fixture,
+verify runtime schema parity, then generate the single file. Fresh/unknown core,
+partial/unknown031 shapes or changed sources abort; recognized reruns preserve
+all populated metadata and business values. No stock openings/backfill/activation,
+permissions, settings, queue/checkpoint or registration changes are authorized.
+
+Preparation inspection found a packaging gap: an extra031 entry in the manifest
+is currently ignored and still emits the025–030 hash. Require exact source/module
+set and ordering before generation so a future manifest cannot silently omit its
+last upgrade. This support-only correction does not change the existing SQL
+artifact. Focus on new031 append success/idempotence/partial-shape/late rollback
+and populated-data/grant preservation once frozen; do not rerun unchanged32
+SQL72 cases without a relevant change. No final artifact PR until concrete031 is
+reviewable; exact file hash and actual PC/server/database approval before use.
+
 ## 6 November — CHART72 approved implementation
 
 Resume the approved chart consistency batch from clean beta3074a475 in separate
@@ -6365,3 +6393,13 @@ of backend admission; the existing branch/authority regressions remain required.
 No browser exceptions, remote requests or full-document reloads occurred.
 Final exact-head CI and beta integration remain; actual SQL, registration,
 checkout data, pending work and Membership were untouched.
+
+SQL73 support checkpoint: only the packager's manifest-set/order validation and
+its focused test changed; all11 packaging tests, exact existing-artifact--check,
+scoped lint and diff checks pass. Existing file SHA090F2403…A4730 is unchanged.
+No031 draft was copied, no fresh manifest/artifact emitted and no old32 engine
+cases rerun. The STOCK401 writer confirms031 remains unstable (publisher/cohort/
+watermark details may change); final runtime preflight and populated-history
+fixture seed are requested at freeze. Next: capture and test that frozen source
+within the existing assembler, then create the concrete one-file beta PR.
+No operator SQL, configuration, queue/checkpoint or permission changes occurred.
