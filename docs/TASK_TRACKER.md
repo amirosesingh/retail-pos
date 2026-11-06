@@ -34,6 +34,30 @@ existing contracts and send the exact proposed files/protocol/risks before code.
 All live DDL/application remains separately approved. Do not enable unreviewed
 mutable history apply/delete helpers or change deferred audit privacy/Membership.
 
+## 6 November — COUNT80 count-artifact line-ending correction
+
+Separate beta correction from c77beecc after merged COUNT79 reproduced
+HISTORY_COUNT_UNEXPECTED_CHANGE on a fresh Windows CRLF checkout. Its multiline
+new_select dollar literal embedded the checkout's CRLF bytes while the unchanged
+new-body hash correctly required the reviewed LF replacement; the transaction
+rolled back. No live count migration has run. Keep its existing filename, exact
+old-source/metadata guards and f5a899 new-body hash. Construct only the replacement
+from single-line literals joined by explicit LF characters. Test the complete
+captured-definition scenario group using both LF and CRLF artifact bytes, including
+cross-format replay and denied/source-drift/rollback parity on PGlite and native
+PostgreSQL. Inspect all other hash-sensitive literals for checkout dependence.
+No source variants, hash relaxation, live schema/data changes or deployment.
+
+Verification: complete21-scenario groups pass with LF and CRLF artifact bytes in
+both PGlite and native PostgreSQL18.6, including cross-format replay. Focused
+Vitest/canonical inventory31 passed. Other guarded old/new/history/sources dollar
+literals are single-line and explicitly checked. The prepared committed-LF-file
+SHA256 is now731375F0F4E03520A7C648DFE790FF05AC97FA455A57CF1E3032B0D0748B9DF7;
+this supersedes COUNT79's288F artifact bytes, not its unchanged reviewed f5a899
+resulting routine body. Exact-head CI, fresh preflight and exact-target database
+application approval remain separate; no live count migration has run. Root's
+independent source review passed the exact four-file correction before commit.
+
 ## 6 November — COUNT79 complete the existing history-count contract
 
 Separate preparation-only branch from beta0b6f00b1. Actual Electron's normal feed
@@ -6573,3 +6597,96 @@ scope. Full Windows run:6167 passed/10 skipped, with sandboxed workerd startup
 and a CRLF-only test assertion failing. The three isolated suites reran24/24
 outside the process sandbox after normalizing both compared test strings; no
 migration bytes changed. Final merged-tree CI and local runtime acceptance remain.
+# SYNC79 — three retained product projections, 6 November
+
+Owner approves using the existing event/acknowledgement/baseline approach,
+agent investigation, repair preparation and resumed Electron verification.
+Exact live changes must be presented before application; no new live repair is
+approved yet. Baseline beta0b6f00b1. Preserve checkout, permissions, offline work,
+all unrelated features and Membership hold. Historical report401 stays preserved.
+
+Read-only investigation identifies three STR1 ownerless products: SKU178089,
+SKU178321 and SKU177040. The local copy retains1 from12October. Cloud has a
+received+1 and an accepted5November sale-1 for each; matching movement receipts
+exist locally/cloud. Cloud zero is supported by business actions, not merely a
+newer timestamp. Once the ownerless product reaches zero, catalogue visibility
+excludes its full row, leaving an ID-only/null global invalidation; consuming that
+invalidation cannot update the stale local balance. It must not be treated as an
+instruction to delete the row or upload the stale unit.
+
+Prepare the smallest supported repair: assign only the three proven original
+STR1 catalogue owners from NULL to STR1, preserving cloud stock0 and every other
+business field. Reuse the guarded22-row repair pattern with new exact IDs,
+full-row/metadata/provenance guards, independent synthetic/native PostgreSQL
+tests, one honest maintenance receipt and normal history/feed effects. Show the
+exact target, file/hash, rows and effects for separate owner approval. Normal
+authorized sync must then adopt the already-accepted zero balance; no manual
+local stock copy, duplicate sale/adjustment, queue clear or checkpoint reset.
+
+Acceptance: unchanged cloud stock/SKU/prices/status/grants; same-cluster archived
+visibility and foreign-cluster denial; normal local adoption after safe pending
+checks; current Electron administrator login, SQL/cloud connectivity and truthful
+upload/download status. Unknown/busy/changed records abort. Existing new-product
+owner stamping and owner-preserving uploads must continue passing regressions.
+
+Protection preflight: the canonical/native source already preserves an existing
+owner against stale NULL/blank uploads, but the live sync_apply_products routine
+still has the older EXCLUDED.owner_store_id assignment; the prepared29October
+upgrade was not applied. This did not cause these three original NULL owners,
+but could undo a repair on a later legacy upload. Within the owner's existing
+owner-preservation/sync-recovery request, prepare a source/ACL-pinned additive
+guard changing only that assignment, test actual captured routine/denied scopes,
+and present its exact migration/hash separately with the three-row repair.
+No routine, grant, schema or business row has been changed live. Apply protection
+before any approved owner repair; abort unknown source or metadata.
+
+SYNC79 verification checkpoint:25 captured-trigger PGlite +26 actual native
+PostgreSQL repair scenarios pass, including competing foreign receiving, exact
+replay/rollback and real lock contention. Actual CloudClient/PullWorker/PushWorker
+SQL Server adoption passes6 groups with exact archive timestamps and protected
+pending edits. Owner-retention guard passes61 PGlite +61 native cases,29 existing
+checks and independent review; TypeScript/lint pass. Required first upgrade SHA
+5669C64B22FDFE3ADDDBCE7DCBDE807EABB5099655626CD1E68C9EEE5A98CB35;
+three-row repair SHA E6F3D4C4C3C36D7A2ADF1E200338CF236DCDFB4F014870BF0DA5574D484CBAB0.
+No live migration or repair has run. Exact-head CI, owner application approval
+and real normal-sync adoption remain. History count/feed gap is separately
+prepared; no claim of all-table convergence or production readiness.
+
+## SYNC79 applied checkpoint — 6 November
+
+Owner explicitly approved both frozen exact files after final CI/fresh preflight.
+Cloud owner guard SHA5669C64B22FDFE3ADDDBCE7DCBDE807EABB5099655626CD1E68C9EEE5A98CB35
+applied first, ledger20261106024316, sameOID26279/grants/security; bodyMD5a076aea59e1cc926542052040f20465e.
+Repair SHAE6F3D4C4C3C36D7A2ADF1E200338CF236DCDFB4F014870BF0DA5574D484CBAB0
+then assigned only the three proven STR1 owners. Exact afterimages/stock0/SKU/prices/
+archive preservation,3histories/4feeds/1audit verified. Ordinary existing Electron
+sync subsequently adopted owners/stock0/archive1/versions9,12,11; existing cursor
+164856→165028. GUID-guarded SELECT-only local verification; no manual local repair,
+reset, queue clearing or extra movement. Full history convergence remains separate.
+Next: integrate exact prepared artifact/evidence through beta after final-head CI,
+complete COUNT79/history recovery and UI/report/release gates. No main/publication.
+
+## COUNT80 applied and fleet rules checkpoint — 6 November
+
+Owner approved exact committed count upgrade SHA731375F0F4E03520A7C648DFE790FF05AC97FA455A57CF1E3032B0D0748B9DF7.
+PR426 exact0c080838 passed all required CI; root independently passed21 nativePG
+CRLF cases. Fresh live source/metadata preflight matched all3 routines; applied
+ledger20261106031334. Counts OID28812/bodyf5a89946adfbd7611366a7cf3b860b8e,
+all original grants/config/flags and delegated/bootstrap source verified unchanged.
+No business DML. PR426 merged beta53c8504a with exact reviewed treea0b371a0.
+This completes count coverage capability, not missing-history delivery.
+
+The owner then explicitly required automatic recovery for hundreds of offline
+PCs, not manual per-PC SQL or ID seeding. Separate automatic-history plan now
+reuses durable jobs/single lane and proposes bounded authorized index/missing-row
+reads with exact-value handling and safe snapshot semantics. Implementation/live
+application remain separately tracked. Root added permanent cross-platform
+recovery/checkout/presentation-isolation and single-transaction-owner rules.
+
+Realtime at11:00 had a short managed-slot handover burst; independent read-only
+11:20 snapshot verified active reserved slots, no retained-WAL loss, no later
+error recurrence in the sampled15minutes and no idle-in-transaction. Transaction
+warnings at10:43/11:13 match the tool plus explicit file wrappers; desired source,
+ACL/OID and both migration ledgers verified. No slot/restart/rollback action ran.
+Future migration payloads need one tested transaction owner and new exact approval
+when protected bytes change; do not reapply already committed files to clear logs.
