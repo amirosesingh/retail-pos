@@ -19,7 +19,9 @@ if(native){
 }
 const nativeFactory=native?await import('data:text/javascript;base64,'+Buffer.from(prelude+'\nexport {createNativeFixture};').toString('base64')):null;
 const db=native?await nativeFactory.createNativeFixture():new PGlite();
-const require=createRequire(import.meta.url),{normalizeIndex,normalizeRows}=require('../electron/sync/history-index-protocol.cjs');
+const require=createRequire(import.meta.url);
+const {releasedHistoryModule}=require('./lib/released-history-fixture.cjs');
+const {normalizeIndex,normalizeRows}=releasedHistoryModule('electron/sync/history-index-protocol.cjs');
 const literal=x=>"E'"+x.replaceAll('\\','\\\\').replaceAll("'","''").replaceAll('\r','\\r').replaceAll('\n','\\n')+"'";
 const id=n=>'aaaaaaaa-aaaa-4aaa-8aaa-'+String(n).padStart(12,'0');
 const terminal='bbbbbbbb-bbbb-4bbb-8bbb-000000000001',management='bbbbbbbb-bbbb-4bbb-8bbb-000000000002';

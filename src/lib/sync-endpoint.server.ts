@@ -119,11 +119,16 @@ const bodySchema = z.object({
     })
     .optional(),
   sqlServerHistoryReconcile: z.discriminatedUnion('action',[
-    z.object({action:z.literal('begin'),organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128)}).strict(),
-    z.object({action:z.literal('page'),organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128),afterId:z.string().uuid().nullable(),upperId:z.string().uuid()}).strict(),
-    z.object({action:z.literal('finish'),organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128),upperId:z.string().uuid().nullable()}).strict(),
-    z.object({action:z.literal('rows'),organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128),ids:z.array(z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)).min(1).max(10).refine(ids=>new Set(ids).size===ids.length)}).strict(),
+    z.object({action:z.literal('begin'),accessPolicy:z.literal('branch-history-v1').optional(),organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128)}).strict(),
+    z.object({action:z.literal('page'),accessPolicy:z.literal('branch-history-v1').optional(),organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128),afterId:z.string().uuid().nullable(),upperId:z.string().uuid()}).strict(),
+    z.object({action:z.literal('finish'),accessPolicy:z.literal('branch-history-v1').optional(),organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128),upperId:z.string().uuid().nullable()}).strict(),
+    z.object({action:z.literal('rows'),accessPolicy:z.literal('branch-history-v1').optional(),organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128),ids:z.array(z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)).min(1).max(10).refine(ids=>new Set(ids).size===ids.length)}).strict(),
   ]).optional(),
+  sqlServerHeldStatus: z.object({
+    organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128),
+    tickets:z.array(z.object({id:z.string().min(1).max(450),billNo:z.string().max(450).nullable(),shiftId:z.string().max(450).nullable()}).strict())
+      .min(1).max(100).refine(tickets=>new Set(tickets.map(ticket=>ticket.id)).size===tickets.length),
+  }).strict().optional(),
   sqlServerTelemetry: z
     .object({
       terminal_id: z.string().min(1).max(128),
@@ -237,8 +242,8 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       });
       exactFinancialOperations = true;
     }
-    if(body.sqlServerHistoryReconcile||body.sqlServerLegacyRecovery||body.sqlServerFinancialCapability||body.sqlServerFinancialEvent||body.sqlServerFinancialBasis||body.sqlServerFinancialObservation||body.sqlServerAggregate?.registerFinancialBoundary||body.sqlServerAggregate?.shiftFinancialOpening||body.sqlServerAggregate?.financialLedgerProjection){
-      const operations=[body.managementSyncBranches,body.ops?.length,body.read,body.sqlServerBatch,body.sqlServerAggregate,body.sqlServerLegacyRecovery,body.sqlServerFinancialCapability,body.sqlServerFinancialEvent,body.sqlServerFinancialBasis,body.sqlServerFinancialObservation,body.sqlServerShiftGraph,body.sqlServerPull,body.sqlServerBootstrap,body.sqlServerCounts,body.sqlServerHistoryReconcile,body.sqlServerTelemetry,body.oldReceipt];
+    if(body.sqlServerHeldStatus||body.sqlServerHistoryReconcile||body.sqlServerLegacyRecovery||body.sqlServerFinancialCapability||body.sqlServerFinancialEvent||body.sqlServerFinancialBasis||body.sqlServerFinancialObservation||body.sqlServerAggregate?.registerFinancialBoundary||body.sqlServerAggregate?.shiftFinancialOpening||body.sqlServerAggregate?.financialLedgerProjection){
+      const operations=[body.managementSyncBranches,body.ops?.length,body.read,body.sqlServerBatch,body.sqlServerAggregate,body.sqlServerLegacyRecovery,body.sqlServerFinancialCapability,body.sqlServerFinancialEvent,body.sqlServerFinancialBasis,body.sqlServerFinancialObservation,body.sqlServerShiftGraph,body.sqlServerPull,body.sqlServerBootstrap,body.sqlServerCounts,body.sqlServerHistoryReconcile,body.sqlServerHeldStatus,body.sqlServerTelemetry,body.oldReceipt];
       if(operations.filter(Boolean).length!==1)throw new Error('Mixed financial metadata request');
     }
   } catch (error) {
@@ -272,6 +277,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     !body.sqlServerBootstrap &&
     !body.sqlServerCounts &&
     !body.sqlServerHistoryReconcile &&
+    !body.sqlServerHeldStatus &&
     !body.sqlServerTelemetry &&
     !body.oldReceipt
   )
@@ -413,6 +419,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     body.sqlServerBootstrap ||
     body.sqlServerCounts ||
     body.sqlServerHistoryReconcile ||
+    body.sqlServerHeldStatus ||
     body.oldReceipt
   ) {
     const branchId =
@@ -428,6 +435,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       body.sqlServerBootstrap?.branchId ??
       body.sqlServerCounts?.branchId ??
       body.sqlServerHistoryReconcile?.branchId ??
+      body.sqlServerHeldStatus?.branchId ??
       body.oldReceipt?.branchId ??
       "";
     const terminalSync = Boolean(
@@ -442,7 +450,8 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       body.sqlServerPull ||
       body.sqlServerBootstrap ||
       body.sqlServerCounts ||
-      body.sqlServerHistoryReconcile,
+      body.sqlServerHistoryReconcile ||
+      body.sqlServerHeldStatus,
     );
     if (terminalSync && !scope.terminalId)
       return Response.json(
@@ -476,6 +485,13 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
         },
         { status: 403 },
       );
+    if(body.sqlServerHeldStatus){
+      if(scope.kind!=='terminal'||!body.terminalToken||!scope.storeId||scope.managementReplica||scope.managementDevice)
+        return Response.json({ok:false,code:'PERMISSION_DENIED',error:'A verified Operations terminal is required for held-ticket reconciliation.'},{status:403});
+      const {commerceSyncIsolationReady}=await import('./commerce-sync-readiness.server');
+      const {protectedHeldStatus}=await import('./protected-held-status.server');
+      return protectedHeldStatus({read:body.sqlServerHeldStatus,terminalId:scope.terminalId??'',keepCommerce:!(await commerceSyncIsolationReady()),signal:request.signal});
+    }
     if(body.sqlServerHistoryReconcile){
       const {commerceSyncIsolationReady}=await import('./commerce-sync-readiness.server');
       const keepCommerce=scope.managementReplica===true||scope.managementDevice===true||!(await commerceSyncIsolationReady());

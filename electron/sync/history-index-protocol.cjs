@@ -2,12 +2,13 @@
 // financial proof or full-row equality witness.
 const { parseExactJson, instant } = require('./shift-recovery-exact.mjs');
 const { recordId } = require('./uuid-fields.cjs');
-const INDEX = 'history-index-v1', ROWS = 'history-rows-v1';
+const {POLICY,visibleHistoryRow}=require('./history-read-scope.cjs');
+const INDEX = 'history-index-v2', ROWS = 'history-rows-v2';
 const PROJECTION = 'history-project-v1:a5be97695f3e105ebde271e2f017ddee';
 const MAX_INDEX = 1000, MAX_ROWS = 10, MAX_BYTES = 5 * 1024 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const INDEX_KEYS = ['protocol','projection','organization_id','branch_id','terminal_id','keep_commerce','action','upper_id','after_id','ids','next_id','complete','range_count'];
-const ROW_KEYS = ['protocol','projection','organization_id','branch_id','terminal_id','keep_commerce','requested_ids','rows','remaining_ids'];
+const INDEX_KEYS = ['protocol','projection','policy','history_scope','organization_id','branch_id','terminal_id','keep_commerce','action','upper_id','after_id','ids','next_id','complete','range_count'];
+const ROW_KEYS = ['protocol','projection','policy','history_scope','organization_id','branch_id','terminal_id','keep_commerce','requested_ids','rows','remaining_ids'];
 const WIRE_COLUMNS = ['id','organization_id','entity_type','entity_id','action','old_value_json','new_value_json','revision','scope_type','scope_id','changed_by','source_application','device_id','terminal_id','server_timestamp'];
 const NULLABLE = new Set(['old_value_json','new_value_json','scope_id','changed_by','device_id','terminal_id']);
 const failure = () => Object.assign(new Error('The protected history reconciliation response is invalid; its progress remains pending.'), {code:'EHISTORY_INDEX_PROTOCOL',table:'change_history'});
@@ -21,7 +22,7 @@ function uuid(value) { if(typeof value!=='string'||!UUID.test(value))throw failu
 function uuidOrNull(value) { return value===null?null:uuid(value); }
 function ids(values,max) { if(!Array.isArray(values)||values.length>max||new Set(values.map(uuid)).size!==values.length)throw failure();return values; }
 function scope(value, expected, adoptMode=false) {
-  if(value.projection!==PROJECTION||value.organization_id!==expected.organizationId||value.branch_id!==expected.branchId||
+  if(value.policy!==POLICY||value.history_scope!==(expected.historyScope??'branch')||value.projection!==PROJECTION||value.organization_id!==expected.organizationId||value.branch_id!==expected.branchId||
     value.terminal_id!==expected.terminalId||typeof value.keep_commerce!=='boolean'||
     !(adoptMode&&expected.keepCommerce===undefined)&&value.keep_commerce!==expected.keepCommerce)throw failure();
 }
@@ -64,7 +65,7 @@ function normalizeRows(value, expected, requestedIds) {
       value.rows.length<1||value.rows.length>requestedIds.length||JSON.stringify(value.remaining_ids)!==JSON.stringify(requestedIds.slice(value.rows.length)))throw failure();
   if(Buffer.byteLength(JSON.stringify(value),'utf8')>MAX_BYTES)throw failure();
   const rows=value.rows.map(normalizeRow);
-  if(rows.some((row,index)=>row.id!==requestedIds[index]))throw failure();
+  if(rows.some((row,index)=>row.id!==requestedIds[index]||!visibleHistoryRow(row,{...expected,historyScope:expected.historyScope??'branch'})))throw failure();
   return Object.freeze({...value,requested_ids:Object.freeze([...requestedIds]),rows:Object.freeze(rows),remaining_ids:Object.freeze([...value.remaining_ids])});
 }
 module.exports={INDEX,ROWS,PROJECTION,MAX_INDEX,MAX_ROWS,MAX_BYTES,WIRE_COLUMNS,normalizeIndex,normalizeRows};

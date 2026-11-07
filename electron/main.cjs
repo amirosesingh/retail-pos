@@ -39,6 +39,7 @@ const { PullWorker } = require("./sync/pull-worker.cjs");
 const { ConflictRepository } = require("./sync/conflicts.cjs");
 const { SyncCoordinator } = require("./sync/coordinator.cjs");
 const { CloudClient } = require("./sync/cloud-client.cjs");
+const { HeldStatusRecovery } = require("./sync/held-status-recovery.cjs");
 const closeWriteBarrier = new (require("./sync/write-barrier.cjs").WriteBarrier)();
 const recoveryMetadataGate = new RecoveryMetadataGate();
 const { createTelemetry } = require("./telemetry.cjs");
@@ -102,6 +103,7 @@ const legacyRecoveryRuntime = require("./sync/legacy-shift-recovery-runtime.cjs"
 const syncCoordinator = new SyncCoordinator({
   pushWorker: {reader:legacyRecoveryRuntime.reader,run:options=>legacyRecoveryRuntime.run(options,value=>shiftFinancialRuntime.runPush(value))},
   pullWorker: new PullWorker({ connectionManager:databaseManager,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,reader:changeReader,conflicts:conflictRepository,publish:publishBusinessChange }),
+  recoverHeldStatuses:recoverLocalHeldStatuses,
   publish: (state) => { for (const win of BrowserWindow.getAllWindows()) win.webContents.send("sync:state",legacyRecoveryRuntime.status(state)); },
 });
 // Main-private ownership evidence for retaining, not executing, an interrupted
@@ -120,10 +122,11 @@ async function ownsHistoryRecoveryExecution({jobId,source,requestParent=null}={}
     return same()&&result.recordset?.length===1&&result.recordset[0].database_guid===source.databaseGuid;
   }catch{return false;}
 }
-const localDataLifecycle = new LocalDataLifecycle({ connectionManager:databaseManager,databaseService,jobManager,jobRepository,registry:syncRegistry,cloud:syncCloud,syncCoordinator,checkpoints:syncCheckpoints,reader:changeReader,publish:publishBusinessChange,historyExecutionProof:ownsHistoryRecoveryExecution });
+const localDataLifecycle = new LocalDataLifecycle({ connectionManager:databaseManager,databaseService,jobManager,jobRepository,registry:syncRegistry,cloud:syncCloud,syncCoordinator,checkpoints:syncCheckpoints,reader:changeReader,publish:publishBusinessChange,historyExecutionProof:ownsHistoryRecoveryExecution,recoverHeldStatuses:recoverLocalHeldStatuses });
 const managementReplica = new (require("./sync/management-replica.cjs").ManagementReplica)({ cloud:syncCloud, databaseService, connectionManager:databaseManager, lifecycle:localDataLifecycle, jobs:jobRepository, coordinator:syncCoordinator });
 const mainTelemetry = createTelemetry({ databaseService,syncCoordinator,jobRepository,configStore,terminalStore,app });
 const operationsRepository = new OperationsRepository(databaseManager, syncRegistry);
+const heldStatusRecovery = new HeldStatusRecovery({manager:databaseManager,registry:syncRegistry,cloud:syncCloud,publish:publishBusinessChange});
 const shiftSyncJournal = new ShiftSyncJournal(operationsRepository,{authorRequired:true});
 // Main-private FIN62 seam. No renderer/IPC configuration and no activation.
 const shiftFinancialDraftProvider = null;
@@ -189,6 +192,34 @@ const recoveryMetadataInstaller = new ShiftRecoveryMetadataInstaller({
   approvedArtifactHash: null,
   verified: () => legacyShiftRecovery.invalidateCapability(),
 });
+async function recoverLocalHeldStatuses({branchId,onActivity=()=>{}}={}) {
+  const deferred=code=>({updated:0,reviewRequired:0,deferred:true,code});
+  try {
+    const terminal=terminalStore.read(),registered=require("./verified-activation.cjs").binding(terminal);
+    const ready=()=>{const state=databaseService.snapshot();return Boolean(process.platform==="win32"&&app.hasSingleInstanceLock()&&syncCoordinator.ownsExclusive()&&!syncCoordinator.paused&&!safeMode&&!quitting&&!closeWriteBarrier.sealed&&state.enabled&&state.configured&&state.connected&&state.tradingReady&&databaseManager.pool&&registered?.mode==="operations"&&registered.platform==="pc"&&!isManagementDevice()&&recordId(localBranchId())===recordId(branchId)&&recordId(registered.branchId)===recordId(branchId));};
+    if(!ready()||!terminal?.tokenId||! /^[a-f0-9]{64}$/.test(String(terminal.deviceBindingProof??"")))return deferred("EHELD_STATUS_CONTEXT");
+    const source=syncCloud.requestContext(false),sourceFingerprint=source.fingerprint,pool=databaseManager.pool;
+    const identity=()=>JSON.stringify([databaseManager.profile,databaseConfig.profile(),terminalStore.read(),authorizationServerUrl(),cloudCredentials.read()?.url??null]);
+    const expected=identity(),assertCurrent=()=>{const current=syncCloud.requestContext(false);if(!ready()||databaseManager.pool!==pool||identity()!==expected||current.pool!==pool||current.fingerprint!==sourceFingerprint)throw Object.assign(new Error("Held ticket recovery source changed."),{code:"EHELD_STATUS_CONTEXT"});};
+    assertCurrent();
+    const sql=databaseManager.sql(),result=(await new sql.Request(pool,{requestTimeout:5000}).input("database",sql.NVarChar(128),databaseManager.profile.database).input("branch",sql.NVarChar(128),branchId).query(`
+      DECLARE @transactions int=@@TRANCOUNT,@implicit int=CONVERT(int,@@OPTIONS&2);
+      IF @transactions<>0 OR @implicit<>0 BEGIN RAISERROR('Held recovery requires an unowned SQL session.',16,1);RETURN;END;
+      SELECT LOWER(CONVERT(varchar(36),database_guid)) database_guid,DB_NAME() database_name,DB_ID(@database) configured_id,DB_ID() actual_id,
+        CASE WHEN EXISTS(SELECT 1 FROM dbo.held_orders WHERE store_id=@branch AND status IN(N'draft',N'held',N'waiting',N'ready')) THEN 1 ELSE 0 END has_tickets
+      FROM sys.database_recovery_status WHERE database_id=DB_ID();`)).recordset;
+    assertCurrent();
+    if(result?.length!==1||! /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(result[0].database_guid)||typeof result[0].database_name!=="string"||!result[0].database_name||result[0].configured_id!==result[0].actual_id||!Number.isInteger(result[0].actual_id)||result[0].actual_id<5||![0,1].includes(result[0].has_tickets))return deferred("EHELD_STATUS_CONTEXT");
+    if(!result[0].has_tickets)return{updated:0,reviewRequired:0,deferred:false,code:null};
+    try{onActivity({phase:"checking",table:"held_orders"});}catch{/* Presentation grants no recovery authority. */}
+    const recovered=await heldStatusRecovery.reconcile({branchId:recordId(branchId),terminalId:recordId(terminal.tokenId),profile:databaseManager.profile,assertCurrent,sourceKey:createHash("sha256").update(expected).digest("hex"),expectedDatabaseGuid:result[0].database_guid,expectedDatabaseName:result[0].database_name});
+    assertCurrent();return recovered;
+  } catch(error) {
+    const code=/^EHELD_STATUS_[A-Z_]{1,40}$/.test(String(error?.code??""))?error.code:"EHELD_STATUS_RETRY";
+    diagnostics.logConnection("held-status-recovery",{code});
+    return deferred(code);
+  }
+}
 async function prepareShiftRecoveryMetadata({profile,pool,assertCurrent}) {
   if(process.platform!=="win32" || !supportsLegacyShiftRecovery() || !app.hasSingleInstanceLock())
     return {available:false,state:"not_applicable"};

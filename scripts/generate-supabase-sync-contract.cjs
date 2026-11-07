@@ -670,6 +670,10 @@ schema = schema.replace("-- Final public-schema privilege hardening after notifi
 // generation. Never replace the rest of the schema with a separate checkout.
 schema = require("./history-index-canonical.cjs").withHistoryIndexContract(schema,
   fs.readFileSync(path.join(root, "supabase", "migrations", "20261106042139_automatic_history_index_recovery.sql"), "utf8"));
+schema = require("./history-scope-canonical.cjs").withHistoryScopeContract(schema,
+  fs.readFileSync(path.join(root, "supabase", "migrations", "20261107021328_isolate_branch_history_sync.sql"), "utf8"));
+schema = require("./history-scope-canonical.cjs").withBoundedHeldStatusContract(schema,
+  fs.readFileSync(path.join(root, "supabase", "migrations", "20261107024729_bounded_held_status_reconciliation.sql"), "utf8"));
 fs.writeFileSync(schemaPath, schema);
 console.log(`Supabase sync contract generated for ${tables.length} keyed tables`);
 

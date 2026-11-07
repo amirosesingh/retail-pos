@@ -6,7 +6,8 @@ import {spawn,execFileSync} from 'node:child_process';
 import {createServer} from 'node:net';
 import {createHmac,randomBytes} from 'node:crypto';
 import {createRequire} from 'node:module';
-const {normalizeIndex,normalizeRows}=createRequire(import.meta.url)('../electron/sync/history-index-protocol.cjs');
+const {releasedHistoryModule}=createRequire(import.meta.url)('./lib/released-history-fixture.cjs');
+const {normalizeIndex,normalizeRows}=releasedHistoryModule('electron/sync/history-index-protocol.cjs');
 export async function verifyHistoryIndexPostgrest(db){
  const exe=process.env.POSTGREST_TEST_EXE;assert(exe);assert.equal(execFileSync(exe,['--version'],{encoding:'utf8',windowsHide:true,timeout:10000}).trim(),'PostgREST 16.5');
  const {port:pgPort,directory}=db.historyRest??{};assert(Number.isInteger(pgPort)&&pgPort>0&&resolve(directory).startsWith(resolve('.tmp/seven-shift-summary-tests')+sep));

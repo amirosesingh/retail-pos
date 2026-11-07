@@ -11,6 +11,8 @@ import { handleSyncRequest } from "../sync-endpoint.server";
 const require = createRequire(import.meta.url);
 const currentBoot = require("../../../electron/jobs/bootstrap.cjs");
 const currentVerifier = require("../../../electron/sync/verifier.cjs");
+const {HistoryIndexStore}=require("../../../electron/sync/history-index-recovery.cjs");
+const {PROJECTION}=require("../../../electron/sync/history-index-protocol.cjs");
 const CurrentClient = require("../../../electron/sync/cloud-client.cjs").CloudClient;
 const terminal = "00000000-0000-4000-8000-000000000001";
 const branch = "00000000-0000-4000-8000-00000000000a";
@@ -41,7 +43,8 @@ const table = { cloudTable: "change_history", sqlServerTable: "change_history", 
 
 function harness(mode: Mode = "current-operations", count = 53, dbMinimum = 10, protectedPages = false) {
   const management = mode !== "current-operations";
-  const rows = Array.from({ length: count }, (_, index) => ({ id: `00000000-0000-4000-8000-${(index + 1).toString(16).padStart(12, "0")}`, old_value: { quantity: 0 }, new_value: { quantity: index } }));
+  const rows = Array.from({ length: count }, (_, index) => ({ organization_id:"default",entity_type:"fixture",entity_id:String(index),action:"insert",revision:"9007199254740993",scope_type:"BRANCH",scope_id:branch,changed_by:null,source_application:"fixture",device_id:null,terminal_id:null,server_timestamp:"2026-11-06T01:02:03.1234567Z", id: `00000000-0000-4000-8000-${(index + 1).toString(16).padStart(12, "0")}`, old_value: { quantity: 0 }, new_value: { quantity: index } }));
+  const exactRow=(row:typeof rows[number])=>{const {old_value,new_value,...rest}=row;return {...rest,old_value_json:JSON.stringify(old_value),new_value_json:JSON.stringify(new_value)};};
   const rpcInputs: Array<Record<string, unknown>> = [], outgoing: Array<Record<string, unknown>> = [], returned: string[] = [], events: string[] = [];
   const local = new Map<string, unknown>();
   let failAtCursor: string | null = null;
@@ -57,6 +60,13 @@ function harness(mode: Mode = "current-operations", count = 53, dbMinimum = 10, 
       management_sync_proof_hash: createHash("sha256").update(claim).digest("hex") }]);
     if (url.includes("/stores?")) return Response.json([{ id: branch }]);
     if (url.includes("/rpc/")) {
+      if(/pos_sync_history_(index|rows)_v2$/.test(url)){
+        const args=JSON.parse(String(init?.body)),isRows=url.includes('history_rows'),selected=isRows?args.p_ids.map((id:string)=>rows.find(row=>row.id===id)!):rows;
+        const common={projection:PROJECTION,policy:'branch-history-v1',history_scope:management?'company':'branch',organization_id:'default',branch_id:branch,terminal_id:terminal,keep_commerce:management};
+        const result=isRows?{...common,protocol:'history-rows-v2',requested_ids:args.p_ids,rows:selected.map(exactRow),remaining_ids:[]}:
+          {...common,protocol:'history-index-v2',action:args.p_action,upper_id:rows.at(-1)?.id??null,after_id:null,ids:rows.map(row=>row.id),next_id:null,complete:true,range_count:null};
+        const text=JSON.stringify(result);return new Response(text,{headers:{'content-type':'application/json','X-POS-History-Reconcile-Version':'2','X-POS-History-Reconcile-Kind':isRows?'rows':'index','X-POS-History-Reconcile-Bytes':String(Buffer.byteLength(text)),'X-POS-History-Reconcile-Rows':String(selected.length)}});
+      }
       if (url.includes("/pos_sync_feed_page_v1")) return Response.json({ code: "PGRST202", message: "Could not find the function public.pos_sync_feed_page_v1 in the schema cache" }, { status: 404 });
       if (url.includes("/pos_sync_history_page_v1")) {
         protectedSignals.push(init?.signal);
@@ -87,7 +97,8 @@ function harness(mode: Mode = "current-operations", count = 53, dbMinimum = 10, 
   });
   vi.stubGlobal("fetch", fetchMock);
   const Client = mode === "1.4.79-management" ? LegacyClient : CurrentClient;
-  const cloud = new Client({ configStore: { get: () => "https://pos.test" }, terminalStore: { read: () => ({ tokenId: terminal,
+  const connectionManager:any={};
+  const cloud = new Client({ connectionManager, configStore: { get: () => "https://pos.test" }, terminalStore: { read: () => ({ tokenId: terminal,
     deviceUse: management ? "management" : "operations", locationId: management ? undefined : branch, deviceBindingProof: proof, deviceClaimProof: claim }) } });
   const context = { job: { dependency_index: 0, completed_rows: 0, batch_number: 0, last_committed_cursor: null as string | null },
     waitWhilePaused: vi.fn(), checkpoint: vi.fn(async (patch: object, transaction?: Transaction) => {
@@ -99,16 +110,24 @@ function harness(mode: Mode = "current-operations", count = 53, dbMinimum = 10, 
     async commit() { for (const [id, value] of this.staged) local.set(id, value); Object.assign(context.job, this.patch);events.push("commit"); }
     async rollback() { this.staged.clear();events.push("rollback"); }
   }
-  const connectionManager = { sql: () => ({ Transaction, ISOLATION_LEVEL: { SERIALIZABLE: 4 } }), pool: { request: () => ({ query: vi.fn(async () => ({ recordset: [{ current_version: 99 }] })) }) } };
+  Object.assign(connectionManager, { sql: () => ({ Transaction, ISOLATION_LEVEL: { SERIALIZABLE: 4 } }), pool: { request: () => ({ query: vi.fn(async () => ({ recordset: [{ current_version: 99 }] })) }) } });
   cloud.applyLocalBatch = vi.fn(async (transaction: Transaction, _table: unknown, batch: { rows: Array<{ row_data: { id: string } }> }) => {
     if (mutationFailure && local.size >= 10) throw new Error("isolated local write failure");
     for (const change of batch.rows) transaction.staged.set(change.row_data.id, change.row_data);
   });
+  if(mode!=="1.4.79-management"){
+    vi.spyOn(HistoryIndexStore.prototype,'guid').mockResolvedValue("00000000-0000-4000-8000-000000009999");
+    vi.spyOn(HistoryIndexStore.prototype,'present').mockImplementation(async(...args:unknown[])=>{const [ids,tx]=args as [string[],Transaction?];return new Set(ids.filter(id=>local.has(id)||tx?.staged.has(id)));});
+    vi.spyOn(HistoryIndexStore.prototype,'pending').mockImplementation(async()=>new Set(pendingId?[pendingId]:[]));
+    vi.spyOn(HistoryIndexStore.prototype,'insert').mockImplementation(async(...args:unknown[])=>{const [tx,row]=args as [Transaction,{id:string}];if(mutationFailure&&local.size>=10)throw Error("isolated local write failure");tx.staged.set(row.id,row);});
+    const bootstrap=cloud.bootstrapPage.bind(cloud);let admission:Promise<unknown>|null=null;
+    cloud.bootstrapPage=async(input:unknown)=>{if(management)await(admission??=cloud.managementBranches());return bootstrap(input);};
+  }
   const checkpoints = { save: vi.fn(async () => { expect(local.size).toBe(count); events.push("baseline"); }) };
   const reader = { unacknowledged: vi.fn(async () => pendingId ? [JSON.stringify({ id: pendingId })] : []) };
   const boot = mode === "1.4.79-management" ? legacyBoot : currentBoot;
   const verifier = mode === "1.4.79-management" ? legacyVerifier : currentVerifier;
-  return { cloud, rows, rpcInputs, protectedInputs, protectedSignals, outgoing, returned, events, local, checkpoints, reader, context, connectionManager, boot, verifier,
+  return { cloud, rows, exactRow, rpcInputs, protectedInputs, protectedSignals, outgoing, returned, events, local, checkpoints, reader, context, connectionManager, boot, verifier,
     registry: { tables: [table] },
     failDownloadAfterFirstPage() { failAtCursor = JSON.stringify({ id: rows[9].id }); },
     clearDownloadFailure() { failAtCursor = null; },
@@ -135,14 +154,14 @@ it.each(modes)("follows protected short-page cursors through real %s clients", a
   expect(h.returned).toEqual(h.rows.map(row=>row.id)); expect(h.rpcInputs).toHaveLength(0);
   expect(h.protectedInputs).toHaveLength(5);
   expect(h.protectedInputs.every(input=>input.p_keep_commerce===(mode!=="current-operations"))).toBe(true);
-  expect(h.checkpoints.save).toHaveBeenCalledOnce();
+  expect(h.checkpoints.save).toHaveBeenCalledTimes(mode === "1.4.79-management" ? 1 : 0);
 });
 it.each(modes)("applies a complete1.65MB protected record through real %s client",async mode=>{
   const h=harness(mode,1,10,true);
   Object.assign(h.rows[0].new_value,{note:"x".repeat(1_649_340)});
   expect(await h.boot.runBootstrap({...h,branchId:branch,historyDays:90})).toMatchObject({completed:1});
-  expect(h.local.get(h.rows[0].id)).toEqual(h.rows[0]);
-  expect(h.protectedInputs).toHaveLength(1); expect(h.checkpoints.save).toHaveBeenCalledOnce();
+  expect(h.local.get(h.rows[0].id)).toEqual(mode === "1.4.79-management" ? h.rows[0] : h.exactRow(h.rows[0]));
+  expect(h.protectedInputs).toHaveLength(1); expect(h.checkpoints.save).toHaveBeenCalledTimes(mode === "1.4.79-management" ? 1 : 0);
 });
 it.each(modes)("does not apply or acknowledge an interrupted protected body for %s",async mode=>{
   const h=harness(mode,1,10,true); h.interruptProtectedStream();
@@ -175,8 +194,8 @@ it.each(modes)("downloads every53/253 history row through actual %s bootstrap/re
     const h = harness(mode, count);
     if (workflow === "bootstrap") {
       expect(await h.boot.runBootstrap({ ...h, branchId: branch, historyDays: 90 })).toMatchObject({ completed: count });
-      expect(h.checkpoints.save).toHaveBeenCalledOnce();
-      expect(h.events.at(-1)).toBe("baseline");
+      expect(h.checkpoints.save).toHaveBeenCalledTimes(mode === "1.4.79-management" ? 1 : 0);
+      expect(h.events.at(-1)).toBe(mode === "1.4.79-management" ? "baseline" : "commit");
     } else if (workflow === "refresh") {
       expect(await h.boot.refreshTable({ ...h, branchId: branch, historyDays: 90, tableName: "change_history" })).toEqual({ completed: count });
       expect(h.checkpoints.save).not.toHaveBeenCalled();
@@ -197,7 +216,7 @@ it.each(modes)("preserves records and cursor with a legacy SQL minimum100 for %s
   expect(h.returned).toEqual(h.rows.map(row => row.id));
   expect(h.rpcInputs.map(input => input.p_limit)).toEqual([10, 10, 10]);
   expect(h.rpcInputs[1].p_after_cursor).toBe(JSON.stringify({ id: h.rows[99].id }));
-  expect(h.checkpoints.save).toHaveBeenCalledOnce();
+  expect(h.checkpoints.save).toHaveBeenCalledTimes(mode === "1.4.79-management" ? 1 : 0);
 });
 
 it.each(modes)("follows the final full-page cursor through an empty page for %s", async mode => {
@@ -205,8 +224,8 @@ it.each(modes)("follows the final full-page cursor through an empty page for %s"
     const h = harness(mode, 20);
     if (workflow === "bootstrap") {
       expect(await h.boot.runBootstrap({ ...h, branchId: branch, historyDays: 90 })).toMatchObject({ completed: 20 });
-      expect(h.checkpoints.save).toHaveBeenCalledOnce();
-      expect(h.events.at(-1)).toBe("baseline");
+      expect(h.checkpoints.save).toHaveBeenCalledTimes(mode === "1.4.79-management" ? 1 : 0);
+      expect(h.events.at(-1)).toBe(mode === "1.4.79-management" ? "baseline" : "commit");
     } else if (workflow === "refresh") {
       expect(await h.boot.refreshTable({ ...h, branchId: branch, historyDays: 90, tableName: "change_history" })).toEqual({ completed: 20 });
       expect(h.checkpoints.save).not.toHaveBeenCalled();
@@ -233,7 +252,7 @@ it.each(modes)("preserves committed cursor, pending edits and baseline on failed
   // Legacy progress counted selected/downloaded rows, while current progress
   // counts applied rows. Neither may replace the protected local edit.
   expect(await h.boot.runBootstrap({ ...h, branchId: branch, historyDays: 90 })).toMatchObject({ completed: mode === "1.4.79-management" ? 53 : 52 });
-  expect(h.checkpoints.save).toHaveBeenCalledOnce();
+  expect(h.checkpoints.save).toHaveBeenCalledTimes(mode === "1.4.79-management" ? 1 : 0);
   expect(h.local.size).toBe(53);
   expect(h.local.get(protectedRow.id)).toEqual({ id: protectedRow.id, pending: true });
   expect(h.returned).toEqual(h.rows.map(row => row.id));
@@ -250,7 +269,7 @@ it.each(modes)("rolls back a failed local page without establishing a CT baselin
 
 it("retains branch denial before the history RPC", async () => {
   const h = harness();
-  await expect(h.cloud.bootstrapPage({ branchId: foreign, table: "change_history", historyDays: 90, cursor: null, limit: 100 })).rejects.toMatchObject({ status: 403 });
+  await expect(h.cloud.bootstrapPage({ branchId: foreign, table: "change_history", historyDays: 90, cursor: null, limit: 100 })).rejects.toMatchObject({ code: "EHISTORY_INDEX_SCOPE" });
   expect(h.rpcInputs).toHaveLength(0);
   expect(h.protectedInputs).toHaveLength(0);
 });

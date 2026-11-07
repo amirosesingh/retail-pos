@@ -7,10 +7,12 @@ const { PushWorker } = require("../../../electron/sync/push-worker.cjs");
 const { readPage } = require("../../../electron/sync/page-policy.cjs");
 const { bootstrapDiagnostic } = require("../../../electron/diagnostics.cjs");
 const branch = "branch-fixture";
+const terminal="00000000-0000-4000-8000-000000000001";
 const proof = "a".repeat(64);
 const client = () => new CloudClient({
+  connectionManager:{pool:{}},
   configStore: { get: () => "https://pos.fixture" },
-  terminalStore: { read: () => ({ tokenId: "terminal-fixture", deviceBindingProof: proof }) },
+  terminalStore: { read: () => ({ tokenId: terminal, deviceUse:"operations", locationId:branch, deviceBindingProof: proof }) },
 });
 const bootstrap = (cloud = client(), limit = 100) => cloud.bootstrapPage({
   table: "change_history", branchId: branch, historyDays: 90, cursor: "saved-cursor", limit,
@@ -177,7 +179,7 @@ describe("native cloud response completion", () => {
 describe("native retry and acknowledgement integration", () => {
   it("uses the existing smaller-page backoff after a successful-status body deadline without changing the cursor", async () => {
     controlledDeadlines();
-    const page = { rows: [{ id: "fixture-row" }], cursor: "next-cursor" };
+    const page = { rows: [{ id: "fixture-row", organization_id:"default", scope_type:"BRANCH", scope_id:branch }], cursor: "next-cursor" };
     const fetch = vi.fn(async (_url: string, init: RequestInit) => fetch.mock.calls.length === 1
       ? stalledBody(init.signal!) : Response.json(page));
     vi.stubGlobal("fetch", fetch);
@@ -190,7 +192,7 @@ describe("native retry and acknowledgement integration", () => {
     expect(await pending).toMatchObject({ batch: page, limit: 50, nextLimit: 50 });
     const payloads = fetch.mock.calls.map(call => JSON.parse(String(call[1].body)));
     expect(payloads.map(payload => payload.sqlServerBootstrap.limit)).toEqual([100, 50]);
-    for (const payload of payloads) expect(payload).toMatchObject({ terminalToken: "terminal-fixture",
+    for (const payload of payloads) expect(payload).toMatchObject({ terminalToken: terminal,
       deviceBindingProof: proof, sqlServerBootstrap: { branchId: branch, cursor: "saved-cursor" } });
   });
 

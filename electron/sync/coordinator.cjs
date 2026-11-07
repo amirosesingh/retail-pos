@@ -13,7 +13,7 @@ function retainDiagnostic(target, source) {
 const syncLease = new AsyncLocalStorage();
 const authorHold = error => /^(?:ESYNC_SHIFT_AUTHOR_|ESHIFT_AUTHOR_)/.test(String(error?.code??""));
 class SyncCoordinator {
-  constructor({ pushWorker, pullWorker, publish = () => {} }) { this.pushWorker=pushWorker; this.pullWorker=pullWorker; this.publish=publish; this.running=false; this.activeRun=null; this.activeOptions=null; this.paused=false; this.status={ phase:"idle", pending:0, failed:0, conflicts:0, lastPushAt:null, lastPullAt:null, lastError:null, lastComparedAt:null, lastVerifiedAt:null, tables:[], recentTables:[], credentialsInvalid:false, membershipDeferred:false, membershipMirrored:0 }; }
+  constructor({ pushWorker, pullWorker, publish = () => {}, recoverHeldStatuses = null }) { this.pushWorker=pushWorker; this.pullWorker=pullWorker; this.publish=publish; this.recoverHeldStatuses=recoverHeldStatuses; this.running=false; this.activeRun=null; this.activeOptions=null; this.paused=false; this.status={ phase:"idle", pending:0, failed:0, conflicts:0, lastPushAt:null, lastPullAt:null, lastError:null, lastComparedAt:null, lastVerifiedAt:null, tables:[], recentTables:[], credentialsInvalid:false, membershipDeferred:false, membershipMirrored:0 }; }
   snapshot() { return { ...this.status, running:this.running, paused:this.paused }; }
   unresolved() { return this.unresolvedFailures??=new Map(); }
   publishFailureStatus(branchId) {
@@ -142,6 +142,12 @@ class SyncCoordinator {
         else (this.historyHolds??=new Map()).delete(String(options.branchId??''));
         this.clearSuccessfulFailures(options,"push",pushed);this.publishFailureStatus(options.branchId); } }
       catch(error) { pushError=error;this.rememberFailure(error,options,"push"); }
+      if(pushError?.code==="ECHANGEGAP" && ["shifts","shift_cash_counts","shift_reconciliations","shift_close_events","shift_notifications","shift_variance_alerts"].includes(pushError.table) && this.recoverHeldStatuses) {
+        // A verified terminal-state adoption is independent of full shift
+        // recovery. Preserve the original guard, feed cursor and failure status.
+        try { this.status.heldStatusRecovery=await this.recoverHeldStatuses({branchId:options.branchId}); }
+        catch { this.status.heldStatusRecovery={updated:0,reviewRequired:0,deferred:true,code:"EHELD_STATUS_RETRY"}; }
+      }
       if (pushError && (pushError.code === "ECHANGEGAP" || (!authorHold(pushError)&&[401,403].includes(Number(pushError.status))))) throw pushError;
       let pulled = {};
       if (!options.pushOnly) {

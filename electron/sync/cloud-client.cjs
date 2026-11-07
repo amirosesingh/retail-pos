@@ -53,6 +53,9 @@ function changedAssignments(assignments, columns) {
 // Main-private transport evidence: body flags cannot authorize partial feed pages.
 const feedContinuation = new WeakMap();
 const legacyRecoveryResponses = new WeakMap();
+// Only a successful existing Management-directory admission creates this
+// capability. A renderer/company flag or NULL branch is not a read grant.
+const managementHistoryScopes = new WeakMap();
 
 function transportDiagnostic(error, payload, stage) {
   // Read data descriptors only: foreign errors must not run getters or leak
@@ -200,6 +203,8 @@ class CloudClient {
   }
   request(payload, operation = "") {
     try {
+      if(payload?.sqlServerHistoryReconcile&&payload.sqlServerHistoryReconcile.accessPolicy!==require('./history-read-scope.cjs').POLICY)
+        throw Object.assign(new Error('The scoped history read protocol is required. Existing progress remains pending.'),{code:'EHISTORY_INDEX_PROTOCOL',table:'change_history'});
       // Capture values when queued. Never send a caller's old work with a new
       // terminal, SQL profile, backend, project or governance operator's proof.
       const capturedJson = JSON.stringify(payload), captured = JSON.parse(capturedJson);
@@ -277,11 +282,13 @@ class CloudClient {
     });
       transportStage = "body";
       try {
-        if(payload?.sqlServerHistoryReconcile&&response.ok){
+        if(payload?.sqlServerHeldStatus){
+          data=JSON.parse(await boundedText(response,2*1024*1024));
+        }else if(payload?.sqlServerHistoryReconcile&&response.ok){
           const kind=payload.sqlServerHistoryReconcile.action==='rows'?'rows':'index';
           const max=kind==='rows'?5*1024*1024:128*1024;
           const text=await boundedText(response,max);
-          if(response.headers?.get?.('X-POS-History-Reconcile-Version')!=='1'||response.headers?.get?.('X-POS-History-Reconcile-Kind')!==kind)
+          if(response.headers?.get?.('X-POS-History-Reconcile-Version')!=='2'||response.headers?.get?.('X-POS-History-Reconcile-Kind')!==kind)
             throw Object.assign(new Error('The protected history read capability could not be verified.'),{code:'EHISTORY_INDEX_PROTOCOL',table:'change_history'});
           data=JSON.parse(text);
         } else if (payload?.sqlServerLegacyRecovery && response.ok) {
@@ -309,6 +316,7 @@ class CloudClient {
       throw tagBootstrapDiagnostic(error, transportDiagnostic(error, payload, transportStage));
     }
     if (!response.ok || data?.ok === false) {
+      if([401,403].includes(response.status))managementHistoryScopes.delete(this);
       // PostgREST reports raised SQL errors in `message`, while the POS relay
       // uses `error`. Preserve both so diagnostics show SYNC_BRANCH_FORBIDDEN
       // instead of an unhelpful generic HTTP 400.
@@ -338,7 +346,20 @@ class CloudClient {
     }
     return exactGraphBody===undefined?normalized:rememberGraph(normalized,exactGraphBody,response.headers?.get?.("X-POS-Shift-Graph-Exact"));
   }
-  managementBranches() { return this.request({ managementSyncBranches: true }); }
+  async managementBranches() {
+    managementHistoryScopes.delete(this);
+    const source=this.requestContext(false),value=await this.request({managementSyncBranches:true});
+    this.assertRequestContext(source,false,{managementSyncBranches:true});
+    if(value?.ok!==true||!Array.isArray(value.branches)||value.branches.some(row=>typeof row?.id!=='string'||!row.id.trim()||row.id.length>128))
+      throw Object.assign(new Error('The Management synchronization directory could not be verified.'),{code:'EHISTORY_INDEX_SCOPE',table:'change_history'});
+    const branches=[...new Set(value.branches.map(row=>recordId(row.id)))].sort();
+    managementHistoryScopes.set(this,{pool:source.pool,fingerprint:source.fingerprint,branches,stamp:createHash('sha256').update(JSON.stringify(branches)).digest('hex')});
+    return value;
+  }
+  verifiedManagementHistoryScope(branchId) {
+    const proof=managementHistoryScopes.get(this),source=this.requestContext(false);
+    return proof&&proof.pool===source.pool&&proof.fingerprint===source.fingerprint&&proof.branches.includes(recordId(branchId))?proof.stamp:null;
+  }
   pushBatch(batch) {
     return this.request({
       sqlServerBatch: {
@@ -477,6 +498,8 @@ class CloudClient {
     });
   }
   bootstrapPage({ organizationId = "default", table, branchId, historyDays, cursor, limit }) {
+    const history=table==='change_history'?require('./history-read-scope.cjs'):null;
+    const scope=history?.captureHistoryScope(this,this.connectionManager,branchId,organizationId);
     return this.request({
       sqlServerBootstrap: {
         organizationId,
@@ -486,21 +509,38 @@ class CloudClient {
         cursor: cursor ?? null,
         limit,
       },
+    }).then(result=>{
+      if(history){history.assertHistoryScope(scope,this,this.connectionManager);history.assertHistoryRows(result?.rows,scope);}
+      return result;
     });
   }
   counts({ organizationId = "default", branchId, historyDays = 90 }) {
     return this.request({ sqlServerCounts: { organizationId, branchId, historyDays } });
   }
   async historyIndex({organizationId='default',branchId,action='begin',afterId=null,upperId=null,keepCommerce}) {
-    const terminalId=this.terminalId();
-    const read={organizationId,branchId,action,...(action==='page'?{afterId,upperId}:action==='finish'?{upperId}:{})};
+    const history=require('./history-read-scope.cjs'),scope=history.captureHistoryScope(this,this.connectionManager,branchId,organizationId),terminalId=scope.terminalId;
+    const read={accessPolicy:history.POLICY,organizationId,branchId,action,...(action==='page'?{afterId,upperId}:action==='finish'?{upperId}:{})};
     const value=await this.request({sqlServerHistoryReconcile:read});
-    return require('./history-index-protocol.cjs').normalizeIndex(value,{organizationId,branchId,terminalId,keepCommerce},{action,afterId,upperId});
+    history.assertHistoryScope(scope,this,this.connectionManager);
+    return require('./history-index-protocol.cjs').normalizeIndex(value,{organizationId,branchId,terminalId,keepCommerce,historyScope:scope.historyScope},{action,afterId,upperId});
   }
   async historyMissingRows({organizationId='default',branchId,ids,keepCommerce}) {
-    const terminalId=this.terminalId();
-    const value=await this.request({sqlServerHistoryReconcile:{organizationId,branchId,action:'rows',ids}});
-    return require('./history-index-protocol.cjs').normalizeRows(value,{organizationId,branchId,terminalId,keepCommerce},ids);
+    const history=require('./history-read-scope.cjs'),scope=history.captureHistoryScope(this,this.connectionManager,branchId,organizationId),terminalId=scope.terminalId;
+    const value=await this.request({sqlServerHistoryReconcile:{accessPolicy:history.POLICY,organizationId,branchId,action:'rows',ids}});
+    history.assertHistoryScope(scope,this,this.connectionManager);
+    return require('./history-index-protocol.cjs').normalizeRows(value,{organizationId,branchId,terminalId,keepCommerce,historyScope:scope.historyScope},ids);
+  }
+  async heldStatuses({organizationId='default',branchId,tickets}) {
+    if(!Array.isArray(tickets)||tickets.length<1||tickets.length>100||new Set(tickets.map(ticket=>ticket?.id)).size!==tickets.length||
+      tickets.some(ticket=>!ticket||typeof ticket!=='object'||Array.isArray(ticket)||Object.keys(ticket).sort().join(',')!=='billNo,id,shiftId'||
+        typeof ticket.id!=='string'||!ticket.id||ticket.id.length>450||
+        !(ticket.billNo===null||typeof ticket.billNo==='string'&&ticket.billNo.length<=450)||
+        !(ticket.shiftId===null||typeof ticket.shiftId==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ticket.shiftId)))||typeof branchId!=='string'||!branchId)
+      throw Object.assign(new Error('The held-ticket status request is invalid.'),{code:'EHELD_STATUS_PROTOCOL',table:'held_orders'});
+    const registered=require('../verified-activation.cjs').binding(this.terminalStore?.read?.());
+    if(!registered||registered.mode!=='operations'||registered.branchId!==recordId(branchId))
+      throw Object.assign(new Error('Held-ticket recovery requires this Operations terminal’s registered branch.'),{code:'SYNC_BRANCH_FORBIDDEN',table:'held_orders'});
+    return this.request({sqlServerHeldStatus:{organizationId,branchId,tickets}});
   }
   membershipDirectory({ afterRevision = 0, limit = 500 } = {}) {
     return this.request({ afterRevision:Number(afterRevision)||0, limit }, "membership_directory");
@@ -517,6 +557,7 @@ class CloudClient {
     }
   }
   async applyLocalBatch(transaction, table, batch) {
+    if(table.cloudTable==='change_history')throw Object.assign(new Error('History requires the scope-verified, absent-only exact download path. Its records and progress remain intact.'),{code:'EHISTORY_EXACT_REQUIRED',table:'change_history'});
     const sql = this.connectionManager?.sql?.() ?? require("mssql/msnodesqlv8");
     const allowed = new Map((table.columns ?? []).map((column) => [column.cloudColumn, column]));
     const localColumns = new Map((table.columns ?? []).map(column => [column.sqlServerColumn, column]));
