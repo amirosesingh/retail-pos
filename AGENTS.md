@@ -90,6 +90,9 @@
   initial setup, offline reconnect, and expired-history recovery. Use the
   existing registry to define each table's authoritative source, supported
   directions, identity, authorized scope, dependencies and deletion policy.
+  Declare intentionally local-only or cloud-only tables and excluded columns
+  explicitly. Preserve each table's actual branch, cluster, Management and
+  private-data boundaries.
   Verify that these match the actual schemas and runtime paths when changing
   sync. Electron saves authorized local work and its outbox in SQL Server
   before upload. Cloud-managed data and accepted web/mobile operations enter
@@ -98,11 +101,17 @@
   dependencies in both directions. Verify parent and child identities and
   scopes. Apply parent inserts before dependent rows and commit protected
   groups together. Publish local changes only after the group commits. Apply
-  permitted deletes in dependency-safe order using the existing tombstone and retention
-  rules. If a parent is missing, fetch it within the same authorized scope or
-  defer the dependent work. Never disable constraints, invent parents or
+  permitted deletes in dependency-safe order using the existing tombstone and
+  retention rules. If a parent is missing, fetch it within the same authorized
+  scope or defer the dependent work. Never disable constraints, invent parents or
   acknowledge an incomplete group to make sync advance. Test missing and
   out-of-order dependencies on both push and pull, including restart and retry.
+- Use stable row IDs, operation IDs and the table's declared unique keys to
+  prevent duplicates in the authoritative transaction. A repeated operation
+  for the same confirmed sale bill number reuses that sale and fills only
+  verified missing dependencies. A bill number that points to a different
+  operation or payload is a conflict. Keep existing invoice uniqueness scopes
+  and allow multiple distinct item and payment rows under one valid parent.
 - Verify retained records against the authorized scoped snapshot, durable
   operation receipts and saved baselines as applicable. Advance a checkpoint
   only after its required records, dependencies and proof commit. An empty

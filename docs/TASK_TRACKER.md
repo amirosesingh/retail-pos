@@ -46,6 +46,15 @@ still use selected repair paths. A separately scoped follow-up should verify
 and fetch exact missing parents for each applicable relationship or defer the
 dependent work, without widening access or scanning unrelated records.
 
+Owner follow-up extends the work to all registered table contracts, with
+foreign-key and business dependency recovery, stable IDs and unique keys,
+and consistent safe retries. First review the 70 registry decisions against
+the actual upload, download, delete and checkpoint paths in parallel. Record
+confirmed gaps and excluded/private tables. Prepare each small correction from
+current beta with scoped regression tests. Do not add new access or apply live
+SQL as part of the audit. Keep the tested shift review slice independently
+reviewable.
+
 ## 7 November — HISTORY-SCOPE82 approved implementation and remote verification
 
 Fresh affected-PC SELECT-only check on 7November about11:05am verified
