@@ -25,6 +25,7 @@ const storageHygiene = require("./storage-hygiene.cjs");
 const { createSecureConfig } = require("./db/secure-config.cjs");
 const { ConnectionManager } = require("./db/connection-manager.cjs");
 const { DatabaseService } = require("./db/service.cjs");
+const { ShiftRecoveryMetadataInstaller, RecoveryMetadataGate, shouldRetryRecoveryMetadata, packageFiles } = require("./db/shift-recovery-metadata.cjs");
 const { BackupService } = require("./db/backup.cjs");
 const { JobRepository } = require("./jobs/repository.cjs");
 const { JobManager } = require("./jobs/manager.cjs");
@@ -39,6 +40,7 @@ const { ConflictRepository } = require("./sync/conflicts.cjs");
 const { SyncCoordinator } = require("./sync/coordinator.cjs");
 const { CloudClient } = require("./sync/cloud-client.cjs");
 const closeWriteBarrier = new (require("./sync/write-barrier.cjs").WriteBarrier)();
+const recoveryMetadataGate = new RecoveryMetadataGate();
 const { createTelemetry } = require("./telemetry.cjs");
 const { OperationsRepository } = require("./db/repositories/operations.cjs");
 const { ShiftSyncJournal } = require("./db/shift-sync-journal.cjs");
@@ -60,6 +62,7 @@ const databaseService = new DatabaseService({
   secureConfig: databaseConfig,
   manager: databaseManager,
   migrate: (profile) => applyMigrations(databaseManager, profile),
+  prepareRecoveryMetadata: prepareShiftRecoveryMetadata,
   log: diagnostics.logConnection,
   startupPaused:()=>syncCoordinator.paused,
   startupIdentity:()=>{const terminal=terminalStore.read();return [authorizationServerUrl(),cloudCredentials.read()?.url??"",terminal?[terminal.tokenId,terminal.deviceUse,terminal.locationId,terminal.storeId,terminal.branchId]:null];},
@@ -178,6 +181,55 @@ legacyShiftRecovery = new (require("./sync/legacy-shift-recovery-service.cjs").L
     return {branchId:source.branchId,terminalId:source.terminalId,backendOriginHash:hash([source.backend,source.projectOrigin]),profileKey:hash(source)};
   },
 });
+
+const recoveryMetadataInstaller = new ShiftRecoveryMetadataInstaller({
+  manager: databaseManager,
+  // Implementation/isolated-test approval is not permission for fleet DDL.
+  // A separately reviewed rollout must pin the final approved SQL hash here.
+  approvedArtifactHash: null,
+  verified: () => legacyShiftRecovery.invalidateCapability(),
+});
+async function prepareShiftRecoveryMetadata({profile,pool,assertCurrent}) {
+  if(process.platform!=="win32" || !supportsLegacyShiftRecovery() || !app.hasSingleInstanceLock())
+    return {available:false,state:"not_applicable"};
+  const identity=()=>JSON.stringify([databaseManager.profile,databaseConfig.profile(),terminalStore.read(),authorizationServerUrl(),cloudCredentials.read()?.url??null]);
+  const expected=identity();
+  const assertBound=()=>{
+    assertCurrent();
+    if(databaseManager.pool!==pool || identity()!==expected || !supportsLegacyShiftRecovery() || !app.hasSingleInstanceLock() || quitting || safeMode)
+      throw Object.assign(new Error("The recovery preparation source changed."),{code:"ERECOVERY_METADATA_CONTEXT"});
+  };
+  return recoveryMetadataGate.prepare({
+    coordinator:syncCoordinator,assertCurrent:assertBound,
+    isBusy:()=>Boolean(quitting || safeMode || closePreparation || closeWriteBarrier.sealed || jobManager.running || localDataPreparePromise),
+    work:async()=>{
+      assertBound();
+      const activity=databaseService.beginStartupActivity?.()??{report:()=>{},finish:()=>{}};
+      try{
+        activity.report({phase:"metadata_packagecheck"});
+        packageFiles(); // No SQL, even the identity read, precedes package pins.
+        assertBound();activity.report({phase:"metadata_probe"});
+        const request=new(databaseManager.sql().Request)(pool,{requestTimeout:5000});
+        const source=(await request.input("configuredDatabase",databaseManager.sql().NVarChar(128),profile.database).query(`
+          DECLARE @transactions int,@implicit int;
+          SELECT @transactions=@@TRANCOUNT,@implicit=CONVERT(int,@@OPTIONS&2);
+          IF @transactions<>0 OR @implicit<>0 BEGIN RAISERROR('Recovery preparation requires an unowned SQL session.',16,1);RETURN;END;
+          SELECT LOWER(CONVERT(varchar(36),database_guid)) database_guid,DB_NAME() database_name,
+            DB_ID(@configuredDatabase) configured_database_id,DB_ID() current_database_id,
+            @transactions transaction_count,XACT_STATE() transaction_state,@implicit implicit_transactions
+          FROM sys.database_recovery_status WHERE database_id=DB_ID();`)).recordset;
+        assertBound();
+        const row=source?.[0];
+        if(source?.length!==1 || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(row.database_guid) || typeof row.database_name!=="string" || !row.database_name || row.database_name.length>128 || !Number.isInteger(row.current_database_id) || row.current_database_id<5 || row.configured_database_id!==row.current_database_id || row.transaction_count!==0 || ![0,1].includes(row.transaction_state) || row.implicit_transactions!==0)
+          throw Object.assign(new Error("The active database identity could not be verified."),{code:"ERECOVERY_METADATA_CONTEXT"});
+        return await recoveryMetadataInstaller.prepare({profile,expectedDatabaseGuid:row.database_guid,expectedDatabaseName:row.database_name,assertCurrent:assertBound,onProgress:activity.report});
+      }
+      // Preparing schema is not proof that retained business data recovered.
+      // Keep any existing recovery warning until the normal lifecycle succeeds.
+      finally{activity.finish(undefined,{complete:false});}
+    },
+  });
+}
 
 function publishBusinessChange(change){
   for(const win of BrowserWindow.getAllWindows()){
@@ -429,6 +481,13 @@ async function runAutomaticSync() {
   // terminal identity. Revocation clears the vault before this can run again.
   if (!terminalStore.read()?.tokenId || !databaseManager.isConnected() || !localBranchId() || jobManager.running || localDataPreparePromise || syncCoordinator.paused) {
     scheduleAutomaticSync();
+    return;
+  }
+  // A pre-install busy lease may retry only while startup data is still gated.
+  // Never turn routine trading or stable backup/schema denials into DDL retries.
+  if (shouldRetryRecoveryMetadata({approvedArtifactHash:recoveryMetadataInstaller.approvedArtifactHash,snapshot:databaseState,paused:syncCoordinator.paused})) {
+    await recoverLocalDatabase({prepare:true});
+    scheduleAutomaticSync(AUTO_SYNC_RETRY_MS);
     return;
   }
   if (syncCoordinator.running) {
@@ -1818,9 +1877,10 @@ function enrollCurrentShiftAuthor(proof) {
 function registerIpc() {
   ipcPrivilege.install(ipcMain, {
     isFirstRun: () => !terminalStore.wasProvisioned(),
-    writeBarrier: closeWriteBarrier,
+    writeBarrier: {run:work=>recoveryMetadataGate.run(()=>closeWriteBarrier.run(work))},
     isManagementDevice,
   });
+  recoveryMetadataGate.install(ipcMain);
   ipcMain.handle("admin:status", () => adminSession.status());
   ipcMain.handle("admin:lock", () => { sessionAdoptionRevision++; adminSession.clear(); syncCloud.clearAuthorizationProof(); return adminSession.status(); });
   ipcMain.handle("admin:recovery-unlock", async (_event, username, pin) => guard.guarded(async () => {

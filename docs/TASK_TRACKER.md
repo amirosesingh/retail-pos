@@ -7166,3 +7166,115 @@ reject the old unsafe branch; retain every other offline/PIN/roster assertion.
 Actual snapshot and mounted tests already prove the behavior. The test-only
 correction passed 73 independent related cases, scoped lint and diff checks;
 runtime remains unchanged. Require fresh CI after the corrective test commit.
+
+## 7 November — approved automatic recovery-metadata implementation
+
+The owner asked whether the guarded automatic upgrade is recommended, then
+explicitly instructed “do it.” This approves implementation and isolated tests
+of docs/database/automatic-shift-recovery-metadata-plan.md. It does not approve
+live SQL execution, automatic DDL rollout to existing PCs, production promotion
+or installer publication. Present final exact SQL/hash and target/rollout with
+backup/quiescence evidence before those protected actions.
+
+New isolated branch codex/automatic-recovery-metadata-beta starts from current
+beta858f023fe543d2ae37e561eb6a42d647c62f301a. PR430 already merged there with
+6409 tests passing/11 skipped, exact-tree verification and successful beta-site
+deployment. Its startup admission and final-outcome reporting fixes are preserved.
+
+Scope: existing prepared028–030 recovery metadata only (four initially empty
+tables and their reviewed constraints/indexes/append-only guards), exact schema
+recognition, backup verification, one transaction owner, bounded exclusive
+startup installation, truthful status and existing recovery resumption. Keep
+the published090F local upgrade byte-identical. Financial025/026, Stock031,
+rollout activation, PINs, grants, settings, registration, queues and checkpoints
+are excluded. A completed metadata upgrade is not a recovered/acknowledged shift.
+
+File ownership: policy_implementation owns Main/database-service installer
+integration, new Main-only helper and runtime unit/integration tests;
+verify_cloud_recovery owns the recovery-only packager/artifact/read-only probe
+contract and owned SQL Server artifact tests; review_chore_prs independently
+reviews backup/transaction/scope/checkout safety and owns separate adversarial
+acceptance tests if needed. Agree artifact/probe interfaces before concurrent
+implementation. Root owns trackers, Git/PR and protected actions.
+
+Use uniquely owned disposable SQL fixtures only. Do not start this candidate with
+the real POS profile, reload it into a real database, inspect secrets or apply
+DDL through production connectors. Automatic application in the normal preview
+must remain excluded until exact-target approval. Preserve all existing qualified
+offline-checkout behavior when an optional upgrade is refused; incomplete or
+unproved recovery remains gated. The proposed side-by-side conflict chooser
+preserves both histories and requires an actual Administrator/reason; no generic
+raw overwrite or new financial correction authority is included in this batch.
+
+Implementation safety refinement: the candidate's Main-owned automatic-DDL
+policy stays disabled until the final artifact hash and live rollout are
+approved. Tests may inject a pinned approved policy only for owned fixtures;
+renderer/environment values cannot authorize DDL. Runtime, probe and installer
+still enforce database identity, exact schema and verified backup independently.
+The normal existing Electron preview remains on verified beta858, not this
+unapproved metadata-installation candidate.
+
+Package checkpoint: the recovery-only generator and three pinned artifacts are
+implemented. Initial installer SHA312B3B4C040336AE979C343283D138B5D6D8CA1C8D7C732CFF000BBE192C730B;
+probe0EE1FFB7CFFD8608728238BD06F3294EC0DA3EBDF3365F1308FD3C0498D26DE7;
+manifestA859B6BA780C08A6FCB16FF4FCBB273DDD4BDAC5C988870AF068DB560A9A7BB1.
+These are review checkpoints, not live approval. Six package checks and root's
+independent generator check pass. Twenty-four original actual LocalDB cases pass
+across CI and BIN2 collations, including wrong-target/caller-TX refusal, late
+rollback, unknown schema, safe whole-module prefixes and unchanged090F install
+followed by exact automatic no-op. That manual file leaves the core ledger24;
+unknown future ledger versions stay denied. All three exact LF hashes also
+survive an owned Windows autocrlf checkout. Populated-evidence/concurrency and
+actual runtime startup/backup/capability acceptance remain in progress.
+
+Caller-transaction guard refinement: actual isolated SQL reproduced that the
+initial312B preparation artifact could abort an unrelated XACT_ABORTON caller
+transaction on invalid target parameters before its ambient-transaction guard.
+The dedicated Main path already refused inherited transactions, but the artifact
+also needs that defense. Its original safe RAISERROR/RETURN guard now executes
+before all parameter/implicit-session THROW checks. Actual caller sentinels now
+retain count1/state1 and their pending row on refusal. No operator work was used.
+New preparation installer SHA CD7AA9591B257F91372FB092990202E4D5E8E89450F39F4A3BC4D6D55CCDE62A;
+manifest6F35A244E975A1E98CB13D43261BF9CC46DB9DAB1DFD23C304DF8325E3E93817;
+probe stays0EE1FFB7CFFD8608728238BD06F3294EC0DA3EBDF3365F1308FD3C0498D26DE7.
+The old312B artifact was never live-approved or applied. The090F manual upgrade
+remains byte-identical. Pure6/root generator/Windows checkout checks pass on new
+bytes; final full native and composed runtime acceptance is still running.
+
+Implementation verification checkpoint: Main startup now wires the optional
+installer behind a literal null approval pin. All three package files have
+independent trusted source hashes before any SQL. Existing primary-pool and
+temporary-session GUID/canonical-name proofs must match even for a no-op.
+The installer recognizes only reviewed whole-module prefixes, backs up through
+the SQL server's configured directory, verifies COPY_ONLY/CHECKSUM/header BindingID,
+and executes the single SQL-owned transaction. Matching installations skip backup
+and DDL. Busy startup retries use only the existing schedule while data stays
+gated; qualified trading and stable backup/schema/approval denials never start
+background DDL. Shutdown/barrier/control ownership and prior pause are preserved.
+
+Read-only progress reports the actual package/probe/backup/verification/install/
+readback stage without exposing paths or clearing an unresolved shift-data
+warning. No metadata result acknowledges a closing or qualifies incomplete data.
+Two hundred seventeen related runtime cases and 38 independent adversarial Main
+cases pass (overlapping suites); syntax, lint and TypeScript pass. The final
+recovery-only artifact passes 28 actual SQL Server groups across two collations;
+the runtime passes seven owned database groups. Both native runners cleaned only
+their owned databases/files and leave the090F manual file unchanged.
+
+Native limitation is explicit: unmodified LocalDB returns no default backup
+directory and was correctly refused with no DDL. The successful owned runtime
+case substitutes only that directory-property reply with its owned test folder;
+COPY_ONLY, VERIFYONLY, HEADERONLY, installation and readback are real SQL. It is
+not proof of the affected SQL Express PC's path/permissions or signed-in recovery.
+No live profile was launched. Root full regression and exact-head PR431 CI are
+running before beta integration; rollout and live SQL approval remain separate.
+
+Full-suite compatibility refinement: the first root run passed6520 cases and
+failed one unchanged DatabaseService no-hook connection test. The new optional
+call evaluated credentials eagerly even when no installer was configured. Pass
+the already validated/saved profile, retaining the hook's fresh saved-credential
+checks before/after preparation. The original seven state-machine tests now
+pass unchanged; two added enabled-hook save tests prove accepted matching identity
+and held mid-operation profile changes. Final focused116 and independent105
+cases pass (overlapping suites); full regression is rerunning on frozen sources.
+No SQL artifact, approval policy or existing assertion was weakened.

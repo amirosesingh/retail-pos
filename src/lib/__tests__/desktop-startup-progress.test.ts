@@ -7,6 +7,30 @@ import { observeDesktopStartup, startupPresentation } from "../desktop-startup-p
 const require = createRequire(import.meta.url);
 const { StartupActivity, reportActivity } = require("../../../electron/db/startup-activity.cjs");
 describe("read-only startup activity", () => {
+  it.each([
+    ["metadata_packagecheck","Checking the recovery update…"],
+    ["metadata_probe","Checking local recovery support…"],
+    ["metadata_backing_up","Backing up the local database…"],
+    ["metadata_verifying_backup","Verifying the database backup…"],
+    ["metadata_installing","Preparing local recovery support…"],
+    ["metadata_readback","Verifying local recovery support…"],
+  ])("shows actual %s preparation without releasing data readiness",(phase,label)=>{
+    const activity=new StartupActivity(),run=activity.begin();
+    run.report({phase,path:"private-path",proof:"private-proof"});
+    expect(activity.snapshot()).toMatchObject({active:true,phase});
+    expect(startupPresentation(activity.snapshot(),"Loading").message).toBe(label);
+    expect(JSON.stringify(activity.snapshot())).not.toMatch(/private-/);
+    run.finish(undefined,{complete:false});
+    expect(activity.snapshot()).toMatchObject({active:false,phase:"waiting"});
+  });
+  it("does not resolve a prior shift-review failure when only metadata preparation finishes",()=>{
+    const activity=new StartupActivity(),failed=activity.begin();
+    failed.finish(Object.assign(new Error("SYNC_SHIFT_GRAPH_CONFLICT"),{code:"SYNC_SHIFT_GRAPH_CONFLICT"}));
+    const schema=activity.begin();schema.report({phase:"metadata_readback"});schema.finish(undefined,{complete:false});
+    expect(activity.snapshot()).toMatchObject({active:false,phase:"waiting",failure:"blocked",reason:"shift-data"});
+    const actualRecovery=activity.begin();actualRecovery.report({phase:"applying"});actualRecovery.finish();
+    expect(activity.snapshot()).toMatchObject({active:false,phase:"complete"});expect(activity.snapshot()).not.toHaveProperty("failure");
+  });
   it("keeps progress on its own main-window-only stream with no automatic renderer retry", () => {
     const main = readFileSync("electron/main.cjs", "utf8");
     const publish = main.slice(

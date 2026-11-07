@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 const { HistoryCadence } = require("../../../electron/sync/history-cadence.cjs");
+const { shouldRetryRecoveryMetadata } = require("../../../electron/db/shift-recovery-metadata.cjs");
 const main = readFileSync("electron/main.cjs", "utf8");
 const source = (start: string, end: string) => {
   const from = main.indexOf(start), to = main.indexOf(end, from);
@@ -58,7 +59,7 @@ function fixture() {
     terminalStore: { read: () => ({ tokenId: "registered" }) }, terminalIdentityPausedSync: false,
     databaseService: { snapshot: () => ({ enabled: true, configured: true, connected: true }),
       beginStartupActivity: () => ({ report, finish }), markReady: vi.fn(), transition: vi.fn() },
-    databaseManager: { isConnected: () => true }, recoverLocalDatabase: vi.fn(), recordFault: vi.fn(),
+    databaseManager: { isConnected: () => true }, recoverLocalDatabase: vi.fn(), shouldRetryRecoveryMetadata,recoveryMetadataInstaller:{approvedArtifactHash:null},recordFault: vi.fn(),
     localBranchId: () => "A", jobManager: { running: false }, localDataPreparePromise: null,
     syncCoordinator: { paused: false, running: false, runNow }, approvalTokenVerifier: { refresh: vi.fn() },
     lastActivityFlush: Date.now(), ACTIVITY_INTERVAL_MS: 120000, AUTO_SYNC_OK_MS: 120000,

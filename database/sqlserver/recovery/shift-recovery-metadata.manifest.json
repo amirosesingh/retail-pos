@@ -1,0 +1,62 @@
+{
+  "format": "retail.shift-recovery-metadata.v1",
+  "coreSchemaVersion": 24,
+  "installer": {
+    "file": "shift-recovery-metadata.sql",
+    "sha256": "CD7AA9591B257F91372FB092990202E4D5E8E89450F39F4A3BC4D6D55CCDE62A"
+  },
+  "probe": {
+    "file": "shift-recovery-metadata-probe.sql",
+    "sha256": "0EE1FFB7CFFD8608728238BD06F3294EC0DA3EBDF3365F1308FD3C0498D26DE7"
+  },
+  "modules": [
+    {
+      "id": "028_retained_shift_evidence",
+      "sourceHash": "E3727FE62A276C1EAF200F8783B289D5BE745F2E95D563CDA850EEE9F8CAADCD",
+      "tables": [
+        "pos_shift_recovery_evidence"
+      ]
+    },
+    {
+      "id": "029_legacy_shift_recovery",
+      "sourceHash": "08917EE9041033A68A81751D6409B0BB60E7E0D1D3878DCF577EA64D0B6C5307",
+      "tables": [
+        "pos_sync_shift_legacy_recoveries",
+        "pos_sync_shift_legacy_recovery_receipts"
+      ]
+    },
+    {
+      "id": "030_reviewed_shift_adoption",
+      "sourceHash": "5EE385C20BE5C3A79C0F0CBB91D0D4294EF17D0CB8B350201C23B4B65BF4CE92",
+      "tables": [
+        "pos_shift_recovery_adoptions"
+      ]
+    }
+  ],
+  "prefixes": [
+    {
+      "prefix": 0,
+      "state": "absent",
+      "schemaFingerprint": "AB36251203D674B064D0C598466A1CF47307C88E54506BAA27112D05C41A6705"
+    },
+    {
+      "prefix": 1,
+      "state": "prefix",
+      "schemaFingerprint": "6B77B44E79C0ABDBA808EA18FB6FC64880F32E60A9DAD45494916D69F8414DD8"
+    },
+    {
+      "prefix": 2,
+      "state": "prefix",
+      "schemaFingerprint": "FBAD40039877ECA57A51242509D9BF81CD641F08F5FDF75E4685290A7AC48CF0"
+    },
+    {
+      "prefix": 3,
+      "state": "matching",
+      "schemaFingerprint": "AB5E631341D1AEFD82E098D930B8A98D754A9B6DA3183DAD643F832BA903EA6B"
+    }
+  ],
+  "manualUpgrade": {
+    "sha256": "090F24031A07660C2D36512D2B38197A06491BB28408CCAAFDBB66FC400A4730",
+    "bytes": 559560
+  }
+}

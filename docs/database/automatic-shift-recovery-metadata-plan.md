@@ -1,6 +1,7 @@
 # Automatic local shift-recovery metadata — preparation plan
 
-Baseline: beta `2bbcf144b054ee2f47d0b9c35d38b2617ef7b6a4`.
+Implementation baseline: beta `858f023fe543d2ae37e561eb6a42d647c62f301a`.
+Owner approved implementation and isolated tests on 7 November 2026.
 This is not a live database or fleet rollout approval.
 
 ## Confirmed release gap
@@ -26,6 +27,10 @@ unverified until read-only inspection is available.
 - Include only existing prepared modules 028–030. Do not include financial
   modules 025/026, activate a financial rollout, change sharing policies, or
   include Stock report module 031.
+- Keep automatic DDL behind a Main-owned, artifact-pinned approval policy that
+  is disabled in the preparation candidate. Owned fixtures inject an approved
+  policy for end-to-end tests. A renderer value or environment variable cannot
+  approve a real database update. Final activation needs exact-file/rollout review.
 
 The exact SQL effects are four initially empty tables:
 
@@ -79,3 +84,21 @@ corrections. Preserve existing financial modes, checkout and pending work.
 The owner must see the final SQL file/hash, target or rollout scope, backup and
 quiescence behavior before live execution or deployment that enables automatic DDL.
 Production promotion remains a separately approved beta-to-main PR.
+
+## Implemented candidate and exact SQL review
+
+The candidate is implemented with automatic DDL disabled in Main. Its installer
+is `database/sqlserver/recovery/shift-recovery-metadata.sql`, SHA256
+`CD7AA9591B257F91372FB092990202E4D5E8E89450F39F4A3BC4D6D55CCDE62A`.
+The read-only probe SHA is
+`0EE1FFB7CFFD8608728238BD06F3294EC0DA3EBDF3365F1308FD3C0498D26DE7`;
+manifest SHA is
+`6F35A244E975A1E98CB13D43261BF9CC46DB9DAB1DFD23C304DF8325E3E93817`.
+The earlier312B preparation hash is superseded and was never applied live.
+
+Package/native/runtime and independent adversarial checks passed on these bytes.
+Whole regression/CI remains an integration gate. Actual LocalDB refused a missing
+server backup directory; its successful fixture supplied only an owned test
+directory reply, then executed real backup/verification/DDL/readback. Target
+SQL Express backup-path/permission and affected-PC recovery acceptance remain
+unverified. No approval to activate Main's pin or install on real PCs is inferred.

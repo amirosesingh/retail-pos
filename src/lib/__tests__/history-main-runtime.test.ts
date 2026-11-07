@@ -2,13 +2,14 @@ import {readFileSync} from 'node:fs';
 import {runInNewContext} from 'node:vm';
 import {describe,it,expect,vi} from 'vitest';
 const {HistoryCadence}=require('../../../electron/sync/history-cadence.cjs');
+const {shouldRetryRecoveryMetadata}=require('../../../electron/db/shift-recovery-metadata.cjs');
 const text=readFileSync('electron/main.cjs','utf8'),start=text.indexOf('function scheduleAutomaticSync('),end=text.indexOf('function stopAutomaticSync(',start);
 function fixture(){
  let clock=1_000_000;const historyCadence=new HistoryCadence({now:()=>clock,jitter:()=>0}),scheduled:number[]=[];
  const runNow=vi.fn(async()=>({ok:true})),historyStep=vi.fn(async()=>({pending:true,status:'queued'})),managementRun=vi.fn(async():Promise<{ok:boolean;history?:{pending:boolean;status:string}} >=>({ok:true,history:{pending:true,status:'queued'}})),fault=vi.fn();
  const context={Date:{now:()=>clock},historyCadence,quitting:false,automaticSyncQueued:false,automaticSyncScheduler:{schedule:(delay:number)=>scheduled.push(delay)},isManagementDevice:()=>false,
   managementReplica:{run:managementRun},terminalStore:{read:()=>({tokenId:'registered'})},terminalIdentityPausedSync:false,databaseService:{snapshot:()=>({enabled:true,configured:true,connected:true})},databaseManager:{isConnected:()=>true},
-  recoverLocalDatabase:vi.fn(),recordFault:fault,localBranchId:()=> 'A',jobManager:{running:false},localDataPreparePromise:null,syncCoordinator:{paused:false,running:false,runNow},
+  recoverLocalDatabase:vi.fn(),shouldRetryRecoveryMetadata,recoveryMetadataInstaller:{approvedArtifactHash:null},recordFault:fault,localBranchId:()=> 'A',jobManager:{running:false},localDataPreparePromise:null,syncCoordinator:{paused:false,running:false,runNow},
   approvalTokenVerifier:{refresh:vi.fn(async()=>{})},lastActivityFlush:clock,ACTIVITY_INTERVAL_MS:120000,AUTO_SYNC_OK_MS:120000,AUTO_SYNC_RETRY_MS:60000,AUTO_VERIFY_MS:900000,lastAutomaticVerification:clock,
   localDataLifecycle:{historyStep,reconcileAndRecover:vi.fn(async()=>[]),historyPending:()=>true},databaseConfig:{profile:()=>({retentionDays:90})},diagnostics:{logConnection:vi.fn(),bootstrapDiagnostic:()=>({})},syncRegistry:{tables:[]},prepareLocalData:vi.fn(),MEMBERSHIP_TABLES:new Set(['members']),reconciliationError:()=>Error('count review'),
  };
