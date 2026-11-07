@@ -88,6 +88,9 @@ const CHANNEL_LEVELS = {
   "sync:legacy-recovery-preview": ADMIN,
   "sync:legacy-recovery-approve": ADMIN,
   "sync:legacy-recovery-accept-cloud": ADMIN,
+  "sync:held-sale-review-list": ADMIN,
+  "sync:held-sale-review-preview": ADMIN,
+  "sync:held-sale-review-resolve": ADMIN,
   "receipts:find-exact": OPEN,
   "receipts:refund": OPEN,
   "pos:status": OPEN,
@@ -452,6 +455,10 @@ function allowed(channel, args = []) {
   if (["sync:legacy-recovery-list", "sync:legacy-recovery-preview", "sync:legacy-recovery-approve", "sync:legacy-recovery-accept-cloud"].includes(channel)) {
     if (!adminSession.hasPosAuthority() || adminSession.identity()?.level !== "admin") return false;
     adminSession.touch(); return true;
+  }
+  if (["sync:held-sale-review-list", "sync:held-sale-review-preview", "sync:held-sale-review-resolve"].includes(channel)) {
+    // The fixed handler verifies the trusted frame before touching the session.
+    return adminSession.hasPosAuthority() && adminSession.identity()?.level === "admin";
   }
   if (channel === "business:management-report") {
     if (!adminSession.hasPosAuthority()) return false;

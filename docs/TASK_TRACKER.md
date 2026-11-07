@@ -7595,3 +7595,43 @@ diff checks passed. The owned SQL Server fixture applied a reversed feed page
 across all three relationships. A page with a missing parent rolled back and
 kept its cursor, and the scoped snapshot retry succeeded when both records
 were present.
+
+## 7 November — reviewed held-sale recovery before STR1 shift reconciliation
+
+Owner approved implementation and testing of the remaining recovery. Start
+from beta 1666da5b, after verified PRs 433, 434 and 435. Keep checkout, the
+existing branch and receipt entitlements, pending work and checkpoints.
+Live data/schema application and production promotion remain separate.
+
+The six saved STR1 sales were missing locally when checked. Expired Change
+Tracking and a matching bill number do not establish the local cart's exact
+history. The private completed-hold cleanup marker can establish the cloud
+hold-to-sale link, but it does not record the retained cart's before-image.
+Require a real current Administrator for legacy cases that lack exact
+matching evidence. Preserve the local before-image and decision before
+completing an exact matching hold. Use the existing sync lane and confirm
+the committed sale graph locally. Recover no unverified sales or payments.
+After held recovery, recheck the shift graph and use the existing reviewed
+decision flow for any remaining discrepancy.
+
+Work in parallel on the bounded authorized cloud read, the verified local
+review and adoption transaction, and the startup review UI. Define and test
+the exact SQL artifacts in isolated databases. Do not activate the existing
+automatic metadata policy or introduce broad historical receipt access.
+Verification must cover checkout retries, no duplicate charge or stock
+movement, active cart changes, wrong branch/operator, lost response,
+disposable SQL Server and PostgreSQL, and actual device acceptance.
+
+Isolated acceptance passed for exact cloud receipts (including cash
+over-tender and zero exchanges), same-branch sibling terminal denial, and
+reviewed recovery with expired local tracking, no additional charge or stock
+write, atomic rollback and lost-response replay. The hosted reader adds one
+service-only STABLE function with no data writes or table grant. File
+`20261107060000_reviewed_held_sale_graph.sql` SHA256
+`982A6843BD6ACDEA26714751E8BB24FDEBE364679B362AB8E5D7A26B283B0369`.
+Local `held-sale-review-metadata.sql` adds one empty review table, checks,
+primary key and append-only trigger. SHA256
+`2AD9AA0DB7EE7427BBEC8E8E7750B6829ADACF6B98A9FDE195A4F99E6942A08F`.
+The previously prepared shift review metadata is independent. Keep cloud and
+local application disabled until exact-target review and backup verification.
+Actual affected-PC recovery and installed-platform acceptance remain pending.

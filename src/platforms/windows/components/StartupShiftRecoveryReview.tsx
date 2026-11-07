@@ -5,6 +5,7 @@ import { isDesktop } from "@/lib/branding";
 import { createLoginView, type LoginView } from "@/lib/login-view";
 import { ensureDesktopPosSession } from "@/lib/desktop-pos-session";
 import { LegacyShiftRecoveryReview } from "./LegacyShiftRecoveryReview";
+import { HeldBillRecoveryReview } from "./HeldBillRecoveryReview";
 
 /** Recovery presentation only. NativeBoot still prevents trading; Main still
  * verifies the real POS Administrator, author, terminal and every SQL write. */
@@ -32,7 +33,7 @@ export function StartupShiftRecoveryReview({ connected, renderLogin }: { connect
     {!ready ? <p role="status" className="text-sm">Checking your POS sign-in…</p>
       : !user ? <div className="[&>div]:min-h-0 [&>div]:p-0 [&>div>div]:max-w-none">{renderLogin(view)}</div>
         : !isAdmin ? <><p role="alert" className="text-sm">This signed-in account cannot approve saved shift recovery.</p><Button variant="outline" onClick={() => void logout()}>Sign in as Administrator</Button></>
-          : verified ? <LegacyShiftRecoveryReview />
+          : verified ? <div className="flex flex-wrap gap-2"><LegacyShiftRecoveryReview /><HeldBillRecoveryReview /></div>
             : <p role={error ? "alert" : "status"} className="text-sm">{error ?? "Verifying Administrator access on this PC…"}</p>}
     {error ? <Button variant="outline" onClick={() => setAttempt(value => value + 1)}>Retry Administrator verification</Button> : null}
   </section>;

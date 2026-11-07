@@ -266,6 +266,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261106042139_automatic_history_index_recovery.sql",
       "supabase/migrations/20261107021328_isolate_branch_history_sync.sql",
       "supabase/migrations/20261107024729_bounded_held_status_reconciliation.sql",
+      "supabase/migrations/20261107060000_reviewed_held_sale_graph.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

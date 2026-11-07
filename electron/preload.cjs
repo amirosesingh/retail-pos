@@ -117,6 +117,11 @@ contextBridge.exposeInMainWorld("pos", {
       approve: (value) => invoke("sync:legacy-recovery-approve", value),
       acceptCloud: (value) => invoke("sync:legacy-recovery-accept-cloud", value),
     },
+    heldRecovery: {
+      list: (options) => invoke("sync:held-sale-review-list", options),
+      preview: (ticketId) => invoke("sync:held-sale-review-preview", ticketId),
+      resolve: (value) => invoke("sync:held-sale-review-resolve", value),
+    },
     subscribe: (cb) => { const handler=(_event,payload)=>cb(payload); ipcRenderer.on("sync:state",handler); return()=>ipcRenderer.removeListener("sync:state",handler); },
   },
   staffRoster: (storeId) => invoke("staff:roster", storeId),

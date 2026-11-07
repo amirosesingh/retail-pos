@@ -674,6 +674,19 @@ schema = require("./history-scope-canonical.cjs").withHistoryScopeContract(schem
   fs.readFileSync(path.join(root, "supabase", "migrations", "20261107021328_isolate_branch_history_sync.sql"), "utf8"));
 schema = require("./history-scope-canonical.cjs").withBoundedHeldStatusContract(schema,
   fs.readFileSync(path.join(root, "supabase", "migrations", "20261107024729_bounded_held_status_reconciliation.sql"), "utf8"));
+const reviewedHeldBegin = "-- REVIEWED_HELD_SALE_GRAPH_BEGIN", reviewedHeldEnd = "-- REVIEWED_HELD_SALE_GRAPH_END";
+const reviewedHeldMigration = fs.readFileSync(path.join(root, "supabase", "migrations", "20261107060000_reviewed_held_sale_graph.sql"), "utf8").replaceAll("\r\n", "\n");
+if (reviewedHeldMigration.split(reviewedHeldBegin).length !== 2 || reviewedHeldMigration.split(reviewedHeldEnd).length !== 2)
+  throw new Error("The reviewed held-sale graph migration boundary changed.");
+if (schema.includes(reviewedHeldBegin)) {
+  if (schema.split(reviewedHeldBegin).length !== 2 || schema.split(reviewedHeldEnd).length !== 2 || schema.indexOf(reviewedHeldEnd) < schema.indexOf(reviewedHeldBegin))
+    throw new Error("The canonical reviewed held-sale graph boundary changed.");
+  schema = schema.slice(0, schema.indexOf(reviewedHeldBegin)).trimEnd() + "\n\n" + schema.slice(schema.indexOf(reviewedHeldEnd) + reviewedHeldEnd.length).trimStart();
+} else if (schema.includes(reviewedHeldEnd)) throw new Error("The canonical reviewed held-sale graph boundary changed.");
+const reviewedHeldAnchor = "-- HISTORY_SCOPE82_BEGIN";
+if (schema.split(reviewedHeldAnchor).length !== 2) throw new Error("Missing reviewed held-sale graph assembly anchor.");
+schema = schema.replace(reviewedHeldAnchor, reviewedHeldBegin + reviewedHeldMigration.split(reviewedHeldBegin)[1].split(reviewedHeldEnd)[0] +
+  reviewedHeldEnd + "\n\n" + reviewedHeldAnchor);
 fs.writeFileSync(schemaPath, schema);
 console.log(`Supabase sync contract generated for ${tables.length} keyed tables`);
 
