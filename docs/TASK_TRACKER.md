@@ -1,3 +1,26 @@
+## 7 November — two-way POS synchronization rules and prior backup
+
+The owner asked to record the revised sync plan as a permanent repository rule
+and back up the previous rules before making the change. The documentation
+batch starts at beta `d39b0333`. The [current plan](database/pos-sync-implementation-plan.md),
+[previous plan](database/archive/pos-sync-plan-before-2026-11-07.md), and
+[previous repository rules](database/archive/pos-sync-rules-before-2026-11-07.md)
+preserve the supplied documents and pre-change instructions. The approval
+refresh fix is tracked separately in beta PR #444.
+
+The replacement protocol is pending. Before the pilot, confirm the isolated
+SQL Server databases, Supabase project and relay, drawer ownership, business-day
+cutoff, offline permissions and limits, card provider behavior, stock allowances,
+and named cross-store approval rules. Treat 24 hours offline and 95% of connected
+approval updates within two seconds as proposed pilot targets. Record checkout
+and catch-up budgets before the drill. Keep a retry with `WAITING_DEPENDENCY`
+eligible to apply under its original operation ID and payload after dependencies
+arrive. Define a byte budget for whole feed groups and rehearse both cutover and
+handback with an open shift and a pending sale. The reported `50C` error remains
+unidentified pending exact reproduction evidence. This batch covers the written
+rules and backup. Runtime implementation, database changes and rollout follow
+their existing approval and verification gates.
+
 ## 7 November — scoped history during mixed-client rollout
 
 The owner requested both sync corrections, beta first and then production.
