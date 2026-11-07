@@ -1,3 +1,40 @@
+## 7 November — first two-way sync implementation batch
+
+The owner approved starting the revised two-way sync plan on beta, using agents
+and focused verification while the existing engine remains active. Begin from
+beta `d39b0333`. The full plan and rules are tracked separately in beta PR #445.
+This batch prepares a private PostgreSQL feed foundation for complete change
+groups. A transaction appends once for all affected scopes, locking heads in a
+consistent order and committing head updates with their groups. An isolated
+PostgreSQL fixture must prove visibility, rollback and concurrent ordering, and
+verify that application roles cannot read or publish directly.
+
+The disposable PostgreSQL 18.6 fixture passed all four focused scenarios. A
+same-scope writer waited for its predecessor, a separate scope progressed, and
+complete groups and their head positions became visible together. Rollback,
+wrong-epoch rejection and the provisional size limit left no gaps or partial
+groups. Anonymous, authenticated and service roles were denied direct access.
+
+The owner asked to complete the plan. Extend the preparation with bounded reads
+of whole groups at a fixed upper position, guarded retention and snapshot pins,
+and a private payload-bound operation inbox. An identical waiting operation can
+resume with its original ID after dependencies arrive. A stored disposition must
+be recorded in the transaction that claimed the operation. Keep the active
+cloud contracts out of this slice. Move the preparation outside `supabase/sql`
+because the canonical schema check treats that directory as deployable SQL.
+
+The extended disposable PostgreSQL fixture passed 14 scenarios covering the
+publisher, whole-group reader, snapshot retention fences and inbox. All 28
+canonical schema checks passed after moving the preparation files. An export
+that reads the canonical projection and head together still needs the
+authorized publisher and relay integration.
+
+Keep the prepared SQL outside the deployment migration chain until the scoped
+relay, domain publishers and snapshot cutover can be reviewed together. The
+existing feed, uploader, approval behavior and all installed cursors remain
+active. Rollback for this preparation batch is a source revert. Live database
+application, pilot activation and release retain their separate approval gates.
+
 ## 7 November — two-way POS synchronization rules and prior backup
 
 The owner asked to record the revised sync plan as a permanent repository rule
