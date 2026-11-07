@@ -50,6 +50,23 @@ a checkpoint changing during recovery, source invalidation before commit and
 blank-branch journal refusal. Independent review confirmed the revised guards.
 The production STR1 flow still needs an installed check.
 
+## 7 November — retain complete Windows Change Tracking upload pages
+
+The owner approved starting the two-way sync plan in scoped beta batches while
+keeping the current engine active. Begin from beta `d39b0333`. The current
+legacy Change Tracking reader can read a boundary twice when a page is full.
+Cleanup between reads can invalidate the saved starting version. Keep complete
+version groups in one bounded-window read and refuse to advance if the starting
+version is outside retention after the read. Preserve journal-first upload,
+scope and echo filtering, and acknowledgement before checkpoint advancement.
+
+The two focused pipeline tests passed. An owned disposable Windows LocalDB
+instance verified whole version groups, composite keys, deletes, existing echo
+markers and rejection of an expired position through ODBC. The change uses the
+current SQL Server connection and recovery path. It requires no migration or
+operator setting change. The rollback is a scoped code revert. Cloud feed
+preparation and immutable legacy-row staging proceed separately.
+
 ## 7 November — mixed-version fleet sync and verified held completions
 
 Owner approved a separate beta implementation and isolated tests from

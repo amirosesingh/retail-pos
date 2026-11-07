@@ -41,22 +41,49 @@ class ChangeReader {
   async changedIds(value, sinceVersion, limit = 500) {
     const { table, primary } = this.table(value);
     const name = table.sqlServerTable;
-    const request = this.connectionManager.pool.request().input("since", Number(sinceVersion) || 0).input("limit", Math.max(100, Math.min(2000, limit)));
-    const bounds = await this.connectionManager.pool.request().input("object", `dbo.${name}`).query("SELECT CHANGE_TRACKING_MIN_VALID_VERSION(OBJECT_ID(@object)) AS min_version, CHANGE_TRACKING_CURRENT_VERSION() AS current_version;");
-    const min = Number(bounds.recordset?.[0]?.min_version ?? 0);
-    if (sinceVersion > 0 && min > Number(sinceVersion)) throw Object.assign(new Error(`Change Tracking history for ${name} has expired; a scoped bootstrap is required.`), { code: "ECHANGEGAP", table: name, minimumVersion: min });
+    const since = ctVersion(sinceVersion ?? 0);
+    if (since === null) throw Object.assign(new Error(`The Change Tracking position for ${name} is invalid.`), {
+      code: "ESYNC_CT_POSITION_INVALID", table: name,
+    });
     const keyColumns = primary.map((column) => `CT.[${column}]`).join(",");
-    const order = primary.map((column) => `CT.[${column}]`).join(",");
-    let result = await request.query(`SELECT TOP (@limit) CT.SYS_CHANGE_VERSION AS version, CT.SYS_CHANGE_OPERATION AS operation, CT.SYS_CHANGE_CONTEXT AS change_context, ${keyColumns}
-      FROM CHANGETABLE(CHANGES dbo.[${name}], @since) CT
-      ORDER BY CT.SYS_CHANGE_VERSION, ${order};`);
-    if ((result.recordset?.length ?? 0) === Math.max(100, Math.min(2000, limit))) {
-      const boundary = Number(result.recordset.at(-1).version);
-      result = await this.connectionManager.pool.request().input("since", Number(sinceVersion) || 0).input("boundary", boundary).query(`SELECT CT.SYS_CHANGE_VERSION AS version, CT.SYS_CHANGE_OPERATION AS operation, CT.SYS_CHANGE_CONTEXT AS change_context, ${keyColumns}
-        FROM CHANGETABLE(CHANGES dbo.[${name}], @since) CT WHERE CT.SYS_CHANGE_VERSION<=@boundary
-        ORDER BY CT.SYS_CHANGE_VERSION, ${order};`);
-    }
-    return (result.recordset ?? []).map((row) => ({ ...row, remote: Boolean(row.change_context), key: Object.fromEntries(primary.map((column) => [column, row[column]])), entityId: this.entityId(primary, row) }));
+    const keyOrder = primary.map((column) => `bounded.[${column}]`).join(",");
+    // Ties are on the commit version alone, so a full page keeps the entire
+    // boundary group without a second scan. Sort its keys outside the limit.
+    const result = await this.connectionManager.pool.request()
+      .input("since", since).input("limit", Math.max(100, Math.min(2000, limit)))
+      .input("object", `dbo.${name}`).query(`
+        DECLARE @from_version bigint=CONVERT(bigint,@since), @table_id int=OBJECT_ID(@object);
+        DECLARE @minimum bigint=CHANGE_TRACKING_MIN_VALID_VERSION(@table_id),
+          @upper bigint=CHANGE_TRACKING_CURRENT_VERSION();
+        IF @minimum IS NOT NULL AND @upper IS NOT NULL AND (@from_version=0 OR @from_version>=@minimum)
+        BEGIN
+          SELECT bounded.* FROM (
+            SELECT TOP (@limit) WITH TIES CT.SYS_CHANGE_VERSION AS version,
+              CT.SYS_CHANGE_OPERATION AS operation, CT.SYS_CHANGE_CONTEXT AS change_context, ${keyColumns}
+            FROM CHANGETABLE(CHANGES dbo.[${name}], @from_version) CT
+            WHERE CT.SYS_CHANGE_VERSION<=@upper
+            ORDER BY CT.SYS_CHANGE_VERSION
+          ) bounded ORDER BY bounded.version, ${keyOrder};
+        END;
+        SELECT CONVERT(varchar(20),@minimum) AS minimum_version,
+          CONVERT(varchar(20),CHANGE_TRACKING_MIN_VALID_VERSION(@table_id)) AS final_minimum_version;`);
+    const sets = result.recordsets ?? [];
+    const bounds = sets.at(-1)?.[0];
+    const minimum = ctVersion(bounds?.minimum_version);
+    const finalMinimum = ctVersion(bounds?.final_minimum_version);
+    // For the initial zero scan, the first observed floor defines the retained
+    // window. For a saved cursor, cleanup is safe only up to that cursor.
+    if (minimum !== null && finalMinimum !== null && (
+      (since !== "0" && BigInt(minimum) > BigInt(since)) ||
+      BigInt(finalMinimum) > BigInt(since === "0" ? minimum : since)
+    )) throw Object.assign(new Error(`Change Tracking history for ${name} has expired; a scoped bootstrap is required.`), {
+      code: "ECHANGEGAP", table: name, minimumVersion: Number(finalMinimum),
+    });
+    if (minimum === null || finalMinimum === null || sets.length !== 2)
+      throw Object.assign(new Error(`Change Tracking is unavailable for ${name}.`), {
+        code: "ESYNC_CT_UNAVAILABLE", table: name,
+      });
+    return sets[0].map((row) => ({ ...row, remote: Boolean(row.change_context), key: Object.fromEntries(primary.map((column) => [column, row[column]])), entityId: this.entityId(primary, row) }));
   }
   async rows(value, changes, { branchId = "", exactFinancial = false } = {}) {
     const { table, primary } = this.table(value);
