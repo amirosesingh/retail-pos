@@ -143,6 +143,28 @@ current SQL Server connection and recovery path. It requires no migration or
 operator setting change. The rollback is a scoped code revert. Cloud feed
 preparation and immutable legacy-row staging proceed separately.
 
+## 7 November — immutable Windows checkout journal preparation
+
+The owner requested completion of the revised two-way sync plan. Begin from
+beta `d39b0333`. Prepare a default-off Windows `SaleCompleted` journal writer
+at the existing checkout aggregate transaction. Capture authorized saved sale,
+item, tender and stock facts with their stable operation and business IDs. Use
+an additive preparation table outside installed migrations. Prove atomic
+commit and rollback, exact replay after local row changes, and default-off
+behavior with an isolated LocalDB fixture. Preserve the deployed uploader,
+legacy pending work, cloud acceptance and operator configuration.
+
+This slice does not enable the new journal on an installed till. Review the
+schema, event contract, cloud ingestion and pilot fence together before any
+activation. Rollback for preparation is a scoped source revert.
+
+Four focused Windows LocalDB scenarios passed. The fixture verified default-off
+behavior and legacy replay, immutable saved cash checkout facts and idempotent
+retry, rejection of unsupported inputs, and rollback of both business and
+journal rows after a failure following evidence insertion. The supported event
+is a plain cash checkout on an active shift. Other tenders and later financial
+actions still need their own typed contracts and verified authoritative apply.
+
 ## 7 November — mixed-version fleet sync and verified held completions
 
 Owner approved a separate beta implementation and isolated tests from

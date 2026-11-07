@@ -1,4 +1,4 @@
-const { normalizeUuidFields } = require("../../sync/uuid-fields.cjs");
+const { normalizeUuidFields, recordId } = require("../../sync/uuid-fields.cjs");
 const { createHash } = require("node:crypto");
 const { branchPredicate, rendererReadBranchPredicate } = require("../branch-scope.cjs");
 const { isFinancialStockUpdate, assertFinancialStockUpdate } = require("../financial-stock-policy.cjs");
@@ -41,10 +41,11 @@ function branchFor(operation, fallback) {
 }
 
 class AggregateRepository {
-  constructor(connectionManager, operationsRepository, {financialOperations=null} = {}) {
+  constructor(connectionManager, operationsRepository, {financialOperations=null, saleOutbox=null} = {}) {
     this.connectionManager = connectionManager;
     this.operationsRepository = operationsRepository;
     this.financialOperations = financialOperations;
+    this.saleOutbox = saleOutbox;
   }
 
   async assertBranch(transaction, table, record, match, branchId, financialStock = false) {
@@ -195,6 +196,8 @@ class AggregateRepository {
         }
       }
       const newOpenings = new Set();
+      const saleOutbox = kind === "sale" ? this.saleOutbox : null;
+      const confirmedStock = saleOutbox ? new Map() : null;
       for (const operation of operations) {
         stage = "business rows";
         tableName = operation.table;
@@ -246,7 +249,13 @@ class AggregateRepository {
           );
         affected += operationAffected;
         if (operation.kind !== "delete") {
-          if (stockPreimage) await this.confirmSaleStock(transaction, table, operation, aggregate, stockPreimage, operationAffected);
+          if (stockPreimage) {
+            await this.confirmSaleStock(transaction, table, operation, aggregate, stockPreimage, operationAffected);
+            if (confirmedStock) {
+              const productId = recordId(operation.match.id);
+              confirmedStock.set(productId, aggregate.financialStockDeltas.get(productId));
+            }
+          }
           else for (const record of records) await this.assertBranch(transaction, table, record, operation.match, aggregate.branchId, isFinancialStockUpdate(operation, aggregate));
         }
         for (const record of records) {
@@ -260,6 +269,13 @@ class AggregateRepository {
           await request.query(`INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id,entity_version,aggregate_id)
             VALUES(@entity_type,@entity_id,@operation,@branch_id,@entity_version,@aggregate_id);`);
         }
+      }
+      if (saleOutbox) {
+        stage = "sale event capture";
+        tableName = "pos_sync_sale_outbox_v1";
+        await saleOutbox.capture(transaction, {
+          operationId, branchId: aggregate.branchId, terminalId: aggregate.terminalId, operations, confirmedStock,
+        });
       }
       stage = "operation receipt";
       if(newOpenings.size){
@@ -280,7 +296,7 @@ class AggregateRepository {
       return { ok: true, operationId, replayed: false, affected };
     } catch (error) {
       await Promise.resolve(transaction.rollback()).catch(() => undefined);
-      if (["EIDEMPOTENCY", "EEXISTING_SALE_RECONCILIATION", "EBRANCH", "EBRANCH_SCOPE", "SYNC_BRANCH_FORBIDDEN", "EEXCHANGE_STATE", "EPRODUCT_STATE", "PERMISSION_DENIED", "ESHIFT_TERMINAL"].includes(error?.code))
+      if (["EIDEMPOTENCY", "EEXISTING_SALE_RECONCILIATION", "EBRANCH", "EBRANCH_SCOPE", "SYNC_BRANCH_FORBIDDEN", "EEXCHANGE_STATE", "EPRODUCT_STATE", "PERMISSION_DENIED", "ESHIFT_TERMINAL", "ESALE_EVENT_UNVERIFIED"].includes(error?.code))
         throw error;
       const target = tableName ? ` while writing ${tableName}` : "";
       const native = error?.originalError?.info ?? error?.originalError ?? error;
