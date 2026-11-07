@@ -1,3 +1,19 @@
+## 7 November — approval wake during verified staff sessions
+
+The owner requested completion of the two-way sync plan. This beta slice keeps
+the existing Approvals and Holds catch-up and uses the authorized activity path
+to refresh the in-app bell after staff verification, reconnect or resume. Keep
+proof-loss teardown, store and recipient checks and the relay fallback. Preserve
+the existing notification cadence and avoid repeated approval-list writes from
+the app shell. The current private topics cannot deliver instant wakes to
+relay-only PIN sessions or named approvers across stores. Those paths require a
+separately authorized wake transport and the two-till pilot.
+
+CI on the initial patch rejected the old source assertion for the one-time
+approval guard. Update the check to require the current per-session guard and
+keep the focused behavior tests for verification and proof loss. The rollback
+is a scoped code revert. This slice uses the existing database contracts.
+
 ## 7 November — scoped history during mixed-client rollout
 
 The owner requested both sync corrections, beta first and then production.

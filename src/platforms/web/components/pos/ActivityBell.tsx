@@ -32,6 +32,7 @@ import { usePosOptional } from "@/lib/pos-store";
 import { createTextHumanizer } from "@/lib/human-readable";
 import { hasStaffSession } from "@/core/api/sync-relay";
 import { localDb } from "@/core/local-db/local-db";
+import { APP_RESUME_EVENT } from "@/core/activation/connection-health";
 
 const PIN_POLL_MS = 15_000;
 const AUTHENTICATED_POLL_MS = 60_000;
@@ -84,7 +85,8 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
   rowsRef.current = rows;
   const lastReconciled = useRef(0);
   const initialReadThrough = useRef("");
-  const preferenceScope = `${meKey}:${activeBranchId() ?? ""}`;
+  const branchId = activeBranchId(pos?.currentStore?.id);
+  const preferenceScope = `${meKey}:${branchId ?? ""}`;
   const preferenceScopeRef = useRef(preferenceScope);
   preferenceScopeRef.current = preferenceScope;
   const [preferenceBusy, setPreferenceBusy] = useState<Set<string>>(() => new Set());
@@ -180,7 +182,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
       // snapshot or reconciliation rereads history; change hints fetch new rows.
       for (let offset = 0; ; offset += 200) {
         const batch = await listActivityEvents({
-          limit: 200, offset, storeId: activeBranchId() ?? undefined,
+          limit: 200, offset, storeId: branchId ?? undefined,
           from, to, sortDirection: reconcile ? "desc" : "asc",
         }, { requireSuccess: true });
         if (generation !== refreshGeneration.current) return;
@@ -257,11 +259,11 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
         });
       }
     }
-  }, [eventText, meKey, showActivity, updatePreference, preferenceScope]);
+  }, [branchId, eventText, meKey, showActivity, updatePreference, preferenceScope]);
   refreshLatest.current = refresh;
 
   useEffect(() => {
-    if (!showActivity) return;
+    if (!showActivity || !meKey) return;
     const generation = refreshGeneration.current;
     mounted.current = true;
     setRows([]);
@@ -284,11 +286,11 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
     };
     let eventTimer: ReturnType<typeof setTimeout> | undefined;
     const schedule = () => {
-      if (eventTimer) clearTimeout(eventTimer);
+      if (eventTimer !== undefined) return;
       eventTimer = setTimeout(() => { eventTimer = undefined; tick(); }, 150);
     };
     tick();
-    const off = subscribeActivityEvents(schedule);
+    const off = subscribeActivityEvents(schedule, branchId);
     const t = setInterval(() => {
       // Stop polling a database that has no activity log.
       if (isActivityLogMissing()) {
@@ -297,20 +299,23 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
       }
       tick();
     }, localDb()?.onBusinessChanged || hasStaffSession() ? AUTHENTICATED_POLL_MS : PIN_POLL_MS);
-    document.addEventListener("visibilitychange", tick);
+    const resumeEvents = ["focus", "online", APP_RESUME_EVENT];
+    document.addEventListener("visibilitychange", schedule);
+    for (const event of resumeEvents) window.addEventListener(event, schedule);
     window.addEventListener("pos:activity-cleared-changed", onCleared);
     window.addEventListener("storage", onCleared);
     return () => {
       refreshGeneration.current = generation + 1;
       mounted.current = false;
-      if (eventTimer) clearTimeout(eventTimer);
+      if (eventTimer !== undefined) clearTimeout(eventTimer);
       off();
       clearInterval(t);
-      document.removeEventListener("visibilitychange", tick);
+      document.removeEventListener("visibilitychange", schedule);
+      for (const event of resumeEvents) window.removeEventListener(event, schedule);
       window.removeEventListener("pos:activity-cleared-changed", onCleared);
       window.removeEventListener("storage", onCleared);
     };
-  }, [showActivity, refresh, meKey]);
+  }, [branchId, showActivity, refresh, meKey]);
 
   const visibleRows = useMemo(
     () => rowsScope === preferenceScope ? visibleActivityRows(rows, cleared, preferenceBusy, preferenceScope, activityAcknowledgementIds(meKey)) : [],

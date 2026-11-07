@@ -19,6 +19,7 @@ import { platformName } from "@/platform-config/platform";
 import { localDb } from "@/core/local-db/local-db";
 import { hasStaffSession } from "@/core/api/sync-relay";
 import { activeBranchId } from "./active-branch";
+import { subscribeCentralAuthSession } from "./session-presence";
 import { unconfirmedShiftClosureActivity } from "../../electron/shift-closure-activity.mjs";
 import { activityAudienceIdentity, activityVisibleTo } from "./activity-audience";
 import { notificationAcknowledgedBy } from "./notification-visibility";
@@ -813,7 +814,7 @@ export const isCleared = (userId: string, id: string): boolean => clearedIds(use
  * Reconcile inserts and clear/reopen updates immediately across authenticated
  * browsers. Registered PIN-only terminals retain the bounded poll fallback.
  */
-export function subscribeActivityEvents(onChange: () => void): () => void {
+export function subscribeActivityEvents(onChange: () => void, branchId = activeBranchId()): () => void {
   const cleanups: Array<() => void> = [];
   const bridge = localDb();
   if (bridge?.onBusinessChanged) {
@@ -828,18 +829,38 @@ export function subscribeActivityEvents(onChange: () => void): () => void {
       if (!tables?.length || tables.includes("activity_events")) onChange();
     }));
   }
-  // A PIN-only Electron session deliberately has no Supabase Auth JWT. The
-  // anon role cannot SELECT this protected table, and Realtime reports that
-  // lack of privilege misleadingly as "invalid column for filter store_id".
-  // Local SQL notifications plus the reconciliation poll remain authoritative.
-  if (!hasStaffSession()) return () => cleanups.forEach((cleanup) => cleanup());
-  const branchId = activeBranchId();
   // Local SQL notifications still work if cloud setup or cleanup fails.
-  if (branchId) cleanups.push(subscribeOwnedPostgresChanges(
-    supabaseExternal,
-    "pos-activity-notifications",
-    { event: "*", schema: "public", table: "activity_events", filter: `store_id=eq.${branchId}` },
-    onChange,
-  ));
+  if (branchId) {
+    let stopRealtime: (() => void) | undefined;
+    const updateRealtime = () => {
+      // PIN-only sessions use local SQL and reconciliation. Open a protected
+      // channel only after AuthProvider has verified a staff session.
+      if (!hasStaffSession()) {
+        stopRealtime?.();
+        stopRealtime = undefined;
+        return;
+      }
+      if (stopRealtime) return;
+      let connected = false;
+      stopRealtime = subscribeOwnedPostgresChanges(
+        supabaseExternal,
+        "pos-activity-notifications",
+        { event: "*", schema: "public", table: "activity_events", filter: `store_id=eq.${branchId}` },
+        onChange,
+        status => {
+          const joined = status === "SUBSCRIBED";
+          if (joined && !connected) onChange();
+          connected = joined;
+        },
+      );
+    };
+    cleanups.push(subscribeCentralAuthSession(() => {
+      const wasWatching = Boolean(stopRealtime);
+      updateRealtime();
+      if (!wasWatching && stopRealtime) onChange();
+    }));
+    cleanups.push(() => stopRealtime?.());
+    updateRealtime();
+  }
   return () => cleanups.forEach((cleanup) => cleanup());
 }
