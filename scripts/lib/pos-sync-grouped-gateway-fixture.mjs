@@ -42,7 +42,8 @@ export async function verifyGroupedGateway({ sql, denySql }) {
     BEGIN; ${settings}\n${gateway} COMMIT;
     INSERT INTO pos_sync_feed_v1.feed_heads (organization_id,scope_id,epoch)
       VALUES ('default','${branch}','${epoch}'),('default','${other}','${epoch}');
-    INSERT INTO pos_sync_feed_v1.settings_pilots VALUES ('default','${branch}','${epoch}'),('default','${other}','${epoch}');`);
+    INSERT INTO pos_sync_feed_v1.settings_pilots (organization_id, scope_id, epoch)
+      VALUES ('default','${branch}','${epoch}'),('default','${other}','${epoch}');`);
 
   for (const role of ["anon", "authenticated"])
     denySql(`SET ROLE ${role}; ${pullCall()}`, /permission denied/);

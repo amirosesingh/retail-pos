@@ -6,7 +6,7 @@ const { CloudClient } = require("../electron/sync/cloud-client.cjs");
 const { PullWorker } = require("../electron/sync/pull-worker.cjs");
 const { ChangeReader } = require("../electron/sync/change-reader.cjs");
 const { CheckpointRepository } = require("../electron/sync/checkpoints.cjs");
-const { CHECKPOINT, TABLE } = require("../electron/sync/grouped-store-settings.cjs");
+const { CHECKPOINT, TABLE, assertLocalTracking } = require("../electron/sync/grouped-store-settings.cjs");
 
 const id = n => "aaaaaaaa-aaaa-4aaa-8aaa-" + String(n).padStart(12, "0");
 const branch = id(1);
@@ -50,7 +50,7 @@ async function main() {
         max_drawer_cash_limit: exactDecimal, show_opening_float_at_close: version % 2 === 0, ...options },
     });
     const snapshot = (position = seq(0), changes = [change(1)], extra = {}) => {
-      const manifest_json = JSON.stringify({ scope_id: branch, epoch, seq: position, changes });
+      const manifest_json = JSON.stringify({ scope_id: branch, epoch: extra.epoch ?? epoch, seq: position, changes });
       return { status: "OK", scope_id: branch, epoch, seq: position, pin_id: id(5),
         expires_at: new Date(Date.now() + 60_000).toISOString(), manifest_json,
         manifest_sha256: createHash("sha256").update(manifest_json).digest("hex"), ...extra };
@@ -75,14 +75,16 @@ async function main() {
       assert.equal(payload[readKey].branchId, branch);
       assert.equal(payload[readKey].organizationId, "default");
       calls.push(payload[readKey]);
-      afterResponse();
-      return new Response(JSON.stringify(reply), { status, headers: { "content-type": "application/json" } });
+      const response = new Response(JSON.stringify(reply), { status, headers: { "content-type": "application/json" } });
+      await afterResponse();
+      return response;
     };
-    const cloud = new CloudClient({ configStore: { get: () => url }, terminalStore: { read: () => terminalConfig },
+    const makeCloud = () => new CloudClient({ configStore: { get: () => url }, terminalStore: { read: () => terminalConfig },
       connectionManager: manager, financialBasisContext: () => project });
+    const cloud = makeCloud();
     const checkpoints = new CheckpointRepository(manager);
     const notices = [];
-    const worker = () => new PullWorker({ connectionManager: manager, cloud, registry, checkpoints,
+    const worker = (client = cloud) => new PullWorker({ connectionManager: manager, cloud: client, registry, checkpoints,
       reader: new ChangeReader(manager, registry), publish: notice => notices.push(notice) });
     const pull = (limit = 100) => worker().pullGroupedSettingsPage({ limit });
     const install = () => worker().installGroupedSettingsSnapshot();
@@ -97,13 +99,23 @@ async function main() {
       UPDATE dbo.sync_checkpoints SET change_tracking_version=CHANGE_TRACKING_CURRENT_VERSION()
       WHERE branch_id=@branch AND entity_type=N'pos_store_settings' AND direction=N'push';`);
 
+    await test("a checksum-valid empty snapshot cannot initialize the branch position", async () => {
+      const valid = reply;
+      reply = snapshot(seq(0), []);
+      await assert.rejects(install(), { code: "ESYNC_GROUPED_PROTOCOL" });
+      assert.equal(await cursor(), null);
+      assert.equal(await saved(), undefined);
+      reply = valid;
+    });
+
     await test("verified snapshot commits the exact row and grouped cursor, with no legacy cursor movement or upload echo", async () => {
       await checkpoints.save(branch, "__feed__", "pull", { committed_cursor: "83" });
       await local.insert(TABLE, { store_id: foreign, row_version: 77 });
+      const before = calls.length;
       assert.deepEqual(await pull(), { status: "SNAPSHOT_REQUIRED", reason: "UNINITIALIZED" });
-      assert.equal(calls.length, 0);
+      assert.equal(calls.length, before);
       assert.deepEqual(await install(), { epoch, seq: seq(0), changed: true });
-      assert.deepEqual(calls[0], { organizationId: "default", branchId: branch });
+      assert.deepEqual(calls.at(-1), { organizationId: "default", branchId: branch });
       assert.equal((await cursor()).seq, seq(0));
       assert.equal(String((await checkpoints.get(branch, "__feed__", "pull")).committed_cursor), "83");
       assert.equal(await checkpoints.get(foreign, CHECKPOINT, "pull"), null);
@@ -148,6 +160,25 @@ async function main() {
       assert.equal((await manager.pool.request().input("branch", branch).query("SELECT idle_timeout_minutes FROM dbo.pos_store_settings WHERE store_id=@branch;")).recordset[0].idle_timeout_minutes, 55);
       await ackTracking();
       assert.equal((await pull()).merged, 1);
+    });
+
+    await test("retention advancing during the native CT scan invalidates its proof", async () => {
+      const sql = manager.sql();
+      const transaction = new sql.Transaction(manager.pool);
+      await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+      try {
+        await assertLocalTracking(transaction, branch);
+        const request = transaction.request();
+        const query = request.query.bind(request);
+        const recheck = "SET @minimum = CHANGE_TRACKING_MIN_VALID_VERSION(OBJECT_ID(N'dbo.pos_store_settings'));";
+        request.query = statement => {
+          const scan = statement.indexOf("CHANGETABLE(CHANGES");
+          assert(scan >= 0 && statement.indexOf(recheck) > scan);
+          // Keep the real CHANGETABLE scan and simulate a later cleanup deterministically.
+          return query(statement.replace(recheck, "SET @minimum = @baseline + 1;"));
+        };
+        await assert.rejects(assertLocalTracking({ request: () => request }, branch), { code: "ELOCAL_PENDING_UNVERIFIED" });
+      } finally { await transaction.rollback(); }
     });
 
     await test("checkpoint failure rolls back its own group, keeps prior committed group, and resumes once", async () => {
@@ -217,6 +248,31 @@ async function main() {
       reply = snapshot(seq(6), [change(6)]);
       assert.deepEqual(await install(), { epoch, seq: seq(6), changed: false });
       assert.equal((await cursor()).seq, seq(6));
+    });
+
+    await test("a delayed snapshot cannot replace a different epoch committed while it was fetching", async () => {
+      const staleEpoch = id(6);
+      const newerEpoch = id(7);
+      const started = Promise.withResolvers();
+      const release = Promise.withResolvers();
+      reply = snapshot(seq(7), [change(6)], { epoch: staleEpoch });
+      afterResponse = () => {
+        started.resolve();
+        return release.promise;
+      };
+      const rejected = assert.rejects(install(), { code: "ESYNC_GROUPED_POSITION_CHANGED" });
+      await started.promise;
+      afterResponse = () => {};
+      try {
+        // Separate request lanes simulate two native workers sharing the database.
+        reply = snapshot("15", [change(6)], { epoch: newerEpoch });
+        assert.deepEqual(await worker(makeCloud()).installGroupedSettingsSnapshot(),
+          { epoch: newerEpoch, seq: "15", changed: false });
+      } finally { release.resolve(); }
+      await rejected;
+      assert.equal((await cursor()).epoch, newerEpoch);
+      assert.equal((await cursor()).seq, "15");
+      assert.equal((await saved()).row_version, 6);
     });
 
     console.log("PASS " + passed + " isolated LocalDB grouped settings cases");

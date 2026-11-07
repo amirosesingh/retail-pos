@@ -60,6 +60,13 @@ row needs review before snapshot activation. The installed coordinator still
 uses its existing entry points. Hosted relay activation, the financial sender
 handoff and the remaining domain projections are pending.
 
+Independent review caught snapshot races, empty manifests, a Change Tracking
+cleanup race and intermediate settings publication. The native commit now
+checks the position saved before fetch and rechecks capture retention after
+the scan. Canonical settings writes publish one final row per transaction,
+including a defaults insert followed by an update. Ten focused LocalDB cases
+and the exact PostgreSQL-to-LocalDB handoff passed after these fixes.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents

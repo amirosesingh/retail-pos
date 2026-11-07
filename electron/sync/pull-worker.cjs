@@ -63,7 +63,8 @@ class PullWorker {
     try {
       const local = await grouped.readLocalRow(transaction, branch, table, change);
       const current = await grouped.readPosition(transaction.request(), branch, source.fingerprint, true);
-      if (!snapshot && (!current || current.epoch !== position.epoch || current.seq !== position.seq || current.upper !== position.upper))
+      if (current === null ? position !== null : position === null ||
+          current.epoch !== position.epoch || current.seq !== position.seq || current.upper !== position.upper)
         throw grouped.fail("Another grouped settings apply advanced the saved position.", "ESYNC_GROUPED_POSITION_CHANGED");
       if (snapshot && current?.epoch === next.epoch &&
           (BigInt(next.seq) < BigInt(current.seq) || (current.upper !== null && BigInt(next.seq) < BigInt(current.upper))))
@@ -75,7 +76,7 @@ class PullWorker {
       if (pending.size) throw grouped.fail("A local settings edit is still pending upload.", "ELOCAL_UPLOAD_PENDING");
       if (snapshot && local && local.matching !== 1)
         throw grouped.fail("The retained local settings differ from the snapshot. Review is required before advancing.", "ESYNC_GROUPED_REVIEW_REQUIRED");
-      if (change && local?.matching !== 1) {
+      if (local?.matching !== 1) {
         await this.applyTable(transaction, table, [change], branch, pending);
         const saved = await grouped.readLocalRow(transaction, branch, table, change);
         if (saved?.matching !== 1)
@@ -100,9 +101,10 @@ class PullWorker {
   async installGroupedSettingsSnapshot() {
     const context = this.groupedSettingsContext();
     const { source, branch, table } = context;
+    const position = await grouped.readPosition(source.pool.request(), branch, source.fingerprint);
     const snapshot = grouped.snapshotFor(await this.cloud.groupedSettingsSnapshot(source), branch, table);
     const { epoch, seq, change } = snapshot;
-    const changed = await this.commitGroupedSettings(context, null, { epoch, seq, upper: null }, change, snapshot);
+    const changed = await this.commitGroupedSettings(context, position, { epoch, seq, upper: null }, change, snapshot);
     return { epoch, seq, changed };
   }
   async pullGroupedSettingsPage({ limit = 100 } = {}) {

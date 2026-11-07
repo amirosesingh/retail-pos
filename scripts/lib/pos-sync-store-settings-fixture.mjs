@@ -11,12 +11,15 @@ export async function verifyStoreSettingsPilot({ sql, denySql, session, waitFor,
   const table = schema.match(/CREATE TABLE IF NOT EXISTS public\.pos_store_settings \([\s\S]*?\n\);/)?.[0];
   assert(table, "The current canonical settings table is required");
   const amendments = schema.match(/ALTER TABLE public\.pos_store_settings\s+ADD COLUMN IF NOT EXISTS [^;]+;/g) ?? [];
+  const canonicalSave = schema.match(/CREATE OR REPLACE FUNCTION public\.pos_rules_save\([\s\S]*?\nEND \$\$;/)?.[0];
+  assert(canonicalSave, "The current canonical settings save routine is required");
   const preparation = await read("../preparation/pos-sync-store-settings-v1.sql");
   const columns = require("../../database/sqlserver/schema-registry.json").tables
     .find(entry => entry.cloudTable === "pos_store_settings").columns.map(column => column.cloudColumn).sort();
   const epoch = randomUUID();
   const branch = "fixture-settings-a";
   const unrelatedBranch = "fixture-settings-b";
+  const newBranch = "fixture-settings-new";
   const settings = "public.pos_store_settings";
   const feed = "pos_sync_feed_v1";
   const pinCall = `SELECT ${feed}.create_snapshot_pin('default', '${branch}', '${epoch}', 60);`;
@@ -32,8 +35,39 @@ export async function verifyStoreSettingsPilot({ sql, denySql, session, waitFor,
       VALUES ('${branch}', 9007199254740993.000000000001, '2026-11-07 09:30:00.123456+08', 'local-only-marker'),
              ('${unrelatedBranch}', 10, '2026-11-07 01:30:00+00', 'other-store-marker');
     BEGIN; ${preparation} COMMIT;
-    INSERT INTO ${feed}.feed_heads (organization_id, scope_id, epoch) VALUES ('default', '${branch}', '${epoch}');
-    INSERT INTO ${feed}.settings_pilots VALUES ('default', '${branch}', '${epoch}');`);
+    INSERT INTO ${feed}.feed_heads (organization_id, scope_id, epoch)
+      VALUES ('default', '${branch}', '${epoch}'), ('default', '${newBranch}', '${epoch}');
+    INSERT INTO ${feed}.settings_pilots (organization_id, scope_id, epoch)
+      VALUES ('default', '${branch}', '${epoch}'), ('default', '${newBranch}', '${epoch}');`);
+
+  // The production save does an INSERT of defaults and a revisioned UPDATE.
+  // Only the final row is visible in this transaction's one feed group.
+  sql(`CREATE SCHEMA auth;
+    CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql AS $$ SELECT NULL::uuid $$;
+    CREATE FUNCTION public.is_supervisor_now() RETURNS boolean LANGUAGE sql AS $$ SELECT true $$;
+    CREATE FUNCTION public.has_perm(text) RETURNS boolean LANGUAGE sql AS $$ SELECT false $$;
+    CREATE FUNCTION public.store_visible(text) RETURNS boolean LANGUAGE sql AS $$ SELECT $1 = '${newBranch}' $$;
+    CREATE FUNCTION public.pos_rules_defaults() RETURNS jsonb LANGUAGE sql AS $$ SELECT '{"block_shift_close_on_hold":true}'::jsonb $$;
+    CREATE FUNCTION public.pos_rules_snapshot(text) RETURNS jsonb LANGUAGE sql AS $$
+      SELECT to_jsonb(row) FROM ${settings} AS row WHERE row.store_id = $1
+    $$;
+    ${canonicalSave}
+    SELECT public.pos_rules_save('${newBranch}', '{"block_shift_close_on_hold":false}', NULL);`);
+  const pullNew = after => JSON.parse(sql(`SELECT ${feed}.pull_groups('default', '${newBranch}', '${epoch}', '${after}');`));
+  const initial = pullNew("0");
+  assert.equal(initial.next_seq, "1");
+  assert.equal(initial.groups.length, 1);
+  assert.equal(initial.groups[0].changes[0].row_version, "2");
+  assert.equal(initial.groups[0].changes[0].row_data.block_shift_close_on_hold, false);
+  sql(`BEGIN;
+    UPDATE ${settings} SET block_shift_close_on_hold=true, row_version=3 WHERE store_id='${newBranch}';
+    UPDATE ${settings} SET block_shift_close_on_hold=false, row_version=4 WHERE store_id='${newBranch}';
+    COMMIT;`);
+  const repeated = pullNew("1");
+  assert.equal(repeated.next_seq, "2");
+  assert.equal(repeated.groups.length, 1);
+  assert.equal(repeated.groups[0].changes[0].row_version, "4");
+  assert.equal(repeated.groups[0].changes[0].row_data.block_shift_close_on_hold, false);
 
   const pin = JSON.parse(sql(pinCall));
   assert.equal(pin.status, "OK");

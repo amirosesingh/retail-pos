@@ -107,9 +107,9 @@ function snapshotFor(value, branch, table) {
   catch { throw fail("The grouped settings snapshot manifest is malformed."); }
   if (!hasKeys(manifest, ["scope_id", "epoch", "seq", "changes"]) || manifest.scope_id !== branch ||
       manifest.epoch !== value.epoch || manifest.seq !== value.seq ||
-      !Array.isArray(manifest.changes) || manifest.changes.length > 1)
-    throw fail("The grouped settings snapshot does not match its scope, epoch or sequence.");
-  return { epoch: value.epoch, seq: value.seq, expires, change: manifest.changes.length ? changeFor(manifest.changes[0], branch, table) : null };
+      !Array.isArray(manifest.changes) || manifest.changes.length !== 1)
+    throw fail("The grouped settings snapshot must contain one complete row for its scope, epoch and sequence.");
+  return { epoch: value.epoch, seq: value.seq, expires, change: changeFor(manifest.changes[0], branch, table) };
 }
 
 async function readPosition(request, branch, source, locked = false) {
@@ -130,8 +130,8 @@ async function readPosition(request, branch, source, locked = false) {
 
 async function readLocalRow(transaction, branch, table, change) {
   const request = transaction.request().input("branch", branch);
-  const expected = change?.row_data;
-  const comparisons = expected ? table.columns.map((column, index) => {
+  const expected = change.row_data;
+  const comparisons = table.columns.map((column, index) => {
     const field = `[${column.sqlServerColumn}]`;
     const parameter = `@value${index}`;
     const value = expected[column.cloudColumn];
@@ -140,9 +140,9 @@ async function readLocalRow(transaction, branch, table, change) {
     if (column.sqlServerType.startsWith("nvarchar("))
       return `DATALENGTH(${field})=DATALENGTH(${parameter}) AND CONVERT(varbinary(max),${field})=CONVERT(varbinary(max),${parameter})`;
     return `${field}=CONVERT(${column.sqlServerType},${parameter})`;
-  }) : [];
+  });
   const result = await request.query(`
-    SELECT CASE WHEN ${comparisons.join(" AND ") || "1=0"} THEN 1 ELSE 0 END AS matching
+    SELECT CASE WHEN ${comparisons.join(" AND ")} THEN 1 ELSE 0 END AS matching
     FROM dbo.pos_store_settings WITH (UPDLOCK,HOLDLOCK) WHERE store_id=@branch;`);
   if (result.recordset?.length > 1) throw fail("The local settings key is ambiguous.");
   return result.recordset?.[0] ?? null;
@@ -155,11 +155,18 @@ async function assertLocalTracking(transaction, branch) {
     DECLARE @minimum bigint=CHANGE_TRACKING_MIN_VALID_VERSION(OBJECT_ID(N'dbo.pos_store_settings'));
     DECLARE @current bigint=CHANGE_TRACKING_CURRENT_VERSION();
     IF @baseline IS NULL OR @minimum IS NULL OR @current IS NULL OR @baseline<@minimum OR @baseline>@current
+    BEGIN
       SELECT N'unverified' AS state;
-    ELSE IF EXISTS (SELECT 1 FROM CHANGETABLE(CHANGES dbo.pos_store_settings, @baseline) AS ct
-      WHERE ct.store_id=@branch AND (ct.SYS_CHANGE_CONTEXT IS NULL OR ct.SYS_CHANGE_CONTEXT<>0x434C4F5544))
-      SELECT N'pending' AS state;
-    ELSE SELECT N'clear' AS state;`);
+      RETURN;
+    END;
+    DECLARE @pending bit=CASE WHEN EXISTS (
+      SELECT 1 FROM CHANGETABLE(CHANGES dbo.pos_store_settings, @baseline) AS ct
+      WHERE ct.store_id=@branch AND (ct.SYS_CHANGE_CONTEXT IS NULL OR ct.SYS_CHANGE_CONTEXT<>0x434C4F5544)
+    ) THEN 1 ELSE 0 END;
+    -- Retention cleanup can invalidate the baseline while CHANGETABLE scans it.
+    SET @minimum = CHANGE_TRACKING_MIN_VALID_VERSION(OBJECT_ID(N'dbo.pos_store_settings'));
+    SELECT CASE WHEN @minimum IS NULL OR @baseline<@minimum THEN N'unverified'
+      WHEN @pending=1 THEN N'pending' ELSE N'clear' END AS state;`);
   const state = result.recordset?.[0]?.state;
   if (state === "pending") throw fail("A local settings edit is still pending upload.", "ELOCAL_UPLOAD_PENDING");
   if (state !== "clear") throw fail("Local settings Change Tracking cannot prove the upload boundary.", "ELOCAL_PENDING_UNVERIFIED");

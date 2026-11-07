@@ -6,9 +6,12 @@ CREATE TABLE pos_sync_feed_v1.settings_pilots (
   organization_id text COLLATE "C" NOT NULL CHECK (organization_id = 'default'),
   scope_id text COLLATE "C" NOT NULL,
   epoch uuid NOT NULL,
+  last_publication_xid xid8,
+  last_publication_seq bigint CHECK (last_publication_seq > 0),
   PRIMARY KEY (organization_id, scope_id),
   FOREIGN KEY (organization_id, scope_id)
-    REFERENCES pos_sync_feed_v1.feed_heads (organization_id, scope_id)
+    REFERENCES pos_sync_feed_v1.feed_heads (organization_id, scope_id),
+  CHECK ((last_publication_xid IS NULL) = (last_publication_seq IS NULL))
 );
 
 ALTER TABLE pos_sync_feed_v1.settings_pilots ENABLE ROW LEVEL SECURITY;
@@ -49,6 +52,7 @@ DECLARE
   ];
   v_raw jsonb := to_jsonb(p_row);
   v_row jsonb;
+  v_projection jsonb;
 BEGIN
   IF p_row.store_id IS NULL OR p_row.row_version IS NULL OR p_row.row_version < 1
      OR p_row.updated_at IS NULL
@@ -80,11 +84,15 @@ BEGIN
       THEN to_char(p_row.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') || '0Z' END,
     'updated_at', to_char(p_row.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') || '0Z'
   );
-  RETURN jsonb_build_object(
+  v_projection := jsonb_build_object(
     'table_name', 'pos_store_settings',
     'entity_id', jsonb_build_object('store_id', p_row.store_id)::text,
     'row_data', v_row, 'row_version', p_row.row_version::text, 'tombstone', false
   );
+  IF octet_length(v_projection::text) > 61440 THEN
+    RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'POS_SETTINGS_V1_PROJECTION_UNAVAILABLE';
+  END IF;
+  RETURN v_projection;
 END;
 $project$;
 
@@ -102,7 +110,9 @@ SET search_path = pg_catalog
 AS $publish$
 DECLARE
   v_scope text;
-  v_epoch uuid;
+  v_pilot pos_sync_feed_v1.settings_pilots%ROWTYPE;
+  v_xid xid8;
+  v_seq bigint;
   v_change jsonb;
 BEGIN
   IF TG_OP = 'DELETE' THEN
@@ -118,8 +128,9 @@ BEGIN
     RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'POS_SETTINGS_V1_SCOPE_MOVE_UNSUPPORTED';
   END IF;
 
-  SELECT pilot.epoch INTO v_epoch FROM pos_sync_feed_v1.settings_pilots AS pilot
-  WHERE pilot.organization_id = 'default' AND pilot.scope_id = v_scope;
+  SELECT pilot.* INTO v_pilot FROM pos_sync_feed_v1.settings_pilots AS pilot
+  WHERE pilot.organization_id = 'default' AND pilot.scope_id = v_scope
+  FOR UPDATE;
   IF NOT FOUND THEN RETURN NULL; END IF;
   IF TG_OP = 'DELETE' THEN
     RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'POS_SETTINGS_V1_DELETE_UNSUPPORTED';
@@ -131,9 +142,25 @@ BEGIN
   IF TG_OP = 'UPDATE' AND NEW.row_version <= OLD.row_version THEN
     RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'POS_SETTINGS_V1_REVISION_NOT_ADVANCED';
   END IF;
-  PERFORM pos_sync_feed_v1.append_groups('default', jsonb_build_array(jsonb_build_object(
-    'scope_id', v_scope, 'epoch', v_epoch, 'changes', jsonb_build_array(v_change)
-  )));
+  -- The canonical save may insert defaults and then update in one transaction.
+  -- Replace only that transaction's still-uncommitted group with its final row.
+  v_xid := pg_current_xact_id();
+  IF v_pilot.last_publication_xid = v_xid THEN
+    UPDATE pos_sync_feed_v1.feed_groups AS feed SET changes = jsonb_build_array(v_change)
+    WHERE feed.organization_id = 'default' AND feed.scope_id = v_scope AND feed.epoch = v_pilot.epoch
+      AND feed.seq = v_pilot.last_publication_seq AND feed.operation_id IS NULL;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'POS_SETTINGS_V1_PUBLICATION_MISSING';
+    END IF;
+    RETURN NULL;
+  END IF;
+  SELECT appended.seq::bigint INTO STRICT v_seq
+  FROM pos_sync_feed_v1.append_groups('default', jsonb_build_array(jsonb_build_object(
+    'scope_id', v_scope, 'epoch', v_pilot.epoch, 'changes', jsonb_build_array(v_change)
+  ))) AS appended;
+  UPDATE pos_sync_feed_v1.settings_pilots AS pilot
+  SET last_publication_xid = v_xid, last_publication_seq = v_seq
+  WHERE pilot.organization_id = 'default' AND pilot.scope_id = v_scope;
   RETURN NULL;
 END;
 $publish$;
