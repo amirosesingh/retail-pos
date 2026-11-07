@@ -6,6 +6,8 @@ const { CloudClient } = require("../../../electron/sync/cloud-client.cjs");
 const { PushWorker } = require("../../../electron/sync/push-worker.cjs");
 const { readPage } = require("../../../electron/sync/page-policy.cjs");
 const { bootstrapDiagnostic } = require("../../../electron/diagnostics.cjs");
+const { PROJECTION } = require("../../../electron/sync/history-index-protocol.cjs");
+const { createHistoryPolicyRun } = require("../../../electron/sync/history-read-scope.cjs");
 const branch = "branch-fixture";
 const terminal="00000000-0000-4000-8000-000000000001";
 const proof = "a".repeat(64);
@@ -15,7 +17,7 @@ const client = () => new CloudClient({
   terminalStore: { read: () => ({ tokenId: terminal, deviceUse:"operations", locationId:branch, deviceBindingProof: proof }) },
 });
 const bootstrap = (cloud = client(), limit = 100) => cloud.bootstrapPage({
-  table: "change_history", branchId: branch, historyDays: 90, cursor: "saved-cursor", limit,
+  table: "products", branchId: branch, historyDays: 90, cursor: "saved-cursor", limit,
 });
 const rejection = (name: string) => new DOMException("Fixture response did not finish", name);
 const failedBody = (status: number, error: Error) => ({
@@ -151,7 +153,7 @@ describe("native cloud response completion", () => {
     const cause = rejection("AbortError");
     const fetch = vi.fn(async () => failedBody(status, cause));
     vi.stubGlobal("fetch", fetch);
-    const result = await outcome(readPage((limit: number) => bootstrap(client(), limit), 100, { table: "change_history" }));
+    const result = await outcome(readPage((limit: number) => bootstrap(client(), limit), 100, { table: "products" }));
     expect(result.error).toMatchObject({ code: `HTTP_${status}`, status, cause });
     expect(bootstrapDiagnostic(result.error, [])).toEqual({ httpStatus: status, nonJsonResponse: false });
     expect(fetch).toHaveBeenCalledOnce();
@@ -169,7 +171,7 @@ describe("native cloud response completion", () => {
     const cause = new TypeError("Fixture stream terminated");
     const fetch = vi.fn(async () => failedBody(503, cause));
     vi.stubGlobal("fetch", fetch);
-    const result = await outcome(readPage((limit: number) => bootstrap(client(), limit), 100, { table: "change_history" }));
+    const result = await outcome(readPage((limit: number) => bootstrap(client(), limit), 100, { table: "products" }));
     expect(result.error).toMatchObject({ code: "HTTP_503", status: 503, cause });
     expect(bootstrapDiagnostic(result.error, [])).toEqual({ httpStatus: 503, nonJsonResponse: false });
     expect(fetch).toHaveBeenCalledOnce();
@@ -183,7 +185,7 @@ describe("native retry and acknowledgement integration", () => {
     const fetch = vi.fn(async (_url: string, init: RequestInit) => fetch.mock.calls.length === 1
       ? stalledBody(init.signal!) : Response.json(page));
     vi.stubGlobal("fetch", fetch);
-    const pending = readPage((limit: number) => bootstrap(client(), limit), 100, { table: "change_history" });
+    const pending = readPage((limit: number) => bootstrap(client(), limit), 100, { table: "products" });
     await vi.advanceTimersByTimeAsync(30_000);
     expect(fetch).toHaveBeenCalledOnce();
     await vi.advanceTimersByTimeAsync(249);
@@ -198,9 +200,23 @@ describe("native retry and acknowledgement integration", () => {
 
   it("preserves genuine non-JSON HTTP 503 provenance and the existing bounded history backoff", async () => {
     vi.useFakeTimers();
-    const fetch = vi.fn(async () => new Response("<html>Fixture service unavailable</html>", { status: 503 }));
+    const policy = "branch-history-v1";
+    const fetch = vi.fn(async (_url: string, init: RequestInit) => {
+      if (JSON.parse(String(init.body)).sqlServerHistoryReconcile) {
+        return Response.json({ protocol: "history-index-v2", projection: PROJECTION, policy, history_scope: "branch",
+          organization_id: "default", branch_id: branch, terminal_id: terminal, keep_commerce: false,
+          action: "begin", upper_id: null, after_id: null, ids: [], next_id: null, complete: true, range_count: null },
+        { headers: { "X-POS-History-Reconcile-Version": "2", "X-POS-History-Reconcile-Kind": "index" } });
+      }
+      return new Response("<html>Fixture service unavailable</html>", { status: 503 });
+    });
     vi.stubGlobal("fetch", fetch);
-    const pending = outcome(readPage((limit: number) => bootstrap(client(), limit), 100, { table: "change_history" }));
+    const cloud = client();
+    const historyWitness = await createHistoryPolicyRun({ cloud, connectionManager: cloud.connectionManager, branchId: branch }).get();
+    fetch.mockClear();
+    const pending = outcome(readPage((limit: number) => cloud.bootstrapPage({
+      table: "change_history", branchId: branch, historyDays: 90, cursor: "saved-cursor", limit, historyWitness,
+    }), 100, { table: "change_history" }));
     await vi.advanceTimersByTimeAsync(249);
     expect(fetch).toHaveBeenCalledOnce();
     await vi.advanceTimersByTimeAsync(1);

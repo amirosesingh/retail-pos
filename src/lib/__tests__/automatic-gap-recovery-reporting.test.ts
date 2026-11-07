@@ -13,7 +13,7 @@ const source = (start: string, end: string) => {
   if (from < 0 || to <= from) throw new Error("Main reporting boundary missing");
   return main.slice(from, to);
 };
-type Result = { ok: boolean; code?: string; error?: string; stage?: string };
+type Result = { ok: boolean; code?: string; error?: string; stage?: string; historyPending?: boolean; syncReady?: boolean };
 type LogEntry = { event: string; detail: Record<string, unknown> };
 type DiagnosticApi = {
   logConnection: (event: string, detail?: object) => void;
@@ -49,7 +49,7 @@ function fixture() {
   log.logConnection("application.started");
   const runNow = vi.fn(async (_input: object): Promise<Result> => ({ ok: true }));
   const recovered = { ok: true, source: "existing lifecycle" };
-  const ensure = vi.fn(async (_input: object): Promise<typeof recovered> => recovered);
+  const ensure = vi.fn(async (_input: object): Promise<Result> => recovered);
   const report = vi.fn(), finish = vi.fn();
   const manual = new Map<string, (_event: unknown, options?: object) => Promise<unknown>>();
   const context = {
@@ -98,6 +98,30 @@ describe("actual Main scoped recovery reports the final operation outcome", () =
     expect(f.ensure).toHaveBeenCalledExactlyOnceWith({ branchId: "A", historyDays: 90, force: true, onActivity: f.report });
     expect(f.finish).toHaveBeenCalledWith(undefined);
     expect(f.scheduled.at(-1)).toBe(120000);
+  });
+
+  it("keeps proven reader unavailability pending, preserves warnings and schedules one bounded retry", async () => {
+    const f = fixture(); f.gap();
+    f.log.logConnection("synchronization.bootstrap.failed", { category: "synchronization", stage: "bootstrap", code: "EARLIER" });
+    f.ensure.mockResolvedValueOnce({ ok: true, historyPending: true, syncReady: false, code: "EHISTORY_POLICY_UNAVAILABLE" });
+    await f.context.runAutomaticSync();
+    expect(f.calls.map(row => row.event)).toEqual([
+      "synchronization.automatic.recovering", "synchronization.bootstrap.pending", "synchronization.automatic.pending",
+    ]);
+    expect(f.log.databaseErrors()).toMatchObject([{ code: "EARLIER" }]);
+    expect(f.context.localDataLifecycle.historyStep).not.toHaveBeenCalled();
+    expect(f.scheduled.at(-1)).toBe(60000);
+  });
+
+  it("returns pending from manual recovery without logging full synchronization success", async () => {
+    const f = fixture(); f.gap();
+    const result = { ok: true, historyPending: true, syncReady: false, code: "EHISTORY_POLICY_UNAVAILABLE" };
+    f.ensure.mockResolvedValueOnce(result);
+    expect(await f.manual()).toBe(result);
+    expect(f.calls.map(row => row.event)).toEqual([
+      "synchronization.manual.recovering", "synchronization.bootstrap.pending", "synchronization.manual.pending",
+    ]);
+    expect(f.log.entries("failure.log")).toEqual([]);
   });
 
   it("keeps genuine prior warnings while recovery is downloading, without a false success or failure", async () => {
@@ -159,6 +183,13 @@ describe("actual Main scoped recovery reports the final operation outcome", () =
     expect(f.runNow).toHaveBeenCalledExactlyOnceWith({ batchSize: 7, branchId: "A" });
     expect(f.ensure).toHaveBeenCalledTimes(1); expect(f.log.databaseErrors()).toEqual([]);
     expect(f.log.entries("failure.log")).toEqual([]);
+  });
+
+  it("does not treat an ordinary completed pass as full manual sync while scoped history is pending", async () => {
+    const f = fixture(); f.context.localDataLifecycle.historyPending = () => true;
+    expect(await f.manual()).toEqual({ ok: true, historyPending: true, syncReady: false });
+    expect(f.calls.map(row => row.event)).toEqual(["synchronization.manual.pending"]);
+    expect(f.ensure).not.toHaveBeenCalled();
   });
 
   it("rethrows the same final manual recovery error without claiming success", async () => {

@@ -1,3 +1,47 @@
+## 7 November — mixed-version fleet sync and verified held completions
+
+Owner approved a separate beta implementation and isolated tests from
+`5316b52a233bfa0605c6f3cd34e0405cc4ac5fd7`. The live STR1 metadata upgrades
+and backup are verified. The six legacy bills have six distinct accepted cloud
+sales and cleanup markers, but no matching local sale graph or retained valid
+Change Tracking evidence. A completion marker alone cannot prove which local
+cart revision was accepted. The Administrator review remains available.
+
+Verified rollout blockers: 1.4.82 with broader retained history can fail count
+reconciliation after narrowing, while 1.4.83 requires the new scoped reader
+even for a fresh empty history snapshot. Bridge only authenticated and exact
+scoped-reader unavailability. Prove the operational dataset separately before
+enabling checkout, retain history and checkpoints, show truthful pending
+progress and resume automatically. Denied scope, invalid data, pending local
+work and network errors must preserve their existing safeguards. Do not call
+broader history as a fallback or change the behavior of installed 1.4.82.
+
+Automatically complete only holds with verified exact sale and cart lineage,
+using existing branch checks, atomic SQL apply and idempotent receipts. Preserve
+review for ambiguous legacy data and do not invoke checkout or charge during
+recovery. Isolate same-branch and cross-branch tills, old/new versions, offline,
+lost acknowledgement, concurrent retries, held-sale audit, and permission denial
+in testing. Keep exact live SQL, real installation, automatic schema rollout
+and production promotion outside this approval. PR #437 remains gated.
+
+The first fleet slice holds history only on authenticated exact reader
+unavailability and keeps checkout available only with an independently
+qualified existing Operations cache. Fresh/incomplete tills stay gated. No
+shared feed position advances over unverified history. The legacy 1.4.82
+contract stays unchanged on the current SQL; the new hosted bridge must be
+deployed and verified before the compatible installer is used. A fleet-wide
+history SQL cutover still requires upgraded-till inventory and exact approval.
+
+The held-status exception is keyed only for exact surviving cloud-held proof
+and already accepted local sale evidence. It retains same-bill aliases, missing
+rows, malformed/foreign pending evidence and expired tracking for review.
+Existing status/provenance writes share one transaction. No charge, stock
+deduction, sale rewrite, new grant or schema change is part of this slice.
+
+Combined 634 focused tests, TypeScript, 29 native held-status cases and 27
+native PostgreSQL/PostgREST cases passed. Device installation and hosted live
+acceptance remain separate gates.
+
 ## 7 November — code-driven shift recovery and durable sync rules
 
 The owner requested the permanent sync rules in AGENTS.md and asked to start

@@ -660,6 +660,8 @@ class HeldStatusRecovery {
             ),
           );
           const bounds = new Map();
+          const exactHeldIds = remote.filter((row) => row.proofFrom === "held").map((row) => row.id);
+          let independentlySafeHeld = new Set();
           const safeTable = async (name) => {
             if (bounds.has(name)) return bounds.get(name);
             if (!["held_orders", ...FAMILIES.sale, ...FAMILIES.booking].includes(name))
@@ -675,16 +677,16 @@ class HeldStatusRecovery {
             const current = version(b?.current_version),
               minimum = version(b?.minimum_version),
               since = version(b?.checkpoint_version);
-            let safe = Boolean(
+            const valid = Boolean(
               current &&
               minimum &&
               since &&
               since !== "0" &&
               b.checkpoint_count === 1 &&
-              b.pending_count === 0 &&
               BigInt(minimum) <= BigInt(since) &&
               BigInt(since) <= BigInt(current),
             );
+            let safe = valid && b.pending_count === 0;
             if (safe) {
               const c =
                 (
@@ -696,13 +698,73 @@ class HeldStatusRecovery {
                 ).recordset ?? [];
               safe = c.length === 0;
             }
+            if (!safe && valid && name === "held_orders" && exactHeldIds.length) {
+              // An unchanged cloud hold can prove a separate ticket despite an
+              // unrelated local hold. Unknown journal keys still fence all tickets.
+              const eligible = await new sql.Request(transaction)
+                .input("since", sql.VarChar(30), since)
+                .input("branch", sql.NVarChar(128), branchId)
+                .input("ids", sql.NVarChar(sql.MAX), JSON.stringify(exactHeldIds))
+                .query(`DECLARE @v bigint=CONVERT(bigint,@since);
+                  WITH candidates AS (
+                    SELECT h.id,h.bill_no FROM OPENJSON(@ids) requested
+                    JOIN dbo.held_orders h WITH(UPDLOCK,HOLDLOCK)
+                      ON h.id=CONVERT(nvarchar(450),requested.value)
+                      AND h.id COLLATE Latin1_General_100_BIN2=requested.value
+                    WHERE h.store_id=@branch AND DATALENGTH(h.bill_no)>0
+                  ), pending AS (
+                    SELECT j.branch_id,key_shape.field_count,key_shape.held_id
+                    FROM dbo.sync_change_journal j WITH(UPDLOCK,HOLDLOCK)
+                    CROSS APPLY (
+                      SELECT COUNT(*) field_count,MAX(CASE WHEN [type]=1 AND DATALENGTH([key])=4
+                        AND [key] COLLATE Latin1_General_100_BIN2=N'id' AND DATALENGTH(value) BETWEEN 2 AND 900
+                        THEN CONVERT(nvarchar(450),value) END) held_id
+                      FROM OPENJSON(CASE WHEN ISJSON(j.entity_id)=1 THEN j.entity_id ELSE N'{}' END)
+                    ) key_shape
+                    WHERE j.entity_type=N'held_orders' AND j.acknowledged_at IS NULL
+                      AND (j.branch_id=@branch OR j.branch_id=N'global' OR j.branch_id IS NULL OR j.branch_id=N'')
+                  )
+                  SELECT c.id FROM candidates c
+                  WHERE NOT EXISTS (
+                    SELECT 1 FROM pending p
+                    WHERE p.branch_id IS NULL OR p.branch_id IN(N'',N'global')
+                      OR p.branch_id COLLATE Latin1_General_100_BIN2<>@branch
+                      OR p.field_count<>1 OR p.held_id IS NULL
+                      OR p.held_id COLLATE DATABASE_DEFAULT=c.id COLLATE DATABASE_DEFAULT
+                      OR p.held_id COLLATE Latin1_General_100_CI_AS=c.id
+                      OR NOT EXISTS (
+                        SELECT 1 FROM dbo.held_orders h WITH(UPDLOCK,HOLDLOCK)
+                        WHERE h.id=p.held_id AND h.id COLLATE Latin1_General_100_BIN2=p.held_id
+                          AND h.store_id=@branch AND DATALENGTH(h.bill_no)>0
+                      )
+                  ) AND NOT EXISTS (
+                    SELECT 1 FROM CHANGETABLE(CHANGES dbo.held_orders,@v) changed
+                    LEFT JOIN dbo.held_orders h WITH(UPDLOCK,HOLDLOCK) ON h.id=changed.id
+                    WHERE (changed.SYS_CHANGE_CONTEXT IS NULL OR changed.SYS_CHANGE_CONTEXT<>0x434C4F5544)
+                      AND (changed.id=c.id OR changed.id COLLATE Latin1_General_100_CI_AS=c.id
+                        OR changed.SYS_CHANGE_OPERATION=N'D' OR h.id IS NULL
+                        OR h.store_id IS NULL OR h.store_id IN(N'',N'global')
+                        OR h.store_id=@branch AND (h.bill_no IS NULL OR DATALENGTH(h.bill_no)=0))
+                  ) AND NOT EXISTS (
+                    SELECT 1 FROM dbo.held_orders sibling WITH(UPDLOCK,HOLDLOCK)
+                    WHERE sibling.store_id=@branch
+                      AND (sibling.bill_no=c.bill_no OR sibling.bill_no COLLATE Latin1_General_100_CI_AS=c.bill_no)
+                      AND sibling.id COLLATE Latin1_General_100_BIN2<>c.id
+                  );`);
+              independentlySafeHeld = new Set((eligible.recordset ?? []).map((row) => row.id));
+            }
             bounds.set(name, safe);
             bound();
             return safe;
           };
-          if (!(await safeTable("held_orders"))) fail("EHELD_STATUS_CT_REVIEW");
+          const heldTableSafe = await safeTable("held_orders");
+          if (!heldTableSafe && !independentlySafeHeld.size) fail("EHELD_STATUS_CT_REVIEW");
           if ((await witness(transaction)) !== schemaWitness) fail("EHELD_STATUS_SCHEMA");
           for (const record of remote) {
+            if (!heldTableSafe && !independentlySafeHeld.has(record.id)) {
+              blocked("EHELD_STATUS_CT_REVIEW");
+              continue;
+            }
             const before = snapshots.get(record.id),
               now = locked.get(record.id);
             if (!before || !now || before.row.exact_json !== now.exact_json) {

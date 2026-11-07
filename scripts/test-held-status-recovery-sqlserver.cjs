@@ -46,7 +46,8 @@ async function main() {
       onCloud = async () => {},
       current = true,
       receiptFault = false,
-      attemptDDL = false;
+      attemptDDL = false,
+      attemptPending = null;
     const events = [],
       cloud = {
         heldStatuses: async (args) => {
@@ -75,7 +76,7 @@ async function main() {
             code: "FIXTURE_RECEIPT_FAIL",
           });
         if (
-          attemptDDL &&
+          (attemptDDL || attemptPending) &&
           statement.includes("WITH CHANGE_TRACKING_CONTEXT(0x434C4F5544) UPDATE dbo.held_orders")
         ) {
           const ddl =
@@ -83,15 +84,27 @@ async function main() {
               ? "CREATE TRIGGER dbo.owned_late_receipt ON dbo.local_operation_receipts AFTER INSERT AS BEGIN SET NOCOUNT ON;END;"
               : "ALTER TRIGGER dbo.held_orders_lifecycle ON dbo.held_orders AFTER INSERT,UPDATE AS BEGIN SET NOCOUNT ON;END;";
           attemptDDL = false;
+          const pending = attemptPending;
+          attemptPending = null;
           const rival = await f.connect(f.database),
             tx = new f.sql.Transaction(rival);
           await tx.begin();
           try {
             await new f.sql.Request(tx).query("SET LOCK_TIMEOUT 200;");
-            await assert.rejects(
-              new f.sql.Request(tx).batch(ddl),
-              (error) => error.number === 1222,
-            );
+            const request = new f.sql.Request(tx);
+            if (pending) {
+              const result = await request
+                .input("entity", JSON.stringify({ id: pending }))
+                .input("branch", branch)
+                .query(`BEGIN TRY
+                  INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id,entity_version,aggregate_id)
+                  VALUES(N'held_orders',@entity,N'update',@branch,7,NEWID());
+                  SELECT 0 error_number;
+                END TRY BEGIN CATCH SELECT ERROR_NUMBER() error_number; END CATCH;`);
+              assert.equal(result.recordset[0].error_number, 1222);
+            } else {
+              await assert.rejects(request.batch(ddl), (error) => error.number === 1222);
+            }
           } finally {
             await tx.rollback().catch(() => {});
             await rival.close();
@@ -158,6 +171,7 @@ async function main() {
       current = true;
       receiptFault = false;
       attemptDDL = false;
+      attemptPending = null;
       events.length = 0;
       await f.pool
         .request()
@@ -178,12 +192,13 @@ async function main() {
       status = "held",
       amount = "12.350000000000",
       id = "held-" + randomUUID(),
+      storeId = branch,
     } = {}) => {
       const parent = randomUUID();
       await f.pool
         .request()
         .input("id", id)
-        .input("branch", branch)
+        .input("branch", storeId)
         .input("bill", bill)
         .input("status", status)
         .input("amount", amount)
@@ -204,7 +219,7 @@ async function main() {
           await f.pool
             .request()
             .input("id", parent)
-            .input("branch", branch)
+            .input("branch", storeId)
             .input("bill", bill)
             .query(
               "INSERT dbo.sales(id,store_id,bill_number,total_amount,paid_amount)VALUES(@id,@branch,@bill,12.35,12.35);",
@@ -356,6 +371,132 @@ async function main() {
       await assert.rejects(helper.reconcile(scope()), { code: "EHELD_STATUS_CT_REVIEW" });
       assert.equal(await json(value.id), value.before);
       assert.equal(await receiptCount(), 0);
+    });
+    await test("exact cloud completion can clear one hold while an unrelated scoped hold remains pending", async () => {
+      await reset();
+      const complete = await seed({ localParent: true, bill: "SCOPED-SAVED" });
+      const pending = await seed({ bill: "SCOPED-PENDING" });
+      const foreign = await seed({ storeId: other, bill: complete.bill });
+      await f.pool
+        .request()
+        .input("sale", complete.parent)
+        .input("branch", branch)
+        .query(`DECLARE @product uniqueidentifier=NEWID();
+          INSERT dbo.products(id,barcode,name,stock_quantity,stock_by_store)
+          VALUES(@product,N'SCOPED-STOCK',N'Saved item',4,N'{"HOLD-OWNED-A":4}');
+          INSERT dbo.sale_items(sale_id,product_id,product_name,quantity,unit_price,branch_id)
+          VALUES(@sale,@product,N'Saved line',1,12.35,@branch);
+          INSERT dbo.payment_transactions(sale_id,source_type,amount,method,kind,status,store_id)
+          VALUES(@sale,N'sale',12.35,N'cash',N'payment',N'completed',@branch);
+          INSERT dbo.local_operation_receipts(operation_id,operation_type,entity_id,note)
+          VALUES(NEWID(),N'sale',CONVERT(nvarchar(36),@sale),REPLICATE(N'a',64));`);
+      await checkpoints();
+      await f.pool
+        .request()
+        .input("id", pending.id)
+        .input("entity", JSON.stringify({ id: pending.id }))
+        .input("branch", branch)
+        .query(`UPDATE dbo.held_orders SET label=N'Unsent local cart' WHERE id=@id;
+          INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id,entity_version,aggregate_id)
+          VALUES(N'held_orders',@entity,N'update',@branch,7,NEWID());`);
+      const business = async () =>
+        (
+          await f.pool.request().query(`SELECT
+            (SELECT * FROM dbo.sales FOR JSON PATH,INCLUDE_NULL_VALUES) sales,
+            (SELECT * FROM dbo.sale_items FOR JSON PATH,INCLUDE_NULL_VALUES) items,
+            (SELECT * FROM dbo.payment_transactions FOR JSON PATH,INCLUDE_NULL_VALUES) payments,
+            (SELECT * FROM dbo.products FOR JSON PATH,INCLUDE_NULL_VALUES) stock,
+            (SELECT * FROM dbo.local_operation_receipts WHERE operation_type=N'sale' FOR JSON PATH,INCLUDE_NULL_VALUES) sale_receipts,
+            (SELECT * FROM dbo.sync_change_journal FOR JSON PATH,INCLUDE_NULL_VALUES) journal,
+            (SELECT * FROM dbo.sync_checkpoints ORDER BY entity_type FOR JSON PATH,INCLUDE_NULL_VALUES) checkpoints;`)
+        ).recordset[0];
+      const retained = await business();
+      const pendingBefore = await json(pending.id);
+      records = [
+        await heldRecord(complete, "completed"),
+        await heldRecord(pending),
+        { ...await heldRecord(foreign, "completed"), parent: parentRecord(complete).parent },
+      ];
+      onCloud = async ({ tickets }) => assert(!tickets.some((ticket) => ticket.id === foreign.id));
+      attemptPending = complete.id;
+      const result = await helper.reconcile(scope());
+      assert.equal(result.updated, 1);
+      assert.equal(result.reviewRequired, 1);
+      assert.equal(result.code, "EHELD_STATUS_CT_REVIEW");
+      assert.deepEqual(await native(complete.id), { ...JSON.parse(complete.before), status: "completed" });
+      assert.equal(await json(pending.id), pendingBefore);
+      assert.equal(await json(foreign.id), foreign.before);
+      assert.deepEqual(await business(), retained);
+      assert.equal(await receiptCount(), 1);
+      await assert.rejects(helper.reconcile(scope()), { code: "EHELD_STATUS_CT_REVIEW" });
+      assert.equal(await receiptCount(), 1);
+      assert.deepEqual(await business(), retained);
+    });
+    await test("a target Change Tracking edit and weaker parent-only proof remain pending", async () => {
+      await reset();
+      const safe = await seed({ bill: "SCOPED-SAFE" });
+      const edited = await seed({ bill: "SCOPED-CT" });
+      const parentOnly = await seed({ localParent: true, bill: "SCOPED-PARENT-ONLY" });
+      await f.pool
+        .request()
+        .input("id", edited.id)
+        .query("UPDATE dbo.held_orders SET label=N'Legacy unsent edit' WHERE id=@id;");
+      const changed = await json(edited.id);
+      records = [await heldRecord(safe), await heldRecord(edited), parentRecord(parentOnly)];
+      const result = await helper.reconcile(scope());
+      assert.equal(result.updated, 1);
+      assert.equal(result.reviewRequired, 2);
+      assert.equal(result.code, "EHELD_STATUS_CT_REVIEW");
+      assert.equal((await native(safe.id)).status, "cancelled");
+      assert.equal(await json(edited.id), changed);
+      assert.equal(await json(parentOnly.id), parentOnly.before);
+      assert.equal(await receiptCount(), 1);
+    });
+    await test("unscoped, ambiguous and malformed held keys cannot authorize independent completion", async () => {
+      for (const [pendingBranch, key] of [
+        ["global", JSON.stringify({ id: "known-other" })],
+        ["", JSON.stringify({ id: "known-other" })],
+        [branch, "legacy-unknown-key"],
+        [branch, '{"id":"known-other","id":"different"}'],
+        [branch, '{"id":"held-case-alias"}'],
+      ]) {
+        await reset();
+        const value = await seed({ localParent: true, id: "HELD-CASE-ALIAS" });
+        records = [await heldRecord(value, "completed")];
+        await f.pool
+          .request()
+          .input("entity", key)
+          .input("branch", pendingBranch)
+          .query(`INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id,entity_version,aggregate_id)
+            VALUES(N'held_orders',@entity,N'update',@branch,7,NEWID());`);
+        await assert.rejects(helper.reconcile(scope()), { code: "EHELD_STATUS_CT_REVIEW" });
+        assert.equal(await json(value.id), value.before);
+        assert.equal(await receiptCount(), 0);
+      }
+    });
+    await test("same-branch bill aliases and deleted local holds cannot be treated as independent", async () => {
+      for (const deleted of [false, true]) {
+        await reset();
+        const value = await seed({ localParent: true });
+        const alias = await seed({ bill: value.bill });
+        if (deleted) {
+          await f.pool
+            .request()
+            .input("id", alias.id)
+            .query("DELETE dbo.held_orders WHERE id=@id;");
+        } else {
+          await f.pool
+            .request()
+            .input("entity", JSON.stringify({ id: alias.id }))
+            .input("branch", branch)
+            .query(`INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id,entity_version,aggregate_id)
+              VALUES(N'held_orders',@entity,N'update',@branch,7,NEWID());`);
+        }
+        records = [await heldRecord(value, "completed")];
+        await assert.rejects(helper.reconcile(scope()), { code: "EHELD_STATUS_CT_REVIEW" });
+        assert.equal(await json(value.id), value.before);
+        assert.equal(await receiptCount(), 0);
+      }
     });
     await test("unattributed legacy pending work cannot be treated as another branch", async () => {
       await reset();

@@ -15,7 +15,7 @@ const httpError = () => Object.assign(new Error("HTTP 503"), { code: "HTTP_503",
 const proof = "a".repeat(64);
 const terminal = "00000000-0000-4000-8000-000000000001";
 const client = () => new CloudClient({ connectionManager: {pool:{}}, configStore: { get: () => "https://pos.fixture" }, terminalStore: { read: () => ({ tokenId: terminal, locationId: "branch-fixture", deviceUse: "operations", deviceBindingProof: proof }) } });
-const fetchPage = (cloud: InstanceType<typeof CloudClient>) => cloud.bootstrapPage({ table: "change_history", branchId: "branch-fixture", historyDays: 90, cursor: null, limit: 100 });
+const fetchPage = (cloud: InstanceType<typeof CloudClient>) => cloud.bootstrapPage({ table: "products", branchId: "branch-fixture", historyDays: 90, cursor: null, limit: 100 });
 
 function sqlHarness() {
   const events: string[] = [];
@@ -60,11 +60,11 @@ describe("bootstrap diagnostic-only transport context", () => {
     expect(bootstrapDiagnostic(failure, names)).toEqual({ httpStatus: code === "57014" ? 500 : 503, nonJsonResponse });
     expect(fetch).toHaveBeenCalledTimes(1);expect(signal).toHaveBeenCalledWith(30_000);
     expect(fetch.mock.calls[0][0]).toBe("https://pos.fixture/api/v1/pos/sync");
-    expect(fetch.mock.calls[0][1].body).toBe(JSON.stringify({ sqlServerBootstrap: { organizationId: "default", table: "change_history", branchId: "branch-fixture", historyDays: 90, cursor: null, limit: 100 }, terminalToken: terminal, deviceBindingProof: proof }));
+    expect(fetch.mock.calls[0][1].body).toBe(JSON.stringify({ sqlServerBootstrap: { organizationId: "default", table: "products", branchId: "branch-fixture", historyDays: 90, cursor: null, limit: 100 }, terminalToken: terminal, deviceBindingProof: proof }));
   });
   it("preserves successful result shape and one request", async () => {
-    const fetch = vi.fn(async () => Response.json({ rows: [{ id: "one", organization_id: "default", scope_type: "BRANCH", scope_id: "branch-fixture" }], cursor: "next" }));vi.stubGlobal("fetch", fetch);
-    expect(await fetchPage(client())).toEqual({ rows: [{ id: "one", organization_id: "default", scope_type: "BRANCH", scope_id: "branch-fixture" }], cursor: "next" });expect(fetch).toHaveBeenCalledTimes(1);
+    const fetch = vi.fn(async () => Response.json({ rows: [{ id: "one" }], cursor: "next" }));vi.stubGlobal("fetch", fetch);
+    expect(await fetchPage(client())).toEqual({ rows: [{ id: "one" }], cursor: "next" });expect(fetch).toHaveBeenCalledTimes(1);
   });
   it("preserves transport error identity with no invented HTTP/JSON fields", async () => {
     const failure = new TypeError("fixture network unavailable");vi.stubGlobal("fetch", vi.fn().mockRejectedValue(failure));

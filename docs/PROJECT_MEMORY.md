@@ -1,3 +1,12 @@
+## 7 November — mixed-version fleet rollout decision
+
+The owner approved implementing and isolate-testing a narrow bridge for truthful
+operational readiness while scoped history is pending, and automatic held-bill
+completion only when durable evidence proves the saved sale and exact local cart
+lineage. Each terminal retains its own identity, scope, pending work and recovery
+state. Conflicts stay with the existing authorized review workflow. The live
+database, installed terminals and production promotion need separate approval.
+
 4 November FIN62 monetary decision: owner explicitly approved ONE exact-decimal tender calculation for NEW closings/corrections, with final currency totals rounded to two decimals and half-cent ties away from zero. Preserve all existing saved sales/receipts/closings and accepted history; no backfill/recalculation. Use an explicit new formula/protocol version rather than relabel legacy native/PostgreSQL rounding as equivalent.
 
 4 November FIN62 multi-terminal decision: validate the complete financial snapshot KNOWN to the saving terminal at the action's transaction. Do not wait for all offline terminals or silently certify global completeness. Later unseen uploads do not rewrite the accepted original snapshot; a later authorized correction captures its own known-data snapshot. Preserve branch scope, authoritative baseline/delta validation, audits and pending work.

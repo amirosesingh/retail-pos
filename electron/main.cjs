@@ -396,6 +396,8 @@ async function observedDatabaseOperation(category, stage, work) {
     if (result?.ok === false) diagnostics.logConnection(`${category}.${stage}.failed`, {
       category, stage, code: result.code ?? "EDATABASE", message: result.error ?? result.message ?? "The database operation did not complete.",
     });
+    else if (result?.historyPending === true || result?.historyHoldOnly === true)
+      diagnostics.logConnection(`${category}.${stage}.pending`, { category, stage, state: "history_recovery" });
     else diagnostics.logConnection(`${category}.${stage}.succeeded`, { category, stage });
     return result;
   } catch (error) {
@@ -418,7 +420,9 @@ function prepareLocalData({force=false}={}){
     let preparationError;
     try{
       const result=await localDataLifecycle.ensure({branchId:localBranchId(),historyDays:Number(profile.retentionDays)||90,force,onActivity:activity.report});
-      diagnostics.logConnection("synchronization.bootstrap.succeeded", { category:"synchronization", stage:"bootstrap", state:"ready" });
+      if(result.historyPending===true)
+        diagnostics.logConnection("synchronization.bootstrap.pending", { category:"synchronization", stage:"bootstrap", state:"history_recovery" });
+      else diagnostics.logConnection("synchronization.bootstrap.succeeded", { category:"synchronization", stage:"bootstrap", state:"ready" });
       return result;
     }
     catch(error){
@@ -456,7 +460,8 @@ function recoverLocalDatabase({prepare=true}={}){
       const synced=await syncCoordinator.runNow({branchId,batchSize:10});
       if(synced.code==="ECHANGEGAP")await prepareLocalData({force:true});
       else if(!synced.ok)throw Object.assign(new Error(synced.error??"Synchronization failed after reconnect."),{code:synced.code??"ESYNC"});
-      else databaseService.markReady({phase:"reconnected",syncReady:true});
+      else if(!synced.historyHoldOnly&&!localDataLifecycle.historyPending(branchId))
+        databaseService.markReady({phase:"reconnected",syncReady:true});
     }catch(error){
       databaseService.markReady({phase:"sync_pending",syncReady:false,code:error?.code??"ESYNC",error:String(error?.message??error)});
     }
@@ -549,21 +554,30 @@ async function runAutomaticSync() {
     // it is running; activity reports its real download/apply progress.
     diagnostics.logConnection("synchronization.automatic.recovering", { category:"synchronization", stage:"automatic", state:"recovering", ...diagnostics.bootstrapDiagnostic(result,syncRegistry.tables.map(table=>table.cloudTable)) });
     try {
-      await prepareLocalData({ force: true });
-      result = { ok: true };
+      result = await prepareLocalData({ force: true });
     } catch (error) {
       failure = error;
       result = { ok: false, code:error?.code??"EBOOTSTRAP", error: String(error?.message ?? error) };
     }
   }
   if (!result.ok) diagnostics.logConnection("synchronization.automatic.failed", { category:"synchronization", stage:result.stage??"automatic", code:result.code??"ESYNC", message:result.error??result.message??"Automatic synchronization failed.", ...diagnostics.bootstrapDiagnostic(failure,syncRegistry.tables.map(table=>table.cloudTable)) });
-  if (result.ok) diagnostics.logConnection("synchronization.automatic.succeeded", { category:"synchronization", stage:"automatic", state:"ready" });
-  historyCadence.finishCore(coreRevision,{ok:result.ok,nextMs:result.ok?Math.max(250,AUTO_SYNC_OK_MS-(Date.now()-lastActivityFlush)):AUTO_SYNC_RETRY_MS});
-  if(result.ok){
-    try{historyCadence.historyOutcome(await localDataLifecycle.historyStep(localBranchId()));}
-    catch(error){historyCadence.historyFailure();recordFault('sync.history-recovery',error);}
+  const scopedReaderUnavailable = result.historyPending === true && result.code === "EHISTORY_POLICY_UNAVAILABLE";
+  const coreComplete = result.ok && !scopedReaderUnavailable;
+  historyCadence.finishCore(coreRevision,{ok:coreComplete,nextMs:coreComplete?Math.max(250,AUTO_SYNC_OK_MS-(Date.now()-lastActivityFlush)):AUTO_SYNC_RETRY_MS});
+  let historyPending = result.historyPending===true||result.historyHoldOnly===true;
+  if(coreComplete){
+    try{
+      const history=await localDataLifecycle.historyStep(localBranchId());
+      historyCadence.historyOutcome(history);
+      historyPending=historyPending||history?.pending===true;
+    }catch(error){historyPending=true;historyCadence.historyFailure();recordFault('sync.history-recovery',error);}
   }
-  if (result.ok && Date.now() - lastAutomaticVerification >= AUTO_VERIFY_MS) {
+  if(result.ok){
+    if(historyPending||localDataLifecycle.historyPending(localBranchId()))
+      diagnostics.logConnection("synchronization.automatic.pending", { category:"synchronization", stage:"automatic", state:"history_recovery" });
+    else diagnostics.logConnection("synchronization.automatic.succeeded", { category:"synchronization", stage:"automatic", state:"ready" });
+  }
+  if (coreComplete && Date.now() - lastAutomaticVerification >= AUTO_VERIFY_MS) {
     lastAutomaticVerification = Date.now();
     void localDataLifecycle.reconcileAndRecover(localBranchId(), Number(databaseConfig.profile()?.retentionDays)||90)
       .then(differences=>{const unresolved=differences.filter(row=>!MEMBERSHIP_TABLES.has(row.table)&&!(row.table==='change_history'&&localDataLifecycle.historyPending(localBranchId())));if(unresolved.length)throw reconciliationError(unresolved);})
@@ -2382,7 +2396,10 @@ function registerIpc() {
     if(!branchId)throw Object.assign(new Error("The terminal branch is not configured."),{code:"EBRANCH"});
     return observedDatabaseOperation("synchronization","manual",async()=>{
       const result=await syncCoordinator.runNow({...input,branchId});
-      if(result.code!=="ECHANGEGAP")return result;
+      if(result.code!=="ECHANGEGAP"){
+        if(result.ok&&localDataLifecycle.historyPending(branchId))return {...result,historyPending:true,syncReady:false};
+        return result;
+      }
       diagnostics.logConnection("synchronization.manual.recovering", { category:"synchronization", stage:"manual", state:"recovering", ...diagnostics.bootstrapDiagnostic(result,syncRegistry.tables.map(table=>table.cloudTable)) });
       return prepareLocalData({force:true});
     });
@@ -2397,7 +2414,7 @@ function registerIpc() {
   ipcMain.handle("sync:pause", () => syncCoordinator.pause());
   ipcMain.handle("sync:resume", () => syncCoordinator.resume());
   ipcMain.handle("sync:get-failures", async () => ({ databaseErrors:diagnostics.databaseErrors(100), failures:databaseManager.isConnected()?await jobRepository.failures():[], businessBatches:databaseManager.isConnected()?await changeReader.failedAggregates(localBranchId()):[], conflictRows:databaseManager.isConnected()?await conflictRepository.unresolved():[], conflicts:databaseManager.isConnected()?await conflictRepository.count():0 }));
-  ipcMain.handle("sync:reconcile", (_e, options) => guard.guarded(async()=>{try{const input=guard.options(options,{name:"reconciliation options"});const branchId=localBranchId();if(!branchId)throw Object.assign(new Error("A branch is required for reconciliation."),{code:"EBRANCH"});const historyDays=Number(databaseConfig.profile()?.retentionDays)||90;if(input.deep===true){const report=await localDataLifecycle.verify(branchId,historyDays,Array.isArray(input.tables)?input.tables:[]);return{ok:true,verified:report.verified,differences:report.tables.filter(table=>!table.verified),verification:report.tables,lastVerifiedAt:report.verifiedAt};}const differences=input.repair===true?await localDataLifecycle.repair(branchId,historyDays,Array.isArray(input.tables)?input.tables:[]):await localDataLifecycle.reconcile(branchId,historyDays);return{ok:true,matched:differences.length===0,differences,verification:syncCoordinator.snapshot().tables,lastComparedAt:syncCoordinator.snapshot().lastComparedAt};}catch(error){return{ok:false,code:error?.code??"ERECONCILE",error:String(error?.message??error)};}}));
+  ipcMain.handle("sync:reconcile", (_e, options) => guard.guarded(async()=>{try{const input=guard.options(options,{name:"reconciliation options"});const branchId=localBranchId();if(!branchId)throw Object.assign(new Error("A branch is required for reconciliation."),{code:"EBRANCH"});const historyDays=Number(databaseConfig.profile()?.retentionDays)||90;if(input.deep===true){const report=await localDataLifecycle.verify(branchId,historyDays,Array.isArray(input.tables)?input.tables:[]);return{ok:true,verified:report.verified,differences:report.tables.filter(table=>!table.verified),verification:report.tables,lastVerifiedAt:report.verifiedAt};}const differences=input.repair===true?await localDataLifecycle.repair(branchId,historyDays,Array.isArray(input.tables)?input.tables:[]):await localDataLifecycle.reconcile(branchId,historyDays);const historyPending=localDataLifecycle.historyPending(branchId);return{ok:true,matched:differences.length===0&&!historyPending,differences,...(historyPending?{historyPending}:{}),verification:syncCoordinator.snapshot().tables,lastComparedAt:syncCoordinator.snapshot().lastComparedAt};}catch(error){return{ok:false,code:error?.code??"ERECONCILE",error:String(error?.message??error)};}}));
   ipcMain.handle("telemetry:presence", (_e, value) => guard.guarded(() => {
     const input = guard.options(value, { name: "telemetry presence", max: 3 });
     return mainTelemetry.setPresence({

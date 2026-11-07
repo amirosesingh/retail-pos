@@ -1,4 +1,5 @@
 import {serviceRest} from '@/core/api/pos-relay.server';
+import {boundedText} from '../../electron/sync/shift-recovery-exact.mjs';
 
 export type HistoryReconcileRead = (
  | {action:'begin';organizationId:string;branchId:string}
@@ -8,6 +9,25 @@ export type HistoryReconcileRead = (
 ) & {accessPolicy?:'branch-history-v1'};
 
 const PREFIX='X-POS-History-Reconcile-';
+const SCOPED_INDEX='public.pos_sync_history_index_v2';
+const SCOPED_PARAMETERS='p_action, p_after_id, p_branch_id, p_keep_commerce, p_limit, p_organization_id, p_terminal_id, p_upper_id';
+const POLICY_UNAVAILABLE='EHISTORY_POLICY_UNAVAILABLE';
+
+async function scopedIndexUnavailable(response:Response,read:HistoryReconcileRead,terminalId:string){
+ let raw:string;
+ try{raw=await boundedText(response,4096);}catch{
+  return Response.json({ok:false,code:'EHISTORY_INDEX_PROTOCOL',error:'The protected history response could not be verified; recovery remains pending.'},{status:502});
+ }
+ let failure;
+ try{failure=JSON.parse(raw);}catch{/* An unrelated response stays an error. */}
+ const signature=`${SCOPED_INDEX}(${SCOPED_PARAMETERS})`;
+ if(failure?.code==='PGRST202'&&failure.message===`Could not find the function ${signature} in the schema cache`&&
+  (failure.hint===null||typeof failure.hint==='string'&&!failure.hint.includes(SCOPED_INDEX))){
+  return Response.json({ok:false,code:POLICY_UNAVAILABLE,policy:read.accessPolicy,organization_id:read.organizationId,branch_id:read.branchId,terminal_id:terminalId},
+   {status:409,headers:{'cache-control':'no-store',[PREFIX+'Version']:'2',[PREFIX+'Kind']:'unavailable'}});
+ }
+ return new Response(raw,{status:response.status,headers:{'content-type':response.headers.get('content-type')??'application/json'}});
+}
 async function invalid(response:Response){
  try{await response.body?.cancel();}catch{/* No progress is committed. */}
  return Response.json({ok:false,code:'EHISTORY_INDEX_PROTOCOL',error:'The protected history response could not be verified; recovery remains pending.'},{status:502});
@@ -24,6 +44,7 @@ export async function protectedHistoryReconciliation(args:{read:HistoryReconcile
  });}catch{return Response.json({ok:false,code:'SERVICE_UNAVAILABLE',error:'The central history service did not answer; recovery will retry.'},{status:503});}
  // Preserve real authorization/network/schema failures. There is no fallback to
  // an unprotected history read or a client-selected privacy mode.
+ if(version==='2'&&read.action==='begin'&&response.status===404)return scopedIndexUnavailable(response,read,args.terminalId);
  if(!response.ok)return new Response(response.body,{status:response.status,headers:{'content-type':response.headers.get('content-type')??'application/json'}});
  const max=rows?5*1024*1024:128*1024;
  const text=response.headers.get(PREFIX+'Bytes')??'',countText=response.headers.get(PREFIX+'Rows')??'';

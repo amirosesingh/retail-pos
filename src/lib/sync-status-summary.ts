@@ -18,6 +18,7 @@ export type NativeDatabaseSnapshot = {
   connected?: boolean;
   tradingReady?: boolean;
   state?: string;
+  detail?: { phase?: unknown; syncReady?: unknown; historyPending?: unknown; branchId?: unknown } | null;
 };
 
 export type SyncStatusSummary = {
@@ -84,6 +85,24 @@ export function nativeSyncSummary(
   };
   const history=snapshot.historyRecovery&&typeof snapshot.historyRecovery==='object'&&!Array.isArray(snapshot.historyRecovery)
     ?snapshot.historyRecovery as Record<string,unknown>:null;
+  const policyHistoryPending = history?.pending === true && history.status === "retrying" &&
+    history.code === "EHISTORY_POLICY_UNAVAILABLE";
+  if (policyHistoryPending && (pending === null || pending === 0)) {
+    const detail = database.detail;
+    const checkoutReady = database.enabled === true && database.state === "enabled_ready" &&
+      database.connected === true && database.tradingReady === true &&
+      detail?.phase === "history_recovery" && detail.syncReady === false && detail.historyPending === true &&
+      typeof detail.branchId === "string" && detail.branchId.length > 0 && detail.branchId === history.branchId;
+    return {
+      state: "degraded", label: checkoutReady ? "Checkout ready · History pending" : "History recovery waiting", pending,
+      detail: [
+        checkoutReady ? "The local checkout data is ready." : "",
+        "The scoped history reader is temporarily unavailable. History remains pending and will retry automatically.",
+        pending === null || failed === null || conflicts === null ? "Some local journal counts still need verification." : "",
+        "Full synchronization still needs verification.",
+      ].filter(Boolean).join(" "),
+    };
+  }
   if(history?.pending===true&&history.membershipOnly===true&&pending===0&&failed===0&&conflicts===0){
     const saved=count(history.completedRows),warning=typeof history.error==='string'?history.error.trim():'';
     return{state:warning?'degraded':'checking',label:warning?'History recovery waiting':'Recovering history',pending,
@@ -96,7 +115,8 @@ export function nativeSyncSummary(
   };
   if (pending > 0) return {
     state: "degraded", label: "Waiting to upload", pending,
-    detail: `${pending} journal change${pending === 1 ? " is" : "s are"} waiting for central acknowledgement.`,
+    detail: [`${pending} journal change${pending === 1 ? " is" : "s are"} waiting for central acknowledgement.`,
+      policyHistoryPending ? "History also remains pending and will retry automatically." : ""].filter(Boolean).join(" "),
   };
   if (typeof snapshot.lastPushAt !== "string" || !Number.isFinite(Date.parse(snapshot.lastPushAt))) return {
     state: "checking", label: "Upload not confirmed", pending,
