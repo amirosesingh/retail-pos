@@ -26,6 +26,7 @@ const fixture = vi.hoisted(() => {
     epoch: 1,
     signedIn: true,
     staff: false,
+    platform: "android" as "android" | "ios" | "electron" | "web",
     pin: "person-pin-proof" as string | null,
     raw: "raw-person-proof" as string | null,
     terminal: { tokenId: "terminal-1", locationId: "branch-a", deviceUse: "operations" },
@@ -57,6 +58,7 @@ vi.mock("@/core/activation/terminal-tokens", () => ({
 }));
 vi.mock("@/core/activation/connection-health", () => ({ APP_RESUME_EVENT: "pos:app-resume" }));
 vi.mock("@/core/api/sync-relay", () => ({ hasStaffSession: () => fixture.staff }));
+vi.mock("@/platform-config/platform", () => ({ platformName: () => fixture.platform }));
 vi.mock("@/integrations/supabase/external-client", () => ({
   externalClientSnapshot: () => fixture.client,
   subscribeExternalClientReset: (callback: () => void) => { fixture.reset = callback; return () => {}; },
@@ -75,7 +77,7 @@ vi.mock("../session-presence", () => ({
 }));
 vi.mock("../session-verify-client", () => ({ verifySession: fixture.verify }));
 
-import { subscribePinApprovalWake } from "../pin-approval-wake";
+import { subscribeMobilePinActivityWake, subscribePinApprovalWake } from "../pin-approval-wake";
 
 const email = "terminal.terminal-1@pos.local";
 const user = { id: "machine-user", email };
@@ -83,8 +85,8 @@ const session = (bearer = "machine-jwt") => ({ access_token: bearer, user, expir
 const profile = { auth_user_id: user.id, email, role: "staff", store_id: "branch-a", is_active: true };
 const proofs = { cashierToken: "person-pin-proof", sessionToken: "raw-person-proof", terminalToken: "terminal-1", deviceBindingProof: "a".repeat(64) };
 const stops: Array<() => void> = [];
-const watch = (branch = "branch-a", wake = vi.fn()) => {
-  const stop = subscribePinApprovalWake(branch, wake);
+const watch = (branch = "branch-a", wake = vi.fn(), subscribe = subscribePinApprovalWake) => {
+  const stop = subscribe(branch, wake);
   stops.push(stop);
   return { stop, wake };
 };
@@ -96,6 +98,7 @@ beforeEach(() => {
   fixture.epoch = 1;
   fixture.signedIn = true;
   fixture.staff = false;
+  fixture.platform = "android";
   fixture.pin = proofs.cashierToken;
   fixture.raw = proofs.sessionToken;
   fixture.terminal = { tokenId: proofs.terminalToken, locationId: "branch-a", deviceUse: "operations" };
@@ -152,6 +155,39 @@ describe("enrolled PIN approval wake", () => {
     second.stop();
     await vi.advanceTimersByTimeAsync(1);
     expect(socket.removeAllChannels).toHaveBeenCalledOnce();
+  });
+
+  it.each(["android", "ios"] as const)("wakes the %s bell from the committed activity row on the same socket", async platform => {
+    fixture.platform = platform;
+    const approval = watch();
+    const badge = watch("branch-a", vi.fn(), subscribeMobilePinActivityWake);
+    const otherBadge = watch("branch-b", vi.fn(), subscribeMobilePinActivityWake);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fixture.construct).toHaveBeenCalledOnce();
+    const socket = fixture.sockets[0];
+    const notify = socket.on.mock.calls[0][2];
+    const status = socket.subscribe.mock.calls[0][0];
+    status("SUBSCRIBED");
+    expect(badge.wake).toHaveBeenCalledOnce();
+    notify({ payload: { table: "authorization_requests" } });
+    expect(badge.wake).toHaveBeenCalledOnce();
+    expect(approval.wake).toHaveBeenCalledTimes(2);
+    notify({ payload: { table: "activity_events" } });
+    expect(badge.wake).toHaveBeenCalledTimes(2);
+    expect(approval.wake).toHaveBeenCalledTimes(2);
+    expect(otherBadge.wake).not.toHaveBeenCalled();
+    badge.stop();
+    notify({ payload: { table: "activity_events" } });
+    expect(badge.wake).toHaveBeenCalledTimes(2);
+    expect(socket.disconnect).not.toHaveBeenCalled();
+  });
+
+  it.each(["electron", "web"] as const)("leaves the %s badge on its current delivery path", async platform => {
+    fixture.platform = platform;
+    const badge = watch("branch-a", vi.fn(), subscribeMobilePinActivityWake);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fixture.construct).not.toHaveBeenCalled();
+    expect(badge.wake).not.toHaveBeenCalled();
   });
 
   it.each([

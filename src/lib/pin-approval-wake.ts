@@ -3,6 +3,7 @@ import { readTerminalConfig, subscribeTerminalConfig } from "@/core/activation/t
 import { APP_RESUME_EVENT } from "@/core/activation/connection-health";
 import { hasStaffSession } from "@/core/api/sync-relay";
 import { externalClientSnapshot, subscribeExternalClientReset } from "@/integrations/supabase/external-client";
+import { platformName } from "@/platform-config/platform";
 import { sameBranchId } from "./branch-id";
 import { supabaseConfig } from "./external-supabase-config";
 import { TERMINAL_EMAIL_DOMAIN } from "./internal-domains";
@@ -12,7 +13,8 @@ import { sessionEpoch } from "./session-epoch";
 import { hasSignedInIdentity, subscribeCentralAuthSession } from "./session-presence";
 import { verifySession } from "./session-verify-client";
 
-const listeners = new Set<{ branchId: string; wake: () => void }>();
+type WakeTable = "authorization_requests" | "activity_events";
+const listeners = new Set<{ branchId: string; table: WakeTable; wake: () => void }>();
 const sockets = createSerialChannelReplacer<RealtimeClient | null>({
   remove: async socket => {
     if (!socket) return;
@@ -135,16 +137,17 @@ function createReceiver() {
             await socket.setAuth(proof.bearer);
             const remaining = proof.expiresAt - Date.now();
             if (!current() || remaining <= 0) { await socket.disconnect(); return null; }
-            const wake = () => {
+            const wake = (table?: WakeTable) => {
               if (!current() || proof.expiresAt <= Date.now()) return;
               for (const listener of [...listeners]) {
-                if (sameBranchId(listener.branchId, proof.branchId)) listener.wake();
+                if (sameBranchId(listener.branchId, proof.branchId) && (!table || listener.table === table)) listener.wake();
               }
             };
             let joined = false;
             socket.channel(`pos-sync:default:branch:${proof.branchId}`, { config: { private: true } })
               .on("broadcast", { event: "sync_changed" }, message => {
-                if (message.payload?.table === "authorization_requests") wake();
+                const table = message.payload?.table;
+                if (table === "authorization_requests" || table === "activity_events") wake(table);
               })
               .subscribe((status, error) => {
                 if (!current()) return;
@@ -186,10 +189,9 @@ function createReceiver() {
 
 let receiver: ReturnType<typeof createReceiver> | undefined;
 
-/** One receive-only hint channel for open approval views on an enrolled PIN till. */
-export function subscribePinApprovalWake(branchId: string, wake: () => void): () => void {
+function subscribePinWake(branchId: string, table: WakeTable, wake: () => void): () => void {
   if (typeof window === "undefined") return () => {};
-  const listener = { branchId, wake };
+  const listener = { branchId, table, wake };
   listeners.add(listener);
   receiver ??= createReceiver();
   receiver.refresh();
@@ -198,4 +200,16 @@ export function subscribePinApprovalWake(branchId: string, wake: () => void): ()
     if (listeners.size) receiver?.refresh();
     else { receiver?.stop(); receiver = undefined; }
   };
+}
+
+/** Receive request hints for open approval views on an enrolled PIN till. */
+export function subscribePinApprovalWake(branchId: string, wake: () => void): () => void {
+  return subscribePinWake(branchId, "authorization_requests", wake);
+}
+
+/** The mobile bell can reread its existing person-authorized activity feed. */
+export function subscribeMobilePinActivityWake(branchId: string, wake: () => void): () => void {
+  const platform = platformName();
+  if (platform !== "android" && platform !== "ios") return () => {};
+  return subscribePinWake(branchId, "activity_events", wake);
 }

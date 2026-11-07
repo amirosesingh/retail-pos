@@ -95,6 +95,22 @@ with its open shift and pending journal intact. The fixture adapts the
 HTTP and Data API boundaries in process. Hosted and installed acceptance
 remain pending.
 
+Android and iOS PIN activity bells now share the verified branch wake used by
+open Approvals and Holds. A committed activity event wakes the existing
+person-authorized read, and the existing polls continue. The three focused
+receiver, approval refresh and notification persistence suites passed 43
+tests. Windows still needs a scoped native download wake for its local badge.
+Named cross-store and relay-only PIN delivery still need an authorized wake
+path.
+
+Strengthen the isolated ordinary cash receipt before connecting a sender.
+Require the independently provisioned active installation generation and
+database identity in the owner-only PostgreSQL fixture. Bind acceptance to
+the original operation and exact checkout bytes. Verify wrong and stale
+generations, payload drift and exact replay without a second inventory
+effect. Existing routes remain in service until both legacy write paths
+can be fenced and reconciled in the authoritative transaction.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents

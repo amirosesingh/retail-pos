@@ -33,6 +33,7 @@ import { createTextHumanizer } from "@/lib/human-readable";
 import { hasStaffSession } from "@/core/api/sync-relay";
 import { localDb } from "@/core/local-db/local-db";
 import { APP_RESUME_EVENT } from "@/core/activation/connection-health";
+import { subscribeMobilePinActivityWake } from "@/lib/pin-approval-wake";
 
 const PIN_POLL_MS = 15_000;
 const AUTHENTICATED_POLL_MS = 60_000;
@@ -94,10 +95,10 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
   const announcedIdsRef = useRef(new Set<string>());
   const activityInitializedRef = useRef(false);
   const refreshInFlight = useRef<Promise<void> | null>(null);
-  const refreshPending = useRef(false);
+  const refreshPending = useRef<boolean | null>(null);
   const refreshGeneration = useRef(0);
   const mounted = useRef(false);
-  const refreshLatest = useRef<() => Promise<void>>(async () => undefined);
+  const refreshLatest = useRef<(drainQueue?: boolean) => Promise<void>>(async () => undefined);
 
   const updatePreference = useCallback(
     async (ids: string[], action: () => Promise<boolean>, failure: string) => {
@@ -161,17 +162,17 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
     [meKey, navigate, updatePreference, preferenceScope],
   );
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (drainQueue = true) => {
     if (!showActivity || !meKey || !mounted.current) return;
     if (refreshInFlight.current) {
-      refreshPending.current = true;
+      refreshPending.current = drainQueue || refreshPending.current === true;
       return refreshInFlight.current;
     }
     const generation = refreshGeneration.current;
     setRefreshing(true);
     setLoadError("");
     const run = (async () => {
-      void flushActivityQueue().catch(() => undefined);
+      if (drainQueue) void flushActivityQueue().catch(() => undefined);
       const retentionFrom = new Date(Date.now() - NOTIFICATION_RETENTION_MS).toISOString();
       const reconcile = !activityInitializedRef.current || Date.now() - lastReconciled.current >= 300_000;
       const previous = rowsRef.current;
@@ -252,10 +253,11 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
     } finally {
       if (mounted.current && generation === refreshGeneration.current) setRefreshing(false);
       refreshInFlight.current = null;
-      if (refreshPending.current && mounted.current) {
-        refreshPending.current = false;
+      const pending = refreshPending.current;
+      refreshPending.current = null;
+      if (pending !== null && mounted.current) {
         queueMicrotask(() => {
-          void refreshLatest.current().catch(() => undefined);
+          void refreshLatest.current(pending).catch(() => undefined);
         });
       }
     }
@@ -281,16 +283,25 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
         return JSON.stringify(current) === JSON.stringify(next) ? current : next;
       });
     onCleared();
-    const tick = () => {
-      if (document.visibilityState !== "hidden") void refresh().catch(() => undefined);
+    const tick = (drainQueue = true) => {
+      if (document.visibilityState !== "hidden") void refresh(drainQueue).catch(() => undefined);
     };
     let eventTimer: ReturnType<typeof setTimeout> | undefined;
-    const schedule = () => {
+    let scheduledDrain = false;
+    const scheduleRead = (drainQueue: boolean) => {
+      scheduledDrain ||= drainQueue;
       if (eventTimer !== undefined) return;
-      eventTimer = setTimeout(() => { eventTimer = undefined; tick(); }, 150);
+      eventTimer = setTimeout(() => {
+        eventTimer = undefined;
+        const drain = scheduledDrain;
+        scheduledDrain = false;
+        tick(drain);
+      }, 150);
     };
+    const schedule = () => scheduleRead(true);
     tick();
     const off = subscribeActivityEvents(schedule, branchId);
+    const offPin = branchId ? subscribeMobilePinActivityWake(branchId, () => scheduleRead(false)) : undefined;
     const t = setInterval(() => {
       // Stop polling a database that has no activity log.
       if (isActivityLogMissing()) {
@@ -309,6 +320,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
       mounted.current = false;
       if (eventTimer !== undefined) clearTimeout(eventTimer);
       off();
+      offPin?.();
       clearInterval(t);
       document.removeEventListener("visibilitychange", schedule);
       for (const event of resumeEvents) window.removeEventListener(event, schedule);
