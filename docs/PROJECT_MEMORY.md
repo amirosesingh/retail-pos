@@ -1,3 +1,12 @@
+## 7 November — mixed-version fleet rollout decision
+
+The owner approved implementing and isolate-testing a narrow bridge for truthful
+operational readiness while scoped history is pending, and automatic held-bill
+completion only when durable evidence proves the saved sale and exact local cart
+lineage. Each terminal retains its own identity, scope, pending work and recovery
+state. Conflicts stay with the existing authorized review workflow. The live
+database, installed terminals and production promotion need separate approval.
+
 4 November FIN62 monetary decision: owner explicitly approved ONE exact-decimal tender calculation for NEW closings/corrections, with final currency totals rounded to two decimals and half-cent ties away from zero. Preserve all existing saved sales/receipts/closings and accepted history; no backfill/recalculation. Use an explicit new formula/protocol version rather than relabel legacy native/PostgreSQL rounding as equivalent.
 
 4 November FIN62 multi-terminal decision: validate the complete financial snapshot KNOWN to the saving terminal at the action's transaction. Do not wait for all offline terminals or silently certify global completeness. Later unseen uploads do not rewrite the accepted original snapshot; a later authorized correction captures its own known-data snapshot. Preserve branch scope, authoritative baseline/delta validation, audits and pending work.
@@ -11,6 +20,20 @@ Owner requires all proposed cloud/local database upgrades collected for exact fi
 
 The exact owner-approved service-only bounded feed RPC and PR384 are applied/deployed on beta. Existing selector/privacy grants and businessrecords are preserved; native continuation is bound to authenticated response metadata. Live147request sample all200/ok with no CPU-exceeded; CPU2–114ms/mean9.469 means NO guarantee allrequestsbelow10ms. Electronfeed131613→133184, all6shiftCTvalid; largebacklog stilldraining. Keep implemented/sample-verified status distinct from fullsync completion, production promotion or installerpublication. Supabase migrationtool ledger20261104042158 corresponds to approvedfile20261104040251, SHA83495D696622241ECA2A8D396234E2FD65EE7C7A3050E93E4280638D6530D59B; do not replay based solely on differing timestamps.
 # POS project memory
+
+## 7 November — branch history isolation and affected-PC follow-up approved
+
+Owner approves agents to fix history synchronization so Operations terminals
+receive their own branch's history and explicitly enabled Management replicas
+receive all shops in the configured company database. Check Electron/web held
+sales and the now-connected affected PC. This authorizes bounded implementation
+and isolated tests plus read-only remote inspection, not live SQL, automatic-DDL
+activation, data copying/deletion, queue/checkpoint/registration reset or release.
+Present exact cloud/local database changes and target before application.
+Keep shared catalogue/availability rules, current user/action permissions,
+offline checkout and retained closings/corrections intact. Root must resolve
+unattributed/global history safely; timestamps or counts alone grant no access.
+
 
 ## 6 November — chart and summary presentation refinement
 
@@ -1700,3 +1723,37 @@ existing coordinated lane after15 minutes plus stable0–60s terminal jitter, wi
 no timer/core-poll change or existing-payload redownload. Counts/membership do not
 certify full-row equality or repair previously divergent immutable facts. Grouped
 exact database approval is still required. Stock401/local031 remain deferred.
+
+## 6 November — installed 1.4.82 shift expiry follow-up
+
+Owner reports shifts ECHANGEGAP on installed production 1.4.82 and asks for
+automatic database recovery. Investigate/correct through current beta, preserving
+offline closings and later authorized corrections. Do not call publication a
+completed recovery on every PC. No new live database application or production
+promotion is authorized by this report; show exact required changes first.
+
+Release-source inspection confirms normal managed migrations stop at024;
+025–030 are optional metadata in the consolidated upgrade, not automatically
+installed by 1.4.82. Also fix the narrow startup recovery-panel admission mismatch
+without weakening trading readiness or Administrator/branch checks. Automatic
+metadata integration needs its own reviewed activation/compatibility plan before
+implementation. The real affected PC still needs current read-only evidence.
+Automatic safe comparison is required; unproved historical financial actions
+still require the existing explicit, audited Administrator decision.
+
+## 7 November — automatic local recovery upgrade preparation approved
+
+Owner's “do it” approves implementation and isolated tests of the documented
+automatic recovery-metadata plan. Use current beta858f023f, which includes the
+verified PR430 startup/recovery-reporting fixes. Add only reviewed028–030 metadata
+automatically through guarded startup preparation, with exact schema/identity,
+backup, transaction and pending-work safety. Keep090F manual upgrade unchanged;
+025/026 financial activation, Stock031 and Membership remain excluded.
+
+Do not run the new automatic installer against real profiles/databases or deploy
+its DDL behavior yet. Exact final SQL/hash, target or rollout scope and backup/
+quiescence safeguards must be reviewed before live application. Production and
+installer publication retain their separate explicit owner approvals. True
+financial conflicts need the existing audited Administrator decision; schema
+installation must never invent proof, choose a timestamp winner, reset a cursor
+or acknowledge retained work.

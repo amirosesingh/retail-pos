@@ -34,7 +34,7 @@ const proof = (revision: number | string = 2) => ({ ok: true, applied_count: 0,
   shift_closure_ack_version: 2,
   shift_closures: [{ id: row.id, store_id: branch, row_version: revision, requested_row_version: 2 }] });
 
-function fixture(result: unknown = { ok: true }) {
+function fixture(result: object = { ok: true }) {
   let pending = true;
   const change = { entity_type: "shifts", entity_id: JSON.stringify({ id: row.id }),
     key: { id: row.id }, operation: "update" };
@@ -46,7 +46,7 @@ function fixture(result: unknown = { ok: true }) {
     acknowledgeAggregate: vi.fn(async () => { pending = false; }),
     failAggregate: vi.fn(),
   };
-  const cloud = { pushAggregate: vi.fn().mockResolvedValue(result) };
+  const cloud = { pushAggregate: vi.fn(async ({ batchId }: { batchId: string }) => ({ ...result, batch_id: batchId })) };
   return { reader, cloud, pending: () => pending,
     worker: new PushWorker({ reader, cloud, registry: { tables: graphTables } }) };
 }
@@ -75,7 +75,7 @@ describe("authoritative shift closure acknowledgements", () => {
   it("keeps an ambiguous timeout pending and uses the same receipt on reconnect", async () => {
     const f = fixture();
     f.cloud.pushAggregate.mockRejectedValueOnce(Object.assign(new Error("timeout"), { code: "ETIMEDOUT" }))
-      .mockResolvedValueOnce(proof());
+      .mockImplementationOnce(async ({ batchId }) => ({ ...proof(), batch_id: batchId }));
     expect(await f.worker.pushAggregates(branch, 100, true)).toBe(0);
     expect(f.pending()).toBe(true);
     expect(await f.worker.pushAggregates(branch, 100, true)).toBe(1);
@@ -140,7 +140,9 @@ describe("authoritative shift closure acknowledgements", () => {
       save: vi.fn(async (_b: string, _t: string, _d: string, value: { change_tracking_version: number }) => {
         checkpoint = value.change_tracking_version;
       }) };
-    const upload = vi.fn().mockResolvedValueOnce({ ok: true }).mockResolvedValue(proof());
+    type UploadProof = { ok: boolean; batch_id: string } & Partial<ReturnType<typeof proof>>;
+    const upload = vi.fn(async ({ batchId }: { batchId: string }): Promise<UploadProof> => ({ ...proof(), batch_id: batchId }))
+      .mockImplementationOnce(async ({ batchId }) => ({ ok: true, batch_id: batchId }));
     const cloud = { pushBatch: upload, pushAggregate: upload };
     const reader = { pendingAggregates: vi.fn(async () => []),
       changedIds: vi.fn(async (metadata: { cloudTable: string }, version: number) => metadata.cloudTable !== "shifts" || version ? []
@@ -158,7 +160,7 @@ describe("authoritative shift closure acknowledgements", () => {
     const event = { id: "activity", store_id: branch, event_type: "shift_close", title: "Shift closed",
       message: "Local count saved", meta: JSON.stringify({ shift_closure_status: "confirmed", shift_id: row.id }) };
     const activityTable = { ...table, cloudTable: "activity_events", sqlServerTable: "activity_events" };
-    const cloud = { pushAggregate: vi.fn().mockResolvedValue({ ok: true }) };
+    const cloud = { pushAggregate: vi.fn(async (batch: { batchId: string; operations: { rows: typeof event[] }[] }) => ({ ok: true, batch_id: batch.batchId })) };
     const reader = { pendingAggregates: vi.fn().mockResolvedValueOnce([{ aggregateId: "old-event", changes: [{
       entity_type: "activity_events", entity_id: '{"id":"activity"}', key: { id: "activity" }, operation: "insert",
     }] }]).mockResolvedValue([]), rows: vi.fn(async () => [event]), acknowledgeAggregate: vi.fn(), failAggregate: vi.fn() };
@@ -176,7 +178,7 @@ describe("authoritative shift closure acknowledgements", () => {
     const activityTable = { ...table, cloudTable: "activity_events", sqlServerTable: "activity_events" };
     const event = { id: "activity", store_id: branch, event_type: "shift_close", title: "Shift closed",
       message: "Offline report", meta: { shift_closure_status: "central_confirmed" } };
-    const cloud = { pushBatch: vi.fn().mockResolvedValue({ ok: true }) };
+    const cloud = { pushBatch: vi.fn(async (batch: { batchId: string; rows: typeof event[] }) => ({ ok: true, batch_id: batch.batchId })) };
     const reader = { pendingAggregates: vi.fn(async () => []), rows: vi.fn(async () => [event]),
       changedIds: vi.fn(async (_t: unknown, version: number) => version ? []
         : [{ operation: "U", version: 8, key: { id: event.id } }]) };

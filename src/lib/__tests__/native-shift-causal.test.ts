@@ -665,7 +665,7 @@ describe("native causal closing transfer", () => {
         { key: { id: count }, operation: "I", version: 41 },
       ],
       save = vi.fn(),
-      pushBatch = vi.fn(async () => ({ ok: true }));
+      pushBatch = vi.fn(async ({ batchId }: { batchId: string }) => ({ ok: true, batch_id: batchId }));
     const reader = {
       pendingAggregates: async () => [],
       changedIds: vi.fn().mockResolvedValueOnce(window).mockResolvedValue([]),

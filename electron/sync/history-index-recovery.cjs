@@ -5,7 +5,8 @@ const {PROJECTION,MAX_INDEX,MAX_ROWS,normalizeIndex,normalizeRows}=require('./hi
 const {recordId}=require('./uuid-fields.cjs');
 const {binding}=require('../verified-activation.cjs');
 const {reportActivity}=require('../db/startup-activity.cjs');
-const {legacyEvidence}=require('./history-index-legacy.cjs');
+const {legacyEvidence,legacyIndexEvidence}=require('./history-index-legacy.cjs');
+const {POLICY,captureHistoryScope,assertHistoryRows}=require('./history-read-scope.cjs');
 const TYPE='history_index_recovery_v1',UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const fail=(message,code='EHISTORY_INDEX_PROGRESS')=>{throw Object.assign(new Error(message),{code,table:'change_history'});};
 const integer=value=>{const text=String(value??'');if(!/^(0|[1-9][0-9]*)$/.test(text)||text.length>19||BigInt(text)>9223372036854775807n)fail('Saved history membership progress is invalid.');return text;};
@@ -112,21 +113,28 @@ class HistoryIndexRecovery {
   if(!source||typeof source.fingerprint!=='string'||!/^[0-9a-f]{64}$/.test(source.fingerprint)||!source.pool||source.pool!==this.connectionManager.pool||
    !terminalId||!UUID.test(terminalId)||!branch||branch.length>128||!registered||registered.mode==='operations'&&registered.branchId!==branch)
    fail('The registered history recovery scope cannot be verified.','EHISTORY_INDEX_SCOPE');
-  return{pool:source.pool,fingerprint:source.fingerprint,organizationId:'default',branchId:branch,terminalId};
+  const readScope=captureHistoryScope(this.cloud,this.connectionManager,branch);
+  return{pool:source.pool,fingerprint:source.fingerprint,organizationId:'default',branchId:branch,terminalId,historyScope:readScope.historyScope,readScope};
  }
- same(scope){try{if(scope.invalidated)return false;const current=this.source(scope.branchId);return current.pool===scope.pool&&current.fingerprint===scope.fingerprint&&current.terminalId===scope.terminalId;}catch{return false;}}
+ same(scope){try{if(scope.invalidated)return false;const current=this.source(scope.branchId);return current.pool===scope.pool&&current.fingerprint===scope.fingerprint&&current.terminalId===scope.terminalId&&current.readScope.authorityStamp===scope.readScope.authorityStamp;}catch{return false;}}
  assert(scope){if(!this.same(scope))fail('The database or terminal changed during history recovery.','ESYNC_REQUEST_CONTEXT_CHANGED');}
  async capture(branchId,scopeTag=''){
   if(scopeTag!==''&&!/^[0-9a-f]{64}$/.test(scopeTag))fail('The authorized history scope is invalid.','EHISTORY_INDEX_SCOPE');
-  const scope={...this.source(branchId),databaseGuid:await this.store.guid()};this.assert(scope);
+  const scope={...this.source(branchId),scopeTag,databaseGuid:await this.store.guid()};this.assert(scope);
   const legacy=await this.legacy(scope);
-  return{...scope,legacyHash:legacy.hash,legacyIds:legacy.ids,hash:'hi1:'+createHash('sha256').update(JSON.stringify([TYPE,PROJECTION,scope.fingerprint,scope.databaseGuid,scopeTag,legacy.hash])).digest('hex')};
+  return{...scope,legacyHash:legacy.hash,legacyIds:legacy.ids,hash:'hi2:'+createHash('sha256').update(JSON.stringify([TYPE,PROJECTION,POLICY,scope.historyScope,scope.fingerprint,scope.databaseGuid,scopeTag,legacy.hash])).digest('hex')};
  }
  async legacy(scope,tx=null){
   this.assert(scope);const rows=await this.jobRepository.legacyHistory?.(scope.branchId,scope.terminalId,tx)??[];this.assert(scope);
+  const indexRows=await this.jobRepository.legacyIndexHistory?.(scope.branchId,scope.terminalId,tx)??[];this.assert(scope);
+  if(rows.length+indexRows.length>50)fail('Retained history job metadata needs review.','EHISTORY_LEGACY_REVIEW');
   const current=this.jobManager.running,own=!current||current.job_type===TYPE&&recordId(current.job_id)===recordId(scope.indexJobId);
-  const ownsExecution=rows.length&&own?await this.executionProof({jobId:scope.indexJobId??null,source:scope,requestParent:tx}):false;this.assert(scope);
-  return legacyEvidence({rows,cloud:this.cloud,branchId:scope.branchId,terminalId:scope.terminalId,ownsExecution});
+  const ownsExecution=(rows.length||indexRows.length)&&own?await this.executionProof({jobId:scope.indexJobId??null,source:scope,requestParent:tx}):false;this.assert(scope);
+  const gap=legacyEvidence({rows,cloud:this.cloud,branchId:scope.branchId,terminalId:scope.terminalId,ownsExecution});
+  if(!indexRows.length)return gap;
+  const hash='hi1:'+createHash('sha256').update(JSON.stringify([TYPE,PROJECTION,scope.fingerprint,scope.databaseGuid,scope.scopeTag??'',gap.hash])).digest('hex');
+  const index=legacyIndexEvidence({rows:indexRows,expected:{...scope,hash},decode,ownsExecution});
+  return{ids:[...gap.ids,...index.ids].sort(),hash:createHash('sha256').update(JSON.stringify([gap.hash,index.hash])).digest('hex')};
  }
  async current(branchId,scopeTag=''){
   const scope=await this.capture(branchId,scopeTag),job=await this.jobRepository.recovery(TYPE,scope.branchId,scope.terminalId);await this.check(scope);
@@ -149,7 +157,7 @@ class HistoryIndexRecovery {
  }
  async quantum(scope,job,context){
   let progress=decode(job,scope);if(progress.s==='done')return{completed:true};
-  const wireScope={organizationId:scope.organizationId,branchId:scope.branchId,terminalId:scope.terminalId,...(progress.m===null?{}:{keepCommerce:progress.m})};
+  const wireScope={organizationId:scope.organizationId,branchId:scope.branchId,terminalId:scope.terminalId,historyScope:scope.historyScope,...(progress.m===null?{}:{keepCommerce:progress.m})};
   reportActivity(this.onActivity,{phase:'checking',table:'change_history',processedRows:safe(job.completed_rows)});await this.check(scope);
   if(progress.s==='finish'){
    const request={...wireScope,action:'finish',upperId:progress.u},result=normalizeIndex(await this.cloud.historyIndex(request),wireScope,request);await this.check(scope);
@@ -168,6 +176,7 @@ class HistoryIndexRecovery {
   if(missing.length){
    reportActivity(this.onActivity,{phase:'downloading',table:'change_history',processedRows:safe(job.completed_rows)});
    rows=normalizeRows(await this.cloud.historyMissingRows({...wireScope,keepCommerce:progress.m,ids:missing}),{...wireScope,keepCommerce:progress.m},missing).rows;
+   assertHistoryRows(rows,scope.readScope);
    await this.check(scope);
   }
   const next={...progress};

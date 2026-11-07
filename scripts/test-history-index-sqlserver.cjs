@@ -5,7 +5,7 @@ const {JobRepository}=require('../electron/jobs/repository.cjs'),{JobManager}=re
 const {HistoryIndexRecovery,cursor}=require('../electron/sync/history-index-recovery.cjs');
 const {PROJECTION}=require('../electron/sync/history-index-protocol.cjs');
 const id=n=>'aaaaaaaa-aaaa-4aaa-8aaa-'+String(n).padStart(12,'0'),branch=id(9000),terminal=id(9001);
-const row=n=>({id:id(n),organization_id:'default',entity_type:'fixture',entity_id:String(n),action:'insert',old_value_json:null,new_value_json:'{"exact":9007199254740993.1234567,"text":"unicode ✓  "}',revision:'9007199254740993',scope_type:'GLOBAL',scope_id:null,changed_by:null,source_application:'fixture',device_id:null,terminal_id:null,server_timestamp:'2026-11-06T01:02:03.1234560Z'});
+const row=n=>({id:id(n),organization_id:'default',entity_type:'fixture',entity_id:String(n),action:'insert',old_value_json:null,new_value_json:'{"exact":9007199254740993.1234567,"text":"unicode ✓  "}',revision:'9007199254740993',scope_type:'BRANCH',scope_id:branch,changed_by:null,source_application:'fixture',device_id:null,terminal_id:null,server_timestamp:'2026-11-06T01:02:03.1234560Z'});
 async function main(){
  assert.deepEqual(process.argv.slice(2),['--run']);let local;let passed=0;
  const test=async(name,fn)=>{await fn();passed++;console.log('PASS '+name);};
@@ -16,10 +16,10 @@ async function main(){
   const full=readFileSync('database/sqlserver/schema.sql','utf8'),start=full.indexOf("IF OBJECT_ID(N'dbo.pos_jobs'"),end=full.indexOf("IF OBJECT_ID(N'dbo.sync_checkpoints'",start);assert(start>=0&&end>start);await cm.pool.request().batch(full.slice(start,end));
   const jobs=new JobRepository(cm);let clock=Date.now(),afterRows=()=>{},failNext=false,maxRows=10;
   const remote=new Map(Array.from({length:27},(_,n)=>[id(n+1),row(n+1)])),calls=[],events=[];
-  const base={projection:PROJECTION,organization_id:'default',branch_id:branch,terminal_id:terminal,keep_commerce:false};
+  const base={projection:PROJECTION,policy:'branch-history-v1',history_scope:'branch',organization_id:'default',branch_id:branch,terminal_id:terminal,keep_commerce:false};
   const cloud={backendUrl:()=> 'https://owned-history-fixture.invalid',terminalId:()=>terminal,terminalStore:{read:()=>({tokenId:terminal,locationId:branch,deviceUse:'operations'})},requestContext:()=>({pool:cm.pool,fingerprint:createHash('sha256').update('private-fixture-profile').digest('hex')}),
-   historyIndex:async request=>{calls.push({type:'index',...request});const upper=request.action==='begin'?[...remote.keys()].sort().at(-1)??null:request.upperId,all=[...remote.keys()].sort().filter(key=>upper&&key<=upper&&(!request.afterId||key>request.afterId)),ids=request.action==='finish'?[]:all.slice(0,1000);return{...base,protocol:'history-index-v1',action:request.action,upper_id:upper,after_id:request.afterId??null,ids,next_id:all.length>1000&&request.action!=='finish'?ids.at(-1):null,complete:request.action==='finish'||all.length<=1000,range_count:request.action==='finish'?String(all.length):null};},
-   historyMissingRows:async request=>{calls.push({type:'rows',...request});if(failNext){failNext=false;throw Object.assign(new Error('fixture network interruption'),{code:'EAI_AGAIN'});}await afterRows();const ids=request.ids.slice(0,maxRows);return{...base,protocol:'history-rows-v1',requested_ids:request.ids,rows:ids.map(key=>remote.get(key)),remaining_ids:request.ids.slice(ids.length)};}};
+   historyIndex:async request=>{calls.push({type:'index',...request});const upper=request.action==='begin'?[...remote.keys()].sort().at(-1)??null:request.upperId,all=[...remote.keys()].sort().filter(key=>upper&&key<=upper&&(!request.afterId||key>request.afterId)),ids=request.action==='finish'?[]:all.slice(0,1000);return{...base,protocol:'history-index-v2',action:request.action,upper_id:upper,after_id:request.afterId??null,ids,next_id:all.length>1000&&request.action!=='finish'?ids.at(-1):null,complete:request.action==='finish'||all.length<=1000,range_count:request.action==='finish'?String(all.length):null};},
+   historyMissingRows:async request=>{calls.push({type:'rows',...request});if(failNext){failNext=false;throw Object.assign(new Error('fixture network interruption'),{code:'EAI_AGAIN'});}await afterRows();const ids=request.ids.slice(0,maxRows);return{...base,protocol:'history-rows-v2',requested_ids:request.ids,rows:ids.map(key=>remote.get(key)),remaining_ids:request.ids.slice(ids.length)};}};
   let manager=new JobManager(jobs,{publish:event=>events.push({...event})}),recovery=new HistoryIndexRecovery({connectionManager:cm,cloud,jobRepository:jobs,jobManager:manager,now:()=>clock});
   const step=async()=>{const before=calls.length,value=await recovery.step({branchId:branch});assert(calls.slice(before).filter(x=>x.type==='index').length<=1);assert(calls.slice(before).filter(x=>x.type==='rows').length<=1);clock+=600000;return value;};
   const complete=async()=>{for(let n=0;n<100;n++){const value=await step();if(value.completed||value.status==='completed')return value;}throw Error('Owned fixture did not finish');};
@@ -125,6 +125,72 @@ async function main(){
    assert.equal(await jobs.hasOtherActiveJobs(null,{ignoreHistoryIndex:true}),true);
    for(const invalid of [[legacy.job_id,legacy.job_id],Array.from({length:51},()=>require('node:crypto').randomUUID()),['not-a-guid']])await assert.rejects(jobs.hasOtherActiveJobs(null,{allowedLegacyIds:invalid}),{code:'EHISTORY_LEGACY_REVIEW'});
    assert.equal(await checkpoint(),legacyCheckpoint);
+  });
+  const {captureHistoryScope,historyComparisonPredicate,visibleHistoryRow}=require('../electron/sync/history-read-scope.cjs');
+  await test('actual CI and BIN2 SQL accept only canonical UUID case aliases, not padded/parser variants',async()=>{
+   const compact=branch.replaceAll('-',''),cases=[['canonical',branch,true],['uppercase',branch.toUpperCase(),true],['compact',compact,false],['compact-padding',compact+'    ',false],['braces','{'+branch+'}',false],['leading',' '+branch,false],['trailing',branch+' ',false],['wrong-hyphens',branch.slice(0,7)+'-'+branch.slice(8),false],['tab',branch.slice(0,-1)+'\t',false],['nul',branch.slice(0,-1)+'\0',false],['unicode',branch.slice(0,-1)+'０',false],['foreign',id(8000),false]];
+   for(const collation of ['Latin1_General_100_CI_AS','Latin1_General_100_BIN2']){
+    const request=cm.pool.request().input('branch',branch).input('history_organization','default');
+    const inputs=cases.map((entry,n)=>{request.input('case'+n,entry[1]);return'(@case'+n+',N\''+entry[0]+'\',N\'default\',N\'BRANCH\')';});
+    const result=await request.query(`DECLARE @cases TABLE(scope_id nvarchar(450) COLLATE ${collation},label nvarchar(50),organization_id nvarchar(450) COLLATE ${collation},scope_type nvarchar(450) COLLATE ${collation});INSERT @cases VALUES${inputs.join(',')};SELECT label,CASE WHEN ${historyComparisonPredicate('source')} THEN 1 ELSE 0 END admitted FROM @cases source;`);
+    assert.deepEqual(new Map(result.recordset.map(item=>[item.label,item.admitted===1])),new Map(cases.map(entry=>[entry[0],entry[2]])));
+   }
+  });
+  await test('actual local counts/signatures exclude retained other-scope history without any data/checkpoint/journal change',async()=>{
+   const {localTableCounts}=require('../electron/sync/reconciliation.cjs'),{localSignature}=require('../electron/sync/verifier.cjs');
+   const extras=[['BRANCH',branch,'default'],['BRANCH',branch.toUpperCase(),'default'],['BRANCH',branch+' ','default'],['BRANCH',id(8000),'default'],['GLOBAL',null,'default'],['PRIVATE',branch,'default'],['TERMINAL',terminal,'default'],['BRANCH ',branch,'default'],['BRANCH',branch,'DEFAULT']];
+   for(let n=0;n<extras.length;n++)await cm.pool.request().input('id',id(60000+n)).input('scope_type',extras[n][0]).input('scope_id',extras[n][1]).input('organization',extras[n][2]).query("INSERT dbo.change_history(id,organization_id,entity_type,entity_id,action,revision,scope_type,scope_id,source_application,server_timestamp) VALUES(@id,@organization,'fixture','scope-case','retained',1,@scope_type,@scope_id,'fixture',SYSDATETIMEOFFSET());");
+   const before=JSON.stringify((await cm.pool.request().query('SELECT * FROM dbo.change_history ORDER BY id FOR JSON PATH,INCLUDE_NULL_VALUES;')).recordset),journal=JSON.stringify((await cm.pool.request().query('SELECT * FROM dbo.sync_change_journal ORDER BY change_id FOR JSON PATH,INCLUDE_NULL_VALUES;')).recordset),check=await checkpoint();
+   const current=(await cm.pool.request().query('SELECT organization_id,scope_type,scope_id FROM dbo.change_history;')).recordset,expected=current.filter(item=>visibleHistoryRow(item,{organizationId:'default',branchId:branch,historyScope:'branch'})).length;
+   const scoped=await localTableCounts(cm,{tables:[table]},branch,90,terminal,captureHistoryScope(cloud,cm,branch));assert.equal(scoped.change_history,String(expected));
+   const signature=await localSignature({connectionManager:cm,registry:{tables:[table]},table,branchId:branch,historyDays:90,terminalId:terminal});assert.equal(signature.split(':')[0],String(expected));
+   const management={...cloud,terminalStore:{read:()=>({tokenId:terminal,deviceUse:'management'})},verifiedManagementHistoryScope:()=> 'c'.repeat(64)},managementScope=captureHistoryScope(management,cm,branch);
+   assert.equal((await localTableCounts(cm,{tables:[table]},branch,90,terminal,managementScope)).change_history,String(current.filter(item=>item.organization_id==='default').length));
+   assert.equal((await localTableCounts(cm,{tables:[table]},branch,90,terminal,{historyScope:'company',organizationId:'DEFAULT'})).change_history,String(expected));
+   assert.equal(JSON.stringify((await cm.pool.request().query('SELECT * FROM dbo.change_history ORDER BY id FOR JSON PATH,INCLUDE_NULL_VALUES;')).recordset),before);assert.equal(await checkpoint(),check);assert.equal(JSON.stringify((await cm.pool.request().query('SELECT * FROM dbo.sync_change_journal ORDER BY change_id FOR JSON PATH,INCLUDE_NULL_VALUES;')).recordset),journal);
+  });
+  await test('actual old broad index cursor survives narrowed restart, cache and exact raw-bootstrap without losing pending immutable facts',async()=>{
+   const owned=await createLocal(branch);try{
+    const manager=owned.manager;await manager.pool.request().batch(historyDdl);await manager.pool.request().batch(full.slice(start,end));
+    const repo=new JobRepository(manager),fingerprint=createHash('sha256').update('scope-upgrade-owned-PC').digest('hex'),databaseGuid=(await manager.pool.request().query('SELECT LOWER(CONVERT(varchar(36),database_guid)) id FROM sys.database_recovery_status WHERE database_id=DB_ID();')).recordset[0].id;
+    const empty=createHash('sha256').update('[]').digest('hex'),hash='hi1:'+createHash('sha256').update(JSON.stringify(['history_index_recovery_v1',PROJECTION,fingerprint,databaseGuid,'',empty])).digest('hex');
+    const makeJob=(kind,scopeHash,status)=>({job_id:require('node:crypto').randomUUID(),job_type:kind,status,organization_id:'default',organization_name:scopeHash,branch_id:branch,branch_name:null,branch_code:null,terminal_id:terminal,terminal_name:null,current_table:'change_history',phase:'history_index',dependency_index:0,last_committed_cursor:JSON.stringify({v:1,s:'page',u:id(2000),a:id(999),n:'999',m:false}),completed_rows:999,estimated_total_rows:null,completed_bytes:1000,batch_number:1,batch_size:100,retry_count:0,next_retry_at:null});
+    const boot=makeJob('bootstrap_90',null,'completed');await repo.create(boot);await repo.checkpoint(boot.job_id,{status:'completed',finished_at:new Date()});const old=makeJob('history_index_recovery_v1',hash,'interrupted');await repo.create(old);
+    const oldImage=async()=>(await repo.legacyIndexHistory(branch,terminal))[0].__history_legacy_json,beforeOld=await oldImage();
+    const small=new Map([[id(1),row(1)]]),scopeBase={...base,history_scope:'branch'},nativeCloud={...cloud,requestContext:()=>({pool:manager.pool,fingerprint}),
+     historyIndex:async request=>{const ids=[...small.keys()].sort();return{...scopeBase,protocol:'history-index-v2',action:request.action,upper_id:request.action==='begin'?ids.at(-1):request.upperId,after_id:request.afterId??null,ids:request.action==='finish'?[]:ids,next_id:null,complete:true,range_count:request.action==='finish'?String(ids.length):null};},
+     historyMissingRows:async request=>({...scopeBase,protocol:'history-rows-v2',requested_ids:request.ids,rows:request.ids.map(key=>small.get(key)),remaining_ids:[]}),
+     bootstrapPage:async()=>({rows:[{...row(2),revision:9007199254740992,new_value:{exact:9007199254740994}}],cursor:null}),applyLocalBatch:async()=>{throw Error('generic history MERGE must remain denied');}};
+    const state={enabled:true,configured:true,connected:true,tradingReady:true,profile:{database:'owned'}};
+    const cache=new LocalDataLifecycle({connectionManager:manager,databaseService:{snapshot:()=>state},jobRepository:repo,jobManager:new JobManager(repo),registry:owned.registry,cloud:nativeCloud,syncCoordinator:{withExclusive:fn=>fn()},historyExecutionProof:()=>true});
+    assert.equal(await cache.cachedSnapshotReady(branch,90),true);assert.equal(await oldImage(),beforeOld);
+    const runManager=new JobManager(repo);let recovery=new HistoryIndexRecovery({connectionManager:manager,cloud:nativeCloud,jobRepository:repo,jobManager:runManager,executionProof:()=>true});
+    for(let n=0;n<5;n++){const result=await recovery.step({branchId:branch});if(result.completed||result.status==='completed')break;}
+    assert.equal((await repo.recovery('history_index_recovery_v1',branch,terminal)).organization_name.startsWith('hi2:'),true);assert.equal(await oldImage(),beforeOld);
+    await owned.restart();recovery=new HistoryIndexRecovery({connectionManager:manager,cloud:nativeCloud,jobRepository:repo,jobManager:new JobManager(repo),executionProof:()=>true});assert.equal((await recovery.step({branchId:branch})).completed,true);assert.equal(await oldImage(),beforeOld);
+    small.set(id(2),row(2));await manager.pool.request().input('branch',branch).query("INSERT dbo.sync_checkpoints(branch_id,entity_type,direction,change_tracking_version,committed_cursor) VALUES(@branch,'change_history','push',1,'retain');");
+    const pushBefore=JSON.stringify((await manager.pool.request().query("SELECT * FROM dbo.sync_checkpoints WHERE entity_type='change_history' FOR JSON PATH,INCLUDE_NULL_VALUES;")).recordset);
+    const bootstrapManager=new JobManager(repo);await bootstrapManager.run('bootstrap_90',context=>require('../electron/jobs/bootstrap.cjs').runBootstrap({registry:{tables:[table]},cloud:nativeCloud,connectionManager:manager,branchId:branch,context,checkpoints:{save:()=>{throw Error('History bootstrap must not advance push proof');}}}),null,{branchId:branch,terminalId:terminal});
+    assert.equal((await manager.pool.request().input('id',id(2)).query('SELECT CONVERT(varchar(30),revision) revision,new_value FROM dbo.change_history WHERE id=@id;')).recordset[0].new_value,row(2).new_value_json);assert.equal(await oldImage(),beforeOld);assert.equal(JSON.stringify((await manager.pool.request().query("SELECT * FROM dbo.sync_checkpoints WHERE entity_type='change_history' FOR JSON PATH,INCLUDE_NULL_VALUES;")).recordset),pushBefore);
+    // A snapshot is membership evidence, not upload acceptance. A retained
+    // immutable member may remain pending without being overwritten or ACKed.
+    await manager.pool.request().input('branch',branch).input('key',JSON.stringify({id:id(2)})).query("INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id,entity_version) VALUES('change_history',@key,'insert',@branch,1);");
+    const historyImage=async()=>JSON.stringify((await manager.pool.request().query('SELECT * FROM dbo.change_history ORDER BY id FOR JSON PATH,INCLUDE_NULL_VALUES;')).recordset),journalImage=async()=>JSON.stringify((await manager.pool.request().query('SELECT * FROM dbo.sync_change_journal ORDER BY change_id FOR JSON PATH,INCLUDE_NULL_VALUES;')).recordset),historyBefore=await historyImage(),journalBefore=await journalImage();
+    const refresh=()=>require('../electron/jobs/bootstrap.cjs').refreshTable({registry:{tables:[table]},cloud:nativeCloud,connectionManager:manager,branchId:branch,tableName:'change_history'});
+    assert.deepEqual(await refresh(),{completed:0});assert.equal(await historyImage(),historyBefore);assert.equal(await journalImage(),journalBefore);
+    // An absent pending member still requires real upload evidence; neither a
+    // cloud presence nor a snapshot page can manufacture that acceptance.
+    small.set(id(3),row(3));nativeCloud.bootstrapPage=async()=>({rows:[{...row(3),new_value:{exact:9007199254740994}}],cursor:null});
+    await manager.pool.request().input('branch',branch).input('key',JSON.stringify({id:id(3)})).query("INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id,entity_version) VALUES('change_history',@key,'insert',@branch,1);");
+    const missingJournal=await journalImage();await assert.rejects(refresh(),{code:'ELOCAL_UPLOAD_PENDING'});assert.equal(await historyImage(),historyBefore);assert.equal(await journalImage(),missingJournal);assert.equal(await oldImage(),beforeOld);assert.equal(JSON.stringify((await manager.pool.request().query("SELECT * FROM dbo.sync_checkpoints WHERE entity_type='change_history' FOR JSON PATH,INCLUDE_NULL_VALUES;")).recordset),pushBefore);
+    const admittedIndex=nativeCloud.historyIndex;nativeCloud.historyIndex=async request=>({...await admittedIndex(request),protocol:'history-index-v1'});
+    for(const raw of [[],[{...row(2),new_value:{exact:9007199254740994}}]]){
+     nativeCloud.bootstrapPage=async()=>({rows:raw,cursor:null});await assert.rejects(refresh(),{code:'EHISTORY_INDEX_PROTOCOL'});assert.equal(await historyImage(),historyBefore);assert.equal(await journalImage(),missingJournal);
+    }
+    let policyCalls=0,pageCalls=0;nativeCloud.historyIndex=async request=>{policyCalls++;return admittedIndex(request);};
+    nativeCloud.bootstrapPage=async()=>++pageCalls===1?{rows:[{...row(2),new_value:{exact:9007199254740994}}],cursor:'last-empty-page'}:{rows:[],cursor:null};
+    assert.deepEqual(await refresh(),{completed:0});assert.equal(policyCalls,1);assert.equal(pageCalls,2);assert.equal(await historyImage(),historyBefore);assert.equal(await journalImage(),missingJournal);assert.equal(await oldImage(),beforeOld);assert.equal(JSON.stringify((await manager.pool.request().query("SELECT * FROM dbo.sync_checkpoints WHERE entity_type='change_history' FOR JSON PATH,INCLUDE_NULL_VALUES;")).recordset),pushBefore);
+   }finally{await owned.close();}
   });
   console.log('PASS '+passed+' owned SQL Server automatic history groups');
  }finally{await local?.close();}

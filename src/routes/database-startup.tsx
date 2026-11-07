@@ -11,6 +11,7 @@ import { LocalDatabaseWizard } from "@/platforms/windows/components/LocalDatabas
 import { checkHealth, cloudDiagnosis } from "@/core/activation/connection-health";
 import { StartupShiftRecoveryReview } from "@/platforms/windows/components/StartupShiftRecoveryReview";
 import { TerminalLogin } from "@/platforms/web/components/pos/TerminalLogin";
+import { desktopStorageRoute } from "@/lib/desktop-storage-route";
 
 type DatabaseState = {
   enabled?: boolean;
@@ -18,7 +19,7 @@ type DatabaseState = {
   connected?: boolean;
   tradingReady?: boolean;
   state?: string;
-  detail?: { error?: string; hint?: string; status?: string } | null;
+  detail?: { error?: string; hint?: string; status?: string; code?: string } | null;
 };
 
 type StartupDatabaseApi = {
@@ -29,6 +30,8 @@ type StartupDatabaseApi = {
 
 const database = () =>
   (window.pos as unknown as { database?: StartupDatabaseApi } | undefined)?.database;
+const needsRecoveryReview = (state: DatabaseState) => state.connected === true && state.tradingReady === true &&
+  state.detail?.code === "ELOCAL_PENDING_UNVERIFIED";
 
 export const Route = createFileRoute("/database-startup")({
   component: DatabaseStartupPage,
@@ -46,6 +49,7 @@ function DatabaseStartupPage() {
   const migrationRequired = state.detail?.status === "migration_required";
   const applyingMigration = state.detail?.status === "applying_migration";
   const restoring = state.state === "enabled_connecting" || state.state === "enabled_validating";
+  const reviewRequired = needsRecoveryReview(state);
 
   useEffect(() => {
     window.sessionStorage.removeItem(LOCAL_DATABASE_SETTINGS_REQUEST);
@@ -54,7 +58,7 @@ function DatabaseStartupPage() {
     const applyState = (next: DatabaseState) => {
       if (!live) return;
       setState(next);
-      if (next.tradingReady) {
+      if (desktopStorageRoute(next) === "local") {
         window.sessionStorage.removeItem(ONLINE_STARTUP_OVERRIDE);
         void navigate({ to: "/" });
       }
@@ -80,10 +84,10 @@ function DatabaseStartupPage() {
     try {
       const next = await database()!.retryStartup();
       setState(next);
-      if (next.tradingReady) {
+      if (desktopStorageRoute(next) === "local") {
         window.sessionStorage.removeItem(ONLINE_STARTUP_OVERRIDE);
         await navigate({ to: "/" });
-      } else {
+      } else if (!needsRecoveryReview(next)) {
         setError(next.detail?.error ?? "The local SQL database is still unavailable.");
       }
     } catch (cause) {
@@ -143,7 +147,7 @@ function DatabaseStartupPage() {
                   ? "Preparing local database"
                   : migrationRequired
                     ? "Local database update required"
-                    : "Local database is unavailable"}
+                    : reviewRequired ? "Saved local work needs review" : "Local database is unavailable"}
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
               {applyingMigration
@@ -152,7 +156,9 @@ function DatabaseStartupPage() {
                   ? "Retail is checking the saved Microsoft SQL Server connection. This screen remains available while startup completes."
                   : migrationRequired
                     ? "SQL Server is connected, but its POS schema must be updated before local trading resumes."
-                    : "Retail tried the saved Microsoft SQL Server connection before opening the terminal."}
+                    : reviewRequired
+                      ? "SQL Server is connected. Retail needs to verify saved local work before local trading can resume."
+                      : "Retail tried the saved Microsoft SQL Server connection before opening the terminal."}
             </p>
           </div>
         </div>
@@ -164,7 +170,7 @@ function DatabaseStartupPage() {
           </div>
         </div>
 
-        <StartupShiftRecoveryReview connected={state.connected === true && !state.tradingReady && !applyingMigration} renderLogin={view => <TerminalLogin view={view} />} />
+        <StartupShiftRecoveryReview connected={state.connected === true && state.tradingReady === true && !migrationRequired && !applyingMigration} renderLogin={view => <TerminalLogin view={view} />} />
 
         <div className="grid gap-3 sm:grid-cols-2">
           <Button disabled={busy || restoring} onClick={() => void retry()}>

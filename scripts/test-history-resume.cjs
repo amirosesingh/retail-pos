@@ -1,5 +1,10 @@
 const test=require('node:test');const assert=require('node:assert/strict');
-const history=require('../electron/sync/history-recovery.cjs');const{refreshTable}=require('../electron/jobs/bootstrap.cjs');const{JobManager}=require('../electron/jobs/manager.cjs');
+const history=require('../electron/sync/history-recovery.cjs');const{JobManager}=require('../electron/jobs/manager.cjs');
+// This is the retired v1 job-generation fixture, not a current runtime fallback.
+// Keep its original refresh implementation pinned while v2 handoff tests exercise
+// the new absent-only/no-upload-ack path independently.
+const {releasedHistoryModule}=require('./lib/released-history-fixture.cjs');
+const {refreshTable}=releasedHistoryModule('electron/jobs/bootstrap.cjs');
 function fixture(){
  const db={jobs:new Map(),rows:[],version:null},calls=[];let failCursor,failCommit=false,minimum=0;
  class Transaction{async begin(){this.state=structuredClone(db);}async commit(){if(failCommit){failCommit=false;throw Error('commit failed');}db.jobs=this.state.jobs;db.rows=this.state.rows;db.version=this.state.version;}async rollback(){} }

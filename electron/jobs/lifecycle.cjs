@@ -8,17 +8,43 @@ const { recordId } = require("../sync/uuid-fields.cjs");
 const { binding } = require("../verified-activation.cjs");
 const {ShiftGapRecovery,TABLES:SHIFT_GRAPH_TABLES}=require('../sync/shift-gap-recovery.cjs');
 const { reportActivity } = require("../db/startup-activity.cjs");
+const {createHistoryPolicyRun}=require('../sync/history-read-scope.cjs');
+const HISTORY_POLICY_UNAVAILABLE='EHISTORY_POLICY_UNAVAILABLE';
 
 class LocalDataLifecycle {
-  constructor({connectionManager,databaseService,jobManager,jobRepository,registry,cloud,syncCoordinator,checkpoints,reader,publish=()=>{},historyExecutionProof=()=>false}){
+  constructor({connectionManager,databaseService,jobManager,jobRepository,registry,cloud,syncCoordinator,checkpoints,reader,publish=()=>{},historyExecutionProof=()=>false,recoverHeldStatuses=null}){
     Object.assign(this,{connectionManager,databaseService,jobManager,jobRepository,registry,cloud,syncCoordinator,checkpoints,reader,publish});
+    this.recoverHeldStatuses=recoverHeldStatuses;
     this.historyIndexRecovery=new historyIndex.HistoryIndexRecovery({connectionManager,cloud,jobRepository,jobManager,executionProof:historyExecutionProof,
       onApplied:({branchId})=>this.publish({kind:'general',branchId,source:'cloud',tables:['change_history']})});
   }
   historyIndexAvailable(){return typeof this.cloud.historyIndex==='function'&&typeof this.cloud.historyMissingRows==='function'&&typeof this.cloud.requestContext==='function';}
+  async unavailableHistoryPolicy(branchId){
+    if(typeof this.cloud.isHistoryPolicyUnavailable!=='function'||!this.registry.tables.some(table=>table.cloudTable==='change_history'))return null;
+    try{await createHistoryPolicyRun({cloud:this.cloud,connectionManager:this.connectionManager,branchId}).get();return null;}
+    catch(error){if(this.cloud.isHistoryPolicyUnavailable(error,branchId))return error;throw error;}
+  }
+  deferHistoryPolicy(branchId,error){
+    if(!this.cloud.isHistoryPolicyUnavailable?.(error,branchId))
+      throw Object.assign(new Error('The history synchronization context changed. Saved progress remains pending.'),{code:'ESYNC_REQUEST_CONTEXT_CHANGED',table:'change_history'});
+    const source=this.cloud.requestContext(false),nextRetryAt=new Date(Date.now()+60_000).toISOString();
+    const previous=this.historyPending(branchId)?this.historyRecoveryState:null;
+    this.deferredHistoryPolicy=error;
+    this.historyRecoveryIdentity={pool:source.pool,fingerprint:source.fingerprint,scopeTag:''};
+    this.historyRecoveryState={branchId,status:'retrying',pending:true,membershipOnly:true,jobId:previous?.jobId??null,completedRows:previous?.completedRows??0,
+      code:HISTORY_POLICY_UNAVAILABLE,error:error.message,nextRetryAt};
+    this.syncCoordinator.recordHistoryRecovery?.(this.historyRecoveryState);
+    return{pending:true,status:'retrying',code:HISTORY_POLICY_UNAVAILABLE,next_retry_at:nextRetryAt};
+  }
   async historyStep(branchId,{force=false,scopeTag='',onActivity=()=>{}}={}){
     if(this.syncCoordinator.paused||this.jobManager.paused)return{pending:true,paused:true};
     if(!this.historyIndexAvailable())throw Object.assign(new Error('The protected history recovery protocol is unavailable. Saved work remains pending.'),{code:'EHISTORY_INDEX_UNAVAILABLE',table:'change_history'});
+    if(!scopeTag&&this.deferredHistoryPolicy&&this.historyPending(branchId)){
+      const unavailable=await this.unavailableHistoryPolicy(branchId);
+      if(unavailable)return this.deferHistoryPolicy(branchId,unavailable);
+      this.deferredHistoryPolicy=null;
+      force=true;
+    }
     const source=this.cloud.requestContext(false),prior=this.historyRecoveryIdentity;
     const samePrior=prior&&prior.pool===source.pool&&prior.fingerprint===source.fingerprint&&prior.scopeTag===scopeTag&&this.historyRecoveryState?.branchId===branchId;
     this.historyIndexRecovery.onActivity=onActivity;
@@ -53,7 +79,7 @@ class LocalDataLifecycle {
   sameCacheIdentity(proof,branchId,historyDays){
     try{const current=this.cacheIdentity(branchId,historyDays);return Boolean(current&&proof&&current.pool===proof.pool&&current.profile===proof.profile&&current.registration===proof.registration&&current.scope===proof.scope);}catch{return false;}
   }
-  async cachedSnapshotReady(branchId,historyDays,historyJob=null){
+  async cachedSnapshotReady(branchId,historyDays,historyJob=null,{requireOperationalBounds=false}={}){
     const identity=this.cacheIdentity(branchId,historyDays);
     if(!identity)return false;
     let indexProof=null;
@@ -67,7 +93,8 @@ class LocalDataLifecycle {
         historyJob=indexProof?.job??null;
       }
       const old=await this.jobRepository.legacyHistory?.(branchId,this.cloud.terminalId())??[];
-      if(old.length)legacyProof=indexProof?.scope??await this.historyIndexRecovery.capture(branchId);
+      const oldIndex=await this.jobRepository.legacyIndexHistory?.(branchId,this.cloud.terminalId())??[];
+      if(old.length||oldIndex.length)legacyProof=indexProof?.scope??await this.historyIndexRecovery.capture(branchId);
     }else if(historyJob?.job_type===historyIndex.TYPE){
       indexProof=await this.historyIndexRecovery.current(branchId);
       if(indexProof?.job.job_id!==historyJob.job_id)return false;
@@ -78,7 +105,7 @@ class LocalDataLifecycle {
     const result=await identity.pool.request().input("branch",String(branchId))
       .query("SELECT TOP (1) id FROM dbo.stores WHERE id=@branch;");
     if(!result.recordset?.length)return false;
-    if(historyJob||legacyProof){
+    if(historyJob||legacyProof||requireOperationalBounds){
       const expected=indexProof?.scope??legacyProof??historyRecovery.scope(this.cloud,branchId,historyDays);
       const decode=indexProof?historyIndex.decode:historyRecovery.decode;
       if(historyJob)decode(await this.jobRepository.get(historyJob.job_id),expected);
@@ -98,13 +125,13 @@ class LocalDataLifecycle {
         seen.add(row.table_name);
         const minimum=BigInt(historyRecovery.version(row.minimum_version)),current=BigInt(historyRecovery.version(row.current_version));
         const since=BigInt(historyRecovery.version(row.checkpoint_version??0));
-        if(minimum>current||since>current||since>0n&&minimum>since)return false;
+        if(minimum>current||since>current||since>0n&&minimum>since||requireOperationalBounds&&(row.checkpoint_version==null||minimum>since))return false;
       }
       // Recheck scope and baseline after metadata reads; a profile change while
       // awaiting SQL must not publish readiness from an obsolete connection.
       if(historyJob)decode(await this.jobRepository.get(historyJob.job_id),expected);
       if(indexProof||legacyProof)await this.historyIndexRecovery.check(indexProof?.scope??legacyProof);
-      else await historyRecovery.retained(this.connectionManager,null,historyRecovery.decode(historyJob,expected).baseline);
+      else if(historyJob)await historyRecovery.retained(this.connectionManager,null,historyRecovery.decode(historyJob,expected).baseline);
     }
     if(!this.sameCacheIdentity(identity,branchId,historyDays))return false;
     this.cachedReadyProof={...identity,branchId,historyDays};
@@ -140,7 +167,7 @@ class LocalDataLifecycle {
     return{table:table.sqlServerTable,completed:refreshed.completed,currentVersion};
   }
   async pushWithGapRecovery(branchId,historyDays,onActivity=()=>{}){
-    const recovered=new Set();
+    const recovered=new Set();let heldRecoveryAttempted=false;
     while(true){
       try{
         reportActivity(onActivity,{phase:"uploading"});
@@ -150,6 +177,13 @@ class LocalDataLifecycle {
       }catch(error){
         if(error?.code!=="ECHANGEGAP"||!error?.table)throw error;
         const tableName=String(error.table);
+        if(!heldRecoveryAttempted&&SHIFT_GRAPH_TABLES.includes(tableName)&&typeof this.recoverHeldStatuses==='function'){
+          heldRecoveryAttempted=true;
+          // A blocked closing must not suppress an independently proven held
+          // completion. This optional bounded read has no shift/CT authority;
+          // its own refusal must never replace the original closing guard.
+          try{await this.recoverHeldStatuses({branchId,onActivity});}catch{/* The original shift recovery/denial below remains authoritative. */}
+        }
         // A checkpoint reset must make progress. Seeing the same table twice
         // means the recovery did not establish a usable baseline, so surface
         // the original failure instead of looping forever.
@@ -172,6 +206,11 @@ class LocalDataLifecycle {
       const refreshed=await refreshTable({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName,diagnosticOrigin:"prefetch",onActivity});
       if(refreshed.completed)this.publish({kind:"general",branchId,source:"cloud",tables:[tableName]});
     }
+    const unavailable=await this.unavailableHistoryPolicy(branchId);
+    if(unavailable&&!await this.cachedSnapshotReady(branchId,historyDays,null,{requireOperationalBounds:true})){
+      this.cachedReadyProof=null;
+      throw unavailable;
+    }
     await this.resume(branchId,historyDays,onActivity);
     const completed=await this.jobRepository.completed(this.bootstrapType(historyDays),branchId);
     // Upload local changes before refreshing shared reference rows. Older
@@ -179,7 +218,7 @@ class LocalDataLifecycle {
     // part of the registry, leaving stores.group_id without its local parent.
     const initialPush=await this.pushWithGapRecovery(branchId,historyDays,onActivity);
     const recoveredGap=initialPush.recovered.length>0;
-    if((force&&!recoveredGap)||!completed){
+    if(!unavailable&&((force&&!recoveredGap)||!completed)){
       // A reused till database can contain completed offline sales before it
       // has a bootstrap checkpoint. Upload every locally tracked transaction
       // first; otherwise bootstrap could establish a new baseline over work
@@ -191,7 +230,23 @@ class LocalDataLifecycle {
     await refreshTable({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName:"store_groups",onActivity});
     reportActivity(onActivity,{phase:"checking"});
     const synced=await this.syncCoordinator.runNow({branchId,batchSize:10});
+    if(unavailable){
+      const unrelatedFailure=[...(this.syncCoordinator.unresolved?.().values()??[])].some(failure=>failure.branchId===String(branchId)&&failure.table!=='change_history');
+      // A history row can block an entire mixed feed page. Even equal
+      // counts cannot certify that the other rows' updates were applied.
+      if(!synced.ok||unrelatedFailure||synced.credentialsInvalid||synced.lastError&&!synced.historyHoldOnly||
+        synced.deferredTables?.some(table=>table!=='change_history')||synced.deferredLocalChanges||synced.deferredHeldDeletion||synced.membershipDeferred||Number(synced.failed??0)>0||Number(synced.conflicts??0)>0)
+        throw Object.assign(new Error(synced.error??synced.lastError??'Operational synchronization must complete before protected history can wait.'),{code:synced.code??'ESYNC'});
+      const differences=await this.reconcile(branchId,historyDays,{unavailable});
+      if(differences.length)throw reconciliationError(differences);
+      if(!await this.cachedSnapshotReady(branchId,historyDays,null,{requireOperationalBounds:true}))throw unavailable;
+      this.deferHistoryPolicy(branchId,unavailable);
+      const detail={phase:'history_recovery',syncReady:false,historyPending:true,code:HISTORY_POLICY_UNAVAILABLE,branchId,historyDays};
+      this.databaseService.markReady(detail);
+      return{ok:true,...detail,differences};
+    }
     if(!synced.ok)throw Object.assign(new Error(synced.error??"Final synchronization failed."),{code:"ESYNC"});
+    if(this.deferredHistoryPolicy&&this.historyPending(branchId))await this.historyStep(branchId,{force:true,onActivity});
     reportActivity(onActivity,{phase:"retaining"});
     await this.retain(branchId,historyDays);
     reportActivity(onActivity,{phase:"checking"});
@@ -204,14 +259,19 @@ class LocalDataLifecycle {
     }else this.databaseService.markReady({phase:"ready",branchId,historyDays});
     return{ok:true,branchId,historyDays,differences,historyPending:this.historyPending(branchId)};
   }
-  async reconcile(branchId,historyDays=90,{publish=true}={}){
+  async reconcile(branchId,historyDays=90,{publish=true,unavailable=null}={}){
     const identity=this.reconciliationIdentity(branchId,historyDays);
+    if(!unavailable&&this.cloud.isHistoryPolicyUnavailable?.(this.deferredHistoryPolicy,branchId))unavailable=this.deferredHistoryPolicy;
     const terminalId=this.cloud.terminalId?.()??"";
-    const [local,cloudRows]=await Promise.all([localTableCounts(this.connectionManager,this.registry,branchId,historyDays,terminalId),this.cloud.counts({branchId,historyDays})]);
+    const historyScope=this.registry.tables.some(table=>table.cloudTable==='change_history')?
+      require('../sync/history-read-scope.cjs').captureHistoryScope(this.cloud,this.connectionManager,branchId):null;
+    const [local,cloudRows]=await Promise.all([localTableCounts(this.connectionManager,this.registry,branchId,historyDays,terminalId,historyScope),this.cloud.counts({branchId,historyDays})]);
     const cloud=validatedCloudCounts(this.registry,cloudRows);
     this.assertReconciliationIdentity(identity,branchId,historyDays);
+    const historyUnavailable=this.cloud.isHistoryPolicyUnavailable?.(unavailable,branchId)===true;
+    if(unavailable&&!historyUnavailable)throw Object.assign(new Error('The history synchronization context changed. Existing counts remain unverified.'),{code:'ESYNC_REQUEST_CONTEXT_CHANGED',table:'change_history'});
     const verifiedAt=new Date().toISOString();
-    const tables=this.registry.tables.filter(table=>cloud[table.cloudTable]!==undefined).map(table=>({
+    const tables=this.registry.tables.filter(table=>cloud[table.cloudTable]!==undefined&&!(historyUnavailable&&table.cloudTable==='change_history')).map(table=>({
       table:table.cloudTable,
       local:String(local[table.cloudTable]??"0"),
       cloud:String(cloud[table.cloudTable]??"0"),
@@ -219,7 +279,7 @@ class LocalDataLifecycle {
       verified:false,
       comparedAt:verifiedAt,
     }));
-    this.lastCountReport={comparedAt:verifiedAt,verified:false,tables};
+    this.lastCountReport={comparedAt:verifiedAt,verified:false,tables,...(historyUnavailable?{historyPending:true}:{})};
     if(publish)this.syncCoordinator.recordVerification(this.lastCountReport);
     return tables.filter(table=>table.status!=="SYNCED");
   }

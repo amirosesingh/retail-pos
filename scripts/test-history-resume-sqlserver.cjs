@@ -50,7 +50,9 @@ async function main(){assert.deepEqual(process.argv.slice(2),["--run"]);
     console.log('PASS real SQL completed snapshot, hidden active restore and newer failed restore barriers');
     await master.request().batch(`ALTER DATABASE [${database}] SET CHANGE_TRACKING=ON (CHANGE_RETENTION=2 DAYS,AUTO_CLEANUP=ON);`);
     await pool.request().batch("CREATE TABLE dbo.change_history(id nvarchar(64) NOT NULL PRIMARY KEY,branch_id nvarchar(64) NOT NULL,note nvarchar(max)); ALTER TABLE dbo.change_history ENABLE CHANGE_TRACKING WITH (TRACK_COLUMNS_UPDATED=ON); INSERT dbo.change_history VALUES('seed','fixture','seed'); DELETE dbo.change_history WHERE id='seed';");
-    const {recover}=require("../electron/sync/history-recovery.cjs"),{refreshTable}=require("../electron/jobs/bootstrap.cjs"),{JobManager}=require("../electron/jobs/manager.cjs");
+    const {recover}=require("../electron/sync/history-recovery.cjs"),{JobManager}=require("../electron/jobs/manager.cjs");
+    const {releasedHistoryModule}=require("./lib/released-history-fixture.cjs");
+    const {refreshTable}=releasedHistoryModule("electron/jobs/bootstrap.cjs");
     const registry={tables:[{cloudTable:"change_history",sqlServerTable:"change_history",columns:[{primaryKey:true,cloudColumn:"id"}]}]};
     const fixture=branch=>{
       const calls=[];let failNext=false,failPageSave=false;

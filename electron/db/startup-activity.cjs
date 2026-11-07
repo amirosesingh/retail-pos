@@ -7,6 +7,12 @@ const PHASES = new Set([
   "applying",
   "checking",
   "retaining",
+  "metadata_packagecheck",
+  "metadata_probe",
+  "metadata_backing_up",
+  "metadata_verifying_backup",
+  "metadata_installing",
+  "metadata_readback",
 ]);
 function reportActivity(sink, value) {
   try {

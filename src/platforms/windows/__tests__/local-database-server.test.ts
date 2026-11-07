@@ -354,7 +354,7 @@ describe("local SQL Server wizard server step", () => {
       main.indexOf('ipcMain.handle("sync:reconcile"'),
       main.indexOf('ipcMain.handle("telemetry:presence"'),
     );
-    expect(handler).toContain("{ok:true,matched:differences.length===0,differences");
+    expect(handler).toContain("{ok:true,matched:differences.length===0&&!historyPending,differences,...(historyPending?{historyPending}:{})");
     expect(handler).toContain("{ok:true,verified:report.verified,differences");
     expect(handler).toContain('{ok:false,code:error?.code??"ERECONCILE"');
   });

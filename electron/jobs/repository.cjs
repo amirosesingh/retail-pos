@@ -35,13 +35,21 @@ class JobRepository {
       WHERE job_type='history_gap_recovery_v1' AND (status<>'completed' OR status IS NULL) AND branch_id=@branch AND terminal_id=@terminal ORDER BY job_id;`);
     return result.recordset??[];
   }
+  async legacyIndexHistory(branchId,terminalId,transaction=null){
+    const result=await this.request(transaction).input('branch',branchId).input('terminal',terminalId).query(`
+      SELECT TOP(51) job.*,(SELECT job.* FOR JSON PATH,INCLUDE_NULL_VALUES,WITHOUT_ARRAY_WRAPPER) __history_legacy_json
+      FROM dbo.pos_jobs job ${transaction?'WITH(UPDLOCK,HOLDLOCK)':''}
+      WHERE job_type='history_index_recovery_v1' AND organization_name LIKE 'hi1:%'
+        AND (status<>'completed' OR status IS NULL) AND branch_id=@branch AND terminal_id=@terminal ORDER BY job_id;`);
+    return result.recordset??[];
+  }
   async active() {
     const result = await this.pool().request().query("SELECT TOP (1) * FROM dbo.pos_jobs WHERE status IN ('queued','starting','running','paused','retrying','interrupted') ORDER BY updated_at DESC;");
     return result.recordset?.[0] ?? null;
   }
   async hasOtherActiveJobs(exceptJobId = null,{ignoreHistoryIndex=false,allowedLegacyIds=[]}={}) {
     const result = await this.pool().request().input("except", exceptJobId).input('ignore_history_index',ignoreHistoryIndex===true).input('legacy_ids',legacyIds(allowedLegacyIds))
-      .query("SELECT TOP (1) job_id FROM dbo.pos_jobs WHERE status IN ('queued','starting','running','paused','retrying','interrupted') AND (@except IS NULL OR job_id<>@except) AND (@ignore_history_index=0 OR job_type<>'history_index_recovery_v1') AND NOT(job_type='history_gap_recovery_v1' AND job_id IN(SELECT CONVERT(uniqueidentifier,[value]) FROM OPENJSON(@legacy_ids)));");
+      .query("SELECT TOP (1) job_id FROM dbo.pos_jobs WHERE status IN ('queued','starting','running','paused','retrying','interrupted') AND (@except IS NULL OR job_id<>@except) AND (@ignore_history_index=0 OR job_type<>'history_index_recovery_v1') AND NOT(job_type IN ('history_gap_recovery_v1','history_index_recovery_v1') AND job_id IN(SELECT CONVERT(uniqueidentifier,[value]) FROM OPENJSON(@legacy_ids)));");
     return Boolean(result.recordset?.length);
   }
   async startupSnapshot(type, branchId, exceptHistoryJobId = null,allowedLegacyIds=[]) {
@@ -51,7 +59,7 @@ class JobRepository {
           AND NOT EXISTS (SELECT 1 FROM dbo.pos_jobs barrier
             WHERE barrier.job_id<>snapshot.job_id AND (barrier.branch_id=@branch OR barrier.branch_id IS NULL)
               AND COALESCE(barrier.finished_at,barrier.updated_at,barrier.started_at)>=COALESCE(snapshot.finished_at,snapshot.updated_at,snapshot.started_at)
-              AND NOT(barrier.job_type='history_gap_recovery_v1' AND barrier.job_id IN(SELECT CONVERT(uniqueidentifier,[value]) FROM OPENJSON(@legacy_ids)))
+              AND NOT(barrier.job_type IN ('history_gap_recovery_v1','history_index_recovery_v1') AND barrier.job_id IN(SELECT CONVERT(uniqueidentifier,[value]) FROM OPENJSON(@legacy_ids)))
               AND (barrier.job_type LIKE 'bootstrap[_]%' OR barrier.job_type NOT IN ('history_gap_recovery_v1','history_index_recovery_v1','retention')
                 OR (barrier.job_type='retention' AND barrier.status<>'completed')
                 OR (barrier.job_type IN ('history_gap_recovery_v1','history_index_recovery_v1') AND barrier.status<>'completed' AND (@history IS NULL OR barrier.job_id<>@history))))

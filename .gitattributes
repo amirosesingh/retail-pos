@@ -13,3 +13,10 @@
 /docs/database/legacy-shift-recovery-outbox.sql text eol=lf
 /docs/database/reviewed-shift-adoption.sql text eol=lf
 /supabase/migrations/20261105140417_isolate_refund_guard_table_fields.sql text eol=lf
+/database/sqlserver/recovery/shift-recovery-metadata.sql text eol=lf
+/database/sqlserver/recovery/shift-recovery-metadata-probe.sql text eol=lf
+/database/sqlserver/recovery/shift-recovery-metadata.manifest.json text eol=lf
+/supabase/migrations/20261107021328_isolate_branch_history_sync.sql text eol=lf
+/supabase/migrations/20261107024729_bounded_held_status_reconciliation.sql text eol=lf
+/supabase/migrations/20261107060000_reviewed_held_sale_graph.sql text eol=lf
+/database/sqlserver/recovery/held-sale-review-metadata.sql text eol=lf

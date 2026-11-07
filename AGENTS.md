@@ -56,11 +56,11 @@
 
 ## Durable synchronization and long-offline integrity
 
-- Use one coordinated synchronization pipeline: transactional local outbox,
-  acknowledged event/aggregate uploads, incremental downloads and bounded,
-  resumable recovery snapshots. Reuse the existing engine and contracts rather
-  than introducing a competing sync system for each module. Different domain
-  operations may require different validators and atomic dependency groups.
+- Use one coordinated synchronization pipeline with a transactional local
+  outbox, acknowledged event/aggregate uploads, cursor-based downloads of
+  committed changes and bounded, resumable recovery snapshots. Reuse the
+  existing engine and contracts. Different domain operations may require
+  different validators and atomic dependency groups.
 - Save a local business operation and its durable pending upload evidence in
   the same transaction. Keep pending operations until verified server acceptance;
   retries and lost acknowledgements must not duplicate sales, payments, stock
@@ -80,17 +80,68 @@
   closings and authorized corrections from web or native terminals. Retained
   legacy work with missing evidence needs explicit recovery provenance; never
   fabricate an original author's signature, accepted receipt or cloud baseline.
+  Bind acceptance to the stable operation ID and its verified receipt. A cursor
+  is a resume position. Advancing it must not rewrite unchanged rows or bump
+  their versions. Preserve existing version fields for compatible concurrency.
 - Classify exact matches, missing operations, validated cloud evolution and true
   conflicts before recovery writes. Keep both histories for competing closings
   and require an authorized decision where no safe causal winner can be proved.
   Never fix recovery by resetting registration/checkpoints, clearing pending work,
   weakening branch/author checks or ad-hoc manual copying into production.
   Separately approved, guarded maintenance remains subject to exact-target review.
+- Apply the same sync rules to every applicable table in normal operation,
+  initial setup, offline reconnect, and expired-history recovery. Use the
+  existing registry to define each table's authoritative source, supported
+  directions, identity, authorized scope, dependencies and deletion policy.
+  Declare intentionally local-only or cloud-only tables and excluded columns
+  explicitly. Preserve each table's actual branch, cluster, Management and
+  private-data boundaries.
+  Verify that these match the actual schemas and runtime paths when changing
+  sync. Electron saves authorized local work and its outbox in SQL Server
+  before upload. Cloud-managed data and accepted web/mobile operations enter
+  native replicas through the authorized download path.
+- Preserve foreign keys, stable record IDs, exact values and business
+  dependencies in both directions. Verify parent and child identities and
+  scopes. Apply parent inserts before dependent rows and commit protected
+  groups together. Publish local changes only after the group commits. Apply
+  permitted deletes in dependency-safe order using the existing tombstone and
+  retention rules. If a parent is missing, fetch it within the same authorized
+  scope or defer the dependent work. Never disable constraints, invent parents or
+  acknowledge an incomplete group to make sync advance. Test missing and
+  out-of-order dependencies on both push and pull, including restart and retry.
+- Use stable row IDs, operation IDs and the table's declared unique keys to
+  prevent duplicates in the authoritative transaction. A repeated operation
+  for the same confirmed sale bill number reuses that sale and fills only
+  verified missing dependencies. A bill number that points to a different
+  operation or payload is a conflict. Keep existing invoice uniqueness scopes
+  and allow multiple distinct item and payment rows under one valid parent.
+- Verify retained records against the authorized scoped snapshot, durable
+  operation receipts and saved baselines as applicable. Advance a checkpoint
+  only after its required records, dependencies and proof commit. An empty
+  pending journal, matching business reference or newer timestamp alone does
+  not prove that local work can be replaced, especially after tracking expires.
+- Preserve durable evidence tying the exact held-cart revision and the saved
+  shift closing to their accepted operations, even after temporary holds or
+  history are cleaned up. Recover a verified missing sale, its items and
+  payments and complete the matching hold in one local transaction. Remove
+  the completed hold from the active list after commit and retain the audit
+  history. Apply a dependent shift closure only after its holds are resolved.
+  A bill number helps locate the related record; verified branch, operation
+  identity and cart evidence establish the link. Keep checkout idempotent and
+  keep the existing receipt access scope.
+- When saved local and cloud records differ without decisive evidence, preserve
+  both and show their versions and timestamps to the authorized reviewer.
+  Save and audit the decision through the app, then resume scoped recovery.
+  If review storage is unavailable, show the exact prerequisite and keep any
+  independently verified comparison read-only. Schema upgrades follow separate
+  approval.
 - Automatically retry transient failures with bounded requests and controlled
   backoff, without overlapping identical work. Display actual upload/download,
   retry, paused, review-required and failed states. Do not hide a failure, report
   "up to date" with pending work, or repeatedly present a recoverable condition as
   an unexplained error. Revoked permissions hold work for review, not silent loss.
+  Keep one coordinated recovery attempt per retry cycle and one persistent
+  status for an unchanged review hold. Preserve raw diagnostics and manual retry.
 
 ## Fleet recovery, checkout and presentation isolation
 

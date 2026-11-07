@@ -111,7 +111,7 @@ describe("one coordinated CloudClient data request lane", () => {
     pending[0]!.response.resolve({ ok: true, json: () => body.promise } as Response);
     const health = client.health(), branches = client.managementBranches();
     expect(pending).toHaveLength(3); expect(pending[1]!.url).toContain("sync-health");
-    respond(1, { serviceKey: true, posUrl: true }); respond(2, []);
+    respond(1, { serviceKey: true, posUrl: true }); respond(2, {ok:true,branches:[{id:"branch-a"}]});
     expect(await health).toMatchObject({ ready: true }); await branches;
     body.resolve({}); await data;
   });
