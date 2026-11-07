@@ -70,7 +70,7 @@ function keyset(primary, alias = "source") {
   return primary.map((column, index) => `(${primary.slice(0, index).map((prior, part) => `${alias}.[${prior.sqlServerColumn}]=@cursor${part}`).concat(`${alias}.[${column.sqlServerColumn}]>@cursor${index}`).join(" AND ")})`).join(" OR ");
 }
 
-async function localSignature({ connectionManager, registry, table, branchId, historyDays, terminalId = "" }) {
+async function localSignature({ connectionManager, registry, table, branchId, historyDays, terminalId = "",historyScope=null }) {
   const primary = table.columns.filter((column) => column.primaryKey);
   if (!primary.length) throw new Error(`No stable key is registered for ${table.sqlServerTable}.`);
   const state = accumulator();
@@ -78,8 +78,9 @@ async function localSignature({ connectionManager, registry, table, branchId, hi
   const cutoff = new Date(Date.now() - Math.max(30, Number(historyDays) || 90) * 86400000);
   for (;;) {
     const request = connectionManager.pool.request().input("branch", String(branchId)).input("terminal", String(terminalId ?? "")).input("cutoff", cutoff).input("limit", PAGE);
+    if(table.cloudTable==='change_history')request.input('history_organization',require('./history-read-scope.cjs').historyOrganization(historyScope));
     if (cursor) primary.forEach((column, index) => request.input(`cursor${index}`, cursor[column.sqlServerColumn]));
-    const scope = comparisonWhere(registry, table, { historyDays, alias: "source" });
+    const scope = comparisonWhere(registry, table, { historyDays, alias: "source",historyScope });
     const after = cursor ? ` AND (${keyset(primary)})` : "";
     const order = primary.map((column) => `source.[${column.sqlServerColumn}]`).join(",");
     const result = await request.query(`SELECT TOP (@limit) source.* FROM dbo.[${table.sqlServerTable}] source WHERE ${scope}${after} ORDER BY ${order};`);
@@ -109,7 +110,8 @@ async function verifyTables({ connectionManager, registry, cloud, branchId, hist
   for (const table of registry.tables) {
     if (wanted && !wanted.has(table.cloudTable)) continue;
     const [localSignatureValue, cloudSignatureValue] = await Promise.all([
-      localSignature({ connectionManager, registry, table, branchId, historyDays, terminalId: cloud.terminalId?.() ?? "" }),
+      localSignature({ connectionManager, registry, table, branchId, historyDays, terminalId: cloud.terminalId?.() ?? "",
+        historyScope:table.cloudTable==='change_history'?require('./history-read-scope.cjs').captureHistoryScope(cloud,connectionManager,branchId):null }),
       cloudSignature({ cloud, table, branchId, historyDays }),
     ]);
     const result = {

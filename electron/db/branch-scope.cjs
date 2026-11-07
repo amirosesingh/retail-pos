@@ -1,4 +1,5 @@
 const { catalogueReadPredicate } = require("./catalogue-scope.cjs");
+const {historyComparisonPredicate}=require('../sync/history-read-scope.cjs');
 /**
  * Build the SQL Server equivalent of the branch predicates generated for the
  * Supabase synchronization RPCs. Registry names are trusted build artifacts;
@@ -141,6 +142,7 @@ function scopedWhere(registry, table, options) {
   return buildScopedWhere(registry, table, options);
 }
 function comparisonWhere(registry, table, options) {
+  if(table?.cloudTable==='change_history')return historyComparisonPredicate(options?.alias??'source',options?.historyScope);
   return buildScopedWhere(registry, table, options, comparisonBranchPredicate);
 }
 

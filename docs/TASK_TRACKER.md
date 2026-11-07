@@ -1,3 +1,202 @@
+## 7 November — HISTORY-SCOPE82 approved implementation and remote verification
+
+Fresh affected-PC SELECT-only check on 7November about11:05am verified
+DESKTOP-VIB2MIL\\LCRPOS/POS_Local GUID F4B03BDB-DE91-4582-B68E-186442172E95.
+Current CT49803, all six closing tables minimum32338; stored push checkpoints
+29273 (counts/events/notifications/reconciliations),27445(variance alerts),
+29281(shifts) are expired. No pending closing-journal rows; zero saved closing
+intents and zero baselines. This does NOT prove older closings were uploaded.
+There are28CLOSED and1OPEN retained branch shifts. Ran only the already-present,
+previously approved STR1-read-only-sync-diagnostic.sql after inspecting its target
+guard and SELECT statements. No business/schema/queue/checkpoint changes.
+The newly approved held/metadata diagnostic has not transferred; remote clipboard
+is unreliable and the sender attachment control is inaccessible in the current
+view. Asked owner to transfer/open that exact approved file, without execution.
+Owner asked root to open it directly. Reopened remote Desktop file dialog and
+confirmed the new file is absent; no reachable sender attachment dialog after
+checking the UltraViewer session toolbar. Existing diagnostic results preserved.
+Fresh read-only cloud comparison: local 5Nov09:16 shift 7d5bc4e5…ce68 OPEN v1;
+cloud same shift CLOSED v4 at 6Nov20:46:42 Brunei. The31Oct shift
+1a349429…ad27 retains its original local closing and later saved web closure
+in cloud. Neither comparison grants permission to adopt or overwrite the graph.
+
+Prepared implementation is now under one fresh independent candidate review.
+Native owner reports410focused cases,26actual SQLServer groups, TSC and lint
+passed. Held helper's first15full-core SQLServer groups passed; final17group
+negative run pending. SQL history20PGlite/26nativePG-PGRST and41API/transport
+cases passed; held20PGlite and final actualPostgREST pending. Root full Vitest
+regression is running on frozen candidate source; these are preparation results,
+not proof the installed production PC is repaired. Main automatic-DDL pin remains
+null. No new PR/commit/live migration, metadata install or beta merge yet.
+Independent reviewer reproduced starvation beyond an unresolved TOP100 prefix
+and whole-batch rejection over2MiB with valid held identities. Root also
+confirmed pending global-journal namespace must be included; actual SQL fixture
+reproduced unsafe adoption before this fix. Held owner is correcting only these
+reviewed cases with bounded keyset scan, safe smaller sub-batches and global
+pending protection. First full run:6639pass/25fail/10skip. New canonical source
+strings confused old SQL fixture extractors; serialized inert CREATE tokens
+without changing their decoded bytes/fingerprints, restored Windows line ends,
+and preserved HEAD canonical financial blocks. Remaining old-protocol fixtures
+and installer inventory are being aligned before final full rerun. No runtime
+guards are weakened to pass tests.
+
+Exact prepared cloud files (approval not granted for live application):
+`20261107021328_isolate_branch_history_sync.sql` SHA256
+`12AFC6692EF3EFDF4C77676D920C0DF959AC26708892D99D6DEAFC55D10FF7FA`
+changes seven read routines and adds four service-only read helpers;
+`20261107024729_bounded_held_status_reconciliation.sql` SHA256
+`3B23385AB97C317A7FB317F2BD3685FBAFE683D5A2536916E71536C5F7B84BCB`
+adds one service-only read RPC. Target only ROSEGILL pos
+`qhrufhtbeguxydenzfey`, postgres. No business records, existing grants, feed
+triggers, checkout writer or checkpoints change. Both exact files passed
+26 owned native PostgreSQL/PostgREST groups each. Canonical component assembly
+and replay pass; full synthetic fresh-schema install stopped at the unchanged
+products-to-stores foreign-key ordering before these components. Existing
+financial blocks are unchanged. Do not claim fresh installation or installed
+device acceptance from these checks. Test deployed beta compatibility before
+coordinated migration rollout because old clients can report a count mismatch
+after narrowing history. Optional SQL Server recovery metadata remains separate.
+
+Owner resumed after the physical Escape stop and explicitly requests only the
+connected UltraViewer window/one remote view. Resume the same agents and source
+scope; no broad desktop inspection or display/security configuration changes.
+Automatic future recovery remains the required product workflow, not per-PC
+manual data copying or checkpoint edits. Current real-PC list confirms recovery
+metadata unavailable (not proof all four objects are absent). Cloud STR1 has
+zero active held tickets:4completed with matching saved sales and10cancelled;
+preserve those distinct terminal states. No real retry, repair or SQL write ran.
+Remote input is intermittently refused due to concurrent owner input; wait for
+an exclusive read-only control interval before navigating, while source work
+continues independently. Source was frozen on Escape; resumed edits/tests remain
+uncommitted and unverified until their explicit checks finish.
+
+Verification checkpoint (not ready/merged): history SQL20PGlite groups and
+26native PostgreSQL/PostgREST groups pass, including negative source/grant/shape/
+immutable/rollback guards and scoped2009-row paging. Scoped history API10cases
+pass. Native26actualSQLServer groups and131focused cases pass; corrected legacy
+bootstrap/resume suites68cases pass using current exact hydration and SHA-pinned
+released bootstrap for old evidence. Old1.4.82 control-flow3cases prove qualified
+cache preservation with truthful ERECONCILE and new scoped convergence; this is
+not installed-device checkout acceptance. Held runner11actual LocalDB/PG/PGRST
+groups reproduce the no-download shift-gap bug and verify ordinary completion.
+Automatic held helper/endpoint integration, full regression and independent
+candidate review remain in progress. No real data was repaired/copied.
+
+Current affected-PC1.4.82 is now verified in Software updates. Its actual local
+Holds page lists6Nov5 WIN51 tickets0002–0007, unlike the14 cloud held rows above.
+Read-only cloud sales lookup confirms exact matching branch/bill saved sale IDs
+for all6. Do not equate missing cloud held row with cancellation or infer paid
+state from an editable label. Check local bill_no, matching accepted parent,
+held CT and canonical lifecycle triggers. SSMS17 is opened and owner connected
+it using saved Windows Authentication to DESKTOP-VIB2MIL\LCRPOS/POS_Local.
+Remote clipboard pasted old search text rather than intended SELECT; nothing
+was executed. Prepared guarded SELECT-only diagnostic SHA3FEE1601B84D4A712B89E90AE6701F949BD73D5ED87EB6E380B6B4A16071241D
+needs authorized file transfer before execution; optional metadata upgrade and
+all live DDL remain unapplied. An initial cloud diagnostic SELECT used an invalid
+total column, was corrected to identifiers only, and changed no data.
+
+Held recovery extension is now justified by an actual owned SQL Server +
+PostgreSQL/PostgREST reproduction: accepted web completion stays locally held
+because the real coordinator throws shifts ECHANGEGAP before its pull phase;
+ordinary pull succeeds. Root authorizes the requested automatic-sync correction,
+not manual data repair: bounded known-held-ID status reads and guarded local
+terminal-state adoption under the existing exclusive lane. No normal feed/push
+checkpoint, journal acknowledgement, checkout readiness or shift warning changes.
+Require valid held CT, stable branch/source/GUID, no related pending writes and
+matching ticket identity; completed also needs an already accepted matching local
+sale/booking. Missing parent, expired held CT or divergent work remains pending.
+No financial header copying or new charge/stock movement is allowed.
+
+Ownership: held_sales_verification owns a new held-status helper, coordinator
+hook, Main wiring and focused actual workflow tests. SQL owner owns the new
+service-only bounded known-ticket read RPC in a separate CLI migration, guarded
+server request/dispatch and SQL/API tests. Native owner owns CloudClient adapter
+and the necessary optional lifecycle hook; coordinate exact wire/callback shape
+before editing. Never add a competing sync lane/timer. New RPC is read-only;
+exact final file/hash/target approval remains required before live installation.
+The observed equal-version competing-draft zero-applied acknowledgement remains
+a separately tracked defect; do not silently bundle its writer/financial fix.
+
+Implementation contract after fresh independent investigation: Operations history
+is ONLY explicit BRANCH attribution matching its trusted registered branch and
+exact organization. GLOBAL, PRIVATE, CLUSTER, TERMINAL and unknown/unattributed
+history remain immutable/stored but excluded; neither current product ownership
+nor a terminal's current branch proves historical attribution. Verified opted-in
+Management retains all history within that configured company. Shared catalogue
+and current scoped settings synchronization are unchanged.
+
+SQL owner history_sql_preparation owns a new CLI-created migration, shared
+canonical scope helper/generator hook, generated schema and SQL/PostgREST tests,
+protected-history-reconciliation.server.ts, sync-endpoint.server.ts guarded
+request/dispatch and their focused API tests. Native never edits those paths.
+Native owner history_native_scope owns a history-read-scope helper, index/legacy
+handoff, jobs repository, feed/bootstrap/CloudClient/protocol, read-comparison
+branch predicate/reconciliation/verifier/lifecycle and native tests.
+Do not modify shared upload/write predicates or financial
+writers. Prefer compatible legacy response shapes with an additive scoped
+protocol marker for new clients; no legacy broad-read bypass or fake count.
+Freeze the shared protocol with both owners before their boundary edits.
+
+Native transition must preserve old hi1 rows/status/cursors/evidence and pending
+work while starting a distinct policy-bound scan; old completed broad proof is
+not new scoped proof. Raw bootstrap uses exact absent-only history hydration,
+not generic highest-version replacement. Old1.4.82 qualified-cache behavior and
+new-client/old-server denials require isolated tests before live rollout. If
+legacy clients cannot safely adopt narrowed counts, report the rollout dependency
+and hold live application rather than weakening isolation or declaring success.
+
+Affected-PC read-only evidence on7November about10:09amBrunei: STR1/361Degree
+Sports, POS_Local SQL connected/schemaReady210ms, stateBootstrapping, zero
+journaled uploads shown, no active database job. Automatic shifts ECHANGEGAP and
+bootstrap/Database.State ELOCAL_PENDING_UNVERIFIED repeat34times; retained work
+needs classification. Zero journal rows does not prove expired CT work uploaded.
+No retry, clear/reset, schema application, manual copying or shift action ran.
+Owner reiterates code-driven automatic recovery for future PCs; prove safe
+matching/recoverable facts and preserve genuine conflicts for authorized review.
+
+Owner explicitly requests agents to fix history sync: registered Operations
+terminals get only their branch; verified opted-in Management replicas get all
+shops. Check held sales between Electron and web and inspect the affected PC
+now available through UltraViewer. Show exact database changes before applying.
+
+Owner follow-up: held bills remaining on affected Electron were already completed
+online. Verify authoritative sale/held identity and completion/cancellation
+delivery through normal sync; no manual DELETE/update, no duplicate payment/stock
+movement and no pretending an unknown response is a confirmed completion. Check
+whether the shift-recovery gate is stopping those independent confirmed updates.
+The held-sale owner extends isolated tests first, reports any confirmed runtime
+defect before editing a shared checkout/pull path. Root reads exact PC/cloud facts.
+
+Recoverable baseline: beta28b7bb97f0f51cea910713511a29c66c88a06a8d,
+new isolated codex/branch-history-sync-beta. PR431 already merged there: local
+6523/10 skipped, CI6522/11 skipped, exact merged tree935d06c8, required and
+post-merge permission checks/Workers succeeded. Automatic recovery-metadata
+approval pin remains null; no live installation or production promotion ran.
+
+Phase1: root independently traces bootstrap/feed/count/history-index/missing-row
+boundaries; fresh read-only security investigator checks alternate paths and
+compatibility. Held-sale agent traces/tests real native/web adapters, offline
+durability, completion and denied branches without real financial writes.
+Then agree the narrow source/migration contract before one owner edits each file.
+Prepare any additive cloud SQL through CLI, matching canonical generator and
+allowed/denied PostgreSQL/PostgREST tests; no new grants or business-row rewrite.
+History already retained locally needs a non-destructive scope-safe transition:
+never delete unuploaded/local-only work or reset progress to force equality.
+
+Root owns tracking, Git/PR, remote inspection and protected actions. Remote
+inspection stays in UltraViewer and SELECT-only diagnostics; no sign-in entry,
+retry/clear/reset/cache action or real checkout/shift mutation. Capture current
+app version, registration/branch, actual error, local schema/capabilities and
+pending-work evidence before deciding a correction. Preserve operator config.
+
+Acceptance: Operations A denies B/GLOBAL/unattributed history through every
+download/count/recovery entry; Management all-company scope remains explicitly
+verified; tampered/revoked identity denied; pending work survives expired history,
+interruption/retry and scope mismatch. Verify held tickets through save/upload/
+web read/update/download/payment-completion fixtures without double effects.
+Membership, Stock401/031 and deferred shutdown logging remain excluded. Exact
+live SQL/rollout and each production promotion need separate owner approval.
+
 ## 6 November — generator TEMP fixture dependency follow-up
 
 Exact PR428 f5ce739d passed the original full permission suite and native/Workers checks, then failed step15: notification parity copies the generator into TEMP but omits its new history helper and migration. Owner/root authorizes fixing every fixture with that same copied-generator dependency defect. Search all actual generator references first; modify only confirmed fixture manifests, retain actual generation and unchanged ownership/denial assertions. Verify the real TEMP invocation plus related canonical/notification checks. SQL/schema/migration bytes, production approval and sole-writer push ownership stay unchanged.

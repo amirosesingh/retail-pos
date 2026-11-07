@@ -12,6 +12,20 @@ Owner requires all proposed cloud/local database upgrades collected for exact fi
 The exact owner-approved service-only bounded feed RPC and PR384 are applied/deployed on beta. Existing selector/privacy grants and businessrecords are preserved; native continuation is bound to authenticated response metadata. Live147request sample all200/ok with no CPU-exceeded; CPU2–114ms/mean9.469 means NO guarantee allrequestsbelow10ms. Electronfeed131613→133184, all6shiftCTvalid; largebacklog stilldraining. Keep implemented/sample-verified status distinct from fullsync completion, production promotion or installerpublication. Supabase migrationtool ledger20261104042158 corresponds to approvedfile20261104040251, SHA83495D696622241ECA2A8D396234E2FD65EE7C7A3050E93E4280638D6530D59B; do not replay based solely on differing timestamps.
 # POS project memory
 
+## 7 November — branch history isolation and affected-PC follow-up approved
+
+Owner approves agents to fix history synchronization so Operations terminals
+receive their own branch's history and explicitly enabled Management replicas
+receive all shops in the configured company database. Check Electron/web held
+sales and the now-connected affected PC. This authorizes bounded implementation
+and isolated tests plus read-only remote inspection, not live SQL, automatic-DDL
+activation, data copying/deletion, queue/checkpoint/registration reset or release.
+Present exact cloud/local database changes and target before application.
+Keep shared catalogue/availability rules, current user/action permissions,
+offline checkout and retained closings/corrections intact. Root must resolve
+unattributed/global history safely; timestamps or counts alone grant no access.
+
+
 ## 6 November — chart and summary presentation refinement
 
 Owner requests clean, compact, readable chart frames with soft graph ends/joins,

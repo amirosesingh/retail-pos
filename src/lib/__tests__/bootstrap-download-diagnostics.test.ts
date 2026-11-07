@@ -9,11 +9,12 @@ const { refreshTable, runBootstrap } = require("../../../electron/jobs/bootstrap
 const { LocalDataLifecycle } = require("../../../electron/jobs/lifecycle.cjs");
 const { tagBootstrapDiagnostic, bootstrapDiagnostic } = require("../../../electron/diagnostics.cjs");
 const table = (name: string, order = 0) => ({ cloudTable: name, sqlServerTable: name, dependencyOrder: order, columns: [{ cloudColumn: "id", sqlServerColumn: "id", primaryKey: true }] });
-const registry = { tables: [table("pos_settings"), table("settings_scoped", 1), table("change_history", 2)] };
+const registry = { tables: [table("pos_settings"), table("settings_scoped", 1), table("change_history", 2), table("products", 3)] };
 const names = registry.tables.map(row => row.cloudTable);
 const httpError = () => Object.assign(new Error("HTTP 503"), { code: "HTTP_503", status: 503 });
 const proof = "a".repeat(64);
-const client = () => new CloudClient({ configStore: { get: () => "https://pos.fixture" }, terminalStore: { read: () => ({ tokenId: "terminal-fixture", deviceBindingProof: proof }) } });
+const terminal = "00000000-0000-4000-8000-000000000001";
+const client = () => new CloudClient({ connectionManager: {pool:{}}, configStore: { get: () => "https://pos.fixture" }, terminalStore: { read: () => ({ tokenId: terminal, locationId: "branch-fixture", deviceUse: "operations", deviceBindingProof: proof }) } });
 const fetchPage = (cloud: InstanceType<typeof CloudClient>) => cloud.bootstrapPage({ table: "change_history", branchId: "branch-fixture", historyDays: 90, cursor: null, limit: 100 });
 
 function sqlHarness() {
@@ -28,8 +29,8 @@ function sqlHarness() {
   const context = { job: { dependency_index: 0, last_committed_cursor: null, batch_number: 0 }, waitWhilePaused: vi.fn(), checkpoint: vi.fn(async (_patch: unknown, _transaction?: unknown) => { events.push("checkpoint"); }) };
   return { events, begin, commit, rollback, connectionManager, cloud, checkpoints, context };
 }
-const refresh = (h: ReturnType<typeof sqlHarness>, extra: Record<string, unknown> = {}) => refreshTable({ ...h, registry, branchId: "branch-fixture", tableName: "change_history", ...extra });
-const job = (h: ReturnType<typeof sqlHarness>) => runBootstrap({ ...h, registry: { tables: [table("change_history")] }, branchId: "branch-fixture", historyDays: 90 });
+const refresh = (h: ReturnType<typeof sqlHarness>, extra: Record<string, unknown> = {}) => refreshTable({ ...h, registry, branchId: "branch-fixture", tableName: "products", ...extra });
+const job = (h: ReturnType<typeof sqlHarness>) => runBootstrap({ ...h, registry: { tables: [table("products")] }, branchId: "branch-fixture", historyDays: 90 });
 
 function logHarness() {
   const output: Array<{ file: string; line: string }> = [];
@@ -59,17 +60,17 @@ describe("bootstrap diagnostic-only transport context", () => {
     expect(bootstrapDiagnostic(failure, names)).toEqual({ httpStatus: code === "57014" ? 500 : 503, nonJsonResponse });
     expect(fetch).toHaveBeenCalledTimes(1);expect(signal).toHaveBeenCalledWith(30_000);
     expect(fetch.mock.calls[0][0]).toBe("https://pos.fixture/api/v1/pos/sync");
-    expect(fetch.mock.calls[0][1].body).toBe(JSON.stringify({ sqlServerBootstrap: { organizationId: "default", table: "change_history", branchId: "branch-fixture", historyDays: 90, cursor: null, limit: 100 }, terminalToken: "terminal-fixture", deviceBindingProof: proof }));
+    expect(fetch.mock.calls[0][1].body).toBe(JSON.stringify({ sqlServerBootstrap: { organizationId: "default", table: "change_history", branchId: "branch-fixture", historyDays: 90, cursor: null, limit: 100 }, terminalToken: terminal, deviceBindingProof: proof }));
   });
   it("preserves successful result shape and one request", async () => {
-    const fetch = vi.fn(async () => Response.json({ rows: [{ id: "one" }], cursor: "next" }));vi.stubGlobal("fetch", fetch);
-    expect(await fetchPage(client())).toEqual({ rows: [{ id: "one" }], cursor: "next" });expect(fetch).toHaveBeenCalledTimes(1);
+    const fetch = vi.fn(async () => Response.json({ rows: [{ id: "one", organization_id: "default", scope_type: "BRANCH", scope_id: "branch-fixture" }], cursor: "next" }));vi.stubGlobal("fetch", fetch);
+    expect(await fetchPage(client())).toEqual({ rows: [{ id: "one", organization_id: "default", scope_type: "BRANCH", scope_id: "branch-fixture" }], cursor: "next" });expect(fetch).toHaveBeenCalledTimes(1);
   });
   it("preserves transport error identity with no invented HTTP/JSON fields", async () => {
     const failure = new TypeError("fixture network unavailable");vi.stubGlobal("fetch", vi.fn().mockRejectedValue(failure));
     const h = sqlHarness();h.cloud.bootstrapPage.mockImplementation(() => fetchPage(client()));
     await expect(refresh(h)).rejects.toBe(failure);
-    expect(bootstrapDiagnostic(failure, names)).toEqual({ table: "change_history", bootstrapPhase: "download", bootstrapOrigin: "refresh",
+    expect(bootstrapDiagnostic(failure, names)).toEqual({ table: "products", bootstrapPhase: "download", bootstrapOrigin: "refresh",
       transportOperation: "bootstrap", transportStage: "fetch", transportErrorName: "TypeError" });
     expect(h.begin).not.toHaveBeenCalled();expect(h.checkpoints.save).not.toHaveBeenCalled();
   });
@@ -88,26 +89,28 @@ describe("bootstrap diagnostic-only transport context", () => {
   });
 });
 
+// Ordinary-table apply/ACK diagnostics exercise the generic writer; history has a
+// separate exact absent-only writer and intentionally cannot establish upload proof.
 describe("actual bootstrap, prefetch and expired-history boundaries", () => {
   it("tags a job download failure after its existing initial checkpoint, without writes or baseline progress", async () => {
     const h = sqlHarness(), failure = httpError();h.cloud.bootstrapPage.mockRejectedValue(failure);
     await expect(job(h)).rejects.toBe(failure);
-    expect(bootstrapDiagnostic(failure, names)).toEqual({ table: "change_history", bootstrapPhase: "download", bootstrapOrigin: "job" });
-    expect(h.context.checkpoint).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ current_table: "change_history", dependency_index: 0, last_committed_cursor: null }));
+    expect(bootstrapDiagnostic(failure, names)).toEqual({ table: "products", bootstrapPhase: "download", bootstrapOrigin: "job" });
+    expect(h.context.checkpoint).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ current_table: "products", dependency_index: 0, last_committed_cursor: null }));
     expect(h.begin).not.toHaveBeenCalled();expect(h.checkpoints.save).not.toHaveBeenCalled();
   });
   it.each(["begin", "apply", "commit"])("preserves %s failure identity and original rollback boundary", async stage => {
     const h = sqlHarness(), failure = Object.assign(new Error("fixture SQL failure"), { code: "EREQUEST", status: 500 });
     (stage === "begin" ? h.begin : stage === "apply" ? h.cloud.applyLocalBatch : h.commit).mockRejectedValue(failure);
     await expect(refresh(h)).rejects.toBe(failure);
-    expect(bootstrapDiagnostic(failure, names)).toEqual({ table: "change_history", bootstrapPhase: "local_apply", bootstrapOrigin: "refresh" });
+    expect(bootstrapDiagnostic(failure, names)).toEqual({ table: "products", bootstrapPhase: "local_apply", bootstrapOrigin: "refresh" });
     expect(h.rollback).toHaveBeenCalledTimes(stage === "begin" ? 0 : 1);expect(h.checkpoints.save).not.toHaveBeenCalled();
   });
   it("preserves successful apply/checkpoint/commit ordering and baseline value", async () => {
     const h = sqlHarness();expect(await job(h)).toEqual({ completed: 1 });
     expect(h.events).toEqual(["checkpoint", "begin", "apply", "checkpoint", "commit", "baseline", "checkpoint"]);
-    expect(h.checkpoints.save).toHaveBeenCalledExactlyOnceWith("branch-fixture", "change_history", "push", { change_tracking_version: 42 });
-    expect(h.cloud.bootstrapPage).toHaveBeenCalledExactlyOnceWith({ table: "change_history", branchId: "branch-fixture", historyDays: 90, cursor: null, limit: 100 });
+    expect(h.checkpoints.save).toHaveBeenCalledExactlyOnceWith("branch-fixture", "products", "push", { change_tracking_version: 42 });
+    expect(h.cloud.bootstrapPage).toHaveBeenCalledExactlyOnceWith({ table: "products", branchId: "branch-fixture", historyDays: 90, cursor: null, limit: 100 });
   });
   it("keeps unknown-table skip behavior unchanged", async () => {
     const h = sqlHarness();expect(await refresh(h, { tableName: "not_registered" })).toEqual({ completed: 0, skipped: true });expect(h.cloud.bootstrapPage).not.toHaveBeenCalled();expect(h.connectionManager.sql).not.toHaveBeenCalled();
@@ -151,7 +154,7 @@ describe("safe actual Main → diagnostic log boundary", () => {
     await expect(context.prepare!()).rejects.toBe(failure);
     expect(markReady).toHaveBeenCalledExactlyOnceWith({ phase: "sync_pending", syncReady: false, code: "HTTP_503", error: "HTTP 503", differences: undefined });
     expect(logs.output).toHaveLength(1);expect(logs.output[0].file).toMatch(/failure\.log$/);
-    expect(logs.parsed()).toMatchObject({ category: "synchronization", stage: "bootstrap", code: "HTTP_503", message: "HTTP 503", table: "change_history", bootstrapPhase: "download", bootstrapOrigin: "refresh", httpStatus: 503, nonJsonResponse: true, outcome: "failure" });
+    expect(logs.parsed()).toMatchObject({ category: "synchronization", stage: "bootstrap", code: "HTTP_503", message: "HTTP 503", table: "products", bootstrapPhase: "download", bootstrapOrigin: "refresh", httpStatus: 503, nonJsonResponse: true, outcome: "failure" });
     expect(logs.output[0].line).not.toMatch(/PRIVATE|https:|branch-fixture|terminal-fixture|credentials|sqlServerBootstrap/);
   });
   it("normalizes only enums/registered names/primitives, never getters or forged payload fields", () => {

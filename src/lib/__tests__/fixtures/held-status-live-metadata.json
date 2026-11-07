@@ -1,0 +1,822 @@
+{
+  "columns": [
+    {
+      "type": "uuid",
+      "not_null": true,
+      "table_name": "bookings",
+      "column_name": "id"
+    },
+    {
+      "type": "text",
+      "not_null": true,
+      "table_name": "bookings",
+      "column_name": "ref"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "store_id"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "shift_id"
+    },
+    {
+      "type": "text",
+      "not_null": true,
+      "table_name": "bookings",
+      "column_name": "customer_name"
+    },
+    {
+      "type": "text",
+      "not_null": true,
+      "table_name": "bookings",
+      "column_name": "customer_phone"
+    },
+    {
+      "type": "uuid",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "member_id"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "service_type_id"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "service_name"
+    },
+    {
+      "type": "numeric",
+      "not_null": true,
+      "table_name": "bookings",
+      "column_name": "service_fee"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "payment_timing"
+    },
+    {
+      "type": "jsonb",
+      "not_null": true,
+      "table_name": "bookings",
+      "column_name": "lines"
+    },
+    {
+      "type": "numeric",
+      "not_null": true,
+      "table_name": "bookings",
+      "column_name": "subtotal"
+    },
+    {
+      "type": "numeric",
+      "not_null": true,
+      "table_name": "bookings",
+      "column_name": "discount"
+    },
+    {
+      "type": "numeric",
+      "not_null": true,
+      "table_name": "bookings",
+      "column_name": "tax"
+    },
+    {
+      "type": "numeric",
+      "not_null": true,
+      "table_name": "bookings",
+      "column_name": "total"
+    },
+    {
+      "type": "numeric",
+      "not_null": true,
+      "table_name": "bookings",
+      "column_name": "paid"
+    },
+    {
+      "type": "date",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "due_date"
+    },
+    {
+      "type": "text",
+      "not_null": true,
+      "table_name": "bookings",
+      "column_name": "note"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "cashier"
+    },
+    {
+      "type": "text",
+      "not_null": true,
+      "table_name": "bookings",
+      "column_name": "status"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "sale_receipt_no"
+    },
+    {
+      "type": "timestamp with time zone",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "closed_at"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "racket_model"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "string_type"
+    },
+    {
+      "type": "numeric",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "tension_main"
+    },
+    {
+      "type": "numeric",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "tension_cross"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "tension_unit"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "grommet_notes"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "job_notes"
+    },
+    {
+      "type": "timestamp with time zone",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "dropped_off_at"
+    },
+    {
+      "type": "timestamp with time zone",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "promised_at"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "job_status"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "job_status_by"
+    },
+    {
+      "type": "timestamp with time zone",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "job_status_at"
+    },
+    {
+      "type": "boolean",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "notify_whatsapp"
+    },
+    {
+      "type": "timestamp with time zone",
+      "not_null": true,
+      "table_name": "bookings",
+      "column_name": "created_at"
+    },
+    {
+      "type": "timestamp with time zone",
+      "not_null": true,
+      "table_name": "bookings",
+      "column_name": "updated_at"
+    },
+    {
+      "type": "jsonb",
+      "not_null": true,
+      "table_name": "bookings",
+      "column_name": "charges"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "tag_id"
+    },
+    {
+      "type": "integer",
+      "not_null": true,
+      "table_name": "bookings",
+      "column_name": "row_version"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "intake_note"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "string_origin"
+    },
+    {
+      "type": "uuid",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "string_source_product_id"
+    },
+    {
+      "type": "uuid",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "grip_product_id"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "technician"
+    },
+    {
+      "type": "boolean",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "liability_accepted"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "incident_note"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "cancel_reason"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "cancelled_by"
+    },
+    {
+      "type": "timestamp with time zone",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "cancelled_at"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "cancelled_terminal"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "cancel_money_action"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "bookings",
+      "column_name": "booking_ref"
+    },
+    {
+      "type": "text",
+      "not_null": true,
+      "table_name": "bookings",
+      "column_name": "booking_kind"
+    },
+    {
+      "type": "text",
+      "not_null": true,
+      "table_name": "held_orders",
+      "column_name": "id"
+    },
+    {
+      "type": "text",
+      "not_null": true,
+      "table_name": "held_orders",
+      "column_name": "label"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "held_orders",
+      "column_name": "store_id"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "held_orders",
+      "column_name": "shift_id"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "held_orders",
+      "column_name": "held_by"
+    },
+    {
+      "type": "numeric",
+      "not_null": true,
+      "table_name": "held_orders",
+      "column_name": "total"
+    },
+    {
+      "type": "jsonb",
+      "not_null": true,
+      "table_name": "held_orders",
+      "column_name": "lines"
+    },
+    {
+      "type": "numeric",
+      "not_null": true,
+      "table_name": "held_orders",
+      "column_name": "cart_discount"
+    },
+    {
+      "type": "text",
+      "not_null": true,
+      "table_name": "held_orders",
+      "column_name": "cart_discount_type"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "held_orders",
+      "column_name": "exchange_ref"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "held_orders",
+      "column_name": "member_id"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "held_orders",
+      "column_name": "member_name"
+    },
+    {
+      "type": "jsonb",
+      "not_null": false,
+      "table_name": "held_orders",
+      "column_name": "coupon"
+    },
+    {
+      "type": "text",
+      "not_null": true,
+      "table_name": "held_orders",
+      "column_name": "note"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "held_orders",
+      "column_name": "cancelled_from"
+    },
+    {
+      "type": "timestamp with time zone",
+      "not_null": true,
+      "table_name": "held_orders",
+      "column_name": "held_at"
+    },
+    {
+      "type": "timestamp with time zone",
+      "not_null": true,
+      "table_name": "held_orders",
+      "column_name": "created_at"
+    },
+    {
+      "type": "timestamp with time zone",
+      "not_null": true,
+      "table_name": "held_orders",
+      "column_name": "updated_at"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "held_orders",
+      "column_name": "bill_no"
+    },
+    {
+      "type": "integer",
+      "not_null": true,
+      "table_name": "held_orders",
+      "column_name": "row_version"
+    },
+    {
+      "type": "text",
+      "not_null": true,
+      "table_name": "held_orders",
+      "column_name": "status"
+    },
+    {
+      "type": "uuid",
+      "not_null": false,
+      "table_name": "held_orders",
+      "column_name": "pending_request_id"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "held_orders",
+      "column_name": "approval_snapshot_hash"
+    },
+    {
+      "type": "uuid",
+      "not_null": true,
+      "table_name": "sales",
+      "column_name": "id"
+    },
+    {
+      "type": "text",
+      "not_null": true,
+      "table_name": "sales",
+      "column_name": "bill_number"
+    },
+    {
+      "type": "uuid",
+      "not_null": false,
+      "table_name": "sales",
+      "column_name": "member_id"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "sales",
+      "column_name": "store_id"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "sales",
+      "column_name": "shift_id"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "sales",
+      "column_name": "cashier_name"
+    },
+    {
+      "type": "numeric",
+      "not_null": true,
+      "table_name": "sales",
+      "column_name": "subtotal_amount"
+    },
+    {
+      "type": "numeric",
+      "not_null": true,
+      "table_name": "sales",
+      "column_name": "total_amount"
+    },
+    {
+      "type": "numeric",
+      "not_null": true,
+      "table_name": "sales",
+      "column_name": "discount_amount"
+    },
+    {
+      "type": "numeric",
+      "not_null": true,
+      "table_name": "sales",
+      "column_name": "tax_amount"
+    },
+    {
+      "type": "text",
+      "not_null": true,
+      "table_name": "sales",
+      "column_name": "payment_type"
+    },
+    {
+      "type": "numeric",
+      "not_null": true,
+      "table_name": "sales",
+      "column_name": "points_earned"
+    },
+    {
+      "type": "numeric",
+      "not_null": true,
+      "table_name": "sales",
+      "column_name": "points_redeemed"
+    },
+    {
+      "type": "boolean",
+      "not_null": true,
+      "table_name": "sales",
+      "column_name": "is_exchange"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "sales",
+      "column_name": "original_bill_number"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "sales",
+      "column_name": "exchanged_to_bill_number"
+    },
+    {
+      "type": "numeric",
+      "not_null": true,
+      "table_name": "sales",
+      "column_name": "exchange_credit"
+    },
+    {
+      "type": "numeric",
+      "not_null": true,
+      "table_name": "sales",
+      "column_name": "paid_amount"
+    },
+    {
+      "type": "numeric",
+      "not_null": true,
+      "table_name": "sales",
+      "column_name": "change_amount"
+    },
+    {
+      "type": "boolean",
+      "not_null": true,
+      "table_name": "sales",
+      "column_name": "is_refunded"
+    },
+    {
+      "type": "timestamp with time zone",
+      "not_null": true,
+      "table_name": "sales",
+      "column_name": "created_at"
+    },
+    {
+      "type": "jsonb",
+      "not_null": true,
+      "table_name": "sales",
+      "column_name": "payments"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "sales",
+      "column_name": "coupon_code"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "sales",
+      "column_name": "coupon_promo_id"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "sales",
+      "column_name": "coupon_scope"
+    },
+    {
+      "type": "numeric",
+      "not_null": false,
+      "table_name": "sales",
+      "column_name": "coupon_discount"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "sales",
+      "column_name": "client_transaction_id"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "sales",
+      "column_name": "cashier_id"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "sales",
+      "column_name": "created_by"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "sales",
+      "column_name": "updated_by"
+    },
+    {
+      "type": "integer",
+      "not_null": true,
+      "table_name": "sales",
+      "column_name": "row_version"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "sales",
+      "column_name": "store_name_snapshot"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "sales",
+      "column_name": "store_address_snapshot"
+    },
+    {
+      "type": "numeric(18,4)",
+      "not_null": true,
+      "table_name": "sales",
+      "column_name": "rounding_adjustment"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "sales",
+      "column_name": "rounding_label"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "sales",
+      "column_name": "branch_id"
+    },
+    {
+      "type": "uuid",
+      "not_null": false,
+      "table_name": "sales",
+      "column_name": "authorization_request_id"
+    },
+    {
+      "type": "text",
+      "not_null": false,
+      "table_name": "sales",
+      "column_name": "authorized_by"
+    },
+    {
+      "type": "timestamp with time zone",
+      "not_null": false,
+      "table_name": "sales",
+      "column_name": "authorized_at"
+    },
+    {
+      "type": "timestamp with time zone",
+      "not_null": false,
+      "table_name": "sales",
+      "column_name": "corrected_at"
+    }
+  ],
+  "policies": [
+    {
+      "cmd": "DELETE",
+      "qual": "(( SELECT is_staff_now() AS is_staff_now) AND store_visible(store_id))",
+      "roles": [
+        "authenticated"
+      ],
+      "table_name": "bookings",
+      "policy_name": "Branch staff delete bookings"
+    },
+    {
+      "cmd": "INSERT",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "table_name": "bookings",
+      "policy_name": "Branch staff insert bookings"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(( SELECT is_staff_now() AS is_staff_now) AND store_visible(store_id))",
+      "roles": [
+        "authenticated"
+      ],
+      "table_name": "bookings",
+      "policy_name": "Branch staff read bookings"
+    },
+    {
+      "cmd": "UPDATE",
+      "qual": "(( SELECT is_staff_now() AS is_staff_now) AND store_visible(store_id))",
+      "roles": [
+        "authenticated"
+      ],
+      "table_name": "bookings",
+      "policy_name": "Branch staff update bookings"
+    },
+    {
+      "cmd": "ALL",
+      "qual": "is_terminal_active()",
+      "roles": [
+        "authenticated"
+      ],
+      "table_name": "bookings",
+      "policy_name": "bookings_revoked_terminal_block"
+    },
+    {
+      "cmd": "ALL",
+      "qual": "(( SELECT is_staff_now() AS is_staff_now) AND store_visible(store_id))",
+      "roles": [
+        "authenticated"
+      ],
+      "table_name": "held_orders",
+      "policy_name": "Branch staff manage held orders"
+    },
+    {
+      "cmd": "ALL",
+      "qual": "is_terminal_active()",
+      "roles": [
+        "authenticated"
+      ],
+      "table_name": "held_orders",
+      "policy_name": "held_orders_revoked_terminal_block"
+    },
+    {
+      "cmd": "INSERT",
+      "qual": null,
+      "roles": [
+        "authenticated"
+      ],
+      "table_name": "sales",
+      "policy_name": "Branch staff insert sales"
+    },
+    {
+      "cmd": "SELECT",
+      "qual": "(( SELECT is_staff_now() AS is_staff_now) AND store_visible(store_id))",
+      "roles": [
+        "authenticated"
+      ],
+      "table_name": "sales",
+      "policy_name": "Branch staff read sales"
+    },
+    {
+      "cmd": "UPDATE",
+      "qual": "(( SELECT is_staff_now() AS is_staff_now) AND store_visible(store_id))",
+      "roles": [
+        "authenticated"
+      ],
+      "table_name": "sales",
+      "policy_name": "Branch staff update sales"
+    },
+    {
+      "cmd": "DELETE",
+      "qual": "( SELECT is_supervisor_now() AS is_supervisor_now)",
+      "roles": [
+        "authenticated"
+      ],
+      "table_name": "sales",
+      "policy_name": "Supervisors delete sales"
+    },
+    {
+      "cmd": "ALL",
+      "qual": "is_terminal_active()",
+      "roles": [
+        "authenticated"
+      ],
+      "table_name": "sales",
+      "policy_name": "sales_revoked_terminal_block"
+    }
+  ]
+}

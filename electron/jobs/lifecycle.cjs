@@ -10,8 +10,9 @@ const {ShiftGapRecovery,TABLES:SHIFT_GRAPH_TABLES}=require('../sync/shift-gap-re
 const { reportActivity } = require("../db/startup-activity.cjs");
 
 class LocalDataLifecycle {
-  constructor({connectionManager,databaseService,jobManager,jobRepository,registry,cloud,syncCoordinator,checkpoints,reader,publish=()=>{},historyExecutionProof=()=>false}){
+  constructor({connectionManager,databaseService,jobManager,jobRepository,registry,cloud,syncCoordinator,checkpoints,reader,publish=()=>{},historyExecutionProof=()=>false,recoverHeldStatuses=null}){
     Object.assign(this,{connectionManager,databaseService,jobManager,jobRepository,registry,cloud,syncCoordinator,checkpoints,reader,publish});
+    this.recoverHeldStatuses=recoverHeldStatuses;
     this.historyIndexRecovery=new historyIndex.HistoryIndexRecovery({connectionManager,cloud,jobRepository,jobManager,executionProof:historyExecutionProof,
       onApplied:({branchId})=>this.publish({kind:'general',branchId,source:'cloud',tables:['change_history']})});
   }
@@ -67,7 +68,8 @@ class LocalDataLifecycle {
         historyJob=indexProof?.job??null;
       }
       const old=await this.jobRepository.legacyHistory?.(branchId,this.cloud.terminalId())??[];
-      if(old.length)legacyProof=indexProof?.scope??await this.historyIndexRecovery.capture(branchId);
+      const oldIndex=await this.jobRepository.legacyIndexHistory?.(branchId,this.cloud.terminalId())??[];
+      if(old.length||oldIndex.length)legacyProof=indexProof?.scope??await this.historyIndexRecovery.capture(branchId);
     }else if(historyJob?.job_type===historyIndex.TYPE){
       indexProof=await this.historyIndexRecovery.current(branchId);
       if(indexProof?.job.job_id!==historyJob.job_id)return false;
@@ -140,7 +142,7 @@ class LocalDataLifecycle {
     return{table:table.sqlServerTable,completed:refreshed.completed,currentVersion};
   }
   async pushWithGapRecovery(branchId,historyDays,onActivity=()=>{}){
-    const recovered=new Set();
+    const recovered=new Set();let heldRecoveryAttempted=false;
     while(true){
       try{
         reportActivity(onActivity,{phase:"uploading"});
@@ -150,6 +152,13 @@ class LocalDataLifecycle {
       }catch(error){
         if(error?.code!=="ECHANGEGAP"||!error?.table)throw error;
         const tableName=String(error.table);
+        if(!heldRecoveryAttempted&&SHIFT_GRAPH_TABLES.includes(tableName)&&typeof this.recoverHeldStatuses==='function'){
+          heldRecoveryAttempted=true;
+          // A blocked closing must not suppress an independently proven held
+          // completion. This optional bounded read has no shift/CT authority;
+          // its own refusal must never replace the original closing guard.
+          try{await this.recoverHeldStatuses({branchId,onActivity});}catch{/* The original shift recovery/denial below remains authoritative. */}
+        }
         // A checkpoint reset must make progress. Seeing the same table twice
         // means the recovery did not establish a usable baseline, so surface
         // the original failure instead of looping forever.
@@ -207,7 +216,9 @@ class LocalDataLifecycle {
   async reconcile(branchId,historyDays=90,{publish=true}={}){
     const identity=this.reconciliationIdentity(branchId,historyDays);
     const terminalId=this.cloud.terminalId?.()??"";
-    const [local,cloudRows]=await Promise.all([localTableCounts(this.connectionManager,this.registry,branchId,historyDays,terminalId),this.cloud.counts({branchId,historyDays})]);
+    const historyScope=this.registry.tables.some(table=>table.cloudTable==='change_history')?
+      require('../sync/history-read-scope.cjs').captureHistoryScope(this.cloud,this.connectionManager,branchId):null;
+    const [local,cloudRows]=await Promise.all([localTableCounts(this.connectionManager,this.registry,branchId,historyDays,terminalId,historyScope),this.cloud.counts({branchId,historyDays})]);
     const cloud=validatedCloudCounts(this.registry,cloudRows);
     this.assertReconciliationIdentity(identity,branchId,historyDays);
     const verifiedAt=new Date().toISOString();

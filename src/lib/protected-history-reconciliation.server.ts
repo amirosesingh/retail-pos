@@ -1,10 +1,11 @@
 import {serviceRest} from '@/core/api/pos-relay.server';
 
-export type HistoryReconcileRead =
+export type HistoryReconcileRead = (
  | {action:'begin';organizationId:string;branchId:string}
  | {action:'page';organizationId:string;branchId:string;afterId:string|null;upperId:string}
  | {action:'finish';organizationId:string;branchId:string;upperId:string|null}
- | {action:'rows';organizationId:string;branchId:string;ids:string[]};
+ | {action:'rows';organizationId:string;branchId:string;ids:string[]}
+) & {accessPolicy?:'branch-history-v1'};
 
 const PREFIX='X-POS-History-Reconcile-';
 async function invalid(response:Response){
@@ -14,11 +15,11 @@ async function invalid(response:Response){
 
 /** Current relay admission/projection is resolved before this read-only call. */
 export async function protectedHistoryReconciliation(args:{read:HistoryReconcileRead;terminalId:string;keepCommerce:boolean;signal?:AbortSignal}):Promise<Response>{
- const {read}=args,rows=read.action==='rows';
+ const {read}=args,rows=read.action==='rows',version=read.accessPolicy==='branch-history-v1'?'2':'1';
  const body={p_organization_id:read.organizationId,p_branch_id:read.branchId,p_terminal_id:args.terminalId,p_keep_commerce:args.keepCommerce,
   ...(rows?{p_ids:read.ids,p_max_bytes:2*1024*1024}:{p_action:read.action,p_after_id:read.action==='page'?read.afterId:null,p_upper_id:read.action==='begin'?null:read.upperId,p_limit:1000})};
  let response:Response;
- try{response=await serviceRest('rpc/'+(rows?'pos_sync_history_rows_v1':'pos_sync_history_index_v1'),{
+ try{response=await serviceRest('rpc/'+(rows?'pos_sync_history_rows_v':'pos_sync_history_index_v')+version,{
   method:'POST',headers:{'Accept-Encoding':'identity'},body:JSON.stringify(body),...(args.signal?{signal:args.signal}:{}),
  });}catch{return Response.json({ok:false,code:'SERVICE_UNAVAILABLE',error:'The central history service did not answer; recovery will retry.'},{status:503});}
  // Preserve real authorization/network/schema failures. There is no fallback to
@@ -27,7 +28,7 @@ export async function protectedHistoryReconciliation(args:{read:HistoryReconcile
  const max=rows?5*1024*1024:128*1024;
  const text=response.headers.get(PREFIX+'Bytes')??'',countText=response.headers.get(PREFIX+'Rows')??'';
  const size=Number(text),count=Number(countText),length=response.headers.get('content-length');
- if(response.status!==200||!response.body||response.headers.get(PREFIX+'Version')!=='1'||response.headers.get(PREFIX+'Kind')!==(rows?'rows':'index')||
+ if(response.status!==200||!response.body||response.headers.get(PREFIX+'Version')!==version||response.headers.get(PREFIX+'Kind')!==(rows?'rows':'index')||
   !/^[1-9][0-9]*$/.test(text)||!Number.isSafeInteger(size)||size>max||
   !/^(?:0|[1-9][0-9]*)$/.test(countText)||!Number.isSafeInteger(count)||count>(rows?10:1000)||rows&&count<1||
   rows&&size>2*1024*1024&&count!==1||
@@ -49,6 +50,6 @@ export async function protectedHistoryReconciliation(args:{read:HistoryReconcile
    buffer=await new Response(body).arrayBuffer();
   }
   return new Response(buffer,{headers:{'content-type':'application/json','cache-control':'no-store',
-   [PREFIX+'Version']:'1',[PREFIX+'Kind']:rows?'rows':'index',[PREFIX+'Bytes']:String(size),[PREFIX+'Rows']:String(count)}});
+   [PREFIX+'Version']:version,[PREFIX+'Kind']:rows?'rows':'index',[PREFIX+'Bytes']:String(size),[PREFIX+'Rows']:String(count)}});
  }catch{return invalid(response);}
 }
