@@ -28,9 +28,20 @@ async function snapshot(f, names) {
   result.ct = (await f.pool.request().query("SELECT CONVERT(varchar(40),CHANGE_TRACKING_CURRENT_VERSION()) version;")).recordset[0].version;
   return result;
 }
+async function memberStatusDefault(f) {
+  return (await f.pool.request().query(
+    "SELECT dc.name,dc.definition FROM sys.default_constraints dc JOIN sys.columns c ON c.object_id=dc.parent_object_id AND c.column_id=dc.parent_column_id WHERE dc.parent_object_id=OBJECT_ID(N'dbo.members') AND c.name=N'membership_status';",
+  )).recordset[0];
+}
+async function setMemberStatusDefault(f, expression, name = "DF_members_membership_status") {
+  const current = await memberStatusDefault(f);
+  await f.pool.request().batch("ALTER TABLE dbo.members DROP CONSTRAINT " + q(current.name) +
+    "; ALTER TABLE dbo.members ADD CONSTRAINT " + q(name) + " DEFAULT " + expression + " FOR membership_status;");
+}
 async function seed(f) {
   await f.pool.request().input("product", f.sql.UniqueIdentifier, randomUUID()).input("sale", f.sql.UniqueIdentifier, randomUUID()).batch(`
     INSERT dbo.stores(id,code,name) VALUES(N'RECOVERY-FIXTURE',N'RF',N'Owned recovery fixture');
+    INSERT dbo.members(member_code,full_name,phone) VALUES(N'RF-SYNTHETIC-MEMBER',N'Owned fixture member',N'000000000');
     INSERT dbo.products(id,barcode,name,cost_price,selling_price,stock_quantity,stock_by_store,row_version) VALUES(@product,N'RF-PRODUCT',N'Synthetic existing stock',12.345678901234,24.99,7,N'{"RECOVERY-FIXTURE":7}',17);
     INSERT dbo.sales(id,bill_number,total_amount,store_id,created_at,row_version) VALUES(@sale,N'RF-SALE',24.99,N'RECOVERY-FIXTURE','2026-11-05T10:12:13.1234567+08:00',23);
     INSERT dbo.shifts(id,store_id,terminal_id,status,state,opened_at,closed_at,opening_float,counted_cash,expected_cash,row_version)
@@ -168,6 +179,39 @@ async function main() {
         await f.pool.request().batch(packageUpgrade().sql); const observed = await probe(f); assert.equal(observed.metadata_state, "matching");
         const all = (await f.pool.request().query("SELECT name FROM sys.tables WHERE schema_id=SCHEMA_ID('dbo') ORDER BY name;")).recordset.map(row => row.name), saved = await snapshot(f, all);
         await install(f, observed); assert.deepEqual(await snapshot(f, all), saved);
+      });
+      await reset(f);
+      await test(collation + " exact legacy membership default admits recovery without altering it", async () => {
+        await setMemberStatusDefault(f, "('active')");
+        const exactDefault = { name: "DF_members_membership_status", definition: "('active')" };
+        assert.deepEqual(await memberStatusDefault(f), exactDefault);
+        const legacyBefore = await snapshot(f, names);
+        await assert.rejects(f.pool.request().batch(packageUpgrade().sql), /Unrecognized Retail schema24 columns/);
+        assert(await absent(f));
+        const observed = await probe(f);
+        assert.equal(observed.core_state, "supported");
+        assert.equal(observed.schema_fingerprint, original.schema_fingerprint);
+        await install(f, observed);
+        const matching = await probe(f);
+        assert.equal(matching.metadata_state, "matching");
+        await install(f, matching);
+        assert.deepEqual(await memberStatusDefault(f), exactDefault);
+        assert.deepEqual(await snapshot(f, names), legacyBefore);
+      });
+      await reset(f);
+      await test("other membership defaults and constraint names still reject all recovery DDL", async () => {
+        for (const [expression, name] of [
+          ["('ACTIVE')", "DF_members_membership_status"],
+          ["(N'inactive')", "DF_members_membership_status"],
+          ["('active ')", "DF_members_membership_status"],
+          ["('active')", "DF_recovery_fixture_other_member_status"],
+        ]) {
+          await setMemberStatusDefault(f, expression, name);
+          const changed = await snapshot(f, names);
+          assert.equal((await probe(f)).core_state, "unknown");
+          await assert.rejects(install(f, original), error => [51028, 3930].includes(error.number));
+          assert(await absent(f)); assert.deepEqual(await snapshot(f, names), changed);
+        }
       });
     } finally { await f.close(); }
   }
