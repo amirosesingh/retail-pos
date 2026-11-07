@@ -49,7 +49,7 @@ function bridge({qualified=true,checkpoint=40 as number|null,central='1',sync={o
  const h=scenario(LocalDataLifecycle,qualified),error=Object.assign(new Error('Scoped reader absent'),{code:'EHISTORY_POLICY_UNAVAILABLE',table:'change_history'});
  const baseQuery=h.request.query;
  h.request.query=async(sql:string)=>{
-  if(sql.includes('minimum_version'))return{recordset:[{table_name:'stores',minimum_version:20,current_version:60,checkpoint_version:checkpoint}]};
+  if(sql.includes('minimum_version'))return{recordset:[{table_name:'stores',minimum_version:20,current_version:60,checkpoint_version:checkpoint,checkpoint_organization_id:'default'}]};
   const result=await baseQuery(sql);
   if(sql.includes('COUNT_BIG'))result.recordset.push({table_name:'stores',row_count:'1'});
   return result;
@@ -107,5 +107,120 @@ describe('scoped reader compatibility bridge before the cloud upgrade',()=>{
   const step=vi.fn(async()=>({completed:true}));h.lifecycle.historyIndexRecovery.step=step;
   expect(await h.lifecycle.historyStep(branch)).toMatchObject({completed:true});
   expect(step).toHaveBeenCalledWith(expect.objectContaining({branchId:branch,force:true}));expect(h.lifecycle.historyPending(branch)).toBe(false);
+ });
+});
+
+type TrackingBound={table_name:string;minimum_version:number|null;current_version:number;checkpoint_version:number|null;checkpoint_organization_id:string};
+function shiftBridge(qualified=true){
+ const h=bridge({qualified}),events:string[]=[];
+ const bounds:TrackingBound[]=[
+  {table_name:'shifts',minimum_version:20,current_version:60,checkpoint_version:10,checkpoint_organization_id:'default'},
+  {table_name:'shift_cash_counts',minimum_version:20,current_version:60,checkpoint_version:15,checkpoint_organization_id:'default'},
+  {table_name:'stores',minimum_version:20,current_version:60,checkpoint_version:40,checkpoint_organization_id:'default'},
+ ];
+ const shiftTables=bounds.slice(0,2).map(row=>row.table_name);
+ h.registry.tables.push(...shiftTables.map(name=>({cloudTable:name,sqlServerTable:name,direction:'bidirectional',columns:[{cloudColumn:'id',sqlServerColumn:'id',primaryKey:true}]})));
+ const query=h.request.query,counts=h.cloud.counts;
+ const readBounds=vi.fn(async()=>({recordset:bounds}));
+ h.request.query=async(sql:string)=>{
+  if(sql.includes('minimum_version'))return readBounds();
+  const result=await query(sql);
+  if(sql.includes('COUNT_BIG'))result.recordset.push(...shiftTables.map(table_name=>({table_name,row_count:'1'})));
+  return result;
+ };
+ h.cloud.counts=async()=>[...await counts(),...shiftTables.map(table_name=>({table_name,row_count:'1'}))];
+ const runPush=vi.fn(async()=>{events.push('push');return{ok:true};});
+ Object.assign(h.coordinator,{runPush});
+ delete h.lifecycle.pushWithGapRecovery; // exercise the real gate before normal upload
+ const recover=vi.fn(async(_branch:string,_days:number,table:string)=>{
+  expect(h.service.markReady).not.toHaveBeenCalled();
+  expect(runPush).not.toHaveBeenCalled();
+  events.push(table);
+  bounds.find(row=>row.table_name===table)!.checkpoint_version=60;
+  return{table,completed:0};
+ });
+ h.lifecycle.recoverChangeTrackingGap=recover;
+ return{...h,bounds,events,readBounds,recover,runPush,ensure:()=>h.lifecycle.ensure({branchId:branch,historyDays:7300,force:true})};
+}
+
+describe('scoped startup recovery with expired shift Change Tracking',()=>{
+ it('uses the existing narrow recovery for each positive expired shift checkpoint before any push or checkout-ready state',async()=>{
+  const h=shiftBridge(),retained=structuredClone(h.physical);
+  await expect(h.ensure()).resolves.toMatchObject({ok:true,historyPending:true,syncReady:false,code:'EHISTORY_POLICY_UNAVAILABLE',branchId:branch});
+  expect(h.recover.mock.calls.map(([selectedBranch,days,table])=>[selectedBranch,days,table])).toEqual(expect.arrayContaining([
+   [branch,7300,'shifts'],[branch,7300,'shift_cash_counts'],
+  ]));
+  expect(h.recover).toHaveBeenCalledTimes(2);
+  expect(h.events.at(-1)).toBe('push');
+  expect(h.service.markReady).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({phase:'history_recovery',branchId:branch,historyPending:true,syncReady:false}));
+  expect(h.physical).toEqual(retained);
+  expect(h.lifecycle.bootstrap).not.toHaveBeenCalled();
+ });
+ it.each(['fresh snapshot','active job','other branch','other organization','ordinary expiry','missing checkpoint','zero checkpoint','future checkpoint','missing bounds','duplicate bounds','malformed bounds'])('denies partial proof from %s before attempting any recovery or upload',async reason=>{
+  const h=shiftBridge(reason!=='fresh snapshot');
+  if(reason==='active job')h.repository.hasOtherActiveJobs=async()=>true;
+  if(reason==='other branch')h.cloud.terminalStore.read=()=>({tokenId:terminal,deviceUse:'operations',locationId:id(3)});
+  if(reason==='other organization')h.bounds[1].checkpoint_organization_id='other';
+  if(reason==='ordinary expiry')h.bounds[2].checkpoint_version=5;
+  if(reason==='missing checkpoint')h.bounds[1].checkpoint_version=null;
+  if(reason==='zero checkpoint')h.bounds[1].checkpoint_version=0;
+  if(reason==='future checkpoint')h.bounds[1].checkpoint_version=61;
+  if(reason==='missing bounds')h.bounds.splice(1,1);
+  if(reason==='duplicate bounds')h.bounds[1]={...h.bounds[0]};
+  if(reason==='malformed bounds')h.bounds[1].minimum_version=null;
+  await expect(h.ensure()).rejects.toMatchObject({code:expect.any(String)});
+  expect(h.recover).not.toHaveBeenCalled();expect(h.runPush).not.toHaveBeenCalled();expect(h.service.markReady).not.toHaveBeenCalled();
+  expect(h.lifecycle.preserveCachedReady()).toBe(false);
+ });
+ it.each(['jobs','sync'])('does not begin shift recovery while %s is paused',async scope=>{
+  const h=shiftBridge();
+  if(scope==='jobs')h.lifecycle.jobManager.paused=true;else Object.assign(h.coordinator,{paused:true});
+  await expect(h.ensure()).rejects.toMatchObject({code:expect.any(String)});
+  expect(h.recover).not.toHaveBeenCalled();expect(h.runPush).not.toHaveBeenCalled();expect(h.service.markReady).not.toHaveBeenCalled();
+ });
+ it('does not use an unavailable-policy response after its verified source changes during bounds inspection',async()=>{
+  const h=shiftBridge();
+  h.readBounds.mockImplementation(async()=>{
+   Object.assign(h.cloud,{isHistoryPolicyUnavailable:()=>false});
+   return{recordset:h.bounds};
+  });
+  await expect(h.ensure()).rejects.toMatchObject({code:expect.any(String)});
+  expect(h.recover).not.toHaveBeenCalled();expect(h.runPush).not.toHaveBeenCalled();expect(h.service.markReady).not.toHaveBeenCalled();
+ });
+ it('does not attempt a second recovery or declare readiness after the source changes during the first',async()=>{
+  const h=shiftBridge();
+  h.recover.mockImplementationOnce(async(_branch,_days,table)=>{
+   h.bounds.find(row=>row.table_name===table)!.checkpoint_version=60;
+   Object.assign(h.cloud,{isHistoryPolicyUnavailable:()=>false});
+   return{table,completed:0};
+  });
+  await expect(h.ensure()).rejects.toMatchObject({code:expect.any(String)});
+  expect(h.recover).toHaveBeenCalledTimes(1);expect(h.runPush).not.toHaveBeenCalled();expect(h.service.markReady).not.toHaveBeenCalled();
+ });
+ it.each([false,true])('rechecks source after the last awaited bounds read before ordinary upload (recovered=%s)',async recovered=>{
+  const h=shiftBridge();
+  if(recovered)h.readBounds.mockResolvedValueOnce({recordset:h.bounds});
+  else for(const row of h.bounds)row.checkpoint_version=60;
+  h.readBounds.mockImplementationOnce(async()=>{
+   Object.assign(h.cloud,{isHistoryPolicyUnavailable:()=>false});
+   return{recordset:h.bounds};
+  });
+  await expect(h.ensure()).rejects.toMatchObject({code:expect.any(String)});
+  expect(h.recover).toHaveBeenCalledTimes(recovered?2:0);
+  expect(h.runPush).not.toHaveBeenCalled();expect(h.service.markReady).not.toHaveBeenCalled();
+ });
+ it.each(['ELOCAL_PENDING_UNVERIFIED','ELOCAL_UPLOAD_PENDING','ESYNC_APPLY_CONFLICT'])('preserves the actual recovery refusal %s and leaves other work pending',async code=>{
+  const h=shiftBridge(),refused=Object.assign(Error('Retained closing needs verification'),{code,table:'shifts'});
+  const prior=structuredClone(h.bounds);
+  h.recover.mockRejectedValueOnce(refused);
+  await expect(h.ensure()).rejects.toBe(refused);
+  expect(h.recover).toHaveBeenCalledOnce();expect(h.runPush).not.toHaveBeenCalled();expect(h.service.markReady).not.toHaveBeenCalled();
+  expect(h.bounds).toEqual(prior);
+ });
+ it('requires strict healthy bounds after a reported successful recovery before starting ordinary upload',async()=>{
+  const h=shiftBridge();
+  h.recover.mockImplementation(async(_branch,_days,table)=>({table,completed:0}));
+  await expect(h.ensure()).rejects.toMatchObject({code:expect.any(String)});
+  expect(h.recover).toHaveBeenCalled();expect(h.runPush).not.toHaveBeenCalled();expect(h.service.markReady).not.toHaveBeenCalled();
  });
 });

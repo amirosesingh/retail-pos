@@ -39,7 +39,7 @@ async function main(){
       CREATE UNIQUE INDEX fixture_checkpoint ON dbo.sync_checkpoints(organization_id,branch_id,entity_type,direction);`);
     const branch='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',cm={pool,sql:()=>sql},reader=new ChangeReader(cm,registry),checkpoints=new CheckpointRepository(cm);
     const cloudIdentity={terminalId:()=> 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',backendUrl:()=> 'https://isolated.invalid'};
-    const run=()=>new ShiftGapRecovery({connectionManager:cm,registry,reader,checkpoints,branchId:branch,tableName:'shifts',cloud:cloudIdentity,historyDays:90});
+    const run=(assertSource,requireExpiredCheckpoint=false)=>new ShiftGapRecovery({connectionManager:cm,registry,reader,checkpoints,branchId:branch,tableName:'shifts',cloud:cloudIdentity,historyDays:90,assertSource,requireExpiredCheckpoint});
     const request=()=>pool.request();
     const seed=async()=>{const id=randomUUID();await request().input('id',id).input('branch',branch).query(`INSERT dbo.shifts(id,store_id,status,state,opened_at,row_version,opening_float) VALUES(@id,@branch,'OPEN','ACTIVE','2026-01-01T00:00:00.1234567+00:00',1,648);`);return id;};
     const seedClosed=async()=>{
@@ -96,6 +96,8 @@ async function main(){
     await reset();
     await test('unknown deleted journal key and author intent deny before any recovery write',async()=>{
       await seed();await request().input('key',JSON.stringify({id:randomUUID()})).input('branch',branch).query("INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id) VALUES('shifts',@key,'D',@branch);");
+      await assert.rejects(run().begin(),e=>e.code==='ELOCAL_UPLOAD_PENDING');await noCheckpoint();
+      await request().query("UPDATE dbo.sync_change_journal SET branch_id=N' ';");
       await assert.rejects(run().begin(),e=>e.code==='ELOCAL_UPLOAD_PENDING');await noCheckpoint();await request().query('DELETE dbo.sync_change_journal;');
       await request().input('id',randomUUID()).input('shift',randomUUID()).input('branch',branch).query('INSERT dbo.pos_sync_shift_intents(intent_id,branch_id,shift_id) VALUES(@id,@branch,@shift);');
       await assert.rejects(run().begin(),e=>e.code==='ELOCAL_UPLOAD_PENDING');await noCheckpoint();
@@ -115,6 +117,30 @@ async function main(){
       const id=await seed(),r=await run().begin();await accept(r,id);const before=await snapshot();
       r.checkpoints={advanceRecovery:async(...args)=>{await checkpoints.advanceRecovery(...args);throw Error('fixture checkpoint rollback');}};
       await assert.rejects(r.finish(),/fixture checkpoint rollback/);await noCheckpoint();assert.equal(await snapshot(),before);
+    });
+    await reset();
+    await test('source change before commit rolls back the captured checkpoint',async()=>{
+      let current=true;
+      const assertSource=()=>{if(!current)throw Object.assign(Error('fixture source changed'),{code:'ESYNC_REQUEST_CONTEXT_CHANGED'});};
+      const id=await seed(),r=await run(assertSource).begin();await accept(r,id);const before=await snapshot();
+      r.checkpoints={advanceRecovery:async(...args)=>{await checkpoints.advanceRecovery(...args);current=false;}};
+      await assert.rejects(r.finish(),e=>e.code==='ESYNC_REQUEST_CONTEXT_CHANGED');await noCheckpoint();assert.equal(await snapshot(),before);
+    });
+    await reset();
+    await test('early recovery proves the same expired default checkpoint before reading graphs and before advancing',async()=>{
+      const id=await seed();
+      await request().batch("ALTER TABLE dbo.shifts DISABLE CHANGE_TRACKING; ALTER TABLE dbo.shifts ENABLE CHANGE_TRACKING;");
+      const ct=(await request().query("SELECT CHANGE_TRACKING_MIN_VALID_VERSION(OBJECT_ID(N'dbo.shifts')) minimum;")).recordset[0];
+      assert(BigInt(String(ct.minimum))>1n);
+      await request().input('branch',branch).query("INSERT dbo.sync_checkpoints(organization_id,branch_id,entity_type,direction,change_tracking_version) VALUES('other',@branch,'shifts','push',1);");
+      await assert.rejects(run(undefined,true).begin(),e=>e.code==='ELOCAL_CT_PENDING');
+      await request().query("DELETE dbo.sync_checkpoints WHERE organization_id='other';");
+      await checkpoints.save(branch,'shifts','push',{change_tracking_version:1});
+      const r=await run(undefined,true).begin();await accept(r,id);
+      const before=await snapshot();
+      await checkpoints.save(branch,'shifts','push',{change_tracking_version:ct.minimum});
+      await assert.rejects(r.finish(),e=>e.code==='ELOCAL_CT_PENDING');assert.equal(await snapshot(),before);
+      assert.equal(String((await checkpoints.get(branch,'shifts','push')).change_tracking_version),String(ct.minimum));
     });
     await reset();
     await test('expired V0 retention during download refuses checkpoint completion',async()=>{

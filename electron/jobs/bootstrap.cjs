@@ -50,6 +50,7 @@ async function refreshTable({registry,cloud,connectionManager,branchId,historyDa
   const historyPolicyRun=table.cloudTable==='change_history'?createHistoryPolicyRun({cloud,connectionManager,branchId}):null;
   try{do{
     await progress?.beforeDownload?.();
+    recovery?.assertScope?.();
     diagnosticPhase="download";
     reportActivity(onActivity,{phase:"downloading",table:table.cloudTable,processedRows:completed});
     const page=await snapshotPage({cloud,connectionManager,table,branchId,historyDays,cursor,size,rowFilter,recovery,historyPolicyRun});const batch=page.batch;size=page.nextLimit;
@@ -68,6 +69,7 @@ async function refreshTable({registry,cloud,connectionManager,branchId,historyDa
       if(progress&&nextCursor!==null&&nextCursor===cursor)throw Object.assign(new Error("History download cursor did not advance."),{code:"EHISTORY_PROGRESS"});
       const nextCompleted=completed+result.applied+graphCount;
       await progress?.save(transaction,{cursor:nextCursor,completed:nextCompleted});
+      recovery?.assertScope?.();
       await transaction.commit();completed=nextCompleted;cursor=nextCursor;
       recovery?.committed(transaction);
       reportActivity(onActivity,{phase:"applying",table:table.cloudTable,processedRows:completed});
