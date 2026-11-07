@@ -67,6 +67,22 @@ the scan. Canonical settings writes publish one final row per transaction,
 including a defaults insert followed by an update. Ten focused LocalDB cases
 and the exact PostgreSQL-to-LocalDB handoff passed after these fixes.
 
+The owner asked to complete the remaining work. Continue on PR #451 with the
+required Worker check that failed to bundle the grouped relay. Use the plain
+rules definition in the Worker and verify the existing exact financial
+download and the grouped relay in focused checks. Exercise the grouped relay
+and native reader together with disposable databases where available. Bind
+the grouped checkpoint and its apply transaction to the actual SQL Server
+database identity and test replacement under the same profile. Keep
+the installed route, hosted database and pilot activation outside this batch.
+Complete the already authorized same-store PIN badge wake through the
+existing verified event path if its authorized read can be preserved.
+
+The relay now imports the plain TypeScript rule definitions explicitly.
+The previous ambiguous module name pulled the React provider and TanStack
+virtual entries into isolated Worker bundles. All 23 focused tests across
+the three affected Worker suites, grouped relay and scoped history passed.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { canCrossBranches } from "@/core/api/relay-policy.server";
 import { runtimeEnvValue, supabaseConfig } from "./external-supabase-config";
-import { DEFAULT_POS_RULES } from "./pos-rules";
+import { DEFAULT_POS_RULES } from "./pos-rules.ts";
 import { canRetrieveHistoricalReceipt } from "./receipt-history-permission";
 import { alignVerifiedScopeIds } from "./verified-scope-ids";
 /**
