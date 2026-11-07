@@ -232,8 +232,9 @@ class LocalDataLifecycle {
     const synced=await this.syncCoordinator.runNow({branchId,batchSize:10});
     if(unavailable){
       const unrelatedFailure=[...(this.syncCoordinator.unresolved?.().values()??[])].some(failure=>failure.branchId===String(branchId)&&failure.table!=='change_history');
-      const historyOnlyFailure=synced.code===HISTORY_POLICY_UNAVAILABLE&&synced.table==='change_history';
-      if(!synced.ok&&!historyOnlyFailure||unrelatedFailure||synced.credentialsInvalid||synced.lastError&&!historyOnlyFailure&&!synced.historyHoldOnly||
+      // A history row can block an entire mixed feed page. Even equal
+      // counts cannot certify that the other rows' updates were applied.
+      if(!synced.ok||unrelatedFailure||synced.credentialsInvalid||synced.lastError&&!synced.historyHoldOnly||
         synced.deferredTables?.some(table=>table!=='change_history')||synced.deferredLocalChanges||synced.deferredHeldDeletion||synced.membershipDeferred||Number(synced.failed??0)>0||Number(synced.conflicts??0)>0)
         throw Object.assign(new Error(synced.error??synced.lastError??'Operational synchronization must complete before protected history can wait.'),{code:synced.code??'ESYNC'});
       const differences=await this.reconcile(branchId,historyDays,{unavailable});

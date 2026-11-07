@@ -86,6 +86,13 @@ describe('scoped reader compatibility bridge before the cloud upgrade',()=>{
   await expect(auth.lifecycle.ensure({branchId:branch,force:true})).rejects.toMatchObject({code:'HTTP_403'});
   expect(difference.recordHistoryRecovery).not.toHaveBeenCalled();expect(auth.recordHistoryRecovery).not.toHaveBeenCalled();
  });
+ it('does not qualify checkout when unavailable history blocked an entire mixed feed page',async()=>{
+  const h=bridge({sync:{ok:false,code:'EHISTORY_POLICY_UNAVAILABLE',table:'change_history',error:'Mixed feed page remains pending'}});
+  await expect(h.lifecycle.ensure({branchId:branch,force:true})).rejects.toMatchObject({code:'EHISTORY_POLICY_UNAVAILABLE'});
+  expect(h.service.markReady).not.toHaveBeenCalled();
+  expect(h.recordHistoryRecovery).not.toHaveBeenCalled();
+  expect(h.coordinator.recordVerification).not.toHaveBeenCalled();
+ });
  it('keeps transient or unverified capability errors distinct from compatibility',async()=>{
   const h=bridge();const transient=Object.assign(new Error('transport'),{code:'HTTP_503'});h.historyIndex.mockRejectedValue(transient);
   await expect(h.lifecycle.ensure({branchId:branch,force:true})).rejects.toBe(transient);
