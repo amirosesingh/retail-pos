@@ -19,6 +19,7 @@ import type { AuthPayload } from "./authorization";
 import { activeBranchId } from "./active-branch";
 import { localDb } from "@/core/local-db/local-db";
 import { subscribeCentralAuthSession } from "./session-presence";
+import { subscribePinApprovalWake } from "./pin-approval-wake";
 
 export const CENTRE_POLL_MS = 45_000;
 
@@ -171,6 +172,7 @@ export function subscribeApprovals(onChange: () => void | Promise<void>, { allBr
     if (!change.tables?.length || change.tables.includes("authorization_requests")) changed();
   });
   if (offLocal) cleanups.push(offLocal);
+  if (branchId && !allBranches) cleanups.push(subscribePinApprovalWake(branchId, changed));
   // Protected PIN sessions have no direct Postgres subscription. Reconcile
   // while visible so remote decisions still reach Holds without navigation.
   if (typeof window !== "undefined") {

@@ -52,7 +52,9 @@ describe("persisted Supabase session validation", () => {
     const methods = {getItem:(key:string)=>storage.get(key)??null,setItem:(key:string,value:string)=>storage.set(key,value),removeItem:(key:string)=>storage.delete(key)};
     vi.stubGlobal("window",{localStorage:methods,sessionStorage:methods});
     const {setDeviceSecret} = await import("../device-secrets");
-    const {loadSessionToken,saveSessionToken,clearStoredCredentials} = await import("../pos-credentials");
+    const {loadSessionToken,saveSessionToken,clearStoredCredentials,sessionTokenSync,subscribeCredentialChanges} = await import("../pos-credentials");
+    const changed = vi.fn(() => sessionTokenSync());
+    const offCredentials = subscribeCredentialChanges(changed);
     await setDeviceSecret("pos-session-token","old-token");
     let finish!: (value: ArrayBuffer) => void;
     const decrypt = vi.spyOn(crypto.subtle,"decrypt").mockImplementationOnce(()=>new Promise<ArrayBuffer>(resolve=>{finish=resolve;}));
@@ -64,9 +66,11 @@ describe("persisted Supabase session validation", () => {
       expect(await first).toBe("new-token");expect(await second).toBe("new-token");
       clearStoredCredentials();
       expect(await loadSessionToken()).toBeNull();
+      expect(changed.mock.calls).toEqual([[], []]);
+      expect(changed.mock.results.map(result => result.value)).toEqual(["new-token", null]);
       expect(storage.has("pos.secure.pos-session-token")).toBe(false);
       expect(storage.has("pos.secure.cashier-session")).toBe(false);
-    } finally {decrypt.mockRestore();vi.unstubAllGlobals();}
+    } finally {offCredentials();decrypt.mockRestore();vi.unstubAllGlobals();}
   });
   it("rejects a token whose server-side session no longer exists", async () => {
     const api = auth({

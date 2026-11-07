@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-const hooks = vi.hoisted(() => ({ status: (_s: string) => {}, change: () => {}, staff: true, filter: {} as { filter?: string }, off: vi.fn() }));
+const hooks = vi.hoisted(() => ({ status: (_s: string) => {}, change: () => {}, staff: true, filter: {} as { filter?: string }, off: vi.fn(), pinWake: vi.fn(), offPin: vi.fn() }));
 vi.mock("../owned-postgres-subscription", () => ({ subscribeOwnedPostgresChanges: (_c: unknown, _t: string, filter: { filter?: string }, change: () => void, status: (s: string) => void) => { Object.assign(hooks, { status, change, filter }); return hooks.off; } }));
+vi.mock("../pin-approval-wake", () => ({ subscribePinApprovalWake: hooks.pinWake }));
 vi.mock("@/integrations/supabase/external-client", () => ({ supabaseExternal: {} }));
 vi.mock("@/core/api/sync-relay", () => ({ hasStaffSession: () => hooks.staff }));
 vi.mock("../authorization-client", () => ({ claimAuthorizationRequest: vi.fn(), listAuthorizationRequests: vi.fn() }));
@@ -12,6 +13,7 @@ import { subscribeApprovals } from "../approval-centre";
 import { setCentralAuthSessionPresent } from "../session-presence";
 beforeEach(() => {
  vi.useFakeTimers(); hooks.staff = true;
+ hooks.pinWake.mockReturnValue(hooks.offPin);
  vi.stubGlobal("document", Object.assign(new EventTarget(), { visibilityState: "visible" }));
  vi.stubGlobal("window", Object.assign(new EventTarget(), { setInterval, clearInterval }));
  vi.stubGlobal("navigator", { onLine: true });
@@ -30,6 +32,7 @@ it("uses changes while subscribed, preserves the missed-event safety check and r
 it("pauses hidden/offline requests, catches up on resume and supports the all-branch page", async () => {
  const read = vi.fn(async () => {}); const stop = subscribeApprovals(read, { allBranches: true });
  expect(hooks.filter.filter).toBeUndefined();
+ expect(hooks.pinWake).not.toHaveBeenCalled();
  Object.assign(document, { visibilityState: "hidden" }); hooks.change(); await vi.advanceTimersByTimeAsync(60000); expect(read).not.toHaveBeenCalled();
  Object.assign(document, { visibilityState: "visible" }); Object.assign(navigator, { onLine: false }); await vi.advanceTimersByTimeAsync(60000); expect(read).not.toHaveBeenCalled();
  Object.assign(navigator, { onLine: true }); window.dispatchEvent(new Event("online")); await vi.advanceTimersByTimeAsync(100); expect(read).toHaveBeenCalledOnce(); stop();
@@ -37,6 +40,7 @@ it("pauses hidden/offline requests, catches up on resume and supports the all-br
 it("polls PIN sessions until verification and stops Realtime when proof is lost", async () => {
  hooks.staff = false; const read = vi.fn(async () => {});
  const stop = subscribeApprovals(read, { branchId: "viewed-branch" });
+ expect(hooks.pinWake).toHaveBeenCalledExactlyOnceWith("viewed-branch", expect.any(Function));
  const previousStatus = hooks.status;
  await vi.advanceTimersByTimeAsync(5100); expect(read).toHaveBeenCalledOnce();
  expect(hooks.status).toBe(previousStatus);
@@ -57,4 +61,5 @@ it("polls PIN sessions until verification and stops Realtime when proof is lost"
  expect(hooks.off).toHaveBeenCalledOnce();
  await vi.advanceTimersByTimeAsync(10000); expect(read).toHaveBeenCalledTimes(3);
  stop();
+ expect(hooks.offPin).toHaveBeenCalledOnce();
 });

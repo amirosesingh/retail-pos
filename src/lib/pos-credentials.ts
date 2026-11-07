@@ -28,6 +28,18 @@ let sessionLoaded = false;
 let revision = 0;
 let cashierLoad: Promise<string | null> | null = null;
 let sessionLoad: Promise<string | null> | null = null;
+const credentialListeners = new Set<() => void>();
+
+export function subscribeCredentialChanges(listener: () => void): () => void {
+  credentialListeners.add(listener);
+  return () => credentialListeners.delete(listener);
+}
+
+function announceCredentialChange(): void {
+  for (const listener of credentialListeners) {
+    try { listener(); } catch { /* One subscriber cannot interrupt credential updates. */ }
+  }
+}
 
 function legacyToken(): string | null {
   try {
@@ -70,6 +82,7 @@ export async function saveCashierToken(token: string): Promise<void> {
   } catch {
     /* session storage unavailable */
   }
+  announceCredentialChange();
   await setDeviceSecret(SECRET, token).catch(() => undefined);
 }
 
@@ -96,6 +109,7 @@ export async function saveSessionToken(token: string): Promise<void> {
   revision += 1;
   sessionCached = token;
   sessionLoaded = true;
+  announceCredentialChange();
   await setDeviceSecret(SESSION_SECRET, token).catch(() => undefined);
 }
 
@@ -114,6 +128,7 @@ export function clearStoredCredentials(): void {
   }
   clearDeviceSecret(SECRET);
   clearDeviceSecret(SESSION_SECRET);
+  announceCredentialChange();
 }
 
 export type PosCredentials = {

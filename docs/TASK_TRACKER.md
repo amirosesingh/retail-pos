@@ -58,6 +58,23 @@ unidentified pending exact reproduction evidence. This batch covers the written
 rules and backup. Runtime implementation, database changes and rollout follow
 their existing approval and verification gates.
 
+## 7 November — existing-enrollment PIN approval wake
+
+Continue the owner's approval sync work from beta `94ac06b8` with the staff
+subscription changes in PR #444. On an already enrolled Operations till, use
+only a verified current-project machine session whose trusted account mapping
+matches that exact terminal and branch. Keep a separate wake-only connection
+for the existing private branch topic. Refresh Approvals and Holds through the
+person's authorized PIN relay and keep the current fallback. The wake carries
+no queue rows or approval authority. Release the subscription on sign-out,
+proof loss, expiry or any terminal, project or scope change.
+
+All 49 focused checks passed for account and device proof, one shared topic,
+credential loss, expiry, branch changes and the relay fallback. Installed
+delivery, the PIN badge outside these views and genuinely relay-only or named
+cross-store sessions remain pending. No hosted schema or configuration change
+is in this batch. The rollback is a scoped code revert.
+
 ## 7 November — scoped history during mixed-client rollout
 
 The owner requested both sync corrections, beta first and then production.
