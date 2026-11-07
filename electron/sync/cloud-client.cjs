@@ -13,6 +13,7 @@ const { toLocalValue } = require("./row-codec.cjs");
 const { tagBootstrapDiagnostic } = require("../diagnostics.cjs");
 const {boundedText,rememberGraph} = require("./shift-recovery-exact.cjs");
 const { SyncRequestLane } = require("./request-lane.cjs");
+const { orderSelfReferencingRows } = require("./self-reference-order.cjs");
 
 function governanceRequest(payload) {
   const tables = new Set(["pos_settings", "pos_store_settings", "authorization_actions", "authorization_action_history"]);
@@ -574,7 +575,9 @@ class CloudClient {
       result.outcomes.push({ entityId: change.entity_id ?? JSON.stringify(this.parseKey(table, change)), status,
         ...(reason ? { reason } : {}), localVersion: localVersion ?? null, remoteVersion: change.row_data?.row_version ?? null });
     };
-    for (const change of [...(batch.rows ?? []), ...(batch.tombstones ?? [])]) {
+    const rows = batch.rows ?? [];
+    const upserts = protectedGraph ? rows : orderSelfReferencingRows(table, rows);
+    for (const change of [...upserts, ...(batch.tombstones ?? [])]) {
       const row = change.row_data ?? {};
       const key = this.parseKey(table, change);
       if (change.tombstone) {
