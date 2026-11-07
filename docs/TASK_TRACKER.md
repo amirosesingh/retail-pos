@@ -1,24 +1,39 @@
-## 7 November — immutable Windows checkout journal preparation
+## 7 November — first two-way sync implementation batch
 
-The owner requested completion of the revised two-way sync plan. Begin from
-beta `d39b0333`. Prepare a default-off Windows `SaleCompleted` journal writer
-at the existing checkout aggregate transaction. Capture authorized saved sale,
-item, tender and stock facts with their stable operation and business IDs. Use
-an additive preparation table outside installed migrations. Prove atomic
-commit and rollback, exact replay after local row changes, and default-off
-behavior with an isolated LocalDB fixture. Preserve the deployed uploader,
-legacy pending work, cloud acceptance and operator configuration.
+The owner approved starting the revised two-way sync plan on beta, using agents
+and focused verification while the existing engine remains active. Begin from
+beta `d39b0333`. The full plan and rules are tracked separately in beta PR #445.
+This batch prepares a private PostgreSQL feed foundation for complete change
+groups. A transaction appends once for all affected scopes, locking heads in a
+consistent order and committing head updates with their groups. An isolated
+PostgreSQL fixture must prove visibility, rollback and concurrent ordering, and
+verify that application roles cannot read or publish directly.
 
-This slice does not enable the new journal on an installed till. Review the
-schema, event contract, cloud ingestion and pilot fence together before any
-activation. Rollback for preparation is a scoped source revert.
+The disposable PostgreSQL 18.6 fixture passed all four focused scenarios. A
+same-scope writer waited for its predecessor, a separate scope progressed, and
+complete groups and their head positions became visible together. Rollback,
+wrong-epoch rejection and the provisional size limit left no gaps or partial
+groups. Anonymous, authenticated and service roles were denied direct access.
 
-Four focused Windows LocalDB scenarios passed. The fixture verified default-off
-behavior and legacy replay, immutable saved cash checkout facts and idempotent
-retry, rejection of unsupported inputs, and rollback of both business and
-journal rows after a failure following evidence insertion. The supported event
-is a plain cash checkout on an active shift. Other tenders and later financial
-actions still need their own typed contracts and verified authoritative apply.
+The owner asked to complete the plan. Extend the preparation with bounded reads
+of whole groups at a fixed upper position, guarded retention and snapshot pins,
+and a private payload-bound operation inbox. An identical waiting operation can
+resume with its original ID after dependencies arrive. A stored disposition must
+be recorded in the transaction that claimed the operation. Keep the active
+cloud contracts out of this slice. Move the preparation outside `supabase/sql`
+because the canonical schema check treats that directory as deployable SQL.
+
+The extended disposable PostgreSQL fixture passed 14 scenarios covering the
+publisher, whole-group reader, snapshot retention fences and inbox. All 28
+canonical schema checks passed after moving the preparation files. An export
+that reads the canonical projection and head together still needs the
+authorized publisher and relay integration.
+
+Keep the prepared SQL outside the deployment migration chain until the scoped
+relay, domain publishers and snapshot cutover can be reviewed together. The
+existing feed, uploader, approval behavior and all installed cursors remain
+active. Rollback for this preparation batch is a source revert. Live database
+application, pilot activation and release retain their separate approval gates.
 
 ## 7 November — two-way POS synchronization rules and prior backup
 
@@ -111,6 +126,28 @@ markers and rejection of an expired position through ODBC. The change uses the
 current SQL Server connection and recovery path. It requires no migration or
 operator setting change. The rollback is a scoped code revert. Cloud feed
 preparation and immutable legacy-row staging proceed separately.
+
+## 7 November — immutable Windows checkout journal preparation
+
+The owner requested completion of the revised two-way sync plan. Begin from
+beta `d39b0333`. Prepare a default-off Windows `SaleCompleted` journal writer
+at the existing checkout aggregate transaction. Capture authorized saved sale,
+item, tender and stock facts with their stable operation and business IDs. Use
+an additive preparation table outside installed migrations. Prove atomic
+commit and rollback, exact replay after local row changes, and default-off
+behavior with an isolated LocalDB fixture. Preserve the deployed uploader,
+legacy pending work, cloud acceptance and operator configuration.
+
+This slice does not enable the new journal on an installed till. Review the
+schema, event contract, cloud ingestion and pilot fence together before any
+activation. Rollback for preparation is a scoped source revert.
+
+Four focused Windows LocalDB scenarios passed. The fixture verified default-off
+behavior and legacy replay, immutable saved cash checkout facts and idempotent
+retry, rejection of unsupported inputs, and rollback of both business and
+journal rows after a failure following evidence insertion. The supported event
+is a plain cash checkout on an active shift. Other tenders and later financial
+actions still need their own typed contracts and verified authoritative apply.
 
 ## 7 November — mixed-version fleet sync and verified held completions
 
