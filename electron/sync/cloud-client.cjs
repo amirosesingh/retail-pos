@@ -17,6 +17,7 @@ const { tagBootstrapDiagnostic } = require("../diagnostics.cjs");
 const {boundedText,rememberGraph} = require("./shift-recovery-exact.cjs");
 const { SyncRequestLane } = require("./request-lane.cjs");
 const { orderSelfReferencingRows } = require("./self-reference-order.cjs");
+const groupedSettings = require("./grouped-store-settings.cjs");
 
 function governanceRequest(payload) {
   if (payload?.sqlServerHeldSaleReview) return true;
@@ -281,6 +282,7 @@ class CloudClient {
     let legacyRecoveryBody;
     let transportStage = "fetch";
     const scopedRead=payload?.sqlServerScopedHistory;
+    const groupedRead = payload?.sqlServerGroupedFeed || payload?.sqlServerGroupedSnapshot;
     const historyRead=HISTORY_INDEX_ACTIONS.has(scopedRead?.action)?scopedRead:payload?.sqlServerHistoryReconcile;
     const historyBegin=historyRead?.action==='begin'?historyRead:null;
     const historyAuthority=historyBegin?this.requestContext(true):null;
@@ -300,7 +302,9 @@ class CloudClient {
           try{await response.body?.cancel();}catch{/* This response cannot advance sync. */}
           throw Object.assign(new Error('The hosted scoped history transport could not be verified.'),{code:'EHISTORY_INDEX_PROTOCOL',table:'change_history'});
         }
-        if(payload?.sqlServerHeldStatus || payload?.sqlServerHeldSaleReview){
+        if (groupedRead) {
+          data = JSON.parse(await boundedText(response, response.ok ? groupedSettings.MAX_RESPONSE_BYTES : 4096));
+        } else if(payload?.sqlServerHeldStatus || payload?.sqlServerHeldSaleReview){
           data=JSON.parse(await boundedText(response,2*1024*1024));
         }else if(historyBegin&&response.status===409&&response.headers.get('X-POS-History-Reconcile-Version')==='2'&&
           response.headers.get('X-POS-History-Reconcile-Kind')==='unavailable'){
@@ -345,6 +349,10 @@ class CloudClient {
       unavailableHistoryPolicies.set(error,{cloud:this,authority:historyAuthority,branchId:historyBegin.branchId,organizationId:historyBegin.organizationId});
       throw error;
     }
+    if (groupedRead && response.status === 409 && groupedSettings.snapshotRequired(data)) {
+      this.assertRequestContext(source, governance, payload);
+      return data;
+    }
     if (!response.ok || data?.ok === false) {
       if([401,403].includes(response.status))managementHistoryScopes.delete(this);
       // PostgREST reports raised SQL errors in `message`, while the POS relay
@@ -361,7 +369,7 @@ class CloudClient {
     this.assertRequestContext(source, governance, payload);
     // Versioned history rows already contain exact JSON/decimal text. Generic
     // entity-key JSON parsing would round its evidence before validation.
-    const normalized=historyRead || payload?.sqlServerHeldSaleReview
+    const normalized=groupedRead || historyRead || payload?.sqlServerHeldSaleReview
       ? data : normalizeSyncPayload(data);
     if (legacyRecoveryBody !== undefined && normalized && typeof normalized === "object")
       legacyRecoveryResponses.set(normalized, legacyRecoveryBody);
@@ -527,6 +535,17 @@ class CloudClient {
         ...(feedContinuation.has(list) ? {continuation:feedContinuation.get(list)} : {}),
       };
     });
+  }
+  pullGroupedSettings(source, { epoch, seq, upper }, limit) {
+    this.assertRequestContext(source, false);
+    const branchId = groupedSettings.operationsScope(source);
+    return this.request({ sqlServerGroupedFeed: { organizationId: "default", branchId,
+      epoch, afterSeq: seq, upperSeq: upper, limit } });
+  }
+  groupedSettingsSnapshot(source) {
+    this.assertRequestContext(source, false);
+    const branchId = groupedSettings.operationsScope(source);
+    return this.request({ sqlServerGroupedSnapshot: { organizationId: "default", branchId } });
   }
   async bootstrapPage({ organizationId = "default", table, branchId, historyDays, cursor, limit, historyWitness=null }) {
     const history=table==='change_history'?require('./history-read-scope.cjs'):null;

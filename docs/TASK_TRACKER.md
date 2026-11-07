@@ -48,6 +48,18 @@ rollback. The legacy uploader remains active. The isolated cash bridge still
 needs a verified relay generation and an exclusive legacy sender handoff before
 any installed device can dispatch this evidence.
 
+The same disposable Windows cash wire was accepted by the isolated PostgreSQL
+checkout bridge, inbox and feed. Its missing shift deferred the operation, and
+its exact replay caused one stock movement. The grouped settings relay and
+snapshot gateway passed the targeted hosted-handler and PostgreSQL scope checks.
+The server gate requires an exact configured pilot project and terminal. LocalDB
+proved atomic row and cursor storage, pending-edit refusal and no echo. A real
+PostgreSQL snapshot and committed settings group also applied on LocalDB while
+leaving the open shift and pending journal intact. A retained divergent settings
+row needs review before snapshot activation. The installed coordinator still
+uses its existing entry points. Hosted relay activation, the financial sender
+handoff and the remaining domain projections are pending.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents

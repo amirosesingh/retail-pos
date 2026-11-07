@@ -244,9 +244,29 @@ try {
   sql("CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;");
   const preparation = await readFile(new URL("./preparation/pos-sync-feed-v1.sql", import.meta.url), "utf8");
   sql(`BEGIN;\n${preparation}\nCOMMIT;`);
-  if (process.argv.includes("--cash-bridge")) {
+  if (process.argv.includes("--cash-bridge") || process.argv.includes("--cash-wire")) {
     const { verifyCashBridge } = await import("./lib/pos-sync-cash-bridge-fixture.mjs");
-    await verifyCashBridge({ sql, denySql });
+    let wire;
+    if (process.argv.includes("--cash-wire")) {
+      const source = execFileSync(process.execPath, [join(root, "scripts/test-pos-sale-outbox-sqlserver.cjs"), "--wire"],
+        { cwd: root, windowsHide: true, encoding: "utf8", timeout: 120_000 });
+      const line = source.split(/\r?\n/).find(value => value.startsWith("POS_CASH_WIRE "));
+      assert(line, "The disposable SQL Server fixture must produce its saved cash wire evidence");
+      wire = JSON.parse(line.slice("POS_CASH_WIRE ".length));
+    }
+    await verifyCashBridge({ sql, denySql, wire });
+  } else if (process.argv.includes("--store-settings") || process.argv.includes("--store-settings-native")) {
+    const { verifyStoreSettingsPilot } = await import("./lib/pos-sync-store-settings-fixture.mjs");
+    const applyNative = process.argv.includes("--store-settings-native") ? evidence => {
+      const output = execFileSync(process.execPath, [join(root, "scripts/test-pos-sync-grouped-sqlserver.cjs"), "--postgres-wire"], {
+        cwd: root, windowsHide: true, encoding: "utf8", input: JSON.stringify(evidence), timeout: 120_000,
+      });
+      console.log(output.trim());
+    } : undefined;
+    await verifyStoreSettingsPilot({ sql, denySql, session, waitFor, applyNative });
+  } else if (process.argv.includes("--grouped-gateway")) {
+    const { verifyGroupedGateway } = await import("./lib/pos-sync-grouped-gateway-fixture.mjs");
+    await verifyGroupedGateway({ sql, denySql });
   } else {
     await verifyFeedFixture();
   }

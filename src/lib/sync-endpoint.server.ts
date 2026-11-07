@@ -1,4 +1,7 @@
+import { createHash } from "node:crypto";
 import { canCrossBranches } from "@/core/api/relay-policy.server";
+import { runtimeEnvValue, supabaseConfig } from "./external-supabase-config";
+import { DEFAULT_POS_RULES } from "./pos-rules";
 import { canRetrieveHistoricalReceipt } from "./receipt-history-permission";
 import { alignVerifiedScopeIds } from "./verified-scope-ids";
 /**
@@ -75,6 +78,160 @@ export type ScopedHistoryRead = z.infer<typeof scopedHistoryReadSchema>;
 const scopedHistoryRequestKeys = new Set([
   "sqlServerScopedHistory", "sessionToken", "cashierToken", "terminalToken", "accessToken", "deviceClaimProof", "deviceBindingProof",
 ]);
+const groupedFeedRequestKeys = new Set([
+  "sqlServerGroupedFeed", "sessionToken", "cashierToken", "terminalToken", "accessToken", "deviceBindingProof",
+]);
+const groupedSnapshotRequestKeys = new Set([
+  "sqlServerGroupedSnapshot", "sessionToken", "cashierToken", "terminalToken", "accessToken", "deviceBindingProof",
+]);
+const feedSequence = z.string().regex(/^(0|[1-9][0-9]{0,18})$/)
+  .refine(value => value.length < 19 || value <= "9223372036854775807");
+const groupedSnapshotReadSchema = z.object({ organizationId: z.literal("default"), branchId: z.string().min(1).max(128) }).strict();
+type GroupedSnapshotRead = z.infer<typeof groupedSnapshotReadSchema>;
+const groupedFeedReadSchema = z.object({
+  organizationId: z.literal("default"), branchId: z.string().min(1).max(128), epoch: z.string().uuid(),
+  afterSeq: feedSequence, upperSeq: feedSequence.nullable().optional(), limit: z.number().int().min(1).max(100),
+}).strict();
+type GroupedFeedRead = z.infer<typeof groupedFeedReadSchema>;
+const groupedSettingsChangeSchema = z.object({
+  table_name: z.literal("pos_store_settings"), entity_id: z.string().min(1).max(1024),
+  row_data: z.record(z.string(), z.unknown()), row_version: feedSequence, tombstone: z.literal(false),
+}).strict();
+const groupedFeedPageSchema = z.object({
+  status: z.literal("OK"), scope_id: z.string(), epoch: z.string().uuid(), next_seq: feedSequence,
+  upper_seq: feedSequence, has_more: z.boolean(), groups: z.array(z.object({
+    seq: feedSequence, operation_id: z.string().uuid().nullable(), changes: z.tuple([groupedSettingsChangeSchema]),
+  }).strict()).max(100),
+}).strict();
+const groupedFeedRecoverySchema = z.object({
+  status: z.literal("SNAPSHOT_REQUIRED"), reason: z.enum(["EPOCH_MISMATCH", "REPLAY_EXPIRED", "FEED_GAP", "GROUP_TOO_LARGE"]),
+}).strict();
+const groupedFeedStatusSchema = z.object({ status: z.enum(["SCOPE_UNAVAILABLE", "INVALID_CURSOR"]) }).strict();
+const groupedSettingsEntitySchema = z.object({ store_id: z.string() }).strict();
+const offsetTimestamp = z.string().regex(/(?:Z|[+-]\d{2}:\d{2})$/).refine(value => Number.isFinite(Date.parse(value)));
+const groupedSnapshotSchema = z.object({
+  status: z.literal("OK"), scope_id: z.string(), epoch: z.string().uuid(), seq: feedSequence,
+  pin_id: z.string().uuid(), expires_at: offsetTimestamp, manifest_json: z.string(),
+  manifest_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict();
+const groupedSnapshotManifestSchema = z.object({
+  scope_id: z.string(), epoch: z.string().uuid(), seq: feedSequence,
+  changes: z.tuple([groupedSettingsChangeSchema]),
+}).strict();
+const groupedSettingsRules = Object.entries(DEFAULT_POS_RULES);
+const groupedSettingsColumnCount = groupedSettingsRules.length + 6;
+const exactSettingDecimal = /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/;
+
+function groupedFeedPilotTerminal(): string | undefined {
+  const project = runtimeEnvValue("POS_GROUPED_FEED_PILOT_PROJECT_URL");
+  const terminal = runtimeEnvValue("POS_GROUPED_FEED_PILOT_TERMINAL_ID");
+  if (!project || !z.string().uuid().safeParse(terminal).success) return undefined;
+  try {
+    const url = new URL(project);
+    return url.protocol === "https:" && url.origin === project && supabaseConfig().url === project ? terminal : undefined;
+  }
+  catch { return undefined; }
+}
+
+const groupedFeedUnavailable = () => Response.json({
+  ok: false, code: "GROUPED_FEED_UNAVAILABLE", error: "The grouped POS feed is unavailable.",
+}, { status: 503, headers: { "cache-control": "no-store" } });
+
+const groupedFeedProtocolError = () => Response.json({
+  ok: false, code: "GROUPED_FEED_PROTOCOL", error: "The grouped POS feed page could not be verified.",
+}, { status: 502, headers: { "cache-control": "no-store" } });
+
+function validGroupedSettings(change: z.infer<typeof groupedSettingsChangeSchema>, branchId: string): boolean {
+  const entity = groupedSettingsEntitySchema.safeParse(JSON.parse(change.entity_id));
+  const row = change.row_data;
+  return entity.success && entity.data.store_id === branchId && row.store_id === branchId &&
+    row.row_version === change.row_version && BigInt(change.row_version) >= 1n && BigInt(change.row_version) <= 2147483647n &&
+    Object.keys(row).length === groupedSettingsColumnCount &&
+    offsetTimestamp.safeParse(row.updated_at).success && (row.created_at === null || offsetTimestamp.safeParse(row.created_at).success) &&
+    (row.updated_by === null || typeof row.updated_by === "string") &&
+    (row.idle_timeout_minutes === null || (typeof row.idle_timeout_minutes === "number" && Number.isSafeInteger(row.idle_timeout_minutes))) &&
+    groupedSettingsRules.every(([key, fallback]) => row[key] === null ||
+      (typeof fallback === "boolean" ? typeof row[key] === "boolean" : typeof row[key] === "string" && exactSettingDecimal.test(row[key])));
+}
+
+async function groupedFeedRpc(name: "pos_sync_pull_grouped_v1" | "pos_sync_snapshot_grouped_v1", read: GroupedSnapshotRead,
+  terminalId: string, binding: string, signal: AbortSignal, args: Record<string, unknown> = {}) {
+  const { serviceRest } = await import("@/core/api/pos-relay.server");
+  const { boundedText } = await import("../../electron/sync/shift-recovery-exact.mjs");
+  if (groupedFeedPilotTerminal() !== terminalId) return groupedFeedUnavailable();
+  let response: Response;
+  try {
+    response = await serviceRest(`rpc/${name}`, {
+      method: "POST", signal, headers: { "Accept-Encoding": "identity" },
+      body: JSON.stringify({
+        p_organization_id: read.organizationId, p_branch_id: read.branchId, p_terminal_id: terminalId,
+        p_binding_proof: binding, ...args,
+      }),
+    });
+  } catch { return groupedFeedUnavailable(); }
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => undefined);
+    return groupedFeedUnavailable();
+  }
+  if (response.status !== 200 || !/^application\/json(?:\s*;|$)/i.test(response.headers.get("content-type") ?? "") ||
+      ![null, "identity"].includes(response.headers.get("content-encoding"))) {
+    await response.body?.cancel().catch(() => undefined);
+    return groupedFeedProtocolError();
+  }
+
+  try {
+    const raw = await boundedText(response, 2 * 1024 * 1024);
+    return { raw, data: JSON.parse(raw) as unknown };
+  } catch { return groupedFeedProtocolError(); }
+}
+
+async function readGroupedFeed(read: GroupedFeedRead, terminalId: string, binding: string, signal: AbortSignal) {
+  const result = await groupedFeedRpc("pos_sync_pull_grouped_v1", read, terminalId, binding, signal, {
+    p_epoch: read.epoch, p_after_seq: read.afterSeq, p_upper_seq: read.upperSeq ?? null, p_limit: read.limit,
+  });
+  if (result instanceof Response) return result;
+  try {
+    const { data, raw } = result;
+    const recovery = groupedFeedRecoverySchema.safeParse(data);
+    if (recovery.success) return Response.json(recovery.data, { status: 409, headers: { "cache-control": "no-store" } });
+    const failure = groupedFeedStatusSchema.safeParse(data);
+    if (failure.success) return failure.data.status === "SCOPE_UNAVAILABLE" ? groupedFeedUnavailable() :
+      Response.json(failure.data, { status: 400, headers: { "cache-control": "no-store" } });
+    const parsed = groupedFeedPageSchema.safeParse(data);
+    if (!parsed.success) return groupedFeedProtocolError();
+    const page = parsed.data;
+    const upper = BigInt(page.upper_seq);
+    let position = BigInt(read.afterSeq);
+    if (page.scope_id !== read.branchId || page.epoch !== read.epoch || page.groups.length > read.limit ||
+        (read.upperSeq != null && page.upper_seq !== read.upperSeq)) return groupedFeedProtocolError();
+    for (const group of page.groups) {
+      position += 1n;
+      if (BigInt(group.seq) !== position || !validGroupedSettings(group.changes[0], read.branchId))
+        return groupedFeedProtocolError();
+    }
+    if (position !== BigInt(page.next_seq) || position > upper || page.has_more !== (position < upper) ||
+        (page.has_more && page.groups.length === 0)) return groupedFeedProtocolError();
+    return new Response(raw, { headers: { "content-type": "application/json", "cache-control": "no-store" } });
+  } catch { return groupedFeedProtocolError(); }
+}
+
+async function readGroupedSnapshot(read: GroupedSnapshotRead, terminalId: string, binding: string, signal: AbortSignal) {
+  const result = await groupedFeedRpc("pos_sync_snapshot_grouped_v1", read, terminalId, binding, signal);
+  if (result instanceof Response) return result;
+  const parsed = groupedSnapshotSchema.safeParse(result.data);
+  if (!parsed.success) return groupedFeedUnavailable();
+  const snapshot = parsed.data;
+  if (snapshot.scope_id !== read.branchId || Date.parse(snapshot.expires_at) <= Date.now() ||
+      new TextEncoder().encode(snapshot.manifest_json).byteLength > 65536 ||
+      createHash("sha256").update(snapshot.manifest_json, "utf8").digest("hex") !== snapshot.manifest_sha256)
+    return groupedFeedProtocolError();
+  try {
+    const manifest = groupedSnapshotManifestSchema.parse(JSON.parse(snapshot.manifest_json));
+    if (manifest.scope_id !== snapshot.scope_id || manifest.epoch !== snapshot.epoch || manifest.seq !== snapshot.seq ||
+        !validGroupedSettings(manifest.changes[0], read.branchId)) return groupedFeedProtocolError();
+    return new Response(result.raw, { headers: { "content-type": "application/json", "cache-control": "no-store" } });
+  } catch { return groupedFeedProtocolError(); }
+}
 
 const bodySchema = z.object({
   sessionToken: z.string().max(400).optional(),
@@ -99,6 +256,8 @@ const bodySchema = z.object({
     })
     .optional(),
   sqlServerAggregate: syncAggregateSchema.optional(),
+  sqlServerGroupedFeed: groupedFeedReadSchema.optional(),
+  sqlServerGroupedSnapshot: groupedSnapshotReadSchema.optional(),
   sqlServerLegacyRecovery: z.object({
     organizationId: z.string().min(1).max(128),
     branchId: z.string().min(1).max(128),
@@ -232,6 +391,10 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     const parsed = JSON.parse(raw);
     if (Object.hasOwn(parsed ?? {}, "sqlServerScopedHistory") && Object.keys(parsed).some(key => !scopedHistoryRequestKeys.has(key)))
       throw new Error("Scoped history requests are exclusive");
+    if (Object.hasOwn(parsed ?? {}, "sqlServerGroupedFeed") && Object.keys(parsed).some(key => !groupedFeedRequestKeys.has(key)))
+      throw new Error("Grouped feed requests are exclusive");
+    if (Object.hasOwn(parsed ?? {}, "sqlServerGroupedSnapshot") && Object.keys(parsed).some(key => !groupedSnapshotRequestKeys.has(key)))
+      throw new Error("Grouped snapshot requests are exclusive");
     body = bodySchema.parse(parsed);
     if (body.sqlServerLegacyRecovery && request.headers.get("x-pos-legacy-recovery") !== "1")
       throw new Error("Missing bounded recovery transport");
@@ -283,6 +446,13 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     return Response.json({ ok: false, error: "Malformed request" }, { status: 400 });
   }
 
+  const groupedRead = body.sqlServerGroupedFeed;
+  const groupedRequest = groupedRead ?? body.sqlServerGroupedSnapshot;
+  const groupedPilotTerminal = groupedRequest ? groupedFeedPilotTerminal() : undefined;
+  if (groupedRequest && !groupedPilotTerminal) return groupedFeedUnavailable();
+  if (groupedRequest && (body.terminalToken !== groupedPilotTerminal || !body.deviceBindingProof))
+    return Response.json({ ok: false, code: "TERMINAL_REQUIRED", error: "A verified pilot Operations terminal is required." }, { status: 403 });
+
   // Every till attaches its raw session token as a bearer. Use it when the
   // body did not carry one, so the header is a first-class proof.
   const bearer = (request.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
@@ -309,6 +479,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     !body.sqlServerCounts &&
     !body.sqlServerHistoryReconcile &&
     !body.sqlServerScopedHistory &&
+    !groupedRequest &&
     !body.sqlServerHeldStatus &&
     !body.sqlServerHeldSaleReview &&
     !body.sqlServerTelemetry &&
@@ -341,7 +512,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
   try {
     const { managementReplicaScope } = await import("./management-replica.server");
     const replicaScope = await managementReplicaScope(body);
-    const caller = replicaScope ? null : await verifyRelayCaller(body);
+    const caller = replicaScope ? null : groupedRequest ? await verifyRelayCaller(body, { strictAvailability: true }) : await verifyRelayCaller(body);
     verifiedTerminal = caller?.terminal;
     if (caller?.storeId) {
       const { branchExists } = await import("./session-verify.server");
@@ -356,7 +527,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
         );
       }
     }
-    scope = replicaScope ?? await resolveRelayScope(caller!);
+    scope = replicaScope ?? (groupedRequest ? await resolveRelayScope(caller!, { strictAvailability: true }) : await resolveRelayScope(caller!));
     // Signed fields retain their exact spelling. Only the existing transport and
     // derived operations may resolve SQL-equivalent scope aliases.
     const signedAuthor = body.sqlServerAggregate?.shiftAuthor;
@@ -377,10 +548,23 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
   } catch (e) {
     if ((e as { status?: number }).status === 503)
       return Response.json({ ok: false, code: "SERVICE_UNAVAILABLE", error: "Registration verification is temporarily unavailable." }, { status: 503 });
+    if (groupedRequest)
+      return Response.json({ ok: false, code: "SESSION_INVALID", error: "The pilot terminal could not be verified." }, { status: 401 });
     return Response.json(
       { ok: false, code: "SESSION_INVALID", error: (e as Error).message },
       { status: 401 },
     );
+  }
+
+  if (groupedRequest) {
+    if (!verifiedTerminal || verifiedTerminal.platform !== "pc" || verifiedTerminal.mode !== "operations" ||
+        verifiedTerminal.id !== groupedPilotTerminal || verifiedTerminal.id !== scope.terminalId ||
+        verifiedTerminal.branchId !== scope.storeId || scope.managementDevice || scope.managementReplica || scope.stale || !body.deviceBindingProof)
+      return Response.json({ ok: false, code: "TERMINAL_REQUIRED", error: "A verified pilot Operations terminal is required." }, { status: 403 });
+    if (groupedRequest.branchId !== verifiedTerminal.branchId)
+      return Response.json({ ok: false, code: "STORE_FORBIDDEN", error: "You can only synchronize your own branch." }, { status: 403 });
+    return groupedRead ? readGroupedFeed(groupedRead, verifiedTerminal.id, body.deviceBindingProof, request.signal) :
+      readGroupedSnapshot(groupedRequest, verifiedTerminal.id, body.deviceBindingProof, request.signal);
   }
 
   if (body.sqlServerScopedHistory) {

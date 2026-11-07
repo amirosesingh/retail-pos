@@ -4,6 +4,7 @@ const { refreshTable } = require("../jobs/bootstrap.cjs");
 const {prepareShiftGraphs,applyShiftGraphs} = require("./shift-graph.cjs");
 const { posFeedFailed, posFeedCompleted } = require("./status-evidence.cjs");
 const {prepareHistoryFeed}=require('./history-feed.cjs');
+const grouped = require("./grouped-store-settings.cjs");
 const SHIFT_GRAPH_TABLES = new Set(["shifts", "shift_cash_counts", "shift_reconciliations",
   "shift_close_events", "shift_notifications", "shift_variance_alerts"]);
 
@@ -44,6 +45,89 @@ class PullWorker {
       });
     }
     return { applied: result?.applied ?? safe.length, alreadyMatching: result?.alreadyMatching ?? 0, conflicts: 0 };
+  }
+  groupedSettingsContext() {
+    const source = this.cloud.requestContext(false);
+    const branch = grouped.operationsScope(source);
+    const table = this.registry.tables.find(table => table.cloudTable === grouped.TABLE && table.sqlServerTable === grouped.TABLE && table.scope === "branch");
+    if (!table || source.pool !== this.connectionManager.pool)
+      throw grouped.fail("The grouped settings projection is unavailable on this database.");
+    return { source, branch, table };
+  }
+  async commitGroupedSettings({ source, branch, table }, position, next, change, snapshot = null) {
+    this.cloud.assertRequestContext(source, false);
+    const sql = this.connectionManager.sql();
+    const transaction = new sql.Transaction(source.pool);
+    await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+    let changed = false;
+    try {
+      const local = await grouped.readLocalRow(transaction, branch, table, change);
+      const current = await grouped.readPosition(transaction.request(), branch, source.fingerprint, true);
+      if (!snapshot && (!current || current.epoch !== position.epoch || current.seq !== position.seq || current.upper !== position.upper))
+        throw grouped.fail("Another grouped settings apply advanced the saved position.", "ESYNC_GROUPED_POSITION_CHANGED");
+      if (snapshot && current?.epoch === next.epoch &&
+          (BigInt(next.seq) < BigInt(current.seq) || (current.upper !== null && BigInt(next.seq) < BigInt(current.upper))))
+        throw grouped.fail("The grouped settings snapshot would regress the saved sequence.");
+
+      await grouped.assertLocalTracking(transaction, branch);
+      const entityId = JSON.stringify({ store_id: branch });
+      const pending = await this.reader.unacknowledged(table, [entityId], transaction, { branchId: branch });
+      if (pending.size) throw grouped.fail("A local settings edit is still pending upload.", "ELOCAL_UPLOAD_PENDING");
+      if (snapshot && local && local.matching !== 1)
+        throw grouped.fail("The retained local settings differ from the snapshot. Review is required before advancing.", "ESYNC_GROUPED_REVIEW_REQUIRED");
+      if (change && local?.matching !== 1) {
+        await this.applyTable(transaction, table, [change], branch, pending);
+        const saved = await grouped.readLocalRow(transaction, branch, table, change);
+        if (saved?.matching !== 1)
+          throw grouped.fail("The native merge did not confirm the grouped settings row.", "ESYNC_GROUPED_REVIEW_REQUIRED");
+        changed = true;
+      }
+      this.cloud.assertRequestContext(source, false);
+      if (snapshot && snapshot.expires <= Date.now()) throw grouped.fail("The grouped settings snapshot pin expired.");
+      await this.checkpoints.save(branch, grouped.CHECKPOINT, "pull",
+        { committed_cursor: JSON.stringify({ source: source.fingerprint, ...next }) }, transaction);
+      this.cloud.assertRequestContext(source, false);
+      await transaction.commit();
+    } catch (error) {
+      await Promise.resolve(transaction.rollback()).catch(() => undefined);
+      throw error;
+    }
+    if (changed) this.publish({ kind: "general", branchId: branch, source: "cloud",
+      tables: [grouped.TABLE], changes: [{ table: grouped.TABLE, entityId: branch }] });
+    return changed;
+  }
+  // Opt-in pilot entry points. The installed coordinator still calls run().
+  async installGroupedSettingsSnapshot() {
+    const context = this.groupedSettingsContext();
+    const { source, branch, table } = context;
+    const snapshot = grouped.snapshotFor(await this.cloud.groupedSettingsSnapshot(source), branch, table);
+    const { epoch, seq, change } = snapshot;
+    const changed = await this.commitGroupedSettings(context, null, { epoch, seq, upper: null }, change, snapshot);
+    return { epoch, seq, changed };
+  }
+  async pullGroupedSettingsPage({ limit = 100 } = {}) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100)
+      throw grouped.fail("The grouped settings page limit must be between 1 and 100.");
+    const context = this.groupedSettingsContext();
+    const { source, branch, table } = context;
+    let position = await grouped.readPosition(source.pool.request(), branch, source.fingerprint);
+    if (!position) return { status: "SNAPSHOT_REQUIRED", reason: "UNINITIALIZED" };
+    const page = await this.cloud.pullGroupedSettings(source, position, limit);
+    if (grouped.snapshotRequired(page)) return page;
+    const groups = grouped.groupsFor(page, branch, table, position, limit);
+    let merged = 0;
+    for (const group of groups) {
+      const next = { epoch: position.epoch, seq: group.seq, upper: group.seq === page.upper_seq ? null : page.upper_seq };
+      try {
+        if (await this.commitGroupedSettings(context, position, next, group.change)) merged++;
+      } catch (error) {
+        if (error?.code === "ELOCAL_UPLOAD_PENDING")
+          return { status: "DEFERRED", reason: error.code, merged, seq: position.seq, hasMore: true };
+        throw error;
+      }
+      position = next;
+    }
+    return { status: "OK", merged, seq: position.seq, hasMore: page.has_more };
   }
   async ensureStoreGroups(batch, branchId) {
     const groupIds = [...new Set(batch.rows

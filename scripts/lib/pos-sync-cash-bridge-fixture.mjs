@@ -4,16 +4,29 @@ import { readFile } from "node:fs/promises";
 
 const read = async relative => (await readFile(new URL(relative, import.meta.url), "utf8")).replaceAll("\r\n", "\n");
 const sqlText = value => `'${value.replaceAll("'", "''")}'`;
-const branch = "A";
 const proof = "a".repeat(64);
-const epoch = randomUUID();
-const terminal = randomUUID();
-const shift = randomUUID();
-const product = randomUUID();
 const at = "2026-11-07T09:00:00Z";
 const serviceClaims = `SET request.jwt.claims = '{"role":"service_role"}';`;
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export async function verifyCashBridge({ sql, denySql }) {
+export async function verifyCashBridge({ sql, denySql, wire }) {
+  const saved = wire ? JSON.parse(wire.checkoutJson) : null;
+  const branch = wire?.scope.branchId ?? "A";
+  const otherBranch = branch === "B" ? "A" : "B";
+  const epoch = wire?.scope.feedEpoch ?? randomUUID();
+  const terminal = wire?.scope.terminalId ?? randomUUID();
+  const shift = saved?.sale.shift_id ?? randomUUID();
+  const product = saved?.item.product_id ?? randomUUID();
+  const productName = saved?.item.product_name ?? "Fixture product";
+  const price = saved?.item.unit_price ?? "3.10";
+  const cost = saved?.item.unit_cost ?? "0";
+  assert([epoch, terminal, shift, product].every(value => uuid.test(value)));
+  if (wire) {
+    assert(uuid.test(wire.operationId) && wire.saleId === saved.sale.id);
+    assert.equal(saved.sale.store_id, branch);
+    assert.equal(saved.tender.terminal_id, terminal);
+  }
+
   const source = await read("../../supabase/schema.sql");
   const definition = name => {
     const begin = source.lastIndexOf(`\nCREATE OR REPLACE FUNCTION public.${name}(`);
@@ -59,12 +72,13 @@ export async function verifyCashBridge({ sql, denySql }) {
 
   const preparation = [await read("../preparation/pos-sync-inbox-v1.sql"), await read("../preparation/pos-sync-cash-bridge-v1.sql")];
   sql(`BEGIN;\n${preparation.join("\n")}\nCOMMIT;`);
-  sql(`INSERT INTO public.stores (id, code, name) VALUES ('${branch}', '${branch}', 'Fixture branch');
+  sql(`INSERT INTO public.stores (id, code, name) VALUES (${sqlText(branch)}, ${sqlText(branch)}, 'Fixture branch');
     INSERT INTO public.terminal_tokens (id, location_id, device_name, is_claimed, claim_proof, claimed_platform)
-    VALUES ('${terminal}', '${branch}', 'Fixture till', true, '${proof}', 'electron');
-    INSERT INTO public.products (id, barcode, name, owner_store_id, selling_price, stock_quantity, stock_by_store)
-    VALUES ('${product}', 'fixture', 'Fixture product', '${branch}', 3.10, 14, '{"A":10,"B":4}');
-    INSERT INTO pos_sync_feed_v1.feed_heads (organization_id, scope_id, epoch) VALUES ('default','${branch}','${epoch}');`);
+    VALUES ('${terminal}', ${sqlText(branch)}, 'Fixture till', true, '${proof}', 'electron');
+    INSERT INTO public.products (id, barcode, name, owner_store_id, selling_price, cost_price, stock_quantity, stock_by_store)
+    VALUES ('${product}', 'fixture', ${sqlText(productName)}, ${sqlText(branch)}, ${sqlText(String(price))}::numeric,
+      ${sqlText(String(cost))}::numeric, 14, ${sqlText(JSON.stringify({ [branch]: 10, [otherBranch]: 4 }))}::jsonb);
+    INSERT INTO pos_sync_feed_v1.feed_heads (organization_id, scope_id, epoch) VALUES ('default',${sqlText(branch)},'${epoch}');`);
 
   const checkout = () => {
     const sale = randomUUID();
@@ -88,26 +102,34 @@ export async function verifyCashBridge({ sql, denySql }) {
   };
   const apply = (operation, payload, overrides = {}) => `SELECT pos_sync_cash_v1.apply_checkout(
     'default', ${sqlText(overrides.branch ?? branch)}, '${terminal}', ${sqlText(overrides.proof ?? proof)},
-    '${operation}', '${overrides.epoch ?? epoch}', ${sqlText(JSON.stringify(payload))}::jsonb);`;
+    '${operation}', '${overrides.epoch ?? epoch}', ${sqlText(overrides.checkoutJson ?? JSON.stringify(payload))}::jsonb);`;
   const counts = () => sql(`SELECT (SELECT count(*) FROM sales), (SELECT count(*) FROM sale_items),
     (SELECT count(*) FROM payment_transactions), (SELECT count(*) FROM item_activity_logs),
     (SELECT count(*) FROM stock_delta_applied), (SELECT head_seq FROM pos_sync_feed_v1.feed_heads),
-    (SELECT stock_by_store->>'A' FROM products), (SELECT stock_by_store->>'B' FROM products);`);
+    (SELECT stock_by_store->>${sqlText(branch)} FROM products), (SELECT stock_by_store->>${sqlText(otherBranch)} FROM products);`);
 
-  const first = checkout();
-  const operation = randomUUID();
-  assert.equal(JSON.parse(sql(serviceClaims + apply(operation, first))).status, "WAITING_DEPENDENCY");
+  const first = saved ?? checkout();
+  const operation = wire?.operationId ?? randomUUID();
+  const firstApply = apply(operation, first, { checkoutJson: wire?.checkoutJson });
+  const remaining = 10 - Number(first.item.quantity);
+  assert.equal(JSON.parse(sql(serviceClaims + firstApply)).status, "WAITING_DEPENDENCY");
   assert.equal(counts(), "0|0|0|0|0|0|10|4");
-  sql(`INSERT INTO public.shifts (id, store_id, terminal_id, status, state) VALUES ('${shift}', '${branch}', '${terminal}', 'OPEN','ACTIVE');`);
-  const applied = JSON.parse(sql(serviceClaims + apply(operation, first)));
+  sql(`INSERT INTO public.shifts (id, store_id, terminal_id, status, state) VALUES ('${shift}', ${sqlText(branch)}, '${terminal}', 'OPEN','ACTIVE');`);
+  const applied = JSON.parse(sql(serviceClaims + firstApply));
   assert.deepEqual(applied, { status: "APPLIED", result: { sale_id: first.sale.id, scope_id: branch, epoch, seq: "1" } });
-  assert.equal(counts(), "1|1|1|1|1|1|9|4");
-  assert.deepEqual(JSON.parse(sql(serviceClaims + apply(operation, first))), { status: "ALREADY_APPLIED", result: applied.result });
-  const feed = JSON.parse(sql(`SELECT pos_sync_feed_v1.pull_groups('default','${branch}','${epoch}','0');`));
+  assert.equal(counts(), `1|1|1|1|1|1|${remaining}|4`);
+  assert.deepEqual(JSON.parse(sql(serviceClaims + firstApply)), { status: "ALREADY_APPLIED", result: applied.result });
+  const feed = JSON.parse(sql(`SELECT pos_sync_feed_v1.pull_groups('default',${sqlText(branch)},'${epoch}','0');`));
   assert.equal(feed.groups.length, 1);
   assert.equal(feed.groups[0].operation_id, operation);
   assert.deepEqual(feed.groups[0].changes.map(entry => entry.type), ["cash_sale", "sale_item", "cash_tender", "stock_delta"]);
-  assert.equal(feed.groups[0].changes[3].row.branch_balance, 9);
+  assert.equal(feed.groups[0].changes[3].row.branch_balance, remaining);
+  if (wire) {
+    assert.equal(feed.groups[0].changes[2].row.id, first.tender.id);
+    assert.equal(counts(), `1|1|1|1|1|1|${remaining}|4`);
+    console.log("PASS exact SQL Server cash outbox to PostgreSQL checkout, inbox and feed with same-operation replay");
+    return;
+  }
   const changed = { ...first, sale: { ...first.sale, created_at: "2026-11-07T09:01:00Z" } };
   assert.equal(JSON.parse(sql(serviceClaims + apply(operation, changed))).status, "INTEGRITY_CONFLICT");
   assert.equal(JSON.parse(sql(serviceClaims + apply(randomUUID(), first))).status, "REVIEW_REQUIRED");
