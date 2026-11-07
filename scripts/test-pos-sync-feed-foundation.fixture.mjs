@@ -35,7 +35,7 @@ const psqlArgs = ["-X", "-qAtw", "-v", "ON_ERROR_STOP=1", "-h", "127.0.0.1", "-p
 const runSql = input => spawnSync(psql, psqlArgs, { ...options, input });
 const sql = input => {
   const { status, stdout, stderr, error } = runSql(input);
-  assert.equal(status, 0, error?.message ?? stderr);
+  assert.equal(status, 0, stderr || error?.message);
   return stdout.replaceAll("\r\n", "\n").trim();
 };
 const denySql = (input, message) => {
@@ -83,12 +83,7 @@ const retireCall = (scope, through, limit = 1000) =>
   `${schema}.retire_groups('fixture-org', ${sqlText(scope)}, '${epoch}', ${sqlText(through)}, ${limit})`;
 const retire = (scope, through, limit) => JSON.parse(sql(`SELECT ${retireCall(scope, through, limit)};`));
 
-try {
-  command("initdb", ["-D", directory, "-A", "trust", "-U", "postgres", "--encoding=UTF8", "--locale=C", "--no-instructions"]);
-  command("pg_ctl", ["-D", directory, "-l", join(directory, "fixture.log"), "-o", `-h 127.0.0.1 -p ${port} -c max_connections=6 -c shared_buffers=32MB -c statement_timeout=15000`, "-w", "start"], { stdio: "ignore" });
-  sql("CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;");
-  const preparation = await readFile(new URL("./preparation/pos-sync-feed-v1.sql", import.meta.url), "utf8");
-  sql(`BEGIN;\n${preparation}\nCOMMIT;`);
+async function verifyFeedFixture() {
   sql(`INSERT INTO ${schema}.feed_heads (organization_id, scope_id, epoch)
        VALUES ('fixture-org', 'A', '${epoch}'), ('fixture-org', 'B', '${epoch}');`);
   assert.equal(state(), "A|0|0\nB|0|0");
@@ -241,6 +236,20 @@ try {
   console.log("PASS 2 isolated PostgreSQL snapshot retention scenarios (active pin and bounded cleanup, rollback and expiry)");
 
   await verifyInboxFoundation({ sql, denySql });
+}
+
+try {
+  command("initdb", ["-D", directory, "-A", "trust", "-U", "postgres", "--encoding=UTF8", "--locale=C", "--no-instructions"]);
+  command("pg_ctl", ["-D", directory, "-l", join(directory, "fixture.log"), "-o", `-h 127.0.0.1 -p ${port} -c max_connections=6 -c shared_buffers=32MB -c statement_timeout=15000`, "-w", "start"], { stdio: "ignore" });
+  sql("CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;");
+  const preparation = await readFile(new URL("./preparation/pos-sync-feed-v1.sql", import.meta.url), "utf8");
+  sql(`BEGIN;\n${preparation}\nCOMMIT;`);
+  if (process.argv.includes("--cash-bridge")) {
+    const { verifyCashBridge } = await import("./lib/pos-sync-cash-bridge-fixture.mjs");
+    await verifyCashBridge({ sql, denySql });
+  } else {
+    await verifyFeedFixture();
+  }
 } finally {
   for (const running of activeSessions) running.child.kill();
   await Promise.all([...activeSessions].map(running => running.finished));
