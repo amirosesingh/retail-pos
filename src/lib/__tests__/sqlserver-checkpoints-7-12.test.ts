@@ -163,7 +163,8 @@ describe("SQL Server checkpoints 7 through 12", () => {
         changedIds: vi.fn().mockResolvedValueOnce([change]).mockResolvedValueOnce([]),
         rows: vi.fn().mockResolvedValue([{ id: "S1", store_id: "B1" }]),
       };
-      const cloud = { pushBatch: vi.fn().mockRejectedValueOnce(new Error("ack lost")).mockResolvedValue({ ok: true, replayed: true }) };
+      const cloud = { pushBatch: vi.fn(async (batch: { batchId: string }) => ({ ok: true, replayed: true, batch_id: batch.batchId }))
+        .mockRejectedValueOnce(new Error("ack lost")) };
       const checkpoints = { get: vi.fn().mockResolvedValue({ change_tracking_version: 3 }), save: vi.fn() };
       const { PushWorker } = await import("../../../electron/sync/push-worker.cjs");
       const worker = new PushWorker({ reader, cloud, checkpoints, registry: { tables: [{ cloudTable: "sales", sqlServerTable: "sales", dependencyOrder: 0, direction: "bidirectional", columns: [{ primaryKey: true }] }] } });
@@ -196,7 +197,7 @@ describe("SQL Server checkpoints 7 through 12", () => {
         ? [{ id: "P1", store_id: null }]
         : changes.map((change: { key: Record<string, string> }) => ({ ...change.key, value: "1" }))),
     };
-    const cloud = { pushBatch: vi.fn().mockResolvedValue({ ok: true }), terminalId: () => "T1" };
+    const cloud = { pushBatch: vi.fn(async (batch: { batchId: string; rows: unknown[]; changes: unknown[] }) => ({ ok: true, batch_id: batch.batchId })), terminalId: () => "T1" };
     const checkpoints = { get: vi.fn().mockResolvedValue(null), save: vi.fn() };
     const { PushWorker } = await import("../../../electron/sync/push-worker.cjs");
     await new PushWorker({ reader, cloud, checkpoints, registry: { tables: [
@@ -273,7 +274,7 @@ describe("SQL Server checkpoints 7 through 12", () => {
       failAggregate: vi.fn(),
       changedIds: vi.fn().mockResolvedValue([]),
     };
-    const cloud = { pushAggregate: vi.fn().mockResolvedValue({ ok: true }), terminalId: vi.fn().mockReturnValue("T1") };
+    const cloud = { pushAggregate: vi.fn(async (batch: { batchId: string; operations: unknown[] }) => ({ ok: true, batch_id: batch.batchId })), terminalId: vi.fn().mockReturnValue("T1") };
     const checkpoints = { get: vi.fn().mockResolvedValue(null), save: vi.fn() };
     const { PushWorker } = await import("../../../electron/sync/push-worker.cjs");
     const worker = new PushWorker({

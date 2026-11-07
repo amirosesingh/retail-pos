@@ -7441,6 +7441,26 @@ Actual snapshot and mounted tests already prove the behavior. The test-only
 correction passed 73 independent related cases, scoped lint and diff checks;
 runtime remains unchanged. Require fresh CI after the corrective test commit.
 
+## 7 November — all-table sync, upload acknowledgement identity
+
+The all-table audit reproduced a journal and Change Tracking upload accepting
+an unrelated successful batch ID. The journal could be acknowledged and the
+checkpoint could advance before the sent operation was confirmed.
+
+This separate beta-based correction binds ordinary acknowledgements to the
+exact submitted batch ID in both upload paths, including the actual aggregate
+ID used when an upload includes parents. Preserve existing receipt replay,
+financial and shift proofs, branch checks, queues and checkpoint boundaries.
+Missing or mismatched acknowledgement IDs leave local work pending. A matching
+ID is necessary but does not resolve a missing source row, an unauthorized
+delete, or unsupported zero-applied behavior. Those findings remain separate.
+No SQL or live database changes are included.
+
+Verified 418 focused tests, 49 sync/event tests and isolated SQL Server and
+PostgreSQL regression suites. Exact matching no-op and replay replies remain
+valid. Missing, mismatched and non-boolean success replies retain local
+progress. TypeScript, scoped lint and diff checks passed.
+
 ## 7 November — approved automatic recovery-metadata implementation
 
 The owner asked whether the guarded automatic upgrade is recommended, then

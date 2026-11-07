@@ -31,6 +31,16 @@ function collapseChanges(changes) {
   return [...latest.values()];
 }
 
+function assertBatchAcknowledgement(acknowledgement, batchId) {
+  if (acknowledgement?.ok === false)
+    throw new Error(acknowledgement?.error ?? "Cloud did not acknowledge the upload.");
+  // A replay may omit the applied count, and a valid versioned no-op may return zero.
+  if (acknowledgement?.ok !== true || recordId(acknowledgement.batch_id) !== recordId(batchId))
+    throw Object.assign(new Error("The cloud did not confirm this upload batch. Saved changes remain pending."), {
+      code: "ESYNC_ACK_UNCONFIRMED",
+    });
+}
+
 const SHIFT_GRAPH_TABLES = new Set(["shifts", "shift_cash_counts", "shift_reconciliations",
   "shift_close_events", "shift_notifications", "shift_variance_alerts"]);
 
@@ -449,8 +459,7 @@ class PushWorker {
         const acknowledged = await this.retry(() =>
           this.cloud.pushAggregate({ batchId, branchId, operations,...(openingSidecar?{shiftFinancialOpening:openingSidecar}:{}),...(financialRequired?{financialLedgerProjection:true}:{}) }),
         );
-        if (!acknowledged?.ok)
-          throw new Error(acknowledged?.error ?? "Cloud did not acknowledge the aggregate.");
+        assertBatchAcknowledgement(acknowledged, batchId);
         assertShiftClosureAcknowledgement(acknowledged, operations, branchId);
         if(financialRequired)await this.reader.acknowledgeFinancialBusinessRows?.({token:financialCoverageToken,operations,batchId,acknowledgement:acknowledged,branchId,terminalId});
         if(financialOpening){if(typeof this.reader.acknowledgeFinancialOpening!=='function')throw Object.assign(new Error('The opening acknowledgement cannot be persisted.'),{code:'EFINANCIAL_HISTORY_UNCONFIRMED',table:'shifts'});await this.reader.acknowledgeFinancialOpening(financialOpening,acknowledged,branchId,terminalId);}
@@ -622,20 +631,20 @@ class PushWorker {
             key: change.key,
           })),
         });
+        const uploadId = withParents ? stableUuid({ branchId, recovery: batchId, operations }) : batchId;
         let acknowledged;
         try {
           acknowledged = await this.retry(() =>
             withParents
-              ? this.cloud.pushAggregate({ batchId: stableUuid({ branchId, recovery: batchId, operations }), branchId, operations })
-              : this.cloud.pushBatch({ batchId, branchId, table: table.cloudTable, changes, rows }),
+              ? this.cloud.pushAggregate({ batchId: uploadId, branchId, operations })
+              : this.cloud.pushBatch({ batchId: uploadId, branchId, table: table.cloudTable, changes, rows }),
           );
         } catch (error) {
           if ((governance.has(table.cloudTable) || requiresSettingsProof) &&
             error?.code === "GOVERNANCE_AUTH_REQUIRED") { deferredTables.add(table.cloudTable); break; }
           throw error;
         }
-        if (!acknowledged?.ok)
-          throw new Error(acknowledged?.error ?? "Cloud did not acknowledge the batch.");
+        assertBatchAcknowledgement(acknowledged, uploadId);
         assertShiftClosureAcknowledgement(acknowledged, operations, branchId);
         const version = Math.max(...changes.map((row) => Number(row.version)));
         await this.checkpoints.save(branchId, table.sqlServerTable, "push", {

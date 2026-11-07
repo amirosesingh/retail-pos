@@ -46,7 +46,7 @@ function pushFixture(rejectCombined=false) {
   const worker=new PushWorker({reader,registry:{tables:[table]},cloud:{pushAggregate:async batch=>{
     calls.push(batch);
     if(rejectCombined && batch.operations[0].rows.length>1)throw Object.assign(new Error("Payload rejected"),{status:413});
-    return {ok:true};
+    return {ok:true,batch_id:batch.batchId};
   }}});
   return {worker,pending,calls,progress};
 }
@@ -81,7 +81,7 @@ test("ambiguous held-order commit replays unchanged data but uses a new receipt 
   },cloud:{pushAggregate:async batch=>{
     const payload=JSON.stringify(batch.operations);calls.push(batch.batchId);
     if(receipts.has(batch.batchId))assert.equal(receipts.get(batch.batchId),payload,"receipt must never identify different data");
-    receipts.set(batch.batchId,payload);return {ok:true};
+    receipts.set(batch.batchId,payload);return {ok:true,batch_id:batch.batchId};
   }}});
   await worker.pushAggregates("B1",100,true);
   await worker.pushAggregates("B1",100,true);
@@ -95,6 +95,49 @@ test("a rejected upload remains pending and produces no completed progress", asy
   const f=pushFixture();f.worker.cloud.pushAggregate=async()=>{throw Object.assign(new Error("Denied"),{status:403});};
   await assert.rejects(f.worker.pushAggregates("B1",100,true,p=>f.progress.push(p)),/Denied/);
   assert.equal(f.pending.size,3);assert.equal(f.progress.length,0);
+});
+
+for (const badReply of [{ok:true}, {ok:true,batch_id:"11111111-1111-4111-8111-111111111111"}, {ok:"true"}]) {
+  test(`an unconfirmed aggregate keeps every journal group until matching replay (${JSON.stringify(badReply)})`, async () => {
+    const f = pushFixture();
+    const upload = f.worker.cloud.pushAggregate;
+    f.worker.cloud.pushAggregate = async batch => {
+      f.calls.push(batch);
+      return badReply.ok === "true" ? {...badReply, batch_id:batch.batchId} : badReply;
+    };
+    assert.equal(await f.worker.pushAggregates("B1", 100, true, p => f.progress.push(p)), 0);
+    assert.equal(f.worker.pushErrors[0]?.code, "ESYNC_ACK_UNCONFIRMED");
+    assert.equal(f.pending.size, 3); assert.deepEqual(f.progress, []);
+    f.worker.cloud.pushAggregate = async batch => ({ ...await upload(batch), replayed: true });
+    assert.equal(await f.worker.pushAggregates("B1", 100, true, p => f.progress.push(p)), 3);
+    assert.equal(f.calls[1].batchId, f.calls[0].batchId);
+    assert.equal(f.pending.size, 0); assert.equal(f.progress[0].completed, 3);
+  });
+}
+
+test("plain Change Tracking saves its checkpoint only after a matching reply, including a versioned no-op", async () => {
+  let saved = 0, confirmed = false;
+  const batchIds = [], progress = [];
+  const worker = new PushWorker({ registry: {tables: [table]}, reader: {
+    pendingAggregates: async () => [],
+    changedIds: async (_table, version) => version ? [] : [{key:{id:"row"}, operation:"U", version:7}],
+    rows: async () => [{id:"row", store_id:"B1"}],
+  }, checkpoints: {
+    get: async () => ({change_tracking_version:saved}),
+    save: async (_branch, _table, _direction, value) => { saved = value.change_tracking_version; },
+  }, cloud: {
+    pushBatch: async ({batchId}) => {
+      batchIds.push(batchId);
+      return confirmed ? {ok:true, batch_id:batchId.toUpperCase(), applied:0} : {ok:true};
+    },
+  }});
+  const run = () => worker.run({branchId:"B1", onProgress:value => progress.push(value)});
+  await assert.rejects(run(), {code:"ESYNC_ACK_UNCONFIRMED", table:"audit_logs"});
+  assert.equal(saved, 0); assert.deepEqual(progress, []);
+  confirmed = true;
+  assert.equal((await run()).pushed, 1);
+  assert.equal(saved, 7); assert.equal(batchIds[1], batchIds[0]);
+  assert.equal(progress[0].completed, 1);
 });
 
 test("a full cloud timeout leaves the batch pending for the scheduler without five blocking attempts", async () => {
@@ -189,7 +232,7 @@ test("completed draft upload carries its saved sale before the draft", async () 
     rows:async()=>[{id:"draft",store_id:"B1",bill_no:"BILL-1",status:"completed"}],
     ticketCompletionParents:async(rows,branch)=>{assert.equal(branch,"B1");assert.equal(rows[0].bill_no,"BILL-1");return [{table:"sales",rows:[{id:"sale",store_id:"B1",bill_number:"BILL-1"}]}];},
     acknowledgeAggregate:async()=>{pending=false;},failAggregate:async()=>{},
-  },cloud:{pushAggregate:async batch=>{sent=batch;return {ok:true};}}});
+  },cloud:{pushAggregate:async batch=>{sent=batch;return {ok:true,batch_id:batch.batchId};}}});
   await worker.pushAggregates("B1",100);
   assert.deepEqual(sent.operations.map(op=>op.table),["sales","held_orders"]);
   assert.equal(pending,false);
@@ -209,7 +252,7 @@ test("completed draft download fetches its missing sale once before applying the
 });
 
 for (const child of ["held_orders", "payment_transactions", "sale_items"]) {
-  for (const rejected of [false, true]) test(`change tracking ${child} carries its sale atomically; rejected=${rejected}`, async () => {
+  for (const outcome of ["accepted", "denied", "mismatched"]) test(`change tracking ${child} carries its sale atomically; ${outcome}`, async () => {
     const tables = [
       {...table, cloudTable:"sales", sqlServerTable:"sales", dependencyOrder:1},
       {...table, cloudTable:child, sqlServerTable:child, dependencyOrder:4},
@@ -224,13 +267,18 @@ for (const child of ["held_orders", "payment_transactions", "sale_items"]) {
       ticketCompletionParents:async()=>[{table:"sales",rows:[sale]}],
     }, checkpoints:{list:async()=>[], save:async()=>{saved++;}}, cloud:{
       pushBatch:async()=>{throw new Error("Dependent recovery must be atomic");},
-      pushAggregate:async(batch)=>{calls.push(batch); if(rejected) throw Object.assign(new Error("Rejected"),{status:400}); return {ok:true};},
+      pushAggregate:async(batch)=>{
+        calls.push(batch);
+        if(outcome==="denied") throw Object.assign(new Error("Rejected"),{status:400});
+        return {ok:true,batch_id:outcome==="mismatched"?"11111111-1111-4111-8111-111111111111":batch.batchId};
+      },
     }});
-    if(rejected) await assert.rejects(worker.run({branchId:"B1"}), /Rejected/);
+    if(outcome==="denied") await assert.rejects(worker.run({branchId:"B1"}), /Rejected/);
+    else if(outcome==="mismatched") await assert.rejects(worker.run({branchId:"B1"}), {code:"ESYNC_ACK_UNCONFIRMED",table:child});
     else await worker.run({branchId:"B1"});
     assert.equal(calls.length,1);
     assert.deepEqual(calls[0].operations.map(op=>op.table),["sales",child]);
-    assert.equal(saved,rejected ? 0 : 1);
+    assert.equal(saved,outcome==="accepted" ? 1 : 0);
   });
 }
 

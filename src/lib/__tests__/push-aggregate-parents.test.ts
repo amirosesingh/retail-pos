@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
+const acknowledge = async ({ batchId }: { batchId: string; operations: { table: string; rows: Record<string, unknown>[] }[] }) =>
+  ({ ok: true, batch_id: batchId });
+
 const tables = [
   { cloudTable: "purchase_orders", sqlServerTable: "purchase_orders", dependencyOrder: 1,
     scope: "branch", columns: [{ cloudColumn: "store_id", sqlServerColumn: "store_id" }] },
@@ -21,7 +24,7 @@ describe("queued receiving aggregate recovery", () => {
         : [{ id: "line", po_id: "order" }]),
       acknowledgeAggregate: vi.fn(), failAggregate: vi.fn(),
     };
-    const cloud = { pushAggregate: vi.fn().mockResolvedValue({ ok: true }), terminalId: () => "T1" };
+    const cloud = { pushAggregate: vi.fn(acknowledge), terminalId: () => "T1" };
     const { PushWorker } = await import("../../../electron/sync/push-worker.cjs");
     await new PushWorker({ reader, cloud, checkpoints: {}, registry: { tables } })
       .pushAggregates("B1", 100);
@@ -53,7 +56,7 @@ describe("queued receiving aggregate recovery", () => {
         : [{ id: "line", po_id: "order" }]),
       acknowledgeAggregate: vi.fn(), failAggregate: vi.fn(),
     };
-    const cloud = { pushAggregate: vi.fn().mockResolvedValue({ ok: true }), terminalId: () => "T1" };
+    const cloud = { pushAggregate: vi.fn(acknowledge), terminalId: () => "T1" };
     const { PushWorker } = await import("../../../electron/sync/push-worker.cjs");
     await new PushWorker({ reader, cloud, checkpoints: {}, registry: { tables } })
       .pushAggregates("B1", 100);
@@ -78,7 +81,7 @@ describe("queued global settings while a cashier is signed in", () => {
       acknowledgeAggregate: vi.fn(), failAggregate: vi.fn(),
     };
     const cloud = { hasAuthorizationProof: () => false,
-      pushAggregate: vi.fn().mockResolvedValue({ ok: true }), terminalId: () => "T1" };
+      pushAggregate: vi.fn(acknowledge), terminalId: () => "T1" };
     const { PushWorker } = await import("../../../electron/sync/push-worker.cjs");
     await new PushWorker({ reader, cloud, checkpoints: {}, registry: { tables: [
       { cloudTable: "pos_settings", sqlServerTable: "pos_settings", dependencyOrder: 1 },
@@ -101,7 +104,7 @@ describe("queued global settings while a cashier is signed in", () => {
       acknowledgeAggregate: vi.fn(), failAggregate: vi.fn(),
     };
     const cloud = { hasAuthorizationProof: () => false,
-      pushAggregate: vi.fn().mockResolvedValue({ ok: true }), terminalId: () => "T1" };
+      pushAggregate: vi.fn(acknowledge), terminalId: () => "T1" };
     const { PushWorker } = await import("../../../electron/sync/push-worker.cjs");
     await new PushWorker({ reader, cloud, checkpoints: {}, registry: { tables: [
       { cloudTable: "settings_scoped", sqlServerTable: "settings_scoped", dependencyOrder: 1 },
@@ -148,7 +151,7 @@ describe.each([
         : [{ id: "child", [foreignKey]: "parent" }]),
       acknowledgeAggregate: vi.fn(), failAggregate: vi.fn(),
     };
-    const cloud = { pushAggregate: vi.fn().mockResolvedValue({ ok: true }), terminalId: () => "T1" };
+    const cloud = { pushAggregate: vi.fn(acknowledge), terminalId: () => "T1" };
     const { PushWorker } = await import("../../../electron/sync/push-worker.cjs");
     await new PushWorker({ reader, cloud, checkpoints: {}, registry: { tables: [
       { cloudTable: parentName, sqlServerTable: parentName, dependencyOrder: 1 },
