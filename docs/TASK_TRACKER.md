@@ -1,3 +1,26 @@
+## 7 November — first two-way sync implementation batch
+
+The owner approved starting the revised two-way sync plan on beta, using agents
+and focused verification while the existing engine remains active. Begin from
+beta `d39b0333`. The full plan and rules are tracked separately in beta PR #445.
+This batch prepares a private PostgreSQL feed foundation for complete change
+groups. A transaction appends once for all affected scopes, locking heads in a
+consistent order and committing head updates with their groups. An isolated
+PostgreSQL fixture must prove visibility, rollback and concurrent ordering, and
+verify that application roles cannot read or publish directly.
+
+The disposable PostgreSQL 18.6 fixture passed all four focused scenarios. A
+same-scope writer waited for its predecessor, a separate scope progressed, and
+complete groups and their head positions became visible together. Rollback,
+wrong-epoch rejection and the provisional size limit left no gaps or partial
+groups. Anonymous, authenticated and service roles were denied direct access.
+
+Keep the prepared SQL outside the deployment migration chain until the scoped
+relay, domain publishers and snapshot cutover can be reviewed together. The
+existing feed, uploader, approval behavior and all installed cursors remain
+active. Rollback for this preparation batch is a source revert. Live database
+application, pilot activation and release retain their separate approval gates.
+
 ## 7 November — scoped history during mixed-client rollout
 
 The owner requested both sync corrections, beta first and then production.
