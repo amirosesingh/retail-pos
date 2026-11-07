@@ -27,7 +27,26 @@ function packageRecoveryMetadata(saved = JSON.parse(fs.readFileSync(manifestPath
     return { ...module, existingValidation: validationSql(reviewed.shape, module.id),
       existsSql: module.selectors.tables.map(name => `OBJECT_ID(${literal("dbo." + name)}) IS NOT NULL`).join(" OR ") };
   });
-  const coreValidation = validationSql(saved.core, "Retail schema24");
+  const membershipStatus = saved.core.columns.find(column =>
+    column.table_name === "members" && column.name === "membership_status");
+  const canonicalDefault = "(N'active')";
+  assert.deepEqual(
+    [membershipStatus?.type_schema, membershipStatus?.type_name, membershipStatus?.max_length,
+      membershipStatus?.nullable, membershipStatus?.default_name, membershipStatus?.default_definition],
+    ["sys", "nvarchar", -1, 0, "DF_members_membership_status", canonicalDefault],
+    "Reviewed membership status column changed",
+  );
+  // The old core installer used the same ASCII value without the Unicode
+  // prefix. Recognize those exact catalogue bytes for recovery checks only.
+  const definitionHashes = [canonicalDefault, "('active')"]
+    .map(definition => "0x" + digest(Buffer.from(definition, "utf16le")));
+  const fingerprintMarker = "DECLARE @fingerprint varchar(64);";
+  const reviewedCore = validationSql(saved.core, "Retail schema24");
+  assert.equal(reviewedCore.split(fingerprintMarker).length, 2, "Reviewed core validation layout changed");
+  const coreValidation = reviewedCore.replace(fingerprintMarker,
+    "INSERT @definitionVariants(category,table_name,name,field,canonical,lf_hash,windows_hash)\n" +
+    " VALUES(N'columns',N'members',N'membership_status',N'default_definition'," +
+    [literal(canonicalDefault), ...definitionHashes].join(",") + ");\n" + fingerprintMarker);
   const coreIdentity = digest(JSON.stringify(saved.core.fingerprints));
   const prefixes = Array.from({ length: 4 }, (_, prefix) => ({ prefix, state: prefix === 0 ? "absent" : prefix === 3 ? "matching" : "prefix",
     schemaFingerprint: digest(JSON.stringify({ format: FORMAT, coreSchemaVersion: 24, coreIdentity,
