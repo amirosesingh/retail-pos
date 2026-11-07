@@ -73,7 +73,7 @@ const pass = text => { count++; console.log(`PASS ${text}`); };
   await assert.rejects(pull.applyTable(null, table, [{ entity_id: entity, row_data: { id: first.requestId, outcome: "conflicting cloud row" } }], branchId), { code: "ELOCAL_UPLOAD_PENDING" }); assert.equal(applied, 0); pass("actual pull barrier cannot overwrite the unacknowledged approval audit");
   const batches = [], accepted = new Set(); let loseAck = true;
   const push = new PushWorker({ reader, registry, cloud: { terminalId: () => "terminal-a", pushAggregate: async body => {
-    batches.push(body); accepted.add(body.batchId); if (loseAck) { loseAck = false; throw Object.assign(Error("Synthetic lost acknowledgement"), { code: "ETIMEDOUT" }); } return { ok: true };
+    batches.push(body); accepted.add(body.batchId); if (loseAck) { loseAck = false; throw Object.assign(Error("Synthetic lost acknowledgement"), { code: "ETIMEDOUT" }); } return { ok: true, batch_id: body.batchId };
   } }, checkpoints: {} });
   await assert.rejects(push.pushAggregates(branchId, 100), { code: "ETIMEDOUT" }); assert((await reader.unacknowledged(table, [entity])).has(entity));
   assert.equal(await push.pushAggregates(branchId, 100), 1); assert.equal(accepted.size, 1); assert.equal(batches.length, 2); assert.equal(batches[0].batchId, batches[1].batchId); assert.equal((await reader.unacknowledged(table, [entity])).size, 0);

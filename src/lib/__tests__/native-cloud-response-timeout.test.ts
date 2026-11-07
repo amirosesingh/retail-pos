@@ -229,7 +229,8 @@ describe("native retry and acknowledgement integration", () => {
     const worker = new PushWorker({ reader, cloud, registry });
     const cause = rejection("TimeoutError");
     const fetch = vi.fn().mockResolvedValueOnce(failedBody(200, cause))
-      .mockImplementation(async () => Response.json({ ok: true }));
+      .mockImplementation(async (_url, init) => Response.json({ ok: true, replayed: true,
+        batch_id: JSON.parse(init.body).sqlServerAggregate.batchId }));
     vi.stubGlobal("fetch", fetch);
     expect(await worker.pushAggregates(branch, 100, true)).toBe(0);
     expect(pendingAggregate).toBe(true);

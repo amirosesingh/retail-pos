@@ -192,7 +192,7 @@ function workerFixture(h: ReturnType<typeof fixture>, confirmation = true) {
       const shiftRows = operations.filter((operation:Row) => operation.table === "shifts").flatMap((operation:Row) => operation.rows);
       for (const row of shiftRows)if(!(cloudRows.get(String(row.id))?.status==="CLOSED"&&row.status==="OPEN"))cloudRows.set(String(row.id), copy(row));
       const parents = shiftRows.filter((row:Row) => row.status === "CLOSED");
-      return { ok: true, ...(confirmation ? { shift_closure_ack_version: request.shiftIntent?3:2,
+      return { ok: true, batch_id: request.batchId, ...(confirmation ? { shift_closure_ack_version: request.shiftIntent?3:2,
         shift_closures: parents.map((row:Row) => ({ id: row.id, store_id: row.store_id, row_version: Number(row.row_version) + 10, requested_row_version: row.row_version,
           ...(request.shiftIntent?{intent_id:request.batchId,intent_hash:require("../../../electron/db/shift-intents.cjs").hashPayload(request.shiftIntent.payloadJson),accepted_token:"a".repeat(64),current_token:"a".repeat(64),superseded:false,coverage:matchingCoverage(h.registry,operations)}:{}) })) } : {}) };
     },

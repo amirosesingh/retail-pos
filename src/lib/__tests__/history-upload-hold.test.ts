@@ -6,7 +6,7 @@ const gap=(table='change_history')=>Object.assign(new Error('fixture expired his
 function fixture(){
  const saved=new Map<string,number>(),pending=vi.fn(async()=>({pending:0,failed:0}));let failure:Error=gap();
  const reader={pendingAggregates:vi.fn(async()=>[]),changedIds:vi.fn(async(table:typeof history,since:number)=>{if(table.cloudTable==='change_history')throw failure;return since?[ ]:[{version:7,operation:'I',key:{id:'one'},entityId:'{"id":"one"}'}];}),rows:vi.fn(async()=>[{id:'one',store_id:'A'}]),pendingSummary:pending};
- const cloud={terminalId:()=> 'T',pushBatch:vi.fn(async()=>({ok:true}))},checkpoints={list:async()=>[...saved].map(([entity_type,change_tracking_version])=>({entity_type,change_tracking_version})),save:vi.fn(async(_branch:string,table:string,_direction:string,patch:{change_tracking_version:number})=>saved.set(table,patch.change_tracking_version))};
+ const cloud={terminalId:()=> 'T',pushBatch:vi.fn(async({batchId}:{batchId:string})=>({ok:true,batch_id:batchId}))},checkpoints={list:async()=>[...saved].map(([entity_type,change_tracking_version])=>({entity_type,change_tracking_version})),save:vi.fn(async(_branch:string,table:string,_direction:string,patch:{change_tracking_version:number})=>saved.set(table,patch.change_tracking_version))};
  const push=new PushWorker({reader,cloud,checkpoints,registry:{tables:[history,logs]}}),pull=vi.fn(async()=>({merged:1}));
  const coordinator=new SyncCoordinator({pushWorker:push,pullWorker:{run:pull}});
  return{reader,cloud,checkpoints,push,pull,coordinator,saved,setFailure:(error:Error)=>failure=error};

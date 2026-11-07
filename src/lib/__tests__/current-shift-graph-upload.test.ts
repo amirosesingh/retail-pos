@@ -8,7 +8,7 @@ const { stableUuid } = require("../../../electron/db/repositories/aggregates.cjs
 const { loadRegistry } = require("../../../electron/db/schema-registry.cjs");
 type Row = Record<string, unknown>;
 type Change = { entity_type: string; entity_id: string; operation: string; key: { id: string } };
-type Acknowledgement = { ok: boolean; shift_closure_ack_version?: number;
+type Acknowledgement = { ok: boolean; batch_id?: string; shift_closure_ack_version?: number;
   shift_closures?: { id: unknown; store_id: unknown; row_version: number; requested_row_version: unknown }[] };
 const branch = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const foreign = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -85,7 +85,7 @@ function fixture() {
   const uploads: { batchId: string; operations: { table: string; rows: Row[]; changes: Change[]; dependencyOrder: number; deletePhase: boolean }[] }[] = [];
   const cloud = { pushAggregate: vi.fn(async (packet: typeof uploads[number]): Promise<Acknowledgement> => {
     uploads.push(clone(packet));
-    return { ok: true, shift_closure_ack_version: 2, shift_closures: packet.operations.filter(op => op.table === "shifts").flatMap(op => op.rows)
+    return { ok: true, batch_id: packet.batchId, shift_closure_ack_version: 2, shift_closures: packet.operations.filter(op => op.table === "shifts").flatMap(op => op.rows)
       .filter(row => row.status === "CLOSED").map(row => ({ id: row.id, store_id: row.store_id, row_version: 2, requested_row_version: row.row_version })) };
   }) };
   return { data, registry, reader, events, queries, faults, groups, acknowledged, failed, recount, uploads, cloud,
@@ -147,7 +147,7 @@ describe("shift upload binding before receipt hashing", () => {
       f.uploads.push(clone(packet));
       if (f.uploads.length > 1) throw Object.assign(new Error("isolated next group failure"), { status: 422 });
       const parent = packet.operations.find(op => op.table === "shifts")!.rows[0];
-      return { ok: true, shift_closure_ack_version: 2, shift_closures: [{ id: parent.id, store_id: branch, row_version: 2, requested_row_version: Number(parent.row_version) }] };
+      return { ok: true, batch_id: packet.batchId, shift_closure_ack_version: 2, shift_closures: [{ id: parent.id, store_id: branch, row_version: 2, requested_row_version: Number(parent.row_version) }] };
     });
     await expect(f.worker().pushAggregates(branch, 1, false)).rejects.toThrow("next group failure");
     const sent = f.uploads[0].operations;
@@ -183,7 +183,7 @@ describe("shift upload binding before receipt hashing", () => {
     const f = fixture();
     if (mode === "missing capability") f.reader.closedShiftGraphs = undefined;
     if (mode === "capture failure") { f.faults.table = "shift_close_events"; f.faults.error = new Error("isolated graph failure"); }
-    if (mode === "missing proof") f.cloud.pushAggregate.mockResolvedValue({ ok: true });
+    if (mode === "missing proof") f.cloud.pushAggregate.mockImplementation(async packet => ({ ok: true, batch_id: packet.batchId }));
     expect(await f.worker().pushAggregates(branch, 1, true)).toBe(0);
     expect(f.acknowledged).toEqual([]); expect(f.failed).toHaveLength(1);
     if (mode !== "missing proof") expect(f.cloud.pushAggregate).not.toHaveBeenCalled();
@@ -265,7 +265,7 @@ describe("shift upload binding before receipt hashing", () => {
     f.reader.changedIds = vi.fn(async (table: { cloudTable: string }) => table.cloudTable === "sales" && !version ? changes : []);
     const checkpoints = { list: vi.fn(async () => [{ entity_type: "sales", change_tracking_version: version }]),
       save: vi.fn(async (_branch: string, _table: string, _direction: string, patch: { change_tracking_version: number }) => { version = patch.change_tracking_version; }) };
-    const pushBatch = vi.fn(async () => ({ ok: true }));
+    const pushBatch = vi.fn(async ({ batchId }: { batchId: string }) => ({ ok: true, batch_id: batchId }));
     const snapshot = vi.spyOn(f.reader, "closedShiftGraphs");
     await new PushWorker({ reader: f.reader, cloud: { ...f.cloud, pushBatch }, checkpoints, registry: f.registry }).run({ branchId: branch });
     expect(pushBatch).toHaveBeenCalledExactlyOnceWith({ branchId: branch, table: "sales", changes, rows: [sale],
