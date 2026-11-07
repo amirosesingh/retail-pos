@@ -198,7 +198,13 @@ class SaleEventOutbox {
     if (checkout?.sale?.id !== recordId(row.sale_id) || checkout.sale.shift_id !== recordId(row.shift_id) ||
         recordId(checkout.sale.branch_id) !== scope.branchId || checkout.tender?.terminal_id !== scope.terminalId ||
         checkout.movement?.terminal_id !== scope.terminalId) refuseCashBridge();
-    return { operationId: event.operationId, saleId: checkout.sale.id, checkoutJson: event.bridge.checkoutJson, scope };
+    return {
+      operationId: event.operationId,
+      saleId: checkout.sale.id,
+      checkoutJson: event.bridge.checkoutJson,
+      checkoutSha256: payloadHash(event.bridge.checkoutJson),
+      scope,
+    };
   }
 }
 

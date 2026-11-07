@@ -111,6 +111,22 @@ generations, payload drift and exact replay without a second inventory
 effect. Existing routes remain in service until both legacy write paths
 can be fenced and reconciled in the authoritative transaction.
 
+Five focused LocalDB outbox cases passed. Both disposable PostgreSQL cash
+fixtures passed with the bound receipt, including the exact checkout bytes
+and digest produced by Windows. Missing enrollment, a stale generation,
+the wrong database and altered bytes are refused. A wrong epoch cannot
+record a waiting receipt. Exact replay returns the stored acceptance with
+one stock movement.
+
+Remaining integration needs one verified handoff covering the journal and
+Change Tracking fallback writes, a canonical financial projection that can
+be applied as one group on the receiving till, and authorized setup for two
+distinct terminal enrollments. The current settings reader accepts settings
+groups only. Cash evidence in the same stream would stop that cursor, so
+do not enroll both publishers until the receiver supports the complete
+financial group. Reconcile the pending sale and open shift on both sides
+before allowing handback. The connected Supabase project is production-linked.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents

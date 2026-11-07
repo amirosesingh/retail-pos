@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 const read = async relative => (await readFile(new URL(relative, import.meta.url), "utf8")).replaceAll("\r\n", "\n");
 const sqlText = value => `'${value.replaceAll("'", "''")}'`;
+const digest = value => createHash("sha256").update(value, "utf8").digest("hex");
 const proof = "a".repeat(64);
 const at = "2026-11-07T09:00:00Z";
 const serviceClaims = `SET request.jwt.claims = '{"role":"service_role"}';`;
@@ -15,12 +16,14 @@ export async function verifyCashBridge({ sql, denySql, wire }) {
   const otherBranch = branch === "B" ? "A" : "B";
   const epoch = wire?.scope.feedEpoch ?? randomUUID();
   const terminal = wire?.scope.terminalId ?? randomUUID();
+  const installationGeneration = wire?.scope.installationGeneration ?? randomUUID();
+  const databaseGuid = wire?.scope.databaseGuid ?? randomUUID();
   const shift = saved?.sale.shift_id ?? randomUUID();
   const product = saved?.item.product_id ?? randomUUID();
-  const productName = saved?.item.product_name ?? "Fixture product";
+  const productName = saved?.item.product_name ?? "Fixture café";
   const price = saved?.item.unit_price ?? "3.10";
   const cost = saved?.item.unit_cost ?? "0";
-  assert([epoch, terminal, shift, product].every(value => uuid.test(value)));
+  assert([epoch, terminal, installationGeneration, databaseGuid, shift, product].every(value => uuid.test(value)));
   if (wire) {
     assert(uuid.test(wire.operationId) && wire.saleId === saved.sale.id);
     assert.equal(saved.sale.store_id, branch);
@@ -90,7 +93,7 @@ export async function verifyCashBridge({ sql, denySql, wire }) {
         points_earned: 0, points_redeemed: 0, is_exchange: false, is_refunded: false, created_at: at, paid_amount: "3.10",
         change_amount: 0, exchange_credit: 0, coupon_discount: 0, payments: [{ id: tender, method: "cash", amount: "3.10" }],
         rounding_adjustment: 0, row_version: 1 },
-      item: { id: randomUUID(), sale_id: sale, product_id: product, product_name: "Fixture product", branch_id: branch,
+      item: { id: randomUUID(), sale_id: sale, product_id: product, product_name: productName, branch_id: branch,
         unit_price: "3.10", quantity: 1, discount_percent: 0, discount_amount: 0, is_return: false, created_at: at,
         tax_rate: 0, is_foc: false, coupon_discount: 0, unit_cost: 0, row_version: 1, refunded_qty: 0 },
       tender: { id: tender, source_type: "sale", sale_id: sale, store_id: branch, shift_id: shift, terminal_id: terminal,
@@ -100,9 +103,14 @@ export async function verifyCashBridge({ sql, denySql, wire }) {
         activity_type: "sale", reference: bill, quantity_delta: -1, unit_cost: 0, note: "", created_at: at, row_version: 1 },
     };
   };
-  const apply = (operation, payload, overrides = {}) => `SELECT pos_sync_cash_v1.apply_checkout(
-    'default', ${sqlText(overrides.branch ?? branch)}, '${terminal}', ${sqlText(overrides.proof ?? proof)},
-    '${operation}', '${overrides.epoch ?? epoch}', ${sqlText(overrides.checkoutJson ?? JSON.stringify(payload))}::jsonb);`;
+  const apply = (operation, payload, overrides = {}) => {
+    const checkoutJson = overrides.checkoutJson ?? JSON.stringify(payload);
+    return `SELECT pos_sync_cash_v1.apply_checkout(
+      'default', ${sqlText(overrides.branch ?? branch)}, '${terminal}', ${sqlText(overrides.proof ?? proof)},
+      '${overrides.installationGeneration ?? installationGeneration}', '${overrides.databaseGuid ?? databaseGuid}',
+      '${operation}', '${overrides.epoch ?? epoch}', ${sqlText(checkoutJson)},
+      '${overrides.checkoutSha256 ?? digest(checkoutJson)}');`;
+  };
   const counts = () => sql(`SELECT (SELECT count(*) FROM sales), (SELECT count(*) FROM sale_items),
     (SELECT count(*) FROM payment_transactions), (SELECT count(*) FROM item_activity_logs),
     (SELECT count(*) FROM stock_delta_applied), (SELECT head_seq FROM pos_sync_feed_v1.feed_heads),
@@ -110,24 +118,53 @@ export async function verifyCashBridge({ sql, denySql, wire }) {
 
   const first = saved ?? checkout();
   const operation = wire?.operationId ?? randomUUID();
-  const firstApply = apply(operation, first, { checkoutJson: wire?.checkoutJson });
+  const checkoutJson = wire?.checkoutJson ?? JSON.stringify(first);
+  if (wire) assert.equal(wire.checkoutSha256, digest(checkoutJson));
+  const checkoutSha256 = wire?.checkoutSha256 ?? digest(checkoutJson);
+  const firstApply = apply(operation, first, { checkoutJson, checkoutSha256 });
+  const differentBytes = ` ${checkoutJson}\n`;
   const remaining = 10 - Number(first.item.quantity);
+  denySql(serviceClaims + firstApply, /POS_CASH_V1_INSTALLATION_FORBIDDEN/);
+  sql(`INSERT INTO pos_sync_cash_v1.installation_enrollments
+    (organization_id, terminal_id, branch_id, installation_generation, database_guid)
+    VALUES ('default', '${terminal}', ${sqlText(branch)}, '${installationGeneration}', '${databaseGuid}');`);
+  denySql(serviceClaims + apply(operation, first, { checkoutJson, installationGeneration: randomUUID() }), /POS_CASH_V1_INSTALLATION_FORBIDDEN/);
+  denySql(serviceClaims + apply(operation, first, { checkoutJson, databaseGuid: randomUUID() }), /POS_CASH_V1_INSTALLATION_FORBIDDEN/);
+  denySql(serviceClaims + apply(operation, first, { checkoutJson: differentBytes, checkoutSha256 }), /POS_CASH_V1_CHECKOUT_DIGEST_MISMATCH/);
+  denySql(serviceClaims + apply(operation, first, { checkoutJson, epoch: randomUUID() }), /POS_FEED_V1_SCOPE_OR_EPOCH_MISMATCH/);
+  assert.equal(sql(`SELECT count(*) FROM pos_sync_inbox_v1.operation_receipts;`), "0");
   assert.equal(JSON.parse(sql(serviceClaims + firstApply)).status, "WAITING_DEPENDENCY");
+  assert.equal(sql(`SELECT origin_installation_id FROM pos_sync_inbox_v1.operation_receipts WHERE operation_id = '${operation}';`), installationGeneration);
+  assert.deepEqual(JSON.parse(sql(serviceClaims + apply(operation, first, { checkoutJson: differentBytes }))), { status: "INTEGRITY_CONFLICT" });
   assert.equal(counts(), "0|0|0|0|0|0|10|4");
   sql(`INSERT INTO public.shifts (id, store_id, terminal_id, status, state) VALUES ('${shift}', ${sqlText(branch)}, '${terminal}', 'OPEN','ACTIVE');`);
   const applied = JSON.parse(sql(serviceClaims + firstApply));
-  assert.deepEqual(applied, { status: "APPLIED", result: { sale_id: first.sale.id, scope_id: branch, epoch, seq: "1" } });
+  assert.deepEqual(applied, { status: "APPLIED", result: { sale_id: first.sale.id, scope_id: branch, epoch, seq: "1",
+    operation_id: operation, terminal_id: terminal, installation_generation: installationGeneration,
+    database_guid: databaseGuid, checkout_sha256: checkoutSha256 } });
   assert.equal(counts(), `1|1|1|1|1|1|${remaining}|4`);
   assert.deepEqual(JSON.parse(sql(serviceClaims + firstApply)), { status: "ALREADY_APPLIED", result: applied.result });
+  assert.deepEqual(JSON.parse(sql(serviceClaims + apply(operation, first, { checkoutJson: differentBytes }))), { status: "INTEGRITY_CONFLICT" });
+  assert.deepEqual(JSON.parse(sql(serviceClaims + apply(operation, first, { checkoutJson, epoch: randomUUID() }))), { status: "INTEGRITY_CONFLICT" });
   const feed = JSON.parse(sql(`SELECT pos_sync_feed_v1.pull_groups('default',${sqlText(branch)},'${epoch}','0');`));
   assert.equal(feed.groups.length, 1);
   assert.equal(feed.groups[0].operation_id, operation);
   assert.deepEqual(feed.groups[0].changes.map(entry => entry.type), ["cash_sale", "sale_item", "cash_tender", "stock_delta"]);
   assert.equal(feed.groups[0].changes[3].row.branch_balance, remaining);
+
+  const verifyReenrollment = () => {
+    const nextGeneration = randomUUID();
+    sql(`UPDATE pos_sync_cash_v1.installation_enrollments SET installation_generation = '${nextGeneration}'
+      WHERE organization_id = 'default' AND terminal_id = '${terminal}';`);
+    denySql(serviceClaims + firstApply, /POS_CASH_V1_INSTALLATION_FORBIDDEN/);
+    assert.deepEqual(JSON.parse(sql(serviceClaims + apply(operation, first, { checkoutJson, installationGeneration: nextGeneration }))),
+      { status: "INTEGRITY_CONFLICT" });
+    assert.equal(counts(), `1|1|1|1|1|1|${remaining}|4`);
+  };
   if (wire) {
     assert.equal(feed.groups[0].changes[2].row.id, first.tender.id);
-    assert.equal(counts(), `1|1|1|1|1|1|${remaining}|4`);
-    console.log("PASS exact SQL Server cash outbox to PostgreSQL checkout, inbox and feed with same-operation replay");
+    verifyReenrollment();
+    console.log("PASS exact SQL Server cash outbox to PostgreSQL checkout, generation-bound receipt and single-effect replay");
     return;
   }
   const changed = { ...first, sale: { ...first.sale, created_at: "2026-11-07T09:01:00Z" } };
@@ -139,12 +176,15 @@ export async function verifyCashBridge({ sql, denySql, wire }) {
   const nextOperation = randomUUID();
   const extraSaleField = { ...next, sale: { ...next.sale, created_by: "unsupported" } };
   const extraPaymentField = { ...next, sale: { ...next.sale, payments: [{ ...next.sale.payments[0], reference: "unsupported" }] } };
+  denySql(serviceClaims + apply(nextOperation, next, { checkoutJson: "{" }), /POS_CASH_V1_INVALID_CHECKOUT/);
   denySql(serviceClaims + apply(nextOperation, extraSaleField), /POS_CASH_V1_INVALID_CHECKOUT/);
   denySql(serviceClaims + apply(nextOperation, extraPaymentField), /POS_CASH_V1_INVALID_CHECKOUT/);
   denySql(serviceClaims + apply(nextOperation, next, { proof: "b".repeat(64) }), /POS_CASH_V1_SCOPE_FORBIDDEN/);
   denySql(serviceClaims + apply(nextOperation, next, { branch: "B" }), /SYNC_TERMINAL_SCOPE_FORBIDDEN/);
-  for (const role of ["anon", "authenticated", "service_role"])
+  for (const role of ["anon", "authenticated", "service_role"]) {
     denySql(`SET ROLE ${role}; ${serviceClaims}${apply(nextOperation, next)}`, /permission denied/);
+    denySql(`SET ROLE ${role}; SELECT * FROM pos_sync_cash_v1.installation_enrollments;`, /permission denied/);
+  }
   denySql(serviceClaims + apply(nextOperation, next, { epoch: randomUUID() }), /POS_FEED_V1_SCOPE_OR_EPOCH_MISMATCH/);
   assert.equal(counts(), "1|1|1|1|1|1|9|4");
   assert.equal(sql(`SELECT count(*) FROM pos_sync_inbox_v1.operation_receipts WHERE operation_id='${nextOperation}';`), "0");
@@ -154,5 +194,6 @@ export async function verifyCashBridge({ sql, denySql, wire }) {
     INSERT INTO fin62_history_preparation.streams VALUES ('${shift}');`);
   denySql(serviceClaims + apply(nextOperation, next), /POS_CASH_V1_PROTECTED_SHIFT/);
   assert.equal(counts(), "1|1|1|1|1|1|9|4");
-  console.log("PASS isolated authoritative cash bridge (dependency, single inventory delta, repeat acknowledgement, scope and atomic rollback)");
+  verifyReenrollment();
+  console.log("PASS isolated authoritative cash bridge (enrollment, exact digest, dependency, replay, single inventory delta and atomic rollback)");
 }

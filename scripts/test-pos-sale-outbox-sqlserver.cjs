@@ -138,6 +138,7 @@ async function main() {
     const wire = await bridgeStore.readBridgeCheckout(bridgeSale.operationId);
     assert.equal(wire.operationId, bridgeSale.operationId);
     assert.equal(wire.saleId, bridgeSale.saleId);
+    assert.equal(wire.checkoutSha256, createHash("sha256").update(wire.checkoutJson).digest("hex"));
     assert.deepEqual(wire.scope, cashBridge);
     const checkoutPayload = JSON.parse(wire.checkoutJson);
     assert.deepEqual(Object.keys(checkoutPayload), ["sale", "item", "tender", "movement"]);

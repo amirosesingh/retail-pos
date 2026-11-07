@@ -6,9 +6,24 @@
 CREATE SCHEMA pos_sync_cash_v1;
 REVOKE ALL ON SCHEMA pos_sync_cash_v1 FROM PUBLIC, anon, authenticated, service_role;
 
+-- The owner provisions one current source per terminal before any checkout.
+-- Replacing or deleting this row waits for admitted checkouts to finish.
+CREATE TABLE pos_sync_cash_v1.installation_enrollments (
+  organization_id text COLLATE "C" NOT NULL,
+  terminal_id uuid NOT NULL,
+  branch_id text COLLATE "C" NOT NULL,
+  installation_generation uuid NOT NULL,
+  database_guid uuid NOT NULL,
+  PRIMARY KEY (organization_id, terminal_id)
+);
+
+ALTER TABLE pos_sync_cash_v1.installation_enrollments ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE pos_sync_cash_v1.installation_enrollments FROM PUBLIC, anon, authenticated, service_role;
+
 CREATE FUNCTION pos_sync_cash_v1.apply_checkout(
   p_organization_id text, p_branch_id text, p_terminal_id uuid, p_binding_proof text,
-  p_operation_id uuid, p_epoch uuid, p_checkout jsonb
+  p_installation_generation uuid, p_database_guid uuid, p_operation_id uuid, p_epoch uuid,
+  p_checkout_json text, p_checkout_sha256 text
 )
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -16,6 +31,10 @@ SECURITY INVOKER
 SET search_path = pg_catalog
 AS $checkout$
 DECLARE
+  v_installation_generation uuid;
+  v_checkout_utf8 bytea;
+  v_checkout_sha256 text;
+  v_checkout jsonb;
   v_sale public.sales%ROWTYPE;
   v_item public.sale_items%ROWTYPE;
   v_tender public.payment_transactions%ROWTYPE;
@@ -46,32 +65,56 @@ BEGIN
     RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'POS_CASH_V1_SCOPE_FORBIDDEN';
   END IF;
 
-  IF p_operation_id IS NULL OR p_epoch IS NULL OR jsonb_typeof(p_checkout) IS DISTINCT FROM 'object'
-     OR octet_length(p_checkout::text) > 524288
-     OR p_checkout - ARRAY['sale', 'item', 'tender', 'movement'] <> '{}'::jsonb
-     OR jsonb_typeof(p_checkout->'sale') IS DISTINCT FROM 'object'
-     OR jsonb_typeof(p_checkout->'item') IS DISTINCT FROM 'object'
-     OR jsonb_typeof(p_checkout->'tender') IS DISTINCT FROM 'object'
-     OR jsonb_typeof(p_checkout->'movement') IS DISTINCT FROM 'object' THEN
+  SELECT enrollment.installation_generation INTO v_installation_generation
+  FROM pos_sync_cash_v1.installation_enrollments AS enrollment
+  WHERE enrollment.organization_id = p_organization_id AND enrollment.terminal_id = p_terminal_id
+    AND enrollment.branch_id = p_branch_id AND enrollment.installation_generation = p_installation_generation
+    AND enrollment.database_guid = p_database_guid
+  FOR SHARE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'POS_CASH_V1_INSTALLATION_FORBIDDEN';
+  END IF;
+
+  v_checkout_utf8 := convert_to(p_checkout_json, 'UTF8');
+  IF p_operation_id IS NULL OR p_epoch IS NULL OR v_checkout_utf8 IS NULL
+     OR octet_length(v_checkout_utf8) > 524288
+     OR p_checkout_sha256 IS NULL OR p_checkout_sha256 !~ '^[a-f0-9]{64}$' THEN
     RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'POS_CASH_V1_INVALID_CHECKOUT';
   END IF;
-  IF (p_checkout->'sale') - ARRAY['id', 'bill_number', 'client_transaction_id', 'store_id', 'branch_id', 'shift_id',
+  v_checkout_sha256 := encode(sha256(v_checkout_utf8), 'hex');
+  IF v_checkout_sha256 <> p_checkout_sha256 THEN
+    RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'POS_CASH_V1_CHECKOUT_DIGEST_MISMATCH';
+  END IF;
+  BEGIN
+    v_checkout := p_checkout_json::jsonb;
+  EXCEPTION WHEN invalid_text_representation THEN
+    RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'POS_CASH_V1_INVALID_CHECKOUT';
+  END;
+  IF jsonb_typeof(v_checkout) IS DISTINCT FROM 'object' OR octet_length(v_checkout::text) > 524288
+     OR v_checkout - ARRAY['sale', 'item', 'tender', 'movement'] <> '{}'::jsonb
+     OR jsonb_typeof(v_checkout->'sale') IS DISTINCT FROM 'object'
+     OR jsonb_typeof(v_checkout->'item') IS DISTINCT FROM 'object'
+     OR jsonb_typeof(v_checkout->'tender') IS DISTINCT FROM 'object'
+     OR jsonb_typeof(v_checkout->'movement') IS DISTINCT FROM 'object' THEN
+    RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'POS_CASH_V1_INVALID_CHECKOUT';
+  END IF;
+  IF (v_checkout->'sale') - ARRAY['id', 'bill_number', 'client_transaction_id', 'store_id', 'branch_id', 'shift_id',
        'subtotal_amount', 'total_amount', 'discount_amount', 'tax_amount', 'payment_type', 'payments',
        'points_earned', 'points_redeemed', 'is_exchange', 'is_refunded', 'created_at', 'paid_amount',
        'change_amount', 'exchange_credit', 'coupon_discount', 'rounding_adjustment', 'row_version'] <> '{}'::jsonb
-     OR (p_checkout->'item') - ARRAY['id', 'sale_id', 'branch_id', 'product_id', 'product_name', 'quantity', 'unit_price',
+     OR (v_checkout->'item') - ARRAY['id', 'sale_id', 'branch_id', 'product_id', 'product_name', 'quantity', 'unit_price',
        'discount_percent', 'discount_amount', 'tax_rate', 'is_return', 'is_foc', 'created_at', 'coupon_discount',
        'unit_cost', 'row_version', 'refunded_qty'] <> '{}'::jsonb
-     OR (p_checkout->'tender') - ARRAY['id', 'source_type', 'sale_id', 'store_id', 'shift_id', 'terminal_id', 'amount',
+     OR (v_checkout->'tender') - ARRAY['id', 'source_type', 'sale_id', 'store_id', 'shift_id', 'terminal_id', 'amount',
        'method', 'kind', 'note', 'paid_at', 'created_at', 'updated_at', 'row_version', 'status', 'metadata'] <> '{}'::jsonb
-     OR (p_checkout->'movement') - ARRAY['id', 'product_id', 'store_id', 'terminal_id', 'activity_type', 'reference',
+     OR (v_checkout->'movement') - ARRAY['id', 'product_id', 'store_id', 'terminal_id', 'activity_type', 'reference',
        'quantity_delta', 'unit_cost', 'note', 'created_at', 'row_version'] <> '{}'::jsonb THEN
     RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'POS_CASH_V1_INVALID_CHECKOUT';
   END IF;
-  v_sale := jsonb_populate_record(NULL::public.sales, p_checkout->'sale');
-  v_item := jsonb_populate_record(NULL::public.sale_items, p_checkout->'item');
-  v_tender := jsonb_populate_record(NULL::public.payment_transactions, p_checkout->'tender');
-  v_movement := jsonb_populate_record(NULL::public.item_activity_logs, p_checkout->'movement');
+  v_sale := jsonb_populate_record(NULL::public.sales, v_checkout->'sale');
+  v_item := jsonb_populate_record(NULL::public.sale_items, v_checkout->'item');
+  v_tender := jsonb_populate_record(NULL::public.payment_transactions, v_checkout->'tender');
+  v_movement := jsonb_populate_record(NULL::public.item_activity_logs, v_checkout->'movement');
 
   IF v_sale.id IS NULL OR v_item.id IS NULL OR v_tender.id IS NULL OR v_movement.id IS NULL
      OR ROW(v_sale.row_version, v_item.row_version, v_tender.row_version, v_movement.row_version)
@@ -116,11 +159,20 @@ BEGIN
     RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'POS_CASH_V1_INVALID_CHECKOUT';
   END IF;
 
-  v_claim := pos_sync_inbox_v1.claim_operation(p_organization_id, p_operation_id, p_terminal_id, p_checkout);
+  v_claim := pos_sync_inbox_v1.claim_operation(p_organization_id, p_operation_id, v_installation_generation,
+    jsonb_build_object('scope_id', p_branch_id, 'terminal_id', p_terminal_id, 'database_guid', p_database_guid,
+      'epoch', p_epoch, 'checkout_sha256', v_checkout_sha256));
   IF v_claim->>'status' <> 'PROCEED' THEN RETURN v_claim; END IF;
 
   SELECT shift.* INTO v_shift FROM public.shifts AS shift WHERE shift.id = v_sale.shift_id::uuid FOR SHARE;
   IF NOT FOUND THEN
+    -- A waiting receipt binds its epoch even though it will not append a group.
+    PERFORM 1 FROM pos_sync_feed_v1.feed_heads AS head
+    WHERE head.organization_id = p_organization_id AND head.scope_id = p_branch_id AND head.epoch = p_epoch
+    FOR SHARE;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'POS_FEED_V1_SCOPE_OR_EPOCH_MISMATCH';
+    END IF;
     v_result := jsonb_build_object('reason', 'SHIFT_MISSING');
     PERFORM pos_sync_inbox_v1.record_disposition(p_organization_id, p_operation_id, 'WAITING_DEPENDENCY', v_result);
     RETURN jsonb_build_object('status', 'WAITING_DEPENDENCY', 'result', v_result);
@@ -167,10 +219,10 @@ BEGIN
   -- stable movement and existing stock delta receipt, never a products row.
   v_ack := public.pos_sync_push_aggregate(p_operation_id, p_organization_id, p_branch_id, p_terminal_id::text,
     jsonb_build_array(
-      jsonb_build_object('table', 'sales', 'rows', jsonb_build_array(p_checkout->'sale'), 'changes', '[]'::jsonb),
-      jsonb_build_object('table', 'sale_items', 'rows', jsonb_build_array(p_checkout->'item'), 'changes', '[]'::jsonb),
-      jsonb_build_object('table', 'payment_transactions', 'rows', jsonb_build_array(p_checkout->'tender'), 'changes', '[]'::jsonb),
-      jsonb_build_object('table', 'item_activity_logs', 'rows', jsonb_build_array(p_checkout->'movement'), 'changes', '[]'::jsonb)
+      jsonb_build_object('table', 'sales', 'rows', jsonb_build_array(v_checkout->'sale'), 'changes', '[]'::jsonb),
+      jsonb_build_object('table', 'sale_items', 'rows', jsonb_build_array(v_checkout->'item'), 'changes', '[]'::jsonb),
+      jsonb_build_object('table', 'payment_transactions', 'rows', jsonb_build_array(v_checkout->'tender'), 'changes', '[]'::jsonb),
+      jsonb_build_object('table', 'item_activity_logs', 'rows', jsonb_build_array(v_checkout->'movement'), 'changes', '[]'::jsonb)
     ));
   IF v_ack->>'ok' IS DISTINCT FROM 'true' OR v_ack->>'batch_id' IS DISTINCT FROM p_operation_id::text
      OR coalesce(v_ack->>'replayed', 'false') <> 'false' THEN
@@ -210,11 +262,13 @@ BEGIN
   SELECT appended.seq INTO STRICT v_seq FROM pos_sync_feed_v1.append_groups(p_organization_id,
     jsonb_build_array(jsonb_build_object('scope_id', p_branch_id, 'epoch', p_epoch,
       'operation_id', p_operation_id, 'changes', v_changes))) AS appended;
-  v_result := jsonb_build_object('sale_id', v_sale.id, 'scope_id', p_branch_id, 'epoch', p_epoch, 'seq', v_seq);
+  v_result := jsonb_build_object('sale_id', v_sale.id, 'scope_id', p_branch_id, 'epoch', p_epoch, 'seq', v_seq,
+    'operation_id', p_operation_id, 'terminal_id', p_terminal_id, 'installation_generation', v_installation_generation,
+    'database_guid', p_database_guid, 'checkout_sha256', v_checkout_sha256);
   PERFORM pos_sync_inbox_v1.record_disposition(p_organization_id, p_operation_id, 'APPLIED', v_result);
   RETURN jsonb_build_object('status', 'APPLIED', 'result', v_result);
 END;
 $checkout$;
 
-REVOKE ALL ON FUNCTION pos_sync_cash_v1.apply_checkout(text, text, uuid, text, uuid, uuid, jsonb)
+REVOKE ALL ON FUNCTION pos_sync_cash_v1.apply_checkout(text, text, uuid, text, uuid, uuid, uuid, uuid, text, text)
   FROM PUBLIC, anon, authenticated, service_role;
