@@ -28,20 +28,34 @@ function harness(name = "change_history", response?: (input: PageInput, attempt:
   const policyRequests: Array<Record<string, unknown>> = [];
   const fetch = vi.fn(async (_url: string, init: RequestInit) => {
     const body = JSON.parse(String(init.body));
-    if (body.sqlServerHistoryReconcile) {
-      expect(body.sqlServerHistoryReconcile).toEqual({ organizationId: "default", branchId: branch, accessPolicy: "branch-history-v1", action: "begin" });
+    const scoped = body.sqlServerScopedHistory;
+    if (scoped?.action === "begin") {
+      expect(scoped).toEqual({ organizationId: "default", branchId: branch, action: "begin" });
+      expect(body).not.toHaveProperty("sqlServerHistoryReconcile");
       policyRequests.push(body);
       const text = JSON.stringify({ protocol: "history-index-v2", projection: PROJECTION, policy: "branch-history-v1", history_scope: "branch",
         organization_id: "default", branch_id: branch, terminal_id: terminal, keep_commerce: false,
         action: "begin", upper_id: null, after_id: null, ids: [], next_id: null, complete: true, range_count: null });
-      return new Response(text, { headers: { "Content-Type": "application/json", "X-POS-History-Reconcile-Version": "2", "X-POS-History-Reconcile-Kind": "index" } });
+      return new Response(text, { headers: { "Content-Type": "application/json", "X-POS-History-Reconcile-Version": "2", "X-POS-History-Reconcile-Kind": "index", "X-POS-Scoped-History-Transport": "1" } });
     }
-    requests.push(body);const input = body.sqlServerBootstrap as PageInput;inputs.push(input);
+    requests.push(body);
+    if (scoped) {
+      expect(legacy).toBe(false);
+      expect(name).toBe("change_history");
+      expect(Object.keys(body).sort()).toEqual(["deviceBindingProof", "sqlServerScopedHistory", "terminalToken"]);
+      expect(Object.keys(scoped).sort()).toEqual(["action", "branchId", "cursor", "historyDays", "limit", "organizationId"]);
+      expect(scoped).toMatchObject({ action: "bootstrap", organizationId: "default", branchId: branch, historyDays: 90 });
+    } else {
+      expect(body).toHaveProperty("sqlServerBootstrap.table", name);
+    }
+    const input = scoped ? { ...scoped, table: "change_history" } as PageInput : body.sqlServerBootstrap as PageInput;
+    inputs.push(input);
     if (response) return response(input, inputs.length);
     const last = input.cursor ? JSON.parse(input.cursor).id : null;
     const offset = last ? rows.findIndex(row => row.id === last) + 1 : 0;
     const page = rows.slice(offset, offset + input.limit);
-    return Response.json({ rows: page, cursor: offset + page.length < rows.length ? JSON.stringify({ id: page.at(-1)!.id }) : null });
+    return Response.json({ rows: page, cursor: offset + page.length < rows.length ? JSON.stringify({ id: page.at(-1)!.id }) : null },
+      scoped ? { headers: { "X-POS-Scoped-History-Transport": "1" } } : undefined);
   });
   vi.stubGlobal("fetch", fetch);
   const begin = vi.fn(async () => { events.push("begin"); }), commit = vi.fn(async () => { events.push("commit"); }), rollback = vi.fn(async () => { events.push("rollback"); });

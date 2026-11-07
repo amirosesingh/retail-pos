@@ -9,20 +9,19 @@ export type HistoryReconcileRead = (
 ) & {accessPolicy?:'branch-history-v1'};
 
 const PREFIX='X-POS-History-Reconcile-';
-const SCOPED_INDEX='public.pos_sync_history_index_v2';
 const SCOPED_PARAMETERS='p_action, p_after_id, p_branch_id, p_keep_commerce, p_limit, p_organization_id, p_terminal_id, p_upper_id';
 const POLICY_UNAVAILABLE='EHISTORY_POLICY_UNAVAILABLE';
 
-async function scopedIndexUnavailable(response:Response,read:HistoryReconcileRead,terminalId:string){
+async function scopedIndexUnavailable(response:Response,read:HistoryReconcileRead,terminalId:string,rpc:string){
  let raw:string;
  try{raw=await boundedText(response,4096);}catch{
   return Response.json({ok:false,code:'EHISTORY_INDEX_PROTOCOL',error:'The protected history response could not be verified; recovery remains pending.'},{status:502});
  }
  let failure;
  try{failure=JSON.parse(raw);}catch{/* An unrelated response stays an error. */}
- const signature=`${SCOPED_INDEX}(${SCOPED_PARAMETERS})`;
+ const name='public.'+rpc,signature=`${name}(${SCOPED_PARAMETERS})`;
  if(failure?.code==='PGRST202'&&failure.message===`Could not find the function ${signature} in the schema cache`&&
-  (failure.hint===null||typeof failure.hint==='string'&&!failure.hint.includes(SCOPED_INDEX))){
+  (failure.hint===null||typeof failure.hint==='string'&&!failure.hint.includes(name))){
   return Response.json({ok:false,code:POLICY_UNAVAILABLE,policy:read.accessPolicy,organization_id:read.organizationId,branch_id:read.branchId,terminal_id:terminalId},
    {status:409,headers:{'cache-control':'no-store',[PREFIX+'Version']:'2',[PREFIX+'Kind']:'unavailable'}});
  }
@@ -34,17 +33,18 @@ async function invalid(response:Response){
 }
 
 /** Current relay admission/projection is resolved before this read-only call. */
-export async function protectedHistoryReconciliation(args:{read:HistoryReconcileRead;terminalId:string;keepCommerce:boolean;signal?:AbortSignal}):Promise<Response>{
+export async function protectedHistoryReconciliation(args:{read:HistoryReconcileRead;terminalId:string;keepCommerce:boolean;signal?:AbortSignal;scopedTransport?:true}):Promise<Response>{
  const {read}=args,rows=read.action==='rows',version=read.accessPolicy==='branch-history-v1'?'2':'1';
+ const rpc=(rows?'pos_sync_history_rows_v':'pos_sync_history_index_v')+(args.scopedTransport?'3':version);
  const body={p_organization_id:read.organizationId,p_branch_id:read.branchId,p_terminal_id:args.terminalId,p_keep_commerce:args.keepCommerce,
   ...(rows?{p_ids:read.ids,p_max_bytes:2*1024*1024}:{p_action:read.action,p_after_id:read.action==='page'?read.afterId:null,p_upper_id:read.action==='begin'?null:read.upperId,p_limit:1000})};
  let response:Response;
- try{response=await serviceRest('rpc/'+(rows?'pos_sync_history_rows_v':'pos_sync_history_index_v')+version,{
+ try{response=await serviceRest('rpc/'+rpc,{
   method:'POST',headers:{'Accept-Encoding':'identity'},body:JSON.stringify(body),...(args.signal?{signal:args.signal}:{}),
  });}catch{return Response.json({ok:false,code:'SERVICE_UNAVAILABLE',error:'The central history service did not answer; recovery will retry.'},{status:503});}
  // Preserve real authorization/network/schema failures. There is no fallback to
  // an unprotected history read or a client-selected privacy mode.
- if(version==='2'&&read.action==='begin'&&response.status===404)return scopedIndexUnavailable(response,read,args.terminalId);
+ if(version==='2'&&read.action==='begin'&&response.status===404)return scopedIndexUnavailable(response,read,args.terminalId,rpc);
  if(!response.ok)return new Response(response.body,{status:response.status,headers:{'content-type':response.headers.get('content-type')??'application/json'}});
  const max=rows?5*1024*1024:128*1024;
  const text=response.headers.get(PREFIX+'Bytes')??'',countText=response.headers.get(PREFIX+'Rows')??'';

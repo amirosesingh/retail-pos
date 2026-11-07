@@ -23,7 +23,15 @@ beforeEach(() => {
   }));
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
-const respond = (index: number, value: unknown = {}) => pending[index]!.response.resolve(Response.json(value));
+const scopedHeaders = { "X-POS-Scoped-History-Transport": "1" };
+const respond = (index: number, value: unknown = {}) => {
+  const { body, response } = pending[index]!;
+  const read = body.sqlServerScopedHistory as { action?: string } | undefined;
+  const headers = read?.action === "feed"
+    ? { ...scopedHeaders, "X-POS-Feed-Projection": "1", "X-POS-Feed-Continue": "0" }
+    : read?.action === "counts" ? scopedHeaders : undefined;
+  response.resolve(Response.json(value, { headers }));
+};
 
 describe("one coordinated CloudClient data request lane", () => {
   it("schedules the new signed recovery operation in the existing upload turn", async () => {
@@ -34,7 +42,7 @@ describe("one coordinated CloudClient data request lane", () => {
     respond(0); await first; await tick();
     expect(pending[1]!.body).toHaveProperty("sqlServerLegacyRecovery");
     respond(1); await recovery; await tick();
-    expect(pending[2]!.body).toHaveProperty("sqlServerPull"); respond(2, []); await download;
+    expect(pending[2]!.body).toHaveProperty("sqlServerScopedHistory.action", "feed"); respond(2, []); await download;
   });
   it("serializes real upload/download/bootstrap/count requests and alternates fairly between directions", async () => {
     const { client } = fixture();
@@ -45,17 +53,19 @@ describe("one coordinated CloudClient data request lane", () => {
     const fifth = client.counts({ branchId: "branch-a" });
     expect(pending).toHaveLength(1);
     respond(0); await first; await tick();
-    expect(pending[1]!.body).toHaveProperty("sqlServerPull");
+    expect(pending[1]!.body).toHaveProperty("sqlServerScopedHistory.action", "feed");
     respond(1, []); await third; await tick();
     expect(pending[2]!.body).toHaveProperty("sqlServerBatch.batchId", "u2");
     respond(2); await second; await tick();
     expect(pending[3]!.body).toHaveProperty("sqlServerBootstrap.table", "products");
-    respond(3); await fourth; await tick(); respond(4); await fifth;
+    respond(3); await fourth; await tick();
+    expect(pending[4]!.body).toHaveProperty("sqlServerScopedHistory.action", "counts");
+    respond(4); await fifth;
   });
   it("holds the lane through response-body consumption instead of releasing it at headers", async () => {
     const { client } = fixture(), body = gate<unknown>();
     const first = client.counts({ branchId: "branch-a" }), second = client.bootstrapPage({ table: "products", branchId: "branch-a", limit: 10 });
-    pending[0]!.response.resolve({ ok: true, json: () => body.promise } as Response);
+    pending[0]!.response.resolve({ ok: true, json: () => body.promise, headers: new Headers(scopedHeaders) } as Response);
     await tick(); expect(pending).toHaveLength(1);
     body.resolve({ products: 1 }); await first; await tick(); expect(pending).toHaveLength(2);
     respond(1); await second;
@@ -108,7 +118,7 @@ describe("one coordinated CloudClient data request lane", () => {
   it("keeps health and branch-admission control requests independent of a waiting data body", async () => {
     const { client } = fixture(), body = gate<unknown>();
     const data = client.counts({ branchId: "branch-a" });
-    pending[0]!.response.resolve({ ok: true, json: () => body.promise } as Response);
+    pending[0]!.response.resolve({ ok: true, json: () => body.promise, headers: new Headers(scopedHeaders) } as Response);
     const health = client.health(), branches = client.managementBranches();
     expect(pending).toHaveLength(3); expect(pending[1]!.url).toContain("sync-health");
     respond(1, { serviceKey: true, posUrl: true }); respond(2, {ok:true,branches:[{id:"branch-a"}]});

@@ -1,3 +1,55 @@
+## 7 November — scoped history during mixed-client rollout
+
+The owner requested both sync corrections, beta first and then production.
+Begin at beta 1b29fc22, which includes the tested shift recovery order fix.
+The deployed 1.4.83 audit reader remains intentionally unavailable because
+its current bootstrap, feed and counts use legacy reads after admission.
+Older Operations clients can retain wider counts. Enabling only the v2
+index would expose broader rows over the wire before a native refusal.
+
+Prepare a separate scoped request for upgraded Windows clients covering
+index, exact rows, history bootstrap, feed and counts. Keep legacy RPCs
+unchanged during rollout and preserve authenticated branch and Management
+scope. Add service-role-only routines under distinct names in one reviewed
+migration. Make new requests fail closed if the matching hosted code or
+SQL is unavailable. Maintain exact pages, cursors, bounded reads, protected
+fields and the existing sync lane. Test old and new clients, branch denial,
+authorized Management, rollback and pre-deployment ordering in isolation.
+Show the exact hosted SQL and promotion for separate owner approval.
+Keep the legacy cutoff as a separately reviewed operation.
+
+The isolated exact migration, guarded fresh-install component and real
+PostgreSQL/PostgREST suite passed 39 cases. Native sync fixtures passed 25
+database integration cases. Read-only hosted preflight matched 13 dependency
+definitions and the table integrity checks. The existing PostgREST DDL
+watcher is enabled. No live SQL has been applied in this batch.
+
+## 7 November — shift recovery while the protected history reader is unavailable
+
+The owner directed a focused fix for the synchronization failure reported on
+released 1.4.83. Start from beta b0685139. STR1 had SQL connection and schema
+Ready, an open shift, a current shifts Change Tracking gap and 29 local versus
+30 cloud shifts. The held-status reader is deployed. The broader history
+readers remain unavailable. The current startup checks audit-history
+availability before its protected shift-gap recovery can run.
+
+Allow existing scoped shift recovery to run only after proving an existing
+same-branch Operations snapshot with valid operational bounds except positive
+expired shift-family checkpoints. Check all bounds and source scope before
+any attempt. Preserve pause, conflicts, pending journals, protected shift
+intents and exact retained-graph validation. Recheck all operational bounds
+before normal synchronization or checkout readiness. Test refusal of fresh
+setup, another branch, unrelated or malformed bounds, blocked jobs, identity
+changes and unverified local work. No live SQL, configuration changes,
+manual checkpoint resets, installation or production promotion in this batch.
+Mixed-version hosted history activation remains a separate decision.
+
+The focused regression run passed 154 tests. The disposable SQL Server run
+passed 18 cases, including exact default-organization checkpoint ownership,
+a checkpoint changing during recovery, source invalidation before commit and
+blank-branch journal refusal. Independent review confirmed the revised guards.
+The production STR1 flow still needs an installed check.
+
 ## 7 November — mixed-version fleet sync and verified held completions
 
 Owner approved a separate beta implementation and isolated tests from

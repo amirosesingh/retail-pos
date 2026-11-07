@@ -79,9 +79,10 @@ class LocalDataLifecycle {
   sameCacheIdentity(proof,branchId,historyDays){
     try{const current=this.cacheIdentity(branchId,historyDays);return Boolean(current&&proof&&current.pool===proof.pool&&current.profile===proof.profile&&current.registration===proof.registration&&current.scope===proof.scope);}catch{return false;}
   }
-  async cachedSnapshotReady(branchId,historyDays,historyJob=null,{requireOperationalBounds=false}={}){
+  async inspectCachedSnapshot(branchId,historyDays,historyJob,{requireOperationalBounds=false,inspectShiftGaps=false}={}){
     const identity=this.cacheIdentity(branchId,historyDays);
-    if(!identity)return false;
+    if(!identity)return null;
+    const expiredShiftTables=[];
     let indexProof=null;
     let legacyProof=null;
     if(!historyJob&&this.historyIndexAvailable()){
@@ -97,14 +98,14 @@ class LocalDataLifecycle {
       if(old.length||oldIndex.length)legacyProof=indexProof?.scope??await this.historyIndexRecovery.capture(branchId);
     }else if(historyJob?.job_type===historyIndex.TYPE){
       indexProof=await this.historyIndexRecovery.current(branchId);
-      if(indexProof?.job.job_id!==historyJob.job_id)return false;
+      if(indexProof?.job.job_id!==historyJob.job_id)return null;
     }
     const allowedLegacyIds=(indexProof?.scope??legacyProof)?.legacyIds??[];
     const completed=await this.jobRepository.startupSnapshot(this.bootstrapType(historyDays),branchId,historyJob?.job_id??null,allowedLegacyIds);
-    if(!completed||await this.jobRepository.hasOtherActiveJobs(historyJob?.job_id??null,{allowedLegacyIds}))return false;
+    if(!completed||await this.jobRepository.hasOtherActiveJobs(historyJob?.job_id??null,{allowedLegacyIds}))return null;
     const result=await identity.pool.request().input("branch",String(branchId))
       .query("SELECT TOP (1) id FROM dbo.stores WHERE id=@branch;");
-    if(!result.recordset?.length)return false;
+    if(!result.recordset?.length)return null;
     if(historyJob||legacyProof||requireOperationalBounds){
       const expected=indexProof?.scope??legacyProof??historyRecovery.scope(this.cloud,branchId,historyDays);
       const decode=indexProof?historyIndex.decode:historyRecovery.decode;
@@ -114,18 +115,24 @@ class LocalDataLifecycle {
       // require their own recovery before an existing snapshot can be exposed.
       const bounds=await identity.pool.request().input("tables",JSON.stringify(tables.map(table=>table.sqlServerTable))).input("branch",String(branchId)).query(`
         SELECT names.[value] table_name, CHANGE_TRACKING_MIN_VALID_VERSION(OBJECT_ID(QUOTENAME('dbo')+'.'+QUOTENAME(names.[value]))) minimum_version,
-          CHANGE_TRACKING_CURRENT_VERSION() current_version, checkpoints.change_tracking_version checkpoint_version
+          CHANGE_TRACKING_CURRENT_VERSION() current_version, checkpoints.change_tracking_version checkpoint_version,
+          checkpoints.organization_id checkpoint_organization_id
         FROM OPENJSON(@tables) names LEFT JOIN dbo.sync_checkpoints checkpoints
           ON checkpoints.entity_type=names.[value] AND checkpoints.branch_id=@branch AND checkpoints.direction='push';`);
       const rows=bounds.recordset??[];
-      if(rows.length!==tables.length)return false;
+      if(rows.length!==tables.length)return null;
       const seen=new Set();
       for(const row of rows){
-        if(seen.has(row.table_name)||!tables.some(table=>table.sqlServerTable===row.table_name))return false;
+        const table=tables.find(candidate=>candidate.sqlServerTable===row.table_name);
+        if(seen.has(row.table_name)||!table)return null;
         seen.add(row.table_name);
         const minimum=BigInt(historyRecovery.version(row.minimum_version)),current=BigInt(historyRecovery.version(row.current_version));
         const since=BigInt(historyRecovery.version(row.checkpoint_version??0));
-        if(minimum>current||since>current||since>0n&&minimum>since||requireOperationalBounds&&(row.checkpoint_version==null||minimum>since))return false;
+        if(minimum>current||since>current||requireOperationalBounds&&(row.checkpoint_version==null||row.checkpoint_organization_id!=='default'))return null;
+        if(minimum>since&&(since>0n||requireOperationalBounds)){
+          if(!inspectShiftGaps||since===0n||table.cloudTable!==row.table_name||!SHIFT_GRAPH_TABLES.includes(row.table_name))return null;
+          expiredShiftTables.push(row.table_name);
+        }
       }
       // Recheck scope and baseline after metadata reads; a profile change while
       // awaiting SQL must not publish readiness from an obsolete connection.
@@ -133,9 +140,45 @@ class LocalDataLifecycle {
       if(indexProof||legacyProof)await this.historyIndexRecovery.check(indexProof?.scope??legacyProof);
       else if(historyJob)await historyRecovery.retained(this.connectionManager,null,historyRecovery.decode(historyJob,expected).baseline);
     }
-    if(!this.sameCacheIdentity(identity,branchId,historyDays))return false;
-    this.cachedReadyProof={...identity,branchId,historyDays};
+    if(!this.sameCacheIdentity(identity,branchId,historyDays))return null;
+    return {identity,expiredShiftTables};
+  }
+  async cachedSnapshotReady(branchId,historyDays,historyJob=null,options={}){
+    const snapshot=await this.inspectCachedSnapshot(branchId,historyDays,historyJob,options);
+    if(!snapshot||snapshot.expiredShiftTables.length)return false;
+    this.cachedReadyProof={...snapshot.identity,branchId,historyDays};
     return true;
+  }
+  async prepareWithoutHistoryReader(branchId,historyDays,unavailable,onActivity){
+    this.cachedReadyProof=null;
+    const snapshot=await this.inspectCachedSnapshot(branchId,historyDays,null,{requireOperationalBounds:true,inspectShiftGaps:true});
+    if(!snapshot)throw unavailable;
+    const assertSource=()=>{
+      if(snapshot.expiredShiftTables.length&&(this.syncCoordinator.paused||this.jobManager.paused)){
+        this.cachedReadyProof=null;
+        throw unavailable;
+      }
+      const terminal=binding(this.cloud.terminalStore?.read?.());
+      if(!terminal||terminal.mode!=='operations'||terminal.platform!=='pc'||terminal.branchId!==recordId(branchId)||
+        !this.sameCacheIdentity(snapshot.identity,branchId,historyDays)||!this.cloud.isHistoryPolicyUnavailable?.(unavailable,branchId)){
+        this.cachedReadyProof=null;
+        throw Object.assign(new Error('The registered recovery source changed. Saved progress remains pending.'),{code:'ESYNC_REQUEST_CONTEXT_CHANGED',table:'shifts'});
+      }
+    };
+    assertSource();
+    if(!snapshot.expiredShiftTables.length){
+      this.cachedReadyProof={...snapshot.identity,branchId,historyDays};
+      return;
+    }
+    // An expired shift checkpoint is a separate protected recovery. Try only
+    // the proved shift gaps, then require all operational bounds again.
+    for(const tableName of snapshot.expiredShiftTables){
+      assertSource();
+      await this.recoverChangeTrackingGap(branchId,historyDays,tableName,onActivity,assertSource);
+    }
+    assertSource();
+    if(!await this.cachedSnapshotReady(branchId,historyDays,null,{requireOperationalBounds:true}))throw unavailable;
+    assertSource();
   }
   preserveCachedReady(){
     const proof=this.cachedReadyProof;
@@ -147,12 +190,13 @@ class LocalDataLifecycle {
   async bootstrap(branchId,historyDays,existing=null,onActivity=()=>{}){return this.jobManager.run(this.bootstrapType(historyDays),context=>runBootstrap({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,checkpoints:this.checkpoints,branchId,historyDays,context,onActivity}),existing,{branchId});}
   async retain(branchId,historyDays,existing=null){if(historyDays===7300)return{status:"completed",skipped:true};return this.jobManager.run("retention",context=>runRetention({connectionManager:this.connectionManager,days:historyDays,context}),existing,{branchId});}
   async resume(branchId,historyDays,onActivity=()=>{}){const active=await this.jobRepository.active();if(!active||String(active.branch_id??"")!==String(branchId))return null;if(String(active.job_type).startsWith("bootstrap_"))return this.bootstrap(branchId,Number(String(active.job_type).slice(10))||historyDays,active,onActivity);if(active.job_type==="retention")return this.retain(branchId,historyDays,active);return null;}
-  async recoverChangeTrackingGap(branchId,historyDays,tableName,onActivity=()=>{}){
+  async recoverChangeTrackingGap(branchId,historyDays,tableName,onActivity=()=>{},assertSource){
     const table=this.registry.tables.find(candidate=>candidate.sqlServerTable===tableName);
     if(!table)throw Object.assign(new Error(`The expired Change Tracking table ${tableName} is not registered.`),{code:"ESCHEMA_REGISTRY"});
     if(table.sqlServerTable==="change_history"&&table.cloudTable==="change_history")return this.historyStep(branchId,{onActivity});
     if(SHIFT_GRAPH_TABLES.includes(table.sqlServerTable)){
-      const recovery=await new ShiftGapRecovery({connectionManager:this.connectionManager,registry:this.registry,reader:this.reader,checkpoints:this.checkpoints,branchId,tableName:table.sqlServerTable,cloud:this.cloud,historyDays}).begin();
+      const recovery=await new ShiftGapRecovery({connectionManager:this.connectionManager,registry:this.registry,reader:this.reader,checkpoints:this.checkpoints,branchId,tableName:table.sqlServerTable,cloud:this.cloud,historyDays,
+        assertSource,requireExpiredCheckpoint:typeof assertSource==='function'}).begin();
       const refreshed=await refreshTable({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName:table.cloudTable,diagnosticOrigin:'gap_recovery',recovery,onActivity});
       await recovery.proveMissing(this.cloud);
       const proof=await recovery.finish();return {table:table.sqlServerTable,completed:refreshed.completed,...proof};
@@ -207,10 +251,7 @@ class LocalDataLifecycle {
       if(refreshed.completed)this.publish({kind:"general",branchId,source:"cloud",tables:[tableName]});
     }
     const unavailable=await this.unavailableHistoryPolicy(branchId);
-    if(unavailable&&!await this.cachedSnapshotReady(branchId,historyDays,null,{requireOperationalBounds:true})){
-      this.cachedReadyProof=null;
-      throw unavailable;
-    }
+    if(unavailable)await this.prepareWithoutHistoryReader(branchId,historyDays,unavailable,onActivity);
     await this.resume(branchId,historyDays,onActivity);
     const completed=await this.jobRepository.completed(this.bootstrapType(historyDays),branchId);
     // Upload local changes before refreshing shared reference rows. Older
