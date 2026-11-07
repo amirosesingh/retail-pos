@@ -1,3 +1,12 @@
+## 7 November — mixed-client scoped history transport
+
+Use an explicit scoped download request and server-verified scope on every
+upgraded index, rows, history bootstrap, feed and count operation. Keep
+current legacy readers and the previous gated v2 endpoint separate until a
+coordinated cutoff. Additive staged routines need distinct names from the
+reviewed full cutoff migration, including its helpers. Production SQL,
+installed acceptance and exact promotion have separate review boundaries.
+
 ## 7 November — recover verified shifts independently of audit history
 
 A confirmed missing protected audit-history reader may defer history while an

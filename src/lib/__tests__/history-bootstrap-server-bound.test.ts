@@ -42,6 +42,7 @@ const table = { cloudTable: "change_history", sqlServerTable: "change_history", 
     { cloudColumn: "old_value", sqlServerColumn: "old_value", cloudType: "jsonb" }, { cloudColumn: "new_value", sqlServerColumn: "new_value", cloudType: "jsonb" }] };
 
 async function harness(mode: Mode = "current-operations", count = 53, dbMinimum = 10, protectedPages = false) {
+  const legacy = mode === "1.4.79-management";
   const management = mode !== "current-operations";
   const rows = Array.from({ length: count }, (_, index) => ({ organization_id:"default",entity_type:"fixture",entity_id:String(index),action:"insert",revision:"9007199254740993",scope_type:"BRANCH",scope_id:branch,changed_by:null,source_application:"fixture",device_id:null,terminal_id:null,server_timestamp:"2026-11-06T01:02:03.1234567Z", id: `00000000-0000-4000-8000-${(index + 1).toString(16).padStart(12, "0")}`, old_value: { quantity: 0 }, new_value: { quantity: index } }));
   const exactRow=(row:typeof rows[number])=>{const {old_value,new_value,...rest}=row;return {...rest,old_value_json:JSON.stringify(old_value),new_value_json:JSON.stringify(new_value)};};
@@ -51,6 +52,7 @@ async function harness(mode: Mode = "current-operations", count = 53, dbMinimum 
   let mutationFailure = false;
   let pendingId: string | null = null;
   let interruptProtected=false;
+  let protectedPageUnavailable = false;
   const protectedInputs: Array<Record<string, unknown>> = [];
   const protectedSignals: Array<AbortSignal | null | undefined> = [];
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
@@ -60,7 +62,7 @@ async function harness(mode: Mode = "current-operations", count = 53, dbMinimum 
       management_sync_proof_hash: createHash("sha256").update(claim).digest("hex") }]);
     if (url.includes("/stores?")) return Response.json([{ id: branch }]);
     if (url.includes("/rpc/")) {
-      if(/pos_sync_history_(index|rows)_v2$/.test(url)){
+      if(/pos_sync_history_(index|rows)_v3$/.test(url)){
         const args=JSON.parse(String(init?.body)),isRows=url.includes('history_rows'),selected=isRows?args.p_ids.map((id:string)=>rows.find(row=>row.id===id)!):rows;
         const common={projection:PROJECTION,policy:'branch-history-v1',history_scope:management?'company':'branch',organization_id:'default',branch_id:branch,terminal_id:terminal,keep_commerce:management};
         const result=isRows?{...common,protocol:'history-rows-v2',requested_ids:args.p_ids,rows:selected.map(exactRow),remaining_ids:[]}:
@@ -68,14 +70,23 @@ async function harness(mode: Mode = "current-operations", count = 53, dbMinimum 
         const text=JSON.stringify(result);return new Response(text,{headers:{'content-type':'application/json','X-POS-History-Reconcile-Version':'2','X-POS-History-Reconcile-Kind':isRows?'rows':'index','X-POS-History-Reconcile-Bytes':String(Buffer.byteLength(text)),'X-POS-History-Reconcile-Rows':String(selected.length)}});
       }
       if (url.includes("/pos_sync_feed_page_v1")) return Response.json({ code: "PGRST202", message: "Could not find the function public.pos_sync_feed_page_v1 in the schema cache" }, { status: 404 });
-      if (url.includes("/pos_sync_history_page_v1")) {
+      if (url.endsWith("/pos_sync_feed_page_v2")) {
+        rpcInputs.push({ rpc: "pos_sync_feed_page_v2", ...JSON.parse(String(init?.body)) });
+        return new Response("[]", { headers: { "Content-Type": "application/json", "X-POS-Feed-Projection": "1",
+          "X-POS-Feed-Bytes": "2", "X-POS-Feed-Rows": "0", "X-POS-Feed-Continue": "0" } });
+      }
+      if (/\/pos_sync_history_page_v[12]$/.test(url)) {
+        const rpc = url.split("/rpc/")[1];
         protectedSignals.push(init?.signal);
-        const args=JSON.parse(String(init?.body)); protectedInputs.push(args);
-        if (!protectedPages) return Response.json({ code: "PGRST202", message: "Could not find the function public.pos_sync_history_page_v1 in the schema cache" }, { status: 404 });
+        const args=JSON.parse(String(init?.body)); protectedInputs.push({ rpc, ...args });
+        if (rpc === "pos_sync_history_page_v1" ? !protectedPages : protectedPageUnavailable)
+          return Response.json({ code: "PGRST202", message: `Could not find the function public.${rpc} in the schema cache` }, { status: 404 });
+        if (failAtCursor && args.p_after_cursor === failAtCursor) return Response.json({ error: "isolated download unavailable" }, { status: 503 });
         const last=args.p_after_cursor ? JSON.parse(args.p_after_cursor).id : null;
         const start=last ? rows.findIndex(row=>row.id===last)+1 : 0;
-        const page=rows.slice(start,start+3); returned.push(...page.map(row=>row.id));
-        const text=JSON.stringify({rows:page,cursor:page.length===3 ? JSON.stringify({id:page.at(-1)!.id}) : null});
+        const size = protectedPages ? 3 : 10;
+        const page=rows.slice(start,start+size); returned.push(...page.map(row=>row.id));
+        const text=JSON.stringify({rows:page,cursor:page.length===size ? JSON.stringify({id:page.at(-1)!.id}) : null});
         const bytes=new TextEncoder().encode(text);
         const stream=interruptProtected ? new ReadableStream<Uint8Array>({start(controller){controller.enqueue(bytes.slice(0,100));controller.close();}}) : text;
         return new Response(stream,{headers:{"Content-Type":"application/json","X-POS-History-Projection":"1",
@@ -127,12 +138,14 @@ async function harness(mode: Mode = "current-operations", count = 53, dbMinimum 
   const boot = mode === "1.4.79-management" ? legacyBoot : currentBoot;
   const verifier = mode === "1.4.79-management" ? legacyVerifier : currentVerifier;
   return { cloud, rows, exactRow, rpcInputs, protectedInputs, protectedSignals, outgoing, returned, events, local, checkpoints, reader, context, connectionManager, boot, verifier,
+    pageInputs: legacy ? rpcInputs : protectedInputs,
     registry: { tables: [table] },
     failDownloadAfterFirstPage() { failAtCursor = JSON.stringify({ id: rows[9].id }); },
     clearDownloadFailure() { failAtCursor = null; },
     failLocalAfterFirstPage() { mutationFailure = true; },
     protect(id: string) { pendingId = id; },
     interruptProtectedStream() {interruptProtected=true;},
+    disableScopedPage() { protectedPageUnavailable = true; },
   };
 }
 afterEach(() => { vi.unstubAllGlobals();vi.restoreAllMocks(); });
@@ -169,22 +182,23 @@ it.each(modes)("does not apply or acknowledge an interrupted protected body for 
   expect(h.checkpoints.save).not.toHaveBeenCalled();
 });
 
-it.each([10, 25, 100, 500])("bounds only history SQL paging before RPC for incoming limit%s", async limit => {
+it.each([10, 25, 100, 500])("keeps scoped history SQL paging byte-bounded for incoming limit%s", async limit => {
   const h = await harness();
   const result = await h.cloud.bootstrapPage({ branchId: branch, table: "change_history", historyDays: 90, cursor: null, limit });
-  expect(h.rpcInputs[0]).toMatchObject({ rpc: "pos_sync_bootstrap", p_table: "change_history", p_limit: 10, p_after_cursor: null, p_branch_id: branch });
+  expect(h.protectedInputs[0]).toMatchObject({ rpc: "pos_sync_history_page_v2", p_max_bytes: 2 * 1024 * 1024, p_after_cursor: null, p_branch_id: branch });
+  expect(h.rpcInputs).toHaveLength(0);
   expect(result.rows).toHaveLength(10);
   expect(result.cursor).toBe(JSON.stringify({ id: h.rows[9].id }));
-  expect(h.outgoing.find(request=>request.sqlServerBootstrap)?.sqlServerBootstrap).toMatchObject({ limit });
+  expect(h.outgoing.find(request=>(request.sqlServerScopedHistory as {action?: string})?.action === "bootstrap")?.sqlServerScopedHistory).toMatchObject({ limit });
 });
 
-it("keeps non-history bootstrap, pull, count and graph RPC arguments unchanged", async () => {
+it("keeps non-history bootstrap, legacy count and graph arguments while routing current feed to its protected RPC", async () => {
   const h = await harness();
   await h.cloud.bootstrapPage({ branchId: branch, table: "products", historyDays: 90, cursor: null, limit: 500 });
   await h.cloud.pullBatch({ branchId: branch, cursor: 42, limit: 100 });
   await h.cloud.request({ sqlServerCounts: { organizationId: "default", branchId: branch, historyDays: 90 } });
   await h.cloud.shiftGraph({ branchId: branch, shiftId: terminal });
-  expect(h.rpcInputs.map(input => [input.rpc, input.p_limit])).toEqual([["pos_sync_bootstrap", 500], ["pos_sync_pull", 100], ["pos_sync_counts", undefined], ["pos_sync_shift_graph", undefined]]);
+  expect(h.rpcInputs.map(input => [input.rpc, input.p_limit])).toEqual([["pos_sync_bootstrap", 500], ["pos_sync_feed_page_v2", undefined], ["pos_sync_counts", undefined], ["pos_sync_shift_graph", undefined]]);
   expect(h.rpcInputs[1].p_after_cursor).toBe(42);
 });
 
@@ -203,18 +217,20 @@ it.each(modes)("downloads every53/253 history row through actual %s bootstrap/re
     }
     expect(h.returned).toEqual(h.rows.map(row => row.id));
     expect(new Set(h.returned).size).toBe(count);
-    expect(h.rpcInputs.every(input => input.p_limit === 10)).toBe(true);
-    expect(h.rpcInputs).toHaveLength(Math.ceil(count / 10));
+    expect(h.pageInputs.every(input => mode === "1.4.79-management" ? input.p_limit === 10 : input.rpc === "pos_sync_history_page_v2")).toBe(true);
+    expect(h.pageInputs).toHaveLength(Math.ceil(count / 10));
   }
 });
 
-it.each(modes)("preserves records and cursor with a legacy SQL minimum100 for %s", async mode => {
+it.each(modes)("preserves records and cursor when the legacy SQL minimum is100 for %s", async mode => {
   const h = await harness(mode, 253, 100);
   expect(await h.boot.runBootstrap({ ...h, branchId: branch, historyDays: 90 })).toMatchObject({ completed: 253 });
   expect(h.local.size).toBe(253);
   expect(h.returned).toEqual(h.rows.map(row => row.id));
-  expect(h.rpcInputs.map(input => input.p_limit)).toEqual([10, 10, 10]);
-  expect(h.rpcInputs[1].p_after_cursor).toBe(JSON.stringify({ id: h.rows[99].id }));
+  const legacy = mode === "1.4.79-management";
+  if (legacy) expect(h.rpcInputs.map(input => input.p_limit)).toEqual([10, 10, 10]);
+  else expect(h.rpcInputs).toHaveLength(0);
+  expect(h.pageInputs[1].p_after_cursor).toBe(JSON.stringify({ id: h.rows[legacy ? 99 : 9].id }));
   expect(h.checkpoints.save).toHaveBeenCalledTimes(mode === "1.4.79-management" ? 1 : 0);
 });
 
@@ -231,10 +247,21 @@ it.each(modes)("follows the final full-page cursor through an empty page for %s"
     } else {
       expect(await h.verifier.cloudSignature({ ...h, table, branchId: branch, historyDays: 90 })).toBe(h.verifier.signatureRows(table, h.rows));
     }
-    expect(h.rpcInputs.map(input => input.p_after_cursor)).toEqual([null,
+    expect(h.pageInputs.map(input => input.p_after_cursor)).toEqual([null,
       JSON.stringify({ id: h.rows[9].id }), JSON.stringify({ id: h.rows[19].id })]);
     expect(h.returned).toEqual(h.rows.map(row => row.id));
   }
+});
+
+it.each(["current-operations", "current-management"] as const)("keeps the snapshot pending without fallback when v2 is missing for %s", async mode => {
+  const h = await harness(mode);
+  h.disableScopedPage();
+  await expect(h.boot.runBootstrap({ ...h, branchId: branch, historyDays: 90 })).rejects.toMatchObject({ status: 404 });
+  expect(h.protectedInputs).toEqual([expect.objectContaining({ rpc: "pos_sync_history_page_v2" })]);
+  expect(h.rpcInputs).toHaveLength(0);
+  expect(h.local.size).toBe(0);
+  expect(h.context.job.last_committed_cursor).toBeNull();
+  expect(h.checkpoints.save).not.toHaveBeenCalled();
 });
 
 it.each(modes)("preserves committed cursor, pending edits and baseline on failed download then retries for %s", async mode => {

@@ -54,6 +54,28 @@ const opSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
+const scopedHistoryIdentity = {
+  organizationId: z.string().min(1).max(128),
+  branchId: z.string().min(1).max(128),
+};
+const historyIds = z.array(z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/))
+  .min(1).max(10).refine(ids => new Set(ids).size === ids.length);
+const historyDays = z.number().int().min(30).max(7300);
+const historyLimit = z.number().int().min(10).max(2000);
+const scopedHistoryReadSchema = z.discriminatedUnion("action", [
+  z.object({ ...scopedHistoryIdentity, action: z.literal("begin") }).strict(),
+  z.object({ ...scopedHistoryIdentity, action: z.literal("page"), afterId: z.string().uuid().nullable(), upperId: z.string().uuid() }).strict(),
+  z.object({ ...scopedHistoryIdentity, action: z.literal("finish"), upperId: z.string().uuid().nullable() }).strict(),
+  z.object({ ...scopedHistoryIdentity, action: z.literal("rows"), ids: historyIds }).strict(),
+  z.object({ ...scopedHistoryIdentity, action: z.literal("bootstrap"), cursor: z.string().max(512).nullable(), historyDays, limit: historyLimit }).strict(),
+  z.object({ ...scopedHistoryIdentity, action: z.literal("feed"), cursor: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), limit: historyLimit }).strict(),
+  z.object({ ...scopedHistoryIdentity, action: z.literal("counts"), historyDays }).strict(),
+]);
+export type ScopedHistoryRead = z.infer<typeof scopedHistoryReadSchema>;
+const scopedHistoryRequestKeys = new Set([
+  "sqlServerScopedHistory", "sessionToken", "cashierToken", "terminalToken", "accessToken", "deviceClaimProof", "deviceBindingProof",
+]);
+
 const bodySchema = z.object({
   sessionToken: z.string().max(400).optional(),
   cashierToken: z.string().max(2000).optional(),
@@ -122,8 +144,9 @@ const bodySchema = z.object({
     z.object({action:z.literal('begin'),accessPolicy:z.literal('branch-history-v1').optional(),organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128)}).strict(),
     z.object({action:z.literal('page'),accessPolicy:z.literal('branch-history-v1').optional(),organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128),afterId:z.string().uuid().nullable(),upperId:z.string().uuid()}).strict(),
     z.object({action:z.literal('finish'),accessPolicy:z.literal('branch-history-v1').optional(),organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128),upperId:z.string().uuid().nullable()}).strict(),
-    z.object({action:z.literal('rows'),accessPolicy:z.literal('branch-history-v1').optional(),organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128),ids:z.array(z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)).min(1).max(10).refine(ids=>new Set(ids).size===ids.length)}).strict(),
+    z.object({action:z.literal('rows'),accessPolicy:z.literal('branch-history-v1').optional(),organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128),ids:historyIds}).strict(),
   ]).optional(),
+  sqlServerScopedHistory: scopedHistoryReadSchema.optional(),
   sqlServerHeldStatus: z.object({
     organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128),
     tickets:z.array(z.object({id:z.string().min(1).max(450),billNo:z.string().max(450).nullable(),shiftId:z.string().max(450).nullable()}).strict())
@@ -206,7 +229,10 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
         { ok: false, code: "PAYLOAD_TOO_LARGE", error: "The sync batch exceeds 8 MiB." },
         { status: 413 },
       );
-    body = bodySchema.parse(JSON.parse(raw));
+    const parsed = JSON.parse(raw);
+    if (Object.hasOwn(parsed ?? {}, "sqlServerScopedHistory") && Object.keys(parsed).some(key => !scopedHistoryRequestKeys.has(key)))
+      throw new Error("Scoped history requests are exclusive");
+    body = bodySchema.parse(parsed);
     if (body.sqlServerLegacyRecovery && request.headers.get("x-pos-legacy-recovery") !== "1")
       throw new Error("Missing bounded recovery transport");
     if (body.sqlServerAggregate?.financialLedgerProjection) {
@@ -282,6 +308,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     !body.sqlServerBootstrap &&
     !body.sqlServerCounts &&
     !body.sqlServerHistoryReconcile &&
+    !body.sqlServerScopedHistory &&
     !body.sqlServerHeldStatus &&
     !body.sqlServerHeldSaleReview &&
     !body.sqlServerTelemetry &&
@@ -354,6 +381,25 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       { ok: false, code: "SESSION_INVALID", error: (e as Error).message },
       { status: 401 },
     );
+  }
+
+  if (body.sqlServerScopedHistory) {
+    const read = body.sqlServerScopedHistory;
+    const operations = verifiedTerminal?.platform === "pc" && verifiedTerminal.mode === "operations" &&
+      verifiedTerminal.id === scope.terminalId && verifiedTerminal.branchId === scope.storeId &&
+      !scope.managementDevice;
+    if (!body.terminalToken || !body.deviceBindingProof || !scope.terminalId || (!scope.managementReplica && !operations))
+      return Response.json({ ok: false, code: "TERMINAL_REQUIRED", error: "Scoped history requires a verified POS terminal." }, { status: 403 });
+    if (!scope.managementReplica && read.branchId !== scope.storeId)
+      return Response.json({ ok: false, code: "STORE_FORBIDDEN", error: "You can only synchronize your own branch." }, { status: 403 });
+    const { scopedHistoryTransport } = await import("./scoped-history-transport.server");
+    let keepCommerce = scope.managementReplica === true;
+    if (read.action !== "counts" && !keepCommerce) {
+      const { commerceSyncIsolationReady } = await import("./commerce-sync-readiness.server");
+      keepCommerce = !(await commerceSyncIsolationReady());
+    }
+    return scopedHistoryTransport({ read, terminalId: scope.terminalId,
+      keepCommerce, signal: request.signal });
   }
 
   if (body.sqlServerHeldSaleReview) {

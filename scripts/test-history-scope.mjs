@@ -5,10 +5,12 @@ import { createRequire } from "node:module";
 import { PGlite } from "@electric-sql/pglite";
 const require = createRequire(import.meta.url);
 const { MIGRATION, build } = require("./prepare-history-scope.cjs");
+const transport = require("./prepare-scoped-history-transport.cjs");
 const read = file => readFile(new URL("../" + file, import.meta.url), "utf8");
 const metadata = JSON.parse(await read("src/lib/__tests__/fixtures/history-scope-live-metadata.json"));
 const registry = JSON.parse(await read("database/sqlserver/schema-registry.json"));
 const migration = await read("supabase/migrations/" + MIGRATION);
+const transportMigration = await read("supabase/migrations/" + transport.MIGRATION);
 const native = process.argv.includes("--native");
 assert(process.argv.slice(2).every(value => ["--native", "--postgrest"].includes(value)));
 const nativeBaseSource = native ? (await read("scripts/test-seven-shift-summary-native.fixture.mjs")).replaceAll("\r\n", "\n") : null;
@@ -17,6 +19,7 @@ const nativeSource = native ? nativeBaseSource.replace("return {\n   exec:", "re
 const factory = native ? await import("data:text/javascript;base64," + Buffer.from(nativeSource + "\nexport {createNativeFixture};").toString("base64")) : null;
 const db = native ? await factory.createNativeFixture() : new PGlite();
 const prepared = build(metadata);
+const staged = transport.build(metadata);
 const quote = value => "'" + String(value).replaceAll("'", "''") + "'";
 const literal = value => "E" + quote(value.replaceAll("\\", "\\\\").replaceAll("\r", "\\r").replaceAll("\n", "\\n"));
 const scalar = async (query, params = []) => (await db.query(query, params)).rows[0]?.value;
@@ -37,6 +40,8 @@ const rows = (version, ids, branch = A, terminal = OPS, keep = false) =>
 const boot = (terminal = OPS, branch = A) => scalar("SELECT public.pos_sync_bootstrap('default',$1,$2,'change_history',NULL,7300,10) value", [branch, terminal]);
 const protectedBoot = (terminal = OPS, branch = A) => scalar("SELECT public.pos_sync_history_page_v1('default',$1,$2,NULL,7300,false,2097152) value", [branch, terminal]);
 const count = (terminal = OPS, branch = A) => scalar("SELECT row_count::text value FROM public.pos_sync_counts('default',$1,$2,7300) WHERE table_name='change_history'", [branch, terminal]);
+const stageCount = (terminal = OPS, branch = A) => scalar("SELECT row_count::text value FROM public.pos_sync_counts_history_v2('default',$1,$2,7300) WHERE table_name='change_history'", [branch, terminal]);
+const stagePage = (terminal = OPS, branch = A, cursor = null, bytes = 2097152) => scalar("SELECT public.pos_sync_history_page_v2('default',$1,$2,$3,7300,false,$4) value", [branch, terminal, cursor, bytes]);
 let passed = 0;
 const check = async (name, work) => { await work(); passed++; console.log("PASS " + name); };
 const state = () => scalar("SELECT jsonb_build_object('history',(SELECT jsonb_agg(to_jsonb(h) ORDER BY id)::text FROM public.change_history h),'triggers',(SELECT jsonb_agg(pg_get_triggerdef(oid) ORDER BY tgname) FROM pg_trigger WHERE tgrelid='public.change_history'::regclass AND NOT tgisinternal),'indexes',(SELECT jsonb_agg(pg_get_indexdef(indexrelid) ORDER BY indexrelid) FROM pg_index WHERE indrelid='public.change_history'::regclass),'functions',(SELECT jsonb_agg(jsonb_build_object('oid',p.oid,'name',p.proname,'body',p.prosrc,'acl',p.proacl::text,'config',p.proconfig,'owner',p.proowner) ORDER BY p.proname) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname LIKE 'pos_sync%')) value");
@@ -93,7 +98,114 @@ try {
     passed += await verifyHistoryScopePostgrest(db, { A, B, OPS, OTHER, MAN, id }, { legacy: true });
     assert.deepEqual(await state(), original);
   }
+  await check("scoped transport artifact is deterministic and a late failure rolls back every added function", async () => {
+    assert.equal(transportMigration, transport.render(metadata));
+    assert(!/^\s*(BEGIN|COMMIT)\s*;/mi.test(transportMigration));
+    await db.exec("BEGIN;");
+    try {
+      await db.exec(transportMigration);
+      await assert.rejects(db.exec("INSERT INTO deliberately_missing_transport_ledger VALUES(1);"), /does not exist/);
+    } finally { await db.exec("ROLLBACK;"); }
+    assert.deepEqual(await state(), original);
+  });
+  await check("unknown source grants abort before any staged SQL is committed", async () => {
+    await db.exec("BEGIN;");
+    try {
+      await db.exec("GRANT EXECUTE ON FUNCTION public.pos_sync_counts(text,text,text,integer) TO authenticated;");
+      await assert.rejects(db.exec(transportMigration), /HISTORY_TRANSPORT_METADATA/);
+    } finally { await db.exec("ROLLBACK;"); }
+    assert.deepEqual(await state(), original);
+  });
+  await check("additive stage preserves every legacy function, history row, trigger and index, leaving the installed v2 handshake absent", async () => {
+    const before = { bootstrap: await boot(), index: await idx(1), count: await count() };
+    await db.exec(transportMigration);
+    const after = await state(), names = new Set(staged.targets.map(entry => entry.signature.split("(")[0]));
+    assert.equal(after.functions.filter(entry => names.has(entry.name)).length, 8);
+    assert.deepEqual({ ...after, functions: after.functions.filter(entry => !names.has(entry.name)) }, original);
+    assert.deepEqual({ bootstrap: await boot(), index: await idx(1), count: await count() }, before);
+    assert.equal(await scalar("SELECT to_regprocedure('public.pos_sync_history_index_v2(text,text,text,text,uuid,uuid,integer,boolean)') value"), null);
+    await db.exec(transportMigration);
+    assert.deepEqual(await state(), after);
+  });
+  await check("staged branch and Management reads agree across index, exact rows, opaque bootstrap and counts", async () => {
+    for (const [terminal, branch, expected] of [[OPS,A,[id(1),id(9)]],[OTHER,B,[id(2)]]]) {
+      const begin = await idx(3,"begin",null,null,branch,terminal);
+      assert.equal(begin.protocol,"history-index-v2");assert.equal(begin.policy,"branch-history-v1");assert.equal(begin.history_scope,"branch");
+      assert.deepEqual(begin.ids,expected);
+      assert.deepEqual((await stagePage(terminal,branch)).rows.map(row=>row.id),expected);
+      assert.equal(await stageCount(terminal,branch),String(expected.length));
+      const exact = await rows(3,expected,branch,terminal);
+      assert.equal(exact.protocol,"history-rows-v2");
+      assert.deepEqual(exact.rows.map(row=>row.id),expected);
+      assert(!exact.rows[0].new_value_json.includes("ecom_price"));
+    }
+    const management = await idx(3,"begin",null,null,B,MAN);
+    assert.equal(management.history_scope,"company");
+    assert(management.ids.includes(id(3))&&!management.ids.includes(id(11)));
+    assert.equal(await stageCount(MAN,B),"12");
+    const first=await stagePage(MAN,B),second=await stagePage(MAN,B,first.cursor);
+    assert.equal(first.rows.length,10);assert.equal(second.rows.length,2);assert.equal(second.cursor,null);
+    assert.deepEqual([...first.rows,...second.rows].map(row=>row.id),management.ids);
+    await assert.rejects(stagePage(OPS,B), /SYNC_(?:TERMINAL_)?(?:BRANCH|SCOPE)_FORBIDDEN|SYNC_TERMINAL_SCOPE_FORBIDDEN/);
+    await assert.rejects(stagePage(OPS,A,'{"id":"unknown"}'), /POS_HISTORY_STREAM_INVALID_ARGUMENT/);
+    await assert.rejects(rows(3,[id(2)]), /HISTORY_INDEX_ROW_MISSING/);
+    const operationalCounts = name => db.query(
+      "SELECT table_name,row_count::text FROM public."+name+"('default',$1,$2,7300) WHERE table_name<>'change_history' ORDER BY table_name",[A,OPS]);
+    assert.deepEqual((await operationalCounts("pos_sync_counts_history_v2")).rows,(await operationalCounts("pos_sync_counts")).rows);
+  });
+  await check("staged bootstrap resumes after the last kept UUID when response bytes split the page", async () => {
+    await db.exec("BEGIN;");
+    try {
+      for (const suffix of [21,22]) await db.exec("INSERT INTO public.change_history(id,organization_id,entity_type,entity_id,action,new_value,revision,scope_type,scope_id,source_application,server_timestamp) VALUES ("+
+        quote(id(suffix))+",'default','products','fixture','insert',jsonb_build_object('blob',repeat('x',1500)),1,'BRANCH',"+quote(A)+",'fixture',now());");
+      const first=await stagePage(OPS,A,JSON.stringify({id:id(20)}),1024);
+      assert.deepEqual(first.rows.map(row=>row.id),[id(21)]);
+      assert.deepEqual(JSON.parse(first.cursor),{id:id(21)});
+      const last=await stagePage(OPS,A,first.cursor,1024);
+      assert.deepEqual(last.rows.map(row=>row.id),[id(22)]);assert.equal(last.cursor,null);
+    } finally { await db.exec("ROLLBACK;"); }
+  });
+  await check("staged feed scopes before limit, keeps real mixed records and does not advance over an unauthorized tombstone", async () => {
+    await db.exec("BEGIN;");
+    try {
+      await db.exec("INSERT INTO sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone) SELECT 'default','global','change_history'," + quote(JSON.stringify({ id: id(2) })) + ",'insert',1,false FROM generate_series(1,101);");
+      await db.exec("INSERT INTO sync_change_feed(organization_id,branch_id,table_name,entity_id,operation,row_version,tombstone) VALUES "
+       + "('default','global','change_history'," + quote(JSON.stringify({id:id(1)})) + ",'delete',1,true),"
+       + "('default','global','change_history'," + quote(JSON.stringify({id:id(1)})) + ",'insert',1,false),"
+       + "('default','global','stores'," + quote(JSON.stringify({id:A})) + ",'update',1,false);");
+      const value = await scalar("SELECT public.pos_sync_feed_page_v2('default',$1,$2,0,false,2097152) value",[A,OPS]);
+      assert.deepEqual(value.map(row=>[row.cursor,row.table_name,row.tombstone]),[[103,"change_history",false],[104,"stores",false]]);
+      assert.equal(value[0].row_data.id,id(1));
+      const legacy = await scalar("SELECT public.pos_sync_feed_page_v1('default',$1,$2,0,false,2097152) value",[A,OPS]);
+      assert.equal(legacy.length,10);assert.equal(legacy[0].row_data.id,id(2));
+    } finally { await db.exec("ROLLBACK;"); }
+    // Identity sequences are not transactional even for this isolated fixture.
+    await db.exec("ALTER TABLE public.sync_change_feed ALTER COLUMN cursor RESTART WITH 1;");
+  });
+  await check("staged exact replay refuses a partial install or unexpected new routine ACL", async () => {
+    const before=await state();
+    for (const [mutation,error] of [
+      ["DROP FUNCTION public.pos_sync_history_rows_v3(text,text,text,jsonb,boolean,integer);",/HISTORY_TRANSPORT_PARTIAL/],
+      ["GRANT EXECUTE ON FUNCTION public.pos_sync_history_rows_v3(text,text,text,jsonb,boolean,integer) TO authenticated;",/HISTORY_TRANSPORT_METADATA/],
+    ]) {
+      await db.exec("BEGIN;");
+      try { await db.exec(mutation);await assert.rejects(db.exec(transportMigration),error); }
+      finally { await db.exec("ROLLBACK;"); }
+      assert.deepEqual(await state(),before);
+    }
+  });
+  if (process.argv.includes("--postgrest")) {
+    const { verifyHistoryScopePostgrest } = await import("./test-history-scope-postgrest.fixture.mjs");
+    passed += await verifyHistoryScopePostgrest(db, { A, B, OPS, OTHER, MAN, id }, { staged: true });
+  }
   await check("one tool-owned migration installs only guarded readers/helpers and preserves all history/trigger/index values", async () => { assert(!/^\s*(BEGIN|COMMIT)\s*;/mi.test(migration)); await db.exec(migration); const after = await state(); assert.deepEqual(after.history, original.history); assert.deepEqual(after.triggers, original.triggers); assert.deepEqual(after.indexes, original.indexes); });
+  await check("the existing final cutover and staged transport coexist and replay without changed functions or records", async () => {
+    const before=await state();
+    await db.exec(transportMigration);await db.exec(migration);await db.exec(transportMigration.replaceAll("\n","\r\n"));
+    assert.deepEqual(await state(),before);
+    assert.deepEqual((await idx(3)).ids,(await idx(2)).ids);
+    assert.deepEqual((await stagePage()).rows.map(row=>row.id),(await protectedBoot()).rows.map(row=>row.id));
+  });
   await check("old v1 bootstrap/protected bootstrap/count/index return only exact own-branch rows", async () => { for (const value of [await boot(), await protectedBoot()]) assert.deepEqual(value.rows.map(row => row.id), [id(1), id(9)]); const value = await idx(1); assert.deepEqual(value.ids, [id(1), id(9)]); assert.equal(value.upper_id, id(9)); assert.equal(await count(), "2"); assert(!Object.hasOwn(value, "policy")); assert.equal((await idx(1, "finish", null, value.upper_id)).range_count, "2"); });
   await check("new v2 explicitly attests branch policy without changing exact financial/privacy projection", async () => { const value = await idx(2); assert.equal(value.protocol, "history-index-v2"); assert.equal(value.policy, "branch-history-v1"); assert.equal(value.history_scope, "branch"); const result = await rows(2, [id(1), id(9)]); assert.equal(result.protocol, "history-rows-v2"); assert.equal(result.history_scope, "branch"); assert.equal(result.rows[0].revision, "9007199254740993"); assert.match(result.rows[0].new_value_json, /9007199254740993/); assert(!result.rows[0].new_value_json.includes("ecom_price")); assert(!result.rows[0].old_value_json.includes("PRIVATE")); assert.equal(result.rows[0].server_timestamp, "2026-11-07T01:02:03.1234560Z"); });
   await check("strict non-UUID branch strings retain case-sensitive identity", async () => { assert.deepEqual((await idx(2, "begin", null, null, "StoreA", TEXT)).ids, [id(12)]); });
@@ -145,7 +257,7 @@ try {
     assert.deepEqual(await state(), before);
   });
   await check("fresh canonical component executes the reviewed 70-table/pre-count wrapper variants and replays", async () => {
-    const { historyScopeCanonicalBlock } = require("./history-scope-canonical.cjs");
+    const { historyScopeCanonicalBlock, scopedHistoryTransportCanonicalBlock, withScopedHistoryTransportContract } = require("./history-scope-canonical.cjs");
     const oldCapture = JSON.parse(await read("src/lib/__tests__/fixtures/history-count-contract-live-metadata.json"));
     await apply(oldCapture.functions.find(item => item.signature === "pos_sync_counts(text,text,text,integer)").definition);
     const delegate = metadata.functions.find(item => item.signature === "pos_sync_counts_scoped(text,text,text,integer)");
@@ -160,6 +272,16 @@ try {
     assert.equal((await idx(2)).history_scope, "branch");
     assert.deepEqual((await state()).history, before.history);
     const verified = await state(); await db.exec(block); assert.deepEqual(await state(), verified);
+    for (const target of [...staged.targets].reverse()) await db.exec("DROP FUNCTION public."+target.signature+";");
+    const beforeStage=await state(),stageBlock=scopedHistoryTransportCanonicalBlock(transportMigration,migration);
+    await assert.rejects(db.exec(transportMigration), /HISTORY_TRANSPORT_SOURCE_CHANGED/);
+    assert.deepEqual(await state(),beforeStage);
+    await db.exec(stageBlock);
+    assert.deepEqual((await idx(3)).ids,[id(1),id(9)]);
+    assert.equal(await stageCount(),"2");
+    const stagedFresh=await state();await db.exec(stageBlock);assert.deepEqual(await state(),stagedFresh);
+    const schema=(await read("supabase/schema.sql")).replaceAll("\r\n","\n");
+    assert(schema.includes(stageBlock));assert.equal(withScopedHistoryTransportContract(schema,transportMigration),schema);
   });
   if (process.argv.includes("--postgrest")) {
     assert(native);

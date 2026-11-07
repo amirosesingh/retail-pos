@@ -1,3 +1,29 @@
+## 7 November — scoped history during mixed-client rollout
+
+The owner requested both sync corrections, beta first and then production.
+Begin at beta 1b29fc22, which includes the tested shift recovery order fix.
+The deployed 1.4.83 audit reader remains intentionally unavailable because
+its current bootstrap, feed and counts use legacy reads after admission.
+Older Operations clients can retain wider counts. Enabling only the v2
+index would expose broader rows over the wire before a native refusal.
+
+Prepare a separate scoped request for upgraded Windows clients covering
+index, exact rows, history bootstrap, feed and counts. Keep legacy RPCs
+unchanged during rollout and preserve authenticated branch and Management
+scope. Add service-role-only routines under distinct names in one reviewed
+migration. Make new requests fail closed if the matching hosted code or
+SQL is unavailable. Maintain exact pages, cursors, bounded reads, protected
+fields and the existing sync lane. Test old and new clients, branch denial,
+authorized Management, rollback and pre-deployment ordering in isolation.
+Show the exact hosted SQL and promotion for separate owner approval.
+Keep the legacy cutoff as a separately reviewed operation.
+
+The isolated exact migration, guarded fresh-install component and real
+PostgreSQL/PostgREST suite passed 39 cases. Native sync fixtures passed 25
+database integration cases. Read-only hosted preflight matched 13 dependency
+definitions and the table integrity checks. The existing PostgREST DDL
+watcher is enabled. No live SQL has been applied in this batch.
+
 ## 7 November — shift recovery while the protected history reader is unavailable
 
 The owner directed a focused fix for the synchronization failure reported on

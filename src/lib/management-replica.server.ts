@@ -7,11 +7,11 @@ export async function managementReplicaScope(body: {
   terminalToken?: string; deviceClaimProof?: string; managementSyncBranches?: boolean;
   deviceBindingProof?: string;
   sqlServerPull?: unknown; sqlServerBootstrap?: unknown; sqlServerCounts?: unknown; sqlServerShiftGraph?: unknown;
-  sqlServerHistoryReconcile?: unknown;
+  sqlServerHistoryReconcile?: unknown; sqlServerScopedHistory?: unknown;
   ops?: unknown[]; sqlServerBatch?: unknown; sqlServerAggregate?: unknown;
   read?: unknown; oldReceipt?: unknown; sqlServerTelemetry?: unknown;
 }): Promise<RelayScope | null> {
-  const reads = body.managementSyncBranches || body.sqlServerPull || body.sqlServerBootstrap || body.sqlServerCounts || body.sqlServerShiftGraph || body.sqlServerHistoryReconcile;
+  const reads = body.managementSyncBranches || body.sqlServerPull || body.sqlServerBootstrap || body.sqlServerCounts || body.sqlServerShiftGraph || body.sqlServerHistoryReconcile || body.sqlServerScopedHistory;
   if (!body.deviceClaimProof || !reads) return null;
   if (body.ops?.length || body.sqlServerBatch || body.sqlServerAggregate || body.read || body.oldReceipt || body.sqlServerTelemetry)
     throw new Error("Management replication accepts downloads only");

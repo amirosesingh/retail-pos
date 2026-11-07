@@ -7,6 +7,9 @@ const client=()=>new CloudClient({configStore:{get:()=>"https://fixture.invalid"
 afterEach(()=>vi.unstubAllGlobals());
 it.each([
  [{sqlServerPull:{branchId:"branch"}},"feed"],
+ [{sqlServerScopedHistory:{action:"feed",branchId:"branch"}},"feed"],
+ [{sqlServerScopedHistory:{action:"counts",branchId:"branch"}},"count"],
+ [{sqlServerScopedHistory:{action:"begin",branchId:"branch"}},"bootstrap"],
  [{sqlServerBootstrap:{branchId:"branch"}},"bootstrap"],
  [{sqlServerShiftGraph:{branchId:"branch"}},"graph"],
  [{sqlServerCounts:{branchId:"branch"}},"count"],
@@ -23,7 +26,7 @@ it.each([
 });
 it("identifies interrupted successful response bodies while preserving their original error",async()=>{
  const error=new TypeError("terminated",{cause:Object.assign(Error("private"),{code:"UND_ERR_SOCKET"})});
- vi.stubGlobal("fetch",vi.fn(async()=>({ok:true,status:200,json:async()=>{throw error;}})));
+ vi.stubGlobal("fetch",vi.fn(async()=>({ok:true,status:200,headers:new Headers({"X-POS-Scoped-History-Transport":"1"}),json:async()=>{throw error;}})));
  await expect(client().pullBatch({branchId:"branch",cursor:1,limit:100})).rejects.toBe(error);
  expect(bootstrapDiagnostic(error,[])).toMatchObject({transportStage:"body",transportCode:"UND_ERR_SOCKET",transportOperation:"feed"});
 });

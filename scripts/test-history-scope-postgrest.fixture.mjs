@@ -5,7 +5,7 @@ import { resolve, join, sep } from "node:path";
 import { spawn, execFileSync } from "node:child_process";
 import { createServer } from "node:net";
 import { createHmac, randomBytes } from "node:crypto";
-export async function verifyHistoryScopePostgrest(db, { A, B, OPS, OTHER, MAN, id }, { legacy = false } = {}) {
+export async function verifyHistoryScopePostgrest(db, { A, B, OPS, OTHER, MAN, id }, { legacy = false, staged = false } = {}) {
   const exe = process.env.POSTGREST_TEST_EXE;
   assert(exe);
   assert.equal(execFileSync(exe, ["--version"], { encoding: "utf8", windowsHide: true, timeout: 10000 }).trim(), "PostgREST 16.5");
@@ -13,7 +13,7 @@ export async function verifyHistoryScopePostgrest(db, { A, B, OPS, OTHER, MAN, i
   assert(Number.isInteger(pgPort) && pgPort > 0 && resolve(directory).startsWith(resolve(".tmp/seven-shift-summary-tests") + sep));
   const port = await new Promise((yes, no) => { const server = createServer(); server.once("error", no); server.listen(0, "127.0.0.1", () => { const value = server.address().port; server.close(() => yes(value)); }); });
   const quote = value => "'" + String(value).replaceAll("'", "''") + "'";
-  if (!legacy) await db.exec("INSERT INTO public.change_history(id,organization_id,entity_type,entity_id,action,new_value,revision,scope_type,scope_id,source_application,server_timestamp) SELECT ('eeeeeeee-eeee-4eee-8eee-'||lpad(n::text,12,'0'))::uuid,'default','products',n::text,'insert','{\"safe\":1}',1,'BRANCH'," + quote(A) + ",'fixture',now() FROM generate_series(1,2007)n;");
+  if (!legacy && !staged) await db.exec("INSERT INTO public.change_history(id,organization_id,entity_type,entity_id,action,new_value,revision,scope_type,scope_id,source_application,server_timestamp) SELECT ('eeeeeeee-eeee-4eee-8eee-'||lpad(n::text,12,'0'))::uuid,'default','products',n::text,'insert','{\"safe\":1}',1,'BRANCH'," + quote(A) + ",'fixture',now() FROM generate_series(1,2007)n;");
   const secret = randomBytes(48).toString("hex"), encode = value => Buffer.from(JSON.stringify(value)).toString("base64url");
   const token = role => { const value = encode({ alg: "HS256", typ: "JWT" }) + "." + encode({ role, exp: Math.floor(Date.now() / 1000) + 600 }); return value + "." + createHmac("sha256", secret).update(value).digest("base64url"); };
   const config = join(directory, "history-scope-postgrest.conf");
@@ -35,8 +35,8 @@ export async function verifyHistoryScopePostgrest(db, { A, B, OPS, OTHER, MAN, i
     let ready = false;
     for (let n = 0; n < 100; n++) { assert.equal(child.exitCode, null, log); try { const response = await fetch(origin + "/", { signal: AbortSignal.timeout(500) }); if (response.ok) { ready = true; break; } } catch {} await new Promise(resolve => setTimeout(resolve, 50)); }
     assert(ready, "Owned PostgREST readiness timed out");
-    if (legacy) {
-      await check("pre-upgrade scoped capability is missing for two distinct Operations tills while v1 is unchanged", async () => {
+    if (legacy || staged) {
+      await check((staged ? "additive stage" : "pre-upgrade") + " leaves the installed v2 handshake absent for two Operations tills while v1 is unchanged", async () => {
         for (const [branch, terminal] of [[A, OPS], [B, OTHER]]) {
           const args = { ...common, p_branch_id: branch, p_terminal_id: terminal, p_action: "begin", p_after_id: null, p_upper_id: null, p_limit: 1000 };
           const absent = await request("pos_sync_history_index_v2", args);
@@ -52,6 +52,52 @@ export async function verifyHistoryScopePostgrest(db, { A, B, OPS, OTHER, MAN, i
           assert.equal(wire.ids.length, 13);
         }
       });
+      if (staged) {
+        await check("new bounded history routes preserve exact wire contracts and branch scope", async () => {
+          for (const [branch, terminal, expected] of [[A,OPS,[id(1),id(9)]],[B,OTHER,[id(2)]]]) {
+            const scope={...common,p_branch_id:branch,p_terminal_id:terminal};
+            const index = await request("pos_sync_history_index_v3", {...scope,p_action:"begin",p_limit:1000});
+            assert.equal(index.status,200,await index.clone().text());assert.equal(index.headers.get("x-pos-history-reconcile-version"),"2");
+            assert.equal(index.headers.get("x-pos-history-reconcile-kind"),"index");
+            assert.deepEqual((await index.json()).ids,expected);
+            const exact=await request("pos_sync_history_rows_v3",{...scope,p_ids:expected,p_max_bytes:2097152});
+            assert.equal(exact.status,200,await exact.clone().text());assert.equal(exact.headers.get("x-pos-history-reconcile-version"),"2");
+            assert.equal(exact.headers.get("x-pos-history-reconcile-kind"),"rows");
+            const exactRows=(await exact.json()).rows;
+            assert.deepEqual(exactRows.map(row=>row.id),expected);assert.equal(exactRows[0].revision,"9007199254740993");
+            const page=await request("pos_sync_history_page_v2",{...scope,p_after_cursor:null,p_history_days:7300,p_max_bytes:2097152});
+            assert.equal(page.status,200,await page.clone().text());assert.equal(page.headers.get("x-pos-history-projection"),"1");
+            const text=await page.text(),value=JSON.parse(text);
+            assert.equal(Number(page.headers.get("x-pos-history-bytes")),Buffer.byteLength(text));
+            assert.equal(Number(page.headers.get("x-pos-history-rows")),expected.length);
+            assert.deepEqual(value.rows.map(row=>row.id),expected);assert.equal(value.cursor,null);assert(!text.includes("PRIVATE"));
+            const {p_keep_commerce:keepCommerce,...countArgs}=scope;
+            assert.equal(keepCommerce,false);
+            const counts=await request("pos_sync_counts_history_v2",{...countArgs,p_history_days:7300});
+            assert.equal(counts.status,200,await counts.clone().text());
+            const values=await counts.json();
+            assert.equal(values.length,70);
+            assert.equal(String(values.find(row=>row.table_name==="change_history").row_count),String(expected.length));
+          }
+        });
+        await check("staged feed attests an exact empty page and Management admits its full company only", async () => {
+          const feed=await request("pos_sync_feed_page_v2",{...common,p_after_cursor:0,p_max_bytes:2097152});
+          assert.equal(feed.status,200,await feed.clone().text());assert.equal(await feed.text(),"[]");
+          assert.equal(feed.headers.get("x-pos-feed-projection"),"1");assert.equal(feed.headers.get("x-pos-feed-bytes"),"2");
+          assert.equal(feed.headers.get("x-pos-feed-rows"),"0");assert.equal(feed.headers.get("x-pos-feed-continue"),"0");
+          const management=await request("pos_sync_history_index_v3",{...common,p_branch_id:B,p_terminal_id:MAN,p_action:"begin",p_limit:1000});
+          assert.equal(management.status,200);const company=await management.json();
+          assert.equal(company.history_scope,"company");assert(company.ids.includes(id(3)));assert(!company.ids.includes(id(11)));
+        });
+        await check("staged service readers deny unauthenticated, staff and wrong-branch requests", async () => {
+          const args={...common,p_action:"begin",p_limit:1000};
+          for (const [role,status] of [[null,401],["authenticated",403]]) {
+            const denied=await request("pos_sync_history_index_v3",args,role);assert.equal(denied.status,status,await denied.text());
+            const page=await request("pos_sync_history_page_v2",{...common,p_max_bytes:2097152},role);assert.equal(page.status,status,await page.text());
+          }
+          const foreign=await request("pos_sync_history_index_v3",{...args,p_branch_id:B});assert.equal(foreign.status,400,await foreign.text());
+        });
+      }
       return passed;
     }
     await check("v2 scalar pages enumerate every own-branch UUID beyond the server 1000-row cap", async () => {

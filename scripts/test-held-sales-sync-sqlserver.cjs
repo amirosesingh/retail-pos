@@ -404,8 +404,8 @@ async function main() {
         const body = JSON.parse(text);
         assert.equal(body.terminalToken, terminal);
         assert.equal(body.deviceBindingProof, proof);
-        const send = (status, value) => {
-          response.writeHead(status, { "content-type": "application/json" });
+        const send = (status, value, headers = {}) => {
+          response.writeHead(status, { "content-type": "application/json", ...headers });
           response.end(JSON.stringify(value));
         };
         if (body.sqlServerAggregate) {
@@ -432,8 +432,10 @@ async function main() {
             });
           return send(result.status, value);
         }
-        if (body.sqlServerPull) {
-          const p = body.sqlServerPull;
+        if (body.sqlServerScopedHistory?.action === "feed") {
+          const p = body.sqlServerScopedHistory;
+          assert.deepEqual(Object.keys(body).sort(), ["deviceBindingProof", "sqlServerScopedHistory", "terminalToken"]);
+          assert.deepEqual(Object.keys(p).sort(), ["action", "branchId", "cursor", "limit", "organizationId"]);
           await db.query("SELECT pos_sync_validate_scope($1,$2,$3)", [
             p.organizationId,
             p.branchId,
@@ -442,9 +444,11 @@ async function main() {
           const feed = (
             await db.query(
               "SELECT cursor,table_name,entity_id,operation,row_version,tombstone FROM sync_change_feed WHERE organization_id=$1 AND branch_id=$2 AND cursor>$3::bigint ORDER BY cursor LIMIT $4::integer",
-              [p.organizationId, p.branchId, p.cursor, p.limit],
+              [p.organizationId, p.branchId, p.cursor, p.limit + 1],
             )
           ).rows;
+          const hasMore = feed.length > p.limit;
+          if (hasMore) feed.pop();
           for (const row of feed) {
             assert(
               ["held_orders", "sales", "sale_items", "payment_transactions"].includes(
@@ -460,7 +464,11 @@ async function main() {
                   )
                 ).rows[0]?.data ?? null);
           }
-          return send(200, feed);
+          return send(200, feed, {
+            "X-POS-Scoped-History-Transport": "1",
+            "X-POS-Feed-Projection": "1",
+            "X-POS-Feed-Continue": hasMore ? "1" : "0",
+          });
         }
         if (body.sqlServerBootstrap) {
           const p = body.sqlServerBootstrap;

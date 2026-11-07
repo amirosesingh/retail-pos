@@ -687,6 +687,8 @@ const reviewedHeldAnchor = "-- HISTORY_SCOPE82_BEGIN";
 if (schema.split(reviewedHeldAnchor).length !== 2) throw new Error("Missing reviewed held-sale graph assembly anchor.");
 schema = schema.replace(reviewedHeldAnchor, reviewedHeldBegin + reviewedHeldMigration.split(reviewedHeldBegin)[1].split(reviewedHeldEnd)[0] +
   reviewedHeldEnd + "\n\n" + reviewedHeldAnchor);
+schema = require("./history-scope-canonical.cjs").withScopedHistoryTransportContract(schema,
+  fs.readFileSync(path.join(root, "supabase", "migrations", "20261107094311_add_scoped_history_transport.sql"), "utf8"));
 fs.writeFileSync(schemaPath, schema);
 console.log(`Supabase sync contract generated for ${tables.length} keyed tables`);
 

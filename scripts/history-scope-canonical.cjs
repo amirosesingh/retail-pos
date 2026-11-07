@@ -49,4 +49,41 @@ function withBoundedHeldStatusContract(schema, migration) {
   if (hardening < 0) throw new Error("Final privilege hardening must follow held-status assembly.");
   return schema.slice(0, hardening).trimEnd() + "\n\n" + boundedHeldStatusCanonicalBlock(migration) + "\n\n" + schema.slice(hardening).trimStart().trimEnd() + "\n";
 }
-module.exports = { historyScopeCanonicalBlock, withHistoryScopeContract, boundedHeldStatusCanonicalBlock, withBoundedHeldStatusContract };
+const transportBegin = "-- SCOPED_HISTORY_TRANSPORT_BEGIN", transportEnd = "-- SCOPED_HISTORY_TRANSPORT_END";
+function scopedHistoryTransportCanonicalBlock(migration, historyScope) {
+  const sql = migration.replaceAll("\r\n", "\n");
+  const anchor = /^( dependencies constant jsonb := \$history_transport_data\$)(\[.*\])(\$history_transport_data\$::jsonb;)$/m;
+  const dependency = anchor.exec(sql);
+  const reviewed = /^ expected constant jsonb := \$history_scope_data\$(\[.*\])\$history_scope_data\$::jsonb;$/m.exec(historyScope.replaceAll("\r\n", "\n"));
+  if (!dependency || !reviewed || sql.split("DO $history_transport_upgrade$").length !== 2 ||
+      sql.split("\n$history_transport_upgrade$;").length !== 2)
+    throw new Error("The scoped history transport assembly boundary changed.");
+  const known = JSON.parse(reviewed[1]);
+  const dependencies = JSON.parse(dependency[2]);
+  for (const entry of dependencies) {
+    const variants = known.find(routine => routine.signature === entry.signature)?.canonical_alternate_md5 ?? [];
+    entry.definition_hashes = [...new Set([...entry.definition_hashes, ...variants])];
+  }
+  let block = once(sql, dependency[0], dependency[1] + JSON.stringify(dependencies) + dependency[3]);
+  // The fresh-schema privilege hardener has the already-reviewed immutable
+  // function ACL forms. The exact hosted artifact accepts only captured ACLs.
+  block = once(block,
+    "AND (SELECT jsonb_agg(v::text ORDER BY v::text) FROM unnest(p.proacl)v)=entry->'acl_values'",
+    "AND ((SELECT jsonb_agg(v::text ORDER BY v::text) FROM unnest(p.proacl)v)=entry->'acl_values' OR (entry->>'signature'='change_history_immutable()' AND (p.proacl IS NULL OR (SELECT jsonb_agg(v::text ORDER BY v::text) FROM unnest(p.proacl)v)=jsonb_build_array('postgres=X/postgres','service_role=X/postgres'))))");
+  return transportBegin + "\n" + block.trim() + "\n" + transportEnd;
+}
+function withScopedHistoryTransportContract(schema, migration) {
+  if (schema.includes(transportBegin)) {
+    if (schema.split(transportBegin).length !== 2 || schema.split(transportEnd).length !== 2 ||
+        schema.indexOf(transportEnd) < schema.indexOf(transportBegin)) throw new Error("The canonical scoped history transport boundary changed.");
+    schema = schema.slice(0, schema.indexOf(transportBegin)).trimEnd() + "\n\n" + schema.slice(schema.indexOf(transportEnd) + transportEnd.length).trimStart();
+  } else if (schema.includes(transportEnd)) throw new Error("The canonical scoped history transport boundary changed.");
+  const hardening = schema.lastIndexOf("-- Final public-schema privilege hardening");
+  const historyStart = schema.indexOf(START), historyEnd = schema.indexOf(END);
+  if (hardening < 0 || historyStart < 0 || historyEnd <= historyStart || historyEnd >= hardening)
+    throw new Error("The scoped history definitions must precede the new transport and final privilege hardening.");
+  const block = scopedHistoryTransportCanonicalBlock(migration, schema.slice(historyStart, historyEnd));
+  return schema.slice(0, hardening).trimEnd() + "\n\n" + block + "\n\n" + schema.slice(hardening).trimStart().trimEnd() + "\n";
+}
+module.exports = { historyScopeCanonicalBlock, withHistoryScopeContract, boundedHeldStatusCanonicalBlock, withBoundedHeldStatusContract,
+  scopedHistoryTransportCanonicalBlock, withScopedHistoryTransportContract };
