@@ -1,3 +1,13 @@
+## 7 November — recover verified shifts independently of audit history
+
+A confirmed missing protected audit-history reader may defer history while an
+existing Operations till attempts proof-based shift Change Tracking recovery.
+Require a completed same-branch snapshot, a matching registered source and
+positive expired checkpoints limited to the shift graph. Preserve readiness
+gates, pending local work, exact coverage and branch verification. A cloud
+scope cutover, live repairs and another production release need separate
+approval.
+
 ## 7 November — mixed-version fleet rollout decision
 
 The owner approved implementing and isolate-testing a narrow bridge for truthful
