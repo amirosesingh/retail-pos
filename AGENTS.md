@@ -56,11 +56,36 @@
 
 ## Durable synchronization and long-offline integrity
 
-- Use one coordinated synchronization pipeline with a transactional local
-  outbox, acknowledged event/aggregate uploads, cursor-based downloads of
-  committed changes and bounded, resumable recovery snapshots. Reuse the
-  existing engine and contracts. Different domain operations may require
-  different validators and atomic dependency groups.
+- Follow the [POS sync implementation plan](docs/database/pos-sync-implementation-plan.md)
+  for future sync work. The [previous rules](docs/database/archive/pos-sync-rules-before-2026-11-07.md)
+  and [previous plan](docs/database/archive/pos-sync-plan-before-2026-11-07.md)
+  are historical backups. Implement in reviewed beta stages through the existing
+  entry points. Keep compatibility until isolated acceptance and cutover.
+- Synchronization is two-way. Local SQL Server uploads authorized business
+  events and permitted local changes. Supabase downloads canonical cloud
+  changes and confirmed results to eligible tills. The registry defines each
+  table's direction, field ownership and scope. Give uploads and downloads
+  independent progress and health within their authorization and dependency
+  guards. Reuse the existing Windows ODBC Driver 18 connection and HTTPS relay.
+- On SQL Server 2025 Express, use one durable transactional outbox and one
+  uploader. Use Change Tracking only on approved legacy current-state mirrors.
+  Keep journal delivery independent of capture history. Treat native CDC as a
+  separate decision for a future deployment that supports it.
+- Publish complete cloud change groups in commit order to a durable feed per
+  authorized scope. Use private Supabase Realtime signals to wake authorized
+  readers and resume from saved checkpoints on reconnect or polling. Apply the
+  whole group and its cursor together. Recover an expired cursor through a
+  staged snapshot that preserves the journal, pending sales and active shifts.
+- Refresh Approvals, Holds and the in-app badge promptly for authorized active
+  sessions, including PIN-only tills and named cross-store recipients when
+  store policy permits them. Use minimal wake signals and authorized reads.
+  Recheck permission and ticket binding when claiming an approval. Preserve
+  authorized polling when Realtime is unavailable.
+- Before replacing the current route, classify all deployed relations and
+  critical writers. Verify two isolated tills against staging with the agreed
+  offline rules, matching scoped records and business values, and a successful
+  cutover and handback drill with a pending sale and an open shift. Preserve the
+  existing live database, production promotion and release approval boundaries.
 - Save a local business operation and its durable pending upload evidence in
   the same transaction. Keep pending operations until verified server acceptance;
   retries and lost acknowledgements must not duplicate sales, payments, stock

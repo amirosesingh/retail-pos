@@ -140,6 +140,39 @@ test("plain Change Tracking saves its checkpoint only after a matching reply, in
   assert.equal(progress[0].completed, 1);
 });
 
+test("Change Tracking reads one bounded whole-version page and rejects a moving retention floor", async () => {
+  const page = [
+    { id: "local", version: 9, operation: "I", change_context: null },
+    { id: "remote", version: 9, operation: "U", change_context: Buffer.from("CLOUD") },
+  ];
+  const responses = [
+    [page, [{ minimum_version: "3", final_minimum_version: "3" }]],
+    [page, [{ minimum_version: "3", final_minimum_version: "8" }]],
+    [page, [{ minimum_version: "3", final_minimum_version: "4" }]],
+    [[{ minimum_version: "8", final_minimum_version: "8" }]],
+  ];
+  const calls = [];
+  const reader = new ChangeReader({ pool: { request() {
+    const args = {};
+    return {
+      input(name, value) { args[name] = value; return this; },
+      async query(sql) { calls.push({ sql, args }); return { recordsets: responses.shift() }; },
+    };
+  } } }, { tables: [table] });
+
+  const changes = await reader.changedIds(table, 0, 100);
+  assert.deepEqual(changes.map(change => [change.entityId, change.remote]), [
+    ['{"id":"local"}', false], ['{"id":"remote"}', true],
+  ]);
+  assert.deepEqual(calls[0].args, { since: "0", limit: 100, object: "dbo.audit_logs" });
+  assert.match(calls[0].sql, /TOP \(@limit\) WITH TIES/);
+  assert.match(calls[0].sql, /WHERE CT\.SYS_CHANGE_VERSION<=@upper\s+ORDER BY CT\.SYS_CHANGE_VERSION\s+\) bounded ORDER BY bounded\.version, bounded\.\[id\]/);
+  await assert.rejects(reader.changedIds(table, "7"), { code: "ECHANGEGAP", minimumVersion: 8 });
+  await assert.rejects(reader.changedIds(table, 0), { code: "ECHANGEGAP", minimumVersion: 4 });
+  await assert.rejects(reader.changedIds(table, 7), { code: "ECHANGEGAP", minimumVersion: 8 });
+  assert.equal(calls.length, 4);
+});
+
 test("a full cloud timeout leaves the batch pending for the scheduler without five blocking attempts", async () => {
   const f=pushFixture();let attempts=0;
   f.worker.cloud.pushAggregate=async()=>{attempts++;throw Object.assign(new Error("timed out"),{code:"ETIMEDOUT"});};
