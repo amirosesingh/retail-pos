@@ -4,6 +4,7 @@
 const { randomUUID } = require("node:crypto");
 const { recordId } = require("./uuid-fields.cjs");
 const { exactGraph, stringifyExactJson, isExactNumber } = require("./shift-recovery-exact.cjs");
+const { classifyRetainedShiftGraph } = require("./shift-recovery-classification.cjs");
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const HASH = /^[a-f0-9]{64}$/;
 const fail = (code = "ELEGACY_RECOVERY_SCOPE") => { throw Object.assign(new Error("Saved closing recovery is not ready or requires administrator review. Existing shift records remain intact."), { code, table: "shifts" }); };
@@ -188,37 +189,54 @@ class LegacyShiftRecoveryService {
       return this.summaryPending(tx, scope);
     });
   }
+  async reviewMode(tx) {
+    if (await this.hasSchema(tx)) return this.adopter && !await this.adoptionAvailable(tx) ? null : "full";
+    // Untyped IDs detect name collisions with non-table objects. Only dbo
+    // can prove absence when another user could have an object-level DENY.
+    const result = await this.query(tx, `SELECT CASE WHEN USER_NAME()=N'dbo' THEN 1 ELSE 0 END metadata_visible,
+      CASE WHEN OBJECT_ID(N'dbo.pos_shift_recovery_evidence') IS NULL
+        AND OBJECT_ID(N'dbo.pos_sync_shift_legacy_recoveries') IS NULL
+        AND OBJECT_ID(N'dbo.pos_sync_shift_legacy_recovery_receipts') IS NULL
+        AND OBJECT_ID(N'dbo.pos_shift_recovery_adoptions') IS NULL THEN 1 ELSE 0 END recovery_absent;`);
+    if (result.recordset?.length !== 1 || result.recordset[0].metadata_visible !== 1 ||
+        ![0, 1].includes(result.recordset[0].recovery_absent)) fail("ELEGACY_RECOVERY_SCHEMA");
+    return result.recordset[0].recovery_absent === 1 ? "read-only" : null;
+  }
   async list({ afterId = null, limit = 25 } = {}) {
     this.invalidateCapability();
     const capture = this.capture(true); limitOf(limit); if (afterId !== null) id(afterId);
     return this.atomic(capture, async (tx, scope) => {
-      if (!await this.hasSchema(tx)) return Object.freeze({ available: false, reason: "UPGRADE_REQUIRED", items: [] });
-      if (this.adopter && !await this.adoptionAvailable(tx)) return Object.freeze({ available: false, reason: "UPGRADE_REQUIRED", items: [] });
+      const mode = await this.reviewMode(tx);
+      if (!mode) return Object.freeze({ available: false, reason: "UPGRADE_REQUIRED", items: [] });
       const result = await this.query(tx, `SELECT TOP(@limit) CONVERT(varchar(36),id) id,status,state,
         CONVERT(nvarchar(40),opened_at,127) opened_at,CONVERT(nvarchar(40),closed_at,127) closed_at
         FROM dbo.shifts WITH(UPDLOCK,HOLDLOCK) WHERE store_id=@branch AND terminal_id=@terminal AND (@after IS NULL OR id>@after) ORDER BY id;`,
       { limit, branch: scope.branchId, terminal: scope.terminalId, after: afterId });
       const rows = Array.from(result.recordset ?? []); if (rows.length > limit) fail();
       const items = rows.map(row => Object.freeze({ shiftId: id(row.id), status: row.status, state: row.state, openedAt: row.opened_at, closedAt: row.closed_at }));
-      return Object.freeze({ available: true, items: Object.freeze(items), nextAfterId: rows.length === limit ? items.at(-1).shiftId : null });
+      return Object.freeze({ available: true, ...(mode === "read-only" ? { readOnly: true } : {}),
+        items: Object.freeze(items), nextAfterId: rows.length === limit ? items.at(-1).shiftId : null });
     });
   }
   summary(parent) {
     const text = key => { const value = parent[key]; if (value === null) return null; if (typeof value === "string") return value; if (isExactNumber(value)) return stringifyExactJson(value); fail(); };
     return Object.freeze({ status: text("status"), openedAt: text("opened_at"), closedAt: text("closed_at"),
       countedCash: text("counted_cash"), countedCard: text("counted_card"), countedDigital: text("counted_digital"),
-      expectedCash: text("expected_cash"), expectedCard: text("expected_card"), expectedDigital: text("expected_digital") });
+      expectedCash: text("expected_cash"), expectedCard: text("expected_card"), expectedDigital: text("expected_digital"),
+      ...(Object.hasOwn(parent, "updated_at") ? { updatedAt: text("updated_at") } : {}),
+      ...(Object.hasOwn(parent, "row_version") ? { rowVersion: text("row_version") } : {}) });
   }
   async preview(shiftId) {
     this.invalidateCapability();
     shiftId = id(shiftId); const capture = this.capture(true);
     // Check local identity and database before contacting the cloud, release
     // this transaction, then capture current SQL rows after the response.
-    await this.atomic(capture, async (tx, scope) => {
-      if (!await this.hasSchema(tx)) fail("ELEGACY_RECOVERY_UPGRADE_REQUIRED");
-      if (this.adopter && !await this.adoptionAvailable(tx)) fail("ELEGACY_RECOVERY_UPGRADE_REQUIRED");
+    const mode = await this.atomic(capture, async (tx, scope) => {
+      const current = await this.reviewMode(tx);
+      if (!current) fail("ELEGACY_RECOVERY_UPGRADE_REQUIRED");
       const r = await this.query(tx, "SELECT store_id,terminal_id FROM dbo.shifts WITH(UPDLOCK,HOLDLOCK) WHERE id=@id;", { id: shiftId });
       if (r.recordset?.length !== 1 || recordId(r.recordset[0].store_id) !== scope.branchId || recordId(r.recordset[0].terminal_id) !== scope.terminalId) fail("SYNC_BRANCH_FORBIDDEN");
+      return current;
     });
     this.assertCurrent(capture);
     const response = await this.cloud.shiftGraph({ branchId: capture.context.branchId, shiftId });
@@ -227,15 +245,23 @@ class LegacyShiftRecoveryService {
     if (!exact || !Array.isArray(exact.tables)) fail("ELEGACY_RECOVERY_EXACT_GRAPH_REQUIRED");
     const cloudGraphText = stringifyExactJson(exact.tables);
     return this.atomic(capture, async (tx, scope) => {
+      if (mode === "read-only" && await this.reviewMode(tx) !== mode) fail("ELEGACY_RECOVERY_REVIEW_CHANGED");
       const localTables = await this.outbox.localGraph(tx, scope, shiftId), localGraphText = JSON.stringify(localTables);
       this.outbox.assertOwnedGraphs(scope, localGraphText, cloudGraphText);
-      const evidence = await this.evidenceStore.capture(tx, { scope, shiftId, jobId: randomUUID(), localGraphText, cloudGraphText });
-      const canAcceptCloud = this.adopter ? await this.adoptionAvailable(tx) && evidence.classification !== "legacy-local-closing-needs-review" && await this.convergence(tx, scope, { available: true, shiftId }) === 0 : false;
       const local = localTables.find(part => part.table === "shifts")?.rows, remote = exact.tables.find(part => part.table === "shifts")?.rows;
       if (local?.length !== 1 || remote?.length !== 1) fail();
-      return Object.freeze({ shiftId, captureKey: evidence.captureKey, classification: evidence.classification,
-        canApprove: evidence.classification === "legacy-local-closing-needs-review", canAcceptCloud, financialVerification: "UNVERIFIED_HISTORICAL",
-        local: this.summary(local[0]), cloud: this.summary(remote[0]) });
+      const comparison = { shiftId, financialVerification: "UNVERIFIED_HISTORICAL",
+        local: this.summary(local[0]), cloud: this.summary(remote[0]) };
+      if (mode === "read-only") {
+        const { kind } = classifyRetainedShiftGraph({ registry: this.registry, branchId: scope.branchId,
+          shiftId, localTables, cloudTables: exact.tables });
+        return Object.freeze({ ...comparison, readOnly: true, captureKey: null, classification: kind,
+          canApprove: false, canAcceptCloud: false });
+      }
+      const evidence = await this.evidenceStore.capture(tx, { scope, shiftId, jobId: randomUUID(), localGraphText, cloudGraphText });
+      const canAcceptCloud = this.adopter ? await this.adoptionAvailable(tx) && evidence.classification !== "legacy-local-closing-needs-review" && await this.convergence(tx, scope, { available: true, shiftId }) === 0 : false;
+      return Object.freeze({ ...comparison, captureKey: evidence.captureKey, classification: evidence.classification,
+        canApprove: evidence.classification === "legacy-local-closing-needs-review", canAcceptCloud });
     });
   }
   async approve({ captureKey, recoveryId, reason }) {

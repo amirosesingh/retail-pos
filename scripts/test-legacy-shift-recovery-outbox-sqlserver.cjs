@@ -36,8 +36,6 @@ async function main() {
     const all = loadRegistry(), registry = { ...all, tables: all.tables.filter(t => TABLES.includes(t.cloudTable)) };
     assert.equal(registry.tables.length, 6);
     for (const name of TABLES) { const t = registry.tables.find(t => t.cloudTable === name); await pool.request().batch(`CREATE TABLE dbo.[${name}](${t.columns.map(c => `[${c.sqlServerColumn}] ${c.sqlServerType} ${c.sqlServerColumn === "id" ? "NOT NULL" : "NULL"}`).join(",")},PRIMARY KEY(id)); ALTER TABLE dbo.[${name}] ENABLE CHANGE_TRACKING;`); }
-    await pool.request().batch(fs.readFileSync(path.join(__dirname, "../docs/database/retained-shift-recovery-evidence.sql"), "utf8"));
-    await pool.request().batch(fs.readFileSync(path.join(__dirname, "../docs/database/legacy-shift-recovery-outbox.sql"), "utf8"));
     await pool.request().batch("CREATE TABLE dbo.pos_sync_shift_author_keys(scope_hash char(64) PRIMARY KEY,project_origin nvarchar(2048),terminal_id nvarchar(128),author_id uniqueidentifier,key_id uniqueidentifier,public_key nvarchar(256));");
     const branchId = crypto.randomUUID(), terminalId = crypto.randomUUID(), authorId = crypto.randomUUID(), projectOrigin = "https://fixture.supabase.co";
     const dbGuid = (await pool.request().query("SELECT CONVERT(varchar(36),database_guid) id FROM sys.database_recovery_status WHERE database_id=DB_ID();")).recordset[0].id.toLowerCase();
@@ -62,6 +60,38 @@ async function main() {
     const assertReceipt = (w, event) => { const record = brands.get(w); if (!record || record.hash !== event.payloadHash) throw Object.assign(Error("Unverified fixture receipt"), { code: "ELEGACY_RECOVERY_RECEIPT" }); return { receiptJson: record.json }; };
     const outbox = new LegacyShiftRecoveryOutbox({ connectionManager: cm, registry, evidenceStore, authority, assertScope, assertReceipt });
     const graph = async id => { const tables = []; for (const name of TABLES) { const t = registry.tables.find(t => t.cloudTable === name); tables.push({ table: name, rows: (await pool.request().input("id", id).query(`SELECT ${projection(t)} FROM dbo.[${name}] source WHERE ${name === "shifts" ? "id" : "shift_id"}=@id ORDER BY id;`)).recordset }); } return JSON.stringify(tables); };
+    await test("actual read-only review works before any optional recovery table and preserves all six tables", async () => {
+      const shiftId = crypto.randomUUID(), otherId = crypto.randomUUID(), openedAt = "2026-01-01T00:00:00.1234567Z";
+      await pool.request().input("id", shiftId).input("other", otherId).input("branch", branchId)
+        .input("terminal", terminalId).input("otherTerminal", crypto.randomUUID()).input("opened", openedAt)
+        .query(`INSERT dbo.shifts(id,store_id,terminal_id,status,state,opened_at,updated_at,row_version,opening_float) VALUES
+          (@id,@branch,@terminal,'OPEN','ACTIVE',@opened,@opened,1,100),(@other,@branch,@otherTerminal,'OPEN','ACTIVE',@opened,@opened,1,100);`);
+      const before = await graph(shiftId), start = (await pool.request().query("SELECT CHANGE_TRACKING_CURRENT_VERSION() version;")).recordset[0].version;
+      let review;
+      const compare = new LegacyShiftRecoveryOutbox({ connectionManager: cm, registry, evidenceStore, authority, assertReceipt,
+        assertScope: (tx, supplied) => review.assertScope(tx, supplied) });
+      review = new LegacyShiftRecoveryService({ connectionManager: cm, registry, evidenceStore, outbox: compare, authority,
+        readContext: () => ({ branchId, terminalId, backendOriginHash: scope.backendOriginHash, profileKey: "owned LocalDB review" }),
+        cloud: { shiftGraph: async () => {
+          const raw = JSON.stringify({ ok: true, shiftGraphVersion: 1, branchId, shiftId, graphToken: null, closedAtRaw: null, tables: JSON.parse(before) });
+          return rememberGraph(JSON.parse(raw), raw, "1");
+        } } });
+      const listed = await review.list({ limit: 1 });
+      assert.equal(listed.readOnly, true); assert.deepEqual(listed.items.map(item => item.shiftId), [shiftId]);
+      const preview = await review.preview(shiftId);
+      assert.equal(preview.classification, "exact"); assert.equal(preview.readOnly, true); assert.equal(preview.captureKey, null);
+      assert.equal(preview.canAcceptCloud, false); assert.equal(preview.canApprove, false);
+      assert.equal(preview.local.openedAt, JSON.parse(before)[0].rows[0].opened_at); assert.equal(preview.local.rowVersion, "1");
+      await assert.rejects(review.preview(otherId), error => error.code === "SYNC_BRANCH_FORBIDDEN");
+      assert.equal(await graph(shiftId), before);
+      assert.equal((await pool.request().query("SELECT CHANGE_TRACKING_CURRENT_VERSION() version;")).recordset[0].version, start);
+      await pool.request().batch("CREATE VIEW dbo.pos_shift_recovery_adoptions AS SELECT 1 AS id;");
+      assert.deepEqual(await review.list(), { available: false, reason: "UPGRADE_REQUIRED", items: [] });
+      await assert.rejects(review.preview(shiftId), error => error.code === "ELEGACY_RECOVERY_UPGRADE_REQUIRED");
+      await pool.request().input("id", shiftId).input("other", otherId).query("DROP VIEW dbo.pos_shift_recovery_adoptions; DELETE dbo.shifts WHERE id IN (@id,@other);");
+    });
+    await pool.request().batch(fs.readFileSync(path.join(__dirname, "../docs/database/retained-shift-recovery-evidence.sql"), "utf8"));
+    await pool.request().batch(fs.readFileSync(path.join(__dirname, "../docs/database/legacy-shift-recovery-outbox.sql"), "utf8"));
     const seed = async ({ oversized = false, wireHeavy = false, terminalOverride = null } = {}) => {
       const id = crypto.randomUUID(), count = crypto.randomUUID(), recon = crypto.randomUUID();
       await pool.request().input("id", id).input("branch", branchId).input("terminal", terminalId).query("INSERT dbo.shifts(id,store_id,terminal_id,status,state,opened_at,row_version,opening_float) VALUES(@id,@branch,@terminal,'OPEN','ACTIVE','2026-01-01T00:00:00.1234567+00:00',1,100);");

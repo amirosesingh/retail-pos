@@ -1,3 +1,51 @@
+## 7 November — code-driven shift recovery and durable sync rules
+
+The owner requested the permanent sync rules in AGENTS.md and asked to start
+the code fix. Isolated beta baseline b631b5d54035bba6fa00ae641b70fdbbd55c5816.
+Live databases and the affected PC stay read-only. Existing checkout, receipt
+access, permissions, data, queues and checkpoints remain protected.
+The rules cover all applicable sync tables and modes, including each table's
+source, supported directions, scope, identities, foreign keys, apply ordering,
+deletion policy and checkpoint guarantees. The implementation below is the
+first bounded fix under those rules.
+
+First slice: expose the existing authenticated exact branch/terminal shift
+comparison as read-only when all optional recovery tables are absent. Show the
+actual prerequisite, preserve the startup and checkout gates, and keep review
+writes disabled until the existing metadata and approval checks pass. Native
+and renderer files have separate owners. Cover clean absence, partial schema,
+unauthorized and foreign scope, and the existing writable review workflow in
+isolated tests. This slice does not complete a held bill or resolve a conflict.
+
+The comparison uses the existing authenticated Main/IPC path. The fallback
+requires database-owner metadata visibility to prove all four optional objects
+are absent. It returns no decision key or write action. Focused sync/permission
+tests, mounted browser fixtures at desktop and mobile widths, and the isolated
+SQL Server absence/collision and exact timestamp test passed. TypeScript and
+scoped lint passed. Actual affected-PC acceptance remains pending.
+
+In parallel, review the existing checkout evidence and receipt scope before
+preparing any durable held-proof changes. Keep the earlier missing-sale
+prototype separate. The six STR1 holds must be verified or reviewed before
+the dependent local shift can close. Competing closings still require trusted
+evidence or an authorized decision. Show any exact database changes before
+requesting rollout approval. No live migration or production promotion.
+
+The existing private completed-hold cleanup receipt links hold, branch, bill
+and sale IDs, but has no cart snapshot or revision. It can scope a review read,
+but does not resolve an older offline edit. Future automatic recovery needs
+durable exact cart evidence retained with accepted completion and durable local
+pending/deletion evidence. Existing receipts cannot be backfilled from a sale
+match alone. Reuse the current receipt entitlement and share one bounded scan
+across the coordinator and recovery lifecycle.
+
+Registry audit: the generated registry already orders normal inserts by
+foreign-key depth and accounts for business dependencies such as held bills.
+Pull applies deletions in reverse order. Missing parents outside a pull page
+still use selected repair paths. A separately scoped follow-up should verify
+and fetch exact missing parents for each applicable relationship or defer the
+dependent work, without widening access or scanning unrelated records.
+
 ## 7 November — HISTORY-SCOPE82 approved implementation and remote verification
 
 Fresh affected-PC SELECT-only check on 7November about11:05am verified
