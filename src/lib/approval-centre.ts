@@ -18,6 +18,7 @@ import type { AuthorizationRequest } from "./authorization";
 import type { AuthPayload } from "./authorization";
 import { activeBranchId } from "./active-branch";
 import { localDb } from "@/core/local-db/local-db";
+import { subscribeCentralAuthSession } from "./session-presence";
 
 export const CENTRE_POLL_MS = 45_000;
 
@@ -189,17 +190,31 @@ export function subscribeApprovals(onChange: () => void | Promise<void>, { allBr
   // PIN-only terminals use the protected relay and the visible-page
   // reconciliation poll. Without a Supabase staff JWT, a filtered Postgres
   // subscription is rejected before RLS as an "invalid column" error.
-  if (!hasStaffSession()) return () => cleanups.forEach((cleanup) => cleanup());
-  if (branchId || allBranches) cleanups.push(subscribeOwnedPostgresChanges(
-    supabaseExternal,
-    "pos-approval-centre",
-    { event: "*", schema: "public", table: "authorization_requests", ...(allBranches ? {} : { filter: `store_id=eq.${branchId}` }) },
-    changed,
-    status => {
-      const connected = status === "SUBSCRIBED";
-      if (connected && !live) changed();
-      live = connected;
-    },
-  ));
+  if (branchId || allBranches) {
+    let stopRealtime: (() => void) | undefined;
+    const updateRealtime = () => {
+      if (!hasStaffSession()) {
+        stopRealtime?.();
+        stopRealtime = undefined;
+        live = false;
+        return;
+      }
+      if (stopRealtime) return;
+      stopRealtime = subscribeOwnedPostgresChanges(
+        supabaseExternal,
+        "pos-approval-centre",
+        { event: "*", schema: "public", table: "authorization_requests", ...(allBranches ? {} : { filter: `store_id=eq.${branchId}` }) },
+        changed,
+        status => {
+          const connected = status === "SUBSCRIBED";
+          if (connected && !live) changed();
+          live = connected;
+        },
+      );
+    };
+    cleanups.push(subscribeCentralAuthSession(updateRealtime));
+    cleanups.push(() => stopRealtime?.());
+    updateRealtime();
+  }
   return () => cleanups.forEach((cleanup) => cleanup());
 }
