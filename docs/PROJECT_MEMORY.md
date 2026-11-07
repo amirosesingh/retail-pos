@@ -40,6 +40,19 @@ Owner requires all proposed cloud/local database upgrades collected for exact fi
 The exact owner-approved service-only bounded feed RPC and PR384 are applied/deployed on beta. Existing selector/privacy grants and businessrecords are preserved; native continuation is bound to authenticated response metadata. Live147request sample all200/ok with no CPU-exceeded; CPU2–114ms/mean9.469 means NO guarantee allrequestsbelow10ms. Electronfeed131613→133184, all6shiftCTvalid; largebacklog stilldraining. Keep implemented/sample-verified status distinct from fullsync completion, production promotion or installerpublication. Supabase migrationtool ledger20261104042158 corresponds to approvedfile20261104040251, SHA83495D696622241ECA2A8D396234E2FD65EE7C7A3050E93E4280638D6530D59B; do not replay based solely on differing timestamps.
 # POS project memory
 
+## 7 November — two-way POS synchronization plan
+
+The owner requested permanent rules for the revised two-way sync plan and a
+backup of the earlier rules. SQL Server 2025 Express uses the existing ODBC
+connection and one durable business-event uploader. Change Tracking is limited
+to approved legacy current-state mirrors. Supabase sends authorized committed
+change groups back through the durable feed, with private Realtime wake signals
+and checkpoint-based catch-up. The [current plan](database/pos-sync-implementation-plan.md)
+controls staged implementation. Live acceptance requires matching data and an
+isolated two-till cutover and handback drill. The plan records proposed pilot
+settings. Store policies, staging targets and production actions retain their
+existing approval boundaries.
+
 ## 7 November — branch history isolation and affected-PC follow-up approved
 
 Owner approves agents to fix history synchronization so Operations terminals

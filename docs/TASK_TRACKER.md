@@ -20,6 +20,29 @@ journal rows after a failure following evidence insertion. The supported event
 is a plain cash checkout on an active shift. Other tenders and later financial
 actions still need their own typed contracts and verified authoritative apply.
 
+## 7 November — two-way POS synchronization rules and prior backup
+
+The owner asked to record the revised sync plan as a permanent repository rule
+and back up the previous rules before making the change. The documentation
+batch starts at beta `d39b0333`. The [current plan](database/pos-sync-implementation-plan.md),
+[previous plan](database/archive/pos-sync-plan-before-2026-11-07.md), and
+[previous repository rules](database/archive/pos-sync-rules-before-2026-11-07.md)
+preserve the supplied documents and pre-change instructions. The approval
+refresh fix is tracked separately in beta PR #444.
+
+The replacement protocol is pending. Before the pilot, confirm the isolated
+SQL Server databases, Supabase project and relay, drawer ownership, business-day
+cutoff, offline permissions and limits, card provider behavior, stock allowances,
+and named cross-store approval rules. Treat 24 hours offline and 95% of connected
+approval updates within two seconds as proposed pilot targets. Record checkout
+and catch-up budgets before the drill. Keep a retry with `WAITING_DEPENDENCY`
+eligible to apply under its original operation ID and payload after dependencies
+arrive. Define a byte budget for whole feed groups and rehearse both cutover and
+handback with an open shift and a pending sale. The reported `50C` error remains
+unidentified pending exact reproduction evidence. This batch covers the written
+rules and backup. Runtime implementation, database changes and rollout follow
+their existing approval and verification gates.
+
 ## 7 November — scoped history during mixed-client rollout
 
 The owner requested both sync corrections, beta first and then production.
@@ -71,6 +94,23 @@ passed 18 cases, including exact default-organization checkpoint ownership,
 a checkpoint changing during recovery, source invalidation before commit and
 blank-branch journal refusal. Independent review confirmed the revised guards.
 The production STR1 flow still needs an installed check.
+
+## 7 November — retain complete Windows Change Tracking upload pages
+
+The owner approved starting the two-way sync plan in scoped beta batches while
+keeping the current engine active. Begin from beta `d39b0333`. The current
+legacy Change Tracking reader can read a boundary twice when a page is full.
+Cleanup between reads can invalidate the saved starting version. Keep complete
+version groups in one bounded-window read and refuse to advance if the starting
+version is outside retention after the read. Preserve journal-first upload,
+scope and echo filtering, and acknowledgement before checkpoint advancement.
+
+The two focused pipeline tests passed. An owned disposable Windows LocalDB
+instance verified whole version groups, composite keys, deletes, existing echo
+markers and rejection of an expired position through ODBC. The change uses the
+current SQL Server connection and recovery path. It requires no migration or
+operator setting change. The rollback is a scoped code revert. Cloud feed
+preparation and immutable legacy-row staging proceed separately.
 
 ## 7 November — mixed-version fleet sync and verified held completions
 
