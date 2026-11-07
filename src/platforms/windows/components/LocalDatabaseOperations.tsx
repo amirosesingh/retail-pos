@@ -64,7 +64,7 @@ export function LocalDatabaseOperations() {
   }, []);
   const [failures, setFailures] = useState<Failures>({});
   const [file, setFile] = useState("");
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ text: string; pending: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [failureDetailsOpen, setFailureDetailsOpen] = useState(false);
@@ -106,7 +106,9 @@ export function LocalDatabaseOperations() {
       const result = await work();
       if (result.ok === false) throw new Error(String(result.error ?? "The operation did not complete."));
       const differences = Array.isArray(result.differences) ? result.differences.length : 0;
-      setMessage(differences ? `${success} ${differences} difference${differences === 1 ? " remains" : "s remain"}.` : success);
+      const pending = result.historyPending === true || result.historyHoldOnly === true;
+      const status = pending ? "Protected history is still pending." : success;
+      setMessage({ text: differences ? `${status} ${differences} difference${differences === 1 ? " remains" : "s remain"}.` : status, pending });
       await refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -195,7 +197,7 @@ export function LocalDatabaseOperations() {
           </details>
         </section>
       </DatabaseHealthCard>
-      {message ? <p className="rounded-md bg-emerald-500/10 p-3 text-xs text-emerald-700 dark:text-emerald-400" role="status">{message}</p> : null}
+      {message ? <p className={message.pending ? "rounded-md bg-muted p-3 text-xs text-muted-foreground" : "rounded-md bg-emerald-500/10 p-3 text-xs text-emerald-700 dark:text-emerald-400"} role="status">{message.text}</p> : null}
       {error ? <p className="rounded-md bg-destructive/10 p-3 text-xs text-destructive" role="alert">{error}</p> : null}
       <Card>
         <CardHeader><CardTitle className="text-base">Backup and recovery</CardTitle></CardHeader>

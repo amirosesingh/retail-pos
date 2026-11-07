@@ -5,7 +5,7 @@ import { resolve, join, sep } from "node:path";
 import { spawn, execFileSync } from "node:child_process";
 import { createServer } from "node:net";
 import { createHmac, randomBytes } from "node:crypto";
-export async function verifyHistoryScopePostgrest(db, { A, B, OPS, MAN, id }) {
+export async function verifyHistoryScopePostgrest(db, { A, B, OPS, OTHER, MAN, id }, { legacy = false } = {}) {
   const exe = process.env.POSTGREST_TEST_EXE;
   assert(exe);
   assert.equal(execFileSync(exe, ["--version"], { encoding: "utf8", windowsHide: true, timeout: 10000 }).trim(), "PostgREST 16.5");
@@ -13,7 +13,7 @@ export async function verifyHistoryScopePostgrest(db, { A, B, OPS, MAN, id }) {
   assert(Number.isInteger(pgPort) && pgPort > 0 && resolve(directory).startsWith(resolve(".tmp/seven-shift-summary-tests") + sep));
   const port = await new Promise((yes, no) => { const server = createServer(); server.once("error", no); server.listen(0, "127.0.0.1", () => { const value = server.address().port; server.close(() => yes(value)); }); });
   const quote = value => "'" + String(value).replaceAll("'", "''") + "'";
-  await db.exec("INSERT INTO public.change_history(id,organization_id,entity_type,entity_id,action,new_value,revision,scope_type,scope_id,source_application,server_timestamp) SELECT ('eeeeeeee-eeee-4eee-8eee-'||lpad(n::text,12,'0'))::uuid,'default','products',n::text,'insert','{\"safe\":1}',1,'BRANCH'," + quote(A) + ",'fixture',now() FROM generate_series(1,2007)n;");
+  if (!legacy) await db.exec("INSERT INTO public.change_history(id,organization_id,entity_type,entity_id,action,new_value,revision,scope_type,scope_id,source_application,server_timestamp) SELECT ('eeeeeeee-eeee-4eee-8eee-'||lpad(n::text,12,'0'))::uuid,'default','products',n::text,'insert','{\"safe\":1}',1,'BRANCH'," + quote(A) + ",'fixture',now() FROM generate_series(1,2007)n;");
   const secret = randomBytes(48).toString("hex"), encode = value => Buffer.from(JSON.stringify(value)).toString("base64url");
   const token = role => { const value = encode({ alg: "HS256", typ: "JWT" }) + "." + encode({ role, exp: Math.floor(Date.now() / 1000) + 600 }); return value + "." + createHmac("sha256", secret).update(value).digest("base64url"); };
   const config = join(directory, "history-scope-postgrest.conf");
@@ -35,6 +35,25 @@ export async function verifyHistoryScopePostgrest(db, { A, B, OPS, MAN, id }) {
     let ready = false;
     for (let n = 0; n < 100; n++) { assert.equal(child.exitCode, null, log); try { const response = await fetch(origin + "/", { signal: AbortSignal.timeout(500) }); if (response.ok) { ready = true; break; } } catch {} await new Promise(resolve => setTimeout(resolve, 50)); }
     assert(ready, "Owned PostgREST readiness timed out");
+    if (legacy) {
+      await check("pre-upgrade scoped capability is missing for two distinct Operations tills while v1 is unchanged", async () => {
+        for (const [branch, terminal] of [[A, OPS], [B, OTHER]]) {
+          const args = { ...common, p_branch_id: branch, p_terminal_id: terminal, p_action: "begin", p_after_id: null, p_upper_id: null, p_limit: 1000 };
+          const absent = await request("pos_sync_history_index_v2", args);
+          assert.equal(absent.status, 404);
+          const failure = await absent.json();
+          assert.equal(failure.code, "PGRST202");
+          assert.equal(failure.message, "Could not find the function public.pos_sync_history_index_v2(p_action, p_after_id, p_branch_id, p_keep_commerce, p_limit, p_organization_id, p_terminal_id, p_upper_id) in the schema cache");
+          assert(failure.hint === null || !failure.hint.includes("public.pos_sync_history_index_v2"));
+          const prior = await request("pos_sync_history_index_v1", args);
+          assert.equal(prior.status, 200);
+          const wire = await prior.json();
+          assert.equal(wire.protocol, "history-index-v1");
+          assert.equal(wire.ids.length, 13);
+        }
+      });
+      return passed;
+    }
     await check("v2 scalar pages enumerate every own-branch UUID beyond the server 1000-row cap", async () => {
       let after = null, upper = null, seen = [];
       for (let page = 0; page < 10; page++) {

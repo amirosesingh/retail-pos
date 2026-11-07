@@ -265,11 +265,11 @@ describe("existing health-check transport integration", () => {
 
 /** Execute the actual TSX component's hooks and async handlers. The JSX tree is
  * an inspectable value; a separate Chrome fixture verifies real React rendering. */
-function panelHarness(databaseRead: unknown) {
+function panelHarness(databaseRead: unknown, syncResult: unknown = { ok: true }) {
   const ts = createRequire(import.meta.url)("typescript") as typeof import("typescript");
   const source = readFileSync("src/platforms/windows/components/LocalDatabaseOperations.tsx", "utf8");
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
-  type Element = { type: unknown; props: { children?: unknown; role?: string } };
+  type Element = { type: unknown; props: { children?: unknown; role?: string; onClick?: () => Promise<void>; className?: string } };
   let cursor = 0;
   const values: unknown[] = [], effects: (() => void)[] = [];
   const react = {
@@ -289,7 +289,7 @@ function panelHarness(databaseRead: unknown) {
     database: { getState: async () => databaseRead, health: () => health, schemaStatus: async () => ({ ok: true }),
       subscribe: (callback: (next: unknown) => void) => { databaseCallback = callback; return () => undefined; } },
     jobs: { getActive: async () => null, subscribe: () => () => undefined },
-    sync: { getStatus: async () => native(), getFailures: async () => ({}), subscribe: () => () => undefined },
+    sync: { getStatus: async () => native(), getFailures: async () => ({}), runNow: async () => syncResult, subscribe: () => () => undefined },
   };
   const exports: { LocalDatabaseOperations?: () => Element | null } = {};
   runInNewContext(compiled, {
@@ -298,6 +298,7 @@ function panelHarness(databaseRead: unknown) {
       if (name === "react/jsx-runtime") return { jsx: (type: unknown, props: Element["props"]) => ({ type, props }), jsxs: (type: unknown, props: Element["props"]) => ({ type, props }) };
       if (name === "@/lib/sync-status-summary") return { nativeSyncSummary, isNativeDatabaseSnapshot };
       if (name === "@/lib/time-zone") return { formatDateTime: String };
+      if (name === "@/core/activation/terminal-tokens") return { mirrorTerminalConfigToDesktop: async () => undefined };
       return new Proxy({}, { get: (_target, key) => String(key) });
     },
   });
@@ -311,11 +312,27 @@ function panelHarness(databaseRead: unknown) {
     const element = tree as Element;
     return element.props?.role === "status" ? String(element.props.children) : status(element.props?.children);
   };
-  return { first, render, settle, status, emitDatabase: (next: unknown) => databaseCallback!(next) };
+  const findText = (tree: unknown, value: string): Element | undefined => {
+    if (Array.isArray(tree)) return tree.map(node => findText(node, value)).find(Boolean);
+    if (!tree || typeof tree !== "object") return undefined;
+    const node = tree as Element;
+    return node.props?.children === value ? node : findText(node.props?.children, value);
+  };
+  return { first, render, settle, status, findText, emitDatabase: (next: unknown) => databaseCallback!(next) };
 }
 
 describe("actual local panel database freshness", () => {
   const ready = { enabled: true, connected: true, tradingReady: true, state: "enabled_ready" };
+
+  it("reports pending protected history after manual sync without a green completion", async () => {
+    const panel = panelHarness(ready, { ok: true, historyPending: true });
+    await panel.settle();
+    await panel.findText(panel.render(), "Sync now")!.props.onClick!();
+    const tree = panel.render();
+    const message = panel.findText(tree, "Protected history is still pending.");
+    expect(message?.props.className).toContain("text-muted-foreground");
+    expect(panel.findText(tree, "Synchronization completed.")).toBeUndefined();
+  });
 
   it("does not restore a stale connected snapshot after a newer disconnect event", async () => {
     const panel = panelHarness(ready);

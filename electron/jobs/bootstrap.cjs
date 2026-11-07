@@ -28,7 +28,10 @@ async function snapshotPage({cloud,connectionManager,table,branchId,historyDays,
   let prepared,selected,historyPrepared;const decisions=new Map();
   const page=await readPage(async limit=>{
     prepared=null;historyPrepared=null;
-    let batch;try{batch=await cloud.bootstrapPage({table:table.cloudTable,branchId,historyDays,cursor,limit});}
+    // A legacy server can return a broader snapshot. Do not even request it
+    // until the current scoped reader has attested this terminal's policy.
+    const witness=await historyPolicyRun?.get();
+    let batch;try{batch=await cloud.bootstrapPage({table:table.cloudTable,branchId,historyDays,cursor,limit,...(witness?{historyWitness:witness}:{})});}
     catch(error){historyPolicyRun?.invalidate();throw error;}
     if(Buffer.byteLength(JSON.stringify(batch),"utf8")>MAX_PAGE_BYTES)throw Object.assign(new Error("Download exceeds the safe page size."),{code:"EOVERSIZED"});
     selected=(batch.rows??[]).filter(row=>{const key=keyFor(table,row);if(!decisions.has(key))decisions.set(key,rowFilter(row));return decisions.get(key);});

@@ -5,6 +5,8 @@ const {parseExactJson}=require("./shift-recovery-exact.cjs");
 const {normalizeFinancialSourceEvidence,normalizePublishedThrough}=require("./financial-source-order.cjs");
 const financialBasisWitnesses=new WeakMap();
 const financialCapabilityWitnesses=new WeakMap();
+const unavailableHistoryPolicies=new WeakMap();
+const HISTORY_POLICY_UNAVAILABLE='EHISTORY_POLICY_UNAVAILABLE';
 const deepFreezeFinancial=value=>{if(value&&typeof value==='object'){for(const child of Object.values(value))deepFreezeFinancial(child);Object.freeze(value);}return value;};
 const financialBasisFailure=()=>{throw Object.assign(new Error("The verified financial basis is unavailable or its source changed."),{code:"EFINANCIAL_BASIS_SOURCE_CHANGED",table:"shifts"});};
 const financialBasisHash=value=>createHash("sha256").update(value,"utf8").digest("hex");
@@ -273,6 +275,9 @@ class CloudClient {
     let exactGraphBody;
     let legacyRecoveryBody;
     let transportStage = "fetch";
+    const historyBegin=payload?.sqlServerHistoryReconcile?.action==='begin'?payload.sqlServerHistoryReconcile:null;
+    const historyAuthority=historyBegin?this.requestContext(true):null;
+    let historyUnavailable=false;
     const requestBody = JSON.stringify({ ...outbound, ...personProof, terminalToken: recordId(terminalToken), deviceBindingProof:terminal.deviceBindingProof, ...(terminal.deviceUse === "management" ? { deviceClaimProof: terminal.deviceClaimProof } : {}) });
     if (payload?.sqlServerLegacyRecovery && Buffer.byteLength(requestBody, "utf8") > require("../security/legacy-shift-recovery-protocol.cjs").MAX_UPLOAD_BYTES)
       throw Object.assign(new Error("The reviewed closing exceeds the bounded recovery upload. Its saved evidence remains available for review."), { code:"ELEGACY_RECOVERY_OVERSIZED", table:"shifts" });
@@ -286,6 +291,11 @@ class CloudClient {
       try {
         if(payload?.sqlServerHeldStatus || payload?.sqlServerHeldSaleReview){
           data=JSON.parse(await boundedText(response,2*1024*1024));
+        }else if(historyBegin&&response.status===409&&response.headers.get('X-POS-History-Reconcile-Version')==='2'&&
+          response.headers.get('X-POS-History-Reconcile-Kind')==='unavailable'){
+          data=JSON.parse(await boundedText(response,4096));
+          historyUnavailable=data?.ok===false&&data.code===HISTORY_POLICY_UNAVAILABLE&&Object.keys(data).sort().join(',')==='branch_id,code,ok,organization_id,policy,terminal_id'&&
+            data.policy===historyBegin.accessPolicy&&data.organization_id===historyBegin.organizationId&&data.branch_id===historyBegin.branchId&&data.terminal_id===recordId(terminalToken);
         }else if(payload?.sqlServerHistoryReconcile&&response.ok){
           const kind=payload.sqlServerHistoryReconcile.action==='rows'?'rows':'index';
           const max=kind==='rows'?5*1024*1024:128*1024;
@@ -317,6 +327,13 @@ class CloudClient {
       }
       throw tagBootstrapDiagnostic(error, transportDiagnostic(error, payload, transportStage));
     }
+    if(historyUnavailable){
+      this.assertRequestContext(source,governance,payload);
+      this.assertRequestContext(historyAuthority,true,payload);
+      const error=Object.assign(new Error('The central database does not currently expose protected history for this terminal. History will retry.'),{code:HISTORY_POLICY_UNAVAILABLE,status:409,table:'change_history'});
+      unavailableHistoryPolicies.set(error,{cloud:this,authority:historyAuthority,branchId:historyBegin.branchId,organizationId:historyBegin.organizationId});
+      throw error;
+    }
     if (!response.ok || data?.ok === false) {
       if([401,403].includes(response.status))managementHistoryScopes.delete(this);
       // PostgREST reports raised SQL errors in `message`, while the POS relay
@@ -324,7 +341,7 @@ class CloudClient {
       // instead of an unhelpful generic HTTP 400.
       const message = data?.error ?? data?.message ?? `HTTP ${response.status}`;
       throw tagBootstrapDiagnostic(Object.assign(new Error(message), {
-        code: data?.code ?? `HTTP_${response.status}`,
+        code: data?.code===HISTORY_POLICY_UNAVAILABLE?'EHISTORY_INDEX_PROTOCOL':data?.code ?? `HTTP_${response.status}`,
         status: response.status,
         detail: data?.details ?? data?.detail ?? null,
         ...(bodyReadError ? { cause: bodyReadError } : {}),
@@ -500,10 +517,15 @@ class CloudClient {
       };
     });
   }
-  bootstrapPage({ organizationId = "default", table, branchId, historyDays, cursor, limit }) {
+  async bootstrapPage({ organizationId = "default", table, branchId, historyDays, cursor, limit, historyWitness=null }) {
     const history=table==='change_history'?require('./history-read-scope.cjs'):null;
-    const scope=history?.captureHistoryScope(this,this.connectionManager,branchId,organizationId);
-    return this.request({
+    const witness=history?(historyWitness??await history.createHistoryPolicyRun({cloud:this,connectionManager:this.connectionManager,branchId,organizationId}).get()):null;
+    if(witness){
+      history.assertHistoryPolicy(witness,this,this.connectionManager);
+      if(witness.scope.branchId!==recordId(branchId)||witness.scope.organizationId!==organizationId)
+        throw Object.assign(new Error('The requested history snapshot is outside the verified policy scope.'),{code:'EHISTORY_INDEX_SCOPE',table:'change_history'});
+    }
+    const result=await this.request({
       sqlServerBootstrap: {
         organizationId,
         table,
@@ -512,10 +534,9 @@ class CloudClient {
         cursor: cursor ?? null,
         limit,
       },
-    }).then(result=>{
-      if(history){history.assertHistoryScope(scope,this,this.connectionManager);history.assertHistoryRows(result?.rows,scope);}
-      return result;
     });
+    if(witness){history.assertHistoryPolicy(witness,this,this.connectionManager);history.assertHistoryRows(result?.rows,witness.scope);}
+    return result;
   }
   counts({ organizationId = "default", branchId, historyDays = 90 }) {
     return this.request({ sqlServerCounts: { organizationId, branchId, historyDays } });
@@ -526,6 +547,11 @@ class CloudClient {
     const value=await this.request({sqlServerHistoryReconcile:read});
     history.assertHistoryScope(scope,this,this.connectionManager);
     return require('./history-index-protocol.cjs').normalizeIndex(value,{organizationId,branchId,terminalId,keepCommerce,historyScope:scope.historyScope},{action,afterId,upperId});
+  }
+  isHistoryPolicyUnavailable(error,branchId,organizationId='default') {
+    const proof=unavailableHistoryPolicies.get(error);
+    if(!proof||proof.cloud!==this||proof.branchId!==branchId||proof.organizationId!==organizationId)return false;
+    try{this.assertRequestContext(proof.authority,true,{sqlServerHistoryReconcile:true});return true;}catch{return false;}
   }
   async historyMissingRows({organizationId='default',branchId,ids,keepCommerce}) {
     const history=require('./history-read-scope.cjs'),scope=history.captureHistoryScope(this,this.connectionManager,branchId,organizationId),terminalId=scope.terminalId;
