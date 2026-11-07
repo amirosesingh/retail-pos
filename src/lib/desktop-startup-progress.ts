@@ -94,6 +94,12 @@ const TABLES: Record<string, string> = {
   store_groups: "Clusters",
 };
 const PHASES: Record<string, string> = {
+  metadata_packagecheck: "Checking the recovery update…",
+  metadata_probe: "Checking local recovery support…",
+  metadata_backing_up: "Backing up the local database…",
+  metadata_verifying_backup: "Verifying the database backup…",
+  metadata_installing: "Preparing local recovery support…",
+  metadata_readback: "Verifying local recovery support…",
   preparing: "Preparing local store data…",
   authorizing: "Checking authorized store access…",
   uploading: "Uploading saved changes…",

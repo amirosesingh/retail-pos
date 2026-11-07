@@ -7240,3 +7240,41 @@ probe stays0EE1FFB7CFFD8608728238BD06F3294EC0DA3EBDF3365F1308FD3C0498D26DE7.
 The old312B artifact was never live-approved or applied. The090F manual upgrade
 remains byte-identical. Pure6/root generator/Windows checkout checks pass on new
 bytes; final full native and composed runtime acceptance is still running.
+
+Implementation verification checkpoint: Main startup now wires the optional
+installer behind a literal null approval pin. All three package files have
+independent trusted source hashes before any SQL. Existing primary-pool and
+temporary-session GUID/canonical-name proofs must match even for a no-op.
+The installer recognizes only reviewed whole-module prefixes, backs up through
+the SQL server's configured directory, verifies COPY_ONLY/CHECKSUM/header BindingID,
+and executes the single SQL-owned transaction. Matching installations skip backup
+and DDL. Busy startup retries use only the existing schedule while data stays
+gated; qualified trading and stable backup/schema/approval denials never start
+background DDL. Shutdown/barrier/control ownership and prior pause are preserved.
+
+Read-only progress reports the actual package/probe/backup/verification/install/
+readback stage without exposing paths or clearing an unresolved shift-data
+warning. No metadata result acknowledges a closing or qualifies incomplete data.
+Two hundred seventeen related runtime cases and 38 independent adversarial Main
+cases pass (overlapping suites); syntax, lint and TypeScript pass. The final
+recovery-only artifact passes 28 actual SQL Server groups across two collations;
+the runtime passes seven owned database groups. Both native runners cleaned only
+their owned databases/files and leave the090F manual file unchanged.
+
+Native limitation is explicit: unmodified LocalDB returns no default backup
+directory and was correctly refused with no DDL. The successful owned runtime
+case substitutes only that directory-property reply with its owned test folder;
+COPY_ONLY, VERIFYONLY, HEADERONLY, installation and readback are real SQL. It is
+not proof of the affected SQL Express PC's path/permissions or signed-in recovery.
+No live profile was launched. Root full regression and exact-head PR431 CI are
+running before beta integration; rollout and live SQL approval remain separate.
+
+Full-suite compatibility refinement: the first root run passed6520 cases and
+failed one unchanged DatabaseService no-hook connection test. The new optional
+call evaluated credentials eagerly even when no installer was configured. Pass
+the already validated/saved profile, retaining the hook's fresh saved-credential
+checks before/after preparation. The original seven state-machine tests now
+pass unchanged; two added enabled-hook save tests prove accepted matching identity
+and held mid-operation profile changes. Final focused116 and independent105
+cases pass (overlapping suites); full regression is rerunning on frozen sources.
+No SQL artifact, approval policy or existing assertion was weakened.

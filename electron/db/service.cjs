@@ -16,11 +16,12 @@ const STATES = new Set([
 ]);
 
 class DatabaseService {
-  constructor({ secureConfig, manager, publish = () => {}, log = () => {}, validator = validateDatabase, migrate = null, startupIdentity = () => null, startupPaused = () => false, publishStartupActivity = () => {} }) {
+  constructor({ secureConfig, manager, publish = () => {}, log = () => {}, validator = validateDatabase, migrate = null, prepareRecoveryMetadata = null, startupIdentity = () => null, startupPaused = () => false, publishStartupActivity = () => {} }) {
     this.secureConfig = secureConfig; this.manager = manager; this.publish = publish;
     this.startupPaused = startupPaused;
     this.log = log;
     this.validator = validator; this.migrate = migrate;
+    this.prepareRecoveryMetadata = prepareRecoveryMetadata; this.recoveryMetadata = null;
     this.validatedProfileKey = null;
     this.connectedSchemaKey = null;
     this.state = secureConfig.enabled() ? (secureConfig.profile() ? "enabled_connecting" : "enabled_unconfigured") : "disabled";
@@ -34,7 +35,21 @@ class DatabaseService {
     const locallyConnected = this.manager.isConnected?.() ?? Boolean(this.manager.pool);
     return { state: this.state, enabled: this.secureConfig.enabled(), configured: Boolean(this.secureConfig.profile()),
       connected: locallyConnected, tradingReady: locallyConnected && this.validated, profile: this.secureConfig.profile(), detail: this.detail,
-      lastCheckedAt: this.lastCheckedAt, startupActivity:this.startupActivity.snapshot(), startupPaused:this.startupPaused() };
+      lastCheckedAt: this.lastCheckedAt, startupActivity:this.startupActivity.snapshot(), startupPaused:this.startupPaused(), recoveryMetadata:this.recoveryMetadata };
+  }
+  async prepareOptionalRecovery(profile) {
+    if (!this.prepareRecoveryMetadata) return true;
+    const pool = this.manager.pool, key = profileValidationKey(profile);
+    const current = () => pool === this.manager.pool && this.secureConfig.enabled() && profileValidationKey(this.secureConfig.credentials()) === key;
+    const assertCurrent = () => { if (!current()) throw Object.assign(new Error("The database preparation target changed."), { code:"ERECOVERY_METADATA_CONTEXT" }); };
+    let result;
+    try { assertCurrent(); result = await this.prepareRecoveryMetadata({profile,pool,assertCurrent}); }
+    catch(error) { result = {available:false,state:"held",code:/^ERECOVERY_METADATA_[A-Z_]{1,40}$/.test(String(error?.code??""))?error.code:"ERECOVERY_METADATA_PREPARATION",reason:"Recovery support requires attention. Existing local work is preserved."}; }
+    // A stale optional operation must not publish readiness or close a newly
+    // selected pool. The normal new-source startup owns its own state.
+    if (!current()) return false;
+    this.recoveryMetadata = result;
+    return true;
   }
   beginStartupActivity(){return this.startupActivity.begin();}
   transition(state, detail = null) {
@@ -75,6 +90,8 @@ class DatabaseService {
       return this.transition("enabled_error", validation);
     }
     if (!(this.manager.isConnected?.() ?? this.manager.pool)) await this.manager.open(profile);
+    this.validated = false;
+    if (!await this.prepareOptionalRecovery(profile)) return this.snapshot();
     this.validated = true;
     this.connectedSchemaKey = profileValidationKey(profile);
     this.lastCheckedAt = new Date().toISOString();
@@ -103,9 +120,10 @@ class DatabaseService {
       this.validated = false;
       this.transition("enabled_connecting");
       await this.manager.open(profile);
+      const saved = this.secureConfig.save(profile);
+      if (!await this.prepareOptionalRecovery(profile)) return {ok:false,code:"ERECOVERY_METADATA_CONTEXT",state:this.snapshot()};
       this.validated = true;
       this.connectedSchemaKey = profileValidationKey(profile);
-      const saved = this.secureConfig.save(profile);
       this.validatedProfileKey = null;
       this.lastCheckedAt = new Date().toISOString();
       this.transition("enabled_bootstrapping");
@@ -131,6 +149,7 @@ class DatabaseService {
         this.validated = false;
         this.transition("enabled_connecting", { phase: "reconnecting" });
         await this.manager.open(profile);
+        if (!await this.prepareOptionalRecovery(profile)) return this.snapshot();
         this.validated = true;
         this.lastCheckedAt = new Date().toISOString();
         return this.transition("enabled_ready", { phase: "reconnected" });
@@ -157,6 +176,7 @@ class DatabaseService {
       }
       this.transition("enabled_connecting");
       await this.manager.open(profile);
+      if (!await this.prepareOptionalRecovery(profile)) return this.snapshot();
       this.validated = true;
       this.connectedSchemaKey = profileValidationKey(profile);
       this.lastCheckedAt = new Date().toISOString();

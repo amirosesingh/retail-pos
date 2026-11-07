@@ -84,3 +84,21 @@ corrections. Preserve existing financial modes, checkout and pending work.
 The owner must see the final SQL file/hash, target or rollout scope, backup and
 quiescence behavior before live execution or deployment that enables automatic DDL.
 Production promotion remains a separately approved beta-to-main PR.
+
+## Implemented candidate and exact SQL review
+
+The candidate is implemented with automatic DDL disabled in Main. Its installer
+is `database/sqlserver/recovery/shift-recovery-metadata.sql`, SHA256
+`CD7AA9591B257F91372FB092990202E4D5E8E89450F39F4A3BC4D6D55CCDE62A`.
+The read-only probe SHA is
+`0EE1FFB7CFFD8608728238BD06F3294EC0DA3EBDF3365F1308FD3C0498D26DE7`;
+manifest SHA is
+`6F35A244E975A1E98CB13D43261BF9CC46DB9DAB1DFD23C304DF8325E3E93817`.
+The earlier312B preparation hash is superseded and was never applied live.
+
+Package/native/runtime and independent adversarial checks passed on these bytes.
+Whole regression/CI remains an integration gate. Actual LocalDB refused a missing
+server backup directory; its successful fixture supplied only an owned test
+directory reply, then executed real backup/verification/DDL/readback. Target
+SQL Express backup-path/permission and affected-PC recovery acceptance remain
+unverified. No approval to activate Main's pin or install on real PCs is inferred.
