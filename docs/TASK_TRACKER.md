@@ -15,6 +15,14 @@ complete groups and their head positions became visible together. Rollback,
 wrong-epoch rejection and the provisional size limit left no gaps or partial
 groups. Anonymous, authenticated and service roles were denied direct access.
 
+The owner asked to complete the plan. Extend the preparation with bounded reads
+of whole groups at a fixed upper position, guarded retention and snapshot pins,
+and a private payload-bound operation inbox. An identical waiting operation can
+resume with its original ID after dependencies arrive. A stored disposition must
+be recorded in the transaction that claimed the operation. Keep the active
+cloud contracts out of this slice. Move the preparation outside `supabase/sql`
+because the canonical schema check treats that directory as deployable SQL.
+
 Keep the prepared SQL outside the deployment migration chain until the scoped
 relay, domain publishers and snapshot cutover can be reviewed together. The
 existing feed, uploader, approval behavior and all installed cursors remain

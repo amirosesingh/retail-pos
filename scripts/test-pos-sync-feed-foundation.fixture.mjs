@@ -6,6 +6,7 @@ import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { verifyInboxFoundation } from "./lib/pos-sync-inbox-foundation-fixture.mjs";
 
 const bin = process.env.POSTGRES_TEST_BIN;
 assert(bin, "Set POSTGRES_TEST_BIN to the existing portable PostgreSQL bin directory");
@@ -73,12 +74,20 @@ const group = (scope_id, entity, groupEpoch = epoch) => ({ scope_id, epoch: grou
 const append = (...groups) => `SELECT * FROM ${schema}.append_groups('fixture-org', '${JSON.stringify(groups)}'::jsonb);`;
 const state = () => sql(`SELECT scope_id, head_seq, replay_floor FROM ${schema}.feed_heads ORDER BY scope_id;`);
 const entries = () => sql(`SELECT scope_id, seq, changes->0->>'entity' FROM ${schema}.feed_groups ORDER BY scope_id, seq;`);
+const sqlText = value => value === null ? "NULL" : `'${value.replaceAll("'", "''")}'`;
+const pullCall = (scope, after, { upper = null, limit = 100, scopeEpoch = epoch, org = "fixture-org" } = {}) =>
+  `${schema}.pull_groups(${[org, scope, scopeEpoch, after, upper].map(sqlText).join(", ")}, ${limit})`;
+const pull = (scope, after, options) => JSON.parse(sql(`SELECT ${pullCall(scope, after, options)};`));
+const pinCall = (scope, scopeEpoch = epoch) => `${schema}.create_snapshot_pin('fixture-org', ${sqlText(scope)}, ${sqlText(scopeEpoch)})`;
+const retireCall = (scope, through, limit = 1000) =>
+  `${schema}.retire_groups('fixture-org', ${sqlText(scope)}, '${epoch}', ${sqlText(through)}, ${limit})`;
+const retire = (scope, through, limit) => JSON.parse(sql(`SELECT ${retireCall(scope, through, limit)};`));
 
 try {
   command("initdb", ["-D", directory, "-A", "trust", "-U", "postgres", "--encoding=UTF8", "--locale=C", "--no-instructions"]);
   command("pg_ctl", ["-D", directory, "-l", join(directory, "fixture.log"), "-o", `-h 127.0.0.1 -p ${port} -c max_connections=6 -c shared_buffers=32MB -c statement_timeout=15000`, "-w", "start"], { stdio: "ignore" });
   sql("CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;");
-  const preparation = await readFile(new URL("../supabase/sql/prepared_pos_sync_feed_v1.sql", import.meta.url), "utf8");
+  const preparation = await readFile(new URL("./preparation/pos-sync-feed-v1.sql", import.meta.url), "utf8");
   sql(`BEGIN;\n${preparation}\nCOMMIT;`);
   sql(`INSERT INTO ${schema}.feed_heads (organization_id, scope_id, epoch)
        VALUES ('fixture-org', 'A', '${epoch}'), ('fixture-org', 'B', '${epoch}');`);
@@ -97,6 +106,9 @@ try {
   );`) === "t", "Later append was not blocked by the first transaction");
   assert.equal(state(), "A|0|0\nB|0|0");
   assert.equal(entries(), "");
+  assert.deepEqual(pull("A", "0"), {
+    status: "OK", scope_id: "A", epoch, next_seq: "0", upper_seq: "0", has_more: false, groups: [],
+  });
   sql(append(group("B", "independent")));
   assert.equal(entries(), "B|1|independent");
   holder.child.stdin.end("COMMIT;\n");
@@ -131,11 +143,104 @@ try {
     assert.equal(sql(`SELECT has_schema_privilege('${role}', '${schema}', 'USAGE'),
       has_table_privilege('${role}', '${schema}.feed_heads', 'SELECT'),
       has_table_privilege('${role}', '${schema}.feed_groups', 'SELECT'),
-      has_function_privilege('${role}', '${schema}.append_groups(text,jsonb)', 'EXECUTE');`), "f|f|f|f");
+      has_table_privilege('${role}', '${schema}.snapshot_pins', 'SELECT'),
+      has_function_privilege('${role}', '${schema}.append_groups(text,jsonb)', 'EXECUTE'),
+      has_function_privilege('${role}', '${schema}.pull_groups(text,text,uuid,text,text,integer)', 'EXECUTE'),
+      has_function_privilege('${role}', '${schema}.create_snapshot_pin(text,text,uuid,integer)', 'EXECUTE'),
+      has_function_privilege('${role}', '${schema}.retire_groups(text,text,uuid,text,integer)', 'EXECUTE');`), "f|f|f|f|f|f|f|f");
     denySql(`SET ROLE ${role}; ${append(group("A", "unauthorized"))}`, /permission denied/);
+    denySql(`SET ROLE ${role}; SELECT ${pullCall("A", "0")};`, /permission denied/);
+    denySql(`SET ROLE ${role}; SELECT ${pinCall("A")};`, /permission denied/);
+    denySql(`SET ROLE ${role}; SELECT ${retireCall("A", "1")};`, /permission denied/);
   }
   assert.equal(state(), "A|3|0\nB|2|0");
   console.log("PASS 4 isolated PostgreSQL feed foundation scenarios (commit order, rollback, multi-scope atomicity, role denial)");
+
+  // A continuation uses the captured upper sequence even after another commit.
+  const firstPage = pull("A", "0", { limit: 1 });
+  assert.deepEqual(firstPage, {
+    status: "OK", scope_id: "A", epoch, next_seq: "1", upper_seq: "3", has_more: true,
+    groups: [{ seq: "1", operation_id: null, changes: [{ entity: "first" }] }],
+  });
+  sql(append(group("A", "after-window")));
+  const lastPage = pull("A", firstPage.next_seq, { upper: firstPage.upper_seq, limit: 2 });
+  assert.equal(lastPage.has_more, false);
+  assert.equal(lastPage.next_seq, "3");
+  assert.deepEqual(lastPage.groups.map(item => item.seq), ["2", "3"]);
+  assert.deepEqual(lastPage.groups[1].changes, wholeGroup.changes);
+  assert.deepEqual(pull("A", "3").groups.map(item => item.seq), ["4"]);
+  assert.deepEqual(pull("B", "0").groups.map(item => item.changes[0].entity), ["independent", "committed-b"]);
+  assert.deepEqual(pull("A", "0", { org: "other-org" }), { status: "SCOPE_UNAVAILABLE" });
+
+  // The page byte budget defers a whole group rather than splitting it.
+  sql(`INSERT INTO ${schema}.feed_heads (organization_id, scope_id, epoch)
+       VALUES ('fixture-org', 'wide', '${epoch}');`);
+  const wideAppend = `SELECT * FROM ${schema}.append_groups('fixture-org', jsonb_build_array(jsonb_build_object(
+    'scope_id', 'wide', 'epoch', '${epoch}', 'changes', jsonb_build_array(jsonb_build_object('entity', repeat('x', 1048000)))
+  )));`;
+  sql(wideAppend);
+  sql(wideAppend);
+  const widePage = (after, options) => sql(`SELECT page->>'next_seq', page->>'upper_seq', page->>'has_more',
+    jsonb_array_length(page->'groups'), octet_length(page::text) <= 2097152
+    FROM (SELECT ${pullCall("wide", after, options)} AS page) AS result;`);
+  assert.equal(widePage("0"), "1|2|true|1|t");
+  assert.equal(widePage("1", { upper: "2" }), "2|2|false|1|t");
+
+  // Compare and return full bigint cursors without JavaScript rounding.
+  const highStart = "9007199254740992";
+  const highNext = "9007199254740993";
+  sql(`INSERT INTO ${schema}.feed_heads (organization_id, scope_id, epoch, head_seq, replay_floor)
+       VALUES ('fixture-org', 'high', '${epoch}', ${highStart}, ${highStart});`);
+  sql(append(group("high", "exact")));
+  const highPage = pull("high", highStart);
+  assert.equal(highPage.next_seq, highNext);
+  assert.equal(highPage.upper_seq, highNext);
+  assert.equal(highPage.groups[0].seq, highNext);
+  assert.deepEqual(pull("high", "9223372036854775808"), { status: "INVALID_CURSOR" });
+  assert.deepEqual(pull("high", "1e3"), { status: "INVALID_CURSOR" });
+  assert.deepEqual(pull("high", highNext, { upper: highStart }), { status: "INVALID_CURSOR" });
+  assert.deepEqual(pull("high", highStart, { upper: "9007199254740994" }), { status: "INVALID_CURSOR" });
+
+  assert.deepEqual(pull("A", "0", { scopeEpoch: wrongEpoch }), { status: "SNAPSHOT_REQUIRED", reason: "EPOCH_MISMATCH" });
+  sql(`BEGIN;
+       UPDATE ${schema}.feed_heads SET replay_floor = 1 WHERE organization_id = 'fixture-org' AND scope_id = 'A';
+       DELETE FROM ${schema}.feed_groups WHERE organization_id = 'fixture-org' AND scope_id = 'A' AND seq = 1;
+       COMMIT;`);
+  assert.deepEqual(pull("A", "0"), { status: "SNAPSHOT_REQUIRED", reason: "REPLAY_EXPIRED" });
+  assert.equal(pull("A", "1").groups[0].seq, "2");
+  sql(`DELETE FROM ${schema}.feed_groups WHERE organization_id = 'fixture-org' AND scope_id = 'A' AND seq = 3;`);
+  assert.deepEqual(pull("A", "2"), { status: "SNAPSHOT_REQUIRED", reason: "FEED_GAP" });
+  console.log("PASS 4 isolated PostgreSQL feed reader scenarios (fixed bounds and scope, whole-group byte budget, exact cursors, recovery outcomes)");
+
+  // A pin protects every change after the snapshot baseline, while older
+  // groups can be removed in bounded transactions.
+  const pin = JSON.parse(sql(`SELECT ${pinCall("B")};`));
+  assert.equal(pin.status, "OK");
+  assert.equal(pin.protected_seq, "2");
+  assert.equal(pin.epoch, epoch);
+  assert.equal(JSON.parse(sql(`SELECT ${pinCall("B", wrongEpoch)};`)).status, "SNAPSHOT_REQUIRED");
+  sql(append(group("B", "post-pin-1")));
+  sql(append(group("B", "post-pin-2")));
+  assert.deepEqual(retire("B", "4", 1), { status: "OK", replay_floor: "1", has_more: true, blocked_by_pin: true });
+  assert.deepEqual(retire("B", "4"), { status: "OK", replay_floor: "2", has_more: false, blocked_by_pin: true });
+  assert.deepEqual(pull("B", pin.protected_seq).groups.map(item => item.seq), ["3", "4"]);
+
+  // Cleanup and floor movement roll back together. An expired pin can no
+  // longer protect the groups and is pruned by the same bounded cleanup.
+  sql(`UPDATE ${schema}.snapshot_pins SET expires_at = clock_timestamp() - interval '1 second'
+       WHERE organization_id = 'fixture-org' AND scope_id = 'B' AND pin_id = '${pin.pin_id}';`);
+  sql(`BEGIN; SELECT ${retireCall("B", "4")}; ROLLBACK;`);
+  assert.equal(sql(`SELECT count(*) FROM ${schema}.snapshot_pins WHERE pin_id = '${pin.pin_id}';`), "1");
+  assert.deepEqual(pull("B", "2").groups.map(item => item.seq), ["3", "4"]);
+  assert.deepEqual(retire("B", "4", 1), { status: "OK", replay_floor: "3", has_more: true, blocked_by_pin: false });
+  assert.equal(sql(`SELECT count(*) FROM ${schema}.snapshot_pins WHERE pin_id = '${pin.pin_id}';`), "0");
+  assert.deepEqual(pull("B", "2"), { status: "SNAPSHOT_REQUIRED", reason: "REPLAY_EXPIRED" });
+  assert.deepEqual(pull("B", "3").groups.map(item => item.seq), ["4"]);
+  assert.deepEqual(retire("B", "4"), { status: "OK", replay_floor: "4", has_more: false, blocked_by_pin: false });
+  assert.deepEqual(pull("B", "4").groups, []);
+  console.log("PASS 2 isolated PostgreSQL snapshot retention scenarios (active pin and bounded cleanup, rollback and expiry)");
+
+  await verifyInboxFoundation({ sql, denySql });
 } finally {
   for (const running of activeSessions) running.child.kill();
   await Promise.all([...activeSessions].map(running => running.finished));
