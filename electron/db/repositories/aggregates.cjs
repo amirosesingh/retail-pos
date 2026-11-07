@@ -253,7 +253,7 @@ class AggregateRepository {
             await this.confirmSaleStock(transaction, table, operation, aggregate, stockPreimage, operationAffected);
             if (confirmedStock) {
               const productId = recordId(operation.match.id);
-              confirmedStock.set(productId, aggregate.financialStockDeltas.get(productId));
+              confirmedStock.set(productId, { delta: aggregate.financialStockDeltas.get(productId), product: stockPreimage.before });
             }
           }
           else for (const record of records) await this.assertBranch(transaction, table, record, operation.match, aggregate.branchId, isFinancialStockUpdate(operation, aggregate));
@@ -296,7 +296,7 @@ class AggregateRepository {
       return { ok: true, operationId, replayed: false, affected };
     } catch (error) {
       await Promise.resolve(transaction.rollback()).catch(() => undefined);
-      if (["EIDEMPOTENCY", "EEXISTING_SALE_RECONCILIATION", "EBRANCH", "EBRANCH_SCOPE", "SYNC_BRANCH_FORBIDDEN", "EEXCHANGE_STATE", "EPRODUCT_STATE", "PERMISSION_DENIED", "ESHIFT_TERMINAL", "ESALE_EVENT_UNVERIFIED"].includes(error?.code))
+      if (["EIDEMPOTENCY", "EEXISTING_SALE_RECONCILIATION", "EBRANCH", "EBRANCH_SCOPE", "SYNC_BRANCH_FORBIDDEN", "EEXCHANGE_STATE", "EPRODUCT_STATE", "PERMISSION_DENIED", "ESHIFT_TERMINAL", "ESALE_EVENT_UNVERIFIED", "ESALE_CASH_BRIDGE_UNVERIFIED"].includes(error?.code))
         throw error;
       const target = tableName ? ` while writing ${tableName}` : "";
       const native = error?.originalError?.info ?? error?.originalError ?? error;

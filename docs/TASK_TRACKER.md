@@ -42,6 +42,12 @@ configuration. Required checks include another branch, an invalid terminal,
 replayed operations, group rollback and the existing route when the gate is off.
 No installed handoff or hosted database write is authorized by preparation.
 
+Five focused LocalDB cases passed for the opt-in cash wire evidence, including
+exact replay after restart, installation and database mismatch, and atomic
+rollback. The legacy uploader remains active. The isolated cash bridge still
+needs a verified relay generation and an exclusive legacy sender handoff before
+any installed device can dispatch this evidence.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents
