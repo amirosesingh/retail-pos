@@ -56,11 +56,11 @@
 
 ## Durable synchronization and long-offline integrity
 
-- Use one coordinated synchronization pipeline: transactional local outbox,
-  acknowledged event/aggregate uploads, incremental downloads and bounded,
-  resumable recovery snapshots. Reuse the existing engine and contracts rather
-  than introducing a competing sync system for each module. Different domain
-  operations may require different validators and atomic dependency groups.
+- Use one coordinated synchronization pipeline with a transactional local
+  outbox, acknowledged event/aggregate uploads, cursor-based downloads of
+  committed changes and bounded, resumable recovery snapshots. Reuse the
+  existing engine and contracts. Different domain operations may require
+  different validators and atomic dependency groups.
 - Save a local business operation and its durable pending upload evidence in
   the same transaction. Keep pending operations until verified server acceptance;
   retries and lost acknowledgements must not duplicate sales, payments, stock
@@ -80,6 +80,9 @@
   closings and authorized corrections from web or native terminals. Retained
   legacy work with missing evidence needs explicit recovery provenance; never
   fabricate an original author's signature, accepted receipt or cloud baseline.
+  Bind acceptance to the stable operation ID and its verified receipt. A cursor
+  is a resume position. Advancing it must not rewrite unchanged rows or bump
+  their versions. Preserve existing version fields for compatible concurrency.
 - Classify exact matches, missing operations, validated cloud evolution and true
   conflicts before recovery writes. Keep both histories for competing closings
   and require an authorized decision where no safe causal winner can be proved.
