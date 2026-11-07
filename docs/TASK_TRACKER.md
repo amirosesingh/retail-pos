@@ -1,3 +1,26 @@
+## 7 November — isolated authoritative cash sync bridge
+
+Continue the owner's two-way plan from beta `94ac06b8`, with the private feed
+and inbox preparation from PR #447 as a dependency. Prepare one synthetic
+cash-checkout path that can call the existing canonical native aggregate writer
+with verified branch and installation authority, record a payload-bound result
+and publish a group of canonical post-write rows in the same transaction.
+Preserve the existing writer's exact shift, receipt and inventory rules. The
+staged cash event must carry any required saved facts and proof before it can
+replace a legacy upload. A test adapter must use real domain routines and an
+isolated PostgreSQL database. Keep the live relay and databases outside this
+slice. If the existing writer's proof or scoped projection is unavailable,
+record that prerequisite and retain the live route. A source revert removes
+the preparation without touching installed data.
+
+The focused PostgreSQL 18.6 fixture passed with the existing native aggregate,
+stock delta and scope routines. The test covers a missing shift followed by
+same-operation acceptance, replay without a duplicate stock movement, legacy
+identity and unsupported-field rejection, and rollback on feed publication
+failure. The bridge is owner-only and synthetic. It needs a full event
+projection, verified installation generation and a fenced sender handoff
+before an authorized relay can call it.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents
