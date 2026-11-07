@@ -57,6 +57,24 @@ device acceptance from these checks. Test deployed beta compatibility before
 coordinated migration rollout because old clients can report a count mismatch
 after narrowing history. Optional SQL Server recovery metadata remains separate.
 
+Owner explicitly requests a draft PR now so checks can run during verification.
+[Draft beta PR #432](https://github.com/amirosesingh/retail-pos/pull/432) opened
+and labeled `beta` at e5c51b73a0db356e653fde0c9380025479c66542. Exact beta base
+28b7bb97 checked identical on GitHub before push. Stage only scoped paths.
+Second full local suite6667pass/10skip; independent SQL schema/registry/install
+ordering and91sync/startup/update tests pass. Held global-pending/keyset and
+oversize fix passed22full-core SQLServer groups, including101unresolved prefix
+and subsequent valid ticket. One extra trigger attach race was reproduced after
+the existing packaged probe: extend held/receipt trigger witness under owned
+transaction locks. Final witness also pins the complete held and receipt trigger
+sets, rechecked after the held row and receipt key range are locked. Both red
+fixture side effects are prevented;25/25 actual full-core SQLServer groups pass,
+including a competing CREATE trigger timing out under the receipt lock.
+Final helper SHA256 CEBFC054D36F8D32B6A3CBD264CE0896E926FBDACA7C77DAEC93080E681B4028.
+Final follow-up commit/head CI, applied-migration acceptance and the affected
+PC's held-parent evidence remain separate.
+No beta merge, live database change, installer or production promotion.
+
 Owner resumed after the physical Escape stop and explicitly requests only the
 connected UltraViewer window/one remote view. Resume the same agents and source
 scope; no broad desktop inspection or display/security configuration changes.

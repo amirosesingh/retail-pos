@@ -78,6 +78,10 @@ async function main() {
           attemptDDL &&
           statement.includes("WITH CHANGE_TRACKING_CONTEXT(0x434C4F5544) UPDATE dbo.held_orders")
         ) {
+          const ddl =
+            attemptDDL === "receipt"
+              ? "CREATE TRIGGER dbo.owned_late_receipt ON dbo.local_operation_receipts AFTER INSERT AS BEGIN SET NOCOUNT ON;END;"
+              : "ALTER TRIGGER dbo.held_orders_lifecycle ON dbo.held_orders AFTER INSERT,UPDATE AS BEGIN SET NOCOUNT ON;END;";
           attemptDDL = false;
           const rival = await f.connect(f.database),
             tx = new f.sql.Transaction(rival);
@@ -85,9 +89,7 @@ async function main() {
           try {
             await new f.sql.Request(tx).query("SET LOCK_TIMEOUT 200;");
             await assert.rejects(
-              new f.sql.Request(tx).batch(
-                "ALTER TRIGGER dbo.held_orders_lifecycle ON dbo.held_orders AFTER INSERT,UPDATE AS BEGIN SET NOCOUNT ON;END;",
-              ),
+              new f.sql.Request(tx).batch(ddl),
               (error) => error.number === 1222,
             );
           } finally {
@@ -579,6 +581,20 @@ async function main() {
       assert.equal((await native("zz-after-fence")).status, "held");
       assert.equal(await receiptCount(), 1);
     });
+    await test("receipt key lock excludes a new INSERT trigger between validation and receipt write", async () => {
+      await reset();
+      const value = await seed();
+      records = [await heldRecord(value)];
+      attemptDDL = "receipt";
+      assert.equal((await helper.reconcile(scope())).updated, 1);
+      assert.equal(attemptDDL, false);
+      assert.equal(await receiptCount(), 1);
+      assert.equal(
+        (await f.pool.request().query("SELECT OBJECT_ID(N'dbo.owned_late_receipt') trigger_id;"))
+          .recordset[0].trigger_id,
+        null,
+      );
+    });
     await test("large escaped identity responses are split into no more than four known IDs without losing valid proofs", async () => {
       await reset();
       const ids = Array.from({ length: 9 }, (_, i) => "large-ticket-" + i),
@@ -655,6 +671,52 @@ async function main() {
       assert.equal(await json(b.id), b.before);
       assert.equal(await receiptCount(), 0);
     });
+    for (const [table, action] of [
+      ["held_orders", "UPDATE"],
+      ["local_operation_receipts", "INSERT"],
+    ]) {
+      await test(`unexpected ${table} ${action} trigger attached after the package probe cannot run`, async () => {
+        await reset();
+        const value = await seed();
+        records = [await heldRecord(value)];
+        const before = (
+          await f.pool
+            .request()
+            .input("id", other)
+            .query("SELECT name FROM dbo.stores WHERE id=@id;")
+        ).recordset[0].name;
+        onCloud = async () => {
+          await f.pool
+            .request()
+            .batch(
+              `CREATE TRIGGER dbo.owned_unexpected_side_effect ON dbo.[${table}] AFTER ${action} AS BEGIN SET NOCOUNT ON;UPDATE dbo.stores SET name=N'Unexpected side effect' WHERE id=N'HOLD-OWNED-B';END;`,
+            );
+        };
+        try {
+          const failure = await helper.reconcile(scope()).then(
+            () => null,
+            (error) => error,
+          );
+          const sideEffect =
+            (
+              await f.pool
+                .request()
+                .input("id", other)
+                .query("SELECT name FROM dbo.stores WHERE id=@id;")
+            ).recordset[0].name !== before;
+          assert.equal(
+            failure?.code,
+            "EHELD_STATUS_SCHEMA",
+            "Unexpected trigger side effect committed: " + sideEffect,
+          );
+          assert.equal(sideEffect, false);
+          assert.equal(await json(value.id), value.before);
+          assert.equal(await receiptCount(), 0);
+        } finally {
+          await f.pool.request().batch("DROP TRIGGER IF EXISTS dbo.owned_unexpected_side_effect;");
+        }
+      });
+    }
     await test("unknown trigger definition is denied before network or local changes", async () => {
       await reset();
       const value = await seed();

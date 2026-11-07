@@ -484,7 +484,7 @@ class HeldStatusRecovery {
         const value = (
           await q.input("database", sql.NVarChar(128), profile.database)
             .query(`SELECT LOWER(CONVERT(varchar(36),database_guid)) database_guid,DB_NAME() database_name,DB_ID(@database) configured_id,DB_ID() actual_id,
-     (SELECT tr.name,tr.is_disabled,tr.is_not_for_replication,OBJECT_DEFINITION(tr.object_id) definition FROM sys.triggers tr WHERE tr.object_id IN(OBJECT_ID(N'dbo.held_orders_lifecycle'),OBJECT_ID(N'dbo.sales_complete_held_ticket')) ORDER BY tr.name FOR JSON PATH,INCLUDE_NULL_VALUES) triggers_json,
+     (SELECT tr.name,OBJECT_NAME(tr.parent_id) table_name,tr.is_disabled,tr.is_not_for_replication,OBJECT_DEFINITION(tr.object_id) definition FROM sys.triggers tr WHERE tr.parent_id IN(OBJECT_ID(N'dbo.held_orders'),OBJECT_ID(N'dbo.local_operation_receipts')) OR tr.object_id=OBJECT_ID(N'dbo.sales_complete_held_ticket') ORDER BY tr.name FOR JSON PATH,INCLUDE_NULL_VALUES) triggers_json,
      (SELECT c.name,ty.name type,c.max_length,c.precision,c.scale,c.is_nullable FROM sys.columns c JOIN sys.types ty ON c.user_type_id=ty.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.held_orders') ORDER BY c.column_id FOR JSON PATH,INCLUDE_NULL_VALUES) columns_json
      FROM sys.database_recovery_status WHERE database_id=DB_ID();`)
         ).recordset;
@@ -499,6 +499,12 @@ class HeldStatusRecovery {
         const triggers = JSON.parse(value[0].triggers_json);
         if (
           triggers.length !== 2 ||
+          !triggers.some(
+            (row) => row.name === "held_orders_lifecycle" && row.table_name === "held_orders",
+          ) ||
+          !triggers.some(
+            (row) => row.name === "sales_complete_held_ticket" && row.table_name === "sales",
+          ) ||
           triggers.some(
             (row) =>
               row.is_disabled || row.is_not_for_replication || typeof row.definition !== "string",
@@ -777,6 +783,9 @@ class HeldStatusRecovery {
               blocked("EHELD_STATUS_CHANGED");
               continue;
             }
+            // Both the held row and the receipt key range are now locked. Reject
+            // every extra attached write trigger, even one added after the probe.
+            if ((await witness(transaction)) !== schemaWitness) fail("EHELD_STATUS_SCHEMA");
             // Preserve local version/time: an accepted-parent proof is not a cloud
             // held-row revision. This operation adopts only a verified terminal state.
             const result = await new sql.Request(transaction)
