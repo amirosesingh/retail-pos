@@ -21,6 +21,27 @@ failure. The bridge is owner-only and synthetic. It needs a full event
 projection, verified installation generation and a fenced sender handoff
 before an authorized relay can call it.
 
+## 7 November — connect the isolated two-way synchronization pilot
+
+The owner requested completing the sync and keeping the beta PR current as
+each part is verified. Start at beta `a5bf2ebc`. Continue with the existing
+Windows queue, HTTPS relay and web authentication. The installed route remains
+active until a fenced handoff is verified. The first connected pilot is scoped
+to a verified Windows Operations till and an ordinary cash checkout. Management
+continues using the authorized multi-branch replica. Its permissions and the
+web route stay in force.
+
+Prepare exact cash checkout wire evidence under the existing checkout transaction,
+a bounded grouped read through the existing HTTPS relay with an explicit server
+pilot gate, and a native consumer that preserves a durable scoped position.
+Verify actual accepted change groups and replay using disposable databases.
+Snapshot work must read canonical scoped data and protect the pending sale and
+open shift before any activation. Keep staging SQL outside deployed migrations
+and leave the gate disabled without the exact isolated project and terminal
+configuration. Required checks include another branch, an invalid terminal,
+replayed operations, group rollback and the existing route when the gate is off.
+No installed handoff or hosted database write is authorized by preparation.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents
