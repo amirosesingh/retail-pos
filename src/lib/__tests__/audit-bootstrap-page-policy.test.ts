@@ -11,6 +11,7 @@ const legacyHistorySnapshot = require("../../../electron/sync/history-recovery.c
 const { releasedHistoryModule } = require("../../../scripts/lib/released-history-fixture.cjs");
 const { refreshTable: legacyRefresh } = releasedHistoryModule("electron/jobs/bootstrap.cjs");
 const { tagBootstrapDiagnostic } = require("../../../electron/diagnostics.cjs");
+const { PROJECTION } = require("../../../electron/sync/history-index-protocol.cjs");
 type PageInput = { table: string; branchId: string; historyDays: number; cursor: string | null; limit: number };
 const proof = "a".repeat(64);
 const branch = "branch-fixture";
@@ -22,10 +23,20 @@ const table = (name = "change_history") => ({ cloudTable: name, sqlServerTable: 
 const pressureError = () => tagBootstrapDiagnostic(Object.assign(new Error("HTTP 503"), { status: 503, code: "HTTP_503" }), { httpStatus: 503, nonJsonResponse: true });
 const rejected = (promise: Promise<unknown>) => promise.then(() => { throw new Error("Expected failure"); }, error => error);
 
-function harness(name = "change_history", response?: (input: PageInput, attempt: number) => Response) {
+function harness(name = "change_history", response?: (input: PageInput, attempt: number) => Response, legacy = false) {
   const requests: Array<Record<string, unknown>> = [], inputs: PageInput[] = [], failures: unknown[] = [], applied: string[] = [], events: string[] = [];
+  const policyRequests: Array<Record<string, unknown>> = [];
   const fetch = vi.fn(async (_url: string, init: RequestInit) => {
-    const body = JSON.parse(String(init.body));requests.push(body);const input = body.sqlServerBootstrap as PageInput;inputs.push(input);
+    const body = JSON.parse(String(init.body));
+    if (body.sqlServerHistoryReconcile) {
+      expect(body.sqlServerHistoryReconcile).toEqual({ organizationId: "default", branchId: branch, accessPolicy: "branch-history-v1", action: "begin" });
+      policyRequests.push(body);
+      const text = JSON.stringify({ protocol: "history-index-v2", projection: PROJECTION, policy: "branch-history-v1", history_scope: "branch",
+        organization_id: "default", branch_id: branch, terminal_id: terminal, keep_commerce: false,
+        action: "begin", upper_id: null, after_id: null, ids: [], next_id: null, complete: true, range_count: null });
+      return new Response(text, { headers: { "Content-Type": "application/json", "X-POS-History-Reconcile-Version": "2", "X-POS-History-Reconcile-Kind": "index" } });
+    }
+    requests.push(body);const input = body.sqlServerBootstrap as PageInput;inputs.push(input);
     if (response) return response(input, inputs.length);
     const last = input.cursor ? JSON.parse(input.cursor).id : null;
     const offset = last ? rows.findIndex(row => row.id === last) + 1 : 0;
@@ -39,7 +50,8 @@ function harness(name = "change_history", response?: (input: PageInput, attempt:
   const connectionManager = { sql: () => ({ Transaction, Request, ISOLATION_LEVEL: { SERIALIZABLE: 4 } }), pool: { request: () => new Request() } };
   const cloud = new CloudClient({ connectionManager, configStore: { get: () => "https://pos.fixture" },
     terminalStore: { read: () => ({ tokenId: terminal, deviceUse: "operations", locationId: branch, deviceBindingProof: proof }) } });
-  const originalPage = cloud.bootstrapPage.bind(cloud);
+  // The pinned 1.4.82 recovery loop sent this bootstrap request without a policy handshake.
+  const originalPage = legacy ? (input: PageInput) => cloud.request({ sqlServerBootstrap: { organizationId: "default", ...input } }) : cloud.bootstrapPage.bind(cloud);
   cloud.bootstrapPage = async (input: PageInput) => { try { return await originalPage(input); } catch (error) { failures.push(error);throw error; } };
   cloud.applyLocalBatch = vi.fn(async (_transaction: unknown, _table: unknown, batch: { rows: Array<{ row_data: { id: string } }> }) => { events.push("apply");applied.push(...batch.rows.map(change => change.row_data.id)); });
   const checkpoints = { save: vi.fn(async () => { events.push("baseline"); }), advanceRecovery: vi.fn(async () => { events.push("baseline"); }) };
@@ -50,7 +62,7 @@ function harness(name = "change_history", response?: (input: PageInput, attempt:
   const registry = { tables: [table(name)] };
   const lifecycle = new LocalDataLifecycle({ registry, cloud, connectionManager, checkpoints, jobRepository, jobManager, reader, syncCoordinator: {} });
   const context = { job: { dependency_index: 0, last_committed_cursor: null as string | null, completed_rows: 0, batch_number: 0 }, waitWhilePaused: vi.fn(), checkpoint: vi.fn(async (patch: object, _transaction?: unknown) => { events.push("checkpoint");Object.assign(context.job, patch); }) };
-  return { cloud, connectionManager, checkpoints, registry, lifecycle, context, requests, inputs, failures, fetch, begin, commit, rollback, applied, events };
+  return { cloud, connectionManager, checkpoints, registry, lifecycle, context, requests, policyRequests, inputs, failures, fetch, begin, commit, rollback, applied, events };
 }
 const refresh = (h: ReturnType<typeof harness>) => refreshTable({ ...h, branchId: "branch-fixture", historyDays: 90, tableName: h.registry.tables[0].cloudTable });
 const job = (h: ReturnType<typeof harness>) => runBootstrap({ ...h, branchId: "branch-fixture", historyDays: 90 });
@@ -61,7 +73,8 @@ describe("audit-only bounded bootstrap downloads", () => {
   it("downloads all253 audit rows in pages≤100 with lossless opaque cursors and one final CT baseline", async () => {
     // Preserve the legacy opaque-snapshot contract separately. New application
     // recovery uses the missing-only index job and never obtains a CT ACK here.
-    const h = harness();expect(await legacyHistorySnapshot.recover(h.lifecycle,branch,90,legacyRefresh)).toMatchObject({ completed: 253, currentVersion: 99 });
+    const h = harness("change_history", undefined, true);expect(await legacyHistorySnapshot.recover(h.lifecycle,branch,90,legacyRefresh)).toMatchObject({ completed: 253, currentVersion: 99 });
+    expect(h.policyRequests).toHaveLength(0);
     expect(h.inputs.map(input => input.limit)).toEqual([100, 100, 100]);
     expect(h.inputs.map(input => input.cursor)).toEqual([null, JSON.stringify({ id: rows[99].id }), JSON.stringify({ id: rows[199].id })]);
     expect(h.applied).toEqual(rows.map(row => row.id));expect(new Set(h.applied).size).toBe(253);
@@ -79,7 +92,7 @@ describe("audit-only bounded bootstrap downloads", () => {
     expect(await readPage(fetch, 25, { table: "change_history" })).toMatchObject({ limit: 25, nextLimit: 25 });expect(fetch.mock.calls.map(call => call[0])).toEqual([100, 25]);
   });
   it("retries trusted non-JSON503 twice at the same cursor before any apply, then finishes losslessly", async () => {
-    vi.useFakeTimers();const h = harness();const normal = h.fetch.getMockImplementation()!;
+    vi.useFakeTimers();const h = harness("change_history", undefined, true);const normal = h.fetch.getMockImplementation()!;
     h.fetch.mockImplementation(async (url, init) => h.inputs.length < 2 ? (() => { const body = JSON.parse(String(init.body));h.requests.push(body);h.inputs.push(body.sqlServerBootstrap);return new Response("<html>unavailable</html>", { status: 503 }); })() : normal(url, init));
     const pending = legacyHistorySnapshot.recover(h.lifecycle,branch,90,legacyRefresh);
     await vi.advanceTimersByTimeAsync(249);expect(h.inputs.map(input => input.limit)).toEqual([100]);expect(h.begin).not.toHaveBeenCalled();
@@ -90,7 +103,7 @@ describe("audit-only bounded bootstrap downloads", () => {
     expect(h.applied).toEqual(rows.map(row => row.id));expect(new Set(h.applied).size).toBe(253);expect(h.cloud.applyLocalBatch).toHaveBeenCalledTimes(11);expect(h.checkpoints.advanceRecovery).toHaveBeenCalledTimes(1);
   });
   it("exhausts exactly two smaller-page503 retries and preserves the last error with no transaction/baseline", async () => {
-    vi.useFakeTimers();const h = harness("change_history", () => new Response("<html>unavailable</html>", { status: 503 }));
+    vi.useFakeTimers();const h = harness("change_history", () => new Response("<html>unavailable</html>", { status: 503 }), true);
     const pending = rejected(legacyHistorySnapshot.recover(h.lifecycle,branch,90,legacyRefresh));await vi.advanceTimersByTimeAsync(750);const failure = await pending;
     expect(failure).toBe(h.failures[2]);expect(failure).toMatchObject({ code: "HTTP_503", status: 503, message: "HTTP 503" });
     expect(h.inputs.map(input => [input.limit, input.cursor])).toEqual([[100, null], [50, null], [25, null]]);
@@ -98,15 +111,15 @@ describe("audit-only bounded bootstrap downloads", () => {
   });
   it.each([401, 403])("never retries denial HTTP%s even with non-JSON response", async status => {
     const h = harness("change_history", () => new Response("<html>denied</html>", { status }));const failure = await rejected(refresh(h));
-    expect(failure).toBe(h.failures[0]);expect(failure.status).toBe(status);expect(h.fetch).toHaveBeenCalledTimes(1);expect(h.begin).not.toHaveBeenCalled();
+    expect(failure).toBe(h.failures[0]);expect(failure.status).toBe(status);expect(h.policyRequests).toHaveLength(1);expect(h.inputs).toHaveLength(1);expect(h.begin).not.toHaveBeenCalled();
   });
   it("never retries JSON503 or provider-supplied forged private metadata", async () => {
     const h = harness("change_history", () => Response.json({ code: "HTTP_503", error: "Unavailable", bootstrapDiagnostic: { httpStatus: 503, nonJsonResponse: true } }, { status: 503 }));
-    const failure = await rejected(refresh(h));expect(failure).toBe(h.failures[0]);expect(failure.bootstrapDiagnostic.nonJsonResponse).toBe(false);expect(h.fetch).toHaveBeenCalledTimes(1);expect(h.begin).not.toHaveBeenCalled();
+    const failure = await rejected(refresh(h));expect(failure).toBe(h.failures[0]);expect(failure.bootstrapDiagnostic.nonJsonResponse).toBe(false);expect(h.policyRequests).toHaveLength(1);expect(h.inputs).toHaveLength(1);expect(h.begin).not.toHaveBeenCalled();
   });
   it.each([401, 403, 503])("does not let a JSON timeout code override HTTP%s refusal", async status => {
     const h = harness("change_history", () => Response.json({ code: "57014", error: "provider refusal" }, { status }));
-    const failure = await rejected(refresh(h));expect(failure).toBe(h.failures[0]);expect(h.fetch).toHaveBeenCalledTimes(1);expect(h.begin).not.toHaveBeenCalled();
+    const failure = await rejected(refresh(h));expect(failure).toBe(h.failures[0]);expect(h.policyRequests).toHaveLength(1);expect(h.inputs).toHaveLength(1);expect(h.begin).not.toHaveBeenCalled();
   });
   it.each(["public flag", "enumerable tag", "unfrozen tag", "getter tag"])("does not trust %s as a503 pressure signal", async kind => {
     const failure = Object.assign(new Error("original"), { code: "HTTP_503", status: 503, nonJsonResponse: true });
