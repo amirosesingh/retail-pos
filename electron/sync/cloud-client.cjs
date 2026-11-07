@@ -7,6 +7,7 @@ const financialBasisWitnesses=new WeakMap();
 const financialCapabilityWitnesses=new WeakMap();
 const unavailableHistoryPolicies=new WeakMap();
 const HISTORY_POLICY_UNAVAILABLE='EHISTORY_POLICY_UNAVAILABLE';
+const HISTORY_INDEX_ACTIONS=new Set(['begin','page','finish','rows']);
 const deepFreezeFinancial=value=>{if(value&&typeof value==='object'){for(const child of Object.values(value))deepFreezeFinancial(child);Object.freeze(value);}return value;};
 const financialBasisFailure=()=>{throw Object.assign(new Error("The verified financial basis is unavailable or its source changed."),{code:"EFINANCIAL_BASIS_SOURCE_CHANGED",table:"shifts"});};
 const financialBasisHash=value=>createHash("sha256").update(value,"utf8").digest("hex");
@@ -68,9 +69,11 @@ function transportDiagnostic(error, payload, stage) {
     try { return Object.getOwnPropertyDescriptor(object, key)?.value; } catch { return undefined; }
   };
   try {
+    const scopedAction=payload?.sqlServerScopedHistory?.action;
     return {
-      transportOperation: payload?.sqlServerPull ? "feed" : payload?.sqlServerBootstrap || payload?.sqlServerHistoryReconcile ? "bootstrap"
-        : payload?.sqlServerShiftGraph ? "graph" : payload?.sqlServerCounts ? "count"
+      transportOperation: payload?.sqlServerPull || scopedAction==='feed' ? "feed"
+        : payload?.sqlServerBootstrap || payload?.sqlServerHistoryReconcile || scopedAction==='bootstrap' || HISTORY_INDEX_ACTIONS.has(scopedAction) ? "bootstrap"
+          : payload?.sqlServerShiftGraph ? "graph" : payload?.sqlServerCounts || scopedAction==='counts' ? "count"
           : payload?.sqlServerBatch || payload?.sqlServerAggregate || payload?.sqlServerLegacyRecovery ? "upload" : "other",
       transportStage: stage,
       transportCode: own(error, "code") ?? own(own(error, "cause"), "code"),
@@ -209,6 +212,8 @@ class CloudClient {
     try {
       if(payload?.sqlServerHistoryReconcile&&payload.sqlServerHistoryReconcile.accessPolicy!==require('./history-read-scope.cjs').POLICY)
         throw Object.assign(new Error('The scoped history read protocol is required. Existing progress remains pending.'),{code:'EHISTORY_INDEX_PROTOCOL',table:'change_history'});
+      if(payload?.sqlServerScopedHistory&&Object.keys(payload).length!==1)
+        throw Object.assign(new Error('Protected history requests must contain one read.'),{code:'EHISTORY_INDEX_PROTOCOL',table:'change_history'});
       // Capture values when queued. Never send a caller's old work with a new
       // terminal, SQL profile, backend, project or governance operator's proof.
       const capturedJson = JSON.stringify(payload), captured = JSON.parse(capturedJson);
@@ -275,7 +280,9 @@ class CloudClient {
     let exactGraphBody;
     let legacyRecoveryBody;
     let transportStage = "fetch";
-    const historyBegin=payload?.sqlServerHistoryReconcile?.action==='begin'?payload.sqlServerHistoryReconcile:null;
+    const scopedRead=payload?.sqlServerScopedHistory;
+    const historyRead=HISTORY_INDEX_ACTIONS.has(scopedRead?.action)?scopedRead:payload?.sqlServerHistoryReconcile;
+    const historyBegin=historyRead?.action==='begin'?historyRead:null;
     const historyAuthority=historyBegin?this.requestContext(true):null;
     let historyUnavailable=false;
     const requestBody = JSON.stringify({ ...outbound, ...personProof, terminalToken: recordId(terminalToken), deviceBindingProof:terminal.deviceBindingProof, ...(terminal.deviceUse === "management" ? { deviceClaimProof: terminal.deviceClaimProof } : {}) });
@@ -285,19 +292,23 @@ class CloudClient {
       method: "POST",
       headers: { "content-type": "application/json", ...(payload?.sqlServerLegacyRecovery ? { "x-pos-legacy-recovery": "1" } : {}) },
       body: requestBody,
-      signal: AbortSignal.timeout(payload?.sqlServerHistoryReconcile || payload?.sqlServerHeldSaleReview ? 12_000 : 30_000),
+      signal: AbortSignal.timeout(historyRead || payload?.sqlServerHeldSaleReview ? 12_000 : 30_000),
     });
       transportStage = "body";
       try {
+        if(scopedRead&&response.ok&&response.headers?.get?.('X-POS-Scoped-History-Transport')!=='1'){
+          try{await response.body?.cancel();}catch{/* This response cannot advance sync. */}
+          throw Object.assign(new Error('The hosted scoped history transport could not be verified.'),{code:'EHISTORY_INDEX_PROTOCOL',table:'change_history'});
+        }
         if(payload?.sqlServerHeldStatus || payload?.sqlServerHeldSaleReview){
           data=JSON.parse(await boundedText(response,2*1024*1024));
         }else if(historyBegin&&response.status===409&&response.headers.get('X-POS-History-Reconcile-Version')==='2'&&
           response.headers.get('X-POS-History-Reconcile-Kind')==='unavailable'){
           data=JSON.parse(await boundedText(response,4096));
           historyUnavailable=data?.ok===false&&data.code===HISTORY_POLICY_UNAVAILABLE&&Object.keys(data).sort().join(',')==='branch_id,code,ok,organization_id,policy,terminal_id'&&
-            data.policy===historyBegin.accessPolicy&&data.organization_id===historyBegin.organizationId&&data.branch_id===historyBegin.branchId&&data.terminal_id===recordId(terminalToken);
-        }else if(payload?.sqlServerHistoryReconcile&&response.ok){
-          const kind=payload.sqlServerHistoryReconcile.action==='rows'?'rows':'index';
+            data.policy===require('./history-read-scope.cjs').POLICY&&data.organization_id===historyBegin.organizationId&&data.branch_id===historyBegin.branchId&&data.terminal_id===recordId(terminalToken);
+        }else if(historyRead&&response.ok){
+          const kind=historyRead.action==='rows'?'rows':'index';
           const max=kind==='rows'?5*1024*1024:128*1024;
           const text=await boundedText(response,max);
           if(response.headers?.get?.('X-POS-History-Reconcile-Version')!=='2'||response.headers?.get?.('X-POS-History-Reconcile-Kind')!==kind)
@@ -350,14 +361,14 @@ class CloudClient {
     this.assertRequestContext(source, governance, payload);
     // Versioned history rows already contain exact JSON/decimal text. Generic
     // entity-key JSON parsing would round its evidence before validation.
-    const normalized=payload?.sqlServerHistoryReconcile || payload?.sqlServerHeldSaleReview
+    const normalized=historyRead || payload?.sqlServerHeldSaleReview
       ? data : normalizeSyncPayload(data);
     if (legacyRecoveryBody !== undefined && normalized && typeof normalized === "object")
       legacyRecoveryResponses.set(normalized, legacyRecoveryBody);
-    if (payload?.sqlServerPull) {
+    if (payload?.sqlServerPull || scopedRead?.action==='feed') {
       const projection = response.headers?.get?.("X-POS-Feed-Projection") ?? null;
       const continuation = response.headers?.get?.("X-POS-Feed-Continue") ?? null;
-      if (projection !== null || continuation !== null) {
+      if (scopedRead || projection !== null || continuation !== null) {
         if (projection !== "1" || !["0", "1"].includes(continuation) || !Array.isArray(normalized) ||
             (continuation === "1" && normalized.length === 0))
           throw Object.assign(new Error("The cloud feed continuation response is invalid. Its page remains pending."), {code:"EFEED_PROTOCOL"});
@@ -496,7 +507,7 @@ class CloudClient {
   }
   pullBatch({ organizationId = "default", branchId, cursor, limit }) {
     return this.request({
-      sqlServerPull: { organizationId, branchId, cursor: Number(cursor ?? 0), limit },
+      sqlServerScopedHistory: { action:'feed',organizationId,branchId,cursor:Number(cursor??0),limit },
     }).then((rows) => {
       const list = Array.isArray(rows) ? rows : [];
       if (feedContinuation.has(list) && list.length) {
@@ -525,37 +536,31 @@ class CloudClient {
       if(witness.scope.branchId!==recordId(branchId)||witness.scope.organizationId!==organizationId)
         throw Object.assign(new Error('The requested history snapshot is outside the verified policy scope.'),{code:'EHISTORY_INDEX_SCOPE',table:'change_history'});
     }
-    const result=await this.request({
-      sqlServerBootstrap: {
-        organizationId,
-        table,
-        branchId,
-        historyDays,
-        cursor: cursor ?? null,
-        limit,
-      },
-    });
+    const read={organizationId,branchId,historyDays,cursor:cursor??null,limit};
+    const result=await this.request(history
+      ? {sqlServerScopedHistory:{action:'bootstrap',...read}}
+      : {sqlServerBootstrap:{organizationId,table,branchId,historyDays,cursor:read.cursor,limit}});
     if(witness){history.assertHistoryPolicy(witness,this,this.connectionManager);history.assertHistoryRows(result?.rows,witness.scope);}
     return result;
   }
   counts({ organizationId = "default", branchId, historyDays = 90 }) {
-    return this.request({ sqlServerCounts: { organizationId, branchId, historyDays } });
+    return this.request({sqlServerScopedHistory:{action:'counts',organizationId,branchId,historyDays}});
   }
   async historyIndex({organizationId='default',branchId,action='begin',afterId=null,upperId=null,keepCommerce}) {
     const history=require('./history-read-scope.cjs'),scope=history.captureHistoryScope(this,this.connectionManager,branchId,organizationId),terminalId=scope.terminalId;
-    const read={accessPolicy:history.POLICY,organizationId,branchId,action,...(action==='page'?{afterId,upperId}:action==='finish'?{upperId}:{})};
-    const value=await this.request({sqlServerHistoryReconcile:read});
+    const read={organizationId,branchId,action,...(action==='page'?{afterId,upperId}:action==='finish'?{upperId}:{})};
+    const value=await this.request({sqlServerScopedHistory:read});
     history.assertHistoryScope(scope,this,this.connectionManager);
     return require('./history-index-protocol.cjs').normalizeIndex(value,{organizationId,branchId,terminalId,keepCommerce,historyScope:scope.historyScope},{action,afterId,upperId});
   }
   isHistoryPolicyUnavailable(error,branchId,organizationId='default') {
     const proof=unavailableHistoryPolicies.get(error);
     if(!proof||proof.cloud!==this||proof.branchId!==branchId||proof.organizationId!==organizationId)return false;
-    try{this.assertRequestContext(proof.authority,true,{sqlServerHistoryReconcile:true});return true;}catch{return false;}
+    try{this.assertRequestContext(proof.authority,true,{sqlServerScopedHistory:true});return true;}catch{return false;}
   }
   async historyMissingRows({organizationId='default',branchId,ids,keepCommerce}) {
     const history=require('./history-read-scope.cjs'),scope=history.captureHistoryScope(this,this.connectionManager,branchId,organizationId),terminalId=scope.terminalId;
-    const value=await this.request({sqlServerHistoryReconcile:{accessPolicy:history.POLICY,organizationId,branchId,action:'rows',ids}});
+    const value=await this.request({sqlServerScopedHistory:{organizationId,branchId,action:'rows',ids}});
     history.assertHistoryScope(scope,this,this.connectionManager);
     return require('./history-index-protocol.cjs').normalizeRows(value,{organizationId,branchId,terminalId,keepCommerce,historyScope:scope.historyScope},ids);
   }

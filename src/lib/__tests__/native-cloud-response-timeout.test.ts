@@ -202,12 +202,15 @@ describe("native retry and acknowledgement integration", () => {
     vi.useFakeTimers();
     const policy = "branch-history-v1";
     const fetch = vi.fn(async (_url: string, init: RequestInit) => {
-      if (JSON.parse(String(init.body)).sqlServerHistoryReconcile) {
+      const read = JSON.parse(String(init.body)).sqlServerScopedHistory;
+      if (read?.action === "begin") {
+        expect(read).toEqual({ action: "begin", organizationId: "default", branchId: branch });
         return Response.json({ protocol: "history-index-v2", projection: PROJECTION, policy, history_scope: "branch",
           organization_id: "default", branch_id: branch, terminal_id: terminal, keep_commerce: false,
           action: "begin", upper_id: null, after_id: null, ids: [], next_id: null, complete: true, range_count: null },
-        { headers: { "X-POS-History-Reconcile-Version": "2", "X-POS-History-Reconcile-Kind": "index" } });
+        { headers: { "X-POS-History-Reconcile-Version": "2", "X-POS-History-Reconcile-Kind": "index", "X-POS-Scoped-History-Transport": "1" } });
       }
+      expect(read).toMatchObject({ action: "bootstrap", organizationId: "default", branchId: branch, cursor: "saved-cursor" });
       return new Response("<html>Fixture service unavailable</html>", { status: 503 });
     });
     vi.stubGlobal("fetch", fetch);

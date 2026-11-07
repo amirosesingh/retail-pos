@@ -47,11 +47,11 @@ async function invalid(response: Response): Promise<Response> {
 
 export async function protectedHistoryDownload(args: {
   organizationId: string; branchId: string; terminalId: string;
-  cursor: string | null; historyDays: number; keepCommerce: boolean; signal?: AbortSignal;
+  cursor: string | null; historyDays: number; keepCommerce: boolean; signal?: AbortSignal; scopedTransport?: true;
 }): Promise<Response | null> {
-  const project = supabaseConfig().url.replace(/\/+$/, "");
-  if ((unavailableUntil.get(project) ?? 0) > Date.now()) return null;
-  const response = await serviceRest(`rpc/${RPC}`, {
+  const project = args.scopedTransport ? null : supabaseConfig().url.replace(/\/+$/, "");
+  if (project !== null && (unavailableUntil.get(project) ?? 0) > Date.now()) return null;
+  const response = await serviceRest(`rpc/${args.scopedTransport ? "pos_sync_history_page_v2" : RPC}`, {
     method: "POST", headers: { "Accept-Encoding": "identity" },
     ...(args.signal ? { signal: args.signal } : {}),
     body: JSON.stringify({ p_organization_id: args.organizationId, p_branch_id: args.branchId,
@@ -62,7 +62,7 @@ export async function protectedHistoryDownload(args: {
   if (encoding !== null && encoding.toLowerCase() !== "identity") return invalid(response);
   if (!response.ok) {
     // Inspect a clone: unrecognized failures retain their original response.
-    if (await recognizedUnsupported(response.clone())) {
+    if (project !== null && await recognizedUnsupported(response.clone())) {
       unavailable(project);
       try { await response.body?.cancel(); } catch { /* No business state is changed. */ }
       return null;

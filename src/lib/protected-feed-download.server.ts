@@ -38,11 +38,11 @@ async function invalid(response: Response): Promise<Response> {
 /** Only admit the service RPC's complete, privacy-projected, byte-bounded page. */
 export async function protectedFeedDownload(args: {
   organizationId: string; branchId: string; terminalId: string; cursor: number;
-  keepCommerce: boolean; signal?: AbortSignal;
+  keepCommerce: boolean; signal?: AbortSignal; scopedTransport?: true;
 }): Promise<Response | null> {
-  const project = supabaseConfig().url.replace(/\/+$/, "");
-  if ((unavailableUntil.get(project) ?? 0) > Date.now()) return null;
-  const response = await serviceRest("rpc/pos_sync_feed_page_v1", {
+  const project = args.scopedTransport ? null : supabaseConfig().url.replace(/\/+$/, "");
+  if (project !== null && (unavailableUntil.get(project) ?? 0) > Date.now()) return null;
+  const response = await serviceRest(args.scopedTransport ? "rpc/pos_sync_feed_page_v2" : "rpc/pos_sync_feed_page_v1", {
     method: "POST", headers: { "Accept-Encoding": "identity" },
     ...(args.signal ? { signal: args.signal } : {}),
     body: JSON.stringify({ p_organization_id: args.organizationId, p_branch_id: args.branchId,
@@ -52,7 +52,7 @@ export async function protectedFeedDownload(args: {
   const encoding = response.headers.get("Content-Encoding");
   if (encoding !== null && encoding.toLowerCase() !== "identity") return invalid(response);
   if (!response.ok) {
-    if (await unsupported(response.clone())) {
+    if (project !== null && await unsupported(response.clone())) {
       for (const [key, until] of unavailableUntil) if (until <= Date.now()) unavailableUntil.delete(key);
       if (unavailableUntil.size >= 64) unavailableUntil.delete(unavailableUntil.keys().next().value!);
       unavailableUntil.set(project, Date.now() + 30_000);

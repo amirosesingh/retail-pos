@@ -362,7 +362,8 @@ try {
         "supabase/migrations/20261106042139_automatic_history_index_recovery.sql",
         "supabase/migrations/20261107021328_isolate_branch_history_sync.sql",
         "supabase/migrations/20261107024729_bounded_held_status_reconciliation.sql",
-        "supabase/migrations/20261107060000_reviewed_held_sale_graph.sql"]) {
+        "supabase/migrations/20261107060000_reviewed_held_sale_graph.sql",
+        "supabase/migrations/20261107094311_add_scoped_history_transport.sql"]) {
         await mkdir(dirname(join(fixture, path)), { recursive: true });
         await copyFile(join(root, path), join(fixture, path));
       }

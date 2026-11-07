@@ -23,12 +23,19 @@ async function main(){
   cloud.applyLocalBatch=async()=>{generic++;throw Error('Protected history reached generic MERGE');};
   const envelope={projection:PROJECTION,policy:'branch-history-v1',history_scope:'branch',organization_id:'default',branch_id:branch,terminal_id:terminal,keep_commerce:false};
   globalThis.fetch=async(_url,options)=>{
-   const body=JSON.parse(options.body),read=body.sqlServerHistoryReconcile;calls.push(structuredClone(body));let value,kind;
-   if(body.sqlServerPull){const rows=[...remote.keys()].filter(n=>n>body.sqlServerPull.cursor).map(hint);return new Response(JSON.stringify(rows),{headers:{'content-type':'application/json','X-POS-Feed-Projection':'1','X-POS-Feed-Continue':'0'}});}
-   assert(read);assert.equal(read.accessPolicy,'branch-history-v1');
-   if(read.action==='begin'){kind='index';const ids=[...remote.values()].map(r=>r.id).sort();value={...envelope,protocol:'history-index-v2',action:'begin',upper_id:ids.at(-1)??null,after_id:null,ids,next_id:null,complete:true,range_count:null};}
-   else{assert.equal(read.action,'rows');kind='rows';const ids=read.ids.slice(0,prefix);value={...envelope,protocol:'history-rows-v2',requested_ids:read.ids,rows:ids.map(key=>[...remote.values()].find(r=>r.id===key)),remaining_ids:read.ids.slice(ids.length)};afterRows();}
-   return new Response(JSON.stringify(value),{headers:{'content-type':'application/json','X-POS-History-Reconcile-Version':version,'X-POS-History-Reconcile-Kind':kind}});
+   const body=JSON.parse(options.body),read=body.sqlServerScopedHistory;calls.push(structuredClone(body));let value,kind;
+   assert.deepEqual(Object.keys(body).sort(),['deviceBindingProof','sqlServerScopedHistory','terminalToken']);
+   assert.equal(body.terminalToken,terminal);assert.equal(body.deviceBindingProof,'a'.repeat(64));
+   assert(read);assert.equal(read.organizationId,'default');assert.equal(read.branchId,branch);
+   const headers={'content-type':'application/json','X-POS-Scoped-History-Transport':'1'};
+   if(read.action==='feed'){
+    assert.deepEqual(Object.keys(read).sort(),['action','branchId','cursor','limit','organizationId']);
+    const matching=[...remote.keys()].filter(n=>n>read.cursor);
+    return new Response(JSON.stringify(matching.slice(0,read.limit).map(hint)),{headers:{...headers,'X-POS-Feed-Projection':'1','X-POS-Feed-Continue':matching.length>read.limit?'1':'0'}});
+   }
+   if(read.action==='begin'){assert.deepEqual(Object.keys(read).sort(),['action','branchId','organizationId']);kind='index';const ids=[...remote.values()].map(r=>r.id).sort();value={...envelope,protocol:'history-index-v2',action:'begin',upper_id:ids.at(-1)??null,after_id:null,ids,next_id:null,complete:true,range_count:null};}
+   else{assert.equal(read.action,'rows');assert.deepEqual(Object.keys(read).sort(),['action','branchId','ids','organizationId']);kind='rows';const ids=read.ids.slice(0,prefix);value={...envelope,protocol:'history-rows-v2',requested_ids:read.ids,rows:ids.map(key=>[...remote.values()].find(r=>r.id===key)),remaining_ids:read.ids.slice(ids.length)};afterRows();}
+   return new Response(JSON.stringify(value),{headers:{...headers,'X-POS-History-Reconcile-Version':version,'X-POS-History-Reconcile-Kind':kind}});
   };
   const worker=()=>new PullWorker({connectionManager:cm,cloud,checkpoints,registry:{tables:[table]},reader:{unacknowledged:async()=>[]}});
   const run=()=>worker().run({branchId:branch,skipMembership:true});
@@ -41,10 +48,10 @@ async function main(){
    remote.set(5,row(5));await store.transaction(tx=>store.insert(tx,{...row(5),new_value_json:'{"originalLocal":true}'}));
    version='1';await assert.rejects(run(),{code:'EHISTORY_INDEX_PROTOCOL'});assert.equal(await checkpoint(),'4');assert.equal((await saved(5)).new_value,'{"originalLocal":true}');
    version='2';const before=calls.length;await run();assert.equal((await saved(5)).new_value,'{"originalLocal":true}');
-   assert.deepEqual(calls.slice(before).flatMap(x=>x.sqlServerHistoryReconcile?[x.sqlServerHistoryReconcile.action]:[]),['begin']);assert.equal(await checkpoint(),'5');
+   assert.deepEqual(calls.slice(before).map(x=>x.sqlServerScopedHistory.action),['feed','begin']);assert.equal(await checkpoint(),'5');
   });
   await test('profile change during exact response prevents SQL/cursor writes',async()=>{remote.set(6,row(6));afterRows=()=>{url='https://changed-owned-history.invalid';};await assert.rejects(run(),error=>error.code==='ESYNC_REQUEST_CONTEXT_CHANGED');assert.equal(await saved(6),undefined);assert.equal(await checkpoint(),'5');afterRows=()=>{};url='https://owned-history-feed.invalid';await run();assert.equal(await checkpoint(),'6');});
-  await test('lost post-commit notification and cold pool retry do not duplicate or redownload accepted history',async()=>{remote.set(7,row(7));const failing=worker();failing.publish=()=>{throw Error('fixture lost postcommit notification');};await assert.rejects(failing.run({branchId:branch,skipMembership:true}),/lost postcommit/);assert.equal(await checkpoint(),'7');assert.equal((await saved(7)).revision,row(7).revision);await local.restart();const before=calls.length;await run();const retry=calls.slice(before);assert.equal(retry.length,1);assert.equal(String(retry[0].sqlServerPull.cursor),'7');assert.equal(retry[0].sqlServerHistoryReconcile,undefined);assert.equal((await cm.pool.request().query('SELECT count(*) n FROM dbo.change_history;')).recordset[0].n,7);});
+  await test('lost post-commit notification and cold pool retry do not duplicate or redownload accepted history',async()=>{remote.set(7,row(7));const failing=worker();failing.publish=()=>{throw Error('fixture lost postcommit notification');};await assert.rejects(failing.run({branchId:branch,skipMembership:true}),/lost postcommit/);assert.equal(await checkpoint(),'7');assert.equal((await saved(7)).revision,row(7).revision);await local.restart();const before=calls.length;await run();const retry=calls.slice(before);assert.equal(retry.length,1);assert.equal(String(retry[0].sqlServerScopedHistory.cursor),'7');assert.equal(retry[0].sqlServerScopedHistory.action,'feed');assert.equal((await cm.pool.request().query('SELECT count(*) n FROM dbo.change_history;')).recordset[0].n,7);});
   await test('actual aggregate business save completes before exact append in a mixed-page lock interleaving',async()=>{
    const sql=cm.sql(),full=require('../electron/db/schema-registry.cjs').loadRegistry(),product=full.tables.find(t=>t.cloudTable==='products'),pid=id(8800);
    await cm.pool.request().batch(`CREATE TABLE dbo.products(${product.columns.map(c=>'['+c.sqlServerColumn+'] '+c.sqlServerType+(c.primaryKey?' NOT NULL':' NULL')).join(',')},PRIMARY KEY(id));`);

@@ -57,14 +57,21 @@ async function main(){try{
  globalThis.fetch=async(url,options)=>{
   assert.equal(String(url),'https://three-product-sync.fixture.invalid/api/v1/pos/sync');assert.equal(options.method,'POST');
   const body=JSON.parse(options.body);requests.push(body);assert.equal(body.terminalToken,terminal);assert.equal(body.deviceBindingProof,'SYNTHETIC-SEALED-PROOF');
-  assert(body.sqlServerPull&&!body.sqlServerBatch&&!body.sqlServerAggregate,'No synthetic upload is expected or accepted.');
-  assert.equal(body.sqlServerPull.organizationId,'default');assert(body.sqlServerPull.limit<=100);
+  const scoped=body.sqlServerScopedHistory, legacy=body.sqlServerPull;
+  assert.notEqual(Boolean(scoped),Boolean(legacy),'A single scoped or legacy feed read is required.');
+  const read=scoped??legacy;
+  assert.deepEqual(Object.keys(body).sort(),['deviceBindingProof',scoped?'sqlServerScopedHistory':'sqlServerPull','terminalToken']);
+  assert.deepEqual(Object.keys(read).sort(),scoped?['action','branchId','cursor','limit','organizationId']:['branchId','cursor','limit','organizationId']);
+  if(scoped)assert.equal(read.action,'feed');
+  assert.equal(read.organizationId,'default');assert(read.limit<=100);
   // This synthetic relay enforces the existing paired-branch contract; native
   // SQL tests below prove refusal propagation, not independent hosted RLS.
-  if(body.sqlServerPull.branchId!==branch)return Response.json({ok:false,code:'SYNC_BRANCH_FORBIDDEN',error:'Synthetic terminal branch denied'},{status:403});
-  const page=entries.filter(row=>row.cursor>body.sqlServerPull.cursor).slice(0,body.sqlServerPull.limit);
+  if(read.branchId!==branch)return Response.json({ok:false,code:'SYNC_BRANCH_FORBIDDEN',error:'Synthetic terminal branch denied'},{status:403});
+  const matching=entries.filter(row=>row.cursor>read.cursor), page=matching.slice(0,read.limit);
   if(mutateAfterFetch){const mutate=mutateAfterFetch;mutateAfterFetch=null;mutate();}
-  return Response.json(page,{headers:{'X-POS-Feed-Projection':'1','X-POS-Feed-Continue':'0'}});
+  const headers={'X-POS-Feed-Projection':'1','X-POS-Feed-Continue':matching.length>read.limit?'1':'0'};
+  if(scoped)headers['X-POS-Scoped-History-Transport']='1';
+  return Response.json(page,{headers});
  };
  const pull=new PullWorker({connectionManager:manager,cloud:client,checkpoints,registry,reader,publish:event=>published.push(event)});
  const push=new PushWorker({reader,cloud:client,checkpoints,registry});
