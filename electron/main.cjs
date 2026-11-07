@@ -185,6 +185,10 @@ legacyShiftRecovery = new (require("./sync/legacy-shift-recovery-service.cjs").L
   },
 });
 
+const heldSaleReview = new (require("./sync/held-sale-review.cjs").HeldSaleReview)({
+  connectionManager: databaseManager, registry: syncRegistry, cloud: syncCloud, authority: legacyRecoveryAuthority,
+});
+
 const recoveryMetadataInstaller = new ShiftRecoveryMetadataInstaller({
   manager: databaseManager,
   // Implementation/isolated-test approval is not permission for fleet DDL.
@@ -2355,6 +2359,23 @@ function registerIpc() {
     onAdoptCommitted:()=>{automaticSyncQueued=true;scheduleAutomaticSync(250);},
     isPosSender:event=>event.sender===mainWindow?.webContents && event.senderFrame===event.sender.mainFrame,
   });
+  require("./sync/held-sale-review-ipc.cjs").installHeldSaleReviewIpc({
+    ipcMain, service: heldSaleReview, session: adminSession,
+    isPosSender: event => event.sender === mainWindow?.webContents && event.senderFrame === event.sender.mainFrame,
+    runExclusive: work => syncCoordinator.withExclusive(work),
+    canResolve: () => {
+      const state = databaseService.snapshot();
+      return app.hasSingleInstanceLock() && !safeMode && !quitting && !closeWriteBarrier.sealed &&
+        state.enabled && state.configured && state.connected && state.tradingReady;
+    },
+    onCommitted: () => {
+      automaticSyncQueued = true;
+      scheduleAutomaticSync(250);
+      publishBusinessChange({ kind: "general", branchId: localBranchId(), source: "cloud",
+        tables: ["sales", "sale_items", "payment_transactions", "held_orders"] });
+    },
+  });
+
   ipcMain.handle("sync:run-now", (_e, options) => guard.guarded(async()=>{
     const input=guard.options(options,{name:"sync options"});
     const branchId=localBranchId();

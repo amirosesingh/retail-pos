@@ -41,7 +41,7 @@ const scenario=new URLSearchParams(location.search).get('scenario')||'admin';
 if(scenario==='schema')Object.assign(db,{tradingReady:false,state:'enabled_validating',detail:{status:'migration_required'}});
 if(scenario==='migrating')Object.assign(db,{tradingReady:false,state:'enabled_validating',detail:{status:'applying_migration'}});
 if(scenario==='disconnected')Object.assign(db,{connected:false,tradingReady:false});
-window.fixture={listeners,databaseListeners,databaseState:db,navigations:[],verifications:0,reads:0,previews:0,approvals:0,adoptions:0,retries:0,documentToken:crypto.randomUUID(),
+window.fixture={listeners,databaseListeners,databaseState:db,navigations:[],verifications:0,reads:0,previews:0,approvals:0,adoptions:0,heldLists:0,heldPreviews:0,heldResolutions:[],retries:0,documentToken:crypto.randomUUID(),
 state:{role:scenario==='signed-out'?null:scenario==='cashier'?'staff':'admin',actor:'fixture-original-admin',proof:scenario!=='proof-denied',authReady:true,pathname:'/database-startup'},
 patch(value){flushSync(()=>{this.state={...this.state,...value};for(const fn of listeners)fn()})},
 database(value){Object.assign(this.databaseState,value);flushSync(()=>{for(const fn of databaseListeners)fn({...this.databaseState})})}};
@@ -49,8 +49,26 @@ const summary={status:'CLOSED',openedAt:'2026-10-31T08:00:00.0000000Z',closedAt:
 const cloudSummary={...summary,status:'OPEN',closedAt:null,updatedAt:'2026-10-31T08:00:01.1234560Z',rowVersion:'2'};
 const readOnly=scenario==='readonly';
 const shiftId='00000000-0000-4000-8000-000000000007';
+const ticketId='D:00000000-0000-4000-8000-000000000001:STR1-BILL-007', saleId='00000000-0000-4000-8000-000000000027';
+const reviewToken='00000000-0000-4000-8000-000000000037', decisionId='00000000-0000-4000-8000-000000000047';
+const ticket={ticketId,billNo:'STR1-BILL-007',shiftId,status:'held',updatedAt:'2026-10-31T20:00:00.1234567Z',rowVersion:'5'};
+const local={status:ticket.status,updatedAt:ticket.updatedAt,rowVersion:ticket.rowVersion,itemCount:1,total:'25.0100',
+items:[{name:'Saved local item',variant:'Blue',quantity:'1.5000',price:'12.3456'}]};
+const verifiedCloud={saleId,createdAt:'2026-10-31T20:01:00.1234560Z',total:'26.0200',paid:'26.0200',
+items:[{name:'Saved cloud item',variant:null,quantity:'2.5000',price:'13.4567'}],paymentCount:1,proof:'cleaned_hold'};
+const heldRecovery={
+list:async(options)=>{if(options.afterId!==null||options.limit!==25)throw Error('Unexpected held list request');window.fixture.heldLists++;return {ok:true,available:true,items:[ticket],nextAfterId:null}},
+preview:async(id)=>{if(id!==ticketId)throw Error('Unexpected held bill ID');window.fixture.heldPreviews++;
+const cloud=scenario==='held-unproven'?null:verifiedCloud;const canAdopt=Boolean(cloud)&&!['held-readonly','held-cart-too-large'].includes(scenario);
+const localSummary=['held-cart-too-large','held-truncated-invalid'].includes(scenario)?{...local,itemCount:257}:local;
+return {ok:true,ticketId,billNo:scenario==='held-mismatch'?'UNRELATED-BILL':ticket.billNo,shiftId,local:localSummary,cloud,canAdopt,
+reviewToken:canAdopt?reviewToken:null,reason:!cloud?'NO_COMPLETION_PROOF':canAdopt?null:scenario==='held-cart-too-large'?'CART_TOO_LARGE':'SCHEMA_REQUIRED'}},
+resolve:async(value)=>{window.fixture.heldResolutions.push(value);if(value.reviewToken!==reviewToken||value.reason!=='Completed from web receipt'||Object.keys(value).length!==2)throw Error('Unexpected held decision');
+if(scenario==='held-changed')return {ok:false,code:'EHELD_REVIEW_CHANGED',error:'The saved bill changed. Compare it again.'};
+return {ok:true,state:'ADOPTED',ticketId,saleId,decisionId}}
+};
 window.sqlAdmin={adminStatus:async()=>({unlocked:window.fixture.state.role==='admin'&&window.fixture.state.proof,source:'pos',level:window.fixture.state.role})};
-window.pos={database:{getState:async()=>({...window.fixture.databaseState}),retryStartup:async()=>{window.fixture.retries++;return{...window.fixture.databaseState}},subscribe:fn=>{databaseListeners.add(fn);return()=>databaseListeners.delete(fn)}},sync:{subscribe:()=>()=>{},legacyRecovery:{
+window.pos={database:{getState:async()=>({...window.fixture.databaseState}),retryStartup:async()=>{window.fixture.retries++;return{...window.fixture.databaseState}},subscribe:fn=>{databaseListeners.add(fn);return()=>databaseListeners.delete(fn)}},sync:{subscribe:()=>()=>{},heldRecovery,legacyRecovery:{
 list:async()=>{window.fixture.reads++;return{ok:true,available:true,...(readOnly?{readOnly:true}:{}),items:[{shiftId,status:'CLOSED',openedAt:summary.openedAt,closedAt:summary.closedAt}]}},
 preview:async()=>{window.fixture.previews++;return{ok:true,shiftId,classification:'legacy-local-closing-needs-review',local:summary,cloud:cloudSummary,...(readOnly?{readOnly:true,captureKey:null,canApprove:false,canAcceptCloud:false}:{captureKey:'a'.repeat(64),canApprove:true})}},
 approve:async()=>{window.fixture.approvals++;throw Error('This fixture must never approve recovery')},acceptCloud:async()=>{window.fixture.adoptions++;throw Error('This fixture must never adopt recovery')}
@@ -110,6 +128,60 @@ createRoot(document.getElementById('root')).render(<App/>);
       assert.equal(await readOnly.getByRole("button", { name: /Save reviewed recovery|Use reviewed cloud closing locally/ }).count(), 0);
       assert.deepEqual(await readOnly.evaluate(() => [window.fixture.reads, window.fixture.previews, window.fixture.approvals, window.fixture.adoptions]), [1, 1, 0, 0]);
       assert.deepEqual(await readOnly.evaluate(() => window.fixture.navigations), []); groups++; await readOnly.close();
+      const compareHeld = async scenario => {
+        const held = await open(scenario, width);
+        await held.getByRole("button", { name: "Compare held bills", exact: true }).click();
+        await held.getByRole("button", { name: /STR1-BILL-007/ }).click();
+        assert.equal(await held.locator("[data-normal-trading]").count(), 0);
+        return held;
+      };
+      const proven = await compareHeld("held-proven");
+      const heldComparison = proven.getByLabel("Held bill comparison", { exact: true });
+      await heldComparison.getByRole("heading", { name: "Local SQL Server", exact: true }).waitFor();
+      await heldComparison.getByRole("heading", { name: "Cloud", exact: true }).waitFor();
+      for (const value of ["2026-10-31T20:00:00.1234567Z", "2026-10-31T20:01:00.1234560Z", "25.0100", "Saved local item", "Saved cloud item", "Qty 1.5000", "Unit price 13.4567"])
+        await heldComparison.getByText(value, { exact: true }).waitFor();
+      assert.equal(await heldComparison.getByText("26.0200", { exact: true }).count(), 2);
+      const choose = proven.getByRole("button", { name: "Use verified cloud completion", exact: true });
+      assert.equal(await choose.isDisabled(), true);
+      await proven.getByLabel("Administrator review reason", { exact: true }).fill(" x ");
+      assert.equal(await choose.isDisabled(), true);
+      await proven.getByLabel("Administrator review reason", { exact: true }).fill("  Completed from web receipt  ");
+      await choose.dblclick();
+      await proven.getByText(/The cloud completion was recorded on this PC/).waitFor();
+      assert.deepEqual(await proven.evaluate(() => window.fixture.heldResolutions), [{
+        reviewToken: "00000000-0000-4000-8000-000000000037", reason: "Completed from web receipt",
+      }]);
+      assert.deepEqual(await proven.evaluate(() => window.fixture.navigations), []);
+      groups++; await proven.close();
+      for (const scenario of ["held-unproven", "held-readonly", "held-cart-too-large", "held-truncated-invalid", "held-mismatch", "held-changed"]) {
+        const held = await compareHeld(scenario);
+        if (scenario === "held-unproven") await held.getByText("This bill remains held. A matching completed sale could not be proved.").waitFor();
+        if (scenario === "held-readonly") await held.getByText("Read-only comparison. Saving a decision requires the reviewed recovery metadata upgrade on this PC.").waitFor();
+        if (scenario === "held-cart-too-large") {
+          await held.getByText("Read-only comparison. This cart has too many lines to compare in full. The bill remains held.").waitFor();
+          await held.getByText("Showing 1 of 257 saved item lines.").waitFor();
+        }
+        if (scenario === "held-mismatch" || scenario === "held-truncated-invalid") await held.getByText("The held-bill comparison could not be verified. Open a fresh comparison before making a decision.").waitFor();
+        if (scenario === "held-changed") {
+          await held.getByLabel("Administrator review reason", { exact: true }).fill("Completed from web receipt");
+          await held.getByRole("button", { name: "Use verified cloud completion", exact: true }).click();
+          await held.getByText("The saved bill changed. Compare it again.").waitFor();
+          assert.equal(await held.getByText(/The cloud completion was recorded on this PC/).count(), 0);
+        }
+        assert.equal(await held.getByRole("button", { name: "Use verified cloud completion", exact: true }).count(), 0);
+        assert.deepEqual(await held.evaluate(() => [window.fixture.heldLists, window.fixture.heldPreviews, window.fixture.heldResolutions.length]), [1, 1, scenario === "held-changed" ? 1 : 0]);
+        assert.deepEqual(await held.evaluate(() => window.fixture.navigations), []);
+        groups++; await held.close();
+      }
+      const heldIdentity = await compareHeld("held-proven");
+      await heldIdentity.getByLabel("Held bill comparison", { exact: true }).waitFor();
+      await heldIdentity.evaluate(() => window.fixture.patch({ role: "staff", actor: "fixture-new-cashier" }));
+      await heldIdentity.getByText("This signed-in account cannot approve saved shift recovery.", { exact: true }).waitFor();
+      assert.equal(await heldIdentity.getByRole("button", { name: "Compare held bills", exact: true }).count(), 0);
+      assert.equal(await heldIdentity.getByLabel("Held bill comparison", { exact: true }).count(), 0);
+      assert.deepEqual(await heldIdentity.evaluate(() => window.fixture.heldResolutions), []);
+      groups++; await heldIdentity.close();
       const signedOut = await open("signed-out", width);
       await signedOut.getByRole("button", { name: "Fixture Administrator sign-in", exact: true }).click();
       await signedOut.getByRole("button", { name: "Review saved closings", exact: true }).waitFor();
@@ -121,11 +193,12 @@ createRoot(document.getElementById('root')).render(<App/>);
         if (scenario === "cashier") await held.getByText("This signed-in account cannot approve saved shift recovery.", { exact: true }).waitFor();
         if (scenario === "proof-denied") await held.getByText("Synthetic terminal identity rejected", { exact: true }).waitFor();
         assert.equal(await held.getByRole("button", { name: "Review saved closings", exact: true }).count(), 0);
-        assert.deepEqual(await held.evaluate(() => [window.fixture.reads, window.fixture.previews, window.fixture.approvals, window.fixture.adoptions]), [0, 0, 0, 0]);
+        assert.equal(await held.getByRole("button", { name: "Compare held bills", exact: true }).count(), 0);
+        assert.deepEqual(await held.evaluate(() => [window.fixture.reads, window.fixture.previews, window.fixture.approvals, window.fixture.adoptions, window.fixture.heldLists, window.fixture.heldPreviews, window.fixture.heldResolutions.length]), [0, 0, 0, 0, 0, 0, 0]);
         groups++; await held.close();
       }
     }
     assert.deepEqual(errors, []); assert.deepEqual(remote, []);
-    console.log(`PASS ${groups} mounted startup shift review groups; actual schema-ready snapshot, preserved trading gate, no approvals/adoptions, SQL or remote traffic.`);
+    console.log(`PASS ${groups} mounted startup shift and held-bill review groups; preserved trading gate, no actual writes or remote traffic.`);
   } finally { await browser?.close(); await server?.close(); }
 })().catch(error => { console.error(error.stack); process.exitCode = 1; });

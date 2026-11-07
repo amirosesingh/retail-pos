@@ -18,5 +18,6 @@ const BUSINESS_WRITE_CHANNELS = new Set([
   "business:shift-close-start", "business:shift-close-count", "business:shift-recount",
   "business:shift-variance-approve", "receipts:refund",
   "sync:legacy-recovery-preview", "sync:legacy-recovery-approve", "sync:legacy-recovery-accept-cloud",
+  "sync:held-sale-review-resolve",
 ]);
 module.exports={WriteBarrier,BUSINESS_WRITE_CHANNELS};

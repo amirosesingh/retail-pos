@@ -16,6 +16,7 @@ const { SyncRequestLane } = require("./request-lane.cjs");
 const { orderSelfReferencingRows } = require("./self-reference-order.cjs");
 
 function governanceRequest(payload) {
+  if (payload?.sqlServerHeldSaleReview) return true;
   const tables = new Set(["pos_settings", "pos_store_settings", "authorization_actions", "authorization_action_history"]);
   const field = row => String(row?.scope ?? "").toLowerCase() === "global" &&
     String(row?.scope_id ?? "") === "" && String(row?.key ?? "").startsWith("pos_field:");
@@ -279,11 +280,11 @@ class CloudClient {
       method: "POST",
       headers: { "content-type": "application/json", ...(payload?.sqlServerLegacyRecovery ? { "x-pos-legacy-recovery": "1" } : {}) },
       body: requestBody,
-      signal: AbortSignal.timeout(payload?.sqlServerHistoryReconcile ? 12_000 : 30_000),
+      signal: AbortSignal.timeout(payload?.sqlServerHistoryReconcile || payload?.sqlServerHeldSaleReview ? 12_000 : 30_000),
     });
       transportStage = "body";
       try {
-        if(payload?.sqlServerHeldStatus){
+        if(payload?.sqlServerHeldStatus || payload?.sqlServerHeldSaleReview){
           data=JSON.parse(await boundedText(response,2*1024*1024));
         }else if(payload?.sqlServerHistoryReconcile&&response.ok){
           const kind=payload.sqlServerHistoryReconcile.action==='rows'?'rows':'index';
@@ -332,7 +333,8 @@ class CloudClient {
     this.assertRequestContext(source, governance, payload);
     // Versioned history rows already contain exact JSON/decimal text. Generic
     // entity-key JSON parsing would round its evidence before validation.
-    const normalized=payload?.sqlServerHistoryReconcile?data:normalizeSyncPayload(data);
+    const normalized=payload?.sqlServerHistoryReconcile || payload?.sqlServerHeldSaleReview
+      ? data : normalizeSyncPayload(data);
     if (legacyRecoveryBody !== undefined && normalized && typeof normalized === "object")
       legacyRecoveryResponses.set(normalized, legacyRecoveryBody);
     if (payload?.sqlServerPull) {
@@ -542,6 +544,30 @@ class CloudClient {
     if(!registered||registered.mode!=='operations'||registered.branchId!==recordId(branchId))
       throw Object.assign(new Error('Held-ticket recovery requires this Operations terminal’s registered branch.'),{code:'SYNC_BRANCH_FORBIDDEN',table:'held_orders'});
     return this.request({sqlServerHeldStatus:{organizationId,branchId,tickets}});
+  }
+  async heldSaleReview({ branchId, ticketId, billNo, shiftId }) {
+    const registered = require("../verified-activation.cjs").binding(this.terminalStore?.read?.());
+    if (!registered || registered.mode !== "operations" || registered.platform !== "pc" ||
+        registered.branchId !== recordId(branchId)) {
+      throw Object.assign(new Error("Held bill review requires this Operations terminal’s registered branch."), {
+        code: "SYNC_BRANCH_FORBIDDEN", table: "held_orders",
+      });
+    }
+    if (!this.hasAuthorizationProof()) {
+      throw Object.assign(new Error("Sign in online as Administrator to compare this held bill."), {
+        code: "PERMISSION_DENIED", table: "held_orders",
+      });
+    }
+    if (typeof billNo !== "string" || !billNo || billNo.length > 450 ||
+        typeof ticketId !== "string" || ticketId.length > 450 || ticketId !== `D:${registered.branchId}:${billNo}` ||
+        typeof shiftId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(shiftId)) {
+      throw Object.assign(new Error("The held bill review identity could not be verified."), {
+        code: "EHELD_SALE_REVIEW_IDENTITY", table: "held_orders",
+      });
+    }
+    return this.request({ sqlServerHeldSaleReview: {
+      organizationId: "default", branchId: registered.branchId, ticketId, billNo, shiftId: recordId(shiftId),
+    } });
   }
   membershipDirectory({ afterRevision = 0, limit = 500 } = {}) {
     return this.request({ afterRevision:Number(afterRevision)||0, limit }, "membership_directory");

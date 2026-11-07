@@ -11,6 +11,7 @@ import { mirrorTerminalConfigToDesktop } from "@/core/activation/terminal-tokens
 import { OPEN_LOCAL_DATABASE_SETTINGS_EVENT } from "./LocalDatabaseWizard";
 import { isNativeDatabaseSnapshot, nativeSyncSummary } from "@/lib/sync-status-summary";
 import { LegacyShiftRecoveryReview } from "./LegacyShiftRecoveryReview";
+import { HeldBillRecoveryReview } from "./HeldBillRecoveryReview";
 
 type DatabaseState = { state?: string; enabled?: boolean; connected?: boolean; tradingReady?: boolean; profile?: { database?: string } | null };
 type TableStatus = { table: string; local: string; cloud: string; status: "SYNCED" | "VERIFIED" | "DIFFERENT"; verified?: boolean; comparedAt?: string | null };
@@ -160,6 +161,7 @@ export function LocalDatabaseOperations() {
             <Button variant="outline" disabled={busy || !state.connected || !tableDifferences.length} onClick={() => run("Targeted repair completed.", async () => { await mirrorTerminalConfigToDesktop(); return shell().sync!.reconcile({ repair: true, tables: tableDifferences.map((table) => table.table) }); })}>Repair differences</Button>
             <Button variant="ghost" disabled={busy} onClick={() => void refresh()}>Refresh</Button>
             <LegacyShiftRecoveryReview />
+            {state.connected && state.tradingReady ? <HeldBillRecoveryReview /> : null}
           </div>
           <details open={comparisonOpen} onToggle={(event) => setComparisonOpen(event.currentTarget.open)} className="rounded-md border">
             <summary className="cursor-pointer px-3 py-2 text-xs font-medium">Results · last compared {when(sync.lastComparedAt)}</summary>

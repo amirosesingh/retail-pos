@@ -129,6 +129,11 @@ const bodySchema = z.object({
     tickets:z.array(z.object({id:z.string().min(1).max(450),billNo:z.string().max(450).nullable(),shiftId:z.string().max(450).nullable()}).strict())
       .min(1).max(100).refine(tickets=>new Set(tickets.map(ticket=>ticket.id)).size===tickets.length),
   }).strict().optional(),
+  sqlServerHeldSaleReview: z.object({
+    organizationId: z.literal("default"), branchId: z.string().min(1).max(128),
+    ticketId: z.string().min(1).max(450), billNo: z.string().min(1).max(450),
+    shiftId: z.string().uuid().transform(value => value.toLowerCase()),
+  }).strict().refine(read => read.ticketId === `D:${read.branchId}:${read.billNo}`).optional(),
   sqlServerTelemetry: z
     .object({
       terminal_id: z.string().min(1).max(128),
@@ -242,8 +247,8 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       });
       exactFinancialOperations = true;
     }
-    if(body.sqlServerHeldStatus||body.sqlServerHistoryReconcile||body.sqlServerLegacyRecovery||body.sqlServerFinancialCapability||body.sqlServerFinancialEvent||body.sqlServerFinancialBasis||body.sqlServerFinancialObservation||body.sqlServerAggregate?.registerFinancialBoundary||body.sqlServerAggregate?.shiftFinancialOpening||body.sqlServerAggregate?.financialLedgerProjection){
-      const operations=[body.managementSyncBranches,body.ops?.length,body.read,body.sqlServerBatch,body.sqlServerAggregate,body.sqlServerLegacyRecovery,body.sqlServerFinancialCapability,body.sqlServerFinancialEvent,body.sqlServerFinancialBasis,body.sqlServerFinancialObservation,body.sqlServerShiftGraph,body.sqlServerPull,body.sqlServerBootstrap,body.sqlServerCounts,body.sqlServerHistoryReconcile,body.sqlServerHeldStatus,body.sqlServerTelemetry,body.oldReceipt];
+    if(body.sqlServerHeldSaleReview||body.sqlServerHeldStatus||body.sqlServerHistoryReconcile||body.sqlServerLegacyRecovery||body.sqlServerFinancialCapability||body.sqlServerFinancialEvent||body.sqlServerFinancialBasis||body.sqlServerFinancialObservation||body.sqlServerAggregate?.registerFinancialBoundary||body.sqlServerAggregate?.shiftFinancialOpening||body.sqlServerAggregate?.financialLedgerProjection){
+      const operations=[body.managementSyncBranches,body.ops?.length,body.read,body.sqlServerBatch,body.sqlServerAggregate,body.sqlServerLegacyRecovery,body.sqlServerFinancialCapability,body.sqlServerFinancialEvent,body.sqlServerFinancialBasis,body.sqlServerFinancialObservation,body.sqlServerShiftGraph,body.sqlServerPull,body.sqlServerBootstrap,body.sqlServerCounts,body.sqlServerHistoryReconcile,body.sqlServerHeldStatus,body.sqlServerHeldSaleReview,body.sqlServerTelemetry,body.oldReceipt];
       if(operations.filter(Boolean).length!==1)throw new Error('Mixed financial metadata request');
     }
   } catch (error) {
@@ -278,6 +283,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     !body.sqlServerCounts &&
     !body.sqlServerHistoryReconcile &&
     !body.sqlServerHeldStatus &&
+    !body.sqlServerHeldSaleReview &&
     !body.sqlServerTelemetry &&
     !body.oldReceipt
   )
@@ -348,6 +354,22 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       { ok: false, code: "SESSION_INVALID", error: (e as Error).message },
       { status: 401 },
     );
+  }
+
+  if (body.sqlServerHeldSaleReview) {
+    const read = body.sqlServerHeldSaleReview;
+    if (!body.terminalToken || !body.deviceBindingProof || !verifiedTerminal ||
+        verifiedTerminal.platform !== "pc" || verifiedTerminal.mode !== "operations" ||
+        verifiedTerminal.id !== scope.terminalId || verifiedTerminal.branchId !== scope.storeId ||
+        scope.kind === "terminal" || scope.managementDevice || scope.managementReplica || scope.stale || !scope.appUserId ||
+        (scope.role !== "admin" && scope.roleSlug !== "admin") || !canRetrieveHistoricalReceipt(scope))
+      return Response.json({ ok: false, code: "PERMISSION_DENIED", error: "A verified POS Administrator on the registered Operations PC is required." }, { status: 403 });
+    if (read.branchId !== verifiedTerminal.branchId || read.ticketId !== `D:${read.branchId}:${read.billNo}`)
+      return Response.json({ ok: false, code: "STORE_FORBIDDEN", error: "You can only review bills from your registered branch." }, { status: 403 });
+    const { commerceSyncIsolationReady } = await import("./commerce-sync-readiness.server");
+    const { reviewedHeldSale } = await import("./reviewed-held-sale.server");
+    return reviewedHeldSale({ read, terminalId: verifiedTerminal.id, actorId: scope.appUserId,
+      keepCommerce: !(await commerceSyncIsolationReady()), signal: request.signal });
   }
 
   if (body.managementSyncBranches) {
