@@ -45,12 +45,14 @@ window.fixture={listeners,databaseListeners,databaseState:db,navigations:[],veri
 state:{role:scenario==='signed-out'?null:scenario==='cashier'?'staff':'admin',actor:'fixture-original-admin',proof:scenario!=='proof-denied',authReady:true,pathname:'/database-startup'},
 patch(value){flushSync(()=>{this.state={...this.state,...value};for(const fn of listeners)fn()})},
 database(value){Object.assign(this.databaseState,value);flushSync(()=>{for(const fn of databaseListeners)fn({...this.databaseState})})}};
-const summary={status:'CLOSED',openedAt:'2026-10-31T08:00:00.0000000Z',closedAt:'2026-10-31T20:00:00.1234567Z',countedCash:'123.45',countedCard:'0',countedDigital:'0',expectedCash:'123.45',expectedCard:'0',expectedDigital:'0'};
+const summary={status:'CLOSED',openedAt:'2026-10-31T08:00:00.0000000Z',closedAt:'2026-10-31T20:00:00.1234567Z',updatedAt:'2026-10-31T20:01:00.1234567Z',rowVersion:'5',countedCash:'123.45',countedCard:'0',countedDigital:'0',expectedCash:'123.45',expectedCard:'0',expectedDigital:'0'};
+const cloudSummary={...summary,status:'OPEN',closedAt:null,updatedAt:'2026-10-31T08:00:01.1234560Z',rowVersion:'2'};
+const readOnly=scenario==='readonly';
 const shiftId='00000000-0000-4000-8000-000000000007';
 window.sqlAdmin={adminStatus:async()=>({unlocked:window.fixture.state.role==='admin'&&window.fixture.state.proof,source:'pos',level:window.fixture.state.role})};
 window.pos={database:{getState:async()=>({...window.fixture.databaseState}),retryStartup:async()=>{window.fixture.retries++;return{...window.fixture.databaseState}},subscribe:fn=>{databaseListeners.add(fn);return()=>databaseListeners.delete(fn)}},sync:{subscribe:()=>()=>{},legacyRecovery:{
-list:async()=>{window.fixture.reads++;return{ok:true,available:true,items:[{shiftId,status:'CLOSED',openedAt:summary.openedAt,closedAt:summary.closedAt}]}},
-preview:async()=>{window.fixture.previews++;return{ok:true,shiftId,captureKey:'a'.repeat(64),classification:'legacy-local-closing-needs-review',canApprove:true,local:summary,cloud:{...summary,status:'OPEN',closedAt:null}}},
+list:async()=>{window.fixture.reads++;return{ok:true,available:true,...(readOnly?{readOnly:true}:{}),items:[{shiftId,status:'CLOSED',openedAt:summary.openedAt,closedAt:summary.closedAt}]}},
+preview:async()=>{window.fixture.previews++;return{ok:true,shiftId,classification:'legacy-local-closing-needs-review',local:summary,cloud:cloudSummary,...(readOnly?{readOnly:true,captureKey:null,canApprove:false,canAcceptCloud:false}:{captureKey:'a'.repeat(64),canApprove:true})}},
 approve:async()=>{window.fixture.approvals++;throw Error('This fixture must never approve recovery')},acceptCloud:async()=>{window.fixture.adoptions++;throw Error('This fixture must never adopt recovery')}
 }}};
 function App(){const s=useSyncExternalStore(fn=>{listeners.add(fn);return()=>listeners.delete(fn)},()=>window.fixture.state);return<NativeBoot>{s.pathname==='/database-startup'?<Route.component/>:<div data-normal-trading>Normal trading page</div>}</NativeBoot>};
@@ -94,6 +96,20 @@ createRoot(document.getElementById('root')).render(<App/>);
       await page.evaluate(() => window.fixture.patch({ pathname: "/" }));
       await page.locator("[data-trading-blocked]").waitFor(); assert.equal(await page.locator("[data-normal-trading]").count(), 0); groups++;
       await page.close();
+      const readOnly = await open("readonly", width);
+      await readOnly.getByRole("heading", { name: "Saved local work needs review", exact: true }).waitFor();
+      await readOnly.getByRole("button", { name: "Review saved closings", exact: true }).click();
+      await readOnly.getByText(/Saving a recovery decision requires the approved recovery metadata upgrade/).waitFor();
+      await readOnly.getByRole("button", { name: /CLOSED · 00000000/ }).click();
+      const comparison = readOnly.getByLabel("Closing comparison", { exact: true });
+      await comparison.getByRole("heading", { name: "Local SQL Server", exact: true }).waitFor();
+      await comparison.getByRole("heading", { name: "Cloud", exact: true }).waitFor();
+      await comparison.getByText("2026-10-31T20:00:00.1234567Z", { exact: true }).waitFor();
+      await comparison.getByText("2026-10-31T08:00:01.1234560Z", { exact: true }).waitFor();
+      assert.deepEqual(await comparison.locator("dt").filter({ hasText: /^Record version$/ }).locator("xpath=following-sibling::dd[1]").allTextContents(), ["5", "2"]);
+      assert.equal(await readOnly.getByRole("button", { name: /Save reviewed recovery|Use reviewed cloud closing locally/ }).count(), 0);
+      assert.deepEqual(await readOnly.evaluate(() => [window.fixture.reads, window.fixture.previews, window.fixture.approvals, window.fixture.adoptions]), [1, 1, 0, 0]);
+      assert.deepEqual(await readOnly.evaluate(() => window.fixture.navigations), []); groups++; await readOnly.close();
       const signedOut = await open("signed-out", width);
       await signedOut.getByRole("button", { name: "Fixture Administrator sign-in", exact: true }).click();
       await signedOut.getByRole("button", { name: "Review saved closings", exact: true }).waitFor();
@@ -101,7 +117,7 @@ createRoot(document.getElementById('root')).render(<App/>);
       await signedOut.locator("[data-normal-trading]").waitFor(); assert.deepEqual(await signedOut.evaluate(() => window.fixture.navigations), ["/"]); groups++; await signedOut.close();
       for (const scenario of ["schema", "migrating", "disconnected", "cashier", "proof-denied"]) {
         const held = await open(scenario, width);
-        await held.getByRole("heading", { name: /database/i }).waitFor();
+        await held.getByRole("heading", { level: 1 }).waitFor();
         if (scenario === "cashier") await held.getByText("This signed-in account cannot approve saved shift recovery.", { exact: true }).waitFor();
         if (scenario === "proof-denied") await held.getByText("Synthetic terminal identity rejected", { exact: true }).waitFor();
         assert.equal(await held.getByRole("button", { name: "Review saved closings", exact: true }).count(), 0);

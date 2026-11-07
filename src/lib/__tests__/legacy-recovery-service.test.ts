@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 const require = createRequire(import.meta.url);
 const { LegacyShiftRecoveryService } = require("../../../electron/sync/legacy-shift-recovery-service.cjs");
 const { rememberGraph, parseExactJson, stringifyExactJson } = require("../../../electron/sync/shift-recovery-exact.cjs");
+const { LegacyShiftRecoveryOutbox } = require("../../../electron/db/legacy-shift-recovery-outbox.cjs");
+const { loadRegistry } = require("../../../electron/db/schema-registry.cjs");
 const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const BRANCH = uuid(1), TERMINAL = uuid(2), SHIFT = uuid(3), DATABASE = uuid(4), RECOVERY = uuid(5);
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; }
@@ -10,6 +12,7 @@ function fixture() {
   const context = { branchId: BRANCH, terminalId: TERMINAL, backendOriginHash: "a".repeat(64), profileKey: "project/backend/proof/profile-v1" };
   const pool = {}, cm = { pool, sql: () => sql };
   let open = 0, guid = DATABASE, epoch = 1, admin = true, schema: boolean | "partial" = true, pending = "1", convergence = "0", adoption = true;
+  let metadataVisible = 1, recoveryAbsent = 0;
   const statements: string[] = [], transactions: object[] = [];
   class Transaction {
     async begin() { open++; transactions.push(this); }
@@ -22,8 +25,9 @@ function fixture() {
     async query(text: string) {
       statements.push(text);
       if (text.includes("sys.database_recovery_status")) return { recordset: [{ database_guid: guid }] };
+      if (text.includes("metadata_visible")) return { recordset: [{ metadata_visible: metadataVisible, recovery_absent: recoveryAbsent }] };
       if (text.includes("adoption_id")) return { recordset: [{ adoption_id: adoption ? 4 : null }] };
-      if (text.includes("OBJECT_ID")) return { recordset: [{ evidence_id: 1, event_id: schema ? 2 : null, receipt_id: schema === true ? 3 : null }] };
+      if (text.includes("OBJECT_ID")) return { recordset: [{ evidence_id: recoveryAbsent && !schema ? null : 1, event_id: schema ? 2 : null, receipt_id: schema === true ? 3 : null }] };
       if (text.includes("COUNT_BIG")) return { recordset: [{ pending_count: text.includes("AND EXISTS") ? convergence : pending }] };
       if (text.includes("CONVERT(varchar(36),e.recovery_id)")) return { recordset: convergence === "1" ? [{ recovery_id: RECOVERY }] : [] };
       if (text.includes("SELECT store_id,terminal_id")) return { recordset: [{ store_id: BRANCH, terminal_id: TERMINAL }] };
@@ -45,13 +49,14 @@ function fixture() {
   };
   const event = Object.freeze({ recoveryId: RECOVERY, shiftId: SHIFT });
   const evidenceStore = { preflight: vi.fn(async () => undefined), load: vi.fn(async () => ({ shiftId: SHIFT, localGraphText: JSON.stringify(tables), cloudGraphText: stringifyExactJson(parseExactJson(raw).tables) })), capture: vi.fn(async (tx: object, input: { scope: object; cloudGraphText: string }) => { expect(service.assertScope(tx, input.scope)).toBe(true); expect(input.cloudGraphText).toContain("100.1234567890123456789"); return { captureKey: "c".repeat(64), classification: "legacy-local-closing-needs-review" }; }) };
-  const outbox = { preflight: vi.fn(async () => undefined), localGraph: vi.fn(async () => tables), assertOwnedGraphs: vi.fn(),
+  const outbox = { preflight: vi.fn(async () => undefined), localGraph: vi.fn<() => Promise<unknown[]>>(async () => tables), assertOwnedGraphs: vi.fn(),
     create: vi.fn(async () => event), load: vi.fn(async () => event), pending: vi.fn(async () => pending === "1" ? [event] : []),
     acknowledge: vi.fn(async (tx: object, input: { scope: object }) => { expect(service.assertScope(tx, input.scope)).toBe(true); pending = "0"; if (service.adopter) convergence = "1"; return { acknowledged: true }; }) };
   const service = new LegacyShiftRecoveryService({ connectionManager: cm, registry: {}, cloud, evidenceStore, outbox, authority, readContext: () => context });
   const adopter = { schema: vi.fn(async () => undefined), prepareAdmin: vi.fn(() => ({})), prepareReceipt: vi.fn(() => ({})), apply: vi.fn(async (_tx: object, value: { decisionId: string }) => { convergence = "0"; return { decisionId: value.decisionId }; }) };
   return { service, context, cm, cloud, authority, outbox, evidenceStore, statements, transactions, branded, tables,
     adopter, enableAdopter: () => { service.adopter = adopter; }, setAdoption: (value: boolean) => { adoption = value; }, setConvergence: (value: string) => { convergence = value; },
+    setReadOnlySchema: (visible = true) => { schema = false; recoveryAbsent = 1; metadataVisible = visible ? 1 : 0; },
     setGuid: (value: string) => { guid = value; }, setEpoch: () => { epoch++; }, setAdmin: (value: boolean) => { admin = value; }, setSchema: (value: boolean | "partial") => { schema = value; }, setPending: (value: string) => { pending = value; }, open: () => open };
 }
 describe("native legacy recovery coordinator", () => {
@@ -152,6 +157,91 @@ describe("native legacy recovery coordinator", () => {
     f.service.query = async () => { throw Error("SQL temporarily unavailable"); };
     await expect(f.service.pendingSummary()).rejects.toMatchObject({ code: "ELEGACY_RECOVERY_CAPABILITY_UNAVAILABLE", retryable: true });
     f.service.query = originalQuery; expect((await f.service.pendingSummary()).pending).toBe(1);
+  });
+});
+
+function readOnlyFixture() {
+  const f = fixture(); f.enableAdopter(); f.setReadOnlySchema();
+  const registry = loadRegistry() as { tables: Array<{ cloudTable: string; columns: Array<{ cloudColumn: string }> }> };
+  f.service.registry = registry;
+  f.outbox.assertOwnedGraphs.mockImplementation(LegacyShiftRecoveryOutbox.prototype.assertOwnedGraphs.bind({ registry }));
+  const opened = "2026-11-05T01:16:00.1234567Z", closed = "2026-11-06T12:46:42.456789Z";
+  const cash = "100.123456789012", countId = uuid(6);
+  const counts = { counted_cash: cash, counted_card: "12.34", counted_digital: "0" };
+  const totals = { ...counts, expected_cash: cash, expected_card: "12.34", expected_digital: "0",
+    variance_cash: "0", variance_card: "0", variance_digital: "0", variance_total: "0", variance_status: "NO_VARIANCE" };
+  const rows = (table: string, values: object) => {
+    const row = Object.fromEntries(registry.tables.find(entry => entry.cloudTable === table)!.columns.map(column => [column.cloudColumn, null]));
+    return [Object.assign(row, { store_id: BRANCH, ...(table === "shifts" ? {} : { shift_id: SHIFT }),
+      ...(Object.hasOwn(row, "terminal_id") ? { terminal_id: TERMINAL } : {}) }, values)];
+  };
+  const parent = { id: SHIFT, status: "OPEN", state: "ACTIVE", opened_at: opened, created_at: opened, updated_at: opened, row_version: "1" };
+  const local = ["shifts", "shift_cash_counts", "shift_reconciliations", "shift_close_events", "shift_notifications", "shift_variance_alerts"].map(table =>
+    ({ table, rows: table === "shifts" ? rows(table, parent) : [] }));
+  const remote = local.map(({ table }) => ({ table, rows:
+    table === "shifts" ? rows(table, { ...parent, ...totals, status: "CLOSED", state: "CLOSED", closed_at: closed, updated_at: closed, row_version: "4", final_counted_cash: cash }) :
+    table === "shift_cash_counts" ? rows(table, { id: countId, kind: "ORIGINAL", ...counts }) :
+    table === "shift_reconciliations" ? rows(table, { id: uuid(7), count_id: countId, ...totals }) : [] }));
+  const graph = () => {
+    const raw = JSON.stringify({ ok: true, shiftGraphVersion: 1, branchId: BRANCH, shiftId: SHIFT, graphToken: "b".repeat(64), closedAtRaw: closed, tables: remote })
+      .replaceAll(`"${cash}"`, cash);
+    return rememberGraph(JSON.parse(raw), raw, "1");
+  };
+  f.outbox.localGraph.mockResolvedValue(local); f.cloud.shiftGraph.mockImplementation(async () => { expect(f.open()).toBe(0); return graph(); });
+  return { ...f, graph, local, remote, opened, closed, cash };
+}
+
+describe("read-only shift review before optional recovery metadata is installed", () => {
+  it("lists only scoped shifts and compares exact local and cloud values without saving anything", async () => {
+    const f = readOnlyFixture();
+    expect(await f.service.list({ limit: 1 })).toMatchObject({ available: true, readOnly: true, items: [{ shiftId: SHIFT }], nextAfterId: SHIFT });
+    expect(f.statements.find(sql => sql.includes("SELECT TOP(@limit)"))).toContain("WHERE store_id=@branch AND terminal_id=@terminal");
+    expect(await f.service.preview(SHIFT)).toMatchObject({ shiftId: SHIFT, readOnly: true, captureKey: null,
+      classification: "unverified-difference-needs-review", canApprove: false, canAcceptCloud: false, financialVerification: "UNVERIFIED_HISTORICAL",
+      local: { status: "OPEN", openedAt: f.opened, updatedAt: f.opened, closedAt: null, rowVersion: "1" },
+      cloud: { status: "CLOSED", closedAt: f.closed, updatedAt: f.closed, rowVersion: "4", countedCash: f.cash } });
+    expect(f.evidenceStore.capture).not.toHaveBeenCalled(); expect(f.outbox.create).not.toHaveBeenCalled();
+    expect(f.adopter.apply).not.toHaveBeenCalled(); expect(f.authority.prepare).not.toHaveBeenCalled(); expect(f.cloud.pushLegacyRecovery).not.toHaveBeenCalled();
+    expect(f.statements.every(sql => /^\s*SELECT\b/.test(sql))).toBe(true);
+    const check = f.statements.find(sql => sql.includes("recovery_absent"));
+    for (const name of ["pos_shift_recovery_evidence", "pos_sync_shift_legacy_recoveries", "pos_sync_shift_legacy_recovery_receipts", "pos_shift_recovery_adoptions"])
+      expect(check).toContain(`OBJECT_ID(N'dbo.${name}') IS NULL`);
+  });
+
+  it("preserves the upgrade-required path for partial metadata and denies unknown visibility", async () => {
+    const f = fixture(); f.enableAdopter(); f.setSchema(false);
+    expect(await f.service.list()).toEqual({ available: false, reason: "UPGRADE_REQUIRED", items: [] });
+    await expect(f.service.preview(SHIFT)).rejects.toMatchObject({ code: "ELEGACY_RECOVERY_UPGRADE_REQUIRED" });
+    f.setReadOnlySchema(false);
+    await expect(f.service.list()).rejects.toMatchObject({ code: "ELEGACY_RECOVERY_SCHEMA" });
+    await expect(f.service.preview(SHIFT)).rejects.toMatchObject({ code: "ELEGACY_RECOVERY_SCHEMA" });
+    expect(f.cloud.shiftGraph).not.toHaveBeenCalled(); expect(f.evidenceStore.capture).not.toHaveBeenCalled();
+  });
+
+  it("does not switch a read-only preview to write mode when metadata changes during the network request", async () => {
+    const f = readOnlyFixture();
+    f.cloud.shiftGraph.mockImplementation(async () => { f.setSchema(true); return f.graph(); });
+    await expect(f.service.preview(SHIFT)).rejects.toMatchObject({ code: "ELEGACY_RECOVERY_REVIEW_CHANGED" });
+    expect(f.evidenceStore.capture).not.toHaveBeenCalled(); expect(f.outbox.localGraph).not.toHaveBeenCalled();
+  });
+
+  it("keeps real administrator and terminal ownership guards in read-only mode", async () => {
+    const f = readOnlyFixture(); f.setAdmin(false);
+    await expect(f.service.list()).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    await expect(f.service.preview(SHIFT)).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    expect(f.statements).toHaveLength(0); expect(f.cloud.shiftGraph).not.toHaveBeenCalled();
+    f.setAdmin(true); f.remote[0].rows[0].terminal_id = uuid(99);
+    await expect(f.service.preview(SHIFT)).rejects.toMatchObject({ code: "SYNC_BRANCH_FORBIDDEN" });
+    expect(f.evidenceStore.capture).not.toHaveBeenCalled();
+  });
+
+  it("requires the private exact response witness and rechecks the admin session across network reads", async () => {
+    const f = readOnlyFixture();
+    f.cloud.shiftGraph.mockResolvedValueOnce(JSON.parse(JSON.stringify(f.graph())));
+    await expect(f.service.preview(SHIFT)).rejects.toMatchObject({ code: "ELEGACY_RECOVERY_EXACT_GRAPH_REQUIRED" });
+    f.cloud.shiftGraph.mockImplementationOnce(async () => { f.setEpoch(); return f.graph(); });
+    await expect(f.service.preview(SHIFT)).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    expect(f.evidenceStore.capture).not.toHaveBeenCalled(); expect(f.outbox.localGraph).not.toHaveBeenCalled();
   });
 });
 
