@@ -185,6 +185,13 @@ describe("actual Main scoped recovery reports the final operation outcome", () =
     expect(f.log.entries("failure.log")).toEqual([]);
   });
 
+  it("does not treat an ordinary completed pass as full manual sync while scoped history is pending", async () => {
+    const f = fixture(); f.context.localDataLifecycle.historyPending = () => true;
+    expect(await f.manual()).toEqual({ ok: true, historyPending: true, syncReady: false });
+    expect(f.calls.map(row => row.event)).toEqual(["synchronization.manual.pending"]);
+    expect(f.ensure).not.toHaveBeenCalled();
+  });
+
   it("rethrows the same final manual recovery error without claiming success", async () => {
     const f = fixture(); f.gap(); const failure = Object.assign(Error("Administrator review required."), { code: "ELOCAL_PENDING_UNVERIFIED" });
     f.ensure.mockRejectedValueOnce(failure);

@@ -2396,7 +2396,10 @@ function registerIpc() {
     if(!branchId)throw Object.assign(new Error("The terminal branch is not configured."),{code:"EBRANCH"});
     return observedDatabaseOperation("synchronization","manual",async()=>{
       const result=await syncCoordinator.runNow({...input,branchId});
-      if(result.code!=="ECHANGEGAP")return result;
+      if(result.code!=="ECHANGEGAP"){
+        if(result.ok&&localDataLifecycle.historyPending(branchId))return {...result,historyPending:true,syncReady:false};
+        return result;
+      }
       diagnostics.logConnection("synchronization.manual.recovering", { category:"synchronization", stage:"manual", state:"recovering", ...diagnostics.bootstrapDiagnostic(result,syncRegistry.tables.map(table=>table.cloudTable)) });
       return prepareLocalData({force:true});
     });
