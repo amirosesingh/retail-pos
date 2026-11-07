@@ -264,9 +264,9 @@ try {
       console.log(output.trim());
     } : undefined;
     await verifyStoreSettingsPilot({ sql, denySql, session, waitFor, applyNative });
-  } else if (process.argv.includes("--grouped-gateway")) {
+  } else if (process.argv.includes("--grouped-gateway") || process.argv.includes("--grouped-gateway-native")) {
     const { verifyGroupedGateway } = await import("./lib/pos-sync-grouped-gateway-fixture.mjs");
-    await verifyGroupedGateway({ sql, denySql });
+    await verifyGroupedGateway({ sql, denySql, native: process.argv.includes("--grouped-gateway-native") });
   } else {
     await verifyFeedFixture();
   }

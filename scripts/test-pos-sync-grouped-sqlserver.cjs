@@ -6,7 +6,7 @@ const { CloudClient } = require("../electron/sync/cloud-client.cjs");
 const { PullWorker } = require("../electron/sync/pull-worker.cjs");
 const { ChangeReader } = require("../electron/sync/change-reader.cjs");
 const { CheckpointRepository } = require("../electron/sync/checkpoints.cjs");
-const { CHECKPOINT, TABLE, assertLocalTracking } = require("../electron/sync/grouped-store-settings.cjs");
+const { CHECKPOINT, TABLE, assertLocalTracking, readDatabaseGuid } = require("../electron/sync/grouped-store-settings.cjs");
 
 const id = n => "aaaaaaaa-aaaa-4aaa-8aaa-" + String(n).padStart(12, "0");
 const branch = id(1);
@@ -117,6 +117,7 @@ async function main() {
       assert.deepEqual(await install(), { epoch, seq: seq(0), changed: true });
       assert.deepEqual(calls.at(-1), { organizationId: "default", branchId: branch });
       assert.equal((await cursor()).seq, seq(0));
+      assert.equal((await cursor()).databaseGuid, await readDatabaseGuid(manager.pool.request()));
       assert.equal(String((await checkpoints.get(branch, "__feed__", "pull")).committed_cursor), "83");
       assert.equal(await checkpoints.get(foreign, CHECKPOINT, "pull"), null);
       assert.equal((await saved(foreign)).row_version, 77);
@@ -144,6 +145,47 @@ async function main() {
       assert.equal(calls.at(-1).upperSeq, seq(2));
       assert.equal((await cursor()).upper, null);
       assert.equal((await saved()).row_version, 3);
+    });
+
+    await test("a copied checkpoint cannot resume or commit against another SQL Server database", async () => {
+      const replacement = await createLocal(branch);
+      const originalPool = manager.pool;
+      const originalSql = manager.sql;
+      try {
+        const position = await cursor();
+        const replacementPool = replacement.manager.pool;
+        assert.notEqual(await readDatabaseGuid(replacementPool.request()), position.databaseGuid);
+        await new CheckpointRepository(replacement.manager).save(branch, CHECKPOINT, "pull",
+          { committed_cursor: JSON.stringify(position) });
+        reply = page(3, 3, [[3, change(4)]]);
+        const before = calls.length;
+        manager.pool = replacementPool;
+        await assert.rejects(pull(), { code: "ESYNC_GROUPED_DATABASE_CHANGED" });
+        await assert.rejects(install(), { code: "ESYNC_GROUPED_DATABASE_CHANGED" });
+        assert.equal(calls.length, before);
+
+        // Keep the captured profile and pool references stable but route the
+        // actual apply transaction to the second disposable database.
+        manager.pool = originalPool;
+        const sql = originalSql();
+        manager.sql = () => ({ ...sql, Transaction: class extends sql.Transaction {
+          constructor(pool) {
+            assert.equal(pool, originalPool);
+            super(replacementPool);
+          }
+        } });
+        await assert.rejects(pull(), { code: "ESYNC_GROUPED_DATABASE_CHANGED" });
+        assert.equal(calls.length, before + 1);
+        assert.deepEqual(await cursor(), position);
+        assert.equal((await saved()).row_version, 3);
+        manager.pool = replacementPool;
+        assert.deepEqual(await cursor(), position);
+        assert.equal(await saved(), undefined);
+      } finally {
+        manager.pool = originalPool;
+        manager.sql = originalSql;
+        await replacement.close();
+      }
     });
 
     await test("pending native journal and unjournaled local CT edits both retain the exact prior cursor", async () => {
@@ -282,17 +324,12 @@ async function main() {
   }
 }
 
-async function postgresWire() {
-  const { readFileSync } = require("node:fs");
-  const { baseline, page } = JSON.parse(readFileSync(0, "utf8"));
+async function postgresWire({ baseline, page, send, terminalId = terminal }) {
   const scope = baseline?.scope_id;
   assert.equal(typeof scope, "string");
   assert(scope.length > 0 && scope.length <= 128);
-  assert.equal(page.scope_id, scope);
   const before = JSON.parse(baseline.manifest_json).changes[0].row_data;
-  const after = page.groups.at(-1).changes[0].row_data;
   assert.equal(before.store_id, scope);
-  assert.equal(after.store_id, scope);
   const fetchBefore = globalThis.fetch;
   let local;
   try {
@@ -300,47 +337,59 @@ async function postgresWire() {
     const { manager, registry } = local;
     manager.profile = { id: "owned-postgres-wire", host: "owned-private-pipe", database: "owned-postgres-wire" };
     const settings = registry.tables.find(table => table.cloudTable === TABLE);
-    const changed = settings.columns.find(column => column.sqlServerType === "bit" &&
-      before[column.cloudColumn] !== after[column.cloudColumn]);
-    assert(changed, "The actual Postgres feed must carry an observable settings change.");
     const shift = id(991);
-    await local.insert("shifts", { id: shift, store_id: scope, terminal_id: terminal, state: "ACTIVE", status: "OPEN", row_version: 1 });
+    await local.insert("shifts", { id: shift, store_id: scope, terminal_id: terminalId, state: "ACTIVE", status: "OPEN", row_version: 1 });
     await manager.pool.request().input("branch", scope).input("key", JSON.stringify({ id: shift })).query(`
       INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id,entity_version)
       VALUES(N'shifts',@key,N'insert',@branch,1);`);
     const requests = [];
     globalThis.fetch = async (target, options) => {
+      if (send && target !== url + "/api/v1/pos/sync") return fetchBefore(target, options);
       assert.equal(target, url + "/api/v1/pos/sync");
       const body = JSON.parse(options.body);
-      assert.equal(body.terminalToken, terminal);
+      assert.equal(body.terminalToken, terminalId);
       assert.equal(body.deviceBindingProof, registration.deviceBindingProof);
       const read = body.sqlServerGroupedSnapshot ?? body.sqlServerGroupedFeed;
       requests.push(read);
       assert.equal(read.branchId, scope);
+      if (send) return send(new Request(target, options));
       return Response.json(body.sqlServerGroupedSnapshot ? baseline : page);
     };
     const cloud = new CloudClient({ configStore: { get: () => url },
-      terminalStore: { read: () => ({ ...registration, locationId: scope }) },
+      terminalStore: { read: () => ({ ...registration, tokenId: terminalId, locationId: scope }) },
       connectionManager: manager, financialBasisContext: () => ({ ...originalProject, branchId: scope }) });
     const checkpoints = new CheckpointRepository(manager);
     const worker = new PullWorker({ connectionManager: manager, cloud, registry, checkpoints,
       reader: new ChangeReader(manager, registry) });
+    assert.deepEqual(await worker.installGroupedSettingsSnapshot(), { epoch: baseline.epoch, seq: baseline.seq, changed: true });
+    const update = typeof page === "function" ? page() : page;
+    assert.equal(update.scope_id, scope);
+    const after = update.groups.at(-1).changes[0].row_data;
+    assert.equal(after.store_id, scope);
+    const changed = settings.columns.find(column => column.sqlServerType === "bit" &&
+      before[column.cloudColumn] !== after[column.cloudColumn]);
+    assert(changed, "The actual Postgres feed must carry an observable settings change.");
     const readFlag = async () => (await manager.pool.request().input("branch", scope).query(
       `SELECT [${changed.sqlServerColumn}] AS actual FROM dbo.pos_store_settings WHERE store_id=@branch;`)).recordset[0].actual;
-    assert.deepEqual(await worker.installGroupedSettingsSnapshot(), { epoch: baseline.epoch, seq: baseline.seq, changed: true });
     assert.equal(await readFlag(), before[changed.cloudColumn]);
-    assert.equal((await worker.pullGroupedSettingsPage()).seq, page.next_seq);
+    assert.equal((await worker.pullGroupedSettingsPage()).seq, update.next_seq);
     assert.equal(requests[1].afterSeq, baseline.seq);
     assert.equal(await readFlag(), after[changed.cloudColumn]);
-    assert.equal(JSON.parse((await checkpoints.get(scope, CHECKPOINT, "pull")).committed_cursor).seq, page.next_seq);
+    assert.equal(JSON.parse((await checkpoints.get(scope, CHECKPOINT, "pull")).committed_cursor).seq, update.next_seq);
     assert.equal((await manager.pool.request().input("shift", shift).query("SELECT state FROM dbo.shifts WHERE id=@shift;")).recordset[0].state, "ACTIVE");
     assert.equal((await manager.pool.request().query("SELECT COUNT(*) AS n FROM dbo.sync_change_journal WHERE entity_type=N'shifts' AND acknowledged_at IS NULL;")).recordset[0].n, 1);
-    console.log("PASS actual PostgreSQL snapshot and group applied by the native LocalDB worker");
+    console.log("PASS actual PostgreSQL snapshot and group applied by the native LocalDB worker" +
+      (send ? " through the grouped relay handler" : ""));
   } finally {
     globalThis.fetch = fetchBefore;
     await local?.close();
   }
 }
 
-const run = process.argv.slice(2).join(" ") === "--postgres-wire" ? postgresWire : main;
-run().catch(error => { console.error(error); process.exitCode = 1; });
+if (require.main === module) {
+  const run = async () => process.argv.slice(2).join(" ") === "--postgres-wire"
+    ? postgresWire(JSON.parse(require("node:fs").readFileSync(0, "utf8")))
+    : main();
+  run().catch(error => { console.error(error); process.exitCode = 1; });
+}
+module.exports = { postgresWire };

@@ -83,6 +83,18 @@ The previous ambiguous module name pulled the React provider and TanStack
 virtual entries into isolated Worker bundles. All 23 focused tests across
 the three affected Worker suites, grouped relay and scoped history passed.
 
+The grouped checkpoint and its apply transaction now require the actual SQL
+Server database GUID. Eleven disposable LocalDB cases passed, including a
+copied checkpoint and a transaction routed to a different database under
+the same profile. A restore that retains its GUID still needs generation
+validation before installed activation.
+
+The disposable gateway fixture passed a snapshot and a subsequent committed
+settings group from PostgreSQL through the real relay handler to LocalDB,
+with its open shift and pending journal intact. The fixture adapts the
+HTTP and Data API boundaries in process. Hosted and installed acceptance
+remain pending.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents

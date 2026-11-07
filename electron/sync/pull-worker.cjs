@@ -46,23 +46,28 @@ class PullWorker {
     }
     return { applied: result?.applied ?? safe.length, alreadyMatching: result?.alreadyMatching ?? 0, conflicts: 0 };
   }
-  groupedSettingsContext() {
+  async groupedSettingsContext() {
     const source = this.cloud.requestContext(false);
     const branch = grouped.operationsScope(source);
     const table = this.registry.tables.find(table => table.cloudTable === grouped.TABLE && table.sqlServerTable === grouped.TABLE && table.scope === "branch");
     if (!table || source.pool !== this.connectionManager.pool)
       throw grouped.fail("The grouped settings projection is unavailable on this database.");
-    return { source, branch, table };
+    const databaseGuid = await grouped.readDatabaseGuid(source.pool.request());
+    this.cloud.assertRequestContext(source, false);
+    return { source, branch, table, databaseGuid };
   }
-  async commitGroupedSettings({ source, branch, table }, position, next, change, snapshot = null) {
+  async commitGroupedSettings(context, position, next, change, snapshot = null) {
+    const { source, branch, table, databaseGuid } = context;
     this.cloud.assertRequestContext(source, false);
     const sql = this.connectionManager.sql();
     const transaction = new sql.Transaction(source.pool);
     await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
     let changed = false;
     try {
+      if (await grouped.readDatabaseGuid(transaction.request()) !== databaseGuid)
+        throw grouped.fail("The SQL Server database changed before the grouped settings apply.", "ESYNC_GROUPED_DATABASE_CHANGED");
       const local = await grouped.readLocalRow(transaction, branch, table, change);
-      const current = await grouped.readPosition(transaction.request(), branch, source.fingerprint, true);
+      const current = await grouped.readPosition(transaction.request(), context, true);
       if (current === null ? position !== null : position === null ||
           current.epoch !== position.epoch || current.seq !== position.seq || current.upper !== position.upper)
         throw grouped.fail("Another grouped settings apply advanced the saved position.", "ESYNC_GROUPED_POSITION_CHANGED");
@@ -86,7 +91,7 @@ class PullWorker {
       this.cloud.assertRequestContext(source, false);
       if (snapshot && snapshot.expires <= Date.now()) throw grouped.fail("The grouped settings snapshot pin expired.");
       await this.checkpoints.save(branch, grouped.CHECKPOINT, "pull",
-        { committed_cursor: JSON.stringify({ source: source.fingerprint, ...next }) }, transaction);
+        { committed_cursor: JSON.stringify({ source: source.fingerprint, databaseGuid, ...next }) }, transaction);
       this.cloud.assertRequestContext(source, false);
       await transaction.commit();
     } catch (error) {
@@ -99,9 +104,9 @@ class PullWorker {
   }
   // Opt-in pilot entry points. The installed coordinator still calls run().
   async installGroupedSettingsSnapshot() {
-    const context = this.groupedSettingsContext();
+    const context = await this.groupedSettingsContext();
     const { source, branch, table } = context;
-    const position = await grouped.readPosition(source.pool.request(), branch, source.fingerprint);
+    const position = await grouped.readPosition(source.pool.request(), context);
     const snapshot = grouped.snapshotFor(await this.cloud.groupedSettingsSnapshot(source), branch, table);
     const { epoch, seq, change } = snapshot;
     const changed = await this.commitGroupedSettings(context, position, { epoch, seq, upper: null }, change, snapshot);
@@ -110,9 +115,9 @@ class PullWorker {
   async pullGroupedSettingsPage({ limit = 100 } = {}) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100)
       throw grouped.fail("The grouped settings page limit must be between 1 and 100.");
-    const context = this.groupedSettingsContext();
+    const context = await this.groupedSettingsContext();
     const { source, branch, table } = context;
-    let position = await grouped.readPosition(source.pool.request(), branch, source.fingerprint);
+    let position = await grouped.readPosition(source.pool.request(), context);
     if (!position) return { status: "SNAPSHOT_REQUIRED", reason: "UNINITIALIZED" };
     const page = await this.cloud.pullGroupedSettings(source, position, limit);
     if (grouped.snapshotRequired(page)) return page;

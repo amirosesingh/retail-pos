@@ -112,7 +112,17 @@ function snapshotFor(value, branch, table) {
   return { epoch: value.epoch, seq: value.seq, expires, change: changeFor(manifest.changes[0], branch, table) };
 }
 
-async function readPosition(request, branch, source, locked = false) {
+async function readDatabaseGuid(request) {
+  const result = await request.query(`
+    SELECT LOWER(CONVERT(nvarchar(36),database_guid)) AS database_guid
+    FROM sys.database_recovery_status WHERE database_id=DB_ID();`);
+  const guid = result.recordset?.[0]?.database_guid;
+  if (result.recordset?.length !== 1 || typeof guid !== "string" || !UUID.test(guid))
+    throw fail("The local database identity cannot be verified.", "ESYNC_GROUPED_DATABASE_UNVERIFIED");
+  return guid;
+}
+
+async function readPosition(request, { branch, source, databaseGuid }, locked = false) {
   const result = await request.input("branch", branch).input("entity", CHECKPOINT).query(`
     SELECT committed_cursor FROM dbo.sync_checkpoints ${locked ? "WITH (UPDLOCK,HOLDLOCK)" : ""}
     WHERE organization_id=N'default' AND branch_id=@branch AND entity_type=@entity AND direction=N'pull';`);
@@ -120,10 +130,12 @@ async function readPosition(request, branch, source, locked = false) {
   let position;
   try { position = JSON.parse(result.recordset[0].committed_cursor); }
   catch { throw fail("The saved grouped settings position is invalid."); }
-  if (result.recordset.length !== 1 || !hasKeys(position, ["source", "epoch", "seq", "upper"]) ||
-      position.source !== source || typeof position.epoch !== "string" || !UUID.test(position.epoch) ||
+  if (result.recordset.length !== 1 || !hasKeys(position, ["source", "databaseGuid", "epoch", "seq", "upper"]) ||
+      position.source !== source.fingerprint || typeof position.epoch !== "string" || !UUID.test(position.epoch) ||
       (position.upper !== null && sequence(position.upper) <= sequence(position.seq)))
     throw fail("The saved grouped settings position does not belong to this database and registration.");
+  if (position.databaseGuid !== databaseGuid)
+    throw fail("The saved grouped settings position belongs to a different SQL Server database.", "ESYNC_GROUPED_DATABASE_CHANGED");
   sequence(position.seq);
   return position;
 }
@@ -174,5 +186,5 @@ async function assertLocalTracking(transaction, branch) {
 
 module.exports = {
   TABLE, CHECKPOINT, MAX_RESPONSE_BYTES, fail, operationsScope, snapshotRequired,
-  groupsFor, snapshotFor, readPosition, readLocalRow, assertLocalTracking,
+  groupsFor, snapshotFor, readDatabaseGuid, readPosition, readLocalRow, assertLocalTracking,
 };
