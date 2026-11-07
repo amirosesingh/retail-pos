@@ -86,8 +86,10 @@ describe("scoped SQL Server synchronization", () => {
     expect(engine).not.toContain("Boolean(session?.access_token)");
     expect(engine).toContain("installLiveChannel(staffPresent)");
     expect(engine).toContain("offVerifiedAuth()");
-    expect(activity).toContain("if (!hasStaffSession()) return");
-    expect(approvals).toContain("if (!hasStaffSession()) return");
+    for (const source of [activity, approvals]) {
+      expect(source).toMatch(/if \(!hasStaffSession\(\)\) \{\s*stopRealtime\?\.\(\)/);
+      expect(source).toContain("subscribeCentralAuthSession(");
+    }
   });
 
   it("keeps master/configuration and stock-request transition history append-only", () => {

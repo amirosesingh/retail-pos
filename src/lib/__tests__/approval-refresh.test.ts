@@ -9,6 +9,7 @@ vi.mock("../held-orders", () => ({ heldOrderForRequest: vi.fn(), markHeldReady: 
 vi.mock("../active-branch", () => ({ activeBranchId: () => "branch-a" }));
 vi.mock("@/core/local-db/local-db", () => ({ localDb: () => null }));
 import { subscribeApprovals } from "../approval-centre";
+import { setCentralAuthSessionPresent } from "../session-presence";
 beforeEach(() => {
  vi.useFakeTimers(); hooks.staff = true;
  vi.stubGlobal("document", Object.assign(new EventTarget(), { visibilityState: "visible" }));
@@ -33,7 +34,27 @@ it("pauses hidden/offline requests, catches up on resume and supports the all-br
  Object.assign(document, { visibilityState: "visible" }); Object.assign(navigator, { onLine: false }); await vi.advanceTimersByTimeAsync(60000); expect(read).not.toHaveBeenCalled();
  Object.assign(navigator, { onLine: true }); window.dispatchEvent(new Event("online")); await vi.advanceTimersByTimeAsync(100); expect(read).toHaveBeenCalledOnce(); stop();
 });
-it("keeps remote decisions timely for PIN sessions without direct Realtime", async () => {
- hooks.staff = false; const read = vi.fn(async () => {}); const stop = subscribeApprovals(read);
- await vi.advanceTimersByTimeAsync(5100); expect(read).toHaveBeenCalledOnce(); stop();
+it("polls PIN sessions until verification and stops Realtime when proof is lost", async () => {
+ hooks.staff = false; const read = vi.fn(async () => {});
+ const stop = subscribeApprovals(read, { branchId: "viewed-branch" });
+ const previousStatus = hooks.status;
+ await vi.advanceTimersByTimeAsync(5100); expect(read).toHaveBeenCalledOnce();
+ expect(hooks.status).toBe(previousStatus);
+
+ hooks.staff = true;
+ setCentralAuthSessionPresent(true, "verified-token");
+ expect(hooks.status).not.toBe(previousStatus);
+ expect(hooks.filter.filter).toBe("store_id=eq.viewed-branch");
+ hooks.status("SUBSCRIBED");
+ await vi.advanceTimersByTimeAsync(100); expect(read).toHaveBeenCalledTimes(2);
+
+ const liveStatus = hooks.status;
+ setCentralAuthSessionPresent(true, "refreshed-token");
+ expect(hooks.status).toBe(liveStatus);
+
+ hooks.staff = false;
+ setCentralAuthSessionPresent(false);
+ expect(hooks.off).toHaveBeenCalledOnce();
+ await vi.advanceTimersByTimeAsync(10000); expect(read).toHaveBeenCalledTimes(3);
+ stop();
 });

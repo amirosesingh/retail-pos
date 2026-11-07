@@ -84,6 +84,22 @@ database integration cases. Read-only hosted preflight matched 13 dependency
 definitions and the table integrity checks. The existing PostgREST DDL
 watcher is enabled. No live SQL has been applied in this batch.
 
+## 7 November — approval wake during verified staff sessions
+
+The owner requested completion of the two-way sync plan. This beta slice keeps
+the existing Approvals and Holds catch-up and uses the authorized activity path
+to refresh the in-app bell after staff verification, reconnect or resume. Keep
+proof-loss teardown, store and recipient checks and the relay fallback. Preserve
+the existing notification cadence and avoid repeated approval-list writes from
+the app shell. The current private topics cannot deliver instant wakes to
+relay-only PIN sessions or named approvers across stores. Those paths require a
+separately authorized wake transport and the two-till pilot.
+
+CI on the initial patch rejected the old source assertion for the one-time
+approval guard. The check now requires the per-session guard. All 47 focused
+approval, notification and scope checks passed. The rollback is a scoped code
+revert. This slice uses the existing database contracts.
+
 ## 7 November — shift recovery while the protected history reader is unavailable
 
 The owner directed a focused fix for the synchronization failure reported on
