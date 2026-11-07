@@ -7495,3 +7495,26 @@ pass unchanged; two added enabled-hook save tests prove accepted matching identi
 and held mid-operation profile changes. Final focused116 and independent105
 cases pass (overlapping suites); full regression is rerunning on frozen sources.
 No SQL artifact, approval policy or existing assertion was weakened.
+
+## 7 November — all-table sync, in-page dependency order
+
+The owner requested a correction across all sync tables and relationships.
+This isolated beta-based batch addresses a confirmed local apply defect.
+The registry verifies 70 table decisions and defines 36 foreign-key edges.
+Table-level ordering excludes self references, so a cloud page can list a
+category, store or transfer child before its in-page parent and fail the
+local SQL constraint.
+
+Order in-page inserts and updates using self-reference columns in the
+existing registry. Keep pending-work, authorization, conflict and delete
+behavior, and preserve each record's repeated operations in their original
+order. Missing parents outside the page still rely on the SQL constraint and
+rollback without advancing progress. A bounded exact-key fetch for that
+separate case needs a designed, authorized read contract. This batch adds
+no new network read, database migration, or live operation.
+
+Seven focused ordering tests, 64 overlapping runtime tests, scoped lint and
+diff checks passed. The owned SQL Server fixture applied a reversed feed page
+across all three relationships. A page with a missing parent rolled back and
+kept its cursor, and the scoped snapshot retry succeeded when both records
+were present.
