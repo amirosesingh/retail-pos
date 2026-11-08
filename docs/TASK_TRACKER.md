@@ -185,6 +185,12 @@ session invalidation. Installed Windows Realtime acceptance remains pending.
 The owner clarified that `50C` came from speech recognition. Removed the
 incident investigation from the active sync plan.
 
+The owner confirmed that online sync must reuse the existing Database & Cloud
+Connection fields for the central URL, publishable key and POS backend address.
+The Windows worker reads the saved project from the existing credential store
+and uses the existing backend setting. Use the same fields on the two test
+tills when staging is available. Pilot enrollment remains server-side.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents

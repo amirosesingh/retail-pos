@@ -245,6 +245,8 @@ Use two Windows tills or equivalent staging instances with separate device enrol
 
 Confirm and record the actual staging project and database identifiers before running the drill. Use two tills in one store for receipt and shift tests. Put the named approver in a second test store or assign one of the tills to that store for the cross-store approval test.
 
+Enter the staging connection on each test till through the existing Settings → Database & Cloud Connection fields. Use **Central database URL**, **API key (publishable)**, and **POS backend / website address**. The sync worker uses those saved settings and the existing local SQL Server profile. Pilot enrollment stays a server-side control. Keep the same connection fields when rolling out to other tills.
+
 ### Delivery phases
 
 | Phase | Work | Exit criteria |
