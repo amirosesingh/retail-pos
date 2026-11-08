@@ -77,7 +77,7 @@ vi.mock("../session-presence", () => ({
 }));
 vi.mock("../session-verify-client", () => ({ verifySession: fixture.verify }));
 
-import { subscribeMobilePinActivityWake, subscribePinApprovalWake } from "../pin-approval-wake";
+import { subscribeDesktopPinActivityWake, subscribeMobilePinActivityWake, subscribePinApprovalWake } from "../pin-approval-wake";
 
 const email = "terminal.terminal-1@pos.local";
 const user = { id: "machine-user", email };
@@ -188,6 +188,25 @@ describe("enrolled PIN approval wake", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(fixture.construct).not.toHaveBeenCalled();
     expect(badge.wake).not.toHaveBeenCalled();
+  });
+
+  it("shares the Windows approval socket and stops issuing native wakes when the PIN signs out", async () => {
+    fixture.platform = "electron";
+    const approval = watch();
+    const badge = watch("branch-a", vi.fn(), subscribeDesktopPinActivityWake);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fixture.construct).toHaveBeenCalledOnce();
+    const socket = fixture.sockets[0];
+    const notify = socket.on.mock.calls[0][2];
+    notify({ payload: { table: "activity_events" } });
+    expect(badge.wake).toHaveBeenCalledOnce();
+    expect(approval.wake).not.toHaveBeenCalled();
+    fixture.pin = null;
+    fixture.credentials();
+    notify({ payload: { table: "activity_events" } });
+    expect(badge.wake).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(socket.disconnect).toHaveBeenCalledOnce();
   });
 
   it.each([

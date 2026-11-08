@@ -849,7 +849,7 @@ export async function verifyRelayCaller(input: {
   terminalToken?: string;
   accessToken?: string;
   deviceBindingProof?: string;
-}, options: { strictAvailability?: boolean } = {}): Promise<RelayCaller> {
+}, options: { strictAvailability?: boolean; requireBoundCashier?: boolean } = {}): Promise<RelayCaller> {
   let identity: RelayCaller | null = null;
   let verifiedRawSession: string | null = null;
   let terminalStore: string | null = null;
@@ -926,6 +926,8 @@ export async function verifyRelayCaller(input: {
         (stable.storeId || null) === (identity.storeId || null) && stableAppUserId(stable.id)) identity.appUserId = stableAppUserId(stable.id);
   }
 
+  if (options.requireBoundCashier && (!verifiedRawSession || identity?.kind !== "cashier" || !storedTerminalId || !storedBranch))
+    throw new RelayAuthenticationError("A PIN session bound to this terminal is required.");
   if(storedTerminalId && input.terminalToken && recordId(storedTerminalId)!==recordId(input.terminalToken))
     throw new RelayAuthenticationError("The request does not match the signed-in terminal.");
   const requestedTerminal=storedTerminalId || input.terminalToken;

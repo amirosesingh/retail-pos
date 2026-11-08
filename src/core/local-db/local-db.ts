@@ -437,6 +437,7 @@ export type PosBridge = {
     auto?: () => Promise<
       LocalSyncStatus & { ok?: boolean; busy?: boolean; skipped?: boolean; pushed?: number; merged?: number }
     >;
+    refreshApprovalActivity?: () => Promise<{ ok: boolean; inserted?: number; skipped?: boolean }>;
     pause?: () => Promise<LocalSyncStatus>;
     resume?: () => Promise<LocalSyncStatus>;
     getFailures?: () => Promise<Record<string, unknown>>;

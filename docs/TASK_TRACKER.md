@@ -173,6 +173,15 @@ PostgreSQL policy fixture and 33 targeted application tests passed, along with
 the three affected actual-Worker suites. The recipient badge, relay-only PIN
 subscription credential and actual hosted Realtime acceptance remain pending.
 
+The Windows PIN badge now uses the verified same-branch wake and a narrow
+Main-process catch-up. It requires an enrolled Windows Operations terminal,
+a PIN session bound to that terminal and branch, and the exact configured
+Supabase project. It reads up to 50 recent authorized approval events and
+commits only missing local rows under the existing sync lease. Fifty-three
+focused application tests and five disposable LocalDB cases passed, covering
+no upload echo, preservation of local clears, rollback, wake coalescing and
+session invalidation. Installed Windows Realtime acceptance remains pending.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents

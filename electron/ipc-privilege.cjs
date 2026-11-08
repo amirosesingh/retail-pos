@@ -129,6 +129,7 @@ const CHANNEL_LEVELS = {
   "staff:verify-pin": OPEN,
   "staff:verify-approval-pin": OPEN, // signed-in operator may present an approver credential
   "approval:authorize-offline-discount": OPEN, // fixed Main-owned audit; current sale authority below
+  "approval:refresh-activity": OPEN, // fixed scoped catch-up; current POS authority and trusted frame checked in Main
   "approval:own-token-vault": OPEN, // POS main-frame only; fixed encrypted token keys, PIN-locked envelope before sign-in
   "approval:enroll-verifier": OPEN, // permission checked in allowed() and again by the backend
   "staff:sign-in": OPEN,

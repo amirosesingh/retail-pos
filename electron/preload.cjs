@@ -107,6 +107,7 @@ contextBridge.exposeInMainWorld("pos", {
     runNow: (options) => invoke("sync:run-now", options),
     finalizeShiftClose: (shiftId) => invoke("sync:finalize-shift-close", shiftId),
     auto: () => invoke("sync:auto"),
+    refreshApprovalActivity: () => invoke("approval:refresh-activity"),
     pause: () => invoke("sync:pause"),
     resume: () => invoke("sync:resume"),
     getFailures: () => invoke("sync:get-failures"),

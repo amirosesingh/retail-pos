@@ -213,3 +213,9 @@ export function subscribeMobilePinActivityWake(branchId: string, wake: () => voi
   if (platform !== "android" && platform !== "ios") return () => {};
   return subscribePinWake(branchId, "activity_events", wake);
 }
+
+/** Windows waits for the authorized local mirror to commit before reading. */
+export function subscribeDesktopPinActivityWake(branchId: string, wake: () => void): () => void {
+  if (platformName() !== "electron") return () => {};
+  return subscribePinWake(branchId, "activity_events", wake);
+}

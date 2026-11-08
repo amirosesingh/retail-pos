@@ -8,6 +8,82 @@ import {
   MAX_ACTIVITY_SOURCE_BATCHES,
   activityScanBudgetExhausted,
 } from "@/lib/activity-pagination";
+import { supabaseConfig } from "@/lib/external-supabase-config";
+import { activityVisibleTo } from "@/lib/activity-audience";
+
+const nativeApprovalWakeSchema = z.object({
+  action: z.literal("native_approval_wake"),
+  sessionToken: z.string().min(1).max(400),
+  terminalToken: z.string().min(1).max(200),
+  deviceBindingProof: z.string().regex(/^[a-f0-9]{64}$/i),
+  projectUrl: z.string().url().max(400),
+}).strict();
+const approvalEventTypes = ["approval_requested", "approval_granted", "approval_rejected", "approval_expired"];
+const activityWakeLimit = 50;
+const activityWakeColumns = [
+  "id", "event_type", "severity", "title", "message", "actor_id", "actor_name", "actor_role",
+  "terminal_id", "terminal_name", "store_id", "entity_type", "entity_id", "amount::text",
+  "meta::text", "whatsapp_status", "whatsapp_error", "client_event_id", "created_at",
+  "previous_state", "new_state", "cleared_by", "branch_id",
+].join(",");
+const cleanProject = (url: string) => url.replace(/\/+$/, "");
+
+async function nativeApprovalWake(body: unknown, signal: AbortSignal, reply: (body: unknown, status?: number) => Response) {
+  const parsed = nativeApprovalWakeSchema.safeParse(body);
+  if (!parsed.success) return reply({ ok: false, error: "Invalid approval activity request" }, 400);
+  const input = parsed.data;
+  const { verifyRelayCaller, serviceRest, RelayAuthenticationError } = await import("@/core/api/pos-relay.server");
+  try {
+    const projectUrl = cleanProject(supabaseConfig().url);
+    if (input.projectUrl !== projectUrl)
+      return reply({ ok: false, error: "Approval activity access denied" }, 403);
+    const { resolveRelayScope } = await import("@/core/api/relay-policy.server");
+    const caller = await verifyRelayCaller(input, { strictAvailability: true, requireBoundCashier: true });
+    const terminal = caller.terminal;
+    if (caller.kind !== "cashier" || !terminal || terminal.platform !== "pc" ||
+        terminal.mode !== "operations" || !terminal.branchId || caller.storeId !== terminal.branchId)
+      return reply({ ok: false, error: "Approval activity access denied" }, 403);
+    const scope = await resolveRelayScope(caller, { strictAvailability: true });
+    if (scope.stale || !scope.staffUserId || scope.storeId !== terminal.branchId || scope.terminalId !== terminal.id)
+      return reply({ ok: false, error: "Approval activity access denied" }, 403);
+    const params = new URLSearchParams({
+      select: activityWakeColumns,
+      store_id: `eq.${terminal.branchId}`,
+      entity_type: "eq.authorization_request",
+      event_type: `in.(${approvalEventTypes.join(",")})`,
+      created_at: `gte.${new Date(Date.now() - 7 * 86_400_000).toISOString()}`,
+      order: "created_at.desc,id.desc",
+      limit: String(activityWakeLimit),
+    });
+    const response = await serviceRest(`activity_events?${params}`, { signal });
+    if (!response.ok) return reply({ ok: false, error: "Could not load approval activity" }, 503);
+    const { boundedText } = await import("../../../../../electron/sync/shift-recovery-exact.mjs");
+    const source = JSON.parse(await boundedText(response, 480 * 1024)) as Array<Record<string, unknown>>;
+    if (!Array.isArray(source) || source.length > activityWakeLimit)
+      return reply({ ok: false, error: "Could not load approval activity" }, 503);
+    const identity = {
+      userIds: [scope.staffUserId, scope.label].filter(Boolean) as string[],
+      role: scope.roleSlug ?? scope.role,
+      storeId: terminal.branchId,
+      terminalId: terminal.id,
+      allStores: false,
+      mayViewGeneralActivity: false,
+    };
+    const rows = source.filter(row => {
+      if (!row || row.store_id !== terminal.branchId || row.entity_type !== "authorization_request" ||
+          typeof row.event_type !== "string" || !approvalEventTypes.includes(row.event_type) ||
+          typeof row.meta !== "string") return false;
+      const meta = JSON.parse(row.meta);
+      return activityVisibleTo({ ...row, meta }, identity);
+    });
+    return reply({ ok: true, protocol: "native-approval-activity-v1", projectUrl, branchId: terminal.branchId, rows });
+  } catch (error) {
+    const status = (error as { status?: number } | null)?.status;
+    return error instanceof RelayAuthenticationError || status === 401 || status === 403
+      ? reply({ ok: false, error: "Approval activity access denied" }, 403)
+      : reply({ ok: false, error: "Could not load approval activity" }, 503);
+  }
+}
 
 const bodySchema = z.object({
   action: z.enum(["list", "clear", "clear_all"]),
@@ -50,6 +126,12 @@ export const Route = createFileRoute("/api/v1/pos/activity-preferences")({
         } catch {
           return reply({ ok: false, error: "Invalid JSON" }, 400);
         }
+        if (body && typeof body === "object" && "action" in body && body.action === "native_approval_wake")
+          return nativeApprovalWake(body, request.signal, (value, status) => {
+            const response = reply(value, status);
+            response.headers.set("Cache-Control", "no-store");
+            return response;
+          });
         const parsed = bodySchema.safeParse(body);
         if (!parsed.success) return reply({ ok: false, error: "Invalid request" }, 400);
         const input = parsed.data;
@@ -93,7 +175,6 @@ export const Route = createFileRoute("/api/v1/pos/activity-preferences")({
           const eventRows = eventResponse.ok
             ? ((await eventResponse.json()) as Record<string, unknown>[])
             : [];
-          const { activityVisibleTo } = await import("@/lib/activity-audience");
           if (!eventRows[0] || !activityVisibleTo(eventRows[0], audienceIdentity))
             return reply({ ok: false, error: "Notification access denied" }, 403);
           const response = await serviceRest("rpc/pos_set_activity_event_cleared", {
@@ -146,7 +227,6 @@ export const Route = createFileRoute("/api/v1/pos/activity-preferences")({
         }
         if (input.from) params.set("created_at", `gte.${input.from}`);
         if (input.to) params.append("created_at", `lte.${input.to}`);
-        const { activityVisibleTo } = await import("@/lib/activity-audience");
         const offset = input.offset ?? 0;
         const limit = input.limit ?? 200;
         const target = offset + limit;

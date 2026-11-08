@@ -106,6 +106,11 @@ const syncCoordinator = new SyncCoordinator({
   recoverHeldStatuses:recoverLocalHeldStatuses,
   publish: (state) => { for (const win of BrowserWindow.getAllWindows()) win.webContents.send("sync:state",legacyRecoveryRuntime.status(state)); },
 });
+const refreshPinApprovalActivity = require("./sync/approval-activity-wake.cjs").createApprovalActivityWake({
+  coordinator: syncCoordinator, manager: databaseManager, registry: syncRegistry, reader: changeReader,
+  publish: publishBusinessChange, runApply: work => closeWriteBarrier.run(work),
+  capture: capturePinApprovalActivity,
+});
 // Main-private ownership evidence for retaining, not executing, an interrupted
 // history-only v1 job. No renderer flag or job timestamp can supply this proof.
 async function ownsHistoryRecoveryExecution({jobId,source,requestParent=null}={}){
@@ -312,6 +317,35 @@ function localBranchId(){
 }
 function rememberVerifiedBranch(){ /* Account scope never assigns a physical terminal. */ }
 function authorizedLocalBranch(){return activationBoundary.authorizedBranch(terminalStore.read(),adminSession.branchId());}
+function capturePinApprovalActivity() {
+  const ready = () => {
+    const state = databaseService.snapshot();
+    return process.platform === "win32" && app.hasSingleInstanceLock() && adminSession.hasPosAuthority() &&
+      !safeMode && !quitting && !closeWriteBarrier.sealed && !syncCoordinator.paused &&
+      state.enabled && state.configured && state.connected && state.tradingReady;
+  };
+  try {
+    if (!ready()) return null;
+    const source = syncCloud.requestContext(true);
+    const registration = activationBoundary.binding(source.terminal);
+    const branchId = registration?.branchId;
+    const projectUrl = source.project?.projectOrigin?.replace(/\/+$/, "");
+    const { sessionToken, accessToken } = source.personProof;
+    const deviceBindingProof = source.terminal.deviceBindingProof;
+    if (registration?.platform !== "pc" || registration.mode !== "operations" || !branchId ||
+        recordId(adminSession.branchId()) !== branchId || recordId(source.project?.branchId) !== branchId ||
+        !source.pool || !source.profile || !/^https:\/\//i.test(source.base) || !/^https:\/\//i.test(projectUrl ?? "") ||
+        !sessionToken || accessToken || !/^[a-f0-9]{64}$/i.test(deviceBindingProof ?? "")) return null;
+    const epoch = adminSession.epoch();
+    return { key: `${epoch}:${source.fingerprint}`, pool: source.pool, branchId, projectUrl, sessionToken,
+      backendUrl: source.base, terminalToken: registration.id, deviceBindingProof,
+      assertCurrent() {
+        if (!ready() || adminSession.epoch() !== epoch) throw new Error("The signed-in approval reader changed.");
+        syncCloud.assertRequestContext(source, true);
+      },
+    };
+  } catch { return null; }
+}
 async function assertSafeRegistrationChange(config){
   const previous=terminalStore.lastBinding();
   if(!previous||activationBoundary.sameBinding(activationBoundary.binding(previous),activationBoundary.binding(config)))return;
@@ -2410,6 +2444,11 @@ function registerIpc() {
   ipcMain.handle("sync:auto", async () => {
     if(!databaseManager.isConnected()||!localBranchId())return{ok:false,skipped:true};
     return syncCoordinator.runNow({branchId:localBranchId(),batchSize:500,includeActivity:false});
+  });
+  ipcMain.handle("approval:refresh-activity", event => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame)
+      return { ok: false, skipped: true };
+    return refreshPinApprovalActivity();
   });
   ipcMain.handle("sync:pause", () => syncCoordinator.pause());
   ipcMain.handle("sync:resume", () => syncCoordinator.resume());

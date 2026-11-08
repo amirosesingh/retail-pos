@@ -33,7 +33,7 @@ import { createTextHumanizer } from "@/lib/human-readable";
 import { hasStaffSession } from "@/core/api/sync-relay";
 import { localDb } from "@/core/local-db/local-db";
 import { APP_RESUME_EVENT } from "@/core/activation/connection-health";
-import { subscribeMobilePinActivityWake } from "@/lib/pin-approval-wake";
+import { subscribeDesktopPinActivityWake, subscribeMobilePinActivityWake } from "@/lib/pin-approval-wake";
 
 const PIN_POLL_MS = 15_000;
 const AUTHENTICATED_POLL_MS = 60_000;
@@ -301,7 +301,12 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
     const schedule = () => scheduleRead(true);
     tick();
     const off = subscribeActivityEvents(schedule, branchId);
-    const offPin = branchId ? subscribeMobilePinActivityWake(branchId, () => scheduleRead(false)) : undefined;
+    const nativeWake = localDb()?.sync?.refreshApprovalActivity;
+    const offPin = branchId
+      ? (nativeWake
+          ? subscribeDesktopPinActivityWake(branchId, () => { void nativeWake().catch(() => undefined); })
+          : subscribeMobilePinActivityWake(branchId, () => scheduleRead(false)))
+      : undefined;
     const t = setInterval(() => {
       // Stop polling a database that has no activity log.
       if (isActivityLogMissing()) {
