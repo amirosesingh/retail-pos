@@ -182,6 +182,9 @@ focused application tests and five disposable LocalDB cases passed, covering
 no upload echo, preservation of local clears, rollback, wake coalescing and
 session invalidation. Installed Windows Realtime acceptance remains pending.
 
+The owner clarified that `50C` came from speech recognition. Removed the
+incident investigation from the active sync plan.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents
@@ -237,8 +240,7 @@ approval updates within two seconds as proposed pilot targets. Record checkout
 and catch-up budgets before the drill. Keep a retry with `WAITING_DEPENDENCY`
 eligible to apply under its original operation ID and payload after dependencies
 arrive. Define a byte budget for whole feed groups and rehearse both cutover and
-handback with an open shift and a pending sale. The reported `50C` error remains
-unidentified pending exact reproduction evidence. This batch covers the written
+handback with an open shift and a pending sale. This batch covers the written
 rules and backup. Runtime implementation, database changes and rollout follow
 their existing approval and verification gates.
 
