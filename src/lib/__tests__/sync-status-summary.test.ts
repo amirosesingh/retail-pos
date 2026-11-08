@@ -265,7 +265,7 @@ describe("existing health-check transport integration", () => {
 
 /** Execute the actual TSX component's hooks and async handlers. The JSX tree is
  * an inspectable value; a separate Chrome fixture verifies real React rendering. */
-function panelHarness(databaseRead: unknown, syncResult: unknown = { ok: true }) {
+function panelHarness(databaseRead: unknown, syncResult: unknown = { ok: true }, options: { branchId?: string; sync?: unknown } = {}) {
   const ts = createRequire(import.meta.url)("typescript") as typeof import("typescript");
   const source = readFileSync("src/platforms/windows/components/LocalDatabaseOperations.tsx", "utf8");
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
@@ -289,20 +289,21 @@ function panelHarness(databaseRead: unknown, syncResult: unknown = { ok: true })
     database: { getState: async () => databaseRead, health: () => health, schemaStatus: async () => ({ ok: true }),
       subscribe: (callback: (next: unknown) => void) => { databaseCallback = callback; return () => undefined; } },
     jobs: { getActive: async () => null, subscribe: () => () => undefined },
-    sync: { getStatus: async () => native(), getFailures: async () => ({}), runNow: async () => syncResult, subscribe: () => () => undefined },
+    sync: { getStatus: async () => options.sync ?? native(), getFailures: async () => ({}), runNow: async () => syncResult, subscribe: () => () => undefined },
   };
-  const exports: { LocalDatabaseOperations?: () => Element | null } = {};
+  const exports: { LocalDatabaseOperations?: (props: { branchId?: string }) => Element | null } = {};
   runInNewContext(compiled, {
     exports, window: { pos: api }, require: (name: string) => {
       if (name === "react") return react;
       if (name === "react/jsx-runtime") return { jsx: (type: unknown, props: Element["props"]) => ({ type, props }), jsxs: (type: unknown, props: Element["props"]) => ({ type, props }) };
       if (name === "@/lib/sync-status-summary") return { nativeSyncSummary, isNativeDatabaseSnapshot };
+      if (name === "@/lib/branch-id") return { sameBranchId: (left: unknown, right: unknown) => left === right };
       if (name === "@/lib/time-zone") return { formatDateTime: String };
       if (name === "@/core/activation/terminal-tokens") return { mirrorTerminalConfigToDesktop: async () => undefined };
       return new Proxy({}, { get: (_target, key) => String(key) });
     },
   });
-  const render = () => { cursor = 0; return exports.LocalDatabaseOperations!(); };
+  const render = () => { cursor = 0; return exports.LocalDatabaseOperations!({ branchId: options.branchId }); };
   const first = render();
   effects.splice(0).forEach(effect => effect());
   const settle = async () => { releaseHealth({ ok: true }); for (let index = 0; index < 10; index++) await Promise.resolve(); };
@@ -323,6 +324,15 @@ function panelHarness(databaseRead: unknown, syncResult: unknown = { ok: true })
 
 describe("actual local panel database freshness", () => {
   const ready = { enabled: true, connected: true, tradingReady: true, state: "enabled_ready" };
+
+  it("shows a grouped settings pilot only for the current branch", async () => {
+    const sync = { ...native(), groupedSettingsPilot: { status: "REVIEW_REQUIRED", branchId: "branch-a", position: { seq: "7" } } };
+    const sameBranch = panelHarness(ready, undefined, { branchId: "branch-a", sync });
+    const otherBranch = panelHarness(ready, undefined, { branchId: "branch-b", sync });
+    await Promise.all([sameBranch.settle(), otherBranch.settle()]);
+    expect(sameBranch.findText(sameBranch.render(), "Store settings sync pilot")).toBeDefined();
+    expect(otherBranch.findText(otherBranch.render(), "Store settings sync pilot")).toBeUndefined();
+  });
 
   it("reports pending protected history after manual sync without a green completion", async () => {
     const panel = panelHarness(ready, { ok: true, historyPending: true });

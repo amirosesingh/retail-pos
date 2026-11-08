@@ -191,6 +191,46 @@ The Windows worker reads the saved project from the existing credential store
 and uses the existing backend setting. Use the same fields on the two test
 tills when staging is available. Pilot enrollment remains server-side.
 
+## 8 November — two-way store settings
+
+The owner confirmed that a permitted edit for a particular store must reach
+the cloud and then other eligible tills for that store. This applies to a
+branch-authorized edit from a Management PC or the store's own Operations
+till. Continue on PR #451 at `006a5505`. Reuse the existing authorized
+settings save and pending-edit paths. Preserve Management replica read-only
+behavior, Operations registration scope, settings conflict checks and the
+existing connection fields. Connect the staged store-settings download only
+through a verified pilot path that preserves pending local edits and cannot
+conflict with legacy writers. Verify a same-store round trip, a different-store
+refusal and no duplicate write. Keep hosted configuration and installation
+outside the disposable fixture until the staging target is confirmed.
+Confirm the cloud save response matches the selected store and the next
+revision before replacing the editor's verified settings.
+Show a scoped grouped-settings pilot result in the existing Database
+connection screen when the coordinator reports it. Keep pilot status distinct
+from ordinary sync progress and leave the existing connection controls in place.
+
+The actual online rules handler routes Management and Operations edits through
+the selected store's canonical save, preserving the person, registration,
+permissions and expected revision. The editor accepts only a baseline for the
+selected branch, and confirms the returned branch and next revision before
+replacing its saved view. The disposable PostgreSQL canonical save produced one
+group per accepted edit, and the receiving LocalDB consumed both through the
+grouped relay. The fixture denied a stale retry, an unauthorized editor and a
+foreign-store Operations edit.
+
+The previous offline editor fallback tried to write an unsupported
+`base_version` column and could fall through to a generic write without a
+proven base. The editor now keeps the draft open and asks for a connection.
+Existing pending records are preserved. A new offline edit needs a durable
+original revision and the canonical upload path before enabling offline save.
+
+The grouped settings coordinator pilot now resumes its durable cursor under
+the existing lease, limits work per pass, and checks pause before commit. The
+Database connection screen can display the pilot result for the current store.
+All 119 focused application tests and 12 grouped LocalDB cases passed. The
+installed scheduler and legacy write handoff remain pending.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents

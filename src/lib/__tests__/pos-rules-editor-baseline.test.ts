@@ -6,10 +6,10 @@ import { DEFAULT_POS_RULES } from "../pos-rules";
 const mock = vi.hoisted(() => ({
   source: "DATABASE", loading: false, usingDefaults: false, notVerified: false,
   permission: true, slots: [] as unknown[], cursor: 0,
-  refs: [] as Array<{ current: unknown }>, refCursor: 0, branch: "branch", cacheScope: "verified-scope",
+  refs: [] as Array<{ current: unknown }>, refCursor: 0, branch: "branch", baselineBranch: "branch", cacheScope: "verified-scope",
   userId: "user-a",
   buttons: [] as Array<Record<string, unknown>>, switches: [] as Array<Record<string, unknown>>,
-  queue: vi.fn(), auth: vi.fn(), refresh: vi.fn(), save: vi.fn(), fetch: vi.fn(),
+  queue: vi.fn(), auth: vi.fn(), refresh: vi.fn(), save: vi.fn(), fetch: vi.fn(), toastError: vi.fn(),
 }));
 vi.mock("react", async original => ({ ...await original<typeof import("react")>(),
   useRef: (initial: unknown) => {
@@ -30,7 +30,7 @@ vi.mock("@/lib/pos-rules.tsx", () => ({ usePosRules: () => ({
   rules: DEFAULT_POS_RULES, source: mock.source, loading: mock.loading,
   usingDefaults: mock.usingDefaults, notVerified: mock.notVerified,
   failureText: mock.notVerified ? "Unavailable" : "", status: mock.notVerified ? "NOT_VERIFIED" : "DEGRADED",
-  refresh: mock.refresh, confirmSaved: vi.fn(), branchId: mock.branch, terminalId: "terminal", rowVersion: 7,
+  refresh: mock.refresh, confirmSaved: vi.fn(), branchId: mock.baselineBranch, terminalId: "terminal", rowVersion: 7,
   cacheScope: mock.cacheScope,
   shiftSharingAvailable: true,
 }) }));
@@ -44,7 +44,7 @@ vi.mock("@/platform-config/features", () => ({ isWindowsShell: () => true }));
 vi.mock("@/lib/idle-timeout-client", () => ({ requestIdleTimeout: vi.fn() }));
 vi.mock("@/lib/sync-engine", () => ({ broadcastSettingsChange: vi.fn() }));
 vi.mock("@/lib/notify", () => ({ notifyError: vi.fn() }));
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: mock.toastError } }));
 vi.mock("@/components/ui/button", () => ({ Button: (props: Record<string, unknown>) => {
   mock.buttons.push(props); return createElement("button", props as object, props.children as ReactNode);
 } }));
@@ -73,10 +73,11 @@ const draw = () => {
 const saveButton = () => mock.buttons.find(button => Array.isArray(button.children) && button.children.includes("Save rules"))!;
 beforeEach(() => {
   mock.source = "DATABASE"; mock.loading = false; mock.usingDefaults = false; mock.notVerified = false; mock.permission = true;
-  mock.slots = []; mock.refs = []; mock.branch = "branch"; mock.cacheScope = "verified-scope";
+  mock.slots = []; mock.refs = []; mock.branch = "branch"; mock.baselineBranch = "branch"; mock.cacheScope = "verified-scope";
   mock.userId = "user-a";
   mock.auth.mockReset().mockResolvedValue({}); mock.queue.mockReset().mockResolvedValue(undefined);
   mock.refresh.mockReset().mockResolvedValue(undefined); mock.save.mockReset(); mock.fetch.mockReset();
+  mock.toastError.mockReset();
 });
 it.each(["DEFAULT_SAFETY", "UNAVAILABLE", "LEGACY_CACHE"])("does not edit or save unverified %s defaults, even through a stale callback", async source => {
   mock.source = source; mock.usingDefaults = source !== "LEGACY_CACHE"; mock.notVerified = source !== "LEGACY_CACHE";
@@ -91,13 +92,37 @@ it.each(["DEFAULT_SAFETY", "UNAVAILABLE", "LEGACY_CACHE"])("does not edit or sav
   expect(mock.auth).not.toHaveBeenCalled(); expect(mock.queue).not.toHaveBeenCalled();
   expect(mock.save).not.toHaveBeenCalled(); expect(mock.fetch).not.toHaveBeenCalled();
 });
-it.each(["DATABASE", "LAST_KNOWN_GOOD", "LOCAL_PENDING"])("preserves authorized editing and offline queueing from verified %s", async source => {
+it.each(["DATABASE", "LAST_KNOWN_GOOD"])("keeps the verified %s draft when a connection is required to save", async source => {
   mock.source = source;
   draw();
   expect(saveButton().disabled).toBe(false);
   expect(mock.switches.some(switchProps => !switchProps.disabled)).toBe(true);
   await (saveButton().onClick as () => Promise<void>)();
-  expect(mock.queue).toHaveBeenCalledWith(expect.objectContaining({ branchId: "branch", terminalId: "terminal", expectedVersion: 7 }));
+  expect(mock.queue).not.toHaveBeenCalled();
+  expect(mock.save).not.toHaveBeenCalled();
+  expect(mock.toastError).toHaveBeenCalledWith(expect.stringContaining("Your draft is still open"));
+});
+it("keeps existing pending rules and refuses a new save based on their unconfirmed revision", async () => {
+  mock.source = "LOCAL_PENDING";
+  draw();
+  expect(mock.switches.some(switchProps => !switchProps.disabled)).toBe(true);
+  await (saveButton().onClick as () => Promise<void>)();
+  expect(mock.queue).not.toHaveBeenCalled();
+  expect(mock.auth).not.toHaveBeenCalled();
+  expect(mock.toastError).toHaveBeenCalledWith(expect.stringContaining("pending rules to be confirmed"));
+});
+it("requires a verified revision for the selected store before submitting", async () => {
+  mock.branch = "another-branch";
+  draw();
+  expect(saveButton().disabled).toBe(true);
+  await (saveButton().onClick as () => Promise<void>)();
+  expect(mock.auth).not.toHaveBeenCalled();
+});
+it("accepts a case-equivalent selected store UUID", () => {
+  mock.branch = "00000000-0000-4000-8000-00000000000A";
+  mock.baselineBranch = mock.branch.toLowerCase();
+  draw();
+  expect(saveButton().disabled).toBe(false);
 });
 it("holds edits while the first rules read is loading", async () => {
   mock.loading = true; draw(); expect(saveButton().disabled).toBe(true);
@@ -126,15 +151,19 @@ it.each(["permission denied", "Not signed in", "Unexpected data failure"])("does
   await new Promise(done => setTimeout(done, 0));
   expect(mock.queue).not.toHaveBeenCalled();
 });
-it("queues a genuine transport failure while the current verified authority is unchanged", async () => {
+it("keeps a failed transport from falling through to the generic settings writer", async () => {
   mock.auth.mockRejectedValue(new Error("fetch failed")); draw();
   await (saveButton().onClick as () => Promise<void>)();
   await new Promise(done => setTimeout(done, 0));
-  expect(mock.queue).toHaveBeenCalledOnce();
+  expect(mock.queue).not.toHaveBeenCalled();
+  expect(mock.toastError).toHaveBeenCalledWith(expect.stringContaining("could not be confirmed"));
 });
-it("does not queue a second write if a refresh fails after the local save succeeded", async () => {
+it("does not queue a second write if a refresh fails after the canonical save succeeded", async () => {
+  mock.auth.mockResolvedValue({ accessToken: "staff-token" });
+  mock.save.mockResolvedValue({ ok: true });
   mock.refresh.mockRejectedValue(new Error("fetch failed")); draw();
   await (saveButton().onClick as () => Promise<void>)();
   await new Promise(done => setTimeout(done, 0));
-  expect(mock.queue).toHaveBeenCalledOnce();
+  expect(mock.save).toHaveBeenCalledOnce();
+  expect(mock.queue).not.toHaveBeenCalled();
 });

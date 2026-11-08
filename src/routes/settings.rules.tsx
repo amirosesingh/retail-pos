@@ -29,14 +29,13 @@ import { usePosRules } from "@/lib/pos-rules.tsx";
 import { rulesEqual } from "@/lib/pos-rules-pending";
 import { RULE_GROUPS, requiresClosingCashCount, withClosingCashCount, type PosRules, type PosRuleKey } from "@/lib/pos-rules";
 import { savePosRules } from "@/lib/pos-rules-client";
-import { queueRulesSave } from "@/lib/pos-rules-offline";
 import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 import { posFetch, serverOrigin } from "@/lib/server-origin";
 import { requestIdleTimeout } from "@/lib/idle-timeout-client";
-import { isWindowsShell } from "@/platform-config/features";
 import { broadcastSettingsChange } from "@/lib/sync-engine";
 import { hasVerifiedRulesBaseline, reconcileRulesDraft } from "@/lib/pos-rules-draft";
 import { isTransientRulesSaveFailure } from "@/lib/pos-rules-failure";
+import { sameBranchId } from "@/lib/branch-id";
 
 export const Route = createFileRoute("/settings/rules")({
   head: () => ({
@@ -80,9 +79,10 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
   const { currentStore } = usePos();
   const { isAdmin, can, user, authUserId, terminalUser } = useAuth();
   const mayEdit = isAdmin || can("can_access_pos_settings");
-  const mayEditRules = mayEdit && hasVerifiedRulesBaseline({ source, loading, usingDefaults, notVerified });
+  const mayEditRules = mayEdit && Boolean(branchId) && sameBranchId(branchId, currentStore.id) &&
+    hasVerifiedRulesBaseline({ source, loading, usingDefaults, notVerified });
   const contextKey = JSON.stringify([mayEditRules, authUserId, user?.staffId ?? null,
-    terminalUser?.cashierId ?? terminalUser?.userCode ?? null, currentStore.id, branchId, terminal, cacheScope]);
+    terminalUser?.cashierId ?? terminalUser?.userCode ?? null, currentStore.id, branchId, terminal, cacheScope, source]);
   const editContext = useRef(contextKey);
   const contextEpoch = useRef(0);
   if (editContext.current !== contextKey) {
@@ -182,36 +182,12 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
       : ({ ...d, [key]: value }) as PosRules);
   };
 
-  /**
-   * Keep the change on this terminal and let the sync worker deliver it.
-   * Used when the central system cannot be reached right now.
-   */
-  async function keepLocally(reason: string, assertContext: () => void) {
-    assertContext();
-    if (!mayEditRules) throw new Error("Verified saved rules are required before changes can be saved.");
-    if (!isWindowsShell())
-      throw new Error("Rules can only be saved while connected on this device.");
-    await queueRulesSave({
-      terminalId: terminal,
-      branchId: branchId || currentStore.id,
-      rules: draft,
-      patch: draft as unknown as Record<string, boolean | number>,
-      expectedVersion: rowVersion,
-      cacheScope,
-      shiftSharingAvailable,
-      assertContext,
-    });
-    assertContext();
-    // A failed read cannot undo the already committed local save or queue it twice.
-    await refresh().catch(() => undefined);
-    assertContext();
-    toast.success("Saved on this terminal", {
-      description: `${reason} These rules are in force here and will reach head office on the next connection.`,
-    });
-  }
-
   async function save() {
     if (!mayEditRules) return;
+    if (source === "LOCAL_PENDING") {
+      toast.error("Wait for the pending rules to be confirmed before saving another edit. Your draft is still open.");
+      return;
+    }
     const startedEpoch = contextEpoch.current;
     const assertContext = () => {
       if (contextEpoch.current !== startedEpoch || editContext.current !== contextKey)
@@ -223,9 +199,7 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
       const auth = await getPosCallerAuth();
       assertContext();
       if (!auth.accessToken) {
-        // Signed in at the till but with no central session — the change is
-        // still kept, and the server re-checks the account when it arrives.
-        await keepLocally("Head office could not be reached.", assertContext);
+        toast.error("Connect to head office to save these rules. Your draft is still open.");
         return;
       }
       const payload = {
@@ -261,7 +235,6 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
           );
           return;
         }
-        // A refusal is a refusal; only an unreachable system is queued.
         toast.error(res.error ?? "Could not save rules");
         return;
       }
@@ -270,15 +243,9 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
       await broadcastSettingsChange("pos_store_settings");
       toast.success("Rules saved");
     } catch (e) {
-      if (!isWindowsShell() || !isTransientRulesSaveFailure(e)) {
-        notifyError(e, "Could not save rules");
-        return;
-      }
-      try {
-        await keepLocally("Head office could not be reached.", assertContext);
-      } catch (localError) {
-        notifyError(localError, "Could not save rules");
-      }
+      if (isTransientRulesSaveFailure(e))
+        toast.error("The save could not be confirmed. Reconnect and refresh the store rules before retrying.");
+      else notifyError(e, "Could not save rules");
     } finally {
       setSaving(false);
     }

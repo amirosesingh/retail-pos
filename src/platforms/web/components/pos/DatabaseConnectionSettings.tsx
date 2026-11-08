@@ -51,7 +51,7 @@ export function DatabaseConnectionSettings() {
       {isWindowsShell() && mayManageLocal && (
         <>
           <LocalDatabaseWizard />
-          <LocalDatabaseOperations />
+          <LocalDatabaseOperations branchId={currentStore.id} />
         </>
       )}
     </div>

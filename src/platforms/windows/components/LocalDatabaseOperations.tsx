@@ -12,10 +12,22 @@ import { OPEN_LOCAL_DATABASE_SETTINGS_EVENT } from "./LocalDatabaseWizard";
 import { isNativeDatabaseSnapshot, nativeSyncSummary } from "@/lib/sync-status-summary";
 import { LegacyShiftRecoveryReview } from "./LegacyShiftRecoveryReview";
 import { HeldBillRecoveryReview } from "./HeldBillRecoveryReview";
+import { sameBranchId } from "@/lib/branch-id";
 
 type DatabaseState = { state?: string; enabled?: boolean; connected?: boolean; tradingReady?: boolean; profile?: { database?: string } | null };
 type TableStatus = { table: string; local: string; cloud: string; status: "SYNCED" | "VERIFIED" | "DIFFERENT"; verified?: boolean; comparedAt?: string | null };
-type SyncState = { phase?: string; running?: boolean; paused?: boolean; pending?: number; failed?: number; conflicts?: number; membershipDeferred?: boolean; membershipMirrored?: number; lastPushAt?: string | null; lastPullAt?: string | null; lastComparedAt?: string | null; lastVerifiedAt?: string | null; tables?: TableStatus[]; pushed?: number; merged?: number; currentTable?: string | null; lastError?: string | null; queuedTables?: { table: string; pending: number; failed: number; error?: string | null }[]; recentTables?: { table: string; direction: "push" | "pull"; rows: number; at: string }[] };
+const groupedSettingsLabels = {
+  PAUSED: "Paused",
+  CAUGHT_UP: "Caught up",
+  MORE: "More changes waiting",
+  DEFERRED: "Waiting for a local edit to upload",
+  REVIEW_REQUIRED: "Review required",
+  UNAVAILABLE: "Feed unavailable",
+  REFUSED: "Pilot connection could not be verified",
+  RETRY: "Waiting to retry",
+};
+type GroupedSettingsPilot = { status: keyof typeof groupedSettingsLabels; branchId: string; position?: { seq: string } | null };
+type SyncState = { phase?: string; running?: boolean; paused?: boolean; pending?: number; failed?: number; conflicts?: number; membershipDeferred?: boolean; membershipMirrored?: number; lastPushAt?: string | null; lastPullAt?: string | null; lastComparedAt?: string | null; lastVerifiedAt?: string | null; tables?: TableStatus[]; pushed?: number; merged?: number; currentTable?: string | null; lastError?: string | null; queuedTables?: { table: string; pending: number; failed: number; error?: string | null }[]; recentTables?: { table: string; direction: "push" | "pull"; rows: number; at: string }[]; groupedSettingsPilot?: GroupedSettingsPilot | null };
 type FailureRow = { job_id?: string; job_type?: string; status?: string; phase?: string; current_table?: string | null; error_code?: string | null; error_message?: string | null; updated_at?: string | null };
 type ConflictRow = { conflict_id?: string; entity_type?: string; entity_id?: string; reason?: string; created_at?: string | null };
 type DatabaseErrorRow = { id?: string; occurred_at?: string; event?: string; category?: string; stage?: string | null; state?: string | null; code?: string | null; message?: string | null; occurrences?: number };
@@ -41,7 +53,7 @@ const isDatabaseConnectivityFailure = (failure: FailureRow) => /(?:E?CONN(?:ECT|
   `${failure.error_code ?? ""} ${failure.error_message ?? ""}`,
 );
 
-export function LocalDatabaseOperations() {
+export function LocalDatabaseOperations({ branchId }: { branchId?: string } = {}) {
   const [state, setState] = useState<DatabaseState>({});
   const [health, setHealth] = useState<Result>({});
   const [schema, setSchema] = useState<Result>({});
@@ -123,6 +135,8 @@ export function LocalDatabaseOperations() {
   const tableDifferences = (sync.tables ?? []).filter((table) => table.status === "DIFFERENT");
   const activeTable = sync.running ? sync.currentTable : null;
   const syncSummary = nativeSyncSummary(sync, state, syncReadFailed || databaseReadFailed);
+  const groupedSettings = branchId && sameBranchId(sync.groupedSettingsPilot?.branchId, branchId)
+    ? sync.groupedSettingsPilot : null;
   const queuedTables = (sync.queuedTables ?? []).filter((row) =>
     (row.pending > 0 || row.failed > 0) && row.table !== activeTable);
   const direction = sync.phase === "pulling" ? "Download" : sync.phase === "pushing" ? "Upload" : "Processing";
@@ -150,6 +164,10 @@ export function LocalDatabaseOperations() {
             <summary className="cursor-pointer px-3 py-2 text-xs font-medium">More settings</summary>
             <div className="space-y-4 border-t border-border p-3">
           <DatabaseJobProgress job={job} />
+          {groupedSettings ? <p role="status" className="text-xs text-muted-foreground">
+            <span>Store settings sync pilot</span> · {groupedSettingsLabels[groupedSettings.status]}
+            {groupedSettings.position ? ` · Saved position ${groupedSettings.position.seq}` : ""}
+          </p> : null}
           {sync.membershipDeferred ? <p role="status" className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-300">Membership directory synchronization is waiting for the membership service. Sales and other POS data continue syncing normally.</p> : null}
           <p className="text-xs text-muted-foreground">Last upload {when(sync.lastPushAt)} · Last download {when(sync.lastPullAt)} · {activeErrorCount} current errors · {conflictCount} conflicts</p>
           <div className="flex flex-wrap gap-2 [&>button]:h-8 [&>button]:px-3 [&>button]:text-xs">

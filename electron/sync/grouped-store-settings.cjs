@@ -18,6 +18,24 @@ function hasKeys(value, keys) {
     Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
 }
 
+function httpsOrigin(value) {
+  if (typeof value !== "string") return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.origin === value;
+  }
+  catch { return false; }
+}
+
+function pilotEnrollment(value) {
+  if (!hasKeys(value, ["branchId", "terminalId", "backendOrigin", "projectOrigin", "databaseGuid"]) ||
+      typeof value.branchId !== "string" || !value.branchId || value.branchId.length > 128 ||
+      recordId(value.branchId) !== value.branchId || typeof value.terminalId !== "string" || !UUID.test(value.terminalId) ||
+      typeof value.databaseGuid !== "string" || !UUID.test(value.databaseGuid) ||
+      !httpsOrigin(value.backendOrigin) || !httpsOrigin(value.projectOrigin)) return null;
+  return Object.freeze({ ...value });
+}
+
 function sequence(value) {
   if (typeof value !== "string" || !/^(?:0|[1-9]\d{0,18})$/.test(value) || BigInt(value) > MAX_SEQ)
     throw fail("The grouped settings sequence is invalid.");
@@ -186,6 +204,6 @@ async function assertLocalTracking(transaction, branch) {
 }
 
 module.exports = {
-  TABLE, CHECKPOINT, MAX_RESPONSE_BYTES, fail, operationsScope, snapshotRequired,
+  TABLE, CHECKPOINT, MAX_RESPONSE_BYTES, fail, operationsScope, pilotEnrollment, snapshotRequired,
   groupsFor, snapshotFor, readDatabaseGuid, readPosition, readLocalRow, assertLocalTracking,
 };

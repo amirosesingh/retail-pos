@@ -1,6 +1,7 @@
 const { AsyncLocalStorage } = require("node:async_hooks");
 const { bootstrapDiagnostic, tagBootstrapDiagnostic } = require("../diagnostics.cjs");
 const { posFeedEvidence } = require("./status-evidence.cjs");
+const { pilotEnrollment } = require("./grouped-store-settings.cjs");
 function retainDiagnostic(target, source) {
   const { bootstrapPhase: phase, bootstrapOrigin: origin, ...fields } = bootstrapDiagnostic(source, []);
   try {
@@ -13,7 +14,8 @@ function retainDiagnostic(target, source) {
 const syncLease = new AsyncLocalStorage();
 const authorHold = error => /^(?:ESYNC_SHIFT_AUTHOR_|ESHIFT_AUTHOR_)/.test(String(error?.code??""));
 class SyncCoordinator {
-  constructor({ pushWorker, pullWorker, publish = () => {}, recoverHeldStatuses = null }) { this.pushWorker=pushWorker; this.pullWorker=pullWorker; this.publish=publish; this.recoverHeldStatuses=recoverHeldStatuses; this.running=false; this.activeRun=null; this.activeOptions=null; this.paused=false; this.status={ phase:"idle", pending:0, failed:0, conflicts:0, lastPushAt:null, lastPullAt:null, lastError:null, lastComparedAt:null, lastVerifiedAt:null, tables:[], recentTables:[], credentialsInvalid:false, membershipDeferred:false, membershipMirrored:0 }; }
+  #groupedSettingsPilot;
+  constructor({ pushWorker, pullWorker, publish = () => {}, recoverHeldStatuses = null, groupedSettingsPilot = null }) { this.pushWorker=pushWorker; this.pullWorker=pullWorker; this.publish=publish; this.recoverHeldStatuses=recoverHeldStatuses; this.#groupedSettingsPilot=pilotEnrollment(groupedSettingsPilot); this.running=false; this.activeRun=null; this.activeOptions=null; this.paused=false; this.status={ phase:"idle", pending:0, failed:0, conflicts:0, lastPushAt:null, lastPullAt:null, lastError:null, lastComparedAt:null, lastVerifiedAt:null, tables:[], recentTables:[], credentialsInvalid:false, membershipDeferred:false, membershipMirrored:0 }; }
   snapshot() { return { ...this.status, running:this.running, paused:this.paused }; }
   unresolved() { return this.unresolvedFailures??=new Map(); }
   publishFailureStatus(branchId) {
@@ -64,6 +66,32 @@ class SyncCoordinator {
   }
   runPush(options) { return this.withExclusive(() => this.pushWorker.run(options)); }
   ownsExclusive(){return syncLease.getStore()===this;}
+
+  // Explicit isolated caller only. The installed runNow path still owns the
+  // legacy feed until its settings writers have a verified handoff.
+  runGroupedSettingsPilot() {
+    const enrollment = this.#groupedSettingsPilot;
+    if (!enrollment) return Promise.resolve({ status: "DISABLED", reason: null, branchId: null, position: null });
+    return this.withExclusive(async () => {
+      let result;
+      if (this.paused) {
+        result = { status: "PAUSED", reason: null, branchId: enrollment.branchId,
+          position: this.status.groupedSettingsPilot?.position ?? null };
+      } else {
+        try {
+          result = await this.pullWorker.runGroupedSettingsPilot(enrollment, () => this.paused);
+        } catch (error) {
+          const refused = ["ESYNC_GROUPED_SCOPE", "ESYNC_GROUPED_DATABASE_CHANGED", "ESYNC_GROUPED_DATABASE_UNVERIFIED",
+            "ESYNC_REQUEST_CONTEXT_CHANGED"].includes(error?.code);
+          result = { status: refused ? "REFUSED" : "RETRY", reason: refused ? error.code : "ESYNC_GROUPED_RETRY",
+            branchId: enrollment.branchId, position: null };
+        }
+      }
+      this.status.groupedSettingsPilot = result;
+      this.publish(this.snapshot());
+      return result;
+    });
+  }
 
   async refresh(branchId) {
     try {

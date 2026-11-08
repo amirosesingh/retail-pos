@@ -6,6 +6,9 @@ const { posFeedFailed, posFeedCompleted } = require("./status-evidence.cjs");
 const {prepareHistoryFeed}=require('./history-feed.cjs');
 const grouped = require("./grouped-store-settings.cjs");
 const { applyGroupedCashReceipt } = require("./grouped-cash-receipt.cjs");
+function assertGroupedPilotRunning(isPaused) {
+  if (isPaused?.()) throw grouped.fail("The grouped settings pilot is paused.", "ESYNC_PAUSED");
+}
 const SHIFT_GRAPH_TABLES = new Set(["shifts", "shift_cash_counts", "shift_reconciliations",
   "shift_close_events", "shift_notifications", "shift_variance_alerts"]);
 
@@ -47,18 +50,24 @@ class PullWorker {
     }
     return { applied: result?.applied ?? safe.length, alreadyMatching: result?.alreadyMatching ?? 0, conflicts: 0 };
   }
-  async groupedSettingsContext() {
+  async groupedSettingsContext(enrollment = null) {
     const source = this.cloud.requestContext(false);
     const branch = grouped.operationsScope(source);
     const table = this.registry.tables.find(table => table.cloudTable === grouped.TABLE && table.sqlServerTable === grouped.TABLE && table.scope === "branch");
     if (!table || source.pool !== this.connectionManager.pool)
       throw grouped.fail("The grouped settings projection is unavailable on this database.");
+    if (enrollment && (enrollment.branchId !== branch || enrollment.terminalId !== source.terminal.tokenId ||
+        enrollment.projectOrigin !== source.project.projectOrigin || enrollment.backendOrigin !== source.base))
+      throw grouped.fail("The grouped settings pilot does not match this terminal and project.", "ESYNC_GROUPED_SCOPE");
     const databaseGuid = await grouped.readDatabaseGuid(source.pool.request());
     this.cloud.assertRequestContext(source, false);
+    if (enrollment && enrollment.databaseGuid !== databaseGuid)
+      throw grouped.fail("The grouped settings pilot does not match this SQL Server database.", "ESYNC_GROUPED_DATABASE_CHANGED");
     return { source, branch, table, databaseGuid };
   }
-  async commitGroupedSettings(context, position, next, change, snapshot = null) {
+  async commitGroupedSettings(context, position, next, change, snapshot = null, isPaused = null) {
     const { source, branch, table, databaseGuid } = context;
+    assertGroupedPilotRunning(isPaused);
     this.cloud.assertRequestContext(source, false);
     const sql = this.connectionManager.sql();
     const transaction = new sql.Transaction(source.pool);
@@ -90,10 +99,11 @@ class PullWorker {
         changed = true;
       }
       this.cloud.assertRequestContext(source, false);
-      if (snapshot && snapshot.expires <= Date.now()) throw grouped.fail("The grouped settings snapshot pin expired.");
       await this.checkpoints.save(branch, grouped.CHECKPOINT, "pull",
         { committed_cursor: JSON.stringify({ source: source.fingerprint, databaseGuid, ...next }) }, transaction);
       this.cloud.assertRequestContext(source, false);
+      assertGroupedPilotRunning(isPaused);
+      if (snapshot && snapshot.expires <= Date.now()) throw grouped.fail("The grouped settings snapshot pin expired.");
       await transaction.commit();
     } catch (error) {
       await Promise.resolve(transaction.rollback()).catch(() => undefined);
@@ -109,29 +119,38 @@ class PullWorker {
   }
 
   async installGroupedSettingsSnapshot() {
-    const context = await this.groupedSettingsContext();
+    return this.installGroupedSettingsSnapshotFor(await this.groupedSettingsContext());
+  }
+  async installGroupedSettingsSnapshotFor(context, isPaused = null) {
     const { source, branch, table } = context;
     const position = await grouped.readPosition(source.pool.request(), context);
-    const snapshot = grouped.snapshotFor(await this.cloud.groupedSettingsSnapshot(source), branch, table);
+    assertGroupedPilotRunning(isPaused);
+    const response = await this.cloud.groupedSettingsSnapshot(source);
+    assertGroupedPilotRunning(isPaused);
+    const snapshot = grouped.snapshotFor(response, branch, table);
     const { epoch, seq, change } = snapshot;
-    const changed = await this.commitGroupedSettings(context, position, { epoch, seq, upper: null }, change, snapshot);
+    const changed = await this.commitGroupedSettings(context, position, { epoch, seq, upper: null }, change, snapshot, isPaused);
     return { epoch, seq, changed };
   }
   async pullGroupedSettingsPage({ limit = 100 } = {}) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100)
       throw grouped.fail("The grouped settings page limit must be between 1 and 100.");
-    const context = await this.groupedSettingsContext();
+    return this.pullGroupedSettingsPageFor(await this.groupedSettingsContext(), limit);
+  }
+  async pullGroupedSettingsPageFor(context, limit, isPaused = null) {
     const { source, branch, table } = context;
     let position = await grouped.readPosition(source.pool.request(), context);
     if (!position) return { status: "SNAPSHOT_REQUIRED", reason: "UNINITIALIZED" };
+    assertGroupedPilotRunning(isPaused);
     const page = await this.cloud.pullGroupedSettings(source, position, limit);
+    assertGroupedPilotRunning(isPaused);
     if (grouped.snapshotRequired(page)) return page;
     const groups = grouped.groupsFor(page, branch, table, position, limit);
     let merged = 0;
     for (const group of groups) {
       const next = { epoch: position.epoch, seq: group.seq, upper: group.seq === page.upper_seq ? null : page.upper_seq };
       try {
-        if (await this.commitGroupedSettings(context, position, next, group.change)) merged++;
+        if (await this.commitGroupedSettings(context, position, next, group.change, null, isPaused)) merged++;
       } catch (error) {
         if (error?.code === "ELOCAL_UPLOAD_PENDING")
           return { status: "DEFERRED", reason: error.code, merged, seq: position.seq, hasMore: true };
@@ -140,6 +159,48 @@ class PullWorker {
       position = next;
     }
     return { status: "OK", merged, seq: position.seq, hasMore: page.has_more };
+  }
+  async runGroupedSettingsPilot(enrollment, isPaused) {
+    const context = await this.groupedSettingsContext(enrollment);
+    const { source, branch } = context;
+    let snapshotUsed = false;
+    const progress = async (status, reason = null) => {
+      this.cloud.assertRequestContext(source, false);
+      const position = await grouped.readPosition(source.pool.request(), context);
+      this.cloud.assertRequestContext(source, false);
+      const saved = position ? { epoch: position.epoch, seq: position.seq, upper: position.upper } : null;
+      return { status, reason, branchId: branch, position: saved };
+    };
+    try {
+      let pages = 0;
+      while (pages < 2 && !isPaused()) {
+        const result = await this.pullGroupedSettingsPageFor(context, 25, isPaused);
+        if (result.status === "SNAPSHOT_REQUIRED") {
+          if (isPaused()) break;
+          if (snapshotUsed || !["UNINITIALIZED", "REPLAY_EXPIRED", "EPOCH_MISMATCH"].includes(result.reason))
+            return progress("REVIEW_REQUIRED", result.reason);
+          await this.installGroupedSettingsSnapshotFor(context, isPaused);
+          snapshotUsed = true;
+          continue;
+        }
+        if (result.status === "DEFERRED") return progress("DEFERRED", result.reason);
+        if (!result.hasMore) return progress("CAUGHT_UP");
+        pages++;
+      }
+      return progress(isPaused() ? "PAUSED" : "MORE");
+    } catch (error) {
+      if (error?.code === "ESYNC_PAUSED") return progress("PAUSED");
+      if (error?.code === "ELOCAL_UPLOAD_PENDING") return progress("DEFERRED", error.code);
+      if (["ESYNC_GROUPED_REVIEW_REQUIRED", "ELOCAL_PENDING_UNVERIFIED"].includes(error?.code))
+        return progress("REVIEW_REQUIRED", error.code);
+      if (["GROUPED_FEED_UNAVAILABLE", "HTTP_401", "HTTP_403"].includes(error?.code))
+        return progress("UNAVAILABLE", error.code);
+      if (error?.code === "ESYNC_GROUPED_PROTOCOL" || error?.code === "GROUPED_FEED_PROTOCOL")
+        return progress("REVIEW_REQUIRED", error.code);
+      if (["ETIMEDOUT", "ESYNC_GROUPED_POSITION_CHANGED"].includes(error?.code) || error instanceof TypeError || Number(error?.status) >= 500)
+        return progress("RETRY", "ESYNC_GROUPED_RETRY");
+      throw error;
+    }
   }
   async ensureStoreGroups(batch, branchId) {
     const groupIds = [...new Set(batch.rows

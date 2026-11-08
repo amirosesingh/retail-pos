@@ -53,6 +53,14 @@ isolated two-till cutover and handback drill. The plan records proposed pilot
 settings. Store policies, staging targets and production actions retain their
 existing approval boundaries.
 
+Store rules synchronize in both directions. An authorized Management account
+can save for a permitted selected store through the cloud. An Operations till
+is restricted to its registered store. Use the existing verified settings save
+and preserve the original expected revision on any deferred native edit.
+Distribute the committed result to the eligible tills for that store. Keep
+Management replicas read-only and preserve the operator's existing connection
+fields.
+
 ## 7 November — branch history isolation and affected-PC follow-up approved
 
 Owner approves agents to fix history synchronization so Operations terminals

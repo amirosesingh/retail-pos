@@ -4,6 +4,7 @@ const { createHash } = require("node:crypto");
 const { createLocal } = require("./lib/shift-protocol-integration-fixture.cjs");
 const { CloudClient } = require("../electron/sync/cloud-client.cjs");
 const { PullWorker } = require("../electron/sync/pull-worker.cjs");
+const { SyncCoordinator } = require("../electron/sync/coordinator.cjs");
 const { ChangeReader } = require("../electron/sync/change-reader.cjs");
 const { CheckpointRepository } = require("../electron/sync/checkpoints.cjs");
 const { CHECKPOINT, TABLE, assertLocalTracking, readDatabaseGuid } = require("../electron/sync/grouped-store-settings.cjs");
@@ -317,6 +318,109 @@ async function main() {
       assert.equal((await saved()).row_version, 6);
     });
 
+    await test("the verified coordinator bounds catch-up, preserves pending work, and resumes the same window after restart", async () => {
+      const enrollment = { branchId: branch, terminalId: terminal, backendOrigin: url, projectOrigin: originalProject.projectOrigin,
+        databaseGuid: await readDatabaseGuid(manager.pool.request()) };
+      const states = [];
+      let legacyRuns = 0;
+      const coordinator = (gate, pullWorker = worker()) => new SyncCoordinator({ groupedSettingsPilot: gate, pullWorker,
+        pushWorker: { run: async () => ({}) }, publish: state => states.push(state.groupedSettingsPilot) });
+      const ordinary = coordinator(undefined, { run: async () => { legacyRuns++; return {}; } });
+      const before = calls.length;
+      assert.equal((await ordinary.runGroupedSettingsPilot()).status, "DISABLED");
+      assert.equal((await ordinary.runNow({ branchId: branch })).ok, true);
+      assert.equal(legacyRuns, 1);
+      assert.equal(ordinary.snapshot().groupedSettingsPilot, undefined);
+      assert.equal((await coordinator({ ...enrollment, databaseGuid: id(33) }).runGroupedSettingsPilot()).status, "REFUSED");
+      assert.equal(calls.length, before);
+
+      const pilot = coordinator(enrollment);
+      pilot.pause();
+      assert.equal((await pilot.runGroupedSettingsPilot()).status, "PAUSED");
+      assert.equal(calls.length, before);
+      pilot.resume();
+
+      // Simulate an epoch expiry, then install a verified matching snapshot
+      // and catch up over two pages within the same exclusive lease.
+      const started = Promise.withResolvers();
+      const release = Promise.withResolvers();
+      let fixtureWriterRan = false;
+      const responses = [
+        [200, snapshot(seq(0), [change(6)])],
+        [200, page(1, 3, [[1, change(7)]])],
+        [200, page(2, 3, [[2, change(8)]])],
+      ];
+      status = 409;
+      reply = { status: "SNAPSHOT_REQUIRED", reason: "EPOCH_MISMATCH" };
+      afterResponse = async () => {
+        assert(pilot.ownsExclusive());
+        if (responses.length === 3) {
+          started.resolve();
+          await release.promise;
+          assert.equal(fixtureWriterRan, false);
+        }
+        if (responses.length) [status, reply] = responses.shift();
+      };
+      const catchingUp = pilot.runGroupedSettingsPilot();
+      await started.promise;
+      const competingWork = pilot.withExclusive(() => { fixtureWriterRan = true; });
+      release.resolve();
+      const partial = { status: "MORE", reason: null, branchId: branch, position: { epoch, seq: seq(2), upper: seq(3) } };
+      assert.deepEqual(await catchingUp, partial);
+      await competingWork;
+      assert.equal(fixtureWriterRan, true);
+      assert.deepEqual(states.at(-1), partial);
+      assert.deepEqual(calls.slice(before + 2).map(read => [read.afterSeq, read.upperSeq, read.limit]), [
+        [seq(0), null, 25], [seq(1), seq(3), 25],
+      ]);
+      afterResponse = () => {};
+
+      reply = page(3, 3, [[3, change(9)]]);
+      await manager.pool.request().input("key", key).input("branch", branch).query(`
+        INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id,entity_version)
+        VALUES(N'pos_store_settings',@key,N'update',@branch,9);`);
+      await local.restart();
+      const restarted = coordinator(enrollment);
+      assert.deepEqual(await restarted.runGroupedSettingsPilot(), { ...partial, status: "DEFERRED", reason: "ELOCAL_UPLOAD_PENDING" });
+      assert.equal((await saved()).row_version, 8);
+      assert.deepEqual([calls.at(-1).afterSeq, calls.at(-1).upperSeq], [seq(2), seq(3)]);
+      await manager.pool.request().query("UPDATE dbo.sync_change_journal SET acknowledged_at=SYSDATETIMEOFFSET();");
+      const done = { ...partial, status: "CAUGHT_UP", position: { epoch, seq: seq(3), upper: null } };
+      assert.deepEqual(await restarted.runGroupedSettingsPilot(), done);
+      assert.deepEqual(restarted.snapshot().groupedSettingsPilot, done);
+      assert.equal((await saved()).row_version, 9);
+      assert.equal((await cursor()).seq, seq(3));
+      assert.equal(String((await checkpoints.get(branch, "__feed__", "pull")).committed_cursor), "83");
+
+      status = 404;
+      reply = { ok: false, code: "GROUPED_FEED_UNAVAILABLE" };
+      assert.deepEqual(await restarted.runGroupedSettingsPilot(), { ...done, status: "UNAVAILABLE", reason: "GROUPED_FEED_UNAVAILABLE" });
+      assert.equal((await saved()).row_version, 9);
+      assert.equal((await cursor()).seq, seq(3));
+      assert.equal(legacyRuns, 1);
+
+      status = 200;
+      reply = page(4, 4, [[4, change(10, { updated_at: "2026-11-07T04:30:10.1234567Z" })]]);
+      afterResponse = () => { restarted.pause(); };
+      assert.deepEqual(await restarted.runGroupedSettingsPilot(), { ...done, status: "PAUSED" });
+      assert.equal((await saved()).row_version, 9);
+      afterResponse = () => {};
+      restarted.resume();
+
+      const save = checkpoints.save.bind(checkpoints);
+      checkpoints.save = async (...args) => {
+        await save(...args);
+        restarted.pause();
+      };
+      try { assert.deepEqual(await restarted.runGroupedSettingsPilot(), { ...done, status: "PAUSED" }); }
+      finally { checkpoints.save = save; }
+      assert.equal((await saved()).row_version, 9);
+      assert.equal((await cursor()).seq, seq(3));
+      restarted.resume();
+      assert.equal((await restarted.runGroupedSettingsPilot()).position.seq, seq(4));
+      assert.equal((await saved()).row_version, 10);
+    });
+
     console.log("PASS " + passed + " isolated LocalDB grouped settings cases");
   } finally {
     globalThis.fetch = fetchBefore;
@@ -372,7 +476,13 @@ async function postgresWire({ baseline, page, send, terminalId = terminal }) {
     const readFlag = async () => (await manager.pool.request().input("branch", scope).query(
       `SELECT [${changed.sqlServerColumn}] AS actual FROM dbo.pos_store_settings WHERE store_id=@branch;`)).recordset[0].actual;
     assert.equal(await readFlag(), before[changed.cloudColumn]);
-    assert.equal((await worker.pullGroupedSettingsPage()).seq, update.next_seq);
+    const coordinator = new SyncCoordinator({ pullWorker: worker, pushWorker: {}, groupedSettingsPilot: {
+      branchId: scope, terminalId, backendOrigin: url, projectOrigin: originalProject.projectOrigin,
+      databaseGuid: await readDatabaseGuid(manager.pool.request()),
+    } });
+    const result = await coordinator.runGroupedSettingsPilot();
+    assert.equal(result.status, "CAUGHT_UP");
+    assert.equal(result.position.seq, update.next_seq);
     assert.equal(requests[1].afterSeq, baseline.seq);
     assert.equal(await readFlag(), after[changed.cloudColumn]);
     assert.equal(JSON.parse((await checkpoints.get(scope, CHECKPOINT, "pull")).committed_cursor).seq, update.next_seq);
