@@ -20,6 +20,7 @@ import { activeBranchId } from "./active-branch";
 import { localDb } from "@/core/local-db/local-db";
 import { subscribeCentralAuthSession } from "./session-presence";
 import { subscribePinApprovalWake } from "./pin-approval-wake";
+import { subscribeNamedApprovalWake } from "./named-approval-wake";
 
 export const CENTRE_POLL_MS = 45_000;
 
@@ -135,10 +136,13 @@ export async function claimMatchingApproval(input: {
  * Live delivery of decisions and new requests. Falls back silently when the
  * database has no realtime — the poll still reconciles.
  */
-export function subscribeApprovals(onChange: () => void | Promise<void>, { allBranches = false, branchId = activeBranchId() } = {}): () => void {
+export function subscribeApprovals(onChange: () => void | Promise<void>, {
+  allBranches = false, branchId = activeBranchId(), namedWakeProject,
+}: { allBranches?: boolean; branchId?: string | null; namedWakeProject?: string } = {}): () => void {
   const cleanups: Array<() => void> = [];
   let stopped = false;
   let live = false;
+  let namedLive = false;
   let lastRead = Date.now();
   const visible = () => document.visibilityState !== "hidden" && (Boolean(localDb()) || navigator.onLine);
   let running = false;
@@ -173,11 +177,12 @@ export function subscribeApprovals(onChange: () => void | Promise<void>, { allBr
   });
   if (offLocal) cleanups.push(offLocal);
   if (branchId && !allBranches) cleanups.push(subscribePinApprovalWake(branchId, changed));
+  if (namedWakeProject) cleanups.push(subscribeNamedApprovalWake(namedWakeProject, changed, value => { namedLive = value; }));
   // Protected PIN sessions have no direct Postgres subscription. Reconcile
   // while visible so remote decisions still reach Holds without navigation.
   if (typeof window !== "undefined") {
     const timer = window.setInterval(() => {
-      if (visible() && !running && Date.now() - lastRead >= (live ? 300_000 : 5_000)) changed();
+      if (visible() && !running && Date.now() - lastRead >= (live && (!namedWakeProject || namedLive) ? 300_000 : 5_000)) changed();
     }, 5_000);
     cleanups.push(() => window.clearInterval(timer));
     window.addEventListener("focus", changed);

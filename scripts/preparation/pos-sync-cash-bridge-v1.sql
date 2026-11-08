@@ -45,6 +45,7 @@ DECLARE
   v_managed_shift boolean;
   v_claim jsonb;
   v_ack jsonb;
+  v_operations jsonb;
   v_changes jsonb;
   v_seq text;
   v_result jsonb;
@@ -164,6 +165,7 @@ BEGIN
       'epoch', p_epoch, 'checkout_sha256', v_checkout_sha256));
   IF v_claim->>'status' <> 'PROCEED' THEN RETURN v_claim; END IF;
 
+  PERFORM pos_sync_cash_v1.lock_checkout_routes();
   SELECT shift.* INTO v_shift FROM public.shifts AS shift WHERE shift.id = v_sale.shift_id::uuid FOR SHARE;
   IF NOT FOUND THEN
     -- A waiting receipt binds its epoch even though it will not append a group.
@@ -191,7 +193,6 @@ BEGIN
     END IF;
   END IF;
 
-  PERFORM pg_advisory_xact_lock(hashtextextended('pos-cash-v1-sale:' || v_sale.id::text, 0));
   IF EXISTS (SELECT 1 FROM public.sales AS sale WHERE sale.id = v_sale.id OR sale.bill_number = v_sale.bill_number
              OR sale.client_transaction_id = v_sale.client_transaction_id)
      OR EXISTS (SELECT 1 FROM public.sale_items AS item WHERE item.id = v_item.id)
@@ -217,13 +218,13 @@ BEGIN
 
   -- Use the current native atomic writer. Inventory comes only from the
   -- stable movement and existing stock delta receipt, never a products row.
-  v_ack := public.pos_sync_push_aggregate(p_operation_id, p_organization_id, p_branch_id, p_terminal_id::text,
-    jsonb_build_array(
-      jsonb_build_object('table', 'sales', 'rows', jsonb_build_array(v_checkout->'sale'), 'changes', '[]'::jsonb),
-      jsonb_build_object('table', 'sale_items', 'rows', jsonb_build_array(v_checkout->'item'), 'changes', '[]'::jsonb),
-      jsonb_build_object('table', 'payment_transactions', 'rows', jsonb_build_array(v_checkout->'tender'), 'changes', '[]'::jsonb),
-      jsonb_build_object('table', 'item_activity_logs', 'rows', jsonb_build_array(v_checkout->'movement'), 'changes', '[]'::jsonb)
-    ));
+  v_operations := jsonb_build_array(
+    jsonb_build_object('table', 'sales', 'rows', jsonb_build_array(v_checkout->'sale'), 'changes', '[]'::jsonb),
+    jsonb_build_object('table', 'sale_items', 'rows', jsonb_build_array(v_checkout->'item'), 'changes', '[]'::jsonb),
+    jsonb_build_object('table', 'payment_transactions', 'rows', jsonb_build_array(v_checkout->'tender'), 'changes', '[]'::jsonb),
+    jsonb_build_object('table', 'item_activity_logs', 'rows', jsonb_build_array(v_checkout->'movement'), 'changes', '[]'::jsonb)
+  );
+  v_ack := public.pos_sync_push_aggregate(p_operation_id, p_organization_id, p_branch_id, p_terminal_id::text, v_operations);
   IF v_ack->>'ok' IS DISTINCT FROM 'true' OR v_ack->>'batch_id' IS DISTINCT FROM p_operation_id::text
      OR coalesce(v_ack->>'replayed', 'false') <> 'false' THEN
     RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'POS_CASH_V1_WRITER_UNCONFIRMED';
@@ -262,6 +263,9 @@ BEGIN
   SELECT appended.seq INTO STRICT v_seq FROM pos_sync_feed_v1.append_groups(p_organization_id,
     jsonb_build_array(jsonb_build_object('scope_id', p_branch_id, 'epoch', p_epoch,
       'operation_id', p_operation_id, 'changes', v_changes))) AS appended;
+  INSERT INTO pos_sync_cash_v1.checkout_route_owners (entity, identity, operation_id)
+  SELECT entity, identity, p_operation_id FROM pos_sync_cash_v1.checkout_route_keys(v_operations)
+  UNION ALL SELECT 'stock_delta_applied', v_movement.id::text, p_operation_id;
   v_result := jsonb_build_object('sale_id', v_sale.id, 'scope_id', p_branch_id, 'epoch', p_epoch, 'seq', v_seq,
     'operation_id', p_operation_id, 'terminal_id', p_terminal_id, 'installation_generation', v_installation_generation,
     'database_guid', p_database_guid, 'checkout_sha256', v_checkout_sha256);

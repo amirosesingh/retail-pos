@@ -83,7 +83,7 @@ async function createCloud(branch, terminal, { financialRolloutStub = true } = {
     return db;
   } catch (error) { await db.close(); throw error; }
 }
-async function createLocal(branch) {
+async function createLocal(branch, { extraTables = [] } = {}) {
   assert.equal(process.platform, 'win32', 'The opt-in fixture needs Windows LocalDB.');
   const sql = require('mssql/msnodesqlv8');
   const suffix = randomUUID().replaceAll('-', ''), instance = 'CodexProtocol_' + suffix, database = 'ProtocolFixture_' + suffix;
@@ -111,7 +111,8 @@ async function createLocal(branch) {
     await master.request().batch(`CREATE DATABASE [${database}]; ALTER DATABASE [${database}] SET CHANGE_TRACKING=ON(CHANGE_RETENTION=2 DAYS,AUTO_CLEANUP=ON);`);
     created = true; pool = await connect(database);
     const fullRegistry = require(resolve(root, 'electron/db/schema-registry.cjs')).loadRegistry();
-    const registry = { ...fullRegistry, tables: fullRegistry.tables.filter(table => tableNames.includes(table.cloudTable)) };
+    const registry = { ...fullRegistry, tables: fullRegistry.tables.filter(table =>
+      tableNames.includes(table.cloudTable) || extraTables.includes(table.cloudTable)) };
     for (const table of registry.tables) {
       const primary = table.columns.filter(column => column.primaryKey).map(column => column.sqlServerColumn);
       assert(primary.length);

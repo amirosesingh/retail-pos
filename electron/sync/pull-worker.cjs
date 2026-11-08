@@ -5,6 +5,7 @@ const {prepareShiftGraphs,applyShiftGraphs} = require("./shift-graph.cjs");
 const { posFeedFailed, posFeedCompleted } = require("./status-evidence.cjs");
 const {prepareHistoryFeed}=require('./history-feed.cjs');
 const grouped = require("./grouped-store-settings.cjs");
+const { applyGroupedCashReceipt } = require("./grouped-cash-receipt.cjs");
 const SHIFT_GRAPH_TABLES = new Set(["shifts", "shift_cash_counts", "shift_reconciliations",
   "shift_close_events", "shift_notifications", "shift_variance_alerts"]);
 
@@ -66,7 +67,7 @@ class PullWorker {
     try {
       if (await grouped.readDatabaseGuid(transaction.request()) !== databaseGuid)
         throw grouped.fail("The SQL Server database changed before the grouped settings apply.", "ESYNC_GROUPED_DATABASE_CHANGED");
-      const local = await grouped.readLocalRow(transaction, branch, table, change);
+      const local = await grouped.readLocalRow(transaction, table, change, "store_id", branch);
       const current = await grouped.readPosition(transaction.request(), context, true);
       if (current === null ? position !== null : position === null ||
           current.epoch !== position.epoch || current.seq !== position.seq || current.upper !== position.upper)
@@ -83,7 +84,7 @@ class PullWorker {
         throw grouped.fail("The retained local settings differ from the snapshot. Review is required before advancing.", "ESYNC_GROUPED_REVIEW_REQUIRED");
       if (local?.matching !== 1) {
         await this.applyTable(transaction, table, [change], branch, pending);
-        const saved = await grouped.readLocalRow(transaction, branch, table, change);
+        const saved = await grouped.readLocalRow(transaction, table, change, "store_id", branch);
         if (saved?.matching !== 1)
           throw grouped.fail("The native merge did not confirm the grouped settings row.", "ESYNC_GROUPED_REVIEW_REQUIRED");
         changed = true;
@@ -103,6 +104,10 @@ class PullWorker {
     return changed;
   }
   // Opt-in pilot entry points. The installed coordinator still calls run().
+  applyGroupedCashReceipt(input) {
+    return applyGroupedCashReceipt(this, input);
+  }
+
   async installGroupedSettingsSnapshot() {
     const context = await this.groupedSettingsContext();
     const { source, branch, table } = context;

@@ -244,17 +244,22 @@ try {
   sql("CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;");
   const preparation = await readFile(new URL("./preparation/pos-sync-feed-v1.sql", import.meta.url), "utf8");
   sql(`BEGIN;\n${preparation}\nCOMMIT;`);
-  if (process.argv.includes("--cash-bridge") || process.argv.includes("--cash-wire")) {
+  if (process.argv.includes("--named-approval-wake")) {
+    const { verifyNamedApprovalWake } = await import("./lib/pos-named-approval-wake-fixture.mjs");
+    await verifyNamedApprovalWake({ sql, denySql });
+  } else if (process.argv.includes("--cash-bridge") || process.argv.includes("--cash-wire") || process.argv.includes("--cash-receiving")) {
     const { verifyCashBridge } = await import("./lib/pos-sync-cash-bridge-fixture.mjs");
     let wire;
-    if (process.argv.includes("--cash-wire")) {
+    if (process.argv.includes("--cash-wire") || process.argv.includes("--cash-receiving")) {
       const source = execFileSync(process.execPath, [join(root, "scripts/test-pos-sale-outbox-sqlserver.cjs"), "--wire"],
         { cwd: root, windowsHide: true, encoding: "utf8", timeout: 120_000 });
       const line = source.split(/\r?\n/).find(value => value.startsWith("POS_CASH_WIRE "));
       assert(line, "The disposable SQL Server fixture must produce its saved cash wire evidence");
       wire = JSON.parse(line.slice("POS_CASH_WIRE ".length));
     }
-    await verifyCashBridge({ sql, denySql, wire });
+    const receiving = process.argv.includes("--cash-receiving")
+      ? await (await import("./lib/pos-sync-cash-receive-fixture.mjs")).cashReceivingFixture(root) : undefined;
+    await verifyCashBridge({ sql, denySql, wire, receiving, session, waitFor });
   } else if (process.argv.includes("--store-settings") || process.argv.includes("--store-settings-native")) {
     const { verifyStoreSettingsPilot } = await import("./lib/pos-sync-store-settings-fixture.mjs");
     const applyNative = process.argv.includes("--store-settings-native") ? evidence => {

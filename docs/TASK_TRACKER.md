@@ -127,6 +127,52 @@ do not enroll both publishers until the receiver supports the complete
 financial group. Reconcile the pending sale and open shift on both sides
 before allowing handback. The connected Supabase project is production-linked.
 
+## 8 November — financial handoff and Windows approval follow-up
+
+The owner requested finishing the outstanding sync work and updating PR #451.
+Continue from PR head `d841938b` on beta base `a5bf2ebc`. Implement only
+reviewable steps that preserve the existing checkout, journal, branch access
+and SQL Server connection configuration. Verify ordinary cash handoff against
+the actual legacy writers in disposable databases, and prepare a receiving
+projection with exact scoped sale, line, tender and movement facts. A scoped
+Windows approval wake must keep the current authorized local activity read and
+avoid launching a full sync on each broadcast. Keep hosted SQL, live sender
+activation and publication outside this batch pending the isolated target and
+acceptance. Run only focused checks and record remaining gaps in the PR.
+Prepare exact allowlist support for two Windows Operations test registrations
+without accepting any additional tills or changing their branch authority.
+Prepare a private cross-store wake for explicitly named staff on the existing
+approval route. The topic carries an empty hint, checks the verified person's
+identity and current rule, and reuses the authorized queue read. Keep the
+publisher disabled without an exact project opt-in. Verify recipient isolation,
+client publishing denial, and rejection after a rule or account is revoked.
+
+The isolated ordinary cash fence passed concurrent legacy-first and cash-first
+tests using the actual journal aggregate and Change Tracking batch RPCs, with
+their compatible service-role overloads. Mixed overlap fails atomically and
+unrelated writes still work. The prepared lock and reservations cover exact
+ordinary checkout identities. Direct web writes, protected financial routes,
+late corrections and sender handback still need their own verified boundary
+before applying this preparation or switching either installed route.
+
+The cash receiving fixture passed from a saved Windows checkout through the
+canonical PostgreSQL commit to a second disposable LocalDB. Sale, line, tender,
+movement and cursor committed together. Missing dependencies, pending work and
+failed cursor writes retained local state. Replay did not deduct stock or echo
+an upload. The receiving test uses a separate private cash projection; the
+installed scheduler, authorized HTTPS cash transport and a unified snapshot
+remain pending. The existing grouped settings tests passed all eleven cases.
+
+The grouped relay now accepts either one exact legacy pilot terminal or a
+configured pair in `POS_GROUPED_FEED_PILOT_TERMINAL_IDS`, with project,
+registration, binding and branch verification for each. Mixed configuration
+or a larger list is refused. The named staff wake prepares a private recipient
+topic and a service-only hint using the committed route and current rule.
+The Approvals page reuses its authorized queue refresh. The disposable
+PostgreSQL policy fixture and 33 targeted application tests passed, along with
+the three affected actual-Worker suites. The recipient badge, relay-only PIN
+subscription credential and actual hosted Realtime acceptance remain pending.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents

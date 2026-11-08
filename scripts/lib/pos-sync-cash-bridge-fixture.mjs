@@ -8,9 +8,10 @@ const digest = value => createHash("sha256").update(value, "utf8").digest("hex")
 const proof = "a".repeat(64);
 const at = "2026-11-07T09:00:00Z";
 const serviceClaims = `SET request.jwt.claims = '{"role":"service_role"}';`;
+const legacyRole = "SET ROLE service_role;";
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export async function verifyCashBridge({ sql, denySql, wire }) {
+export async function verifyCashBridge({ sql, denySql, session, waitFor, wire, receiving }) {
   const saved = wire ? JSON.parse(wire.checkoutJson) : null;
   const branch = wire?.scope.branchId ?? "A";
   const otherBranch = branch === "B" ? "A" : "B";
@@ -31,10 +32,10 @@ export async function verifyCashBridge({ sql, denySql, wire }) {
   }
 
   const source = await read("../../supabase/schema.sql");
-  const definition = name => {
-    const begin = source.lastIndexOf(`\nCREATE OR REPLACE FUNCTION public.${name}(`);
+  const definition = (name, definitions = source) => {
+    const begin = definitions.lastIndexOf(`\nCREATE OR REPLACE FUNCTION public.${name}(`);
     assert(begin >= 0, `Missing repository function ${name}`);
-    const tail = source.slice(begin);
+    const tail = definitions.slice(begin);
     const opening = tail.match(/\bAS\s+(\$[\w]*\$)/i);
     assert(opening, `Missing function body for ${name}`);
     const delimiter = opening[1];
@@ -57,7 +58,12 @@ export async function verifyCashBridge({ sql, denySql, wire }) {
   const routines = ["pos_sync_validate_scope", "has_role", "is_app_supervisor", "is_supervisor_now", "user_store_id",
     "store_visible", "stock_apply_delta", "sync_apply_sales", "sync_delete_sales", "sync_apply_sale_items",
     "sync_delete_sale_items", "sync_apply_payment_transactions", "sync_delete_payment_transactions",
-    "sync_apply_item_activity_logs", "sync_delete_item_activity_logs", "sales_block_closing_shift", "pos_sync_push_aggregate"];
+    "sync_apply_item_activity_logs", "sync_delete_item_activity_logs", "sync_apply_stock_delta_applied", "sync_delete_stock_delta_applied",
+    "sales_block_closing_shift", "pos_sync_push_aggregate", "pos_sync_push_batch"];
+  const compatibility = await read("../../supabase/migrations/20260928071500_restore_shift_notifications_sync_contract.sql");
+  const writers = ["public.pos_sync_push_batch(uuid,text,text,text,jsonb,jsonb)",
+    "public.pos_sync_push_batch(uuid,text,text,text,text,jsonb,jsonb)", "public.pos_sync_push_aggregate(uuid,text,text,jsonb)",
+    "public.pos_sync_push_aggregate(uuid,text,text,text,jsonb)"].join(", ");
   sql(`SET client_min_messages = warning;
     CREATE SCHEMA auth;
     CREATE FUNCTION auth.jwt() RETURNS jsonb LANGUAGE sql STABLE AS $$
@@ -69,11 +75,16 @@ export async function verifyCashBridge({ sql, denySql, wire }) {
     ${tables.map(table).join("\n")}
     CREATE UNIQUE INDEX fixture_sales_bill ON public.sales (bill_number);
     CREATE UNIQUE INDEX fixture_sales_client ON public.sales (client_transaction_id) WHERE client_transaction_id IS NOT NULL;
-    ${routines.map(definition).join("\n")}
+    ${routines.map(name => definition(name)).join("\n")}
+    ${definition("pos_sync_push_aggregate", compatibility)}
+    ${definition("pos_sync_push_batch", compatibility)}
+    REVOKE ALL ON FUNCTION ${writers} FROM PUBLIC, anon, authenticated;
+    GRANT EXECUTE ON FUNCTION ${writers} TO service_role;
     CREATE TRIGGER sales_block_closing_shift BEFORE INSERT ON public.sales
       FOR EACH ROW EXECUTE FUNCTION public.sales_block_closing_shift();`);
 
-  const preparation = [await read("../preparation/pos-sync-inbox-v1.sql"), await read("../preparation/pos-sync-cash-bridge-v1.sql")];
+  const preparation = [await read("../preparation/pos-sync-inbox-v1.sql"), await read("../preparation/pos-sync-cash-bridge-v1.sql"),
+    await read("../preparation/pos-sync-cash-overlap-v1.sql")];
   sql(`BEGIN;\n${preparation.join("\n")}\nCOMMIT;`);
   sql(`INSERT INTO public.stores (id, code, name) VALUES (${sqlText(branch)}, ${sqlText(branch)}, 'Fixture branch');
     INSERT INTO public.terminal_tokens (id, location_id, device_name, is_claimed, claim_proof, claimed_platform)
@@ -82,6 +93,7 @@ export async function verifyCashBridge({ sql, denySql, wire }) {
     VALUES ('${product}', 'fixture', ${sqlText(productName)}, ${sqlText(branch)}, ${sqlText(String(price))}::numeric,
       ${sqlText(String(cost))}::numeric, 14, ${sqlText(JSON.stringify({ [branch]: 10, [otherBranch]: 4 }))}::jsonb);
     INSERT INTO pos_sync_feed_v1.feed_heads (organization_id, scope_id, epoch) VALUES ('default',${sqlText(branch)},'${epoch}');`);
+  await receiving?.prepare({ sql, denySql, branch, epoch, terminal, shift, product });
 
   const checkout = () => {
     const sale = randomUUID();
@@ -113,8 +125,15 @@ export async function verifyCashBridge({ sql, denySql, wire }) {
   };
   const counts = () => sql(`SELECT (SELECT count(*) FROM sales), (SELECT count(*) FROM sale_items),
     (SELECT count(*) FROM payment_transactions), (SELECT count(*) FROM item_activity_logs),
-    (SELECT count(*) FROM stock_delta_applied), (SELECT head_seq FROM pos_sync_feed_v1.feed_heads),
+    (SELECT count(*) FROM stock_delta_applied), (SELECT head_seq FROM pos_sync_feed_v1.feed_heads
+      WHERE organization_id = 'default' AND scope_id = ${sqlText(branch)}),
     (SELECT stock_by_store->>${sqlText(branch)} FROM products), (SELECT stock_by_store->>${sqlText(otherBranch)} FROM products);`);
+  const operationRows = (table, rows = [], changes = []) => ({ table, rows, changes });
+  const legacyBatch = (id, { table, rows, changes }, compatible = false) => `${legacyRole} SELECT public.pos_sync_push_batch(
+    '${id}', 'default', ${sqlText(branch)}, ${compatible ? "" : `'${terminal}', `}${sqlText(table)},
+    ${sqlText(JSON.stringify(rows))}::jsonb, ${sqlText(JSON.stringify(changes))}::jsonb);`;
+  const legacyAggregate = (id, operations, compatible = false) => `${legacyRole} SELECT public.pos_sync_push_aggregate(
+    '${id}', 'default', ${sqlText(branch)}, ${compatible ? "" : `'${terminal}', `}${sqlText(JSON.stringify(operations))}::jsonb);`;
 
   const first = saved ?? checkout();
   const operation = wire?.operationId ?? randomUUID();
@@ -151,15 +170,26 @@ export async function verifyCashBridge({ sql, denySql, wire }) {
   assert.equal(feed.groups[0].operation_id, operation);
   assert.deepEqual(feed.groups[0].changes.map(entry => entry.type), ["cash_sale", "sale_item", "cash_tender", "stock_delta"]);
   assert.equal(feed.groups[0].changes[3].row.branch_balance, remaining);
+  assert.equal(sql(`SELECT count(*) FROM pos_sync_cash_v1.checkout_route_owners WHERE operation_id = '${operation}';`), "7");
+  await receiving?.verify({ sql, denySql, branch, epoch, terminal, shift, product, operation, first, feed });
+
+  for (const compatible of [false, true]) {
+    denySql(serviceClaims + legacyAggregate(randomUUID(), [operationRows("sale_items", [first.item])], compatible), /POS_CASH_V1_LEGACY_ROUTE_FENCED/);
+    denySql(serviceClaims + legacyBatch(randomUUID(), operationRows("sales", [{ ...first.sale, id: randomUUID() }]), compatible), /POS_CASH_V1_LEGACY_ROUTE_FENCED/);
+    denySql(serviceClaims + legacyBatch(randomUUID(), operationRows("stock_delta_applied", [], [
+      { operation: "D", entityId: JSON.stringify({ movement_id: first.movement.id }) },
+    ]), compatible), /POS_CASH_V1_LEGACY_ROUTE_FENCED/);
+  }
 
   const verifyReenrollment = () => {
+    const before = counts();
     const nextGeneration = randomUUID();
     sql(`UPDATE pos_sync_cash_v1.installation_enrollments SET installation_generation = '${nextGeneration}'
       WHERE organization_id = 'default' AND terminal_id = '${terminal}';`);
     denySql(serviceClaims + firstApply, /POS_CASH_V1_INSTALLATION_FORBIDDEN/);
     assert.deepEqual(JSON.parse(sql(serviceClaims + apply(operation, first, { checkoutJson, installationGeneration: nextGeneration }))),
       { status: "INTEGRITY_CONFLICT" });
-    assert.equal(counts(), `1|1|1|1|1|1|${remaining}|4`);
+    assert.equal(counts(), before);
   };
   if (wire) {
     assert.equal(feed.groups[0].changes[2].row.id, first.tender.id);
@@ -184,16 +214,56 @@ export async function verifyCashBridge({ sql, denySql, wire }) {
   for (const role of ["anon", "authenticated", "service_role"]) {
     denySql(`SET ROLE ${role}; ${serviceClaims}${apply(nextOperation, next)}`, /permission denied/);
     denySql(`SET ROLE ${role}; SELECT * FROM pos_sync_cash_v1.installation_enrollments;`, /permission denied/);
+    denySql(`SET ROLE ${role}; SELECT * FROM pos_sync_cash_v1.checkout_route_owners;`, /permission denied/);
   }
   denySql(serviceClaims + apply(nextOperation, next, { epoch: randomUUID() }), /POS_FEED_V1_SCOPE_OR_EPOCH_MISMATCH/);
   assert.equal(counts(), "1|1|1|1|1|1|9|4");
   assert.equal(sql(`SELECT count(*) FROM pos_sync_inbox_v1.operation_receipts WHERE operation_id='${nextOperation}';`), "0");
   assert.equal(sql(`SELECT count(*) FROM public.sync_idempotency_receipts WHERE batch_id='${nextOperation}';`), "0");
+  assert.equal(sql(`SELECT count(*) FROM pos_sync_cash_v1.checkout_route_owners WHERE operation_id='${nextOperation}';`), "0");
+
+  async function race(holderSql, waiterSql) {
+    const holder = session();
+    holder.child.stdin.write(`SET application_name = 'pos_cash_holder'; ${serviceClaims}\nBEGIN;\n${holderSql}\n\\echo POS_CASH_LOCKED\n`);
+    await waitFor(() => holder.stdout.includes("POS_CASH_LOCKED"), "First cash route did not acquire its transaction lock");
+    const waiter = session();
+    waiter.child.stdin.end(`SET application_name = 'pos_cash_waiter'; ${serviceClaims}\n${waiterSql}\n`);
+    await waitFor(() => sql(`SELECT EXISTS (
+      SELECT 1 FROM pg_stat_activity AS waiter JOIN pg_stat_activity AS holder ON holder.pid = ANY(pg_blocking_pids(waiter.pid))
+      WHERE waiter.application_name = 'pos_cash_waiter' AND holder.application_name = 'pos_cash_holder'
+    );`) === "t", "Second cash route did not wait for the first transaction");
+    holder.child.stdin.end("COMMIT;\n");
+    assert.equal(await holder.finished, 0, holder.stderr);
+    return { holder, waiter, waiterCode: await waiter.finished };
+  }
+
+  const legacyFirst = checkout();
+  const legacyFirstOperation = randomUUID();
+  const legacyWins = await race(legacyBatch(randomUUID(), operationRows("sales", [legacyFirst.sale])), apply(legacyFirstOperation, legacyFirst));
+  assert.equal(legacyWins.waiterCode, 0, legacyWins.waiter.stderr);
+  assert.deepEqual(JSON.parse(legacyWins.waiter.stdout.trim()), { status: "REVIEW_REQUIRED", result: { reason: "LEGACY_OR_CONFLICTING_IDENTITY" } });
+  assert.equal(counts(), "2|1|1|1|1|1|9|4");
+
+  const cashFirst = checkout();
+  const unrelated = checkout();
+  const cashFirstOperation = randomUUID();
+  const legacyMixedBatch = randomUUID();
+  const cashWins = await race(apply(cashFirstOperation, cashFirst), legacyAggregate(legacyMixedBatch, [
+    operationRows("sales", [unrelated.sale]), operationRows("item_activity_logs", [cashFirst.movement]),
+  ]));
+  assert.notEqual(cashWins.waiterCode, 0);
+  assert.match(cashWins.waiter.stderr, /POS_CASH_V1_LEGACY_ROUTE_FENCED/);
+  assert.equal(JSON.parse(cashWins.holder.stdout.split(/\r?\n/)[0]).status, "APPLIED");
+  assert.equal(counts(), "3|2|2|2|2|2|8|4");
+  assert.equal(sql(`SELECT count(*) FROM public.sync_idempotency_receipts WHERE batch_id='${legacyMixedBatch}';`), "0");
+  const unrelatedResult = JSON.parse(sql(serviceClaims + legacyAggregate(randomUUID(), [operationRows("sales", [unrelated.sale])])));
+  assert.equal(unrelatedResult.ok, true);
+  const beforeProtected = counts();
   sql(`CREATE SCHEMA fin62_history_preparation;
     CREATE TABLE fin62_history_preparation.streams (shift_id uuid PRIMARY KEY);
     INSERT INTO fin62_history_preparation.streams VALUES ('${shift}');`);
   denySql(serviceClaims + apply(nextOperation, next), /POS_CASH_V1_PROTECTED_SHIFT/);
-  assert.equal(counts(), "1|1|1|1|1|1|9|4");
+  assert.equal(counts(), beforeProtected);
   verifyReenrollment();
-  console.log("PASS isolated authoritative cash bridge (enrollment, exact digest, dependency, replay, single inventory delta and atomic rollback)");
+  console.log("PASS isolated authoritative cash bridge (exact receipt, aggregate and CT batch fencing, both race orders and rollback)");
 }

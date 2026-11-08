@@ -122,13 +122,18 @@ const groupedSettingsRules = Object.entries(DEFAULT_POS_RULES);
 const groupedSettingsColumnCount = groupedSettingsRules.length + 6;
 const exactSettingDecimal = /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/;
 
-function groupedFeedPilotTerminal(): string | undefined {
+function groupedFeedPilotTerminals(): string[] | undefined {
   const project = runtimeEnvValue("POS_GROUPED_FEED_PILOT_PROJECT_URL");
-  const terminal = runtimeEnvValue("POS_GROUPED_FEED_PILOT_TERMINAL_ID");
-  if (!project || !z.string().uuid().safeParse(terminal).success) return undefined;
+  const single = runtimeEnvValue("POS_GROUPED_FEED_PILOT_TERMINAL_ID");
+  const pair = runtimeEnvValue("POS_GROUPED_FEED_PILOT_TERMINAL_IDS");
+  if (!project || (single && pair)) return undefined;
+  const terminals = pair ? pair.split(",").map(id => id.trim()) : [single ?? ""];
+  const uuid = z.string().uuid();
+  if (terminals.length !== (pair ? 2 : 1) || terminals.some(id => id !== id.toLowerCase() || !uuid.safeParse(id).success) ||
+      new Set(terminals).size !== terminals.length) return undefined;
   try {
     const url = new URL(project);
-    return url.protocol === "https:" && url.origin === project && supabaseConfig().url === project ? terminal : undefined;
+    return url.protocol === "https:" && url.origin === project && supabaseConfig().url === project ? terminals : undefined;
   }
   catch { return undefined; }
 }
@@ -158,7 +163,7 @@ async function groupedFeedRpc(name: "pos_sync_pull_grouped_v1" | "pos_sync_snaps
   terminalId: string, binding: string, signal: AbortSignal, args: Record<string, unknown> = {}) {
   const { serviceRest } = await import("@/core/api/pos-relay.server");
   const { boundedText } = await import("../../electron/sync/shift-recovery-exact.mjs");
-  if (groupedFeedPilotTerminal() !== terminalId) return groupedFeedUnavailable();
+  if (!groupedFeedPilotTerminals()?.includes(terminalId)) return groupedFeedUnavailable();
   let response: Response;
   try {
     response = await serviceRest(`rpc/${name}`, {
@@ -448,9 +453,10 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
 
   const groupedRead = body.sqlServerGroupedFeed;
   const groupedRequest = groupedRead ?? body.sqlServerGroupedSnapshot;
-  const groupedPilotTerminal = groupedRequest ? groupedFeedPilotTerminal() : undefined;
-  if (groupedRequest && !groupedPilotTerminal) return groupedFeedUnavailable();
-  if (groupedRequest && (body.terminalToken !== groupedPilotTerminal || !body.deviceBindingProof))
+  const groupedPilotTerminals = groupedRequest ? groupedFeedPilotTerminals() : undefined;
+  const groupedTerminalToken = body.terminalToken;
+  if (groupedRequest && !groupedPilotTerminals) return groupedFeedUnavailable();
+  if (groupedRequest && (!groupedTerminalToken || !groupedPilotTerminals?.includes(groupedTerminalToken) || !body.deviceBindingProof))
     return Response.json({ ok: false, code: "TERMINAL_REQUIRED", error: "A verified pilot Operations terminal is required." }, { status: 403 });
 
   // Every till attaches its raw session token as a bearer. Use it when the
@@ -558,7 +564,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
 
   if (groupedRequest) {
     if (!verifiedTerminal || verifiedTerminal.platform !== "pc" || verifiedTerminal.mode !== "operations" ||
-        verifiedTerminal.id !== groupedPilotTerminal || verifiedTerminal.id !== scope.terminalId ||
+        verifiedTerminal.id !== groupedTerminalToken || verifiedTerminal.id !== scope.terminalId ||
         verifiedTerminal.branchId !== scope.storeId || scope.managementDevice || scope.managementReplica || scope.stale || !body.deviceBindingProof)
       return Response.json({ ok: false, code: "TERMINAL_REQUIRED", error: "A verified pilot Operations terminal is required." }, { status: 403 });
     if (groupedRequest.branchId !== verifiedTerminal.branchId)

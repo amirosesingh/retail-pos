@@ -1,6 +1,7 @@
 const { createHash } = require("node:crypto");
 const { binding } = require("../verified-activation.cjs");
 const { recordId } = require("./uuid-fields.cjs");
+const { toLocalValue } = require("./row-codec.cjs");
 
 const TABLE = "pos_store_settings";
 const CHECKPOINT = "__grouped_store_settings_v1__";
@@ -122,8 +123,8 @@ async function readDatabaseGuid(request) {
   return guid;
 }
 
-async function readPosition(request, { branch, source, databaseGuid }, locked = false) {
-  const result = await request.input("branch", branch).input("entity", CHECKPOINT).query(`
+async function readPosition(request, { branch, source, databaseGuid, checkpoint = CHECKPOINT }, locked = false) {
+  const result = await request.input("branch", branch).input("entity", checkpoint).query(`
     SELECT committed_cursor FROM dbo.sync_checkpoints ${locked ? "WITH (UPDLOCK,HOLDLOCK)" : ""}
     WHERE organization_id=N'default' AND branch_id=@branch AND entity_type=@entity AND direction=N'pull';`);
   if (!result.recordset?.length) return null;
@@ -140,13 +141,13 @@ async function readPosition(request, { branch, source, databaseGuid }, locked = 
   return position;
 }
 
-async function readLocalRow(transaction, branch, table, change) {
-  const request = transaction.request().input("branch", branch);
+async function readLocalRow(transaction, table, change, keyColumn, key) {
+  const request = transaction.request().input("key", key);
   const expected = change.row_data;
-  const comparisons = table.columns.map((column, index) => {
+  const comparisons = table.columns.filter(column => Object.hasOwn(expected, column.cloudColumn)).map((column, index) => {
     const field = `[${column.sqlServerColumn}]`;
     const parameter = `@value${index}`;
-    const value = expected[column.cloudColumn];
+    const value = toLocalValue(column, expected[column.cloudColumn]);
     if (value === null) return `${field} IS NULL`;
     request.input(parameter.slice(1), value);
     if (column.sqlServerType.startsWith("nvarchar("))
@@ -155,8 +156,8 @@ async function readLocalRow(transaction, branch, table, change) {
   });
   const result = await request.query(`
     SELECT CASE WHEN ${comparisons.join(" AND ")} THEN 1 ELSE 0 END AS matching
-    FROM dbo.pos_store_settings WITH (UPDLOCK,HOLDLOCK) WHERE store_id=@branch;`);
-  if (result.recordset?.length > 1) throw fail("The local settings key is ambiguous.");
+    FROM dbo.[${table.sqlServerTable}] WITH (UPDLOCK,HOLDLOCK) WHERE [${keyColumn}]=@key;`);
+  if (result.recordset?.length > 1) throw fail("The grouped local row key is ambiguous.");
   return result.recordset?.[0] ?? null;
 }
 

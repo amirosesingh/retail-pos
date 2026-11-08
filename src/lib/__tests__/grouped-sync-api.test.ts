@@ -10,6 +10,8 @@ vi.mock("../external-supabase-config", () => ({
 import { handleSyncRequest } from "../sync-endpoint.server";
 
 const terminal = "00000000-0000-4000-8000-000000000001";
+const secondTerminal = "00000000-0000-4000-8000-000000000002";
+const otherTerminal = "00000000-0000-4000-8000-000000000003";
 const branch = "00000000-0000-4000-8000-00000000000a";
 const otherBranch = "00000000-0000-4000-8000-00000000000b";
 const epoch = "00000000-0000-4000-8000-0000000000aa";
@@ -80,6 +82,26 @@ describe("isolated grouped sync relay", () => {
       { sqlServerGroupedFeed: { ...read, upperSeq: "9223372036854775808" } },
     ]) expect((await direct(input)).status).toBe(400);
     expect(requests).toHaveLength(0);
+  });
+
+  it("admits only the exact two configured terminals with their own verified proof and branch", async () => {
+    runtime.env.POS_GROUPED_FEED_PILOT_TERMINAL_IDS = `${terminal},${secondTerminal}`;
+    expect((await direct({ sqlServerGroupedFeed: read })).status).toBe(503);
+    delete runtime.env.POS_GROUPED_FEED_PILOT_TERMINAL_ID;
+    for (const invalid of [terminal, `${terminal},${terminal}`, `${terminal},${secondTerminal},${otherTerminal}`]) {
+      runtime.env.POS_GROUPED_FEED_PILOT_TERMINAL_IDS = invalid;
+      expect((await direct({ sqlServerGroupedFeed: read })).status).toBe(503);
+    }
+    runtime.env.POS_GROUPED_FEED_PILOT_TERMINAL_IDS = `${terminal}, ${secondTerminal}`;
+    expect((await direct({ sqlServerGroupedFeed: read }, { terminalToken: otherTerminal })).status).toBe(403);
+    expect(requests).toHaveLength(0);
+    expect((await direct({ sqlServerGroupedFeed: read })).status).toBe(200);
+    terminalRow = { ...terminalRow, id: secondTerminal, claim_proof: "b".repeat(64) };
+    expect((await direct({ sqlServerGroupedFeed: read }, { terminalToken: secondTerminal })).status).toBe(401);
+    const secondProof = { terminalToken: secondTerminal, deviceBindingProof: "b".repeat(64) };
+    expect((await direct({ sqlServerGroupedFeed: { ...read, branchId: otherBranch } }, secondProof)).status).toBe(403);
+    expect((await direct({ sqlServerGroupedFeed: read }, secondProof)).status).toBe(200);
+    expect(requests.filter(call => call.url.includes("/rpc/")).map(call => call.args.p_terminal_id)).toEqual([terminal, secondTerminal]);
   });
 
   it("binds an exact Windows Operations branch and preserves whole groups and exact positions", async () => {

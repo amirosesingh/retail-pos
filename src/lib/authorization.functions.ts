@@ -11,6 +11,7 @@ import { z } from "zod";
 import { loadRequesterDirectLimit } from "./approval-baseline.server";
 import { ticketDiscounts, ticketDiscountApprovalPercent } from "./authorization";
 import { approvalBranchAllowed, approvalAllBranchesAllowed, approvalScopeConfigured, approvalSelectedBranch, approvalPersonBranchAllowed } from "./approval-branch-scope";
+import { namedApprovalWakeProject, wakeNamedApprovers } from "./named-approval-wake.server";
 
 const caller = z.object({
   sessionToken: z.string().min(10).optional(),
@@ -772,6 +773,7 @@ export const submitAuthorizationRequest = createServerFn({ method: "POST" })
       if (created.created) {
         await notifyApprovers(request, who).catch(() => undefined);
         await markRequestNotified(request.id);
+        await wakeNamedApprovers(request);
       }
       return { ok: true as const, request };
     } catch (e) {
@@ -920,6 +922,7 @@ export const listAuthorizationRequests = createServerFn({ method: "POST" })
             },
           });
           await notifyRequesterExpired(request).catch(() => undefined);
+          await wakeNamedApprovers(request);
           const { releaseDecidedHold } = await import("./record-edits.server");
           await releaseDecidedHold(request.id).catch(() => undefined);
         }),
@@ -976,6 +979,7 @@ export const listAuthorizationRequests = createServerFn({ method: "POST" })
         ok: true as const,
         requests: visible,
         pageInfo: result.pageInfo,
+        namedWakeProject: namedApprovalWakeProject(),
         me: { id: who.id, role: who.role, canAccessAllBranches: allApprovalBranches, branchId: requestedStoreId },
         rules: Array.from(rulesByStore.entries())
           .filter(([branch]) => visibleBranches.has(branch))
@@ -1177,6 +1181,7 @@ export const decideAuthorizationRequest = createServerFn({ method: "POST" })
         };
       }
       await notifyRequester(existing, data.approve, who, approvedAmount).catch(() => undefined);
+      await wakeNamedApprovers(updated);
       // A rejected request must not leave a posted record locked.
       if (!data.approve) {
         const { releaseDecidedHold } = await import("./record-edits.server");
@@ -1311,6 +1316,7 @@ export const cancelAuthorizationRequest = createServerFn({ method: "POST" })
           approved_payload: request.approvedPayload,
         },
       });
+      if (logged.ok) await wakeNamedApprovers(request);
       return logged.ok
         ? { ok: true as const, changed: true, status: "cancelled" as const }
         : { ok: false as const, error: "Request cancelled, but its audit entry failed" };
