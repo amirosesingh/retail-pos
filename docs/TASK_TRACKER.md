@@ -231,6 +231,14 @@ Database connection screen can display the pilot result for the current store.
 All 119 focused application tests and 12 grouped LocalDB cases passed. The
 installed scheduler and legacy write handoff remain pending.
 
+The private two-field settings edit preparation uses the existing canonical
+save and inbox. It checks the enrolled source and original person, binds the
+operation to its expected revision and settings patch, and seals the committed
+group to that operation. Disposable PostgreSQL passed exact replay, stale
+review, authorization refusal and rollback if publication is missing or
+changes in the same transaction. There is no active caller. Native offline
+capture and authorized delivery still need integration.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents
