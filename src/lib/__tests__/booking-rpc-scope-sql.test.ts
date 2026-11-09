@@ -33,7 +33,8 @@ it("keeps all booking money RPCs within the table's branch and authorization rul
   const actor = async (user: string | null, role = "authenticated") => {
     await db.exec("RESET ROLE");
     await db.query("SELECT set_config('test.uid',$1,false), set_config('test.role',$2,false)", [user ?? "", role]);
-    await db.exec(role === "service_role" ? "SET ROLE service_role" : "SET ROLE authenticated");
+    if (role === "service_role") await db.exec("SET ROLE service_role");
+    else await db.exec("SET ROLE authenticated");
   };
   const collect = (id: string, amount: number, key = randomUUID(), complete = false) =>
     db.query("SELECT * FROM public.booking_collect($1,$2,'cash','Fixture cashier',NULL,$3,$4)", [id, amount, key, complete]);

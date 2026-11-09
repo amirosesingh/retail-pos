@@ -26,10 +26,13 @@ export async function verifyLiveStockGateway({ sql, denySql, session, waitFor, s
   assert.notEqual(await older.finished, 0);
   assert.match(older.stderr, /could not serialize access due to concurrent update/);
   assert.equal(sql(`SELECT stock_by_store->>'${branch}' FROM public.products WHERE id='${product}';`), "4");
-  const stockPin = JSON.parse(sql(service + begin().replace(/\);$/, ",true);")));
+  const beginExtended = minimum =>
+    JSON.parse(sql(service + begin().replace(/\);$/, minimum === undefined ? ",true);" : `,true,'${minimum}');`)));
+  const stockPin = beginExtended();
   assert.equal(stockPin.status, "OK");
   assert.notEqual(stockPin.pin_id, priorPin.pin_id);
   assert.equal(stockPin.seq, untouched);
+  assert.equal(beginExtended("0").pin_id, stockPin.pin_id);
 
   sql(`BEGIN;
     UPDATE public.products SET stock_by_store=jsonb_set(stock_by_store,ARRAY['${branch}'],'7'),
@@ -47,6 +50,16 @@ export async function verifyLiveStockGateway({ sql, denySql, session, waitFor, s
   assert.equal(initial.groups[0].changes[0].table_name, "products_stock");
   assert.equal(latest.branch_balance, 8);
   assert.ok(!JSON.stringify(initial).includes(other));
+  assert.equal(beginExtended(stockPin.seq).pin_id, stockPin.pin_id);
+  const refreshed = beginExtended();
+  assert.equal(refreshed.status, "OK");
+  assert.notEqual(refreshed.pin_id, stockPin.pin_id);
+  assert.equal(refreshed.seq, initial.next_seq);
+  assert.equal(beginExtended().pin_id, refreshed.pin_id);
+  const currentStock = JSON.parse(sql(service + `SELECT public.pos_sync_page_cash_settings_recovery_v1(
+    'default','${branch}','${terminal}','${proof}','${refreshed.pin_id}','stock','0',100,true);`));
+  assert.equal(currentStock.status, "OK");
+  assert.deepEqual(JSON.parse(currentStock.payload_json).rows.find(row => row.product_id === product), latest);
 
   const start = head();
   sql(`UPDATE public.products SET stock_by_store=jsonb_set(stock_by_store,ARRAY['${other}'],'102'),
@@ -110,7 +123,7 @@ export async function verifyLiveStockGateway({ sql, denySql, session, waitFor, s
   sql(`DELETE FROM pos_sync_feed_v1.snapshot_pins WHERE scope_id='${branch}';
     SELECT pos_sync_feed_v1.retire_groups('default','${branch}','${epoch}','${withdrawal.next_seq}');`);
   assert.equal(JSON.parse(sql(service + extendedPull(completed.next_seq))).status, "SNAPSHOT_REQUIRED");
-  const recovered = JSON.parse(sql(service + begin().replace(/\);$/, ",true);")));
+  const recovered = beginExtended();
   assert.equal(recovered.status, "OK");
   assert.equal(JSON.parse(recovered.manifest_json).cash_count, "107");
   let after = "0", retired = null;

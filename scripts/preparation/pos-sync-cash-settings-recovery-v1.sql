@@ -92,7 +92,8 @@ BEGIN
   IF p_at_least_seq::numeric > v_head.head_seq THEN
     RETURN jsonb_build_object('status','INVALID_CURSOR');
   END IF;
-  v_minimum := p_at_least_seq::bigint;
+  -- A fresh till can already have bootstrapped legacy state at the current head.
+  v_minimum := CASE WHEN p_at_least_seq='0' THEN v_head.head_seq ELSE p_at_least_seq::bigint END;
   IF p_extended THEN
     IF pos_sync_feed_v1.extended_read_epoch(p_organization_id,p_branch_id) IS DISTINCT FROM v_head.epoch THEN
       RETURN jsonb_build_object('status','SCOPE_UNAVAILABLE');

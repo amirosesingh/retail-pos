@@ -545,6 +545,20 @@ links. Full signed financial two-till acceptance, long-offline cutover and
 handback, and grouped support for remaining tenders and writers still
 require verification or implementation.
 
+The first hosted cutover attempt verified terminal claims, scoped catalogue,
+legacy cursors and wrong-proof refusal, then held an earlier stock pin. The
+initial recovery request now pins the current head. A nonzero resume still
+reuses a covering pin, and an unchanged initial retry reuses its pin. The
+focused PostgreSQL gateway fixture passed, and the exact fix was applied to
+Retail POS Beta. Automatic review blocked the hosted two-till rerun, citing
+the earlier hosted testing hold.
+
+The staged transfer smoke also left a completed transfer at revision 5
+beside its archived dispatch at revision 3. Preserve the current local
+record. A later recovery may advance only with an exact scoped descendant
+proof bound to the recovery pin. The current dispatch envelope carries the
+original receipt, which by itself cannot prove the newer lifecycle state.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents
