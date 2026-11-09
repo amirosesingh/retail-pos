@@ -302,8 +302,10 @@ and Operations continue to use their authorized online rules save. The
 settings and sync screens show queued, accepted, retry and review status.
 An authorized settings conflict resolution workflow still needs an audited
 decision before a stale command can be released from review.
-The registration reassignment preflight must also account for unresolved
-settings outbox work before installed rollout, even after pilot opt-out.
+The registration reassignment preflight now checks unresolved settings work
+for the previous store and terminal even after pilot opt-out. A limited
+legacy login can proceed when it proves no durable grouped settings fence.
+Five disposable LocalDB groups and the focused activation checks passed.
 
 The final settings checks covered the focused renderer, IPC, status, relay
 and checkpoint suites, five disposable LocalDB outbox groups, and thirteen

@@ -369,11 +369,11 @@ function capturePinApprovalActivity() {
   } catch { return null; }
 }
 async function assertSafeRegistrationChange(config){
-  const previous=terminalStore.lastBinding();
-  if(!previous||activationBoundary.sameBinding(activationBoundary.binding(previous),activationBoundary.binding(config)))return;
+  const previous=activationBoundary.binding(terminalStore.lastBinding());
+  if(!previous||activationBoundary.sameBinding(previous,activationBoundary.binding(config)))return;
   if(!adminSession.hasLevel("admin")&&!adminSession.recoveryActive())throw new Error("An administrator must authorize terminal reassignment.");
   if(!databaseManager.isConnected())throw new Error("Connect the local database before changing terminal registration so pending transactions can be checked.");
-  const branch=activationBoundary.binding(previous)?.branchId;
+  const branch=previous.branchId;
   // Management can have pending work from several branches in the same SQL
   // store. Inspect all unacknowledged work rather than treating null as a
   // branch or preventing a legitimate replacement activation forever.
@@ -382,6 +382,18 @@ async function assertSafeRegistrationChange(config){
   };
   const conflicts=await conflictRepository.unresolved();
   if(summary.pending||summary.failed||conflicts?.length)throw new Error("Synchronize or review pending transactions before changing terminal registration.");
+  if(branch && previous.id) await syncCoordinator.withExclusive(async () => {
+    const pool = databaseManager.pool;
+    const { assertStoreSettingsEditReassignmentClear } = require("./db/store-settings-edit-outbox.cjs");
+    try {
+      await assertStoreSettingsEditReassignmentClear(pool, { branchId: branch, terminalId: previous.id });
+      if (pool !== databaseManager.pool) throw new Error("The local database changed.");
+    } catch (error) {
+      if (error?.code === "ESETTINGS_EDIT_PENDING")
+        throw Object.assign(new Error("Synchronize or review the pending store settings edit before changing terminal registration."), { code: error.code });
+      throw new Error("Store settings upload status could not be verified. Retry with the same local database connected.");
+    }
+  });
 }
 function recordRegistrationChange(previous,config){
   const before=activationBoundary.binding(previous),after=activationBoundary.binding(config);
@@ -2159,7 +2171,7 @@ function registerIpc() {
     syncCloud.setAuthorizationProof(proof);
     enrollCurrentShiftAuthor(proof);
     rememberVerifiedBranch(result.branchId);
-    if (groupedSettingsPilot?.mode === "run" && result.settingsPersonId) scheduleAutomaticSync(250);
+    if (result.settingsPersonId && groupedSettingsPilot?.mode === "run") scheduleAutomaticSync(250);
     return {ok:true,level:result.level};
     }catch(error){
       if(error?.name==="BadArg")throw error;

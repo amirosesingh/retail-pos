@@ -2,6 +2,7 @@
 
 const { createHash } = require("node:crypto");
 const { readDatabaseGuid } = require("../sync/grouped-store-settings.cjs");
+const { readFence } = require("../sync/grouped-settings-handoff.cjs");
 const { recordId } = require("../sync/uuid-fields.cjs");
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -68,22 +69,45 @@ function checkedReceipt(command, verified) {
   return { disposition: "APPLIED", result: { ...context, row_version: result.row_version, seq: result.seq } };
 }
 
-async function assertStoreSettingsEditHandbackClear(tx, { branchId, terminalId, rowVersion }) {
-  if (!branchId || recordId(branchId) !== branchId || !Number.isInteger(rowVersion) || rowVersion < 1) invalid();
-  const tables = await tx.request().query(`SELECT
+async function assertStoreSettingsEditScopeClear(database, { branchId, terminalId }, snapshotVersion = null) {
+  if (!branchId || recordId(branchId) !== branchId) invalid();
+  const tables = await database.request().query(`SELECT
     OBJECT_ID(N'dbo.pos_store_settings_edit_commands', N'U') AS commands,
     OBJECT_ID(N'dbo.pos_store_settings_edit_receipts', N'U') AS receipts,
     HAS_PERMS_BY_NAME(DB_NAME(), N'DATABASE', N'VIEW DEFINITION') AS can_see_schema;`);
   const { commands, receipts, can_see_schema: canSeeSchema } = tables.recordset[0];
-  if (commands === null && receipts === null && canSeeSchema === 1) return;
-  if (commands === null || receipts === null) pending();
-  const result = await tx.request().input("branch", branchId).input("terminal", uuid(terminalId)).input("revision", rowVersion)
+  if (commands === null && receipts === null) {
+    if (canSeeSchema === 1) return;
+    // An existing till's limited SQL login might not see the prepared tables.
+    // Capture requires this durable fence and a verified handback clears it
+    // only after the outbox is resolved. Failure to read it still holds re-pair.
+    if (snapshotVersion === null && !await readFence(database.request(), branchId)) return;
+  }
+  if (commands === null || receipts === null)
+    refuse("ESETTINGS_EDIT_STATE", "The saved settings edit state cannot be verified.");
+  const revision = snapshotVersion === null ? "s.row_version" : "@revision";
+  const canonical = snapshotVersion === null
+    ? "LEFT JOIN dbo.pos_store_settings s ON s.store_id COLLATE Latin1_General_100_BIN2=c.branch_id" : "";
+  const result = await database.request().input("branch", branchId).input("terminal", uuid(terminalId)).input("revision", snapshotVersion)
     .query(`SELECT TOP (1) 1 AS pending FROM dbo.pos_store_settings_edit_commands c WITH (UPDLOCK,HOLDLOCK)
       LEFT JOIN dbo.pos_store_settings_edit_receipts r WITH (UPDLOCK,HOLDLOCK) ON r.operation_id=c.operation_id
+      ${canonical}
       WHERE c.branch_id=@branch AND c.terminal_id=@terminal AND (r.disposition IS NULL OR r.disposition<>N'APPLIED' OR
+        ${revision} IS NULL OR
         TRY_CONVERT(int,JSON_VALUE(r.receipt_json,'$.result.row_version')) IS NULL OR
-        TRY_CONVERT(int,JSON_VALUE(r.receipt_json,'$.result.row_version'))>@revision);`);
+        TRY_CONVERT(int,JSON_VALUE(r.receipt_json,'$.result.row_version')) NOT BETWEEN 2 AND ${revision});`);
   if (result.recordset.length) pending();
+}
+
+async function assertStoreSettingsEditHandbackClear(tx, scope) {
+  if (!Number.isInteger(scope.rowVersion) || scope.rowVersion < 1) invalid();
+  await assertStoreSettingsEditScopeClear(tx, scope, scope.rowVersion);
+}
+
+async function assertStoreSettingsEditReassignmentClear(database, scope) {
+  // Legacy non-UUID registrations could never enroll for this upload protocol.
+  if (typeof scope.terminalId !== "string" || !UUID.test(scope.terminalId)) return;
+  await assertStoreSettingsEditScopeClear(database, scope);
 }
 
 /** Prepared repository. The caller owns the serializable transaction and Main-only authority. */
@@ -213,4 +237,4 @@ class StoreSettingsEditOutbox {
   }
 }
 
-module.exports = { StoreSettingsEditOutbox, assertStoreSettingsEditHandbackClear };
+module.exports = { StoreSettingsEditOutbox, assertStoreSettingsEditHandbackClear, assertStoreSettingsEditReassignmentClear };

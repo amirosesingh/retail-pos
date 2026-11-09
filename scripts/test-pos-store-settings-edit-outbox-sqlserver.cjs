@@ -6,7 +6,8 @@ const { createHash, randomUUID } = require("node:crypto");
 const { readFileSync } = require("node:fs");
 const { join } = require("node:path");
 const { createLocal } = require("./lib/shift-protocol-integration-fixture.cjs");
-const { StoreSettingsEditOutbox, assertStoreSettingsEditHandbackClear } = require("../electron/db/store-settings-edit-outbox.cjs");
+const { StoreSettingsEditOutbox, assertStoreSettingsEditHandbackClear,
+  assertStoreSettingsEditReassignmentClear } = require("../electron/db/store-settings-edit-outbox.cjs");
 const grouped = require("../electron/sync/grouped-store-settings.cjs");
 const handoff = require("../electron/sync/grouped-settings-handoff.cjs");
 const { createStoreSettingsEditRuntime } = require("../electron/sync/store-settings-edit-runtime.cjs");
@@ -19,6 +20,7 @@ async function main() {
   const local = await createLocal(branchId);
   try {
     const { manager } = local;
+    await assertStoreSettingsEditReassignmentClear(manager.pool, { branchId, terminalId: randomUUID() });
     await manager.pool.request().batch(readFileSync(join(__dirname, "preparation/pos-store-settings-edit-outbox-v1.sql"), "utf8"));
     await local.insert("pos_store_settings", { store_id: branchId, row_version: 7,
       block_shift_close_on_hold: true, max_drawer_cash_limit: 50 });
@@ -44,6 +46,20 @@ async function main() {
       catch (error) { await tx.rollback().catch(() => undefined); throw error; }
       finally { transactions.delete(tx); }
     };
+    await manager.pool.request().batch(`CREATE USER fixture_settings_reassign_reader WITHOUT LOGIN;
+      GRANT SELECT ON dbo.sync_checkpoints TO fixture_settings_reassign_reader;`);
+    const legacyLogin = work => atomic(async tx => {
+      await tx.request().batch("EXECUTE AS USER=N'fixture_settings_reassign_reader';");
+      try {
+        const { visible, can_see_schema: canSeeSchema } = (await tx.request().query(`SELECT
+          OBJECT_ID(N'dbo.pos_store_settings_edit_commands',N'U') AS visible,
+          HAS_PERMS_BY_NAME(DB_NAME(),N'DATABASE',N'VIEW DEFINITION') AS can_see_schema;`)).recordset[0];
+        assert.equal(visible, null);
+        assert.equal(canSeeSchema, 0);
+        return await work(tx);
+      } finally { await tx.request().batch("REVERT;"); }
+    });
+    await legacyLogin(tx => assertStoreSettingsEditReassignmentClear(tx, scope));
     const counts = async () => (await manager.pool.request().query(`SELECT
       (SELECT COUNT(*) FROM dbo.pos_store_settings_edit_commands) AS commands,
       (SELECT COUNT(*) FROM dbo.pos_store_settings_edit_receipts) AS receipts,
@@ -87,6 +103,8 @@ async function main() {
     assert.deepEqual(await atomic(tx => outbox.readPending(tx, { personId })), saved);
     assert.deepEqual(await atomic(tx => outbox.readUpload(tx, { personId: null })), { status: "AWAITING_OPERATOR" });
     await assert.rejects(atomic(tx => assertStoreSettingsEditHandbackClear(tx, { ...scope, rowVersion: 7 })), { code: "ESETTINGS_EDIT_PENDING" });
+    await assert.rejects(assertStoreSettingsEditReassignmentClear(manager.pool, scope), { code: "ESETTINGS_EDIT_PENDING" });
+    await assertStoreSettingsEditReassignmentClear(manager.pool, { ...scope, terminalId: randomUUID() });
     const same = { personId, operationId: saved.operationId, expectedVersion: 7, patch: saved.patch };
     assert.deepEqual(await atomic(tx => outbox.capture(tx, same)), saved);
     await assert.rejects(atomic(tx => outbox.capture(tx, { ...same, patch: { block_shift_close_on_hold: true } })), { code: "ESETTINGS_EDIT_CONFLICT" });
@@ -115,6 +133,7 @@ async function main() {
     assert.equal(await atomic(tx => outbox.readPending(tx, { personId })), null);
     assert.deepEqual(await atomic(tx => outbox.readUpload(tx, { personId: null })), { status: "AWAITING_DOWNLOAD" });
     await assert.rejects(atomic(tx => assertStoreSettingsEditHandbackClear(tx, { ...scope, rowVersion: 7 })), { code: "ESETTINGS_EDIT_PENDING" });
+    await assert.rejects(assertStoreSettingsEditReassignmentClear(manager.pool, scope), { code: "ESETTINGS_EDIT_PENDING" });
     await atomic(tx => assertStoreSettingsEditHandbackClear(tx, { ...scope, rowVersion: 8 }));
     await assert.rejects(atomic(tx => outbox.capture(tx, make())), { code: "ESETTINGS_EDIT_PENDING" });
     assert.deepEqual(await counts(), { commands: 1, receipts: 1, journal: 0, generic_receipts: 0 });
@@ -129,6 +148,7 @@ async function main() {
 
     // Represents the independently verified canonical download advancing the saved store row.
     await manager.pool.request().query("UPDATE dbo.pos_store_settings SET row_version=8;");
+    await assertStoreSettingsEditReassignmentClear(manager.pool, scope);
     const next = await atomic(tx => outbox.capture(tx, make(8)));
     const held = await atomic(tx => outbox.acknowledge(tx, { personId, operationId: next.operationId, witness: witness(next, "REVIEW_REQUIRED") }));
     assert.equal(held.disposition, "REVIEW_REQUIRED");
@@ -136,6 +156,7 @@ async function main() {
     await local.restart();
     assert.deepEqual(await atomic(tx => outbox.readUpload(tx, { personId: null })), { status: "REVIEW_REQUIRED" });
     await assert.rejects(atomic(tx => assertStoreSettingsEditHandbackClear(tx, { ...scope, rowVersion: 8 })), { code: "ESETTINGS_EDIT_PENDING" });
+    await assert.rejects(assertStoreSettingsEditReassignmentClear(manager.pool, scope), { code: "ESETTINGS_EDIT_PENDING" });
     await assert.rejects(atomic(tx => outbox.capture(tx, make(8))), { code: "ESETTINGS_EDIT_PENDING" });
     await assert.rejects(manager.pool.request().query("DELETE FROM dbo.pos_store_settings_edit_receipts;"), /immutable/i);
     await assert.rejects(manager.pool.request().query("UPDATE dbo.pos_store_settings_edit_commands SET command_sha256=command_sha256;"), /immutable/i);
@@ -162,6 +183,7 @@ async function main() {
     await saveCheckpoint(handoff.CHECKPOINT, handoff.fenceValue({ source, databaseGuid: scope.databaseGuid }));
     await saveCheckpoint(grouped.CHECKPOINT, JSON.stringify({ source: source.fingerprint, databaseGuid: scope.databaseGuid,
       epoch: scope.feedEpoch, seq: "1", upper: null }));
+    await assert.rejects(legacyLogin(tx => assertStoreSettingsEditReassignmentClear(tx, enrollment)), { code: "ESETTINGS_EDIT_STATE" });
     await assert.rejects(atomic(tx => local.repository.applyOperation(tx, { table: "pos_store_settings", kind: "update",
       match: { store_id: branchId }, values: { block_shift_close_on_hold: false } }, { branchId })), { code: "ESYNC_GROUPED_LEGACY_FENCED" });
     assert.equal((await runtime().capture({ ...draft, branchId: randomUUID() })).code, "ESETTINGS_EDIT_UNAVAILABLE");
