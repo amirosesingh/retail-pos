@@ -33,6 +33,7 @@ function httpsOrigin(value) {
 function pilotEnrollment(value) {
   const fields = ["branchId", "terminalId", "backendOrigin", "projectOrigin", "databaseGuid"];
   if (value?.projection === MIXED_PROJECTION) fields.push("projection");
+  if (value?.projection === MIXED_PROJECTION && value.recovery === "paged_stock_v1") fields.push("recovery");
   if (!hasKeys(value, fields) ||
       typeof value.branchId !== "string" || !value.branchId || value.branchId.length > 128 ||
       recordId(value.branchId) !== value.branchId || typeof value.terminalId !== "string" || !UUID.test(value.terminalId) ||

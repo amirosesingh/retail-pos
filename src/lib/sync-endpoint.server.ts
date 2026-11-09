@@ -4,6 +4,7 @@ import { runtimeEnvValue, supabaseConfig } from "./external-supabase-config";
 import { DEFAULT_POS_RULES } from "./pos-rules.ts";
 import { applyGroupedSettingsEdit, groupedSettingsEditSchema } from "./grouped-settings-edit.server";
 import { applyGroupedCashUpload, groupedCashUploadSchema } from "./grouped-cash-upload.server";
+import { applyGroupedRefundUpload, groupedRefundUploadSchema } from "./grouped-refund-upload.server";
 import { canRetrieveHistoricalReceipt } from "./receipt-history-permission";
 import { alignVerifiedScopeIds } from "./verified-scope-ids";
 /**
@@ -90,6 +91,11 @@ const groupedSettingsEditRequestKeys = new Set([
   "sqlServerSettingsEdit", "terminalToken", "accessToken", "deviceBindingProof",
 ]);
 const groupedCashUploadRequestKeys = new Set(["sqlServerCashCheckout", "terminalToken", "deviceBindingProof"]);
+const groupedRefundUploadRequestKeys = new Set([
+  "sqlServerRefund", "terminalToken", "deviceBindingProof", "sessionToken", "cashierToken", "accessToken",
+]);
+const groupedRecoveryRequestKeys = new Set(["sqlServerGroupedRecovery", "terminalToken", "deviceBindingProof"]);
+const groupedCashCoverageRequestKeys = new Set(["sqlServerCashLegacyCoverage", "terminalToken", "deviceBindingProof"]);
 const feedSequence = z.string().regex(/^(0|[1-9][0-9]{0,18})$/)
   .refine(value => value.length < 19 || value <= "9223372036854775807");
 const groupedSnapshotReadSchema = z.object({
@@ -110,6 +116,21 @@ const groupedSettingsGroupSchema = z.object({
   seq: feedSequence, operation_id: z.string().uuid().nullable(), changes: z.tuple([groupedSettingsChangeSchema]),
 }).strict();
 const groupedCashTables = ["sales", "sale_items", "payment_transactions", "item_activity_logs"] as const;
+const groupedRecoveryScope = z.object({ organizationId: z.literal("default"), branchId: z.string().min(1).max(128) }).strict();
+const groupedRecoveryReadSchema = z.discriminatedUnion("action", [
+  groupedRecoveryScope.extend({ action: z.literal("begin") }),
+  groupedRecoveryScope.extend({ action: z.literal("page"), pinId: z.string().uuid(), kind: z.enum(["cash", "stock"]),
+    after: feedSequence, limit: z.number().int().min(1).max(100) }),
+]);
+type GroupedRecoveryRead = z.infer<typeof groupedRecoveryReadSchema>;
+const cashLegacyKeySchema = z.object({ table_name: z.enum(groupedCashTables),
+  id: z.string().uuid().refine(id => id === id.toLowerCase()) }).strict();
+const cashLegacyCoverageSchema = groupedRecoveryScope.extend({
+  epoch: z.string().uuid(),
+  entries: z.array(cashLegacyKeySchema).min(1).max(100)
+    .refine(entries => new Set(entries.map(entry => `${entry.table_name}:${entry.id}`)).size === entries.length),
+});
+type CashLegacyCoverage = z.infer<typeof cashLegacyCoverageSchema>;
 const groupedCashChangeSchema = groupedSettingsChangeSchema.extend({ table_name: z.enum(groupedCashTables) });
 const groupedCashGroupSchema = z.object({
   seq: feedSequence, operation_id: z.string().uuid(), changes: z.array(groupedCashChangeSchema).length(4),
@@ -139,6 +160,27 @@ const groupedSnapshotManifestSchema = z.object({
   changes: z.tuple([groupedSettingsChangeSchema]),
 }).strict();
 const groupedMixedManifestSchema = groupedSnapshotManifestSchema.extend({ cash_groups: z.array(groupedCashGroupSchema).max(100) });
+const groupedRecoveryManifestSchema = groupedSnapshotManifestSchema.extend({ cash_count: feedSequence, stock_count: feedSequence });
+const groupedRecoveryPageEnvelope = groupedSnapshotSchema.omit({ manifest_json: true, manifest_sha256: true })
+  .extend({ payload_json: z.string(), payload_sha256: z.string().regex(/^[a-f0-9]{64}$/) });
+const groupedRecoveryPageBase = groupedSnapshotManifestSchema.omit({ changes: true }).extend({
+  pin_id: z.string().uuid(), after: feedSequence, next: feedSequence, total: feedSequence,
+});
+const groupedRecoveryPageSchema = z.discriminatedUnion("kind", [
+  groupedRecoveryPageBase.extend({ kind: z.literal("cash"), rows: z.array(groupedCashGroupSchema).max(100) }),
+  groupedRecoveryPageBase.extend({ kind: z.literal("stock"), rows: z.array(z.object({
+    product_id: z.string().uuid(), branch_balance: z.number().int().min(-2147483648).max(2147483647),
+    row_version: z.number().int().min(1).max(2147483647),
+  }).strict()).max(100) }),
+]);
+const groupedRecoveryHoldSchema = z.object({
+  status: z.literal("SNAPSHOT_REQUIRED"),
+  reason: z.enum(["EPOCH_MISMATCH", "REPLAY_EXPIRED", "FEED_GAP", "GROUP_TOO_LARGE", "PIN_UNAVAILABLE"]),
+}).strict();
+const cashLegacyCoverageReplySchema = z.object({
+  status: z.literal("OK"), scope_id: z.string(), epoch: z.string().uuid(),
+  entries: z.array(cashLegacyKeySchema.extend({ seq: feedSequence })).max(100),
+}).strict();
 const groupedSettingsRules = Object.entries(DEFAULT_POS_RULES);
 const groupedSettingsColumnCount = groupedSettingsRules.length + 6;
 const exactSettingDecimal = /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/;
@@ -219,7 +261,9 @@ function mixedGroupedEnabled() {
 }
 
 type GroupedRpc = "pos_sync_pull_grouped_v1" | "pos_sync_snapshot_grouped_v1" |
-  "pos_sync_pull_cash_settings_v1" | "pos_sync_snapshot_cash_settings_v1";
+  "pos_sync_pull_cash_settings_v1" | "pos_sync_snapshot_cash_settings_v1" |
+  "pos_sync_begin_cash_settings_recovery_v1" | "pos_sync_page_cash_settings_recovery_v1" |
+  "pos_sync_cash_legacy_coverage_v1";
 async function groupedFeedRpc(name: GroupedRpc, read: GroupedSnapshotRead,
   terminalId: string, binding: string, signal: AbortSignal, args: Record<string, unknown> = {}) {
   const { serviceRest } = await import("@/core/api/pos-relay.server");
@@ -229,7 +273,7 @@ async function groupedFeedRpc(name: GroupedRpc, read: GroupedSnapshotRead,
   let response: Response;
   try {
     response = await serviceRest(`rpc/${name}`, {
-      method: "POST", signal, headers: { "Accept-Encoding": "identity" },
+      method: "POST", signal, redirect: "error", headers: { "Accept-Encoding": "identity" },
       body: JSON.stringify({
         p_organization_id: read.organizationId, p_branch_id: read.branchId, p_terminal_id: terminalId,
         p_binding_proof: binding, ...args,
@@ -320,6 +364,71 @@ async function readGroupedSnapshot(read: GroupedSnapshotRead, terminalId: string
   } catch { return groupedFeedProtocolError(); }
 }
 
+async function readGroupedRecovery(read: GroupedRecoveryRead, terminalId: string, binding: string, signal: AbortSignal) {
+  const page = read.action === "page";
+  const result = await groupedFeedRpc(page ? "pos_sync_page_cash_settings_recovery_v1" : "pos_sync_begin_cash_settings_recovery_v1",
+    { ...read, projection: "settings_cash_v1" }, terminalId, binding, signal,
+    page ? { p_pin_id: read.pinId, p_kind: read.kind, p_after: read.after, p_limit: read.limit } : {});
+  if (result instanceof Response) return result;
+  const hold = groupedRecoveryHoldSchema.safeParse(result.data);
+  if (hold.success) return Response.json(hold.data, { status: 409, headers: { "cache-control": "no-store" } });
+  const failure = groupedFeedStatusSchema.safeParse(result.data);
+  if (failure.success) return failure.data.status === "SCOPE_UNAVAILABLE" ? groupedFeedUnavailable() :
+    Response.json(failure.data, { status: 400, headers: { "cache-control": "no-store" } });
+  try {
+    if (page) {
+      const envelope = groupedRecoveryPageEnvelope.parse(result.data);
+      if (envelope.scope_id !== read.branchId || envelope.pin_id !== read.pinId || Date.parse(envelope.expires_at) <= Date.now() ||
+          createHash("sha256").update(envelope.payload_json, "utf8").digest("hex") !== envelope.payload_sha256)
+        return groupedFeedProtocolError();
+      const payload = groupedRecoveryPageSchema.parse(JSON.parse(envelope.payload_json));
+      const start = BigInt(payload.after);
+      const next = BigInt(payload.next);
+      const total = BigInt(payload.total);
+      if (payload.scope_id !== read.branchId || payload.epoch !== envelope.epoch || payload.seq !== envelope.seq ||
+          payload.pin_id !== read.pinId || payload.kind !== read.kind || payload.after !== read.after ||
+          payload.rows.length > read.limit || next !== start + BigInt(payload.rows.length) || next > total ||
+          (next < total && !payload.rows.length)) return groupedFeedProtocolError();
+      if (payload.kind === "cash") {
+        let prior = 0n;
+        for (const group of payload.rows) {
+          const seq = BigInt(group.seq);
+          if (seq <= prior || seq > BigInt(payload.seq) || !validGroupedCash(group, read.branchId))
+            return groupedFeedProtocolError();
+          prior = seq;
+        }
+      } else if (payload.rows.some((row, index, rows) => row.product_id !== row.product_id.toLowerCase() ||
+        (index > 0 && rows[index - 1].product_id >= row.product_id))) return groupedFeedProtocolError();
+    } else {
+      const envelope = groupedSnapshotSchema.parse(result.data);
+      if (envelope.scope_id !== read.branchId || Date.parse(envelope.expires_at) <= Date.now() ||
+          new TextEncoder().encode(envelope.manifest_json).byteLength > 65536 ||
+          createHash("sha256").update(envelope.manifest_json, "utf8").digest("hex") !== envelope.manifest_sha256)
+        return groupedFeedProtocolError();
+      const manifest = groupedRecoveryManifestSchema.parse(JSON.parse(envelope.manifest_json));
+      if (manifest.scope_id !== read.branchId || manifest.epoch !== envelope.epoch || manifest.seq !== envelope.seq ||
+          BigInt(manifest.cash_count) > BigInt(manifest.seq) || !validGroupedSettings(manifest.changes[0], read.branchId))
+        return groupedFeedProtocolError();
+    }
+    return new Response(result.raw, { headers: { "content-type": "application/json", "cache-control": "no-store" } });
+  } catch { return groupedFeedProtocolError(); }
+}
+
+async function readCashLegacyCoverage(read: CashLegacyCoverage, terminalId: string, binding: string, signal: AbortSignal) {
+  const result = await groupedFeedRpc("pos_sync_cash_legacy_coverage_v1", { ...read, projection: "settings_cash_v1" },
+    terminalId, binding, signal, { p_epoch: read.epoch, p_entries: read.entries });
+  if (result instanceof Response) return result;
+  const failure = groupedFeedStatusSchema.safeParse(result.data);
+  if (failure.success && failure.data.status === "SCOPE_UNAVAILABLE") return groupedFeedUnavailable();
+  const parsed = cashLegacyCoverageReplySchema.safeParse(result.data);
+  if (!parsed.success || parsed.data.scope_id !== read.branchId || parsed.data.epoch !== read.epoch)
+    return groupedFeedProtocolError();
+  const keys = new Set(read.entries.map(entry => `${entry.table_name}:${entry.id}`));
+  if (parsed.data.entries.some(entry => entry.seq === "0" || !keys.delete(`${entry.table_name}:${entry.id}`)))
+    return groupedFeedProtocolError();
+  return new Response(result.raw, { headers: { "content-type": "application/json", "cache-control": "no-store" } });
+}
+
 const bodySchema = z.object({
   sessionToken: z.string().max(400).optional(),
   cashierToken: z.string().max(2000).optional(),
@@ -345,8 +454,11 @@ const bodySchema = z.object({
   sqlServerAggregate: syncAggregateSchema.optional(),
   sqlServerGroupedFeed: groupedFeedReadSchema.optional(),
   sqlServerGroupedSnapshot: groupedSnapshotReadSchema.optional(),
+  sqlServerGroupedRecovery: groupedRecoveryReadSchema.optional(),
+  sqlServerCashLegacyCoverage: cashLegacyCoverageSchema.optional(),
   sqlServerSettingsEdit: groupedSettingsEditSchema.optional(),
   sqlServerCashCheckout: groupedCashUploadSchema.optional(),
+  sqlServerRefund: groupedRefundUploadSchema.optional(),
   sqlServerLegacyRecovery: z.object({
     organizationId: z.string().min(1).max(128),
     branchId: z.string().min(1).max(128),
@@ -488,6 +600,12 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       throw new Error("Grouped settings edits are exclusive");
     if (Object.hasOwn(parsed ?? {}, "sqlServerCashCheckout") && Object.keys(parsed).some(key => !groupedCashUploadRequestKeys.has(key)))
       throw new Error("Cash checkout uploads are exclusive");
+    if (Object.hasOwn(parsed ?? {}, "sqlServerRefund") && Object.keys(parsed).some(key => !groupedRefundUploadRequestKeys.has(key)))
+      throw new Error("Refund uploads are exclusive");
+    if (Object.hasOwn(parsed ?? {}, "sqlServerGroupedRecovery") && Object.keys(parsed).some(key => !groupedRecoveryRequestKeys.has(key)))
+      throw new Error("Grouped recovery requests are exclusive");
+    if (Object.hasOwn(parsed ?? {}, "sqlServerCashLegacyCoverage") && Object.keys(parsed).some(key => !groupedCashCoverageRequestKeys.has(key)))
+      throw new Error("Cash legacy coverage requests are exclusive");
     body = bodySchema.parse(parsed);
     if (body.sqlServerLegacyRecovery && request.headers.get("x-pos-legacy-recovery") !== "1")
       throw new Error("Missing bounded recovery transport");
@@ -543,9 +661,15 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     return applyGroupedSettingsEdit(body.sqlServerSettingsEdit, body, groupedFeedPilotTerminals, request.signal);
   if (body.sqlServerCashCheckout)
     return applyGroupedCashUpload(body.sqlServerCashCheckout, body, groupedFeedPilotTerminals, request.signal);
+  if (body.sqlServerRefund)
+    return applyGroupedRefundUpload(body.sqlServerRefund, body, groupedFeedPilotTerminals, request.signal);
 
   const groupedRead = body.sqlServerGroupedFeed;
-  const groupedRequest = groupedRead ?? body.sqlServerGroupedSnapshot;
+  const groupedRecovery = body.sqlServerGroupedRecovery;
+  const cashLegacyCoverage = body.sqlServerCashLegacyCoverage;
+  const groupedMixedRead = groupedRecovery ?? cashLegacyCoverage;
+  const groupedRequest = groupedMixedRead ? { ...groupedMixedRead, projection: "settings_cash_v1" as const } :
+    groupedRead ?? body.sqlServerGroupedSnapshot;
   const groupedPilotTerminals = groupedRequest ? groupedFeedPilotTerminals() : undefined;
   const groupedTerminalToken = body.terminalToken;
   if (groupedRequest && (!groupedPilotTerminals || (groupedRequest.projection && !mixedGroupedEnabled())))
@@ -663,6 +787,8 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       return Response.json({ ok: false, code: "TERMINAL_REQUIRED", error: "A verified pilot Operations terminal is required." }, { status: 403 });
     if (groupedRequest.branchId !== verifiedTerminal.branchId)
       return Response.json({ ok: false, code: "STORE_FORBIDDEN", error: "You can only synchronize your own branch." }, { status: 403 });
+    if (groupedRecovery) return readGroupedRecovery(groupedRecovery, verifiedTerminal.id, body.deviceBindingProof, request.signal);
+    if (cashLegacyCoverage) return readCashLegacyCoverage(cashLegacyCoverage, verifiedTerminal.id, body.deviceBindingProof, request.signal);
     return groupedRead ? readGroupedFeed(groupedRead, verifiedTerminal.id, body.deviceBindingProof, request.signal) :
       readGroupedSnapshot(groupedRequest, verifiedTerminal.id, body.deviceBindingProof, request.signal);
   }

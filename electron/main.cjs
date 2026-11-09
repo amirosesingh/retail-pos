@@ -90,7 +90,8 @@ const changeReader = new ChangeReader(databaseManager, syncRegistry, {reviewedSh
   verify:(tx,token,graph,branch)=>legacyShiftRecovery.verifyCoverage(tx,token,graph,branch),
 }});
 const conflictRepository = new ConflictRepository(databaseManager);
-const legacyPushWorker = new PushWorker({ reader:changeReader,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,validateAuthor:proof=>shiftAuthority.validatePending(proof),validateClosingStart:proof=>shiftAuthority.validatePendingClosingStart(proof) });
+const uploadCashCheckout = wire => cashCheckoutRuntime.upload(wire);
+const legacyPushWorker = new PushWorker({ reader:changeReader,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,validateAuthor:proof=>shiftAuthority.validatePending(proof),validateClosingStart:proof=>shiftAuthority.validatePendingClosingStart(proof),uploadCashCheckout });
 let legacyShiftRecovery;
 const legacyRecoveryRuntime = require("./sync/legacy-shift-recovery-runtime.cjs").createLegacyShiftRecoveryRuntime({
   reader:changeReader,recovery:()=>legacyShiftRecovery,enabled:supportsLegacyShiftRecovery,activeBranch:localBranchId,
@@ -102,14 +103,27 @@ const legacyRecoveryRuntime = require("./sync/legacy-shift-recovery-runtime.cjs"
   },
 });
 const groupedSettingsPilot = installedGroupedSettingsPilot(process.env);
+const pullWorker = new PullWorker({ connectionManager:databaseManager,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,reader:changeReader,conflicts:conflictRepository,publish:publishBusinessChange });
 const syncCoordinator = new SyncCoordinator({
   pushWorker: {reader:legacyRecoveryRuntime.reader,run:options=>legacyRecoveryRuntime.run(options,value=>shiftFinancialRuntime.runPush(value))},
-  pullWorker: new PullWorker({ connectionManager:databaseManager,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,reader:changeReader,conflicts:conflictRepository,publish:publishBusinessChange }),
+  pullWorker,
   recoverHeldStatuses:recoverLocalHeldStatuses,
   groupedSettingsPilot: groupedSettingsPilot?.enrollment,
   groupedSettingsPilotMode: groupedSettingsPilot?.mode,
   uploadStoreSettingsEdit: () => storeSettingsEdits.upload(),
   publish: (state) => { for (const win of BrowserWindow.getAllWindows()) win.webContents.send("sync:state",legacyRecoveryRuntime.status(state)); },
+});
+const { cashSenderEnrollment, createCashCheckoutRuntime } = require("./sync/cash-checkout-runtime.cjs");
+const cashCheckoutRuntime = createCashCheckoutRuntime({
+  configured: cashSenderEnrollment(process.env), cloud: syncCloud, connectionManager: databaseManager,
+  registry: syncRegistry, coordinator: syncCoordinator, authority: shiftAuthority,
+  handoff: proof => pullWorker.cashSenderHandoff?.(proof),
+  ready: () => {
+    const state = databaseService.snapshot();
+    return process.platform === "win32" && app.hasSingleInstanceLock() && !safeMode &&
+      (!quitting || closeWriteBarrier.sealed) && !jobManager.running && !localDataPreparePromise &&
+      state.enabled && state.configured && state.connected && state.tradingReady;
+  },
 });
 const storeSettingsEdits = require("./sync/store-settings-edit-runtime.cjs").createStoreSettingsEditRuntime({
   pilot: groupedSettingsPilot,
@@ -162,7 +176,7 @@ const receiptRepository = new ReceiptRepository(databaseManager, syncCloud);
 const shiftFinancialRuntime = new (require('./db/shift-financial-runtime.cjs').ShiftFinancialRuntime)({
   manager:databaseManager,cloud:syncCloud,terminal:()=>terminalStore.read(),authority:shiftAuthority,
   vault:require('./security/financial-capability-vault.cjs').createFinancialCapabilityVault({safeStorage,directory:()=>app.getPath('userData')}),
-  operationsRepository,registry:syncRegistry,checkpoints:syncCheckpoints,
+  operationsRepository,registry:syncRegistry,checkpoints:syncCheckpoints,uploadCashCheckout,
   legacy:{aggregate:aggregateRepository,receipts:receiptRepository,journal:shiftSyncJournal,push:legacyPushWorker},
 });
 const authorizationRulesRepository = new AuthorizationRulesRepository(databaseManager);
@@ -2372,7 +2386,9 @@ function registerIpc() {
       const requestCapture=typeof shiftFinancialRuntime!=='undefined'&&operations.some(operation=>['sales','shifts'].includes(operation.table))?captureLocalOperationIdentity():null;
       const repository=typeof shiftFinancialRuntime==='undefined'?aggregateRepository:await shiftFinancialRuntime.forAggregate(trustedAggregate);
       requestCapture?.assertCurrent();
-      const result=await repository.commit(aggregate.kind,trustedAggregate);
+      const result = typeof cashCheckoutRuntime !== "undefined" && repository === aggregateRepository
+        ? await cashCheckoutRuntime.commit(repository, aggregate.kind, trustedAggregate, requestCapture?.assertCurrent)
+        : await repository.commit(aggregate.kind, trustedAggregate);
       publishBusinessChange({kind:aggregate.kind,branchId,operationId:result.operationId??null,tables:[...new Set(operations.map(op=>op.table))],changes:operations.flatMap(op=>(op.rows??[op.match??{}]).map(row=>({table:op.table,entityId:op.table==="product_barcodes"?row.product_id:row.id??null})))});
       scheduleLocalChanges(operations);
       return result;

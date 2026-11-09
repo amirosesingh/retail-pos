@@ -305,7 +305,8 @@ class CloudClient {
     let legacyRecoveryBody;
     let transportStage = "fetch";
     const scopedRead=payload?.sqlServerScopedHistory;
-    const groupedRead = payload?.sqlServerGroupedFeed || payload?.sqlServerGroupedSnapshot;
+    const groupedRead = payload?.sqlServerGroupedFeed || payload?.sqlServerGroupedSnapshot ||
+      payload?.sqlServerGroupedRecovery || payload?.sqlServerCashLegacyCoverage;
     const historyRead=HISTORY_INDEX_ACTIONS.has(scopedRead?.action)?scopedRead:payload?.sqlServerHistoryReconcile;
     const historyBegin=historyRead?.action==='begin'?historyRead:null;
     const historyAuthority=historyBegin?this.requestContext(true):null;
@@ -315,7 +316,7 @@ class CloudClient {
       throw Object.assign(new Error("The reviewed closing exceeds the bounded recovery upload. Its saved evidence remains available for review."), { code:"ELEGACY_RECOVERY_OVERSIZED", table:"shifts" });
     try { response = await fetch(`${base}/api/v1/pos/sync${suffix}`, {
       method: "POST",
-      ...(payload?.sqlServerSettingsEdit || payload?.sqlServerCashCheckout ? { redirect: "error" } : {}),
+      ...(groupedRead || payload?.sqlServerSettingsEdit || payload?.sqlServerCashCheckout ? { redirect: "error" } : {}),
       headers: { "content-type": "application/json", ...(payload?.sqlServerLegacyRecovery ? { "x-pos-legacy-recovery": "1" } : {}) },
       body: requestBody,
       signal: AbortSignal.timeout(historyRead || payload?.sqlServerHeldSaleReview ? 12_000 : 30_000),
@@ -375,7 +376,8 @@ class CloudClient {
       unavailableHistoryPolicies.set(error,{cloud:this,authority:historyAuthority,branchId:historyBegin.branchId,organizationId:historyBegin.organizationId});
       throw error;
     }
-    if (groupedRead && response.status === 409 && groupedSettings.snapshotRequired(data)) {
+    if (groupedRead && response.status === 409 && (groupedSettings.snapshotRequired(data) ||
+        (payload?.sqlServerGroupedRecovery && data?.status === "SNAPSHOT_REQUIRED" && data.reason === "PIN_UNAVAILABLE"))) {
       this.assertRequestContext(source, governance, payload);
       return data;
     }
@@ -573,6 +575,24 @@ class CloudClient {
     const branchId = groupedSettings.operationsScope(source);
     return this.request({ sqlServerGroupedSnapshot: { organizationId: "default", branchId, ...(projection ? { projection } : {}) } });
   }
+  beginGroupedRecovery(source) {
+    this.assertRequestContext(source, false);
+    return this.request({ sqlServerGroupedRecovery: {
+      organizationId: "default", branchId: groupedSettings.operationsScope(source), action: "begin",
+    } });
+  }
+  pageGroupedRecovery(source, { pinId, kind, after, limit }) {
+    this.assertRequestContext(source, false);
+    return this.request({ sqlServerGroupedRecovery: {
+      organizationId: "default", branchId: groupedSettings.operationsScope(source), action: "page", pinId, kind, after, limit,
+    } });
+  }
+  cashLegacyCoverage(source, epoch, entries) {
+    this.assertRequestContext(source, false);
+    return this.request({ sqlServerCashLegacyCoverage: {
+      organizationId: "default", branchId: groupedSettings.operationsScope(source), epoch, entries,
+    } });
+  }
   async submitStoreSettingsEdit(source, command) {
     this.assertRequestContext(source, true);
     const branch = groupedSettings.operationsScope(source);
@@ -707,6 +727,7 @@ class CloudClient {
         .map(change => recordId(this.parseKey(table, change)?.store_id)));
       for (const branch of [...scopes].sort()) await assertLegacyApply(transaction, branch);
     }
+    await require("./grouped-cash-legacy.cjs").assertCashDownload(transaction, table.cloudTable, batch);
     const sql = this.connectionManager?.sql?.() ?? require("mssql/msnodesqlv8");
     const allowed = new Map((table.columns ?? []).map((column) => [column.cloudColumn, column]));
     const localColumns = new Map((table.columns ?? []).map(column => [column.sqlServerColumn, column]));

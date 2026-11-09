@@ -135,6 +135,8 @@ class AggregateRepository {
     const financialStore=this.financialOperations?.enabled===true?this.financialOperations:null;
     const financialContext=financialStore?await financialStore.prepareContext({branchId:aggregate.branchId,terminalId:aggregate.terminalId,operationId,kind}):null;
     const saleOutbox = kind === "sale" ? this.saleOutbox : null;
+    const cashCheckoutContext = saleOutbox?.installedHandoff
+      ? require("../../sync/cash-checkout-route.cjs").contextForCashCheckout(operationId) : null;
     let cashAuthor, cashAuthorError;
     try { cashAuthor = await saleOutbox?.prepareCashAuthor?.(); }
     catch (error) { cashAuthorError = error; }
@@ -172,10 +174,11 @@ class AggregateRepository {
         }
         if (!sale.shift_id) continue;
         const shift = await new sql.Request(transaction).input("shift", String(sale.shift_id)).input("branch", aggregate.branchId)
-          .query("SELECT state,status,closed_at FROM dbo.shifts WITH (UPDLOCK,HOLDLOCK) WHERE id=TRY_CONVERT(uniqueidentifier,@shift) AND store_id=@branch;");
+          .query("SELECT state,status,closed_at,terminal_id FROM dbo.shifts WITH (UPDLOCK,HOLDLOCK) WHERE id=TRY_CONVERT(uniqueidentifier,@shift) AND store_id=@branch;");
         const row = shift.recordset?.[0];
         if (!row || row.closed_at || row.status !== "OPEN" || (row.state && row.state !== "ACTIVE"))
           throw Object.assign(new Error("This shift is closing or closed. Refresh the shift status before recording a sale."), { code: "ESHIFT_CLOSED" });
+        if (saleOutbox?.installedHandoff) saleOutbox.assertInstalledShift(row.terminal_id);
       }
       let affected = 0;
       const financialTokens=[],openingTokens=new Map();
@@ -231,6 +234,8 @@ class AggregateRepository {
         // and made the post-write ownership check report a false branch
         // violation for sales, shift sessions, and other aggregates.
         const stockPreimage = await this.captureSaleStock(transaction, table, operation, aggregate, kind);
+        if (stockPreimage && saleOutbox?.installedHandoff)
+          await saleOutbox.assertInstalledStockBaseline(transaction, operation.match.id, aggregate.branchId);
         const operationAffected = await this.operationsRepository.applyOperation(transaction, operation, {
           branchId: aggregate.branchId,
           terminalId: aggregate.terminalId,
@@ -243,6 +248,7 @@ class AggregateRepository {
           memberAccrual: aggregate.memberAccrual,
           financialExchangeLinks: aggregate.financialExchangeLinks,
           activityOperator: aggregate.activityOperator,
+          ...(cashCheckoutContext ? { cashCheckoutContext } : {}),
         });
         if (operation.requireMatch && operationAffected !== 1)
           throw Object.assign(
@@ -300,7 +306,11 @@ class AggregateRepository {
       await transaction.commit();
       return { ok: true, operationId, replayed: false, affected };
     } catch (error) {
-      await Promise.resolve(transaction.rollback()).catch(() => undefined);
+      const rolledBack = await Promise.resolve(transaction.rollback()).then(() => true, () => false);
+      if (rolledBack && saleOutbox?.installedHandoff && (error?.code === "ESALE_CASH_LEGACY_ONLY" ||
+          (stage === "sale event capture" && error?.code === "ESALE_EVENT_UNVERIFIED")))
+        throw Object.assign(new Error("The unsupported cash capture rolled back before the existing sale route."),
+          { code: "ESALE_CASH_LEGACY_ONLY" });
       if (["EIDEMPOTENCY", "EEXISTING_SALE_RECONCILIATION", "EBRANCH", "EBRANCH_SCOPE", "SYNC_BRANCH_FORBIDDEN", "EEXCHANGE_STATE", "EPRODUCT_STATE", "PERMISSION_DENIED", "ESHIFT_TERMINAL", "ESALE_EVENT_UNVERIFIED", "ESALE_CASH_BRIDGE_UNVERIFIED"].includes(error?.code))
         throw error;
       const target = tableName ? ` while writing ${tableName}` : "";

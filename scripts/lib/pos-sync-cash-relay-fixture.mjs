@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
@@ -74,7 +75,7 @@ export async function verifyAttestedCashRelay({ wire, proof, invokeRpc, invokeRe
       return Response.json([{ id: author.authorId, user_id: author.subject, role: "staff", role_slug: "cashier",
         permissions: { can_process_sale: true }, store_id: branchId, is_active: true }]);
     }
-    if (/^\/rest\/v1\/rpc\/pos_sync_(pull|snapshot)_cash_settings_v1$/.test(address.pathname))
+    if (/^\/rest\/v1\/rpc\/pos_sync_((pull|snapshot)_cash_settings|cash_legacy_coverage)_v1$/.test(address.pathname))
       return Response.json(invokeRead(address.pathname.split("/").at(-1), JSON.parse(options.body)));
     assert.equal(address.pathname, "/rest/v1/rpc/pos_sync_cash_checkout_attested_v1");
     assert.deepEqual(JSON.parse(options.body), {
@@ -109,6 +110,10 @@ export async function verifyAttestedCashRelay({ wire, proof, invokeRpc, invokeRe
     assert.equal(page.groups[0].acceptance.checkout_sha256, wire.checkoutSha256);
     const snapshot = await cloud.groupedSettingsSnapshot(source, "settings_cash_v1");
     assert.deepEqual(JSON.parse(snapshot.manifest_json).cash_groups, page.groups);
+    const keys = [{ table_name: "sales", id: result.result.sale_id }, { table_name: "sales", id: randomUUID() }];
+    const coverage = await cloud.cashLegacyCoverage(source, wire.scope.feedEpoch, keys);
+    assert.deepEqual(coverage, { status: "OK", scope_id: branchId, epoch: wire.scope.feedEpoch,
+      entries: [{ ...keys[0], seq: result.result.seq }] });
     console.log("PASS signed LocalDB cash upload and mixed download/snapshot through the actual relay and PostgreSQL");
     return result;
   } finally { globalThis.fetch = upstream; }

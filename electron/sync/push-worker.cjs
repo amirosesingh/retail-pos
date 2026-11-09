@@ -5,6 +5,7 @@ const { stableUuid } = require("../db/repositories/aggregates.cjs");
 const { ACTIVITY_TABLES } = require("./event-policy.cjs");
 const { assertShiftClosureAcknowledgement } = require("./shift-closure-ack.cjs");
 const {prepareShiftFinancialBasis,assertShiftFinancialAcknowledgement}=require("./shift-financial-ack.cjs");
+const cashRoute = require("./cash-checkout-route.cjs");
 
 function groupBy(values, key) {
   const groups = new Map();
@@ -239,7 +240,8 @@ function terminalWritableChanges(tableName, changes, { branchId = "", terminalId
 }
 
 class PushWorker {
-  constructor({ reader, cloud, checkpoints, registry, validateAuthor, validateClosingStart, validateFinancialBasis, financialHistoryEnabled=false, validateFinancialOperation }) {
+  constructor({ reader, cloud, checkpoints, registry, validateAuthor, validateClosingStart, validateFinancialBasis, financialHistoryEnabled=false, validateFinancialOperation,
+    uploadCashCheckout = null }) {
     this.financialHistoryEnabled=financialHistoryEnabled===true;
     this.validateFinancialOperation=validateFinancialOperation;
     this.validateAuthor = validateAuthor;
@@ -249,6 +251,12 @@ class PushWorker {
     this.cloud = cloud;
     this.checkpoints = checkpoints;
     this.registry = registry;
+    this.uploadCashCheckout = uploadCashCheckout;
+  }
+  async assertLegacyCashWrites(branchId, operations) {
+    if (!this.reader.assertLegacyCashWrites) return;
+    const keys = operations.flatMap(({ table, rows, changes }) => cashRoute.cashRowKeys(table, [...(rows ?? []), ...(changes ?? [])]));
+    if (keys.length) await this.reader.assertLegacyCashWrites(branchId, keys);
   }
   async retry(work) {
     for (let attempt = 1; attempt <= 5; attempt += 1) {
@@ -307,6 +315,7 @@ class PushWorker {
   async pushAggregates(branchId, batchSize, isolate = false, onProgress = () => {}, includeActivity = true) {
     branchId = recordId(branchId);
     this.pushErrors = []; this.blockedTables = new Set();
+    this.cashUploadHeld = null;
     let pushed = 0;
     const terminalId = this.cloud.terminalId?.() ?? "";
     await this.registerFinancialHistory(branchId,terminalId,onProgress);
@@ -322,10 +331,27 @@ class PushWorker {
       if (!aggregates.length) break;
       for (const aggregate of aggregates) {
       const originalIds = (aggregate.originals ?? [aggregate]).map(item => item.aggregateId);
+      try {
+      // The immutable capture owns delivery even when the installed pilot is
+      // paused or removed. Do not rebuild its journal into a second writer.
+      if (aggregate.changes.some(change => cashRoute.TABLES.includes(change.entity_type))) {
+        if (originalIds.length !== 1) throw cashRoute.fail();
+        const cash = await this.reader.readCashRoute?.(branchId, originalIds[0]);
+        if (cash) {
+          const result = await this.uploadCashCheckout?.(cash);
+          if (result !== true) {
+            this.cashUploadHeld ??= result || cashRoute.uploadHold();
+            deferred.add(aggregate.aggregateId);
+          } else {
+            pushed += aggregate.changes.length;
+            onProgress({ direction: "push", table: "sales", completed: aggregate.changes.length });
+          }
+          continue;
+        }
+      }
       if (aggregate.changes.some(change => this.blockedTables.has(change.entity_type))) {
         originalIds.forEach(id => deferred.add(id)); continue;
       }
-      try {
       const financialRequired=await this.reader.financialAggregateRequired?.(aggregate.aggregateId,branchId,terminalId)??false;
       const financialOpening=await this.reader.financialOpening?.(aggregate.aggregateId,branchId,terminalId)??null;
       if((financialRequired||financialOpening)&&!this.financialHistoryEnabled)throw Object.assign(new Error('The matching financial history capability is required. Saved work remains pending.'),{code:'EFINANCIAL_PROTOCOL_UNAVAILABLE',table:'shifts'});
@@ -443,6 +469,7 @@ class PushWorker {
         throw Object.assign(new Error("One business aggregate exceeds the 6 MiB sync limit."), {
           code: "EOVERSIZED",
         });
+      await this.assertLegacyCashWrites(branchId, operations);
       try {
         // Journal IDs identify local transactions, but uploads read current
         // rows. A later pass can therefore have a different payload after an
@@ -474,6 +501,11 @@ class PushWorker {
         throw error;
       }
       } catch(error) {
+        if (error?.code === "ESYNC_CASH_ROUTE_HELD") {
+          this.cashUploadHeld ??= cashRoute.uploadHold();
+          originalIds.forEach(id => deferred.add(id));
+          continue;
+        }
         // Fall back for a payload rejection, not network/auth/database failures.
         if (aggregate.originals && (error?.code === "EOVERSIZED" ||
           [400,413,422].includes(Number(error?.status)))) {
@@ -502,6 +534,7 @@ class PushWorker {
     batchSize = Math.max(100, Math.min(2000, Number(batchSize) || 500));
     const terminalId = this.cloud.terminalId?.() ?? "";
     let pushed = await this.pushAggregates(branchId, batchSize, true, onProgress, includeActivity);
+    let cashUploadHeld = this.cashUploadHeld;
     const deferredTables = new Set();
     let historyUploadHeld=null;
     let financialCoverageAdvanced=false;
@@ -549,9 +582,14 @@ class PushWorker {
           batchSize,
         );
         if (!window.length) break;
+        const tagged = window.filter(change => change.cashCheckoutId);
+        const cashCovered = tagged.length
+          ? await this.reader.cashTrackingCoverage?.(branchId, table.sqlServerTable, tagged)
+          : null;
+        if (tagged.length && !tagged.every(change => cashCovered?.has(change))) throw cashRoute.fail();
         let changes = terminalWritableChanges(
           table.cloudTable,
-          window.filter((change) => !change.remote),
+          window.filter((change) => !change.remote && !cashCovered?.has(change)),
           { branchId, terminalId },
         );
         // A v3 receipt proves only the exact frozen saved facts. A stale CT
@@ -632,6 +670,7 @@ class PushWorker {
           })),
         });
         const uploadId = withParents ? stableUuid({ branchId, recovery: batchId, operations }) : batchId;
+        await this.assertLegacyCashWrites(branchId, withParents ? operations : [{ table: table.cloudTable, rows, changes }]);
         let acknowledged;
         try {
           acknowledged = await this.retry(() =>
@@ -657,6 +696,11 @@ class PushWorker {
         live = [];
       }
       } catch(error) {
+        if (error?.code === "ESYNC_CASH_ROUTE_HELD") {
+          cashUploadHeld ??= cashRoute.uploadHold();
+          deferredTables.add(table.cloudTable);
+          continue;
+        }
         if(error?.code==='ECHANGEGAP'&&error.table==='change_history'&&table.sqlServerTable==='change_history'&&table.cloudTable==='change_history'){
           // Missing-only cloud membership is not proof that local authored
           // history was accepted. Retain its CT checkpoint/journal and let
@@ -675,7 +719,10 @@ class PushWorker {
     // or a blind checkpoint advance. Ordinary legacy passes stay unchanged.
     if(financialCoverageAdvanced)pushed+=await this.pushAggregates(branchId,batchSize,true,onProgress,includeActivity);
     if (this.pushErrors.length) throw Object.assign(this.pushErrors[0], {pushed, failures:this.pushErrors.length});
-    return { pushed, deferredTables:[...deferredTables],...(historyUploadHeld?{historyUploadHeld,allUploaded:false}:{}) };
+    cashUploadHeld ??= this.cashUploadHeld;
+    if (cashUploadHeld) deferredTables.add("sales");
+    return { pushed, deferredTables:[...deferredTables], ...(cashUploadHeld ? { cashUploadHeld, allUploaded:false } : {}),
+      ...(historyUploadHeld?{historyUploadHeld,allUploaded:false}:{}) };
   }
 }
 module.exports = { PushWorker, collapseChanges, rowsForBranch, terminalWritableChanges, batchAuditAggregates };

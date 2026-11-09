@@ -51,9 +51,20 @@ async function freezeOrigin(local, group, branch, epoch, terminal) {
   };
   const { privateKey } = generateKeyPairSync("ed25519");
   const attestation = { ...proof, signature: sign(null, Buffer.from(cashCheckoutMessage(proof)), privateKey).toString("base64url") };
+  const journal = [];
+  for (const [table, id] of [["sales", sale.id], ["sale_items", item.id], ["payment_transactions", tender.id],
+    ["item_activity_logs", movement.id], ["products", item.product_id]]) {
+    const entity = JSON.stringify({ id });
+    const operation = table === "products" ? "update" : "insert";
+    const { recordset } = await manager.pool.request().input("aggregate", group.operation_id).input("branch", branch)
+      .input("table", table).input("entity", entity).input("operation", operation).query(`
+        INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id,entity_version,aggregate_id)
+        OUTPUT CONVERT(varchar(20),inserted.change_id) AS id VALUES(@table,@entity,@operation,@branch,1,@aggregate);`);
+    journal.push({ id: recordset[0].id, table, entity, operation, version: "1" });
+  }
   const payload = JSON.stringify({ eventType: "SaleCompleted", version: 1, operationId: group.operation_id,
     branchId: branch, terminalId: terminal, shiftId: sale.shift_id, sale: { id: sale.id },
-    bridge: { scope, checkoutJson, attestation } });
+    bridge: { scope, checkoutJson, attestation, journal } });
   for (const file of ["pos-sale-outbox-v1.sql", "pos-sale-acceptance-v1.sql"])
     await manager.pool.request().batch(readFileSync(join(__dirname, "preparation", file), "utf8"));
   await manager.pool.request().input("operation", group.operation_id).input("branch", branch).input("terminal", terminal)
@@ -182,7 +193,179 @@ async function verifyMixed(local, worker, checkpoints, receipt, origin, terminal
     assert.equal((await checkpoints.get(branch, grouped.CHECKPOINT, "pull")).committed_cursor.includes('"seq":"0"'), true);
     assert.equal((await checkpoints.get(branch, "__feed__", "pull")).committed_cursor, "98");
     console.log("PASS mixed settings and cash use one durable position, recover atomically, and acknowledge verified sender replay without writes");
+
+    const original = { ...first.changes[0], cursor: 99 };
+    const unrelated = { ...nextReceipt(first, "7", origin, randomUUID(), receipt.changes[0].row_data.shift_id).changes[0], cursor: 100 };
+    const { cloud } = worker;
+    const priorPull = cloud.pullBatch, priorCoverage = cloud.cashLegacyCoverage;
+    let legacyRows = [original, unrelated];
+    let ownedSeq = "1";
+    cloud.pullBatch = async () => ({ rows: legacyRows, tombstones: [], count: legacyRows.length, cursor: legacyRows.at(-1).cursor });
+    cloud.cashLegacyCoverage = async (_source, expectedEpoch, entries) => {
+      assert.equal(expectedEpoch, epoch);
+      const identity = { table_name: "sales", id: original.row_data.id };
+      assert(entries.some(entry => entry.id === identity.id));
+      return { status: "OK", scope_id: branch, epoch, entries: [{ ...identity, seq: ownedSeq }] };
+    };
+    try {
+      const run = value => worker.run({ branchId: branch, skipMembership: true }, value);
+      assert.equal((await run(enrollment)).merged, 1);
+      assert.equal((await state()).sales, 5);
+      assert.equal((await checkpoints.get(branch, "__feed__", "pull")).committed_cursor, "100");
+      legacyRows = [{ ...original, cursor: 101, row_version: "2",
+        row_data: { ...original.row_data, row_version: "2", total_amount: "55.00" } }];
+      ownedSeq = "10";
+      assert.equal((await run(enrollment)).deferredLocalChanges, true);
+      await assert.rejects(run(null), { code: "ESYNC_CASH_LEGACY_COVERAGE" });
+      assert.equal((await checkpoints.get(branch, "__feed__", "pull")).committed_cursor, "100");
+      assert.equal((await position()).seq, "6");
+      ownedSeq = "1";
+      assert.equal((await run(enrollment)).merged, 1);
+      assert.equal((await checkpoints.get(branch, "__feed__", "pull")).committed_cursor, "101");
+      console.log("PASS legacy download skips the archived receipt birth, preserves unrelated rows, and orders corrections after grouped delivery");
+    } finally {
+      cloud.pullBatch = priorPull;
+      cloud.cashLegacyCoverage = priorCoverage;
+    }
   } finally { globalThis.fetch = priorFetch; }
+}
+
+async function verifyPagedRecovery(receipt, origin) {
+  const { scope_id: branch, epoch } = receipt;
+  const terminal = randomUUID();
+  const local = await createLocal(branch, { extraTables: ["products", "item_activity_logs"] });
+  const { manager, registry } = local;
+  const profile = "owned-paged-recovery";
+  const backend = "https://owned-paged-recovery.invalid";
+  const project = "https://owned-project.invalid";
+  manager.profile = { id: profile, host: "owned-private-pipe", database: profile };
+  const fetchBefore = globalThis.fetch;
+  try {
+    const cloud = new CloudClient({ configStore: { get: () => backend },
+      terminalStore: { read: () => ({ tokenId: terminal, locationId: branch, deviceUse: "operations", deviceType: "pc",
+        deviceBindingProof: "b".repeat(64) }) }, connectionManager: manager,
+      financialBasisContext: () => ({ branchId: branch, projectOrigin: project }) });
+    const checkpoints = new CheckpointRepository(manager);
+    const worker = new PullWorker({ connectionManager: manager, cloud, registry, checkpoints,
+      reader: new ChangeReader(manager, registry) });
+    const [sale, item] = receipt.changes.map(change => change.row_data);
+    const product = item.product_id;
+    const otherProduct = randomUUID();
+    const pinId = randomUUID(), seq = "3";
+    const expires = new Date(Date.now() + 300_000).toISOString();
+    const cash = [{ seq: receipt.seq, operation_id: receipt.operation_id, changes: receipt.changes, acceptance: {
+      terminal_id: origin, installation_generation: randomUUID(), database_guid: randomUUID(), checkout_sha256: "a".repeat(64),
+    } }];
+    cash.push(nextReceipt(cash[0], seq, origin, randomUUID(), sale.shift_id));
+    const stock = [{ product_id: product, branch_balance: 3, row_version: 2 },
+      { product_id: otherProduct, branch_balance: 5, row_version: 2 }]
+      .sort((a, b) => a.product_id.localeCompare(b.product_id));
+    const settingsTable = registry.tables.find(table => table.cloudTable === grouped.TABLE);
+    const setting = { table_name: grouped.TABLE, entity_id: JSON.stringify({ store_id: branch }), tombstone: false,
+      row_version: "1", row_data: { ...Object.fromEntries(settingsTable.columns.map(col => [col.cloudColumn, col.nullable ? null : false])),
+        store_id: branch, row_version: "1", idle_timeout_minutes: 7, max_drawer_cash_limit: "45",
+        created_at: "2026-11-07T09:30:00.1234567Z", updated_at: "2026-11-07T09:30:00.1234567Z", updated_by: "fixture" } };
+    const manifest = JSON.stringify({ scope_id: branch, epoch, seq, changes: [setting], cash_count: "2", stock_count: "2" });
+    const identity = { status: "OK", scope_id: branch, epoch, seq, pin_id: pinId, expires_at: expires };
+    let badDigest = true;
+    const requests = [];
+    globalThis.fetch = async (_url, options) => {
+      const read = JSON.parse(options.body).sqlServerGroupedRecovery;
+      requests.push(read.action === "begin" ? "begin" : [read.kind, read.after].join(":"));
+      assert.equal(read.branchId, branch);
+      if (read.action === "begin") return Response.json({ ...identity, manifest_json: manifest, manifest_sha256: digest(manifest) });
+      const index = Number(read.after);
+      assert.equal(read.pinId, pinId);
+      const payload = JSON.stringify({ scope_id: branch, epoch, seq, pin_id: pinId, kind: read.kind,
+        after: read.after, next: String(index + 1), total: "2", rows: [(read.kind === "cash" ? cash : stock)[index]] });
+      return Response.json({ ...identity, payload_json: payload,
+        payload_sha256: badDigest && read.kind === "stock" ? "0".repeat(64) : digest(payload) });
+    };
+    await manager.pool.request().batch(readFileSync(join(__dirname, "preparation", "pos-sync-cash-settings-recovery-stage-v1.sql"), "utf8"));
+    await local.insert("products", { id: product, owner_store_id: branch, row_version: 1, stock_quantity: 42,
+      stock_by_store: { [branch]: 5, "preserved-foreign": 37 } });
+    await local.insert("products", { id: otherProduct, owner_store_id: branch, row_version: 1,
+      stock_quantity: 5, stock_by_store: { [branch]: 5 } });
+    await local.insert("shifts", { id: sale.shift_id, store_id: branch, terminal_id: origin, state: "ACTIVE", status: "OPEN" });
+    const start = (await manager.pool.request().query("SELECT CHANGE_TRACKING_CURRENT_VERSION() AS version;")).recordset[0].version;
+    await checkpoints.save(branch, "products", "push", { change_tracking_version: start });
+    const enrollment = grouped.pilotEnrollment({ branchId: branch, terminalId: terminal, projectOrigin: project, backendOrigin: backend,
+      databaseGuid: await grouped.readDatabaseGuid(manager.pool.request()), projection: grouped.MIXED_PROJECTION, recovery: "paged_stock_v1" });
+    assert(enrollment);
+    const run = async () => worker.installGroupedSettingsSnapshotFor(await worker.groupedSettingsContext(enrollment));
+    const state = async () => (await manager.pool.request().input("id", product).query(`
+      SELECT stock_quantity,stock_by_store,row_version,(SELECT COUNT(*) FROM dbo.sales) AS sales,
+        (SELECT COUNT(*) FROM dbo.pos_sync_cash_settings_recovery_pages_v1) AS stages
+      FROM dbo.products WHERE id=@id;`)).recordset[0];
+    const position = () => checkpoints.get(branch, grouped.MIXED_CHECKPOINT, "pull");
+    await assert.rejects(run(), { code: "ESYNC_GROUPED_PROTOCOL" });
+    assert.equal(await position(), null);
+    assert.equal((await state()).stages, 0);
+    badDigest = false;
+    const key = JSON.stringify({ id: product });
+    await manager.pool.request().input("branch", branch).input("key", key).query(`
+      INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id,entity_version)
+      VALUES(N'products',@key,N'update',@branch,1);`);
+    await assert.rejects(run(), { code: "ELOCAL_UPLOAD_PENDING" });
+    assert.equal(await position(), null);
+    assert.equal((await state()).sales, 0);
+    assert.equal((await state()).stock_quantity, 42);
+    await manager.pool.request().input("key", key)
+      .query("UPDATE dbo.sync_change_journal SET acknowledged_at=SYSUTCDATETIME() WHERE entity_id=@key;");
+    await manager.pool.request().input("id", product)
+      .query("UPDATE dbo.products SET stock_quantity=43 WHERE id=@id;");
+    await assert.rejects(run(), { code: "ELOCAL_UPLOAD_PENDING" });
+    assert.equal((await state()).stock_quantity, 43);
+    await manager.pool.request().input("id", product).query(`
+      WITH CHANGE_TRACKING_CONTEXT (0x434C4F5544) UPDATE dbo.products SET stock_quantity=42 WHERE id=@id;`);
+
+    const save = checkpoints.save.bind(checkpoints);
+    checkpoints.save = async (...args) => {
+      await save(...args);
+      if (args[1] === grouped.MIXED_CHECKPOINT) throw Error("fixture paged recovery checkpoint failure");
+    };
+    try { await assert.rejects(run(), /fixture paged recovery checkpoint failure/); }
+    finally { checkpoints.save = save; }
+    assert.equal(await position(), null);
+    assert.equal((await state()).sales, 0);
+    assert.equal((await state()).stock_quantity, 42);
+    assert.deepEqual(await run(), { epoch, seq, changed: true });
+    const installed = await state();
+    assert.equal(installed.stock_quantity, 40);
+    assert.deepEqual(JSON.parse(installed.stock_by_store), { [branch]: 3, "preserved-foreign": 37 });
+    assert.equal(installed.row_version, 1);
+    assert.equal(installed.sales, 2);
+    assert.equal(installed.stages, 0);
+    assert.equal(JSON.parse((await position()).committed_cursor).seq, seq);
+    assert.deepEqual(requests.slice(-5), ["begin", "cash:0", "cash:1", "stock:0", "stock:1"]);
+    const tracked = await manager.pool.request().input("start", start).input("id", product).query(`
+      SELECT CONVERT(varchar(32),SYS_CHANGE_CONTEXT,2) AS context
+      FROM CHANGETABLE(CHANGES dbo.products,@start) AS ct WHERE ct.id=@id;`);
+    assert.deepEqual(tracked.recordset, [{ context: "434C4F5544" }]);
+    const sql = manager.sql();
+    const download = new sql.Transaction(manager.pool);
+    await download.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+    try {
+      const products = registry.tables.find(table => table.cloudTable === "products");
+      await worker.applyTable(download, products, [{ entity_id: key, tombstone: false,
+        row_data: { id: product, stock_quantity: 45, stock_by_store: { [branch]: 8, "preserved-foreign": 37 }, row_version: 3 } }],
+      branch);
+      await download.commit();
+    } catch (error) {
+      await download.rollback().catch(() => {});
+      throw error;
+    }
+    const newer = await state();
+    assert.equal(newer.row_version, 3);
+    assert.equal(newer.stock_quantity, 45);
+    const priorPosition = (await position()).committed_cursor;
+    await assert.rejects(run(), { code: "ESYNC_GROUPED_REVIEW_REQUIRED", message: /newer local stock/ });
+    assert.deepEqual(await state(), newer);
+    assert.equal((await position()).committed_cursor, priorPosition);
+    await local.restart();
+    assert.equal(JSON.parse((await position()).committed_cursor).seq, seq);
+    console.log("PASS paged mixed LocalDB recovery preserves pending work, newer cloud stock, and foreign stock, and commits receipts, stock and cursor atomically");
+  } finally { globalThis.fetch = fetchBefore; await local.close(); }
 }
 
 async function main() {
@@ -267,6 +450,7 @@ async function main() {
     assert.deepEqual(await state(), complete);
     console.log("PASS committed PostgreSQL cash receipt applied atomically to a second LocalDB, with dependency and pending-work fences, no stock effect or echo, and restart-safe replay");
     await verifyMixed(local, worker, checkpoints, receipt, origin, terminal, state);
+    await verifyPagedRecovery(receipt, origin);
   } finally { await local.close(); }
 }
 

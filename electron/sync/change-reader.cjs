@@ -8,6 +8,8 @@ const {exactGraph,exactRows,projection,parseExactJson,isExactNumber}=require("./
 const {createHash}=require("node:crypto");
 const {stableUuid}=require("../db/repositories/aggregates.cjs");
 const {prepareFinancialOpening,prepareFinancialHistory,assertFinancialHistoryAcknowledgement}=require("./financial-history-ack.cjs");
+const { cashCheckoutForContext } = require("./cash-checkout-route.cjs");
+const { readCashRoute, cashTrackingCoverage, assertLegacyCashWrites } = require("../db/sale-event-outbox.cjs");
 const SHIFT_GRAPH_TABLES = ["shifts", "shift_cash_counts", "shift_reconciliations", "shift_close_events",
   "shift_notifications", "shift_variance_alerts"];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -83,8 +85,18 @@ class ChangeReader {
       throw Object.assign(new Error(`Change Tracking is unavailable for ${name}.`), {
         code: "ESYNC_CT_UNAVAILABLE", table: name,
       });
-    return sets[0].map((row) => ({ ...row, remote: Boolean(row.change_context), key: Object.fromEntries(primary.map((column) => [column, row[column]])), entityId: this.entityId(primary, row) }));
+    return sets[0].map((row) => {
+      const cashCheckoutId = cashCheckoutForContext(row.change_context);
+      return { ...row, remote: Boolean(row.change_context) && !cashCheckoutId,
+        ...(cashCheckoutId ? { cashCheckoutId } : {}),
+        key: Object.fromEntries(primary.map((column) => [column, row[column]])), entityId: this.entityId(primary, row) };
+    });
   }
+  readCashRoute(branchId, operationId) { return readCashRoute(this.connectionManager, branchId, operationId); }
+  cashTrackingCoverage(branchId, table, changes) {
+    return cashTrackingCoverage(this.connectionManager, branchId, table, changes);
+  }
+  assertLegacyCashWrites(branchId, keys) { return assertLegacyCashWrites(this.connectionManager, branchId, keys); }
   async rows(value, changes, { branchId = "", exactFinancial = false } = {}) {
     const { table, primary } = this.table(value);
     if (!changes.length) return [];

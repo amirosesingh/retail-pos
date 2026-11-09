@@ -158,6 +158,7 @@ async function applyGroupedCashInTransaction(worker, transaction, context, facts
     if (local && local.matching !== 1) throw fail("The local receipt differs from the canonical group.", "ESYNC_CASH_RECEIPT_REVIEW");
     if (!local) missing.push({ table, change, id });
   }
+  require("./grouped-cash-legacy.cjs").allowCashApply(transaction, missing.map(({ change }) => change));
   for (const { table, change, id } of missing) {
     await cloud.applyLocalBatch(transaction, table, { rows: [change], tombstones: [] });
     if ((await grouped.readLocalRow(transaction, table, change, "id", id))?.matching !== 1)

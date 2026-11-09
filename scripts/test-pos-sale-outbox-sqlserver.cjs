@@ -13,7 +13,7 @@ const { aggregatePolicy } = require("../electron/db/write-policy.cjs");
 
 async function main() {
   const mode = process.argv[2];
-  assert(process.argv.length === 3 && ["--run", "--wire", "--attested-wire"].includes(mode));
+  assert(process.argv.length === 3 && ["--run", "--wire", "--attested-wire", "--installed-sender"].includes(mode));
   const branchId = "sale-outbox-fixture";
   const terminalId = randomUUID();
   const shiftId = randomUUID();
@@ -21,7 +21,7 @@ async function main() {
   const price = "19.123456789123";
   const local = await createLocal(branchId);
   const { manager } = local;
-  const keyFixture = mode === "--attested-wire" ? createAuthorKeys() : null;
+  const keyFixture = ["--attested-wire", "--installed-sender"].includes(mode) ? createAuthorKeys() : null;
   try {
     const registry = loadRegistry();
     for (const name of ["products", "item_activity_logs", "settings_scoped", "stock_transfers", "stock_transfer_items"]) {
@@ -125,9 +125,9 @@ async function main() {
     const databaseGuid = (await manager.pool.request().query(`SELECT LOWER(CONVERT(nvarchar(36),database_guid)) AS guid
       FROM sys.database_recovery_status WHERE database_id=DB_ID();`)).recordset[0].guid;
     const cashBridge = { branchId, terminalId, databaseGuid, installationGeneration: randomUUID(), feedEpoch: randomUUID() };
-    let prepareCashAuthor, publicKey, activeAuthor = { ...identity, branchId, authorId: randomUUID(), canonicalSubject: identity.subject };
+    let authority, prepareCashAuthor, publicKey, activeAuthor = { ...identity, branchId, authorId: randomUUID(), canonicalSubject: identity.subject };
     if (keyFixture) {
-      const authority = new ShiftAuthorAuthority({
+      authority = new ShiftAuthorAuthority({
         keys: keyFixture.keys, session: { identity: () => activeAuthor, epoch: () => 1,
           hasPermission: key => activeAuthor.permissions[key] === true }, connectionManager: manager,
         terminal: () => ({ tokenId: terminalId, deviceUse: "operations", locationId: branchId }),
@@ -138,6 +138,124 @@ async function main() {
       keyFixture.keys.markEnrolled(binding, { keyId, publicKey });
       prepareCashAuthor = () => authority.prepare(authority.captureCashCheckout());
       await manager.pool.request().batch(readFileSync(resolve(__dirname, "preparation/pos-sale-acceptance-v1.sql"), "utf8"));
+    }
+    if (mode === "--installed-sender") {
+      const { ChangeReader } = require("../electron/sync/change-reader.cjs");
+      const { PushWorker } = require("../electron/sync/push-worker.cjs");
+      const { SyncCoordinator } = require("../electron/sync/coordinator.cjs");
+      const { CheckpointRepository } = require("../electron/sync/checkpoints.cjs");
+      const { cashSenderEnrollment, createCashCheckoutRuntime } = require("../electron/sync/cash-checkout-runtime.cjs");
+      const { TABLES, FENCE } = require("../electron/sync/cash-checkout-route.cjs");
+      for (const table of TABLES) await manager.pool.request().query(`
+        IF NOT EXISTS (SELECT 1 FROM sys.change_tracking_tables WHERE object_id=OBJECT_ID(N'dbo.[${table}]'))
+          ALTER TABLE dbo.[${table}] ENABLE CHANGE_TRACKING;`);
+      await manager.pool.request().query("UPDATE dbo.sync_change_journal SET acknowledged_at=SYSDATETIMEOFFSET();");
+      const reader = new ChangeReader(manager, registry);
+      const checkpoints = new CheckpointRepository(manager);
+      const baseline = await reader.currentVersion();
+      for (const table of TABLES) await checkpoints.save(branchId, table, "push", { change_tracking_version: baseline });
+      const projectOrigin = "https://cash-pilot.fixture.invalid", backendOrigin = "https://cash-relay.fixture.invalid";
+      let handoff = true, attempt = 0, ready = true;
+      const attempts = [], oldWrites = [];
+      const cloud = {
+        terminalId: () => terminalId,
+        requestContext: () => ({ pool: manager.pool, profile: { database: "fixture" },
+          terminal: { tokenId: terminalId, deviceType: "pc", deviceUse: "operations", locationId: branchId,
+            deviceBindingProof: "a".repeat(64) },
+          project: { projectOrigin, branchId }, base: backendOrigin }),
+        assertRequestContext: source => { assert.equal(source.pool, manager.pool); },
+        async submitCashCheckout(source, wire) {
+          attempts.push(wire);
+          assert.equal(source.pool, manager.pool);
+          assert.equal(wire.attestation.authorId, activeAuthor.authorId);
+          if (++attempt === 1) throw Object.assign(new Error("Fixture lost response"), { code: "ETIMEDOUT" });
+          return { status: "ALREADY_APPLIED", result: {
+            operation_id: wire.operationId, sale_id: wire.saleId, scope_id: branchId, epoch: cashBridge.feedEpoch,
+            terminal_id: terminalId, installation_generation: cashBridge.installationGeneration,
+            database_guid: databaseGuid, checkout_sha256: wire.checkoutSha256, author_id: wire.attestation.authorId,
+            author_key_id: wire.attestation.keyId, seq: "2",
+          } };
+        },
+        pushAggregate: value => { oldWrites.push(value); throw new Error("Legacy must not upload this checkout."); },
+        pushBatch: value => { oldWrites.push(value); throw new Error("Legacy CT must not upload this checkout."); },
+      };
+      const worker = new PushWorker({ reader, cloud, checkpoints,
+        registry: { tables: registry.tables.filter(table => TABLES.includes(table.sqlServerTable)) },
+        uploadCashCheckout: wire => runtime.upload(wire) });
+      const coordinator = new SyncCoordinator({ pushWorker: worker });
+      const configured = cashSenderEnrollment({ POS_GROUPED_CASH_SENDER_ENROLLMENT: JSON.stringify({
+        ...cashBridge, projectOrigin, backendOrigin, projection: "settings_cash_v1",
+      }) });
+      assert(configured);
+      assert.equal(cashSenderEnrollment({}), null);
+      const runtime = createCashCheckoutRuntime({ configured, cloud, connectionManager: manager, registry,
+        coordinator, ready: () => ready, handoff: () => handoff, authority });
+      const candidate = checkout(8);
+      candidate.operations.find(operation => operation.table === "sales").rows[0].cashier_id = identity.subject;
+      await runtime.commit(legacy, "sale", candidate);
+      assert(await event(candidate.operationId));
+      assert(await checkpoints.get(branchId, FENCE, "push"));
+      for (const table of TABLES) {
+        const changes = await reader.changedIds(table, baseline);
+        assert.equal(changes.length, 1);
+        assert.equal(changes[0].cashCheckoutId, candidate.operationId);
+        assert.equal(changes[0].remote, false);
+      }
+      await assert.rejects(reader.assertLegacyCashWrites(branchId, [{ table: "products", id: productId }]),
+        { code: "ESYNC_CASH_ROUTE_HELD" });
+      handoff = false;
+      const held = await coordinator.runNow({ branchId, pushOnly: true });
+      assert.equal(held.ok, true);
+      assert(held.deferredTables.includes("sales"));
+      assert.equal(held.cashUploadHeld.code, "ESYNC_CASH_HANDOFF_REQUIRED");
+      assert.equal((await coordinator.runFinal({ branchId })).code, "ESYNC_CASH_HANDOFF_REQUIRED");
+      assert.equal(attempts.length, 0);
+      assert.equal(Number((await checkpoints.get(branchId, "sales", "push")).change_tracking_version), baseline);
+      handoff = true;
+      const lost = await coordinator.runNow({ branchId, pushOnly: true });
+      assert.equal(lost.code, "ETIMEDOUT");
+      assert.equal(await count("pos_sync_sale_acceptance_v1", "operation_id=@id", candidate.operationId), 0);
+      assert.equal(Number((await checkpoints.get(branchId, "sales", "push")).change_tracking_version), baseline);
+      await local.restart();
+      const accepted = await coordinator.runNow({ branchId, pushOnly: true });
+      assert.equal(accepted.ok, true);
+      assert.equal(accepted.cashUploadHeld, null);
+      assert.equal(accepted.pushed, 5);
+      assert.deepEqual(attempts[1], attempts[0]);
+      assert.equal(await count("sync_change_journal", "aggregate_id=@id AND acknowledged_at IS NULL", candidate.operationId), 0);
+      assert.equal(await count("pos_sync_sale_acceptance_v1", "operation_id=@id", candidate.operationId), 1);
+      assert.equal(oldWrites.length, 0);
+      assert((await checkpoints.get(branchId, "sales", "push")).change_tracking_version > baseline);
+      await assert.rejects(reader.assertLegacyCashWrites(branchId, [{ table: "sales", id: candidate.saleId }]),
+        { code: "ESYNC_CASH_ROUTE_HELD" });
+      await reader.assertLegacyCashWrites(branchId, [{ table: "products", id: productId }]);
+      console.log("PASS installed sender retains its journal and CT fence after opt-out, then replays the original checkout after restart");
+
+      const unsupported = checkout(7);
+      unsupported.operations.find(operation => operation.table === "sales").rows[0].rounding_adjustment = "0.01";
+      await runtime.commit(legacy, "sale", unsupported);
+      assert.equal(await event(unsupported.operationId), undefined);
+      assert.equal(await stock(), 6);
+      const unsupportedChange = (await reader.changedIds("sales", baseline)).find(change => change.key.id.toLowerCase() === unsupported.saleId);
+      assert(unsupportedChange && !unsupportedChange.cashCheckoutId);
+      const pendingStock = checkout(6);
+      await runtime.commit(legacy, "sale", pendingStock);
+      assert.equal(await event(pendingStock.operationId), undefined);
+      assert.equal(await stock(), 5);
+      await manager.pool.request().input("shift", shiftId).input("another", randomUUID()).query(`
+        UPDATE dbo.sync_change_journal SET acknowledged_at=SYSDATETIMEOFFSET();
+        UPDATE dbo.shifts SET terminal_id=@another WHERE id=@shift;`);
+      await checkpoints.save(branchId, "products", "push", { change_tracking_version: await reader.currentVersion() });
+      const sharedShift = checkout(5);
+      await runtime.commit(legacy, "sale", sharedShift);
+      assert.equal(await event(sharedShift.operationId), undefined);
+      assert.equal(await stock(), 4);
+      ready = false;
+      const disabled = checkout(4);
+      await runtime.commit(legacy, "sale", disabled);
+      assert.equal(await event(disabled.operationId), undefined);
+      console.log("PASS unsupported shapes, pending stock, shared shifts, and disabled capture use the existing checkout without CT ownership");
+      return;
     }
     const bridgeStore = new SaleEventOutbox(manager, registry, { cashBridge, ...(prepareCashAuthor ? { prepareCashAuthor } : {}) });
     const bridgeRepository = new AggregateRepository(manager, repository, { saleOutbox: bridgeStore });

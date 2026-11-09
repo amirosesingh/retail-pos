@@ -374,6 +374,47 @@ and destination effects. A drawer wake must never replay its hardware pulse.
 The bounded snapshot covers settings and ordinary cash receipt rows, not
 full stock balances, the remaining financial writers or larger paged recovery.
 
+The owner asked to continue with the installed financial sender, exclusive
+legacy handoff, refunds and remaining financial writers, and full recovery
+including stock. Continue from `938f2b3f` on PR #451. Keep hosted testing,
+the beta merge, and publication pending. Use agents and only focused local
+tests. Verify that one committed financial operation has one sender and one
+accepted result, that legacy fallback cannot repeat or swallow it, and that
+stock recovery preserves current branch and pending local evidence.
+
+The installed Windows sender is wired into the existing upload worker for
+the supported single-item ordinary cash checkout. Its original journal and
+Change Tracking entries stay pending until the exact central receipt is
+verified. Unsupported checkouts and shared shifts use their existing routes.
+The isolated mixed downloader consults archived row ownership before
+skipping the initial receipt in a legacy page. It preserves unrelated rows
+and waits for the grouped receipt before applying a later correction.
+
+The default-off refund relay checks the current operator and the existing
+approval rule against the locked sale basis. The prepared writer reconciles
+historical refund movement identities, checks exact line preconditions and
+returns the original receipt on retry. The Windows refund journal does not
+yet capture enough preconditions to send this command after local commit.
+Prepared tender and stock SQL verify exact operation and movement replays.
+The paged recovery export stages ordinary cash receipts, store settings and
+branch-owned stock under one pin. The local apply verifies product revisions
+and keeps newer stock and pending changes safe.
+
+Focused LocalDB tests passed for exact cash acknowledgement after a restart,
+legacy overlap, refund replay, and rollback when a recovery pin would
+overwrite newer stock. The local PostgreSQL and relay fixtures passed for
+signed cash, paged recovery, refund approval and replay, duplicate movement
+verification, and exact tender correction. The affected sync, receipt, and
+approval Vitest suites also passed.
+
+Before financial cutover, complete live stock delivery and verified
+handback, publish and apply refund and correction groups, and bring managed
+shifts, voids, other tenders, drawer and transfer actions, and direct
+web and admin writers into the grouped protocol. Full financial recovery
+and reconciliation of all installed data still depend on those writers.
+Keep the prepared SQL outside deployed migrations and leave hosted testing,
+the beta merge, and installer publication pending.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents

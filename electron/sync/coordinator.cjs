@@ -31,8 +31,10 @@ class SyncCoordinator {
   publishFailureStatus(branchId) {
     const failures=[...this.unresolved().values()].filter(failure=>failure.branchId===String(branchId??""));
     const history=(this.historyHolds??=new Map()).get(String(branchId??''))??null;
+    const cash=(this.cashHolds??=new Map()).get(String(branchId??''))??null;
     this.status.historyUploadHeld=history;
-    this.status.lastError=[...new Set([...failures.map(failure=>failure.error),...(history?[history.message]:[])])].join(' ')||null;
+    this.status.cashUploadHeld=cash;
+    this.status.lastError=[...new Set([...failures.map(failure=>failure.error),...[history,cash].filter(Boolean).map(hold=>hold.message)])].join(' ')||null;
     this.status.credentialsInvalid=failures.some(failure=>failure.credentialsInvalid);
   }
   rememberFailure(error,options,direction) {
@@ -183,6 +185,7 @@ class SyncCoordinator {
     const result=await this.runNow({ ...options, includeActivity:true, final:true, pushOnly:true });
     if(!result.ok)return result;
     if(result.historyUploadHeld)return{...result,ok:false,allUploaded:false,code:'EHISTORY_UPLOAD_REVIEW',error:result.historyUploadHeld.message};
+    if(result.cashUploadHeld)return{...result,ok:false,allUploaded:false,code:result.cashUploadHeld.code,error:result.cashUploadHeld.message};
     if(result.deferredTables?.length)return {...result,ok:false,code:"ESYNC_AUTH_PENDING",error:`Settings changes still need an authorized sign-in: ${result.deferredTables.join(", ")}.`};
     const reader=this.pushWorker?.reader;
     const remaining=reader?.pendingSummary
@@ -228,6 +231,8 @@ class SyncCoordinator {
       try { if (!options.pullOnly) { pushed=await this.pushWorker.run(workerOptions); this.status.lastPushAt=new Date().toISOString();
         if(pushed?.historyUploadHeld)(this.historyHolds??=new Map()).set(String(options.branchId??''),pushed.historyUploadHeld);
         else (this.historyHolds??=new Map()).delete(String(options.branchId??''));
+        if(pushed?.cashUploadHeld)(this.cashHolds??=new Map()).set(String(options.branchId??''),pushed.cashUploadHeld);
+        else (this.cashHolds??=new Map()).delete(String(options.branchId??''));
         this.clearSuccessfulFailures(options,"push",pushed);this.publishFailureStatus(options.branchId); } }
       catch(error) { pushError=error;this.rememberFailure(error,options,"push"); }
       if(pushError?.code==="ECHANGEGAP" && ["shifts","shift_cash_counts","shift_reconciliations","shift_close_events","shift_notifications","shift_variance_alerts"].includes(pushError.table) && this.recoverHeldStatuses) {

@@ -219,59 +219,8 @@ export const verifyBusinessAuthorization = createServerFn({ method: "POST" })
     try {
       const who = await assertCaller(data);
       const storeId = callerStore(who, data.storeId);
-      const { loadRuleRows } = await import("./authorization.server");
-      const { resolveRules, authorizationBinding, canBypassAuthorization, requiresAuthorizationAmount } =
-        await import("./authorization");
-      const { verifyOverrideGrant } = await import("./pos-rules.server");
-      const rule = resolveRules(await loadRuleRows(storeId), storeId)[data.actionKey];
-      if (!rule?.isEnabled || rule.mode === "none") return { ok: true as const, required: false };
-      if (requiresAuthorizationAmount(data.actionKey) && data.requestedAmount == null)
-        return { ok: false as const, error: "The value being authorized is required" };
-      if (
-        canBypassAuthorization(
-          rule,
-          { userId: who.id, role: who.role },
-          data.requestedAmount,
-        )
-      ) {
-        return { ok: true as const, required: false, bypassedBy: who.id };
-      }
-      const binding = authorizationBinding(data.payload, data.snapshotHash);
-      const grant = verifyOverrideGrant(data.grantToken ?? undefined, data.actionKey, {
-        storeId,
-        binding,
-      });
-      if (!grant) {
-        return { ok: false as const, error: "A valid authorization grant is required" };
-      }
-      if (data.requestedAmount != null && (grant.approvedAmount == null ||
-          !Number.isFinite(grant.approvedAmount) || grant.approvedAmount < 0))
-        return { ok: false as const, error: "An approval covering the requested value is required" };
-      if (
-        grant.approvedAmount !== undefined &&
-        grant.approvedAmount !== null &&
-        (data.requestedAmount === undefined ||
-          data.requestedAmount === null ||
-          data.requestedAmount > grant.approvedAmount)
-      ) {
-        return { ok: false as const, error: "The requested value exceeds the approved amount" };
-      }
-      // A queued approval can be invalidated after it was claimed (for
-      // example when its line or bill is voided). Signed tokens are therefore
-      // checked against the durable request status, not trusted in isolation.
-      if (grant.requestId) {
-        const { getRequest } = await import("./authorization.server");
-        const request = await getRequest(grant.requestId);
-        if (
-          !request ||
-          request.status !== "approved" ||
-          !request.consumedAt ||
-          request.requestedBy.toLowerCase() !== who.id.toLowerCase()
-        ) {
-          return { ok: false as const, error: "That approval is no longer valid" };
-        }
-      }
-      return { ok: true as const, required: true, grant };
+      const { checkBusinessAuthorization } = await import("./business-authorization.server");
+      return await checkBusinessAuthorization(who, { ...data, storeId });
     } catch (e) {
       return { ok: false as const, error: (e as Error).message.slice(0, 300) };
     }

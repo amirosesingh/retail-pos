@@ -14,8 +14,19 @@ class ReceiptRepository{
   if(financial){try{observed=(await this.connectionManager.pool.request().input("sale",saleId).input("branch",branchId).query("SELECT TOP(1) id,shift_id FROM dbo.sales WHERE id=@sale AND store_id=@branch;")).recordset?.[0]??null;}catch(error){observationError=error;}}
   const sql=this.connectionManager.sql();const tx=new sql.Transaction(this.connectionManager.pool);await tx.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
   try{
-   const prior=await new sql.Request(tx).input("refund",operationId).query(financial?"SELECT operation_id FROM dbo.local_operation_receipts WITH(UPDLOCK,HOLDLOCK) WHERE operation_id=@refund;":"SELECT operation_id FROM dbo.local_operation_receipts WHERE operation_id=@refund;");
-   if(prior.recordset?.length){await tx.commit();return{ok:true,replayed:true,refundId};}
+   const receiptLock=financial?" WITH(UPDLOCK,HOLDLOCK)":"";
+   const prior=(await new sql.Request(tx).input("refund",operationId)
+    .query(`SELECT operation_type,entity_id,note FROM dbo.local_operation_receipts${receiptLock} WHERE operation_id=@refund;`)).recordset?.[0];
+   if(prior){
+    if(prior.operation_type!=="refund"||String(prior.entity_id).toLowerCase()!==saleId.toLowerCase()||
+     (prior.note??null)!==reason)
+     throw Object.assign(new Error("This refund ID belongs to a different saved operation."),{code:"EIDEMPOTENCY"});
+    const owner=await new sql.Request(tx).input("sale",saleId).input("branch",branchId)
+     .query("SELECT id FROM dbo.sales WHERE id=@sale AND store_id=@branch;");
+    if(!owner.recordset?.length)
+     throw Object.assign(new Error("The receipt does not belong to this branch or is unavailable locally."),{code:"ERECEIPT"});
+    await tx.commit();return{ok:true,replayed:true,refundId};
+   }
    let financialToken=null;
    if(financial){
     if(observationError)throw observationError;

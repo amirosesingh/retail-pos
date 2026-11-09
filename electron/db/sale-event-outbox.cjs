@@ -3,6 +3,7 @@ const { decimal, projection } = require("../sync/shift-recovery-exact.cjs");
 const { recordId } = require("../sync/uuid-fields.cjs");
 const { wireFields, cashBridgeCheckout, checkedCashBridgeScope, refuseCashBridge } = require("./sale-cash-wire.cjs");
 const { normalizeCashCheckoutAttestation } = require("../security/financial-author-protocol.cjs");
+const cashRoute = require("../sync/cash-checkout-route.cjs");
 
 const EVENT_TYPE = "SaleCompleted";
 const MAX_PAYLOAD_BYTES = 512 * 1024;
@@ -22,6 +23,8 @@ const fields = {
   item_activity_logs: ["id", "product_id", "store_id", "terminal_id", "activity_type", "reference",
     "quantity_delta", "unit_cost", "created_at", "row_version"],
 };
+const legacyCheckout = () => Object.assign(new Error("This checkout uses the existing sale upload route."),
+  { code: "ESALE_CASH_LEGACY_ONLY" });
 
 function refuse() {
   throw Object.assign(new Error("The checkout is outside the supported immutable sale capture or its saved facts are incomplete."), {
@@ -115,6 +118,93 @@ function readFrozenCheckout(row, scope, operationId) {
   return { wire, journal: event.bridge.journal };
 }
 
+function routeEnvelope(row) {
+  if (typeof row?.payload_json !== "string" || payloadHash(row.payload_json) !== row.payload_hash) throw cashRoute.fail();
+  let scope;
+  try { scope = checkedCashBridgeScope(JSON.parse(row.payload_json)?.bridge?.scope); }
+  catch { throw cashRoute.fail(); }
+  const evidence = readFrozenCheckout(row, scope, recordId(row.operation_id));
+  if (!evidence?.wire.attestation || !Array.isArray(evidence.journal) || evidence.journal.length !== cashRoute.TABLES.length)
+    throw cashRoute.fail();
+  return evidence;
+}
+
+// A new installed capture records this marker in the same transaction. A
+// limited replacement SQL login or partially restored metadata must not make
+// the legacy routes assume that protected cash work has disappeared.
+const assertRouteStorage = `
+  IF OBJECT_ID(N'dbo.pos_sync_sale_outbox_v1',N'U') IS NULL
+  BEGIN
+    IF EXISTS (SELECT 1 FROM dbo.sync_checkpoints WHERE organization_id=N'default'
+        AND branch_id=@branch AND entity_type=N'${cashRoute.FENCE}' AND direction=N'push')
+      THROW 51041,'Protected cash checkout storage is unavailable.',1;
+    RETURN;
+  END;`;
+
+async function readCashRoute(connectionManager, branchId, operationId) {
+  if (!uuid(operationId)) return null;
+  const result = await connectionManager.pool.request().input("branch", branchId).input("operation", operationId).query(`
+    ${assertRouteStorage}
+    EXEC sys.sp_executesql N'SELECT o.* FROM dbo.pos_sync_sale_outbox_v1 AS o
+      WHERE o.operation_id=@id AND JSON_QUERY(o.payload_json,''$.bridge.attestation'') IS NOT NULL;',
+      N'@id uniqueidentifier', @id=@operation;`);
+  const rows = result.recordset ?? [];
+  if (!rows.length) return null;
+  if (rows.length !== 1) throw cashRoute.fail();
+  const { wire } = routeEnvelope(rows[0]);
+  if (wire.scope.branchId !== branchId) throw cashRoute.fail();
+  return wire;
+}
+
+async function cashTrackingCoverage(connectionManager, branchId, table, changes) {
+  const tagged = changes.filter(change => change.cashCheckoutId);
+  if (!tagged.length) return new Set();
+  if (!cashRoute.TABLES.includes(table) || tagged.some(change => !uuid(change.cashCheckoutId) ||
+      !uuid(change.key?.id) || change.operation === "D")) throw cashRoute.fail();
+  const operations = [...new Set(tagged.map(change => change.cashCheckoutId))];
+  const result = await connectionManager.pool.request().input("branch", branchId).input("operations", JSON.stringify(operations)).query(`
+    ${databaseGuidQuery}
+    ${assertRouteStorage}
+    IF OBJECT_ID(N'dbo.pos_sync_sale_acceptance_v1',N'U') IS NOT NULL
+      EXEC sys.sp_executesql N'SELECT o.*,a.receipt_json FROM dbo.pos_sync_sale_outbox_v1 AS o
+        INNER JOIN dbo.pos_sync_sale_acceptance_v1 AS a ON a.operation_id=o.operation_id
+        INNER JOIN OPENJSON(@ids) AS wanted ON o.operation_id=TRY_CONVERT(uniqueidentifier,wanted.[value])
+        WHERE o.branch_id=@branch;', N'@ids nvarchar(max),@branch nvarchar(128)', @ids=@operations,@branch=@branch;`);
+  const guid = result.recordsets?.[0]?.[0]?.database_guid;
+  const rows = result.recordsets?.[1] ?? [];
+  if (rows.length !== operations.length) throw cashRoute.fail();
+  const byOperation = new Map(rows.map(row => {
+    const { wire, journal } = routeEnvelope(row);
+    if (wire.scope.databaseGuid !== guid || wire.scope.branchId !== branchId) throw cashRoute.fail();
+    try { confirmedReceipt(wire, JSON.parse(row.receipt_json)); }
+    catch { throw cashRoute.fail(); }
+    return [wire.operationId, journal];
+  }));
+  for (const change of tagged) {
+    const evidence = byOperation.get(change.cashCheckoutId);
+    if (!evidence?.some(row => row.table === table && recordId(JSON.parse(row.entity).id) === recordId(change.key.id)))
+      throw cashRoute.fail();
+  }
+  return new Set(tagged);
+}
+
+async function assertLegacyCashWrites(connectionManager, branchId, keys) {
+  if (!keys.length) return;
+  const result = await connectionManager.pool.request().input("branch", branchId).input("keys", JSON.stringify(keys)).query(`
+    ${assertRouteStorage}
+    DECLARE @pendingProduct nvarchar(max)=CASE WHEN OBJECT_ID(N'dbo.pos_sync_sale_acceptance_v1',N'U') IS NULL THEN N''
+      ELSE N' AND (saved.[table]<>N''products'' OR NOT EXISTS (SELECT 1 FROM dbo.pos_sync_sale_acceptance_v1 a WHERE a.operation_id=o.operation_id))'
+      END;
+    DECLARE @query nvarchar(max)=N'SELECT TOP (1) 1 AS held FROM dbo.pos_sync_sale_outbox_v1 AS o
+      CROSS APPLY OPENJSON(o.payload_json,''$.bridge.journal'')
+        WITH ([table] nvarchar(128) ''$.table'', entity nvarchar(512) ''$.entity'') AS saved
+      INNER JOIN OPENJSON(@keys) WITH ([table] nvarchar(128), id uniqueidentifier) AS wanted
+        ON saved.[table]=wanted.[table] AND TRY_CONVERT(uniqueidentifier, JSON_VALUE(saved.entity,''$.id''))=wanted.id
+      WHERE o.branch_id=@branch AND JSON_QUERY(o.payload_json,''$.bridge.attestation'') IS NOT NULL'+@pendingProduct;
+    EXEC sys.sp_executesql @query, N'@keys nvarchar(max),@branch nvarchar(128)', @keys=@keys,@branch=@branch;`);
+  if (result.recordset?.length) throw cashRoute.fail();
+}
+
 function confirmedReceipt(wire, value) {
   if (!wire?.attestation || !validSequence(value?.seq)) refuseCashBridge();
   const expected = { operation_id: wire.operationId, sale_id: wire.saleId, scope_id: wire.scope.branchId,
@@ -152,14 +242,14 @@ async function hasCashAcceptance(transaction, { operationId, seq, branchId, epoc
   } catch { return false; }
 }
 
-// This capture is injected only in isolated preparation. Delivery and its
-// mutable dispositions belong to a separate, reviewed protocol slice.
 class SaleEventOutbox {
-  constructor(connectionManager, registry, { cashBridge = null, prepareCashAuthor = null } = {}) {
+  constructor(connectionManager, registry, { cashBridge = null, prepareCashAuthor = null, installedHandoff = false } = {}) {
     this.connectionManager = connectionManager;
     this.cashBridge = cashBridge === null ? null : checkedCashBridgeScope(cashBridge);
     if (prepareCashAuthor !== null && (!this.cashBridge || typeof prepareCashAuthor !== "function")) refuseCashBridge();
+    if (installedHandoff && !prepareCashAuthor) refuseCashBridge();
     this.prepareCashAuthor = prepareCashAuthor;
+    this.installedHandoff = installedHandoff;
     this.projections = Object.fromEntries(Object.entries(fields).map(([name, names]) => {
       const table = registry.tables.find(table => table.sqlServerTable === name);
       const selected = this.cashBridge ? [...new Set([...names, ...wireFields[name]])] : names;
@@ -167,6 +257,28 @@ class SaleEventOutbox {
       if (columns.some(column => !column)) refuse();
       return [name, projection({ columns })];
     }));
+  }
+
+  async assertInstalledStockBaseline(transaction, productId, branchId) {
+    const { recordset } = await transaction.request().input("product", productId).input("branch", branchId).query(`
+      DECLARE @baseline bigint=(SELECT change_tracking_version FROM dbo.sync_checkpoints WITH(HOLDLOCK)
+        WHERE organization_id=N'default' AND branch_id=@branch AND entity_type=N'products' AND direction=N'push');
+      DECLARE @minimum bigint=CHANGE_TRACKING_MIN_VALID_VERSION(OBJECT_ID(N'dbo.products'));
+      IF @baseline IS NULL OR @minimum IS NULL OR @baseline<@minimum OR @baseline>CHANGE_TRACKING_CURRENT_VERSION()
+      BEGIN SELECT 0 AS ready; RETURN; END;
+      SELECT CASE WHEN EXISTS (
+        SELECT 1 FROM CHANGETABLE(VERSION dbo.products, (id), (CONVERT(uniqueidentifier,@product))) c
+        WHERE c.SYS_CHANGE_VERSION>@baseline AND (c.SYS_CHANGE_CONTEXT IS NULL OR c.SYS_CHANGE_CONTEXT<>0x434C4F5544)
+      ) OR EXISTS (
+        SELECT 1 FROM dbo.sync_change_journal WITH(HOLDLOCK) WHERE branch_id=@branch AND entity_type=N'products'
+          AND acknowledged_at IS NULL AND TRY_CONVERT(uniqueidentifier, JSON_VALUE(
+            CASE WHEN ISJSON(entity_id)=1 THEN entity_id END, '$.id'))=@product
+      ) THEN 0 ELSE 1 END AS ready;`);
+    if (recordset?.[0]?.ready !== 1) throw legacyCheckout();
+  }
+
+  assertInstalledShift(terminalId) {
+    if (recordId(terminalId) !== this.cashBridge.terminalId) throw legacyCheckout();
   }
 
   async capture(transaction, { operationId, branchId, terminalId, operations, confirmedStock, cashAuthor }) {
@@ -240,15 +352,27 @@ class SaleEventOutbox {
     let bridge;
     if (this.cashBridge) {
       if (database?.length !== 1 || database[0].database_guid !== this.cashBridge.databaseGuid) refuseCashBridge();
-      const checkout = cashBridgeCheckout(this.cashBridge, { sale, items: savedItems, tenders: savedTenders, movements: savedMovements, confirmedStock });
+      let checkout;
+      try {
+        checkout = cashBridgeCheckout(this.cashBridge, { sale, items: savedItems, tenders: savedTenders, movements: savedMovements, confirmedStock });
+      } catch (error) {
+        if (this.installedHandoff && error?.code === "ESALE_CASH_BRIDGE_UNVERIFIED")
+          throw legacyCheckout();
+        throw error;
+      }
       bridge = { scope: this.cashBridge, checkoutJson: JSON.stringify(checkout) };
       if (this.prepareCashAuthor) {
         if (!cashAuthor?.signCashCheckout || !cashAuthor.assertCurrent) refuseCashBridge();
         const { branchId, installationGeneration, databaseGuid, feedEpoch } = this.cashBridge;
         const payloadDigest = payloadHash(bridge.checkoutJson);
-        bridge.attestation = checkedAttestation(cashAuthor.signCashCheckout({ branchId, installationGeneration,
-          databaseGuid, feedEpoch, operationId: recordId(operationId), payloadHash: payloadDigest }),
-        this.cashBridge, recordId(operationId), payloadDigest);
+        try {
+          bridge.attestation = checkedAttestation(cashAuthor.signCashCheckout({ branchId, installationGeneration,
+            databaseGuid, feedEpoch, operationId: recordId(operationId), payloadHash: payloadDigest }),
+          this.cashBridge, recordId(operationId), payloadDigest);
+        } catch (error) {
+          if (this.installedHandoff && error?.code === "ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING") throw legacyCheckout();
+          throw error;
+        }
         if (sale.cashier_id && sale.cashier_id !== bridge.attestation.subject) refuseCashBridge();
         bridge.journal = await cashJournal(transaction, recordId(operationId), branchId, checkout);
         cashAuthor.assertCurrent();
@@ -273,6 +397,11 @@ class SaleEventOutbox {
       .input("hash", sql.Char(64), payloadHash(payload))
       .query(`INSERT dbo.pos_sync_sale_outbox_v1(operation_id,branch_id,terminal_id,shift_id,sale_id,payload_json,payload_hash)
         VALUES(@operation,@branch,@terminal,@shift,@sale,@payload,@hash);`);
+    if (this.installedHandoff) await transaction.request().input("branch", branchId).query(`
+      IF NOT EXISTS (SELECT 1 FROM dbo.sync_checkpoints WITH (UPDLOCK,HOLDLOCK)
+        WHERE organization_id=N'default' AND branch_id=@branch AND entity_type=N'${cashRoute.FENCE}' AND direction=N'push')
+      INSERT dbo.sync_checkpoints(organization_id,branch_id,entity_type,direction)
+      VALUES(N'default',@branch,N'${cashRoute.FENCE}',N'push');`);
   }
 
   // Prepared reader only. A future dispatcher still needs a server-verified
@@ -344,4 +473,4 @@ class SaleEventOutbox {
   }
 }
 
-module.exports = { SaleEventOutbox, hasCashAcceptance };
+module.exports = { SaleEventOutbox, hasCashAcceptance, readCashRoute, cashTrackingCoverage, assertLegacyCashWrites };

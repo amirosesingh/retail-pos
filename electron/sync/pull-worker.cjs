@@ -6,6 +6,7 @@ const { posFeedFailed, posFeedCompleted } = require("./status-evidence.cjs");
 const {prepareHistoryFeed}=require('./history-feed.cjs');
 const grouped = require("./grouped-store-settings.cjs");
 const handoff = require("./grouped-settings-handoff.cjs");
+const { prepareLegacyCashPage, applyLegacyCashCoverage } = require("./grouped-cash-legacy.cjs");
 const { applyGroupedCashReceipt, applyGroupedCashInTransaction, parseMixedCashGroup } = require("./grouped-cash-receipt.cjs");
 const { assertStoreSettingsEditHandbackClear } = require("../db/store-settings-edit-outbox.cjs");
 const { recordId } = require("./uuid-fields.cjs");
@@ -73,7 +74,7 @@ class PullWorker {
     const parseCash = projection === grouped.MIXED_PROJECTION
       ? (group, epoch) => parseMixedCashGroup(group, branch, epoch, recordId(source.terminal.tokenId), this.registry)
       : null;
-    return { source, branch, table, databaseGuid, projection, parseCash };
+    return { source, branch, table, databaseGuid, projection, parseCash, recovery: enrollment?.recovery };
   }
   async assertGroupedProjection(context, transaction = null) {
     if (context.parseCash && context.handoff !== "return") return;
@@ -129,6 +130,8 @@ class PullWorker {
     const transaction = new sql.Transaction(source.pool);
     await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
     const changes = [];
+    const recoveredTables = new Set();
+    let recoveredCount = 0;
     try {
       if (await grouped.readDatabaseGuid(transaction.request()) !== databaseGuid)
         throw grouped.fail("The SQL Server database changed before the grouped settings apply.", "ESYNC_GROUPED_DATABASE_CHANGED");
@@ -157,6 +160,20 @@ class PullWorker {
         const merged = await applyGroupedCashInTransaction(this, transaction, context, facts);
         changes.push(...merged.map(({ table, id }) => ({ table: table.cloudTable, entityId: id })));
       }
+      if (snapshot?.runId) {
+        const assertCurrent = () => {
+          assertGroupedPilotRunning(isPaused);
+          this.cloud.assertRequestContext(source, false);
+        };
+        const { applyPagedRecovery } = require("./grouped-paged-recovery.cjs");
+        const stockChanged = await applyPagedRecovery(this, transaction, context, snapshot, async facts => {
+          const merged = await applyGroupedCashInTransaction(this, transaction, context, facts);
+          for (const { table } of merged) recoveredTables.add(table.cloudTable);
+          recoveredCount += merged.length;
+        }, assertCurrent);
+        if (stockChanged) recoveredTables.add("products");
+        recoveredCount += stockChanged;
+      }
       this.cloud.assertRequestContext(source, false);
       await this.checkpoints.save(branch, grouped.checkpointFor(projection), "pull",
         { committed_cursor: JSON.stringify({ source: source.fingerprint, databaseGuid, ...next }) }, transaction);
@@ -168,9 +185,9 @@ class PullWorker {
       await Promise.resolve(transaction.rollback()).catch(() => undefined);
       throw error;
     }
-    if (changes.length) this.publish({ kind: "general", branchId: branch, source: "cloud",
-      tables: [...new Set(changes.map(({ table }) => table))], changes });
-    return changes.length;
+    if (changes.length || recoveredCount) this.publish({ kind: "general", branchId: branch, source: "cloud",
+      tables: [...new Set([...changes.map(({ table }) => table), ...recoveredTables])], changes });
+    return changes.length + recoveredCount;
   }
   applyGroupedCashReceipt(input) {
     return applyGroupedCashReceipt(this, input);
@@ -203,6 +220,20 @@ class PullWorker {
     await this.assertGroupedProjection(context);
     const position = await grouped.readPosition(source.pool.request(), context);
     assertGroupedPilotRunning(isPaused);
+    const { RECOVERY, stagePagedRecovery } = require("./grouped-paged-recovery.cjs");
+    if (context.recovery === RECOVERY && parseCash) {
+      const snapshot = await stagePagedRecovery(this.cloud, context, () => {
+        assertGroupedPilotRunning(isPaused);
+        this.cloud.assertRequestContext(source, false);
+      });
+      try {
+        snapshot.replayExpired = replayExpired;
+        const { epoch, seq, change } = snapshot;
+        const changed = await this.commitGroupedChanges(context, position, { epoch, seq, upper: null },
+          { change, snapshot }, isPaused);
+        return { epoch, seq, changed: changed > 0 };
+      } finally { await snapshot.clear().catch(() => {}); }
+    }
     const response = await this.cloud.groupedSettingsSnapshot(source, projection);
     assertGroupedPilotRunning(isPaused);
     const snapshot = grouped.snapshotFor(response, branch, table, parseCash);
@@ -392,16 +423,22 @@ class PullWorker {
     let merged = 0; let conflictCount = 0; let membershipMirrored = 0; let membershipDeferred = false; let deferredHeldDeletion = false; let deferredLocalChanges = false;
     try {
     let groupedSource = null;
+    let cashContext = null;
     if (enrollment) {
       try { groupedSource = this.cloud.requestContext(false); }
       catch { /* The legacy page remains guarded if its settings need the pilot. */ }
+      if (enrollment.projection === grouped.MIXED_PROJECTION) {
+        cashContext = await this.groupedSettingsContext(enrollment);
+        if (cashContext.branch !== branchId) throw handoff.legacyFenced();
+        groupedSource = cashContext.source;
+      }
     }
     await this.conflicts?.reconcileAcknowledged?.();
     let checkpoint = await this.checkpoints.get(branchId, "__feed__", "pull");
     while (true) {
-      let prepared,history;
+      let prepared,history,cashCoverage;
       const page = await readPage(async limit => {
-        prepared=null;history=null;
+        prepared=null;history=null;cashCoverage=null;
         const downloaded=await this.cloud.pullBatch({ branchId, cursor: checkpoint?.committed_cursor ?? null, limit });
         if (typeof downloaded.continuation === "boolean" && (downloaded.count || downloaded.continuation)) {
           let previous = Number(checkpoint?.committed_cursor ?? 0);
@@ -417,6 +454,7 @@ class PullWorker {
         }
         if(Buffer.byteLength(JSON.stringify(downloaded),"utf8")>MAX_PAGE_BYTES)
           throw Object.assign(new Error("Download exceeds the safe page size."),{code:"EOVERSIZED"});
+        if (cashContext) cashCoverage = await prepareLegacyCashPage(this.cloud, groupedSource, cashContext, downloaded);
         prepared=await prepareShiftGraphs({cloud:this.cloud,connectionManager:this.connectionManager,branchId,changes:[...downloaded.rows,...downloaded.tombstones]});
         history=await prepareHistoryFeed({cloud:this.cloud,connectionManager:this.connectionManager,branchId,changes:[...downloaded.rows,...downloaded.tombstones]});
         return downloaded;
@@ -438,7 +476,16 @@ class PullWorker {
       await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
       let applicable;
       try {
-        applicable = await this.legacySettingsPage(transaction, batch, branchId, groupedSource, enrollment, checkpoint);
+        if (cashCoverage) {
+          this.cloud.assertRequestContext(groupedSource, false);
+          if (await grouped.readDatabaseGuid(transaction.request()) !== cashContext.databaseGuid) throw handoff.legacyFenced();
+          handoff.assertGroupedFence(await handoff.readFence(transaction.request(), branchId, true), cashContext);
+          const prior = await this.checkpoints.get(branchId, "__feed__", "pull", transaction);
+          if (String(prior?.committed_cursor ?? "") !== String(checkpoint?.committed_cursor ?? ""))
+            throw grouped.fail("Another legacy download advanced the receipt overlap page.", "ESYNC_CURSOR");
+        }
+        const receipts = await applyLegacyCashCoverage(transaction, cashContext, batch, cashCoverage);
+        applicable = await this.legacySettingsPage(transaction, receipts, branchId, groupedSource, enrollment, checkpoint);
         const ordered = [...this.registry.tables].sort((a, b) => a.dependencyOrder - b.dependencyOrder || a.cloudTable.localeCompare(b.cloudTable));
         merged+=await applyShiftGraphs({transaction,connectionManager:this.connectionManager,registry:this.registry,reader:this.reader,branchId,prepared});
         const graphPending = new Map();
@@ -462,7 +509,7 @@ class PullWorker {
         merged+=await history.apply(transaction);
         await history.assert(transaction);
         await this.checkpoints.save(branchId, "__feed__", "pull", { committed_cursor: batch.cursor }, transaction);
-        if (applicable !== batch) this.cloud.assertRequestContext(groupedSource, false);
+        if (cashCoverage || applicable !== batch) this.cloud.assertRequestContext(groupedSource, false);
         await transaction.commit();
       } catch (error) {
         await Promise.resolve(transaction.rollback()).catch(() => undefined);

@@ -10,6 +10,7 @@ const {
 } = require("../branch-scope.cjs");
 const { toRendererRow, normalizeSettingsScope } = require("../../sync/row-codec.cjs");
 const { assertLegacyApply: assertSettingsHandoff } = require("../../sync/grouped-settings-handoff.cjs");
+const { cashCheckoutForContext } = require("../../sync/cash-checkout-route.cjs");
 
 const MAX_BATCH_ROWS = 2000;
 const MAX_ENCODED_BYTES = 6 * 1024 * 1024;
@@ -487,6 +488,13 @@ class OperationsRepository {
     const table = this.tables.get(op.table);
     const primary = table.columns.filter((column) => column.primaryKey).map((column) => column.sqlServerColumn);
     const hasRowVersion = table.columns.some((column) => column.sqlServerColumn === "row_version");
+    const cashContext = scope.cashCheckoutContext;
+    if (cashContext && !cashCheckoutForContext(cashContext)) throw new Error("Invalid cash checkout tracking context.");
+    const taggedQuery = (request, statement) => {
+      if (!cashContext) return request.query(statement);
+      request.input("cashCheckoutContext", this.connectionManager.sql().VarBinary(128), cashContext);
+      return request.query(`WITH CHANGE_TRACKING_CONTEXT (@cashCheckoutContext) ${statement}`);
+    };
     if (op.kind === "insert" || op.kind === "upsert") {
       let affected = 0;
       for (const row of op.rows ?? (op.values ? [op.values] : [])) {
@@ -515,7 +523,7 @@ class OperationsRepository {
         const matched = op.kind === "upsert" && update && !["immutable_reversal", "movement_delta"].includes(table.conflictRule) ? `WHEN MATCHED THEN UPDATE SET ${update}` : "";
         const ownership = this.branchPredicate(table, "candidate");
         const scopedSource = ownership ? `(SELECT * FROM (SELECT ${source}) candidate WHERE ${ownership})` : `(SELECT ${source})`;
-        const result = await request.query(`MERGE dbo.[${op.table}] WITH (HOLDLOCK) AS target USING ${scopedSource} AS source ON ${on} ${matched} WHEN NOT MATCHED THEN INSERT (${insertColumns}) VALUES (${insertValues});`);
+        const result = await taggedQuery(request, `MERGE dbo.[${op.table}] WITH (HOLDLOCK) AS target USING ${scopedSource} AS source ON ${on} ${matched} WHEN NOT MATCHED THEN INSERT (${insertColumns}) VALUES (${insertValues});`);
         affected += result.rowsAffected?.reduce((sum, count) => sum + count, 0) ?? 0;
       }
       return affected;
@@ -546,7 +554,7 @@ class OperationsRepository {
       if (hasRowVersion) setters.push("[row_version]=COALESCE([row_version],0)+1");
       query = `UPDATE source SET ${setters.join(",")} FROM dbo.[${op.table}] source WHERE ${restrictedWhere};`;
     }
-    const result = await request.query(query);
+    const result = await taggedQuery(request, query);
     return result.rowsAffected?.reduce((sum, count) => sum + count, 0) ?? 0;
   }
   branchPredicate(table, alias = "source", seen = new Set()) {

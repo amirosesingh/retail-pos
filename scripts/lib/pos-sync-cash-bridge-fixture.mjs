@@ -88,8 +88,9 @@ export async function verifyCashBridge({ sql, denySql, session, waitFor, wire, r
     await read("../preparation/pos-sync-cash-overlap-v1.sql")];
   if (attested) {
     sql(await read("../../supabase/migrations/20261102101610_shift_author_key_registry.sql"));
+    preparation.push(await read("../preparation/pos-sync-stock-movement-proof-v1.sql"));
     for (const name of ["pos-sync-cash-receive-v1.sql", "pos-sync-store-settings-v1.sql", "pos-sync-grouped-gateway-v1.sql",
-      "pos-sync-cash-settings-gateway-v1.sql", "pos-sync-cash-attested-gateway-v1.sql"])
+      "pos-sync-cash-settings-gateway-v1.sql", "pos-sync-cash-legacy-coverage-v1.sql", "pos-sync-cash-attested-gateway-v1.sql"])
       preparation.push(await read(`../preparation/${name}`));
   }
   sql(`BEGIN;\n${preparation.join("\n")}\nCOMMIT;`);
@@ -187,12 +188,13 @@ export async function verifyCashBridge({ sql, denySql, session, waitFor, wire, r
       return JSON.parse(sql(call()));
     };
     const invokeRead = (rpc, values) => {
-      assert(["pos_sync_pull_cash_settings_v1", "pos_sync_snapshot_cash_settings_v1"].includes(rpc));
+      assert(["pos_sync_pull_cash_settings_v1", "pos_sync_snapshot_cash_settings_v1", "pos_sync_cash_legacy_coverage_v1"].includes(rpc));
       const names = ["p_organization_id", "p_branch_id", "p_terminal_id", "p_binding_proof"];
       if (rpc === "pos_sync_pull_cash_settings_v1") names.push("p_epoch", "p_after_seq", "p_upper_seq", "p_limit");
+      if (rpc === "pos_sync_cash_legacy_coverage_v1") names.push("p_epoch", "p_entries");
       assert.deepEqual(Object.keys(values).sort(), [...names].sort());
       return JSON.parse(sql(`${legacyRole}${serviceClaims} SELECT public.${rpc}(${names.map(name =>
-        values[name] === null ? "NULL" : sqlText(String(values[name]))).join(",")});`));
+        values[name] === null ? "NULL" : sqlText(name === "p_entries" ? JSON.stringify(values[name]) : String(values[name]))).join(",")});`));
     };
     const accepted = relay ? await relay({ wire, proof, args, invokeRpc, invokeRead }) : invokeRpc();
     assert.deepEqual(accepted, { status: "APPLIED", result: { sale_id: first.sale.id, scope_id: branch, epoch, seq: "1",
@@ -200,6 +202,11 @@ export async function verifyCashBridge({ sql, denySql, session, waitFor, wire, r
       database_guid: databaseGuid, checkout_sha256: checkoutSha256, author_id: author.authorId, author_key_id: author.keyId } });
     assert.equal(sql(`SELECT cashier_id FROM public.sales WHERE id='${first.sale.id}';`), author.subject);
     assert.deepEqual(invokeRpc(), { status: "ALREADY_APPLIED", result: accepted.result });
+    assert.equal(counts(), `1|1|1|1|1|1|${10 - Number(first.item.quantity)}|4`);
+    const replayStock = delta => `${legacyRole}${serviceClaims}
+      SELECT public.stock_apply_delta('${first.movement.id}','${product}',${sqlText(branch)},${delta});`;
+    assert.equal(sql(replayStock(-Number(first.item.quantity))), String(10 - Number(first.item.quantity)));
+    denySql(replayStock(1), /POS_STOCK_MOVEMENT_EVIDENCE_CONFLICT/);
     assert.equal(counts(), `1|1|1|1|1|1|${10 - Number(first.item.quantity)}|4`);
     const feed = JSON.parse(sql(`${legacyRole}${serviceClaims}
       SELECT public.pos_sync_pull_cash_settings_v1('default',${sqlText(branch)},'${terminal}','${proof}','${epoch}','0',NULL,10);`));

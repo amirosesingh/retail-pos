@@ -64,6 +64,45 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("isolated grouped sync relay", () => {
+  it("binds paged stock recovery to its requested pin, branch, ordinal and exact payload", async () => {
+    const request = { ...snapshotRead, action: "page", pinId: terminal, kind: "stock", after: "0", limit: 1 };
+    expect((await direct({ sqlServerGroupedRecovery: request })).status).toBe(503);
+    runtime.env.POS_GROUPED_CASH_SETTINGS_PILOT_ENABLED = "true";
+    expect((await direct({ sqlServerGroupedRecovery: request, sqlServerGroupedFeed: read })).status).toBe(400);
+    expect((await direct({ sqlServerGroupedRecovery: { ...request, branchId: otherBranch } })).status).toBe(403);
+    const page = (extra: Record<string, unknown> = {}) => {
+      const payload_json = JSON.stringify({ scope_id: branch, epoch, seq: next, pin_id: terminal, kind: "stock",
+        after: "0", next: "1", total: "2", rows: [{ product_id: secondTerminal, branch_balance: 7, row_version: 3 }], ...extra });
+      return { status: "OK", scope_id: branch, epoch, seq: next, pin_id: terminal,
+        expires_at: new Date(Date.now() + 60_000).toISOString(), payload_json,
+        payload_sha256: createHash("sha256").update(payload_json).digest("hex") };
+    };
+    upstream = () => Response.json(page());
+    expect((await direct({ sqlServerGroupedRecovery: request })).status).toBe(200);
+    expect(requests.at(-1)?.url).toMatch(/\/pos_sync_page_cash_settings_recovery_v1$/);
+    for (const invalid of [{ pin_id: otherTerminal }, { next: "2" },
+      { rows: [{ product_id: secondTerminal, branch_balance: 7.5, row_version: 3 }] },
+      { rows: [{ product_id: secondTerminal, branch_balance: 7, row_version: 0 }] }]) {
+      upstream = () => Response.json(page(invalid));
+      expect((await direct({ sqlServerGroupedRecovery: request })).status).toBe(502);
+    }
+  });
+
+  it("accepts cash legacy coverage only for requested receipt identities and the exact branch epoch", async () => {
+    runtime.env.POS_GROUPED_CASH_SETTINGS_PILOT_ENABLED = "true";
+    const key = { table_name: "sales", id: secondTerminal };
+    const body = { sqlServerCashLegacyCoverage: { ...snapshotRead, epoch, entries: [key] } };
+    const owner = { ...key, seq: next };
+    upstream = () => Response.json({ status: "OK", scope_id: branch, epoch, entries: [owner] });
+    expect((await direct(body)).status).toBe(200);
+    for (const entries of [[owner, owner], [{ ...owner, id: otherTerminal }], [{ ...owner, seq: "0" }]]) {
+      upstream = () => Response.json({ status: "OK", scope_id: branch, epoch, entries });
+      expect((await direct(body)).status).toBe(502);
+    }
+    upstream = () => Response.json({ status: "OK", scope_id: branch, epoch: otherTerminal, entries: [owner] });
+    expect((await direct(body)).status).toBe(502);
+  });
+
   it("uses the mixed snapshot gateway only when enabled and never accepts a settings-only manifest for it", async () => {
     const body = { sqlServerGroupedSnapshot: { ...snapshotRead, projection: "settings_cash_v1" } };
     expect((await direct(body)).status).toBe(503);

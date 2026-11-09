@@ -129,7 +129,7 @@ async function applyThroughRelay({ sql, service, baseline, update, branch, termi
 }
 
 export async function verifyGroupedGateway({ sql, denySql, native = false, settingsEdit = false, editGateway = false, editRelay = false,
-  mixedGateway = false }) {
+  mixedGateway = false, pagedRecovery = false }) {
   const read = async path => (await readFile(new URL(path, import.meta.url), "utf8")).replaceAll("\r\n", "\n");
   const schema = await read("../../supabase/schema.sql");
   const table = schema.match(/CREATE TABLE IF NOT EXISTS public\.pos_store_settings \([\s\S]*?\n\);/)?.[0];
@@ -250,12 +250,14 @@ export async function verifyGroupedGateway({ sql, denySql, native = false, setti
     const mixedPull = after => pullCall(branch, terminal, proof, after).replace("pos_sync_pull_grouped", "pos_sync_pull_cash_settings");
     const mixedSnapshot = snapshotCall().replace("pos_sync_snapshot_grouped", "pos_sync_snapshot_cash_settings");
     const operation = randomUUID(), generation = randomUUID(), database = randomUUID();
+    const product = randomUUID(), movement = randomUUID();
     const cashHash = "a".repeat(64);
     const changes = [
       { table_name: "sales", row_data: { store_id: branch, branch_id: branch } },
-      { table_name: "sale_items", row_data: { branch_id: branch } },
+      { table_name: "sale_items", row_data: { branch_id: branch, product_id: product } },
       { table_name: "payment_transactions", row_data: { store_id: branch, terminal_id: terminal } },
-      { table_name: "item_activity_logs", row_data: { store_id: branch, terminal_id: terminal } },
+      { table_name: "item_activity_logs", row_data: { id: movement, store_id: branch, terminal_id: terminal,
+        product_id: product, quantity_delta: -1 } },
     ];
     const append = `SELECT pos_sync_feed_v1.append_groups('default',
       '${JSON.stringify([{ scope_id: branch, epoch, operation_id: operation, changes }])}'::jsonb);`;
@@ -286,6 +288,80 @@ export async function verifyGroupedGateway({ sql, denySql, native = false, setti
     assert.deepEqual(manifest.cash_groups, [mixed.groups[2]]);
     assert.equal(recovered.manifest_sha256, createHash("sha256").update(recovered.manifest_json).digest("hex"));
     denySql(service + mixedSnapshot.replace(`'${proof}'`, `'${"c".repeat(64)}'`), /SCOPE_FORBIDDEN/);
+    if (pagedRecovery) {
+      sql(`CREATE TABLE public.products (id uuid PRIMARY KEY, owner_store_id text NOT NULL, stock_by_store jsonb NOT NULL,
+          row_version integer NOT NULL DEFAULT 1);
+        CREATE TABLE public.stock_delta_applied (movement_id uuid PRIMARY KEY,product_id uuid NOT NULL,store_id text NOT NULL,delta integer NOT NULL);
+        INSERT INTO public.products VALUES ('${product}','${branch}','{"${branch}":17,"${other}":99}'),
+          (gen_random_uuid(),'${other}','{"${other}":91}');
+        INSERT INTO public.products (id,owner_store_id,stock_by_store)
+          SELECT gen_random_uuid(),'${branch}','{"${branch}":12}' FROM generate_series(1,30);
+        INSERT INTO public.stock_delta_applied VALUES ('${movement}','${product}','${branch}',-1);`);
+      sql(await read("../preparation/pos-sync-cash-settings-recovery-v1.sql"));
+      const appendReceipts = count => sql(`DO $$
+        DECLARE op uuid; movement_id uuid; new_changes jsonb; receipt_seq bigint;
+        BEGIN FOR i IN 1..${count} LOOP
+          op := gen_random_uuid(); movement_id := gen_random_uuid();
+          new_changes := jsonb_set('${JSON.stringify(changes)}'::jsonb, '{3,row_data,id}', to_jsonb(movement_id));
+          INSERT INTO public.stock_delta_applied VALUES (movement_id,'${product}','${branch}',-1);
+          SELECT head_seq+1 INTO receipt_seq FROM pos_sync_feed_v1.feed_heads WHERE scope_id='${branch}';
+          PERFORM pos_sync_feed_v1.append_groups('default',jsonb_build_array(jsonb_build_object(
+            'scope_id','${branch}','epoch','${epoch}','operation_id',op,'changes',new_changes)));
+          PERFORM pos_sync_feed_v1.record_cash_publication('default','${branch}','${epoch}',receipt_seq,op,
+            '${terminal}','${generation}','${database}','${cashHash}');
+        END LOOP; END $$;`);
+      appendReceipts(104);
+      const begin = () => `SELECT public.pos_sync_begin_cash_settings_recovery_v1('default','${branch}','${terminal}','${proof}');`;
+      const pinned = JSON.parse(sql(service + begin()));
+      const pinnedManifest = JSON.parse(pinned.manifest_json);
+      assert.equal(pinnedManifest.cash_count, "105");
+      assert.equal(pinnedManifest.stock_count, "31");
+      assert.equal(pinnedManifest.seq, "107");
+      assert.equal(pinned.manifest_sha256, createHash("sha256").update(pinned.manifest_json).digest("hex"));
+      assert.equal(JSON.parse(sql(service + begin())).pin_id, pinned.pin_id);
+      const pageCall = (kind, after = "0", terminalId = terminal, binding = proof) =>
+        `SELECT public.pos_sync_page_cash_settings_recovery_v1('default','${branch}','${terminalId}',
+          '${binding}','${pinned.pin_id}','${kind}','${after}',25);`;
+      denySql(`SET ROLE authenticated; ${pageCall("cash")}`, /permission denied/);
+      assert.deepEqual(JSON.parse(sql(service + pageCall("stock", "0", receiver, "b".repeat(64)))),
+        { status: "SNAPSHOT_REQUIRED", reason: "PIN_UNAVAILABLE" });
+      assert.deepEqual(JSON.parse(sql(service + pageCall("cash", "106"))), { status: "INVALID_CURSOR" });
+
+      // Writers can proceed between requests. Every page still describes
+      // the stock and cash frozen at the original protected sequence.
+      sql(`UPDATE public.products SET stock_by_store='{"${branch}":3,"${other}":99}',row_version=row_version+1 WHERE id='${product}';`);
+      appendReceipts(1);
+      const all = kind => {
+        let after = "0";
+        const rows = [];
+        while (after !== pinnedManifest[kind + "_count"]) {
+          const page = JSON.parse(sql(service + pageCall(kind, after)));
+          const payload = JSON.parse(page.payload_json);
+          assert.equal(page.pin_id, pinned.pin_id);
+          assert.equal(page.payload_sha256, createHash("sha256").update(page.payload_json).digest("hex"));
+          assert.equal(payload.seq, pinned.seq);
+          assert.equal(payload.after, after);
+          assert.ok(payload.rows.length <= 25);
+          rows.push(...payload.rows);
+          after = payload.next;
+        }
+        return rows;
+      };
+      const cashRows = all("cash"), stockRows = all("stock");
+      assert.equal(cashRows.length, 105);
+      assert.equal(cashRows[0].seq, "3");
+      assert.equal(cashRows.at(-1).seq, "107");
+      assert.equal(stockRows.length, 31);
+      assert.deepEqual(stockRows.find(row => row.product_id === product), { product_id: product, branch_balance: 17, row_version: 1 });
+      assert.ok(stockRows.every(row => Object.keys(row).length === 3));
+      denySql(`BEGIN; UPDATE pos_sync_feed_v1.cash_publications SET acceptance='{}' WHERE scope_id='${branch}' AND seq=3;
+        ${service}${pageCall("cash")} COMMIT;`, /POS_CASH_RECOVERY_ARCHIVE_UNVERIFIED/);
+      sql(`UPDATE pos_sync_feed_v1.snapshot_pins SET expires_at=clock_timestamp()-interval '1 second' WHERE pin_id='${pinned.pin_id}';`);
+      assert.deepEqual(JSON.parse(sql(service + pageCall("stock"))), { status: "SNAPSHOT_REQUIRED", reason: "PIN_UNAVAILABLE" });
+      denySql(`BEGIN; DELETE FROM public.stock_delta_applied WHERE movement_id='${movement}'; ${service}${begin()} COMMIT;`,
+        /POS_CASH_RECOVERY_STOCK_UNVERIFIED/);
+      console.log("PASS complete pinned paged cash archive and branch stock across intervening writes, cross-terminal refusal and expiry");
+    }
     console.log("PASS scoped settings and cash gateway with atomic archive and recovery after live-feed retirement");
     return;
   }
