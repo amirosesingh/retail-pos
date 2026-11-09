@@ -553,11 +553,23 @@ focused PostgreSQL gateway fixture passed, and the exact fix was applied to
 Retail POS Beta. Automatic review blocked the hosted two-till rerun, citing
 the earlier hosted testing hold.
 
+The owner explicitly approved resuming the hosted two-till test on Retail
+POS Beta only. Use a separate synthetic cash scope and disposable SQL
+Server databases for the signed sale and receive drill. Retain the existing
+synthetic transfer and its recovery hold as a separate negative case.
+The hosted migration ledger confirms the recovery-pin repair and RLS on all
+79 public POS tables and 18 grouped-feed tables. The separate cash drill
+requires the isolated HTTPS relay to be running with a valid Beta key.
+
 The staged transfer smoke also left a completed transfer at revision 5
 beside its archived dispatch at revision 3. Preserve the current local
 record. A later recovery may advance only with an exact scoped descendant
 proof bound to the recovery pin. The current dispatch envelope carries the
 original receipt, which by itself cannot prove the newer lifecycle state.
+The focused PostgreSQL and LocalDB replay passed. It exercised the review
+hold after a tentative stock write and verified rollback of the entire
+transaction, preserving the completed transfer, stock, audit, pending
+journal and checkpoint.
 
 ## 7 November — first two-way sync implementation batch
 

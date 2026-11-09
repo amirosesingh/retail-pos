@@ -32,16 +32,22 @@ const changeGraph = (group, edit) => {
   return copy;
 };
 
-async function applyLocal(branch, epoch, facts, { pending = false, recovering = false } = {}) {
+async function applyLocal(branch, epoch, facts, { pending = false, recovering = false, completed = null } = {}) {
   const local = await createLocal(branch, { extraTables: ["stock_transfers", "stock_transfer_items", "products", "item_activity_logs"] });
   try {
     const { manager, registry } = local;
     await manager.pool.request().batch(await preparation("pos-sync-live-stock-native-v1"));
-    await local.insert("products", { id: ids.product, row_version: 1, owner_store_id: "A", stock_quantity: 14, stock_by_store: { A: 10, B: 4 } });
+    await local.insert("products", completed?.product ??
+      { id: ids.product, row_version: 1, owner_store_id: "A", stock_quantity: 14, stock_by_store: { A: 10, B: 4 } });
     await manager.pool.request().batch(`
       ALTER TABLE dbo.stock_transfers ADD FOREIGN KEY(source_request_id) REFERENCES dbo.stock_transfers(id);
       ALTER TABLE dbo.stock_transfer_items ADD FOREIGN KEY(transfer_id) REFERENCES dbo.stock_transfers(id),
         FOREIGN KEY(product_id) REFERENCES dbo.products(id);`);
+    if (completed) {
+      for (const row of completed.headers) await local.insert("stock_transfers", row);
+      for (const row of completed.lines) await local.insert("stock_transfer_items", row);
+      for (const row of facts.logs) await local.insert("item_activity_logs", row);
+    }
     const checkpoint = new CheckpointRepository(manager);
     const current = () => manager.pool.request().query("SELECT CHANGE_TRACKING_CURRENT_VERSION() AS version;");
     for (const name of ["stock_transfers", "stock_transfer_items", "products", "item_activity_logs"]) {
@@ -53,9 +59,11 @@ async function applyLocal(branch, epoch, facts, { pending = false, recovering = 
       const tx = new sql.Transaction(manager.pool);
       await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
       try {
-        if (writePin) await applyGroupedStock(worker, tx, branch,
-          [{ ...facts.stock[0], row_version: facts.stock[0].row_version + 1, branch_balance: 5 }],
-          { epoch, seq: "2", recovery: true });
+        if (writePin) {
+          assert.equal(await applyGroupedStock(worker, tx, branch,
+            [{ ...facts.stock[0], row_version: facts.stock[0].row_version + 1, branch_balance: 5 }],
+            { epoch, seq: "2", recovery: true }), 1);
+        }
         const count = await applyFinancialCorrection(worker, tx, { branch, financialEpoch: epoch, recoveringFinancial: recovering }, facts);
         await checkpoint.save(branch, "fixture_transfer", "pull", { committed_cursor: facts.seq }, tx);
         await tx.commit();
@@ -65,6 +73,32 @@ async function applyLocal(branch, epoch, facts, { pending = false, recovering = 
         throw error;
       }
     };
+    if (completed) {
+      assert.equal(facts.headers.at(-1).row_version, 3);
+      assert.equal(completed.headers.at(-1).row_version, 5);
+      assert.equal(completed.headers.at(-1).status, "completed");
+      const pendingId = randomUUID();
+      await local.insert("stock_transfers", { id: pendingId, from_store_id: branch, to_store_id: "B", status: "draft", row_version: 1 });
+      await manager.pool.request().input("branch", branch).input("id", JSON.stringify({ id: pendingId })).query(`
+        INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id,entity_version)
+        VALUES(N'stock_transfers',@id,N'insert',@branch,1);`);
+      await checkpoint.save(branch, "fixture_transfer", "pull", { committed_cursor: "0" });
+      const state = async () => (await manager.pool.request().query(`
+        SELECT * FROM dbo.stock_transfers ORDER BY id;
+        SELECT * FROM dbo.stock_transfer_items ORDER BY id;
+        SELECT * FROM dbo.products ORDER BY id;
+        SELECT * FROM dbo.pos_sync_grouped_stock_v1 ORDER BY branch_id,product_id;
+        SELECT * FROM dbo.item_activity_logs ORDER BY id;
+        SELECT * FROM dbo.sync_change_journal ORDER BY change_id;
+        SELECT * FROM dbo.sync_checkpoints WHERE entity_type=N'fixture_transfer';`)).recordsets;
+      const retained = await state();
+      assert.equal(retained[5].length, 1);
+      assert.equal(retained[6][0].committed_cursor, "0");
+      await assert.rejects(apply({ writePin: true }), { code: "ESYNC_GROUPED_REVIEW_REQUIRED" });
+      assert.deepEqual(await state(), retained);
+      console.log("PASS archived dispatch holds over the later completed transfer and rolls back stock, audit, pending work, and cursor.");
+      return;
+    }
     if (pending) {
       await manager.pool.request().input("id", ids.product).query("UPDATE dbo.products SET row_version=row_version+1 WHERE id=@id;");
       await assert.rejects(apply(), { code: "ELOCAL_UPLOAD_PENDING" });
@@ -132,7 +166,7 @@ try {
   await db.exec(correction.slice(correction.indexOf("CREATE FUNCTION pos_sync_feed_v1.correction_receipt_row("),
     correction.indexOf("CREATE FUNCTION pos_sync_feed_v1.capture_correction_receipt_graph()")));
   await db.exec(await preparation("pos-sync-transfer-dispatch-feed-v1"));
-  await db.exec(seedSql());
+  await db.exec(seedSql({ extra: `UPDATE public.stock_transfers SET row_version=2 WHERE id='${ids.child}';` }));
   for (const [branch, epoch, terminal, proof] of [["A", epochA, terminalA, proofA], ["B", epochB, terminalB, proofB]]) {
     await db.query("INSERT INTO public.terminal_tokens VALUES($1,$2,'pc','active',NULL,true,NULL,'electron',$3,NULL)", [terminal, branch, proof]);
     await db.query("INSERT INTO pos_sync_feed_v1.feed_heads VALUES('default',$1,$2,0,0)", [branch, epoch]);
@@ -244,6 +278,13 @@ try {
     await applyLocal("A", epochA, sending, { pending: true });
     await applyLocal("A", epochA, parseFinancialCorrection(recovery, "A"), { recovering: true });
     console.log("PASS independent LocalDB tills apply the group and cursor atomically, retry without writes, and preserve newer pinned stock.");
+    const completed = await one(`SELECT jsonb_build_object(
+      'headers',(SELECT jsonb_agg(to_jsonb(t) ORDER BY t.kind) FROM public.stock_transfers t WHERE t.id IN ('${ids.parent}','${ids.child}')),
+      'lines',(SELECT jsonb_agg(to_jsonb(i)||jsonb_build_object('unit_cost',i.unit_cost::text) ORDER BY i.id)
+        FROM public.stock_transfer_items i WHERE i.transfer_id IN ('${ids.parent}','${ids.child}')),
+      'product',(SELECT jsonb_build_object('id',id,'row_version',row_version,'owner_store_id',owner_store_id,
+        'stock_quantity',stock_quantity,'stock_by_store',stock_by_store) FROM public.products WHERE id='${ids.product}'))`);
+    await applyLocal("A", epochA, parseFinancialCorrection(recovery, "A"), { recovering: true, completed });
   }
 } catch (error) {
   console.error(error.message, error.detail ?? "", error.where ?? "");
