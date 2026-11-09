@@ -273,6 +273,19 @@ group to the receiving LocalDB without disturbing the open shift or pending
 journal. Four focused relay and Worker suites passed 11 tests, including
 default-off authorization and refusal of mixed or inexact uploads.
 
+The owner confirmed that no separate hosted staging project currently exists.
+Keep fixture tests isolated. Add a relation inventory check to the existing
+sync verifier so staging metadata can flag missing mappings and unclassified
+relations before cutover. This check does not qualify a table's write paths.
+The structural check still passes for the 70 existing mappings. The new
+metadata comparison passed against disposable SQL Server and PostgreSQL,
+including a missing mapped column, a new unclassified private relation and
+refusal of incomplete SQL Server catalog permissions.
+
+The first GitHub run found one legacy checkpoint call with an added null
+argument. Restore the original call for every other table and keep the
+transaction argument only on the fenced settings path.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents

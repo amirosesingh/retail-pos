@@ -10,6 +10,12 @@ Use one durable upload queue and one authorized cloud download feed. A committed
 
 The 24 SQL Server tables outside the row registry are local journal, checkpoint and conflict state, operational jobs and counters, schema history, operation receipts, and 17 shift author and financial support tables. Their business effects travel through the existing protected protocol. Of the 10 unmapped public Postgres tables, nine are explicitly server-only. They cover session state, SKU allocation, notification deliveries, sponsorship policy and issues, missed-bill provenance, the feed and idempotency receipts. The remaining public table is schema migration history. Private, managed and preparation schemas still require explicit relation-level disposition in the rollout registry. [Server-only policy](../../scripts/sqlserver-sync-policy.cjs)
 
+Export the final JSON value from each read-only inventory and run
+`node scripts/verify-sync-registry.cjs --installed <sqlserver.json> <postgres.json>`.
+The check reports unclassified relations and unavailable mapped columns.
+Use separate evidence for writer authorization, keys, dependencies and
+recovery before accepting a rollout.
+
 ## Implementation and verification gaps
 
 1. **Approval delivery.** A screen opened before staff verification now joins scoped Realtime as soon as verification completes and refreshes after joining. Holds subscribes to the same store it reads. Add an authenticated, minimal wake for relay-only PIN users and a recipient-scoped wake for named cross-store approvers. Include new, approved, rejected, expired and claimed requests, held-ticket readiness and notification badges in acceptance. A wake triggers the authorized queue read. A claim still validates the person, request, ticket contents and one-time use. Make decision, audit and wake publication recover together if one part fails. [Approval client](../../src/lib/approval-centre.ts) · [Approval server](../../src/lib/authorization.functions.ts)

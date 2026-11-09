@@ -1,7 +1,9 @@
 // Runs only against a new, disposable PostgreSQL cluster bound to localhost.
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { access, mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -244,7 +246,32 @@ try {
   sql("CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;");
   const preparation = await readFile(new URL("./preparation/pos-sync-feed-v1.sql", import.meta.url), "utf8");
   sql(`BEGIN;\n${preparation}\nCOMMIT;`);
-  if (process.argv.includes("--named-approval-wake")) {
+  if (process.argv.includes("--installed-registry")) {
+    const require = createRequire(import.meta.url);
+    const { compareInstalledRegistry } = require("./lib/pos-sync-installed-registry.cjs");
+    const { createLocal } = require("./lib/shift-protocol-integration-fixture.cjs");
+    const { tables } = require("../database/sqlserver/schema-registry.json");
+    const local = await createLocal(randomUUID());
+    try {
+      const sqlRead = await readFile(join(root, "docs/database/pos-sync-sqlserver-inventory.readonly.sql"), "utf8");
+      const pgRead = await readFile(join(root, "docs/database/pos-sync-postgres-inventory.readonly.sql"), "utf8");
+      const results = await local.manager.pool.request().batch(sqlRead);
+      const inventory = JSON.parse(results.recordsets.at(-1)[0].pos_sync_sqlserver_inventory);
+      for (const field of ["relations", "columns"])
+        inventory[field] = inventory[field].filter(row => row.relation_name === "pos_store_settings");
+      const settings = tables.find(table => table.cloudTable === "pos_store_settings");
+      const registry = { tables: [{ ...settings, columns: settings.columns.filter(column => column.cloudColumn === "store_id") }] };
+      sql("CREATE TABLE public.pos_store_settings (store_id text); CREATE TABLE public.schema_migrations (version text);");
+      assert.deepEqual(compareInstalledRegistry(registry, inventory, JSON.parse(sql(pgRead))), []);
+      sql("ALTER TABLE public.pos_store_settings RENAME COLUMN store_id TO wrong; CREATE TABLE pos_sync_feed_v1.unreviewed_scope (id text);");
+      assert.deepEqual(compareInstalledRegistry(registry, inventory, JSON.parse(sql(pgRead))), [
+        "Postgres mapped column unavailable: public.pos_store_settings.store_id",
+        "Postgres unclassified relation: pos_sync_feed_v1.unreviewed_scope (r)",
+      ]);
+      assert.throws(() => compareInstalledRegistry(registry, { ...inventory, can_view_database_definition: 0 }, {}), /VIEW DEFINITION/);
+      console.log("PASS disposable SQL Server and PostgreSQL relation inventory and mapped-column drift check");
+    } finally { await local.close(); }
+  } else if (process.argv.includes("--named-approval-wake")) {
     const { verifyNamedApprovalWake } = await import("./lib/pos-named-approval-wake-fixture.mjs");
     await verifyNamedApprovalWake({ sql, denySql });
   } else if (process.argv.includes("--cash-bridge") || process.argv.includes("--cash-wire") || process.argv.includes("--cash-receiving")) {

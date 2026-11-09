@@ -140,3 +140,27 @@ SELECT DISTINCT
 FROM sys.views AS views
 LEFT JOIN sys.sql_expression_dependencies AS dependencies ON dependencies.referencing_id = views.object_id
 ORDER BY view_schema, view_name, referenced_server_name, referenced_database_name, referenced_schema, referenced_entity_name;
+
+-- Save this final result as JSON for scripts/verify-sync-registry.cjs --installed.
+SELECT (
+    SELECT
+        CONVERT(int, HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'VIEW DEFINITION')) AS can_view_database_definition,
+        JSON_QUERY((
+            SELECT SCHEMA_NAME(objects.schema_id) AS schema_name, objects.name AS relation_name,
+                RTRIM(objects.type) AS relation_type
+            FROM sys.objects AS objects
+            WHERE objects.type IN ('U', 'V') AND objects.is_ms_shipped = 0
+            ORDER BY schema_name, relation_name
+            FOR JSON PATH
+        )) AS relations,
+        JSON_QUERY((
+            SELECT SCHEMA_NAME(objects.schema_id) AS schema_name, objects.name AS relation_name,
+                columns.name AS column_name
+            FROM sys.objects AS objects
+            JOIN sys.columns AS columns ON columns.object_id = objects.object_id
+            WHERE objects.type IN ('U', 'V') AND objects.is_ms_shipped = 0
+            ORDER BY schema_name, relation_name, columns.column_id
+            FOR JSON PATH
+        )) AS columns
+    FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+) AS pos_sync_sqlserver_inventory;
