@@ -466,6 +466,24 @@ No hosted schema or data was changed. Grouped shift opening, alternate
 tender checkout, paired stock transfers, remaining direct writers, and
 recovery for those paths still require work.
 
+The owner authorized setup and two-till testing on 9 November in the new
+Retail POS Beta Supabase project in luckycharms Org. Use a dedicated HTTPS
+relay and separate Windows SQL Server databases, with synthetic branches,
+devices, and users. Verify each target before applying schema or enabling the
+pilot. Test restart and lost-response replay, scope isolation, existing-data
+reconciliation, pending work, recovery and handback through the existing POS
+entry points. Continue remaining code and focused tests on PR #451. Production,
+existing shared deployments, beta merge and installer publication remain
+outside this batch.
+
+Grouped shift openings now use the same scoped shift feed as closings. During
+recovery, the Windows worker merges the staged receipt and financial streams
+in commit order, so a missing opening can be restored before its dependent
+sale. An exact opening already present on a till leaves newer shift state
+in place. A divergent opening holds for review. The focused PostgreSQL and
+SQL Server fixtures passed, including a missing shift before its archived
+cash receipt and a retained product after an ownership move.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents

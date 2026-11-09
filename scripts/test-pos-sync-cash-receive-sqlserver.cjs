@@ -424,11 +424,27 @@ async function verifyPagedRecovery(receipt, origin) {
     assert.equal(await worker.cashSenderHandoff(proof, handbackPilot), false);
     assert.equal(await worker.cashSenderHandoff({ ...proof, writingNew: false }, handbackPilot), true);
     const latestSequence = "6";
-    const historical = nextReceipt(cash[0], "5", origin, randomUUID(), sale.shift_id);
+    const missingShift = randomUUID();
+    const shiftTable = registry.tables.find(table => table.cloudTable === "shifts");
+    const stamp = "2026-11-07T09:30:00.123456Z";
+    const opening = { ...Object.fromEntries(shiftTable.columns.map(column => [column.cloudColumn, null])),
+      id: missingShift, store_id: branch, terminal_id: origin, status: "OPEN", state: "ACTIVE",
+      opening_float: 10, opened_at: stamp, created_at: stamp, updated_at: stamp, row_version: 1,
+      opened_by_name: "Fixture Cashier", note: "", overdue: false };
+    const { GRAPH_TABLES } = require("../electron/db/shift-intents.cjs");
+    const graphJson = JSON.stringify({ ok: true, shiftGraphVersion: 1, branchId: branch, shiftId: missingShift,
+      graphToken: null, closedAtRaw: null,
+      tables: GRAPH_TABLES.map(table => ({ table, rows: table === "shifts" ? [opening] : [] })) });
+    const shiftGroup = { seq: "5", operation_id: randomUUID(), financial: { kind: "shift_v1", shift_id: missingShift },
+      changes: [{ table_name: "shifts", entity_id: JSON.stringify({ id: missingShift }), row_version: "1",
+        tombstone: false, row_data: { id: missingShift, store_id: branch, row_version: 1,
+          graph_json: graphJson, graph_sha256: digest(graphJson) } }] };
+    const historical = nextReceipt(cash[0], latestSequence, origin, randomUUID(), missingShift);
     const movedStock = extendedStock.map(row => row.product_id === product
       ? { product_id: product, row_version: 4, retired: true } : row);
     const movedIdentity = { ...extendedIdentity, seq: latestSequence, pin_id: randomUUID() };
-    const movedManifest = JSON.stringify({ ...JSON.parse(extendedManifest), seq: latestSequence, cash_count: "3" });
+    const movedManifest = JSON.stringify({ ...JSON.parse(extendedManifest), seq: latestSequence, cash_count: "3",
+      financial_count: "2" });
     const laterBuckets = { "new-owner": 9, "preserved-foreign": 37 };
     await manager.pool.request().input("id", product).input("buckets", JSON.stringify(laterBuckets)).query(`
       WITH CHANGE_TRACKING_CONTEXT (0x434C4F5544)
@@ -441,7 +457,7 @@ async function verifyPagedRecovery(receipt, origin) {
         assert.equal(read.atLeastSeq, "4");
         return Response.json({ ...movedIdentity, manifest_json: movedManifest, manifest_sha256: digest(movedManifest) });
       }
-      const rows = { cash: [...cash, historical], financial: [correction], stock: movedStock }[read.kind];
+      const rows = { cash: [...cash, historical], financial: [correction, shiftGroup], stock: movedStock }[read.kind];
       const payload = JSON.stringify({ scope_id: branch, epoch, seq: latestSequence, pin_id: movedIdentity.pin_id,
         kind: read.kind, after: read.after, next: String(rows.length), total: String(rows.length), rows });
       return Response.json({ ...movedIdentity, payload_json: payload, payload_sha256: digest(payload) });
@@ -453,7 +469,7 @@ async function verifyPagedRecovery(receipt, origin) {
     const movedState = await state();
     assert.deepEqual(JSON.parse(movedState.stock_by_store), laterBuckets);
     assert.equal(movedState.sales, 3);
-    console.log("PASS extended recovery restores archived cash after ownership moves without changing the new owner's product");
+    console.log("PASS extended recovery restores a missing shift before its receipt and preserves the new owner's stock");
     let sealed = false;
     cloud.pullGroupedSettings = async (_source, saved, _limit, _projection, enabled) => {
       assert.equal(enabled, true);

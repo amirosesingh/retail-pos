@@ -8,7 +8,9 @@ const { recordId } = require("./uuid-fields.cjs");
 const fields = (value, keys) => value && typeof value === "object" && !Array.isArray(value) &&
   Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
 const fail = (message, code = "ESYNC_GROUPED_SHIFT_PROTOCOL") => Object.assign(new Error(message), { code, table: "shifts" });
-const invalid = () => fail("The grouped managed shift is outside the verified closing scope or shape.");
+const invalid = () => fail("The grouped managed shift is outside the verified shift scope or shape.");
+const openingFields = new Set(["id", "store_id", "terminal_id", "opened_at", "opening_float",
+  "opened_by_staff_id", "opened_by_name", "opened_by_role"]);
 
 function parseManagedShiftGroup(group, branch) {
   if (!fields(group, ["seq", "operation_id", "financial", "changes"]) ||
@@ -34,15 +36,22 @@ function parseManagedShiftGroup(group, branch) {
   try { graph = JSON.parse(row.graph_json); } catch { throw invalid(); }
   if (!fields(graph, ["ok", "shiftGraphVersion", "branchId", "shiftId", "graphToken", "closedAtRaw", "tables"]) ||
       graph.branchId !== branch || graph.shiftId !== shiftId) throw invalid();
-  const parent = validateGraph(graph, branch, shiftId).get("shifts")[0];
+  const tables = validateGraph(graph, branch, shiftId, { allowUnclosed: true });
+  const parent = tables.get("shifts")[0];
   if (parent.row_version !== row.row_version) throw invalid();
-  return { kind: "shift_v1", seq: group.seq, operationId: group.operation_id, shiftId, branch,
+  const opening = graph.graphToken === null;
+  if (opening && (parent.status !== "OPEN" || parent.state !== "ACTIVE" || parent.closed_at !== null ||
+      instant(parent.opened_at) === undefined || parent.opening_float == null ||
+      !Number.isFinite(Number(parent.opening_float)) || Number(parent.opening_float) < 0 ||
+      [...tables].some(([table, rows]) => table !== "shifts" && rows.length))) throw invalid();
+  return { kind: "shift_v1", seq: group.seq, operationId: group.operation_id, shiftId, branch, opening,
     rowVersion: row.row_version, changes: group.changes, graph: rememberGraph(graph, row.graph_json, "1") };
 }
 
 async function applyManagedShiftGroup(worker, transaction, context, facts) {
   const { branch } = context;
   if (facts.branch !== branch) throw invalid();
+  if (facts.opening) return applyOpening(worker, transaction, context, facts);
   const local = await transaction.request().input("branch", branch).input("shift", facts.shiftId).query(`
     SELECT row_version,status,state,CONVERT(nvarchar(40),closed_at,127) AS closed_at
     FROM dbo.shifts WITH(UPDLOCK,HOLDLOCK)
@@ -55,6 +64,25 @@ async function applyManagedShiftGroup(worker, transaction, context, facts) {
   }
   return applyShiftGraphs({ transaction, connectionManager: worker.connectionManager, registry: worker.registry,
     reader: worker.reader, branchId: branch, prepared: { graphs: new Map([[facts.shiftId, facts.graph]]), exactNoops: new Set() } });
+}
+
+async function applyOpening(worker, transaction, { branch }, facts) {
+  const parent = worker.registry.tables.find(table => table.cloudTable === "shifts" && table.sqlServerTable === "shifts");
+  if (!parent) throw invalid();
+  const identity = { ...parent, columns: parent.columns.filter(column => openingFields.has(column.cloudColumn)) };
+  const rows = (await transaction.request().input("shift", facts.shiftId).query(`
+    SELECT ${projection(identity)},source.row_version FROM dbo.shifts AS source WITH(UPDLOCK,HOLDLOCK)
+    WHERE source.id=@shift;`)).recordset ?? [];
+  const graph = exactGraph(facts.graph, branch, facts.shiftId);
+  if (!graph || identity.columns.length !== openingFields.size) throw invalid();
+  if (rows.length) {
+    const opening = graph.tables.find(part => part.table === "shifts").rows;
+    if (Number(rows[0].row_version) >= facts.rowVersion && exactRows(identity, rows, opening)) return 0;
+    throw fail("The saved shift opening differs from the verified opening.", "ESYNC_GROUPED_REVIEW_REQUIRED");
+  }
+  return applyShiftGraphs({ transaction, connectionManager: worker.connectionManager, registry: worker.registry,
+    reader: worker.reader, branchId: branch, groupedOpening: true,
+    prepared: { graphs: new Map([[facts.shiftId, facts.graph]]), exactNoops: new Set() } });
 }
 
 async function proveAcceptedOlderClosing(worker, transaction, context, facts, parent) {

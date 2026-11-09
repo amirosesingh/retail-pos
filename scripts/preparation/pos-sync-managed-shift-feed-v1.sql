@@ -1,6 +1,6 @@
 -- Isolated preparation after the FIN62 guards and extended feed.
 -- The original protected writer still owns authorization and financial math.
--- Capture the complete committed closing graph once, after all writer effects.
+-- Capture committed openings and closing graphs after all writer effects.
 BEGIN;
 
 CREATE FUNCTION pos_sync_feed_v1.publish_managed_shift_graph()
@@ -10,6 +10,7 @@ DECLARE
   v_shift uuid;
   v_branch text;
   v_version integer;
+  v_opening boolean;
   v_epoch uuid;
   v_graph jsonb;
   v_raw text;
@@ -23,10 +24,14 @@ BEGIN
   IF TG_TABLE_NAME='shifts' THEN v_shift:=NEW.id;
   ELSE v_shift:=NEW.shift_id; END IF;
   IF v_shift IS NULL THEN RETURN NULL; END IF;
-  SELECT sh.store_id,sh.row_version INTO v_branch,v_version FROM public.shifts AS sh
-  JOIN fin62_history_preparation.protected_shifts AS managed ON managed.shift_id=sh.id AND managed.branch_id=sh.store_id
-  WHERE sh.id=v_shift AND sh.store_id=NEW.store_id AND sh.status='CLOSED' AND sh.state='CLOSED'
-    AND sh.closed_at IS NOT NULL FOR NO KEY UPDATE OF sh;
+  SELECT sh.store_id,sh.row_version,sh.closed_at IS NULL INTO v_branch,v_version,v_opening
+  FROM public.shifts AS sh
+  WHERE sh.id=v_shift AND sh.store_id=NEW.store_id AND (
+    (TG_TABLE_NAME='shifts' AND TG_OP='INSERT' AND sh.status='OPEN' AND sh.state='ACTIVE' AND sh.closed_at IS NULL)
+    OR (sh.status='CLOSED' AND sh.state='CLOSED' AND sh.closed_at IS NOT NULL
+      AND EXISTS (SELECT 1 FROM fin62_history_preparation.protected_shifts AS managed
+        WHERE managed.shift_id=sh.id AND managed.branch_id=sh.store_id))
+  ) FOR NO KEY UPDATE OF sh;
   IF NOT FOUND THEN RETURN NULL; END IF;
   v_epoch:=pos_sync_feed_v1.extended_scope_epoch('default',v_branch);
   IF v_epoch IS NULL THEN RETURN NULL; END IF;
@@ -35,9 +40,12 @@ BEGIN
   END IF;
 
   v_graph:=pos_sync_private.shift_graph(v_shift);
-  PERFORM pos_sync_private.validate_graph(v_graph,v_branch,v_shift,true);
+  IF v_opening AND EXISTS (SELECT 1 FROM jsonb_array_elements(v_graph) AS part
+    WHERE part->>'table'<>'shifts' AND jsonb_array_length(part->'rows')<>0) THEN RETURN NULL; END IF;
+  PERFORM pos_sync_private.validate_graph(v_graph,v_branch,v_shift,NOT v_opening);
   v_raw:=jsonb_build_object('ok',true,'shiftGraphVersion',1,'branchId',v_branch,'shiftId',v_shift,
-    'graphToken',pos_sync_private.graph_token(v_graph),'closedAtRaw',v_graph->0->'rows'->0->'closed_at',
+    'graphToken',CASE WHEN NOT v_opening THEN pos_sync_private.graph_token(v_graph) END,
+    'closedAtRaw',v_graph->0->'rows'->0->'closed_at',
     'tables',v_graph)::text;
   IF octet_length(v_raw)>196608 THEN
     RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='POS_MANAGED_SHIFT_GROUP_TOO_LARGE';

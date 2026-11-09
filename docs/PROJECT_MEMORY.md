@@ -67,6 +67,12 @@ hosted acceptance, the beta merge and installer publication pending. Run
 database checks against disposable instances and keep prepared SQL outside
 the deployed migrations.
 
+The owner subsequently created a separate Retail POS Beta project in
+luckycharms Org and authorized its POS schema, isolated test relay and
+two-till acceptance on PR #451. Use synthetic data and independent test SQL
+Server databases. This supersedes the hosted test hold for that isolated
+project only. Production and shared deployments remain outside the work.
+
 ## 7 November — branch history isolation and affected-PC follow-up approved
 
 Owner approves agents to fix history synchronization so Operations terminals

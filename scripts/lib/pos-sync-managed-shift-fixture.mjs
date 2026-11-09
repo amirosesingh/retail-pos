@@ -51,25 +51,27 @@ export async function verifyManagedShiftAndDrawerFeed({ db, read, table, branch,
   const shift = await addShift();
   const drawer = randomUUID();
   await db.query("INSERT INTO fin62_history_preparation.protected_shifts VALUES($1,$2)", [shift, branch]);
+  const closings = async () => (await readGroups("shift_v1")).filter(group =>
+    JSON.parse(group.changes[0].row_data.graph_json).graphToken !== null);
   let close, recount, request, result;
   await test("one scoped group per protected close or recount and exact drawer audit stage", async () => {
-    assert.deepEqual(await readGroups("shift_v1"), []);
+    assert.deepEqual(await closings(), []);
     await state("authenticated", cashier);
     assert.equal((await original(shift)).rows[0].state, "CLOSED");
     assert.equal((await original(shift)).rows[0].state, "CLOSED");
     await stateRole();
-    const originalGroups = await readGroups("shift_v1");
+    const originalGroups = await closings();
     assert.equal(originalGroups.length, 1);
     close = parseFinancialCorrection(originalGroups[0], branch);
-    assert.throws(() => parseFinancialCorrection(originalGroups[0], "other"), /verified closing scope/);
+    assert.throws(() => parseFinancialCorrection(originalGroups[0], "other"), /verified shift scope/);
     const tampered = structuredClone(originalGroups[0]);
     tampered.changes[0].row_data.graph_json += " ";
-    assert.throws(() => parseFinancialCorrection(tampered, branch), /verified closing scope/);
+    assert.throws(() => parseFinancialCorrection(tampered, branch), /verified shift scope/);
     await state("authenticated", cashier);
     assert.equal(await scalar("SELECT public.shift_recount_submit($1,21.01,'second verified count',NULL,NULL,$2)",
       [shift, terminal]), "CLOSED");
     await stateRole();
-    const graphs = await readGroups("shift_v1");
+    const graphs = await closings();
     assert.equal(graphs.length, 2);
     recount = parseFinancialCorrection(graphs[1], branch);
     assert(recount.rowVersion > close.rowVersion);
@@ -86,6 +88,20 @@ export async function verifyManagedShiftAndDrawerFeed({ db, read, table, branch,
     assert.equal(request.row.note, "OPEN_REQUESTED");
     assert.equal(result.row.note, "OPENED");
     assert.throws(() => parseFinancialCorrection(audit[0], "other"), /verified scope/);
+  });
+
+  const openingId = randomUUID();
+  let opening;
+  await test("one scoped opening group survives changes to the live shift row", async () => {
+    await db.query(`INSERT INTO public.shifts(id,store_id,terminal_id,opening_float,opened_at,status,state,row_version,opened_by_name)
+      VALUES($1,$2,$3,13.005,'2026-11-09T07:01:00.123456Z','OPEN','ACTIVE',1,'Fixture Cashier')`,
+      [openingId, branch, terminal]);
+    await db.query("UPDATE public.shifts SET note='a later update' WHERE id=$1", [openingId]);
+    const groups = (await readGroups("shift_v1")).filter(group => group.financial.shift_id === openingId);
+    assert.equal(groups.length, 1);
+    opening = parseFinancialCorrection(groups[0], branch);
+    assert.equal(opening.opening, true);
+    assert.equal(opening.graph.tables[0].rows[0].note, "");
   });
 
   await test("LocalDB preserves pending shifts and replays drawer audit without changing the saved result", async () => {
@@ -110,6 +126,18 @@ export async function verifyManagedShiftAndDrawerFeed({ db, read, table, branch,
     const apply = (facts, currentSource = source) => inTransaction(transaction =>
       applyFinancialCorrection(worker, transaction, { branch, financialEpoch: epoch, source: currentSource }, facts));
     try {
+      assert.equal(await apply(opening), 1);
+      assert.equal(await apply(opening), 0);
+      await manager.pool.request().input("id", openingId).query(
+        "UPDATE dbo.shifts SET state=N'CASH_COUNT_REQUIRED',row_version=row_version+1 WHERE id=@id;");
+      assert.equal(await apply(opening), 0);
+      const openingState = (await manager.pool.request().input("id", openingId).query(
+        "SELECT state,CONVERT(varchar(40),opening_float) AS opening_float FROM dbo.shifts WHERE id=@id;")).recordset[0];
+      assert.equal(openingState.state, "CASH_COUNT_REQUIRED");
+      assert.equal(Number(openingState.opening_float), 13.005);
+      await manager.pool.request().input("id", openingId).query("UPDATE dbo.shifts SET opening_float=99 WHERE id=@id;");
+      await assert.rejects(apply(opening), { code: "ESYNC_GROUPED_REVIEW_REQUIRED" });
+
       await local.insert("shifts", { id: shift, store_id: branch, terminal_id: terminal, status: "OPEN", state: "CASH_COUNT_REQUIRED",
         opening_float: "1.005", opened_at: "2026-11-05T00:00:00Z", row_version: 1 });
       await manager.pool.request().query("UPDATE dbo.sync_checkpoints SET change_tracking_version=CHANGE_TRACKING_CURRENT_VERSION();");

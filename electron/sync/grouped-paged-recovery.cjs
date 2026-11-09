@@ -178,9 +178,7 @@ async function verifyCoverage(transaction, snapshot) {
 async function applyPagedRecovery(worker, transaction, context, snapshot, applyCash, assertCurrent, applyFinancial) {
   await verifyCoverage(transaction, snapshot);
   const previous = { cash: 0n, financial: 0n, stock: "" };
-  let stockChanged = 0;
-  const kinds = context.extended ? ["stock", "cash", "financial"] : Object.keys(snapshot.totals);
-  for (const kind of kinds) {
+  async function* stagedRows(kind) {
     let after = "0";
     while (after !== snapshot.totals[kind]) {
       assertCurrent();
@@ -190,16 +188,46 @@ async function applyPagedRecovery(worker, transaction, context, snapshot, applyC
           WHERE run_id=@run AND kind=@kind AND after_ordinal=CONVERT(bigint,@after);`);
       const row = result.recordset?.[0];
       const page = pageFor(decode(row?.payload_json, row?.payload_sha256, MAX_PAGE_BYTES), kind, after, snapshot);
-      const rows = checkRows(page, snapshot, context.parseCash, previous);
-      if (kind === "cash") {
-        for (const row of rows) await applyCash(row.facts, row.seq);
-      } else if (kind === "financial") {
-        for (const facts of rows) await applyFinancial(facts);
-      } else {
-        stockChanged += await applyGroupedStock(worker, transaction, context.branch, rows, context.extended
-          ? { epoch: snapshot.epoch, seq: snapshot.seq, recovery: true } : {});
-      }
+      yield checkRows(page, snapshot, context.parseCash, previous);
       after = page.next;
+    }
+  }
+  let stockChanged = 0;
+  async function stock() {
+    for await (const rows of stagedRows("stock")) {
+      stockChanged += await applyGroupedStock(worker, transaction, context.branch, rows, context.extended
+        ? { epoch: snapshot.epoch, seq: snapshot.seq, recovery: true } : {});
+    }
+  }
+  if (!context.extended) {
+    for await (const rows of stagedRows("cash")) {
+      for (const row of rows) await applyCash(row.facts, row.seq);
+    }
+    await stock();
+    return stockChanged;
+  }
+
+  // Stock is the pinned current state. Merge the two event streams by commit
+  // sequence so an opening precedes its receipt and a correction follows it.
+  await stock();
+  async function* individualRows(kind) {
+    for await (const rows of stagedRows(kind)) yield* rows;
+  }
+  const cash = individualRows("cash");
+  const financial = individualRows("financial");
+  let sale = await cash.next();
+  let event = await financial.next();
+  while (!sale.done || !event.done) {
+    assertCurrent();
+    const saleSeq = sale.done ? null : ordinal(sale.value.seq);
+    const eventSeq = event.done ? null : ordinal(event.value.seq);
+    if (saleSeq === eventSeq) throw fail("The recovery archives repeat a committed sequence.");
+    if (eventSeq === null || (saleSeq !== null && saleSeq < eventSeq)) {
+      await applyCash(sale.value.facts, sale.value.seq);
+      sale = await cash.next();
+    } else {
+      await applyFinancial(event.value);
+      event = await financial.next();
     }
   }
   return stockChanged;
