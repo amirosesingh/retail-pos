@@ -2,6 +2,12 @@ import {
   authorizationBinding, canBypassAuthorization, requiresAuthorizationAmount, resolveRules, type AuthPayload,
 } from "./authorization";
 import { getRequest, loadRuleRows } from "./authorization.server";
+import type { OverrideGrant } from "./pos-rules.server";
+
+type BusinessAuthorizationResult =
+  | { ok: false; error: string }
+  | { ok: true; required: false; bypassedBy?: string }
+  | { ok: true; required: true; grant: OverrideGrant };
 
 /** Verify the existing effective rule for an already authenticated operator. */
 export async function checkBusinessAuthorization(
@@ -14,7 +20,7 @@ export async function checkBusinessAuthorization(
     requestedAmount?: number | null;
     grantToken?: string | null;
   },
-) {
+): Promise<BusinessAuthorizationResult> {
   const rule = resolveRules(await loadRuleRows(data.storeId), data.storeId)[data.actionKey];
   if (!rule?.isEnabled || rule.mode === "none") return { ok: true as const, required: false };
   if (requiresAuthorizationAmount(data.actionKey) && data.requestedAmount == null)
