@@ -27,6 +27,21 @@ beforeEach(() => {
 });
 
 describe("guarded native Worker dispatch", () => {
+  it("receives bindings from Nitro when its SSR delegation supplies only the request", async () => {
+    const runtime = { POS_GROUPED_EXTENDED_PILOT_ENABLED: "true" };
+    vi.stubGlobal("__env__", runtime);
+    try {
+      const worker = await entry();
+      await worker.fetch(input(paths[0]), undefined, undefined);
+      expect(h.env).toHaveBeenLastCalledWith(runtime);
+      const direct = { fixture: true };
+      await worker.fetch(input(paths[0]), direct, undefined);
+      expect(h.env).toHaveBeenLastCalledWith(direct);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it.each(paths)("delegates exact CF POST %s without loading the UI router", async path => {
     const request = input(path), env = { fixture: true }, handler = path === paths[0] ? h.sync : path === paths[1] ? h.adopt : h.enroll;
     handler.mockImplementationOnce(async (received: Request) => {

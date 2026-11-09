@@ -519,6 +519,13 @@ entry points and verify denial without a tender or balance disclosure.
 Keep the separate booking payment, checkout, and link finalization gap
 tracked independently.
 
+The actual beta Worker returned grouped-feed unavailable even with the two
+eligible tills and correct project. The generated Nitro adapter supplies the
+Cloudflare bindings through its runtime environment and delegates only the
+request to the inner entry. Carry that trusted environment into the existing
+server configuration resolver, then verify the real HTTPS Worker responds
+with scoped results and denies the wrong proof.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents
