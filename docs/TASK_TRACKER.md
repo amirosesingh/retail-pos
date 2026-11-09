@@ -484,6 +484,16 @@ in place. A divergent opening holds for review. The focused PostgreSQL and
 SQL Server fixtures passed, including a missing shift before its archived
 cash receipt and a retained product after an ownership move.
 
+Grouped transfer dispatch publishes the verified transfer, request and lines
+to eligible participants. The sender's stock and audit stay in its own
+group. The archive and native cursor preserve atomic apply. The focused
+PostgreSQL and LocalDB tests passed, including cross-branch rejection,
+pending local stock and replay after the live feed expired. Split warehouse
+stock, foreign-owned stock, and receive and verify actions still use their
+existing routes. A newer local document without exact dispatch history
+holds for review. Card and split tenders still need a compatible receipt
+contract that retains their reconciliation metadata.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents

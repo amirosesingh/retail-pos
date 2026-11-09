@@ -131,7 +131,8 @@ type GroupedRecoveryRead = z.infer<typeof groupedRecoveryReadSchema>;
 const cashLegacyKeySchema = z.object({ table_name: z.enum(groupedCashTables),
   id: z.string().uuid().refine(id => id === id.toLowerCase()) }).strict();
 const extendedLegacyKeySchema = cashLegacyKeySchema.extend({
-  table_name: z.enum([...groupedCashTables, "stock_delta_applied", ...groupedShiftTables, "drawer_events"]),
+  table_name: z.enum([...groupedCashTables, "stock_delta_applied", ...groupedShiftTables, "drawer_events",
+    "stock_transfers", "stock_transfer_items"]),
   version: z.string().regex(/^[1-9]\d{0,9}$/).nullable(),
 });
 const legacyKey = (entry: { table_name: string; id: string; version?: string | null }) =>
@@ -167,7 +168,8 @@ const groupedStockGroupSchema = z.object({
   ])]),
 }).strict();
 const groupedFinancialChangeSchema = groupedSettingsChangeSchema.extend({
-  table_name: z.enum(["sales", "sale_items", "payment_transactions", "stock_delta_applied", "products", "shifts", "drawer_events"]),
+  table_name: z.enum(["sales", "sale_items", "payment_transactions", "stock_delta_applied", "products", "shifts",
+    "drawer_events", "stock_transfers"]),
 });
 const groupedFinancialGroupSchema = z.object({
   seq: feedSequence, operation_id: z.string().uuid(),
@@ -175,6 +177,7 @@ const groupedFinancialGroupSchema = z.object({
     z.object({ kind: z.enum(["refund_v1", "tender_v1"]), sale_id: z.string().uuid() }).strict(),
     z.object({ kind: z.literal("shift_v1"), shift_id: z.string().uuid() }).strict(),
     z.object({ kind: z.literal("drawer_v1"), event_id: z.string().uuid() }).strict(),
+    z.object({ kind: z.literal("transfer_v1"), transfer_id: z.string().uuid() }).strict(),
   ]),
   changes: z.array(groupedFinancialChangeSchema).min(1).max(301),
   receipt_graph: z.object({ payload_json: z.string().max(196608), payload_sha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict().optional(),
@@ -344,6 +347,39 @@ function validGroupedFinancial(group: z.infer<typeof groupedFinancialGroupSchema
       evidence.tables.every((part: { table: typeof groupedShiftTables[number]; rows?: Record<string, unknown>[] }) =>
         groupedShiftTables.includes(part?.table) && Array.isArray(part.rows) &&
         part.rows.every(row => row?.store_id === branch && (part.table === "shifts" ? row.id === shift : row.shift_id === shift)));
+  }
+  if (group.financial.kind === "transfer_v1") {
+    const { graph_json: graph, graph_sha256: digest } = sale.row_data;
+    const transferId = group.financial.transfer_id;
+    if (group.receipt_graph || children.length || sale.table_name !== "stock_transfers" || !entity.success ||
+      entity.data.id !== transferId || sale.row_data.id !== transferId || sale.row_data.store_id !== branch ||
+      String(sale.row_data.row_version) !== sale.row_version || typeof graph !== "string" || typeof digest !== "string" ||
+      new TextEncoder().encode(graph).byteLength > 196608 || createHash("sha256").update(graph, "utf8").digest("hex") !== digest)
+      return false;
+    const evidence = JSON.parse(graph);
+    const transfer = evidence?.transfer;
+    const request = evidence?.request;
+    if (evidence?.branch_id !== branch || transfer?.id !== transferId || transfer.kind !== "transfer" ||
+      transfer.status !== "dispatched" || String(transfer.row_version) !== sale.row_version ||
+      transfer.from_store_id === transfer.to_store_id || ![transfer.from_store_id, transfer.to_store_id].includes(branch) ||
+      (request === null ? transfer.source_request_id !== null : request?.id !== transfer.source_request_id ||
+        request?.kind !== "request" || request?.status !== "completed" || request.from_store_id !== transfer.from_store_id ||
+        request.to_store_id !== transfer.to_store_id) || !Array.isArray(evidence.lines) ||
+      evidence.lines.length < 1 || evidence.lines.length > 100 || !Array.isArray(evidence.stock) ||
+      evidence.stock.length > 100 || !Array.isArray(evidence.logs) || evidence.logs.length !== evidence.stock.length ||
+      evidence.lines.some((line: Record<string, unknown>) =>
+        line?.transfer_id !== transferId && line?.transfer_id !== request?.id)) return false;
+    if (branch !== transfer.from_store_id) return evidence.stock.length === 0;
+    const sentProducts = new Set(evidence.lines.filter((line: Record<string, unknown>) =>
+      line.transfer_id === transferId && typeof line.quantity_dispatched === "number" && line.quantity_dispatched > 0)
+      .map((line: Record<string, unknown>) => line.product_id));
+    if (evidence.stock.length !== sentProducts.size || evidence.logs.some((row: Record<string, unknown>) =>
+      row?.store_id !== branch || row.activity_type !== "transfer_out" || row.reference !== transfer.ref ||
+      !sentProducts.has(row.product_id))) return false;
+    return evidence.stock.every((row: unknown) => {
+      const parsed = groupedStockRowSchema.safeParse(row);
+      return parsed.success && sentProducts.delete(parsed.data.product_id);
+    });
   }
   const graph = group.receipt_graph;
   if (graph && (new TextEncoder().encode(graph.payload_json).byteLength > 196608 ||

@@ -120,7 +120,7 @@ BEGIN
   v_kind := p_metadata->'financial'->>'kind';
   IF v_correction THEN
     IF p_operation IS NULL OR p_metadata - 'financial' <> '{}'::jsonb OR
-       jsonb_typeof(p_metadata->'financial') IS DISTINCT FROM 'object' OR coalesce(v_kind,'') NOT IN ('refund_v1','tender_v1','shift_v1','drawer_v1') OR
+       jsonb_typeof(p_metadata->'financial') IS DISTINCT FROM 'object' OR coalesce(v_kind,'') NOT IN ('refund_v1','tender_v1','shift_v1','drawer_v1','transfer_v1') OR
        p_changes->0->'row_data'->>'store_id' IS DISTINCT FROM p_branch THEN
       RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='POS_EXTENDED_V1_CORRECTION_UNVERIFIED';
     END IF;
@@ -139,6 +139,13 @@ BEGIN
            OR (p_changes->0->>'row_version'='2' AND (p_changes->0->'row_data'->>'note'='OPENED'
              OR p_changes->0->'row_data'->>'note' LIKE 'FAILED: %')),false) THEN
         RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='POS_EXTENDED_V1_DRAWER_UNVERIFIED';
+      END IF;
+    ELSIF v_kind='transfer_v1' THEN
+      IF (p_metadata->'financial') - ARRAY['kind','transfer_id'] <> '{}'::jsonb OR jsonb_array_length(p_changes)<>1
+         OR p_changes->0->>'table_name' IS DISTINCT FROM 'stock_transfers'
+         OR p_changes->0->'row_data'->>'id' IS DISTINCT FROM p_metadata->'financial'->>'transfer_id'
+         OR jsonb_typeof(p_changes->0->'row_data'->'graph_json') IS DISTINCT FROM 'string' THEN
+        RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='POS_EXTENDED_V1_TRANSFER_UNVERIFIED';
       END IF;
     ELSIF (p_metadata->'financial') - ARRAY['kind','sale_id'] <> '{}'::jsonb OR
           p_changes->0->>'table_name' IS DISTINCT FROM 'sales' OR
@@ -164,6 +171,17 @@ BEGIN
     FROM jsonb_to_recordset((p_changes->0->'row_data'->>'graph_json')::jsonb->'tables') AS part("table" text,rows jsonb)
     CROSS JOIN LATERAL jsonb_array_elements(part.rows) AS entry
     WHERE part."table" IN ('shifts','shift_cash_counts','shift_reconciliations','shift_close_events','shift_notifications','shift_variance_alerts');
+  ELSIF v_kind='transfer_v1' THEN
+    INSERT INTO pos_sync_feed_v1.correction_owners
+    SELECT p_org,p_branch,p_epoch,part.table_name,(entry->>'id')::uuid,(entry->>'row_version')::integer,v_seq
+    FROM (SELECT (p_changes->0->'row_data'->>'graph_json')::jsonb AS graph) AS input
+    CROSS JOIN LATERAL (VALUES
+      ('stock_transfers',jsonb_build_array(input.graph->'transfer',input.graph->'request')),
+      ('stock_transfer_items',input.graph->'lines'),
+      ('item_activity_logs',input.graph->'logs')
+    ) AS part(table_name,rows)
+    CROSS JOIN LATERAL jsonb_array_elements(part.rows) AS entry
+    WHERE entry <> 'null'::jsonb;
   ELSIF v_correction THEN
     INSERT INTO pos_sync_feed_v1.correction_owners
     SELECT p_org,p_branch,p_epoch,change->>'table_name',
@@ -301,7 +319,8 @@ BEGIN
     WHERE jsonb_typeof(value) IS DISTINCT FROM 'object' OR value - ARRAY['table_name','id','version'] <> '{}'::jsonb
       OR NOT value ? 'version' OR coalesce(value->>'table_name','') NOT IN
         ('sales','sale_items','payment_transactions','item_activity_logs','stock_delta_applied',
-         'shifts','shift_cash_counts','shift_reconciliations','shift_close_events','shift_notifications','shift_variance_alerts','drawer_events')
+         'shifts','shift_cash_counts','shift_reconciliations','shift_close_events','shift_notifications','shift_variance_alerts','drawer_events',
+         'stock_transfers','stock_transfer_items')
       OR coalesce(value->>'id','') !~ '^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$'
       OR NOT (value->'version'='null'::jsonb OR
         (jsonb_typeof(value->'version')='string' AND value->>'version' ~ '^[1-9][0-9]{0,9}$'))) THEN

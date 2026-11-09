@@ -144,6 +144,36 @@ describe("isolated grouped sync relay", () => {
     expect((await direct(body)).status).toBe(502);
   });
 
+  it("keeps a dispatch balance and audit out of the destination feed", async () => {
+    runtime.env.POS_GROUPED_CASH_SETTINGS_PILOT_ENABLED = "true";
+    runtime.env.POS_GROUPED_EXTENDED_PILOT_ENABLED = "true";
+    const body = { sqlServerGroupedFeed: { ...read, projection: "settings_cash_v1", extended: true } };
+    const show = (source: boolean, withStock: boolean) => {
+      const graph_json = JSON.stringify({
+        branch_id: branch,
+        transfer: { id: secondTerminal, kind: "transfer", status: "dispatched", row_version: 2, ref: "ST-test",
+          from_store_id: source ? branch : otherBranch, to_store_id: source ? otherBranch : branch, source_request_id: null },
+        request: null,
+        lines: [{ transfer_id: secondTerminal, product_id: otherTerminal, quantity_dispatched: 2 }],
+        stock: withStock ? [{ product_id: otherTerminal, branch_balance: 3, row_version: 3 }] : [],
+        logs: withStock ? [{ store_id: branch, activity_type: "transfer_out", reference: "ST-test", product_id: otherTerminal }] : [],
+      });
+      upstream = () => Response.json({ ...page(), groups: [{ seq: next, operation_id: otherTerminal,
+        financial: { kind: "transfer_v1", transfer_id: secondTerminal }, changes: [{
+          table_name: "stock_transfers", entity_id: JSON.stringify({ id: secondTerminal }), row_version: "2", tombstone: false,
+          row_data: { id: secondTerminal, store_id: branch, row_version: 2, graph_json,
+            graph_sha256: createHash("sha256").update(graph_json).digest("hex") },
+        }],
+      }] });
+    };
+    show(true, true);
+    expect((await direct(body)).status).toBe(200);
+    show(false, false);
+    expect((await direct(body)).status).toBe(200);
+    show(false, true);
+    expect((await direct(body)).status).toBe(502);
+  });
+
   it("binds paged stock recovery to its requested pin, branch, ordinal and exact payload", async () => {
     const request = { ...snapshotRead, action: "page", pinId: terminal, kind: "stock", after: "0", limit: 1 };
     expect((await direct({ sqlServerGroupedRecovery: request })).status).toBe(503);

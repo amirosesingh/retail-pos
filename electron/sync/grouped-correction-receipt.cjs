@@ -32,17 +32,17 @@ function validValue(column, value) {
   return true;
 }
 
-function registeredRows(registry, name, rows) {
+function registeredRows(registry, name, rows, invalid = review) {
   const table = registry.tables.find(candidate => candidate.cloudTable === name && candidate.sqlServerTable === name);
   if (!table || table.columns.filter(column => column.primaryKey).length !== 1 ||
       !table.columns.some(column => column.primaryKey && column.sqlServerColumn === "id") ||
       table.columns.some(column => column.cloudColumn !== column.sqlServerColumn || !/^[a-z][a-z_0-9]*$/.test(column.cloudColumn) ||
         !/^(?:uniqueidentifier|bit|int|datetimeoffset\(7\)|decimal\(38,12\)|decimal\(18,4\)|nvarchar\((?:max|[1-9]\d*)\))$/.test(column.sqlServerType)))
-    throw review();
+    throw invalid();
   const keys = table.columns.map(column => column.cloudColumn);
   if (new Set(rows.map(row => row?.id)).size !== rows.length || rows.some(row =>
     !exact(row, keys) || !uuid(row.id) || !Number.isInteger(row.row_version) || row.row_version < 1 ||
-    table.columns.some(column => !validValue(column, row[column.cloudColumn])))) throw review();
+    table.columns.some(column => !validValue(column, row[column.cloudColumn])))) throw invalid();
   return { table, rows };
 }
 
@@ -181,4 +181,4 @@ async function installCorrectionReceipt(transaction, context, facts, graph, ownA
   return count;
 }
 
-module.exports = { decodeCorrectionReceipt, installCorrectionReceipt };
+module.exports = { decodeCorrectionReceipt, installCorrectionReceipt, registeredRows };

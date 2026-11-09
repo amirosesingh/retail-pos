@@ -10,12 +10,14 @@ const ledger = "stock_delta_applied";
 const graphTables = new Set(["shifts", "shift_cash_counts", "shift_reconciliations", "shift_close_events",
   "shift_notifications", "shift_variance_alerts"]);
 const drawer = "drawer_events";
+const transferTables = new Set(["stock_transfers", "stock_transfer_items"]);
 const drawerVersion = note => note === "OPEN_REQUESTED" ? "1" :
   note === "OPENED" || (typeof note === "string" && note.startsWith("FAILED: ")) ? "2" : null;
 const coveredChange = (change, extended) => {
   const table = change.table_name;
   return (tables.has(table) && (table !== ledger || extended)) ||
-    (extended && (graphTables.has(table) || (table === drawer && (change.tombstone || drawerVersion(change.row_data?.note)))));
+    (extended && (graphTables.has(table) || transferTables.has(table) ||
+      (table === drawer && (change.tombstone || drawerVersion(change.row_data?.note)))));
 };
 const rowKey = table => table === ledger ? "movement_id" : "id";
 const uuid = /^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
@@ -33,9 +35,13 @@ function entryFor(change, branch, extended) {
   try { entity = JSON.parse(change.entity_id); } catch { throw fail(); }
   const field = rowKey(change.table_name);
   const id = recordId(entity?.[field]);
+  const row = change.row_data;
+  const scoped = change.table_name === "stock_transfers"
+    ? [row?.from_store_id, row?.to_store_id].includes(branch)
+    : change.table_name === "stock_transfer_items" ? uuid.test(recordId(row?.transfer_id)) :
+      recordId(row?.[tables.get(change.table_name) ?? "store_id"]) === branch;
   if (!entity || Object.keys(entity).length !== 1 || !uuid.test(id) ||
-      (change.tombstone !== true && (recordId(change.row_data?.[field]) !== id ||
-        recordId(change.row_data?.[tables.get(change.table_name) ?? "store_id"]) !== branch))) throw fail();
+      (change.tombstone !== true && (recordId(row?.[field]) !== id || !scoped))) throw fail();
   if (!extended) return { table_name: change.table_name, id };
   const version = change.tombstone === true ? null : change.table_name === drawer ? drawerVersion(change.row_data?.note) :
     String(change.row_data?.row_version ?? (change.table_name === ledger || graphTables.has(change.table_name) ? 1 : change.row_version));
@@ -85,13 +91,43 @@ function allowCashApply(transaction, accepted) {
   permits.set(transaction, permitted);
 }
 
+async function assertTransferOverlapScope(transaction, branch, accepted) {
+  const candidates = accepted.filter(change => transferTables.has(change.table_name));
+  if (!candidates.length) return;
+  const headers = new Set(candidates.filter(change => change.table_name === "stock_transfers" && !change.tombstone)
+    .map(change => recordId(change.row_data.id)));
+  const facts = candidates.map(change => {
+    const { id } = entryFor(change, branch, true);
+    const parent = change.table_name === "stock_transfer_items" && !change.tombstone
+      ? recordId(change.row_data.transfer_id) : null;
+    return { id, is_item: change.table_name === "stock_transfer_items", parent: headers.has(parent) ? null : parent };
+  });
+  const result = await transaction.request().input("branch", branch).input("facts", JSON.stringify(facts)).query(`
+    DECLARE @wanted TABLE(id uniqueidentifier,is_item bit,parent uniqueidentifier);
+    INSERT @wanted SELECT id,is_item,parent FROM OPENJSON(@facts) WITH(id uniqueidentifier,is_item bit,parent uniqueidentifier);
+    SELECT CASE WHEN EXISTS(SELECT 1 FROM @wanted wanted
+      LEFT JOIN dbo.stock_transfer_items child WITH(HOLDLOCK) ON wanted.is_item=1 AND child.id=wanted.id
+      JOIN dbo.stock_transfers saved WITH(HOLDLOCK) ON saved.id=CASE WHEN wanted.is_item=1 THEN child.transfer_id ELSE wanted.id END
+      WHERE saved.from_store_id COLLATE Latin1_General_100_BIN2<>@branch COLLATE Latin1_General_100_BIN2
+        AND saved.to_store_id COLLATE Latin1_General_100_BIN2<>@branch COLLATE Latin1_General_100_BIN2)
+      OR EXISTS(SELECT 1 FROM @wanted wanted
+        LEFT JOIN dbo.stock_transfers parent WITH(HOLDLOCK) ON parent.id=wanted.parent
+          AND @branch COLLATE Latin1_General_100_BIN2 IN
+            (parent.from_store_id COLLATE Latin1_General_100_BIN2,parent.to_store_id COLLATE Latin1_General_100_BIN2)
+        WHERE wanted.parent IS NOT NULL AND parent.id IS NULL)
+      THEN 0 ELSE 1 END AS allowed;`);
+  if (result.recordset?.[0]?.allowed !== 1) throw fail();
+}
+
 async function applyLegacyCashCoverage(transaction, context, batch, proof) {
   if (!proof) return batch;
   if (batch !== proof.batch) throw fail();
   const position = await grouped.readPosition(transaction.request(), context, true);
   if (!proof.position) {
     if (!context.extended || position || proof.owners.size) throw held();
-    allowCashApply(transaction, changes(batch).filter(change => coveredChange(change, true)));
+    const accepted = changes(batch).filter(change => coveredChange(change, true));
+    await assertTransferOverlapScope(transaction, context.branch, accepted);
+    allowCashApply(transaction, accepted);
     return batch;
   }
   if (!position || position.epoch !== proof.position.epoch ||
@@ -121,6 +157,7 @@ async function applyLegacyCashCoverage(transaction, context, batch, proof) {
     }
     apply.push(change);
   }
+  if (context.extended) await assertTransferOverlapScope(transaction, context.branch, apply);
   allowCashApply(transaction, apply);
   return skip.size ? { ...batch, rows: batch.rows.filter(change => !skip.has(change)) } : batch;
 }

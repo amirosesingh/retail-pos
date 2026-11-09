@@ -34,6 +34,8 @@ function parseFinancialCorrection(group, branch) {
     return require("./grouped-managed-shift.cjs").parseManagedShiftGroup(group, branch);
   if (group?.financial?.kind === "drawer_v1")
     return require("./grouped-drawer-audit.cjs").parseDrawerAuditGroup(group, branch);
+  if (group?.financial?.kind === "transfer_v1")
+    return require("./grouped-transfer-dispatch.cjs").parseTransferDispatchGroup(group, branch);
   const envelopeFields = ["seq", "operation_id", "changes", "financial"];
   if (group && Object.hasOwn(group, "receipt_graph")) envelopeFields.push("receipt_graph");
   if (!fields(group, envelopeFields) || typeof group.seq !== "string" ||
@@ -254,6 +256,8 @@ async function applyFinancialCorrection(worker, transaction, context, facts) {
     return require("./grouped-managed-shift.cjs").applyManagedShiftGroup(worker, transaction, context, facts);
   if (facts.kind === "drawer_v1")
     return require("./grouped-drawer-audit.cjs").applyDrawerAuditGroup(worker, transaction, context, facts);
+  if (facts.kind === "transfer_v1")
+    return require("./grouped-transfer-dispatch.cjs").applyTransferDispatchGroup(worker, transaction, context, facts);
   const { branch } = context;
   if (facts.sale.store_id !== branch) throw invalid();
   // Lock the receipt before consulting pending evidence, matching local writer
