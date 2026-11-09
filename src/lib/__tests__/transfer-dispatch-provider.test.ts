@@ -3,7 +3,7 @@ import { runInNewContext } from "node:vm";
 import { ModuleKind, ScriptTarget, transpileModule } from "typescript";
 import { describe, expect, it, vi } from "vitest";
 import type { Product, Transfer } from "@/core/types/pos-types";
-import type { RpcResult } from "../stock-transfers";
+import type { RpcResult, StoredTransfer } from "../stock-transfers";
 import { sameBranchId } from "../branch-id";
 import { sameRecordId } from "../sale-identity";
 import { reconcileDispatchProducts, type DispatchProof } from "../transfer-dispatch-result";
@@ -120,8 +120,10 @@ describe("actual provider receipt callbacks", () => {
     const app = harness();
     const sourceProduct = app.state().products[0];
     const destinationProduct = { ...sourceProduct, id: "destination-product", stockByStore: { destination: 7 } };
+    const interGroupTransfer: StoredTransfer = { ...transfer({ status: "received" }), scope: "INTER_GROUP",
+      fromGroupId: "source-catalogue", toGroupId: "destination-catalogue" };
     const before: State = { ...app.state(), currentStoreId: "destination", products: [sourceProduct, destinationProduct],
-      transfers: [transfer({ status: "received", scope: "INTER_GROUP" })] };
+      transfers: [interGroupTransfer] };
     app.replace(before);
     app.receipt.mockResolvedValueOnce({ success: true });
     await expect(app.verify("transfer", [{ productId: "product", qty: 2 }])).resolves.toEqual({ success: true });

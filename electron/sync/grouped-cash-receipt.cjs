@@ -1,6 +1,7 @@
 const grouped = require("./grouped-store-settings.cjs");
 const { recordId } = require("./uuid-fields.cjs");
 const { hasCashAcceptance } = require("../db/sale-event-outbox.cjs");
+const { extendedTenderFields, extendedPayments } = require("../db/sale-cash-wire.cjs");
 
 const CHECKPOINT = "__grouped_cash_receipts_v1__";
 const FIELDS = {
@@ -39,14 +40,19 @@ function normalize(receipt, branch, epoch, terminal, registry, acceptance = null
   if (!keys(receipt, ["scope_id", "epoch", "seq", "operation_id", "changes"]) || receipt.scope_id !== branch ||
       !uuid(epoch) || receipt.epoch !== epoch || !uuid(receipt.operation_id) || typeof receipt.seq !== "string" ||
       !/^[1-9]\d{0,18}$/.test(receipt.seq) || BigInt(receipt.seq) > 9223372036854775807n ||
-      !Array.isArray(receipt.changes) || receipt.changes.length !== 4 || Buffer.byteLength(JSON.stringify(receipt)) > 524288)
+      !Array.isArray(receipt.changes) || receipt.changes.length < 4 || receipt.changes.length > 19 ||
+      Buffer.byteLength(JSON.stringify(receipt)) > 524288)
     throw fail("The grouped cash receipt is outside the verified scope or shape.");
 
-  const rows = Object.entries(FIELDS).map(([name, list], index) => {
+  const extended = receipt.changes.length > 4 || receipt.changes[0]?.row_data?.payment_type !== "cash";
+  if (extended && !acceptance) throw fail("A grouped card or split tender requires signed acceptance.");
+  const tables = [...Object.keys(FIELDS), ...Array(receipt.changes.length - 4).fill("payment_transactions")];
+  const rows = tables.map((name, index) => {
     const table = registry.tables.find(item => item.cloudTable === name && item.sqlServerTable === name);
     const change = receipt.changes[index];
     const row = change?.row_data;
-    const fields = list.split(" ");
+    const fields = FIELDS[name].split(" ");
+    if (extended && name === "payment_transactions") fields.push(...extendedTenderFields);
     let key;
     try { key = JSON.parse(change?.entity_id); } catch { throw fail("A grouped cash receipt key is invalid."); }
     if (!table || !keys(change, ["table_name", "entity_id", "row_data", "row_version", "tombstone"]) ||
@@ -55,27 +61,32 @@ function normalize(receipt, branch, epoch, terminal, registry, acceptance = null
       throw fail("The grouped cash receipt does not contain the complete registered rows.");
     for (const field of fields) {
       if (["payments", "metadata", "row_version"].includes(field)) continue;
+      if (extended && name === "payment_transactions" && field === "cashier_name" && row[field] === null) continue;
       const column = table.columns.find(item => item.cloudColumn === field && item.sqlServerColumn === field);
       if (!column || !validValue(column, row[field])) throw fail("The grouped cash receipt contains an invalid SQL Server value.");
     }
     return { table, change: { ...change, entity_id: JSON.stringify(key), row_data: { ...row, row_version: 1 } } };
   });
-  const [sale, item, tender, movement] = rows.map(entry => entry.change.row_data);
+  const [sale, item, tender, movement, ...otherTenders] = rows.map(entry => entry.change.row_data);
+  const tenders = [tender, ...otherTenders];
   const payment = sale.payments?.[0];
-  if (sale.store_id !== branch || sale.branch_id !== branch || item.branch_id !== branch || tender.store_id !== branch ||
-      movement.store_id !== branch || !uuid(sale.shift_id) || tender.shift_id !== sale.shift_id ||
+  const legacyPayment = () => sale.payment_type === "cash" && tender.method === "cash" && keys(tender.metadata, []) &&
+    Array.isArray(sale.payments) && sale.payments.length === 1 && keys(payment, ["id", "method", "amount"]) &&
+    payment.id === tender.id && payment.method === "cash" && decimal(payment.amount) &&
+    exact(payment.amount) === exact(tender.amount) && exact(tender.amount) === exact(sale.total_amount);
+  if (sale.store_id !== branch || sale.branch_id !== branch || item.branch_id !== branch ||
+      movement.store_id !== branch || !uuid(sale.shift_id) ||
       !uuid(tender.terminal_id) || movement.terminal_id !== tender.terminal_id ||
       (acceptance ? acceptance.terminal_id !== tender.terminal_id : tender.terminal_id === terminal) ||
-      item.sale_id !== sale.id || tender.sale_id !== sale.id || movement.product_id !== item.product_id ||
+      item.sale_id !== sale.id || movement.product_id !== item.product_id ||
       movement.reference !== sale.bill_number || movement.activity_type !== "sale" || item.quantity <= 0 ||
-      movement.quantity_delta !== -item.quantity || sale.payment_type !== "cash" || sale.is_exchange || sale.is_refunded ||
-      item.is_return || item.is_foc || item.refunded_qty !== 0 || tender.source_type !== "sale" || tender.method !== "cash" ||
-      tender.kind !== "payment" || tender.status !== "completed" || !keys(tender.metadata, []) ||
-      !Array.isArray(sale.payments) || sale.payments.length !== 1 || !keys(payment, ["id", "method", "amount"]) ||
-      payment.id !== tender.id || payment.method !== "cash" || !decimal(payment.amount) ||
-      exact(payment.amount) !== exact(tender.amount) || exact(tender.amount) !== exact(sale.total_amount))
+      movement.quantity_delta !== -item.quantity || sale.is_exchange || sale.is_refunded ||
+      item.is_return || item.is_foc || item.refunded_qty !== 0 ||
+      tenders.some(row => row.store_id !== branch || row.sale_id !== sale.id || row.shift_id !== sale.shift_id ||
+        row.terminal_id !== tender.terminal_id || row.source_type !== "sale" || row.kind !== "payment" || row.status !== "completed") ||
+      (extended ? !extendedPayments(sale, tenders) : !legacyPayment()))
     throw fail("The grouped cash receipt rows do not describe one ordinary checkout for this branch.");
-  return { rows, sale, item, tender, movement, epoch, operationId: receipt.operation_id, seq: receipt.seq, acceptance };
+  return { rows, sale, item, tender, tenders, movement, epoch, operationId: receipt.operation_id, seq: receipt.seq, acceptance };
 }
 
 function parseMixedCashGroup(group, branch, epoch, terminal, registry) {
@@ -137,7 +148,8 @@ async function applyGroupedCashInTransaction(worker, transaction, context, facts
   if (facts.tender.terminal_id === recordId(source.terminal.tokenId)) {
     const acceptance = facts.acceptance;
     if (!acceptance || acceptance.database_guid !== databaseGuid || !await hasCashAcceptance(transaction, {
-      operationId: facts.operationId, saleId: facts.sale.id, itemId: facts.item.id, tenderId: facts.tender.id,
+      operationId: facts.operationId, saleId: facts.sale.id, itemId: facts.item.id,
+      tenderIds: facts.tenders.map(tender => tender.id),
       movementId: facts.movement.id, seq: facts.seq, branchId: branch, epoch: facts.epoch,
       terminalId: acceptance.terminal_id, installationGeneration: acceptance.installation_generation,
       databaseGuid, checkoutSha256: acceptance.checkout_sha256,

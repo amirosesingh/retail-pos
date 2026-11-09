@@ -8,7 +8,7 @@ const { CloudClient } = require("../electron/sync/cloud-client.cjs");
 const { PullWorker } = require("../electron/sync/pull-worker.cjs");
 const { ChangeReader } = require("../electron/sync/change-reader.cjs");
 const { CheckpointRepository } = require("../electron/sync/checkpoints.cjs");
-const { CHECKPOINT } = require("../electron/sync/grouped-cash-receipt.cjs");
+const { CHECKPOINT, parseMixedCashGroup, applyGroupedCashInTransaction } = require("../electron/sync/grouped-cash-receipt.cjs");
 const grouped = require("../electron/sync/grouped-store-settings.cjs");
 const { SaleEventOutbox } = require("../electron/db/sale-event-outbox.cjs");
 const { cashCheckoutMessage } = require("../electron/security/financial-author-protocol.cjs");
@@ -496,7 +496,8 @@ async function verifyPagedRecovery(receipt, origin) {
 }
 
 async function main() {
-  assert.deepEqual(process.argv.slice(2), ["--run"]);
+  const mode = process.argv[2];
+  assert(process.argv.length === 3 && ["--run", "--tender"].includes(mode));
   const { receipt, terminal: origin } = JSON.parse(readFileSync(0, "utf8"));
   const branch = receipt.scope_id;
   const epoch = receipt.epoch;
@@ -525,6 +526,58 @@ async function main() {
 
     await local.insert("products", { id: item.product_id, owner_store_id: branch, stock_quantity: 42 });
     await checkpoints.save(branch, "__feed__", "pull", { committed_cursor: "98" });
+    if (mode === "--tender") {
+      await local.insert("shifts", { id: sale.shift_id, store_id: branch, terminal_id: origin,
+        state: "ACTIVE", status: "OPEN", row_version: 1 });
+      const { scope_id, epoch: archiveEpoch, ...group } = receipt;
+      const facts = parseMixedCashGroup(group, scope_id, archiveEpoch, terminal, registry);
+      const apply = async () => {
+        const source = cloud.requestContext(false);
+        const sql = manager.sql();
+        const databaseGuid = await grouped.readDatabaseGuid(source.pool.request());
+        const transaction = new sql.Transaction(source.pool);
+        await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+        try {
+          const merged = await applyGroupedCashInTransaction(worker, transaction, { source, branch, databaseGuid }, facts);
+          await checkpoints.save(branch, CHECKPOINT, "pull", { committed_cursor: JSON.stringify({
+            source: source.fingerprint, databaseGuid, epoch, seq: receipt.seq, upper: null,
+          }) }, transaction);
+          await transaction.commit();
+          return merged.length;
+        } catch (error) {
+          await transaction.rollback().catch(() => {});
+          throw error;
+        }
+      };
+      const altered = structuredClone(group);
+      altered.changes[2].row_data.amount = "0.01";
+      assert.throws(() => parseMixedCashGroup(altered, branch, epoch, terminal, registry), { code: "ESYNC_CASH_RECEIPT_PROTOCOL" });
+      assert.equal(await apply(), receipt.changes.length);
+      const { recordsets } = await manager.pool.request().query(`
+        SELECT payments FROM dbo.sales;
+        SELECT id, method, CONVERT(nvarchar(80),amount) amount, reference, metadata, client_transaction_id
+          FROM dbo.payment_transactions ORDER BY client_transaction_id;
+        SELECT COUNT(*) AS pending FROM dbo.sync_change_journal WHERE acknowledged_at IS NULL;`);
+      assert.deepEqual(JSON.parse(recordsets[0][0].payments), sale.payments);
+      assert.equal(recordsets[1].length, facts.tenders.length);
+      for (const [index, actual] of recordsets[1].entries()) {
+        const expected = facts.tenders[index];
+        assert.equal(actual.id.toLowerCase(), expected.id);
+        assert.equal(actual.method, expected.method);
+        assert.equal(Number(actual.amount), Number(expected.amount));
+        assert.equal(actual.reference, expected.reference);
+        assert.equal(actual.client_transaction_id, expected.client_transaction_id);
+        assert.deepEqual(JSON.parse(actual.metadata), expected.metadata);
+      }
+      assert.deepEqual(recordsets[2], [{ pending: 0 }]);
+      assert.equal((await position()).seq, receipt.seq);
+      assert.equal((await checkpoints.get(branch, "__feed__", "pull")).committed_cursor, "98");
+      await local.restart();
+      assert.equal(await apply(), 0);
+      assert.deepEqual(await state(), { ...complete, tenders: facts.tenders.length });
+      console.log("PASS signed card or split receipt and reconciliation metadata applied to a second LocalDB, with exact restart replay");
+      return;
+    }
     await assert.rejects(run({ ...receipt, scope_id: "outside-fixture" }), { code: "ESYNC_CASH_RECEIPT_PROTOCOL" });
     await assert.rejects(run({ ...receipt, seq: "2" }), { code: "ESYNC_CASH_RECEIPT_PROTOCOL" });
     await assert.rejects(run(), { code: "ESYNC_CASH_RECEIPT_DEPENDENCY" });

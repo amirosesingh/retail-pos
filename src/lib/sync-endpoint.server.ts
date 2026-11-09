@@ -7,6 +7,7 @@ import { applyGroupedCashUpload, groupedCashUploadSchema } from "./grouped-cash-
 import { applyGroupedRefundUpload, groupedRefundUploadSchema } from "./grouped-refund-upload.server";
 import { canRetrieveHistoricalReceipt } from "./receipt-history-permission";
 import { alignVerifiedScopeIds } from "./verified-scope-ids";
+import { extendedPayments, extendedTenderFields } from "../../electron/sync/sale-tender-evidence.mjs";
 /**
  * Shared handler for the POS sync relay.
  *
@@ -151,7 +152,7 @@ const groupedStockRowSchema = z.object({
 }).strict();
 const groupedRetiredStockRowSchema = groupedStockRowSchema.omit({ branch_balance: true }).extend({ retired: z.literal(true) });
 const groupedCashGroupSchema = z.object({
-  seq: feedSequence, operation_id: z.string().uuid(), changes: z.array(groupedCashChangeSchema).length(4),
+  seq: feedSequence, operation_id: z.string().uuid(), changes: z.array(groupedCashChangeSchema).min(4).max(19),
   acceptance: z.object({
     terminal_id: z.string().uuid(), installation_generation: z.string().uuid(), database_guid: z.string().uuid(),
     checkout_sha256: z.string().regex(/^[a-f0-9]{64}$/),
@@ -284,26 +285,33 @@ const exactCashPayment = z.tuple([z.object({
 }).strict()]);
 const noCashMetadata = z.object({}).strict();
 
-function validGroupedCash(group: z.infer<typeof groupedCashGroupSchema>, branchId: string): boolean {
+function validGroupedCash(group: z.infer<typeof groupedCashGroupSchema>, branchId: string, extended = false): boolean {
   if (group.seq === "0") return false;
+  const extendedTenders = group.changes.length > 4 || group.changes[0].row_data.payment_type !== "cash";
+  if (extendedTenders && !extended) return false;
   for (const [index, change] of group.changes.entries()) {
     const row = change.row_data;
     const entity = cashEntity.safeParse(JSON.parse(change.entity_id));
-    const fields = cashProjectionFields[index];
-    if (change.table_name !== groupedCashTables[index] || change.row_version !== "1" || row.row_version !== "1" ||
+    const slot = index > 3 ? 2 : index;
+    const fields = extendedTenders && slot === 2 ? [...cashProjectionFields[slot], ...extendedTenderFields] : cashProjectionFields[slot];
+    if (change.table_name !== groupedCashTables[slot] || change.row_version !== "1" || row.row_version !== "1" ||
         !entity.success || entity.data.id !== row.id || Object.keys(row).length !== fields.length ||
         fields.some(field => !Object.hasOwn(row, field)) ||
         row[index === 1 ? "branch_id" : "store_id"] !== branchId ||
         Object.entries(row).some(([key, value]) => key !== "payments" && key !== "metadata" &&
+          !(extendedTenders && slot === 2 && key === "cashier_name" && value === null) &&
           (value === null || !["string", "boolean", "number"].includes(typeof value)))) return false;
   }
-  const [sale, item, tender, movement] = group.changes.map(change => change.row_data);
+  const [sale, item, tender, movement, ...additional] = group.changes.map(change => change.row_data);
+  const tenders = [tender, ...additional];
   const payment = exactCashPayment.safeParse(sale.payments);
-  return sale.branch_id === branchId && sale.payment_type === "cash" && item.sale_id === sale.id &&
-    tender.sale_id === sale.id && tender.shift_id === sale.shift_id && tender.method === "cash" &&
-    tender.terminal_id === group.acceptance.terminal_id && movement.terminal_id === group.acceptance.terminal_id &&
+  return sale.branch_id === branchId && item.sale_id === sale.id &&
+    tenders.every(row => row.sale_id === sale.id && row.shift_id === sale.shift_id &&
+      row.terminal_id === group.acceptance.terminal_id && row.kind === "payment" && row.status === "completed") &&
+    movement.terminal_id === group.acceptance.terminal_id &&
     movement.product_id === item.product_id && movement.reference === sale.bill_number &&
-    payment.success && payment.data[0].id === tender.id && noCashMetadata.safeParse(tender.metadata).success;
+    (extendedTenders ? extendedPayments(sale, tenders) !== null :
+      tender.method === "cash" && payment.success && payment.data[0].id === tender.id && noCashMetadata.safeParse(tender.metadata).success);
 }
 
 function mixedGroupedEnabled() {
@@ -359,14 +367,38 @@ function validGroupedFinancial(group: z.infer<typeof groupedFinancialGroupSchema
     const evidence = JSON.parse(graph);
     const transfer = evidence?.transfer;
     const request = evidence?.request;
+    const receipt = Object.hasOwn(evidence ?? {}, "movements");
     if (evidence?.branch_id !== branch || transfer?.id !== transferId || transfer.kind !== "transfer" ||
-      transfer.status !== "dispatched" || String(transfer.row_version) !== sale.row_version ||
+      String(transfer.row_version) !== sale.row_version ||
       transfer.from_store_id === transfer.to_store_id || ![transfer.from_store_id, transfer.to_store_id].includes(branch) ||
+      !Array.isArray(evidence.lines) || evidence.lines.length < 1 || evidence.lines.length > 100 ||
+      !Array.isArray(evidence.stock) || evidence.stock.length > 100 ||
+      !Array.isArray(evidence.logs) || evidence.logs.length > 100) return false;
+    if (receipt) {
+      if (request !== null || !["received", "completed", "completed_with_discrepancy"].includes(transfer.status) ||
+        !Array.isArray(evidence.movements) || evidence.movements.length !== evidence.logs.length ||
+        evidence.lines.some((line: Record<string, unknown>) => line?.transfer_id !== transferId)) return false;
+      if (transfer.status === "received" || branch !== transfer.to_store_id)
+        return evidence.stock.length === 0 && evidence.logs.length === 0;
+      const lines = new Set(evidence.lines.map((line: Record<string, unknown>) => line.id));
+      const products = new Set<unknown>();
+      const auditIds = new Set<unknown>();
+      for (const [index, row] of evidence.logs.entries()) {
+        const movement = evidence.movements[index];
+        if (row?.store_id !== branch || row.activity_type !== "transfer_in" || row.reference !== transfer.ref ||
+          !movement || movement.log_id !== row.id || auditIds.has(row.id) || !lines.delete(movement.line_id)) return false;
+        auditIds.add(row.id);
+        products.add(row.product_id);
+      }
+      return evidence.stock.every((row: unknown) => {
+        const parsed = groupedStockRowSchema.safeParse(row);
+        return parsed.success && products.delete(parsed.data.product_id);
+      });
+    }
+    if (transfer.status !== "dispatched" ||
       (request === null ? transfer.source_request_id !== null : request?.id !== transfer.source_request_id ||
         request?.kind !== "request" || request?.status !== "completed" || request.from_store_id !== transfer.from_store_id ||
-        request.to_store_id !== transfer.to_store_id) || !Array.isArray(evidence.lines) ||
-      evidence.lines.length < 1 || evidence.lines.length > 100 || !Array.isArray(evidence.stock) ||
-      evidence.stock.length > 100 || !Array.isArray(evidence.logs) || evidence.logs.length !== evidence.stock.length ||
+        request.to_store_id !== transfer.to_store_id) || evidence.logs.length !== evidence.stock.length ||
       evidence.lines.some((line: Record<string, unknown>) =>
         line?.transfer_id !== transferId && line?.transfer_id !== request?.id)) return false;
     if (branch !== transfer.from_store_id) return evidence.stock.length === 0;
@@ -468,7 +500,7 @@ async function readGroupedFeed(read: GroupedFeedRead, terminalId: string, bindin
       let valid;
       if ("acceptance" in group) {
         const stock = "stock" in group ? group.stock : null;
-        valid = read.projection && validGroupedCash(group, read.branchId) &&
+        valid = read.projection && validGroupedCash(group, read.branchId, read.extended) &&
           (read.extended ? stock?.product_id === group.changes[1].row_data.product_id : stock === null);
       } else if ("financial" in group) valid = read.extended && validGroupedFinancial(group, read.branchId, read.epoch);
       else {
@@ -551,7 +583,7 @@ async function readGroupedRecovery(read: GroupedRecoveryRead, terminalId: string
         let prior = 0n;
         for (const group of payload.rows) {
           const seq = BigInt(group.seq);
-          if (seq <= prior || seq > BigInt(payload.seq) || !validGroupedCash(group, read.branchId))
+          if (seq <= prior || seq > BigInt(payload.seq) || !validGroupedCash(group, read.branchId, read.extended))
             return groupedFeedProtocolError();
           prior = seq;
         }

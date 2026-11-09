@@ -11,7 +11,7 @@ const serviceClaims = `SET request.jwt.claims = '{"role":"service_role"}';`;
 const legacyRole = "SET ROLE service_role;";
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export async function verifyCashBridge({ sql, denySql, session, waitFor, wire, receiving, attested = false, relay }) {
+export async function verifyCashBridge({ sql, denySql, session, waitFor, wire, receiving, receiveExtended, attested = false, extended = null, relay }) {
   const saved = wire ? JSON.parse(wire.checkoutJson) : null;
   const branch = wire?.scope.branchId ?? "A";
   const otherBranch = branch === "B" ? "A" : "B";
@@ -28,7 +28,9 @@ export async function verifyCashBridge({ sql, denySql, session, waitFor, wire, r
   if (wire) {
     assert(uuid.test(wire.operationId) && wire.saleId === saved.sale.id);
     assert.equal(saved.sale.store_id, branch);
-    assert.equal(saved.tender.terminal_id, terminal);
+    const tenders = extended ? saved.tenders : [saved.tender];
+    assert.equal(tenders.length, extended === "split" ? 2 : 1);
+    assert(tenders.every(tender => tender.terminal_id === terminal));
   }
 
   const source = await read("../../supabase/schema.sql");
@@ -94,6 +96,10 @@ export async function verifyCashBridge({ sql, denySql, session, waitFor, wire, r
       preparation.push(await read(`../preparation/${name}`));
   }
   sql(`BEGIN;\n${preparation.join("\n")}\nCOMMIT;`);
+  if (extended) sql(`CREATE FUNCTION pos_sync_feed_v1.extended_scope_epoch(p_org text,p_branch text)
+    RETURNS uuid LANGUAGE sql STABLE SET search_path=pg_catalog
+    RETURN (SELECT pilot.epoch FROM pos_sync_feed_v1.cash_settings_pilots AS pilot
+      WHERE pilot.organization_id=p_org AND pilot.scope_id=p_branch);`);
   sql(`INSERT INTO public.stores (id, code, name) VALUES (${sqlText(branch)}, ${sqlText(branch)}, 'Fixture branch');
     INSERT INTO public.terminal_tokens (id, location_id, device_name, is_claimed, claim_proof, claimed_platform)
     VALUES ('${terminal}', ${sqlText(branch)}, 'Fixture till', true, '${proof}', 'electron');
@@ -179,10 +185,25 @@ export async function verifyCashBridge({ sql, denySql, session, waitFor, wire, r
     denySql(call({ p_author_subject: "another.cashier" }), /POS_CASH_V1_AUTHOR_FORBIDDEN/);
     denySql(call({ p_checkout_json: ` ${checkoutJson}` }), /POS_CASH_V1_CHECKOUT_DIGEST_MISMATCH/);
     denySql(call({ p_database_guid: randomUUID() }), /POS_CASH_V1_INSTALLATION_FORBIDDEN/);
-    denySql(call(), /POS_CASH_SETTINGS_V1_PUBLICATION_UNVERIFIED/);
+    denySql(call(), extended ? /POS_TENDER_SCOPE_FORBIDDEN/ : /POS_CASH_SETTINGS_V1_PUBLICATION_UNVERIFIED/);
     assert.equal(counts(), "0|0|0|0|0|0|10|4");
     assert.equal(sql("SELECT count(*) FROM pos_sync_inbox_v1.operation_receipts;"), "0");
     sql(`SELECT pos_sync_feed_v1.arm_cash_settings_scope(${scope});`);
+    if (extended) {
+      const tamper = edit => {
+        const payload = structuredClone(first);
+        edit(payload);
+        const p_checkout_json = JSON.stringify(payload);
+        return call({ p_checkout_json, p_checkout_sha256: digest(p_checkout_json) });
+      };
+      denySql(tamper(payload => { delete payload.tenders.at(-1).metadata.voucher_reference; }), /POS_TENDER_INVALID/);
+      denySql(tamper(payload => {
+        const amount = (Number(payload.tenders.at(-1).amount) + 0.01).toFixed(2);
+        payload.tenders.at(-1).amount = payload.sale.payments.at(-1).amount = amount;
+      }), /POS_TENDER_INVALID/);
+      assert.equal(counts(), "0|0|0|0|0|0|10|4");
+      assert.equal(sql("SELECT count(*) FROM pos_sync_inbox_v1.operation_receipts;"), "0");
+    }
     const invokeRpc = body => {
       if (body !== undefined) assert.deepEqual(body, args);
       return JSON.parse(sql(call()));
@@ -202,17 +223,37 @@ export async function verifyCashBridge({ sql, denySql, session, waitFor, wire, r
       database_guid: databaseGuid, checkout_sha256: checkoutSha256, author_id: author.authorId, author_key_id: author.keyId } });
     assert.equal(sql(`SELECT cashier_id FROM public.sales WHERE id='${first.sale.id}';`), author.subject);
     assert.deepEqual(invokeRpc(), { status: "ALREADY_APPLIED", result: accepted.result });
-    assert.equal(counts(), `1|1|1|1|1|1|${10 - Number(first.item.quantity)}|4`);
+    const settled = `1|1|${extended ? first.tenders.length : 1}|1|1|1|${10 - Number(first.item.quantity)}|4`;
+    assert.equal(counts(), settled);
     const replayStock = delta => `${legacyRole}${serviceClaims}
       SELECT public.stock_apply_delta('${first.movement.id}','${product}',${sqlText(branch)},${delta});`;
     assert.equal(sql(replayStock(-Number(first.item.quantity))), String(10 - Number(first.item.quantity)));
     denySql(replayStock(1), /POS_STOCK_MOVEMENT_EVIDENCE_CONFLICT/);
-    assert.equal(counts(), `1|1|1|1|1|1|${10 - Number(first.item.quantity)}|4`);
+    assert.equal(counts(), settled);
     const feed = JSON.parse(sql(`${legacyRole}${serviceClaims}
       SELECT public.pos_sync_pull_cash_settings_v1('default',${sqlText(branch)},'${terminal}','${proof}','${epoch}','0',NULL,10);`));
     assert.equal(feed.groups.length, 1);
-    assert.deepEqual(feed.groups[0].changes.map(change => change.table_name), ["sales", "sale_items", "payment_transactions", "item_activity_logs"]);
-    assert.equal(feed.groups[0].acceptance.checkout_sha256, checkoutSha256);
+    const [group] = feed.groups;
+    assert.deepEqual(group.changes.map(change => change.table_name), ["sales", "sale_items", "payment_transactions",
+      "item_activity_logs", ...(extended ? first.tenders.slice(1).map(() => "payment_transactions") : [])]);
+    assert.equal(group.acceptance.checkout_sha256, checkoutSha256);
+    if (extended) {
+      const saved = JSON.parse(sql(`SELECT jsonb_build_object('payments',sale.payments,'tenders',
+        (SELECT jsonb_agg(to_jsonb(tender) ORDER BY tender.client_transaction_id)
+          FROM public.payment_transactions AS tender WHERE tender.sale_id=sale.id))
+        FROM public.sales AS sale WHERE sale.id='${first.sale.id}';`));
+      const evidence = ({ id, method, amount, metadata, client_transaction_id, reference, cashier_name }) =>
+        ({ id, method, amount: Number(amount), metadata, client_transaction_id, reference, cashier_name });
+      assert.deepEqual(saved.payments, first.sale.payments);
+      assert.deepEqual(saved.tenders.map(evidence), first.tenders.map(evidence));
+      assert.deepEqual(group.changes[0].row_data.payments, first.sale.payments);
+      assert.deepEqual(group.changes.filter(change => change.table_name === "payment_transactions").map(change => evidence(change.row_data)),
+        first.tenders.map(evidence));
+      const archive = JSON.parse(sql(`SELECT changes FROM pos_sync_feed_v1.cash_publications
+        WHERE organization_id='default' AND operation_id='${operation}';`));
+      assert.deepEqual(archive, group.changes);
+      await receiveExtended({ receipt: { scope_id: branch, epoch, ...group }, terminal });
+    }
     sql(`UPDATE public.app_users SET permissions='{"can_process_sale":true,"page:register":false}' WHERE id='${author.authorId}';`);
     denySql(call(), /POS_CASH_V1_AUTHOR_FORBIDDEN/);
     sql(`UPDATE public.app_users SET permissions='{"can_process_sale":true}', is_active=false WHERE id='${author.authorId}';`);
@@ -220,8 +261,8 @@ export async function verifyCashBridge({ sql, denySql, session, waitFor, wire, r
     sql(`UPDATE public.app_users SET is_active=true WHERE id='${author.authorId}';
       UPDATE pos_sync_private.shift_author_keys SET revoked_at=now() WHERE key_id='${author.keyId}';`);
     denySql(call(), /POS_CASH_V1_AUTHOR_FORBIDDEN/);
-    assert.equal(counts(), `1|1|1|1|1|1|${10 - Number(first.item.quantity)}|4`);
-    console.log("PASS attested LocalDB cash to native PostgreSQL, service-only author binding, exact archived group, replay and atomic rollback");
+    assert.equal(counts(), settled);
+    console.log(`PASS attested LocalDB ${extended ?? "cash"} to native PostgreSQL, service-only author binding, exact archived group, replay and atomic rollback`);
     return;
   }
   const firstApply = apply(operation, first, { checkoutJson, checkoutSha256 });

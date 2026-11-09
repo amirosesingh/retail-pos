@@ -1,7 +1,7 @@
 const { createHash } = require("node:crypto");
 const { decimal, projection } = require("../sync/shift-recovery-exact.cjs");
 const { recordId } = require("../sync/uuid-fields.cjs");
-const { wireFields, cashBridgeCheckout, checkedCashBridgeScope, refuseCashBridge } = require("./sale-cash-wire.cjs");
+const { wireFields, extendedTenderFields, cashBridgeCheckout, checkedCashBridgeScope, refuseCashBridge } = require("./sale-cash-wire.cjs");
 const { normalizeCashCheckoutAttestation } = require("../security/financial-author-protocol.cjs");
 const cashRoute = require("../sync/cash-checkout-route.cjs");
 
@@ -70,14 +70,18 @@ function checkedAttestation(input, scope, operationId, digest) {
   return proof;
 }
 
-/** Capture the exact journal membership in the same transaction as the sale.
- * The fifth row is the one product update already proven by its movement. */
+const checkoutTenders = checkout => checkout?.tenders ?? [checkout?.tender];
+const checkoutJournalSize = checkout => checkoutTenders(checkout).length + 4;
+
+/** Capture the exact journal membership, including every tender and the
+ * single product update already proven by its movement. */
 async function cashJournal(transaction, operationId, branchId, checkout) {
-  const expected = new Map([["sales", checkout.sale.id], ["sale_items", checkout.item.id],
-    ["payment_transactions", checkout.tender.id], ["item_activity_logs", checkout.movement.id],
-    ["products", checkout.item.product_id]]);
-  const { recordset } = await transaction.request().input("operation", operationId).query(`
-    SELECT TOP (6) CONVERT(varchar(20),change_id) AS id,entity_type,entity_id,operation,branch_id,
+  const key = (table, id) => `${table}:${id}`;
+  const expected = new Set([key("sales", checkout.sale.id), key("sale_items", checkout.item.id),
+    ...checkoutTenders(checkout).map(tender => key("payment_transactions", tender.id)),
+    key("item_activity_logs", checkout.movement.id), key("products", checkout.item.product_id)]);
+  const { recordset } = await transaction.request().input("operation", operationId).input("limit", expected.size + 1).query(`
+    SELECT TOP (@limit) CONVERT(varchar(20),change_id) AS id,entity_type,entity_id,operation,branch_id,
       CONVERT(varchar(20),entity_version) AS version,acknowledged_at
     FROM dbo.sync_change_journal WITH (UPDLOCK,HOLDLOCK) WHERE aggregate_id=@operation ORDER BY change_id;
   `);
@@ -86,10 +90,9 @@ async function cashJournal(transaction, operationId, branchId, checkout) {
     let entity;
     try { entity = JSON.parse(row.entity_id); } catch { refuseCashBridge(); }
     const allowedOperation = row.entity_type === "products" ? row.operation === "update" : ["insert", "update"].includes(row.operation);
-    if (!entity || Object.keys(entity).length !== 1 || !expected.has(row.entity_type) ||
-        recordId(entity.id) !== expected.get(row.entity_type) || row.branch_id !== branchId || !allowedOperation ||
+    if (!entity || Object.keys(entity).length !== 1 || !expected.delete(key(row.entity_type, recordId(entity.id))) ||
+        row.branch_id !== branchId || !allowedOperation ||
         row.acknowledged_at !== null || !validSequence(row.id) || !validSequence(row.version)) refuseCashBridge();
-    expected.delete(row.entity_type);
     return { id: row.id, table: row.entity_type, entity: row.entity_id, operation: row.operation, version: row.version };
   });
 }
@@ -107,15 +110,17 @@ function readFrozenCheckout(row, scope, operationId) {
   const recordedScope = checkedCashBridgeScope(event.bridge.scope);
   if (Object.keys(scope).some(key => scope[key] !== recordedScope[key]) || typeof event.bridge.checkoutJson !== "string") refuseCashBridge();
   try { checkout = JSON.parse(event.bridge.checkoutJson); } catch { refuseCashBridge(); }
+  const tenders = checkoutTenders(checkout);
   if (checkout?.sale?.id !== recordId(row.sale_id) || checkout.sale.shift_id !== recordId(row.shift_id) ||
-      recordId(checkout.sale.branch_id) !== scope.branchId || checkout.tender?.terminal_id !== scope.terminalId ||
+      recordId(checkout.sale.branch_id) !== scope.branchId || !Array.isArray(tenders) || !tenders.length || tenders.length > 16 ||
+      tenders.some(tender => !uuid(tender?.id) || tender.terminal_id !== scope.terminalId) ||
       checkout.movement?.terminal_id !== scope.terminalId) refuseCashBridge();
   const checkoutSha256 = payloadHash(event.bridge.checkoutJson);
   const attestation = event.bridge.attestation &&
     checkedAttestation(event.bridge.attestation, scope, operationId, checkoutSha256);
   const wire = { operationId, saleId: checkout.sale.id, checkoutJson: event.bridge.checkoutJson, checkoutSha256, scope,
     ...(attestation ? { attestation } : {}) };
-  return { wire, journal: event.bridge.journal };
+  return { wire, journal: event.bridge.journal, journalSize: checkoutJournalSize(checkout) };
 }
 
 function routeEnvelope(row) {
@@ -124,7 +129,7 @@ function routeEnvelope(row) {
   try { scope = checkedCashBridgeScope(JSON.parse(row.payload_json)?.bridge?.scope); }
   catch { throw cashRoute.fail(); }
   const evidence = readFrozenCheckout(row, scope, recordId(row.operation_id));
-  if (!evidence?.wire.attestation || !Array.isArray(evidence.journal) || evidence.journal.length !== cashRoute.TABLES.length)
+  if (!evidence?.wire.attestation || !Array.isArray(evidence.journal) || evidence.journal.length !== evidence.journalSize)
     throw cashRoute.fail();
   return evidence;
 }
@@ -220,8 +225,8 @@ function confirmedReceipt(wire, value) {
 }
 
 async function hasCashAcceptance(transaction, { operationId, seq, branchId, epoch, terminalId,
-  installationGeneration, databaseGuid, checkoutSha256, saleId, itemId, tenderId, movementId }) {
-  if (![operationId, saleId, itemId, tenderId, movementId].every(uuid) || !validSequence(seq) ||
+  installationGeneration, databaseGuid, checkoutSha256, saleId, itemId, tenderId, tenderIds = [tenderId], movementId }) {
+  if (![operationId, saleId, itemId, ...tenderIds, movementId].every(uuid) || !validSequence(seq) ||
       typeof checkoutSha256 !== "string" || !/^[0-9a-f]{64}$/.test(checkoutSha256)) return false;
   const scope = checkedCashBridgeScope({ branchId, terminalId, installationGeneration, feedEpoch: epoch, databaseGuid });
   const result = await transaction.request().input("operation", operationId).query(`
@@ -241,21 +246,27 @@ async function hasCashAcceptance(transaction, { operationId, seq, branchId, epoc
     const receipt = confirmedReceipt(wire, JSON.parse(row.receipt_json));
     const checkout = JSON.parse(wire.checkoutJson);
     return receipt.seq === seq && receipt.checkout_sha256 === checkoutSha256 && receipt.sale_id === saleId &&
-      checkout.item.id === itemId && checkout.tender.id === tenderId && checkout.movement.id === movementId;
+      checkout.item.id === itemId && checkout.movement.id === movementId &&
+      JSON.stringify(checkoutTenders(checkout).map(tender => tender.id)) === JSON.stringify(tenderIds);
   } catch { return false; }
 }
 
 class SaleEventOutbox {
-  constructor(connectionManager, registry, { cashBridge = null, prepareCashAuthor = null, installedHandoff = false } = {}) {
+  constructor(connectionManager, registry, { cashBridge = null, prepareCashAuthor = null, installedHandoff = false,
+    allowExtendedTenders = false } = {}) {
     this.connectionManager = connectionManager;
     this.cashBridge = cashBridge === null ? null : checkedCashBridgeScope(cashBridge);
     if (prepareCashAuthor !== null && (!this.cashBridge || typeof prepareCashAuthor !== "function")) refuseCashBridge();
     if (installedHandoff && !prepareCashAuthor) refuseCashBridge();
     this.prepareCashAuthor = prepareCashAuthor;
     this.installedHandoff = installedHandoff;
+    this.allowExtendedTenders = allowExtendedTenders;
     this.projections = Object.fromEntries(Object.entries(fields).map(([name, names]) => {
       const table = registry.tables.find(table => table.sqlServerTable === name);
-      const selected = this.cashBridge ? [...new Set([...names, ...wireFields[name]])] : names;
+      const extended = this.allowExtendedTenders
+        ? name === "sales" ? ["payments"] : name === "payment_transactions" ? [...extendedTenderFields, "metadata"] : []
+        : [];
+      const selected = this.cashBridge ? [...new Set([...names, ...wireFields[name], ...extended])] : names;
       const columns = selected.map(column => table?.columns.find(candidate => candidate.sqlServerColumn === column));
       if (columns.some(column => !column)) refuse();
       return [name, projection({ columns })];
@@ -292,7 +303,7 @@ class SaleEventOutbox {
     const items = expectedIds(operations, "sale_items");
     const tenders = expectedIds(operations, "payment_transactions");
     const movements = expectedIds(operations, "item_activity_logs");
-    if (sales.size !== 1 || !items.size || tenders.size !== 1 ||
+    if (sales.size !== 1 || !items.size || tenders.size < 1 || tenders.size > (this.allowExtendedTenders ? 16 : 1) ||
         confirmedStock.size !== operations.filter(operation => operation.table === "products").length) refuse();
 
     const saleId = sales.values().next().value;
@@ -301,10 +312,11 @@ class SaleEventOutbox {
       .input("sale", sql.UniqueIdentifier, saleId)
       .input("branch", sql.NVarChar(128), branchId)
       .input("item_limit", sql.Int, items.size + 1)
+      .input("tender_limit", sql.Int, tenders.size + 1)
       .input("movements", sql.NVarChar(sql.MAX), JSON.stringify([...movements]))
       .query(`SELECT ${this.projections.sales} FROM dbo.sales source WHERE id=@sale AND store_id=@branch;
         SELECT TOP (@item_limit) ${this.projections.sale_items} FROM dbo.sale_items source WHERE sale_id=@sale ORDER BY id;
-        SELECT TOP (2) ${this.projections.payment_transactions} FROM dbo.payment_transactions source WHERE sale_id=@sale ORDER BY id;
+        SELECT TOP (@tender_limit) ${this.projections.payment_transactions} FROM dbo.payment_transactions source WHERE sale_id=@sale ORDER BY id;
         SELECT ${this.projections.item_activity_logs} FROM dbo.item_activity_logs source
         WHERE id IN (SELECT CONVERT(uniqueidentifier,[value]) FROM OPENJSON(@movements)) ORDER BY id;
         ${this.cashBridge ? databaseGuidQuery : ""}`);
@@ -317,16 +329,17 @@ class SaleEventOutbox {
 
     const [sale] = headers;
     const [tender] = savedTenders;
+    const extended = this.allowExtendedTenders && (sale.payment_type !== "cash" || tenders.size > 1);
     const shiftId = recordId(sale.shift_id);
     const matchesTerminal = value => value == null || recordId(value) === recordId(terminalId);
     if (recordId(sale.store_id) !== recordId(branchId) || !uuid(shiftId) || !sale.bill_number || !sale.created_at ||
         sale.member_id != null || sale.is_exchange !== false || sale.is_refunded !== false || sale.original_bill_number != null ||
-        sale.payment_type !== "cash" || !positive(sale.total_amount) || !positive(sale.paid_amount) ||
+        (!extended && sale.payment_type !== "cash") || !positive(sale.total_amount) || !positive(sale.paid_amount) ||
         [sale.subtotal_amount, sale.tax_amount, sale.discount_amount, sale.change_amount].some(value => decimal(value) === undefined) ||
-        recordId(tender.store_id) !== recordId(branchId) || recordId(tender.shift_id) !== shiftId ||
-        !matchesTerminal(tender.terminal_id) || tender.source_type !== "sale" || tender.method !== "cash" ||
-        tender.kind !== "payment" || tender.status !== "completed" || !tender.paid_at ||
-        decimal(tender.amount) !== decimal(sale.paid_amount)) refuse();
+        savedTenders.some(row => recordId(row.sale_id) !== saleId || recordId(row.store_id) !== recordId(branchId) ||
+          recordId(row.shift_id) !== shiftId || !matchesTerminal(row.terminal_id) || row.source_type !== "sale" ||
+          row.kind !== "payment" || row.status !== "completed" || !row.paid_at) ||
+        (!extended && (tender.method !== "cash" || decimal(tender.amount) !== decimal(sale.paid_amount)))) refuse();
 
     const itemQuantities = new Map();
     const movementDeltas = new Map();
@@ -357,7 +370,8 @@ class SaleEventOutbox {
       if (database?.length !== 1 || database[0].database_guid !== this.cashBridge.databaseGuid) refuseCashBridge();
       let checkout;
       try {
-        checkout = cashBridgeCheckout(this.cashBridge, { sale, items: savedItems, tenders: savedTenders, movements: savedMovements, confirmedStock });
+        checkout = cashBridgeCheckout(this.cashBridge, { sale, items: savedItems, tenders: savedTenders,
+          movements: savedMovements, confirmedStock, allowExtendedTenders: this.allowExtendedTenders });
       } catch (error) {
         if (this.installedHandoff && error?.code === "ESALE_CASH_BRIDGE_UNVERIFIED")
           throw legacyCheckout();

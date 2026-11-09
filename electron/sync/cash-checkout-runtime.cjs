@@ -14,11 +14,12 @@ function cashSenderEnrollment(env) {
     if (!enrollment || enrollment.projection !== MIXED_PROJECTION) return null;
     const scope = checkedCashBridgeScope({ ...enrollment, installationGeneration, feedEpoch });
     if (scope.feedEpoch !== feedEpoch || scope.installationGeneration !== installationGeneration) return null;
-    return Object.freeze({ enrollment, scope });
+    return Object.freeze({ enrollment, scope, allowExtendedTenders: enrollment.extended === true &&
+      env.POS_GROUPED_TENDER_UPLOAD_PILOT_ENABLED === "true" });
   } catch { return null; }
 }
 
-function isCashCandidate(kind, aggregate) {
+function isCashCandidate(kind, aggregate, allowExtendedTenders) {
   if (kind !== "sale" || aggregate.managementDevice || aggregate.operations.length !== route.TABLES.length) return false;
   const byTable = new Map(aggregate.operations.map(operation => [operation.table, operation]));
   const product = byTable.get("products");
@@ -28,8 +29,12 @@ function isCashCandidate(kind, aggregate) {
     return operation.rows ?? (operation.values ? [operation.values] : []);
   };
   const sale = rows("sales")[0];
-  return product?.kind === "update" && product.match?.id && sale?.payment_type === "cash" && Boolean(sale.shift_id) &&
-    route.TABLES.filter(table => table !== "products").every(table => rows(table).length === 1);
+  const tenders = rows("payment_transactions");
+  const eligibleTender = (tenders.length === 1 && sale?.payment_type === "cash") ||
+    (allowExtendedTenders && tenders.length > 0 && tenders.length <= 16 &&
+      tenders.some(row => row.method === "card") && tenders.every(row => ["cash", "card"].includes(row.method)));
+  return product?.kind === "update" && product.match?.id && eligibleTender && Boolean(sale?.shift_id) &&
+    route.TABLES.filter(table => !["products", "payment_transactions"].includes(table)).every(table => rows(table).length === 1);
 }
 
 function createCashCheckoutRuntime({ configured, cloud, connectionManager, registry, coordinator, ready, handoff, authority }) {
@@ -56,7 +61,7 @@ function createCashCheckoutRuntime({ configured, cloud, connectionManager, regis
   }
 
   async function commit(legacy, kind, aggregate, assertRequestCurrent = () => {}) {
-    if (!configured || !isCashCandidate(kind, aggregate)) return legacy.commit(kind, aggregate);
+    if (!configured || !isCashCandidate(kind, aggregate, configured.allowExtendedTenders)) return legacy.commit(kind, aggregate);
     return coordinator.withExclusive(async () => {
       const legacyCommit = () => { assertRequestCurrent(); return legacy.commit(kind, aggregate); };
       assertRequestCurrent();
@@ -74,6 +79,7 @@ function createCashCheckoutRuntime({ configured, cloud, connectionManager, regis
       }
       const assertCurrent = () => { assertRequestCurrent(); active.assertCurrent(); author.assertCurrent(); };
       const outbox = new SaleEventOutbox(connectionManager, registry, { cashBridge: active.scope, installedHandoff: true,
+        allowExtendedTenders: configured.allowExtendedTenders,
         prepareCashAuthor: () => ({ assertCurrent, signCashCheckout: author.signCashCheckout }) });
       const repository = new AggregateRepository(connectionManager, legacy.operationsRepository, { saleOutbox: outbox });
       assertCurrent();

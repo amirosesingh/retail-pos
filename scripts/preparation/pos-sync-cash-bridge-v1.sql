@@ -36,6 +36,8 @@ DECLARE
   v_sale public.sales%ROWTYPE;
   v_item public.sale_items%ROWTYPE;
   v_tender public.payment_transactions%ROWTYPE;
+  v_tenders jsonb;
+  v_extended boolean;
   v_movement public.item_activity_logs%ROWTYPE;
   v_shift public.shifts%ROWTYPE;
   v_product public.products%ROWTYPE;
@@ -89,11 +91,14 @@ BEGIN
   EXCEPTION WHEN invalid_text_representation THEN
     RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'POS_CASH_V1_INVALID_CHECKOUT';
   END;
+  v_extended := v_checkout ? 'tenders';
   IF jsonb_typeof(v_checkout) IS DISTINCT FROM 'object' OR octet_length(v_checkout::text) > 524288
-     OR v_checkout - ARRAY['sale', 'item', 'tender', 'movement'] <> '{}'::jsonb
+     OR v_checkout - ARRAY['sale', 'item', 'tender', 'tenders', 'movement'] <> '{}'::jsonb
      OR jsonb_typeof(v_checkout->'sale') IS DISTINCT FROM 'object'
      OR jsonb_typeof(v_checkout->'item') IS DISTINCT FROM 'object'
-     OR jsonb_typeof(v_checkout->'tender') IS DISTINCT FROM 'object'
+     OR (NOT v_extended AND jsonb_typeof(v_checkout->'tender') IS DISTINCT FROM 'object')
+     OR (v_extended AND (v_checkout ? 'tender' OR jsonb_typeof(v_checkout->'tenders') IS DISTINCT FROM 'array'
+       OR p_verified_author IS NULL))
      OR jsonb_typeof(v_checkout->'movement') IS DISTINCT FROM 'object' THEN
     RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'POS_CASH_V1_INVALID_CHECKOUT';
   END IF;
@@ -104,15 +109,16 @@ BEGIN
      OR (v_checkout->'item') - ARRAY['id', 'sale_id', 'branch_id', 'product_id', 'product_name', 'quantity', 'unit_price',
        'discount_percent', 'discount_amount', 'tax_rate', 'is_return', 'is_foc', 'created_at', 'coupon_discount',
        'unit_cost', 'row_version', 'refunded_qty'] <> '{}'::jsonb
-     OR (v_checkout->'tender') - ARRAY['id', 'source_type', 'sale_id', 'store_id', 'shift_id', 'terminal_id', 'amount',
-       'method', 'kind', 'note', 'paid_at', 'created_at', 'updated_at', 'row_version', 'status', 'metadata'] <> '{}'::jsonb
+     OR (NOT v_extended AND (v_checkout->'tender') - ARRAY['id', 'source_type', 'sale_id', 'store_id', 'shift_id', 'terminal_id', 'amount',
+       'method', 'kind', 'note', 'paid_at', 'created_at', 'updated_at', 'row_version', 'status', 'metadata'] <> '{}'::jsonb)
      OR (v_checkout->'movement') - ARRAY['id', 'product_id', 'store_id', 'terminal_id', 'activity_type', 'reference',
        'quantity_delta', 'unit_cost', 'note', 'created_at', 'row_version'] <> '{}'::jsonb THEN
     RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'POS_CASH_V1_INVALID_CHECKOUT';
   END IF;
   v_sale := jsonb_populate_record(NULL::public.sales, v_checkout->'sale');
   v_item := jsonb_populate_record(NULL::public.sale_items, v_checkout->'item');
-  v_tender := jsonb_populate_record(NULL::public.payment_transactions, v_checkout->'tender');
+  v_tenders := CASE WHEN v_extended THEN v_checkout->'tenders' ELSE jsonb_build_array(v_checkout->'tender') END;
+  v_tender := jsonb_populate_record(NULL::public.payment_transactions, v_tenders->0);
   v_movement := jsonb_populate_record(NULL::public.item_activity_logs, v_checkout->'movement');
 
   IF v_sale.id IS NULL OR v_item.id IS NULL OR v_tender.id IS NULL OR v_movement.id IS NULL
@@ -121,7 +127,7 @@ BEGIN
      OR nullif(v_sale.bill_number, '') IS NULL OR nullif(v_sale.client_transaction_id, '') IS NULL
      OR v_sale.shift_id IS NULL OR v_sale.created_at IS NULL
      OR v_sale.store_id IS DISTINCT FROM p_branch_id OR v_sale.branch_id IS DISTINCT FROM p_branch_id
-     OR v_sale.payment_type IS DISTINCT FROM 'cash' OR v_sale.is_exchange IS DISTINCT FROM false
+     OR (NOT v_extended AND v_sale.payment_type IS DISTINCT FROM 'cash') OR v_sale.is_exchange IS DISTINCT FROM false
      OR v_sale.is_refunded IS DISTINCT FROM false
      OR ROW(v_sale.discount_amount, v_sale.tax_amount, v_sale.coupon_discount, v_sale.rounding_adjustment,
             v_sale.points_earned, v_sale.points_redeemed, v_sale.exchange_credit, v_sale.change_amount)
@@ -130,10 +136,10 @@ BEGIN
      OR v_sale.subtotal_amount IS DISTINCT FROM v_sale.total_amount OR v_sale.paid_amount IS DISTINCT FROM v_sale.total_amount
      OR jsonb_typeof(v_sale.payments) IS DISTINCT FROM 'array'
      OR jsonb_typeof(v_sale.payments->0) IS DISTINCT FROM 'object'
-     OR v_sale.payments->0->>'id' IS DISTINCT FROM v_tender.id::text
-     OR v_sale.payments->0->>'method' IS DISTINCT FROM 'cash'
-     OR (v_sale.payments->0->>'amount')::numeric IS DISTINCT FROM v_sale.total_amount
-     OR v_sale.payments->1 IS NOT NULL
+     OR (NOT v_extended AND (v_sale.payments->0->>'id' IS DISTINCT FROM v_tender.id::text
+       OR v_sale.payments->0->>'method' IS DISTINCT FROM 'cash'
+       OR (v_sale.payments->0->>'amount')::numeric IS DISTINCT FROM v_sale.total_amount
+       OR v_sale.payments->1 IS NOT NULL))
      OR v_item.sale_id IS DISTINCT FROM v_sale.id OR v_item.branch_id IS DISTINCT FROM p_branch_id
      OR v_item.product_id IS NULL OR v_item.quantity IS NULL OR v_item.quantity <= 0
      OR v_item.is_return IS DISTINCT FROM false OR v_item.is_foc IS DISTINCT FROM false
@@ -143,10 +149,11 @@ BEGIN
      OR (v_item.unit_price * v_item.quantity) IS DISTINCT FROM v_sale.total_amount
      OR v_tender.sale_id IS DISTINCT FROM v_sale.id OR v_tender.store_id IS DISTINCT FROM p_branch_id
      OR v_tender.shift_id IS DISTINCT FROM v_sale.shift_id OR v_tender.terminal_id IS DISTINCT FROM p_terminal_id::text
-     OR v_tender.source_type IS DISTINCT FROM 'sale' OR v_tender.method IS DISTINCT FROM 'cash'
+     OR v_tender.source_type IS DISTINCT FROM 'sale' OR (NOT v_extended AND v_tender.method IS DISTINCT FROM 'cash')
      OR v_tender.kind IS DISTINCT FROM 'payment' OR v_tender.status IS DISTINCT FROM 'completed'
-     OR v_tender.note IS DISTINCT FROM '' OR v_tender.metadata IS DISTINCT FROM '{}'::jsonb
-     OR v_tender.paid_at IS NULL OR v_tender.created_at IS NULL OR v_tender.amount IS DISTINCT FROM v_sale.total_amount
+     OR v_tender.note IS DISTINCT FROM '' OR (NOT v_extended AND v_tender.metadata IS DISTINCT FROM '{}'::jsonb)
+     OR v_tender.paid_at IS NULL OR v_tender.created_at IS NULL
+     OR (NOT v_extended AND v_tender.amount IS DISTINCT FROM v_sale.total_amount)
      OR v_movement.product_id IS DISTINCT FROM v_item.product_id OR v_movement.store_id IS DISTINCT FROM p_branch_id
      OR v_movement.terminal_id IS DISTINCT FROM p_terminal_id::text OR v_movement.activity_type IS DISTINCT FROM 'sale'
      OR v_movement.reference IS DISTINCT FROM v_sale.bill_number OR v_movement.created_at IS NULL
@@ -154,8 +161,12 @@ BEGIN
      OR v_movement.quantity_delta IS DISTINCT FROM -v_item.quantity THEN
     RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'POS_CASH_V1_INVALID_CHECKOUT';
   END IF;
-  IF (v_sale.payments->0) - ARRAY['id', 'method', 'amount'] <> '{}'::jsonb THEN
+  IF NOT v_extended AND (v_sale.payments->0) - ARRAY['id', 'method', 'amount'] <> '{}'::jsonb THEN
     RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'POS_CASH_V1_INVALID_CHECKOUT';
+  END IF;
+
+  IF v_extended THEN
+    PERFORM pos_sync_cash_v1.assert_extended_tenders(v_sale, v_tenders, p_terminal_id);
   END IF;
 
   v_claim := pos_sync_inbox_v1.claim_operation(p_organization_id, p_operation_id, v_installation_generation,
@@ -163,6 +174,11 @@ BEGIN
       'epoch', p_epoch, 'checkout_sha256', v_checkout_sha256) ||
       CASE WHEN p_verified_author IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('author', p_verified_author) END);
   IF v_claim->>'status' <> 'PROCEED' THEN RETURN v_claim; END IF;
+  IF v_extended THEN
+    IF pos_sync_feed_v1.extended_scope_epoch(p_organization_id,p_branch_id) IS DISTINCT FROM p_epoch THEN
+      RAISE EXCEPTION USING ERRCODE='42501', MESSAGE='POS_TENDER_SCOPE_FORBIDDEN';
+    END IF;
+  END IF;
 
   PERFORM pos_sync_cash_v1.lock_checkout_routes();
   SELECT shift.* INTO v_shift FROM public.shifts AS shift WHERE shift.id = v_sale.shift_id::uuid FOR SHARE;
@@ -195,7 +211,9 @@ BEGIN
   IF EXISTS (SELECT 1 FROM public.sales AS sale WHERE sale.id = v_sale.id OR sale.bill_number = v_sale.bill_number
              OR sale.client_transaction_id = v_sale.client_transaction_id)
      OR EXISTS (SELECT 1 FROM public.sale_items AS item WHERE item.id = v_item.id)
-     OR EXISTS (SELECT 1 FROM public.payment_transactions AS tender WHERE tender.id = v_tender.id)
+     OR EXISTS (SELECT 1 FROM jsonb_to_recordset(v_tenders) AS incoming(id uuid,client_transaction_id text)
+       JOIN public.payment_transactions AS tender ON tender.id=incoming.id OR
+         (incoming.client_transaction_id IS NOT NULL AND tender.client_transaction_id=incoming.client_transaction_id))
      OR EXISTS (SELECT 1 FROM public.item_activity_logs AS movement WHERE movement.id = v_movement.id)
      OR EXISTS (SELECT 1 FROM public.stock_delta_applied AS delta WHERE delta.movement_id = v_movement.id)
      OR EXISTS (SELECT 1 FROM public.sync_idempotency_receipts AS receipt WHERE receipt.batch_id = p_operation_id) THEN
@@ -222,7 +240,7 @@ BEGIN
       CASE WHEN p_verified_author IS NULL THEN '{}'::jsonb
         ELSE jsonb_build_object('cashier_id', p_verified_author->>'subject') END), 'changes', '[]'::jsonb),
     jsonb_build_object('table', 'sale_items', 'rows', jsonb_build_array(v_checkout->'item'), 'changes', '[]'::jsonb),
-    jsonb_build_object('table', 'payment_transactions', 'rows', jsonb_build_array(v_checkout->'tender'), 'changes', '[]'::jsonb),
+    jsonb_build_object('table', 'payment_transactions', 'rows', v_tenders, 'changes', '[]'::jsonb),
     jsonb_build_object('table', 'item_activity_logs', 'rows', jsonb_build_array(v_checkout->'movement'), 'changes', '[]'::jsonb)
   );
   v_ack := public.pos_sync_push_aggregate(p_operation_id, p_organization_id, p_branch_id, p_terminal_id::text, v_operations);
@@ -254,7 +272,7 @@ BEGIN
     AND sale.bill_number = v_sale.bill_number AND sale.total_amount = v_sale.total_amount
     AND (p_verified_author IS NULL OR sale.cashier_id = p_verified_author->>'subject')
     AND item.product_id = v_item.product_id AND item.quantity = v_item.quantity AND item.unit_price = v_item.unit_price
-    AND tender.method = 'cash' AND tender.amount = v_tender.amount AND tender.terminal_id = p_terminal_id::text
+    AND tender.method = v_tender.method AND tender.amount = v_tender.amount AND tender.terminal_id = p_terminal_id::text
     AND movement.product_id = v_item.product_id AND movement.quantity_delta = v_movement.quantity_delta
     AND delta.product_id = v_item.product_id AND delta.delta = v_movement.quantity_delta
     AND (product.stock_by_store->>p_branch_id)::integer = v_stock + delta.delta;
@@ -262,6 +280,21 @@ BEGIN
     RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'POS_CASH_V1_WRITER_UNCONFIRMED';
   END IF;
 
+  IF v_extended THEN
+    IF EXISTS (
+      SELECT 1 FROM jsonb_populate_recordset(NULL::public.payment_transactions,v_tenders) AS incoming
+      LEFT JOIN public.payment_transactions AS saved ON saved.id=incoming.id
+      WHERE ROW(saved.source_type,saved.sale_id,saved.store_id,saved.shift_id,saved.terminal_id,saved.method,
+          saved.kind,saved.status,saved.amount,saved.reference,saved.metadata,saved.client_transaction_id,saved.cashier_name)
+        IS DISTINCT FROM ROW(incoming.source_type,incoming.sale_id,incoming.store_id,incoming.shift_id,incoming.terminal_id,
+          incoming.method,incoming.kind,incoming.status,incoming.amount,incoming.reference,incoming.metadata,
+          incoming.client_transaction_id,incoming.cashier_name)
+    ) OR NOT EXISTS (SELECT 1 FROM public.sales WHERE id=v_sale.id AND payments=v_sale.payments AND payment_type=v_sale.payment_type)
+    THEN RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='POS_CASH_V1_WRITER_UNCONFIRMED'; END IF;
+    v_changes := v_changes || jsonb_build_array(jsonb_build_object('type','card_or_split','ids',
+      (SELECT jsonb_agg(entry->'id' ORDER BY position)
+       FROM jsonb_array_elements(v_tenders) WITH ORDINALITY AS tender(entry,position))));
+  END IF;
   IF p_verified_author IS NOT NULL THEN
     v_changes := pos_sync_cash_v1.project_receipt(p_branch_id, v_changes);
   END IF;

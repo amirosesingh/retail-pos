@@ -7,7 +7,7 @@ CREATE TABLE pos_sync_feed_v1.cash_publications (
   epoch uuid NOT NULL,
   seq bigint NOT NULL CHECK (seq > 0),
   operation_id uuid NOT NULL,
-  changes jsonb NOT NULL CHECK (jsonb_typeof(changes) = 'array' AND jsonb_array_length(changes) = 4),
+  changes jsonb NOT NULL CHECK (jsonb_typeof(changes) = 'array' AND jsonb_array_length(changes) BETWEEN 4 AND 19),
   acceptance jsonb NOT NULL,
   PRIMARY KEY (organization_id, scope_id, epoch, seq),
   UNIQUE (organization_id, operation_id),
@@ -69,7 +69,7 @@ BEGIN
   WHERE (feed.organization_id, feed.scope_id, feed.epoch, feed.seq, feed.operation_id) =
     (p_org, p_branch, p_epoch, p_seq, p_operation) AND feed.seq > pilot.armed_after
   FOR NO KEY UPDATE OF feed;
-  IF NOT FOUND OR jsonb_array_length(v_changes) <> 4
+  IF NOT FOUND OR jsonb_array_length(v_changes) NOT BETWEEN 4 AND 19
      OR v_changes->0->>'table_name' IS DISTINCT FROM 'sales'
      OR v_changes->1->>'table_name' IS DISTINCT FROM 'sale_items'
      OR v_changes->2->>'table_name' IS DISTINCT FROM 'payment_transactions'
@@ -80,7 +80,14 @@ BEGIN
      OR v_changes->2->'row_data'->>'store_id' IS DISTINCT FROM p_branch
      OR v_changes->3->'row_data'->>'store_id' IS DISTINCT FROM p_branch
      OR v_changes->2->'row_data'->>'terminal_id' IS DISTINCT FROM p_terminal::text
-     OR v_changes->3->'row_data'->>'terminal_id' IS DISTINCT FROM p_terminal::text THEN
+     OR v_changes->3->'row_data'->>'terminal_id' IS DISTINCT FROM p_terminal::text
+     OR EXISTS (
+       SELECT 1 FROM jsonb_array_elements(v_changes) WITH ORDINALITY AS entry(change,ordinality)
+       WHERE ordinality > 4 AND (change->>'table_name' IS DISTINCT FROM 'payment_transactions'
+         OR change->'row_data'->>'store_id' IS DISTINCT FROM p_branch
+         OR change->'row_data'->>'sale_id' IS DISTINCT FROM v_changes->0->'row_data'->>'id'
+         OR change->'row_data'->>'terminal_id' IS DISTINCT FROM p_terminal::text)
+     ) THEN
     RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'POS_CASH_SETTINGS_V1_PUBLICATION_UNVERIFIED';
   END IF;
   INSERT INTO pos_sync_feed_v1.cash_publications VALUES (

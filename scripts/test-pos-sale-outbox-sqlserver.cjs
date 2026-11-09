@@ -13,15 +13,16 @@ const { aggregatePolicy } = require("../electron/db/write-policy.cjs");
 
 async function main() {
   const mode = process.argv[2];
-  assert(process.argv.length === 3 && ["--run", "--wire", "--attested-wire", "--installed-sender"].includes(mode));
+  const extendedTenders = mode === "--card-wire" || mode === "--split-wire";
+  assert(process.argv.length === 3 && (extendedTenders || ["--run", "--wire", "--attested-wire", "--installed-sender"].includes(mode)));
   const branchId = "sale-outbox-fixture";
   const terminalId = randomUUID();
   const shiftId = randomUUID();
   const productId = randomUUID();
-  const price = "19.123456789123";
+  const price = extendedTenders ? "19.120000000000" : "19.123456789123";
   const local = await createLocal(branchId);
   const { manager } = local;
-  const keyFixture = ["--attested-wire", "--installed-sender"].includes(mode) ? createAuthorKeys() : null;
+  const keyFixture = extendedTenders || ["--attested-wire", "--installed-sender"].includes(mode) ? createAuthorKeys() : null;
   try {
     const registry = loadRegistry();
     for (const name of ["products", "item_activity_logs", "settings_scoped", "stock_transfers", "stock_transfer_items"]) {
@@ -281,7 +282,8 @@ async function main() {
       console.log("PASS last-unit checkout preserves its exact Change Tracking tag through automatic catalogue archive");
       return;
     }
-    const bridgeStore = new SaleEventOutbox(manager, registry, { cashBridge, ...(prepareCashAuthor ? { prepareCashAuthor } : {}) });
+    const bridgeStore = new SaleEventOutbox(manager, registry, { cashBridge, allowExtendedTenders: extendedTenders,
+      ...(prepareCashAuthor ? { prepareCashAuthor } : {}) });
     const bridgeRepository = new AggregateRepository(manager, repository, { saleOutbox: bridgeStore });
     assert.equal(await bridgeStore.readBridgeCheckout(sale.operationId), null);
     const unsupported = checkout(8);
@@ -301,6 +303,20 @@ async function main() {
     }
     const bridgeSale = checkout(8);
     if (keyFixture) bridgeSale.operations.find(operation => operation.table === "sales").rows[0].cashier_id = identity.subject;
+    if (extendedTenders) {
+      const sale = bridgeSale.operations.find(operation => operation.table === "sales").rows[0];
+      const tender = bridgeSale.operations.find(operation => operation.table === "payment_transactions");
+      const card = { id: randomUUID(), method: "card", amount: mode === "--split-wire" ? 11 : 19.12,
+        accountId: randomUUID(), bankName: "Fixture terminal", reference: "TEST-SLIP", referenceNote: "Fixture batch", requiresReference: true };
+      sale.payment_type = "card";
+      sale.payments = mode === "--split-wire" ? [{ id: randomUUID(), method: "cash", amount: 8.12 }, card] : [card];
+      tender.rows = sale.payments.map((payment, index) => ({
+        ...tender.rows[0], id: randomUUID(), client_transaction_id: `${sale.id}:pay:${index}`,
+        method: payment.method, amount: payment.amount, reference: payment.reference ?? sale.bill_number,
+        cashier_name: "Fixture cashier", metadata: { bill: sale.bill_number, captured_at: sale.created_at, captured_by: "Fixture cashier",
+          ...(payment.reference && { voucher_reference: payment.reference, reference_note: payment.referenceNote, bank: payment.bankName }) },
+      }));
+    }
     await bridgeRepository.commit("sale", bridgeSale);
     const wire = await bridgeStore.readBridgeCheckout(bridgeSale.operationId);
     assert.equal(wire.operationId, bridgeSale.operationId);
@@ -308,6 +324,25 @@ async function main() {
     assert.equal(wire.checkoutSha256, createHash("sha256").update(wire.checkoutJson).digest("hex"));
     assert.deepEqual(wire.scope, cashBridge);
     const checkoutPayload = JSON.parse(wire.checkoutJson);
+    if (extendedTenders) {
+      assert.deepEqual(Object.keys(checkoutPayload), ["sale", "item", "tenders", "movement"]);
+      assert.equal(checkoutPayload.tenders.length, mode === "--split-wire" ? 2 : 1);
+      assert.equal(checkoutPayload.tenders.at(-1).metadata.voucher_reference, "TEST-SLIP");
+      assert.equal(checkoutPayload.sale.payments.at(-1).bankName, "Fixture terminal");
+      assert.equal(wire.attestation.payloadHash, wire.checkoutSha256);
+      const accepted = { operation_id: wire.operationId, sale_id: wire.saleId, scope_id: wire.scope.branchId,
+        epoch: wire.scope.feedEpoch, terminal_id: wire.scope.terminalId, installation_generation: wire.scope.installationGeneration,
+        database_guid: wire.scope.databaseGuid, checkout_sha256: wire.checkoutSha256, author_id: wire.attestation.authorId,
+        author_key_id: wire.attestation.keyId, seq: "1" };
+      await bridgeStore.recordBridgeAcceptance(wire, { status: "APPLIED", result: accepted });
+      await bridgeStore.recordBridgeAcceptance(wire, { status: "ALREADY_APPLIED", result: accepted });
+      const journal = await manager.pool.request().input("operation", wire.operationId).query(`
+        SELECT COUNT(*) AS rows_saved, COUNT(acknowledged_at) AS acknowledged
+          FROM dbo.sync_change_journal WHERE aggregate_id=@operation;`);
+      assert.deepEqual(journal.recordset, [{ rows_saved: checkoutPayload.tenders.length + 4, acknowledged: checkoutPayload.tenders.length + 4 }]);
+      console.log("POS_CASH_WIRE " + JSON.stringify({ ...wire, publicKey }));
+      return;
+    }
     assert.deepEqual(Object.keys(checkoutPayload), ["sale", "item", "tender", "movement"]);
     assert.deepEqual(checkoutPayload.sale.payments, [{ id: bridgeSale.tenderId, method: "cash", amount: price }]);
     assert.equal(checkoutPayload.sale.branch_id, branchId);

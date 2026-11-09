@@ -19,9 +19,9 @@ const db = new PGlite();
 const one = async (query, args = []) => Object.values((await db.query(query, args)).rows[0])[0];
 const epochA = randomUUID(), epochB = randomUUID(), terminalA = randomUUID(), terminalB = randomUUID();
 const proofA = "a".repeat(64), proofB = "b".repeat(64);
-const pull = (branch, terminal, proof, epoch) => one(
-  "SELECT public.pos_sync_pull_cash_settings_extended_v1('default',$1,$2,$3,$4,'0',NULL,20)",
-  [branch, terminal, proof, epoch]);
+const pull = (branch, terminal, proof, epoch, after = "0") => one(
+  "SELECT public.pos_sync_pull_cash_settings_extended_v1('default',$1,$2,$3,$4,$5,NULL,20)",
+  [branch, terminal, proof, epoch, after]);
 const changeGraph = (group, edit) => {
   const copy = structuredClone(group);
   const row = copy.changes[0].row_data;
@@ -32,13 +32,17 @@ const changeGraph = (group, edit) => {
   return copy;
 };
 
-async function applyLocal(branch, epoch, facts, { pending = false, recovering = false, completed = null } = {}) {
+async function applyLocal(branch, epoch, facts, {
+  pending = false, recovering = false, completed = null, successors = [], ownedSuccessors = [],
+} = {}) {
   const local = await createLocal(branch, { extraTables: ["stock_transfers", "stock_transfer_items", "products", "item_activity_logs"] });
   try {
     const { manager, registry } = local;
     await manager.pool.request().batch(await preparation("pos-sync-live-stock-native-v1"));
     await local.insert("products", completed?.product ??
       { id: ids.product, row_version: 1, owner_store_id: "A", stock_quantity: 14, stock_by_store: { A: 10, B: 4 } });
+    if (ownedSuccessors.length) await local.insert("products",
+      { id: ids.product2, row_version: 1, owner_store_id: branch, stock_quantity: 38, stock_by_store: { A: 38, B: 0 } });
     await manager.pool.request().batch(`
       ALTER TABLE dbo.stock_transfers ADD FOREIGN KEY(source_request_id) REFERENCES dbo.stock_transfers(id);
       ALTER TABLE dbo.stock_transfer_items ADD FOREIGN KEY(transfer_id) REFERENCES dbo.stock_transfers(id),
@@ -55,7 +59,7 @@ async function applyLocal(branch, epoch, facts, { pending = false, recovering = 
     }
     const worker = { registry, connectionManager: manager, reader: new ChangeReader(manager, registry) };
     const sql = manager.sql();
-    const apply = async ({ writePin = false } = {}) => {
+    const apply = async ({ writePin = false, group = facts } = {}) => {
       const tx = new sql.Transaction(manager.pool);
       await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
       try {
@@ -64,8 +68,8 @@ async function applyLocal(branch, epoch, facts, { pending = false, recovering = 
             [{ ...facts.stock[0], row_version: facts.stock[0].row_version + 1, branch_balance: 5 }],
             { epoch, seq: "2", recovery: true }), 1);
         }
-        const count = await applyFinancialCorrection(worker, tx, { branch, financialEpoch: epoch, recoveringFinancial: recovering }, facts);
-        await checkpoint.save(branch, "fixture_transfer", "pull", { committed_cursor: facts.seq }, tx);
+        const count = await applyFinancialCorrection(worker, tx, { branch, financialEpoch: epoch, recoveringFinancial: recovering }, group);
+        await checkpoint.save(branch, "fixture_transfer", "pull", { committed_cursor: group.seq }, tx);
         await tx.commit();
         return count;
       } catch (error) {
@@ -112,15 +116,47 @@ async function applyLocal(branch, epoch, facts, { pending = false, recovering = 
     }
     assert.equal(await apply({ writePin: recovering }), branch === "A" ? recovering ? 5 : 6 : 4);
     assert.equal(await apply(), 0);
-    const result = await manager.pool.request().query(`
+    const result = await manager.pool.request().input("product", ids.product).query(`
       SELECT status FROM dbo.stock_transfers ORDER BY kind;
       SELECT COUNT(*) AS count FROM dbo.stock_transfer_items;
       SELECT COUNT(*) AS count FROM dbo.item_activity_logs;
-      SELECT stock_by_store FROM dbo.products;`);
+      SELECT stock_by_store FROM dbo.products WHERE id=@product;`);
     assert.deepEqual(result.recordsets[0].map(row => row.status), ["completed", "dispatched"]);
     assert.equal(result.recordsets[1][0].count, 2);
     assert.equal(result.recordsets[2][0].count, branch === "A" ? 1 : 0);
     assert.deepEqual(JSON.parse(result.recordsets[3][0].stock_by_store), { A: branch === "A" ? recovering ? 5 : 8 : 10, B: 4 });
+    for (const group of successors) {
+      assert.equal(await apply({ group }), group.logs.length ? 3 : 2);
+      assert.equal(await apply({ group }), 0);
+    }
+    if (successors.length) {
+      const state = await manager.pool.request().input("id", ids.child).query(`
+        SELECT status,received_by,verified_by FROM dbo.stock_transfers WHERE id=@id;
+        SELECT quantity_verified FROM dbo.stock_transfer_items WHERE transfer_id=@id;
+        SELECT COUNT(*) AS count FROM dbo.item_activity_logs WHERE activity_type=N'transfer_in';
+        SELECT committed_cursor FROM dbo.sync_checkpoints WHERE entity_type=N'fixture_transfer';`);
+      assert.deepEqual(state.recordsets[0], [{ status: "completed", received_by: "Verified Receiver", verified_by: "Verified Receiver" }]);
+      assert.deepEqual(state.recordsets[1], [{ quantity_verified: 2 }]);
+      assert.deepEqual(state.recordsets[2], [{ count: branch === "B" ? 1 : 0 }]);
+      assert.deepEqual(state.recordsets[3], [{ committed_cursor: successors.at(-1).seq }]);
+    }
+    if (ownedSuccessors.length) {
+      for (const [index, group] of ownedSuccessors.entries()) {
+        assert.equal(await apply({ group }), index === 0 ? 2 : 4);
+        assert.equal(await apply({ group }), 0);
+      }
+      const verified = ownedSuccessors.at(-1);
+      const result = await manager.pool.request().input("transfer", verified.headers[0].id).input("product", ids.product2).query(`
+        SELECT status,discrepancy_reason FROM dbo.stock_transfers WHERE id=@transfer;
+        SELECT stock_quantity,stock_by_store FROM dbo.products WHERE id=@product;
+        SELECT branch_balance,product_version FROM dbo.pos_sync_grouped_stock_v1 WHERE product_id=@product;
+        SELECT committed_cursor FROM dbo.sync_checkpoints WHERE entity_type=N'fixture_transfer';`);
+      assert.deepEqual(result.recordsets[0], [{ status: "completed_with_discrepancy", discrepancy_reason: "One item short" }]);
+      assert.equal(result.recordsets[1][0].stock_quantity, 39);
+      assert.deepEqual(JSON.parse(result.recordsets[1][0].stock_by_store), { A: 38, B: 1 });
+      assert.deepEqual(result.recordsets[2], [{ branch_balance: 1, product_version: verified.stock[0].row_version }]);
+      assert.deepEqual(result.recordsets[3], [{ committed_cursor: verified.seq }]);
+    }
     if (branch === "A" && !recovering) {
       const foreign = randomUUID();
       await local.insert("stock_transfers", { id: foreign, from_store_id: "C", to_store_id: "D", row_version: 1 });
@@ -215,6 +251,8 @@ try {
   }
   await db.exec(await preparation("pos-sync-native-transfer-receive-v1"));
   await db.exec(await preparation("pos-sync-native-transfer-receive-v1"));
+  await db.exec(await preparation("pos-sync-transfer-receipt-feed-v1"));
+  await db.exec(await preparation("pos-sync-transfer-receipt-feed-v1"));
   const receiver = randomUUID();
   await db.query(`INSERT INTO public.app_users(id,user_id,full_name,email,role,role_slug,store_id,is_active,auth_user_id,permissions)
     VALUES($1,'fixture-receiver','Verified Receiver','receiver@example.test','staff','warehouse','B',true,$1,'{"can_receive_transfer":true}')`, [receiver]);
@@ -249,6 +287,78 @@ try {
   assert.equal(await one("SELECT coalesce(current_setting('pos.native_receiver_transfer',true),'')"), "");
   console.log("PASS native scoped arrival and verification preserve actor attribution, rollback and exactly-once destination stock.");
 
+  const receiptA = (await pull("A", terminalA, proofA, epochA, "1")).groups.filter(group => group.financial?.kind === "transfer_v1");
+  const receiptB = (await pull("B", terminalB, proofB, epochB, "1")).groups.filter(group => group.financial?.kind === "transfer_v1");
+  assert.equal(receiptA.length, 2);
+  assert.equal(receiptB.length, 2);
+  const arrivalsA = receiptA.map(group => parseFinancialCorrection(group, "A"));
+  const arrivalsB = receiptB.map(group => parseFinancialCorrection(group, "B"));
+  assert.deepEqual(arrivalsA.map(group => group.headers[0].status), ["received", "completed"]);
+  assert.deepEqual(arrivalsA.map(group => group.headers), arrivalsB.map(group => group.headers));
+  assert.deepEqual(arrivalsA.flatMap(group => group.logs), []);
+  assert.deepEqual(arrivalsB[0].logs, []);
+  assert.deepEqual(arrivalsB[1].logs.map(row => [row.store_id, row.activity_type, row.quantity_delta, row.stock_after]),
+    [["B", "transfer_in", 2, 2]]);
+  assert.deepEqual(arrivalsB[1].stock, [], "A shared product's destination bucket remains on its existing legacy mirror.");
+  assert.throws(() => parseFinancialCorrection(changeGraph(receiptB[1], graph => {
+    graph.movements[0].line_id = randomUUID();
+  }), "B"), /authorized scope/);
+  assert.throws(() => parseFinancialCorrection(changeGraph(receiptB[1], graph => {
+    graph.logs[0].store_id = "A";
+  }), "B"), /authorized scope/);
+  const arrivedCoverage = { table_name: "stock_transfers", id: ids.child, version: receiptB[0].changes[0].row_version };
+  const verifiedAudit = { table_name: "item_activity_logs", id: arrivalsB[1].logs[0].id,
+    version: String(arrivalsB[1].logs[0].row_version) };
+  const owned = await one("SELECT public.pos_sync_extended_legacy_coverage_v1('default','B',$1,$2,$3,$4)",
+    [terminalB, proofB, epochB, JSON.stringify([arrivedCoverage, verifiedAudit])]);
+  assert.deepEqual(owned.entries, [{ ...verifiedAudit, seq: receiptB[1].seq, owned: true },
+    { ...arrivedCoverage, seq: receiptB[0].seq, owned: true }]);
+  await one("SELECT pos_sync_feed_v1.retire_groups('default','B',$1,$2)", [epochB, receiptB[1].seq]);
+  const archivedB = (await db.query(`SELECT pos_sync_feed_v1.financial_recovery_row(published) AS row
+    FROM pos_sync_feed_v1.extended_publications published WHERE scope_id='B' AND seq>1
+    AND metadata->'financial'->>'kind'='transfer_v1' ORDER BY seq`)).rows.map(row => row.row);
+  assert.deepEqual(archivedB, receiptB);
+  console.log("PASS arrival and verification are separately archived in both authorized scopes with destination-only audit and legacy coverage.");
+
+  const ownedTransfer = randomUUID();
+  await db.query("UPDATE public.products SET owner_store_id='B' WHERE id=$1", [ids.product2]);
+  await db.exec(`SET session_replication_role=replica;
+    INSERT INTO public.stock_transfers(id,ref,kind,status,from_store_id,to_store_id,created_by,approved_by,approved_at)
+    VALUES('${ownedTransfer}','ST-FIXTURE-OWNED','transfer','approved','A','B','Requester','Approver',now());
+    INSERT INTO public.stock_transfer_items(transfer_id,product_id,quantity,quantity_approved)
+    VALUES('${ownedTransfer}','${ids.product2}',2,2);
+    SET session_replication_role=origin;`);
+  await db.exec(webIdentity);
+  await one(`SELECT public.stock_transfer_dispatch_atomic($1,'Authorized Dispatcher',$2)`,
+    [ownedTransfer, JSON.stringify([{ product_id: ids.product2, qty: 2 }])]);
+  await db.query("SELECT set_config('test.uid',$1,false)", [receiver]);
+  await one("SELECT public.stock_transfer_receive($1,'Verified Receiver',false,NULL)", [ownedTransfer]);
+  const forged = randomUUID();
+  await db.exec("BEGIN");
+  await db.query(`INSERT INTO public.item_activity_logs(id,product_id,store_id,activity_type,reference,quantity_delta,
+    stock_before,stock_after,staff_name) VALUES($1,$2,'B','transfer_in','ST-FIXTURE-OWNED',1,999,1000,'Verified Receiver')`,
+    [forged, ids.product2]);
+  await one("SELECT public.stock_transfer_verify($1,'Verified Receiver',$2,'One item short')",
+    [ownedTransfer, JSON.stringify([{ product_id: ids.product2, qty: 1 }])]);
+  await db.exec("COMMIT");
+  await db.exec("SELECT set_config('test.uid','',false),set_config('test.role','service_role',false);");
+  const scopedOwned = (await pull("B", terminalB, proofB, epochB, receiptB[1].seq)).groups;
+  const ownedGroups = scopedOwned.filter(group => group.financial?.transfer_id === ownedTransfer);
+  assert.equal(ownedGroups.length, 2);
+  const ownedFacts = ownedGroups.map(group => parseFinancialCorrection(group, "B"));
+  assert.equal(ownedFacts[1].headers[0].status, "completed_with_discrepancy");
+  assert.equal(ownedFacts[1].headers[0].discrepancy_reason, "One item short");
+  assert.equal(ownedFacts[1].logs.length, 1);
+  assert.notEqual(ownedFacts[1].logs[0].id, forged);
+  assert.deepEqual(ownedFacts[1].stock.map(row => [row.product_id, row.branch_balance]), [[ids.product2, 1]]);
+  assert.equal(await one(`SELECT seq::text FROM pos_sync_feed_v1.stock_revision_coverage WHERE scope_id='B'
+    AND product_id=$1 AND product_version=$2`, [ids.product2, ownedFacts[1].stock[0].row_version]), ownedGroups[1].seq);
+  for (const role of ["anon", "authenticated", "service_role"]) {
+    assert.equal(await one(`SELECT has_function_privilege($1,
+      'pos_sync_feed_v1.publish_transfer_receipt(uuid,jsonb)','execute')`, [role]), false);
+  }
+  console.log("PASS canonical web verification with discrepancy publishes exact destination-owned stock and excludes a matching forged audit.");
+
   for (const role of ["anon", "authenticated", "service_role"]) {
     assert.equal(await one(`SELECT has_function_privilege($1,
       'pos_sync_feed_v1.assert_cash_settings_projection()','execute')`, [role]), false);
@@ -273,11 +383,13 @@ try {
   assert.equal(emitted.branch_balance, 4);
   console.log("PASS service-role product write commits its deferred private stock group without direct feed access.");
   if (process.argv.includes("--native")) {
-    await applyLocal("A", epochA, sending);
-    await applyLocal("B", epochB, receiving);
+    await applyLocal("A", epochA, sending, { successors: arrivalsA });
+    await applyLocal("B", epochB, receiving, {
+      successors: archivedB.map(group => parseFinancialCorrection(group, "B")), ownedSuccessors: ownedFacts,
+    });
     await applyLocal("A", epochA, sending, { pending: true });
     await applyLocal("A", epochA, parseFinancialCorrection(recovery, "A"), { recovering: true });
-    console.log("PASS independent LocalDB tills apply the group and cursor atomically, retry without writes, and preserve newer pinned stock.");
+    console.log("PASS independent LocalDB tills apply dispatch, receipt, verification, owned destination stock and cursors atomically; retries are no-ops.");
     const completed = await one(`SELECT jsonb_build_object(
       'headers',(SELECT jsonb_agg(to_jsonb(t) ORDER BY t.kind) FROM public.stock_transfers t WHERE t.id IN ('${ids.parent}','${ids.child}')),
       'lines',(SELECT jsonb_agg(to_jsonb(i)||jsonb_build_object('unit_cost',i.unit_cost::text) ORDER BY i.id)

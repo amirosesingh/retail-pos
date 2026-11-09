@@ -64,6 +64,45 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("isolated grouped sync relay", () => {
+  it("returns every scoped card and split tender only in the extended feed", async () => {
+    runtime.env.POS_GROUPED_CASH_SETTINGS_PILOT_ENABLED = "true";
+    runtime.env.POS_GROUPED_EXTENDED_PILOT_ENABLED = "true";
+    const row = (table_name: string, row_data: Record<string, unknown>) => ({
+      table_name, row_data: { ...row_data, row_version: "1" }, row_version: "1", tombstone: false,
+      entity_id: JSON.stringify({ id: row_data.id }),
+    });
+    const sale = { id: terminal, bill_number: "B-1", client_transaction_id: "attempt", store_id: branch, branch_id: branch,
+      shift_id: epoch, subtotal_amount: "10", total_amount: "10", discount_amount: "0", tax_amount: "0",
+      payment_type: "card", payments: [{ id: secondTerminal, method: "cash", amount: 4 },
+        { id: otherTerminal, method: "card", amount: 6, accountId: epoch, reference: "SLIP-1", bankName: "Fixture" }],
+      points_earned: "0", points_redeemed: "0", is_exchange: false, is_refunded: false, created_at: "2026-11-07T09:00:00Z",
+      paid_amount: "10", change_amount: "0", exchange_credit: "0", coupon_discount: "0", rounding_adjustment: "0" };
+    const item = { id: secondTerminal, sale_id: sale.id, branch_id: branch, product_id: secondTerminal,
+      product_name: "Fixture", quantity: 1, unit_price: "10", discount_percent: "0", discount_amount: "0",
+      tax_rate: "0", is_return: false, is_foc: false, created_at: sale.created_at, coupon_discount: "0", unit_cost: "1", refunded_qty: 0 };
+    const tender = (id: string, index: number, method: string, amount: string, reference: string, metadata: object) => ({
+      id, sale_id: sale.id, store_id: branch, shift_id: epoch, terminal_id: terminal, source_type: "sale", amount,
+      method, kind: "payment", note: "", paid_at: sale.created_at, created_at: sale.created_at, updated_at: sale.created_at,
+      status: "completed", client_transaction_id: `attempt:pay:${index}`, reference, cashier_name: null, metadata,
+    });
+    const movement = { id: otherTerminal, product_id: item.product_id, store_id: branch, terminal_id: terminal,
+      activity_type: "sale", reference: sale.bill_number, quantity_delta: -1, unit_cost: "1", note: "", created_at: sale.created_at };
+    const card = tender(otherTerminal, 1, "card", "6", "SLIP-1",
+      { bill: sale.bill_number, voucher_reference: "SLIP-1", bank: "Fixture" });
+    const group = { seq: next, operation_id: epoch,
+      acceptance: { terminal_id: terminal, installation_generation: epoch, database_guid: epoch, checkout_sha256: "a".repeat(64) },
+      stock: { product_id: item.product_id, branch_balance: 4, row_version: 2 },
+      changes: [row("sales", sale), row("sale_items", item),
+        row("payment_transactions", tender(secondTerminal, 0, "cash", "4", sale.bill_number, { bill: sale.bill_number })),
+        row("item_activity_logs", movement), row("payment_transactions", card)] };
+    upstream = () => Response.json({ ...page(), groups: [group] });
+    const extended = { ...read, projection: "settings_cash_v1", extended: true };
+    expect((await direct({ sqlServerGroupedFeed: extended })).status).toBe(200);
+    expect((await direct({ sqlServerGroupedFeed: { ...read, projection: "settings_cash_v1" } })).status).toBe(502);
+    group.changes[4] = row("payment_transactions", { ...card, reference: "ALTERED-SLIP" });
+    expect((await direct({ sqlServerGroupedFeed: extended })).status).toBe(502);
+  });
+
   it("uses Worker-compatible redirect rejection without forwarding a service credential", async () => {
     upstream = () => new Response(null, { status: 307, headers: { Location: "https://redirect.fixture" } });
     const response = await direct({ sqlServerGroupedFeed: read });
@@ -182,6 +221,43 @@ describe("isolated grouped sync relay", () => {
     expect((await direct(body)).status).toBe(200);
     show(false, true);
     expect((await direct(body)).status).toBe(502);
+  });
+
+  it("relays arrival and verification evidence with movements only in the destination scope", async () => {
+    runtime.env.POS_GROUPED_CASH_SETTINGS_PILOT_ENABLED = "true";
+    runtime.env.POS_GROUPED_EXTENDED_PILOT_ENABLED = "true";
+    const request = { sqlServerGroupedFeed: { ...read, projection: "settings_cash_v1", extended: true } };
+    const show = (status: string, source: boolean, movements: boolean, logBranch = branch) => {
+      const graph_json = JSON.stringify({
+        branch_id: branch,
+        transfer: { id: secondTerminal, kind: "transfer", status, row_version: 4, ref: "ST-test",
+          from_store_id: source ? branch : otherBranch, to_store_id: source ? otherBranch : branch, source_request_id: null },
+        request: null,
+        lines: [{ id: terminal, transfer_id: secondTerminal, product_id: otherTerminal }],
+        stock: movements ? [{ product_id: otherTerminal, branch_balance: 3, row_version: 3 }] : [],
+        logs: movements ? [{ id: epoch, store_id: logBranch, activity_type: "transfer_in", reference: "ST-test", product_id: otherTerminal }] : [],
+        movements: movements ? [{ line_id: terminal, log_id: epoch }] : [],
+      });
+      upstream = () => Response.json({ ...page(), groups: [{ seq: next, operation_id: otherTerminal,
+        financial: { kind: "transfer_v1", transfer_id: secondTerminal }, changes: [{
+          table_name: "stock_transfers", entity_id: JSON.stringify({ id: secondTerminal }), row_version: "4", tombstone: false,
+          row_data: { id: secondTerminal, store_id: branch, row_version: 4, graph_json,
+            graph_sha256: createHash("sha256").update(graph_json).digest("hex") },
+        }],
+      }] });
+    };
+    show("received", false, false);
+    expect((await direct(request)).status).toBe(200);
+    show("completed_with_discrepancy", false, true);
+    expect((await direct(request)).status).toBe(200);
+    show("completed", true, false);
+    expect((await direct(request)).status).toBe(200);
+    show("received", false, true);
+    expect((await direct(request)).status).toBe(502);
+    show("completed", true, true);
+    expect((await direct(request)).status).toBe(502);
+    show("completed", false, true, otherBranch);
+    expect((await direct(request)).status).toBe(502);
   });
 
   it("binds paged stock recovery to its requested pin, branch, ordinal and exact payload", async () => {

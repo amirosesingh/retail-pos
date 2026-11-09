@@ -6,8 +6,8 @@ const UUID = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const exact = (row, keys) => row && typeof row === "object" && !Array.isArray(row) &&
   Object.keys(row).length === keys.length && keys.every(key => Object.hasOwn(row, key));
 const fail = (message, code = "ESYNC_FINANCIAL_GROUP_PROTOCOL") => Object.assign(new Error(message), { code, table: "stock_transfers" });
-const invalid = () => fail("The grouped transfer dispatch is outside its authorized scope or shape.");
-const review = () => fail("The saved transfer does not match the verified dispatch boundary.", "ESYNC_GROUPED_REVIEW_REQUIRED");
+const invalid = () => fail("The grouped transfer is outside its authorized scope or shape.");
+const review = () => fail("The saved transfer does not match the verified transfer boundary.", "ESYNC_GROUPED_REVIEW_REQUIRED");
 const uuid = value => typeof value === "string" && UUID.test(value);
 const branchId = value => typeof value === "string" && value.length > 0 && value.length <= 128 && !value.includes("\0");
 
@@ -28,20 +28,28 @@ function parseTransferDispatchGroup(group, branch) {
       createHash("sha256").update(graph_json, "utf8").digest("hex") !== graph_sha256) throw invalid();
   let key, graph;
   try { key = JSON.parse(change.entity_id); graph = JSON.parse(graph_json); } catch { throw invalid(); }
-  if (!exact(key, ["id"]) || key.id !== id || !exact(graph, ["branch_id", "transfer", "request", "lines", "stock", "logs"]))
+  const receipt = Object.hasOwn(graph ?? {}, "movements");
+  const fields = ["branch_id", "transfer", "request", "lines", "stock", "logs"];
+  if (receipt) fields.push("movements");
+  if (!exact(key, ["id"]) || key.id !== id || !exact(graph, fields))
     throw invalid();
   const { transfer, request, lines, stock, logs } = graph;
   if (graph.branch_id !== branch || transfer?.id !== id || transfer.row_version !== row_version ||
-      transfer.kind !== "transfer" || transfer.status !== "dispatched" ||
+      transfer.kind !== "transfer" ||
       typeof transfer.dispatched_at !== "string" || typeof transfer.dispatched_by !== "string" ||
       !branchId(transfer.from_store_id) || !branchId(transfer.to_store_id) || transfer.from_store_id === transfer.to_store_id ||
       ![transfer.from_store_id, transfer.to_store_id].includes(branch) ||
+      !Array.isArray(lines) || lines.length < 1 || lines.length > 100 ||
+      !Array.isArray(stock) || stock.length > 100 || !Array.isArray(logs) || logs.length > 100) throw invalid();
+  if (receipt) {
+    assertReceiptGraph(graph, branch);
+    return transferFacts(group, branch, [transfer], lines, stock, logs);
+  }
+  if (transfer.status !== "dispatched" ||
       (request === null ? transfer.source_request_id !== null : !uuid(request?.id) || request.id === id ||
         request.id !== transfer.source_request_id || request.kind !== "request" || request.status !== "completed" ||
         request.from_store_id !== transfer.from_store_id || request.to_store_id !== transfer.to_store_id ||
-        request.source_request_id !== null || request.closed_at !== transfer.dispatched_at) ||
-      !Array.isArray(lines) || lines.length < 1 || lines.length > 100 ||
-      !Array.isArray(stock) || stock.length > 100 || !Array.isArray(logs) || logs.length > 100) throw invalid();
+        request.source_request_id !== null || request.closed_at !== transfer.dispatched_at)) throw invalid();
   const dispatched = new Map();
   let childCount = 0;
   for (const line of lines) {
@@ -66,10 +74,71 @@ function parseTransferDispatchGroup(group, branch) {
       row.note !== "Warehouse dispatch" || !balances.has(row.product_id) || row.stock_after !== balances.get(row.product_id) ||
       row.quantity_delta !== -dispatched.get(row.product_id) || row.stock_before + row.quantity_delta !== row.stock_after) ||
       new Set(logs.map(row => row.product_id)).size !== logs.length) throw invalid();
-  const headers = request ? [request, transfer] : [transfer];
+  return transferFacts(group, branch, request ? [request, transfer] : [transfer], lines, stock, logs);
+}
+
+function assertReceiptGraph({ transfer, request, lines, stock, logs, movements }, branch) {
+  const arrived = transfer.status === "received";
+  if (request !== null || (transfer.source_request_id !== null &&
+      (!uuid(transfer.source_request_id) || transfer.source_request_id === transfer.id)) ||
+      !["received", "completed", "completed_with_discrepancy"].includes(transfer.status) ||
+      typeof transfer.received_at !== "string" ||
+      (arrived ? transfer.verified_at !== null || transfer.posted_at !== null :
+        typeof transfer.verified_at !== "string" || transfer.posted_at !== transfer.verified_at) ||
+      !Array.isArray(movements) || movements.length !== logs.length) throw invalid();
+  const verified = new Map();
+  let short = false;
+  const ids = new Set();
+  for (const line of lines) {
+    if (line?.transfer_id !== transfer.id || !uuid(line.id) || ids.has(line.id) ||
+        !Number.isInteger(line.quantity_dispatched) || line.quantity_dispatched < 0 ||
+        line.quantity_dispatched > (line.quantity_approved ?? line.quantity) ||
+        !Number.isInteger(line.quantity_received) || line.quantity_received < 0 ||
+        line.quantity_received > line.quantity_dispatched ||
+        (arrived ? line.quantity_verified !== null : line.quantity_verified !== line.quantity_received)) throw invalid();
+    ids.add(line.id);
+    if (arrived) continue;
+    if (line.quantity_verified < line.quantity_dispatched) short = true;
+    if (line.quantity_verified > 0) {
+      if (!uuid(line.product_id)) throw invalid();
+      verified.set(line.id, line);
+    }
+  }
+  if (short !== (transfer.status === "completed_with_discrepancy") ||
+      (short && (typeof transfer.discrepancy_reason !== "string" || !transfer.discrepancy_reason.trim()))) throw invalid();
+  if (arrived || branch !== transfer.to_store_id) {
+    if (logs.length || stock.length) throw invalid();
+    return;
+  }
+  if (logs.length !== verified.size) throw invalid();
+  const auditIds = new Set();
+  const finalBalances = new Map();
+  for (const [index, movement] of movements.entries()) {
+    if (!exact(movement, ["line_id", "log_id"])) throw invalid();
+    const line = verified.get(movement.line_id);
+    const log = logs[index];
+    if (!line || !uuid(log?.id) || movement.log_id !== log.id || auditIds.has(log.id) ||
+        !uuid(log.product_id) || (transfer.transfer_scope !== "INTER_GROUP" && log.product_id !== line.product_id) ||
+        log.store_id !== branch || log.activity_type !== "transfer_in" || log.reference !== transfer.ref ||
+        log.staff_name !== (transfer.verified_by ?? "") || log.created_at !== transfer.posted_at ||
+        log.quantity_delta !== line.quantity_verified || !Number.isInteger(log.stock_before) ||
+        !Number.isInteger(log.stock_after) || log.stock_before + log.quantity_delta !== log.stock_after ||
+        (finalBalances.has(log.product_id) && finalBalances.get(log.product_id) !== log.stock_before)) throw invalid();
+    verified.delete(movement.line_id);
+    auditIds.add(log.id);
+    finalBalances.set(log.product_id, log.stock_after);
+  }
+  for (const raw of stock) {
+    const row = parseStockRow(raw);
+    if (finalBalances.get(row.product_id) !== row.branch_balance) throw invalid();
+    finalBalances.delete(row.product_id);
+  }
+}
+
+function transferFacts(group, branch, headers, lines, stock, logs) {
   return { kind: "transfer_v1", seq: group.seq, branch, headers, lines, stock, logs,
     changes: [...group.changes, { table_name: "stock_transfer_items" },
-      ...(stock.length ? [{ table_name: "products" }, { table_name: "item_activity_logs" }] : [])] };
+      ...(stock.length ? [{ table_name: "products" }] : []), ...(logs.length ? [{ table_name: "item_activity_logs" }] : [])] };
 }
 
 const identities = {
@@ -139,13 +208,23 @@ async function applyTransferDispatchGroup(worker, transaction, context, facts) {
   const headers = registeredRows(worker.registry, "stock_transfers", facts.headers, invalid);
   const lines = registeredRows(worker.registry, "stock_transfer_items", facts.lines, invalid);
   const logs = registeredRows(worker.registry, "item_activity_logs", facts.logs, invalid);
-  const products = [...new Set(facts.lines.map(row => row.product_id).filter(Boolean))];
+  const transfer = headers.rows.at(-1);
+  if (headers.rows.length === 1 && transfer.source_request_id) {
+    const request = await transaction.request().input("id", transfer.source_request_id)
+      .input("from", transfer.from_store_id).input("to", transfer.to_store_id).query(`
+      SELECT id FROM dbo.stock_transfers WITH(HOLDLOCK) WHERE id=@id AND kind=N'request'
+        AND from_store_id COLLATE Latin1_General_100_BIN2=@from COLLATE Latin1_General_100_BIN2
+        AND to_store_id COLLATE Latin1_General_100_BIN2=@to COLLATE Latin1_General_100_BIN2;`);
+    if (request.recordset?.length !== 1)
+      throw fail("The linked request must arrive before the transfer receipt.", "ESYNC_CASH_RECEIPT_DEPENDENCY");
+  }
+  const products = [...new Set([...facts.lines, ...facts.logs].map(row => row.product_id).filter(Boolean))];
   if (products.length) {
     const result = await transaction.request().input("keys", JSON.stringify(products)).query(`
       SELECT COUNT(*) AS found FROM dbo.products AS product WITH(HOLDLOCK)
       JOIN OPENJSON(@keys) AS wanted ON product.id=TRY_CONVERT(uniqueidentifier,wanted.[value]);`);
     if (result.recordset?.[0]?.found !== products.length)
-      throw fail("A registered transfer product must arrive before the dispatch group.", "ESYNC_CASH_RECEIPT_DEPENDENCY");
+      throw fail("A registered transfer product must arrive before the transfer group.", "ESYNC_CASH_RECEIPT_DEPENDENCY");
   }
   let changed = 0;
   // The request is an actual self-referencing parent of the dispatch.

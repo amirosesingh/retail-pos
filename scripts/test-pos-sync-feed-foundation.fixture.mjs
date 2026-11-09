@@ -275,13 +275,17 @@ try {
     const { verifyNamedApprovalWake } = await import("./lib/pos-named-approval-wake-fixture.mjs");
     await verifyNamedApprovalWake({ sql, denySql });
   } else if (process.argv.includes("--cash-bridge") || process.argv.includes("--cash-wire") || process.argv.includes("--cash-receiving") ||
-      process.argv.includes("--cash-attested") || process.argv.includes("--cash-attested-relay")) {
+      process.argv.includes("--cash-attested") || process.argv.includes("--cash-attested-relay") ||
+      process.argv.includes("--card-receiving") || process.argv.includes("--split-receiving")) {
     const { verifyCashBridge } = await import("./lib/pos-sync-cash-bridge-fixture.mjs");
     const useCashRelay = process.argv.includes("--cash-attested-relay");
-    const attested = useCashRelay || process.argv.includes("--cash-attested");
+    const extended = process.argv.includes("--card-receiving") ? "card" :
+      process.argv.includes("--split-receiving") ? "split" : null;
+    const attested = useCashRelay || process.argv.includes("--cash-attested") || Boolean(extended);
     let wire;
     if (process.argv.includes("--cash-wire") || process.argv.includes("--cash-receiving") || attested) {
-      const source = execFileSync(process.execPath, [join(root, "scripts/test-pos-sale-outbox-sqlserver.cjs"), attested ? "--attested-wire" : "--wire"],
+      const wireMode = extended ? `--${extended}-wire` : attested ? "--attested-wire" : "--wire";
+      const source = execFileSync(process.execPath, [join(root, "scripts/test-pos-sale-outbox-sqlserver.cjs"), wireMode],
         { cwd: root, windowsHide: true, encoding: "utf8", timeout: 120_000 });
       const line = source.split(/\r?\n/).find(value => value.startsWith("POS_CASH_WIRE "));
       assert(line, "The disposable SQL Server fixture must produce its saved cash wire evidence");
@@ -289,8 +293,14 @@ try {
     }
     const receiving = process.argv.includes("--cash-receiving")
       ? await (await import("./lib/pos-sync-cash-receive-fixture.mjs")).cashReceivingFixture(root) : undefined;
+    const receiveExtended = extended ? evidence => {
+      const output = execFileSync(process.execPath, [join(root, "scripts/test-pos-sync-cash-receive-sqlserver.cjs"), "--tender"], {
+        cwd: root, windowsHide: true, encoding: "utf8", input: JSON.stringify(evidence), timeout: 120_000,
+      });
+      console.log(output.trim());
+    } : undefined;
     const relay = useCashRelay ? (await import("./lib/pos-sync-cash-relay-fixture.mjs")).verifyAttestedCashRelay : undefined;
-    await verifyCashBridge({ sql, denySql, wire, receiving, session, waitFor, attested, relay });
+    await verifyCashBridge({ sql, denySql, wire, receiving, receiveExtended, session, waitFor, attested, extended, relay });
   } else if (process.argv.includes("--store-settings") || process.argv.includes("--store-settings-native")) {
     const { verifyStoreSettingsPilot } = await import("./lib/pos-sync-store-settings-fixture.mjs");
     const applyNative = process.argv.includes("--store-settings-native") ? evidence => {

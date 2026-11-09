@@ -51,7 +51,10 @@ export async function applyGroupedCashUpload(
         new TextEncoder().encode(JSON.stringify(command.attestation)).byteLength > 4096 ||
         createHash("sha256").update(command.checkoutJson, "utf8").digest("hex") !== command.checkoutSha256)
       throw new Error("Checkout digest mismatch");
-    saleId = uuid.parse(JSON.parse(command.checkoutJson)?.sale?.id);
+    const checkout = JSON.parse(command.checkoutJson);
+    if (Object.hasOwn(checkout ?? {}, "tenders") && runtimeEnvValue("POS_GROUPED_TENDER_UPLOAD_PILOT_ENABLED") !== "true")
+      return unavailable();
+    saleId = uuid.parse(checkout?.sale?.id);
   } catch { return reply({ ok: false, code: "CASH_UPLOAD_INVALID" }, 400); }
 
   const { verifyRelayCaller, serviceRest } = await import("@/core/api/pos-relay.server");
