@@ -573,17 +573,26 @@ journal and checkpoint.
 
 The follow-up beta batch makes scoped grouped download holds visible in
 Data & Sync and system health even with an empty upload queue. Native
-booking collection checks the observed booking revision in the same SQL
-Server transaction as the payment and journal. A stale edit rolls back and
-cannot fall back to independent cloud writes. Transfer arrival and
+booking collection and cancellation check the observed booking revision
+inside the SQL Server aggregate. A stale edit rolls back and cannot fall
+back to independent cloud writes. Transfer arrival and
 verification refresh the authorized saved state, which preserves an already
 synced balance and handles destination product mapping centrally.
 
-Focused application and database checks passed. The hosted drill uses a
-new synthetic scope separate from the demo and prior transfer fixture. It
-can run the signed checkout and refund before the handback. The relay must
-first authenticate to Retail POS Beta. The full booking handover still
-requires one authoritative payment, receipt and booking-link transaction.
+The signed cash drill passed on Retail POS Beta with two disposable SQL
+Server databases and the native workers. The offline checkout retained
+five pending rows and the legacy cursor. After reconnect and an exact
+retry, both tills reached sequence 1 and confirmed one receipt and stock
+of 19. Both tills completed handback after the fresh test scope sealed.
+The receiving till verified the hosted archive contains the same receipt
+and stock. The demo and older transfer scope were separate.
+
+The hosted refund under the existing PIN rule and expired-cursor replay
+remain pending. Automatic review rejected disabling PIN for the test
+branch, and the active rule remained in place. Disposable PostgreSQL and
+SQL Server passed paged recovery and the two-till settings round trip
+after a lost response. Full booking handover still requires one
+authoritative payment, receipt and booking-link transaction.
 
 ## 7 November — first two-way sync implementation batch
 

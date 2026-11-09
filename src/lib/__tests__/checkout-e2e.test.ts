@@ -51,7 +51,7 @@ import {
 } from "@/core/api/pos-db";
 import { setPreferredDatabaseMode, setStartupOnlineMode } from "@/core/local-db/db-mode";
 import type { Member, Product, Sale } from "@/core/types/pos-types";
-import { collectBookingPayment } from "../booking-collection";
+import { cancelBookingAuthoritative, collectBookingPayment } from "../booking-collection";
 
 const sale = (over: Partial<Sale> = {}): Sale =>
   ({
@@ -154,6 +154,31 @@ describe("checkout commit", () => {
       expect(live).not.toHaveBeenCalled();
     },
   );
+
+  it("rejects a stale native booking cancellation that would retain an old balance", async () => {
+    platform.offlineFirst = true;
+    setPreferredDatabaseMode("local");
+    localQuery.mockResolvedValueOnce({
+      ok: true,
+      rows: [{ id: "booking-1", store_id: "store-1", total: 20, row_version: 4, status: "active" }],
+    }).mockResolvedValueOnce({ ok: true, rows: [{ amount: 5 }] });
+    localAggregate.mockResolvedValueOnce({ ok: false, error: "BOOKING_CHANGED" });
+
+    const result = await cancelBookingAuthoritative({
+      bookingId: "booking-1", reason: "Customer request", moneyAction: "retained",
+    });
+
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining("booking changed") });
+    expect(localAggregate).toHaveBeenCalledExactlyOnceWith({
+      kind: "booking", branchId: "store-1",
+      operations: [expect.objectContaining({
+        kind: "update", table: "bookings", match: { id: "booking-1", row_version: 4 }, requireMatch: true,
+        values: expect.objectContaining({ paid: 5, status: "cancelled", cancel_money_action: "retained" }),
+      })],
+    });
+    expect(localWrite).not.toHaveBeenCalled();
+    expect(live).not.toHaveBeenCalled();
+  });
 
   it("commits restored stock, its audit movement and posted draft in one Electron transaction", async () => {
     platform.offlineFirst = true;

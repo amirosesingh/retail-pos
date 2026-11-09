@@ -11,6 +11,7 @@ import { commitOps } from "@/core/api/pos-db";
 import { routedQuery } from "@/core/api/db-query";
 import { localDb } from "@/core/local-db/local-db";
 import { CUSTOMER_REFUNDS_ALLOWED, NO_REFUND_MESSAGE } from "./returns-policy";
+import type { SyncOp } from "./sync-outbox";
 
 export type BookingBalanceState = {
   total: number;
@@ -45,6 +46,18 @@ const toState = (row: Record<string, unknown>): BookingBalanceState => ({
 });
 
 const roundMoney = (value: number) => Number(value.toFixed(2));
+
+function bookingUpdate(
+  id: string,
+  booking: Record<string, unknown>,
+  values: Record<string, unknown>,
+): SyncOp {
+  const version = booking.row_version;
+  if (typeof version !== "number" || !Number.isSafeInteger(version) || version < 0) {
+    throw new Error("BOOKING_CHANGED");
+  }
+  return { kind: "update", table: "bookings", match: { id, row_version: version }, requireMatch: true, values };
+}
 
 async function localBalance(bookingId: string): Promise<{
   booking: Record<string, unknown>;
@@ -120,10 +133,6 @@ export async function collectBookingPayment(input: {
     if (localDb()?.writeBatch) {
       const before = await localBalance(input.bookingId);
       if (before.state.status === "cancelled") throw new Error("BOOKING_CANCELLED");
-      const version = before.booking.row_version;
-      if (typeof version !== "number" || !Number.isSafeInteger(version) || version < 0) {
-        throw new Error("BOOKING_CHANGED");
-      }
       const duplicate = await duplicatePayment(input.bookingId, input.clientPaymentId);
       let changeDue = 0;
       let taken = roundMoney(Math.max(0, input.amount));
@@ -151,19 +160,15 @@ export async function collectBookingPayment(input: {
           }],
         });
       }
-      ops.push({
-        kind: "update", table: "bookings", match: { id: input.bookingId, row_version: version },
-        requireMatch: true,
-        values: {
-          store_id: before.booking.store_id, paid: settledPaid, status: nextStatus,
-          job_status: nextJob,
-          ...(input.complete && fullyPaid ? {
-            closed_at: now,
-            ...(before.state.jobStatus ? { job_status_at: now, job_status_by: input.cashier ?? before.booking.job_status_by ?? null } : {}),
-          } : {}),
-          updated_at: now,
-        },
-      });
+      ops.push(bookingUpdate(input.bookingId, before.booking, {
+        store_id: before.booking.store_id, paid: settledPaid, status: nextStatus,
+        job_status: nextJob,
+        ...(input.complete && fullyPaid ? {
+          closed_at: now,
+          ...(before.state.jobStatus ? { job_status_at: now, job_status_by: input.cashier ?? before.booking.job_status_by ?? null } : {}),
+        } : {}),
+        updated_at: now,
+      }));
       await commitOps("Booking payment", ops, undefined, { requireLocalAggregate: true });
       return { ok: true, state: { total: before.state.total, settledPaid, outstanding, fullyPaid, status: nextStatus, jobStatus: nextJob, duplicate, changeDue } };
     }
@@ -221,10 +226,10 @@ export async function refundBookingPayment(input: {
           kind: "refund", refund_reason: clean, change_given: 0,
         }],
       });
-      ops.push({ kind: "update", table: "bookings", match: { id: input.bookingId }, values: {
+      ops.push(bookingUpdate(input.bookingId, before.booking, {
         store_id: before.booking.store_id, paid: settledPaid, updated_at: now,
-      } });
-      await commitOps("Booking refund", ops);
+      }));
+      await commitOps("Booking refund", ops, undefined, { requireLocalAggregate: true });
       return { ok: true, state: { ...before.state, settledPaid, outstanding, fullyPaid: outstanding <= MONEY_TOLERANCE, duplicate, changeDue: 0 } };
     }
     const res = await supabase.rpc("booking_refund" as never, {
@@ -289,8 +294,8 @@ export async function cancelBookingAuthoritative(input: {
         cancel_money_action: before.booking.cancel_money_action ?? action,
         updated_at: now,
       };
-      ops.push({ kind: "update", table: "bookings", match: { id: input.bookingId }, values });
-      await commitOps("Booking cancellation", ops);
+      ops.push(bookingUpdate(input.bookingId, before.booking, values));
+      await commitOps("Booking cancellation", ops, undefined, { requireLocalAggregate: true });
       return { ok: true, row: { ...before.booking, ...values } };
     }
     const res = await supabase.rpc("booking_cancel" as never, {
@@ -322,7 +327,7 @@ export function readable(raw: string): string {
   if (raw.includes("CANCEL_REASON_REQUIRED")) return "A cancellation reason is required.";
   if (raw.includes("BOOKING_ALREADY_COLLECTED")) return "This booking has already been collected.";
   if (raw.includes("BOOKING_CANCELLED")) return "This booking was cancelled.";
-  if (raw.includes("BOOKING_CHANGED")) return "The booking changed while payment was being saved. Reopen it and check the current balance before retrying.";
+  if (raw.includes("BOOKING_CHANGED")) return "The booking changed while it was being saved. Reopen it and check the current balance before trying again.";
   if (raw.includes("BOOKING_OVERPAYMENT"))
     return "That is more than the amount still outstanding — refresh and try again.";
   if (raw.includes("BOOKING_BALANCE_DUE"))

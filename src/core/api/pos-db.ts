@@ -2397,7 +2397,7 @@ async function commitOpsInternal(context: string, ops: SyncOp[], report?: (compl
   }
 
   if (requireLocalAggregate) {
-    throw new Error("The local SQL Server transaction is unavailable. Reopen the booking before retrying payment.");
+    throw new Error("The local SQL Server transaction is unavailable. Reopen the booking before trying again.");
   }
 
   const operational = ops.every((op) => isOperationalTable(op.table));
