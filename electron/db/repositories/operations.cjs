@@ -491,7 +491,7 @@ class OperationsRepository {
     const cashContext = scope.cashCheckoutContext;
     if (cashContext && !cashCheckoutForContext(cashContext)) throw new Error("Invalid cash checkout tracking context.");
     const taggedQuery = (request, statement, declaration = "") => {
-      if (!cashContext) return request.query(statement);
+      if (!cashContext) return request.query(declaration + statement);
       request.input("cashCheckoutContext", this.connectionManager.sql().VarBinary(128), cashContext);
       return request.query(`${declaration}WITH CHANGE_TRACKING_CONTEXT (@cashCheckoutContext) ${statement}`);
     };
@@ -523,7 +523,17 @@ class OperationsRepository {
         const matched = op.kind === "upsert" && update && !["immutable_reversal", "movement_delta"].includes(table.conflictRule) ? `WHEN MATCHED THEN UPDATE SET ${update}` : "";
         const ownership = this.branchPredicate(table, "candidate");
         const scopedSource = ownership ? `(SELECT * FROM (SELECT ${source}) candidate WHERE ${ownership})` : `(SELECT ${source})`;
-        const result = await taggedQuery(request, `MERGE dbo.[${op.table}] WITH (HOLDLOCK) AS target USING ${scopedSource} AS source ON ${on} ${matched} WHEN NOT MATCHED THEN INSERT (${insertColumns}) VALUES (${insertValues});`);
+        const savedProductScope = op.table === "products" && op.kind === "upsert" ? this.branchPredicate(table, "saved") : null;
+        // The candidate's owner only authorizes an insert. Check the saved
+        // owner before a matching upsert and before the aggregate can journal it.
+        const productScopeGuard = savedProductScope ? `IF EXISTS (
+          SELECT 1 FROM dbo.products saved WITH (UPDLOCK,HOLDLOCK)
+          WHERE ${primary.map(column => `saved.[${column}]=@v${columns.indexOf(column)}`).join(" AND ")}
+            AND NOT (${savedProductScope})
+        ) BEGIN SELECT 1 AS product_scope_denied; RETURN; END;` : "";
+        const result = await taggedQuery(request, `MERGE dbo.[${op.table}] WITH (HOLDLOCK) AS target USING ${scopedSource} AS source ON ${on} ${matched} WHEN NOT MATCHED THEN INSERT (${insertColumns}) VALUES (${insertValues});`, productScopeGuard);
+        if (result.recordset?.[0]?.product_scope_denied === 1)
+          throw Object.assign(new Error("The saved product belongs to another branch."), { code: "SYNC_BRANCH_FORBIDDEN", table: "products" });
         affected += result.rowsAffected?.reduce((sum, count) => sum + count, 0) ?? 0;
       }
       return affected;

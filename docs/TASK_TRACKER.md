@@ -494,6 +494,31 @@ existing routes. A newer local document without exact dispatch history
 holds for review. Card and split tenders still need a compatible receipt
 contract that retains their reconciliation metadata.
 
+The owner expanded beta acceptance to a whole-POS smoke run. Verify actual
+product setup and stock, checkout, exchanges, refunds, bookings, shifts,
+approvals and transfer activity alongside the two-till sync, offline recovery
+and handback. Use synthetic records and payment sandbox or manual test
+tenders. A settings-only check is outside the requested acceptance. Record
+hosted beta and disposable fixture results separately.
+
+The isolated catalogue smoke found that a branch-scoped upsert could match
+and modify another branch's product by ID. Repair the existing-row authority
+check in the native write transaction. Verify that a denied write leaves the
+product and pending journal intact, while authorized creation and editing
+still work.
+
+The staging base installer is verified in Retail POS Beta. The hosted
+schema contains 79 public tables with RLS on each and started with no
+business data or terminal records. The isolated HTTPS relay has a verified
+staging service connection. Full grouped pilot installation and the
+whole-POS hosted acceptance are still in progress.
+
+The booking smoke found a cross-branch defect in the web booking balance
+and collection functions. Add existing booking-scope checks to those
+entry points and verify denial without a tender or balance disclosure.
+Keep the separate booking payment, checkout, and link finalization gap
+tracked independently.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents

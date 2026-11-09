@@ -7,6 +7,7 @@ const { createLocal } = require("./lib/shift-protocol-integration-fixture.cjs");
 const { CloudClient } = require("../electron/sync/cloud-client.cjs");
 const { ChangeReader } = require("../electron/sync/change-reader.cjs");
 const { CheckpointRepository } = require("../electron/sync/checkpoints.cjs");
+const { AggregateRepository } = require("../electron/db/repositories/aggregates.cjs");
 const handoff = require("../electron/sync/grouped-settings-handoff.cjs");
 const { readDatabaseGuid, MIXED_CHECKPOINT } = require("../electron/sync/grouped-store-settings.cjs");
 const { applyGroupedStock, noteLocalStockAcceptance, parseStockGroup } = require("../electron/sync/grouped-live-stock.cjs");
@@ -162,6 +163,27 @@ async function verify() {
     const gone = await manager.pool.request().input("id", product).query("SELECT id FROM dbo.products WHERE id=@id;");
     assert.deepEqual(gone.recordset, []);
     console.log("PASS LocalDB live stock keeps legacy metadata and foreign balances, checks revision and pending CT, and rolls back proof with the data");
+
+    const aggregate = new AggregateRepository(manager, local.repository);
+    const catalogProduct = randomUUID();
+    const writeCatalog = (branchId, row, permissions, operationId = randomUUID()) => aggregate.commit("general", {
+      operationId, branchId, permissions, operations: [{ kind: "upsert", table: "products", rows: [row] }],
+    });
+    assert.equal((await writeCatalog(ownerB, { id: catalogProduct, owner_store_id: ownerB, name: "New item" },
+      { can_add_new_product: true })).affected, 1);
+    assert.equal((await writeCatalog(ownerB, { id: catalogProduct, owner_store_id: ownerB, name: "Owned edit" },
+      { can_edit_product_details: true })).affected, 1);
+    const refused = randomUUID();
+    await assert.rejects(writeCatalog(branch, { id: catalogProduct, owner_store_id: branch, name: "Cross-branch attempt" },
+      { can_add_new_product: true, can_edit_product_details: true }, refused), { code: "SYNC_BRANCH_FORBIDDEN" });
+    const protectedProduct = await manager.pool.request().input("id", catalogProduct).input("operation", refused).query(`
+      SELECT name,owner_store_id,row_version FROM dbo.products WHERE id=@id;
+      SELECT COUNT(*) AS pending FROM dbo.sync_change_journal WHERE aggregate_id=@operation;
+      SELECT COUNT(*) AS receipts FROM dbo.local_operation_receipts WHERE operation_id=@operation;`);
+    assert.deepEqual(protectedProduct.recordsets[0], [{ name: "Owned edit", owner_store_id: ownerB, row_version: 2 }]);
+    assert.deepEqual(protectedProduct.recordsets[1], [{ pending: 0 }]);
+    assert.deepEqual(protectedProduct.recordsets[2], [{ receipts: 0 }]);
+    console.log("PASS scoped product creation and edit succeed, and a forged foreign upsert creates no row change, journal, or receipt");
   } finally { await local.close(); }
 }
 
