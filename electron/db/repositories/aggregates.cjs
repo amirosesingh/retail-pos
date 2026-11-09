@@ -250,6 +250,8 @@ class AggregateRepository {
           activityOperator: aggregate.activityOperator,
           ...(cashCheckoutContext ? { cashCheckoutContext } : {}),
         });
+        if (operation.requireMatch && operationAffected !== 1 && operation.table === "bookings")
+          throw Object.assign(new Error("BOOKING_CHANGED"), { code: "EBOOKING_CHANGED" });
         if (operation.requireMatch && operationAffected !== 1)
           throw Object.assign(
             new Error(operation.table === "products"
@@ -307,6 +309,7 @@ class AggregateRepository {
       return { ok: true, operationId, replayed: false, affected };
     } catch (error) {
       const rolledBack = await Promise.resolve(transaction.rollback()).then(() => true, () => false);
+      if (rolledBack && error?.code === "EBOOKING_CHANGED") throw error;
       if (rolledBack && saleOutbox?.installedHandoff && (error?.code === "ESALE_CASH_LEGACY_ONLY" ||
           (stage === "sale event capture" && error?.code === "ESALE_EVENT_UNVERIFIED")))
         throw Object.assign(new Error("The unsupported cash capture rolled back before the existing sale route."),

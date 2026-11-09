@@ -73,6 +73,15 @@ describe("native journal status presentation", () => {
     expect(summary.detail).toContain("does not verify historical data completeness");
     expect(JSON.stringify({ snapshot, database })).toBe(before);
   });
+
+  it("reports a held grouped download even with an empty journal and only for its branch", () => {
+    const snapshot = native({ groupedSettingsPilot: { status: "REVIEW_REQUIRED", branchId: "branch-a" } });
+    const database = { enabled: true, connected: true, detail: { branchId: "branch-a" } };
+    expect(nativeSyncSummary(snapshot, database)).toMatchObject({ state: "degraded", label: "Sync needs review", pending: 0 });
+    expect(nativeSyncSummary(snapshot, { ...database, detail: { branchId: "branch-b" } })).toMatchObject({
+      state: "ok", label: "Journal queue clear",
+    });
+  });
 });
 
 describe("durable browser queue status presentation", () => {
@@ -333,7 +342,7 @@ describe("actual local panel database freshness", () => {
     await Promise.all([sameBranch.settle(), otherBranch.settle()]);
     expect(sameBranch.findText(sameBranch.render(), "Store settings download")).toBeDefined();
     expect(sameBranch.findText(sameBranch.render(), "Store settings upload")).toBeDefined();
-    expect(sameBranch.status(sameBranch.render())).toBe("Store settings upload needs attention");
+    expect(sameBranch.status(sameBranch.render())).toBe("Sync needs review");
     expect(otherBranch.findText(otherBranch.render(), "Store settings download")).toBeUndefined();
     expect(otherBranch.findText(otherBranch.render(), "Store settings upload")).toBeUndefined();
     expect(otherBranch.status(otherBranch.render())).toBe("Journal queue clear");

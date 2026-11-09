@@ -157,7 +157,8 @@ export function LocalDatabaseOperations({ branchId }: { branchId?: string } = {}
     ? sync.groupedSettingsPilot : null;
   const settingsUpload = branchId && sameBranchId(sync.storeSettingsEditUpload?.branchId, branchId)
     ? sync.storeSettingsEditUpload : null;
-  const syncSummary = nativeSyncSummary({ ...sync, storeSettingsEditUpload: settingsUpload }, state, syncReadFailed || databaseReadFailed);
+  const syncSummary = nativeSyncSummary({ ...sync, groupedSettingsPilot: groupedSettings,
+    storeSettingsEditUpload: settingsUpload }, state, syncReadFailed || databaseReadFailed);
   const queuedTables = (sync.queuedTables ?? []).filter((row) =>
     (row.pending > 0 || row.failed > 0) && row.table !== activeTable);
   const direction = sync.phase === "pulling" ? "Download" : sync.phase === "pushing" ? "Upload" : "Processing";

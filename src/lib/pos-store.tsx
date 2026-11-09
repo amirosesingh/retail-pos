@@ -4233,27 +4233,17 @@ export function PosProvider({ children }: { children: ReactNode }) {
    */
   const receiveTransfer = useCallback(async (id: string): Promise<RpcResult> => {
     const s0 = stateRef.current;
+    const epoch = sessionEpoch();
+    const generation = bootstrapGeneration.current;
     const before = s0.transfers.find((x) => x.id === id);
     if (!before || before.status !== "dispatched")
       return { success: false, error: "Transfer is not dispatched." };
-    const now = new Date().toISOString();
-    const persisted = await receiveTransferInDb(id, actorRef.current);
+    const actor = actorRef.current;
+    const persisted = await receiveTransferInDb(id, actor);
     if (!persisted.success) return persisted;
-
-    setState((s) => ({
-      ...s,
-      transfers: s.transfers.map((x) =>
-        x.id === id
-          ? {
-              ...x,
-              status: "received",
-              receivedBy: actorRef.current,
-              receivedAt: now,
-              updatedAt: now,
-            }
-          : x,
-      ),
-    }));
+    if (sessionEpoch() !== epoch || bootstrapGeneration.current !== generation ||
+        !sameBranchId(stateRef.current.currentStoreId, s0.currentStoreId)) return persisted;
+    requestBackgroundRefresh();
 
     logger.log("inventory", "Stock transfer arrived", "transfers", {
       transferId: id,
@@ -4266,7 +4256,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       entityId: id,
       from: "dispatched",
       to: "received",
-      actorName: actorRef.current,
+      actorName: actor,
       storeId: before.toStoreId,
       metadata: { ref: before.ref, fromStoreId: before.fromStoreId },
     });
@@ -4275,7 +4265,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       type: "transfer_received",
       title: `Transfer ${before.ref} received`,
       message: `${destination || "The receiving branch"} confirmed that the delivery arrived.`,
-      actorName: actorRef.current,
+      actorName: actor,
       storeId: before.fromStoreId,
       entityType: "stock_transfer",
       entityId: before.id,
@@ -4286,18 +4276,19 @@ export function PosProvider({ children }: { children: ReactNode }) {
         receiving_store_id: before.toStoreId,
       },
     });
-    return { success: true };
+    return persisted;
   }, []);
 
   /**
    * Physical verification. The counted quantity — and only that — goes onto
-   * the destination shelf. The cloud call is the authority: if it refuses
-   * (already posted, permission, connection), nothing is left half-moved
-   * because the local mirror is only written once the database agrees.
+   * the destination shelf. Re-read the scoped stock after the cloud commit
+   * so the renderer shows the actual destination product and balance.
    */
   const verifyTransfer = useCallback(
     async (id: string, lines: LineQty[], reason?: string): Promise<RpcResult> => {
       const s0 = stateRef.current;
+      const epoch = sessionEpoch();
+      const generation = bootstrapGeneration.current;
       const before = s0.transfers.find((x) => x.id === id);
       if (!before) return { success: false, error: "That transfer no longer exists." };
       if (before.status !== "received")
@@ -4310,40 +4301,15 @@ export function PosProvider({ children }: { children: ReactNode }) {
       if (short && !reason?.trim())
         return { success: false, error: "A short delivery needs a reason." };
 
-      const res = await verifyTransferInDb(id, actorRef.current, counted, reason);
+      const actor = actorRef.current;
+      const res = await verifyTransferInDb(id, actor, counted, reason);
       if (!res.success) return res;
-
-      const arriving = counted.filter((l) => l.qty > 0);
-      const now = new Date().toISOString();
+      if (sessionEpoch() !== epoch || bootstrapGeneration.current !== generation ||
+          !sameBranchId(stateRef.current.currentStoreId, s0.currentStoreId)) return res;
+      // The backend can match a different destination SKU, and a live read
+      // may already have the posted balance by the time this response arrives.
+      requestBackgroundRefresh();
       const status: TransferStatus = short ? "completed_with_discrepancy" : "completed";
-
-      setState((s) => ({
-        ...s,
-        products: bumpItems(
-          s.products,
-          arriving,
-          before.toStoreId,
-          1,
-          s.settings.integrations.autoArchiveZeroStock !== false,
-        ),
-        transfers: s.transfers.map((x) =>
-          x.id === id
-            ? {
-                ...x,
-                status,
-                verifiedBy: actorRef.current,
-                verifiedAt: now,
-                postedAt: now,
-                discrepancyReason: short ? reason?.trim() : x.discrepancyReason,
-                items: x.items.map((i) => {
-                  const qty = counted.find((l) => l.productId === i.productId)?.qty ?? 0;
-                  return { ...i, receivedQty: qty, verifiedQty: qty };
-                }),
-                updatedAt: now,
-              }
-            : x,
-        ),
-      }));
 
       logger.log("inventory", "Stock transfer verified", "transfers", {
         transferId: id,
@@ -4358,11 +4324,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
         entityId: id,
         from: "received",
         to: status,
-        actorName: actorRef.current,
+        actorName: actor,
         storeId: before.toStoreId,
         metadata: { ref: before.ref, fromStoreId: before.fromStoreId, lines: counted, reason },
       });
-      return { success: true };
+      return res;
     },
     [],
   );

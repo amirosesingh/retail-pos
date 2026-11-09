@@ -571,6 +571,20 @@ hold after a tentative stock write and verified rollback of the entire
 transaction, preserving the completed transfer, stock, audit, pending
 journal and checkpoint.
 
+The follow-up beta batch makes scoped grouped download holds visible in
+Data & Sync and system health even with an empty upload queue. Native
+booking collection checks the observed booking revision in the same SQL
+Server transaction as the payment and journal. A stale edit rolls back and
+cannot fall back to independent cloud writes. Transfer arrival and
+verification refresh the authorized saved state, which preserves an already
+synced balance and handles destination product mapping centrally.
+
+Focused application and database checks passed. The hosted drill uses a
+new synthetic scope separate from the demo and prior transfer fixture. It
+can run the signed checkout and refund before the handback. The relay must
+first authenticate to Retail POS Beta. The full booking handover still
+requires one authoritative payment, receipt and booking-link transaction.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents

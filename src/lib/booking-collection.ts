@@ -120,6 +120,10 @@ export async function collectBookingPayment(input: {
     if (localDb()?.writeBatch) {
       const before = await localBalance(input.bookingId);
       if (before.state.status === "cancelled") throw new Error("BOOKING_CANCELLED");
+      const version = before.booking.row_version;
+      if (typeof version !== "number" || !Number.isSafeInteger(version) || version < 0) {
+        throw new Error("BOOKING_CHANGED");
+      }
       const duplicate = await duplicatePayment(input.bookingId, input.clientPaymentId);
       let changeDue = 0;
       let taken = roundMoney(Math.max(0, input.amount));
@@ -148,7 +152,8 @@ export async function collectBookingPayment(input: {
         });
       }
       ops.push({
-        kind: "update", table: "bookings", match: { id: input.bookingId },
+        kind: "update", table: "bookings", match: { id: input.bookingId, row_version: version },
+        requireMatch: true,
         values: {
           store_id: before.booking.store_id, paid: settledPaid, status: nextStatus,
           job_status: nextJob,
@@ -159,7 +164,7 @@ export async function collectBookingPayment(input: {
           updated_at: now,
         },
       });
-      await commitOps("Booking payment", ops);
+      await commitOps("Booking payment", ops, undefined, { requireLocalAggregate: true });
       return { ok: true, state: { total: before.state.total, settledPaid, outstanding, fullyPaid, status: nextStatus, jobStatus: nextJob, duplicate, changeDue } };
     }
     const res = await supabase.rpc("booking_collect" as never, {
@@ -317,6 +322,7 @@ export function readable(raw: string): string {
   if (raw.includes("CANCEL_REASON_REQUIRED")) return "A cancellation reason is required.";
   if (raw.includes("BOOKING_ALREADY_COLLECTED")) return "This booking has already been collected.";
   if (raw.includes("BOOKING_CANCELLED")) return "This booking was cancelled.";
+  if (raw.includes("BOOKING_CHANGED")) return "The booking changed while payment was being saved. Reopen it and check the current balance before retrying.";
   if (raw.includes("BOOKING_OVERPAYMENT"))
     return "That is more than the amount still outstanding — refresh and try again.";
   if (raw.includes("BOOKING_BALANCE_DUE"))

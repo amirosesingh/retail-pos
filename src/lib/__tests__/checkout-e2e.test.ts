@@ -13,6 +13,7 @@ const live = vi.fn();
 const localWrite = vi.fn();
 const localAggregate = vi.fn();
 const localQuery = vi.fn();
+const localState = vi.fn();
 const attemptRows = vi.fn(() => ({ data: [] as unknown[] | null, error: null as unknown }));
 
 vi.mock("@/lib/sync-engine", () => ({
@@ -28,7 +29,7 @@ vi.mock("@/core/local-db/local-db", () => ({
     write: (...a: unknown[]) => localWrite(...a),
     writeBatch: (...a: unknown[]) => localWrite(...a),
     commitAggregate: (...a: unknown[]) => localAggregate(...a),
-    database: { getState: async () => ({ enabled: true, connected: true, state: "ready" }) },
+    database: { getState: () => localState() },
   }),
   electronDb: () => null,
   readBranch: () => ({ branchId: null, branchName: null }),
@@ -50,6 +51,7 @@ import {
 } from "@/core/api/pos-db";
 import { setPreferredDatabaseMode, setStartupOnlineMode } from "@/core/local-db/db-mode";
 import type { Member, Product, Sale } from "@/core/types/pos-types";
+import { collectBookingPayment } from "../booking-collection";
 
 const sale = (over: Partial<Sale> = {}): Sale =>
   ({
@@ -103,6 +105,7 @@ describe("checkout commit", () => {
     localWrite.mockReset();
     localAggregate.mockReset();
     localQuery.mockReset();
+    localState.mockReset().mockResolvedValue({ enabled: true, connected: true, state: "ready" });
     attemptRows.mockClear();
     attemptRows.mockReturnValue({ data: [], error: null });
     live.mockResolvedValue(undefined);
@@ -111,6 +114,46 @@ describe("checkout commit", () => {
     setPreferredDatabaseMode("online");
   });
   afterEach(() => setPreferredDatabaseMode("local"));
+
+  it.each(["saved", "changed", "disconnected"] as const)(
+    "uses one version-checked local booking payment aggregate when %s",
+    async outcome => {
+      platform.offlineFirst = true;
+      setPreferredDatabaseMode("local");
+      localQuery.mockResolvedValueOnce({
+        ok: true,
+        rows: [{ id: "booking-1", store_id: "store-1", total: 20, row_version: 4, status: "active" }],
+      }).mockResolvedValueOnce({ ok: true, rows: [{ amount: 5 }] })
+        .mockResolvedValueOnce({ ok: true, rows: [] });
+      if (outcome === "changed") localAggregate.mockResolvedValueOnce({ ok: false, error: "BOOKING_CHANGED" });
+      if (outcome === "disconnected") localState.mockResolvedValueOnce({ enabled: true, connected: false });
+
+      const result = await collectBookingPayment({
+        bookingId: "booking-1", amount: 10, method: "cash", clientPaymentId: "booking-payment-1", complete: false,
+      });
+      if (outcome === "disconnected") {
+        expect(result).toMatchObject({ ok: false, error: expect.stringContaining("local SQL Server transaction") });
+        expect(localAggregate).not.toHaveBeenCalled();
+      } else {
+        expect(localAggregate).toHaveBeenCalledExactlyOnceWith({
+          kind: "payment", branchId: "store-1",
+          operations: [
+            expect.objectContaining({ kind: "insert", table: "booking_payments", rows: [
+              expect.objectContaining({ booking_id: "booking-1", client_payment_id: "booking-payment-1", amount: 10 }),
+            ] }),
+            expect.objectContaining({
+              kind: "update", table: "bookings", match: { id: "booking-1", row_version: 4 },
+              requireMatch: true, values: expect.objectContaining({ paid: 15 }),
+            }),
+          ],
+        });
+        if (outcome === "saved") expect(result).toMatchObject({ ok: true, state: { settledPaid: 15 } });
+        else expect(result).toMatchObject({ ok: false, error: expect.stringContaining("booking changed") });
+      }
+      expect(localWrite).not.toHaveBeenCalled();
+      expect(live).not.toHaveBeenCalled();
+    },
+  );
 
   it("commits restored stock, its audit movement and posted draft in one Electron transaction", async () => {
     platform.offlineFirst = true;

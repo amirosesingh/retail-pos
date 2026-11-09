@@ -2276,19 +2276,24 @@ async function runBatchLive(context: string, ops: SyncOp[], report?: (completed:
  * Callers await this before printing, clearing the cart or starting the next
  * action — nothing moves on while the data is still only in memory.
  */
-export function commitOps(context: string, ops: SyncOp[], refundGrant?: string | null): Promise<CommitTarget> {
+export function commitOps(
+  context: string,
+  ops: SyncOp[],
+  refundGrant?: string | null,
+  options: { requireLocalAggregate?: boolean } = {},
+): Promise<CommitTarget> {
   return withDataTask(context, async task => {
     const total = commitRowCount(ops);
     task?.report(0,total);
     if ((total ?? 0) >= 200 || ops.length >= 25) await yieldToUi();
-    const target = await commitOpsInternal(context, normalizeUuidFields(ops),task?.report, refundGrant);
+    const target = await commitOpsInternal(context, normalizeUuidFields(ops),task?.report, refundGrant, options.requireLocalAggregate);
     if (target !== "offline" && total !== null) task?.report(total,total);
     return target;
   });
 }
 
 async function commitOpsInternal(context: string, ops: SyncOp[], report?: (completed: number, total: number | null) => void,
-  refundGrant?: string | null): Promise<CommitTarget> {
+  refundGrant?: string | null, requireLocalAggregate = false): Promise<CommitTarget> {
   if (!ops.length) return noteCommitTarget("cloud");
   // A packaged or browser till may carry an encrypted tenant override. Never
   // let an early write resolve the client against the build-time tenant first.
@@ -2301,7 +2306,7 @@ async function commitOpsInternal(context: string, ops: SyncOp[], report?: (compl
   const { ops: cloudOps, deltas } = withRelativeStock(ops);
 
   const local = localDb();
-  if (local?.writeBatch) {
+  if (local?.writeBatch && (!requireLocalAggregate || local.commitAggregate)) {
     const state = await local.database?.getState?.().catch(() => null);
     if (state?.enabled && state?.connected && (state.tradingReady ?? state.connected)) {
       const refund =
@@ -2358,7 +2363,7 @@ async function commitOpsInternal(context: string, ops: SyncOp[], report?: (compl
           "",
       );
       const stored =
-        refund && local.refundReceipt
+        !requireLocalAggregate && refund && local.refundReceipt
           ? await local.refundReceipt({
               saleId: String(refund.args._sale_id),
               refundId: String(refund.args._client_refund_id),
@@ -2366,7 +2371,7 @@ async function commitOpsInternal(context: string, ops: SyncOp[], report?: (compl
               reason: refund.args._reason == null ? null : String(refund.args._reason),
               ...(refundGrant ? { grantToken: refundGrant } : {}),
             })
-          : local.commitAggregate && aggregateKind !== "settings"
+          : local.commitAggregate && (requireLocalAggregate || aggregateKind !== "settings")
             ? await local.commitAggregate({
                 kind: aggregateKind,
                 branchId: branchId || undefined,
@@ -2389,6 +2394,10 @@ async function commitOpsInternal(context: string, ops: SyncOp[], report?: (compl
         "Local SQL Server is connected, but its POS schema is not ready. Open Database & Cloud Connection and apply the current local database update before taking payment.",
       );
     }
+  }
+
+  if (requireLocalAggregate) {
+    throw new Error("The local SQL Server transaction is unavailable. Reopen the booking before retrying payment.");
   }
 
   const operational = ops.every((op) => isOperationalTable(op.table));
