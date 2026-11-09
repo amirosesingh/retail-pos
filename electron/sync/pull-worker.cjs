@@ -6,7 +6,7 @@ const { posFeedFailed, posFeedCompleted } = require("./status-evidence.cjs");
 const {prepareHistoryFeed}=require('./history-feed.cjs');
 const grouped = require("./grouped-store-settings.cjs");
 const handoff = require("./grouped-settings-handoff.cjs");
-const { applyGroupedCashReceipt } = require("./grouped-cash-receipt.cjs");
+const { applyGroupedCashReceipt, applyGroupedCashInTransaction, parseMixedCashGroup } = require("./grouped-cash-receipt.cjs");
 const { assertStoreSettingsEditHandbackClear } = require("../db/store-settings-edit-outbox.cjs");
 const { recordId } = require("./uuid-fields.cjs");
 function assertGroupedPilotRunning(isPaused) {
@@ -69,23 +69,73 @@ class PullWorker {
     this.cloud.assertRequestContext(source, false);
     if (enrollment && enrollment.databaseGuid !== databaseGuid)
       throw grouped.fail("The grouped settings pilot does not match this SQL Server database.", "ESYNC_GROUPED_DATABASE_CHANGED");
-    return { source, branch, table, databaseGuid };
+    const projection = enrollment?.projection;
+    const parseCash = projection === grouped.MIXED_PROJECTION
+      ? (group, epoch) => parseMixedCashGroup(group, branch, epoch, recordId(source.terminal.tokenId), this.registry)
+      : null;
+    return { source, branch, table, databaseGuid, projection, parseCash };
   }
-  async commitGroupedSettings(context, position, next, change, snapshot = null, isPaused = null) {
-    const { source, branch, table, databaseGuid } = context;
+  async assertGroupedProjection(context, transaction = null) {
+    if (context.parseCash && context.handoff !== "return") return;
+    if (await this.checkpoints.get(context.branch, grouped.MIXED_CHECKPOINT, "pull", transaction))
+      throw grouped.fail("This scope requires the mixed financial recovery and handback path.", "ESYNC_GROUPED_REVIEW_REQUIRED");
+  }
+  async applyGroupedSettingsChange(transaction, context, current, next, change, snapshot, fence) {
+    const { source, branch, table } = context;
+    const local = await grouped.readLocalRow(transaction, table, change, "store_id", branch);
+    await grouped.assertLocalTracking(transaction, branch);
+    const entityId = JSON.stringify({ store_id: branch });
+    const pending = await this.reader.unacknowledged(table, [entityId], transaction, { branchId: branch });
+    if (pending.size) throw grouped.fail("A local settings edit is still pending upload.", "ELOCAL_UPLOAD_PENDING");
+    if (context.handoff === "return") {
+      const { row_version: rowVersion } = change.row_data;
+      if (local?.matching !== 1 || rowVersion < handoff.assertGroupedFence(fence, context))
+        throw grouped.fail("The local settings must match a verified snapshot covering the skipped legacy settings.",
+          "ESYNC_GROUPED_REVIEW_REQUIRED");
+      const legacy = await grouped.readLocalRow(transaction, table, { row_data: snapshot.legacyRow }, "store_id", branch);
+      if (legacy?.matching !== 1)
+        throw grouped.fail("The existing settings download cannot reproduce the verified local settings.",
+          "ESYNC_GROUPED_REVIEW_REQUIRED");
+      await assertStoreSettingsEditHandbackClear(transaction, { branchId: branch,
+        terminalId: recordId(source.terminal.tokenId), rowVersion });
+      await handoff.deleteFence(transaction, branch);
+    }
+    if (context.handoff === "prepare") {
+      const legacy = await this.checkpoints.get(branch, "__feed__", "pull", transaction);
+      if (!/^(?:0|[1-9]\d*)$/.test(legacy?.committed_cursor ?? "") ||
+          !Number.isSafeInteger(Number(legacy.committed_cursor)) || local?.matching !== 1)
+        throw grouped.fail("The legacy cursor and matching local settings baseline must be verified before handoff.", "ESYNC_GROUPED_REVIEW_REQUIRED");
+      await this.checkpoints.save(branch, handoff.CHECKPOINT, "pull",
+        { committed_cursor: handoff.fenceValue(context) }, transaction);
+    }
+    // The locked row, unchanged position and clear local upload evidence
+    // permit a newer settings revision from this same expired feed.
+    const recoveryCanReplace = snapshot?.replayExpired === true && context.handoff === "required" &&
+      current?.epoch === next.epoch && BigInt(next.seq) > BigInt(current.seq) &&
+      Number.isInteger(local?.row_version) && local.row_version > 0 && change.row_data.row_version > local.row_version;
+    if (snapshot && local && local.matching !== 1 && !recoveryCanReplace)
+      throw grouped.fail("The retained local settings differ from the snapshot. Review is required before advancing.", "ESYNC_GROUPED_REVIEW_REQUIRED");
+    if (local?.matching === 1) return false;
+    await this.applyTable(transaction, table, [change], branch, pending);
+    if ((await grouped.readLocalRow(transaction, table, change, "store_id", branch))?.matching !== 1)
+      throw grouped.fail("The native merge did not confirm the grouped settings row.", "ESYNC_GROUPED_REVIEW_REQUIRED");
+    return true;
+  }
+  async commitGroupedChanges(context, position, next, { change, cash = [], snapshot = null }, isPaused = null) {
+    const { source, branch, databaseGuid, projection } = context;
     assertGroupedPilotRunning(isPaused);
     this.cloud.assertRequestContext(source, false);
     const sql = this.connectionManager.sql();
     const transaction = new sql.Transaction(source.pool);
     await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
-    let changed = false;
+    const changes = [];
     try {
       if (await grouped.readDatabaseGuid(transaction.request()) !== databaseGuid)
         throw grouped.fail("The SQL Server database changed before the grouped settings apply.", "ESYNC_GROUPED_DATABASE_CHANGED");
       const fence = await handoff.readFence(transaction.request(), branch, true);
       if (context.handoff === "required" || context.handoff === "return") handoff.authorizeGroupedApply(transaction, context, fence);
       else if (fence) throw handoff.legacyFenced();
-      const local = await grouped.readLocalRow(transaction, table, change, "store_id", branch);
+      await this.assertGroupedProjection(context, transaction);
       const current = await grouped.readPosition(transaction.request(), context, true);
       if (current === null ? position !== null : position === null ||
           current.epoch !== position.epoch || current.seq !== position.seq || current.upper !== position.upper)
@@ -93,49 +143,22 @@ class PullWorker {
       if (snapshot && current?.epoch === next.epoch &&
           (BigInt(next.seq) < BigInt(current.seq) || (current.upper !== null && BigInt(next.seq) < BigInt(current.upper))))
         throw grouped.fail("The grouped settings snapshot would regress the saved sequence.");
-
-      await grouped.assertLocalTracking(transaction, branch);
-      const entityId = JSON.stringify({ store_id: branch });
-      const pending = await this.reader.unacknowledged(table, [entityId], transaction, { branchId: branch });
-      if (pending.size) throw grouped.fail("A local settings edit is still pending upload.", "ELOCAL_UPLOAD_PENDING");
-      if (context.handoff === "return") {
-        const { row_version: rowVersion } = change.row_data;
-        if (local?.matching !== 1 || rowVersion < handoff.assertGroupedFence(fence, context))
-          throw grouped.fail("The local settings must match a verified snapshot covering the skipped legacy settings.",
-            "ESYNC_GROUPED_REVIEW_REQUIRED");
-        const legacy = await grouped.readLocalRow(transaction, table, { row_data: snapshot.legacyRow }, "store_id", branch);
-        if (legacy?.matching !== 1)
-          throw grouped.fail("The existing settings download cannot reproduce the verified local settings.",
-            "ESYNC_GROUPED_REVIEW_REQUIRED");
-        await assertStoreSettingsEditHandbackClear(transaction, { branchId: branch,
-          terminalId: recordId(source.terminal.tokenId), rowVersion });
-        await handoff.deleteFence(transaction, branch);
+      if (context.parseCash && snapshot && current && current.epoch !== next.epoch)
+        throw grouped.fail("The mixed snapshot cannot prove continuity across a changed financial epoch.", "ESYNC_GROUPED_REVIEW_REQUIRED");
+      if (context.parseCash && snapshot && !current) {
+        const settings = await grouped.readPosition(transaction.request(), { ...context, projection: undefined }, true);
+        if (settings && (settings.epoch !== next.epoch || BigInt(next.seq) < BigInt(settings.upper ?? settings.seq)))
+          throw grouped.fail("The mixed snapshot does not cover the existing settings position.", "ESYNC_GROUPED_REVIEW_REQUIRED");
       }
-      if (context.handoff === "prepare") {
-        const legacy = await this.checkpoints.get(branch, "__feed__", "pull", transaction);
-        if (!/^(?:0|[1-9]\d*)$/.test(legacy?.committed_cursor ?? "") ||
-            !Number.isSafeInteger(Number(legacy.committed_cursor)) || local?.matching !== 1)
-          throw grouped.fail("The legacy cursor and matching local settings baseline must be verified before handoff.", "ESYNC_GROUPED_REVIEW_REQUIRED");
-        await this.checkpoints.save(branch, handoff.CHECKPOINT, "pull",
-          { committed_cursor: handoff.fenceValue(context) }, transaction);
-      }
-      // Only the same enrolled feed can advance an expired replay boundary.
-      // The locked row, unchanged saved position and clear local upload
-      // evidence above protect newer canonical data from overwriting local work.
-      const recoveryCanReplace = snapshot?.replayExpired === true && context.handoff === "required" &&
-        current?.epoch === next.epoch && BigInt(next.seq) > BigInt(current.seq) &&
-        Number.isInteger(local?.row_version) && local.row_version > 0 && change.row_data.row_version > local.row_version;
-      if (snapshot && local && local.matching !== 1 && !recoveryCanReplace)
-        throw grouped.fail("The retained local settings differ from the snapshot. Review is required before advancing.", "ESYNC_GROUPED_REVIEW_REQUIRED");
-      if (local?.matching !== 1) {
-        await this.applyTable(transaction, table, [change], branch, pending);
-        const saved = await grouped.readLocalRow(transaction, table, change, "store_id", branch);
-        if (saved?.matching !== 1)
-          throw grouped.fail("The native merge did not confirm the grouped settings row.", "ESYNC_GROUPED_REVIEW_REQUIRED");
-        changed = true;
+      if (change && await this.applyGroupedSettingsChange(transaction, context, current, next, change, snapshot, fence))
+        changes.push({ table: grouped.TABLE, entityId: branch });
+      for (const facts of cash) {
+        assertGroupedPilotRunning(isPaused);
+        const merged = await applyGroupedCashInTransaction(this, transaction, context, facts);
+        changes.push(...merged.map(({ table, id }) => ({ table: table.cloudTable, entityId: id })));
       }
       this.cloud.assertRequestContext(source, false);
-      await this.checkpoints.save(branch, grouped.CHECKPOINT, "pull",
+      await this.checkpoints.save(branch, grouped.checkpointFor(projection), "pull",
         { committed_cursor: JSON.stringify({ source: source.fingerprint, databaseGuid, ...next }) }, transaction);
       this.cloud.assertRequestContext(source, false);
       assertGroupedPilotRunning(isPaused);
@@ -145,9 +168,9 @@ class PullWorker {
       await Promise.resolve(transaction.rollback()).catch(() => undefined);
       throw error;
     }
-    if (changed) this.publish({ kind: "general", branchId: branch, source: "cloud",
-      tables: [grouped.TABLE], changes: [{ table: grouped.TABLE, entityId: branch }] });
-    return changed;
+    if (changes.length) this.publish({ kind: "general", branchId: branch, source: "cloud",
+      tables: [...new Set(changes.map(({ table }) => table))], changes });
+    return changes.length;
   }
   applyGroupedCashReceipt(input) {
     return applyGroupedCashReceipt(this, input);
@@ -171,17 +194,18 @@ class PullWorker {
     const fence = await handoff.readFence(context.source.pool.request(), context.branch);
     if (fence) {
       handoff.assertGroupedFence(fence, context);
-      return this.installGroupedSettingsSnapshotFor({ ...context, handoff: "return" }, isPaused);
+      return this.installGroupedSettingsSnapshotFor({ ...context, projection: undefined, parseCash: null, handoff: "return" }, isPaused);
     }
     return null;
   }
   async installGroupedSettingsSnapshotFor(context, isPaused = null, replayExpired = false) {
-    const { source, branch, table } = context;
+    const { source, branch, table, projection, parseCash } = context;
+    await this.assertGroupedProjection(context);
     const position = await grouped.readPosition(source.pool.request(), context);
     assertGroupedPilotRunning(isPaused);
-    const response = await this.cloud.groupedSettingsSnapshot(source);
+    const response = await this.cloud.groupedSettingsSnapshot(source, projection);
     assertGroupedPilotRunning(isPaused);
-    const snapshot = grouped.snapshotFor(response, branch, table);
+    const snapshot = grouped.snapshotFor(response, branch, table, parseCash);
     snapshot.replayExpired = replayExpired;
     const { epoch, seq, change } = snapshot;
     if (context.handoff === "return") {
@@ -197,7 +221,8 @@ class PullWorker {
           "ESYNC_GROUPED_REVIEW_REQUIRED");
       snapshot.legacyRow = row;
     }
-    const changed = await this.commitGroupedSettings(context, position, { epoch, seq, upper: null }, change, snapshot, isPaused);
+    const changed = (await this.commitGroupedChanges(context, position, { epoch, seq, upper: null },
+      { change, cash: snapshot.cash, snapshot }, isPaused)) > 0;
     return { epoch, seq, changed };
   }
   async pullGroupedSettingsPage({ limit = 100 } = {}) {
@@ -206,21 +231,23 @@ class PullWorker {
     return this.pullGroupedSettingsPageFor(await this.groupedSettingsContext(), limit);
   }
   async pullGroupedSettingsPageFor(context, limit, isPaused = null) {
-    const { source, branch, table } = context;
+    const { source, branch, table, projection, parseCash } = context;
+    await this.assertGroupedProjection(context);
     let position = await grouped.readPosition(source.pool.request(), context);
     if (!position) return { status: "SNAPSHOT_REQUIRED", reason: "UNINITIALIZED" };
     assertGroupedPilotRunning(isPaused);
-    const page = await this.cloud.pullGroupedSettings(source, position, limit);
+    const page = await this.cloud.pullGroupedSettings(source, position, limit, projection);
     assertGroupedPilotRunning(isPaused);
     if (grouped.snapshotRequired(page)) return page;
-    const groups = grouped.groupsFor(page, branch, table, position, limit);
+    const groups = grouped.groupsFor(page, branch, table, position, limit, parseCash);
     let merged = 0;
     for (const group of groups) {
       const next = { epoch: position.epoch, seq: group.seq, upper: group.seq === page.upper_seq ? null : page.upper_seq };
       try {
-        if (await this.commitGroupedSettings(context, position, next, group.change, null, isPaused)) merged++;
+        merged += await this.commitGroupedChanges(context, position, next,
+          { change: group.change, cash: group.cash ? [group.cash] : [] }, isPaused);
       } catch (error) {
-        if (error?.code === "ELOCAL_UPLOAD_PENDING")
+        if (["ELOCAL_UPLOAD_PENDING", "ESYNC_CASH_RECEIPT_DEPENDENCY"].includes(error?.code))
           return { status: "DEFERRED", reason: error.code, merged, seq: position.seq, hasMore: true };
         throw error;
       }
@@ -259,8 +286,10 @@ class PullWorker {
       return progress(isPaused() ? "PAUSED" : "MORE");
     } catch (error) {
       if (error?.code === "ESYNC_PAUSED") return progress("PAUSED");
-      if (error?.code === "ELOCAL_UPLOAD_PENDING") return progress("DEFERRED", error.code);
-      if (["ESYNC_GROUPED_REVIEW_REQUIRED", "ELOCAL_PENDING_UNVERIFIED"].includes(error?.code))
+      if (["ELOCAL_UPLOAD_PENDING", "ESYNC_CASH_RECEIPT_DEPENDENCY"].includes(error?.code))
+        return progress("DEFERRED", error.code);
+      if (["ESYNC_GROUPED_REVIEW_REQUIRED", "ELOCAL_PENDING_UNVERIFIED", "ESYNC_CASH_RECEIPT_PROTOCOL",
+        "ESYNC_CASH_RECEIPT_REVIEW"].includes(error?.code))
         return progress("REVIEW_REQUIRED", error.code);
       if (["GROUPED_FEED_UNAVAILABLE", "HTTP_401", "HTTP_403"].includes(error?.code))
         return progress("UNAVAILABLE", error.code);

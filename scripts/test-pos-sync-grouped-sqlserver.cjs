@@ -476,6 +476,8 @@ async function main() {
       assert.equal(installedGroupedSettingsPilot(env), null);
       assert.equal(installedGroupedSettingsPilot({ ...env, POS_GROUPED_SETTINGS_PILOT_MODE: "run",
         POS_GROUPED_SETTINGS_PILOT_ENROLLMENT: "{}" }), null);
+      assert.equal(installedGroupedSettingsPilot({ ...env, POS_GROUPED_SETTINGS_PILOT_MODE: "run",
+        POS_GROUPED_SETTINGS_PILOT_ENROLLMENT: JSON.stringify({ ...enrollment, projection: "settings_cash_v1" }) }), null);
       const active = installedGroupedSettingsPilot({ ...env, POS_GROUPED_SETTINGS_PILOT_MODE: "run" });
       const legacy = makeCloud();
       const groupedWorker = worker(legacy);

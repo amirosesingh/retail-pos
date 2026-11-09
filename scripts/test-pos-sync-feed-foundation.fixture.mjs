@@ -274,11 +274,14 @@ try {
   } else if (process.argv.includes("--named-approval-wake")) {
     const { verifyNamedApprovalWake } = await import("./lib/pos-named-approval-wake-fixture.mjs");
     await verifyNamedApprovalWake({ sql, denySql });
-  } else if (process.argv.includes("--cash-bridge") || process.argv.includes("--cash-wire") || process.argv.includes("--cash-receiving")) {
+  } else if (process.argv.includes("--cash-bridge") || process.argv.includes("--cash-wire") || process.argv.includes("--cash-receiving") ||
+      process.argv.includes("--cash-attested") || process.argv.includes("--cash-attested-relay")) {
     const { verifyCashBridge } = await import("./lib/pos-sync-cash-bridge-fixture.mjs");
+    const useCashRelay = process.argv.includes("--cash-attested-relay");
+    const attested = useCashRelay || process.argv.includes("--cash-attested");
     let wire;
-    if (process.argv.includes("--cash-wire") || process.argv.includes("--cash-receiving")) {
-      const source = execFileSync(process.execPath, [join(root, "scripts/test-pos-sale-outbox-sqlserver.cjs"), "--wire"],
+    if (process.argv.includes("--cash-wire") || process.argv.includes("--cash-receiving") || attested) {
+      const source = execFileSync(process.execPath, [join(root, "scripts/test-pos-sale-outbox-sqlserver.cjs"), attested ? "--attested-wire" : "--wire"],
         { cwd: root, windowsHide: true, encoding: "utf8", timeout: 120_000 });
       const line = source.split(/\r?\n/).find(value => value.startsWith("POS_CASH_WIRE "));
       assert(line, "The disposable SQL Server fixture must produce its saved cash wire evidence");
@@ -286,7 +289,8 @@ try {
     }
     const receiving = process.argv.includes("--cash-receiving")
       ? await (await import("./lib/pos-sync-cash-receive-fixture.mjs")).cashReceivingFixture(root) : undefined;
-    await verifyCashBridge({ sql, denySql, wire, receiving, session, waitFor });
+    const relay = useCashRelay ? (await import("./lib/pos-sync-cash-relay-fixture.mjs")).verifyAttestedCashRelay : undefined;
+    await verifyCashBridge({ sql, denySql, wire, receiving, session, waitFor, attested, relay });
   } else if (process.argv.includes("--store-settings") || process.argv.includes("--store-settings-native")) {
     const { verifyStoreSettingsPilot } = await import("./lib/pos-sync-store-settings-fixture.mjs");
     const applyNative = process.argv.includes("--store-settings-native") ? evidence => {
@@ -297,10 +301,12 @@ try {
     } : undefined;
     await verifyStoreSettingsPilot({ sql, denySql, session, waitFor, applyNative });
   } else if (process.argv.includes("--grouped-gateway") || process.argv.includes("--grouped-gateway-native") ||
+      process.argv.includes("--mixed-grouped-gateway") ||
       process.argv.includes("--settings-edit") || process.argv.includes("--settings-edit-gateway") || process.argv.includes("--settings-edit-relay")) {
     const { verifyGroupedGateway } = await import("./lib/pos-sync-grouped-gateway-fixture.mjs");
     const editRelay = process.argv.includes("--settings-edit-relay");
     await verifyGroupedGateway({ sql, denySql, native: process.argv.includes("--grouped-gateway-native"),
+      mixedGateway: process.argv.includes("--mixed-grouped-gateway"),
       settingsEdit: process.argv.includes("--settings-edit"), editGateway: editRelay || process.argv.includes("--settings-edit-gateway"), editRelay });
   } else {
     await verifyFeedFixture();

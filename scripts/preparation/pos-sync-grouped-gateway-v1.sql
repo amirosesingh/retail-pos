@@ -31,6 +31,17 @@ $scope$;
 REVOKE ALL ON FUNCTION pos_sync_feed_v1.assert_grouped_gateway_scope(text, text, uuid, text)
   FROM PUBLIC, anon, authenticated, service_role;
 
+-- An armed mixed epoch cannot be read or snapshotted by a settings-only till.
+CREATE TABLE pos_sync_feed_v1.cash_settings_pilots (
+  organization_id text COLLATE "C" NOT NULL,
+  scope_id text COLLATE "C" NOT NULL,
+  epoch uuid NOT NULL,
+  armed_after bigint NOT NULL CHECK (armed_after >= 0),
+  PRIMARY KEY (organization_id, scope_id, epoch)
+);
+ALTER TABLE pos_sync_feed_v1.cash_settings_pilots ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE pos_sync_feed_v1.cash_settings_pilots FROM PUBLIC, anon, authenticated, service_role;
+
 CREATE FUNCTION public.pos_sync_pull_grouped_v1(
   p_organization_id text, p_branch_id text, p_terminal_id uuid, p_binding_proof text,
   p_epoch uuid, p_after_seq text, p_upper_seq text, p_limit integer
@@ -48,6 +59,9 @@ BEGIN
     SELECT 1 FROM pos_sync_feed_v1.feed_heads AS head
     JOIN pos_sync_feed_v1.settings_pilots AS pilot USING (organization_id, scope_id, epoch)
     WHERE head.organization_id = p_organization_id AND head.scope_id = p_branch_id
+      AND NOT EXISTS (SELECT 1 FROM pos_sync_feed_v1.cash_settings_pilots AS mixed
+        WHERE (mixed.organization_id, mixed.scope_id, mixed.epoch) =
+          (head.organization_id, head.scope_id, head.epoch))
   ) THEN RETURN jsonb_build_object('status', 'SCOPE_UNAVAILABLE'); END IF;
 
   v_page := pos_sync_feed_v1.pull_groups(p_organization_id, p_branch_id, p_epoch, p_after_seq, p_upper_seq, p_limit);
@@ -88,7 +102,11 @@ BEGIN
   JOIN pos_sync_feed_v1.settings_pilots AS pilot USING (organization_id, scope_id, epoch)
   WHERE head.organization_id = p_organization_id AND head.scope_id = p_branch_id
   FOR NO KEY UPDATE OF head;
-  IF NOT FOUND THEN RETURN jsonb_build_object('status', 'SCOPE_UNAVAILABLE'); END IF;
+  IF NOT FOUND OR EXISTS (
+    SELECT 1 FROM pos_sync_feed_v1.cash_settings_pilots AS mixed
+    WHERE (mixed.organization_id, mixed.scope_id, mixed.epoch) =
+      (v_head.organization_id, v_head.scope_id, v_head.epoch)
+  ) THEN RETURN jsonb_build_object('status', 'SCOPE_UNAVAILABLE'); END IF;
 
   SELECT pin.pin_id INTO v_pin_id FROM pos_sync_feed_v1.snapshot_pins AS pin
   WHERE pin.organization_id = p_organization_id AND pin.scope_id = p_branch_id AND pin.epoch = v_head.epoch

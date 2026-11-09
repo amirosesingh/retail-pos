@@ -64,6 +64,41 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("isolated grouped sync relay", () => {
+  it("uses the mixed snapshot gateway only when enabled and never accepts a settings-only manifest for it", async () => {
+    const body = { sqlServerGroupedSnapshot: { ...snapshotRead, projection: "settings_cash_v1" } };
+    expect((await direct(body)).status).toBe(503);
+    expect(requests).toHaveLength(0);
+    runtime.env.POS_GROUPED_CASH_SETTINGS_PILOT_ENABLED = "true";
+    upstream = () => Response.json(snapshot());
+    expect((await direct(body)).status).toBe(502);
+    expect(requests.at(-1)?.url).toMatch(/\/pos_sync_snapshot_cash_settings_v1$/);
+    upstream = () => {
+      const base = snapshot();
+      const manifest_json = JSON.stringify({ ...JSON.parse(base.manifest_json), cash_groups: [] });
+      return Response.json({ ...base, manifest_json, manifest_sha256: createHash("sha256").update(manifest_json).digest("hex") });
+    };
+    expect((await direct(body)).status).toBe(200);
+    expect((await direct({ sqlServerGroupedSnapshot: snapshotRead })).status).toBe(502);
+  });
+
+  it("keeps cash uploads exclusive, gated and bound to the exact checkout bytes", async () => {
+    const checkoutJson = JSON.stringify({ sale: { id: epoch } });
+    const edit = {
+      organizationId: "default", branchId: branch, installationGeneration: terminal, databaseGuid: secondTerminal,
+      feedEpoch: epoch, operationId: otherTerminal, checkoutJson, attestation: {},
+      checkoutSha256: createHash("sha256").update(checkoutJson).digest("hex"),
+    };
+    const body = { sqlServerCashCheckout: edit };
+    expect((await direct(body)).status).toBe(503);
+    runtime.env.POS_GROUPED_CASH_SETTINGS_PILOT_ENABLED = "true";
+    expect((await direct(body)).status).toBe(503);
+    runtime.env.POS_GROUPED_CASH_UPLOAD_PILOT_ENABLED = "true";
+    expect((await direct(body, { accessToken: "later-uploader" })).status).toBe(400);
+    expect((await direct(body, { terminalToken: otherTerminal })).status).toBe(403);
+    expect((await direct({ sqlServerCashCheckout: { ...edit, checkoutJson: checkoutJson + " " } })).status).toBe(400);
+    expect(requests).toHaveLength(0);
+  });
+
   it("keeps settings uploads opt-in and requires an exclusive command with person and device proofs", async () => {
     const edit = {
       organizationId: "default", branchId: branch, installationGeneration: terminal, databaseGuid: secondTerminal,

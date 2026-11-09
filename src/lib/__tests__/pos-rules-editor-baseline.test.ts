@@ -132,6 +132,32 @@ it("reuses one offline settings command ID across uncertain IPC responses withou
   }], [queueStoreSettingsEdit.mock.calls[0][0]]]);
   expect(mock.save).not.toHaveBeenCalled(); expect(mock.fetch).not.toHaveBeenCalled(); expect(mock.queue).not.toHaveBeenCalled();
 });
+it("shows an exact stale settings comparison and confirms keep-central separately from saving", async () => {
+  const decisionSha256 = "f".repeat(64);
+  const reviewStoreSettingsEdit = vi.fn()
+    .mockResolvedValueOnce({ ok: true, review: { operationId: "saved-operation", decisionSha256,
+      expectedVersion: 7, currentVersion: 8,
+      proposedValues: { max_drawer_cash_limit: "10000000000000.123456789123" },
+      currentValues: { max_drawer_cash_limit: "10000000000000.123456789124" } } })
+    .mockResolvedValueOnce({ ok: true, operationId: "saved-operation" });
+  vi.stubGlobal("window", { pos: { reviewStoreSettingsEdit } });
+  mock.slots[9] = { status: "REVIEW_REQUIRED", branchId: "branch" };
+  const button = (label: string) => mock.buttons.find(item => item.children === label)!;
+  draw();
+  expect(saveButton().disabled).toBe(true);
+  (button("Review saved settings edit").onClick as () => void)();
+  await vi.waitFor(() => expect(draw()).toContain("10000000000000.123456789123"));
+  expect(draw()).toContain("10000000000000.123456789124");
+  expect(reviewStoreSettingsEdit.mock.calls).toEqual([[{ action: "preview", branchId: "branch" }]]);
+  (button("Keep central rules").onClick as () => void)();
+  await vi.waitFor(() => expect(draw()).not.toContain("Keep central rules"));
+  expect(reviewStoreSettingsEdit.mock.calls.at(-1)).toEqual([{
+    action: "keep-central", branchId: "branch", operationId: "saved-operation", decisionSha256,
+  }]);
+  expect(mock.save).not.toHaveBeenCalled();
+  expect(mock.fetch).not.toHaveBeenCalled();
+  expect(saveButton().disabled).toBe(false);
+});
 it("requires a verified revision for the selected store before submitting", async () => {
   mock.branch = "another-branch";
   draw();

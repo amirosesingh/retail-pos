@@ -11,7 +11,7 @@ const serviceClaims = `SET request.jwt.claims = '{"role":"service_role"}';`;
 const legacyRole = "SET ROLE service_role;";
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export async function verifyCashBridge({ sql, denySql, session, waitFor, wire, receiving }) {
+export async function verifyCashBridge({ sql, denySql, session, waitFor, wire, receiving, attested = false, relay }) {
   const saved = wire ? JSON.parse(wire.checkoutJson) : null;
   const branch = wire?.scope.branchId ?? "A";
   const otherBranch = branch === "B" ? "A" : "B";
@@ -50,11 +50,12 @@ export async function verifyCashBridge({ sql, denySql, session, waitFor, wire, r
     assert(end >= 0);
     const additions = source.match(new RegExp(`ALTER TABLE public\\.${name}\\s+ADD COLUMN IF NOT EXISTS [^;]+;`, "gi")) ?? [];
     const key = name === "stock_delta_applied" ? "movement_id" : "id";
-    const primaryKey = name === "sync_idempotency_receipts" ? "" : `ALTER TABLE public.${name} ADD PRIMARY KEY(${key});`;
+    const primaryKey = ["sync_idempotency_receipts", "pos_store_settings"].includes(name) ? "" : `ALTER TABLE public.${name} ADD PRIMARY KEY(${key});`;
     return [source.slice(start, end + 2), primaryKey, ...additions].join("\n");
   };
   const tables = ["stores", "app_users", "user_roles", "terminal_tokens", "shifts", "products", "sales", "sale_items", "payment_transactions",
     "item_activity_logs", "stock_delta_applied", "sync_idempotency_receipts"];
+  if (attested) tables.push("pos_store_settings");
   const routines = ["pos_sync_validate_scope", "has_role", "is_app_supervisor", "is_supervisor_now", "user_store_id",
     "store_visible", "stock_apply_delta", "sync_apply_sales", "sync_delete_sales", "sync_apply_sale_items",
     "sync_delete_sale_items", "sync_apply_payment_transactions", "sync_delete_payment_transactions",
@@ -85,6 +86,12 @@ export async function verifyCashBridge({ sql, denySql, session, waitFor, wire, r
 
   const preparation = [await read("../preparation/pos-sync-inbox-v1.sql"), await read("../preparation/pos-sync-cash-bridge-v1.sql"),
     await read("../preparation/pos-sync-cash-overlap-v1.sql")];
+  if (attested) {
+    sql(await read("../../supabase/migrations/20261102101610_shift_author_key_registry.sql"));
+    for (const name of ["pos-sync-cash-receive-v1.sql", "pos-sync-store-settings-v1.sql", "pos-sync-grouped-gateway-v1.sql",
+      "pos-sync-cash-settings-gateway-v1.sql", "pos-sync-cash-attested-gateway-v1.sql"])
+      preparation.push(await read(`../preparation/${name}`));
+  }
   sql(`BEGIN;\n${preparation.join("\n")}\nCOMMIT;`);
   sql(`INSERT INTO public.stores (id, code, name) VALUES (${sqlText(branch)}, ${sqlText(branch)}, 'Fixture branch');
     INSERT INTO public.terminal_tokens (id, location_id, device_name, is_claimed, claim_proof, claimed_platform)
@@ -140,6 +147,76 @@ export async function verifyCashBridge({ sql, denySql, session, waitFor, wire, r
   const checkoutJson = wire?.checkoutJson ?? JSON.stringify(first);
   if (wire) assert.equal(wire.checkoutSha256, digest(checkoutJson));
   const checkoutSha256 = wire?.checkoutSha256 ?? digest(checkoutJson);
+  if (attested) {
+    const author = wire?.attestation;
+    assert(author && wire.publicKey && author.payloadHash === checkoutSha256);
+    const scope = `'default',${sqlText(branch)},'${epoch}'`;
+    const settingsColumns = source.match(/ALTER TABLE public\.pos_store_settings\s+ADD COLUMN IF NOT EXISTS [^;]+;/g) ?? [];
+    sql(`${settingsColumns.join("\n")}
+      INSERT INTO public.pos_store_settings (store_id) VALUES (${sqlText(branch)});
+      INSERT INTO pos_sync_cash_v1.installation_enrollments
+      (organization_id,terminal_id,branch_id,installation_generation,database_guid)
+      VALUES ('default','${terminal}',${sqlText(branch)},'${installationGeneration}','${databaseGuid}');
+      INSERT INTO public.app_users (id,user_id,full_name,email,store_id,permissions)
+      VALUES ('${author.authorId}',${sqlText(author.subject)},'Original cashier','fixture@invalid.test',${sqlText(branch)},
+        '{"can_process_sale":true}');
+      INSERT INTO pos_sync_private.shift_author_keys(key_id,author_id,terminal_id,project_origin,subject,public_key)
+      VALUES ('${author.keyId}','${author.authorId}','${terminal}',${sqlText(author.projectOrigin)},
+        ${sqlText(author.subject)},${sqlText(wire.publicKey)});
+      INSERT INTO pos_sync_feed_v1.settings_pilots(organization_id,scope_id,epoch) VALUES (${scope});
+      INSERT INTO public.shifts(id,store_id,terminal_id,status,state) VALUES ('${shift}',${sqlText(branch)},'${terminal}','OPEN','ACTIVE');`);
+    const args = {
+      p_organization_id: "default", p_branch_id: branch, p_terminal_id: terminal, p_binding_proof: proof,
+      p_installation_generation: installationGeneration, p_database_guid: databaseGuid, p_operation_id: operation,
+      p_epoch: epoch, p_checkout_json: checkoutJson, p_checkout_sha256: checkoutSha256,
+      p_author_key_id: author.keyId, p_author_id: author.authorId, p_author_subject: author.subject, p_project_origin: author.projectOrigin,
+    };
+    const call = (overrides = {}, role = "service_role") => `SET ROLE ${role}; ${serviceClaims}
+      SELECT public.pos_sync_cash_checkout_attested_v1(${Object.values({ ...args, ...overrides }).map(sqlText).join(",")});`;
+    for (const role of ["anon", "authenticated"]) denySql(call({}, role), /permission denied/);
+    denySql(call({ p_author_key_id: randomUUID() }), /POS_CASH_V1_AUTHOR_FORBIDDEN/);
+    denySql(call({ p_author_subject: "another.cashier" }), /POS_CASH_V1_AUTHOR_FORBIDDEN/);
+    denySql(call({ p_checkout_json: ` ${checkoutJson}` }), /POS_CASH_V1_CHECKOUT_DIGEST_MISMATCH/);
+    denySql(call({ p_database_guid: randomUUID() }), /POS_CASH_V1_INSTALLATION_FORBIDDEN/);
+    denySql(call(), /POS_CASH_SETTINGS_V1_PUBLICATION_UNVERIFIED/);
+    assert.equal(counts(), "0|0|0|0|0|0|10|4");
+    assert.equal(sql("SELECT count(*) FROM pos_sync_inbox_v1.operation_receipts;"), "0");
+    sql(`SELECT pos_sync_feed_v1.arm_cash_settings_scope(${scope});`);
+    const invokeRpc = body => {
+      if (body !== undefined) assert.deepEqual(body, args);
+      return JSON.parse(sql(call()));
+    };
+    const invokeRead = (rpc, values) => {
+      assert(["pos_sync_pull_cash_settings_v1", "pos_sync_snapshot_cash_settings_v1"].includes(rpc));
+      const names = ["p_organization_id", "p_branch_id", "p_terminal_id", "p_binding_proof"];
+      if (rpc === "pos_sync_pull_cash_settings_v1") names.push("p_epoch", "p_after_seq", "p_upper_seq", "p_limit");
+      assert.deepEqual(Object.keys(values).sort(), [...names].sort());
+      return JSON.parse(sql(`${legacyRole}${serviceClaims} SELECT public.${rpc}(${names.map(name =>
+        values[name] === null ? "NULL" : sqlText(String(values[name]))).join(",")});`));
+    };
+    const accepted = relay ? await relay({ wire, proof, args, invokeRpc, invokeRead }) : invokeRpc();
+    assert.deepEqual(accepted, { status: "APPLIED", result: { sale_id: first.sale.id, scope_id: branch, epoch, seq: "1",
+      operation_id: operation, terminal_id: terminal, installation_generation: installationGeneration,
+      database_guid: databaseGuid, checkout_sha256: checkoutSha256, author_id: author.authorId, author_key_id: author.keyId } });
+    assert.equal(sql(`SELECT cashier_id FROM public.sales WHERE id='${first.sale.id}';`), author.subject);
+    assert.deepEqual(invokeRpc(), { status: "ALREADY_APPLIED", result: accepted.result });
+    assert.equal(counts(), `1|1|1|1|1|1|${10 - Number(first.item.quantity)}|4`);
+    const feed = JSON.parse(sql(`${legacyRole}${serviceClaims}
+      SELECT public.pos_sync_pull_cash_settings_v1('default',${sqlText(branch)},'${terminal}','${proof}','${epoch}','0',NULL,10);`));
+    assert.equal(feed.groups.length, 1);
+    assert.deepEqual(feed.groups[0].changes.map(change => change.table_name), ["sales", "sale_items", "payment_transactions", "item_activity_logs"]);
+    assert.equal(feed.groups[0].acceptance.checkout_sha256, checkoutSha256);
+    sql(`UPDATE public.app_users SET permissions='{"can_process_sale":true,"page:register":false}' WHERE id='${author.authorId}';`);
+    denySql(call(), /POS_CASH_V1_AUTHOR_FORBIDDEN/);
+    sql(`UPDATE public.app_users SET permissions='{"can_process_sale":true}', is_active=false WHERE id='${author.authorId}';`);
+    denySql(call(), /POS_CASH_V1_AUTHOR_FORBIDDEN/);
+    sql(`UPDATE public.app_users SET is_active=true WHERE id='${author.authorId}';
+      UPDATE pos_sync_private.shift_author_keys SET revoked_at=now() WHERE key_id='${author.keyId}';`);
+    denySql(call(), /POS_CASH_V1_AUTHOR_FORBIDDEN/);
+    assert.equal(counts(), `1|1|1|1|1|1|${10 - Number(first.item.quantity)}|4`);
+    console.log("PASS attested LocalDB cash to native PostgreSQL, service-only author binding, exact archived group, replay and atomic rollback");
+    return;
+  }
   const firstApply = apply(operation, first, { checkoutJson, checkoutSha256 });
   const differentBytes = ` ${checkoutJson}\n`;
   const remaining = 10 - Number(first.item.quantity);

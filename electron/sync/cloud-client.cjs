@@ -245,7 +245,9 @@ class CloudClient {
       // Branch admission is control-plane metadata. Health/login/enrollment use
       // their existing separate paths and cannot wait behind data downloads.
       if (!operation && captured?.managementSyncBranches === true && Object.keys(captured).length === 1) return work();
-      const upload = captured?.sqlServerBatch || captured?.sqlServerAggregate || captured?.sqlServerFinancialEvent || captured?.sqlServerFinancialObservation || captured?.sqlServerLegacyRecovery || captured?.sqlServerSettingsEdit;
+      const upload = captured?.sqlServerBatch || captured?.sqlServerAggregate || captured?.sqlServerFinancialEvent ||
+        captured?.sqlServerFinancialObservation || captured?.sqlServerLegacyRecovery || captured?.sqlServerSettingsEdit ||
+        captured?.sqlServerCashCheckout;
       return this.requestLane.run(upload ? "upload" : "download", Buffer.byteLength(capturedJson, "utf8"), work);
     } catch (error) { return Promise.reject(error); }
   }
@@ -285,6 +287,7 @@ class CloudClient {
     // UUID cleanup is for ordinary rows, never for already-signed labels.
     // Raw JSON and proof objects remain exactly those captured by Main.
     if(payload?.sqlServerFinancialEvent)outbound.sqlServerFinancialEvent={...outbound.sqlServerFinancialEvent,operationJson:payload.sqlServerFinancialEvent.operationJson,proof:payload.sqlServerFinancialEvent.proof};
+    if (payload?.sqlServerCashCheckout) outbound.sqlServerCashCheckout = payload.sqlServerCashCheckout;
     if (payload?.sqlServerLegacyRecovery) outbound.sqlServerLegacyRecovery = {
       ...payload.sqlServerLegacyRecovery,
       payloadJson: payload.sqlServerLegacyRecovery.payloadJson,
@@ -312,7 +315,7 @@ class CloudClient {
       throw Object.assign(new Error("The reviewed closing exceeds the bounded recovery upload. Its saved evidence remains available for review."), { code:"ELEGACY_RECOVERY_OVERSIZED", table:"shifts" });
     try { response = await fetch(`${base}/api/v1/pos/sync${suffix}`, {
       method: "POST",
-      ...(payload?.sqlServerSettingsEdit ? { redirect: "error" } : {}),
+      ...(payload?.sqlServerSettingsEdit || payload?.sqlServerCashCheckout ? { redirect: "error" } : {}),
       headers: { "content-type": "application/json", ...(payload?.sqlServerLegacyRecovery ? { "x-pos-legacy-recovery": "1" } : {}) },
       body: requestBody,
       signal: AbortSignal.timeout(historyRead || payload?.sqlServerHeldSaleReview ? 12_000 : 30_000),
@@ -323,7 +326,7 @@ class CloudClient {
           try{await response.body?.cancel();}catch{/* This response cannot advance sync. */}
           throw Object.assign(new Error('The hosted scoped history transport could not be verified.'),{code:'EHISTORY_INDEX_PROTOCOL',table:'change_history'});
         }
-        if (payload?.sqlServerSettingsEdit) {
+        if (payload?.sqlServerSettingsEdit || payload?.sqlServerCashCheckout) {
           data = JSON.parse(await boundedText(response, 4096));
         } else if (groupedRead) {
           data = JSON.parse(await boundedText(response, response.ok ? groupedSettings.MAX_RESPONSE_BYTES : 4096));
@@ -559,16 +562,16 @@ class CloudClient {
       };
     });
   }
-  pullGroupedSettings(source, { epoch, seq, upper }, limit) {
+  pullGroupedSettings(source, { epoch, seq, upper }, limit, projection) {
     this.assertRequestContext(source, false);
     const branchId = groupedSettings.operationsScope(source);
     return this.request({ sqlServerGroupedFeed: { organizationId: "default", branchId,
-      epoch, afterSeq: seq, upperSeq: upper, limit } });
+      epoch, afterSeq: seq, upperSeq: upper, limit, ...(projection ? { projection } : {}) } });
   }
-  groupedSettingsSnapshot(source) {
+  groupedSettingsSnapshot(source, projection) {
     this.assertRequestContext(source, false);
     const branchId = groupedSettings.operationsScope(source);
-    return this.request({ sqlServerGroupedSnapshot: { organizationId: "default", branchId } });
+    return this.request({ sqlServerGroupedSnapshot: { organizationId: "default", branchId, ...(projection ? { projection } : {}) } });
   }
   async submitStoreSettingsEdit(source, command) {
     this.assertRequestContext(source, true);
@@ -593,6 +596,22 @@ class CloudClient {
       assertSource: () => this.assertRequestContext(source, true),
     });
     return witness;
+  }
+  async submitCashCheckout(source, wire) {
+    this.assertRequestContext(source, false);
+    const branchId = groupedSettings.operationsScope(source);
+    const { scope, operationId, checkoutJson, checkoutSha256, attestation } = wire ?? {};
+    if (scope?.branchId !== branchId || scope.terminalId !== recordId(source.terminal.tokenId) ||
+        !attestation || typeof checkoutJson !== "string" || Buffer.byteLength(checkoutJson, "utf8") > 524288 ||
+        createHash("sha256").update(checkoutJson, "utf8").digest("hex") !== checkoutSha256)
+      throw Object.assign(new Error("The original cash checkout is unavailable or does not match this source."),
+        { code: "ESALE_CASH_BRIDGE_UNVERIFIED" });
+    const result = await this.request({ sqlServerCashCheckout: {
+      organizationId: "default", branchId, operationId, checkoutJson, checkoutSha256, attestation,
+      installationGeneration: scope.installationGeneration, databaseGuid: scope.databaseGuid, feedEpoch: scope.feedEpoch,
+    } });
+    this.assertRequestContext(source, false);
+    return result;
   }
   async bootstrapPage({ organizationId = "default", table, branchId, historyDays, cursor, limit, historyWitness=null }) {
     const history=table==='change_history'?require('./history-read-scope.cjs'):null;

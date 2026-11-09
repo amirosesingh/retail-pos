@@ -5,3 +5,8 @@ export type FinancialOperationAttestation={
 };
 export function normalizeFinancialAttestation(input:unknown):FinancialOperationAttestation;
 export function financialOperationMessage(input:unknown):string;
+export type CashCheckoutAttestation=Omit<FinancialOperationAttestation,'action'>&{
+ installationGeneration:string;databaseGuid:string;feedEpoch:string;
+};
+export function cashCheckoutMessage(input:unknown):string;
+export function normalizeCashCheckoutAttestation(input:unknown):CashCheckoutAttestation;

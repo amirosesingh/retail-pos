@@ -114,7 +114,7 @@ const syncCoordinator = new SyncCoordinator({
 const storeSettingsEdits = require("./sync/store-settings-edit-runtime.cjs").createStoreSettingsEditRuntime({
   pilot: groupedSettingsPilot,
   installationGeneration: process.env.POS_GROUPED_SETTINGS_EDIT_INSTALLATION_GENERATION,
-  coordinator: syncCoordinator, cloud: syncCloud, connectionManager: databaseManager,
+  coordinator: syncCoordinator, cloud: syncCloud, connectionManager: databaseManager, registry: syncRegistry,
   ready: () => {
     const state = databaseService.snapshot();
     return process.platform === "win32" && app.hasSingleInstanceLock() && !safeMode && !quitting &&
@@ -2323,6 +2323,20 @@ function registerIpc() {
       expectedVersion: input.expectedVersion,
       patch,
     });
+    if (result.ok) scheduleAutomaticSync(250);
+    return result;
+  }));
+  ipcMain.handle("business:review-store-settings-edit", (event, value) => guard.guarded(async () => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame)
+      return { ok: false, code: "ESETTINGS_REVIEW_UNAVAILABLE", error: "Store settings review is unavailable on this till." };
+    const input = guard.plainObject(value, { name: "settings review" });
+    const branchId = guard.text(input.branchId, { name: "store", max: 128 });
+    if (input.action === "preview" && Object.keys(input).length === 2) return storeSettingsEdits.review({ branchId });
+    if (input.action !== "keep-central" || Object.keys(input).length !== 4 ||
+        typeof input.decisionSha256 !== "string" || !/^[a-f0-9]{64}$/.test(input.decisionSha256))
+      throw new guard.BadArg("Confirm the verified store settings comparison.");
+    const result = await storeSettingsEdits.review({ branchId,
+      operationId: guard.uuid(input.operationId, { name: "operation id" }), decisionSha256: input.decisionSha256 });
     if (result.ok) scheduleAutomaticSync(250);
     return result;
   }));

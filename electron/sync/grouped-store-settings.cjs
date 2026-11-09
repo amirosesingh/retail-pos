@@ -5,7 +5,10 @@ const { toLocalValue } = require("./row-codec.cjs");
 
 const TABLE = "pos_store_settings";
 const CHECKPOINT = "__grouped_store_settings_v1__";
+const MIXED_PROJECTION = "settings_cash_v1";
+const MIXED_CHECKPOINT = "__grouped_settings_cash_v1__";
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+const MAX_MIXED_MANIFEST_BYTES = 7 * 256 * 1024;
 const MAX_SEQ = 9223372036854775807n;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const HASH = /^[a-f0-9]{64}$/;
@@ -28,7 +31,9 @@ function httpsOrigin(value) {
 }
 
 function pilotEnrollment(value) {
-  if (!hasKeys(value, ["branchId", "terminalId", "backendOrigin", "projectOrigin", "databaseGuid"]) ||
+  const fields = ["branchId", "terminalId", "backendOrigin", "projectOrigin", "databaseGuid"];
+  if (value?.projection === MIXED_PROJECTION) fields.push("projection");
+  if (!hasKeys(value, fields) ||
       typeof value.branchId !== "string" || !value.branchId || value.branchId.length > 128 ||
       recordId(value.branchId) !== value.branchId || typeof value.terminalId !== "string" || !UUID.test(value.terminalId) ||
       typeof value.databaseGuid !== "string" || !UUID.test(value.databaseGuid) ||
@@ -42,7 +47,9 @@ function installedGroupedSettingsPilot(env) {
   if (!["run", "handback"].includes(mode) || typeof input !== "string" || input.length > 1024) return null;
   try {
     const enrollment = pilotEnrollment(JSON.parse(input));
-    return enrollment ? Object.freeze({ enrollment, mode }) : null;
+    // The native mixed contract is exercised in isolation. Installed finance
+    // still needs an exclusive legacy read/write handoff before it can run.
+    return enrollment && !enrollment.projection ? Object.freeze({ enrollment, mode }) : null;
   } catch { return null; }
 }
 
@@ -95,7 +102,7 @@ function changeFor(value, branch, table) {
   return { ...value, entity_id: JSON.stringify(key), row_data: { ...row, row_version: Number(value.row_version) } };
 }
 
-function groupsFor(page, branch, table, position, limit) {
+function groupsFor(page, branch, table, position, limit, parseCash = null) {
   if (!hasKeys(page, ["status", "scope_id", "epoch", "next_seq", "upper_seq", "has_more", "groups"]) ||
       page.status !== "OK" || page.scope_id !== branch || page.epoch !== position.epoch ||
       !Array.isArray(page.groups) || page.groups.length > limit ||
@@ -109,22 +116,26 @@ function groupsFor(page, branch, table, position, limit) {
     throw fail("The grouped settings page did not advance safely.");
 
   const groups = page.groups.map(group => {
-    if (!hasKeys(group, ["seq", "operation_id", "changes"]) || sequence(group.seq) !== previous + 1n ||
+    if (sequence(group?.seq) !== previous + 1n ||
         (group.operation_id !== null && (typeof group.operation_id !== "string" || !UUID.test(group.operation_id))) ||
-        !Array.isArray(group.changes) || group.changes.length !== 1)
+        !Array.isArray(group.changes))
       throw fail("The grouped settings page contains an unsupported or incomplete group.");
     previous = BigInt(group.seq);
-    return { seq: group.seq, change: changeFor(group.changes[0], branch, table) };
+    if (hasKeys(group, ["seq", "operation_id", "changes"]) && group.changes.length === 1)
+      return { seq: group.seq, change: changeFor(group.changes[0], branch, table) };
+    if (parseCash) return { seq: group.seq, cash: parseCash(group, position.epoch) };
+    throw fail("The grouped settings page contains an unsupported or incomplete group.");
   });
   if (previous !== next) throw fail("The grouped settings page skipped a sequence.");
   return groups;
 }
 
-function snapshotFor(value, branch, table) {
+function readSnapshot(value, branch, table, mixed) {
   if (!hasKeys(value, ["status", "scope_id", "epoch", "seq", "pin_id", "expires_at", "manifest_json", "manifest_sha256"]) ||
       value.status !== "OK" || value.scope_id !== branch || typeof value.epoch !== "string" || !UUID.test(value.epoch) ||
       typeof value.pin_id !== "string" || !UUID.test(value.pin_id) || typeof value.expires_at !== "string" ||
-      typeof value.manifest_json !== "string" || Buffer.byteLength(value.manifest_json, "utf8") > MAX_RESPONSE_BYTES ||
+      typeof value.manifest_json !== "string" ||
+      Buffer.byteLength(value.manifest_json, "utf8") > (mixed ? MAX_MIXED_MANIFEST_BYTES : MAX_RESPONSE_BYTES) ||
       typeof value.manifest_sha256 !== "string" || !HASH.test(value.manifest_sha256) ||
       createHash("sha256").update(value.manifest_json, "utf8").digest("hex") !== value.manifest_sha256)
     throw fail("The grouped settings snapshot manifest does not match its scoped proof.");
@@ -134,11 +145,45 @@ function snapshotFor(value, branch, table) {
   let manifest;
   try { manifest = JSON.parse(value.manifest_json); }
   catch { throw fail("The grouped settings snapshot manifest is malformed."); }
-  if (!hasKeys(manifest, ["scope_id", "epoch", "seq", "changes"]) || manifest.scope_id !== branch ||
+  const fields = ["scope_id", "epoch", "seq", "changes"];
+  if (mixed) fields.push("cash_groups");
+  if (!hasKeys(manifest, fields) || manifest.scope_id !== branch ||
       manifest.epoch !== value.epoch || manifest.seq !== value.seq ||
       !Array.isArray(manifest.changes) || manifest.changes.length !== 1)
     throw fail("The grouped settings snapshot must contain one complete row for its scope, epoch and sequence.");
-  return { epoch: value.epoch, seq: value.seq, expires, change: changeFor(manifest.changes[0], branch, table) };
+  const snapshot = { epoch: value.epoch, seq: value.seq, expires, change: changeFor(manifest.changes[0], branch, table) };
+  if (mixed && (!Array.isArray(manifest.cash_groups) || manifest.cash_groups.length > 100))
+    throw fail("The mixed snapshot cannot prove its complete cash groups.");
+  return { snapshot, cashGroups: manifest.cash_groups };
+}
+
+// For stale settings review only. Advancing a mixed position requires the
+// separate snapshot parser and a successful atomic apply of every cash group.
+function settingsFromSnapshot(value, branch, table, projection) {
+  return readSnapshot(value, branch, table, projection === MIXED_PROJECTION).snapshot;
+}
+
+function snapshotFor(value, branch, table, parseCash = null) {
+  const { snapshot, cashGroups } = readSnapshot(value, branch, table, Boolean(parseCash));
+  if (!parseCash) return snapshot;
+  let previous = 0n;
+  const operations = new Set();
+  const entities = new Set();
+  snapshot.cash = cashGroups.map(group => {
+    const current = sequence(group?.seq);
+    if (current <= previous || current > BigInt(value.seq) || operations.has(group.operation_id))
+      throw fail("The mixed snapshot contains a repeated or out-of-order cash group.");
+    const facts = parseCash(group, value.epoch);
+    for (const { table, change } of facts.rows) {
+      const id = `${table.cloudTable}:${change.row_data.id}`;
+      if (entities.has(id)) throw fail("The mixed snapshot repeats a cash receipt row.");
+      entities.add(id);
+    }
+    operations.add(group.operation_id);
+    previous = current;
+    return facts;
+  });
+  return snapshot;
 }
 
 async function readDatabaseGuid(request) {
@@ -151,7 +196,11 @@ async function readDatabaseGuid(request) {
   return guid;
 }
 
-async function readPosition(request, { branch, source, databaseGuid, checkpoint = CHECKPOINT }, locked = false) {
+function checkpointFor(projection) {
+  return projection === MIXED_PROJECTION ? MIXED_CHECKPOINT : CHECKPOINT;
+}
+
+async function readPosition(request, { branch, source, databaseGuid, projection, checkpoint = checkpointFor(projection) }, locked = false) {
   const result = await request.input("branch", branch).input("entity", checkpoint).query(`
     SELECT committed_cursor FROM dbo.sync_checkpoints ${locked ? "WITH (UPDLOCK,HOLDLOCK)" : ""}
     WHERE organization_id=N'default' AND branch_id=@branch AND entity_type=@entity AND direction=N'pull';`);
@@ -214,6 +263,6 @@ async function assertLocalTracking(transaction, branch) {
 }
 
 module.exports = {
-  TABLE, CHECKPOINT, MAX_RESPONSE_BYTES, fail, operationsScope, pilotEnrollment, installedGroupedSettingsPilot, snapshotRequired,
-  groupsFor, snapshotFor, readDatabaseGuid, readPosition, readLocalRow, assertLocalTracking,
+  TABLE, CHECKPOINT, MIXED_PROJECTION, MIXED_CHECKPOINT, MAX_RESPONSE_BYTES, checkpointFor, fail, operationsScope, pilotEnrollment, installedGroupedSettingsPilot, snapshotRequired,
+  groupsFor, snapshotFor, settingsFromSnapshot, readDatabaseGuid, readPosition, readLocalRow, assertLocalTracking,
 };

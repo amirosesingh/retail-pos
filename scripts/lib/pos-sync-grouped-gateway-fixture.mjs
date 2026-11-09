@@ -128,7 +128,8 @@ async function applyThroughRelay({ sql, service, baseline, update, branch, termi
   }
 }
 
-export async function verifyGroupedGateway({ sql, denySql, native = false, settingsEdit = false, editGateway = false, editRelay = false }) {
+export async function verifyGroupedGateway({ sql, denySql, native = false, settingsEdit = false, editGateway = false, editRelay = false,
+  mixedGateway = false }) {
   const read = async path => (await readFile(new URL(path, import.meta.url), "utf8")).replaceAll("\r\n", "\n");
   const schema = await read("../../supabase/schema.sql");
   const table = schema.match(/CREATE TABLE IF NOT EXISTS public\.pos_store_settings \([\s\S]*?\n\);/)?.[0];
@@ -243,6 +244,51 @@ export async function verifyGroupedGateway({ sql, denySql, native = false, setti
   assert.equal(operationsChange.block_shift_close_on_hold, true);
   assert.equal(sql(`SELECT head_seq FROM pos_sync_feed_v1.feed_heads WHERE scope_id='${other}';`), "0");
   assert.equal(JSON.parse(sql(service + snapshotCall())).seq, "2");
+
+  if (mixedGateway) {
+    sql(await read("../preparation/pos-sync-cash-settings-gateway-v1.sql"));
+    const mixedPull = after => pullCall(branch, terminal, proof, after).replace("pos_sync_pull_grouped", "pos_sync_pull_cash_settings");
+    const mixedSnapshot = snapshotCall().replace("pos_sync_snapshot_grouped", "pos_sync_snapshot_cash_settings");
+    const operation = randomUUID(), generation = randomUUID(), database = randomUUID();
+    const cashHash = "a".repeat(64);
+    const changes = [
+      { table_name: "sales", row_data: { store_id: branch, branch_id: branch } },
+      { table_name: "sale_items", row_data: { branch_id: branch } },
+      { table_name: "payment_transactions", row_data: { store_id: branch, terminal_id: terminal } },
+      { table_name: "item_activity_logs", row_data: { store_id: branch, terminal_id: terminal } },
+    ];
+    const append = `SELECT pos_sync_feed_v1.append_groups('default',
+      '${JSON.stringify([{ scope_id: branch, epoch, operation_id: operation, changes }])}'::jsonb);`;
+    assert.deepEqual(JSON.parse(sql(service + mixedSnapshot)), { status: "SCOPE_UNAVAILABLE" });
+    denySql(`SET ROLE anon; ${mixedSnapshot}`, /permission denied/);
+    sql(`SELECT pos_sync_feed_v1.arm_cash_settings_scope('default','${branch}','${epoch}');`);
+    assert.deepEqual(JSON.parse(sql(service + snapshotCall())), { status: "SCOPE_UNAVAILABLE" });
+    assert.deepEqual(JSON.parse(sql(service + pullCall())), { status: "SCOPE_UNAVAILABLE" });
+    denySql(append, /POS_CASH_SETTINGS_V1_PUBLICATION_UNVERIFIED/);
+    sql(`BEGIN; ${append}
+      SELECT pos_sync_feed_v1.record_cash_publication('default','${branch}','${epoch}',3,'${operation}',
+        '${terminal}','${generation}','${database}','${cashHash}');
+      COMMIT;`);
+    const mixed = JSON.parse(sql(service + mixedPull("0")));
+    assert.deepEqual(mixed.groups.map(group => group.seq), ["1", "2", "3"]);
+    assert.deepEqual(mixed.groups[2], { seq: "3", operation_id: operation, changes, acceptance: {
+      terminal_id: terminal, installation_generation: generation, database_guid: database, checkout_sha256: cashHash,
+    } });
+    denySql(`UPDATE pos_sync_feed_v1.feed_groups SET changes=(SELECT changes FROM pos_sync_feed_v1.feed_groups
+      WHERE scope_id='${branch}' AND seq=2) WHERE scope_id='${branch}' AND seq=3;`, /POS_CASH_SETTINGS_V1_PUBLICATION_UNVERIFIED/);
+    sql(`DELETE FROM pos_sync_feed_v1.snapshot_pins WHERE scope_id='${branch}';
+      SELECT pos_sync_feed_v1.retire_groups('default','${branch}','${epoch}','3');`);
+    assert.deepEqual(JSON.parse(sql(service + mixedPull("0"))), { status: "SNAPSHOT_REQUIRED", reason: "REPLAY_EXPIRED" });
+    const recovered = JSON.parse(sql(service + mixedSnapshot));
+    const manifest = JSON.parse(recovered.manifest_json);
+    assert.equal(manifest.seq, "3");
+    assert.equal(manifest.changes[0].row_data.row_version, "3");
+    assert.deepEqual(manifest.cash_groups, [mixed.groups[2]]);
+    assert.equal(recovered.manifest_sha256, createHash("sha256").update(recovered.manifest_json).digest("hex"));
+    denySql(service + mixedSnapshot.replace(`'${proof}'`, `'${"c".repeat(64)}'`), /SCOPE_FORBIDDEN/);
+    console.log("PASS scoped settings and cash gateway with atomic archive and recovery after live-feed retirement");
+    return;
+  }
 
   let lastSequence = "2";
   if (settingsEdit || editGateway) {

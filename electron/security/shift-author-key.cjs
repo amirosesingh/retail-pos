@@ -133,6 +133,19 @@ function createShiftAuthorKeys({ safeStorage, directory }) {
     const saved = load(parsedBinding, { expectedKeyId: requiredKey });
     return operationProtocol.normalizeFinancialAttestation({ ...unsigned, signature: crypto.sign(null, Buffer.from(operationProtocol.financialOperationMessage(unsigned)), saved.privateKey).toString('base64url') });
   }
+  function signCashCheckout(binding, input) {
+    const { expectedKeyId, ...facts } = input;
+    const keyId = expected({ expectedKeyId });
+    if (!keyId) throw failure('ESYNC_SHIFT_AUTHOR_INVALID');
+    const parsedBinding = protocol.normalizeBinding(binding);
+    const unsigned = { ...facts, version: 1, algorithm: 'Ed25519', ...parsedBinding, keyId };
+    const message = operationProtocol.cashCheckoutMessage(unsigned);
+    const saved = load(parsedBinding, { expectedKeyId: keyId });
+    if (!saved.enrolled) throw failure('ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING');
+    return operationProtocol.normalizeCashCheckoutAttestation({
+      ...unsigned, signature: crypto.sign(null, Buffer.from(message), saved.privateKey).toString('base64url'),
+    });
+  }
   function markEnrolled(binding, response) {
     if (!response || typeof response !== 'object' || Object.keys(response).length !== 2 || !Object.hasOwn(response, 'keyId') || !Object.hasOwn(response, 'publicKey')) throw failure('ESYNC_SHIFT_AUTHOR_INVALID');
     protocol.normalizeEnrollment({ version: 1, algorithm: 'Ed25519', ...protocol.normalizeBinding(binding), keyId: response.keyId, publicKey: response.publicKey });
@@ -165,6 +178,6 @@ function createShiftAuthorKeys({ safeStorage, directory }) {
     if (!saved.enrolled) throw failure('ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING');
     return legacy.normalizeLegacyRecovery({ ...unsigned, signature: crypto.sign(null, Buffer.from(legacy.legacyRecoveryMessage(unsigned)), saved.privateKey).toString('base64url') });
   }
-  return { prepare, enrollment, signIntent, signClosingStart, signFinancialBasis, signOpeningFinancialBasis, signFinancialOperation, signLegacyRecovery, markEnrolled };
+  return { prepare, enrollment, signIntent, signClosingStart, signFinancialBasis, signOpeningFinancialBasis, signFinancialOperation, signCashCheckout, signLegacyRecovery, markEnrolled };
 }
 module.exports = { createShiftAuthorKeys };

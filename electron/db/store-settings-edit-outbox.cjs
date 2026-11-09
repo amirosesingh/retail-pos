@@ -19,6 +19,8 @@ const invalid = () => refuse("ESETTINGS_EDIT_INVALID", "The settings edit eviden
 const wrongScope = () => refuse("ESETTINGS_EDIT_SCOPE", "The current settings editor or installation could not be verified.");
 const badReceipt = () => refuse("ESETTINGS_EDIT_RECEIPT", "The settings edit acceptance could not be verified.");
 const pending = () => refuse("ESETTINGS_EDIT_PENDING", "An earlier settings edit still requires confirmation or review.");
+const reviewUnavailable = () => refuse("ESETTINGS_REVIEW_UNAVAILABLE", "The settings review audit is unavailable.");
+const reviewChanged = () => refuse("ESETTINGS_REVIEW_CHANGED", "The central rules changed. Open a fresh comparison before deciding.");
 const hash = value => createHash("sha256").update(value, "utf8").digest("hex");
 const plain = value => value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype;
 
@@ -69,6 +71,19 @@ function checkedReceipt(command, verified) {
   return { disposition: "APPLIED", result: { ...context, row_version: result.row_version, seq: result.seq } };
 }
 
+async function reviewInstalled(request) {
+  const result = await request.query("SELECT OBJECT_ID(N'dbo.pos_store_settings_edit_reviews', N'U') AS reviews;");
+  return result.recordset?.[0]?.reviews != null;
+}
+
+function reviewed(installed, throughVersion) {
+  return installed ? `EXISTS (SELECT 1 FROM dbo.pos_store_settings_edit_reviews d WITH (HOLDLOCK)
+    WHERE d.operation_id=c.operation_id AND d.decision=N'KEEP_CENTRAL'
+      AND d.reviewer_id=TRY_CONVERT(uniqueidentifier,JSON_VALUE(c.command_json,'$.personId'))
+      AND d.reviewed_version>TRY_CONVERT(int,JSON_VALUE(c.command_json,'$.expectedVersion'))
+      ${throughVersion ? `AND d.reviewed_version<=${throughVersion}` : ""})` : "1=0";
+}
+
 async function assertStoreSettingsEditScopeClear(database, { branchId, terminalId }, snapshotVersion = null) {
   if (!branchId || recordId(branchId) !== branchId) invalid();
   const tables = await database.request().query(`SELECT
@@ -88,14 +103,15 @@ async function assertStoreSettingsEditScopeClear(database, { branchId, terminalI
   const revision = snapshotVersion === null ? "s.row_version" : "@revision";
   const canonical = snapshotVersion === null
     ? "LEFT JOIN dbo.pos_store_settings s ON s.store_id COLLATE Latin1_General_100_BIN2=c.branch_id" : "";
+  const review = reviewed(await reviewInstalled(database.request()), revision);
   const result = await database.request().input("branch", branchId).input("terminal", uuid(terminalId)).input("revision", snapshotVersion)
     .query(`SELECT TOP (1) 1 AS pending FROM dbo.pos_store_settings_edit_commands c WITH (UPDLOCK,HOLDLOCK)
       LEFT JOIN dbo.pos_store_settings_edit_receipts r WITH (UPDLOCK,HOLDLOCK) ON r.operation_id=c.operation_id
       ${canonical}
-      WHERE c.branch_id=@branch AND c.terminal_id=@terminal AND (r.disposition IS NULL OR r.disposition<>N'APPLIED' OR
-        ${revision} IS NULL OR
-        TRY_CONVERT(int,JSON_VALUE(r.receipt_json,'$.result.row_version')) IS NULL OR
-        TRY_CONVERT(int,JSON_VALUE(r.receipt_json,'$.result.row_version')) NOT BETWEEN 2 AND ${revision});`);
+      WHERE c.branch_id=@branch AND c.terminal_id=@terminal
+        AND CASE WHEN r.disposition=N'APPLIED' AND
+          TRY_CONVERT(int,JSON_VALUE(r.receipt_json,'$.result.row_version')) BETWEEN 2 AND ${revision} THEN 1
+          WHEN r.disposition=N'REVIEW_REQUIRED' AND (${review}) THEN 1 ELSE 0 END=0;`);
   if (result.recordset.length) pending();
 }
 
@@ -147,10 +163,12 @@ class StoreSettingsEditOutbox {
   }
 
   async outstanding(tx) {
+    const review = reviewed(await reviewInstalled(this.request(tx)));
     const result = await this.request(tx).input("branch", this.scope.branchId).input("terminal", this.scope.terminalId)
       .query(`SELECT TOP (2) ${COMMAND_COLUMNS} FROM dbo.pos_store_settings_edit_commands c WITH (UPDLOCK,HOLDLOCK)
         LEFT JOIN dbo.pos_store_settings_edit_receipts r WITH (UPDLOCK,HOLDLOCK) ON r.operation_id=c.operation_id
-        WHERE c.branch_id=@branch AND c.terminal_id=@terminal AND (r.disposition IS NULL OR r.disposition=N'REVIEW_REQUIRED')
+        WHERE c.branch_id=@branch AND c.terminal_id=@terminal
+          AND (r.disposition IS NULL OR (r.disposition=N'REVIEW_REQUIRED' AND NOT (${review})))
         ORDER BY c.created_at,c.operation_id;`);
     const rows = result.recordset ?? [];
     if (rows.length > 1) invalid();
@@ -174,13 +192,7 @@ class StoreSettingsEditOutbox {
     if (current.recordset?.length !== 1 || recordId(current.recordset[0].store_id) !== command.branchId ||
         Number(current.recordset[0].row_version) !== command.expectedVersion)
       refuse("STALE_RULES", "The verified local revision changed. Refresh the current store rules before saving.");
-    const unobserved = await this.request(tx).input("branch", command.branchId).input("terminal", command.terminalId)
-      .input("expected", command.expectedVersion).query(`SELECT TOP (1) 1 AS found
-        FROM dbo.pos_store_settings_edit_commands c JOIN dbo.pos_store_settings_edit_receipts r ON r.operation_id=c.operation_id
-        WHERE c.branch_id=@branch AND c.terminal_id=@terminal AND r.disposition=N'APPLIED'
-          AND TRY_CONVERT(int,JSON_VALUE(r.receipt_json,'$.result.row_version'))>@expected;`);
-    if (unobserved.recordset?.length)
-      refuse("ESETTINGS_EDIT_PENDING", "An accepted edit has not reached the local settings yet.");
+    await assertStoreSettingsEditScopeClear(tx, command, command.expectedVersion);
     await this.request(tx).input("operation", command.operationId).input("branch", command.branchId)
       .input("terminal", command.terminalId).input("command", command.commandJson).input("hash", command.commandSha256)
       .query(`INSERT dbo.pos_store_settings_edit_commands (operation_id,branch_id,terminal_id,command_json,command_sha256)
@@ -209,14 +221,57 @@ class StoreSettingsEditOutbox {
       if (!personId || saved?.personId !== personId) return { status: "AWAITING_OPERATOR" };
       return { status: "PENDING", command: this.commandFrom(row, personId) };
     }
-    const awaiting = await this.request(tx).input("branch", this.scope.branchId).input("terminal", this.scope.terminalId)
-      .query(`SELECT TOP (1) 1 AS pending FROM dbo.pos_store_settings_edit_commands c
-        JOIN dbo.pos_store_settings_edit_receipts r ON r.operation_id=c.operation_id AND r.disposition=N'APPLIED'
-        LEFT JOIN dbo.pos_store_settings s ON s.store_id COLLATE Latin1_General_100_BIN2=c.branch_id
-        WHERE c.branch_id=@branch AND c.terminal_id=@terminal AND (s.row_version IS NULL OR
-          TRY_CONVERT(int,JSON_VALUE(r.receipt_json,'$.result.row_version')) IS NULL OR
-          TRY_CONVERT(int,JSON_VALUE(r.receipt_json,'$.result.row_version'))>s.row_version);`);
-    return { status: awaiting.recordset?.length ? "AWAITING_DOWNLOAD" : "EMPTY" };
+    try {
+      await assertStoreSettingsEditScopeClear(tx, this.scope);
+      return { status: "EMPTY" };
+    } catch (error) {
+      if (error?.code === "ESETTINGS_EDIT_PENDING") return { status: "AWAITING_DOWNLOAD" };
+      throw error;
+    }
+  }
+
+  async review(tx, { personId, canonical, operationId, decisionSha256 }) {
+    personId = uuid(personId);
+    await this.verify(tx, personId);
+    if (!await reviewInstalled(this.request(tx))) reviewUnavailable();
+    const row = operationId ? await this.operation(tx, uuid(operationId)) : await this.outstanding(tx);
+    if (!row || row.disposition !== "REVIEW_REQUIRED") return null;
+    const command = this.commandFrom(row, personId);
+    let receipt;
+    try { receipt = JSON.parse(row.receipt_json); } catch { badReceipt(); }
+    const original = checkedReceipt(command, { commandSha256: command.commandSha256,
+      receipt: { status: receipt?.disposition, result: receipt?.result } });
+    if (original.disposition !== "REVIEW_REQUIRED" || JSON.stringify(original) !== row.receipt_json) badReceipt();
+
+    if (operationId) {
+      const prior = (await this.request(tx).input("operation", command.operationId)
+        .query(`SELECT reviewer_id,decision_sha256 FROM dbo.pos_store_settings_edit_reviews WITH (UPDLOCK,HOLDLOCK)
+          WHERE operation_id=@operation;`)).recordset?.[0];
+      if (prior) {
+        if (recordId(prior.reviewer_id) !== personId || prior.decision_sha256 !== decisionSha256) reviewChanged();
+        await this.verify(tx, personId);
+        return { operationId: command.operationId };
+      }
+    }
+    if (!plain(canonical) || canonical.store_id !== command.branchId ||
+        !Number.isInteger(canonical.row_version) || canonical.row_version <= command.expectedVersion) reviewChanged();
+    const currentValues = Object.fromEntries(Object.keys(command.patch).map(key => [key, canonical[key]]));
+    if (Object.values(currentValues).includes(undefined)) reviewChanged();
+    const comparison = { operationId: command.operationId, expectedVersion: command.expectedVersion,
+      currentVersion: canonical.row_version, currentValues };
+    const digest = hash(JSON.stringify(comparison));
+    if (!operationId) {
+      await this.verify(tx, personId);
+      return { ...comparison, proposedValues: command.patch, decisionSha256: digest };
+    }
+    if (decisionSha256 !== digest) reviewChanged();
+    await this.request(tx).input("operation", command.operationId).input("reviewer", personId)
+      .input("version", canonical.row_version).input("values", JSON.stringify(currentValues)).input("digest", digest)
+      .query(`INSERT dbo.pos_store_settings_edit_reviews
+        (operation_id,reviewer_id,decision,reviewed_version,reviewed_values,decision_sha256)
+        VALUES (@operation,@reviewer,N'KEEP_CENTRAL',@version,@values,@digest);`);
+    await this.verify(tx, personId);
+    return { operationId: command.operationId };
   }
 
   async acknowledge(tx, { personId, operationId, witness }) {

@@ -3,16 +3,17 @@ const assert = require("node:assert/strict");
 const { createHash, randomUUID } = require("node:crypto");
 const { readFileSync } = require("node:fs");
 const { resolve } = require("node:path");
-const { createLocal } = require("./lib/shift-protocol-integration-fixture.cjs");
+const { createLocal, createAuthorKeys } = require("./lib/shift-protocol-integration-fixture.cjs");
 const { AggregateRepository } = require("../electron/db/repositories/aggregates.cjs");
 const { OperationsRepository } = require("../electron/db/repositories/operations.cjs");
 const { loadRegistry } = require("../electron/db/schema-registry.cjs");
-const { SaleEventOutbox } = require("../electron/db/sale-event-outbox.cjs");
+const { SaleEventOutbox, hasCashAcceptance } = require("../electron/db/sale-event-outbox.cjs");
+const { ShiftAuthorAuthority } = require("../electron/shift-authority.cjs");
 const { aggregatePolicy } = require("../electron/db/write-policy.cjs");
 
 async function main() {
   const mode = process.argv[2];
-  assert(process.argv.length === 3 && ["--run", "--wire"].includes(mode));
+  assert(process.argv.length === 3 && ["--run", "--wire", "--attested-wire"].includes(mode));
   const branchId = "sale-outbox-fixture";
   const terminalId = randomUUID();
   const shiftId = randomUUID();
@@ -20,6 +21,7 @@ async function main() {
   const price = "19.123456789123";
   const local = await createLocal(branchId);
   const { manager } = local;
+  const keyFixture = mode === "--attested-wire" ? createAuthorKeys() : null;
   try {
     const registry = loadRegistry();
     for (const name of ["products", "item_activity_logs", "settings_scoped", "stock_transfers", "stock_transfer_items"]) {
@@ -123,7 +125,21 @@ async function main() {
     const databaseGuid = (await manager.pool.request().query(`SELECT LOWER(CONVERT(nvarchar(36),database_guid)) AS guid
       FROM sys.database_recovery_status WHERE database_id=DB_ID();`)).recordset[0].guid;
     const cashBridge = { branchId, terminalId, databaseGuid, installationGeneration: randomUUID(), feedEpoch: randomUUID() };
-    const bridgeStore = new SaleEventOutbox(manager, registry, { cashBridge });
+    let prepareCashAuthor, publicKey, activeAuthor = { ...identity, branchId, authorId: randomUUID(), canonicalSubject: identity.subject };
+    if (keyFixture) {
+      const authority = new ShiftAuthorAuthority({
+        keys: keyFixture.keys, session: { identity: () => activeAuthor, epoch: () => 1,
+          hasPermission: key => activeAuthor.permissions[key] === true }, connectionManager: manager,
+        terminal: () => ({ tokenId: terminalId, deviceUse: "operations", locationId: branchId }),
+        project: () => "https://cash-pilot.fixture.invalid", branch: () => branchId,
+      });
+      const { binding, keyId } = await authority.prepare(authority.capture("ENROLL"));
+      ({ publicKey } = keyFixture.keys.prepare(binding, { expectedKeyId: keyId }));
+      keyFixture.keys.markEnrolled(binding, { keyId, publicKey });
+      prepareCashAuthor = () => authority.prepare(authority.captureCashCheckout());
+      await manager.pool.request().batch(readFileSync(resolve(__dirname, "preparation/pos-sale-acceptance-v1.sql"), "utf8"));
+    }
+    const bridgeStore = new SaleEventOutbox(manager, registry, { cashBridge, ...(prepareCashAuthor ? { prepareCashAuthor } : {}) });
     const bridgeRepository = new AggregateRepository(manager, repository, { saleOutbox: bridgeStore });
     assert.equal(await bridgeStore.readBridgeCheckout(sale.operationId), null);
     const unsupported = checkout(8);
@@ -133,7 +149,16 @@ async function main() {
     assert.equal(await count("sales", "id=@id", unsupported.saleId), 0);
     assert.equal(await stock(), 8);
 
+    if (keyFixture) {
+      const impersonated = checkout(8);
+      impersonated.operations.find(operation => operation.table === "sales").rows[0].cashier_id = "different.cashier";
+      await assert.rejects(bridgeRepository.commit("sale", impersonated), { code: "ESALE_CASH_BRIDGE_UNVERIFIED" });
+      assert.equal(await event(impersonated.operationId), undefined);
+      assert.equal(await count("sales", "id=@id", impersonated.saleId), 0);
+      assert.equal(await stock(), 8);
+    }
     const bridgeSale = checkout(8);
+    if (keyFixture) bridgeSale.operations.find(operation => operation.table === "sales").rows[0].cashier_id = identity.subject;
     await bridgeRepository.commit("sale", bridgeSale);
     const wire = await bridgeStore.readBridgeCheckout(bridgeSale.operationId);
     assert.equal(wire.operationId, bridgeSale.operationId);
@@ -151,6 +176,74 @@ async function main() {
     assert.equal(checkoutPayload.movement.terminal_id, terminalId);
     assert.deepEqual(checkoutPayload.tender.metadata, {});
     assert.doesNotMatch(wire.checkoutJson, /omit-/);
+    if (keyFixture) {
+      assert.equal(wire.attestation.authorId, activeAuthor.authorId);
+      assert.equal(wire.attestation.subject, activeAuthor.canonicalSubject);
+      assert.equal(wire.attestation.payloadHash, wire.checkoutSha256);
+      assert.equal(wire.attestation.databaseGuid, databaseGuid);
+      assert.equal(wire.attestation.feedEpoch, cashBridge.feedEpoch);
+      const check = { operationId: wire.operationId, saleId: wire.saleId, itemId: bridgeSale.itemId, tenderId: bridgeSale.tenderId,
+        movementId: bridgeSale.movementId, seq: "9007199254740993", branchId, terminalId,
+        epoch: cashBridge.feedEpoch, databaseGuid, installationGeneration: cashBridge.installationGeneration, checkoutSha256: wire.checkoutSha256 };
+      const result = { operation_id: check.operationId, sale_id: check.saleId, scope_id: branchId, epoch: check.epoch,
+        terminal_id: terminalId, database_guid: databaseGuid, installation_generation: check.installationGeneration,
+        checkout_sha256: check.checkoutSha256, author_id: wire.attestation.authorId, author_key_id: wire.attestation.keyId, seq: check.seq };
+      const verifyReceipt = async input => {
+        const sql = manager.sql(), tx = new sql.Transaction(manager.pool);
+        await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+        try { return await hasCashAcceptance(tx, input); }
+        finally { await tx.rollback(); }
+      };
+      assert.equal(await verifyReceipt(check), false);
+      await assert.rejects(bridgeStore.recordBridgeAcceptance(wire, { status: "APPLIED", result: { ...result, author_id: randomUUID() } }),
+        { code: "ESALE_CASH_BRIDGE_UNVERIFIED" });
+      const pending = async operationId => Number((await manager.pool.request().input("operation", operationId)
+        .query("SELECT COUNT(*) AS n FROM dbo.sync_change_journal WHERE aggregate_id=@operation AND acknowledged_at IS NULL;")).recordset[0].n);
+      assert.equal(await pending(wire.operationId), 5);
+      await manager.pool.request().input("operation", wire.operationId).query(`
+        INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id,entity_version,aggregate_id)
+        VALUES(N'activity_events',N'{"id":"fixture-extra-effect"}',N'insert',N'foreign-branch',1,@operation);
+      `);
+      await assert.rejects(bridgeStore.recordBridgeAcceptance(wire, { status: "APPLIED", result }),
+        { code: "ESALE_CASH_BRIDGE_UNVERIFIED" });
+      assert.equal(await verifyReceipt(check), false);
+      assert.equal(await pending(wire.operationId), 6);
+      await manager.pool.request().input("operation", wire.operationId).query(`
+        DELETE dbo.sync_change_journal WHERE aggregate_id=@operation AND entity_type=N'activity_events'
+          AND branch_id=N'foreign-branch' AND entity_id=N'{"id":"fixture-extra-effect"}';
+      `);
+      await manager.pool.request().batch(`CREATE TRIGGER dbo.fixture_fail_cash_ack ON dbo.sync_change_journal AFTER UPDATE AS
+        BEGIN IF EXISTS(SELECT 1 FROM inserted WHERE acknowledged_at IS NOT NULL)
+          THROW 51978, 'Fixture refused the journal acknowledgement after the receipt insert.', 1;
+        END;`);
+      await assert.rejects(bridgeStore.recordBridgeAcceptance(wire, { status: "APPLIED", result }), { number: 51978 });
+      assert.equal(await verifyReceipt(check), false);
+      assert.equal(await pending(wire.operationId), 5);
+      await manager.pool.request().batch("DROP TRIGGER dbo.fixture_fail_cash_ack;");
+      let sourceChecks = 0;
+      await assert.rejects(bridgeStore.recordBridgeAcceptance(wire, { status: "APPLIED", result }, () => {
+        if (++sourceChecks === 2) throw Object.assign(new Error("The sender source changed before commit."), { code: "EFIXTURE_SOURCE_CHANGED" });
+      }), { code: "EFIXTURE_SOURCE_CHANGED" });
+      assert.equal(await verifyReceipt(check), false);
+      assert.equal(await pending(wire.operationId), 5);
+      const unrelatedPending = await pending(sale.operationId);
+      await bridgeStore.recordBridgeAcceptance(wire, { status: "APPLIED", result });
+      await bridgeStore.recordBridgeAcceptance(wire, { status: "ALREADY_APPLIED", result });
+      assert.equal(await verifyReceipt(check), true);
+      assert.equal(await pending(wire.operationId), 0);
+      assert.equal(await pending(sale.operationId), unrelatedPending);
+      for (const field of ["saleId", "itemId", "tenderId", "movementId", "installationGeneration", "databaseGuid"])
+        assert.equal(await verifyReceipt({ ...check, [field]: randomUUID() }), false);
+      assert.equal(await verifyReceipt({ ...check, seq: "9007199254740994" }), false);
+      await assert.rejects(manager.pool.request().input("id", bridgeSale.operationId)
+        .query("DELETE dbo.pos_sync_sale_acceptance_v1 WHERE operation_id=@id;"), { number: 51041 });
+      console.log("PASS native cash proof, exact journal membership, atomic rollback and immutable own-operation acceptance");
+      const original = activeAuthor;
+      activeAuthor = { ...original, authorId: randomUUID(), canonicalSubject: "different.cashier" };
+      assert.equal((await bridgeStore.readBridgeCheckout(bridgeSale.operationId)).attestation.authorId, original.authorId);
+      assert.equal((await bridgeRepository.commit("sale", bridgeSale)).replayed, true);
+      activeAuthor = original;
+    }
     await manager.pool.request().input("id", bridgeSale.saleId).query("UPDATE dbo.sales SET total_amount=99 WHERE id=@id;");
     await local.restart();
     assert.deepEqual(await bridgeStore.readBridgeCheckout(bridgeSale.operationId), wire);
@@ -178,9 +271,9 @@ async function main() {
     assert.equal(await count("local_operation_receipts", "operation_id=@id", interrupted.operationId), 0);
     assert.equal(await stock(), 7);
     console.log("PASS failure after event insert rolls back the event, sale, stock and original journal");
-    if (mode === "--wire") console.log(`POS_CASH_WIRE ${JSON.stringify(wire)}`);
+    if (mode !== "--run") console.log(`POS_CASH_WIRE ${JSON.stringify({ ...wire, ...(publicKey ? { publicKey } : {}) })}`);
   } finally {
-    await local.close();
+    try { await local.close(); } finally { keyFixture?.close(); }
   }
 }
 

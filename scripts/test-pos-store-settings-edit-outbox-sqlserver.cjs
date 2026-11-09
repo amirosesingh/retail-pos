@@ -163,6 +163,52 @@ async function main() {
     assert.deepEqual(await counts(), { commands: 2, receipts: 2, journal: 0, generic_receipts: 0 });
     console.log("PASS stale review remains durable and blocks automatic rebase or a new edit");
 
+    const central = { store_id: branchId, row_version: 9, block_shift_close_on_hold: true,
+      max_drawer_cash_limit: "10000000000000.123456789124" };
+    const review = (canonical, decision = {}) => atomic(tx => outbox.review(tx, { personId, canonical, ...decision }));
+    await assert.rejects(review(central), { code: "ESETTINGS_REVIEW_UNAVAILABLE" });
+    await manager.pool.request().batch(readFileSync(join(__dirname, "preparation/pos-store-settings-edit-review-v1.sql"), "utf8"));
+    await assert.rejects(review({ ...central, row_version: 8 }), { code: "ESETTINGS_REVIEW_CHANGED" });
+    activePerson = randomUUID();
+    await assert.rejects(review(central, { personId: activePerson }), { code: "ESETTINGS_EDIT_SCOPE" });
+    activePerson = personId;
+    const comparison = await review(central);
+    assert.equal(comparison.operationId, next.operationId);
+    assert.equal(comparison.expectedVersion, 8);
+    assert.equal(comparison.currentVersion, 9);
+    assert.deepEqual(comparison.proposedValues, next.patch);
+    assert.equal(comparison.currentValues.max_drawer_cash_limit, central.max_drawer_cash_limit);
+    const decision = { operationId: next.operationId, decisionSha256: comparison.decisionSha256 };
+    await assert.rejects(review({ ...central, max_drawer_cash_limit: "50" }, decision), { code: "ESETTINGS_REVIEW_CHANGED" });
+    await assert.rejects(atomic(async tx => {
+      await outbox.review(tx, { personId, canonical: central, ...decision });
+      throw new Error("review rollback");
+    }), /review rollback/);
+    await assert.rejects(assertStoreSettingsEditReassignmentClear(manager.pool, scope), { code: "ESETTINGS_EDIT_PENDING" });
+    await manager.pool.request().query("UPDATE dbo.pos_store_settings SET row_version=9;");
+    assert.deepEqual(await review(central, decision), { operationId: next.operationId });
+    await local.restart();
+    assert.deepEqual(await review({ ...central, row_version: 10 }, decision), { operationId: next.operationId });
+    assert.equal(await review(central), null);
+    await assert.rejects(manager.pool.request().query("DELETE FROM dbo.pos_store_settings_edit_reviews;"), /immutable/i);
+    const reviewRow = (await manager.pool.request().query(`SELECT d.decision,d.reviewed_version,d.reviewed_values,c.command_json,r.receipt_json
+      FROM dbo.pos_store_settings_edit_reviews d JOIN dbo.pos_store_settings_edit_commands c ON c.operation_id=d.operation_id
+      JOIN dbo.pos_store_settings_edit_receipts r ON r.operation_id=d.operation_id;`)).recordset[0];
+    assert.equal(reviewRow.decision, "KEEP_CENTRAL");
+    assert.equal(reviewRow.reviewed_version, 9);
+    assert.deepEqual(JSON.parse(reviewRow.reviewed_values), comparison.currentValues);
+    assert.equal(reviewRow.command_json, next.commandJson);
+    assert.equal(reviewRow.receipt_json, JSON.stringify(held));
+    await assert.rejects(atomic(tx => assertStoreSettingsEditHandbackClear(tx, { ...scope, rowVersion: 8 })), { code: "ESETTINGS_EDIT_PENDING" });
+    await atomic(tx => assertStoreSettingsEditHandbackClear(tx, { ...scope, rowVersion: 9 }));
+    await assertStoreSettingsEditReassignmentClear(manager.pool, scope);
+    await assert.rejects(atomic(async tx => {
+      const newCommand = await outbox.capture(tx, make(9));
+      assert.notEqual(newCommand.operationId, next.operationId);
+      throw new Error("new command fixture rollback");
+    }), /new command fixture rollback/);
+    console.log("PASS audited keep-central preserves the exact comparison, original evidence and verified handback");
+
     manager.profile = { id: "fixture-installed-settings", host: "fixture-private-pipe", database: "fixture-settings" };
     const enrollment = { branchId, terminalId: randomUUID(), databaseGuid: scope.databaseGuid,
       backendOrigin: "https://settings-relay.fixture", projectOrigin: "https://settings-project.fixture" };
@@ -172,9 +218,9 @@ async function main() {
     cloud.setAuthorizationProof({ accessToken: "fixture-never-sent" });
     const coordinator = new SyncCoordinator({ pushWorker: {}, pullWorker: {} });
     let actor = { personId, branchId, epoch: 1 };
-    const runtime = () => createStoreSettingsEditRuntime({ pilot: { mode: "run", enrollment }, installationGeneration: scope.installationGeneration,
-      cloud, coordinator, connectionManager: manager, ready: () => true, actor: () => actor });
-    const { personId: _person, ...input } = make(8);
+    const runtime = (mode = "run") => createStoreSettingsEditRuntime({ pilot: { mode, enrollment }, installationGeneration: scope.installationGeneration,
+      cloud, coordinator, connectionManager: manager, registry: local.registry, ready: () => true, actor: () => actor });
+    const { personId: _person, ...input } = make(9);
     const draft = { ...input, branchId };
     assert.equal((await runtime().capture(draft)).code, "ESETTINGS_EDIT_UNAVAILABLE");
     const source = cloud.requestContext(false);
@@ -194,6 +240,66 @@ async function main() {
     assert.equal((await runtime().capture(draft)).code, "ESETTINGS_EDIT_OPERATOR");
     assert.deepEqual(await counts(), { commands: 3, receipts: 2, journal: 0, generic_receipts: 0 });
     console.log("PASS installed capture requires the scoped handoff and actor; restart preserves the queued command and fences the old native writer");
+
+    actor = { personId, branchId, epoch: 2 };
+    const installedScope = { ...scope, terminalId: enrollment.terminalId };
+    currentScope = installedScope;
+    const installedOutbox = repository(installedScope);
+    const installedCommand = await atomic(tx => installedOutbox.readPending(tx, { personId }));
+    await atomic(tx => installedOutbox.acknowledge(tx, { personId, operationId: installedCommand.operationId,
+      witness: witness(installedCommand, "REVIEW_REQUIRED") }));
+    const table = local.registry.tables.find(entry => entry.cloudTable === "pos_store_settings");
+    const date = "2026-11-09T12:30:00.1234567Z";
+    const decimals = table.columns.filter(column => column.sqlServerType === "decimal(38,12)");
+    const decimalColumns = new Set(decimals.map(column => column.cloudColumn));
+    const canonicalRow = Object.fromEntries(table.columns.map(column => [column.cloudColumn, column.nullable ? null : false]));
+    Object.assign(canonicalRow, { store_id: branchId, row_version: "10", created_at: date, updated_at: date,
+      idle_timeout_minutes: 0, block_shift_close_on_hold: true, max_drawer_cash_limit: central.max_drawer_cash_limit });
+    await manager.pool.request().query(`UPDATE dbo.pos_store_settings SET ${table.columns.filter(column => column.cloudColumn !== "store_id")
+      .map(column => {
+        const key = column.cloudColumn;
+        const value = canonicalRow[key];
+        const expression = value === null ? "NULL" : typeof value === "boolean" ? String(Number(value)) :
+          decimalColumns.has(key) ? value : `N'${value}'`;
+        return `[${column.sqlServerColumn}]=${expression}`;
+      }).join(",")};`);
+    const snapshot = row => {
+      const manifest_json = JSON.stringify({ scope_id: branchId, epoch: scope.feedEpoch, seq: "2", changes: [{
+        table_name: "pos_store_settings", entity_id: JSON.stringify({ store_id: branchId }), tombstone: false,
+        row_version: row.row_version, row_data: row,
+      }] });
+      return { status: "OK", scope_id: branchId, epoch: scope.feedEpoch, seq: "2", pin_id: randomUUID(),
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+        manifest_json, manifest_sha256: createHash("sha256").update(manifest_json).digest("hex") };
+    };
+    let response = snapshot(canonicalRow);
+    cloud.groupedSettingsSnapshot = async () => response;
+    const originalFetch = globalThis.fetch;
+    let permission = true;
+    globalThis.fetch = async (url, options) => {
+      assert.equal(url, enrollment.backendOrigin + "/api/v1/pos/ipc-adopt");
+      assert.deepEqual(JSON.parse(options.body), { accessToken: "fixture-never-sent", terminalToken: enrollment.terminalId,
+        deviceBindingProof: "b".repeat(64) });
+      return Response.json({ ok: true, settingsPersonId: personId, branchId, level: "staff",
+        permissions: { can_access_pos_settings: permission },
+        terminal: { id: enrollment.terminalId, platform: "pc", mode: "operations", branchId } });
+    };
+    try {
+      const target = { branchId };
+      permission = false;
+      assert.equal((await runtime().review(target)).code, "ESETTINGS_EDIT_OPERATOR");
+      permission = true;
+      const pendingReview = await runtime("handback").review(target);
+      assert.equal(pendingReview.ok, true, pendingReview.error);
+      assert.equal(pendingReview.review.currentValues.max_drawer_cash_limit, canonicalRow.max_drawer_cash_limit);
+      const reviewInput = { ...target, operationId: pendingReview.review.operationId, decisionSha256: pendingReview.review.decisionSha256 };
+      response = snapshot({ ...canonicalRow, max_drawer_cash_limit: "50" });
+      assert.equal((await runtime("handback").review(reviewInput)).code, "ESETTINGS_REVIEW_CHANGED");
+      response = snapshot(canonicalRow);
+      assert.deepEqual(await runtime("handback").review(reviewInput), { ok: true, operationId: installedCommand.operationId });
+      assert.deepEqual(await runtime("handback").review(target), { ok: true, review: null });
+    } finally { globalThis.fetch = originalFetch; }
+    console.log("PASS installed review rechecks live author permission and exact canonical snapshot before recording the decision");
   } finally { await local.close(); }
 }
 

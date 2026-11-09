@@ -79,6 +79,7 @@ const CHANNEL_LEVELS = {
   "business:management-report": OPEN, // explicit report permissions below; handler additionally verifies sealed management registration and complete replica
   "business:save-authorization-rule": OPEN,
   "business:queue-store-settings-edit": OPEN,
+  "business:review-store-settings-edit": OPEN,
   "business:shift-expected": OPEN,
   "business:shift-close-start": OPEN,
   "business:shift-close-count": OPEN,
@@ -621,7 +622,7 @@ function allowed(channel, args = []) {
     }
     return false;
   }
-  if (channel === "business:queue-store-settings-edit") {
+  if (channel === "business:queue-store-settings-edit" || channel === "business:review-store-settings-edit") {
     if (!adminSession.hasPosAuthority() ||
         !(adminSession.hasLevel(ADMIN) || adminSession.hasPermission("can_access_pos_settings"))) return false;
     adminSession.touch();

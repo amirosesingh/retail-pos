@@ -1,8 +1,6 @@
 -- Isolated, owner-only composition of the prepared inbox/feed and the native
--- aggregate writer. Requires the existing relay's verified cashier permission
--- and operating-till admission before any future use. No relay or legacy
--- sender calls this function. Its complete rows differ from the shadow event
--- projection, and migration/activation requires a fenced sender handoff.
+-- aggregate writer. The separate attested gateway supplies the verified
+-- cashier for the mixed pilot. The private un-authored form is fixture-only.
 CREATE SCHEMA pos_sync_cash_v1;
 REVOKE ALL ON SCHEMA pos_sync_cash_v1 FROM PUBLIC, anon, authenticated, service_role;
 
@@ -23,7 +21,7 @@ REVOKE ALL ON TABLE pos_sync_cash_v1.installation_enrollments FROM PUBLIC, anon,
 CREATE FUNCTION pos_sync_cash_v1.apply_checkout(
   p_organization_id text, p_branch_id text, p_terminal_id uuid, p_binding_proof text,
   p_installation_generation uuid, p_database_guid uuid, p_operation_id uuid, p_epoch uuid,
-  p_checkout_json text, p_checkout_sha256 text
+  p_checkout_json text, p_checkout_sha256 text, p_verified_author jsonb DEFAULT NULL
 )
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -162,7 +160,8 @@ BEGIN
 
   v_claim := pos_sync_inbox_v1.claim_operation(p_organization_id, p_operation_id, v_installation_generation,
     jsonb_build_object('scope_id', p_branch_id, 'terminal_id', p_terminal_id, 'database_guid', p_database_guid,
-      'epoch', p_epoch, 'checkout_sha256', v_checkout_sha256));
+      'epoch', p_epoch, 'checkout_sha256', v_checkout_sha256) ||
+      CASE WHEN p_verified_author IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('author', p_verified_author) END);
   IF v_claim->>'status' <> 'PROCEED' THEN RETURN v_claim; END IF;
 
   PERFORM pos_sync_cash_v1.lock_checkout_routes();
@@ -206,7 +205,7 @@ BEGIN
   END IF;
 
   SELECT product.* INTO v_product FROM public.products AS product WHERE product.id = v_item.product_id FOR NO KEY UPDATE;
-  IF NOT FOUND OR v_product.owner_store_id IS DISTINCT FROM p_branch_id OR v_product.is_archived
+  IF NOT FOUND OR v_product.owner_store_id IS DISTINCT FROM p_branch_id OR v_product.is_archived IS DISTINCT FROM false
      OR v_product.name IS DISTINCT FROM v_item.product_name OR v_product.selling_price IS DISTINCT FROM v_item.unit_price
      OR v_product.cost_price IS DISTINCT FROM v_item.unit_cost OR v_product.cost_price IS DISTINCT FROM v_movement.unit_cost THEN
     RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'POS_CASH_V1_PRODUCT_FORBIDDEN';
@@ -219,7 +218,9 @@ BEGIN
   -- Use the current native atomic writer. Inventory comes only from the
   -- stable movement and existing stock delta receipt, never a products row.
   v_operations := jsonb_build_array(
-    jsonb_build_object('table', 'sales', 'rows', jsonb_build_array(v_checkout->'sale'), 'changes', '[]'::jsonb),
+    jsonb_build_object('table', 'sales', 'rows', jsonb_build_array((v_checkout->'sale') ||
+      CASE WHEN p_verified_author IS NULL THEN '{}'::jsonb
+        ELSE jsonb_build_object('cashier_id', p_verified_author->>'subject') END), 'changes', '[]'::jsonb),
     jsonb_build_object('table', 'sale_items', 'rows', jsonb_build_array(v_checkout->'item'), 'changes', '[]'::jsonb),
     jsonb_build_object('table', 'payment_transactions', 'rows', jsonb_build_array(v_checkout->'tender'), 'changes', '[]'::jsonb),
     jsonb_build_object('table', 'item_activity_logs', 'rows', jsonb_build_array(v_checkout->'movement'), 'changes', '[]'::jsonb)
@@ -251,6 +252,7 @@ BEGIN
   JOIN public.products AS product ON product.id = delta.product_id AND product.owner_store_id = p_branch_id
   WHERE sale.id = v_sale.id AND sale.store_id = p_branch_id AND sale.shift_id = v_sale.shift_id
     AND sale.bill_number = v_sale.bill_number AND sale.total_amount = v_sale.total_amount
+    AND (p_verified_author IS NULL OR sale.cashier_id = p_verified_author->>'subject')
     AND item.product_id = v_item.product_id AND item.quantity = v_item.quantity AND item.unit_price = v_item.unit_price
     AND tender.method = 'cash' AND tender.amount = v_tender.amount AND tender.terminal_id = p_terminal_id::text
     AND movement.product_id = v_item.product_id AND movement.quantity_delta = v_movement.quantity_delta
@@ -258,6 +260,10 @@ BEGIN
     AND (product.stock_by_store->>p_branch_id)::integer = v_stock + delta.delta;
   IF NOT FOUND THEN
     RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'POS_CASH_V1_WRITER_UNCONFIRMED';
+  END IF;
+
+  IF p_verified_author IS NOT NULL THEN
+    v_changes := pos_sync_cash_v1.project_receipt(p_branch_id, v_changes);
   END IF;
 
   SELECT appended.seq INTO STRICT v_seq FROM pos_sync_feed_v1.append_groups(p_organization_id,
@@ -269,10 +275,14 @@ BEGIN
   v_result := jsonb_build_object('sale_id', v_sale.id, 'scope_id', p_branch_id, 'epoch', p_epoch, 'seq', v_seq,
     'operation_id', p_operation_id, 'terminal_id', p_terminal_id, 'installation_generation', v_installation_generation,
     'database_guid', p_database_guid, 'checkout_sha256', v_checkout_sha256);
+  IF p_verified_author IS NOT NULL THEN
+    v_result := v_result || jsonb_build_object('author_id', p_verified_author->>'author_id',
+      'author_key_id', p_verified_author->>'author_key_id');
+  END IF;
   PERFORM pos_sync_inbox_v1.record_disposition(p_organization_id, p_operation_id, 'APPLIED', v_result);
   RETURN jsonb_build_object('status', 'APPLIED', 'result', v_result);
 END;
 $checkout$;
 
-REVOKE ALL ON FUNCTION pos_sync_cash_v1.apply_checkout(text, text, uuid, text, uuid, uuid, uuid, uuid, text, text)
+REVOKE ALL ON FUNCTION pos_sync_cash_v1.apply_checkout(text, text, uuid, text, uuid, uuid, uuid, uuid, text, text, jsonb)
   FROM PUBLIC, anon, authenticated, service_role;

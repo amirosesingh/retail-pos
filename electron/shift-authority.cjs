@@ -8,6 +8,7 @@ const permissions = {
   FINANCIAL_TENDER: ["can_edit_tenders"],
   FINANCIAL_VOID: ["can_void_item"],
   FINANCIAL_CONTEXT: [],
+  CASH_CHECKOUT: ["can_process_sale"],
   START_CLOSE: ["can_close_shift"],
   ORIGINAL: ["can_shift_cash_count", "can_close_shift"],
   RECOUNT: ["can_shift_cash_recount"],
@@ -144,6 +145,9 @@ class ShiftAuthorAuthority {
     // no action: each real delta is checked against its own live flag at sign.
     return this.capture('FINANCIAL_CONTEXT');
   }
+  captureCashCheckout() {
+    return this.capture("CASH_CHECKOUT");
+  }
   query(transaction, statement, inputs = {}) {
     const request = new (this.connectionManager.sql().Request)(
       transaction ?? this.connectionManager.pool,
@@ -192,6 +196,7 @@ class ShiftAuthorAuthority {
       )
         fail("ESYNC_SHIFT_AUTHOR_KEY_MISMATCH");
       const expectedKeyId = saved?.key_id ?? references[0]?.key_id;
+      if (capture.action === "CASH_CHECKOUT" && !expectedKeyId) fail("ESYNC_SHIFT_AUTHOR_ENROLLMENT_PENDING");
       const info = this.keys.prepare(
         capture.binding,
         expectedKeyId ? { expectedKeyId: String(expectedKeyId).toLowerCase() } : {},
@@ -264,6 +269,17 @@ class ShiftAuthorAuthority {
                 input.branchId !== capture.branchId || input.action !== capture.action) fail('ESYNC_SHIFT_AUTHOR_INVALID');
             const proof = this.keys.signOpeningFinancialBasis(capture.binding, {
               expectedKeyId: info.keyId, subject: capture.subject, ...input,
+            });
+            capture.assertCurrent();
+            return proof;
+          },
+        } : {}),
+        ...(capture.action === "CASH_CHECKOUT" ? {
+          signCashCheckout: (input) => {
+            capture.assertCurrent();
+            if (input.branchId !== recordId(capture.branchId)) fail("ESYNC_SHIFT_AUTHOR_INVALID");
+            const proof = this.keys.signCashCheckout(capture.binding, {
+              ...input, expectedKeyId: info.keyId, subject: capture.subject,
             });
             capture.assertCurrent();
             return proof;

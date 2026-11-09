@@ -3,6 +3,7 @@ import { canCrossBranches } from "@/core/api/relay-policy.server";
 import { runtimeEnvValue, supabaseConfig } from "./external-supabase-config";
 import { DEFAULT_POS_RULES } from "./pos-rules.ts";
 import { applyGroupedSettingsEdit, groupedSettingsEditSchema } from "./grouped-settings-edit.server";
+import { applyGroupedCashUpload, groupedCashUploadSchema } from "./grouped-cash-upload.server";
 import { canRetrieveHistoricalReceipt } from "./receipt-history-permission";
 import { alignVerifiedScopeIds } from "./verified-scope-ids";
 /**
@@ -88,12 +89,16 @@ const groupedSnapshotRequestKeys = new Set([
 const groupedSettingsEditRequestKeys = new Set([
   "sqlServerSettingsEdit", "terminalToken", "accessToken", "deviceBindingProof",
 ]);
+const groupedCashUploadRequestKeys = new Set(["sqlServerCashCheckout", "terminalToken", "deviceBindingProof"]);
 const feedSequence = z.string().regex(/^(0|[1-9][0-9]{0,18})$/)
   .refine(value => value.length < 19 || value <= "9223372036854775807");
-const groupedSnapshotReadSchema = z.object({ organizationId: z.literal("default"), branchId: z.string().min(1).max(128) }).strict();
+const groupedSnapshotReadSchema = z.object({
+  organizationId: z.literal("default"), branchId: z.string().min(1).max(128),
+  projection: z.literal("settings_cash_v1").optional(),
+}).strict();
 type GroupedSnapshotRead = z.infer<typeof groupedSnapshotReadSchema>;
-const groupedFeedReadSchema = z.object({
-  organizationId: z.literal("default"), branchId: z.string().min(1).max(128), epoch: z.string().uuid(),
+const groupedFeedReadSchema = groupedSnapshotReadSchema.extend({
+  epoch: z.string().uuid(),
   afterSeq: feedSequence, upperSeq: feedSequence.nullable().optional(), limit: z.number().int().min(1).max(100),
 }).strict();
 type GroupedFeedRead = z.infer<typeof groupedFeedReadSchema>;
@@ -101,11 +106,22 @@ const groupedSettingsChangeSchema = z.object({
   table_name: z.literal("pos_store_settings"), entity_id: z.string().min(1).max(1024),
   row_data: z.record(z.string(), z.unknown()), row_version: feedSequence, tombstone: z.literal(false),
 }).strict();
+const groupedSettingsGroupSchema = z.object({
+  seq: feedSequence, operation_id: z.string().uuid().nullable(), changes: z.tuple([groupedSettingsChangeSchema]),
+}).strict();
+const groupedCashTables = ["sales", "sale_items", "payment_transactions", "item_activity_logs"] as const;
+const groupedCashChangeSchema = groupedSettingsChangeSchema.extend({ table_name: z.enum(groupedCashTables) });
+const groupedCashGroupSchema = z.object({
+  seq: feedSequence, operation_id: z.string().uuid(), changes: z.array(groupedCashChangeSchema).length(4),
+  acceptance: z.object({
+    terminal_id: z.string().uuid(), installation_generation: z.string().uuid(), database_guid: z.string().uuid(),
+    checkout_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  }).strict(),
+}).strict();
 const groupedFeedPageSchema = z.object({
   status: z.literal("OK"), scope_id: z.string(), epoch: z.string().uuid(), next_seq: feedSequence,
-  upper_seq: feedSequence, has_more: z.boolean(), groups: z.array(z.object({
-    seq: feedSequence, operation_id: z.string().uuid().nullable(), changes: z.tuple([groupedSettingsChangeSchema]),
-  }).strict()).max(100),
+  upper_seq: feedSequence, has_more: z.boolean(),
+  groups: z.array(z.union([groupedSettingsGroupSchema, groupedCashGroupSchema])).max(100),
 }).strict();
 const groupedFeedRecoverySchema = z.object({
   status: z.literal("SNAPSHOT_REQUIRED"), reason: z.enum(["EPOCH_MISMATCH", "REPLAY_EXPIRED", "FEED_GAP", "GROUP_TOO_LARGE"]),
@@ -122,6 +138,7 @@ const groupedSnapshotManifestSchema = z.object({
   scope_id: z.string(), epoch: z.string().uuid(), seq: feedSequence,
   changes: z.tuple([groupedSettingsChangeSchema]),
 }).strict();
+const groupedMixedManifestSchema = groupedSnapshotManifestSchema.extend({ cash_groups: z.array(groupedCashGroupSchema).max(100) });
 const groupedSettingsRules = Object.entries(DEFAULT_POS_RULES);
 const groupedSettingsColumnCount = groupedSettingsRules.length + 6;
 const exactSettingDecimal = /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/;
@@ -163,11 +180,52 @@ function validGroupedSettings(change: z.infer<typeof groupedSettingsChangeSchema
       (typeof fallback === "boolean" ? typeof row[key] === "boolean" : typeof row[key] === "string" && exactSettingDecimal.test(row[key])));
 }
 
-async function groupedFeedRpc(name: "pos_sync_pull_grouped_v1" | "pos_sync_snapshot_grouped_v1", read: GroupedSnapshotRead,
+const cashProjectionFields = [
+  "id bill_number client_transaction_id store_id branch_id shift_id subtotal_amount total_amount discount_amount tax_amount payment_type payments points_earned points_redeemed is_exchange is_refunded created_at paid_amount change_amount exchange_credit coupon_discount rounding_adjustment row_version",
+  "id sale_id branch_id product_id product_name quantity unit_price discount_percent discount_amount tax_rate is_return is_foc created_at coupon_discount unit_cost row_version refunded_qty",
+  "id source_type sale_id store_id shift_id terminal_id amount method kind note paid_at created_at updated_at row_version status metadata",
+  "id product_id store_id terminal_id activity_type reference quantity_delta unit_cost note created_at row_version",
+].map(fields => fields.split(" "));
+const cashEntity = z.object({ id: z.string().uuid() }).strict();
+const exactCashPayment = z.tuple([z.object({
+  id: z.string().uuid(), method: z.literal("cash"), amount: z.string().regex(/^(?:0|[1-9]\d{0,25})(?:\.\d{1,12})?$/),
+}).strict()]);
+const noCashMetadata = z.object({}).strict();
+
+function validGroupedCash(group: z.infer<typeof groupedCashGroupSchema>, branchId: string): boolean {
+  if (group.seq === "0") return false;
+  for (const [index, change] of group.changes.entries()) {
+    const row = change.row_data;
+    const entity = cashEntity.safeParse(JSON.parse(change.entity_id));
+    const fields = cashProjectionFields[index];
+    if (change.table_name !== groupedCashTables[index] || change.row_version !== "1" || row.row_version !== "1" ||
+        !entity.success || entity.data.id !== row.id || Object.keys(row).length !== fields.length ||
+        fields.some(field => !Object.hasOwn(row, field)) ||
+        row[index === 1 ? "branch_id" : "store_id"] !== branchId ||
+        Object.entries(row).some(([key, value]) => key !== "payments" && key !== "metadata" &&
+          (value === null || !["string", "boolean", "number"].includes(typeof value)))) return false;
+  }
+  const [sale, item, tender, movement] = group.changes.map(change => change.row_data);
+  const payment = exactCashPayment.safeParse(sale.payments);
+  return sale.branch_id === branchId && sale.payment_type === "cash" && item.sale_id === sale.id &&
+    tender.sale_id === sale.id && tender.shift_id === sale.shift_id && tender.method === "cash" &&
+    tender.terminal_id === group.acceptance.terminal_id && movement.terminal_id === group.acceptance.terminal_id &&
+    movement.product_id === item.product_id && movement.reference === sale.bill_number &&
+    payment.success && payment.data[0].id === tender.id && noCashMetadata.safeParse(tender.metadata).success;
+}
+
+function mixedGroupedEnabled() {
+  return runtimeEnvValue("POS_GROUPED_CASH_SETTINGS_PILOT_ENABLED") === "true";
+}
+
+type GroupedRpc = "pos_sync_pull_grouped_v1" | "pos_sync_snapshot_grouped_v1" |
+  "pos_sync_pull_cash_settings_v1" | "pos_sync_snapshot_cash_settings_v1";
+async function groupedFeedRpc(name: GroupedRpc, read: GroupedSnapshotRead,
   terminalId: string, binding: string, signal: AbortSignal, args: Record<string, unknown> = {}) {
   const { serviceRest } = await import("@/core/api/pos-relay.server");
   const { boundedText } = await import("../../electron/sync/shift-recovery-exact.mjs");
-  if (!groupedFeedPilotTerminals()?.includes(terminalId)) return groupedFeedUnavailable();
+  if (!groupedFeedPilotTerminals()?.includes(terminalId) || (read.projection && !mixedGroupedEnabled()))
+    return groupedFeedUnavailable();
   let response: Response;
   try {
     response = await serviceRest(`rpc/${name}`, {
@@ -195,7 +253,8 @@ async function groupedFeedRpc(name: "pos_sync_pull_grouped_v1" | "pos_sync_snaps
 }
 
 async function readGroupedFeed(read: GroupedFeedRead, terminalId: string, binding: string, signal: AbortSignal) {
-  const result = await groupedFeedRpc("pos_sync_pull_grouped_v1", read, terminalId, binding, signal, {
+  const rpc = read.projection ? "pos_sync_pull_cash_settings_v1" : "pos_sync_pull_grouped_v1";
+  const result = await groupedFeedRpc(rpc, read, terminalId, binding, signal, {
     p_epoch: read.epoch, p_after_seq: read.afterSeq, p_upper_seq: read.upperSeq ?? null, p_limit: read.limit,
   });
   if (result instanceof Response) return result;
@@ -215,7 +274,9 @@ async function readGroupedFeed(read: GroupedFeedRead, terminalId: string, bindin
         (read.upperSeq != null && page.upper_seq !== read.upperSeq)) return groupedFeedProtocolError();
     for (const group of page.groups) {
       position += 1n;
-      if (BigInt(group.seq) !== position || !validGroupedSettings(group.changes[0], read.branchId))
+      const valid = "acceptance" in group ? read.projection && validGroupedCash(group, read.branchId) :
+        validGroupedSettings(group.changes[0], read.branchId);
+      if (BigInt(group.seq) !== position || !valid)
         return groupedFeedProtocolError();
     }
     if (position !== BigInt(page.next_seq) || position > upper || page.has_more !== (position < upper) ||
@@ -225,19 +286,36 @@ async function readGroupedFeed(read: GroupedFeedRead, terminalId: string, bindin
 }
 
 async function readGroupedSnapshot(read: GroupedSnapshotRead, terminalId: string, binding: string, signal: AbortSignal) {
-  const result = await groupedFeedRpc("pos_sync_snapshot_grouped_v1", read, terminalId, binding, signal);
+  const rpc = read.projection ? "pos_sync_snapshot_cash_settings_v1" : "pos_sync_snapshot_grouped_v1";
+  const result = await groupedFeedRpc(rpc, read, terminalId, binding, signal);
   if (result instanceof Response) return result;
+  if (read.projection) {
+    const recovery = groupedFeedRecoverySchema.safeParse(result.data);
+    if (recovery.success) return Response.json(recovery.data, { status: 409, headers: { "cache-control": "no-store" } });
+  }
   const parsed = groupedSnapshotSchema.safeParse(result.data);
   if (!parsed.success) return groupedFeedUnavailable();
   const snapshot = parsed.data;
   if (snapshot.scope_id !== read.branchId || Date.parse(snapshot.expires_at) <= Date.now() ||
-      new TextEncoder().encode(snapshot.manifest_json).byteLength > 65536 ||
+      new TextEncoder().encode(snapshot.manifest_json).byteLength > (read.projection ? 1835008 : 65536) ||
       createHash("sha256").update(snapshot.manifest_json, "utf8").digest("hex") !== snapshot.manifest_sha256)
     return groupedFeedProtocolError();
   try {
-    const manifest = groupedSnapshotManifestSchema.parse(JSON.parse(snapshot.manifest_json));
+    const manifest = (read.projection ? groupedMixedManifestSchema : groupedSnapshotManifestSchema)
+      .parse(JSON.parse(snapshot.manifest_json));
     if (manifest.scope_id !== snapshot.scope_id || manifest.epoch !== snapshot.epoch || manifest.seq !== snapshot.seq ||
         !validGroupedSettings(manifest.changes[0], read.branchId)) return groupedFeedProtocolError();
+    if ("cash_groups" in manifest) {
+      let previous = 0n;
+      const operations = new Set<string>();
+      for (const group of manifest.cash_groups as z.infer<typeof groupedCashGroupSchema>[]) {
+        const seq = BigInt(group.seq);
+        if (seq <= previous || seq > BigInt(snapshot.seq) || operations.has(group.operation_id) ||
+            !validGroupedCash(group, read.branchId)) return groupedFeedProtocolError();
+        previous = seq;
+        operations.add(group.operation_id);
+      }
+    }
     return new Response(result.raw, { headers: { "content-type": "application/json", "cache-control": "no-store" } });
   } catch { return groupedFeedProtocolError(); }
 }
@@ -268,6 +346,7 @@ const bodySchema = z.object({
   sqlServerGroupedFeed: groupedFeedReadSchema.optional(),
   sqlServerGroupedSnapshot: groupedSnapshotReadSchema.optional(),
   sqlServerSettingsEdit: groupedSettingsEditSchema.optional(),
+  sqlServerCashCheckout: groupedCashUploadSchema.optional(),
   sqlServerLegacyRecovery: z.object({
     organizationId: z.string().min(1).max(128),
     branchId: z.string().min(1).max(128),
@@ -407,6 +486,8 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       throw new Error("Grouped snapshot requests are exclusive");
     if (Object.hasOwn(parsed ?? {}, "sqlServerSettingsEdit") && Object.keys(parsed).some(key => !groupedSettingsEditRequestKeys.has(key)))
       throw new Error("Grouped settings edits are exclusive");
+    if (Object.hasOwn(parsed ?? {}, "sqlServerCashCheckout") && Object.keys(parsed).some(key => !groupedCashUploadRequestKeys.has(key)))
+      throw new Error("Cash checkout uploads are exclusive");
     body = bodySchema.parse(parsed);
     if (body.sqlServerLegacyRecovery && request.headers.get("x-pos-legacy-recovery") !== "1")
       throw new Error("Missing bounded recovery transport");
@@ -460,12 +541,15 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
 
   if (body.sqlServerSettingsEdit)
     return applyGroupedSettingsEdit(body.sqlServerSettingsEdit, body, groupedFeedPilotTerminals, request.signal);
+  if (body.sqlServerCashCheckout)
+    return applyGroupedCashUpload(body.sqlServerCashCheckout, body, groupedFeedPilotTerminals, request.signal);
 
   const groupedRead = body.sqlServerGroupedFeed;
   const groupedRequest = groupedRead ?? body.sqlServerGroupedSnapshot;
   const groupedPilotTerminals = groupedRequest ? groupedFeedPilotTerminals() : undefined;
   const groupedTerminalToken = body.terminalToken;
-  if (groupedRequest && !groupedPilotTerminals) return groupedFeedUnavailable();
+  if (groupedRequest && (!groupedPilotTerminals || (groupedRequest.projection && !mixedGroupedEnabled())))
+    return groupedFeedUnavailable();
   if (groupedRequest && (!groupedTerminalToken || !groupedPilotTerminals?.includes(groupedTerminalToken) || !body.deviceBindingProof))
     return Response.json({ ok: false, code: "TERMINAL_REQUIRED", error: "A verified pilot Operations terminal is required." }, { status: 403 });
 

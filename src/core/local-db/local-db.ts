@@ -297,6 +297,15 @@ export type StoreSettingsEditUpload = {
     "AWAITING_OPERATOR" | "PAUSED" | "UNAVAILABLE";
   reason?: string | null;
 };
+type StoreSettingsReviewValues = { block_shift_close_on_hold?: boolean | null; max_drawer_cash_limit?: string | null };
+export type StoreSettingsEditReview = {
+  operationId: string;
+  expectedVersion: number;
+  currentVersion: number;
+  proposedValues: StoreSettingsReviewValues;
+  currentValues: StoreSettingsReviewValues;
+  decisionSha256: string;
+};
 
 export type LocalSyncStatus = {
   connected: boolean;
@@ -325,6 +334,7 @@ export type LocalSyncStatus = {
   conflicts?: number;
   lastError?: string | null;
   storeSettingsEditUpload?: StoreSettingsEditUpload;
+  groupedSettingsPilot?: { branchId: string | null; status: string; reason?: string | null };
   running?: boolean;
   paused?: boolean;
   enabled?: boolean;
@@ -421,6 +431,10 @@ export type PosBridge = {
     operationId: string;
     patch: { block_shift_close_on_hold?: boolean; max_drawer_cash_limit?: string };
   }) => Promise<{ ok: boolean; operationId?: string; error?: string; code?: string }>;
+  reviewStoreSettingsEdit?: (value:
+    { action: "preview"; branchId: string } |
+    { action: "keep-central"; branchId: string; operationId: string; decisionSha256: string }
+  ) => Promise<{ ok: boolean; review?: StoreSettingsEditReview | null; operationId?: string; error?: string; code?: string }>;
   openDrawer?: (value: {
     reason: string;
     shiftId?: string | null;

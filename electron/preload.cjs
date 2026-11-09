@@ -49,6 +49,7 @@ contextBridge.exposeInMainWorld("pos", {
   query: (table, options) => invoke("business:query", table, options),
   saveAuthorizationRule: (value) => invoke("business:save-authorization-rule", value),
   queueStoreSettingsEdit: (value) => invoke("business:queue-store-settings-edit", value),
+  reviewStoreSettingsEdit: (value) => invoke("business:review-store-settings-edit", value),
   shiftExpectedTotals: (shiftId) => invoke("business:shift-expected", shiftId),
   shiftCloseStart: (value) => invoke("business:shift-close-start", value),
   shiftCloseCount: (value) => invoke("business:shift-close-count", value),

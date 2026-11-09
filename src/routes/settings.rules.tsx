@@ -36,7 +36,7 @@ import { broadcastSettingsChange } from "@/lib/sync-engine";
 import { changedDrawerLimit, hasVerifiedRulesBaseline, offlineRulesPatch, reconcileRulesDraft } from "@/lib/pos-rules-draft";
 import { isTransientRulesSaveFailure } from "@/lib/pos-rules-failure";
 import { canonicalBranchId, sameBranchId } from "@/lib/branch-id";
-import type { LocalSyncStatus, StoreSettingsEditUpload } from "@/core/local-db/local-db";
+import type { LocalSyncStatus, StoreSettingsEditReview, StoreSettingsEditUpload } from "@/core/local-db/local-db";
 
 const uploadLabels: Partial<Record<StoreSettingsEditUpload["status"], string>> = {
   PENDING: "Edit saved on this till and waiting to upload. Current rules stay in effect.",
@@ -48,6 +48,9 @@ const uploadLabels: Partial<Record<StoreSettingsEditUpload["status"], string>> =
   PAUSED: "Store settings synchronization is paused.",
   UNAVAILABLE: "The offline store settings pilot is unavailable on this till.",
 };
+const reviewLabels = { block_shift_close_on_hold: "Block shift closing while bills are held", max_drawer_cash_limit: "Drawer cash limit" };
+const reviewValue = (value: boolean | string | null | undefined) =>
+  value === true ? "On" : value === false ? "Off" : value ?? "Unset";
 
 export const Route = createFileRoute("/settings/rules")({
   head: () => ({
@@ -114,6 +117,8 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
   const [checking, setChecking] = useState(false);
   const [drawerLimit, setDrawerLimit] = useState<string | null>(null);
   const [upload, setUpload] = useState<StoreSettingsEditUpload | null>(null);
+  const [review, setReview] = useState<{ context: string; comparison: StoreSettingsEditReview } | null>(null);
+  const [reviewing, setReviewing] = useState(false);
   const draftBase = useRef<{ rules: PosRules; version: number } | null>(null);
   const queuedAttempt = useRef<{ key: string; operationId: string } | null>(null);
   const uncertainOnlineSave = useRef<string | null>(null);
@@ -125,7 +130,11 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
     const sync = window.pos?.sync;
     let active = true;
     const update = (state: LocalSyncStatus) => {
-      if (active && state.storeSettingsEditUpload) setUpload(state.storeSettingsEditUpload);
+      if (!active) return;
+      if (state.storeSettingsEditUpload) setUpload(state.storeSettingsEditUpload);
+      else if (state.groupedSettingsPilot?.reason === "ESETTINGS_EDIT_PENDING" && state.groupedSettingsPilot.branchId)
+        setUpload({ status: "REVIEW_REQUIRED", branchId: state.groupedSettingsPilot.branchId });
+      else if (state.groupedSettingsPilot?.status === "HANDED_BACK") setUpload(null);
     };
     const stop = sync?.subscribe?.(update);
     void sync?.getStatus?.().then(update).catch(() => undefined);
@@ -189,6 +198,10 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
 
   const dirty = !rulesEqual(draft, rules) || changedDrawerLimit(drawerLimit, rules.max_drawer_cash_limit);
   const idleDirty = idleLoaded && savedIdle !== null && idle !== savedIdle;
+  const hasReviewHold = upload?.status === "REVIEW_REQUIRED" && sameBranchId(upload.branchId, currentStore.id);
+  const canReview = mayEdit && hasReviewHold && sameBranchId(branchId, currentStore.id) &&
+    typeof window !== "undefined" && Boolean(window.pos?.reviewStoreSettingsEdit);
+  const comparison = canReview && review?.context === contextKey ? review.comparison : null;
 
   const saveStatus = dirty ? "Unsaved changes" : status === "LIVE" ? "Saved"
     : status === "PENDING_UPLOAD" ? "Saved on this terminal — upload pending"
@@ -213,7 +226,7 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
   };
 
   async function save() {
-    if (!mayEditRules || saving || draftScope.current !== editorScope) return;
+    if (!mayEditRules || saving || hasReviewHold || draftScope.current !== editorScope) return;
     if (source === "LOCAL_PENDING") {
       toast.error("Wait for the pending rules to be confirmed before saving another edit. Your draft is still open.");
       return;
@@ -319,6 +332,41 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
     }
   }
 
+  async function reviewSavedEdit(keepCentral: boolean) {
+    if (!canReview || reviewing || saving || editContext.current !== contextKey || (keepCentral && !comparison)) return;
+    const reviewEdit = window.pos?.reviewStoreSettingsEdit;
+    if (!reviewEdit) return;
+    const epoch = contextEpoch.current;
+    const branchId = canonicalBranchId(currentStore.id);
+    setReviewing(true);
+    try {
+      const result = await reviewEdit(keepCentral && comparison
+        ? { action: "keep-central", branchId, operationId: comparison.operationId, decisionSha256: comparison.decisionSha256 }
+        : { action: "preview", branchId });
+      if (contextEpoch.current !== epoch) return;
+      if (!result.ok) {
+        if (result.code === "ESETTINGS_REVIEW_CHANGED") setReview(null);
+        toast.error(result.error ?? "The saved edit could not be reviewed.");
+        return;
+      }
+      if (keepCentral) {
+        if (result.operationId !== comparison?.operationId) throw new Error("The saved review could not be confirmed.");
+        setReview(null);
+        setUpload(null);
+        toast.success("Central rules kept. The original edit and review were saved.");
+      } else if (result.review) {
+        setReview({ context: contextKey, comparison: result.review });
+      } else {
+        setReview(null);
+        toast.error("There is no stale settings edit to review on this till.");
+      }
+    } catch (error) {
+      if (contextEpoch.current === epoch) notifyError(error, "Could not review the saved settings edit");
+    } finally {
+      setReviewing(false);
+    }
+  }
+
   const Shell = embedded ? Fragment : SettingsShell;
   return (
     <Shell>
@@ -352,6 +400,38 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
         {failureText && status !== "LIVE" && <p role="alert" className="text-sm text-destructive">Could not load current saved settings. Check the connection and reload.</p>}
         {source === "LEGACY_CACHE" && <p role="status" className="text-sm text-muted-foreground">Previous saved rules are preserved for offline operation. Connect to verify this database before editing. Existing pending changes remain pending.</p>}
         {upload && sameBranchId(upload.branchId, currentStore.id) && uploadLabels[upload.status] && <p role="status" className="text-sm text-muted-foreground">{uploadLabels[upload.status]}</p>}
+        {canReview && (
+          <section className="space-y-3 rounded-lg border border-border bg-card p-4" aria-label="Saved offline settings edit">
+            {!comparison ? (
+              <Button type="button" size="sm" variant="outline" disabled={reviewing || saving} onClick={() => void reviewSavedEdit(false)}>
+                Review saved settings edit
+              </Button>
+            ) : (
+              <>
+                <h2 className="text-sm font-semibold">Compare the saved edit with central rules</h2>
+                <p className="text-sm text-muted-foreground">
+                  The edit used revision {comparison.expectedVersion}. Central rules are at revision {comparison.currentVersion}.
+                </p>
+                <ul className="space-y-2 text-sm">
+                  {(Object.keys(comparison.proposedValues) as (keyof typeof reviewLabels)[]).map(field => (
+                    <li key={field}>
+                      <span className="font-medium">{reviewLabels[field]}</span>
+                      <span className="block">Saved edit {reviewValue(comparison.proposedValues[field])}</span>
+                      <span className="block">Central value {reviewValue(comparison.currentValues[field])}</span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-sm text-muted-foreground">Keeping central rules records the decision. Make and save any new edits separately.</p>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" size="sm" disabled={reviewing || saving} onClick={() => void reviewSavedEdit(true)}>
+                    Keep central rules
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" disabled={reviewing} onClick={() => setReview(null)}>Cancel</Button>
+                </div>
+              </>
+            )}
+          </section>
+        )}
 
         <section className="rounded-lg border border-border bg-card px-5">
           <div className="flex items-center justify-between gap-3 border-b border-border/60 py-4">
@@ -492,7 +572,7 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
             <Button
               size="sm"
               className="ml-auto"
-              disabled={!mayEditRules || !dirty || saving}
+              disabled={!mayEditRules || !dirty || saving || hasReviewHold}
               onClick={() => void save()}
             >
               {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}

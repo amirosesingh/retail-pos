@@ -134,6 +134,10 @@ class AggregateRepository {
     const payloadHash = createHash("sha256").update(JSON.stringify(canonical({ kind, operations }))).digest("hex");
     const financialStore=this.financialOperations?.enabled===true?this.financialOperations:null;
     const financialContext=financialStore?await financialStore.prepareContext({branchId:aggregate.branchId,terminalId:aggregate.terminalId,operationId,kind}):null;
+    const saleOutbox = kind === "sale" ? this.saleOutbox : null;
+    let cashAuthor, cashAuthorError;
+    try { cashAuthor = await saleOutbox?.prepareCashAuthor?.(); }
+    catch (error) { cashAuthorError = error; }
     const sql = this.connectionManager.sql();
     const transaction = new sql.Transaction(this.operationsRepository.pool());
     await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
@@ -149,6 +153,7 @@ class AggregateRepository {
         return { ok: true, operationId, replayed: true, affected: 0 };
       }
 
+      if (cashAuthorError) throw cashAuthorError;
       await this.assertNewSaleIdentities(transaction, operations);
 
       // Close-start takes the same shift row lock. Once counting begins no
@@ -196,7 +201,6 @@ class AggregateRepository {
         }
       }
       const newOpenings = new Set();
-      const saleOutbox = kind === "sale" ? this.saleOutbox : null;
       const confirmedStock = saleOutbox ? new Map() : null;
       for (const operation of operations) {
         stage = "business rows";
@@ -274,7 +278,7 @@ class AggregateRepository {
         stage = "sale event capture";
         tableName = "pos_sync_sale_outbox_v1";
         await saleOutbox.capture(transaction, {
-          operationId, branchId: aggregate.branchId, terminalId: aggregate.terminalId, operations, confirmedStock,
+          operationId, branchId: aggregate.branchId, terminalId: aggregate.terminalId, operations, confirmedStock, cashAuthor,
         });
       }
       stage = "operation receipt";
@@ -292,6 +296,7 @@ class AggregateRepository {
         .input("note", payloadHash)
         .query("INSERT dbo.local_operation_receipts(operation_id,operation_type,entity_id,note) VALUES(@operation_id,@operation_type,@entity_id,@note);");
       if(financialStore)for(const token of [...financialTokens,...openingTokens.values()])financialStore.assertCurrent(transaction,token);
+      cashAuthor?.assertCurrent();
       await transaction.commit();
       return { ok: true, operationId, replayed: false, affected };
     } catch (error) {

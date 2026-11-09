@@ -330,6 +330,50 @@ The required GitHub checks caught a source-level guard for the automatic
 offline retry cadence. Keep the existing queued-core delay expression and
 schedule another grouped settings page explicitly when one remains.
 
+## 9 November — finish sync code while hosted acceptance is paused
+
+The owner requested completing the pending sync code with agents and focused
+tests on PR #451. Continue from `8106b17c`. Keep hosted testing, the beta merge,
+and publication pending while only the production project is available.
+Use disposable databases and existing operator fields. First complete the
+audited stale settings decision, bind financial evidence to the originating
+actor and exact committed checkout, and make the grouped receiver preserve
+settings and financial transactions under a common scoped checkpoint. Verify
+failure, retry, wrong-scope and pending-work boundaries. Review recovery and
+table coverage against both installed schemas before enabling anything.
+
+The original still-authorized settings operator can compare the exact saved
+patch with the current canonical revision and record an immutable keep-central
+decision. The original command and stale receipt survive. The decision allows
+a separate new edit or verified handback and re-pair. Missing audit storage,
+changed comparisons and revoked authorization hold the edit. Seven disposable
+LocalDB checks and 62 focused application tests passed.
+
+An originating cashier attestation binds the exact captured cash receipt bytes
+to the operation, registration, database and epoch. The service-only writer
+rechecks the active cashier and key in the apply transaction. A native
+checkout passed through the actual relay to PostgreSQL, and an altered
+signature was refused. The existing private cash overlap fixture still
+passes. The local acceptance transaction saves the receipt and acknowledges
+only its five frozen journal rows. It rolls both back on extra evidence,
+source change or write failure. The shared settings and cash receiver has one durable mixed cursor.
+It can recover a bounded snapshot of settings and archived ordinary cash
+groups after feed retirement. The receiver verifies the source till's own
+accepted operation without rewriting its business rows. Native rollback,
+restart, wrong proof and refused downgrade were tested in LocalDB.
+
+Installed mixed finance stays gated. The legacy journal and Change Tracking
+paths and the old download must all honor the new route before cutover.
+Existing overlap locks cover the two native upload RPC families, not all
+direct hosted writers or later corrections. Windows and cloud refund paths
+currently derive different stock movement IDs for the same logical return.
+Reconcile those IDs and the exact product, store and delta before replay.
+Tender corrections need a stable receipt, managed shifts need their existing
+signed graph and closure fences, and stock transfers need the complete source
+and destination effects. A drawer wake must never replay its hardware pulse.
+The bounded snapshot covers settings and ordinary cash receipt rows, not
+full stock balances, the remaining financial writers or larger paged recovery.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents
