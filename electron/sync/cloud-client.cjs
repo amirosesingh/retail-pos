@@ -774,7 +774,8 @@ class CloudClient {
     const stock = table.cloudTable === "products" ? require("./grouped-live-stock.cjs") : null;
     const groupedStock = stock ? await stock.legacyStockOwnership(transaction, batch) : null;
     for (const change of [...upserts, ...(batch.tombstones ?? [])]) {
-      const row = stock && change.row_data ? await stock.legacyOwnedStockRow(transaction, change.row_data, groupedStock)
+      if (groupedStock?.skipped.has(change)) continue;
+      const row = stock && change.row_data ? await stock.legacyOwnedStockRow(transaction, change.row_data, groupedStock.owned)
         : change.row_data ?? {};
       const key = this.parseKey(table, change);
       if (change.tombstone) {

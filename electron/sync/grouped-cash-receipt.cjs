@@ -107,11 +107,14 @@ async function assertTracking(transaction, branch, table, id) {
   if (state !== "clear") throw fail("The local receipt Change Tracking boundary cannot be verified.", "ELOCAL_PENDING_UNVERIFIED");
 }
 
-async function assertDependencies(transaction, branch, { sale, item, tender }) {
+async function assertDependencies(transaction, branch, { sale, item, tender }, retiredStockEpoch = null) {
   const result = await transaction.request().input("branch", branch).input("shift", sale.shift_id)
-    .input("terminal", tender.terminal_id).input("product", item.product_id).input("bill", sale.bill_number).query(`
+    .input("terminal", tender.terminal_id).input("product", item.product_id).input("bill", sale.bill_number)
+    .input("retiredEpoch", retiredStockEpoch).query(`
     SELECT CASE WHEN EXISTS (SELECT 1 FROM dbo.shifts WITH (HOLDLOCK) WHERE id=@shift AND store_id=@branch AND terminal_id=@terminal)
-      AND EXISTS (SELECT 1 FROM dbo.products WITH (HOLDLOCK) WHERE id=@product AND owner_store_id=@branch)
+      AND EXISTS (SELECT 1 FROM dbo.products WITH (HOLDLOCK) WHERE id=@product AND (owner_store_id=@branch
+        ${retiredStockEpoch ? `OR EXISTS(SELECT 1 FROM dbo.pos_sync_grouped_stock_v1 WITH (HOLDLOCK)
+          WHERE branch_id=@branch AND product_id=@product AND feed_epoch=TRY_CONVERT(uniqueidentifier,@retiredEpoch) AND retired=1)` : ""}))
       AND NOT EXISTS (SELECT 1 FROM dbo.held_orders WITH (UPDLOCK,HOLDLOCK) WHERE store_id=@branch
         AND bill_no=@bill AND (status IS NULL OR status<>N'completed')) THEN 1 ELSE 0 END AS ready;`);
   if (result.recordset?.[0]?.ready !== 1)
@@ -147,7 +150,7 @@ async function applyGroupedCashInTransaction(worker, transaction, context, facts
     return [];
   }
 
-  await assertDependencies(transaction, branch, facts);
+  await assertDependencies(transaction, branch, facts, context.retiredStockEpoch);
   const missing = [];
   for (const { table, change } of facts.rows) {
     const id = change.row_data.id;

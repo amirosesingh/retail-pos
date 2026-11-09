@@ -6,7 +6,7 @@ const { posFeedFailed, posFeedCompleted } = require("./status-evidence.cjs");
 const {prepareHistoryFeed}=require('./history-feed.cjs');
 const grouped = require("./grouped-store-settings.cjs");
 const handoff = require("./grouped-settings-handoff.cjs");
-const { prepareLegacyCashPage, applyLegacyCashCoverage } = require("./grouped-cash-legacy.cjs");
+const { prepareLegacyCashPage, applyLegacyCashCoverage, legacyShiftInputs } = require("./grouped-cash-legacy.cjs");
 const { applyGroupedCashReceipt, applyGroupedCashInTransaction, parseMixedCashGroup } = require("./grouped-cash-receipt.cjs");
 const { assertStoreSettingsEditHandbackClear } = require("../db/store-settings-edit-outbox.cjs");
 const { recordId } = require("./uuid-fields.cjs");
@@ -48,7 +48,7 @@ class PullWorker {
     const result = safe.length ? await this.cloud.applyLocalBatch(transaction, table, {
       rows: safe.filter((change) => !change.tombstone),
       tombstones: safe.filter((change) => change.tombstone),
-      ...(SHIFT_GRAPH_TABLES.has(table.cloudTable) ? { branchId } : {}),
+      ...(SHIFT_GRAPH_TABLES.has(table.cloudTable) || table.cloudTable === "products" ? { branchId } : {}),
     }) : null;
     if (SHIFT_GRAPH_TABLES.has(table.cloudTable) && (!result || result.deferred || result.conflicts ||
         result.applied + result.alreadyMatching !== safe.length)) {
@@ -193,7 +193,10 @@ class PullWorker {
       const applyFinancial = async (facts, recoveringFinancial) => {
         const count = await applyFinancialCorrection(this, transaction,
           { ...context, financialEpoch: next.epoch, recoveringFinancial }, facts);
-        if (count) for (const row of facts.changes) recoveredTables.add(row.table_name);
+        if (count) {
+          for (const row of facts.changes) recoveredTables.add(row.table_name);
+          if (facts.receiptGraph) for (const name of ["sales", "sale_items", "payment_transactions"]) recoveredTables.add(name);
+        }
         recoveredCount += count;
       };
       if (financial) await applyFinancial(financial, false);
@@ -211,7 +214,8 @@ class PullWorker {
         const { applyPagedRecovery } = require("./grouped-paged-recovery.cjs");
         const stockChanged = await applyPagedRecovery(this, transaction, context, snapshot, async (facts, seq) => {
           if (context.extended && current && BigInt(seq) <= BigInt(current.seq)) return;
-          const merged = await applyGroupedCashInTransaction(this, transaction, context, facts);
+          const merged = await applyGroupedCashInTransaction(this, transaction,
+            context.extended ? { ...context, retiredStockEpoch: next.epoch } : context, facts);
           for (const { table } of merged) recoveredTables.add(table.cloudTable);
           recoveredCount += merged.length;
         }, assertCurrent, async facts => {
@@ -344,8 +348,12 @@ class PullWorker {
         const { epoch, seq, change } = snapshot;
         const changed = await this.commitGroupedChanges(context, position, { epoch, seq, upper: null },
           { change, snapshot }, isPaused);
+        await snapshot.clear().catch(() => {});
         return { epoch, seq, changed: changed > 0 };
-      } finally { await snapshot.clear().catch(() => {}); }
+      } catch (error) {
+        if (error?.code === "ESYNC_GROUPED_PROTOCOL") await snapshot.clear().catch(() => {});
+        throw error;
+      }
     }
     const response = await this.cloud.groupedSettingsSnapshot(source, projection);
     assertGroupedPilotRunning(isPaused);
@@ -444,6 +452,7 @@ class PullWorker {
       if (["ELOCAL_UPLOAD_PENDING", "ESYNC_CASH_RECEIPT_DEPENDENCY"].includes(error?.code))
         return progress("DEFERRED", error.code);
       if (["ESYNC_GROUPED_REVIEW_REQUIRED", "ELOCAL_PENDING_UNVERIFIED", "ESYNC_CASH_RECEIPT_PROTOCOL", "ESYNC_FINANCIAL_GROUP_PROTOCOL",
+        "ESYNC_GROUPED_SHIFT_PROTOCOL", "ESYNC_GROUPED_DRAWER_PROTOCOL",
         "ESYNC_CASH_RECEIPT_REVIEW"].includes(error?.code))
         return progress("REVIEW_REQUIRED", error.code);
       if (["GROUPED_FEED_UNAVAILABLE", "HTTP_401", "HTTP_403"].includes(error?.code))
@@ -581,7 +590,8 @@ class PullWorker {
         if(Buffer.byteLength(JSON.stringify(downloaded),"utf8")>MAX_PAGE_BYTES)
           throw Object.assign(new Error("Download exceeds the safe page size."),{code:"EOVERSIZED"});
         if (cashContext) cashCoverage = await prepareLegacyCashPage(this.cloud, groupedSource, cashContext, downloaded);
-        prepared=await prepareShiftGraphs({cloud:this.cloud,connectionManager:this.connectionManager,branchId,changes:[...downloaded.rows,...downloaded.tombstones]});
+        prepared=await prepareShiftGraphs({cloud:this.cloud,connectionManager:this.connectionManager,branchId,
+          changes:legacyShiftInputs(downloaded,cashContext,cashCoverage)});
         history=await prepareHistoryFeed({cloud:this.cloud,connectionManager:this.connectionManager,branchId,changes:[...downloaded.rows,...downloaded.tombstones]});
         return downloaded;
       },batchSize);
@@ -619,7 +629,7 @@ class PullWorker {
         // Check the graph before any page writes. Parent discovery uses a short
         // pool read and must never wait on this transaction's own later X locks.
         for (const table of ordered) if (SHIFT_GRAPH_TABLES.has(table.cloudTable)) {
-          const changes = [...batch.rows, ...batch.tombstones].filter(row => row.table_name === table.cloudTable && !prepared.covers(row));
+          const changes = [...applicable.rows, ...applicable.tombstones].filter(row => row.table_name === table.cloudTable && !prepared.covers(row));
           if (changes.length) graphPending.set(table.cloudTable, await this.reader.unacknowledged(table,
             changes.map(change => String(change.entity_id)), transaction, { branchId, changes }));
         }

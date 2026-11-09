@@ -38,6 +38,14 @@ ALTER TABLE pos_sync_feed_v1.correction_owners ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON TABLE pos_sync_feed_v1.extended_pilots, pos_sync_feed_v1.extended_publications,
   pos_sync_feed_v1.correction_owners FROM PUBLIC, anon, authenticated, service_role;
 
+-- Corrections prepared before receipt-parent recovery have no archived graph.
+-- Its separate preparation replaces this projection without rewriting groups.
+CREATE FUNCTION pos_sync_feed_v1.financial_parent_evidence(p_row pos_sync_feed_v1.extended_publications)
+RETURNS jsonb LANGUAGE sql STABLE STRICT SECURITY INVOKER SET search_path = pg_catalog
+RETURN '{}'::jsonb;
+REVOKE ALL ON FUNCTION pos_sync_feed_v1.financial_parent_evidence(pos_sync_feed_v1.extended_publications)
+  FROM PUBLIC, anon, authenticated, service_role;
+
 CREATE FUNCTION pos_sync_feed_v1.extended_read_epoch(p_org text, p_branch text)
 RETURNS uuid LANGUAGE plpgsql STABLE SECURITY INVOKER SET search_path = pg_catalog
 AS $scope$
@@ -101,6 +109,7 @@ AS $append$
 DECLARE
   v_seq bigint;
   v_correction boolean;
+  v_kind text;
 BEGIN
   IF pos_sync_feed_v1.extended_scope_epoch(p_org,p_branch) IS DISTINCT FROM p_epoch OR p_epoch IS NULL
      OR jsonb_typeof(p_changes) IS DISTINCT FROM 'array' OR jsonb_typeof(p_metadata) IS DISTINCT FROM 'object'
@@ -108,14 +117,32 @@ BEGIN
     RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='POS_EXTENDED_V1_PUBLICATION_UNVERIFIED';
   END IF;
   v_correction := p_metadata ? 'financial';
+  v_kind := p_metadata->'financial'->>'kind';
   IF v_correction THEN
     IF p_operation IS NULL OR p_metadata - 'financial' <> '{}'::jsonb OR
-       jsonb_typeof(p_metadata->'financial') IS DISTINCT FROM 'object' OR
-       (p_metadata->'financial') - ARRAY['kind','sale_id'] <> '{}'::jsonb OR
-       coalesce(p_metadata->'financial'->>'kind','') NOT IN ('refund_v1','tender_v1') OR
-       p_changes->0->>'table_name' IS DISTINCT FROM 'sales' OR
-       p_changes->0->'row_data'->>'id' IS DISTINCT FROM p_metadata->'financial'->>'sale_id' OR
+       jsonb_typeof(p_metadata->'financial') IS DISTINCT FROM 'object' OR coalesce(v_kind,'') NOT IN ('refund_v1','tender_v1','shift_v1','drawer_v1') OR
        p_changes->0->'row_data'->>'store_id' IS DISTINCT FROM p_branch THEN
+      RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='POS_EXTENDED_V1_CORRECTION_UNVERIFIED';
+    END IF;
+    IF v_kind='shift_v1' THEN
+      IF (p_metadata->'financial') - ARRAY['kind','shift_id'] <> '{}'::jsonb OR jsonb_array_length(p_changes)<>1
+         OR p_changes->0->>'table_name' IS DISTINCT FROM 'shifts'
+         OR p_changes->0->'row_data'->>'id' IS DISTINCT FROM p_metadata->'financial'->>'shift_id'
+         OR jsonb_typeof(p_changes->0->'row_data'->'graph_json') IS DISTINCT FROM 'string' THEN
+        RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='POS_EXTENDED_V1_SHIFT_UNVERIFIED';
+      END IF;
+    ELSIF v_kind='drawer_v1' THEN
+      IF (p_metadata->'financial') - ARRAY['kind','event_id'] <> '{}'::jsonb OR jsonb_array_length(p_changes)<>1
+         OR p_changes->0->>'table_name' IS DISTINCT FROM 'drawer_events'
+         OR p_changes->0->'row_data'->>'id' IS DISTINCT FROM p_metadata->'financial'->>'event_id'
+         OR NOT coalesce((p_changes->0->>'row_version'='1' AND p_changes->0->'row_data'->>'note'='OPEN_REQUESTED')
+           OR (p_changes->0->>'row_version'='2' AND (p_changes->0->'row_data'->>'note'='OPENED'
+             OR p_changes->0->'row_data'->>'note' LIKE 'FAILED: %')),false) THEN
+        RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='POS_EXTENDED_V1_DRAWER_UNVERIFIED';
+      END IF;
+    ELSIF (p_metadata->'financial') - ARRAY['kind','sale_id'] <> '{}'::jsonb OR
+          p_changes->0->>'table_name' IS DISTINCT FROM 'sales' OR
+          p_changes->0->'row_data'->>'id' IS DISTINCT FROM p_metadata->'financial'->>'sale_id' THEN
       RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='POS_EXTENDED_V1_CORRECTION_UNVERIFIED';
     END IF;
   ELSIF p_operation IS NOT NULL OR p_metadata <> '{"stock":true}'::jsonb OR
@@ -131,13 +158,19 @@ BEGIN
   END IF;
   INSERT INTO pos_sync_feed_v1.extended_publications
     VALUES(p_org,p_branch,p_epoch,v_seq,p_operation,p_changes,p_metadata);
-  IF v_correction THEN
+  IF v_kind='shift_v1' THEN
+    INSERT INTO pos_sync_feed_v1.correction_owners
+    SELECT p_org,p_branch,p_epoch,part."table",(entry->>'id')::uuid,coalesce((entry->>'row_version')::integer,1),v_seq
+    FROM jsonb_to_recordset((p_changes->0->'row_data'->>'graph_json')::jsonb->'tables') AS part("table" text,rows jsonb)
+    CROSS JOIN LATERAL jsonb_array_elements(part.rows) AS entry
+    WHERE part."table" IN ('shifts','shift_cash_counts','shift_reconciliations','shift_close_events','shift_notifications','shift_variance_alerts');
+  ELSIF v_correction THEN
     INSERT INTO pos_sync_feed_v1.correction_owners
     SELECT p_org,p_branch,p_epoch,change->>'table_name',
       ((change->>'entity_id')::jsonb->>CASE WHEN change->>'table_name'='stock_delta_applied' THEN 'movement_id' ELSE 'id' END)::uuid,
       (change->>'row_version')::integer,v_seq
     FROM jsonb_array_elements(p_changes) AS change
-    WHERE change->>'table_name' IN ('sales','sale_items','payment_transactions','stock_delta_applied')
+    WHERE change->>'table_name' IN ('sales','sale_items','payment_transactions','stock_delta_applied','drawer_events')
       AND NOT (change->>'table_name'='sales' AND p_metadata->'financial'->>'kind'='refund_v1'
         AND change->'row_data'->>'is_refunded'='false');
   END IF;
@@ -197,6 +230,7 @@ DECLARE
   v_sealed bigint;
   v_page jsonb;
   v_groups jsonb;
+  v_next text;
 BEGIN
   PERFORM pos_sync_feed_v1.assert_grouped_gateway_scope(p_organization_id,p_branch_id,p_terminal_id,p_binding_proof);
   v_epoch := pos_sync_feed_v1.extended_read_epoch(p_organization_id,p_branch_id);
@@ -211,7 +245,8 @@ BEGIN
   SELECT coalesce(jsonb_agg(
     CASE WHEN cash.operation_id IS NOT NULL AND cash.stock_after IS NOT NULL THEN
            page.value || jsonb_build_object('acceptance',cash.acceptance,'stock',cash.stock_after)
-         WHEN extended.seq IS NOT NULL AND extended.metadata ? 'financial' THEN page.value || extended.metadata
+         WHEN extended.seq IS NOT NULL AND extended.metadata ? 'financial'
+           THEN page.value || extended.metadata || pos_sync_feed_v1.financial_parent_evidence(extended)
          WHEN extended.seq IS NOT NULL OR pos_sync_feed_v1.is_settings_projection(page.value->'changes',p_branch_id)
            THEN page.value
     END ORDER BY page.ordinal),'[]'::jsonb) INTO v_groups
@@ -223,8 +258,20 @@ BEGIN
     (extended.organization_id,extended.scope_id,extended.epoch,extended.seq)=
     (p_organization_id,p_branch_id,v_epoch,(page.value->>'seq')::bigint)
     AND (extended.operation_id,extended.changes) IS NOT DISTINCT FROM ((page.value->>'operation_id')::uuid,page.value->'changes');
-  IF v_groups @> '[null]'::jsonb OR octet_length(v_groups::text)>2093056 THEN
+  IF v_groups @> '[null]'::jsonb THEN
     RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='POS_EXTENDED_V1_PUBLICATION_UNVERIFIED';
+  END IF;
+  IF octet_length(v_groups::text)>2093056 THEN
+    -- The base feed bounds its own rows. Archived evidence can enlarge them,
+    -- so return the longest safe prefix with the original upper boundary.
+    SELECT coalesce(jsonb_agg(group_value ORDER BY ordinal),'[]'::jsonb),
+      max((group_value->>'seq')::bigint)::text INTO v_groups,v_next
+    FROM (
+      SELECT group_value,ordinal,sum(octet_length(group_value::text)+2) OVER (ORDER BY ordinal) AS bytes
+      FROM jsonb_array_elements(v_groups) WITH ORDINALITY AS expanded(group_value,ordinal)
+    ) AS prefix WHERE bytes<=2093054;
+    IF v_next IS NULL THEN RETURN jsonb_build_object('status','SNAPSHOT_REQUIRED','reason','GROUP_TOO_LARGE'); END IF;
+    v_page := v_page || jsonb_build_object('next_seq',v_next,'has_more',true);
   END IF;
   v_page := jsonb_set(v_page,'{groups}',v_groups);
   IF v_sealed IS NOT NULL THEN v_page := v_page || jsonb_build_object('sealed_seq',v_sealed::text); END IF;
@@ -253,7 +300,8 @@ BEGIN
     SELECT 1 FROM jsonb_array_elements(p_entries) AS item(value)
     WHERE jsonb_typeof(value) IS DISTINCT FROM 'object' OR value - ARRAY['table_name','id','version'] <> '{}'::jsonb
       OR NOT value ? 'version' OR coalesce(value->>'table_name','') NOT IN
-        ('sales','sale_items','payment_transactions','item_activity_logs','stock_delta_applied')
+        ('sales','sale_items','payment_transactions','item_activity_logs','stock_delta_applied',
+         'shifts','shift_cash_counts','shift_reconciliations','shift_close_events','shift_notifications','shift_variance_alerts','drawer_events')
       OR coalesce(value->>'id','') !~ '^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$'
       OR NOT (value->'version'='null'::jsonb OR
         (jsonb_typeof(value->'version')='string' AND value->>'version' ~ '^[1-9][0-9]{0,9}$'))) THEN

@@ -443,6 +443,29 @@ alternate tenders, drawer and transfer activity, product owner changes and
 the remaining direct legacy and web writers. Full recovery of those
 workflows and missing authoritative receipt parents remains pending.
 
+The owner requested continuing those code items on PR #451 from `ee420c73`.
+Use disposable tests. Keep hosted verification, beta merge and publication
+pending. Work on protected shift and drawer groups, product ownership
+transitions and transfer receipts, and authoritative receipt-parent recovery
+alongside the canonical checkout and administrative writer paths.
+
+Disposable PostgreSQL and SQL Server LocalDB checks passed for grouped
+protected closes and recounts, drawer request and result audits, stock
+ownership moves and deletes, refund and tender receipt recovery, and
+restart-safe paged recovery. The old stock owner receives only a retirement
+marker. A retained historical product can still anchor an archived receipt.
+Missing authoritative records or pending local edits hold the affected scope
+without advancing the cursor. Canceling an unfinished register bill continues
+to use the existing cart path.
+
+Prepared SQL keeps the business tables and connection settings in place.
+Before enabling a till, verify restorable backups, reconcile existing rows
+and totals by store, and account for pending uploads and open shifts at the
+same boundary. Older corrections without archived evidence require review.
+No hosted schema or data was changed. Grouped shift opening, alternate
+tender checkout, paired stock transfers, remaining direct writers, and
+recovery for those paths still require work.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents

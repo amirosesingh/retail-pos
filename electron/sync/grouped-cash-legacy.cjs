@@ -7,7 +7,16 @@ const tables = new Map([
   ["stock_delta_applied", "store_id"],
 ]);
 const ledger = "stock_delta_applied";
-const receiptTable = (table, extended) => tables.has(table) && (table !== ledger || extended);
+const graphTables = new Set(["shifts", "shift_cash_counts", "shift_reconciliations", "shift_close_events",
+  "shift_notifications", "shift_variance_alerts"]);
+const drawer = "drawer_events";
+const drawerVersion = note => note === "OPEN_REQUESTED" ? "1" :
+  note === "OPENED" || (typeof note === "string" && note.startsWith("FAILED: ")) ? "2" : null;
+const coveredChange = (change, extended) => {
+  const table = change.table_name;
+  return (tables.has(table) && (table !== ledger || extended)) ||
+    (extended && (graphTables.has(table) || (table === drawer && (change.tombstone || drawerVersion(change.row_data?.note)))));
+};
 const rowKey = table => table === ledger ? "movement_id" : "id";
 const uuid = /^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const seq = /^(0|[1-9][0-9]{0,18})$/;
@@ -26,16 +35,16 @@ function entryFor(change, branch, extended) {
   const id = recordId(entity?.[field]);
   if (!entity || Object.keys(entity).length !== 1 || !uuid.test(id) ||
       (change.tombstone !== true && (recordId(change.row_data?.[field]) !== id ||
-        recordId(change.row_data?.[tables.get(change.table_name)]) !== branch))) throw fail();
+        recordId(change.row_data?.[tables.get(change.table_name) ?? "store_id"]) !== branch))) throw fail();
   if (!extended) return { table_name: change.table_name, id };
-  const version = change.tombstone === true ? null : String(change.row_data?.row_version ??
-    (change.table_name === ledger ? 1 : change.row_version));
+  const version = change.tombstone === true ? null : change.table_name === drawer ? drawerVersion(change.row_data?.note) :
+    String(change.row_data?.row_version ?? (change.table_name === ledger || graphTables.has(change.table_name) ? 1 : change.row_version));
   if (version !== null && !/^[1-9]\d{0,9}$/.test(version)) throw fail();
   return { table_name: change.table_name, id, version };
 }
 
 async function prepareLegacyCashPage(cloud, source, context, batch) {
-  const cashRows = changes(batch).filter(change => receiptTable(change.table_name, context.extended));
+  const cashRows = changes(batch).filter(change => coveredChange(change, context.extended));
   if (!cashRows.length || context.projection !== grouped.MIXED_PROJECTION) return null;
   const position = await grouped.readPosition(source.pool.request(), context);
   if (!position && !context.extended) return { batch, position: null };
@@ -58,6 +67,18 @@ async function prepareLegacyCashPage(cloud, source, context, batch) {
   return { batch, position, owners };
 }
 
+function legacyShiftInputs(batch, context, proof) {
+  if (!context?.extended || !proof) return changes(batch);
+  return changes(batch).filter(change => {
+    if (!graphTables.has(change.table_name)) return true;
+    const owner = proof.owners.get(keyOf(entryFor(change, context.branch, true)));
+    if (!owner?.owned) return true;
+    // A shift child without a revision can change in place, including after
+    // the grouped publisher is sealed. Recheck its legacy graph after drain.
+    return change.table_name !== "shifts" && proof.position && BigInt(proof.position.seq) >= owner.seq;
+  });
+}
+
 function allowCashApply(transaction, accepted) {
   const permitted = permits.get(transaction) ?? new Set();
   for (const change of accepted) permitted.add(change);
@@ -70,7 +91,7 @@ async function applyLegacyCashCoverage(transaction, context, batch, proof) {
   const position = await grouped.readPosition(transaction.request(), context, true);
   if (!proof.position) {
     if (!context.extended || position || proof.owners.size) throw held();
-    allowCashApply(transaction, changes(batch).filter(change => receiptTable(change.table_name, true)));
+    allowCashApply(transaction, changes(batch).filter(change => coveredChange(change, true)));
     return batch;
   }
   if (!position || position.epoch !== proof.position.epoch ||
@@ -78,7 +99,7 @@ async function applyLegacyCashCoverage(transaction, context, batch, proof) {
   const skip = new Set();
   const apply = [];
   for (const change of changes(batch)) {
-    if (!receiptTable(change.table_name, context.extended)) continue;
+    if (!coveredChange(change, context.extended)) continue;
     const owner = proof.owners.get(keyOf(entryFor(change, context.branch, context.extended)));
     if (owner !== undefined) {
       if (context.extended) {
@@ -86,7 +107,10 @@ async function applyLegacyCashCoverage(transaction, context, batch, proof) {
         // Once the legacy cursor advances, every skipped row must already be
         // committed by its grouped owner on this SQL Server.
         if (BigInt(position.seq) < owner.seq) throw held();
-        if (owner.owned && change.tombstone === false) { skip.add(change); continue; }
+        if (owner.owned && graphTables.has(change.table_name) && change.table_name !== "shifts" &&
+            BigInt(proof.position.seq) < owner.seq) throw held();
+        if (owner.owned && change.tombstone === false &&
+            (!graphTables.has(change.table_name) || change.table_name === "shifts")) { skip.add(change); continue; }
       }
       const original = change.tombstone === false && String(change.row_version) === "1" &&
         String(change.row_data?.row_version) === "1";
@@ -130,4 +154,4 @@ async function assertCashDownload(transaction, tableName, batch) {
   }
 }
 
-module.exports = { prepareLegacyCashPage, applyLegacyCashCoverage, allowCashApply, assertCashDownload };
+module.exports = { prepareLegacyCashPage, applyLegacyCashCoverage, legacyShiftInputs, allowCashApply, assertCashDownload };

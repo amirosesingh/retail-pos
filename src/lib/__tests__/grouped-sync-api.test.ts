@@ -79,11 +79,26 @@ describe("isolated grouped sync relay", () => {
     expect(requests.at(-1)?.url).toMatch(/\/pos_sync_pull_cash_settings_extended_v1$/);
     expect((await direct({ sqlServerGroupedFeed: { ...read, projection: "settings_cash_v1" } })).status).toBe(502);
     expect((await direct({ sqlServerGroupedFeed: { ...extended, branchId: otherBranch } })).status).toBe(403);
+    const retired = { ...stock, tombstone: true, row_data: { product_id: secondTerminal, row_version: 5 } };
+    upstream = () => Response.json({ ...page(), groups: [{ ...stockGroup, changes: [retired] }] });
+    expect((await direct(body)).status).toBe(200);
+    upstream = () => Response.json({ ...page(), groups: [{ ...stockGroup,
+      changes: [{ ...retired, row_data: { ...retired.row_data, branch_balance: 8 } }] }] });
+    expect((await direct(body)).status).toBe(502);
     const correction = { seq: next, operation_id: otherTerminal, financial: { kind: "tender_v1", sale_id: secondTerminal },
       changes: [{ ...stock, table_name: "sales",
         row_data: { id: secondTerminal, store_id: branch, row_version: 5, payment_type: "cash", payments_count: 0 } }] };
     upstream = () => Response.json({ ...page(), groups: [correction] });
     expect((await direct(body)).status).toBe(200);
+    const payload_json = JSON.stringify({ scope_id: branch, epoch, seq: next, operation_id: otherTerminal,
+      sale: { id: secondTerminal, store_id: branch }, items: [], tenders: [] });
+    upstream = () => Response.json({ ...page(), groups: [{ ...correction,
+      receipt_graph: { payload_json, payload_sha256: createHash("sha256").update(payload_json).digest("hex") } }] });
+    expect((await direct(body)).status).toBe(200);
+    upstream = () => Response.json({ ...page(), groups: [{ ...correction,
+      receipt_graph: { payload_json, payload_sha256: "0".repeat(64) } }] });
+    expect((await direct(body)).status).toBe(502);
+    upstream = () => Response.json({ ...page(), groups: [correction] });
     correction.changes[0].row_data.store_id = otherBranch;
     expect((await direct(body)).status).toBe(502);
   });
@@ -100,6 +115,32 @@ describe("isolated grouped sync relay", () => {
     expect((await direct({ sqlServerCashLegacyCoverage: { ...body.sqlServerCashLegacyCoverage, epoch: null } })).status).toBe(200);
     expect(requests.at(-1)?.args.p_epoch).toBeNull();
     upstream = () => Response.json({ status: "OK", scope_id: branch, epoch, entries: [{ ...coverage, version: "2" }] });
+    expect((await direct(body)).status).toBe(502);
+  });
+
+  it("accepts scoped shift and drawer groups with exact archived evidence", async () => {
+    runtime.env.POS_GROUPED_CASH_SETTINGS_PILOT_ENABLED = "true";
+    runtime.env.POS_GROUPED_EXTENDED_PILOT_ENABLED = "true";
+    const body = { sqlServerGroupedFeed: { ...read, projection: "settings_cash_v1", extended: true } };
+    const graph_json = JSON.stringify({ branchId: branch, shiftId: secondTerminal,
+      tables: ["shifts", "shift_cash_counts", "shift_reconciliations", "shift_close_events",
+        "shift_notifications", "shift_variance_alerts"].map(table => ({ table, rows: [] })) });
+    const shift = { seq: next, operation_id: otherTerminal, financial: { kind: "shift_v1", shift_id: secondTerminal },
+      changes: [{ table_name: "shifts", entity_id: JSON.stringify({ id: secondTerminal }), row_version: "2", tombstone: false,
+        row_data: { id: secondTerminal, store_id: branch, row_version: 2, graph_json,
+          graph_sha256: createHash("sha256").update(graph_json).digest("hex") } }] };
+    const show = (group: unknown) => { upstream = () => Response.json({ ...page(), groups: [group] }); };
+    show(shift);
+    expect((await direct(body)).status).toBe(200);
+    shift.changes[0].row_data.graph_sha256 = "0".repeat(64);
+    expect((await direct(body)).status).toBe(502);
+    const drawer = { ...shift, financial: { kind: "drawer_v1", event_id: secondTerminal },
+      changes: [{ ...shift.changes[0], table_name: "drawer_events",
+        row_data: { id: secondTerminal, store_id: branch, note: "OPENED", terminal_id: terminal, shift_id: null,
+          staff_id: null, staff_name: null, role: null, reason: "Fixture", approved_by: null, created_at: "2026-11-07T09:00:00Z" } }] };
+    show(drawer);
+    expect((await direct(body)).status).toBe(200);
+    drawer.changes[0].row_data.store_id = otherBranch;
     expect((await direct(body)).status).toBe(502);
   });
 

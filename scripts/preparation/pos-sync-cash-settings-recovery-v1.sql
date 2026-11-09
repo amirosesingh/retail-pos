@@ -41,8 +41,25 @@ RETURN jsonb_build_object('seq', p_row.seq::text, 'operation_id', p_row.operatio
   'changes', p_row.changes, 'acceptance', p_row.acceptance);
 
 CREATE FUNCTION pos_sync_feed_v1.financial_recovery_row(p_row pos_sync_feed_v1.extended_publications)
-RETURNS jsonb LANGUAGE sql IMMUTABLE STRICT SECURITY INVOKER SET search_path = pg_catalog
-RETURN jsonb_build_object('seq',p_row.seq::text,'operation_id',p_row.operation_id,'changes',p_row.changes) || p_row.metadata;
+RETURNS jsonb LANGUAGE sql STABLE STRICT SECURITY INVOKER SET search_path = pg_catalog
+RETURN jsonb_build_object('seq',p_row.seq::text,'operation_id',p_row.operation_id,'changes',p_row.changes)
+  || p_row.metadata || pos_sync_feed_v1.financial_parent_evidence(p_row);
+
+CREATE FUNCTION pos_sync_feed_v1.recovery_stock_retirements(
+  p_org text, p_branch text, p_epoch uuid, p_seq bigint, p_extended boolean
+)
+RETURNS TABLE(product_id uuid, product_version integer, retirement_seq bigint)
+LANGUAGE plpgsql STABLE SECURITY INVOKER SET search_path = pg_catalog
+AS $retired$
+BEGIN
+  IF NOT p_extended THEN RETURN; END IF;
+  RETURN QUERY SELECT retired.product_id,retired.product_version,retired.seq
+  FROM pos_sync_feed_v1.stock_retirements AS retired
+  WHERE (retired.organization_id,retired.scope_id,retired.epoch)=(p_org,p_branch,p_epoch)
+    AND retired.seq<=p_seq AND NOT EXISTS (SELECT 1 FROM public.products AS product
+      WHERE product.id=retired.product_id AND product.owner_store_id=p_branch);
+END;
+$retired$;
 
 CREATE FUNCTION public.pos_sync_begin_cash_settings_recovery_v1(
   p_organization_id text, p_branch_id text, p_terminal_id uuid, p_binding_proof text,
@@ -141,9 +158,13 @@ BEGIN
             AND product.stock_by_store->>p_branch_id ~ '^-?(0|[1-9][0-9]{0,9})$'
           THEN CASE WHEN (product.stock_by_store->>p_branch_id)::bigint BETWEEN -2147483648 AND 2147483647
             THEN (product.stock_by_store->>p_branch_id)::integer END
-        END AS balance
+        END AS balance, NULL::bigint AS retirement_seq
       FROM public.products AS product
       WHERE product.owner_store_id = p_branch_id
+      UNION ALL
+      SELECT retired.product_id,retired.product_version,NULL::integer,retired.retirement_seq
+      FROM pos_sync_feed_v1.recovery_stock_retirements(
+        p_organization_id,p_branch_id,v_head.epoch,v_pin.protected_seq,p_extended) AS retired
     ), cash AS MATERIALIZED (
       SELECT publication.seq, pos_sync_feed_v1.cash_recovery_row(publication) AS row,
         publication.changes->1->'row_data'->>'product_id' AS product_id,
@@ -164,7 +185,8 @@ BEGIN
       SELECT p_organization_id, p_branch_id, v_pin.pin_id, 'cash', row_number() OVER (ORDER BY cash.seq),
         cash.seq, encode(sha256(convert_to(cash.row::text, 'UTF8')), 'hex'), NULL
       FROM cash
-      JOIN stock ON stock.id = cash.product_id::uuid AND stock.balance IS NOT NULL AND stock.row_version > 0
+      JOIN stock ON stock.id = cash.product_id::uuid AND stock.row_version > 0
+        AND (stock.balance IS NOT NULL OR cash.seq < stock.retirement_seq)
       JOIN public.stock_delta_applied AS delta ON delta.movement_id = cash.movement_id::uuid
         AND delta.product_id = stock.id AND delta.store_id = p_branch_id AND delta.delta::text = cash.quantity_delta
       RETURNING 1
@@ -177,8 +199,10 @@ BEGIN
     ), frozen_stock AS (
       INSERT INTO pos_sync_feed_v1.cash_settings_recovery_entries
       SELECT p_organization_id, p_branch_id, v_pin.pin_id, 'stock', row_number() OVER (ORDER BY stock.id),
-        NULL, NULL, jsonb_build_object('product_id', stock.id, 'branch_balance', stock.balance, 'row_version', stock.row_version)
-      FROM stock WHERE stock.balance IS NOT NULL AND stock.row_version > 0
+        NULL, NULL, CASE WHEN stock.retirement_seq IS NULL
+          THEN jsonb_build_object('product_id', stock.id, 'branch_balance', stock.balance, 'row_version', stock.row_version)
+          ELSE jsonb_build_object('product_id', stock.id, 'retired', true, 'row_version', stock.row_version) END
+      FROM stock WHERE (stock.balance IS NOT NULL OR stock.retirement_seq IS NOT NULL) AND stock.row_version > 0
       RETURNING 1
     )
     SELECT (SELECT count(*) FROM cash) AS cash_expected, (SELECT count(*) FROM frozen_cash) AS cash_count,
@@ -286,7 +310,8 @@ END;
 $page$;
 
 REVOKE ALL ON FUNCTION pos_sync_feed_v1.cash_recovery_row(pos_sync_feed_v1.cash_publications),
-  pos_sync_feed_v1.financial_recovery_row(pos_sync_feed_v1.extended_publications)
+  pos_sync_feed_v1.financial_recovery_row(pos_sync_feed_v1.extended_publications),
+  pos_sync_feed_v1.recovery_stock_retirements(text,text,uuid,bigint,boolean)
   FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON FUNCTION public.pos_sync_begin_cash_settings_recovery_v1(text,text,uuid,text,boolean,text),
   public.pos_sync_page_cash_settings_recovery_v1(text,text,uuid,text,uuid,text,text,integer,boolean)

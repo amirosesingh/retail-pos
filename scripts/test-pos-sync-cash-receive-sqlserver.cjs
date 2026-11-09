@@ -268,12 +268,14 @@ async function verifyPagedRecovery(receipt, origin) {
     const manifest = JSON.stringify({ scope_id: branch, epoch, seq, changes: [setting], cash_count: "2", stock_count: "2" });
     const identity = { status: "OK", scope_id: branch, epoch, seq, pin_id: pinId, expires_at: expires };
     let badDigest = true;
+    let interruptStock = false;
     const requests = [];
     globalThis.fetch = async (_url, options) => {
       const read = JSON.parse(options.body).sqlServerGroupedRecovery;
       requests.push(read.action === "begin" ? "begin" : [read.kind, read.after].join(":"));
       assert.equal(read.branchId, branch);
       if (read.action === "begin") return Response.json({ ...identity, manifest_json: manifest, manifest_sha256: digest(manifest) });
+      if (interruptStock && read.kind === "stock") throw new TypeError("fixture interrupted stock download");
       const index = Number(read.after);
       assert.equal(read.pinId, pinId);
       const payload = JSON.stringify({ scope_id: branch, epoch, seq, pin_id: pinId, kind: read.kind,
@@ -302,11 +304,19 @@ async function verifyPagedRecovery(receipt, origin) {
     assert.equal(await position(), null);
     assert.equal((await state()).stages, 0);
     badDigest = false;
+    interruptStock = true;
+    await assert.rejects(run());
+    assert.equal((await state()).stages, 2);
+    assert.equal(await position(), null);
+    await local.restart();
+    interruptStock = false;
+    const beforeResume = requests.length;
     const key = JSON.stringify({ id: product });
     await manager.pool.request().input("branch", branch).input("key", key).query(`
       INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id,entity_version)
       VALUES(N'products',@key,N'update',@branch,1);`);
     await assert.rejects(run(), { code: "ELOCAL_UPLOAD_PENDING" });
+    assert.deepEqual(requests.slice(beforeResume), ["begin", "stock:0", "stock:1"]);
     assert.equal(await position(), null);
     assert.equal((await state()).sales, 0);
     assert.equal((await state()).stock_quantity, 42);
@@ -337,7 +347,7 @@ async function verifyPagedRecovery(receipt, origin) {
     assert.equal(installed.sales, 2);
     assert.equal(installed.stages, 0);
     assert.equal(JSON.parse((await position()).committed_cursor).seq, seq);
-    assert.deepEqual(requests.slice(-5), ["begin", "cash:0", "cash:1", "stock:0", "stock:1"]);
+    assert.equal(requests.at(-1), "begin");
     const tracked = await manager.pool.request().input("start", start).input("id", product).query(`
       SELECT CONVERT(varchar(32),SYS_CHANGE_CONTEXT,2) AS context
       FROM CHANGETABLE(CHANGES dbo.products,@start) AS ct WHERE ct.id=@id;`);
@@ -360,7 +370,7 @@ async function verifyPagedRecovery(receipt, origin) {
     assert.equal(newer.stock_quantity, 45);
     const priorPosition = (await position()).committed_cursor;
     await assert.rejects(run(), { code: "ESYNC_GROUPED_REVIEW_REQUIRED" });
-    assert.deepEqual(await state(), newer);
+    assert.deepEqual(await state(), { ...newer, stages: 4 });
     assert.equal((await position()).committed_cursor, priorPosition);
     await local.restart();
     assert.equal(JSON.parse((await position()).committed_cursor).seq, seq);
@@ -413,11 +423,42 @@ async function verifyPagedRecovery(receipt, origin) {
     const handbackPilot = { enrollment: extended, mode: "handback" };
     assert.equal(await worker.cashSenderHandoff(proof, handbackPilot), false);
     assert.equal(await worker.cashSenderHandoff({ ...proof, writingNew: false }, handbackPilot), true);
+    const latestSequence = "6";
+    const historical = nextReceipt(cash[0], "5", origin, randomUUID(), sale.shift_id);
+    const movedStock = extendedStock.map(row => row.product_id === product
+      ? { product_id: product, row_version: 4, retired: true } : row);
+    const movedIdentity = { ...extendedIdentity, seq: latestSequence, pin_id: randomUUID() };
+    const movedManifest = JSON.stringify({ ...JSON.parse(extendedManifest), seq: latestSequence, cash_count: "3" });
+    const laterBuckets = { "new-owner": 9, "preserved-foreign": 37 };
+    await manager.pool.request().input("id", product).input("buckets", JSON.stringify(laterBuckets)).query(`
+      WITH CHANGE_TRACKING_CONTEXT (0x434C4F5544)
+      UPDATE dbo.products SET owner_store_id=N'new-owner',row_version=4,stock_quantity=46,stock_by_store=@buckets
+      WHERE id=@id;`);
+    globalThis.fetch = async (_url, options) => {
+      const read = JSON.parse(options.body).sqlServerGroupedRecovery;
+      assert.equal(read.extended, true);
+      if (read.action === "begin") {
+        assert.equal(read.atLeastSeq, "4");
+        return Response.json({ ...movedIdentity, manifest_json: movedManifest, manifest_sha256: digest(movedManifest) });
+      }
+      const rows = { cash: [...cash, historical], financial: [correction], stock: movedStock }[read.kind];
+      const payload = JSON.stringify({ scope_id: branch, epoch, seq: latestSequence, pin_id: movedIdentity.pin_id,
+        kind: read.kind, after: read.after, next: String(rows.length), total: String(rows.length), rows });
+      return Response.json({ ...movedIdentity, payload_json: payload, payload_sha256: digest(payload) });
+    };
+    cloud.pullGroupedSettings = async (_source, saved) => saved.seq === "4"
+      ? { status: "SNAPSHOT_REQUIRED", reason: "REPLAY_EXPIRED" }
+      : { status: "OK", scope_id: branch, epoch, next_seq: saved.seq, upper_seq: saved.seq, has_more: false, groups: [] };
+    assert.equal((await worker.runGroupedSettingsPilot(extended, () => false)).position.seq, latestSequence);
+    const movedState = await state();
+    assert.deepEqual(JSON.parse(movedState.stock_by_store), laterBuckets);
+    assert.equal(movedState.sales, 3);
+    console.log("PASS extended recovery restores archived cash after ownership moves without changing the new owner's product");
     let sealed = false;
     cloud.pullGroupedSettings = async (_source, saved, _limit, _projection, enabled) => {
       assert.equal(enabled, true);
       return { status: "OK", scope_id: branch, epoch, next_seq: saved.seq, upper_seq: saved.seq, has_more: false, groups: [],
-        ...(sealed ? { sealed_seq: "4" } : {}) };
+        ...(sealed ? { sealed_seq: latestSequence } : {}) };
     };
     cloud.bootstrapPage = async () => ({ rows: [setting.row_data], cursor: null });
     await assert.rejects(worker.returnGroupedSettingsHandoff(extended, () => false), { code: "ESYNC_GROUPED_REVIEW_REQUIRED" });
@@ -430,7 +471,7 @@ async function verifyPagedRecovery(receipt, origin) {
     assert.equal(await worker.cashSenderHandoff({ ...proof, writingNew: false }, handbackPilot), true);
     assert.equal(await worker.cashSenderHandoff(proof, activePilot), false);
     await manager.pool.request().input("id", waiting).query("DELETE FROM dbo.local_operation_receipts WHERE operation_id=@id;");
-    assert.equal((await worker.returnGroupedSettingsHandoff(extended, () => false)).seq, "4");
+    assert.equal((await worker.returnGroupedSettingsHandoff(extended, () => false)).seq, latestSequence);
     assert.equal(await position(), null);
     assert.equal((await checkpoints.get(branch, "__feed__", "pull")).committed_cursor, "43");
     assert.equal(await worker.cashSenderHandoff(proof, activePilot), false);

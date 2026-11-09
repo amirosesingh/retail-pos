@@ -1,6 +1,7 @@
-const { createHash, randomUUID } = require("node:crypto");
+const { createHash } = require("node:crypto");
+const { stableUuid } = require("../db/repositories/aggregates.cjs");
 const grouped = require("./grouped-store-settings.cjs");
-const { applyGroupedStock, parseStockRow } = require("./grouped-live-stock.cjs");
+const { applyGroupedStock, parseStockRecoveryRow } = require("./grouped-live-stock.cjs");
 
 const RECOVERY = "paged_stock_v1";
 const PAGE_LIMIT = 25;
@@ -81,7 +82,7 @@ function checkRows(page, snapshot, parseCash, previous) {
       if (page.kind === "cash") return { facts: parseCash(row, snapshot.epoch), seq: row.seq };
       return require("./grouped-financial-corrections.cjs").parseFinancialCorrection(row, snapshot.branch);
     }
-    parseStockRow(row);
+    parseStockRecoveryRow(row, Object.hasOwn(snapshot.totals, "financial"));
     if (row.product_id <= previous.stock)
       throw fail("The recovery archive contains invalid or repeated branch stock.");
     previous.stock = row.product_id;
@@ -95,9 +96,10 @@ function checkRows(page, snapshot, parseCash, previous) {
 async function stagePagedRecovery(cloud, context, assertCurrent) {
   const { source, branch, table, parseCash, extended, atLeastSeq } = context;
   assertCurrent();
-  const snapshot = snapshotFor(await cloud.beginGroupedRecovery(source, { extended, atLeastSeq }),
-    branch, table, extended, atLeastSeq);
-  const runId = randomUUID();
+  const manifest = await cloud.beginGroupedRecovery(source, { extended, atLeastSeq });
+  const snapshot = snapshotFor(manifest, branch, table, extended, atLeastSeq);
+  const runId = stableUuid({ source: source.fingerprint, databaseGuid: context.databaseGuid,
+    pin: snapshot.pinId, manifest: manifest.manifest_sha256 });
   const clear = () => source.pool.request().input("run", runId).query(`DELETE FROM ${PAGE_TABLE} WHERE run_id=@run;`);
   try {
     assertCurrent();
@@ -108,26 +110,33 @@ async function stagePagedRecovery(cloud, context, assertCurrent) {
       while (after !== snapshot.totals[kind]) {
         assertCurrent();
         assertSnapshotLive(snapshot);
-        const response = await cloud.pageGroupedRecovery(source, { pinId: snapshot.pinId, kind, after, limit: PAGE_LIMIT,
+        const staged = await source.pool.request().input("run", runId).input("kind", kind).input("after", after).query(`
+          SELECT payload_json,payload_sha256 FROM ${PAGE_TABLE}
+          WHERE run_id=@run AND kind=@kind AND after_ordinal=CONVERT(bigint,@after) AND expires_at>SYSUTCDATETIME();`);
+        const saved = staged.recordset?.[0];
+        const response = saved ?? await cloud.pageGroupedRecovery(source, { pinId: snapshot.pinId, kind, after, limit: PAGE_LIMIT,
           ...(extended ? { extended } : {}) });
         assertCurrent();
-        if (!exact(response, ["status", "scope_id", "epoch", "seq", "pin_id", "expires_at", "payload_json", "payload_sha256"]) ||
-            response.status !== "OK" || response.scope_id !== branch || response.epoch !== snapshot.epoch ||
-            response.seq !== snapshot.seq || response.pin_id !== snapshot.pinId || response.expires_at !== snapshot.expiresAt)
+        if (!saved &&
+            (!exact(response, ["status", "scope_id", "epoch", "seq", "pin_id", "expires_at", "payload_json", "payload_sha256"]) ||
+             response.status !== "OK" || response.scope_id !== branch || response.epoch !== snapshot.epoch ||
+             response.seq !== snapshot.seq || response.pin_id !== snapshot.pinId || response.expires_at !== snapshot.expiresAt))
           throw fail("The recovery page came from a different or expired pin.");
         const page = pageFor(decode(response.payload_json, response.payload_sha256, MAX_PAGE_BYTES), kind, after, snapshot);
         checkRows(page, snapshot, parseCash, previous);
-        await source.pool.request().input("run", runId).input("kind", kind).input("after", after)
+        if (!saved) await source.pool.request().input("run", runId).input("kind", kind).input("after", after)
           .input("expires", new Date(snapshot.expires)).input("payload", response.payload_json).input("hash", response.payload_sha256)
           .query(`INSERT ${PAGE_TABLE} (run_id,kind,after_ordinal,expires_at,payload_json,payload_sha256)
-            VALUES (@run,@kind,CONVERT(bigint,@after),@expires,@payload,@hash);`);
+            SELECT @run,@kind,CONVERT(bigint,@after),@expires,@payload,@hash
+            WHERE NOT EXISTS (SELECT 1 FROM ${PAGE_TABLE} WITH(UPDLOCK,HOLDLOCK)
+              WHERE run_id=@run AND kind=@kind AND after_ordinal=CONVERT(bigint,@after));`);
         after = page.next;
       }
     }
     assertSnapshotLive(snapshot);
     return { ...snapshot, runId, clear };
   } catch (error) {
-    await clear().catch(() => {});
+    if (error?.code === "ESYNC_GROUPED_PROTOCOL") await clear().catch(() => {});
     throw error;
   }
 }
@@ -170,7 +179,8 @@ async function applyPagedRecovery(worker, transaction, context, snapshot, applyC
   await verifyCoverage(transaction, snapshot);
   const previous = { cash: 0n, financial: 0n, stock: "" };
   let stockChanged = 0;
-  for (const kind of Object.keys(snapshot.totals)) {
+  const kinds = context.extended ? ["stock", "cash", "financial"] : Object.keys(snapshot.totals);
+  for (const kind of kinds) {
     let after = "0";
     while (after !== snapshot.totals[kind]) {
       assertCurrent();

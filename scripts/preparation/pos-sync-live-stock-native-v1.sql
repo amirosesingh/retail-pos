@@ -6,8 +6,10 @@ CREATE TABLE dbo.pos_sync_grouped_stock_v1 (
   feed_epoch uniqueidentifier NOT NULL,
   product_version int NULL CHECK (product_version > 0),
   branch_balance int NULL,
+  retired bit NOT NULL CONSTRAINT DF_pos_sync_grouped_stock_v1_retired DEFAULT (0),
   own_accepted_seq bigint NULL CHECK (own_accepted_seq > 0),
-  CHECK ((product_version IS NULL AND branch_balance IS NULL AND own_accepted_seq IS NOT NULL) OR
-         (product_version IS NOT NULL AND branch_balance IS NOT NULL)),
+  CHECK ((retired=0 AND product_version IS NULL AND branch_balance IS NULL AND own_accepted_seq IS NOT NULL) OR
+         (retired=0 AND product_version IS NOT NULL AND branch_balance IS NOT NULL) OR
+         (retired=1 AND product_version IS NOT NULL AND branch_balance IS NULL)),
   PRIMARY KEY (branch_id, product_id)
 );

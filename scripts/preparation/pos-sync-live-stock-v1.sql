@@ -23,9 +23,36 @@ CREATE TABLE pos_sync_feed_v1.stock_revision_coverage (
 );
 CREATE INDEX stock_revision_coverage_feed ON pos_sync_feed_v1.stock_revision_coverage
   (organization_id, scope_id, epoch, seq);
+-- Retirement remains recoverable after live groups expire. A later return
+-- of the same product to the same branch replaces the retired projection.
+CREATE TABLE pos_sync_feed_v1.stock_retirements (
+  organization_id text COLLATE "C" NOT NULL,
+  scope_id text COLLATE "C" NOT NULL,
+  epoch uuid NOT NULL,
+  product_id uuid NOT NULL,
+  product_version integer NOT NULL CHECK (product_version > 0),
+  seq bigint NOT NULL CHECK (seq > 0),
+  PRIMARY KEY (organization_id, scope_id, epoch, product_id),
+  FOREIGN KEY (organization_id, scope_id, epoch) REFERENCES pos_sync_feed_v1.stock_pilots
+);
+CREATE INDEX stock_retirements_product_version ON pos_sync_feed_v1.stock_retirements
+  (organization_id, product_id, product_version);
+-- Transaction-only staging. The deferred trigger consumes every row before
+-- commit and has access to the first old owner and the final product state.
+CREATE TABLE pos_sync_feed_v1.stock_transaction_writes (
+  transaction_id xid8 NOT NULL,
+  product_id uuid NOT NULL,
+  previous_owner text COLLATE "C",
+  previous_balance jsonb,
+  previous_version integer,
+  PRIMARY KEY (transaction_id, product_id)
+);
 ALTER TABLE pos_sync_feed_v1.stock_pilots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pos_sync_feed_v1.stock_revision_coverage ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON pos_sync_feed_v1.stock_pilots, pos_sync_feed_v1.stock_revision_coverage
+ALTER TABLE pos_sync_feed_v1.stock_retirements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pos_sync_feed_v1.stock_transaction_writes ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON pos_sync_feed_v1.stock_pilots, pos_sync_feed_v1.stock_revision_coverage,
+  pos_sync_feed_v1.stock_retirements, pos_sync_feed_v1.stock_transaction_writes
   FROM PUBLIC, anon, authenticated, service_role;
 
 ALTER TABLE pos_sync_feed_v1.cash_publications ADD COLUMN stock_after jsonb;
@@ -76,14 +103,16 @@ RETURNS boolean LANGUAGE sql IMMUTABLE SECURITY INVOKER SET search_path = pg_cat
 RETURN coalesce(p_branch <> '' AND jsonb_array_length(p_changes) = 1
   AND (p_changes->0) - ARRAY['table_name','entity_id','row_version','tombstone','row_data'] = '{}'::jsonb
   AND p_changes->0->>'table_name' = 'products_stock'
-  AND p_changes->0->'tombstone' = 'false'::jsonb
   AND jsonb_typeof(p_changes->0->'entity_id') = 'string'
   AND p_changes->0->>'entity_id' = jsonb_build_object('id', p_changes->0->'row_data'->>'product_id')::text
-  AND (p_changes->0->'row_data') - ARRAY['product_id','branch_balance','row_version'] = '{}'::jsonb
   AND p_changes->0->'row_data'->>'product_id' ~ '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'
-  AND jsonb_typeof(p_changes->0->'row_data'->'branch_balance') = 'number'
-  AND p_changes->0->'row_data'->>'branch_balance' ~ '^-?(0|[1-9][0-9]{0,9})$'
-  AND (p_changes->0->'row_data'->>'branch_balance')::numeric BETWEEN -2147483648 AND 2147483647
+  AND (CASE p_changes->0->'tombstone'
+    WHEN 'true'::jsonb THEN (p_changes->0->'row_data') - ARRAY['product_id','row_version'] = '{}'::jsonb
+    WHEN 'false'::jsonb THEN (p_changes->0->'row_data') - ARRAY['product_id','branch_balance','row_version'] = '{}'::jsonb
+      AND jsonb_typeof(p_changes->0->'row_data'->'branch_balance') = 'number'
+      AND p_changes->0->'row_data'->>'branch_balance' ~ '^-?(0|[1-9][0-9]{0,9})$'
+      AND (p_changes->0->'row_data'->>'branch_balance')::numeric BETWEEN -2147483648 AND 2147483647
+    ELSE false END)
   AND jsonb_typeof(p_changes->0->'row_data'->'row_version') = 'number'
   AND p_changes->0->'row_data'->>'row_version' ~ '^[1-9][0-9]{0,9}$'
   AND (p_changes->0->'row_data'->>'row_version')::numeric <= 2147483647
@@ -112,7 +141,16 @@ BEGIN
      OR (v_stock->>'row_version')::integer IS DISTINCT FROM p_version THEN
     RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'POS_LIVE_STOCK_V1_REVISION_UNVERIFIED';
   END IF;
+  IF EXISTS (SELECT 1 FROM pos_sync_feed_v1.stock_retirements AS retired
+    WHERE retired.organization_id=p_org AND retired.product_id=p_product
+      AND (retired.product_version>p_version OR
+        (retired.scope_id=p_branch AND retired.product_version=p_version))) THEN
+    RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'POS_LIVE_STOCK_V1_REVISION_UNVERIFIED';
+  END IF;
   INSERT INTO pos_sync_feed_v1.stock_revision_coverage VALUES (p_org, p_branch, p_epoch, p_product, p_version, p_seq);
+  DELETE FROM pos_sync_feed_v1.stock_retirements AS retired
+  WHERE (retired.organization_id, retired.scope_id, retired.epoch, retired.product_id) =
+    (p_org, p_branch, p_epoch, p_product) AND retired.product_version < p_version;
 END;
 $cover$;
 
@@ -143,9 +181,21 @@ $cash$;
 CREATE TRIGGER pos_sync_capture_cash_stock_after BEFORE INSERT ON pos_sync_feed_v1.cash_publications
 FOR EACH ROW EXECUTE FUNCTION pos_sync_feed_v1.capture_cash_stock_after();
 
--- Deferred until business writes and their optional receipt coverage exist.
--- Several updates of a product in one transaction project only its final
--- revision. Cash/refund coverage keeps the balance inside the receipt group.
+CREATE FUNCTION pos_sync_feed_v1.stage_product_stock()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog
+AS $stage$
+BEGIN
+  INSERT INTO pos_sync_feed_v1.stock_transaction_writes
+  VALUES (pg_current_xact_id(), coalesce(NEW.id, OLD.id), OLD.owner_store_id,
+    OLD.stock_by_store->OLD.owner_store_id, OLD.row_version)
+  ON CONFLICT DO NOTHING;
+  RETURN NULL;
+END;
+$stage$;
+
+-- Acquire all involved scope heads in one consistent order after ordinary
+-- product DML. A move publishes the old owner's retirement and the new
+-- owner's balance together, without sharing one branch's data with the other.
 CREATE FUNCTION pos_sync_feed_v1.publish_product_stock()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog
 AS $publish$
@@ -155,18 +205,45 @@ DECLARE
   v_row jsonb;
   v_change jsonb;
   v_seq bigint;
+  v_retired_version integer;
 BEGIN
-  SELECT * INTO v_product FROM public.products WHERE id = NEW.id;
-  IF NOT FOUND OR v_product.owner_store_id IS NULL THEN RETURN NULL; END IF;
-  IF TG_OP = 'UPDATE' AND OLD.owner_store_id IS NOT DISTINCT FROM v_product.owner_store_id
-     AND (OLD.stock_by_store->v_product.owner_store_id) IS NOT DISTINCT FROM
-         (v_product.stock_by_store->v_product.owner_store_id) THEN RETURN NULL; END IF;
+  SELECT * INTO v_product FROM public.products WHERE id = NEW.product_id;
+  PERFORM head.scope_id FROM pos_sync_feed_v1.feed_heads AS head
+  WHERE head.organization_id='default' AND head.scope_id IN (
+    SELECT saved.previous_owner FROM pos_sync_feed_v1.stock_transaction_writes AS saved WHERE saved.transaction_id=NEW.transaction_id
+    UNION SELECT product.owner_store_id FROM pos_sync_feed_v1.stock_transaction_writes AS saved
+      JOIN public.products AS product ON product.id=saved.product_id WHERE saved.transaction_id=NEW.transaction_id
+  )
+  ORDER BY head.scope_id FOR NO KEY UPDATE OF head;
+  DELETE FROM pos_sync_feed_v1.stock_transaction_writes
+  WHERE transaction_id=NEW.transaction_id AND product_id=NEW.product_id;
 
-  -- Serializes activation with writes already in flight. Acquire the head
-  -- only after the ordinary product DML, just as the cash writer does.
-  SELECT epoch INTO v_epoch FROM pos_sync_feed_v1.feed_heads
-  WHERE organization_id = 'default' AND scope_id = v_product.owner_store_id FOR NO KEY UPDATE;
-  IF NOT FOUND OR pos_sync_feed_v1.extended_scope_epoch('default', v_product.owner_store_id) IS DISTINCT FROM v_epoch
+  IF NEW.previous_owner IS NOT NULL AND NEW.previous_owner IS DISTINCT FROM v_product.owner_store_id THEN
+    v_epoch := pos_sync_feed_v1.extended_scope_epoch('default', NEW.previous_owner);
+    IF v_epoch IS NOT NULL THEN
+      v_retired_version := coalesce(v_product.row_version, NEW.previous_version + 1);
+      IF v_retired_version IS NULL OR v_retired_version <= NEW.previous_version THEN
+        RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='POS_LIVE_STOCK_V1_RETIREMENT_UNVERIFIED';
+      END IF;
+      v_change := jsonb_build_array(jsonb_build_object('table_name','products_stock',
+        'entity_id',jsonb_build_object('id',NEW.product_id)::text,'row_version',v_retired_version::text,'tombstone',true,
+        'row_data',jsonb_build_object('product_id',NEW.product_id,'row_version',v_retired_version)));
+      v_seq := pos_sync_feed_v1.append_extended_group('default', NEW.previous_owner, v_epoch, NULL, v_change, '{"stock":true}'::jsonb);
+      INSERT INTO pos_sync_feed_v1.stock_retirements VALUES
+        ('default', NEW.previous_owner, v_epoch, NEW.product_id, v_retired_version, v_seq)
+      ON CONFLICT (organization_id, scope_id, epoch, product_id) DO UPDATE
+        SET product_version=EXCLUDED.product_version,seq=EXCLUDED.seq
+        WHERE stock_retirements.product_version<EXCLUDED.product_version;
+      IF NOT FOUND THEN RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='POS_LIVE_STOCK_V1_RETIREMENT_UNVERIFIED'; END IF;
+    END IF;
+  END IF;
+
+  IF v_product.owner_store_id IS NULL OR
+     (NEW.previous_owner IS NOT DISTINCT FROM v_product.owner_store_id AND
+      NEW.previous_balance IS NOT DISTINCT FROM v_product.stock_by_store->v_product.owner_store_id)
+  THEN RETURN NULL; END IF;
+  v_epoch := pos_sync_feed_v1.extended_scope_epoch('default', v_product.owner_store_id);
+  IF v_epoch IS NULL
      OR NOT EXISTS (SELECT 1 FROM pos_sync_feed_v1.stock_pilots AS pilot
        WHERE (pilot.organization_id, pilot.scope_id, pilot.epoch) = ('default', v_product.owner_store_id, v_epoch))
      OR EXISTS (SELECT 1 FROM pos_sync_feed_v1.stock_revision_coverage AS covered
@@ -184,15 +261,16 @@ BEGIN
   RETURN NULL;
 END;
 $publish$;
-CREATE CONSTRAINT TRIGGER pos_sync_publish_product_stock_insert AFTER INSERT ON public.products
-DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION pos_sync_feed_v1.publish_product_stock();
-CREATE CONSTRAINT TRIGGER pos_sync_publish_product_stock_update AFTER UPDATE ON public.products
-DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+CREATE TRIGGER pos_sync_stage_product_stock_insert_delete AFTER INSERT OR DELETE ON public.products
+FOR EACH ROW EXECUTE FUNCTION pos_sync_feed_v1.stage_product_stock();
+CREATE TRIGGER pos_sync_stage_product_stock_update AFTER UPDATE ON public.products FOR EACH ROW
 WHEN (OLD.owner_store_id IS DISTINCT FROM NEW.owner_store_id OR OLD.stock_by_store IS DISTINCT FROM NEW.stock_by_store)
-EXECUTE FUNCTION pos_sync_feed_v1.publish_product_stock();
+EXECUTE FUNCTION pos_sync_feed_v1.stage_product_stock();
+CREATE CONSTRAINT TRIGGER pos_sync_publish_product_stock AFTER INSERT ON pos_sync_feed_v1.stock_transaction_writes
+DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION pos_sync_feed_v1.publish_product_stock();
 
 REVOKE ALL ON FUNCTION pos_sync_feed_v1.arm_cash_stock_scope(text,text,uuid),
   pos_sync_feed_v1.live_stock_row(uuid,jsonb,text,integer), pos_sync_feed_v1.is_live_stock_projection(jsonb,text),
   pos_sync_feed_v1.cover_stock_revision(text,text,uuid,bigint,uuid,integer,integer),
-  pos_sync_feed_v1.capture_cash_stock_after(), pos_sync_feed_v1.publish_product_stock()
+  pos_sync_feed_v1.capture_cash_stock_after(), pos_sync_feed_v1.stage_product_stock(), pos_sync_feed_v1.publish_product_stock()
   FROM PUBLIC, anon, authenticated, service_role;

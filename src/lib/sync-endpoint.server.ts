@@ -117,6 +117,8 @@ const groupedSettingsGroupSchema = z.object({
   seq: feedSequence, operation_id: z.string().uuid().nullable(), changes: z.tuple([groupedSettingsChangeSchema]),
 }).strict();
 const groupedCashTables = ["sales", "sale_items", "payment_transactions", "item_activity_logs"] as const;
+const groupedShiftTables = ["shifts", "shift_cash_counts", "shift_reconciliations", "shift_close_events",
+  "shift_notifications", "shift_variance_alerts"] as const;
 const groupedRecoveryScope = z.object({ organizationId: z.literal("default"), branchId: z.string().min(1).max(128),
   extended: z.literal(true).optional(),
 }).strict();
@@ -129,7 +131,7 @@ type GroupedRecoveryRead = z.infer<typeof groupedRecoveryReadSchema>;
 const cashLegacyKeySchema = z.object({ table_name: z.enum(groupedCashTables),
   id: z.string().uuid().refine(id => id === id.toLowerCase()) }).strict();
 const extendedLegacyKeySchema = cashLegacyKeySchema.extend({
-  table_name: z.enum([...groupedCashTables, "stock_delta_applied"]),
+  table_name: z.enum([...groupedCashTables, "stock_delta_applied", ...groupedShiftTables, "drawer_events"]),
   version: z.string().regex(/^[1-9]\d{0,9}$/).nullable(),
 });
 const legacyKey = (entry: { table_name: string; id: string; version?: string | null }) =>
@@ -146,6 +148,7 @@ const groupedStockRowSchema = z.object({
   product_id: z.string().uuid(), branch_balance: z.number().int().min(-2147483648).max(2147483647),
   row_version: z.number().int().min(1).max(2147483647),
 }).strict();
+const groupedRetiredStockRowSchema = groupedStockRowSchema.omit({ branch_balance: true }).extend({ retired: z.literal(true) });
 const groupedCashGroupSchema = z.object({
   seq: feedSequence, operation_id: z.string().uuid(), changes: z.array(groupedCashChangeSchema).length(4),
   acceptance: z.object({
@@ -154,18 +157,27 @@ const groupedCashGroupSchema = z.object({
   }).strict(),
 }).strict();
 const groupedCashStockGroupSchema = groupedCashGroupSchema.extend({ stock: groupedStockRowSchema });
+const groupedStockChangeSchema = groupedSettingsChangeSchema.extend({
+  table_name: z.literal("products_stock"), row_data: groupedStockRowSchema,
+});
 const groupedStockGroupSchema = z.object({
-  seq: feedSequence, operation_id: z.null(), changes: z.tuple([groupedSettingsChangeSchema.extend({
-    table_name: z.literal("products_stock"), row_data: groupedStockRowSchema,
-  })]),
+  seq: feedSequence, operation_id: z.null(), changes: z.tuple([z.discriminatedUnion("tombstone", [
+    groupedStockChangeSchema,
+    groupedStockChangeSchema.extend({ tombstone: z.literal(true), row_data: groupedRetiredStockRowSchema.omit({ retired: true }) }),
+  ])]),
 }).strict();
 const groupedFinancialChangeSchema = groupedSettingsChangeSchema.extend({
-  table_name: z.enum(["sales", "sale_items", "payment_transactions", "stock_delta_applied", "products"]),
+  table_name: z.enum(["sales", "sale_items", "payment_transactions", "stock_delta_applied", "products", "shifts", "drawer_events"]),
 });
 const groupedFinancialGroupSchema = z.object({
   seq: feedSequence, operation_id: z.string().uuid(),
-  financial: z.object({ kind: z.enum(["refund_v1", "tender_v1"]), sale_id: z.string().uuid() }).strict(),
+  financial: z.union([
+    z.object({ kind: z.enum(["refund_v1", "tender_v1"]), sale_id: z.string().uuid() }).strict(),
+    z.object({ kind: z.literal("shift_v1"), shift_id: z.string().uuid() }).strict(),
+    z.object({ kind: z.literal("drawer_v1"), event_id: z.string().uuid() }).strict(),
+  ]),
   changes: z.array(groupedFinancialChangeSchema).min(1).max(301),
+  receipt_graph: z.object({ payload_json: z.string().max(196608), payload_sha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict().optional(),
 }).strict();
 const groupedFeedPageSchema = z.object({
   status: z.literal("OK"), scope_id: z.string(), epoch: z.string().uuid(), next_seq: feedSequence,
@@ -203,7 +215,7 @@ const groupedRecoveryPageBase = groupedSnapshotManifestSchema.omit({ changes: tr
 const groupedRecoveryPageSchema = z.discriminatedUnion("kind", [
   groupedRecoveryPageBase.extend({ kind: z.literal("cash"), rows: z.array(groupedCashGroupSchema).max(100) }),
   groupedRecoveryPageBase.extend({ kind: z.literal("financial"), rows: z.array(groupedFinancialGroupSchema).max(100) }),
-  groupedRecoveryPageBase.extend({ kind: z.literal("stock"), rows: z.array(groupedStockRowSchema).max(100) }),
+  groupedRecoveryPageBase.extend({ kind: z.literal("stock"), rows: z.array(z.union([groupedStockRowSchema, groupedRetiredStockRowSchema])).max(100) }),
 ]);
 const groupedRecoveryHoldSchema = z.object({
   status: z.literal("SNAPSHOT_REQUIRED"),
@@ -305,12 +317,48 @@ function validGroupedStock(change: z.infer<typeof groupedStockGroupSchema>["chan
     String(change.row_data.row_version) === change.row_version;
 }
 
-function validGroupedFinancial(group: z.infer<typeof groupedFinancialGroupSchema>, branch: string) {
+function validGroupedFinancial(group: z.infer<typeof groupedFinancialGroupSchema>, branch: string, epoch: string) {
   const [sale, ...children] = group.changes;
-  const { sale_id: saleId, kind } = group.financial;
   const entity = cashEntity.safeParse(JSON.parse(sale.entity_id));
+  if (group.financial.kind === "drawer_v1") {
+    const event = group.financial.event_id;
+    const note = sale.row_data.note;
+    const fields = ["id", "store_id", "terminal_id", "shift_id", "staff_id", "staff_name", "role", "reason", "note", "approved_by", "created_at"];
+    return !group.receipt_graph && !children.length && sale.table_name === "drawer_events" &&
+      entity.success && entity.data.id === event && sale.row_data.id === event && sale.row_data.store_id === branch &&
+      Object.keys(sale.row_data).length === fields.length && fields.every(field => Object.hasOwn(sale.row_data, field)) &&
+      (sale.row_version === "1" ? note === "OPEN_REQUESTED" :
+        sale.row_version === "2" && (note === "OPENED" || (typeof note === "string" && note.startsWith("FAILED: "))));
+  }
+  if (group.financial.kind === "shift_v1") {
+    const { graph_json: graph, graph_sha256: digest } = sale.row_data;
+    const shift = group.financial.shift_id;
+    if (group.receipt_graph || children.length || sale.table_name !== "shifts" ||
+      !entity.success || entity.data.id !== shift || sale.row_data.id !== shift || sale.row_data.store_id !== branch ||
+      String(sale.row_data.row_version) !== sale.row_version || typeof graph !== "string" || typeof digest !== "string" ||
+      new TextEncoder().encode(graph).byteLength > 196608 || createHash("sha256").update(graph, "utf8").digest("hex") !== digest)
+      return false;
+    const evidence = JSON.parse(graph);
+    return evidence?.branchId === branch && evidence.shiftId === shift && Array.isArray(evidence.tables) &&
+      evidence.tables.length === groupedShiftTables.length && new Set(evidence.tables.map((part: { table?: string }) => part?.table)).size === groupedShiftTables.length &&
+      evidence.tables.every((part: { table: typeof groupedShiftTables[number]; rows?: Record<string, unknown>[] }) =>
+        groupedShiftTables.includes(part?.table) && Array.isArray(part.rows) &&
+        part.rows.every(row => row?.store_id === branch && (part.table === "shifts" ? row.id === shift : row.shift_id === shift)));
+  }
+  const graph = group.receipt_graph;
+  if (graph && (new TextEncoder().encode(graph.payload_json).byteLength > 196608 ||
+      createHash("sha256").update(graph.payload_json, "utf8").digest("hex") !== graph.payload_sha256)) return false;
+  const { sale_id: saleId, kind } = group.financial;
   if (sale.table_name !== "sales" || !entity.success || entity.data.id !== saleId ||
       sale.row_data.id !== saleId || sale.row_data.store_id !== branch) return false;
+  if (graph) {
+    const evidence = JSON.parse(graph.payload_json);
+    if (evidence?.scope_id !== branch || evidence.epoch !== epoch || evidence.seq !== group.seq ||
+        evidence.operation_id !== group.operation_id || evidence.sale?.id !== saleId || evidence.sale.store_id !== branch ||
+        !Array.isArray(evidence.items) || !Array.isArray(evidence.tenders) ||
+        evidence.items.some((row: Record<string, unknown>) => row?.sale_id !== saleId || (row.branch_id !== null && row.branch_id !== branch)) ||
+        evidence.tenders.some((row: Record<string, unknown>) => row?.sale_id !== saleId || row.store_id !== branch)) return false;
+  }
   return children.every(change => {
     const row = change.row_data;
     if (kind === "tender_v1") return change.table_name === "payment_transactions" && row.sale_id === saleId && row.store_id === branch;
@@ -386,7 +434,7 @@ async function readGroupedFeed(read: GroupedFeedRead, terminalId: string, bindin
         const stock = "stock" in group ? group.stock : null;
         valid = read.projection && validGroupedCash(group, read.branchId) &&
           (read.extended ? stock?.product_id === group.changes[1].row_data.product_id : stock === null);
-      } else if ("financial" in group) valid = read.extended && validGroupedFinancial(group, read.branchId);
+      } else if ("financial" in group) valid = read.extended && validGroupedFinancial(group, read.branchId, read.epoch);
       else {
         const change = group.changes[0];
         valid = change.table_name === "products_stock" ? read.extended && validGroupedStock(change) :
@@ -475,7 +523,7 @@ async function readGroupedRecovery(read: GroupedRecoveryRead, terminalId: string
         let prior = 0n;
         for (const group of payload.rows) {
           const seq = BigInt(group.seq);
-          if (!read.extended || seq <= prior || seq > BigInt(payload.seq) || !validGroupedFinancial(group, read.branchId))
+          if (!read.extended || seq <= prior || seq > BigInt(payload.seq) || !validGroupedFinancial(group, read.branchId, envelope.epoch))
             return groupedFeedProtocolError();
           prior = seq;
         }

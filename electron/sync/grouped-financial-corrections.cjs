@@ -30,7 +30,13 @@ function rowFor(change, table, rowFields, key = "id", rowKey = key) {
 }
 
 function parseFinancialCorrection(group, branch) {
-  if (!fields(group, ["seq", "operation_id", "changes", "financial"]) || typeof group.seq !== "string" ||
+  if (group?.financial?.kind === "shift_v1")
+    return require("./grouped-managed-shift.cjs").parseManagedShiftGroup(group, branch);
+  if (group?.financial?.kind === "drawer_v1")
+    return require("./grouped-drawer-audit.cjs").parseDrawerAuditGroup(group, branch);
+  const envelopeFields = ["seq", "operation_id", "changes", "financial"];
+  if (group && Object.hasOwn(group, "receipt_graph")) envelopeFields.push("receipt_graph");
+  if (!fields(group, envelopeFields) || typeof group.seq !== "string" ||
       !SEQ.test(group.seq) || BigInt(group.seq) > 9223372036854775807n || typeof group.operation_id !== "string" ||
       !UUID.test(group.operation_id) || !fields(group.financial, ["kind", "sale_id"]) ||
       typeof group.financial.sale_id !== "string" || !UUID.test(group.financial.sale_id) ||
@@ -42,7 +48,8 @@ function parseFinancialCorrection(group, branch) {
   const sale = rowFor(parent, "sales", ["id", "store_id", "row_version",
     ...(kind === REFUND ? ["is_refunded"] : ["payment_type", "payments_count"])]);
   if (sale.id !== saleId || sale.store_id !== branch) throw invalid();
-  const base = { kind, operationId: group.operation_id, seq: group.seq, sale, changes: group.changes };
+  const base = { kind, operationId: group.operation_id, seq: group.seq, sale, changes: group.changes,
+    ...(group.receipt_graph ? { receiptGraph: group.receipt_graph } : {}) };
   if (kind === TENDER) {
     if (sale.row_version < 2 || typeof sale.payment_type !== "string" || !METHOD.test(sale.payment_type) ||
         (sale.payments_count !== null && (!Number.isInteger(sale.payments_count) ||
@@ -243,6 +250,10 @@ async function applyTender(transaction, branch, facts) {
 }
 
 async function applyFinancialCorrection(worker, transaction, context, facts) {
+  if (facts.kind === "shift_v1")
+    return require("./grouped-managed-shift.cjs").applyManagedShiftGroup(worker, transaction, context, facts);
+  if (facts.kind === "drawer_v1")
+    return require("./grouped-drawer-audit.cjs").applyDrawerAuditGroup(worker, transaction, context, facts);
   const { branch } = context;
   if (facts.sale.store_id !== branch) throw invalid();
   // Lock the receipt before consulting pending evidence, matching local writer
@@ -250,20 +261,29 @@ async function applyFinancialCorrection(worker, transaction, context, facts) {
   const result = await transaction.request().input("sale", facts.sale.id).input("branch", branch).query(`
     SELECT id FROM dbo.sales WITH(UPDLOCK,HOLDLOCK)
     WHERE id=@sale AND store_id COLLATE Latin1_General_100_BIN2=@branch COLLATE Latin1_General_100_BIN2;`);
-  if (recordId(result.recordset?.[0]?.id) !== facts.sale.id)
-    throw fail("The original receipt must synchronize before its correction.", "ESYNC_CASH_RECEIPT_DEPENDENCY");
-  const ownAcceptance = facts.kind === REFUND &&
-    await require("./grouped-refund-native.cjs").proveNativeRefund(transaction, context, facts);
-  if (!ownAcceptance) await assertNoPendingCorrection(worker, transaction, branch, facts);
+  const verifyOwnRefund = () => facts.kind === REFUND &&
+    require("./grouped-refund-native.cjs").proveNativeRefund(transaction, context, facts);
+  let ownAcceptance;
+  let archivedCount = 0;
+  if (recordId(result.recordset?.[0]?.id) !== facts.sale.id) {
+    const { decodeCorrectionReceipt, installCorrectionReceipt } = require("./grouped-correction-receipt.cjs");
+    const archive = decodeCorrectionReceipt(worker.registry, context, facts);
+    const ledger = facts.changes.filter(change => change.table_name === "stock_delta_applied");
+    await assertNoPendingCorrection(worker, transaction, branch, { changes: [...archive.changes, ...ledger] });
+    ownAcceptance = await verifyOwnRefund();
+    archivedCount = await installCorrectionReceipt(transaction, context, facts, archive, ownAcceptance === true);
+  }
+  else ownAcceptance = await verifyOwnRefund();
+  if (!ownAcceptance && !archivedCount) await assertNoPendingCorrection(worker, transaction, branch, facts);
   const state = facts.kind === REFUND
     ? await applyRefund(transaction, branch, facts, ownAcceptance)
     : await applyTender(transaction, branch, facts);
   if (state?.state === "dependency")
     throw fail("The original receipt lines and payments must synchronize before their correction.", "ESYNC_CASH_RECEIPT_DEPENDENCY");
   if (state?.state !== "applied") throw review();
-  if (facts.kind !== REFUND || context.recoveringFinancial) return state.changed;
+  if (facts.kind !== REFUND || context.recoveringFinancial) return archivedCount + state.changed;
   const { applyGroupedStock } = require("./grouped-live-stock.cjs");
-  return state.changed + await applyGroupedStock(worker, transaction, branch, facts.stock, {
+  return archivedCount + state.changed + await applyGroupedStock(worker, transaction, branch, facts.stock, {
     epoch: context.financialEpoch, seq: facts.seq,
   });
 }

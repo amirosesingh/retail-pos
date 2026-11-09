@@ -119,10 +119,45 @@ async function verify() {
     assert.equal((await state(last)).stock_quantity, 1);
     await assert.rejects(apply(stock(4, 13, last), "5", true), { code: "ESYNC_GROUPED_REVIEW_REQUIRED" });
     assert.equal(await apply(stock(5, 0, last), "6"), 1);
+    const ownerB = "other", moveVersion = 11;
+    await checkpoints.save(ownerB, "products", "push", { change_tracking_version: await current() });
+    await checkpoints.save(ownerB, MIXED_CHECKPOINT, "pull", {
+      committed_cursor: JSON.stringify({ source: "fixture-stock-source", databaseGuid, epoch, seq: "1", upper: null, extended: true }),
+    });
+    const retirement = { product_id: product, row_version: moveVersion, retired: true };
+    const tombstone = { table_name: "products_stock", entity_id: JSON.stringify({ id: product }), row_version: String(moveVersion),
+      tombstone: true, row_data: { product_id: product, row_version: moveVersion } };
+    assert.deepEqual(parseStockGroup({ seq: "7", operation_id: null, changes: [tombstone] }), retirement);
+    assert.equal(await apply(retirement, "7"), 1);
+    assert.equal(await apply(retirement, "7"), 0);
+    assert.equal((await state(product)).stock_quantity, 23);
+    assert.equal((await state(product)).stockProof.branch_balance, null);
+    const fresh = { ...moved, owner_store_id: ownerB, stock_by_store: { [ownerB]: 9 }, stock_quantity: 9, deleted_at: null };
+    await legacyApply([{ row_data: fresh }], []);
+    assert.equal(await withTransaction(tx => applyGroupedStock(worker, tx, ownerB, [stock(moveVersion, 9)], {
+      epoch, seq: "2",
+    })), 1);
+    const shared = await state(product);
+    assert.equal(shared.stock_quantity, 9);
+    assert.equal(await apply(stock(moveVersion - 1, 42), "6"), 0);
+    await legacyApply([{ row_data: { ...remoteRow, row_version: moveVersion - 1 } }], []);
+    await withTransaction(tx => cloud.applyLocalBatch(tx, products, {
+      rows: [], tombstones: [{ ...removed, row_version: moveVersion - 1 }], branchId: branch,
+    }));
+    assert.deepEqual(await state(product), shared);
+    await assert.rejects(legacyApply([], [{ ...removed, row_version: moveVersion }]),
+      { code: "ESYNC_GROUPED_STOCK_PARENT_FENCED" });
+    assert.equal(await withTransaction(tx => applyGroupedStock(worker, tx, ownerB, [{
+      product_id: product, row_version: moveVersion + 1, retired: true,
+    }], { epoch, seq: "3" })), 1);
+    await legacyApply([], [{ ...removed, row_version: moveVersion }]);
+    assert.equal((await state(product)).stock_quantity, 0);
+    await manager.pool.request().input("id", product).query(`
+      SELECT id FROM dbo.products WHERE id=@id AND deleted_at IS NOT NULL;`).then(result => assert.equal(result.recordset.length, 1));
     await manager.pool.request().input("scope", branch).input("checkpoint", MIXED_CHECKPOINT).query(`
       DELETE FROM dbo.sync_checkpoints WHERE branch_id=@scope AND entity_type=@checkpoint AND direction=N'pull';`);
-    await legacyApply([{ row_data: moved }], []);
-    assert.equal((await state(product)).row_version, 11);
+    await manager.pool.request().input("scope", ownerB).input("checkpoint", MIXED_CHECKPOINT).query(`
+      DELETE FROM dbo.sync_checkpoints WHERE branch_id=@scope AND entity_type=@checkpoint AND direction=N'pull';`);
     await legacyApply([], [removed]);
     const gone = await manager.pool.request().input("id", product).query("SELECT id FROM dbo.products WHERE id=@id;");
     assert.deepEqual(gone.recordset, []);
