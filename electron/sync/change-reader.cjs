@@ -14,6 +14,8 @@ const { readCashRoute, cashTrackingCoverage, assertLegacyCashWrites } = require(
 const SHIFT_GRAPH_TABLES = ["shifts", "shift_cash_counts", "shift_reconciliations", "shift_close_events",
   "shift_notifications", "shift_variance_alerts"];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const BOOKING_HANDOVER_TABLES = new Set(["bookings", "booking_payments", "sales", "sale_items", "payment_transactions",
+  "item_activity_logs", "products", "members", "stock_movements", "stock_delta_applied", "held_orders", "audit_logs"]);
 const ctVersion = value => { const text=typeof value==='number'&&Number.isSafeInteger(value)?String(value):value;return typeof text === "string" && /^(0|[1-9]\d*)$/.test(text) && BigInt(text) <= 9223372036854775807n ? text : null; };
 
 class ChangeReader {
@@ -103,6 +105,31 @@ class ChangeReader {
   readRefundRoute(branchId, operationId) { return refundRoute.readRefundRoute(this.connectionManager, branchId, operationId); }
   refundTrackingCoverage(branchId, table, changes) { return refundRoute.refundTrackingCoverage(this.connectionManager, branchId, table, changes); }
   assertLegacyRefundWrites(branchId, keys) { return refundRoute.assertLegacyRefundWrites(this.connectionManager, branchId, keys); }
+  async bookingHandoverTracking(branchId, table, changes) {
+    const covered = new Set();
+    if (!BOOKING_HANDOVER_TABLES.has(table) || !changes.length) return { pending: false, covered };
+    const key = table === "stock_delta_applied" ? "movement_id" : "id";
+    const ids = [...new Set(changes.map(change => recordId(change.key?.[key])).filter(id => UUID.test(id)))];
+    if (!ids.length) return { pending: false, covered };
+    const isPayment = table === "booking_payments";
+    const paymentVersion = isPayment ? "payment.row_version" : "NULL";
+    const result = await this.connectionManager.pool.request().input("branch", branchId).input("table", table)
+      .input("ids", JSON.stringify(ids)).query(`
+        SELECT wanted.[value] AS id, j.acknowledged_at, j.operation, j.entity_version, ${paymentVersion} AS payment_version
+        FROM dbo.sync_change_journal j
+        INNER JOIN dbo.local_operation_receipts r ON r.operation_id=j.aggregate_id AND r.operation_type=N'booking_handover'
+        INNER JOIN OPENJSON(@ids) wanted ON TRY_CONVERT(uniqueidentifier,wanted.[value])=
+          TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(j.entity_id)=1 THEN j.entity_id END,'$.${key}'))
+        ${isPayment ? "LEFT JOIN dbo.booking_payments payment ON payment.id=TRY_CONVERT(uniqueidentifier,wanted.[value])" : ""}
+        WHERE j.branch_id=@branch AND j.entity_type=@table;`);
+    const rows = result.recordset ?? [];
+    if (rows.some(row => row.acknowledged_at == null)) return { pending: true, covered };
+    const exact = new Set(rows.filter(row => row.operation === "insert" && row.payment_version != null &&
+      Number(row.payment_version) === Number(row.entity_version)).map(row => recordId(row.id)));
+    for (const change of changes)
+      if (change.operation !== "D" && exact.has(recordId(change.key?.[key]))) covered.add(change);
+    return { pending: false, covered };
+  }
   async rows(value, changes, { branchId = "", exactFinancial = false } = {}) {
     const { table, primary } = this.table(value);
     if (!changes.length) return [];

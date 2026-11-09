@@ -16,6 +16,8 @@ const KIND_TABLES = {
     "stock_delta_applied",
     "held_orders",
     "audit_logs",
+    "bookings",
+    "booking_payments",
   ],
   payment: [
     "sales",
@@ -56,11 +58,44 @@ function requiresBookingCollection(kind, operations) {
     return values.status === "collected" || (values.status !== "cancelled" && Object.hasOwn(values, "paid"));
   });
 }
+function bookingSale(operations, permissions) {
+  const sales = operations.filter(op => op.table === "sales");
+  const bookings = operations.filter(op => op.table === "bookings");
+  const payments = operations.filter(op => op.table === "booking_payments");
+  const sale = sales[0]?.rows?.[0];
+  const booking = bookings[0];
+  const tender = payments[0]?.rows?.[0];
+  if (permissions.can_collect_booking !== true ||
+      !["can_create_booking", "can_manage_bookings", "can_cancel_booking"].some(key => permissions[key] === true))
+    denied("Booking collection and booking write permission are required.");
+  if (sales.length !== 1 || sales[0].rows?.length !== 1 ||
+      !["insert", "upsert"].includes(sales[0].kind) || !sale?.id || !sale.client_transaction_id ||
+      sale.is_exchange || sale.is_refunded ||
+      bookings.length !== 1 || booking.kind !== "update" || booking.requireMatch !== true ||
+      !booking.match?.id || booking.match.status !== "active" ||
+      !Number.isSafeInteger(booking.match.row_version) || booking.match.row_version < 0 ||
+      booking.values?.status !== "collected" || !booking.values.closed_at ||
+      !sale.bill_number || booking.values.sale_receipt_no !== sale.bill_number ||
+      booking.values.store_id !== sale.store_id ||
+      Object.keys(booking.values).some(key => ![
+        "store_id", "paid", "status", "sale_receipt_no", "closed_at",
+        "job_status", "job_status_at", "job_status_by", "updated_at",
+      ].includes(key)) ||
+      payments.length > 1 || (payments.length === 1 && (
+        payments[0].kind !== "insert" || payments[0].rows?.length !== 1 ||
+        !tender?.id || tender.booking_id !== booking.match.id ||
+        tender.client_payment_id !== sale.client_transaction_id || tender.status !== "settled" ||
+        tender.kind !== "payment" || tender.method !== sale.payment_type || !(Number(tender.amount) > 0)
+      ))) denied("The booking sale does not have a complete handover.");
+  return { sale, booking, tender };
+}
 function aggregatePolicy(kind, operations, identity) {
   if (!identity || identity.source !== "pos") denied("Sign in to perform this action.");
   const permissions = identity.permissions ?? {};
-  if (hasBookingWrites(operations)) {
-    if (!["booking", "payment", "general"].includes(kind))
+  const hasBooking = hasBookingWrites(operations);
+  const bookingHandover = hasBooking && kind === "sale" ? bookingSale(operations, permissions) : null;
+  if (hasBooking) {
+    if (!bookingHandover && !["booking", "payment", "general"].includes(kind))
       denied("The transaction contains unrelated booking writes.");
     if (requiresBookingCollection(kind, operations) && permissions.can_collect_booking !== true)
       denied("Booking collection permission is required.");
@@ -144,7 +179,7 @@ function aggregatePolicy(kind, operations, identity) {
       spent: Number(sale.total_amount),
     });
   }
-  return { enforcePermissions: true, productWriteKind: kind, financialStockDeltas: financialStockDeltas(operations, financial), memberAccrual, financialExchangeLinks, isSettingsAdmin: identity.level === "admin",
+  return { enforcePermissions: true, productWriteKind: kind, financialStockDeltas: financialStockDeltas(operations, financial), memberAccrual, financialExchangeLinks, bookingHandover, isSettingsAdmin: identity.level === "admin",
     activityOperator: { subject: identity.subject, role: identity.level,
       mayViewGeneralActivity: identity.level === "admin" || identity.level === "supervisor" || permissions.can_view_audit_trail === true } };
 }

@@ -51,7 +51,7 @@ import {
 } from "@/core/api/pos-db";
 import { setPreferredDatabaseMode, setStartupOnlineMode } from "@/core/local-db/db-mode";
 import type { Member, Product, Sale } from "@/core/types/pos-types";
-import { cancelBookingAuthoritative, collectBookingPayment } from "../booking-collection";
+import { cancelBookingAuthoritative, collectBookingPayment, commitBookingHandover } from "../booking-collection";
 
 const sale = (over: Partial<Sale> = {}): Sale =>
   ({
@@ -175,6 +175,37 @@ describe("checkout commit", () => {
         kind: "update", table: "bookings", match: { id: "booking-1", row_version: 4 }, requireMatch: true,
         values: expect.objectContaining({ paid: 5, status: "cancelled", cancel_money_action: "retained" }),
       })],
+    });
+    expect(localWrite).not.toHaveBeenCalled();
+    expect(live).not.toHaveBeenCalled();
+  });
+
+  it("commits the booking tender, receipt and collected link in one native sale", async () => {
+    platform.offlineFirst = true;
+    setPreferredDatabaseMode("local");
+    localQuery.mockResolvedValueOnce({
+      ok: true,
+      rows: [{ id: "booking-1", store_id: "store-1", total: 100, row_version: 4, status: "active" }],
+    }).mockResolvedValueOnce({ ok: true, rows: [{ amount: 25 }] })
+      .mockResolvedValueOnce({ ok: true, rows: [] });
+    const prepared = sale();
+
+    const receipt = await commitBookingHandover("booking-1", 80, prepared, [], null);
+
+    expect(receipt).toMatchObject({ paid: 100, payment: { amount: 75, changeGiven: 5 }, sale: { change: 5 } });
+    expect(localAggregate).toHaveBeenCalledExactlyOnceWith({
+      kind: "sale", branchId: "store-1", operations: expect.arrayContaining([
+        expect.objectContaining({ kind: "upsert", table: "sales", rows: [
+          expect.objectContaining({ bill_number: prepared.receiptNo, change_amount: 5 }),
+        ] }),
+        expect.objectContaining({ kind: "insert", table: "booking_payments", rows: [
+          expect.objectContaining({ booking_id: "booking-1", client_payment_id: prepared.clientTxnId, amount: 75 }),
+        ] }),
+        expect.objectContaining({
+          kind: "update", table: "bookings", match: { id: "booking-1", row_version: 4, status: "active" },
+          requireMatch: true, values: expect.objectContaining({ paid: 100, status: "collected", sale_receipt_no: prepared.receiptNo }),
+        }),
+      ]),
     });
     expect(localWrite).not.toHaveBeenCalled();
     expect(live).not.toHaveBeenCalled();

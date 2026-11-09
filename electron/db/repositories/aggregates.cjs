@@ -125,6 +125,33 @@ class AggregateRepository {
     }
   }
 
+  async assertBookingHandover(transaction, { branchId, bookingHandover }) {
+    if (!bookingHandover) return;
+    const { sale, booking, tender } = bookingHandover;
+    const result = await new (this.connectionManager.sql().Request)(transaction)
+      .input("booking", booking.match.id).input("branch", branchId)
+      .query(`SELECT b.status,b.total,b.row_version,b.member_id,b.job_status,b.sale_receipt_no,
+        (SELECT COALESCE(SUM(p.amount),0) FROM dbo.booking_payments p WITH (HOLDLOCK)
+         WHERE p.booking_id=b.id AND p.status='settled') AS settled_paid
+        FROM dbo.bookings b WITH (UPDLOCK,HOLDLOCK) WHERE b.id=@booking AND b.store_id=@branch;`);
+    const row = result.recordset?.[0];
+    if (!row || row.status !== "active" || row.sale_receipt_no || Number(row.row_version) !== booking.match.row_version ||
+        (row.member_id ? recordId(row.member_id) : null) !== (sale.member_id ? recordId(sale.member_id) : null))
+      throw Object.assign(new Error("BOOKING_CHANGED"), { code: "EBOOKING_CHANGED" });
+    const cents = value => Math.round(Number(value) * 100);
+    const total = cents(row.total);
+    const paid = cents(row.settled_paid);
+    const change = cents(sale.change_amount);
+    const finalPaid = paid + cents(tender?.amount ?? 0);
+    if (!Number.isSafeInteger(total) || !Number.isSafeInteger(paid) || !Number.isSafeInteger(change) || change < 0 ||
+        cents(sale.total_amount) !== total || cents(sale.paid_amount) !== total ||
+        cents(booking.values.paid) !== finalPaid || finalPaid !== total ||
+        (change > 0 && sale.payment_type !== "cash") ||
+        (tender && cents(tender.change_given) !== change) ||
+        (row.job_status ? booking.values.job_status !== "collected" : "job_status" in booking.values))
+      throw Object.assign(new Error("BOOKING_CHANGED"), { code: "EBOOKING_CHANGED" });
+  }
+
   async commitOnce(kind, aggregate) {
     aggregate = normalizeUuidFields(aggregate);
     if (!AGGREGATE_KINDS.has(kind)) throw new Error("Unsupported aggregate type.");
@@ -156,7 +183,10 @@ class AggregateRepository {
       }
 
       if (cashAuthorError) throw cashAuthorError;
+      if (aggregate.bookingHandover && saleOutbox)
+        throw Object.assign(new Error("This terminal cannot publish a booking handover through its grouped cash feed yet."), { code: "EBOOKING_HANDOVER_SYNC_UNAVAILABLE" });
       await this.assertNewSaleIdentities(transaction, operations);
+      await this.assertBookingHandover(transaction, aggregate);
 
       // Close-start takes the same shift row lock. Once counting begins no
       // sale can race the database totals used for reconciliation.
@@ -250,7 +280,9 @@ class AggregateRepository {
           activityOperator: aggregate.activityOperator,
           ...(cashCheckoutContext ? { cashCheckoutContext } : {}),
         });
-        if (operation.requireMatch && operationAffected !== 1 && operation.table === "bookings")
+        const bookingWriteMustApply = (operation.table === "bookings" && operation.requireMatch) ||
+          (operation.table === "booking_payments" && aggregate.bookingHandover);
+        if (bookingWriteMustApply && operationAffected !== 1)
           throw Object.assign(new Error("BOOKING_CHANGED"), { code: "EBOOKING_CHANGED" });
         if (operation.requireMatch && operationAffected !== 1)
           throw Object.assign(
@@ -299,7 +331,7 @@ class AggregateRepository {
       tableName = "local_operation_receipts";
       await new sql.Request(transaction)
         .input("operation_id", sql.UniqueIdentifier, operationId)
-        .input("operation_type", kind)
+        .input("operation_type", aggregate.bookingHandover ? "booking_handover" : kind)
         .input("entity_id", operationId)
         .input("note", payloadHash)
         .query("INSERT dbo.local_operation_receipts(operation_id,operation_type,entity_id,note) VALUES(@operation_id,@operation_type,@entity_id,@note);");
@@ -309,7 +341,7 @@ class AggregateRepository {
       return { ok: true, operationId, replayed: false, affected };
     } catch (error) {
       const rolledBack = await Promise.resolve(transaction.rollback()).then(() => true, () => false);
-      if (rolledBack && error?.code === "EBOOKING_CHANGED") throw error;
+      if (rolledBack && ["EBOOKING_CHANGED", "EBOOKING_HANDOVER_SYNC_UNAVAILABLE"].includes(error?.code)) throw error;
       if (rolledBack && saleOutbox?.installedHandoff && (error?.code === "ESALE_CASH_LEGACY_ONLY" ||
           (stage === "sale event capture" && error?.code === "ESALE_EVENT_UNVERIFIED")))
         throw Object.assign(new Error("The unsupported cash capture rolled back before the existing sale route."),

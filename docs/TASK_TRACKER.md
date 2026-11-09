@@ -588,11 +588,24 @@ The receiving till verified the hosted archive contains the same receipt
 and stock. The demo and older transfer scope were separate.
 
 The hosted refund under the existing PIN rule and expired-cursor replay
-remain pending. Automatic review rejected disabling PIN for the test
-branch, and the active rule remained in place. Disposable PostgreSQL and
-SQL Server passed paged recovery and the two-till settings round trip
-after a lost response. Full booking handover still requires one
-authoritative payment, receipt and booking-link transaction.
+remain pending. The isolated relay for that test requires its Beta server
+key. The PIN rule remains active. Disposable PostgreSQL and SQL Server
+passed paged recovery and the two-till settings round trip after a lost
+response.
+
+The opt-in signed checkout path carries ordinary single-product card and
+cash/card split payments with exact payment. Two disposable SQL Server
+tills and PostgreSQL verified tender accounts, references, amounts, exact
+replay, and one stock deduction. The existing cash format still replays.
+
+Booking handover saves the final payment, sale receipt, and booking link
+in one transaction without changing the screens. Disposable database
+checks covered stale edits, rollback, exact retry, and deferral of the
+change-tracking window until the booking group is accepted. Transfer
+arrival and verification now use canonical groups for eligible scopes.
+The fresh Beta cloud installer includes these changes and passed isolated
+install checks. The populated Beta project still needs a separate upgrade
+before these new paths can be enabled there.
 
 ## 7 November — first two-way sync implementation batch
 

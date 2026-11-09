@@ -131,9 +131,12 @@ import { commitBooking, deleteBookingRow, loadBookings } from "./bookings-db";
 import { trackTransition } from "./status-history";
 import {
   cancelBookingAuthoritative,
+  commitBookingHandover,
   collectBookingPayment,
   refundBookingPayment,
   readBookingBalance,
+  readable as bookingError,
+  type BookingHandoverReceipt,
 } from "./booking-collection";
 import {
   clearSectionOverride,
@@ -2062,6 +2065,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     async (
       input: Omit<Sale, "id" | "receiptNo" | "createdAt"> & { receiptNo?: string },
       memberSnapshot?: Member | null,
+      persistBooking?: (sale: Sale, products: Product[], member: Member | null) => Promise<BookingHandoverReceipt>,
     ) => {
       const snapshot = stateRef.current;
       const policyError = exchangePolicyError(input.lines, input.total, input.exchangeOfReceiptNo ?? null);
@@ -2165,11 +2169,20 @@ export function PosProvider({ children }: { children: ReactNode }) {
       try {
         for (let attempt = 0; ; attempt++) {
           try {
-            await db.commitSale(sale, touchedProducts, updatedMember);
+            if (persistBooking) {
+              const receipt = await persistBooking(sale, touchedProducts, updatedMember);
+              sale = receipt.sale;
+              if (receipt.replayed) {
+                requestBackgroundRefresh();
+                return sale;
+              }
+            } else {
+              await db.commitSale(sale, touchedProducts, updatedMember);
+            }
             break;
           } catch (error) {
             if (attempt >= 2 || !isDuplicateBillNumber(error)) throw error;
-            if (sale.clientTxnId && (await db.saleAttemptExists(sale.clientTxnId)) === "yes") break;
+            if (!persistBooking && sale.clientTxnId && (await db.saleAttemptExists(sale.clientTxnId)) === "yes") break;
             const nextNo = await reserveBillNumber(
               store?.receiptPrefix?.trim() || store?.code || "R",
               [...snapshot.sales.map((s) => s.receiptNo), sale.receiptNo],
@@ -2650,11 +2663,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     return updated;
   }, []);
 
-  /**
-   * Hand a booking over. The server checks the outstanding amount, takes the
-   * final tender and closes the booking in one go; only then is a sale
-   * receipt written, so a booking can never be collected unpaid.
-   */
+  /** Hand over the booking only after its final payment and sale are saved together. */
   const collectBooking = useCallback(
     async (id: string, amount: number, method: PaymentMethod, clientPaymentId?: string) => {
       const current = stateRef.current.bookings.find((b) => b.id === id);
@@ -2666,74 +2675,48 @@ export function PosProvider({ children }: { children: ReactNode }) {
       } catch (error) { toast.error(error instanceof Error ? error.message : "Select the booking's branch first."); return null; }
       const endOperation = beginAutoLockOperation();
       try {
-      const check = await readBookingBalance(id);
-      if (!check.ok) {
-        toast.error("Payment could not be verified", { description: check.error });
-        return null;
-      }
-      const outstanding = check.state.outstanding;
-      const settled = r2(Math.min(Math.max(amount, 0), outstanding));
-      if (outstanding > 0 && settled < outstanding) {
-        toast.error("A balance is still outstanding", {
-          description: `${money(outstanding)} must be collected before handover.`,
-        });
-        return null;
-      }
-
-      const server = await collectBookingPayment({
-        bookingId: id,
-        amount: settled,
-        method,
-        cashier: current.cashier,
-        clientPaymentId: clientPaymentId ?? crypto.randomUUID(),
-        complete: true,
-      });
-      if (!server.ok) {
-        toast.error("Collection refused", { description: server.error });
-        return null;
-      }
-
+      const handover: { receipt?: BookingHandoverReceipt } = {};
       const sale = await recordSale({
         storeId: current.storeId,
-        shiftId: activeShift?.id ?? current.shiftId,
+        shiftId: activeShift.id,
         lines: current.lines,
         subtotal: current.subtotal,
         discount: current.discount,
         tax: current.tax,
         total: current.total,
         paid: current.total,
-        change: r2(Math.max(0, amount - outstanding)),
+        change: 0,
         method,
         memberId: current.memberId,
         pointsEarned: 0,
         cashier: current.cashier,
         bookingRef: current.ref,
+        clientTxnId: clientPaymentId ?? crypto.randomUUID(),
+      }, undefined, async (prepared, products, member) => {
+        handover.receipt = await commitBookingHandover(id, amount, prepared, products, member);
+        return handover.receipt;
       });
-      const finalPayment: BookingPayment = {
-        id: clientPaymentId ?? crypto.randomUUID(),
-        amount: settled,
-        method,
-        at: new Date().toISOString(),
-        cashier: current.cashier,
-      };
+      const receipt = handover.receipt;
+      if (!receipt) throw new Error("The database did not confirm the booking receipt.");
+      const payment = receipt.payment;
+      const settled = payment?.amount ?? 0;
       const updated: Booking = {
         ...current,
-        paid: server.state.settledPaid,
-        payments:
-          settled && !server.state.duplicate
-            ? [...current.payments, finalPayment]
-            : current.payments,
+        paid: receipt.paid,
+        payments: payment && !current.payments.some(saved => saved.id === payment.id)
+          ? [...current.payments, payment]
+          : current.payments,
         status: "collected",
-        closedAt: new Date().toISOString(),
+        closedAt: receipt.closedAt,
         saleReceiptNo: sale.receiptNo,
         jobStatus: current.job ? "collected" : current.jobStatus,
-        jobStatusAt: current.job ? new Date().toISOString() : current.jobStatusAt,
+        jobStatusAt: current.job ? receipt.closedAt : current.jobStatusAt,
       };
-      await commitBooking(updated);
       setState((s) => ({
         ...s,
         bookings: s.bookings.map((b) => (b.id === id ? updated : b)),
       }));
+      if (receipt.replayed) return { booking: updated, sale };
       logger.log("sale_event", "Booking collected", "bookings", {
         ref: updated.ref,
         receiptNo: sale.receiptNo,
@@ -2762,6 +2745,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
         });
       }
       return { booking: updated, sale };
+      } catch (error) {
+        toast.error("Collection refused", { description: bookingError(error instanceof Error ? error.message : "Booking handover failed.") });
+        return null;
       } finally { releaseBranch(); endOperation(); }
     },
     [activeShift, recordSale],

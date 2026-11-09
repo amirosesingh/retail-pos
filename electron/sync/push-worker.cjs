@@ -620,6 +620,11 @@ class PushWorker {
           window.filter((change) => !change.remote && !cashCovered?.has(change) && !refundCovered?.has(change)),
           { branchId, terminalId },
         );
+        // The journal owns a handover until its entire booking and sale graph
+        // is accepted. A confirmed final tender must not be inserted again.
+        const bookingTracking = await this.reader.bookingHandoverTracking?.(branchId, table.sqlServerTable, changes);
+        if (bookingTracking?.pending) { deferredTables.add(table.cloudTable); break; }
+        if (bookingTracking?.covered.size) changes = changes.filter(change => !bookingTracking.covered.has(change));
         // A v3 receipt proves only the exact frozen saved facts. A stale CT
         // copy of those facts must not be enriched/re-uploaded as a new close
         // after a later web correction. Different edits and deletes stay queued.

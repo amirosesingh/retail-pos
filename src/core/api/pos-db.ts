@@ -1177,6 +1177,17 @@ export function registerMembershipTierNames(tiers: {id:string;name:string}[]) {
 const tierId = (name: MemberTier) => tierIdByName[name] ?? null;
 const tierName = (id: string | null): MemberTier => (id && tierNameById[recordId(id)]) || "Bronze";
 
+export function saleCommitRpcArgs(sale: Sale, member: Member | null) {
+  return {
+    _sale: saleToRow(sale),
+    _items: saleItemRows(sale),
+    _payments: salePaymentRows(sale),
+    _movements: saleActivityRows(sale),
+    _member: member ? memberToRow(member, tierId) : null,
+    _exchange_bill: isLegacyExchange(sale.exchangeOfReceiptNo) ? null : sale.exchangeOfReceiptNo ?? null,
+  };
+}
+
 /* ------------------------------ bootstrap ------------------------------ */
 
 /**
@@ -2340,6 +2351,9 @@ async function commitOpsInternal(context: string, ops: SyncOp[], report?: (compl
                           : /hold|ticket/i.test(context)
                             ? "held_order"
                             : "general";
+      if (requireLocalAggregate && aggregateKind === "settings") {
+        throw new Error("This local transaction does not support shared settings.");
+      }
       const branchRow = ops
         .flatMap((op): Row[] => {
           if (op.kind === "insert" || op.kind === "upsert") return op.rows as Row[];
@@ -2371,7 +2385,7 @@ async function commitOpsInternal(context: string, ops: SyncOp[], report?: (compl
               reason: refund.args._reason == null ? null : String(refund.args._reason),
               ...(refundGrant ? { grantToken: refundGrant } : {}),
             })
-          : local.commitAggregate && (requireLocalAggregate || aggregateKind !== "settings")
+          : local.commitAggregate && aggregateKind !== "settings"
             ? await local.commitAggregate({
                 kind: aggregateKind,
                 branchId: branchId || undefined,
@@ -2928,7 +2942,12 @@ export const db = {
   /* --------------------- awaited, confirmed versions --------------------- */
 
   /** Save a completed bill and wait until it is stored somewhere. */
-  async commitSale(sale: Sale, products: Product[], member: Member | null): Promise<CommitTarget> {
+  async commitSale(
+    sale: Sale,
+    products: Product[],
+    member: Member | null,
+    bookingOperations?: SyncOp[],
+  ): Promise<CommitTarget> {
     // A retry may find the header already committed. Reuse its real id and
     // reconcile every required child rather than mistaking a partial sale for completion.
     const onlineOnly = effectiveDatabaseMode() === "online";
@@ -2944,15 +2963,16 @@ export const db = {
         values: { stock_quantity: row.stock_quantity, stock_by_store: row.stock_by_store },
         requireMatch: true };
     });
-    if (member) ops.push({ kind: "upsert", table: "members", rows: [memberToRow(member, tierId)] });
+    const saleArgs = saleCommitRpcArgs(sale, member);
+    if (saleArgs._member) ops.push({ kind: "upsert", table: "members", rows: [saleArgs._member] });
     ops.push(
-      { kind: "upsert", table: "sales", rows: [saleToRow(sale)], onConflict: "id" },
-      { kind: "upsert", table: "sale_items", rows: saleItemRows(sale), onConflict: "id" },
+      { kind: "upsert", table: "sales", rows: [saleArgs._sale], onConflict: "id" },
+      { kind: "upsert", table: "sale_items", rows: saleArgs._items, onConflict: "id" },
     );
-    const tenders = salePaymentRows(sale);
+    const tenders = saleArgs._payments;
     if (tenders.length)
       ops.push({ kind: "upsert", table: "payment_transactions", rows: tenders, onConflict: "id" });
-    const movements = saleActivityRows(sale);
+    const movements = saleArgs._movements;
     if (movements.length)
       ops.push({ kind: "upsert", table: "item_activity_logs", rows: movements, onConflict: "id" });
     if (sale.exchangeOfReceiptNo && !isLegacyExchange(sale.exchangeOfReceiptNo)) {
@@ -2977,6 +2997,10 @@ export const db = {
         requireMatch: true,
       });
     }
+    if (bookingOperations) {
+      if (onlineOnly) throw new Error("The booking database mode changed. Reopen the booking before trying again.");
+      return commitOps("Saving booking sale", [...ops, ...bookingOperations], undefined, { requireLocalAggregate: true });
+    }
     if (onlineOnly) {
       // One central transaction owns the immutable financial graph, member
       // effect and stock deltas. The database movement trigger also maintains
@@ -2987,14 +3011,7 @@ export const db = {
         kind: "rpc",
         table: "sales",
         fn: "pos_sale_commit",
-        args: {
-          _sale: saleToRow(sale),
-          _items: saleItemRows(sale),
-          _payments: tenders,
-          _movements: movements,
-          _member: member ? memberToRow(member, tierId) : null,
-          _exchange_bill: isLegacyExchange(sale.exchangeOfReceiptNo) ? null : sale.exchangeOfReceiptNo ?? null,
-        },
+        args: saleArgs,
       });
       return noteCommitTarget("cloud");
     }
