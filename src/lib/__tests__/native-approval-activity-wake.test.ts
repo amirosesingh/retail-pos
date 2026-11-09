@@ -1,3 +1,4 @@
+import { createHash, generateKeyPairSync, verify } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
@@ -7,12 +8,16 @@ const mocked = vi.hoisted(() => ({
   authError: class RelayAuthenticationError extends Error {},
   touch: vi.fn(),
   terminal: vi.fn(),
+  config: vi.fn(),
+  env: new Map<string, string>(),
 }));
 vi.mock("@/core/api/pos-relay.server", () => ({
   verifyRelayCaller: mocked.verify, serviceRest: mocked.rest, RelayAuthenticationError: mocked.authError,
 }));
 vi.mock("@/core/api/relay-policy.server", () => ({ resolveRelayScope: mocked.scope }));
-vi.mock("@/lib/external-supabase-config", () => ({ supabaseConfig: () => ({ url: "https://owned.example/" }) }));
+vi.mock("@/lib/external-supabase-config", () => ({
+  supabaseConfig: mocked.config, runtimeEnvValue: (name: string) => mocked.env.get(name),
+}));
 vi.mock("../session-guard.server", () => ({ touchSession: mocked.touch }));
 vi.mock("../terminal-binding.server", () => ({ readVerifiedTerminal: mocked.terminal }));
 
@@ -31,11 +36,59 @@ const row = (extra: object = {}) => ({ store_id: terminal.branchId, entity_type:
 
 beforeEach(() => {
   vi.resetAllMocks();
+  mocked.env.clear();
+  mocked.config.mockReturnValue({ url: "https://owned.example/" });
   mocked.verify.mockResolvedValue({ kind: "cashier", storeId: terminal.branchId, terminal });
   mocked.scope.mockResolvedValue({ staffUserId: "person", storeId: terminal.branchId, terminalId: terminal.id, role: "cashier" });
   mocked.terminal.mockResolvedValue(terminal);
   mocked.rest.mockResolvedValue(Response.json([row(), row({ store_id: "other" }),
     row({ event_type: "sale_complete" }), row({ meta: '{"audience_user_ids":["another"]}' })]));
+});
+
+describe("relay-only PIN approval hint grant", () => {
+  const body = { ...input, action: "pin_approval_wake_grant" };
+  const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  const kid = "fixture-key";
+  const enable = () => {
+    mocked.config.mockReturnValue({ url: input.projectUrl });
+    mocked.env.set("POS_PIN_APPROVAL_WAKE_PROJECT_URL", input.projectUrl);
+    mocked.env.set("POS_PIN_APPROVAL_WAKE_SIGNING_JWK", JSON.stringify({ ...privateKey.export({ format: "jwk" }), kid }));
+    mocked.env.set("POS_PIN_APPROVAL_WAKE_TERMINAL_IDS", input.terminalToken);
+  };
+  it("issues only a short-lived private hint credential without a staff or machine bearer", async () => {
+    enable();
+    const response = await call(body);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    const grant = await response.json();
+    const topic = `pos-pin-approval-wake:v1:${createHash("sha256").update("branch\x1fperson").digest("hex")}`;
+    expect(grant).toMatchObject({ ok: true, protocol: "pin-approval-wake-v1", topic,
+      projectUrl: input.projectUrl, terminalId: terminal.id, branchId: terminal.branchId });
+    const [header, payload, signature] = grant.bearer.split(".");
+    expect(JSON.parse(Buffer.from(header, "base64url").toString())).toEqual({ alg: "ES256", kid, typ: "JWT" });
+    const claims = JSON.parse(Buffer.from(payload, "base64url").toString());
+    expect(claims).toEqual({ role: "anon", iat: expect.any(Number), exp: claims.iat + 120, pos_pin_approval_wake_topic: topic });
+    expect(verify("sha256", Buffer.from(`${header}.${payload}`),
+      { key: publicKey, dsaEncoding: "ieee-p1363" }, Buffer.from(signature, "base64url"))).toBe(true);
+    expect(mocked.verify).toHaveBeenCalledExactlyOnceWith(body, { strictAvailability: true, requireBoundCashier: true });
+    expect(mocked.rest).not.toHaveBeenCalled();
+  });
+
+  it("refuses a disabled gate, unrelated project, unlisted device, supplied branch and revoked or stale session", async () => {
+    expect((await call(body)).status).toBe(404);
+    enable();
+    expect((await call({ ...body, projectUrl: "https://other.example" })).status).toBe(403);
+    expect((await call({ ...body, terminalToken: "unlisted" })).status).toBe(403);
+    const forged = { ...body, branchId: "unrelated" };
+    expect((await call(forged)).status).toBe(400);
+    expect(mocked.verify).not.toHaveBeenCalled();
+    mocked.verify.mockRejectedValueOnce(new mocked.authError());
+    expect((await call(body)).status).toBe(403);
+    mocked.scope.mockResolvedValueOnce({ stale: true, staffUserId: "person", storeId: terminal.branchId, terminalId: terminal.id });
+    expect((await call(body)).status).toBe(403);
+    mocked.scope.mockResolvedValueOnce({ staffUserId: "person", storeId: "different", terminalId: terminal.id });
+    expect((await call(body)).status).toBe(403);
+  });
 });
 
 describe("Windows scoped approval activity read", () => {

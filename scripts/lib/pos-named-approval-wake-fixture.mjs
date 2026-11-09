@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 export async function verifyNamedApprovalWake({ sql, denySql }) {
@@ -82,4 +82,63 @@ export async function verifyNamedApprovalWake({ sql, denySql }) {
   serviceSend();
   assert.equal(sql(`SELECT count(*) FROM realtime.messages WHERE topic='${topic}';`), "1");
   console.log("PASS private named approval wake (exact recipient, no client send, current rule, revocation, unrelated topics)");
+
+  const pinPreparation = await readFile(new URL("../preparation/pos-pin-approval-wake-v1.sql", import.meta.url), "utf8");
+  const pinRequest = randomUUID();
+  const pinTopic = person => `pos-pin-approval-wake:v1:${createHash("sha256").update(`a\x1f${person}`).digest("hex")}`;
+  const requesterTopic = pinTopic("requester"), supervisorTopic = pinTopic("supervisor");
+  const insert = `INSERT INTO authorization_requests(id,store_id,action_key,requested_by,approval_route)
+    VALUES ('${pinRequest}', 'A', 'refund', 'Requester',
+      '{"primaryApprovers":[{"id":"Supervisor"},{"id":"Named"},{"id":"Inactive"}]}');`;
+  sql(`
+    ALTER TABLE authorization_requests ADD COLUMN status text NOT NULL DEFAULT 'pending',
+      ADD COLUMN consumed_at timestamptz;
+    CREATE TABLE activity_events (store_id text, entity_type text, event_type text, meta jsonb,
+      terminal_id text, entity_id text);
+    INSERT INTO app_users VALUES
+      ('Requester', NULL, 'requester@test.invalid', 'A', true, '{}'),
+      ('Supervisor', NULL, 'supervisor@test.invalid', 'A', true, '{}'),
+      ('Inactive', NULL, 'inactive@test.invalid', 'A', false, '{}');
+    BEGIN; ${pinPreparation} COMMIT;
+    BEGIN; ${insert} ROLLBACK;
+  `);
+  const pinMessages = () => sql("SELECT topic,event,payload,private FROM realtime.messages WHERE topic LIKE 'pos-pin-approval-wake:%' ORDER BY topic,event;");
+  assert.equal(pinMessages(), "");
+  sql(insert);
+  assert.deepEqual(pinMessages().split("\n"), [requesterTopic, supervisorTopic].sort().map(topic => `${topic}|approval_changed|{}|t`));
+
+  const pinRead = (claim, channel, role = "anon") => sql(`SET ROLE ${role};
+    SET request.jwt.claims='${JSON.stringify(claim ? { pos_pin_approval_wake_topic: claim } : {})}';
+    SET fixture.topic='${channel}'; SELECT count(*) FROM realtime.messages WHERE topic='${channel}';`);
+  assert.equal(pinRead(requesterTopic, requesterTopic), "1");
+  assert.equal(pinRead(requesterTopic, supervisorTopic), "0");
+  assert.equal(pinRead(requesterTopic, "ordinary-topic"), "0");
+  assert.equal(pinRead(null, requesterTopic), "0");
+  assert.equal(pinRead(null, requesterTopic, "authenticated"), "0");
+  assert.equal(pinRead(null, "ordinary-topic", "authenticated"), "1");
+  denySql(`SET ROLE anon; SET request.jwt.claims='{"pos_pin_approval_wake_topic":"${requesterTopic}"}';
+    SET fixture.topic='ordinary-topic';
+    INSERT INTO realtime.messages VALUES ('ordinary-topic', 'broadcast', 'forged', '{}', true);`, /row-level security/);
+  denySql(`SET ROLE authenticated; SET fixture.topic='ordinary-topic';
+    INSERT INTO realtime.messages VALUES ('${requesterTopic}', 'broadcast', 'forged', '{}', true);`, /row-level security/);
+  sql(`
+    UPDATE authorization_requests SET status='pending' WHERE id='${pinRequest}';
+    UPDATE authorization_requests SET status='approved' WHERE id='${pinRequest}';
+    UPDATE authorization_requests SET consumed_at=now() WHERE id='${pinRequest}';
+    INSERT INTO activity_events(store_id,entity_type,event_type,meta) VALUES
+      ('A','authorization_request','approval_granted','{"audience_user_ids":["Requester","Named"]}'),
+      ('A','authorization_request','approval_requested','{"audience_user_ids":["Requester"],"notification_routes":{"app":["Supervisor"]}}'),
+      ('A','authorization_request','approval_rejected','{"audience_user_ids":["Requester"],"in_app_disabled":true}'),
+      ('A','sale','sale_complete','{"audience_user_ids":["Requester"]}');
+    INSERT INTO activity_events VALUES
+      ('A','authorization_request','approval_granted','{"notification_routes":{"app":[],"terminalApp":["till-a"]}}',
+       'till-a','${pinRequest}');
+  `);
+  const actual = pinMessages().split("\n");
+  assert.equal(actual.length, 9);
+  for (const topic of [requesterTopic, supervisorTopic]) {
+    assert.equal(actual.filter(message => message === `${topic}|approval_changed|{}|t`).length, 3);
+    assert.equal(actual.filter(message => message === `${topic}|approval_activity_changed|{}|t`).length, topic === requesterTopic ? 2 : 1);
+  }
+  console.log("PASS relay-only PIN approval wake (transaction rollback, own recipient, activity delivery, no client publishing)");
 }

@@ -34,6 +34,7 @@ import { hasStaffSession } from "@/core/api/sync-relay";
 import { localDb } from "@/core/local-db/local-db";
 import { APP_RESUME_EVENT } from "@/core/activation/connection-health";
 import { subscribeDesktopPinActivityWake, subscribeMobilePinActivityWake } from "@/lib/pin-approval-wake";
+import { subscribeNamedApprovalBadge } from "@/lib/named-approval-badge";
 
 const PIN_POLL_MS = 15_000;
 const AUTHENTICATED_POLL_MS = 60_000;
@@ -76,6 +77,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
   const [cleared, setCleared] = useState<string[]>(() => clearedIds(meKey));
   const [rows, setRows] = useState<ActivityEvent[]>([]);
   const [rowsScope, setRowsScope] = useState<string | null>(null);
+  const [namedApprovals, setNamedApprovals] = useState<{ scope: string; ids: string[] }>();
   const [displayLimit, setDisplayLimit] = useState(30);
   const [, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
@@ -265,6 +267,11 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
   refreshLatest.current = refresh;
 
   useEffect(() => {
+    if (!meKey) return;
+    return subscribeNamedApprovalBadge(ids => setNamedApprovals({ scope: preferenceScope, ids }));
+  }, [meKey, preferenceScope]);
+
+  useEffect(() => {
     if (!showActivity || !meKey) return;
     const generation = refreshGeneration.current;
     mounted.current = true;
@@ -346,7 +353,11 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
   })), [visibleRows, humanizer, pos?.stores]);
   const matchingRows = useMemo(() => searchIndex.filter(item => !searchQuery || item.text.includes(searchQuery)).map(item => item.row), [searchIndex, searchQuery]);
   const displayedRows = useMemo(() => matchingRows.slice(0, displayLimit), [matchingRows, displayLimit]);
-  const badge = unseenEvents(visibleRows, meKey).length;
+  const unseen = unseenEvents(visibleRows, meKey);
+  const unseenApprovalIds = new Set(unseen.filter(row => row.type === "approval_requested" &&
+    row.entityType === "authorization_request").map(row => row.entityId));
+  const assignedApprovals = namedApprovals?.scope === preferenceScope ? namedApprovals.ids : [];
+  const badge = unseen.length + assignedApprovals.filter(id => !unseenApprovalIds.has(id)).length;
   const saving = [...preferenceBusy].some(key => key.startsWith(`${preferenceScope}:`));
 
   if (!allowed) return null;
@@ -385,6 +396,14 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
         <div className="border-b border-border/60 px-4 py-4 pr-12">
           <DialogTitle className="flex items-center gap-2 text-base"><Bell className="size-4 text-primary" /> Notifications</DialogTitle>
         </div>
+        {assignedApprovals.length > 0 && (
+          <Button type="button" variant="ghost" className="mx-3 mt-2 justify-start text-sm" onClick={() => {
+            setOpen(false);
+            void navigate({ to: "/approvals" });
+          }}>
+            Cross-store approvals awaiting your decision ({assignedApprovals.length === 10 ? "9+" : assignedApprovals.length})
+          </Button>
+        )}
         <div className="relative mx-3 mt-3">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
           <Input aria-label="Search notifications" placeholder="Search message, person, branch or bill…" value={search}

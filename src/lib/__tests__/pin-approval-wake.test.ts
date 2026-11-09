@@ -22,6 +22,7 @@ const fixture = vi.hoisted(() => {
     }>,
     construct: vi.fn(),
     readCredentials: vi.fn(),
+    posFetch: vi.fn(),
     verify: vi.fn(),
     epoch: 1,
     signedIn: true,
@@ -76,6 +77,7 @@ vi.mock("../session-presence", () => ({
   subscribeCentralAuthSession: (callback: () => void) => { fixture.central = callback; return () => {}; },
 }));
 vi.mock("../session-verify-client", () => ({ verifySession: fixture.verify }));
+vi.mock("../server-origin", () => ({ posFetch: fixture.posFetch }));
 
 import { subscribeDesktopPinActivityWake, subscribeMobilePinActivityWake, subscribePinApprovalWake } from "../pin-approval-wake";
 
@@ -108,6 +110,7 @@ beforeEach(() => {
   fixture.profile.mockReset().mockResolvedValue({ data: [profile], error: null });
   fixture.readCredentials.mockReset().mockResolvedValue({ ...proofs, accessToken: "ignore-other-bearer" });
   fixture.verify.mockReset().mockResolvedValue({ ok: true, kind: "cashier", storeId: "branch-a" });
+  fixture.posFetch.mockReset().mockImplementation(async () => new Response(null, { status: 404 }));
   fixture.query.select.mockReturnValue(fixture.query);
   fixture.query.eq.mockReturnValue(fixture.query);
   fixture.query.limit.mockReturnValue(fixture.query);
@@ -127,6 +130,54 @@ afterEach(async () => {
 });
 
 describe("enrolled PIN approval wake", () => {
+  it("uses only the bound relay session for a person topic when there is no machine token", async () => {
+    fixture.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    const topic = `pos-pin-approval-wake:v1:${"a".repeat(64)}`;
+    fixture.posFetch.mockImplementation(async () => Response.json({
+      ok: true, protocol: "pin-approval-wake-v1", projectUrl: fixture.project.url,
+      terminalId: proofs.terminalToken, branchId: "branch-a", topic,
+      bearer: "pin.wake.grant", expiresAt: Date.now() + 120_000,
+    }));
+    const approval = watch();
+    const badge = watch("branch-a", vi.fn(), subscribeMobilePinActivityWake);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fixture.posFetch).toHaveBeenCalledExactlyOnceWith("/api/v1/pos/activity-preferences", expect.objectContaining({
+      redirect: "error",
+      body: JSON.stringify({ action: "pin_approval_wake_grant", projectUrl: fixture.project.url,
+        sessionToken: proofs.sessionToken, terminalToken: proofs.terminalToken, deviceBindingProof: proofs.deviceBindingProof }),
+    }));
+    expect(fixture.verify).not.toHaveBeenCalled();
+    const first = fixture.sockets[0];
+    expect(first.setAuth).toHaveBeenCalledExactlyOnceWith("pin.wake.grant");
+    expect(first.channel).toHaveBeenCalledExactlyOnceWith(topic, { config: { private: true } });
+    expect(first.on.mock.calls.map(call => call[1].event)).toEqual(["approval_changed", "approval_activity_changed"]);
+    first.on.mock.calls[0][2]();
+    first.on.mock.calls[1][2]();
+    expect(approval.wake).toHaveBeenCalledOnce();
+    expect(badge.wake).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(105_005);
+    expect(first.disconnect).toHaveBeenCalledOnce();
+    expect(fixture.posFetch).toHaveBeenCalledTimes(2);
+    first.on.mock.calls[0][2]();
+    expect(approval.wake).toHaveBeenCalledOnce();
+    fixture.sockets[1].on.mock.calls[0][2]();
+    expect(approval.wake).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry a disabled relay on each focus event for the same PIN session", async () => {
+    fixture.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    watch();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fixture.posFetch).toHaveBeenCalledOnce();
+    window.dispatchEvent(new Event("focus"));
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fixture.posFetch).toHaveBeenCalledOnce();
+    fixture.epoch++;
+    fixture.credentials();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fixture.posFetch).toHaveBeenCalledTimes(2);
+  });
+
   it("shares one private branch socket after verifying the exact machine and PIN session", async () => {
     const first = watch();
     const second = watch();

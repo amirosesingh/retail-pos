@@ -132,6 +132,20 @@ export const Route = createFileRoute("/api/v1/pos/activity-preferences")({
             response.headers.set("Cache-Control", "no-store");
             return response;
           });
+        if (body && typeof body === "object" && "action" in body && body.action === "named_approval_badge") {
+          const { readNamedApprovalBadge } = await import("@/lib/named-approval-wake.server");
+          const result = await readNamedApprovalBadge(body, request.signal);
+          const response = reply(result.body, result.status);
+          response.headers.set("Cache-Control", "no-store");
+          return response;
+        }
+        if (body && typeof body === "object" && "action" in body && body.action === "pin_approval_wake_grant") {
+          const { issuePinApprovalWakeGrant } = await import("@/lib/pin-approval-grant.server");
+          const result = await issuePinApprovalWakeGrant(body, request.signal);
+          const response = reply(result.body, result.status);
+          response.headers.set("Cache-Control", "no-store");
+          return response;
+        }
         const parsed = bodySchema.safeParse(body);
         if (!parsed.success) return reply({ ok: false, error: "Invalid request" }, 400);
         const input = parsed.data;

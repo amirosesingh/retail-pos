@@ -314,6 +314,16 @@ A newer pinned same-epoch settings snapshot recovered an expired feed when
 the local journal and Change Tracking still proved the boundary. Unverified
 Change Tracking and divergent retained rows continued to require review.
 
+The approval bell now reads only current named cross-store assignments from
+the existing authorized relay and shares the private wake with Approvals.
+An enrolled PIN session without a machine bearer can obtain a short-lived
+private Realtime wake tied to the verified person and branch. Existing
+authorized polling remains in service. The disposable PostgreSQL fixture
+passed recipient isolation, rollback, committed activity delivery and client
+publish denial. The focused app suites passed. Hosted activation needs the
+exact staging project, enrolled terminals and a server-side staging signing
+key. The prepared policy is outside deployed migrations.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents
