@@ -17,6 +17,7 @@
  * channel cannot become world-callable by being forgotten.
  */
 const adminSession = require("./admin-session.cjs");
+const { requiresBookingCollection } = require("./db/write-policy.cjs");
 
 const OPEN = "open";
 const SUPERVISOR = "supervisor";
@@ -510,6 +511,8 @@ function allowed(channel, args = []) {
     }
     return false;
   }
+  if (channel === "business:write-batch" && requiresBookingCollection("general", args[1]) &&
+      (!adminSession.hasPosAuthority() || !adminSession.hasPermission("can_collect_booking"))) return false;
   if (channel === "business:commit-aggregate") {
     const kind = String(args[0]?.kind ?? "");
     const permissions = {
@@ -531,6 +534,8 @@ function allowed(channel, args = []) {
       held_order: ["can_hold_cart", "can_process_sale", "can_reopen_held_order", "can_discard_held_order", "can_void_cart"],
     }[kind];
     if (!adminSession.hasPosAuthority()) return false;
+    if (requiresBookingCollection(kind, args[0]?.operations) &&
+        !adminSession.hasPermission("can_collect_booking")) return false;
     if (!permissions) {
       if (!adminSession.hasLevel(SUPERVISOR)) return false;
     } else if (!permissions.some((permission) => adminSession.hasPermission(permission))) {
