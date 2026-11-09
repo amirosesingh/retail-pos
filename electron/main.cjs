@@ -38,6 +38,7 @@ const { PushWorker } = require("./sync/push-worker.cjs");
 const { PullWorker } = require("./sync/pull-worker.cjs");
 const { ConflictRepository } = require("./sync/conflicts.cjs");
 const { SyncCoordinator } = require("./sync/coordinator.cjs");
+const { installedGroupedSettingsPilot } = require("./sync/grouped-store-settings.cjs");
 const { CloudClient } = require("./sync/cloud-client.cjs");
 const { HeldStatusRecovery } = require("./sync/held-status-recovery.cjs");
 const closeWriteBarrier = new (require("./sync/write-barrier.cjs").WriteBarrier)();
@@ -100,11 +101,32 @@ const legacyRecoveryRuntime = require("./sync/legacy-shift-recovery-runtime.cjs"
     return ()=>{if(databaseManager.pool!==pool||identity()!==expected)throw Object.assign(new Error("The configured sync source changed. Saved work remains pending."),{code:"SYNC_BRANCH_FORBIDDEN",table:"shifts"});};
   },
 });
+const groupedSettingsPilot = installedGroupedSettingsPilot(process.env);
 const syncCoordinator = new SyncCoordinator({
   pushWorker: {reader:legacyRecoveryRuntime.reader,run:options=>legacyRecoveryRuntime.run(options,value=>shiftFinancialRuntime.runPush(value))},
   pullWorker: new PullWorker({ connectionManager:databaseManager,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,reader:changeReader,conflicts:conflictRepository,publish:publishBusinessChange }),
   recoverHeldStatuses:recoverLocalHeldStatuses,
+  groupedSettingsPilot: groupedSettingsPilot?.enrollment,
+  groupedSettingsPilotMode: groupedSettingsPilot?.mode,
+  uploadStoreSettingsEdit: () => storeSettingsEdits.upload(),
   publish: (state) => { for (const win of BrowserWindow.getAllWindows()) win.webContents.send("sync:state",legacyRecoveryRuntime.status(state)); },
+});
+const storeSettingsEdits = require("./sync/store-settings-edit-runtime.cjs").createStoreSettingsEditRuntime({
+  pilot: groupedSettingsPilot,
+  installationGeneration: process.env.POS_GROUPED_SETTINGS_EDIT_INSTALLATION_GENERATION,
+  coordinator: syncCoordinator, cloud: syncCloud, connectionManager: databaseManager,
+  ready: () => {
+    const state = databaseService.snapshot();
+    return process.platform === "win32" && app.hasSingleInstanceLock() && !safeMode && !quitting &&
+      !closeWriteBarrier.sealed && !jobManager.running && !localDataPreparePromise &&
+      state.enabled && state.configured && state.connected && state.tradingReady;
+  },
+  actor: () => {
+    const current = adminSession.identity();
+    if (current?.source !== "pos" || !current.settingsPersonId ||
+        !(adminSession.hasLevel("admin") || adminSession.hasPermission("can_access_pos_settings"))) return null;
+    return { personId: current.settingsPersonId, branchId: recordId(current.branchId), epoch: adminSession.epoch() };
+  },
 });
 const refreshPinApprovalActivity = require("./sync/approval-activity-wake.cjs").createApprovalActivityWake({
   coordinator: syncCoordinator, manager: databaseManager, registry: syncRegistry, reader: changeReader,
@@ -617,7 +639,9 @@ async function runAutomaticSync() {
       .then(differences=>{const unresolved=differences.filter(row=>!MEMBERSHIP_TABLES.has(row.table)&&!(row.table==='change_history'&&localDataLifecycle.historyPending(localBranchId())));if(unresolved.length)throw reconciliationError(unresolved);})
       .catch((error) => recordFault("sync.verify-counts", error));
   }
-  scheduleAutomaticSync(automaticSyncQueued ? 250 : historyCadence.nextDelay(),{historyContinuation:true});
+  const settingsContinuation = result.groupedSettingsPilot?.status === "MORE";
+  scheduleAutomaticSync(automaticSyncQueued || settingsContinuation ? 250 : historyCadence.nextDelay(),
+    {historyContinuation:!settingsContinuation});
 }
 function stopAutomaticSync() {
   automaticSyncScheduler.stop();
@@ -2131,10 +2155,12 @@ function registerIpc() {
       recordRegistrationChange(previous,terminal);
     }
     adminSession.grant(result.level,result.subject,result.permissions,"pos",result.branchId);
-    adminSession.bindVerifiedAuthor(result.authorId,result.subject);
+    adminSession.bindVerifiedAuthor(result.authorId,result.subject,result.settingsPersonId);
     syncCloud.setAuthorizationProof(proof);
     enrollCurrentShiftAuthor(proof);
-    rememberVerifiedBranch(result.branchId);return{ok:true,level:result.level};
+    rememberVerifiedBranch(result.branchId);
+    if (groupedSettingsPilot?.mode === "run" && result.settingsPersonId) scheduleAutomaticSync(250);
+    return {ok:true,level:result.level};
     }catch(error){
       if(error?.name==="BadArg")throw error;
       if(error?.code==="EBACKEND_UPGRADE_REQUIRED")return failed("EBACKEND_UPGRADE_REQUIRED",426);
@@ -2266,6 +2292,25 @@ function registerIpc() {
       recordFault("business.save-authorization-rule", error);
       return { ok: false, code: error?.code ?? "ESQLSERVER_WRITE", error: error?.message ?? "The authorization rule could not be saved locally." };
     }
+  }));
+  ipcMain.handle("business:queue-store-settings-edit", (event, value) => guard.guarded(async () => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame)
+      return { ok: false, code: "ESETTINGS_EDIT_UNAVAILABLE", error: "Offline save is unavailable on this till." };
+    const input = guard.plainObject(value, { name: "settings edit" });
+    const keys = ["operationId", "branchId", "expectedVersion", "patch"];
+    if (Object.keys(input).length !== keys.length || keys.some(key => !Object.hasOwn(input, key)))
+      throw new guard.BadArg("The settings edit has unsupported fields.");
+    const patch = guard.plainObject(input.patch, { name: "settings changes" });
+    if (Object.keys(patch).some(key => !["block_shift_close_on_hold", "max_drawer_cash_limit"].includes(key)))
+      throw new guard.BadArg("This setting requires the central connection.");
+    const result = await storeSettingsEdits.capture({
+      operationId: guard.uuid(input.operationId, { name: "operation id" }),
+      branchId: guard.text(input.branchId, { name: "store", max: 128 }),
+      expectedVersion: input.expectedVersion,
+      patch,
+    });
+    if (result.ok) scheduleAutomaticSync(250);
+    return result;
   }));
   ipcMain.handle("business:commit-aggregate", (_e, value) => guard.guarded(async() => {
     const aggregate=guard.aggregate(value);

@@ -1,7 +1,7 @@
 const { AsyncLocalStorage } = require("node:async_hooks");
 const { bootstrapDiagnostic, tagBootstrapDiagnostic } = require("../diagnostics.cjs");
 const { posFeedEvidence } = require("./status-evidence.cjs");
-const { pilotEnrollment } = require("./grouped-store-settings.cjs");
+const { pilotEnrollment, TABLE: GROUPED_SETTINGS } = require("./grouped-store-settings.cjs");
 function retainDiagnostic(target, source) {
   const { bootstrapPhase: phase, bootstrapOrigin: origin, ...fields } = bootstrapDiagnostic(source, []);
   try {
@@ -15,7 +15,17 @@ const syncLease = new AsyncLocalStorage();
 const authorHold = error => /^(?:ESYNC_SHIFT_AUTHOR_|ESHIFT_AUTHOR_)/.test(String(error?.code??""));
 class SyncCoordinator {
   #groupedSettingsPilot;
-  constructor({ pushWorker, pullWorker, publish = () => {}, recoverHeldStatuses = null, groupedSettingsPilot = null }) { this.pushWorker=pushWorker; this.pullWorker=pullWorker; this.publish=publish; this.recoverHeldStatuses=recoverHeldStatuses; this.#groupedSettingsPilot=pilotEnrollment(groupedSettingsPilot); this.running=false; this.activeRun=null; this.activeOptions=null; this.paused=false; this.status={ phase:"idle", pending:0, failed:0, conflicts:0, lastPushAt:null, lastPullAt:null, lastError:null, lastComparedAt:null, lastVerifiedAt:null, tables:[], recentTables:[], credentialsInvalid:false, membershipDeferred:false, membershipMirrored:0 }; }
+  #groupedSettingsPilotMode;
+  #uploadStoreSettingsEdit;
+  constructor({ pushWorker, pullWorker, publish = () => {}, recoverHeldStatuses = null, groupedSettingsPilot = null,
+    groupedSettingsPilotMode = null, uploadStoreSettingsEdit = null }) {
+    this.pushWorker=pushWorker; this.pullWorker=pullWorker; this.publish=publish; this.recoverHeldStatuses=recoverHeldStatuses;
+    this.#groupedSettingsPilot=pilotEnrollment(groupedSettingsPilot);
+    this.#groupedSettingsPilotMode=["run", "handback"].includes(groupedSettingsPilotMode) ? groupedSettingsPilotMode : null;
+    this.#uploadStoreSettingsEdit=uploadStoreSettingsEdit;
+    this.running=false; this.activeRun=null; this.activeOptions=null; this.paused=false;
+    this.status={ phase:"idle", pending:0, failed:0, conflicts:0, lastPushAt:null, lastPullAt:null, lastError:null, lastComparedAt:null, lastVerifiedAt:null, tables:[], recentTables:[], credentialsInvalid:false, membershipDeferred:false, membershipMirrored:0 };
+  }
   snapshot() { return { ...this.status, running:this.running, paused:this.paused }; }
   unresolved() { return this.unresolvedFailures??=new Map(); }
   publishFailureStatus(branchId) {
@@ -67,8 +77,8 @@ class SyncCoordinator {
   runPush(options) { return this.withExclusive(() => this.pushWorker.run(options)); }
   ownsExclusive(){return syncLease.getStore()===this;}
 
-  // Explicit isolated caller only. The installed runNow path still owns the
-  // legacy feed until its settings writers have a verified handoff.
+  // Used by the disposable cutover drill. Installed scheduling derives its
+  // enrollment from Main and establishes this same handoff when needed.
   prepareGroupedSettingsHandoff() {
     const enrollment = this.#groupedSettingsPilot;
     if (!enrollment) throw Object.assign(new Error("This coordinator has no grouped settings enrollment."),
@@ -97,6 +107,44 @@ class SyncCoordinator {
       this.publish(this.snapshot());
       return result;
     });
+  }
+
+  async #runInstalledGroupedSettings(enrollment, pullOnly) {
+    const branchId = enrollment.branchId;
+    let status, reason = null;
+    try {
+      if (this.paused) status = "PAUSED";
+      else if (this.#groupedSettingsPilotMode === "handback") {
+        await this.pullWorker.returnGroupedSettingsHandoff(enrollment, () => this.paused);
+        status = "HANDED_BACK";
+      } else {
+        await this.pullWorker.ensureGroupedSettingsHandoff(enrollment, () => this.paused);
+        if (!pullOnly && !this.paused && this.#uploadStoreSettingsEdit) {
+          try { this.status.storeSettingsEditUpload = await this.#uploadStoreSettingsEdit(); }
+          catch { this.status.storeSettingsEditUpload = { status: "RETRY", branchId, reason: "ESYNC_GROUPED_RETRY" }; }
+          this.publish(this.snapshot());
+        }
+        return this.runGroupedSettingsPilot();
+      }
+    } catch (error) {
+      reason = error?.code;
+      if (reason === "ESYNC_PAUSED") { status = "PAUSED"; reason = null; }
+      else if (["ELOCAL_UPLOAD_PENDING", "ESETTINGS_EDIT_PENDING"].includes(reason)) status = "DEFERRED";
+      else if (["ESYNC_GROUPED_REVIEW_REQUIRED", "ELOCAL_PENDING_UNVERIFIED", "ESYNC_GROUPED_PROTOCOL"].includes(reason)) status = "REVIEW_REQUIRED";
+      else if (["GROUPED_FEED_UNAVAILABLE", "HTTP_401", "HTTP_403"].includes(reason)) status = "UNAVAILABLE";
+      else if (["ESYNC_GROUPED_SCOPE", "ESYNC_GROUPED_DATABASE_CHANGED", "ESYNC_GROUPED_DATABASE_UNVERIFIED",
+        "ESYNC_REQUEST_CONTEXT_CHANGED", "ESYNC_GROUPED_HANDOFF_REQUIRED"].includes(reason)) status = "REFUSED";
+      else { status = "RETRY"; reason = "ESYNC_GROUPED_RETRY"; }
+    }
+    return this.#recordInstalledGroupedSettings(status, reason, branchId);
+  }
+
+  #recordInstalledGroupedSettings(status, reason, branchId) {
+    const prior = this.status.groupedSettingsPilot;
+    this.status.groupedSettingsPilot = { status, reason, branchId,
+      position: prior?.branchId === branchId && status !== "HANDED_BACK" ? prior.position : null };
+    this.publish(this.snapshot());
+    return this.status.groupedSettingsPilot;
   }
 
   async refresh(branchId) {
@@ -153,6 +201,10 @@ class SyncCoordinator {
   }
   async runOnce(options = {}) {
     this.running=true;
+    if (options.branchId) {
+      if (this.status.storeSettingsEditUpload?.branchId !== options.branchId) delete this.status.storeSettingsEditUpload;
+      if (this.status.groupedSettingsPilot?.branchId !== options.branchId) delete this.status.groupedSettingsPilot;
+    }
     Object.assign(this.status, { pushed:0, merged:0, currentTable:null, startedAt:new Date().toISOString() });
     this.publishFailureStatus(options.branchId);
     const workerOptions = { ...options, onProgress: progress => {
@@ -167,6 +219,8 @@ class SyncCoordinator {
       this.status.recentTables.length=Math.min(this.status.recentTables.length,50);
       this.publish(this.snapshot());
     } };
+    const enrollment = this.#groupedSettingsPilotMode && this.#groupedSettingsPilot?.branchId === options.branchId
+      ? this.#groupedSettingsPilot : null;
     let result;let failedDirection="push";
     try {
       this.status.phase="pushing"; this.publish(this.snapshot());
@@ -182,12 +236,28 @@ class SyncCoordinator {
         try { this.status.heldStatusRecovery=await this.recoverHeldStatuses({branchId:options.branchId}); }
         catch { this.status.heldStatusRecovery={updated:0,reviewRequired:0,deferred:true,code:"EHELD_STATUS_RETRY"}; }
       }
-      if (pushError && (pushError.code === "ECHANGEGAP" || (!authorHold(pushError)&&[401,403].includes(Number(pushError.status))))) throw pushError;
+      if (pushError && (pushError.code === "ECHANGEGAP" || (!authorHold(pushError)&&[401,403].includes(Number(pushError.status))))) {
+        if (enrollment && !options.pushOnly && this.#groupedSettingsPilotMode === "run" &&
+            pushError.code === "ECHANGEGAP" && pushError.table !== GROUPED_SETTINGS)
+          await this.#runInstalledGroupedSettings(enrollment, options.pullOnly);
+        throw pushError;
+      }
       let pulled = {};
       if (!options.pushOnly) {
         failedDirection="pull";
         this.status.phase="pulling"; this.status.currentTable=null; this.publish(this.snapshot());
-        pulled=(await this.pullWorker.run(workerOptions)) ?? {}; this.status.lastPullAt=new Date().toISOString(); this.status.conflicts=Number(pulled.conflicts??this.status.conflicts); this.status.membershipDeferred=Boolean(pulled.membershipDeferred); this.status.membershipMirrored=Number(pulled.membershipMirrored??0);
+        try {
+          pulled=(await (enrollment ? this.pullWorker.run(workerOptions, enrollment) : this.pullWorker.run(workerOptions))) ?? {};
+        } finally {
+          if (enrollment && this.#groupedSettingsPilotMode === "run")
+            await this.#runInstalledGroupedSettings(enrollment, options.pullOnly);
+        }
+        if (enrollment && this.#groupedSettingsPilotMode === "handback") {
+          if (pulled.deferredLocalChanges || pulled.deferredHeldDeletion)
+            this.#recordInstalledGroupedSettings("DEFERRED", "ELOCAL_UPLOAD_PENDING", enrollment.branchId);
+          else await this.#runInstalledGroupedSettings(enrollment, options.pullOnly);
+        }
+        this.status.lastPullAt=new Date().toISOString(); this.status.conflicts=Number(pulled.conflicts??this.status.conflicts); this.status.membershipDeferred=Boolean(pulled.membershipDeferred); this.status.membershipMirrored=Number(pulled.membershipMirrored??0);
         this.clearSuccessfulFailures(options,"pull",pulled);this.publishFailureStatus(options.branchId);
       }
       this.status.pushed=Number(pushed.pushed??this.status.pushed); this.status.merged=Number(pulled.merged??this.status.merged);

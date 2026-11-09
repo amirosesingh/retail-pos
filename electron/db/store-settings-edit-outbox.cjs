@@ -72,9 +72,10 @@ async function assertStoreSettingsEditHandbackClear(tx, { branchId, terminalId, 
   if (!branchId || recordId(branchId) !== branchId || !Number.isInteger(rowVersion) || rowVersion < 1) invalid();
   const tables = await tx.request().query(`SELECT
     OBJECT_ID(N'dbo.pos_store_settings_edit_commands', N'U') AS commands,
-    OBJECT_ID(N'dbo.pos_store_settings_edit_receipts', N'U') AS receipts;`);
-  const { commands, receipts } = tables.recordset[0];
-  if (commands === null && receipts === null) return;
+    OBJECT_ID(N'dbo.pos_store_settings_edit_receipts', N'U') AS receipts,
+    HAS_PERMS_BY_NAME(DB_NAME(), N'DATABASE', N'VIEW DEFINITION') AS can_see_schema;`);
+  const { commands, receipts, can_see_schema: canSeeSchema } = tables.recordset[0];
+  if (commands === null && receipts === null && canSeeSchema === 1) return;
   if (commands === null || receipts === null) pending();
   const result = await tx.request().input("branch", branchId).input("terminal", uuid(terminalId)).input("revision", rowVersion)
     .query(`SELECT TOP (1) 1 AS pending FROM dbo.pos_store_settings_edit_commands c WITH (UPDLOCK,HOLDLOCK)
@@ -171,6 +172,27 @@ class StoreSettingsEditOutbox {
     const command = row && row.disposition === null ? this.commandFrom(row, personId) : null;
     await this.verify(tx, personId);
     return command;
+  }
+
+  async readUpload(tx, { personId }) {
+    personId = personId === null ? null : uuid(personId);
+    await this.verify(tx, personId);
+    const row = await this.outstanding(tx);
+    if (row?.disposition === "REVIEW_REQUIRED") return { status: "REVIEW_REQUIRED" };
+    if (row) {
+      let saved;
+      try { saved = JSON.parse(row.command_json); } catch { invalid(); }
+      if (!personId || saved?.personId !== personId) return { status: "AWAITING_OPERATOR" };
+      return { status: "PENDING", command: this.commandFrom(row, personId) };
+    }
+    const awaiting = await this.request(tx).input("branch", this.scope.branchId).input("terminal", this.scope.terminalId)
+      .query(`SELECT TOP (1) 1 AS pending FROM dbo.pos_store_settings_edit_commands c
+        JOIN dbo.pos_store_settings_edit_receipts r ON r.operation_id=c.operation_id AND r.disposition=N'APPLIED'
+        LEFT JOIN dbo.pos_store_settings s ON s.store_id COLLATE Latin1_General_100_BIN2=c.branch_id
+        WHERE c.branch_id=@branch AND c.terminal_id=@terminal AND (s.row_version IS NULL OR
+          TRY_CONVERT(int,JSON_VALUE(r.receipt_json,'$.result.row_version')) IS NULL OR
+          TRY_CONVERT(int,JSON_VALUE(r.receipt_json,'$.result.row_version'))>s.row_version);`);
+    return { status: awaiting.recordset?.length ? "AWAITING_DOWNLOAD" : "EMPTY" };
   }
 
   async acknowledge(tx, { personId, operationId, witness }) {

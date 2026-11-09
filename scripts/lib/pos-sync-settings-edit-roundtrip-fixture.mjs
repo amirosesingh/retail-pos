@@ -48,7 +48,7 @@ export async function uploadSettingsFromLocal({ branchId, terminalId, personId, 
     await assert.rejects(upload(), /fixture lost the committed response/);
     assert.equal((await manager.pool.request().query("SELECT COUNT(*) AS n FROM dbo.pos_store_settings_edit_receipts;")).recordset[0].n, 0);
     assert.deepEqual(await upload(), { status: "APPLIED", operationId });
-    assert.deepEqual(await upload(), { status: "EMPTY" });
+    assert.deepEqual(await upload(), { status: "AWAITING_DOWNLOAD" });
     assert.equal((await manager.pool.request().query("SELECT COUNT(*) AS n FROM dbo.pos_store_settings_edit_receipts;")).recordset[0].n, 1);
     return { operationId, patch };
   } finally { await local.close(); }

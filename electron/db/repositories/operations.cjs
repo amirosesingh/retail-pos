@@ -9,6 +9,7 @@ const {
   settingsScopePredicate,
 } = require("../branch-scope.cjs");
 const { toRendererRow, normalizeSettingsScope } = require("../../sync/row-codec.cjs");
+const { assertLegacyApply: assertSettingsHandoff } = require("../../sync/grouped-settings-handoff.cjs");
 
 const MAX_BATCH_ROWS = 2000;
 const MAX_ENCODED_BYTES = 6 * 1024 * 1024;
@@ -408,6 +409,7 @@ class OperationsRepository {
   }
   async applyOperation(transaction, op, scope = {}) {
     scope = normalizeUuidFields(scope);
+    if (op.table === "pos_store_settings") await assertSettingsHandoff(transaction, scope.branchId);
     if (op.table === "products" && scope.enforcePermissions === true && writeRows(op).some(row => Object.hasOwn(row, "catalogue_store_ids")))
       throw Object.assign(new Error("Catalogue transfer provenance is centrally managed."), { code: "PERMISSION_DENIED" });
     const financialStock = isFinancialStockUpdate(op, scope);

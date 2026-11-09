@@ -326,12 +326,17 @@ describe("actual local panel database freshness", () => {
   const ready = { enabled: true, connected: true, tradingReady: true, state: "enabled_ready" };
 
   it("shows a grouped settings pilot only for the current branch", async () => {
-    const sync = { ...native(), groupedSettingsPilot: { status: "REVIEW_REQUIRED", branchId: "branch-a", position: { seq: "7" } } };
+    const sync = { ...native(), groupedSettingsPilot: { status: "REVIEW_REQUIRED", branchId: "branch-a", position: { seq: "7" } },
+      storeSettingsEditUpload: { status: "REVIEW_REQUIRED", branchId: "branch-a" } };
     const sameBranch = panelHarness(ready, undefined, { branchId: "branch-a", sync });
     const otherBranch = panelHarness(ready, undefined, { branchId: "branch-b", sync });
     await Promise.all([sameBranch.settle(), otherBranch.settle()]);
-    expect(sameBranch.findText(sameBranch.render(), "Store settings sync pilot")).toBeDefined();
-    expect(otherBranch.findText(otherBranch.render(), "Store settings sync pilot")).toBeUndefined();
+    expect(sameBranch.findText(sameBranch.render(), "Store settings download")).toBeDefined();
+    expect(sameBranch.findText(sameBranch.render(), "Store settings upload")).toBeDefined();
+    expect(sameBranch.status(sameBranch.render())).toBe("Store settings upload needs attention");
+    expect(otherBranch.findText(otherBranch.render(), "Store settings download")).toBeUndefined();
+    expect(otherBranch.findText(otherBranch.render(), "Store settings upload")).toBeUndefined();
+    expect(otherBranch.status(otherBranch.render())).toBe("Journal queue clear");
   });
 
   it("reports pending protected history after manual sync without a green completion", async () => {

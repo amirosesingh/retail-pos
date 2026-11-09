@@ -1,6 +1,6 @@
 import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DEFAULT_POS_RULES } from "../pos-rules";
 
 const mock = vi.hoisted(() => ({
@@ -8,6 +8,8 @@ const mock = vi.hoisted(() => ({
   permission: true, slots: [] as unknown[], cursor: 0,
   refs: [] as Array<{ current: unknown }>, refCursor: 0, branch: "branch", baselineBranch: "branch", cacheScope: "verified-scope",
   userId: "user-a",
+  dirtyField: "prevent_negative_stock_sale" as "prevent_negative_stock_sale" | "block_shift_close_on_hold",
+  failure: "none",
   buttons: [] as Array<Record<string, unknown>>, switches: [] as Array<Record<string, unknown>>,
   queue: vi.fn(), auth: vi.fn(), refresh: vi.fn(), save: vi.fn(), fetch: vi.fn(), toastError: vi.fn(),
 }));
@@ -20,7 +22,7 @@ vi.mock("react", async original => ({ ...await original<typeof import("react")>(
   useState: (initial: unknown) => {
     const index = mock.cursor++;
     if (!(index in mock.slots)) mock.slots[index] = index === 0
-      ? { ...(initial as typeof DEFAULT_POS_RULES), prevent_negative_stock_sale: !(initial as typeof DEFAULT_POS_RULES).prevent_negative_stock_sale }
+      ? { ...(initial as typeof DEFAULT_POS_RULES), [mock.dirtyField]: !(initial as typeof DEFAULT_POS_RULES)[mock.dirtyField] }
       : initial;
     return [mock.slots[index], (next: unknown) => { mock.slots[index] = next; }];
   },
@@ -30,6 +32,7 @@ vi.mock("@/lib/pos-rules.tsx", () => ({ usePosRules: () => ({
   rules: DEFAULT_POS_RULES, source: mock.source, loading: mock.loading,
   usingDefaults: mock.usingDefaults, notVerified: mock.notVerified,
   failureText: mock.notVerified ? "Unavailable" : "", status: mock.notVerified ? "NOT_VERIFIED" : "DEGRADED",
+  failure: mock.failure,
   refresh: mock.refresh, confirmSaved: vi.fn(), branchId: mock.baselineBranch, terminalId: "terminal", rowVersion: 7,
   cacheScope: mock.cacheScope,
   shiftSharingAvailable: true,
@@ -75,10 +78,12 @@ beforeEach(() => {
   mock.source = "DATABASE"; mock.loading = false; mock.usingDefaults = false; mock.notVerified = false; mock.permission = true;
   mock.slots = []; mock.refs = []; mock.branch = "branch"; mock.baselineBranch = "branch"; mock.cacheScope = "verified-scope";
   mock.userId = "user-a";
+  mock.dirtyField = "prevent_negative_stock_sale"; mock.failure = "none";
   mock.auth.mockReset().mockResolvedValue({}); mock.queue.mockReset().mockResolvedValue(undefined);
   mock.refresh.mockReset().mockResolvedValue(undefined); mock.save.mockReset(); mock.fetch.mockReset();
   mock.toastError.mockReset();
 });
+afterEach(() => vi.unstubAllGlobals());
 it.each(["DEFAULT_SAFETY", "UNAVAILABLE", "LEGACY_CACHE"])("does not edit or save unverified %s defaults, even through a stale callback", async source => {
   mock.source = source; mock.usingDefaults = source !== "LEGACY_CACHE"; mock.notVerified = source !== "LEGACY_CACHE";
   draw();
@@ -110,6 +115,22 @@ it("keeps existing pending rules and refuses a new save based on their unconfirm
   expect(mock.queue).not.toHaveBeenCalled();
   expect(mock.auth).not.toHaveBeenCalled();
   expect(mock.toastError).toHaveBeenCalledWith(expect.stringContaining("pending rules to be confirmed"));
+});
+it("reuses one offline settings command ID across uncertain IPC responses without sending a legacy write", async () => {
+  const queueStoreSettingsEdit = vi.fn()
+    .mockRejectedValueOnce(new Error("fixture IPC response lost"))
+    .mockImplementation(async ({ operationId }: { operationId: string }) => ({ ok: true, operationId }));
+  vi.stubGlobal("window", { pos: { queueStoreSettingsEdit } });
+  mock.source = "LAST_KNOWN_GOOD"; mock.failure = "network"; mock.dirtyField = "block_shift_close_on_hold";
+  draw();
+  await (saveButton().onClick as () => Promise<void>)();
+  draw();
+  await (saveButton().onClick as () => Promise<void>)();
+  expect(queueStoreSettingsEdit.mock.calls).toEqual([[{
+    branchId: "branch", expectedVersion: 7, operationId: expect.any(String),
+    patch: { block_shift_close_on_hold: !DEFAULT_POS_RULES.block_shift_close_on_hold },
+  }], [queueStoreSettingsEdit.mock.calls[0][0]]]);
+  expect(mock.save).not.toHaveBeenCalled(); expect(mock.fetch).not.toHaveBeenCalled(); expect(mock.queue).not.toHaveBeenCalled();
 });
 it("requires a verified revision for the selected store before submitting", async () => {
   mock.branch = "another-branch";

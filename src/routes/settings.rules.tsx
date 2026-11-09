@@ -33,9 +33,21 @@ import { getPosCallerAuth } from "@/lib/pos-caller-auth";
 import { posFetch, serverOrigin } from "@/lib/server-origin";
 import { requestIdleTimeout } from "@/lib/idle-timeout-client";
 import { broadcastSettingsChange } from "@/lib/sync-engine";
-import { hasVerifiedRulesBaseline, reconcileRulesDraft } from "@/lib/pos-rules-draft";
+import { changedDrawerLimit, hasVerifiedRulesBaseline, offlineRulesPatch, reconcileRulesDraft } from "@/lib/pos-rules-draft";
 import { isTransientRulesSaveFailure } from "@/lib/pos-rules-failure";
-import { sameBranchId } from "@/lib/branch-id";
+import { canonicalBranchId, sameBranchId } from "@/lib/branch-id";
+import type { LocalSyncStatus, StoreSettingsEditUpload } from "@/core/local-db/local-db";
+
+const uploadLabels: Partial<Record<StoreSettingsEditUpload["status"], string>> = {
+  PENDING: "Edit saved on this till and waiting to upload. Current rules stay in effect.",
+  APPLIED: "Edit accepted centrally. Waiting for the confirmed rules to download.",
+  AWAITING_DOWNLOAD: "Edit accepted centrally. Waiting for the confirmed rules to download.",
+  RETRY: "The queued edit is waiting to retry.",
+  AWAITING_OPERATOR: "Store settings upload requires the original authorized staff account.",
+  REVIEW_REQUIRED: "The saved edit needs review. Current rules stay in effect.",
+  PAUSED: "Store settings synchronization is paused.",
+  UNAVAILABLE: "The offline store settings pilot is unavailable on this till.",
+};
 
 export const Route = createFileRoute("/settings/rules")({
   head: () => ({
@@ -63,6 +75,7 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
     shiftSharingAvailable,
     rules,
     loading,
+    failure,
     failureText,
     refresh,
     confirmSaved,
@@ -81,8 +94,9 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
   const mayEdit = isAdmin || can("can_access_pos_settings");
   const mayEditRules = mayEdit && Boolean(branchId) && sameBranchId(branchId, currentStore.id) &&
     hasVerifiedRulesBaseline({ source, loading, usingDefaults, notVerified });
-  const contextKey = JSON.stringify([mayEditRules, authUserId, user?.staffId ?? null,
-    terminalUser?.cashierId ?? terminalUser?.userCode ?? null, currentStore.id, branchId, terminal, cacheScope, source]);
+  const editorScope = JSON.stringify([authUserId, user?.staffId ?? null,
+    terminalUser?.cashierId ?? terminalUser?.userCode ?? null, currentStore.id, branchId, terminal, cacheScope]);
+  const contextKey = JSON.stringify([mayEditRules, editorScope, source]);
   const editContext = useRef(contextKey);
   const contextEpoch = useRef(0);
   if (editContext.current !== contextKey) {
@@ -98,9 +112,25 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
   const [idleLoaded, setIdleLoaded] = useState(false);
   const [savedIdle, setSavedIdle] = useState<number | null>(null);
   const [checking, setChecking] = useState(false);
+  const [drawerLimit, setDrawerLimit] = useState<string | null>(null);
+  const [upload, setUpload] = useState<StoreSettingsEditUpload | null>(null);
+  const draftBase = useRef<{ rules: PosRules; version: number } | null>(null);
+  const queuedAttempt = useRef<{ key: string; operationId: string } | null>(null);
+  const uncertainOnlineSave = useRef<string | null>(null);
   const previouslyConfirmed = useRef(rules);
-  const draftScope = useRef(currentStore.id);
+  const draftScope = useRef(editorScope);
   const forceNextRules = useRef(false);
+
+  useEffect(() => {
+    const sync = window.pos?.sync;
+    let active = true;
+    const update = (state: LocalSyncStatus) => {
+      if (active && state.storeSettingsEditUpload) setUpload(state.storeSettingsEditUpload);
+    };
+    const stop = sync?.subscribe?.(update);
+    void sync?.getStatus?.().then(update).catch(() => undefined);
+    return () => { active = false; stop?.(); };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -141,24 +171,23 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
   // Accept background refreshes while the editor is clean. A focus/timer
   // refresh must never erase an unfinished administrator draft.
   useEffect(() => {
-    const changedBranch = draftScope.current !== currentStore.id;
+    const changedScope = draftScope.current !== editorScope;
     // React may run the updater after the refs below have advanced.
     const previous = previouslyConfirmed.current;
-    const force = forceNextRules.current || changedBranch;
-    setDraft((current) =>
-      reconcileRulesDraft(
-        current,
-        previous,
-        rules,
-        force,
-      ),
-    );
+    const force = forceNextRules.current || changedScope;
+    if (force) {
+      draftBase.current = null;
+      queuedAttempt.current = null;
+      setDrawerLimit(null);
+    }
+    setDraft((current) => !force && changedDrawerLimit(drawerLimit, previous.max_drawer_cash_limit)
+      ? current : reconcileRulesDraft(current, previous, rules, force));
     previouslyConfirmed.current = rules;
-    draftScope.current = currentStore.id;
+    draftScope.current = editorScope;
     forceNextRules.current = false;
-  }, [currentStore.id, rules]);
+  }, [editorScope, rules, rowVersion, drawerLimit]);
 
-  const dirty = !rulesEqual(draft, rules);
+  const dirty = !rulesEqual(draft, rules) || changedDrawerLimit(drawerLimit, rules.max_drawer_cash_limit);
   const idleDirty = idleLoaded && savedIdle !== null && idle !== savedIdle;
 
   const saveStatus = dirty ? "Unsaved changes" : status === "LIVE" ? "Saved"
@@ -176,14 +205,15 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
   }
 
   const set = (key: PosRuleKey, value: boolean | number) => {
-    if (!mayEditRules) return;
+    if (!mayEditRules || saving) return;
+    if (!dirty || !draftBase.current) draftBase.current = { rules, version: rowVersion };
     setDraft((d) => key === "require_counted_cash_on_close"
       ? withClosingCashCount(d, Boolean(value))
       : ({ ...d, [key]: value }) as PosRules);
   };
 
   async function save() {
-    if (!mayEditRules) return;
+    if (!mayEditRules || saving || draftScope.current !== editorScope) return;
     if (source === "LOCAL_PENDING") {
       toast.error("Wait for the pending rules to be confirmed before saving another edit. Your draft is still open.");
       return;
@@ -194,8 +224,40 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
         throw Object.assign(new Error("The active branch, connection or permission changed. Review the current saved rules before saving."), { code: "RULES_CONTEXT_CHANGED" });
     };
     setSaving(true);
+    let submittedOnline = false;
     try {
       assertContext();
+      const queue = typeof window !== "undefined" ? window.pos?.queueStoreSettingsEdit : undefined;
+      const offline = (source === "LAST_KNOWN_GOOD" && failure === "network") ||
+        (source === "DATABASE" && typeof navigator !== "undefined" && navigator.onLine === false);
+      if (queue && offline) {
+        if (uncertainOnlineSave.current === editorScope) {
+          toast.error("The earlier online save could not be confirmed. Reconnect before saving again.");
+          return;
+        }
+        const base = draftBase.current ?? { rules, version: rowVersion };
+        const patch = offlineRulesPatch(draft, base.rules, drawerLimit);
+        if (!patch) {
+          toast.error("These edits need a connection to head office, or a valid drawer cash limit. Your draft is still open.");
+          return;
+        }
+        const key = JSON.stringify([editorScope, base.version, patch]);
+        if (queuedAttempt.current?.key !== key) queuedAttempt.current = { key, operationId: crypto.randomUUID() };
+        const operationId = queuedAttempt.current.operationId;
+        const result = await queue({ branchId: canonicalBranchId(currentStore.id), expectedVersion: base.version, operationId, patch });
+        assertContext();
+        if (!result.ok || result.operationId !== operationId) {
+          toast.error(result.error ?? "The offline save could not be confirmed. Your draft is still open.");
+          return;
+        }
+        queuedAttempt.current = null;
+        draftBase.current = null;
+        setDraft(rules);
+        setDrawerLimit(null);
+        setUpload({ status: "PENDING", branchId: currentStore.id });
+        toast.success("Rules edit queued for synchronization");
+        return;
+      }
       const auth = await getPosCallerAuth();
       assertContext();
       if (!auth.accessToken) {
@@ -207,8 +269,9 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
         accessToken: auth.accessToken,
         storeId: currentStore.id,
         patch: draft as unknown as Record<string, boolean | number>,
-        expectedVersion: rowVersion,
+        expectedVersion: draftBase.current?.version ?? rowVersion,
       };
+      submittedOnline = true;
       // Native bundles have no local app server; the hosted endpoint derives
       // branch and supervisor authority from these credentials.
       const res = serverOrigin()
@@ -225,6 +288,7 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
             ok: response.ok,
           }))
         : await savePosRules({ data: payload });
+      uncertainOnlineSave.current = null;
       assertContext();
       if (!res.ok) {
         if (/STALE_RULES/i.test(res.error ?? "")) {
@@ -240,12 +304,16 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
       }
       if ("snapshot" in res && res.snapshot) await confirmSaved(res.snapshot);
       else await refresh();
+      draftBase.current = null;
+      queuedAttempt.current = null;
+      setDrawerLimit(null);
       await broadcastSettingsChange("pos_store_settings");
       toast.success("Rules saved");
     } catch (e) {
-      if (isTransientRulesSaveFailure(e))
+      if (isTransientRulesSaveFailure(e)) {
+        if (submittedOnline) uncertainOnlineSave.current = editorScope;
         toast.error("The save could not be confirmed. Reconnect and refresh the store rules before retrying.");
-      else notifyError(e, "Could not save rules");
+      } else notifyError(e, "Could not save rules");
     } finally {
       setSaving(false);
     }
@@ -283,6 +351,7 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
         </div>
         {failureText && status !== "LIVE" && <p role="alert" className="text-sm text-destructive">Could not load current saved settings. Check the connection and reload.</p>}
         {source === "LEGACY_CACHE" && <p role="status" className="text-sm text-muted-foreground">Previous saved rules are preserved for offline operation. Connect to verify this database before editing. Existing pending changes remain pending.</p>}
+        {upload && sameBranchId(upload.branchId, currentStore.id) && uploadLabels[upload.status] && <p role="status" className="text-sm text-muted-foreground">{uploadLabels[upload.status]}</p>}
 
         <section className="rounded-lg border border-border bg-card px-5">
           <div className="flex items-center justify-between gap-3 border-b border-border/60 py-4">
@@ -325,7 +394,7 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
                       {field.kind === "switch" ? (
                         <Switch
                           aria-label={field.label}
-                          disabled={!mayEditRules || (field.key === 'allow_branch_shift_sharing' && !shiftSharingAvailable && draft.allow_branch_shift_sharing !== false)}
+                          disabled={!mayEditRules || saving || (field.key === 'allow_branch_shift_sharing' && !shiftSharingAvailable && draft.allow_branch_shift_sharing !== false)}
                           checked={field.key === "require_counted_cash_on_close" ? requiresClosingCashCount(draft) : Boolean(draft[field.key])}
                           onCheckedChange={(v) => set(field.key, v)}
                         />
@@ -334,9 +403,12 @@ export function RulesSettings({ embedded = false }: { embedded?: boolean }) {
                           aria-label={field.label}
                           className="numeric h-8 w-28 shrink-0"
                           inputMode="decimal"
-                          disabled={!mayEditRules}
-                          value={String(draft[field.key])}
-                          onChange={(e) => set(field.key, Number(e.target.value) || 0)}
+                          disabled={!mayEditRules || saving}
+                          value={field.key === "max_drawer_cash_limit" && drawerLimit !== null ? drawerLimit : String(draft[field.key])}
+                          onChange={(e) => {
+                            set(field.key, Number(e.target.value) || 0);
+                            if (field.key === "max_drawer_cash_limit") setDrawerLimit(e.target.value);
+                          }}
                         />
                       )}
                     </div>

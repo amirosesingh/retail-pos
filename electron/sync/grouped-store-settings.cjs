@@ -36,6 +36,16 @@ function pilotEnrollment(value) {
   return Object.freeze({ ...value });
 }
 
+function installedGroupedSettingsPilot(env) {
+  const mode = env.POS_GROUPED_SETTINGS_PILOT_MODE;
+  const input = env.POS_GROUPED_SETTINGS_PILOT_ENROLLMENT;
+  if (!["run", "handback"].includes(mode) || typeof input !== "string" || input.length > 1024) return null;
+  try {
+    const enrollment = pilotEnrollment(JSON.parse(input));
+    return enrollment ? Object.freeze({ enrollment, mode }) : null;
+  } catch { return null; }
+}
+
 function sequence(value) {
   if (typeof value !== "string" || !/^(?:0|[1-9]\d{0,18})$/.test(value) || BigInt(value) > MAX_SEQ)
     throw fail("The grouped settings sequence is invalid.");
@@ -173,7 +183,7 @@ async function readLocalRow(transaction, table, change, keyColumn, key) {
     return `${field}=CONVERT(${column.sqlServerType},${parameter})`;
   });
   const result = await request.query(`
-    SELECT CASE WHEN ${comparisons.join(" AND ")} THEN 1 ELSE 0 END AS matching
+    SELECT CASE WHEN ${comparisons.join(" AND ")} THEN 1 ELSE 0 END AS matching, row_version
     FROM dbo.[${table.sqlServerTable}] WITH (UPDLOCK,HOLDLOCK) WHERE [${keyColumn}]=@key;`);
   if (result.recordset?.length > 1) throw fail("The grouped local row key is ambiguous.");
   return result.recordset?.[0] ?? null;
@@ -204,6 +214,6 @@ async function assertLocalTracking(transaction, branch) {
 }
 
 module.exports = {
-  TABLE, CHECKPOINT, MAX_RESPONSE_BYTES, fail, operationsScope, pilotEnrollment, snapshotRequired,
+  TABLE, CHECKPOINT, MAX_RESPONSE_BYTES, fail, operationsScope, pilotEnrollment, installedGroupedSettingsPilot, snapshotRequired,
   groupsFor, snapshotFor, readDatabaseGuid, readPosition, readLocalRow, assertLocalTracking,
 };

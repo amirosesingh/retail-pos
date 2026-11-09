@@ -1,13 +1,15 @@
 // Opt-in disposable LocalDB and synthetic HTTPS replies. No operator settings are used.
 const assert = require("node:assert/strict");
 const { createHash } = require("node:crypto");
+const { readFileSync } = require("node:fs");
+const path = require("node:path");
 const { createLocal } = require("./lib/shift-protocol-integration-fixture.cjs");
 const { CloudClient } = require("../electron/sync/cloud-client.cjs");
 const { PullWorker } = require("../electron/sync/pull-worker.cjs");
 const { SyncCoordinator } = require("../electron/sync/coordinator.cjs");
 const { ChangeReader } = require("../electron/sync/change-reader.cjs");
 const { CheckpointRepository } = require("../electron/sync/checkpoints.cjs");
-const { CHECKPOINT, TABLE, assertLocalTracking, readDatabaseGuid } = require("../electron/sync/grouped-store-settings.cjs");
+const { CHECKPOINT, TABLE, assertLocalTracking, readDatabaseGuid, installedGroupedSettingsPilot } = require("../electron/sync/grouped-store-settings.cjs");
 const { CHECKPOINT: HANDOFF } = require("../electron/sync/grouped-settings-handoff.cjs");
 const { refreshTable, runBootstrap } = require("../electron/jobs/bootstrap.cjs");
 
@@ -465,6 +467,186 @@ async function main() {
       restarted.resume();
       assert.equal((await restarted.runGroupedSettingsPilot()).position.seq, seq(4));
       assert.equal((await saved()).row_version, 10);
+    });
+
+    await test("installed cycles route mixed pages and hand back only verified exact settings, retaining business work", async () => {
+      const enrollment = { branchId: branch, terminalId: terminal, backendOrigin: url,
+        projectOrigin: originalProject.projectOrigin, databaseGuid: await readDatabaseGuid(manager.pool.request()) };
+      const env = { POS_GROUPED_SETTINGS_PILOT_ENROLLMENT: JSON.stringify(enrollment) };
+      assert.equal(installedGroupedSettingsPilot(env), null);
+      assert.equal(installedGroupedSettingsPilot({ ...env, POS_GROUPED_SETTINGS_PILOT_MODE: "run",
+        POS_GROUPED_SETTINGS_PILOT_ENROLLMENT: "{}" }), null);
+      const active = installedGroupedSettingsPilot({ ...env, POS_GROUPED_SETTINGS_PILOT_MODE: "run" });
+      const legacy = makeCloud();
+      const groupedWorker = worker(legacy);
+      const legacyCursor = async () => String((await checkpoints.get(branch, "__feed__", "pull")).committed_cursor);
+      const fence = async () => JSON.parse((await checkpoints.get(branch, HANDOFF, "pull"))?.committed_cursor ?? "null");
+      const storeName = async () => (await manager.pool.request().input("branch", branch)
+        .query("SELECT name FROM dbo.stores WHERE id=@branch;")).recordset[0].name;
+      await manager.pool.request().input("branch", branch).query(
+        "WITH CHANGE_TRACKING_CONTEXT (0x434C4F5544) UPDATE dbo.stores SET row_version=1 WHERE id=@branch;");
+      const version = n => change(n, { updated_at: `2026-11-07T04:31:${n}.1234567Z`,
+        ...(n >= 13 ? { max_drawer_cash_limit: "100.25" } : {}) });
+      const store = { table_name: "stores", entity_id: JSON.stringify({ id: branch }), row_version: 2,
+        tombstone: false, row_data: { id: branch, name: "Independent store update", row_version: 2 }, cursor: 84 };
+      const pullOptions = { branchId: branch, skipMembership: true };
+      legacy.pullBatch = async () => ({ cursor: 85, count: 2, rows: [{ ...store }],
+        tombstones: [{ ...version(11), tombstone: true, cursor: 85 }] });
+      await assert.rejects(groupedWorker.run(pullOptions, active.enrollment), { code: "ESYNC_GROUPED_LEGACY_FENCED" });
+      assert.equal(await legacyCursor(), "83");
+      assert.equal(await storeName(), "Synthetic branch");
+
+      legacy.pullBatch = async () => ({ cursor: 85, count: 2,
+        rows: [{ ...store }, { ...version(11), row_version: 10, cursor: 85 }], tombstones: [] });
+      const save = checkpoints.save.bind(checkpoints);
+      checkpoints.save = async (...args) => {
+        await save(...args);
+        if (args[1] === "__feed__") throw new Error("fixture legacy commit failure");
+      };
+      try { await assert.rejects(groupedWorker.run(pullOptions, active.enrollment), /fixture legacy commit failure/); }
+      finally { checkpoints.save = save; }
+      assert.equal(await legacyCursor(), "83");
+      assert.equal(await storeName(), "Synthetic branch");
+      assert.equal((await fence()).legacyVersion, undefined);
+
+      let uploadObserved;
+      const installed = new SyncCoordinator({ groupedSettingsPilot: active.enrollment, groupedSettingsPilotMode: active.mode,
+        pullWorker: groupedWorker, pushWorker: { run: async () => ({}) },
+        uploadStoreSettingsEdit: async () => {
+          uploadObserved = { lease: installed.ownsExclusive(), store: await storeName() };
+          return { status: "EMPTY", branchId: branch };
+        } });
+      reply = page(5, 5, [[5, version(11)]]);
+      assert.equal((await installed.runNow(pullOptions)).ok, true);
+      assert.deepEqual(uploadObserved, { lease: true, store: "Independent store update" });
+      assert.equal(installed.snapshot().storeSettingsEditUpload.status, "EMPTY");
+      assert.equal(installed.snapshot().groupedSettingsPilot.status, "CAUGHT_UP");
+      assert.equal(await legacyCursor(), "85");
+      assert.equal((await fence()).legacyVersion, 11);
+      assert.equal((await saved()).row_version, 11);
+      assert.deepEqual(notices.slice(-2).map(value => value.tables), [["stores"], [TABLE]]);
+
+      const legacyPage = row => ({ rows: [row], cursor: null });
+      const emptyFeed = async () => ({ count: 0, rows: [], tombstones: [] });
+      const handback = new SyncCoordinator({ groupedSettingsPilot: enrollment, groupedSettingsPilotMode: "handback",
+        pullWorker: groupedWorker, pushWorker: { run: async () => ({}) },
+        uploadStoreSettingsEdit: async () => { assert.fail("Handback cannot send new settings edits"); } });
+      legacy.pullBatch = async () => ({ cursor: 86, count: 1,
+        rows: [{ ...version(12), cursor: 86 }], tombstones: [] });
+      legacy.bootstrapPage = async () => legacyPage(version(11).row_data);
+      reply = snapshot(seq(5), [version(11)]);
+      assert.equal((await handback.runNow(pullOptions)).groupedSettingsPilot.status, "REVIEW_REQUIRED");
+      assert.equal(await legacyCursor(), "86");
+      assert.equal((await fence()).legacyVersion, 12);
+
+      legacy.pullBatch = emptyFeed;
+      reply = page(6, 6, [[6, version(12)]]);
+      const push = installed.pushWorker.run;
+      installed.pushWorker.run = async () => { throw Object.assign(new Error("fixture sales CT gap"),
+        { code: "ECHANGEGAP", table: "sales" }); };
+      try { assert.equal((await installed.runNow(pullOptions)).code, "ECHANGEGAP"); }
+      finally { installed.pushWorker.run = push; }
+      assert.equal(installed.snapshot().groupedSettingsPilot.status, "CAUGHT_UP");
+      assert.equal((await saved()).row_version, 12);
+      legacy.bootstrapPage = async () => legacyPage({ ...version(12).row_data, max_drawer_cash_limit: Number(exactDecimal) });
+      reply = snapshot(seq(6), [version(12)]);
+      assert.equal((await handback.runNow(pullOptions)).groupedSettingsPilot.status, "REVIEW_REQUIRED");
+      assert.equal((await saved()).amount, exactDecimal);
+      assert(await fence());
+
+      reply = page(7, 7, [[7, version(13)]]);
+      await installed.runNow(pullOptions);
+      const operation = id(42), sale = id(43), shift = id(44);
+      await local.insert("shifts", { id: shift, store_id: branch, terminal_id: terminal, state: "ACTIVE", status: "OPEN", row_version: 1 });
+      await local.insert("sales", { id: sale, store_id: branch, branch_id: branch, shift_id: shift,
+        bill_number: "FIXTURE-PENDING", row_version: 1 });
+      await manager.pool.request().batch(readFileSync(path.join(__dirname, "preparation", "pos-store-settings-edit-outbox-v1.sql"), "utf8"));
+      await manager.pool.request().input("branch", branch).input("terminal", terminal).input("operation", operation)
+        .input("sale", JSON.stringify({ id: sale })).query(`
+        INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id,entity_version)
+          VALUES(N'sales',@sale,N'insert',@branch,1);
+        INSERT dbo.pos_store_settings_edit_commands(operation_id,branch_id,terminal_id,command_json,command_sha256)
+          VALUES(@operation,@branch,@terminal,N'{}',REPLICATE('a',64));`);
+      legacy.bootstrapPage = async () => legacyPage({ ...version(13).row_data, max_drawer_cash_limit: 100.25 });
+      reply = snapshot(seq(7), [version(13)]);
+      const callsBeforeDeferred = calls.length;
+      legacy.pullBatch = async () => ({ cursor: 87, count: 1, tombstones: [],
+        rows: [{ table_name: "sales", entity_id: JSON.stringify({ id: sale }), cursor: 87,
+          row_data: { id: sale, store_id: branch, bill_number: "FIXTURE-PENDING" } }] });
+      assert.equal((await handback.runNow(pullOptions)).groupedSettingsPilot.status, "DEFERRED");
+      assert.equal(calls.length, callsBeforeDeferred);
+      assert.equal(await legacyCursor(), "86");
+      legacy.pullBatch = emptyFeed;
+      assert.equal((await handback.runNow(pullOptions)).groupedSettingsPilot.status, "DEFERRED");
+      assert(await fence());
+
+      await manager.pool.request().input("operation", operation).query(`
+        INSERT dbo.pos_store_settings_edit_receipts(operation_id,disposition,receipt_json)
+          VALUES(@operation,N'APPLIED',N'{"result":{"row_version":13}}');`);
+      assert.equal((await handback.runNow(pullOptions)).groupedSettingsPilot.status, "HANDED_BACK");
+      assert.equal(await fence(), null);
+      assert.equal(await legacyCursor(), "86");
+      assert.equal((await cursor()).seq, seq(7));
+      legacy.pullBatch = async () => ({ cursor: 87, count: 1, rows: [{ ...version(14), cursor: 87 }], tombstones: [] });
+      assert.equal((await handback.runNow(pullOptions)).ok, true);
+      assert.equal(await legacyCursor(), "87");
+      assert.equal((await saved()).row_version, 14);
+      const retained = (await manager.pool.request().input("shift", shift).input("sale", sale)
+        .input("saleKey", JSON.stringify({ id: sale })).query(`
+        SELECT (SELECT state FROM dbo.shifts WHERE id=@shift) state,
+          (SELECT bill_number FROM dbo.sales WHERE id=@sale) bill,
+          (SELECT COUNT(*) FROM dbo.sync_change_journal WHERE entity_type=N'sales' AND entity_id=@saleKey AND acknowledged_at IS NULL) pending,
+          (SELECT COUNT(*) FROM dbo.pos_store_settings_edit_receipts) receipts;`)).recordset[0];
+      assert.deepEqual(retained, { state: "ACTIVE", bill: "FIXTURE-PENDING", pending: 1, receipts: 1 });
+
+      legacy.pullBatch = emptyFeed;
+      reply = snapshot(seq(8), [version(14)]);
+      afterResponse = () => {
+        reply = page(8, 8, []);
+        afterResponse = () => {};
+      };
+      const reinstalled = await installed.runNow(pullOptions);
+      assert.equal(reinstalled.groupedSettingsPilot.status, "CAUGHT_UP");
+      assert.equal((await cursor()).seq, seq(8));
+      assert.equal(await legacyCursor(), "87");
+      assert(await fence());
+
+      const expired = next => {
+        status = 409;
+        reply = { status: "SNAPSHOT_REQUIRED", reason: "REPLAY_EXPIRED" };
+        afterResponse = () => {
+          status = 200;
+          reply = next;
+          afterResponse = () => {
+            reply = page(9, 9, []);
+            afterResponse = () => {};
+          };
+        };
+      };
+      expired(snapshot(seq(9), [{ ...version(14), row_data: { ...version(14).row_data, block_shift_close_on_hold: true } }]));
+      assert.equal((await installed.runNow(pullOptions)).groupedSettingsPilot.status, "REVIEW_REQUIRED");
+      assert.equal((await cursor()).seq, seq(8));
+      expired(snapshot(seq(9), [version(15)], { epoch: id(55) }));
+      assert.equal((await installed.runNow(pullOptions)).groupedSettingsPilot.status, "REVIEW_REQUIRED");
+      assert.equal((await cursor()).epoch, epoch);
+
+      await manager.pool.request().input("branch", branch).input("key", key).query(`
+        INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id,entity_version)
+          VALUES(N'pos_store_settings',@key,N'update',@branch,15);`);
+      expired(snapshot(seq(9), [version(15)]));
+      assert.equal((await installed.runNow(pullOptions)).groupedSettingsPilot.status, "DEFERRED");
+      assert.equal((await cursor()).seq, seq(8));
+      await manager.pool.request().query("UPDATE dbo.sync_change_journal SET acknowledged_at=SYSDATETIMEOFFSET() WHERE entity_type=N'pos_store_settings';");
+      const validTracking = (await checkpoints.get(branch, TABLE, "push")).change_tracking_version;
+      await checkpoints.save(branch, TABLE, "push", { change_tracking_version: "-1" });
+      expired(snapshot(seq(9), [version(15)]));
+      assert.equal((await installed.runNow(pullOptions)).groupedSettingsPilot.status, "REVIEW_REQUIRED");
+      assert.equal((await cursor()).seq, seq(8));
+      await checkpoints.save(branch, TABLE, "push", { change_tracking_version: validTracking });
+      expired(snapshot(seq(9), [version(15)]));
+      assert.equal((await installed.runNow(pullOptions)).groupedSettingsPilot.status, "CAUGHT_UP");
+      assert.equal((await saved()).row_version, 15);
+      assert.equal((await cursor()).seq, seq(9));
     });
 
     console.log("PASS " + passed + " isolated LocalDB grouped settings cases");

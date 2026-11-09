@@ -31,9 +31,10 @@ async function runStoreSettingsEditUpload({ coordinator, connectionManager, outb
       }
     };
 
-    const command = await transact(transaction => outbox.readPending(transaction, { personId }));
+    const next = await transact(transaction => outbox.readUpload(transaction, { personId }));
     if (coordinator.paused) return { status: "PAUSED" };
-    if (!command) return { status: "EMPTY" };
+    if (!next || next.status !== "PENDING") return { status: next?.status ?? "PAUSED" };
+    const { command } = next;
     const witness = await cloud.submitStoreSettingsEdit(source, command);
     if (coordinator.paused) return { status: "PAUSED" };
     const result = await transact(transaction => outbox.acknowledge(transaction, {

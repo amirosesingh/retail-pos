@@ -7,8 +7,15 @@ const {prepareHistoryFeed}=require('./history-feed.cjs');
 const grouped = require("./grouped-store-settings.cjs");
 const handoff = require("./grouped-settings-handoff.cjs");
 const { applyGroupedCashReceipt } = require("./grouped-cash-receipt.cjs");
+const { assertStoreSettingsEditHandbackClear } = require("../db/store-settings-edit-outbox.cjs");
+const { recordId } = require("./uuid-fields.cjs");
 function assertGroupedPilotRunning(isPaused) {
   if (isPaused?.()) throw grouped.fail("The grouped settings pilot is paused.", "ESYNC_PAUSED");
+}
+function assertGroupedEnrollment(enrollment, source, branch) {
+  if (enrollment && (enrollment.branchId !== branch || enrollment.terminalId !== recordId(source.terminal.tokenId) ||
+      enrollment.projectOrigin !== source.project.projectOrigin || enrollment.backendOrigin !== source.base))
+    throw grouped.fail("The grouped settings pilot does not match this terminal and project.", "ESYNC_GROUPED_SCOPE");
 }
 const SHIFT_GRAPH_TABLES = new Set(["shifts", "shift_cash_counts", "shift_reconciliations",
   "shift_close_events", "shift_notifications", "shift_variance_alerts"]);
@@ -57,9 +64,7 @@ class PullWorker {
     const table = this.registry.tables.find(table => table.cloudTable === grouped.TABLE && table.sqlServerTable === grouped.TABLE && table.scope === "branch");
     if (!table || source.pool !== this.connectionManager.pool)
       throw grouped.fail("The grouped settings projection is unavailable on this database.");
-    if (enrollment && (enrollment.branchId !== branch || enrollment.terminalId !== source.terminal.tokenId ||
-        enrollment.projectOrigin !== source.project.projectOrigin || enrollment.backendOrigin !== source.base))
-      throw grouped.fail("The grouped settings pilot does not match this terminal and project.", "ESYNC_GROUPED_SCOPE");
+    assertGroupedEnrollment(enrollment, source, branch);
     const databaseGuid = await grouped.readDatabaseGuid(source.pool.request());
     this.cloud.assertRequestContext(source, false);
     if (enrollment && enrollment.databaseGuid !== databaseGuid)
@@ -78,7 +83,7 @@ class PullWorker {
       if (await grouped.readDatabaseGuid(transaction.request()) !== databaseGuid)
         throw grouped.fail("The SQL Server database changed before the grouped settings apply.", "ESYNC_GROUPED_DATABASE_CHANGED");
       const fence = await handoff.readFence(transaction.request(), branch, true);
-      if (context.handoff === "required") handoff.authorizeGroupedApply(transaction, context, fence);
+      if (context.handoff === "required" || context.handoff === "return") handoff.authorizeGroupedApply(transaction, context, fence);
       else if (fence) throw handoff.legacyFenced();
       const local = await grouped.readLocalRow(transaction, table, change, "store_id", branch);
       const current = await grouped.readPosition(transaction.request(), context, true);
@@ -93,6 +98,19 @@ class PullWorker {
       const entityId = JSON.stringify({ store_id: branch });
       const pending = await this.reader.unacknowledged(table, [entityId], transaction, { branchId: branch });
       if (pending.size) throw grouped.fail("A local settings edit is still pending upload.", "ELOCAL_UPLOAD_PENDING");
+      if (context.handoff === "return") {
+        const { row_version: rowVersion } = change.row_data;
+        if (local?.matching !== 1 || rowVersion < handoff.assertGroupedFence(fence, context))
+          throw grouped.fail("The local settings must match a verified snapshot covering the skipped legacy settings.",
+            "ESYNC_GROUPED_REVIEW_REQUIRED");
+        const legacy = await grouped.readLocalRow(transaction, table, { row_data: snapshot.legacyRow }, "store_id", branch);
+        if (legacy?.matching !== 1)
+          throw grouped.fail("The existing settings download cannot reproduce the verified local settings.",
+            "ESYNC_GROUPED_REVIEW_REQUIRED");
+        await assertStoreSettingsEditHandbackClear(transaction, { branchId: branch,
+          terminalId: recordId(source.terminal.tokenId), rowVersion });
+        await handoff.deleteFence(transaction, branch);
+      }
       if (context.handoff === "prepare") {
         const legacy = await this.checkpoints.get(branch, "__feed__", "pull", transaction);
         if (!/^(?:0|[1-9]\d*)$/.test(legacy?.committed_cursor ?? "") ||
@@ -101,7 +119,13 @@ class PullWorker {
         await this.checkpoints.save(branch, handoff.CHECKPOINT, "pull",
           { committed_cursor: handoff.fenceValue(context) }, transaction);
       }
-      if (snapshot && local && local.matching !== 1)
+      // Only the same enrolled feed can advance an expired replay boundary.
+      // The locked row, unchanged saved position and clear local upload
+      // evidence above protect newer canonical data from overwriting local work.
+      const recoveryCanReplace = snapshot?.replayExpired === true && context.handoff === "required" &&
+        current?.epoch === next.epoch && BigInt(next.seq) > BigInt(current.seq) &&
+        Number.isInteger(local?.row_version) && local.row_version > 0 && change.row_data.row_version > local.row_version;
+      if (snapshot && local && local.matching !== 1 && !recoveryCanReplace)
         throw grouped.fail("The retained local settings differ from the snapshot. Review is required before advancing.", "ESYNC_GROUPED_REVIEW_REQUIRED");
       if (local?.matching !== 1) {
         await this.applyTable(transaction, table, [change], branch, pending);
@@ -125,7 +149,6 @@ class PullWorker {
       tables: [grouped.TABLE], changes: [{ table: grouped.TABLE, entityId: branch }] });
     return changed;
   }
-  // Opt-in pilot entry points. The installed coordinator still calls run().
   applyGroupedCashReceipt(input) {
     return applyGroupedCashReceipt(this, input);
   }
@@ -137,14 +160,43 @@ class PullWorker {
     const context = await this.groupedSettingsContext(enrollment);
     return this.installGroupedSettingsSnapshotFor({ ...context, handoff: "prepare" }, isPaused);
   }
-  async installGroupedSettingsSnapshotFor(context, isPaused = null) {
+  async ensureGroupedSettingsHandoff(enrollment, isPaused) {
+    const context = await this.groupedSettingsContext(enrollment);
+    const fence = await handoff.readFence(context.source.pool.request(), context.branch);
+    if (fence) handoff.assertGroupedFence(fence, context);
+    else await this.installGroupedSettingsSnapshotFor({ ...context, handoff: "prepare" }, isPaused);
+  }
+  async returnGroupedSettingsHandoff(enrollment, isPaused) {
+    const context = await this.groupedSettingsContext(enrollment);
+    const fence = await handoff.readFence(context.source.pool.request(), context.branch);
+    if (fence) {
+      handoff.assertGroupedFence(fence, context);
+      return this.installGroupedSettingsSnapshotFor({ ...context, handoff: "return" }, isPaused);
+    }
+    return null;
+  }
+  async installGroupedSettingsSnapshotFor(context, isPaused = null, replayExpired = false) {
     const { source, branch, table } = context;
     const position = await grouped.readPosition(source.pool.request(), context);
     assertGroupedPilotRunning(isPaused);
     const response = await this.cloud.groupedSettingsSnapshot(source);
     assertGroupedPilotRunning(isPaused);
     const snapshot = grouped.snapshotFor(response, branch, table);
+    snapshot.replayExpired = replayExpired;
     const { epoch, seq, change } = snapshot;
+    if (context.handoff === "return") {
+      const legacy = await this.cloud.bootstrapPage({ table: grouped.TABLE, branchId: branch,
+        historyDays: 90, cursor: null, limit: 100 });
+      this.cloud.assertRequestContext(source, false);
+      assertGroupedPilotRunning(isPaused);
+      const row = legacy?.rows?.[0];
+      if (!Array.isArray(legacy?.rows) || legacy.rows.length !== 1 || legacy.cursor !== null ||
+          !row || row.store_id !== branch || Number(row.row_version) !== change.row_data.row_version ||
+          table.columns.some(column => !Object.hasOwn(row, column.cloudColumn)))
+        throw grouped.fail("The existing settings download did not confirm a complete same-revision branch row.",
+          "ESYNC_GROUPED_REVIEW_REQUIRED");
+      snapshot.legacyRow = row;
+    }
     const changed = await this.commitGroupedSettings(context, position, { epoch, seq, upper: null }, change, snapshot, isPaused);
     return { epoch, seq, changed };
   }
@@ -196,7 +248,7 @@ class PullWorker {
           if (isPaused()) break;
           if (snapshotUsed || !["UNINITIALIZED", "REPLAY_EXPIRED", "EPOCH_MISMATCH"].includes(result.reason))
             return progress("REVIEW_REQUIRED", result.reason);
-          await this.installGroupedSettingsSnapshotFor(context, isPaused);
+          await this.installGroupedSettingsSnapshotFor(context, isPaused, result.reason === "REPLAY_EXPIRED");
           snapshotUsed = true;
           continue;
         }
@@ -278,7 +330,31 @@ class PullWorker {
       await refresh("held_orders", row => ids.has(String(row.id)));
     }
   }
-  async run({ branchId, batchSize = 500, skipMembership = false, onProgress = () => {} }) {
+  async legacySettingsPage(transaction, batch, branch, source, enrollment, checkpoint) {
+    if (!enrollment) return batch;
+    const settings = [...batch.rows, ...batch.tombstones].filter(change => change.table_name === grouped.TABLE);
+    if (!settings.length) return batch;
+    const fence = await handoff.readFence(transaction.request(), branch, true);
+    if (!fence) return batch;
+    if (!source) throw handoff.legacyFenced();
+    this.cloud.assertRequestContext(source, false);
+    if (grouped.operationsScope(source) !== branch) throw handoff.legacyFenced();
+    assertGroupedEnrollment(enrollment, source, branch);
+    const databaseGuid = await grouped.readDatabaseGuid(transaction.request());
+    const context = { source, databaseGuid };
+    if (enrollment.databaseGuid !== databaseGuid) throw handoff.legacyFenced();
+    const oldVersion = handoff.assertGroupedFence(fence, context);
+    const legacyVersion = handoff.legacySettingsVersion(settings, branch);
+    const current = await this.checkpoints.get(branch, "__feed__", "pull", transaction);
+    if (String(current?.committed_cursor ?? "") !== String(checkpoint?.committed_cursor ?? ""))
+      throw grouped.fail("Another legacy download advanced the settings overlap page.", "ESYNC_CURSOR");
+    if (legacyVersion > oldVersion)
+      await this.checkpoints.save(branch, handoff.CHECKPOINT, "pull",
+        { committed_cursor: handoff.fenceValue(context, legacyVersion) }, transaction);
+    return { ...batch, rows: batch.rows.filter(change => change.table_name !== grouped.TABLE),
+      tombstones: batch.tombstones.filter(change => change.table_name !== grouped.TABLE) };
+  }
+  async run({ branchId, batchSize = 500, skipMembership = false, onProgress = () => {} }, enrollment = null) {
     if (!branchId) throw new Error("A branch is required for synchronization.");
     // A single legacy settings/audit row can approach 2 MiB. Keep downloads at
     // the database's byte-safe minimum even when a caller asks for a larger
@@ -286,6 +362,11 @@ class PullWorker {
     batchSize = 100;
     let merged = 0; let conflictCount = 0; let membershipMirrored = 0; let membershipDeferred = false; let deferredHeldDeletion = false; let deferredLocalChanges = false;
     try {
+    let groupedSource = null;
+    if (enrollment) {
+      try { groupedSource = this.cloud.requestContext(false); }
+      catch { /* The legacy page remains guarded if its settings need the pilot. */ }
+    }
     await this.conflicts?.reconcileAcknowledged?.();
     let checkpoint = await this.checkpoints.get(branchId, "__feed__", "pull");
     while (true) {
@@ -326,7 +407,9 @@ class PullWorker {
       const sql = this.connectionManager.sql();
       const transaction = new sql.Transaction(this.connectionManager.pool);
       await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
+      let applicable;
       try {
+        applicable = await this.legacySettingsPage(transaction, batch, branchId, groupedSource, enrollment, checkpoint);
         const ordered = [...this.registry.tables].sort((a, b) => a.dependencyOrder - b.dependencyOrder || a.cloudTable.localeCompare(b.cloudTable));
         merged+=await applyShiftGraphs({transaction,connectionManager:this.connectionManager,registry:this.registry,reader:this.reader,branchId,prepared});
         const graphPending = new Map();
@@ -338,11 +421,11 @@ class PullWorker {
             changes.map(change => String(change.entity_id)), transaction, { branchId, changes }));
         }
         for (const table of ordered) {
-          const result = await this.applyTable(transaction, table, batch.rows.filter((row) => row.table_name === table.cloudTable && !prepared.covers(row) && !history.covers(row)), branchId, graphPending.get(table.cloudTable));
+          const result = await this.applyTable(transaction, table, applicable.rows.filter((row) => row.table_name === table.cloudTable && !prepared.covers(row) && !history.covers(row)), branchId, graphPending.get(table.cloudTable));
           merged += result.applied; conflictCount += result.conflicts;
         }
         for (const table of [...ordered].reverse()) {
-          const result = await this.applyTable(transaction, table, batch.tombstones.filter((row) => row.table_name === table.cloudTable && !prepared.covers(row) && !history.covers(row)), branchId, graphPending.get(table.cloudTable));
+          const result = await this.applyTable(transaction, table, applicable.tombstones.filter((row) => row.table_name === table.cloudTable && !prepared.covers(row) && !history.covers(row)), branchId, graphPending.get(table.cloudTable));
           merged += result.applied; conflictCount += result.conflicts;
         }
         // Business/closing writers acquire their rows before history/journal.
@@ -350,6 +433,7 @@ class PullWorker {
         merged+=await history.apply(transaction);
         await history.assert(transaction);
         await this.checkpoints.save(branchId, "__feed__", "pull", { committed_cursor: batch.cursor }, transaction);
+        if (applicable !== batch) this.cloud.assertRequestContext(groupedSource, false);
         await transaction.commit();
       } catch (error) {
         await Promise.resolve(transaction.rollback()).catch(() => undefined);
@@ -373,10 +457,12 @@ class PullWorker {
         }
         throw error;
       }
-      this.publish({ kind: "general", branchId, source: "cloud", tables: [...new Set([...batch.rows, ...batch.tombstones].map(row => row.table_name))],
-        changes: [...batch.rows, ...batch.tombstones].map(row => ({ table: row.table_name, entityId: row.row_data?.product_id && row.table_name === "product_barcodes" ? row.row_data.product_id : row.row_data?.id ?? (() => { try { return JSON.parse(row.entity_id).id ?? null; } catch { return null; } })() })) });
+      const appliedChanges = [...applicable.rows, ...applicable.tombstones];
+      const tables = [...new Set(appliedChanges.map(row => row.table_name))];
+      if (tables.length) this.publish({ kind: "general", branchId, source: "cloud", tables,
+        changes: appliedChanges.map(row => ({ table: row.table_name, entityId: row.row_data?.product_id && row.table_name === "product_barcodes" ? row.row_data.product_id : row.row_data?.id ?? (() => { try { return JSON.parse(row.entity_id).id ?? null; } catch { return null; } })() })) });
       checkpoint = { ...(checkpoint ?? {}), committed_cursor: batch.cursor };
-      onProgress({ direction: "pull", table: [...new Set([...batch.rows, ...batch.tombstones].map(row => row.table_name))].join(", "), completed: merged - beforePage });
+      if (tables.length) onProgress({ direction: "pull", table: tables.join(", "), completed: merged - beforePage });
       batch.rows.length = 0; batch.tombstones.length = 0;
       if (batch.count < page.limit && batch.continuation !== true) break;
     }

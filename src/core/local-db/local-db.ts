@@ -291,6 +291,13 @@ export type DirectConnectionParams = {
   timeout?: number;
 };
 
+export type StoreSettingsEditUpload = {
+  branchId: string;
+  status: "EMPTY" | "PENDING" | "APPLIED" | "AWAITING_DOWNLOAD" | "RETRY" | "REVIEW_REQUIRED" |
+    "AWAITING_OPERATOR" | "PAUSED" | "UNAVAILABLE";
+  reason?: string | null;
+};
+
 export type LocalSyncStatus = {
   connected: boolean;
   tradingReady?: boolean;
@@ -317,6 +324,7 @@ export type LocalSyncStatus = {
   failed?: number;
   conflicts?: number;
   lastError?: string | null;
+  storeSettingsEditUpload?: StoreSettingsEditUpload;
   running?: boolean;
   paused?: boolean;
   enabled?: boolean;
@@ -407,6 +415,12 @@ export type PosBridge = {
     error?: string;
     code?: string;
   }>;
+  queueStoreSettingsEdit?: (value: {
+    branchId: string;
+    expectedVersion: number;
+    operationId: string;
+    patch: { block_shift_close_on_hold?: boolean; max_drawer_cash_limit?: string };
+  }) => Promise<{ ok: boolean; operationId?: string; error?: string; code?: string }>;
   openDrawer?: (value: {
     reason: string;
     shiftId?: string | null;

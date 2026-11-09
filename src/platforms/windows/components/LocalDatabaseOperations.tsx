@@ -13,12 +13,14 @@ import { isNativeDatabaseSnapshot, nativeSyncSummary } from "@/lib/sync-status-s
 import { LegacyShiftRecoveryReview } from "./LegacyShiftRecoveryReview";
 import { HeldBillRecoveryReview } from "./HeldBillRecoveryReview";
 import { sameBranchId } from "@/lib/branch-id";
+import type { StoreSettingsEditUpload } from "@/core/local-db/local-db";
 
 type DatabaseState = { state?: string; enabled?: boolean; connected?: boolean; tradingReady?: boolean; profile?: { database?: string } | null };
 type TableStatus = { table: string; local: string; cloud: string; status: "SYNCED" | "VERIFIED" | "DIFFERENT"; verified?: boolean; comparedAt?: string | null };
 const groupedSettingsLabels = {
   PAUSED: "Paused",
   CAUGHT_UP: "Caught up",
+  HANDED_BACK: "Using the existing settings download",
   MORE: "More changes waiting",
   DEFERRED: "Waiting for a local edit to upload",
   REVIEW_REQUIRED: "Review required",
@@ -27,7 +29,18 @@ const groupedSettingsLabels = {
   RETRY: "Waiting to retry",
 };
 type GroupedSettingsPilot = { status: keyof typeof groupedSettingsLabels; branchId: string; position?: { seq: string } | null };
-type SyncState = { phase?: string; running?: boolean; paused?: boolean; pending?: number; failed?: number; conflicts?: number; membershipDeferred?: boolean; membershipMirrored?: number; lastPushAt?: string | null; lastPullAt?: string | null; lastComparedAt?: string | null; lastVerifiedAt?: string | null; tables?: TableStatus[]; pushed?: number; merged?: number; currentTable?: string | null; lastError?: string | null; queuedTables?: { table: string; pending: number; failed: number; error?: string | null }[]; recentTables?: { table: string; direction: "push" | "pull"; rows: number; at: string }[]; groupedSettingsPilot?: GroupedSettingsPilot | null };
+const uploadLabels: Record<StoreSettingsEditUpload["status"], string> = {
+  EMPTY: "No edits waiting",
+  PENDING: "Edit queued",
+  APPLIED: "Accepted centrally, waiting for download",
+  AWAITING_DOWNLOAD: "Accepted centrally, waiting for download",
+  RETRY: "Waiting to retry",
+  REVIEW_REQUIRED: "Edit needs review",
+  AWAITING_OPERATOR: "Authorized staff sign-in required",
+  PAUSED: "Paused",
+  UNAVAILABLE: "Pilot connection unavailable",
+};
+type SyncState = { phase?: string; running?: boolean; paused?: boolean; pending?: number; failed?: number; conflicts?: number; membershipDeferred?: boolean; membershipMirrored?: number; lastPushAt?: string | null; lastPullAt?: string | null; lastComparedAt?: string | null; lastVerifiedAt?: string | null; tables?: TableStatus[]; pushed?: number; merged?: number; currentTable?: string | null; lastError?: string | null; queuedTables?: { table: string; pending: number; failed: number; error?: string | null }[]; recentTables?: { table: string; direction: "push" | "pull"; rows: number; at: string }[]; groupedSettingsPilot?: GroupedSettingsPilot | null; storeSettingsEditUpload?: StoreSettingsEditUpload | null };
 type FailureRow = { job_id?: string; job_type?: string; status?: string; phase?: string; current_table?: string | null; error_code?: string | null; error_message?: string | null; updated_at?: string | null };
 type ConflictRow = { conflict_id?: string; entity_type?: string; entity_id?: string; reason?: string; created_at?: string | null };
 type DatabaseErrorRow = { id?: string; occurred_at?: string; event?: string; category?: string; stage?: string | null; state?: string | null; code?: string | null; message?: string | null; occurrences?: number };
@@ -118,8 +131,14 @@ export function LocalDatabaseOperations({ branchId }: { branchId?: string } = {}
       const result = await work();
       if (result.ok === false) throw new Error(String(result.error ?? "The operation did not complete."));
       const differences = Array.isArray(result.differences) ? result.differences.length : 0;
-      const pending = result.historyPending === true || result.historyHoldOnly === true;
-      const status = pending ? "Protected history is still pending." : success;
+      const historyPending = result.historyPending === true || result.historyHoldOnly === true;
+      const synced = result as SyncState;
+      const upload = synced.storeSettingsEditUpload;
+      const download = synced.groupedSettingsPilot;
+      const settingsPending = Boolean(branchId && ((upload && sameBranchId(branchId, upload.branchId) && upload.status !== "EMPTY") ||
+        (download && sameBranchId(branchId, download.branchId) && !["CAUGHT_UP", "HANDED_BACK"].includes(download.status))));
+      const pending = historyPending || settingsPending;
+      const status = historyPending ? "Protected history is still pending." : settingsPending ? "Store settings synchronization is still pending." : success;
       setMessage({ text: differences ? `${status} ${differences} difference${differences === 1 ? " remains" : "s remain"}.` : status, pending });
       await refresh();
     } catch (cause) {
@@ -134,9 +153,11 @@ export function LocalDatabaseOperations({ branchId }: { branchId?: string } = {}
   const conflictCount = Number(failures.conflicts ?? failures.conflictRows?.length ?? sync.conflicts ?? 0);
   const tableDifferences = (sync.tables ?? []).filter((table) => table.status === "DIFFERENT");
   const activeTable = sync.running ? sync.currentTable : null;
-  const syncSummary = nativeSyncSummary(sync, state, syncReadFailed || databaseReadFailed);
   const groupedSettings = branchId && sameBranchId(sync.groupedSettingsPilot?.branchId, branchId)
     ? sync.groupedSettingsPilot : null;
+  const settingsUpload = branchId && sameBranchId(sync.storeSettingsEditUpload?.branchId, branchId)
+    ? sync.storeSettingsEditUpload : null;
+  const syncSummary = nativeSyncSummary({ ...sync, storeSettingsEditUpload: settingsUpload }, state, syncReadFailed || databaseReadFailed);
   const queuedTables = (sync.queuedTables ?? []).filter((row) =>
     (row.pending > 0 || row.failed > 0) && row.table !== activeTable);
   const direction = sync.phase === "pulling" ? "Download" : sync.phase === "pushing" ? "Upload" : "Processing";
@@ -165,8 +186,11 @@ export function LocalDatabaseOperations({ branchId }: { branchId?: string } = {}
             <div className="space-y-4 border-t border-border p-3">
           <DatabaseJobProgress job={job} />
           {groupedSettings ? <p role="status" className="text-xs text-muted-foreground">
-            <span>Store settings sync pilot</span> · {groupedSettingsLabels[groupedSettings.status]}
+            <span>Store settings download</span> · {groupedSettingsLabels[groupedSettings.status]}
             {groupedSettings.position ? ` · Saved position ${groupedSettings.position.seq}` : ""}
+          </p> : null}
+          {settingsUpload ? <p role="status" className="text-xs text-muted-foreground">
+            <span>Store settings upload</span> · {uploadLabels[settingsUpload.status]}
           </p> : null}
           {sync.membershipDeferred ? <p role="status" className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-300">Membership directory synchronization is waiting for the membership service. Sales and other POS data continue syncing normally.</p> : null}
           <p className="text-xs text-muted-foreground">Last upload {when(sync.lastPushAt)} · Last download {when(sync.lastPullAt)} · {activeErrorCount} current errors · {conflictCount} conflicts</p>

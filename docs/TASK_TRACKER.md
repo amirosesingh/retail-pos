@@ -286,6 +286,34 @@ The first GitHub run found one legacy checkpoint call with an added null
 argument. Restore the original call for every other table and keep the
 transaction argument only on the fenced settings path.
 
+The focused checkpoint suite passed all 30 tests after that correction. The
+separate exact cash proof remains isolated. The signed financial header only
+covers before/after sale facts and currently applies to protected shifts that
+the ordinary cash bridge excludes. The cash outbox has immutable checkout
+bytes but needs a verified original author bound to those bytes. Its group
+also needs the common receiver and recovery snapshot before cash and settings
+can publish into the same scope. Do not start a second financial sender or
+attach a later uploader's identity to an older receipt.
+
+The installed Windows settings path now opts in by exact staging enrollment.
+The existing sync coordinator captures and uploads the two reviewed offline
+fields and downloads canonical settings through its existing lease. Management
+and Operations continue to use their authorized online rules save. The
+settings and sync screens show queued, accepted, retry and review status.
+An authorized settings conflict resolution workflow still needs an audited
+decision before a stale command can be released from review.
+The registration reassignment preflight must also account for unresolved
+settings outbox work before installed rollout, even after pilot opt-out.
+
+The final settings checks covered the focused renderer, IPC, status, relay
+and checkpoint suites, five disposable LocalDB outbox groups, and thirteen
+grouped LocalDB cases. Mixed legacy pages retained unrelated work. Handback
+held for pending settings, missing grouped coverage, or an inexact legacy
+decimal. A safe handback preserved the pending sale, journal and open shift.
+A newer pinned same-epoch settings snapshot recovered an expired feed when
+the local journal and Change Tracking still proved the boundary. Unverified
+Change Tracking and divergent retained rows continued to require review.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents

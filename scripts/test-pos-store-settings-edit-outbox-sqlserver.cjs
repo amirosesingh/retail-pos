@@ -6,8 +6,12 @@ const { createHash, randomUUID } = require("node:crypto");
 const { readFileSync } = require("node:fs");
 const { join } = require("node:path");
 const { createLocal } = require("./lib/shift-protocol-integration-fixture.cjs");
-const { StoreSettingsEditOutbox } = require("../electron/db/store-settings-edit-outbox.cjs");
-const { readDatabaseGuid } = require("../electron/sync/grouped-store-settings.cjs");
+const { StoreSettingsEditOutbox, assertStoreSettingsEditHandbackClear } = require("../electron/db/store-settings-edit-outbox.cjs");
+const grouped = require("../electron/sync/grouped-store-settings.cjs");
+const handoff = require("../electron/sync/grouped-settings-handoff.cjs");
+const { createStoreSettingsEditRuntime } = require("../electron/sync/store-settings-edit-runtime.cjs");
+const { CloudClient } = require("../electron/sync/cloud-client.cjs");
+const { SyncCoordinator } = require("../electron/sync/coordinator.cjs");
 
 async function main() {
   assert.deepEqual(process.argv.slice(2), ["--run"]);
@@ -20,12 +24,12 @@ async function main() {
       block_shift_close_on_hold: true, max_drawer_cash_limit: 50 });
     const before = (await manager.pool.request().query("SELECT CHANGE_TRACKING_CURRENT_VERSION() AS version;")).recordset[0].version;
     const scope = { branchId, terminalId: randomUUID(), installationGeneration: randomUUID(),
-      databaseGuid: await readDatabaseGuid(manager.pool.request()), feedEpoch: randomUUID() };
+      databaseGuid: await grouped.readDatabaseGuid(manager.pool.request()), feedEpoch: randomUUID() };
     const personId = randomUUID();
     let currentScope = scope;
     let activePerson = personId;
     const transactions = new WeakSet();
-    const assertContext = (tx, candidate, person) => transactions.has(tx) && activePerson === person &&
+    const assertContext = (tx, candidate, person) => transactions.has(tx) && (person === null || activePerson === person) &&
       Object.keys(currentScope).every(key => candidate[key] === currentScope[key]);
     const witnesses = new WeakMap();
     const assertReceipt = witness => witnesses.get(witness);
@@ -81,6 +85,8 @@ async function main() {
     await local.restart();
     outbox = repository(scope);
     assert.deepEqual(await atomic(tx => outbox.readPending(tx, { personId })), saved);
+    assert.deepEqual(await atomic(tx => outbox.readUpload(tx, { personId: null })), { status: "AWAITING_OPERATOR" });
+    await assert.rejects(atomic(tx => assertStoreSettingsEditHandbackClear(tx, { ...scope, rowVersion: 7 })), { code: "ESETTINGS_EDIT_PENDING" });
     const same = { personId, operationId: saved.operationId, expectedVersion: 7, patch: saved.patch };
     assert.deepEqual(await atomic(tx => outbox.capture(tx, same)), saved);
     await assert.rejects(atomic(tx => outbox.capture(tx, { ...same, patch: { block_shift_close_on_hold: true } })), { code: "ESETTINGS_EDIT_CONFLICT" });
@@ -107,6 +113,9 @@ async function main() {
     assert.deepEqual(await ack(witness(saved, "ALREADY_APPLIED")), accepted);
     await assert.rejects(ack(witness(saved, "APPLIED", { seq: "9007199254740994" })), { code: "ESETTINGS_EDIT_RECEIPT" });
     assert.equal(await atomic(tx => outbox.readPending(tx, { personId })), null);
+    assert.deepEqual(await atomic(tx => outbox.readUpload(tx, { personId: null })), { status: "AWAITING_DOWNLOAD" });
+    await assert.rejects(atomic(tx => assertStoreSettingsEditHandbackClear(tx, { ...scope, rowVersion: 7 })), { code: "ESETTINGS_EDIT_PENDING" });
+    await atomic(tx => assertStoreSettingsEditHandbackClear(tx, { ...scope, rowVersion: 8 }));
     await assert.rejects(atomic(tx => outbox.capture(tx, make())), { code: "ESETTINGS_EDIT_PENDING" });
     assert.deepEqual(await counts(), { commands: 1, receipts: 1, journal: 0, generic_receipts: 0 });
     const current = (await manager.pool.request().query("SELECT row_version,block_shift_close_on_hold,max_drawer_cash_limit FROM dbo.pos_store_settings;")).recordset[0];
@@ -124,11 +133,45 @@ async function main() {
     const held = await atomic(tx => outbox.acknowledge(tx, { personId, operationId: next.operationId, witness: witness(next, "REVIEW_REQUIRED") }));
     assert.equal(held.disposition, "REVIEW_REQUIRED");
     assert.equal(await atomic(tx => outbox.readPending(tx, { personId })), null);
+    await local.restart();
+    assert.deepEqual(await atomic(tx => outbox.readUpload(tx, { personId: null })), { status: "REVIEW_REQUIRED" });
+    await assert.rejects(atomic(tx => assertStoreSettingsEditHandbackClear(tx, { ...scope, rowVersion: 8 })), { code: "ESETTINGS_EDIT_PENDING" });
     await assert.rejects(atomic(tx => outbox.capture(tx, make(8))), { code: "ESETTINGS_EDIT_PENDING" });
     await assert.rejects(manager.pool.request().query("DELETE FROM dbo.pos_store_settings_edit_receipts;"), /immutable/i);
     await assert.rejects(manager.pool.request().query("UPDATE dbo.pos_store_settings_edit_commands SET command_sha256=command_sha256;"), /immutable/i);
     assert.deepEqual(await counts(), { commands: 2, receipts: 2, journal: 0, generic_receipts: 0 });
     console.log("PASS stale review remains durable and blocks automatic rebase or a new edit");
+
+    manager.profile = { id: "fixture-installed-settings", host: "fixture-private-pipe", database: "fixture-settings" };
+    const enrollment = { branchId, terminalId: randomUUID(), databaseGuid: scope.databaseGuid,
+      backendOrigin: "https://settings-relay.fixture", projectOrigin: "https://settings-project.fixture" };
+    const cloud = new CloudClient({ configStore: { get: () => enrollment.backendOrigin }, terminalStore: { read: () => ({
+      tokenId: enrollment.terminalId, locationId: branchId, deviceUse: "operations", deviceType: "pc", deviceBindingProof: "b".repeat(64),
+    }) }, connectionManager: manager, financialBasisContext: () => ({ branchId, projectOrigin: enrollment.projectOrigin }) });
+    cloud.setAuthorizationProof({ accessToken: "fixture-never-sent" });
+    const coordinator = new SyncCoordinator({ pushWorker: {}, pullWorker: {} });
+    let actor = { personId, branchId, epoch: 1 };
+    const runtime = () => createStoreSettingsEditRuntime({ pilot: { mode: "run", enrollment }, installationGeneration: scope.installationGeneration,
+      cloud, coordinator, connectionManager: manager, ready: () => true, actor: () => actor });
+    const { personId: _person, ...input } = make(8);
+    const draft = { ...input, branchId };
+    assert.equal((await runtime().capture(draft)).code, "ESETTINGS_EDIT_UNAVAILABLE");
+    const source = cloud.requestContext(false);
+    const saveCheckpoint = async (entity, cursor) => manager.pool.request().input("branch", branchId).input("entity", entity).input("cursor", cursor)
+      .query(`INSERT dbo.sync_checkpoints(branch_id,entity_type,direction,committed_cursor) VALUES(@branch,@entity,N'pull',@cursor);`);
+    await saveCheckpoint(handoff.CHECKPOINT, handoff.fenceValue({ source, databaseGuid: scope.databaseGuid }));
+    await saveCheckpoint(grouped.CHECKPOINT, JSON.stringify({ source: source.fingerprint, databaseGuid: scope.databaseGuid,
+      epoch: scope.feedEpoch, seq: "1", upper: null }));
+    await assert.rejects(atomic(tx => local.repository.applyOperation(tx, { table: "pos_store_settings", kind: "update",
+      match: { store_id: branchId }, values: { block_shift_close_on_hold: false } }, { branchId })), { code: "ESYNC_GROUPED_LEGACY_FENCED" });
+    assert.equal((await runtime().capture({ ...draft, branchId: randomUUID() })).code, "ESETTINGS_EDIT_UNAVAILABLE");
+    assert.deepEqual(await runtime().capture(draft), { ok: true, operationId: draft.operationId });
+    await local.restart();
+    actor = null;
+    assert.deepEqual(await runtime().upload(), { status: "AWAITING_OPERATOR", reason: null, branchId });
+    assert.equal((await runtime().capture(draft)).code, "ESETTINGS_EDIT_OPERATOR");
+    assert.deepEqual(await counts(), { commands: 3, receipts: 2, journal: 0, generic_receipts: 0 });
+    console.log("PASS installed capture requires the scoped handoff and actor; restart preserves the queued command and fences the old native writer");
   } finally { await local.close(); }
 }
 

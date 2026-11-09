@@ -1,5 +1,7 @@
 /** Presentation only. Queue counts describe their own transport; they do not
  * prove that historical Change Tracking rows reached the central database. */
+import { sameBranchId } from "./branch-id";
+
 export type NativeSyncSnapshot = {
   pending?: unknown;
   failed?: unknown;
@@ -11,6 +13,7 @@ export type NativeSyncSnapshot = {
   running?: boolean;
   paused?: boolean;
   historyRecovery?: unknown;
+  storeSettingsEditUpload?: { branchId: string; status: string } | null;
 };
 
 export type NativeDatabaseSnapshot = {
@@ -118,6 +121,16 @@ export function nativeSyncSummary(
     detail: [`${pending} journal change${pending === 1 ? " is" : "s are"} waiting for central acknowledgement.`,
       policyHistoryPending ? "History also remains pending and will retry automatically." : ""].filter(Boolean).join(" "),
   };
+  const settingsUpload = snapshot.storeSettingsEditUpload;
+  if (settingsUpload && typeof settingsUpload.branchId === "string" && settingsUpload.branchId &&
+      (!database.detail?.branchId || sameBranchId(settingsUpload.branchId, database.detail.branchId))) {
+    if (["PENDING", "RETRY", "REVIEW_REQUIRED", "AWAITING_OPERATOR", "UNAVAILABLE"].includes(settingsUpload.status))
+      return { state: "degraded", label: "Store settings upload needs attention", pending,
+        detail: "Check the store settings upload status. Journal totals are tracked separately." };
+    if (["APPLIED", "AWAITING_DOWNLOAD"].includes(settingsUpload.status))
+      return { state: "checking", label: "Waiting for store settings download", pending,
+        detail: "The central database accepted the edit. The till is waiting for the confirmed revision." };
+  }
   if (typeof snapshot.lastPushAt !== "string" || !Number.isFinite(Date.parse(snapshot.lastPushAt))) return {
     state: "checking", label: "Upload not confirmed", pending,
     detail: "No pending journal uploads reported. A successful native upload pass has not been reported.",
