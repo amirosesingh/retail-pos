@@ -415,6 +415,34 @@ and reconciliation of all installed data still depend on those writers.
 Keep the prepared SQL outside deployed migrations and leave hosted testing,
 the beta merge, and installer publication pending.
 
+The owner requested the remaining sync code on PR #451, starting from
+`03bba8e0`. Work in the beta PR branch. Use agents for live stock, the
+Windows refund journal and sender, and grouped financial publication.
+Verify the installed route switch and recovery against disposable databases.
+Keep hosted testing, the beta merge, and release pending.
+
+The extended pilot uses the same branch cursor for ordinary cash, live
+branch-owned stock, and typed refund and tender correction groups. An
+installed Windows till has to apply its verified extended snapshot before
+the new sender owns a checkout. Handback stops new captures and drains
+owned receipts before the owner seals the cloud branch's financial feed.
+The till verifies that sealed prefix and clears the download fence
+atomically while keeping the legacy cursor. Windows refunds retain the original signed command and exact
+line preconditions in the existing local receipt and journal. Approval
+grants are kept in memory, and a saved command that still needs approval
+stays pending when that grant is unavailable.
+
+The owner also requested repairs for failed PR checks. The local failures
+included an unintended Worker framework import, stale refund/approval
+fixtures, and the development interop allowlist. Android Gradle and iOS
+CocoaPods downloads failed independently upstream, so native CI retries
+those download steps without changing versions or publication settings.
+
+Complete grouped contracts are still required for managed shifts, voids,
+alternate tenders, drawer and transfer activity, product owner changes and
+the remaining direct legacy and web writers. Full recovery of those
+workflows and missing authoritative receipt parents remains pending.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents

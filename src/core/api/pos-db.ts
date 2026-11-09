@@ -2276,18 +2276,19 @@ async function runBatchLive(context: string, ops: SyncOp[], report?: (completed:
  * Callers await this before printing, clearing the cart or starting the next
  * action — nothing moves on while the data is still only in memory.
  */
-export function commitOps(context: string, ops: SyncOp[]): Promise<CommitTarget> {
+export function commitOps(context: string, ops: SyncOp[], refundGrant?: string | null): Promise<CommitTarget> {
   return withDataTask(context, async task => {
     const total = commitRowCount(ops);
     task?.report(0,total);
     if ((total ?? 0) >= 200 || ops.length >= 25) await yieldToUi();
-    const target = await commitOpsInternal(context, normalizeUuidFields(ops),task?.report);
+    const target = await commitOpsInternal(context, normalizeUuidFields(ops),task?.report, refundGrant);
     if (target !== "offline" && total !== null) task?.report(total,total);
     return target;
   });
 }
 
-async function commitOpsInternal(context: string, ops: SyncOp[], report?: (completed: number, total: number | null) => void): Promise<CommitTarget> {
+async function commitOpsInternal(context: string, ops: SyncOp[], report?: (completed: number, total: number | null) => void,
+  refundGrant?: string | null): Promise<CommitTarget> {
   if (!ops.length) return noteCommitTarget("cloud");
   // A packaged or browser till may carry an encrypted tenant override. Never
   // let an early write resolve the client against the build-time tenant first.
@@ -2363,6 +2364,7 @@ async function commitOpsInternal(context: string, ops: SyncOp[], report?: (compl
               refundId: String(refund.args._client_refund_id),
               branchId: String((refund.args as Record<string, unknown>)._branch_id ?? ""),
               reason: refund.args._reason == null ? null : String(refund.args._reason),
+              ...(refundGrant ? { grantToken: refundGrant } : {}),
             })
           : local.commitAggregate && aggregateKind !== "settings"
             ? await local.commitAggregate({
@@ -2686,8 +2688,8 @@ export const db = {
    * much stock back, and marks the bill. Replaying the same refund id (retry,
    * double tap, queued replay) changes nothing a second time.
    */
-  refundSale(saleId: string, refundId: string, reason?: string, branchId?: string) {
-    return queue("Refunding sale", {
+  refundSale(saleId: string, refundId: string, reason?: string, branchId?: string, grantToken?: string | null) {
+    return commitOps("Refunding sale", [{
       kind: "rpc",
       table: "sales",
       fn: "sale_refund",
@@ -2698,23 +2700,24 @@ export const db = {
         _reason: reason ?? null,
         _branch_id: branchId ?? null,
       },
-    });
+    }], grantToken);
   },
 
   /** Correct the tender recorded against a completed bill (e.g. card -> cash). */
-  async updateSalePayment(saleId: string, method: PaymentMethod, branchId: string, _payments?: Sale["payments"]) {
+  async updateSalePayment(saleId: string, method: PaymentMethod, branchId: string, saleVersion?: number) {
     const [{ correctSaleTender }, { getPosCallerAuth }] = await Promise.all([
       import("@/lib/tender-correction-client"), import("@/lib/pos-caller-auth"),
     ]);
     const credentials = await getPosCallerAuth();
-    const result = await correctSaleTender({ data: { ...credentials, saleId, storeId: branchId, method } });
+    const result = await correctSaleTender({ data: { ...credentials, saleId, storeId: branchId, method, saleVersion } });
     if (!result.ok) throw new Error(result.error);
     const bridge = localDb();
-    if (bridge?.findReceipt) {
+    if (bridge?.findReceipt && !result.groupedSaleVersion) {
       try { await bridge.findReceipt(saleId, branchId, { ...credentials, refresh: true }); }
       catch { showNotification("Payment corrected in the cloud. Reconnect and sync to refresh this terminal's local copy.", "info"); }
     }
     await broadcastSettingsChange("sales");
+    return result.groupedSaleVersion;
   },
 
   /** Batch-push pending audit rows; returns the ids that landed in the cloud. */

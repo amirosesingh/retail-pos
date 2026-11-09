@@ -1,9 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 import { applyGroupedRefundUpload, groupedRefundUploadSchema } from "../grouped-refund-upload.server";
 import { handleSyncRequest } from "../sync-endpoint.server";
 
+const { stableRefundUuid } = createRequire(import.meta.url)("../../../electron/sync/refund-command.cjs") as {
+  stableRefundUuid(value: Record<string, string>): string;
+};
 const mocks = vi.hoisted(() => ({
   env: vi.fn(), verify: vi.fn(), scope: vi.fn(), rest: vi.fn(), approve: vi.fn(),
+  verifyAuthor: vi.fn(), currentAuthor: vi.fn(),
 }));
 vi.mock("../external-supabase-config", () => ({
   runtimeEnvValue: mocks.env,
@@ -12,6 +18,9 @@ vi.mock("../external-supabase-config", () => ({
 vi.mock("@/core/api/pos-relay.server", () => ({ verifyRelayCaller: mocks.verify, serviceRest: mocks.rest }));
 vi.mock("@/core/api/relay-policy.server", () => ({ resolveRelayScope: mocks.scope }));
 vi.mock("../business-authorization.server", () => ({ checkBusinessAuthorization: mocks.approve }));
+vi.mock("../shift-author-verification.server", () => ({
+  verifyFinancialAuthorAttestation: mocks.verifyAuthor, readFinancialAuthorPermission: mocks.currentAuthor,
+}));
 
 const terminal = { id: "66666666-6666-4666-8666-666666666666", branchId: "A", platform: "pc", mode: "operations" };
 const operator = { appUserId: "11111111-1111-4111-8111-111111111111", staffUserId: "operator", roleSlug: "cashier" };
@@ -126,5 +135,48 @@ describe("scoped refund command", () => {
     expect(await (await apply()).json()).toEqual({ ok: false, code: "REFUND_UPLOAD_PROTOCOL" });
     expect(mocks.approve).not.toHaveBeenCalled();
     expect(mocks.rest).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses the saved Windows author and scope without a live person session", async () => {
+    const { grantToken, ...original } = command;
+    const operationId = stableRefundUuid({ refundId: original.refundKey });
+    const itemId = original.lines[0].item_id;
+    const source = { branchId: "A", terminalId: terminal.id, feedEpoch: original.saleId,
+      databaseGuid: original.operationId, installationGeneration: product };
+    const refundJson = JSON.stringify({ domain: "retail-pos.native-refund.v1", scope: source,
+      command: { ...original, operationId }, items: [{
+        itemId, nativeItemId: itemId.toUpperCase(), productId: product,
+        nativeMovementId: stableRefundUuid({ refundId: original.refundKey, itemId: itemId.toUpperCase() }),
+      }] });
+    const attestation = { version: 1, algorithm: "Ed25519", keyId: source.databaseGuid,
+      terminalId: terminal.id, projectOrigin: "https://refund-pilot.test", authorId: operator.appUserId,
+      subject: operator.staffUserId, branchId: "A", action: "REFUND", operationId,
+      payloadHash: createHash("sha256").update(refundJson).digest("hex"), signature: Buffer.alloc(64).toString("base64url") };
+    const deviceProof = { terminalToken: proof.terminalToken, deviceBindingProof: proof.deviceBindingProof };
+    const request = { refundJson, attestation, grantToken };
+    const applyNative = (patch = {}) => applyGroupedRefundUpload({ ...request, ...patch }, deviceProof, pilot,
+      new AbortController().signal);
+    const accepted = { ...receipt, operation_id: operationId, fully_refunded: true, sale_row_version: 2,
+      feed_epoch: source.feedEpoch, feed_seq: "7" };
+    mocks.verify.mockResolvedValue({ kind: "terminal", terminal });
+    mocks.verifyAuthor.mockResolvedValue(attestation);
+    mocks.currentAuthor.mockResolvedValue({ allowed: true,
+      authority: { subject: operator.staffUserId, level: "staff" } });
+    mocks.rest.mockResolvedValueOnce(Response.json({ ...preflight, operation_id: operationId }))
+      .mockResolvedValueOnce(Response.json(accepted));
+    expect(await (await applyNative()).json()).toEqual(accepted);
+    expect(mocks.verifyAuthor).toHaveBeenCalledWith({ action: "REFUND", attestation, payloadJson: refundJson,
+      terminal, branchId: "A", operationId });
+    expect(mocks.rest.mock.calls.map(([path]) => path)).toEqual([
+      "rpc/pos_sync_refund_attested_v1", "rpc/pos_sync_refund_attested_v1",
+    ]);
+    expect(JSON.parse(mocks.rest.mock.calls[1][1].body)).toMatchObject({
+      p_author: operator.appUserId, p_author_subject: operator.staffUserId, p_epoch: source.feedEpoch,
+      p_installation_generation: source.installationGeneration, p_database_guid: source.databaseGuid,
+      p_approval_basis: basis,
+    });
+    expect((await applyNative({ refundJson: refundJson + " " })).status).toBe(400);
+    mocks.rest.mockResolvedValueOnce(Response.json({ ...accepted, feed_epoch: source.databaseGuid }));
+    expect((await applyNative()).status).toBe(502);
   });
 });

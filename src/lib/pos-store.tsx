@@ -2808,7 +2808,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       if (!authorization.ok) throw new Error(authorization.error);
       // The stable refund id makes a retry idempotent. Nothing visible changes
       // until the authoritative gateway has accepted the refund.
-      await db.refundSale(saleId, `refund:${saleId}`, undefined, sale.storeId);
+      await db.refundSale(saleId, `refund:${saleId}`, undefined, sale.storeId, grantToken);
       logger.log("sale_event", "Sale refunded", "receipts", {
         saleId,
         receiptNo: sale.receiptNo,
@@ -2872,7 +2872,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
           : stateRef.current.sales.find((x) => x.id === saleId);
       if (!sale || sale.method === method) return false;
       const payments = sale.payments?.map(payment => ({ ...payment, method }));
-      await db.updateSalePayment(saleId, method, sale.storeId, payments);
+      const groupedSaleVersion = await db.updateSalePayment(saleId, method, sale.storeId, sale.rowVersion);
       logger.log("sale_event", "Bill payment method corrected", "receipts", {
         saleId,
         receiptNo: sale.receiptNo,
@@ -2884,7 +2884,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
         ...s,
         // Historical pages are owned by the receipt screen. Do not inject an
         // old bill into this newest-first, bounded live-sales window.
-        sales: s.sales.map((x) => (x.id === saleId ? { ...x, method, payments } : x)),
+        sales: s.sales.map((x) => (x.id === saleId && (!groupedSaleVersion || (x.rowVersion ?? 0) < groupedSaleVersion)
+          ? { ...x, method, payments, rowVersion: groupedSaleVersion ?? x.rowVersion } : x)),
       }));
       return true;
     },

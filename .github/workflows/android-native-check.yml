@@ -41,6 +41,16 @@ jobs:
           node scripts/android-update-setup.cjs
           grep -q 'com.google.mlkit.vision.DEPENDENCIES' android/app/src/main/AndroidManifest.xml
           grep -q 'barcode_ui' android/app/src/main/AndroidManifest.xml
+      - name: Download the pinned Gradle wrapper
+        working-directory: android
+        shell: bash
+        run: |
+          sed -i 's/^networkTimeout=.*/networkTimeout=60000/' gradle/wrapper/gradle-wrapper.properties
+          for attempt in 1 2 3; do
+            if bash gradlew --version; then exit 0; fi
+            if [[ "$attempt" == 3 ]]; then exit 1; fi
+            sleep "$((attempt * 10))"
+          done
       - name: Compile native app and plugins
         working-directory: android
         run: bash gradlew :app:compileDebugJavaWithJavac --no-daemon

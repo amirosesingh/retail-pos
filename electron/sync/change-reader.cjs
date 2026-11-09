@@ -9,6 +9,7 @@ const {createHash}=require("node:crypto");
 const {stableUuid}=require("../db/repositories/aggregates.cjs");
 const {prepareFinancialOpening,prepareFinancialHistory,assertFinancialHistoryAcknowledgement}=require("./financial-history-ack.cjs");
 const { cashCheckoutForContext } = require("./cash-checkout-route.cjs");
+const refundRoute = require("./grouped-refund-native.cjs");
 const { readCashRoute, cashTrackingCoverage, assertLegacyCashWrites } = require("../db/sale-event-outbox.cjs");
 const SHIFT_GRAPH_TABLES = ["shifts", "shift_cash_counts", "shift_reconciliations", "shift_close_events",
   "shift_notifications", "shift_variance_alerts"];
@@ -87,8 +88,10 @@ class ChangeReader {
       });
     return sets[0].map((row) => {
       const cashCheckoutId = cashCheckoutForContext(row.change_context);
-      return { ...row, remote: Boolean(row.change_context) && !cashCheckoutId,
+      const refundId = refundRoute.refundContextOperation(row.change_context);
+      return { ...row, remote: Boolean(row.change_context) && !cashCheckoutId && !refundId,
         ...(cashCheckoutId ? { cashCheckoutId } : {}),
+        ...(refundId ? { refundId } : {}),
         key: Object.fromEntries(primary.map((column) => [column, row[column]])), entityId: this.entityId(primary, row) };
     });
   }
@@ -97,6 +100,9 @@ class ChangeReader {
     return cashTrackingCoverage(this.connectionManager, branchId, table, changes);
   }
   assertLegacyCashWrites(branchId, keys) { return assertLegacyCashWrites(this.connectionManager, branchId, keys); }
+  readRefundRoute(branchId, operationId) { return refundRoute.readRefundRoute(this.connectionManager, branchId, operationId); }
+  refundTrackingCoverage(branchId, table, changes) { return refundRoute.refundTrackingCoverage(this.connectionManager, branchId, table, changes); }
+  assertLegacyRefundWrites(branchId, keys) { return refundRoute.assertLegacyRefundWrites(this.connectionManager, branchId, keys); }
   async rows(value, changes, { branchId = "", exactFinancial = false } = {}) {
     const { table, primary } = this.table(value);
     if (!changes.length) return [];

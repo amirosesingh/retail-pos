@@ -64,6 +64,45 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("isolated grouped sync relay", () => {
+  it("keeps extended stock and corrections behind the same exact scoped feed", async () => {
+    const extended = { ...read, projection: "settings_cash_v1", extended: true };
+    const body = { sqlServerGroupedFeed: extended };
+    runtime.env.POS_GROUPED_CASH_SETTINGS_PILOT_ENABLED = "true";
+    expect((await direct(body)).status).toBe(503);
+    expect(requests).toHaveLength(0);
+    runtime.env.POS_GROUPED_EXTENDED_PILOT_ENABLED = "true";
+    const stock = { table_name: "products_stock", entity_id: JSON.stringify({ id: secondTerminal }),
+      row_version: "5", tombstone: false, row_data: { product_id: secondTerminal, branch_balance: 8, row_version: 5 } };
+    const stockGroup = { seq: next, operation_id: null, changes: [stock] };
+    upstream = () => Response.json({ ...page(), groups: [stockGroup] });
+    expect((await direct(body)).status).toBe(200);
+    expect(requests.at(-1)?.url).toMatch(/\/pos_sync_pull_cash_settings_extended_v1$/);
+    expect((await direct({ sqlServerGroupedFeed: { ...read, projection: "settings_cash_v1" } })).status).toBe(502);
+    expect((await direct({ sqlServerGroupedFeed: { ...extended, branchId: otherBranch } })).status).toBe(403);
+    const correction = { seq: next, operation_id: otherTerminal, financial: { kind: "tender_v1", sale_id: secondTerminal },
+      changes: [{ ...stock, table_name: "sales",
+        row_data: { id: secondTerminal, store_id: branch, row_version: 5, payment_type: "cash", payments_count: 0 } }] };
+    upstream = () => Response.json({ ...page(), groups: [correction] });
+    expect((await direct(body)).status).toBe(200);
+    correction.changes[0].row_data.store_id = otherBranch;
+    expect((await direct(body)).status).toBe(502);
+  });
+
+  it("binds extended legacy coverage to the exact revision, including stock ledger keys", async () => {
+    runtime.env.POS_GROUPED_CASH_SETTINGS_PILOT_ENABLED = "true";
+    runtime.env.POS_GROUPED_EXTENDED_PILOT_ENABLED = "true";
+    const entry = { table_name: "stock_delta_applied", id: secondTerminal, version: "1" };
+    const body = { sqlServerCashLegacyCoverage: { ...snapshotRead, epoch, extended: true, entries: [entry] } };
+    const coverage = { ...entry, seq: next, owned: true };
+    upstream = () => Response.json({ status: "OK", scope_id: branch, epoch, entries: [coverage] });
+    expect((await direct(body)).status).toBe(200);
+    expect(requests.at(-1)?.url).toMatch(/\/pos_sync_extended_legacy_coverage_v1$/);
+    expect((await direct({ sqlServerCashLegacyCoverage: { ...body.sqlServerCashLegacyCoverage, epoch: null } })).status).toBe(200);
+    expect(requests.at(-1)?.args.p_epoch).toBeNull();
+    upstream = () => Response.json({ status: "OK", scope_id: branch, epoch, entries: [{ ...coverage, version: "2" }] });
+    expect((await direct(body)).status).toBe(502);
+  });
+
   it("binds paged stock recovery to its requested pin, branch, ordinal and exact payload", async () => {
     const request = { ...snapshotRead, action: "page", pinId: terminal, kind: "stock", after: "0", limit: 1 };
     expect((await direct({ sqlServerGroupedRecovery: request })).status).toBe(503);

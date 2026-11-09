@@ -33,7 +33,7 @@ function isCashCandidate(kind, aggregate) {
 }
 
 function createCashCheckoutRuntime({ configured, cloud, connectionManager, registry, coordinator, ready, handoff, authority }) {
-  async function admit() {
+  async function admit(writingNew = true) {
     if (!configured || !ready() || !coordinator.ownsExclusive() || coordinator.paused) return null;
     const { enrollment, scope } = configured;
     const source = cloud.requestContext(false);
@@ -50,7 +50,7 @@ function createCashCheckoutRuntime({ configured, cloud, connectionManager, regis
       if (!ready() || coordinator.paused || !coordinator.ownsExclusive()) throw route.fail();
       cloud.assertRequestContext(source, false);
     };
-    if (await handoff({ source, ...scope }) !== true) return null;
+    if (await handoff({ source, ...scope, writingNew }) !== true) return null;
     assertCurrent();
     return { source, scope, assertCurrent };
   }
@@ -87,18 +87,18 @@ function createCashCheckoutRuntime({ configured, cloud, connectionManager, regis
   }
 
   async function upload(wire) {
-    const active = await admit();
+    const active = await admit(false);
     if (!active || Object.entries(active.scope).some(([key, value]) => wire.scope[key] !== value))
       return route.uploadHold("ESYNC_CASH_HANDOFF_REQUIRED");
     const response = await cloud.submitCashCheckout(active.source, wire);
     if (["WAITING_DEPENDENCY", "REVIEW_REQUIRED", "INTEGRITY_CONFLICT", "IN_PROGRESS"].includes(response?.status))
       return route.uploadHold(response.status);
     const outbox = new SaleEventOutbox(connectionManager, registry, { cashBridge: active.scope });
-    await outbox.recordBridgeAcceptance(wire, response, active.assertCurrent);
+    await outbox.recordBridgeAcceptance(wire, response, active.assertCurrent, true);
     return true;
   }
 
-  return { commit, upload };
+  return { admit, commit, upload };
 }
 
 module.exports = { cashSenderEnrollment, createCashCheckoutRuntime };

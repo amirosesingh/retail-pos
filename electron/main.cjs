@@ -91,7 +91,8 @@ const changeReader = new ChangeReader(databaseManager, syncRegistry, {reviewedSh
 }});
 const conflictRepository = new ConflictRepository(databaseManager);
 const uploadCashCheckout = wire => cashCheckoutRuntime.upload(wire);
-const legacyPushWorker = new PushWorker({ reader:changeReader,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,validateAuthor:proof=>shiftAuthority.validatePending(proof),validateClosingStart:proof=>shiftAuthority.validatePendingClosingStart(proof),uploadCashCheckout });
+const uploadGroupedRefund = wire => groupedRefundRuntime.upload(wire);
+const legacyPushWorker = new PushWorker({ reader:changeReader,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,validateAuthor:proof=>shiftAuthority.validatePending(proof),validateClosingStart:proof=>shiftAuthority.validatePendingClosingStart(proof),uploadCashCheckout,uploadGroupedRefund });
 let legacyShiftRecovery;
 const legacyRecoveryRuntime = require("./sync/legacy-shift-recovery-runtime.cjs").createLegacyShiftRecoveryRuntime({
   reader:changeReader,recovery:()=>legacyShiftRecovery,enabled:supportsLegacyShiftRecovery,activeBranch:localBranchId,
@@ -114,10 +115,11 @@ const syncCoordinator = new SyncCoordinator({
   publish: (state) => { for (const win of BrowserWindow.getAllWindows()) win.webContents.send("sync:state",legacyRecoveryRuntime.status(state)); },
 });
 const { cashSenderEnrollment, createCashCheckoutRuntime } = require("./sync/cash-checkout-runtime.cjs");
+const configuredCashSender = cashSenderEnrollment(process.env);
 const cashCheckoutRuntime = createCashCheckoutRuntime({
-  configured: cashSenderEnrollment(process.env), cloud: syncCloud, connectionManager: databaseManager,
+  configured: configuredCashSender, cloud: syncCloud, connectionManager: databaseManager,
   registry: syncRegistry, coordinator: syncCoordinator, authority: shiftAuthority,
-  handoff: proof => pullWorker.cashSenderHandoff?.(proof),
+  handoff: proof => pullWorker.cashSenderHandoff(proof, groupedSettingsPilot),
   ready: () => {
     const state = databaseService.snapshot();
     return process.platform === "win32" && app.hasSingleInstanceLock() && !safeMode &&
@@ -173,10 +175,14 @@ const shiftSyncJournal = new ShiftSyncJournal(operationsRepository,{authorRequir
 const shiftFinancialDraftProvider = null;
 const aggregateRepository = new AggregateRepository(databaseManager, operationsRepository);
 const receiptRepository = new ReceiptRepository(databaseManager, syncCloud);
+const groupedRefundRuntime = require("./sync/grouped-refund-runtime.cjs").createGroupedRefundRuntime({
+  configured: configuredCashSender, cash: cashCheckoutRuntime, cloud: syncCloud, coordinator: syncCoordinator, connectionManager: databaseManager,
+  authority: shiftAuthority, legacyRepository: () => receiptRepository,
+});
 const shiftFinancialRuntime = new (require('./db/shift-financial-runtime.cjs').ShiftFinancialRuntime)({
   manager:databaseManager,cloud:syncCloud,terminal:()=>terminalStore.read(),authority:shiftAuthority,
   vault:require('./security/financial-capability-vault.cjs').createFinancialCapabilityVault({safeStorage,directory:()=>app.getPath('userData')}),
-  operationsRepository,registry:syncRegistry,checkpoints:syncCheckpoints,uploadCashCheckout,
+  operationsRepository,registry:syncRegistry,checkpoints:syncCheckpoints,uploadCashCheckout,uploadGroupedRefund,
   legacy:{aggregate:aggregateRepository,receipts:receiptRepository,journal:shiftSyncJournal,push:legacyPushWorker},
 });
 const authorizationRulesRepository = new AuthorizationRulesRepository(databaseManager);
@@ -2483,7 +2489,14 @@ function registerIpc() {
     const requestCapture=typeof shiftFinancialRuntime!=='undefined'?captureLocalOperationIdentity():null;
     const financial=typeof shiftFinancialRuntime==='undefined'?{repository:receiptRepository,author:null}:await shiftFinancialRuntime.forRefund(branch,saleId,requestCapture);
     requestCapture?.assertCurrent();
-    const result=await financial.repository.refund({saleId,refundId:guard.text(input.refundId,{name:"refund id",max:128}),branchId:guard.text(branch,{name:"branch",max:128}),reason:input.reason?guard.text(input.reason,{name:"reason",max:400}):null},financial.terminalId?{author:financial.author,terminalId:financial.terminalId,expectedShiftId:financial.expectedShiftId}:null);
+    const args = { saleId, refundId: guard.text(input.refundId,{name:"refund id",max:128}),
+      branchId: guard.text(branch,{name:"branch",max:128}), reason: input.reason ? guard.text(input.reason,{name:"reason",max:400}) : null };
+    const context = financial.terminalId ? { author: financial.author, terminalId: financial.terminalId,
+      expectedShiftId: financial.expectedShiftId } : null;
+    const grant = input.grantToken ? guard.text(input.grantToken,{name:"refund authorization",max:4096}) : null;
+    const result = typeof groupedRefundRuntime === "undefined"
+      ? await financial.repository.refund(args, context)
+      : await groupedRefundRuntime.commit(financial.repository, args, context, requestCapture, grant);
     publishBusinessChange({kind:"refund",branchId:branch});scheduleAutomaticSync(250);return result;
   }));
   ipcMain.handle("jobs:get-active", async () => databaseManager.isConnected() ? jobRepository.active() : null);

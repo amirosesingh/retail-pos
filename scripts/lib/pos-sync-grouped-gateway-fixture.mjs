@@ -128,8 +128,8 @@ async function applyThroughRelay({ sql, service, baseline, update, branch, termi
   }
 }
 
-export async function verifyGroupedGateway({ sql, denySql, native = false, settingsEdit = false, editGateway = false, editRelay = false,
-  mixedGateway = false, pagedRecovery = false }) {
+export async function verifyGroupedGateway({ sql, denySql, session, waitFor, native = false, settingsEdit = false, editGateway = false, editRelay = false,
+  mixedGateway = false, pagedRecovery = false, liveStock = false }) {
   const read = async path => (await readFile(new URL(path, import.meta.url), "utf8")).replaceAll("\r\n", "\n");
   const schema = await read("../../supabase/schema.sql");
   const table = schema.match(/CREATE TABLE IF NOT EXISTS public\.pos_store_settings \([\s\S]*?\n\);/)?.[0];
@@ -253,9 +253,9 @@ export async function verifyGroupedGateway({ sql, denySql, native = false, setti
     const product = randomUUID(), movement = randomUUID();
     const cashHash = "a".repeat(64);
     const changes = [
-      { table_name: "sales", row_data: { store_id: branch, branch_id: branch } },
-      { table_name: "sale_items", row_data: { branch_id: branch, product_id: product } },
-      { table_name: "payment_transactions", row_data: { store_id: branch, terminal_id: terminal } },
+      { table_name: "sales", row_data: { id: randomUUID(), store_id: branch, branch_id: branch } },
+      { table_name: "sale_items", row_data: { id: randomUUID(), branch_id: branch, product_id: product } },
+      { table_name: "payment_transactions", row_data: { id: randomUUID(), store_id: branch, terminal_id: terminal } },
       { table_name: "item_activity_logs", row_data: { id: movement, store_id: branch, terminal_id: terminal,
         product_id: product, quantity_delta: -1 } },
     ];
@@ -297,12 +297,22 @@ export async function verifyGroupedGateway({ sql, denySql, native = false, setti
         INSERT INTO public.products (id,owner_store_id,stock_by_store)
           SELECT gen_random_uuid(),'${branch}','{"${branch}":12}' FROM generate_series(1,30);
         INSERT INTO public.stock_delta_applied VALUES ('${movement}','${product}','${branch}',-1);`);
+      if (liveStock) {
+        sql(await read("../preparation/pos-sync-live-stock-v1.sql"));
+        sql(`BEGIN; ${await read("../preparation/pos-sync-cash-legacy-coverage-v1.sql")} COMMIT;`);
+      }
+      sql(await read("../preparation/pos-sync-extended-feed-v1.sql"));
       sql(await read("../preparation/pos-sync-cash-settings-recovery-v1.sql"));
       const appendReceipts = count => sql(`DO $$
-        DECLARE op uuid; movement_id uuid; new_changes jsonb; receipt_seq bigint;
+        DECLARE op uuid; movement_id uuid; new_changes jsonb; receipt_seq bigint; row_index int; row_id uuid;
         BEGIN FOR i IN 1..${count} LOOP
           op := gen_random_uuid(); movement_id := gen_random_uuid();
-          new_changes := jsonb_set('${JSON.stringify(changes)}'::jsonb, '{3,row_data,id}', to_jsonb(movement_id));
+          new_changes := '${JSON.stringify(changes)}'::jsonb;
+          FOR row_index IN 0..3 LOOP
+            row_id := CASE WHEN row_index=3 THEN movement_id ELSE gen_random_uuid() END;
+            new_changes := jsonb_set(jsonb_set(new_changes,ARRAY[row_index::text,'row_data','id'],to_jsonb(row_id)),
+              ARRAY[row_index::text,'entity_id'],to_jsonb(jsonb_build_object('id',row_id)::text));
+          END LOOP;
           INSERT INTO public.stock_delta_applied VALUES (movement_id,'${product}','${branch}',-1);
           SELECT head_seq+1 INTO receipt_seq FROM pos_sync_feed_v1.feed_heads WHERE scope_id='${branch}';
           PERFORM pos_sync_feed_v1.append_groups('default',jsonb_build_array(jsonb_build_object(
@@ -361,6 +371,11 @@ export async function verifyGroupedGateway({ sql, denySql, native = false, setti
       denySql(`BEGIN; DELETE FROM public.stock_delta_applied WHERE movement_id='${movement}'; ${service}${begin()} COMMIT;`,
         /POS_CASH_RECOVERY_STOCK_UNVERIFIED/);
       console.log("PASS complete pinned paged cash archive and branch stock across intervening writes, cross-terminal refusal and expiry");
+      if (liveStock) {
+        const { verifyLiveStockGateway } = await import("./pos-sync-live-stock-fixture.mjs");
+        await verifyLiveStockGateway({ sql, denySql, session, waitFor, service, branch, other, product, epoch,
+          terminal, generation, database, cashHash, changes, pullCall, begin, proof });
+      }
     }
     console.log("PASS scoped settings and cash gateway with atomic archive and recovery after live-feed retirement");
     return;

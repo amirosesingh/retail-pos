@@ -70,6 +70,10 @@ function fixture() {
   reader.frozenOpeningRows=async()=>[];
   reader.protectedShiftIds=async()=>new Set();
   reader.acceptedShiftChanges=async()=>new Set();
+  reader.readCashRoute = async () => null;
+  reader.assertLegacyCashWrites = async () => {};
+  reader.readRefundRoute = async () => null;
+  reader.assertLegacyRefundWrites = async () => {};
   reader.rows = vi.fn(async (table: { cloudTable: string }, changes: Change[]) => clone(data[table.cloudTable].filter(row => changes.some(item => sameId(item.key.id, row.id)))));
   const groups = [{ aggregateId: "original", changes: [change("shifts", shiftId), change("shift_cash_counts", countId), change("shift_reconciliations", reconciliationId)] }];
   const acknowledged: string[] = [], failed: { id: string; error: Error }[] = [];

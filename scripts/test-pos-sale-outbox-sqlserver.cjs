@@ -140,6 +140,7 @@ async function main() {
       await manager.pool.request().batch(readFileSync(resolve(__dirname, "preparation/pos-sale-acceptance-v1.sql"), "utf8"));
     }
     if (mode === "--installed-sender") {
+      await manager.pool.request().batch(readFileSync(resolve(__dirname, "preparation/pos-sync-live-stock-native-v1.sql"), "utf8"));
       const { ChangeReader } = require("../electron/sync/change-reader.cjs");
       const { PushWorker } = require("../electron/sync/push-worker.cjs");
       const { SyncCoordinator } = require("../electron/sync/coordinator.cjs");
@@ -255,6 +256,29 @@ async function main() {
       await runtime.commit(legacy, "sale", disabled);
       assert.equal(await event(disabled.operationId), undefined);
       console.log("PASS unsupported shapes, pending stock, shared shifts, and disabled capture use the existing checkout without CT ownership");
+      const schema = readFileSync(resolve(__dirname, "../database/sqlserver/retail-pos-local-database.sql"), "utf8");
+      const lifecycle = schema.match(/EXEC sys\.sp_executesql N'(CREATE OR ALTER TRIGGER dbo\.products_zero_stock_catalog_lifecycle[\s\S]*?END;)';/)?.[1];
+      assert(lifecycle);
+      await manager.pool.request().batch(lifecycle.replaceAll("''", "'"));
+      await manager.pool.request().input("product", productId).input("branch", branchId).input("shift", shiftId)
+        .input("terminal", terminalId).input("buckets", JSON.stringify({ [branchId]: 1 })).query(`
+        UPDATE dbo.sync_change_journal SET acknowledged_at=SYSDATETIMEOFFSET();
+        UPDATE dbo.shifts SET terminal_id=@terminal WHERE id=@shift;
+        WITH CHANGE_TRACKING_CONTEXT (0x434C4F5544)
+        UPDATE dbo.products SET stock_quantity=1,stock_by_store=@buckets,is_archived=0,archived_at=NULL WHERE id=@product;`);
+      const lastBaseline = await reader.currentVersion();
+      await checkpoints.save(branchId, "products", "push", { change_tracking_version: lastBaseline });
+      ready = true;
+      const last = checkout(1);
+      last.operations.find(operation => operation.table === "sales").rows[0].cashier_id = identity.subject;
+      await runtime.commit(legacy, "sale", last);
+      assert(await event(last.operationId));
+      const lastChanges = await reader.changedIds("products", lastBaseline);
+      assert.equal(lastChanges[0].cashCheckoutId, last.operationId);
+      const archived = await manager.pool.request().input("product", productId)
+        .query("SELECT is_archived,stock_quantity FROM dbo.products WHERE id=@product;");
+      assert.deepEqual(archived.recordset, [{ is_archived: true, stock_quantity: 0 }]);
+      console.log("PASS last-unit checkout preserves its exact Change Tracking tag through automatic catalogue archive");
       return;
     }
     const bridgeStore = new SaleEventOutbox(manager, registry, { cashBridge, ...(prepareCashAuthor ? { prepareCashAuthor } : {}) });

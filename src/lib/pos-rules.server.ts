@@ -9,7 +9,7 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 import { supabaseConfig } from "./external-supabase-config";
-import { DEFAULT_POS_RULES, normalizeRules, type PosRules } from "./pos-rules";
+import { DEFAULT_POS_RULES, normalizeRules, type PosRules } from "./pos-rules.ts";
 import { sameBranchId } from "./branch-id";
 import {
   classifyRulesFailure,

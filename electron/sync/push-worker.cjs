@@ -6,6 +6,7 @@ const { ACTIVITY_TABLES } = require("./event-policy.cjs");
 const { assertShiftClosureAcknowledgement } = require("./shift-closure-ack.cjs");
 const {prepareShiftFinancialBasis,assertShiftFinancialAcknowledgement}=require("./shift-financial-ack.cjs");
 const cashRoute = require("./cash-checkout-route.cjs");
+const refundRoute = require("./grouped-refund-native.cjs");
 
 function groupBy(values, key) {
   const groups = new Map();
@@ -241,7 +242,7 @@ function terminalWritableChanges(tableName, changes, { branchId = "", terminalId
 
 class PushWorker {
   constructor({ reader, cloud, checkpoints, registry, validateAuthor, validateClosingStart, validateFinancialBasis, financialHistoryEnabled=false, validateFinancialOperation,
-    uploadCashCheckout = null }) {
+    uploadCashCheckout = null, uploadGroupedRefund = null }) {
     this.financialHistoryEnabled=financialHistoryEnabled===true;
     this.validateFinancialOperation=validateFinancialOperation;
     this.validateAuthor = validateAuthor;
@@ -252,11 +253,17 @@ class PushWorker {
     this.checkpoints = checkpoints;
     this.registry = registry;
     this.uploadCashCheckout = uploadCashCheckout;
+    this.uploadGroupedRefund = uploadGroupedRefund;
   }
   async assertLegacyCashWrites(branchId, operations) {
-    if (!this.reader.assertLegacyCashWrites) return;
-    const keys = operations.flatMap(({ table, rows, changes }) => cashRoute.cashRowKeys(table, [...(rows ?? []), ...(changes ?? [])]));
-    if (keys.length) await this.reader.assertLegacyCashWrites(branchId, keys);
+    if (this.reader.assertLegacyCashWrites) {
+      const keys = operations.flatMap(({ table, rows, changes }) => cashRoute.cashRowKeys(table, [...(rows ?? []), ...(changes ?? [])]));
+      if (keys.length) await this.reader.assertLegacyCashWrites(branchId, keys);
+    }
+    if (this.reader.assertLegacyRefundWrites) {
+      const keys = operations.flatMap(({ table, rows, changes }) => refundRoute.refundKeys(table, [...(rows ?? []), ...(changes ?? [])]));
+      if (keys.length) await this.reader.assertLegacyRefundWrites(branchId, keys);
+    }
   }
   async retry(work) {
     for (let attempt = 1; attempt <= 5; attempt += 1) {
@@ -316,6 +323,7 @@ class PushWorker {
     branchId = recordId(branchId);
     this.pushErrors = []; this.blockedTables = new Set();
     this.cashUploadHeld = null;
+    this.refundUploadHeld = null;
     let pushed = 0;
     const terminalId = this.cloud.terminalId?.() ?? "";
     await this.registerFinancialHistory(branchId,terminalId,onProgress);
@@ -332,6 +340,15 @@ class PushWorker {
       for (const aggregate of aggregates) {
       const originalIds = (aggregate.originals ?? [aggregate]).map(item => item.aggregateId);
       try {
+      if (originalIds.length === 1 && aggregate.changes.some(change => change.entity_type === "sales")) {
+        const refund = await this.reader.readRefundRoute?.(branchId, originalIds[0]);
+        if (refund) {
+          if (await this.uploadGroupedRefund?.(refund) !== true) throw refundRoute.refundHeld();
+          pushed += aggregate.changes.length;
+          onProgress({ direction: "push", table: "sales", completed: aggregate.changes.length });
+          continue;
+        }
+      }
       // The immutable capture owns delivery even when the installed pilot is
       // paused or removed. Do not rebuild its journal into a second writer.
       if (aggregate.changes.some(change => cashRoute.TABLES.includes(change.entity_type))) {
@@ -501,6 +518,11 @@ class PushWorker {
         throw error;
       }
       } catch(error) {
+        if (["ESYNC_REFUND_REVIEW_REQUIRED", "ESYNC_REFUND_APPROVAL_REQUIRED"].includes(error?.code)) {
+          this.refundUploadHeld ??= { code: error.code, table: "sales", message: error.message };
+          originalIds.forEach(id => deferred.add(id));
+          continue;
+        }
         if (error?.code === "ESYNC_CASH_ROUTE_HELD") {
           this.cashUploadHeld ??= cashRoute.uploadHold();
           originalIds.forEach(id => deferred.add(id));
@@ -535,6 +557,7 @@ class PushWorker {
     const terminalId = this.cloud.terminalId?.() ?? "";
     let pushed = await this.pushAggregates(branchId, batchSize, true, onProgress, includeActivity);
     let cashUploadHeld = this.cashUploadHeld;
+    let refundUploadHeld = this.refundUploadHeld;
     const deferredTables = new Set();
     let historyUploadHeld=null;
     let financialCoverageAdvanced=false;
@@ -587,9 +610,14 @@ class PushWorker {
           ? await this.reader.cashTrackingCoverage?.(branchId, table.sqlServerTable, tagged)
           : null;
         if (tagged.length && !tagged.every(change => cashCovered?.has(change))) throw cashRoute.fail();
+        const refundTagged = window.filter(change => change.refundId);
+        const refundCovered = refundTagged.length
+          ? await this.reader.refundTrackingCoverage?.(branchId, table.sqlServerTable, refundTagged)
+          : null;
+        if (refundTagged.length && !refundTagged.every(change => refundCovered?.has(change))) throw refundRoute.refundHeld();
         let changes = terminalWritableChanges(
           table.cloudTable,
-          window.filter((change) => !change.remote && !cashCovered?.has(change)),
+          window.filter((change) => !change.remote && !cashCovered?.has(change) && !refundCovered?.has(change)),
           { branchId, terminalId },
         );
         // A v3 receipt proves only the exact frozen saved facts. A stale CT
@@ -696,6 +724,11 @@ class PushWorker {
         live = [];
       }
       } catch(error) {
+        if (["ESYNC_REFUND_REVIEW_REQUIRED", "ESYNC_REFUND_APPROVAL_REQUIRED"].includes(error?.code)) {
+          refundUploadHeld ??= { code: error.code, table: "sales", message: error.message };
+          deferredTables.add(table.cloudTable);
+          continue;
+        }
         if (error?.code === "ESYNC_CASH_ROUTE_HELD") {
           cashUploadHeld ??= cashRoute.uploadHold();
           deferredTables.add(table.cloudTable);
@@ -720,8 +753,10 @@ class PushWorker {
     if(financialCoverageAdvanced)pushed+=await this.pushAggregates(branchId,batchSize,true,onProgress,includeActivity);
     if (this.pushErrors.length) throw Object.assign(this.pushErrors[0], {pushed, failures:this.pushErrors.length});
     cashUploadHeld ??= this.cashUploadHeld;
-    if (cashUploadHeld) deferredTables.add("sales");
+    refundUploadHeld ??= this.refundUploadHeld;
+    if (cashUploadHeld || refundUploadHeld) deferredTables.add("sales");
     return { pushed, deferredTables:[...deferredTables], ...(cashUploadHeld ? { cashUploadHeld, allUploaded:false } : {}),
+      ...(refundUploadHeld ? { refundUploadHeld, allUploaded:false } : {}),
       ...(historyUploadHeld?{historyUploadHeld,allUploaded:false}:{}) };
   }
 }

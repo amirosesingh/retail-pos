@@ -86,6 +86,8 @@ it('loads the actual financial and recovery protocol dependency graph with uncha
   const { serverBasisId: _serverBasisId, ...openingFields } = basis;
   const opening = { ...openingFields, openingOrigin: { localAggregateId: uuid(8), rowHash: 'c'.repeat(64) } };
   const operation = { ...binding, operationId: uuid(9), action: 'SALE', payloadHash: 'd'.repeat(64) };
+  const { action: _operationAction, ...cashBase } = operation;
+  const cash = { ...cashBase, installationGeneration: uuid(11), databaseGuid: uuid(12), feedEpoch: uuid(13) };
   const recovery = { ...binding, shiftId: uuid(5), recoveryId: uuid(10), action: 'LEGACY_CLOSING_RECOVERY_V1', payloadHash: 'e'.repeat(64) };
   const payload = { version: 1, recoveryId: uuid(10), branchId: uuid(4), terminalId: uuid(2), shiftId: uuid(5), evidenceHash: 'f'.repeat(64), cloudWitnessHash: 'a'.repeat(64), reason: 'Review retained fixture closing', localGraphText: '[]', cloudGraphText: '[]', financialVerification: 'UNVERIFIED_HISTORICAL' };
   const signature = Buffer.alloc(64).toString('base64url');
@@ -96,6 +98,7 @@ it('loads the actual financial and recovery protocol dependency graph with uncha
     ],
     'financial-author-protocol.cjs': [
       ['financialOperationMessage', [operation]], ['normalizeFinancialAttestation', [{ ...operation, signature }]],
+      ['cashCheckoutMessage', [cash]], ['normalizeCashCheckoutAttestation', [{ ...cash, signature }]],
     ],
     'legacy-shift-recovery-protocol.cjs': [
       ['normalizeLegacyPayload', [payload]], ['unsignedLegacyRecovery', [recovery]],

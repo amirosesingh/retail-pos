@@ -156,13 +156,14 @@ async function readCashRoute(connectionManager, branchId, operationId) {
   return wire;
 }
 
-async function cashTrackingCoverage(connectionManager, branchId, table, changes) {
+async function cashTrackingCoverage(connectionManager, branchId, table, changes, { transaction, epoch, withReceipts = false } = {}) {
   const tagged = changes.filter(change => change.cashCheckoutId);
-  if (!tagged.length) return new Set();
+  if (!tagged.length) return withReceipts ? new Map() : new Set();
   if (!cashRoute.TABLES.includes(table) || tagged.some(change => !uuid(change.cashCheckoutId) ||
       !uuid(change.key?.id) || change.operation === "D")) throw cashRoute.fail();
   const operations = [...new Set(tagged.map(change => change.cashCheckoutId))];
-  const result = await connectionManager.pool.request().input("branch", branchId).input("operations", JSON.stringify(operations)).query(`
+  const result = await (transaction ? transaction.request() : connectionManager.pool.request())
+    .input("branch", branchId).input("operations", JSON.stringify(operations)).query(`
     ${databaseGuidQuery}
     ${assertRouteStorage}
     IF OBJECT_ID(N'dbo.pos_sync_sale_acceptance_v1',N'U') IS NOT NULL
@@ -175,17 +176,19 @@ async function cashTrackingCoverage(connectionManager, branchId, table, changes)
   if (rows.length !== operations.length) throw cashRoute.fail();
   const byOperation = new Map(rows.map(row => {
     const { wire, journal } = routeEnvelope(row);
-    if (wire.scope.databaseGuid !== guid || wire.scope.branchId !== branchId) throw cashRoute.fail();
-    try { confirmedReceipt(wire, JSON.parse(row.receipt_json)); }
+    if (wire.scope.databaseGuid !== guid || wire.scope.branchId !== branchId ||
+        (epoch !== undefined && wire.scope.feedEpoch !== epoch)) throw cashRoute.fail();
+    let receipt;
+    try { receipt = confirmedReceipt(wire, JSON.parse(row.receipt_json)); }
     catch { throw cashRoute.fail(); }
-    return [wire.operationId, journal];
+    return [wire.operationId, { journal, receipt }];
   }));
   for (const change of tagged) {
     const evidence = byOperation.get(change.cashCheckoutId);
-    if (!evidence?.some(row => row.table === table && recordId(JSON.parse(row.entity).id) === recordId(change.key.id)))
+    if (!evidence?.journal.some(row => row.table === table && recordId(JSON.parse(row.entity).id) === recordId(change.key.id)))
       throw cashRoute.fail();
   }
-  return new Set(tagged);
+  return withReceipts ? new Map(tagged.map(change => [change.key.id, byOperation.get(change.cashCheckoutId).receipt])) : new Set(tagged);
 }
 
 async function assertLegacyCashWrites(connectionManager, branchId, keys) {
@@ -430,7 +433,7 @@ class SaleEventOutbox {
 
   /** Main calls this only for the authenticated, bound HTTPS response. Save
    * acceptance with precisely the original journal rows under the same lock. */
-  async recordBridgeAcceptance(wire, response, assertCurrent = () => {}) {
+  async recordBridgeAcceptance(wire, response, assertCurrent = () => {}, liveStock = false) {
     if (!this.cashBridge || !uuid(wire?.operationId) || !["APPLIED", "ALREADY_APPLIED"].includes(response?.status) ||
         Object.keys(response).length !== 2) refuseCashBridge();
     const sql = this.connectionManager.sql();
@@ -462,6 +465,8 @@ class SaleEventOutbox {
           `);
         if (result.recordset?.[0]?.changed !== journal.length) refuseCashBridge();
       }
+      if (liveStock) await require("../sync/grouped-live-stock.cjs").noteLocalStockAcceptance(
+        transaction, receipt.scope_id, receipt.epoch, receipt.seq, [JSON.parse(captured.wire.checkoutJson).item.product_id]);
       assertCurrent();
       if (this.connectionManager.pool !== pool) refuseCashBridge();
       await transaction.commit();

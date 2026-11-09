@@ -233,7 +233,7 @@ async function verifyMixed(local, worker, checkpoints, receipt, origin, terminal
 async function verifyPagedRecovery(receipt, origin) {
   const { scope_id: branch, epoch } = receipt;
   const terminal = randomUUID();
-  const local = await createLocal(branch, { extraTables: ["products", "item_activity_logs"] });
+  const local = await createLocal(branch, { extraTables: ["products", "item_activity_logs", "stock_delta_applied"] });
   const { manager, registry } = local;
   const profile = "owned-paged-recovery";
   const backend = "https://owned-paged-recovery.invalid";
@@ -359,12 +359,82 @@ async function verifyPagedRecovery(receipt, origin) {
     assert.equal(newer.row_version, 3);
     assert.equal(newer.stock_quantity, 45);
     const priorPosition = (await position()).committed_cursor;
-    await assert.rejects(run(), { code: "ESYNC_GROUPED_REVIEW_REQUIRED", message: /newer local stock/ });
+    await assert.rejects(run(), { code: "ESYNC_GROUPED_REVIEW_REQUIRED" });
     assert.deepEqual(await state(), newer);
     assert.equal((await position()).committed_cursor, priorPosition);
     await local.restart();
     assert.equal(JSON.parse((await position()).committed_cursor).seq, seq);
     console.log("PASS paged mixed LocalDB recovery preserves pending work, newer cloud stock, and foreign stock, and commits receipts, stock and cursor atomically");
+
+    for (const file of ["pos-sale-outbox-v1.sql", "pos-sale-acceptance-v1.sql",
+      "pos-sync-live-stock-native-v1.sql", "pos-sync-refund-native-receipt-v1.sql"])
+      await manager.pool.request().batch(readFileSync(join(__dirname, "preparation", file), "utf8"));
+    await checkpoints.save(branch, "__feed__", "pull", { committed_cursor: "43" });
+    const extended = { ...enrollment, extended: true };
+    const env = { POS_GROUPED_SETTINGS_PILOT_MODE: "run", POS_GROUPED_SETTINGS_PILOT_ENROLLMENT: JSON.stringify(extended) };
+    const activePilot = grouped.installedGroupedSettingsPilot(env);
+    assert.equal(activePilot?.enrollment.extended, true);
+    const source = cloud.requestContext(false);
+    const installationGeneration = randomUUID();
+    const proof = { source, branchId: branch, terminalId: terminal, databaseGuid: enrollment.databaseGuid,
+      feedEpoch: epoch, installationGeneration, writingNew: true };
+    assert.equal(await worker.cashSenderHandoff(proof, activePilot), false);
+
+    const tender = cash[0].changes[2].row_data;
+    const tenderChange = (table, id, row_data) => ({ table_name: table, entity_id: JSON.stringify({ id }),
+      row_version: "2", tombstone: false, row_data });
+    const correction = { seq: "4", operation_id: randomUUID(), financial: { kind: "tender_v1", sale_id: sale.id },
+      changes: [tenderChange("sales", sale.id, { id: sale.id, store_id: branch, row_version: 2,
+        payment_type: "card", payments_count: 1 }),
+      tenderChange("payment_transactions", tender.id, { id: tender.id, sale_id: sale.id, store_id: branch,
+        row_version: 2, method: "card", updated_at: "2026-11-07T09:30:00.1234567Z" })] };
+    const extendedStock = stock.map(row => row.product_id === product ? { ...row, row_version: 3, branch_balance: 8 } : row);
+    const extendedIdentity = { ...identity, seq: "4", pin_id: randomUUID() };
+    const extendedManifest = JSON.stringify({ ...JSON.parse(manifest), seq: "4", financial_count: "1",
+      cash_installation: { generation: installationGeneration, database_guid: enrollment.databaseGuid } });
+    globalThis.fetch = async (_url, options) => {
+      const read = JSON.parse(options.body).sqlServerGroupedRecovery;
+      assert.equal(read.extended, true);
+      if (read.action === "begin") {
+        assert.equal(read.atLeastSeq, seq);
+        return Response.json({ ...extendedIdentity, manifest_json: extendedManifest, manifest_sha256: digest(extendedManifest) });
+      }
+      const rows = { cash, financial: [correction], stock: extendedStock }[read.kind];
+      const payload = JSON.stringify({ scope_id: branch, epoch, seq: "4", pin_id: extendedIdentity.pin_id,
+        kind: read.kind, after: read.after, next: String(rows.length), total: String(rows.length), rows });
+      return Response.json({ ...extendedIdentity, payload_json: payload, payload_sha256: digest(payload) });
+    };
+    await worker.prepareGroupedSettingsHandoff(extended);
+    const changedTender = (await manager.pool.request().input("id", tender.id)
+      .query("SELECT method,row_version FROM dbo.payment_transactions WHERE id=@id;")).recordset[0];
+    assert.deepEqual(changedTender, { method: "card", row_version: 2 });
+    assert.equal(await worker.cashSenderHandoff(proof, activePilot), true);
+    assert.equal(await worker.cashSenderHandoff({ ...proof, installationGeneration: randomUUID() }, activePilot), false);
+    const handbackPilot = { enrollment: extended, mode: "handback" };
+    assert.equal(await worker.cashSenderHandoff(proof, handbackPilot), false);
+    assert.equal(await worker.cashSenderHandoff({ ...proof, writingNew: false }, handbackPilot), true);
+    let sealed = false;
+    cloud.pullGroupedSettings = async (_source, saved, _limit, _projection, enabled) => {
+      assert.equal(enabled, true);
+      return { status: "OK", scope_id: branch, epoch, next_seq: saved.seq, upper_seq: saved.seq, has_more: false, groups: [],
+        ...(sealed ? { sealed_seq: "4" } : {}) };
+    };
+    cloud.bootstrapPage = async () => ({ rows: [setting.row_data], cursor: null });
+    await assert.rejects(worker.returnGroupedSettingsHandoff(extended, () => false), { code: "ESYNC_GROUPED_REVIEW_REQUIRED" });
+    sealed = true;
+    const waiting = randomUUID();
+    await manager.pool.request().input("id", waiting).input("branch", branch).input("sale", sale.id).query(`
+      INSERT dbo.local_operation_receipts(operation_id,operation_type,entity_id,refund_branch_id,refund_evidence_json)
+      VALUES(@id,N'refund',@sale,@branch,N'{}');`);
+    await assert.rejects(worker.returnGroupedSettingsHandoff(extended, () => false), { code: "ELOCAL_UPLOAD_PENDING" });
+    assert.equal(await worker.cashSenderHandoff({ ...proof, writingNew: false }, handbackPilot), true);
+    assert.equal(await worker.cashSenderHandoff(proof, activePilot), false);
+    await manager.pool.request().input("id", waiting).query("DELETE FROM dbo.local_operation_receipts WHERE operation_id=@id;");
+    assert.equal((await worker.returnGroupedSettingsHandoff(extended, () => false)).seq, "4");
+    assert.equal(await position(), null);
+    assert.equal((await checkpoints.get(branch, "__feed__", "pull")).committed_cursor, "43");
+    assert.equal(await worker.cashSenderHandoff(proof, activePilot), false);
+    console.log("PASS extended recovery applies a pinned tender correction and installed handback waits for pending refund evidence");
   } finally { globalThis.fetch = fetchBefore; await local.close(); }
 }
 

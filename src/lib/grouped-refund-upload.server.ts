@@ -11,7 +11,7 @@ const linesSchema = z.array(z.object({
   expected_row_version: version,
 }).strict()).min(1).max(100).refine(lines => new Set(lines.map(line => line.item_id)).size === lines.length);
 
-export const groupedRefundUploadSchema = z.object({
+const refundCommandSchema = z.object({
   branchId: z.string().min(1).max(128),
   operationId: uuid,
   refundKey: z.string().min(1).max(128).refine(key => key.trim() === key && !/\p{Cc}/u.test(key)),
@@ -21,6 +21,12 @@ export const groupedRefundUploadSchema = z.object({
   reason: z.string().max(400).nullable(),
   grantToken: z.string().min(1).max(4096).nullish(),
 }).strict();
+const nativeRefundSchema = z.object({
+  refundJson: z.string().min(2).max(64 * 1024),
+  attestation: z.object({}).passthrough(),
+  grantToken: z.string().min(1).max(4096).nullish(),
+}).strict();
+export const groupedRefundUploadSchema = z.union([refundCommandSchema, nativeRefundSchema]);
 
 const context = { operation_id: uuid, sale_id: uuid };
 const approvalBasis = z.object({
@@ -28,23 +34,27 @@ const approvalBasis = z.object({
   total: z.string().regex(/^\d{1,80}(?:\.\d{1,80})?$/),
   row_version: version,
 }).strict();
-const dbReply = z.discriminatedUnion("status", [
+const appliedReply = z.object({
+  ...context, status: z.literal("APPLIED"), sale_row_version: version, fully_refunded: z.boolean(),
+  effects: z.array(z.object({
+    item_id: uuid, product_id: uuid, movement_id: uuid, branch_id: z.string(),
+    delta: z.number().int().positive(), refunded_qty: z.number().int().nonnegative(), row_version: version,
+  }).strict()).min(1).max(100),
+  stock: z.array(z.object({
+    product_id: uuid, branch_id: z.string(), balance: z.number().int().min(-2147483648).max(2147483647),
+  }).strict()).min(1).max(100),
+}).strict();
+const otherReplies = [
   z.object({ ...context, status: z.literal("APPROVAL_CHECK_REQUIRED"), basis: approvalBasis }).strict(),
   z.object({ ...context, status: z.literal("REVIEW_REQUIRED"),
     code: z.enum(["LEGACY_REFUND_MOVEMENT", "REFUND_MOVEMENT_COLLISION"]) }).strict(),
-  z.object({
-    ...context, status: z.literal("APPLIED"), sale_row_version: version, fully_refunded: z.boolean(),
-    effects: z.array(z.object({
-      item_id: uuid, product_id: uuid, movement_id: uuid, branch_id: z.string(),
-      delta: z.number().int().positive(), refunded_qty: z.number().int().nonnegative(), row_version: version,
-    }).strict()).min(1).max(100),
-    stock: z.array(z.object({
-      product_id: uuid, branch_id: z.string(), balance: z.number().int().min(-2147483648).max(2147483647),
-    }).strict()).min(1).max(100),
-  }).strict(),
-]);
+] as const;
+const dbReply = z.discriminatedUnion("status", [...otherReplies, appliedReply]);
+const nativeReply = z.discriminatedUnion("status", [...otherReplies, appliedReply.extend({
+  feed_epoch: uuid, feed_seq: z.string().regex(/^[1-9]\d{0,18}$/),
+})]);
 
-type Command = z.infer<typeof groupedRefundUploadSchema>;
+type Command = z.infer<typeof refundCommandSchema>;
 type Receipt = Extract<z.infer<typeof dbReply>, { status: "APPLIED" }>;
 type Proof = {
   terminalToken?: string;
@@ -78,15 +88,25 @@ function matchesEffects(command: Command, receipt: Receipt): boolean {
 }
 
 export async function applyGroupedRefundUpload(
-  command: Command, proof: Proof, pilotTerminals: () => string[] | undefined, signal: AbortSignal,
+  input: z.infer<typeof groupedRefundUploadSchema>, proof: Proof, pilotTerminals: () => string[] | undefined, signal: AbortSignal,
 ): Promise<Response> {
   const enabled = () => runtimeEnvValue("POS_GROUPED_CASH_SETTINGS_PILOT_ENABLED") === "true" &&
     runtimeEnvValue("POS_GROUPED_REFUND_UPLOAD_PILOT_ENABLED") === "true";
   const terminals = pilotTerminals();
   if (!enabled() || !terminals) return unavailable();
   const { terminalToken, deviceBindingProof } = proof;
+  const native = "refundJson" in input ? input : null;
   if (!terminalToken || !terminals.includes(terminalToken) || !deviceBindingProof ||
-      (!proof.sessionToken && !proof.accessToken)) return forbidden();
+      (!native && !proof.sessionToken && !proof.accessToken) ||
+      (native && (proof.sessionToken || proof.cashierToken || proof.accessToken))) return forbidden();
+
+  const { decodeRefundCommand, checkRefundAcceptance } = await import("../../electron/sync/refund-command.cjs");
+  let saved: ReturnType<typeof decodeRefundCommand> | null = null;
+  let command: Command;
+  try {
+    if (native) saved = decodeRefundCommand(native.refundJson, native.attestation);
+    command = refundCommandSchema.parse(saved ? { ...saved.command, grantToken: input.grantToken } : input);
+  } catch { return failure("REFUND_UPLOAD_INVALID", 400); }
 
   const { verifyRelayCaller, serviceRest } = await import("@/core/api/pos-relay.server");
   const { resolveRelayScope } = await import("@/core/api/relay-policy.server");
@@ -95,16 +115,30 @@ export async function applyGroupedRefundUpload(
     const caller = await verifyRelayCaller(proof, { strictAvailability: true, rejectUnboundCashier: true });
     const terminal = caller.terminal;
     if (!terminal || terminal.id !== terminalToken || terminal.platform !== "pc" ||
-        terminal.mode !== "operations" || terminal.branchId !== command.branchId ||
-        caller.kind === "terminal" || (caller.kind === "cashier" && !proof.sessionToken) ||
-        (caller.kind === "staff" && (!caller.email || caller.email.trim().toLowerCase().endsWith("@pos.local"))))
+        terminal.mode !== "operations" || terminal.branchId !== command.branchId)
       return forbidden();
     const scope = await resolveRelayScope(caller, { strictAvailability: true });
     if (scope.stale || scope.managementDevice || scope.managementReplica || scope.terminalId !== terminal.id ||
-        scope.storeId !== terminal.branchId || !scope.appUserId || !scope.staffUserId ||
-        (scope.role !== "admin" && scope.roleSlug !== "admin" && scope.permissions.can_process_refund !== true))
+        scope.storeId !== terminal.branchId)
       return forbidden();
-    operator = { appUserId: scope.appUserId, id: scope.staffUserId, role: scope.roleSlug || scope.role || "staff" };
+    if (native && saved) {
+      const { verifyFinancialAuthorAttestation, readFinancialAuthorPermission } = await import("./shift-author-verification.server");
+      const attested = await verifyFinancialAuthorAttestation({
+        attestation: native.attestation, payloadJson: native.refundJson, terminal, branchId: command.branchId,
+        operationId: command.operationId, action: "REFUND",
+      });
+      const current = await readFinancialAuthorPermission(attested, { allowAdminRefund: true });
+      if (!current.allowed || current.authority.subject !== attested.subject || saved.scope.terminalId !== terminal.id)
+        return forbidden();
+      operator = { appUserId: attested.authorId, id: current.authority.subject, role: current.authority.level };
+    } else {
+      if (caller.kind === "terminal" || (caller.kind === "cashier" && !proof.sessionToken) ||
+          (caller.kind === "staff" && (!caller.email || caller.email.trim().toLowerCase().endsWith("@pos.local"))) ||
+          !scope.appUserId || !scope.staffUserId ||
+          (scope.role !== "admin" && scope.roleSlug !== "admin" && scope.permissions.can_process_refund !== true))
+        return forbidden();
+      operator = { appUserId: scope.appUserId, id: scope.staffUserId, role: scope.roleSlug || scope.role || "staff" };
+    }
   } catch (error) {
     return (error as { status?: number })?.status === 503 ? unavailable() : forbidden();
   }
@@ -114,13 +148,21 @@ export async function applyGroupedRefundUpload(
     if (!enabled() || !pilotTerminals()?.includes(terminalToken!) || signal.aborted) return unavailable();
     let response: Response;
     try {
-      response = await serviceRest("rpc/pos_sync_refund_v1", {
+      response = await serviceRest(saved ? "rpc/pos_sync_refund_attested_v1" : "rpc/pos_sync_refund_v1", {
         method: "POST", signal, redirect: "error", headers: { "Accept-Encoding": "identity" },
         body: JSON.stringify({
           p_author: operator.appUserId, p_branch: command.branchId, p_terminal: terminalToken,
           p_operation: command.operationId, p_refund_key: command.refundKey, p_sale: command.saleId,
           p_expected_sale_version: command.expectedSaleVersion, p_lines: command.lines,
           p_reason: command.reason, p_approval_basis: basis,
+          ...(saved && {
+            p_binding_proof: deviceBindingProof, p_installation_generation: saved.scope.installationGeneration,
+            p_database_guid: saved.scope.databaseGuid, p_epoch: saved.scope.feedEpoch,
+            p_author_key_id: saved.author.keyId, p_author_subject: saved.author.subject,
+            p_project_origin: saved.author.projectOrigin,
+            p_items: saved.items.map((item: { itemId: string; productId: string }) =>
+              ({ item_id: item.itemId, product_id: item.productId })),
+          }),
         }),
       });
     } catch { return unavailable(); }
@@ -150,9 +192,10 @@ export async function applyGroupedRefundUpload(
       return protocol();
     }
     try {
-      const result = dbReply.parse(JSON.parse(await boundedText(response, 65536)));
+      const result = (saved ? nativeReply : dbReply).parse(JSON.parse(await boundedText(response, 65536)));
       if (result.operation_id !== command.operationId || result.sale_id !== command.saleId ||
           (result.status === "APPLIED" && !matchesEffects(command, result))) return protocol();
+      if (saved && result.status === "APPLIED") checkRefundAcceptance(saved, result);
       return result;
     } catch { return protocol(); }
   }

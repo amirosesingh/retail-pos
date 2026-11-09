@@ -490,10 +490,10 @@ class OperationsRepository {
     const hasRowVersion = table.columns.some((column) => column.sqlServerColumn === "row_version");
     const cashContext = scope.cashCheckoutContext;
     if (cashContext && !cashCheckoutForContext(cashContext)) throw new Error("Invalid cash checkout tracking context.");
-    const taggedQuery = (request, statement) => {
+    const taggedQuery = (request, statement, declaration = "") => {
       if (!cashContext) return request.query(statement);
       request.input("cashCheckoutContext", this.connectionManager.sql().VarBinary(128), cashContext);
-      return request.query(`WITH CHANGE_TRACKING_CONTEXT (@cashCheckoutContext) ${statement}`);
+      return request.query(`${declaration}WITH CHANGE_TRACKING_CONTEXT (@cashCheckoutContext) ${statement}`);
     };
     if (op.kind === "insert" || op.kind === "upsert") {
       let affected = 0;
@@ -535,7 +535,7 @@ class OperationsRepository {
     request.input("terminal", String(terminalId ?? ""));
     match.forEach(([, value], index) => { if (value !== null) request.input(`m${index}`, valueForSql(value)); });
     const where = match.map(([column, value], index) => value === null ? `[${column}] IS NULL` : `[${column}]=@m${index}`).join(" AND ");
-    let query;
+    let query, declaration;
     const ownership = financialStock ? rendererReadBranchPredicate(this.registry, table, "source") : this.branchPredicate(table, "source");
     const restrictedWhere = `${where}${ownership ? ` AND (${ownership})` : ""}`;
     if (op.kind === "delete" && table.deleteRule === "tombstone" && table.columns.some((column) => column.sqlServerColumn === "deleted_at")) {
@@ -551,10 +551,16 @@ class OperationsRepository {
       if (!values.length && !hasRowVersion) return 0;
       values.forEach(([column, value], index) => request.input(`v${index}`, columnValueForSql(table, column, value)));
       const setters = values.map(([column], index) => `[${column}]=@v${index}`);
+      if (cashContext && financialStock) {
+        const { stockLifecycleDeclaration, stockLifecycleAssignments } = require("../../sync/grouped-live-stock.cjs");
+        const total = values.findIndex(([column]) => column === "stock_quantity");
+        setters.push(stockLifecycleAssignments("source", `@v${total}`));
+        declaration = stockLifecycleDeclaration;
+      }
       if (hasRowVersion) setters.push("[row_version]=COALESCE([row_version],0)+1");
       query = `UPDATE source SET ${setters.join(",")} FROM dbo.[${op.table}] source WHERE ${restrictedWhere};`;
     }
-    const result = await taggedQuery(request, query);
+    const result = await taggedQuery(request, query, declaration);
     return result.rowsAffected?.reduce((sum, count) => sum + count, 0) ?? 0;
   }
   branchPredicate(table, alias = "source", seen = new Set()) {

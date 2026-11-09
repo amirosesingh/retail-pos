@@ -2,8 +2,9 @@
 import assert from'node:assert/strict';import{readFile}from'node:fs/promises';import{createRequire}from'node:module';import{randomUUID,createHash}from'node:crypto';import Module from'node:module';import{dirname}from'node:path';
 const require=createRequire(import.meta.url),helperPath=require.resolve('./lib/shift-protocol-integration-fixture.cjs');let{createCloud}=require(helperPath),nativeDb;
 const flags = process.argv.slice(2).join(' ');
+const correctionFeed = flags === '--native --correction-feed';
 const tenderOnly = flags === '--native --tender-sync';
-const native = tenderOnly || flags === '--native';
+const native = tenderOnly || correctionFeed || flags === '--native';
 assert(!flags || native, 'Only fixture flags accepted, never connection arguments');
 const read=p=>readFile(new URL('../'+p,import.meta.url),'utf8'),schema=(await read('supabase/schema.sql')).replaceAll('\r\n','\n');
 function fn(name){const start=schema.lastIndexOf('CREATE OR REPLACE FUNCTION public.'+name+'(');assert(start>=0,name);const tail=schema.slice(start),tag=tail.match(/\bAS\s+(\$[\w]*\$)/i)?.[1],first=tail.indexOf(tag),end=tail.indexOf(tag+';',first+tag.length);assert(end>first);return tail.slice(0,end+tag.length+1);}
@@ -41,10 +42,10 @@ try{
  const correct=(id,version,items,total,key=randomUUID(),who=admin,branch='A')=>scalar('SELECT pos_live_financial_admin_correct_sale($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8,$9)',[who,id,branch,version,JSON.stringify(items),JSON.stringify({subtotal_amount:total,discount_amount:0,tax_amount:0,total_amount:total,coupon_discount:0}),'Reviewed item correction',terminal,key]);
  const tender=(id,method,who=admin)=>scalar('SELECT pos_live_financial_admin_correct_tender($1,$2,$3,$4,$5)',[who,id,'A',method,terminal]);
  const items=id=>scalar('SELECT jsonb_agg(to_jsonb(s) ORDER BY id) FROM sale_items s WHERE sale_id=$1',[id]);
- const liveSale=async()=>{const s={...sale(),total_amount:'10'},item=randomUUID(),payment=randomUUID();await scalar('SELECT pos_live_financial_sale($1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7::jsonb,NULL,NULL)',[author,'A',terminal,JSON.stringify(s),JSON.stringify([{id:item,product_id:product,product_name:'Fixture',quantity:1,unit_price:10,unit_cost:5}]),JSON.stringify([{id:payment,source_type:'sale',amount:10,method:'cash',shift_id:shift}]),JSON.stringify([{id:randomUUID(),product_id:product,activity_type:'sale',quantity_delta:-1}])]);return s;};
+ const liveSale=async(withEmbeddedPayment=false)=>{const s={...sale(),total_amount:'10'},item=randomUUID(),payment=randomUUID();if(withEmbeddedPayment)s.payments=[{id:payment,method:'cash',amount:'10.0000'}];await scalar('SELECT pos_live_financial_sale($1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7::jsonb,NULL,NULL)',[author,'A',terminal,JSON.stringify(s),JSON.stringify([{id:item,product_id:product,product_name:'Fixture',quantity:1,unit_price:10,unit_cost:5}]),JSON.stringify([{id:payment,source_type:'sale',amount:10,method:'cash',shift_id:shift}]),JSON.stringify([{id:randomUUID(),product_id:product,activity_type:'sale',quantity_delta:-1}])]);return s;};
  const oldDevice=randomUUID();await db.query("INSERT INTO terminal_tokens(id,location_id,status) VALUES($1,'A','active')",[oldDevice]);const empty=await scalar('SELECT pos_sync_read_financial_basis($1,$2,$3,$4)',['default','A',oldDevice,shift]);await db.query('SELECT fin62_history_preparation.ensure_stream($1,$2,$3,$4,$5::jsonb)',['default','A',oldDevice,shift,JSON.stringify({serverBasisId:empty.basisId,serverBasisHash:empty.basisHash})]);
  await db.query('INSERT INTO fin62_history_preparation.protected_shifts VALUES($1,$2) ON CONFLICT DO NOTHING',[shift,'A']);
- if (tenderOnly) {
+ if (tenderOnly || correctionFeed) {
   await db.exec(await read('scripts/preparation/pos-sync-tender-correction-v1.sql'));
   await db.query("UPDATE app_users SET permissions='{\"can_process_sale\":true}' WHERE id=$1", [manager]);
   await test('exact tender correction replays without changing stock or writing a second audit', async () => {
@@ -71,6 +72,10 @@ try{
    assert.equal(await scalar(`SELECT count(*)::int FROM fin62_admin_preparation.receipts
      WHERE action='TENDER_CORRECTION' AND sale_id=$1`, [receipt.id]), 1);
   });
+  if (correctionFeed) {
+   const { runFinancialCorrectionFeed } = await import('./lib/pos-sync-financial-corrections-fixture.mjs');
+   await runFinancialCorrectionFeed({ db, read, fn, scalar, test, liveSale, author, admin, terminal, product });
+  }
  } else {
  await test('admin originals and permissions stay byte-identical; partial readiness is failclosed pending final pins',async()=>{assert.deepEqual((await db.query("SELECT oid::regprocedure::text signature,pg_get_functiondef(oid) definition,proacl::text FROM pg_proc WHERE oid IN('public.pos_admin_correct_sale(uuid,text,integer,jsonb,jsonb,text,text,text,text,uuid)'::regprocedure,'public.pos_admin_correct_tender(uuid,text,text)'::regprocedure,'public.pos_admin_add_missed_bill(jsonb,text,text)'::regprocedure) ORDER BY 1")).rows,original);assert.equal((await scalar('SELECT pos_live_financial_ready()')).ready,false);});
  let main,version,changed,key;

@@ -47,7 +47,8 @@ describe("online approval primary database", () => {
     const held = source("src/lib/register/use-held-orders.ts");
 
     expect(fn).toContain('rule.mode !== "pin" && rule.mode !== "either"');
-    expect(fn).toContain("canBypassAuthorization(");
+    expect(fn).toContain("checkBusinessAuthorization(who, { ...data, storeId })");
+    expect(source("src/lib/business-authorization.server.ts")).toContain("canBypassAuthorization(");
     expect(gate).toContain("canBypassAuthorization(");
     expect(dialog).toContain('activeMode === "request"');
     expect(fn).toContain("rule.approvalTimeoutMinutes / 60");

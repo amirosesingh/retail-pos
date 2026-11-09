@@ -13,6 +13,7 @@ const localSupport = new Set([
   "pos_sync_shift_financial_sale_lineage", "pos_sync_shift_financial_versions",
   "pos_sync_sale_outbox_v1", "pos_sync_sale_acceptance_v1", "pos_store_settings_edit_commands", "pos_store_settings_edit_receipts",
   "pos_store_settings_edit_reviews", "pos_sync_cash_settings_recovery_pages_v1",
+  "pos_sync_grouped_stock_v1",
 ]);
 const cloudViews = new Set(["v_daily_item_sales", "v_daily_store_sales", "v_sale_line_facts"]);
 const cloudSupport = new Map(Object.entries({
@@ -24,8 +25,9 @@ const cloudSupport = new Map(Object.entries({
     "requested_staff_permissions", "stock_document_counters", "transfer_dispatch_receipts"],
   shift_sharing_private: ["contracts"],
   pos_sync_feed_v1: ["feed_groups", "feed_heads", "settings_edit_enrollments", "settings_pilots", "snapshot_pins",
+    "stock_pilots", "stock_revision_coverage",
     "cash_settings_pilots", "cash_publications", "cash_receipt_owners", "cash_settings_recovery_exports",
-    "cash_settings_recovery_entries"],
+    "cash_settings_recovery_entries", "extended_pilots", "extended_publications", "correction_owners"],
   pos_sync_refund_v1: ["receipts", "movement_aliases"],
   pos_sync_tender_v1: ["receipts"],
   pos_sync_cash_v1: ["checkout_route_owners", "installation_enrollments"],

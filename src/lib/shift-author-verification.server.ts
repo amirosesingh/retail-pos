@@ -228,7 +228,7 @@ export async function verifyCashCheckoutAttestation(input: {
 }
 
 /** Necessary current action flag, not a replacement for row/field authorization. */
-export async function readFinancialAuthorPermission(value: unknown): Promise<ShiftAuthorAuthority> {
+export async function readFinancialAuthorPermission(value: unknown, options: { allowAdminRefund?: boolean } = {}): Promise<ShiftAuthorAuthority> {
   const {normalizeFinancialAttestation}=await import("../../electron/security/financial-author-protocol.cjs");
   let proof: ReturnType<typeof normalizeFinancialAttestation>;
   try { proof=normalizeFinancialAttestation(value); } catch { return {allowed:false,code:"EFINANCIAL_AUTHOR_INVALID"}; }
@@ -240,7 +240,9 @@ export async function readFinancialAuthorPermission(value: unknown): Promise<Shi
   const flags: Record<string,string>={OPEN:"can_open_shift",SALE:"can_process_sale",REFUND:"can_process_refund",TENDER:"can_edit_tenders",VOID:"can_void_item"};
   const flag=flags[String(proof.action)];
   if(!flag)return {allowed:false,code:"EFINANCIAL_AUTHOR_INVALID"};
-  return authority.permissions[flag]===true?{allowed:true,authority}:{allowed:false,code:"EFINANCIAL_AUTHOR_PERMISSION_REVOKED"};
+  const allowed = authority.permissions[flag] === true ||
+    (options.allowAdminRefund === true && proof.action === "REFUND" && authority.level === "admin");
+  return allowed ? {allowed:true,authority} : {allowed:false,code:"EFINANCIAL_AUTHOR_PERMISSION_REVOKED"};
 }
 /** Companion proof uses the same already-verified graph author, with no second
  * registry request and no change to frozen v1 graph bytes. Not admission alone. */

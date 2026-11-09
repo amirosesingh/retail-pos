@@ -34,6 +34,7 @@ function pilotEnrollment(value) {
   const fields = ["branchId", "terminalId", "backendOrigin", "projectOrigin", "databaseGuid"];
   if (value?.projection === MIXED_PROJECTION) fields.push("projection");
   if (value?.projection === MIXED_PROJECTION && value.recovery === "paged_stock_v1") fields.push("recovery");
+  if (value?.recovery === "paged_stock_v1" && value?.extended === true) fields.push("extended");
   if (!hasKeys(value, fields) ||
       typeof value.branchId !== "string" || !value.branchId || value.branchId.length > 128 ||
       recordId(value.branchId) !== value.branchId || typeof value.terminalId !== "string" || !UUID.test(value.terminalId) ||
@@ -48,9 +49,8 @@ function installedGroupedSettingsPilot(env) {
   if (!["run", "handback"].includes(mode) || typeof input !== "string" || input.length > 1024) return null;
   try {
     const enrollment = pilotEnrollment(JSON.parse(input));
-    // The native mixed contract is exercised in isolation. Installed finance
-    // still needs an exclusive legacy read/write handoff before it can run.
-    return enrollment && !enrollment.projection ? Object.freeze({ enrollment, mode }) : null;
+    return enrollment && (!enrollment.projection || enrollment.extended === true)
+      ? Object.freeze({ enrollment, mode }) : null;
   } catch { return null; }
 }
 
@@ -103,8 +103,13 @@ function changeFor(value, branch, table) {
   return { ...value, entity_id: JSON.stringify(key), row_data: { ...row, row_version: Number(value.row_version) } };
 }
 
-function groupsFor(page, branch, table, position, limit, parseCash = null) {
-  if (!hasKeys(page, ["status", "scope_id", "epoch", "next_seq", "upper_seq", "has_more", "groups"]) ||
+function groupsFor(page, branch, table, position, limit, parseCash = null, extended = false) {
+  const fields = ["status", "scope_id", "epoch", "next_seq", "upper_seq", "has_more", "groups"];
+  if (extended && Object.hasOwn(page ?? {}, "sealed_seq")) {
+    sequence(page.sealed_seq);
+    fields.push("sealed_seq");
+  }
+  if (!hasKeys(page, fields) ||
       page.status !== "OK" || page.scope_id !== branch || page.epoch !== position.epoch ||
       !Array.isArray(page.groups) || page.groups.length > limit ||
       (position.upper !== null && page.upper_seq !== position.upper))
@@ -122,8 +127,20 @@ function groupsFor(page, branch, table, position, limit, parseCash = null) {
         !Array.isArray(group.changes))
       throw fail("The grouped settings page contains an unsupported or incomplete group.");
     previous = BigInt(group.seq);
+    if (extended && Object.hasOwn(group, "financial"))
+      return { seq: group.seq, financial: require("./grouped-financial-corrections.cjs").parseFinancialCorrection(group, branch) };
+    if (extended && group.changes[0]?.table_name === "products_stock")
+      return { seq: group.seq, stock: [require("./grouped-live-stock.cjs").parseStockGroup(group)] };
     if (hasKeys(group, ["seq", "operation_id", "changes"]) && group.changes.length === 1)
       return { seq: group.seq, change: changeFor(group.changes[0], branch, table) };
+    if (parseCash && extended) {
+      const { stock, ...checkout } = group;
+      const parsed = require("./grouped-live-stock.cjs").parseStockRow(stock);
+      const cash = parseCash(checkout, position.epoch);
+      if (parsed.product_id !== cash.rows[1]?.change.row_data.product_id)
+        throw fail("The grouped checkout stock belongs to a different product.");
+      return { seq: group.seq, cash, stock: [parsed] };
+    }
     if (parseCash) return { seq: group.seq, cash: parseCash(group, position.epoch) };
     throw fail("The grouped settings page contains an unsupported or incomplete group.");
   });
@@ -209,7 +226,17 @@ async function readPosition(request, { branch, source, databaseGuid, projection,
   let position;
   try { position = JSON.parse(result.recordset[0].committed_cursor); }
   catch { throw fail("The saved grouped settings position is invalid."); }
-  if (result.recordset.length !== 1 || !hasKeys(position, ["source", "databaseGuid", "epoch", "seq", "upper"]) ||
+  const keys = ["source", "databaseGuid", "epoch", "seq", "upper"];
+  if (position?.extended === true && projection === MIXED_PROJECTION) {
+    keys.push("extended", "cashGeneration");
+    if (Object.hasOwn(position, "sealedSeq")) {
+      sequence(position.sealedSeq);
+      keys.push("sealedSeq");
+    }
+    if (position.cashGeneration !== null && !UUID.test(position.cashGeneration ?? ""))
+      throw fail("The saved grouped cash sender generation is invalid.");
+  }
+  if (result.recordset.length !== 1 || !hasKeys(position, keys) ||
       position.source !== source.fingerprint || typeof position.epoch !== "string" || !UUID.test(position.epoch) ||
       (position.upper !== null && sequence(position.upper) <= sequence(position.seq)))
     throw fail("The saved grouped settings position does not belong to this database and registration.");

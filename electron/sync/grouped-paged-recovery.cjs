@@ -1,5 +1,6 @@
 const { createHash, randomUUID } = require("node:crypto");
 const grouped = require("./grouped-store-settings.cjs");
+const { applyGroupedStock, parseStockRow } = require("./grouped-live-stock.cjs");
 
 const RECOVERY = "paged_stock_v1";
 const PAGE_LIMIT = 25;
@@ -11,7 +12,6 @@ const fail = (message, code = "ESYNC_GROUPED_PROTOCOL") => grouped.fail(message,
 const exact = (row, keys) => !!row && !Array.isArray(row) && typeof row === "object" &&
   Object.keys(row).length === keys.length && keys.every(key => Object.hasOwn(row, key));
 const hash = value => createHash("sha256").update(value, "utf8").digest("hex");
-const isInt32 = value => Number.isInteger(value) && value >= -2147483648 && value <= 2147483647;
 
 function ordinal(value) {
   if (typeof value !== "string" || !/^(0|[1-9]\d{0,18})$/.test(value) || BigInt(value) > 9223372036854775807n)
@@ -27,23 +27,33 @@ function decode(text, digest, bytes) {
   catch { throw fail("The paged recovery payload is malformed."); }
 }
 
-function snapshotFor(response, branch, table) {
+function snapshotFor(response, branch, table, extended, atLeastSeq) {
   if (!exact(response, ["status", "scope_id", "epoch", "seq", "pin_id", "expires_at", "manifest_json", "manifest_sha256"]) ||
       response.status !== "OK" || response.scope_id !== branch || !UUID.test(response.pin_id ?? "") ||
       !UUID.test(response.epoch ?? ""))
     throw fail("The paged recovery manifest does not match the registered scope.");
   const manifest = decode(response.manifest_json, response.manifest_sha256, 65536);
-  if (!exact(manifest, ["scope_id", "epoch", "seq", "changes", "cash_count", "stock_count"]) ||
+  const fields = ["scope_id", "epoch", "seq", "changes", "cash_count", "stock_count"];
+  if (extended) fields.push("financial_count", "cash_installation");
+  if (extended && Object.hasOwn(manifest ?? {}, "sealed_seq")) fields.push("sealed_seq");
+  if (!exact(manifest, fields) ||
       manifest.scope_id !== branch || manifest.epoch !== response.epoch || manifest.seq !== response.seq ||
-      ordinal(manifest.cash_count) > ordinal(manifest.seq))
+      ordinal(manifest.cash_count) + ordinal(manifest.financial_count ?? "0") > ordinal(manifest.seq) ||
+      (atLeastSeq !== undefined && ordinal(manifest.seq) < ordinal(atLeastSeq)) ||
+      (manifest.sealed_seq !== undefined && ordinal(manifest.sealed_seq) > ordinal(manifest.seq)))
     throw fail("The paged recovery manifest does not prove complete coverage.");
   ordinal(manifest.stock_count);
-  const { cash_count, stock_count, ...settingsManifest } = manifest;
+  const { cash_count, stock_count, financial_count, cash_installation, sealed_seq, ...settingsManifest } = manifest;
+  if (extended && cash_installation !== null &&
+      (!exact(cash_installation, ["generation", "database_guid"]) || !UUID.test(cash_installation.generation ?? "") ||
+        !UUID.test(cash_installation.database_guid ?? "")))
+    throw fail("The snapshot does not prove its registered cash sender.");
   const settingsJson = JSON.stringify(settingsManifest);
   const settings = grouped.settingsFromSnapshot({ ...response, manifest_json: settingsJson,
     manifest_sha256: hash(settingsJson) }, branch, table);
-  return { ...settings, branch, pinId: response.pin_id, expiresAt: response.expires_at,
-    totals: { cash: cash_count, stock: stock_count } };
+  return { ...settings, branch, pinId: response.pin_id, expiresAt: response.expires_at, cashInstallation: cash_installation,
+    sealedSeq: sealed_seq,
+    totals: { cash: cash_count, ...(extended ? { financial: financial_count } : {}), stock: stock_count } };
 }
 
 function assertSnapshotLive(snapshot) {
@@ -63,16 +73,16 @@ function pageFor(page, kind, after, snapshot) {
 
 function checkRows(page, snapshot, parseCash, previous) {
   return page.rows.map(row => {
-    if (page.kind === "cash") {
+    if (page.kind === "cash" || page.kind === "financial") {
       const seq = ordinal(row?.seq);
-      if (seq <= previous.cash || seq > ordinal(snapshot.seq))
-        throw fail("The recovery archive contains a repeated or out-of-order cash group.");
-      previous.cash = seq;
-      return parseCash(row, snapshot.epoch);
+      if (seq <= previous[page.kind] || seq > ordinal(snapshot.seq))
+        throw fail("The recovery archive contains a repeated or out-of-order financial group.");
+      previous[page.kind] = seq;
+      if (page.kind === "cash") return { facts: parseCash(row, snapshot.epoch), seq: row.seq };
+      return require("./grouped-financial-corrections.cjs").parseFinancialCorrection(row, snapshot.branch);
     }
-    if (!exact(row, ["product_id", "branch_balance", "row_version"]) || !UUID.test(row.product_id ?? "") ||
-        !isInt32(row.branch_balance) || !isInt32(row.row_version) || row.row_version < 1 ||
-        row.product_id <= previous.stock)
+    parseStockRow(row);
+    if (row.product_id <= previous.stock)
       throw fail("The recovery archive contains invalid or repeated branch stock.");
     previous.stock = row.product_id;
     return row;
@@ -83,21 +93,23 @@ function checkRows(page, snapshot, parseCash, previous) {
 // leaving receipt data in an OS temporary file. Network reads never hold local
 // business locks. Activation revalidates all staged pages in one transaction.
 async function stagePagedRecovery(cloud, context, assertCurrent) {
-  const { source, branch, table, parseCash } = context;
+  const { source, branch, table, parseCash, extended, atLeastSeq } = context;
   assertCurrent();
-  const snapshot = snapshotFor(await cloud.beginGroupedRecovery(source), branch, table);
+  const snapshot = snapshotFor(await cloud.beginGroupedRecovery(source, { extended, atLeastSeq }),
+    branch, table, extended, atLeastSeq);
   const runId = randomUUID();
   const clear = () => source.pool.request().input("run", runId).query(`DELETE FROM ${PAGE_TABLE} WHERE run_id=@run;`);
   try {
     assertCurrent();
     await source.pool.request().query(`DELETE FROM ${PAGE_TABLE} WHERE expires_at<=SYSUTCDATETIME();`);
-    const previous = { cash: 0n, stock: "" };
-    for (const kind of ["cash", "stock"]) {
+    const previous = { cash: 0n, financial: 0n, stock: "" };
+    for (const kind of Object.keys(snapshot.totals)) {
       let after = "0";
       while (after !== snapshot.totals[kind]) {
         assertCurrent();
         assertSnapshotLive(snapshot);
-        const response = await cloud.pageGroupedRecovery(source, { pinId: snapshot.pinId, kind, after, limit: PAGE_LIMIT });
+        const response = await cloud.pageGroupedRecovery(source, { pinId: snapshot.pinId, kind, after, limit: PAGE_LIMIT,
+          ...(extended ? { extended } : {}) });
         assertCurrent();
         if (!exact(response, ["status", "scope_id", "epoch", "seq", "pin_id", "expires_at", "payload_json", "payload_sha256"]) ||
             response.status !== "OK" || response.scope_id !== branch || response.epoch !== snapshot.epoch ||
@@ -127,14 +139,20 @@ async function verifyCoverage(transaction, snapshot) {
       FROM ${PAGE_TABLE} p CROSS APPLY OPENJSON(p.payload_json,'$.rows')
       WITH (operation_id uniqueidentifier '$.operation_id',changes nvarchar(max) '$.changes' AS JSON) AS row
       WHERE p.run_id=@run AND p.kind='cash'
+    ), financial AS (
+      SELECT row.operation_id FROM ${PAGE_TABLE} p CROSS APPLY OPENJSON(p.payload_json,'$.rows')
+      WITH (operation_id uniqueidentifier '$.operation_id') AS row
+      WHERE p.run_id=@run AND p.kind='financial'
     ), stock AS (
       SELECT row.product_id FROM ${PAGE_TABLE} p CROSS APPLY OPENJSON(p.payload_json,'$.rows')
       WITH (product_id uniqueidentifier '$.product_id') AS row
       WHERE p.run_id=@run AND p.kind='stock'
     )
     SELECT CONVERT(varchar(20),(SELECT COUNT_BIG(*) FROM cash)) AS cash_count,
+      CONVERT(varchar(20),(SELECT COUNT_BIG(*) FROM financial)) AS financial_count,
       CONVERT(varchar(20),(SELECT COUNT_BIG(*) FROM stock)) AS stock_count,
       CASE WHEN EXISTS(SELECT 1 FROM cash GROUP BY operation_id HAVING COUNT_BIG(*)<>1)
+        OR EXISTS(SELECT 1 FROM financial GROUP BY operation_id HAVING COUNT_BIG(*)<>1)
         OR EXISTS(SELECT 1 FROM stock GROUP BY product_id HAVING COUNT_BIG(*)<>1)
         OR EXISTS(SELECT 1 FROM cash WHERE NOT EXISTS(SELECT 1 FROM stock
           WHERE stock.product_id=TRY_CONVERT(uniqueidentifier,JSON_VALUE(cash.changes,'$[1].row_data.product_id'))))
@@ -143,86 +161,16 @@ async function verifyCoverage(transaction, snapshot) {
           GROUP BY entity.table_name,entity.entity_id HAVING COUNT_BIG(*)<>1)
         THEN 0 ELSE 1 END AS complete;`);
   const row = result.recordset?.[0];
-  if (row?.cash_count !== snapshot.totals.cash || row.stock_count !== snapshot.totals.stock || row.complete !== 1)
+  if (row?.cash_count !== snapshot.totals.cash || row.financial_count !== (snapshot.totals.financial ?? "0") ||
+      row.stock_count !== snapshot.totals.stock || row.complete !== 1)
     throw fail("The staged recovery pages do not cover all receipt and stock identities.");
 }
 
-async function applyStockPage(worker, transaction, branch, rows) {
-  const products = worker.registry.tables.find(table => table.cloudTable === "products" && table.sqlServerTable === "products");
-  if (!products) throw fail("The registered products table is unavailable for stock recovery.");
-  const pending = await worker.reader.unacknowledged(products, rows.map(row => JSON.stringify({ id: row.product_id })),
-    transaction, { branchId: branch });
-  if (pending.size) throw fail("Local stock is still pending upload.", "ELOCAL_UPLOAD_PENDING");
-  // Ownership and Change Tracking checks are repeated with product locks held.
-  // Reconstruct only the registered branch bucket, keeping local foreign
-  // buckets and product metadata. A missing parent or malformed map blocks
-  // the whole recovery, as does a retention cleanup during the CT read.
-  const path = "$." + JSON.stringify(branch);
-  const result = await transaction.request().input("branch", branch).input("path", path)
-    .input("desired", JSON.stringify(rows)).query(`
-    DECLARE @baseline bigint=(SELECT change_tracking_version FROM dbo.sync_checkpoints WITH(HOLDLOCK)
-      WHERE organization_id=N'default' AND branch_id=@branch AND entity_type=N'products' AND direction=N'push');
-    DECLARE @minimum bigint=CHANGE_TRACKING_MIN_VALID_VERSION(OBJECT_ID(N'dbo.products'));
-    IF @baseline IS NULL OR @minimum IS NULL OR @baseline<@minimum OR @baseline>CHANGE_TRACKING_CURRENT_VERSION()
-    BEGIN SELECT N'unverified' AS state; RETURN; END;
-    DECLARE @rows TABLE(id uniqueidentifier PRIMARY KEY,balance int NOT NULL,pin_version int NOT NULL,
-      prior_stock nvarchar(max),prior_total int,prior_version int,owner_store_id nvarchar(128));
-    INSERT @rows
-    SELECT desired.product_id,desired.branch_balance,desired.row_version,product.stock_by_store,
-      product.stock_quantity,product.row_version,product.owner_store_id
-    FROM OPENJSON(@desired) WITH (product_id uniqueidentifier,branch_balance int,row_version int) AS desired
-    LEFT JOIN dbo.products AS product WITH(UPDLOCK,HOLDLOCK) ON product.id=desired.product_id;
-    IF EXISTS(SELECT 1 FROM @rows WHERE owner_store_id IS NULL OR
-       owner_store_id COLLATE Latin1_General_100_BIN2<>@branch COLLATE Latin1_General_100_BIN2)
-    BEGIN SELECT N'parent' AS state; RETURN; END;
-    DECLARE @pending bit=CASE WHEN EXISTS(SELECT 1 FROM CHANGETABLE(CHANGES dbo.products,@baseline) AS ct
-      JOIN @rows wanted ON wanted.id=ct.id
-      WHERE ct.SYS_CHANGE_CONTEXT IS NULL OR ct.SYS_CHANGE_CONTEXT<>0x434C4F5544) THEN 1 ELSE 0 END;
-    SET @minimum=CHANGE_TRACKING_MIN_VALID_VERSION(OBJECT_ID(N'dbo.products'));
-    IF @minimum IS NULL OR @baseline<@minimum BEGIN SELECT N'unverified' AS state; RETURN; END;
-    IF @pending=1 BEGIN SELECT N'pending' AS state; RETURN; END;
-    IF EXISTS(SELECT 1 FROM @rows WHERE ISJSON(prior_stock,OBJECT)<>1 OR prior_stock IS NULL OR prior_total IS NULL
-      OR prior_version IS NULL OR prior_version<1)
-      OR EXISTS(SELECT 1 FROM @rows AS saved CROSS APPLY OPENJSON(saved.prior_stock) AS bucket
-        WHERE bucket.[type]<>2 OR TRY_CONVERT(int,bucket.value) IS NULL)
-      OR EXISTS(SELECT 1 FROM @rows AS saved CROSS APPLY OPENJSON(saved.prior_stock) AS bucket
-        GROUP BY saved.id,bucket.[key] COLLATE Latin1_General_100_BIN2 HAVING COUNT_BIG(*)<>1)
-    BEGIN SELECT N'unverified' AS state; RETURN; END;
-    -- The cloud products trigger increments row_version on every update.
-    -- A newer local revision with a different balance needs a newer pin.
-    IF EXISTS(SELECT 1 FROM @rows WHERE prior_version>pin_version
-      AND COALESCE(TRY_CONVERT(int,JSON_VALUE(prior_stock,@path)),0)<>balance)
-    BEGIN SELECT N'newer' AS state; RETURN; END;
-    DECLARE @next TABLE(id uniqueidentifier PRIMARY KEY,stock nvarchar(max) NOT NULL,
-      total bigint NOT NULL,prior_sum bigint NOT NULL,prior_total int NOT NULL,changed bit NOT NULL);
-    INSERT @next
-    SELECT saved.id,JSON_MODIFY(saved.prior_stock,@path,saved.balance),
-      sums.total-COALESCE(TRY_CONVERT(int,JSON_VALUE(saved.prior_stock,@path)),0)+saved.balance,
-      sums.total,saved.prior_total,
-      CASE WHEN COALESCE(TRY_CONVERT(int,JSON_VALUE(saved.prior_stock,@path)),0)<>saved.balance THEN 1 ELSE 0 END
-    FROM @rows AS saved CROSS APPLY
-      (SELECT COALESCE(SUM(CONVERT(bigint,value)),0) AS total FROM OPENJSON(saved.prior_stock)) AS sums;
-    IF EXISTS(SELECT 1 FROM @next WHERE prior_total<>prior_sum OR total NOT BETWEEN -2147483648 AND 2147483647)
-    BEGIN SELECT N'unverified' AS state; RETURN; END;
-    WITH CHANGE_TRACKING_CONTEXT (0x434C4F5544)
-    UPDATE product SET stock_by_store=prepared.stock,stock_quantity=CONVERT(int,prepared.total)
-    FROM dbo.products AS product JOIN @next AS prepared ON prepared.id=product.id WHERE prepared.changed=1;
-    SELECT N'applied' AS state,@@ROWCOUNT AS changed;`);
-  const state = result.recordset?.[0];
-  if (state?.state === "pending") throw fail("Local stock is still pending upload.", "ELOCAL_UPLOAD_PENDING");
-  if (state?.state === "parent") throw fail("A recovery stock product is missing or belongs to another branch.", "ESYNC_CASH_RECEIPT_DEPENDENCY");
-  if (state?.state === "newer")
-    throw fail("A newer local stock balance requires a fresh recovery pin.", "ESYNC_GROUPED_REVIEW_REQUIRED");
-  if (state?.state !== "applied")
-    throw fail("Local stock cannot prove the recovery boundary.", "ELOCAL_PENDING_UNVERIFIED");
-  return state.changed;
-}
-
-async function applyPagedRecovery(worker, transaction, context, snapshot, applyCash, assertCurrent) {
+async function applyPagedRecovery(worker, transaction, context, snapshot, applyCash, assertCurrent, applyFinancial) {
   await verifyCoverage(transaction, snapshot);
-  const previous = { cash: 0n, stock: "" };
+  const previous = { cash: 0n, financial: 0n, stock: "" };
   let stockChanged = 0;
-  for (const kind of ["cash", "stock"]) {
+  for (const kind of Object.keys(snapshot.totals)) {
     let after = "0";
     while (after !== snapshot.totals[kind]) {
       assertCurrent();
@@ -234,9 +182,12 @@ async function applyPagedRecovery(worker, transaction, context, snapshot, applyC
       const page = pageFor(decode(row?.payload_json, row?.payload_sha256, MAX_PAGE_BYTES), kind, after, snapshot);
       const rows = checkRows(page, snapshot, context.parseCash, previous);
       if (kind === "cash") {
-        for (const facts of rows) await applyCash(facts);
+        for (const row of rows) await applyCash(row.facts, row.seq);
+      } else if (kind === "financial") {
+        for (const facts of rows) await applyFinancial(facts);
       } else {
-        stockChanged += await applyStockPage(worker, transaction, context.branch, rows);
+        stockChanged += await applyGroupedStock(worker, transaction, context.branch, rows, context.extended
+          ? { epoch: snapshot.epoch, seq: snapshot.seq, recovery: true } : {});
       }
       after = page.next;
     }

@@ -133,6 +133,12 @@ BEGIN
   JOIN pos_sync_feed_v1.cash_settings_pilots AS pilot USING (organization_id, scope_id, epoch)
   WHERE head.organization_id = p_organization_id AND head.scope_id = p_branch_id;
   IF NOT FOUND THEN RETURN jsonb_build_object('status', 'SCOPE_UNAVAILABLE'); END IF;
+  IF to_regclass('pos_sync_feed_v1.extended_pilots') IS NOT NULL THEN
+    IF EXISTS(SELECT 1 FROM pos_sync_feed_v1.extended_pilots
+      WHERE (organization_id,scope_id,epoch)=(p_organization_id,p_branch_id,v_epoch)) THEN
+      RETURN jsonb_build_object('status','SCOPE_UNAVAILABLE');
+    END IF;
+  END IF;
 
   v_page := pos_sync_feed_v1.pull_groups(p_organization_id, p_branch_id, p_epoch, p_after_seq, p_upper_seq, p_limit);
   IF v_page->>'status' <> 'OK' THEN RETURN v_page; END IF;
@@ -170,6 +176,12 @@ BEGIN
   WHERE head.organization_id = p_organization_id AND head.scope_id = p_branch_id
   FOR NO KEY UPDATE OF head;
   IF NOT FOUND THEN RETURN jsonb_build_object('status', 'SCOPE_UNAVAILABLE'); END IF;
+  IF to_regclass('pos_sync_feed_v1.extended_pilots') IS NOT NULL THEN
+    IF EXISTS(SELECT 1 FROM pos_sync_feed_v1.extended_pilots
+      WHERE (organization_id,scope_id,epoch)=(p_organization_id,p_branch_id,v_head.epoch)) THEN
+      RETURN jsonb_build_object('status','SCOPE_UNAVAILABLE');
+    END IF;
+  END IF;
 
   SELECT coalesce(jsonb_agg(jsonb_build_object('seq', seq::text, 'operation_id', operation_id,
     'changes', changes, 'acceptance', acceptance) ORDER BY seq), '[]'::jsonb)

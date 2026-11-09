@@ -288,6 +288,7 @@ class CloudClient {
     // Raw JSON and proof objects remain exactly those captured by Main.
     if(payload?.sqlServerFinancialEvent)outbound.sqlServerFinancialEvent={...outbound.sqlServerFinancialEvent,operationJson:payload.sqlServerFinancialEvent.operationJson,proof:payload.sqlServerFinancialEvent.proof};
     if (payload?.sqlServerCashCheckout) outbound.sqlServerCashCheckout = payload.sqlServerCashCheckout;
+    if (payload?.sqlServerRefund) outbound.sqlServerRefund = payload.sqlServerRefund;
     if (payload?.sqlServerLegacyRecovery) outbound.sqlServerLegacyRecovery = {
       ...payload.sqlServerLegacyRecovery,
       payloadJson: payload.sqlServerLegacyRecovery.payloadJson,
@@ -316,7 +317,7 @@ class CloudClient {
       throw Object.assign(new Error("The reviewed closing exceeds the bounded recovery upload. Its saved evidence remains available for review."), { code:"ELEGACY_RECOVERY_OVERSIZED", table:"shifts" });
     try { response = await fetch(`${base}/api/v1/pos/sync${suffix}`, {
       method: "POST",
-      ...(groupedRead || payload?.sqlServerSettingsEdit || payload?.sqlServerCashCheckout ? { redirect: "error" } : {}),
+      ...(groupedRead || payload?.sqlServerSettingsEdit || payload?.sqlServerCashCheckout || payload?.sqlServerRefund ? { redirect: "error" } : {}),
       headers: { "content-type": "application/json", ...(payload?.sqlServerLegacyRecovery ? { "x-pos-legacy-recovery": "1" } : {}) },
       body: requestBody,
       signal: AbortSignal.timeout(historyRead || payload?.sqlServerHeldSaleReview ? 12_000 : 30_000),
@@ -329,6 +330,8 @@ class CloudClient {
         }
         if (payload?.sqlServerSettingsEdit || payload?.sqlServerCashCheckout) {
           data = JSON.parse(await boundedText(response, 4096));
+        } else if (payload?.sqlServerRefund) {
+          data = JSON.parse(await boundedText(response, response.ok ? 65536 : 4096));
         } else if (groupedRead) {
           data = JSON.parse(await boundedText(response, response.ok ? groupedSettings.MAX_RESPONSE_BYTES : 4096));
         } else if(payload?.sqlServerHeldStatus || payload?.sqlServerHeldSaleReview){
@@ -564,33 +567,36 @@ class CloudClient {
       };
     });
   }
-  pullGroupedSettings(source, { epoch, seq, upper }, limit, projection) {
+  pullGroupedSettings(source, { epoch, seq, upper }, limit, projection, extended = false) {
     this.assertRequestContext(source, false);
     const branchId = groupedSettings.operationsScope(source);
     return this.request({ sqlServerGroupedFeed: { organizationId: "default", branchId,
-      epoch, afterSeq: seq, upperSeq: upper, limit, ...(projection ? { projection } : {}) } });
+      epoch, afterSeq: seq, upperSeq: upper, limit, ...(projection ? { projection } : {}), ...(extended ? { extended } : {}) } });
   }
   groupedSettingsSnapshot(source, projection) {
     this.assertRequestContext(source, false);
     const branchId = groupedSettings.operationsScope(source);
     return this.request({ sqlServerGroupedSnapshot: { organizationId: "default", branchId, ...(projection ? { projection } : {}) } });
   }
-  beginGroupedRecovery(source) {
+  beginGroupedRecovery(source, { extended, atLeastSeq } = {}) {
     this.assertRequestContext(source, false);
     return this.request({ sqlServerGroupedRecovery: {
       organizationId: "default", branchId: groupedSettings.operationsScope(source), action: "begin",
+      ...(extended ? { extended: true } : {}), ...(atLeastSeq === undefined ? {} : { atLeastSeq }),
     } });
   }
-  pageGroupedRecovery(source, { pinId, kind, after, limit }) {
+  pageGroupedRecovery(source, { pinId, kind, after, limit, extended }) {
     this.assertRequestContext(source, false);
     return this.request({ sqlServerGroupedRecovery: {
       organizationId: "default", branchId: groupedSettings.operationsScope(source), action: "page", pinId, kind, after, limit,
+      ...(extended ? { extended: true } : {}),
     } });
   }
-  cashLegacyCoverage(source, epoch, entries) {
+  cashLegacyCoverage(source, epoch, entries, extended = false) {
     this.assertRequestContext(source, false);
     return this.request({ sqlServerCashLegacyCoverage: {
       organizationId: "default", branchId: groupedSettings.operationsScope(source), epoch, entries,
+      ...(extended ? { extended: true } : {}),
     } });
   }
   async submitStoreSettingsEdit(source, command) {
@@ -630,6 +636,25 @@ class CloudClient {
       organizationId: "default", branchId, operationId, checkoutJson, checkoutSha256, attestation,
       installationGeneration: scope.installationGeneration, databaseGuid: scope.databaseGuid, feedEpoch: scope.feedEpoch,
     } });
+    this.assertRequestContext(source, false);
+    return result;
+  }
+  async submitGroupedRefund(source, saved, grantToken) {
+    const { decodeRefundCommand, refundHeld } = require("./refund-command.cjs");
+    this.assertRequestContext(source, false);
+    const { scope, author } = decodeRefundCommand(saved?.refundJson, saved?.attestation);
+    if (scope.branchId !== groupedSettings.operationsScope(source) || scope.terminalId !== recordId(source.terminal.tokenId) ||
+        source.project.projectOrigin !== author.projectOrigin) throw refundHeld();
+    let result;
+    try {
+      result = await this.request({ sqlServerRefund: { refundJson: saved.refundJson, attestation: saved.attestation,
+        ...(grantToken ? { grantToken } : {}) } });
+    } catch (error) {
+      if (error.code === "REFUND_APPROVAL_REQUIRED") throw refundHeld("ESYNC_REFUND_APPROVAL_REQUIRED");
+      if (["REFUND_UPLOAD_FORBIDDEN", "REFUND_UPLOAD_INVALID", "REFUND_UPLOAD_REPLAY_MISMATCH",
+        "REFUND_UPLOAD_STALE", "REFUND_UPLOAD_PROTOCOL"].includes(error.code)) throw refundHeld();
+      throw error;
+    }
     this.assertRequestContext(source, false);
     return result;
   }
@@ -746,8 +771,11 @@ class CloudClient {
     };
     const rows = batch.rows ?? [];
     const upserts = protectedGraph ? rows : orderSelfReferencingRows(table, rows);
+    const stock = table.cloudTable === "products" ? require("./grouped-live-stock.cjs") : null;
+    const groupedStock = stock ? await stock.legacyStockOwnership(transaction, batch) : null;
     for (const change of [...upserts, ...(batch.tombstones ?? [])]) {
-      const row = change.row_data ?? {};
+      const row = stock && change.row_data ? await stock.legacyOwnedStockRow(transaction, change.row_data, groupedStock)
+        : change.row_data ?? {};
       const key = this.parseKey(table, change);
       if (change.tombstone) {
         const request = new sql.Request(transaction);

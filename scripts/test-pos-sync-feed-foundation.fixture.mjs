@@ -302,12 +302,14 @@ try {
     await verifyStoreSettingsPilot({ sql, denySql, session, waitFor, applyNative });
   } else if (process.argv.includes("--grouped-gateway") || process.argv.includes("--grouped-gateway-native") ||
       process.argv.includes("--mixed-grouped-gateway") || process.argv.includes("--paged-mixed-gateway") ||
+      process.argv.includes("--live-stock-gateway") ||
       process.argv.includes("--settings-edit") || process.argv.includes("--settings-edit-gateway") || process.argv.includes("--settings-edit-relay")) {
     const { verifyGroupedGateway } = await import("./lib/pos-sync-grouped-gateway-fixture.mjs");
     const editRelay = process.argv.includes("--settings-edit-relay");
-    await verifyGroupedGateway({ sql, denySql, native: process.argv.includes("--grouped-gateway-native"),
-      mixedGateway: process.argv.includes("--mixed-grouped-gateway") || process.argv.includes("--paged-mixed-gateway"),
-      pagedRecovery: process.argv.includes("--paged-mixed-gateway"),
+    const liveStock = process.argv.includes("--live-stock-gateway");
+    await verifyGroupedGateway({ sql, denySql, session, waitFor, native: process.argv.includes("--grouped-gateway-native"),
+      mixedGateway: process.argv.includes("--mixed-grouped-gateway") || process.argv.includes("--paged-mixed-gateway") || liveStock,
+      pagedRecovery: process.argv.includes("--paged-mixed-gateway") || liveStock, liveStock,
       settingsEdit: process.argv.includes("--settings-edit"), editGateway: editRelay || process.argv.includes("--settings-edit-gateway"), editRelay });
   } else {
     await verifyFeedFixture();

@@ -5,6 +5,58 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { stableUuid } = require("../../electron/db/repositories/aggregates.cjs");
 
+export async function verifyNativeRefundGateway({ db, read, scalar, liveSale, branch, epoch, terminal, author, product }) {
+  await db.exec(`ALTER TABLE public.terminal_tokens ALTER COLUMN id TYPE uuid USING id::uuid;
+    ALTER TABLE public.terminal_tokens ADD COLUMN IF NOT EXISTS claimed_at timestamptz,
+      ADD COLUMN IF NOT EXISTS claimed_platform text, ADD COLUMN IF NOT EXISTS claim_proof text,
+      ADD COLUMN IF NOT EXISTS claimed_proof_hash text;`);
+  const bridge = await read("scripts/preparation/pos-sync-cash-bridge-v1.sql");
+  await db.exec(bridge.slice(0, bridge.indexOf("CREATE FUNCTION pos_sync_cash_v1.apply_checkout(")));
+  await db.exec(await read("scripts/preparation/pos-sync-refund-native-gateway-v1.sql"));
+  const key = randomUUID(), generation = randomUUID(), databaseGuid = randomUUID();
+  const binding = "a".repeat(64), project = "https://refund-fixture.supabase.co";
+  const subject = await scalar("SELECT user_id FROM public.app_users WHERE id=$1", [author]);
+  await db.query("UPDATE public.terminal_tokens SET claim_proof=$1 WHERE id=$2", [binding, terminal]);
+  await db.query(`INSERT INTO pos_sync_cash_v1.installation_enrollments
+    VALUES('default',$1,$2,$3,$4)`, [terminal, branch, generation, databaseGuid]);
+  await db.query(`INSERT INTO pos_sync_private.shift_author_keys
+    (key_id,author_id,terminal_id,project_origin,subject,public_key)
+    VALUES($1,$2,$3,$4,$5,$6)`, [key, author, terminal, project, subject, "a".repeat(59)]);
+  const sale = await liveSale(true);
+  const item = await scalar("SELECT to_jsonb(i) FROM public.sale_items i WHERE sale_id=$1", [sale.id]);
+  const refundKey = "refund:" + sale.id, operationId = stableUuid({ refundId: refundKey });
+  const args = [author, branch, terminal, operationId, refundKey, sale.id, 1,
+    JSON.stringify([{ item_id: item.id, qty: item.quantity, expected_refunded_qty: 0, expected_row_version: item.row_version }]),
+    "native refund fixture", null, binding, generation, databaseGuid, epoch, key, subject, project,
+    JSON.stringify([{ item_id: item.id, product_id: product }])];
+  const send = values => scalar(`SELECT public.pos_sync_refund_attested_v1(
+    $1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10::jsonb,$11,$12,$13,$14,$15,$16,$17,$18::jsonb)`, values);
+  for (const invalidIndex of [12, 13, 14]) {
+    const bad = [...args];
+    bad[invalidIndex] = randomUUID();
+    await assert.rejects(send(bad), /POS_REFUND_V1_(SCOPE|AUTHOR)_FORBIDDEN/);
+  }
+  const preflight = await send(args);
+  assert.equal(preflight.status, "APPROVAL_CHECK_REQUIRED");
+  assert.equal(await scalar("SELECT is_refunded FROM public.sales WHERE id=$1", [sale.id]), false);
+  const confirmed = [...args];
+  confirmed[9] = JSON.stringify(preflight.basis);
+  const wrongProduct = [...confirmed];
+  wrongProduct[17] = JSON.stringify([{ item_id: item.id, product_id: randomUUID() }]);
+  await assert.rejects(send(wrongProduct), /POS_REFUND_V1_STALE_COMMAND/);
+  assert.equal(await scalar("SELECT is_refunded FROM public.sales WHERE id=$1", [sale.id]), false);
+  const receipt = await send(confirmed);
+  assert.equal(receipt.status, "APPLIED");
+  assert.equal(receipt.fully_refunded, true);
+  assert.equal(receipt.effects[0].product_id, product);
+  assert.equal(receipt.feed_epoch, epoch);
+  assert.equal(receipt.feed_seq, await scalar(
+    "SELECT seq::text FROM pos_sync_feed_v1.extended_publications WHERE operation_id=$1", [operationId]));
+  assert.deepEqual(await send(args), receipt);
+  await db.query("UPDATE pos_sync_private.shift_author_keys SET revoked_at=now() WHERE key_id=$1", [key]);
+  await assert.rejects(send(args), /POS_REFUND_V1_AUTHOR_FORBIDDEN/);
+}
+
 export async function verifyRefundSync({ db, author, admin, manager, terminal, product, sale, submit, scalar, test }) {
   const seed = async (options = {}) => {
     const original = sale();
