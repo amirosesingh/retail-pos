@@ -239,6 +239,40 @@ review, authorization refusal and rollback if publication is missing or
 changes in the same transaction. There is no active caller. Native offline
 capture and authorized delivery still need integration.
 
+## 8 November — beta sync release preparation
+
+The owner asked to finish, test and release this sync beta. Continue at
+`f0137f32` on beta base `a5bf2ebc`. Use only isolated data for financial and
+settings acceptance. Connect the remaining settings path through the existing
+verified coordinator and relay where an exact implementation can be tested.
+Preserve the original revision, scoped installation and person authority,
+durable retry, and the existing store settings and connection controls.
+Complete the independent portions while the separate Supabase staging target
+and HTTPS relay are pending. Before merging and publishing this sync beta,
+verify the integrated application, both isolated tills and safe handback. The
+current production-connected Supabase project retains its database approval
+boundary.
+
+On 9 November the owner confirmed completing the pending sync work, including
+both store-settings directions, with agents and only relevant tests. Update
+PR #451 as changes are verified. Merge and publish the beta after the complete
+sync acceptance passes. Continue isolated verification while the separate
+hosted target is pending.
+
+Complete the installed settings path under one exact pilot enrollment and
+the existing Windows sync lease. Preserve the online save and reuse the
+existing fields. Verify mixed legacy pages, pending settings edits and safe
+handback. For approvals, extend the badge to current named cross-store
+recipients through the existing authorized read. Preserve polling while
+testing a private short-lived wake for a verified relay-only PIN session.
+
+The two-disposable-till settings fixture passed against the actual relay
+handler and native PostgreSQL. A lost response after cloud commit retried the
+same command, received the existing acceptance, and delivered one committed
+group to the receiving LocalDB without disturbing the open shift or pending
+journal. Four focused relay and Worker suites passed 11 tests, including
+default-off authorization and refusal of mixed or inexact uploads.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents

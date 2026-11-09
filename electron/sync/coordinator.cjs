@@ -69,6 +69,12 @@ class SyncCoordinator {
 
   // Explicit isolated caller only. The installed runNow path still owns the
   // legacy feed until its settings writers have a verified handoff.
+  prepareGroupedSettingsHandoff() {
+    const enrollment = this.#groupedSettingsPilot;
+    if (!enrollment) throw Object.assign(new Error("This coordinator has no grouped settings enrollment."),
+      { code: "ESYNC_GROUPED_SCOPE" });
+    return this.withExclusive(() => this.pullWorker.prepareGroupedSettingsHandoff(enrollment, () => this.paused));
+  }
   runGroupedSettingsPilot() {
     const enrollment = this.#groupedSettingsPilot;
     if (!enrollment) return Promise.resolve({ status: "DISABLED", reason: null, branchId: null, position: null });
@@ -82,7 +88,7 @@ class SyncCoordinator {
           result = await this.pullWorker.runGroupedSettingsPilot(enrollment, () => this.paused);
         } catch (error) {
           const refused = ["ESYNC_GROUPED_SCOPE", "ESYNC_GROUPED_DATABASE_CHANGED", "ESYNC_GROUPED_DATABASE_UNVERIFIED",
-            "ESYNC_REQUEST_CONTEXT_CHANGED"].includes(error?.code);
+            "ESYNC_REQUEST_CONTEXT_CHANGED", "ESYNC_GROUPED_HANDOFF_REQUIRED"].includes(error?.code);
           result = { status: refused ? "REFUSED" : "RETRY", reason: refused ? error.code : "ESYNC_GROUPED_RETRY",
             branchId: enrollment.branchId, position: null };
         }

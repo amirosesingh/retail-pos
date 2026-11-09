@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 
 export async function verifyStoreSettingsEdit({
   sql, denySql, branch, other, terminal, mobile, proof, epoch, operationsActor, managementActor, unauthorizedActor,
+  editGateway = false, keepActor = false,
 }) {
   const inbox = await readFile(new URL("../preparation/pos-sync-inbox-v1.sql", import.meta.url), "utf8");
   const writer = await readFile(new URL("../preparation/pos-sync-store-settings-edit-v1.sql", import.meta.url), "utf8");
@@ -78,8 +79,78 @@ export async function verifyStoreSettingsEdit({
     SELECT public.pos_rules_save('${branch}', '{"max_drawer_cash_limit":10}', 5); COMMIT;`, /POS_SETTINGS_V1_PUBLICATION_MISSING/);
   assert.equal(state(), applied);
   assert.equal(sql(`SELECT count(*) FROM pos_sync_inbox_v1.operation_receipts WHERE operation_id='${rejectedOperation}';`), "0");
+  const lastSequence = editGateway ? await verifyGateway({
+    sql, denySql, branch, terminal, proof, epoch, generation, database, operationsActor, unauthorizedActor, state, literal,
+  }) : saved.result.seq;
   sql(`UPDATE public.app_users SET is_active=false WHERE auth_user_id='${operationsActor}';`);
   denySql(call(), /POS_SETTINGS_EDIT_V1_PERSON_FORBIDDEN/);
+  if (keepActor) sql(`UPDATE public.app_users SET is_active=true WHERE auth_user_id='${operationsActor}';`);
   console.log("PASS prepared settings edit (canonical apply/replay, stale review, authorization, projection and atomic rollback)");
+  return lastSequence;
+}
+
+async function verifyGateway({
+  sql, denySql, branch, terminal, proof, epoch, generation, database, operationsActor, unauthorizedActor, state, literal,
+}) {
+  const gateway = await readFile(new URL("../preparation/pos-sync-store-settings-edit-gateway-v1.sql", import.meta.url), "utf8");
+  sql(`BEGIN;
+    CREATE OR REPLACE FUNCTION auth.role() RETURNS text LANGUAGE sql STABLE AS $$
+      SELECT coalesce(nullif(current_setting('request.jwt.claim.role',true),''),
+        nullif(current_setting('request.jwt.claims',true),'')::jsonb->>'role');
+    $$;
+    CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$
+      SELECT coalesce(nullif(current_setting('request.jwt.claim.sub',true),''),
+        nullif(current_setting('request.jwt.claims',true),'')::jsonb->>'sub')::uuid;
+    $$;
+    GRANT USAGE ON SCHEMA auth TO service_role;
+    ${gateway}
+    COMMIT;`);
+
+  const operation = randomUUID();
+  const serviceSubject = randomUUID();
+  const serviceClaims = JSON.stringify({ role: "service_role", sub: serviceSubject, fixture: "modern" });
+  const legacyClaim = JSON.stringify({ role: "service_role", sub: serviceSubject, fixture: "legacy" });
+  const service = `SET ROLE service_role;
+    SET request.jwt.claims = '${serviceClaims}'; SET request.jwt.claim = '${legacyClaim}';
+    SET request.jwt.claim.sub = '${serviceSubject}'; SET request.jwt.claim.role = 'service_role';`;
+  const decimal = "9007199254740993.125000000001";
+  const call = ({ id = operation, person = operationsActor, fields = { max_drawer_cash_limit: decimal },
+    source = generation } = {}) => `public.pos_sync_apply_store_settings_edit_v1(${[
+    "default", branch, terminal, proof, source, database, epoch, person, id,
+  ].map(literal).join(",")},4,${literal(JSON.stringify(fields))}::jsonb)`;
+  const claims = `SELECT jsonb_build_object('role', auth.role(), 'sub', auth.uid(),
+    'claims', current_setting('request.jwt.claims'), 'legacy', current_setting('request.jwt.claim'),
+    'legacy_sub', current_setting('request.jwt.claim.sub'), 'legacy_role', current_setting('request.jwt.claim.role'));`;
+  const initial = { role: "service_role", sub: serviceSubject, claims: serviceClaims, legacy: legacyClaim,
+    legacy_sub: serviceSubject, legacy_role: "service_role" };
+  const [saved, claimsAfterSuccess] = sql(`${service} BEGIN; SELECT ${call()}; ${claims} COMMIT;`).split("\n").map(JSON.parse);
+  assert.equal(saved.status, "APPLIED");
+  assert.equal(saved.result.person_id, operationsActor);
+  assert.equal(saved.result.operation_id, operation);
+  assert.equal(saved.result.row_version, 5);
+  assert.equal(saved.result.seq, "4");
+  assert.deepEqual(claimsAfterSuccess, initial);
+  assert.equal(state(), `5|${decimal}|f|4`);
+  assert.deepEqual(JSON.parse(sql(`${service} SELECT ${call()};`)), { ...saved, status: "ALREADY_APPLIED" });
+
+  for (const role of ["anon", "authenticated"])
+    denySql(`SET ROLE ${role}; SELECT ${call()};`, /permission denied/);
+  denySql(`SET ROLE service_role; SET request.jwt.claims = '{"role":"authenticated"}'; SELECT ${call()};`, /POS_SETTINGS_EDIT_GATEWAY_V1_FORBIDDEN/);
+  denySql(`${service} SELECT ${call({ fields: { max_drawer_cash_limit: 10 } })};`, /POS_SETTINGS_EDIT_GATEWAY_V1_INVALID_PATCH/);
+  denySql(`${service} SELECT ${call({ fields: { max_drawer_cash_limit: "0.0000000000001" } })};`, /POS_SETTINGS_EDIT_GATEWAY_V1_INVALID_PATCH/);
+  denySql(`${service} SELECT ${call({ id: randomUUID(), person: unauthorizedActor })};`, /POS_SETTINGS_EDIT_V1_PERSON_FORBIDDEN/);
+  const claimsAfterDenial = JSON.parse(sql(`${service} BEGIN;
+    DO $$ BEGIN
+      BEGIN
+        PERFORM ${call({ id: randomUUID(), source: randomUUID() })};
+        RAISE EXCEPTION 'The invalid installation unexpectedly applied';
+      EXCEPTION WHEN insufficient_privilege THEN
+        IF SQLERRM <> 'POS_SETTINGS_EDIT_V1_INSTALLATION_FORBIDDEN' THEN RAISE; END IF;
+      END;
+    END $$;
+    ${claims} COMMIT;`));
+  assert.deepEqual(claimsAfterDenial, initial);
+  assert.equal(state(), `5|${decimal}|f|4`);
+  console.log("PASS prepared settings edit gateway (service-only, exact decimal, person attribution, replay and claims restoration)");
   return saved.result.seq;
 }

@@ -64,6 +64,25 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("isolated grouped sync relay", () => {
+  it("keeps settings uploads opt-in and requires an exclusive command with person and device proofs", async () => {
+    const edit = {
+      organizationId: "default", branchId: branch, installationGeneration: terminal, databaseGuid: secondTerminal,
+      feedEpoch: epoch, personId: otherTerminal, operationId: otherBranch, expectedVersion: 6,
+      patch: { max_drawer_cash_limit: "9007199254740993.125000000002" },
+    };
+    const body = { sqlServerSettingsEdit: edit };
+    expect((await direct(body)).status).toBe(503);
+    runtime.env.POS_GROUPED_SETTINGS_EDIT_PILOT_ENABLED = "true";
+    expect((await direct(body)).status).toBe(403);
+    expect((await direct(body, { terminalToken: otherTerminal, accessToken: "operator" })).status).toBe(403);
+    expect((await direct({ ...body, sqlServerGroupedSnapshot: snapshotRead })).status).toBe(400);
+    expect((await direct(body, { sessionToken: "pin-session", accessToken: "operator" })).status).toBe(400);
+    expect((await direct({
+      sqlServerSettingsEdit: { ...edit, patch: { max_drawer_cash_limit: 123 } },
+    })).status).toBe(400);
+    expect(requests).toHaveLength(0);
+  });
+
   it("keeps both requests off without an exact server project and pilot terminal", async () => {
     delete runtime.env.POS_GROUPED_FEED_PILOT_PROJECT_URL;
     expect((await direct({ sqlServerGroupedFeed: read })).status).toBe(503);

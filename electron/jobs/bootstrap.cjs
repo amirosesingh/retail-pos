@@ -4,9 +4,11 @@ const {prepareShiftGraphs,applyShiftGraphs} = require("../sync/shift-graph.cjs")
 const {reportActivity} = require("../db/startup-activity.cjs");
 const {prepareHistoryFeed}=require('../sync/history-feed.cjs');
 const {createHistoryPolicyRun}=require('../sync/history-read-scope.cjs');
+const { assertLegacyApply } = require("../sync/grouped-settings-handoff.cjs");
 const SHIFT_GRAPH_TABLES = new Set(["shifts", "shift_cash_counts", "shift_reconciliations",
   "shift_close_events", "shift_notifications", "shift_variance_alerts"]);
 async function applySnapshot(cloud, transaction, table, rows, reader, branchId) {
+  if (table.cloudTable === "pos_store_settings") await assertLegacyApply(transaction, branchId);
   const changes = rows.map(row => ({entity_id:keyFor(table,row),row_data:row,tombstone:false}));
   if (!changes.length) return {applied:0,alreadyMatching:0};
   const protectedGraph = SHIFT_GRAPH_TABLES.has(table.cloudTable);
@@ -60,7 +62,7 @@ async function refreshTable({registry,cloud,connectionManager,branchId,historyDa
     const {selected,prepared}=page;
     const sql=connectionManager.sql();const transaction=new sql.Transaction(connectionManager.pool);await transaction.begin(sql.ISOLATION_LEVEL?.SERIALIZABLE);
     try{
-      await progress?.beforeApply(transaction);
+      await progress?.beforeApply?.(transaction);
       recovery?.beforePage(prepared,selected,table);
       const graphCount=await applyShiftGraphs({transaction,connectionManager,registry,reader,branchId,prepared,recovery});
       const result=page.historyPrepared?{applied:await page.historyPrepared.apply(transaction),alreadyMatching:0}:
@@ -68,12 +70,12 @@ async function refreshTable({registry,cloud,connectionManager,branchId,historyDa
       const nextCursor=batch.cursor??null;
       if(progress&&nextCursor!==null&&nextCursor===cursor)throw Object.assign(new Error("History download cursor did not advance."),{code:"EHISTORY_PROGRESS"});
       const nextCompleted=completed+result.applied+graphCount;
-      await progress?.save(transaction,{cursor:nextCursor,completed:nextCompleted});
+      await progress?.save?.(transaction,{cursor:nextCursor,completed:nextCompleted});
       recovery?.assertScope?.();
       await transaction.commit();completed=nextCompleted;cursor=nextCursor;
       recovery?.committed(transaction);
       reportActivity(onActivity,{phase:"applying",table:table.cloudTable,processedRows:completed});
-      await progress?.committed();
+      await progress?.committed?.();
     }catch(error){await Promise.resolve(transaction.rollback()).catch(()=>undefined);throw error;}
     rows.length=0;
   }while(cursor);}catch(error){throw tagBootstrapDiagnostic(error,{table:table.cloudTable,phase:diagnosticPhase,origin:diagnosticOrigin});}
@@ -109,6 +111,9 @@ async function runBootstrap({registry,cloud,connectionManager,checkpoints,branch
           await applySnapshot(cloud,transaction,table,rows.filter(row=>!prepared.covers({table_name:table.cloudTable,entity_id:keyFor(table,row),row_data:row})),reader,branchId);
         completed+=result.applied+graphCount; cursor=batch.cursor??null;
         await context.checkpoint({status:"running",phase:"bootstrap",current_table:table.sqlServerTable,dependency_index:index,last_committed_cursor:cursor,completed_rows:completed,batch_number:Number(context.job.batch_number??0)+1},transaction);
+        // Settings must keep the handoff lock through the final CT baseline.
+        if (checkpoints && table.cloudTable === "pos_store_settings" && !cursor)
+          await checkpoints.save(branchId, table.sqlServerTable, "push", { change_tracking_version: baseline }, transaction);
         await transaction.commit();
         reportActivity(onActivity,{phase:"applying",table:table.cloudTable,processedRows:completed});
       }catch(error){await Promise.resolve(transaction.rollback()).catch(()=>undefined);throw error;}
@@ -116,7 +121,7 @@ async function runBootstrap({registry,cloud,connectionManager,checkpoints,branch
     }while(cursor);
     // An audit download proves membership only, never that retained local
     // history changes were uploaded. Preserve that table's existing push proof.
-    if(checkpoints&&table.cloudTable!=='change_history')await checkpoints.save(branchId,table.sqlServerTable,"push",{change_tracking_version:baseline});
+    if(checkpoints&&table.cloudTable!=='change_history'&&table.cloudTable!=="pos_store_settings")await checkpoints.save(branchId,table.sqlServerTable,"push",{change_tracking_version:baseline});
     await context.checkpoint({dependency_index:index+1,last_committed_cursor:null});
     }catch(error){throw tagBootstrapDiagnostic(error,{table:table.cloudTable,phase:diagnosticPhase,origin:"job"});}
   }

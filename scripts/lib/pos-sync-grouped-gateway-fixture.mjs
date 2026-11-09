@@ -4,13 +4,19 @@ import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
-async function applyThroughRelay({ sql, service, baseline, update, branch, terminal }) {
+async function applyThroughRelay({ sql, service, baseline, update, branch, terminal, sourceTerminal, personId }) {
   const { build } = await import("esbuild");
   const { postgresWire } = createRequire(import.meta.url)("../test-pos-sync-grouped-sqlserver.cjs");
   const project = "https://owned-project.invalid";
+  const sourceBackend = "https://owned-settings-source.invalid";
+  const sourceProof = "a".repeat(64);
+  const accessToken = "fixture-verified-operator-token";
   const env = {
     POS_GROUPED_FEED_PILOT_PROJECT_URL: project,
-    POS_GROUPED_FEED_PILOT_TERMINAL_ID: terminal,
+    ...(sourceTerminal ? {
+      POS_GROUPED_FEED_PILOT_TERMINAL_IDS: `${terminal},${sourceTerminal}`,
+      POS_GROUPED_SETTINGS_EDIT_PILOT_ENABLED: "true",
+    } : { POS_GROUPED_FEED_PILOT_TERMINAL_ID: terminal }),
     POS_SUPABASE_SERVICE_ROLE_KEY: "fixture-service",
   };
   const bundled = await build({
@@ -36,14 +42,39 @@ async function applyThroughRelay({ sql, service, baseline, update, branch, termi
   const { handleSyncRequest } = await import(moduleUrl);
   const literal = value => value == null ? "NULL" : "'" + String(value).replaceAll("'", "''") + "'";
   const calls = [];
+  const committedResponses = [];
   const fetchBefore = globalThis.fetch;
   globalThis.fetch = async (target, options) => {
     const url = new URL(target);
+    if (sourceTerminal && url.origin === sourceBackend) {
+      assert.equal(url.pathname, "/api/v1/pos/sync");
+      const body = JSON.parse(options.body);
+      assert.deepEqual(Object.keys(body).sort(), ["accessToken", "deviceBindingProof", "sqlServerSettingsEdit", "terminalToken"]);
+      assert.equal(body.terminalToken, sourceTerminal);
+      assert.equal(body.accessToken, accessToken);
+      const response = await handleSyncRequest(new Request(target, options));
+      assert.equal(response.status, 200, await response.clone().text());
+      committedResponses.push(await response.clone().json());
+      if (committedResponses.length === 1) throw new Error("fixture lost the committed response");
+      return response;
+    }
     assert.equal(url.origin, project);
+    if (sourceTerminal && url.pathname === "/auth/v1/user") {
+      assert.equal(new Headers(options?.headers).get("authorization"), `Bearer ${accessToken}`);
+      return Response.json({ id: personId, email: "operator@pos-internal.local" });
+    }
     assert.equal(new Headers(options?.headers).get("apikey"), env.POS_SUPABASE_SERVICE_ROLE_KEY);
     if (url.pathname === "/rest/v1/terminal_tokens") {
-      assert.equal(url.searchParams.get("id"), "eq." + terminal);
-      return Response.json(JSON.parse(sql(`SELECT coalesce(jsonb_agg(t), '[]') FROM public.terminal_tokens AS t WHERE id=${literal(terminal)};`)));
+      const id = url.searchParams.get("id")?.slice(3);
+      assert([terminal, sourceTerminal].includes(id));
+      return Response.json(JSON.parse(sql(`SELECT coalesce(jsonb_agg(t), '[]') FROM public.terminal_tokens AS t WHERE id=${literal(id)};`)));
+    }
+    if (sourceTerminal && url.pathname === "/rest/v1/app_users") {
+      assert.equal(url.searchParams.get("auth_user_id"), "eq." + personId);
+      return Response.json(JSON.parse(sql(`SELECT coalesce(jsonb_agg(jsonb_build_object('user_id','operator','full_name','Fixture operator',
+        'role','staff','role_slug',NULL,'store_id',store_id,'is_active',is_active,
+        'permissions','{"can_access_pos_settings":true}'::jsonb)), '[]')
+        FROM public.app_users WHERE auth_user_id=${literal(personId)};`)));
     }
     if (url.pathname === "/rest/v1/stores") {
       assert.equal(url.searchParams.get("id"), "eq." + branch);
@@ -51,23 +82,53 @@ async function applyThroughRelay({ sql, service, baseline, update, branch, termi
     }
     const snapshot = url.pathname === "/rest/v1/rpc/pos_sync_snapshot_grouped_v1";
     const pull = url.pathname === "/rest/v1/rpc/pos_sync_pull_grouped_v1";
-    assert(snapshot || pull, "Unexpected isolated relay upstream request");
+    const upload = sourceTerminal && url.pathname === "/rest/v1/rpc/pos_sync_apply_store_settings_edit_v1";
+    assert(snapshot || pull || upload, "Unexpected isolated relay upstream request");
     const args = JSON.parse(options.body);
     const base = [args.p_organization_id, args.p_branch_id, args.p_terminal_id, args.p_binding_proof];
+    if (upload) {
+      calls.push("pos_sync_apply_store_settings_edit_v1");
+      assert.equal(args.p_terminal_id, sourceTerminal);
+      assert.equal(args.p_person_id, personId);
+      const values = [...base, args.p_installation_generation, args.p_database_guid, args.p_epoch, args.p_person_id,
+        args.p_operation_id, args.p_expected_version, JSON.stringify(args.p_patch)];
+      return Response.json(JSON.parse(sql(`${service} SELECT public.pos_sync_apply_store_settings_edit_v1(${values.map(literal).join(",")});`)));
+    }
     const extra = snapshot ? [] : [args.p_epoch, args.p_after_seq, args.p_upper_seq, args.p_limit];
     const rpc = snapshot ? "pos_sync_snapshot_grouped_v1" : "pos_sync_pull_grouped_v1";
     calls.push(rpc);
     return Response.json(JSON.parse(sql(`${service} SELECT public.${rpc}(${[...base, ...extra].map(literal).join(",")});`)));
   };
   try {
-    await postgresWire({ baseline, page: update, send: handleSyncRequest, terminalId: terminal });
-    assert.deepEqual(calls, ["pos_sync_snapshot_grouped_v1", "pos_sync_pull_grouped_v1"]);
+    const page = sourceTerminal ? async () => {
+      const { uploadSettingsFromLocal } = await import("./pos-sync-settings-edit-roundtrip-fixture.mjs");
+      const row = JSON.parse(baseline.manifest_json).changes[0].row_data;
+      const { operationId, patch } = await uploadSettingsFromLocal({
+        branchId: branch, terminalId: sourceTerminal, personId, feedEpoch: baseline.epoch,
+        expectedVersion: Number(row.row_version), deviceBindingProof: sourceProof,
+        backend: sourceBackend, project, accessToken, enroll: ({ installationGeneration, databaseGuid }) =>
+          sql(`UPDATE pos_sync_feed_v1.settings_edit_enrollments SET installation_generation=${literal(installationGeneration)},
+            database_guid=${literal(databaseGuid)} WHERE terminal_id=${literal(sourceTerminal)};`),
+      });
+      assert.equal(committedResponses[0].status, "APPLIED");
+      assert.deepEqual(committedResponses[1], { ...committedResponses[0], status: "ALREADY_APPLIED" });
+      const result = update();
+      assert.equal(result.groups.length, 1);
+      assert.equal(result.groups[0].operation_id, operationId);
+      assert.equal(result.groups[0].changes[0].row_data.max_drawer_cash_limit, patch.max_drawer_cash_limit);
+      return result;
+    } : update;
+    await postgresWire({ baseline, page, send: handleSyncRequest, terminalId: terminal,
+      ...(sourceTerminal ? { deviceBindingProof: "b".repeat(64) } : {}) });
+    assert.deepEqual(calls, ["pos_sync_snapshot_grouped_v1",
+      ...(sourceTerminal ? ["pos_sync_apply_store_settings_edit_v1", "pos_sync_apply_store_settings_edit_v1"] : []),
+      "pos_sync_pull_grouped_v1"]);
   } finally {
     globalThis.fetch = fetchBefore;
   }
 }
 
-export async function verifyGroupedGateway({ sql, denySql, native = false, settingsEdit = false }) {
+export async function verifyGroupedGateway({ sql, denySql, native = false, settingsEdit = false, editGateway = false, editRelay = false }) {
   const read = async path => (await readFile(new URL(path, import.meta.url), "utf8")).replaceAll("\r\n", "\n");
   const schema = await read("../../supabase/schema.sql");
   const table = schema.match(/CREATE TABLE IF NOT EXISTS public\.pos_store_settings \([\s\S]*?\n\);/)?.[0];
@@ -80,6 +141,7 @@ export async function verifyGroupedGateway({ sql, denySql, native = false, setti
   const branch = "fixture-settings-a";
   const other = "fixture-settings-b";
   const terminal = randomUUID();
+  const receiver = randomUUID();
   const mobile = randomUUID();
   const managementActor = randomUUID();
   const operationsActor = randomUUID();
@@ -131,6 +193,7 @@ export async function verifyGroupedGateway({ sql, denySql, native = false, setti
     INSERT INTO public.stores VALUES ('${branch}'),('${other}');
     INSERT INTO public.terminal_tokens (id,location_id,platform,status,is_claimed,claimed_platform,claim_proof)
       VALUES ('${terminal}','${branch}','pc','used',true,'electron','${proof}'),
+             ('${receiver}','${branch}','pc','used',true,'electron','${"b".repeat(64)}'),
              ('${mobile}','${branch}','mobile','used',true,'android','${proof}');
     INSERT INTO public.pos_store_settings (store_id,max_drawer_cash_limit,block_shift_close_on_hold)
       VALUES ('${branch}',3.01,false),('${other}',4,false);
@@ -182,11 +245,20 @@ export async function verifyGroupedGateway({ sql, denySql, native = false, setti
   assert.equal(JSON.parse(sql(service + snapshotCall())).seq, "2");
 
   let lastSequence = "2";
-  if (settingsEdit) {
+  if (settingsEdit || editGateway) {
     const { verifyStoreSettingsEdit } = await import("./pos-sync-store-settings-edit-fixture.mjs");
     lastSequence = await verifyStoreSettingsEdit({
       sql, denySql, branch, other, terminal, mobile, proof, epoch, operationsActor, managementActor, unauthorizedActor,
+      editGateway, keepActor: editRelay,
     });
+  }
+  if (editRelay) {
+    const baseline = JSON.parse(sql(service + snapshotCall()));
+    assert.equal(baseline.seq, lastSequence);
+    await applyThroughRelay({ sql, service, baseline, branch, terminal: receiver, sourceTerminal: terminal, personId: operationsActor,
+      update: () => JSON.parse(sql(service + pullCall(branch, terminal, proof, baseline.seq))) });
+    lastSequence = (BigInt(baseline.seq) + 1n).toString();
+    console.log("PASS two LocalDB tills through actual settings upload and grouped download relay handlers after a lost response");
   }
 
   // A branch feed can only emit its own complete settings changes.

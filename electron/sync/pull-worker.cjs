@@ -5,6 +5,7 @@ const {prepareShiftGraphs,applyShiftGraphs} = require("./shift-graph.cjs");
 const { posFeedFailed, posFeedCompleted } = require("./status-evidence.cjs");
 const {prepareHistoryFeed}=require('./history-feed.cjs');
 const grouped = require("./grouped-store-settings.cjs");
+const handoff = require("./grouped-settings-handoff.cjs");
 const { applyGroupedCashReceipt } = require("./grouped-cash-receipt.cjs");
 function assertGroupedPilotRunning(isPaused) {
   if (isPaused?.()) throw grouped.fail("The grouped settings pilot is paused.", "ESYNC_PAUSED");
@@ -76,6 +77,9 @@ class PullWorker {
     try {
       if (await grouped.readDatabaseGuid(transaction.request()) !== databaseGuid)
         throw grouped.fail("The SQL Server database changed before the grouped settings apply.", "ESYNC_GROUPED_DATABASE_CHANGED");
+      const fence = await handoff.readFence(transaction.request(), branch, true);
+      if (context.handoff === "required") handoff.authorizeGroupedApply(transaction, context, fence);
+      else if (fence) throw handoff.legacyFenced();
       const local = await grouped.readLocalRow(transaction, table, change, "store_id", branch);
       const current = await grouped.readPosition(transaction.request(), context, true);
       if (current === null ? position !== null : position === null ||
@@ -89,6 +93,14 @@ class PullWorker {
       const entityId = JSON.stringify({ store_id: branch });
       const pending = await this.reader.unacknowledged(table, [entityId], transaction, { branchId: branch });
       if (pending.size) throw grouped.fail("A local settings edit is still pending upload.", "ELOCAL_UPLOAD_PENDING");
+      if (context.handoff === "prepare") {
+        const legacy = await this.checkpoints.get(branch, "__feed__", "pull", transaction);
+        if (!/^(?:0|[1-9]\d*)$/.test(legacy?.committed_cursor ?? "") ||
+            !Number.isSafeInteger(Number(legacy.committed_cursor)) || local?.matching !== 1)
+          throw grouped.fail("The legacy cursor and matching local settings baseline must be verified before handoff.", "ESYNC_GROUPED_REVIEW_REQUIRED");
+        await this.checkpoints.save(branch, handoff.CHECKPOINT, "pull",
+          { committed_cursor: handoff.fenceValue(context) }, transaction);
+      }
       if (snapshot && local && local.matching !== 1)
         throw grouped.fail("The retained local settings differ from the snapshot. Review is required before advancing.", "ESYNC_GROUPED_REVIEW_REQUIRED");
       if (local?.matching !== 1) {
@@ -120,6 +132,10 @@ class PullWorker {
 
   async installGroupedSettingsSnapshot() {
     return this.installGroupedSettingsSnapshotFor(await this.groupedSettingsContext());
+  }
+  async prepareGroupedSettingsHandoff(enrollment, isPaused) {
+    const context = await this.groupedSettingsContext(enrollment);
+    return this.installGroupedSettingsSnapshotFor({ ...context, handoff: "prepare" }, isPaused);
   }
   async installGroupedSettingsSnapshotFor(context, isPaused = null) {
     const { source, branch, table } = context;
@@ -161,8 +177,9 @@ class PullWorker {
     return { status: "OK", merged, seq: position.seq, hasMore: page.has_more };
   }
   async runGroupedSettingsPilot(enrollment, isPaused) {
-    const context = await this.groupedSettingsContext(enrollment);
+    const context = { ...await this.groupedSettingsContext(enrollment), handoff: "required" };
     const { source, branch } = context;
+    handoff.assertGroupedFence(await handoff.readFence(source.pool.request(), branch), context);
     let snapshotUsed = false;
     const progress = async (status, reason = null) => {
       this.cloud.assertRequestContext(source, false);

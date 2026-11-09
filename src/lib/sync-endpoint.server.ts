@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { canCrossBranches } from "@/core/api/relay-policy.server";
 import { runtimeEnvValue, supabaseConfig } from "./external-supabase-config";
 import { DEFAULT_POS_RULES } from "./pos-rules.ts";
+import { applyGroupedSettingsEdit, groupedSettingsEditSchema } from "./grouped-settings-edit.server";
 import { canRetrieveHistoricalReceipt } from "./receipt-history-permission";
 import { alignVerifiedScopeIds } from "./verified-scope-ids";
 /**
@@ -83,6 +84,9 @@ const groupedFeedRequestKeys = new Set([
 ]);
 const groupedSnapshotRequestKeys = new Set([
   "sqlServerGroupedSnapshot", "sessionToken", "cashierToken", "terminalToken", "accessToken", "deviceBindingProof",
+]);
+const groupedSettingsEditRequestKeys = new Set([
+  "sqlServerSettingsEdit", "terminalToken", "accessToken", "deviceBindingProof",
 ]);
 const feedSequence = z.string().regex(/^(0|[1-9][0-9]{0,18})$/)
   .refine(value => value.length < 19 || value <= "9223372036854775807");
@@ -263,6 +267,7 @@ const bodySchema = z.object({
   sqlServerAggregate: syncAggregateSchema.optional(),
   sqlServerGroupedFeed: groupedFeedReadSchema.optional(),
   sqlServerGroupedSnapshot: groupedSnapshotReadSchema.optional(),
+  sqlServerSettingsEdit: groupedSettingsEditSchema.optional(),
   sqlServerLegacyRecovery: z.object({
     organizationId: z.string().min(1).max(128),
     branchId: z.string().min(1).max(128),
@@ -400,6 +405,8 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       throw new Error("Grouped feed requests are exclusive");
     if (Object.hasOwn(parsed ?? {}, "sqlServerGroupedSnapshot") && Object.keys(parsed).some(key => !groupedSnapshotRequestKeys.has(key)))
       throw new Error("Grouped snapshot requests are exclusive");
+    if (Object.hasOwn(parsed ?? {}, "sqlServerSettingsEdit") && Object.keys(parsed).some(key => !groupedSettingsEditRequestKeys.has(key)))
+      throw new Error("Grouped settings edits are exclusive");
     body = bodySchema.parse(parsed);
     if (body.sqlServerLegacyRecovery && request.headers.get("x-pos-legacy-recovery") !== "1")
       throw new Error("Missing bounded recovery transport");
@@ -450,6 +457,9 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
       return Response.json({ ok: false, code: "PAYLOAD_TOO_LARGE", error: "The recovery request exceeds 256 KiB; saved work remains pending." }, { status: 413 });
     return Response.json({ ok: false, error: "Malformed request" }, { status: 400 });
   }
+
+  if (body.sqlServerSettingsEdit)
+    return applyGroupedSettingsEdit(body.sqlServerSettingsEdit, body, groupedFeedPilotTerminals, request.signal);
 
   const groupedRead = body.sqlServerGroupedFeed;
   const groupedRequest = groupedRead ?? body.sqlServerGroupedSnapshot;

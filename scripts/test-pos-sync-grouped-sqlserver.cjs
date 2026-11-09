@@ -8,6 +8,8 @@ const { SyncCoordinator } = require("../electron/sync/coordinator.cjs");
 const { ChangeReader } = require("../electron/sync/change-reader.cjs");
 const { CheckpointRepository } = require("../electron/sync/checkpoints.cjs");
 const { CHECKPOINT, TABLE, assertLocalTracking, readDatabaseGuid } = require("../electron/sync/grouped-store-settings.cjs");
+const { CHECKPOINT: HANDOFF } = require("../electron/sync/grouped-settings-handoff.cjs");
+const { refreshTable, runBootstrap } = require("../electron/jobs/bootstrap.cjs");
 
 const id = n => "aaaaaaaa-aaaa-4aaa-8aaa-" + String(n).padStart(12, "0");
 const branch = id(1);
@@ -339,6 +341,48 @@ async function main() {
       assert.equal((await pilot.runGroupedSettingsPilot()).status, "PAUSED");
       assert.equal(calls.length, before);
       pilot.resume();
+      assert.deepEqual(await pilot.runGroupedSettingsPilot(), { status: "REFUSED", reason: "ESYNC_GROUPED_HANDOFF_REQUIRED", branchId: branch, position: null });
+      assert.equal(calls.length, before);
+
+      const legacyEpoch = (await cursor()).epoch;
+      reply = snapshot("15", [change(7)], { epoch: legacyEpoch });
+      await assert.rejects(pilot.prepareGroupedSettingsHandoff(), { code: "ESYNC_GROUPED_REVIEW_REQUIRED" });
+      assert.equal(await checkpoints.get(branch, HANDOFF, "pull"), null);
+      reply = snapshot("15", [change(6)], { epoch: legacyEpoch });
+      const originalSave = checkpoints.save.bind(checkpoints);
+      checkpoints.save = async (...args) => {
+        await originalSave(...args);
+        if (args[1] === CHECKPOINT) throw Error("fixture handoff checkpoint failure");
+      };
+      try { await assert.rejects(pilot.prepareGroupedSettingsHandoff(), /fixture handoff checkpoint failure/); }
+      finally { checkpoints.save = originalSave; }
+      assert.equal(await checkpoints.get(branch, HANDOFF, "pull"), null);
+      assert.equal((await cursor()).seq, "15");
+      assert.deepEqual(await pilot.prepareGroupedSettingsHandoff(), { epoch: legacyEpoch, seq: "15", changed: false });
+      assert(await checkpoints.get(branch, HANDOFF, "pull"));
+      assert.equal((await saved()).row_version, 6);
+
+      const legacy = makeCloud();
+      legacy.pullBatch = async () => ({ cursor: 84, count: 1,
+        rows: [{ ...change(7), cursor: 84 }], tombstones: [] });
+      await assert.rejects(worker(legacy).run({ branchId: branch, skipMembership: true }), { code: "ESYNC_GROUPED_LEGACY_FENCED" });
+      const legacyCursor = async () => String((await checkpoints.get(branch, "__feed__", "pull")).committed_cursor);
+      assert.equal(await legacyCursor(), "83");
+      assert.equal((await saved()).row_version, 6);
+      const legacyOptions = { registry: { ...registry, tables: [table] }, cloud: legacy, connectionManager: manager,
+        checkpoints, branchId: branch, reader: new ChangeReader(manager, registry) };
+      legacy.bootstrapPage = async () => ({ rows: [], cursor: null });
+      let pageSaved = false;
+      const bootstrapContext = { job: {}, waitWhilePaused: async () => {}, checkpoint: async (_value, tx) => { pageSaved ||= Boolean(tx); } };
+      const pushBaseline = (await checkpoints.get(branch, TABLE, "push")).change_tracking_version;
+      await assert.rejects(runBootstrap({ ...legacyOptions, context: bootstrapContext }), { code: "ESYNC_GROUPED_LEGACY_FENCED" });
+      assert.equal(pageSaved, false);
+      assert.equal((await checkpoints.get(branch, TABLE, "push")).change_tracking_version, pushBaseline);
+      await assert.rejects(refreshTable({ ...legacyOptions, tableName: TABLE, diagnosticOrigin: "gap_recovery" }), { code: "ESYNC_GROUPED_LEGACY_FENCED" });
+      const foreignChange = change(78, { store_id: foreign, updated_at: "2026-11-07T04:30:10.1234567Z" });
+      await legacy.applyLocalBatchToPool(manager, table, [{ ...foreignChange, entity_id: JSON.stringify({ store_id: foreign }) }]);
+      assert.equal((await saved(foreign)).row_version, 78);
+      const runStart = calls.length;
 
       // Simulate an epoch expiry, then install a verified matching snapshot
       // and catch up over two pages within the same exclusive lease.
@@ -370,16 +414,18 @@ async function main() {
       await competingWork;
       assert.equal(fixtureWriterRan, true);
       assert.deepEqual(states.at(-1), partial);
-      assert.deepEqual(calls.slice(before + 2).map(read => [read.afterSeq, read.upperSeq, read.limit]), [
+      assert.deepEqual(calls.slice(runStart + 2).map(read => [read.afterSeq, read.upperSeq, read.limit]), [
         [seq(0), null, 25], [seq(1), seq(3), 25],
       ]);
       afterResponse = () => {};
 
       reply = page(3, 3, [[3, change(9)]]);
+      await local.restart();
+      await assert.rejects(worker(legacy).run({ branchId: branch, skipMembership: true }), { code: "ESYNC_GROUPED_LEGACY_FENCED" });
+      assert.equal(await legacyCursor(), "83");
       await manager.pool.request().input("key", key).input("branch", branch).query(`
         INSERT dbo.sync_change_journal(entity_type,entity_id,operation,branch_id,entity_version)
         VALUES(N'pos_store_settings',@key,N'update',@branch,9);`);
-      await local.restart();
       const restarted = coordinator(enrollment);
       assert.deepEqual(await restarted.runGroupedSettingsPilot(), { ...partial, status: "DEFERRED", reason: "ELOCAL_UPLOAD_PENDING" });
       assert.equal((await saved()).row_version, 8);
@@ -428,7 +474,7 @@ async function main() {
   }
 }
 
-async function postgresWire({ baseline, page, send, terminalId = terminal }) {
+async function postgresWire({ baseline, page, send, terminalId = terminal, deviceBindingProof = registration.deviceBindingProof }) {
   const scope = baseline?.scope_id;
   assert.equal(typeof scope, "string");
   assert(scope.length > 0 && scope.length <= 128);
@@ -452,7 +498,7 @@ async function postgresWire({ baseline, page, send, terminalId = terminal }) {
       assert.equal(target, url + "/api/v1/pos/sync");
       const body = JSON.parse(options.body);
       assert.equal(body.terminalToken, terminalId);
-      assert.equal(body.deviceBindingProof, registration.deviceBindingProof);
+      assert.equal(body.deviceBindingProof, deviceBindingProof);
       const read = body.sqlServerGroupedSnapshot ?? body.sqlServerGroupedFeed;
       requests.push(read);
       assert.equal(read.branchId, scope);
@@ -460,13 +506,20 @@ async function postgresWire({ baseline, page, send, terminalId = terminal }) {
       return Response.json(body.sqlServerGroupedSnapshot ? baseline : page);
     };
     const cloud = new CloudClient({ configStore: { get: () => url },
-      terminalStore: { read: () => ({ ...registration, tokenId: terminalId, locationId: scope }) },
+      terminalStore: { read: () => ({ ...registration, tokenId: terminalId, locationId: scope, deviceBindingProof }) },
       connectionManager: manager, financialBasisContext: () => ({ ...originalProject, branchId: scope }) });
     const checkpoints = new CheckpointRepository(manager);
     const worker = new PullWorker({ connectionManager: manager, cloud, registry, checkpoints,
       reader: new ChangeReader(manager, registry) });
-    assert.deepEqual(await worker.installGroupedSettingsSnapshot(), { epoch: baseline.epoch, seq: baseline.seq, changed: true });
-    const update = typeof page === "function" ? page() : page;
+    const initial = JSON.parse(baseline.manifest_json).changes[0];
+    await cloud.applyLocalBatchToPool(manager, settings, [initial]);
+    await checkpoints.save(scope, "__feed__", "pull", { committed_cursor: "1" });
+    const coordinator = new SyncCoordinator({ pullWorker: worker, pushWorker: {}, groupedSettingsPilot: {
+      branchId: scope, terminalId, backendOrigin: url, projectOrigin: originalProject.projectOrigin,
+      databaseGuid: await readDatabaseGuid(manager.pool.request()),
+    } });
+    assert.deepEqual(await coordinator.prepareGroupedSettingsHandoff(), { epoch: baseline.epoch, seq: baseline.seq, changed: false });
+    const update = typeof page === "function" ? await page() : page;
     assert.equal(update.scope_id, scope);
     const after = update.groups.at(-1).changes[0].row_data;
     assert.equal(after.store_id, scope);
@@ -476,15 +529,16 @@ async function postgresWire({ baseline, page, send, terminalId = terminal }) {
     const readFlag = async () => (await manager.pool.request().input("branch", scope).query(
       `SELECT [${changed.sqlServerColumn}] AS actual FROM dbo.pos_store_settings WHERE store_id=@branch;`)).recordset[0].actual;
     assert.equal(await readFlag(), before[changed.cloudColumn]);
-    const coordinator = new SyncCoordinator({ pullWorker: worker, pushWorker: {}, groupedSettingsPilot: {
-      branchId: scope, terminalId, backendOrigin: url, projectOrigin: originalProject.projectOrigin,
-      databaseGuid: await readDatabaseGuid(manager.pool.request()),
-    } });
     const result = await coordinator.runGroupedSettingsPilot();
     assert.equal(result.status, "CAUGHT_UP");
     assert.equal(result.position.seq, update.next_seq);
     assert.equal(requests[1].afterSeq, baseline.seq);
     assert.equal(await readFlag(), after[changed.cloudColumn]);
+    if (typeof after.max_drawer_cash_limit === "string") {
+      const saved = await manager.pool.request().input("branch", scope).input("value", after.max_drawer_cash_limit).query(
+        "SELECT CASE WHEN max_drawer_cash_limit=CONVERT(decimal(38,12),@value) THEN 1 ELSE 0 END AS matches FROM dbo.pos_store_settings WHERE store_id=@branch;");
+      assert.equal(saved.recordset[0].matches, 1);
+    }
     assert.equal(JSON.parse((await checkpoints.get(scope, CHECKPOINT, "pull")).committed_cursor).seq, update.next_seq);
     assert.equal((await manager.pool.request().input("shift", shift).query("SELECT state FROM dbo.shifts WHERE id=@shift;")).recordset[0].state, "ACTIVE");
     assert.equal((await manager.pool.request().query("SELECT COUNT(*) AS n FROM dbo.sync_change_journal WHERE entity_type=N'shifts' AND acknowledged_at IS NULL;")).recordset[0].n, 1);

@@ -6,6 +6,7 @@ const {normalizeFinancialSourceEvidence,normalizePublishedThrough}=require("./fi
 const financialBasisWitnesses=new WeakMap();
 const financialCapabilityWitnesses=new WeakMap();
 const unavailableHistoryPolicies=new WeakMap();
+const storeSettingsEditReceipts = new WeakMap();
 const HISTORY_POLICY_UNAVAILABLE='EHISTORY_POLICY_UNAVAILABLE';
 const HISTORY_INDEX_ACTIONS=new Set(['begin','page','finish','rows']);
 const deepFreezeFinancial=value=>{if(value&&typeof value==='object'){for(const child of Object.values(value))deepFreezeFinancial(child);Object.freeze(value);}return value;};
@@ -20,7 +21,7 @@ const { orderSelfReferencingRows } = require("./self-reference-order.cjs");
 const groupedSettings = require("./grouped-store-settings.cjs");
 
 function governanceRequest(payload) {
-  if (payload?.sqlServerHeldSaleReview) return true;
+  if (payload?.sqlServerHeldSaleReview || payload?.sqlServerSettingsEdit) return true;
   const tables = new Set(["pos_settings", "pos_store_settings", "authorization_actions", "authorization_action_history"]);
   const field = row => String(row?.scope ?? "").toLowerCase() === "global" &&
     String(row?.scope_id ?? "") === "" && String(row?.key ?? "").startsWith("pos_field:");
@@ -33,6 +34,24 @@ function governanceRequest(payload) {
     Boolean(payload?.sqlServerAggregate?.operations?.some(operation => tables.has(operation.table) || shared(operation)));
 }
 const requestContextChanged = () => Object.assign(new Error("The terminal or database connection changed during synchronization. Saved local work remains pending."), { code: "ESYNC_REQUEST_CONTEXT_CHANGED" });
+const settingsEditUnconfirmed = () => Object.assign(
+  new Error("The store settings upload could not be confirmed. The edit remains saved locally."),
+  { code: "ESYNC_SETTINGS_EDIT_UNCONFIRMED", table: "pos_store_settings" },
+);
+
+function checkedSettingsEditReceipt(command, receipt) {
+  const result = receipt?.result;
+  if (!result || result.scope_id !== command.branchId || result.terminal_id !== command.terminalId ||
+      result.person_id !== command.personId || result.operation_id !== command.operationId ||
+      result.installation_generation !== command.installationGeneration || result.database_guid !== command.databaseGuid ||
+      result.epoch !== command.feedEpoch || result.expected_version !== command.expectedVersion ||
+      Object.keys(receipt).length !== 2) throw settingsEditUnconfirmed();
+  if (receipt.status === "REVIEW_REQUIRED" && result.code === "STALE_RULES" && Object.keys(result).length === 9) return;
+  if (["APPLIED", "ALREADY_APPLIED"].includes(receipt.status) && Object.keys(result).length === 10 &&
+      result.row_version === command.expectedVersion + 1 && typeof result.seq === "string" &&
+      /^[1-9]\d{0,18}$/.test(result.seq) && BigInt(result.seq) <= 9223372036854775807n) return;
+  throw settingsEditUnconfirmed();
+}
 // Compare effective persisted assignments, not SQL's case/space-insensitive text
 // equality or row versions alone. Unknown registry types retain the old update.
 function changedAssignments(assignments, columns) {
@@ -226,7 +245,7 @@ class CloudClient {
       // Branch admission is control-plane metadata. Health/login/enrollment use
       // their existing separate paths and cannot wait behind data downloads.
       if (!operation && captured?.managementSyncBranches === true && Object.keys(captured).length === 1) return work();
-      const upload = captured?.sqlServerBatch || captured?.sqlServerAggregate || captured?.sqlServerFinancialEvent || captured?.sqlServerFinancialObservation || captured?.sqlServerLegacyRecovery;
+      const upload = captured?.sqlServerBatch || captured?.sqlServerAggregate || captured?.sqlServerFinancialEvent || captured?.sqlServerFinancialObservation || captured?.sqlServerLegacyRecovery || captured?.sqlServerSettingsEdit;
       return this.requestLane.run(upload ? "upload" : "download", Buffer.byteLength(capturedJson, "utf8"), work);
     } catch (error) { return Promise.reject(error); }
   }
@@ -259,7 +278,8 @@ class CloudClient {
       );
     // The OS-sealed activation token is authoritative. Put it last so no
     // caller-supplied payload can replace the device identity or its branch.
-    const personProof = governance ? source.personProof : {};
+    const personProof = payload?.sqlServerSettingsEdit ? { accessToken: source.personProof.accessToken } :
+      governance ? source.personProof : {};
     const suffix = operation ? `?operation=${encodeURIComponent(operation)}` : "";
     const outbound=normalizeSyncPayload(payload);
     // UUID cleanup is for ordinary rows, never for already-signed labels.
@@ -292,6 +312,7 @@ class CloudClient {
       throw Object.assign(new Error("The reviewed closing exceeds the bounded recovery upload. Its saved evidence remains available for review."), { code:"ELEGACY_RECOVERY_OVERSIZED", table:"shifts" });
     try { response = await fetch(`${base}/api/v1/pos/sync${suffix}`, {
       method: "POST",
+      ...(payload?.sqlServerSettingsEdit ? { redirect: "error" } : {}),
       headers: { "content-type": "application/json", ...(payload?.sqlServerLegacyRecovery ? { "x-pos-legacy-recovery": "1" } : {}) },
       body: requestBody,
       signal: AbortSignal.timeout(historyRead || payload?.sqlServerHeldSaleReview ? 12_000 : 30_000),
@@ -302,7 +323,9 @@ class CloudClient {
           try{await response.body?.cancel();}catch{/* This response cannot advance sync. */}
           throw Object.assign(new Error('The hosted scoped history transport could not be verified.'),{code:'EHISTORY_INDEX_PROTOCOL',table:'change_history'});
         }
-        if (groupedRead) {
+        if (payload?.sqlServerSettingsEdit) {
+          data = JSON.parse(await boundedText(response, 4096));
+        } else if (groupedRead) {
           data = JSON.parse(await boundedText(response, response.ok ? groupedSettings.MAX_RESPONSE_BYTES : 4096));
         } else if(payload?.sqlServerHeldStatus || payload?.sqlServerHeldSaleReview){
           data=JSON.parse(await boundedText(response,2*1024*1024));
@@ -547,6 +570,30 @@ class CloudClient {
     const branchId = groupedSettings.operationsScope(source);
     return this.request({ sqlServerGroupedSnapshot: { organizationId: "default", branchId } });
   }
+  async submitStoreSettingsEdit(source, command) {
+    this.assertRequestContext(source, true);
+    const branch = groupedSettings.operationsScope(source);
+    const { commandJson, commandSha256 } = command ?? {};
+    if (!source.personProof?.accessToken || typeof commandJson !== "string" ||
+        Buffer.byteLength(commandJson, "utf8") > 4096 ||
+        createHash("sha256").update(commandJson, "utf8").digest("hex") !== commandSha256) throw settingsEditUnconfirmed();
+    let saved;
+    try { saved = JSON.parse(commandJson); }
+    catch { throw settingsEditUnconfirmed(); }
+    const { terminalId, ...edit } = saved ?? {};
+    if (edit.organizationId !== "default" || edit.branchId !== branch || terminalId !== recordId(source.terminal.tokenId) ||
+        !Number.isInteger(edit.expectedVersion) || edit.expectedVersion < 1 || edit.expectedVersion > 2147483646)
+      throw settingsEditUnconfirmed();
+    const receipt = await this.request({ sqlServerSettingsEdit: edit });
+    this.assertRequestContext(source, true);
+    checkedSettingsEditReceipt(saved, receipt);
+    const witness = Object.freeze({});
+    storeSettingsEditReceipts.set(witness, {
+      commandJson, commandSha256, receipt: deepFreezeFinancial(receipt),
+      assertSource: () => this.assertRequestContext(source, true),
+    });
+    return witness;
+  }
   async bootstrapPage({ organizationId = "default", table, branchId, historyDays, cursor, limit, historyWitness=null }) {
     const history=table==='change_history'?require('./history-read-scope.cjs'):null;
     const witness=history?(historyWitness??await history.createHistoryPolicyRun({cloud:this,connectionManager:this.connectionManager,branchId,organizationId}).get()):null;
@@ -635,6 +682,12 @@ class CloudClient {
   }
   async applyLocalBatch(transaction, table, batch) {
     if(table.cloudTable==='change_history')throw Object.assign(new Error('History requires the scope-verified, absent-only exact download path. Its records and progress remain intact.'),{code:'EHISTORY_EXACT_REQUIRED',table:'change_history'});
+    if (table.cloudTable === "pos_store_settings") {
+      const { assertLegacyApply } = require("./grouped-settings-handoff.cjs");
+      const scopes = new Set([...(batch.rows ?? []), ...(batch.tombstones ?? [])]
+        .map(change => recordId(this.parseKey(table, change)?.store_id)));
+      for (const branch of [...scopes].sort()) await assertLegacyApply(transaction, branch);
+    }
     const sql = this.connectionManager?.sql?.() ?? require("mssql/msnodesqlv8");
     const allowed = new Map((table.columns ?? []).map((column) => [column.cloudColumn, column]));
     const localColumns = new Map((table.columns ?? []).map(column => [column.sqlServerColumn, column]));
@@ -843,4 +896,11 @@ function readVerifiedFinancialCapability(token,expected){
   const saved=financialCapabilityWitnesses.get(token);if(!saved||!expected||saved.manager!==expected.connectionManager||saved.scope.branchId!==expected.branchId||saved.scope.shiftId!==(expected.shiftId??null)||saved.scope.terminalId!==expected.terminalId||saved.scope.projectOrigin!==expected.projectOrigin)financialBasisFailure();
   saved.assertSource();return Object.freeze({descriptor:saved.value,binding:saved.identity});
 }
-module.exports = { CloudClient,readVerifiedFinancialBasis,readVerifiedFinancialCapability };
+function assertStoreSettingsEditReceipt(witness, command) {
+  const saved = storeSettingsEditReceipts.get(witness);
+  if (!saved || saved.commandSha256 !== command?.commandSha256 || saved.commandJson !== command.commandJson)
+    throw settingsEditUnconfirmed();
+  saved.assertSource();
+  return { commandSha256: saved.commandSha256, receipt: saved.receipt };
+}
+module.exports = { CloudClient,readVerifiedFinancialBasis,readVerifiedFinancialCapability,assertStoreSettingsEditReceipt };
