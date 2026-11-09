@@ -20,3 +20,5 @@
 /supabase/migrations/20261107024729_bounded_held_status_reconciliation.sql text eol=lf
 /supabase/migrations/20261107060000_reviewed_held_sale_graph.sql text eol=lf
 /database/sqlserver/recovery/held-sale-review-metadata.sql text eol=lf
+/database/beta/retail-pos-supabase-beta-fresh.sql text eol=lf
+/database/beta/retail-pos-local-beta-fresh.sql text eol=lf
