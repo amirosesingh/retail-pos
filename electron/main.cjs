@@ -651,9 +651,11 @@ async function runAutomaticSync() {
       .then(differences=>{const unresolved=differences.filter(row=>!MEMBERSHIP_TABLES.has(row.table)&&!(row.table==='change_history'&&localDataLifecycle.historyPending(localBranchId())));if(unresolved.length)throw reconciliationError(unresolved);})
       .catch((error) => recordFault("sync.verify-counts", error));
   }
-  const settingsContinuation = result.groupedSettingsPilot?.status === "MORE";
-  scheduleAutomaticSync(automaticSyncQueued || settingsContinuation ? 250 : historyCadence.nextDelay(),
-    {historyContinuation:!settingsContinuation});
+  if (result.groupedSettingsPilot?.status === "MORE") {
+    scheduleAutomaticSync(250);
+  } else {
+    scheduleAutomaticSync(automaticSyncQueued ? 250 : historyCadence.nextDelay(), { historyContinuation: true });
+  }
 }
 function stopAutomaticSync() {
   automaticSyncScheduler.stop();

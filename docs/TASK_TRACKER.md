@@ -326,6 +326,10 @@ publish denial. The focused app suites passed. Hosted activation needs the
 exact staging project, enrolled terminals and a server-side staging signing
 key. The prepared policy is outside deployed migrations.
 
+The required GitHub checks caught a source-level guard for the automatic
+offline retry cadence. Keep the existing queued-core delay expression and
+schedule another grouped settings page explicitly when one remains.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents
