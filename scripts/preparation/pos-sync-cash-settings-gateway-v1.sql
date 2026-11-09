@@ -93,8 +93,10 @@ $record$;
 -- The writer can convert the private cash evidence to public receipt rows
 -- within its transaction. At commit, any non-settings group must have the
 -- matching durable archive. Otherwise it could later vanish in a snapshot.
+-- Deferred validation can run after the publishing function has returned.
+-- Keep the trigger's checks private from the original business writer.
 CREATE FUNCTION pos_sync_feed_v1.assert_cash_settings_projection()
-RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog
 AS $guard$
 BEGIN
   IF EXISTS (

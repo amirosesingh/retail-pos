@@ -64,6 +64,16 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("isolated grouped sync relay", () => {
+  it("uses Worker-compatible redirect rejection without forwarding a service credential", async () => {
+    upstream = () => new Response(null, { status: 307, headers: { Location: "https://redirect.fixture" } });
+    const response = await direct({ sqlServerGroupedFeed: read });
+    expect(response.status).toBe(503);
+    const rpcRequests = vi.mocked(globalThis.fetch).mock.calls.filter(([url]) => String(url).includes("/rpc/"));
+    expect(rpcRequests).toHaveLength(1);
+    expect(rpcRequests[0]?.[1]?.redirect).toBe("manual");
+    expect(vi.mocked(globalThis.fetch).mock.calls.some(([url]) => String(url).includes("redirect.fixture"))).toBe(false);
+  });
+
   it("keeps extended stock and corrections behind the same exact scoped feed", async () => {
     const extended = { ...read, projection: "settings_cash_v1", extended: true };
     const body = { sqlServerGroupedFeed: extended };

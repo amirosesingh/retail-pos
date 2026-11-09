@@ -171,8 +171,73 @@ try {
   const recovery = await one(`SELECT pos_sync_feed_v1.financial_recovery_row(published)
     FROM pos_sync_feed_v1.extended_publications published WHERE scope_id='A' AND seq=1`);
   assert.deepEqual(recovery, sourceGroup);
-  await db.exec(webIdentity);
   console.log("PASS atomic dispatch publishes once to both scopes, retires to a recovery archive, and keeps stock and audit in the sending scope.");
+  const warehouse = await read("supabase/migrations/20261007111500_harden_warehouse_transfer_lifecycle.sql");
+  const beforeWarehouseGuard = source.slice(0, source.indexOf("DROP FUNCTION IF EXISTS public.stock_transfer_receive(uuid, text, boolean);"));
+  assert(beforeWarehouseGuard.length > 1);
+  for (const name of ["stock_transfer_receive", "stock_transfer_verify"]) {
+    await db.exec(sourceFunction("public." + name, beforeWarehouseGuard).replace("FUNCTION public.", "FUNCTION private."));
+    await db.exec(sourceFunction("public." + name, warehouse));
+  }
+  await db.exec(await preparation("pos-sync-native-transfer-receive-v1"));
+  await db.exec(await preparation("pos-sync-native-transfer-receive-v1"));
+  const receiver = randomUUID();
+  await db.query(`INSERT INTO public.app_users(id,user_id,full_name,email,role,role_slug,store_id,is_active,auth_user_id,permissions)
+    VALUES($1,'fixture-receiver','Verified Receiver','receiver@example.test','staff','warehouse','B',true,$1,'{"can_receive_transfer":true}')`, [receiver]);
+  const receipt = (stage, actor = "fixture-receiver", branch = "B", quantity = 2, reason = null) =>
+    one("SELECT public.stock_transfer_receive_for_staff($1,$2,$3,$4,$5,$6)",
+      [ids.child, actor, branch, stage, JSON.stringify([{ product_id: ids.product, qty: quantity }]), reason]);
+  const lifecycle = () => one(`SELECT jsonb_build_object('status',status,'received_by',received_by,'verified_by',verified_by)
+    FROM public.stock_transfers WHERE id='${ids.child}'`);
+  const balance = () => one(`SELECT stock_by_store FROM public.products WHERE id='${ids.product}'`);
+  await db.exec(webIdentity);
+  await assert.rejects(receipt("receive"), /Verified native receiver session required/);
+  assert.equal(await one(`SELECT has_function_privilege('authenticated',
+    'public.stock_transfer_receive_for_staff(uuid,text,text,text,jsonb,text)','execute')`), false);
+  await db.exec("SELECT set_config('test.uid','',false),set_config('test.role','service_role',false);");
+  await assert.rejects(receipt("receive", "fixture-receiver", "A"), /destination location/);
+  await assert.rejects(receipt("receive", "foreign"), /Active transfer receipt permission/);
+  await db.exec("UPDATE public.app_users SET permissions='{\"can_receive_transfer\":true}' WHERE user_id='foreign';");
+  await assert.rejects(receipt("receive", "foreign"), /destination location/);
+  assert.equal((await lifecycle()).status, "dispatched");
+  assert.deepEqual(await balance(), { A: 8, B: 0, C: 0 });
+  await receipt("receive");
+  assert.deepEqual(await lifecycle(), { status: "received", received_by: "Verified Receiver", verified_by: null });
+  assert.deepEqual(await balance(), { A: 8, B: 0, C: 0 });
+  await assert.rejects(receipt("verify", "fixture-receiver", "B", 1), /discrepancy needs a reason/);
+  assert.equal((await lifecycle()).status, "received");
+  assert.deepEqual(await balance(), { A: 8, B: 0, C: 0 });
+  await receipt("verify");
+  assert.deepEqual(await lifecycle(), { status: "completed", received_by: "Verified Receiver", verified_by: "Verified Receiver" });
+  assert.deepEqual(await balance(), { A: 8, B: 2, C: 0 });
+  await assert.rejects(receipt("verify"), /ALREADY_POSTED/);
+  assert.deepEqual(await balance(), { A: 8, B: 2, C: 0 });
+  assert.equal(await one("SELECT coalesce(current_setting('pos.native_receiver_transfer',true),'')"), "");
+  console.log("PASS native scoped arrival and verification preserve actor attribution, rollback and exactly-once destination stock.");
+
+  for (const role of ["anon", "authenticated", "service_role"]) {
+    assert.equal(await one(`SELECT has_function_privilege($1,
+      'pos_sync_feed_v1.assert_cash_settings_projection()','execute')`, [role]), false);
+    assert.equal(await one("SELECT has_schema_privilege($1,'pos_sync_feed_v1','usage')", [role]), false);
+  }
+  await db.exec("GRANT INSERT ON public.products TO service_role;");
+  await db.exec("SET ROLE service_role;");
+  try {
+    assert.equal(await one("SELECT current_user"), "service_role");
+    await assert.rejects(db.query("SELECT pos_sync_feed_v1.assert_cash_settings_projection()"), /permission denied/);
+  } finally { await db.exec("RESET ROLE;"); }
+  const newProduct = randomUUID();
+  const previousHead = await one("SELECT head_seq FROM pos_sync_feed_v1.feed_heads WHERE scope_id='A'");
+  await db.exec("BEGIN; SET LOCAL ROLE service_role;");
+  await db.query(`INSERT INTO public.products(id,name,sku,barcode,owner_store_id,stock_quantity,stock_by_store)
+    VALUES($1,'Service writer test product','FIXTURE-ROLE','FIXTURE-ROLE','A',4,'{"A":4}')`, [newProduct]);
+  await db.exec("COMMIT;");
+  assert.equal(Number(await one("SELECT head_seq FROM pos_sync_feed_v1.feed_heads WHERE scope_id='A'")), Number(previousHead) + 1);
+  const emitted = await one(`SELECT changes->0->'row_data' FROM pos_sync_feed_v1.extended_publications
+    WHERE scope_id='A' AND seq=(SELECT head_seq FROM pos_sync_feed_v1.feed_heads WHERE scope_id='A')`);
+  assert.equal(emitted.product_id, newProduct);
+  assert.equal(emitted.branch_balance, 4);
+  console.log("PASS service-role product write commits its deferred private stock group without direct feed access.");
   if (process.argv.includes("--native")) {
     await applyLocal("A", epochA, sending);
     await applyLocal("B", epochB, receiving);

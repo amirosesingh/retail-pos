@@ -197,7 +197,7 @@ END;
 $append$;
 
 CREATE OR REPLACE FUNCTION pos_sync_feed_v1.assert_cash_settings_projection()
-RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog
 AS $guard$
 BEGIN
   IF EXISTS (

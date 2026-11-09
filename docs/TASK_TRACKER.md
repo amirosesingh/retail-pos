@@ -526,6 +526,25 @@ request to the inner entry. Carry that trusted environment into the existing
 server configuration resolver, then verify the real HTTPS Worker responds
 with scoped results and denies the wrong proof.
 
+The full staged pilot schema and exact test cohorts are installed. The
+Worker now rejects upstream redirects using manual mode so Workerd can
+reach the private recovery RPC without forwarding a service credential.
+Hosted recovery begin and stock paging pass over HTTPS. The deferred stock
+guard checks its private archive under its owner with no new public or
+service-role schema grant. The scoped transfer receipt route and the
+existing approval rule were verified in Retail POS Beta.
+
+Hosted POS smoke passed product creation and price edit, stock adjustment
+with audit, independently approved transfer dispatch, receipt and
+verification, checkout and exchange with exact replays, and booking
+collection and scope. Source and destination stock changed once. Native
+fixtures separately passed held-bill sync, signed refund capture and shift
+causal replay. Booking guard fixtures also denied relabeled native
+collection while preserving legitimate creation, deposits and receipt
+links. Full signed financial two-till acceptance, long-offline cutover and
+handback, and grouped support for remaining tenders and writers still
+require verification or implementation.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents
