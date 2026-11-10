@@ -27,6 +27,9 @@ vi.mock("react", async original => {
         f.pending.push(effect);
       }
     },
+    useCallback<T extends (...args: never[]) => unknown>(callback: T, deps: readonly unknown[]) {
+      return f.shallow ? callback : actual.useCallback(callback, deps);
+    },
   };
 });
 vi.mock("@tanstack/react-router", () => ({
@@ -136,4 +139,20 @@ it("opens an asynchronously missing activation card once and lets the operator c
   open.props.children[0].props.onClick();
   const collapsed = renderCard(activationCard()); f.pending.splice(0).forEach(effect => effect());
   expect(collapsed.props.children[0].props["aria-expanded"]).toBe(false);
+});
+
+it("keeps the recovery activation form open when its first registration is saved", () => {
+  Object.assign(f.profile, { config: null, cloud: true });
+  const draw = () => {
+    const settings = activationCard().props.children as ReactElement<{ config: TerminalConfig | null }>;
+    f.shallow = true;
+    f.cursor = 0;
+    return (settings.type as (props: typeof settings.props) => ReactElement<{ children: ReactNode[] }>)(settings.props);
+  };
+  const editor = (tree: ReturnType<typeof draw>) => tree.props.children.find(
+    child => isValidElement<{ onActivationStarted: () => void }>(child) && child.props.onActivationStarted,
+  ) as ReactElement<{ onActivationStarted: () => void }>;
+  editor(draw()).props.onActivationStarted();
+  f.profile.config = saved;
+  expect(editor(draw())).toBeDefined();
 });

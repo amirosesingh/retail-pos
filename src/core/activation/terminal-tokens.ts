@@ -24,8 +24,7 @@ import { recordActivationAttempt } from "@/core/activation/terminal-activation-l
 import { resetHealthCache } from "@/core/activation/connection-health";
 import { canRelay, relayOp } from "@/core/api/sync-relay";
 import { backendUrl, saveBackendUrl } from "@/lib/backend-config";
-import { serverOrigin } from "@/lib/server-origin";
-import { posFetch } from "@/lib/server-origin";
+import { posFetch, serverOrigin, serverUnreachableOnDevice } from "@/lib/server-origin";
 import {
   canRuntimeClaimToken,
   terminalRuntimePlatform,
@@ -118,7 +117,7 @@ const rpc = (fn: string, args: Record<string, unknown>) =>
     args,
   );
 
-import { deviceProofHash } from "@/core/activation/device-proof";
+import { deviceProofHash, restoreVerifiedDesktopDeviceProof } from "@/core/activation/device-proof";
 import { newReplicaSecret, pairingReplicaSecret, replicaSecretHash } from "@/core/activation/replica-proof";
 
 /** Same helper against a throwaway client for a tenant we are not paired to. */
@@ -486,16 +485,29 @@ export async function hydrateTerminalConfig(): Promise<TerminalConfig | null> {
 }
 
 async function restoreSavedTerminalConfig(): Promise<TerminalConfig | null> {
+  const bridge = desktopBridge();
+  if (bridge) {
+    const native = await bridge.readTerminalConfig();
+    if (!native?.ok) throw new Error("Could not restore the saved terminal registration. Retry opening the app.");
+    if (native.config?.tokenId) {
+      publishTerminalConfig(native.config);
+      return native.config;
+    }
+  }
   const legacy = parseConfig(window.localStorage.getItem(CONFIG_KEY));
+  if (bridge) {
+    // An older renderer could publish a registration before Windows accepted
+    // it. Recover that copy only after Main verifies it and reads it back.
+    const candidate = legacy ?? await getDeviceSecret<TerminalConfig>(SEALED_NAME, true);
+    const restored = candidate?.tokenId ? await persistDesktopTerminalConfig(candidate).catch(() => null) : null;
+    if (restored) publishTerminalConfig(restored);
+    else hydrated = true;
+    return restored;
+  }
   if (legacy) {
     cachedConfig = legacy;
     hydrated = true;
     applyTenantOverride(legacy);
-    // Keep Electron's synchronization process on the same activation as the
-    // renderer. An update or storage recovery may restore only this sealed
-    // renderer copy; without the mirror the UI looks activated while native
-    // SQL synchronization incorrectly reports that no terminal is registered.
-    await desktopBridge()?.writeTerminalConfig(legacy).catch(() => undefined);
     // One-time upgrade: seal it and drop the readable copy.
     try {
       await setDeviceSecret(SEALED_NAME, legacy);
@@ -516,22 +528,9 @@ async function restoreSavedTerminalConfig(): Promise<TerminalConfig | null> {
         deviceType: shell ?? sealed.deviceType,
       };
       applyTenantOverride(cachedConfig);
-      await desktopBridge()?.writeTerminalConfig(cachedConfig).catch(() => undefined);
     }
   } catch (error) {
     restoreError = error;
-  }
-  // Restore the native mirror before startup decides registration. The hook
-  // used to read this later, after an offline launch had already been blocked.
-  if (!cachedConfig && desktopBridge()) {
-    const result = await desktopBridge()!.readTerminalConfig();
-    if (!result?.ok) throw new Error("Could not restore the saved terminal registration. Retry opening the app.");
-    if (result.config?.tokenId) {
-      cachedConfig = parseConfig(JSON.stringify(result.config));
-      applyTenantOverride(cachedConfig);
-      restoreError = undefined;
-      await setDeviceSecret(SEALED_NAME, cachedConfig).catch(() => undefined);
-    }
   }
   if (restoreError) throw new Error("Could not restore the saved terminal registration. Your registration has not been removed.");
   hydrated = true;
@@ -542,23 +541,25 @@ async function restoreSavedTerminalConfig(): Promise<TerminalConfig | null> {
 export function readTerminalConfig(): TerminalConfig | null {
   if (typeof window === "undefined" || terminalRuntimePlatform() === "web") return null;
   if (cachedConfig) return cachedConfig;
+  if (desktopBridge()) return null;
   // Before hydration finishes an older plain copy is still authoritative.
   return parseConfig(window.localStorage.getItem(CONFIG_KEY));
 }
 
 export function writeTerminalConfig(config: TerminalConfig) {
   if (typeof window === "undefined") return;
-  cachedConfig = config;
-  hydrated = true;
-  applyTenantOverride(config);
-  // The desktop mirror writes the token and the bound branch into the branch
-  // SQL database; the sealed browser store is the fallback for a machine with
-  // no local database engine.
-  void desktopBridge()?.writeTerminalConfig(config);
+  publishTerminalConfig(config);
   void setDeviceSecret(SEALED_NAME, config).catch(() => {
     // Last resort so the till is not left unregistered after a restart.
     window.localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
   });
+}
+
+function publishTerminalConfig(config: TerminalConfig) {
+  cachedConfig = config;
+  hydrated = true;
+  if (desktopBridge()) restoreVerifiedDesktopDeviceProof(config.deviceBindingProof);
+  applyTenantOverride(config);
   window.dispatchEvent(new CustomEvent(EVENT));
 }
 
@@ -605,23 +606,66 @@ const desktopBridge = (): TerminalBridge | null => {
  * terminal that is already activated never needs a second activation code.
  */
 export async function mirrorTerminalConfigToDesktop(): Promise<void> {
-  const bridge = desktopBridge();
-  if (!bridge) return;
+  if (!desktopBridge()) return;
   const config = readTerminalConfig() ?? (await hydrateTerminalConfig());
   if (!config?.tokenId) {
     throw new Error("The POS activation could not be read on this device. Sign out and reopen the POS before retrying.");
   }
-  const result = await bridge.writeTerminalConfig({ ...config, deviceBindingProof: await deviceProofHash() });
+  await persistDesktopTerminalConfig(config);
+}
+
+async function persistDesktopTerminalConfig(config: TerminalConfig): Promise<TerminalConfig> {
+  const bridge = desktopBridge();
+  if (!bridge) throw new ActivationError("Windows secure storage is unavailable. Reopen Retail and retry.");
+  const proof = config.deviceBindingProof || await deviceProofHash();
+  const result = await bridge.writeTerminalConfig({ ...config, deviceBindingProof: proof }).catch(() => {
+    throw new ActivationError("Could not reach Windows secure storage. Retry on this device with the same activation.", true);
+  });
   if (!result?.ok) {
-    throw new Error(
+    throw new ActivationError(
       result?.error ??
         "Windows secure storage could not save the existing terminal activation.",
     );
   }
-  const verified = await bridge.readTerminalConfig();
-  if (!verified?.ok || verified.config?.tokenId !== config.tokenId) {
-    throw new Error("Windows secure storage did not retain the terminal activation. Restart Windows and retry.");
+  const verified = await bridge.readTerminalConfig().catch(() => null);
+  if (!verified?.ok || verified.config?.tokenId !== config.tokenId || verified.config?.deviceBindingProof !== proof) {
+    throw new ActivationError("Windows could not confirm the saved registration. Retry on this device with the same activation.", true);
   }
+  return verified.config;
+}
+
+async function desktopActivationConnection(projectUrl: string) {
+  if (!desktopBridge()) return null;
+  const read = window.pos?.bootstrapCloudCredentials;
+  const saved = await read?.().catch(() => {
+    throw new ActivationError("Could not read the saved database connection. Reopen Retail and retry.", true);
+  });
+  if (saved && !saved.ok && "error" in saved)
+    throw new ActivationError("Could not read the saved database connection. Open Database & Cloud Connection and retry.");
+  if (!saved?.ok || !saved.url || !saved.key)
+    throw new ActivationError("Save the database URL and publishable key in Database & Cloud Connection before activating this Windows terminal.");
+  if (saved.url.trim().replace(/\/+$/, "") !== projectUrl.trim().replace(/\/+$/, ""))
+    throw new ActivationError("This activation belongs to a different database. Use a code from the POS website for the database saved on this device.");
+  const backend = await backendUrl().catch(() => {
+    throw new ActivationError("Could not read the saved POS website address. Open Database & Cloud Connection and retry.", true);
+  });
+  if (!backend)
+    throw new ActivationError("Save the POS website address in Database & Cloud Connection before activating this Windows terminal.");
+  return { backend, cloud: { url: saved.url, key: saved.key } };
+}
+
+async function completeDesktopActivation(
+  config: TerminalConfig,
+  connection: NonNullable<Awaited<ReturnType<typeof desktopActivationConnection>>>,
+): Promise<TerminalConfig> {
+  const verified = await persistDesktopTerminalConfig({
+    ...config,
+    backendUrl: connection.backend,
+    supabaseUrl: connection.cloud.url,
+    supabaseKey: connection.cloud.key,
+  });
+  publishTerminalConfig(verified);
+  return verified;
 }
 
 /**
@@ -633,11 +677,7 @@ export async function restoreTerminalConfigFromDisk(): Promise<TerminalConfig | 
   const bridge = desktopBridge();
   if (!bridge || readTerminalConfig()) return readTerminalConfig();
   try {
-    const result = await bridge.readTerminalConfig();
-    const config = result?.config;
-    if (!config?.tokenId) return null;
-    writeTerminalConfig(config);
-    return config;
+    return await hydrateTerminalConfig();
   } catch {
     return null;
   }
@@ -888,7 +928,8 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
   // The claim runs against the tenant named inside the token, not against
   // whatever this machine happens to be pointed at — an unprovisioned till has
   // no connection details at all until this succeeds.
-  const tenant = createTenantClient(payload.supabase_url, payload.supabase_key);
+  const desktop = await desktopActivationConnection(payload.supabase_url);
+  const tenant = createTenantClient(desktop?.cloud.url ?? payload.supabase_url, desktop?.cloud.key ?? payload.supabase_key);
   const note = (
     outcome: Parameters<typeof recordActivationAttempt>[1]["outcome"],
     reason: string,
@@ -967,7 +1008,7 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
     throw new ActivationError("This activation token has already been used or expired.");
   }
 
-  const config: TerminalConfig = {
+  let config: TerminalConfig = {
     tokenId: payload.token_id,
     deviceClaimProof: payload.management_sync_secret,
     deviceBindingProof: proofHash,
@@ -1015,6 +1056,8 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
       await flushConnectionProfile();
       throw error;
     }
+  } else if (desktop) {
+    config = await completeDesktopActivation(config, desktop);
   } else {
     if (config.backendUrl) {
       const saved = await saveBackendUrl(config.backendUrl);
@@ -1022,23 +1065,17 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
     }
     writeTerminalConfig(config);
   }
-  // Electron synchronization reads the OS-vault mirror, not renderer storage.
-  // Await the protected mirror before reporting activation success; otherwise
-  // a quick reload or smoke-test shutdown can leave the UI activated while
-  // the desktop service still has no branch identity.
-  if (desktopBridge()) await mirrorTerminalConfigToDesktop();
   note("succeeded", "This till claimed the code and registered.", {
     id: config.locationId,
     name: config.locationName,
   });
-  const heartbeat = await rpcOn(tenant, "terminal_token_heartbeat", {
+  void Promise.resolve().then(() => rpcOn(tenant, "terminal_token_heartbeat", {
     p_token_id: config.tokenId,
     p_activate: true,
     p_proof_hash: proofHash,
-  });
-  if (heartbeat.error) {
-    note("unreachable", activationFailureMessage(heartbeat.error), branch);
-  }
+  })).then(({ error }) => {
+    if (error) note("unreachable", activationFailureMessage(error), branch);
+  }).catch(error => note("unreachable", activationFailureMessage(error), branch));
   // Give this till its own machine account so its writes are accepted by the
   // central database even when a cashier signs in with a PIN.
   if (config.locationId) void import("@/lib/terminal-session").then((m) => m.provisionTerminalAccount(config.tokenId)).catch(() => null);
@@ -1176,6 +1213,7 @@ export function decodePairingRequest(value: string): PairingRequest | null {
  */
 type PairingApproval = {
   approved: boolean;
+  terminal?: { id: string };
   managementDevice?: boolean;
   status?: TokenStatus;
   locationId?: string;
@@ -1190,20 +1228,25 @@ type PairingApproval = {
 };
 
 async function fetchPairingApproval(request: PairingRequest): Promise<PairingApproval> {
+  if (serverUnreachableOnDevice())
+    throw new ActivationError("Save the POS website address in Database & Cloud Connection before pairing.");
   const response = await posFetch("/api/public/terminal-pairing", {
     method: "POST",
     cache: "no-store",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ tokenId: request.tokenId, proofHash: request.proofHash }),
   });
-  const body = (await response.json().catch(() => ({}))) as PairingApproval & { error?: string };
-  if (!response.ok) throw Object.assign(new Error(body.error || `Pairing check failed (${response.status})`), { status: response.status });
+  const body = (await response.json().catch(() => null)) as (PairingApproval & { error?: string }) | null;
+  if (!response.ok) throw Object.assign(new Error(body?.error || `Pairing check failed (${response.status})`), { status: response.status });
+  if (typeof body?.approved !== "boolean")
+    throw new ActivationError("The saved website did not return a POS pairing response. Check the POS website address in Database & Cloud Connection.");
   return body;
 }
 
-export async function activateWithTokenId(request: PairingRequest): Promise<TerminalConfig | null> {
+export async function activateWithTokenId(request: PairingRequest, onApproved?: () => void): Promise<TerminalConfig | null> {
   const shell = terminalRuntimePlatform();
   const approval = await withActivationRetry(() => fetchPairingApproval(request)).catch((e: unknown) => {
+    if (e instanceof ActivationError) throw e;
     throw new ActivationError(activationFailureMessage(e), isRetryableActivationError(e));
   });
   if (!approval.approved) return null;
@@ -1217,10 +1260,15 @@ export async function activateWithTokenId(request: PairingRequest): Promise<Term
       "The POS server returned an incomplete pairing approval. Ask an administrator to check the hosted database settings.",
     );
   }
-  if (approval.expiresAt && new Date(approval.expiresAt).getTime() < Date.now()) {
+  // Once claimed, the server will accept a retry only with the original
+  // device proof. The deadline applies to first redemption.
+  const alreadyClaimed = approval.status === "used" || approval.terminal?.id === request.tokenId;
+  if (!alreadyClaimed && approval.expiresAt && new Date(approval.expiresAt).getTime() < Date.now()) {
     throw new ActivationError("This pairing request has expired. Ask an administrator to approve it again.");
   }
-  const tenant = createTenantClient(approval.supabaseUrl, approval.supabaseKey);
+  const desktop = await desktopActivationConnection(approval.supabaseUrl);
+  onApproved?.();
+  const tenant = createTenantClient(desktop?.cloud.url ?? approval.supabaseUrl, desktop?.cloud.key ?? approval.supabaseKey);
   const deviceName = typeof navigator !== "undefined" ? navigator.userAgent.slice(0, 120) : null;
   let claimed: unknown;
   try {
@@ -1242,7 +1290,7 @@ export async function activateWithTokenId(request: PairingRequest): Promise<Term
   if (claimed !== true) {
     throw new ActivationError("This pairing request was already used on another terminal.");
   }
-  const config: TerminalConfig = {
+  let config: TerminalConfig = {
     tokenId: request.tokenId,
     deviceClaimProof: approval.managementDevice ? await pairingReplicaSecret() : undefined,
     deviceBindingProof: request.proofHash,
@@ -1258,22 +1306,21 @@ export async function activateWithTokenId(request: PairingRequest): Promise<Term
     backendUrl: approval.backendUrl,
     activatedAt: new Date().toISOString(),
   };
-  if (config.backendUrl) {
-    const saved = await saveBackendUrl(config.backendUrl);
-    if (!saved.ok) {
-      throw new ActivationError(
-        saved.error || "Could not securely save the POS server address on this terminal.",
-      );
+  if (desktop) {
+    config = await completeDesktopActivation(config, desktop);
+  } else {
+    if (config.backendUrl) {
+      const saved = await saveBackendUrl(config.backendUrl);
+      if (!saved.ok) throw new ActivationError(saved.error || "Could not securely save the POS website address.");
     }
+    writeTerminalConfig(config);
   }
-  writeTerminalConfig(config);
-  if (desktopBridge()) await mirrorTerminalConfigToDesktop();
-  clearPairingRequest();
-  await rpcOn(tenant, "terminal_token_heartbeat", {
+  try { clearPairingRequest(); } catch { /* Windows already confirmed the registration. */ }
+  void Promise.resolve().then(() => rpcOn(tenant, "terminal_token_heartbeat", {
     p_token_id: request.tokenId,
     p_activate: true,
     p_proof_hash: request.proofHash,
-  });
+  })).catch(() => undefined);
   if (config.locationId) void import("@/lib/terminal-session")
     .then((m) => m.provisionTerminalAccount(request.tokenId))
     .catch(() => null);

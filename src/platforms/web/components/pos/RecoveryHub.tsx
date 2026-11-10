@@ -8,7 +8,7 @@
  * with a live status chip, and nothing on this page needs the network, a
  * signed-in user or a working database.
  */
-import { Component, useEffect, useState, type ReactNode } from "react";
+import { Component, useCallback, useEffect, useState, type ReactNode } from "react";
 import { Building2, ChevronDown, KeyRound, MonitorCog, Server, ShieldCheck } from "lucide-react";
 
 import { CloudConnectionPanel } from "@/platforms/web/components/pos/settings/panels/CloudConnectionPanel";
@@ -122,7 +122,7 @@ function ModeBanner() {
     },
     "offline-unregistered": {
       tone: "border-border bg-muted text-muted-foreground",
-      text: "Offline emergency mode — limited local functions only. Nothing can be verified until a connection returns.",
+      text: "The last connection check did not reach the central database. You can try your activation token or review the connection settings.",
     },
   };
   const { tone, text } = copy[mode]!;
@@ -130,9 +130,14 @@ function ModeBanner() {
 }
 
 function ActivationSettings({ config }: { config: TerminalConfig | null }) {
-  const [review, setReview] = useState(false);
+  const [mode, setMode] = useState<"overview" | "review" | "activating">("overview");
+  const keepActivationOpen = useCallback(() => {
+    // Saving the first registration refreshes config before the form can
+    // show its confirmation. Keep that form open until the operator continues.
+    setMode((current) => current === "overview" ? "activating" : current);
+  }, []);
   return <div className="space-y-3">
-    {config && <>
+    {config && mode !== "activating" && <>
       <p className="text-xs text-muted-foreground">Saved registration on this device. Online validation is separate.</p>
       <TerminalRegistrationDetails details={{
         tokenId: config.tokenId,
@@ -142,9 +147,13 @@ function ActivationSettings({ config }: { config: TerminalConfig | null }) {
         backendUrl: config.backendUrl,
         supabaseUrl: config.supabaseUrl,
       }} />
-      {!review && <Button variant="outline" size="sm" onClick={() => setReview(true)}>Review activation options</Button>}
+      {mode === "overview" && <Button variant="outline" size="sm" onClick={() => setMode("review")}>Review activation options</Button>}
     </>}
-    {(!config || review) && <TerminalActivation embedded onActivated={() => window.location.reload()} />}
+    {(!config || mode !== "overview") && <TerminalActivation
+      embedded
+      onActivationStarted={keepActivationOpen}
+      onActivated={() => window.location.assign("/")}
+    />}
   </div>;
 }
 

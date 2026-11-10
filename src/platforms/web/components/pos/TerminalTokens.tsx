@@ -98,6 +98,15 @@ const STATUS_CLASS: Record<TerminalLiveStatus, string> = {
 
 /** One badge, one meaning of online / not responding / offline. */
 function TerminalStatusBadge({ token, now }: { token: TerminalToken; now: number }) {
+  // The claim itself updates lastSeenAt. Wait for a device report before
+  // showing a newly claimed Windows till as online.
+  if (token.platform === "pc" && token.status !== "revoked" && token.isClaimed && !token.appVersion) {
+    return (
+      <Badge variant="outline" className={STATUS_CLASS["not-activated"]} title="Waiting for the Windows till to check in after setup.">
+        Code claimed
+      </Badge>
+    );
+  }
   const live = terminalStatus(token, now);
   return (
     <Badge variant="outline" className={STATUS_CLASS[live]} title={TERMINAL_STATUS_HINT[live]}>
@@ -214,7 +223,7 @@ export function TerminalTokens({
     };
   }, [refresh]);
 
-  // Watch the issued token until a till redeems it, then celebrate and reload.
+  // A cloud claim reserves this code for one device. Setup finishes there.
   useEffect(() => {
     if (!codeTokenId || claimed || expired) return;
     let stopped = false;
@@ -227,7 +236,7 @@ export function TerminalTokens({
         if (!remote || stopped) return;
         if (remote.isClaimed || remote.status === "used") {
           setClaimed(true);
-          toast.success("Terminal Activated Successfully!");
+          toast.success("Activation code claimed");
           await refresh();
         }
       } catch {
@@ -483,10 +492,10 @@ export function TerminalTokens({
         {code && claimed && (
           <div className="mt-5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-4">
             <p className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">
-              Terminal Activated Successfully!
+              Activation code claimed
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              The code was redeemed and can never be used again. The list below is up to date.
+              Check that setup has finished on the device. If setup was interrupted, the same device can retry.
             </p>
             {issuedDetails && <div className="mt-3"><TerminalRegistrationDetails details={issuedDetails} /></div>}
             <Button
@@ -506,7 +515,7 @@ export function TerminalTokens({
 
         {code && !claimed && (
           <div className="mt-5 grid gap-4 rounded-lg border border-border bg-surface-2 p-4 sm:grid-cols-[auto_minmax(0,1fr)]">
-            {issuedDetails && <div className="sm:col-span-2"><p className="mb-2 text-xs font-medium">Approved assignment — waiting for terminal activation</p><TerminalRegistrationDetails details={issuedDetails} /></div>}
+            {issuedDetails && <div className="sm:col-span-2"><p className="mb-2 text-xs font-medium">Assignment approved. Waiting for the terminal to claim the code.</p><TerminalRegistrationDetails details={issuedDetails} /></div>}
             <img
               src={qr}
               alt="Activation code QR"
@@ -564,7 +573,7 @@ export function TerminalTokens({
           <div className="space-y-4 py-2">
             <p role="status" className="text-sm text-muted-foreground">{pairChecking ? "Checking terminal registration…" : pairLookupError || (pairExisting ?
               pairExisting.status === "revoked" ? "This registration was revoked. Use the registered-terminal controls to review it." :
-              pairExisting.isClaimed ? "This terminal is already registered with the assignment below." : "This request is already approved. Waiting for the terminal to activate." :
+              pairExisting.isClaimed ? "This code has been claimed. Check that setup has finished on the Windows till." : "This request is approved. Waiting for the Windows till to claim the code." :
               "QR verified. Choose device use, review the assignment and backend, then approve.")}</p>
             <div className="rounded-md border bg-muted/40 p-3 text-xs">
               <p className="font-medium">Scanned pairing request</p>
@@ -700,7 +709,7 @@ export function TerminalTokens({
                 <TableHead>Version</TableHead>
                 <TableHead>Last seen</TableHead>
                 <TableHead>Last sync</TableHead>
-                <TableHead>Activated</TableHead>
+                <TableHead>Code claimed</TableHead>
                 <TableHead className="text-right">Action</TableHead>
               </TableRow>
             </TableHeader>
