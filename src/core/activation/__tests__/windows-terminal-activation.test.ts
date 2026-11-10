@@ -106,6 +106,14 @@ it("rejects a code for a different project before it contacts the claim service"
   expect(f.write).not.toHaveBeenCalled();
 });
 
+it("leaves a code unclaimed when the Windows connection still needs setup", async () => {
+  const { activateTerminal } = await import("../terminal-tokens");
+  f.bootstrap.mockResolvedValue({ ok: false });
+  await expect(activateTerminal("code")).rejects.toThrow("Save the database URL and publishable key");
+  expect(f.rpc).not.toHaveBeenCalled();
+  expect(f.write).not.toHaveBeenCalled();
+});
+
 it("finishes a proof-bound web pairing after the first-claim deadline when this device already claimed it", async () => {
   const { activateWithTokenId } = await import("../terminal-tokens");
   f.posFetch.mockResolvedValueOnce(Response.json({ ...approved, status: "used" }));

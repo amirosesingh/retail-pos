@@ -642,27 +642,27 @@ async function desktopActivationConnection(projectUrl: string) {
   });
   if (saved && !saved.ok && "error" in saved)
     throw new ActivationError("Could not read the saved database connection. Open Database & Cloud Connection and retry.");
-  if (saved?.ok && saved.url && saved.url.trim().replace(/\/+$/, "") !== projectUrl.trim().replace(/\/+$/, ""))
+  if (!saved?.ok || !saved.url || !saved.key)
+    throw new ActivationError("Save the database URL and publishable key in Database & Cloud Connection before activating this Windows terminal.");
+  if (saved.url.trim().replace(/\/+$/, "") !== projectUrl.trim().replace(/\/+$/, ""))
     throw new ActivationError("This activation belongs to a different database. Use a code from the POS website for the database saved on this device.");
   const backend = await backendUrl().catch(() => {
     throw new ActivationError("Could not read the saved POS website address. Open Database & Cloud Connection and retry.", true);
   });
-  const cloud = saved?.ok && saved.url && saved.key ? { url: saved.url, key: saved.key } : null;
-  return { backend, cloud };
+  if (!backend)
+    throw new ActivationError("Save the POS website address in Database & Cloud Connection before activating this Windows terminal.");
+  return { backend, cloud: { url: saved.url, key: saved.key } };
 }
 
 async function completeDesktopActivation(
   config: TerminalConfig,
   connection: NonNullable<Awaited<ReturnType<typeof desktopActivationConnection>>>,
 ): Promise<TerminalConfig> {
-  if (!connection.backend && config.backendUrl) {
-    const saved = await saveBackendUrl(config.backendUrl);
-    if (!saved.ok) throw new ActivationError(saved.error || "Could not securely save the POS website address.", true);
-  }
   const verified = await persistDesktopTerminalConfig({
     ...config,
-    backendUrl: connection.backend || config.backendUrl,
-    ...(connection.cloud ? { supabaseUrl: connection.cloud.url, supabaseKey: connection.cloud.key } : {}),
+    backendUrl: connection.backend,
+    supabaseUrl: connection.cloud.url,
+    supabaseKey: connection.cloud.key,
   });
   publishTerminalConfig(verified);
   return verified;
@@ -929,7 +929,7 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
   // whatever this machine happens to be pointed at — an unprovisioned till has
   // no connection details at all until this succeeds.
   const desktop = await desktopActivationConnection(payload.supabase_url);
-  const tenant = createTenantClient(desktop?.cloud?.url ?? payload.supabase_url, desktop?.cloud?.key ?? payload.supabase_key);
+  const tenant = createTenantClient(desktop?.cloud.url ?? payload.supabase_url, desktop?.cloud.key ?? payload.supabase_key);
   const note = (
     outcome: Parameters<typeof recordActivationAttempt>[1]["outcome"],
     reason: string,
@@ -1266,9 +1266,9 @@ export async function activateWithTokenId(request: PairingRequest, onApproved?: 
   if (!alreadyClaimed && approval.expiresAt && new Date(approval.expiresAt).getTime() < Date.now()) {
     throw new ActivationError("This pairing request has expired. Ask an administrator to approve it again.");
   }
-  onApproved?.();
   const desktop = await desktopActivationConnection(approval.supabaseUrl);
-  const tenant = createTenantClient(desktop?.cloud?.url ?? approval.supabaseUrl, desktop?.cloud?.key ?? approval.supabaseKey);
+  onApproved?.();
+  const tenant = createTenantClient(desktop?.cloud.url ?? approval.supabaseUrl, desktop?.cloud.key ?? approval.supabaseKey);
   const deviceName = typeof navigator !== "undefined" ? navigator.userAgent.slice(0, 120) : null;
   let claimed: unknown;
   try {
