@@ -53,14 +53,16 @@ describe("native activation restore", () => {
   });
   it("shares concurrent restores instead of publishing a temporary missing registration", async () => {
     let finish!: (value: unknown) => void;
-    secrets.read.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    readDisk.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
     const terminal = await import("@/core/activation/terminal-tokens");
     const first = terminal.hydrateTerminalConfig();
     const second = terminal.hydrateTerminalConfig();
     expect(terminal.isTerminalConfigHydrated()).toBe(false);
-    finish(config);
-    await Promise.all([first, second]);
-    expect(secrets.read).toHaveBeenCalledOnce();
+    expect(terminal.readTerminalConfig()).toBeNull();
+    finish({ ok: true, config });
+    await expect(Promise.all([first, second])).resolves.toEqual([config, config]);
+    expect(readDisk).toHaveBeenCalledOnce();
+    expect(secrets.read).not.toHaveBeenCalled();
   });
   it("keeps unreadable Android activation retryable instead of declaring it absent", async () => {
     Reflect.deleteProperty(window, "pos");

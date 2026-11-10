@@ -12,7 +12,7 @@
  */
 import { clearDeviceSecret, deviceHmac, getDeviceSecret, setDeviceSecret } from "@/lib/device-secrets";
 import { readTerminalConfig } from "@/core/activation/terminal-tokens";
-import { isElectron } from "@/platform-config/platform";
+import { terminalRuntimePlatform } from "@/core/activation/terminal-platform";
 
 const RECORD = "activation.record.v1";
 export type ActivationRecord = {
@@ -94,7 +94,7 @@ export function clearActivationRecord(): void {
  */
 export async function isRegistered(): Promise<RegistrationState> {
   // A legacy renderer receipt alone cannot establish a Windows registration.
-  if (isElectron()) return readTerminalConfig() ? "registered" : "not-registered";
+  if (terminalRuntimePlatform() === "electron") return readTerminalConfig() ? "registered" : "not-registered";
   const record = await readActivationRecord();
   if (record?.activated) return "registered";
   return readTerminalConfig() ? "registered" : "not-registered";
