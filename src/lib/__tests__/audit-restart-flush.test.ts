@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   stored: "", push: vi.fn(), request: vi.fn(), databaseState: vi.fn(), nativeLog: undefined as undefined | ReturnType<typeof vi.fn>,
+  localMode: true,
 }));
 vi.mock("../business-storage", () => ({
   readBusinessValue: () => mocks.stored,
@@ -9,13 +10,15 @@ vi.mock("../business-storage", () => ({
 }));
 vi.mock("@/core/api/pos-db", () => ({ db: { pushAuditLogs: mocks.push } }));
 vi.mock("../session-presence", () => ({ hasSignedInIdentity: () => false }));
-vi.mock("@/core/local-db/local-db", () => ({ localDb: () => ({ database: {getState: mocks.databaseState}, logConnection: mocks.nativeLog }) }));
+vi.mock("@/core/local-db/local-db", () => ({ localDb: () => mocks.localMode
+  ? { database: {getState: mocks.databaseState}, logConnection: mocks.nativeLog } : null }));
 vi.mock("@/platform-config/platform", () => ({isTerminalApp: () => true}));
 vi.mock("../activity-journal", () => ({ replayOrder: (rows: unknown[]) => rows, stamp: () => ({deviceTime:new Date().toISOString(),seq:2}) }));
 
 beforeEach(() => {
   vi.resetModules();vi.useFakeTimers();mocks.push.mockReset();mocks.request.mockReset();
   mocks.databaseState.mockReset().mockResolvedValue({ configured: true });
+  mocks.localMode = true;
   mocks.nativeLog = undefined;
   mocks.stored = JSON.stringify([{id:"pending",at:new Date().toISOString(),category:"other",action:"Opened app",module:"app",details:{},synced_to_cloud:false}]);
   vi.stubGlobal("window",{location:{pathname:"/"}});
@@ -78,6 +81,22 @@ it("saves anonymous login activity to native diagnostics without requiring a per
   expect(mocks.nativeLog).toHaveBeenCalledWith("application.signed-out-activity", expect.objectContaining({scope:"login-event"}));
   expect(JSON.parse(mocks.stored)).toEqual([]);
 });
+
+it("an online-only Windows login saves anonymous activity through the native close hook", async () => {
+  mocks.localMode = false;
+  mocks.stored = "[]";
+  const onBeforeClose = vi.fn<(flush: () => Promise<void>) => void>();
+  const logConnection = vi.fn().mockResolvedValue({ ok: true });
+  vi.stubGlobal("window", { location: { pathname: "/" }, pos: { onBeforeClose, logConnection } });
+  const audit = await import("../audit-log");
+  const event = audit.logger.log("browse", "Opened login", "app");
+  expect(onBeforeClose).toHaveBeenCalledOnce();
+  await expect(onBeforeClose.mock.calls[0][0]()).resolves.toBeUndefined();
+  expect(logConnection).toHaveBeenCalledWith("application.signed-out-activity", expect.objectContaining({ scope: event?.id }));
+  expect(mocks.databaseState).not.toHaveBeenCalled();
+  expect(mocks.push).not.toHaveBeenCalled();
+});
+
 it("does not discard a signed-out person's unsaved business audit or a failed diagnostic write", async () => {
   mocks.nativeLog = vi.fn().mockResolvedValue({ ok: false });
   mocks.stored = JSON.stringify([{id:"login-event",staffId:"anonymous",at:new Date().toISOString(),category:"browse",details:{},synced_to_cloud:false}]);

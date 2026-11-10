@@ -6,6 +6,7 @@ import { hasSignedInIdentity } from "./session-presence";
 import { replayOrder, stamp } from "./activity-journal";
 import { isTerminalApp } from "@/platform-config/platform";
 import { localDb } from "@/core/local-db/local-db";
+import { desktopBridge } from "./desktop-bridge-registry";
 import {auditDetails,normalizeCachedAuditRows} from "./audit-row-normalization";
 import { pageDataScope } from "./page-data-cache";
 
@@ -355,6 +356,9 @@ const BATCH = 50;
 const CLOUD_FLUSH_LOCK = "pos-audit-cloud-flush";
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let flushInFlight: Promise<void> | null = null;
+// Native close and diagnostic hooks work even when business queries use the
+// online route. Do not use this bridge to route business writes to SQL.
+const nativeAuditBridge = () => typeof window === "undefined" ? null : desktopBridge("pos", window.pos ?? null);
 
 /** Park desktop activity in SQL promptly; cloud uploads are batched by main. */
 function scheduleFlush() {
@@ -443,7 +447,8 @@ async function flushBatchUnderLock() {
   const pending = replayOrder(logs.filter((l) => !l.synced_to_cloud));
   setSync({ online, pending: pending.length });
   const desktop = localDb();
-  if (desktop?.logConnection && !hasSignedInIdentity()) {
+  const diagnostics = desktop ?? nativeAuditBridge();
+  if (diagnostics?.logConnection && !hasSignedInIdentity()) {
     // Startup/login navigation has no verified person to authorize a SQL
     // audit write. Preserve only that anonymous, nonfinancial activity in
     // native diagnostics. Never discard a person's pending business audit or
@@ -451,7 +456,7 @@ async function flushBatchUnderLock() {
     const recorded = new Set<string>();
     for (const row of pending) {
       if (row.staffId !== "anonymous" || !["browse", "security", "settings", "report", "other"].includes(row.category)) continue;
-      const result = await desktop.logConnection("application.signed-out-activity", {
+      const result = await diagnostics.logConnection("application.signed-out-activity", {
         category: "application", stage: "signed-out", scope: row.id,
         message: `Signed-out ${row.category} activity recorded`,
       });
@@ -672,4 +677,4 @@ export const auditToCsv = (rows: AuditLog[]) => {
 };
 
 // Audit buffers outlive the signed-in app shell, including the login screen.
-if (typeof window !== "undefined") localDb()?.onBeforeClose?.(flushPendingAuditLogs);
+if (typeof window !== "undefined") (nativeAuditBridge() ?? localDb())?.onBeforeClose?.(flushPendingAuditLogs);
