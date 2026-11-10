@@ -28,13 +28,12 @@ import {
   clearPairingRequest,
   encodePairingRequest,
   getPairingRequest,
+  isRetryableActivationError,
   type PairingRequest,
   type TerminalConfig,
 } from "@/core/activation/terminal-tokens";
 import { clearRevocation } from "@/lib/use-revocation-check";
 import { writeActivationRecord } from "@/core/activation/activation-record";
-import { isCloudConnected } from "@/core/activation/registration-status";
-import { subscribeConnectivity } from "@/core/activation/connection-health";
 import { CameraScanner } from "@/platforms/web/components/pos/CameraScanner";
 import { EmergencyAccessLink } from "@/components/shared/EmergencyAccessLink";
 import { useBranding } from "@/lib/branding";
@@ -78,10 +77,6 @@ export function TerminalActivation({
   embedded?: boolean;
   onActivationStarted?: () => void;
 }) {
-  // Pairing is a cloud round-trip: offline it must stay quiet instead of
-  // reporting a verification failure every three seconds.
-  const [online, setOnline] = useState(() => isCloudConnected());
-  useEffect(() => subscribeConnectivity(() => setOnline(isCloudConnected())), []);
   const branding = useBranding();
   const mobile = isNative();
   const [replacingRegistration] = useState(() => mobile && Boolean(readTerminalConfig()?.tokenId));
@@ -90,6 +85,11 @@ export function TerminalActivation({
   // React state is not synchronous: camera callbacks can arrive twice before
   // the disabled button renders. Keep one activation in flight per screen.
   const activationPending = useRef(false);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   const continued = useRef(false);
   const [error, setError] = useState("");
   const [scanning, setScanning] = useState(false);
@@ -97,6 +97,8 @@ export function TerminalActivation({
   const [done, setDone] = useState<TerminalConfig | null>(null);
   const [showPairing, setShowPairing] = useState(false);
   const [pairingStopped, setPairingStopped] = useState(false);
+  const [pairingApproved, setPairingApproved] = useState(false);
+  const [pairingError, setPairingError] = useState("");
   // Minted after mount: the id is random, so generating it during SSR would
   // hydrate a different QR than the server drew and blow up the page.
   const [pairing, setPairing] = useState<PairingRequest | null>(null);
@@ -111,7 +113,7 @@ export function TerminalActivation({
       .catch((cause: unknown) => {
         if (!cancelled) {
           setPairingStopped(true);
-          setError(cause instanceof Error ? cause.message : "Could not prepare secure pairing.");
+          setPairingError(cause instanceof ActivationError ? cause.message : "Could not prepare secure pairing. Try starting a new pairing request.");
         }
       });
     return () => {
@@ -123,69 +125,84 @@ export function TerminalActivation({
     [pairing],
   );
 
+  const finish = useCallback(async (config: TerminalConfig) => {
+    if (!mounted.current) return;
+    clearRevocation();
+    await writeActivationRecord({ tokenId: config.tokenId }).catch(() => {});
+    if (mounted.current) setDone(config);
+  }, []);
+
   const submit = useCallback(
     async (value: string) => {
       if (activationPending.current || done) return;
       const trimmed = value.trim();
       if (!trimmed) return setError("Paste or scan the activation code first.");
       activationPending.current = true;
-      onActivationStarted?.();
       setBusy(true);
       setError("");
       try {
-        const config = await activateTerminal(trimmed);
-        clearRevocation();
-        await writeActivationRecord({ tokenId: config.tokenId }).catch(() => {});
-        setDone(config);
+        onActivationStarted?.();
+        await finish(await activateTerminal(trimmed));
       } catch (e) {
         setError(
-          e instanceof ActivationError ? e.message : "Activation failed. Try again in a moment.",
+          e instanceof ActivationError ? e.message : isRetryableActivationError(e)
+            ? "Could not reach the activation service. Check the connection and try again."
+            : "Could not complete activation on this device. Try the same token again.",
         );
       } finally {
         activationPending.current = false;
         setBusy(false);
       }
     },
-    [onActivationStarted, done],
+    [onActivationStarted, done, finish],
   );
 
-  // While the operator waits, keep asking whether an administrator approved
-  // the pairing request from their phone. Approval activates the till itself.
+  // The hosted pairing endpoint decides whether the request can proceed.
+  // The general database heartbeat may be stale while repairing a profile.
   useEffect(() => {
-    if (!pairing || !online || done || !showPairing || pairingStopped) return;
+    if (!pairing || done || !showPairing || pairingStopped || scanning) return;
     let stopped = false;
-    let pending = false;
     let timer: number | undefined;
     let attempts = 0;
     const tick = async () => {
-      if (pending) return;
+      if (stopped) return;
       if (activationPending.current) {
         timer = window.setTimeout(() => void tick(), 3_000);
         return;
       }
-      pending = true;
       activationPending.current = true;
-      onActivationStarted?.();
+      setBusy(true);
+      let retry = false;
       try {
-        const config = await activateWithTokenId(pairing);
-        if (!stopped) setError("");
-        if (config && !stopped) {
-          clearRevocation();
-          await writeActivationRecord({ tokenId: config.tokenId }).catch(() => {});
-          setDone(config);
+        onActivationStarted?.();
+        const config = await activateWithTokenId(pairing, () => {
+          if (!stopped) {
+            setPairingApproved(true);
+            setPairingError("");
+          }
+        });
+        if (config) {
+          // A claim that finishes after the operator collapses the pairing
+          // panel still belongs to this terminal.
+          await finish(config);
+        } else if (!stopped) {
+          setPairingApproved(false);
+          setPairingError("");
+          retry = true;
         }
       } catch (e) {
-        if (!stopped && e instanceof ActivationError) {
-          setError(e.message);
-          // Network failures recover automatically; token verdicts need a new
-          // request and must not hammer the API every three seconds forever.
-          if (!e.retryable && !/cannot reach|connection/i.test(e.message)) setPairingStopped(true);
+        if (!stopped) {
+          retry = e instanceof ActivationError ? e.retryable : isRetryableActivationError(e);
+          setPairingError(e instanceof ActivationError ? e.message :
+            retry ? "Could not reach the POS website. Check the connection while this terminal retries."
+              : "Could not complete pairing on this device. Try starting a new pairing request.");
+          if (!retry) setPairingStopped(true);
         }
       } finally {
-        pending = false;
         activationPending.current = false;
+        if (mounted.current) setBusy(false);
         attempts += 1;
-        if (!stopped)
+        if (!stopped && retry)
           timer = window.setTimeout(
             () => void tick(),
             Math.min(3_000 + attempts * 1_000, 15_000),
@@ -197,7 +214,7 @@ export function TerminalActivation({
       stopped = true;
       if (timer) window.clearTimeout(timer);
     };
-  }, [pairing, online, done, showPairing, pairingStopped, onActivationStarted]);
+  }, [pairing, done, showPairing, pairingStopped, scanning, onActivationStarted, finish]);
 
   if (done) {
     return (
@@ -271,6 +288,11 @@ export function TerminalActivation({
               <CameraScanner
                 onScan={(text) => {
                   setScanning(false);
+                  if (activationPending.current) {
+                    setCode(text.trim());
+                    setError("An activation check is in progress. Choose Activate terminal when it finishes to use the scanned token.");
+                    return;
+                  }
                   void submit(text);
                 }}
                 onClose={() => setScanning(false)}
@@ -287,6 +309,7 @@ export function TerminalActivation({
             <Button
               variant="outline"
               className="w-full border-border bg-muted text-foreground hover:bg-accent"
+              disabled={busy}
               onClick={() => setScanning(true)}
             >
               <Camera className="size-4" /> Scan the activation QR code
@@ -359,33 +382,34 @@ export function TerminalActivation({
                 </p>
                 <p className="mt-2 flex items-center gap-1">
                   {pairingStopped ? (
-                    <>{error ? "Pairing preparation stopped." : "Approval expired or belongs to another device."}</>
-                  ) : online ? (
-                    <>
-                      <Loader2 className="size-3 animate-spin" /> Waiting for approval…
-                    </>
+                    <>Pairing stopped.</>
+                  ) : pairingError ? (
+                    <>Retrying the pairing check…</>
                   ) : (
-                    <>Waiting for a connection…</>
+                    <>
+                      <Loader2 className="size-3 animate-spin" />
+                      {pairingApproved ? "Approved. Finishing registration on this device…" : "Waiting for approval…"}
+                    </>
                   )}
                 </p>
+                {pairingError && <p role="alert" className="mt-2 text-destructive">{pairingError}</p>}
                 {pairingStopped && (
                   <Button
                     size="sm"
                     variant="outline"
                     className="mt-2 border-border bg-card"
-                    onClick={() => {
-                      clearPairingRequest();
-                      setPairing(null);
-                      void getPairingRequest()
-                        .then(setPairing)
-                        .catch((cause: unknown) => {
-                          setPairingStopped(true);
-                          setError(
-                            cause instanceof Error ? cause.message : "Could not prepare secure pairing.",
-                          );
-                        });
+                    onClick={async () => {
                       setPairingStopped(false);
-                      setError("");
+                      setPairingApproved(false);
+                      setPairingError("");
+                      setPairing(null);
+                      try {
+                        clearPairingRequest();
+                        setPairing(await getPairingRequest());
+                      } catch (cause) {
+                        setPairingStopped(true);
+                        setPairingError(cause instanceof ActivationError ? cause.message : "Could not prepare secure pairing. Try again.");
+                      }
                     }}
                   >
                     Start a new pairing request
@@ -397,15 +421,8 @@ export function TerminalActivation({
         )}
       </div>}
 
-      {!online && (
-        <div className="mt-3 rounded-lg border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
-          No connection to the central database right now. Activation needs one — this screen will
-          pick up automatically as soon as the link is back.
-        </div>
-      )}
-
       {error && (
-        <div className="mt-3 flex items-start gap-2 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-destructive">
+        <div role="alert" className="mt-3 flex items-start gap-2 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-destructive">
           <ShieldAlert className="mt-0.5 size-4 shrink-0" />
           <span>{error}</span>
         </div>
@@ -413,7 +430,8 @@ export function TerminalActivation({
 
       <Button
         className="mt-4 h-11 w-full bg-primary text-primary-foreground hover:bg-primary/90"
-        disabled={busy || !online}
+        disabled={busy}
+        aria-busy={busy}
         onClick={() => void submit(code)}
       >
         {busy ? <Loader2 className="size-4 animate-spin" /> : <KeyRound className="size-4" />}
