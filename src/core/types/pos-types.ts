@@ -1,4 +1,5 @@
 import { r2 as sharedR2, lineDiscountTotal as sharedLineDiscountTotal } from "../../../electron/shared/discount-math.mjs";
+import { parseAmount } from "../pricing/amount";
 
 export type Store = {
   id: string;
@@ -278,12 +279,14 @@ export const paymentsTotal = (ps: Payment[] | undefined) =>
   r2((ps ?? []).reduce((a, p) => a + (Number(p.amount) || 0), 0));
 
 /** Human-readable one-line tender summary, e.g. "Cash 20.00 + Card (HSBC) 15.00". */
-export const paymentsLabel = (ps: Payment[] | undefined) =>
+export const paymentsLabel = (
+  ps: readonly (Pick<Payment, "method" | "bankName"> & { amount: number | string | null })[] | undefined,
+) =>
   (ps ?? [])
-    .map(
-      (p) =>
-        `${methodLabel(p.method)}${p.bankName ? ` (${p.bankName})` : ""} ${p.amount.toFixed(2)}`,
-    )
+    .map((p) => {
+      const amount = parseAmount(p.amount);
+      return `${methodLabel(p.method)}${p.bankName ? ` (${p.bankName})` : ""} ${amount?.toFixed(2) ?? "—"}`;
+    })
     .join(" + ");
 
 export type TenderCheck = {

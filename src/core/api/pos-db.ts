@@ -57,6 +57,7 @@ import {
 } from "@/lib/browser-sync-outbox";
 import { withRelativeStock, type StockDelta } from "@/lib/sync-stock";
 import { safeCreatedAt, safeReceiptNo } from "@/lib/report-data-safety";
+import { parseAmount } from "@/core/pricing/amount";
 
 import { isLinkedRecordError, usageBlock, type ProductUsage } from "@/lib/product-delete";
 import type {
@@ -873,14 +874,22 @@ export const rowToSale = (r: Row): Sale => normalizeUuidFields({
   change: num(r.change_amount),
   method: (r.payment_type ?? "cash") as PaymentMethod,
   payments: (() => {
-    if (Array.isArray(r.payments)) return r.payments as Sale["payments"];
-    if (typeof r.payments !== "string" || !r.payments.trim()) return undefined;
-    try {
-      const parsed = JSON.parse(r.payments);
-      return Array.isArray(parsed) ? (parsed as Sale["payments"]) : undefined;
-    } catch {
-      return undefined;
+    let payments: unknown = r.payments;
+    if (typeof payments === "string") {
+      try {
+        payments = JSON.parse(payments);
+      } catch {
+        return undefined;
+      }
     }
+    if (!Array.isArray(payments)) return undefined;
+    // The sync feed can serialize an exact decimal as text inside the receipt JSON.
+    return payments.map((payment) => {
+      const rawAmount: unknown = payment?.amount;
+      if (typeof rawAmount !== "string") return payment;
+      const amount = parseAmount(rawAmount);
+      return amount === null ? payment : { ...payment, amount };
+    });
   })(),
   memberId: r.member_id ?? null,
   pointsEarned: num(r.points_earned),

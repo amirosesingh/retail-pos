@@ -1,3 +1,11 @@
+## 10 November — receipt report tender amounts
+
+Fix the beta receipt report crash when a synced tender carries its decimal
+amount as text. Accept both database arrays and serialized payment arrays,
+preserve tender details, and verify the displayed amounts for existing sales.
+The regression tests reproduced the crash for both storage forms, then passed
+with normalized amounts and a dash for cached amounts that cannot be read.
+
 ## 7 November — isolated authoritative cash sync bridge
 
 Continue the owner's two-way plan from beta `94ac06b8`, with the private feed
