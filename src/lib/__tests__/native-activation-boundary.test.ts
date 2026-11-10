@@ -142,6 +142,30 @@ it('re-pairing Management requires admin, connected SQL and no pending work acro
  conflicts.mockResolvedValueOnce([{}]);await expect(check(next)).rejects.toThrow('pending transactions');
 });
 
+it('holds a changed Operations registration while its scoped settings upload is pending with no pilot flag',async()=>{
+ const source=readFileSync(new URL('../../../electron/main.cjs',import.meta.url),'utf8');
+ const from=source.indexOf('async function assertSafeRegistrationChange(');
+ const to=source.indexOf('function recordRegistrationChange(',from);
+ const original={...a,tokenId:'10000000-0000-4000-8000-000000000001'};
+ const next={...original,tokenId:'10000000-0000-4000-8000-000000000002',locationId:'B'};
+ const pool={};
+ const checkPending=vi.fn<(_pool:object,_scope:object)=>Promise<void>>();
+ const lease=vi.fn(async(work:()=>Promise<void>)=>work());
+ const check=new Function('terminalStore','activationBoundary','adminSession','databaseManager','legacyRecoveryRuntime','conflictRepository','syncCoordinator','require',`${source.slice(from,to)};return assertSafeRegistrationChange;`)({lastBinding:()=>original},policy,
+  {hasLevel:()=>true},{isConnected:()=>true,pool},{reader:{pendingSummary:async()=>({pending:0,failed:0})}}, {unresolved:async()=>[]},
+  {withExclusive:lease},(name:string)=>{
+    expect(name).toBe('./db/store-settings-edit-outbox.cjs');
+    return {assertStoreSettingsEditReassignmentClear:checkPending};
+  });
+ await expect(check(original)).resolves.toBeUndefined();
+ expect(checkPending).not.toHaveBeenCalled();
+ checkPending.mockRejectedValueOnce(Object.assign(Error('private SQL details'),{code:'ESETTINGS_EDIT_PENDING'}));
+ await expect(check(next)).rejects.toMatchObject({code:'ESETTINGS_EDIT_PENDING',message:expect.stringContaining('pending store settings edit')});
+ expect(lease).toHaveBeenCalledOnce();
+ expect(checkPending).toHaveBeenCalledWith(pool,{branchId:'A',terminalId:original.tokenId});
+ await expect(check(next)).resolves.toBeUndefined();
+});
+
 it('offline unchanged legacy mirroring remains available and proof repair validates online',async()=>{
  const source=readFileSync(new URL('../../../electron/main.cjs',import.meta.url),'utf8');
  const from=source.indexOf('async function verifiedTerminalMirror(');

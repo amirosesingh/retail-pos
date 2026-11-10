@@ -21,6 +21,599 @@ failure. The bridge is owner-only and synthetic. It needs a full event
 projection, verified installation generation and a fenced sender handoff
 before an authorized relay can call it.
 
+## 7 November — connect the isolated two-way synchronization pilot
+
+The owner requested completing the sync and keeping the beta PR current as
+each part is verified. Start at beta `a5bf2ebc`. Continue with the existing
+Windows queue, HTTPS relay and web authentication. The installed route remains
+active until a fenced handoff is verified. The first connected pilot is scoped
+to a verified Windows Operations till and an ordinary cash checkout. Management
+continues using the authorized multi-branch replica. Its permissions and the
+web route stay in force.
+
+Prepare exact cash checkout wire evidence under the existing checkout transaction,
+a bounded grouped read through the existing HTTPS relay with an explicit server
+pilot gate, and a native consumer that preserves a durable scoped position.
+Verify actual accepted change groups and replay using disposable databases.
+Snapshot work must read canonical scoped data and protect the pending sale and
+open shift before any activation. Keep staging SQL outside deployed migrations
+and leave the gate disabled without the exact isolated project and terminal
+configuration. Required checks include another branch, an invalid terminal,
+replayed operations, group rollback and the existing route when the gate is off.
+No installed handoff or hosted database write is authorized by preparation.
+
+Five focused LocalDB cases passed for the opt-in cash wire evidence, including
+exact replay after restart, installation and database mismatch, and atomic
+rollback. The legacy uploader remains active. The isolated cash bridge still
+needs a verified relay generation and an exclusive legacy sender handoff before
+any installed device can dispatch this evidence.
+
+The same disposable Windows cash wire was accepted by the isolated PostgreSQL
+checkout bridge, inbox and feed. Its missing shift deferred the operation, and
+its exact replay caused one stock movement. The grouped settings relay and
+snapshot gateway passed the targeted hosted-handler and PostgreSQL scope checks.
+The server gate requires an exact configured pilot project and terminal. LocalDB
+proved atomic row and cursor storage, pending-edit refusal and no echo. A real
+PostgreSQL snapshot and committed settings group also applied on LocalDB while
+leaving the open shift and pending journal intact. A retained divergent settings
+row needs review before snapshot activation. The installed coordinator still
+uses its existing entry points. Hosted relay activation, the financial sender
+handoff and the remaining domain projections are pending.
+
+Independent review caught snapshot races, empty manifests, a Change Tracking
+cleanup race and intermediate settings publication. The native commit now
+checks the position saved before fetch and rechecks capture retention after
+the scan. Canonical settings writes publish one final row per transaction,
+including a defaults insert followed by an update. Ten focused LocalDB cases
+and the exact PostgreSQL-to-LocalDB handoff passed after these fixes.
+
+The owner asked to complete the remaining work. Continue on PR #451 with the
+required Worker check that failed to bundle the grouped relay. Use the plain
+rules definition in the Worker and verify the existing exact financial
+download and the grouped relay in focused checks. Exercise the grouped relay
+and native reader together with disposable databases where available. Bind
+the grouped checkpoint and its apply transaction to the actual SQL Server
+database identity and test replacement under the same profile. Keep
+the installed route, hosted database and pilot activation outside this batch.
+Complete the already authorized same-store PIN badge wake through the
+existing verified event path if its authorized read can be preserved.
+
+The relay now imports the plain TypeScript rule definitions explicitly.
+The previous ambiguous module name pulled the React provider and TanStack
+virtual entries into isolated Worker bundles. All 23 focused tests across
+the three affected Worker suites, grouped relay and scoped history passed.
+
+The grouped checkpoint and its apply transaction now require the actual SQL
+Server database GUID. Eleven disposable LocalDB cases passed, including a
+copied checkpoint and a transaction routed to a different database under
+the same profile. A restore that retains its GUID still needs generation
+validation before installed activation.
+
+The disposable gateway fixture passed a snapshot and a subsequent committed
+settings group from PostgreSQL through the real relay handler to LocalDB,
+with its open shift and pending journal intact. The fixture adapts the
+HTTP and Data API boundaries in process. Hosted and installed acceptance
+remain pending.
+
+Android and iOS PIN activity bells now share the verified branch wake used by
+open Approvals and Holds. A committed activity event wakes the existing
+person-authorized read, and the existing polls continue. The three focused
+receiver, approval refresh and notification persistence suites passed 43
+tests. Windows still needs a scoped native download wake for its local badge.
+Named cross-store and relay-only PIN delivery still need an authorized wake
+path.
+
+Strengthen the isolated ordinary cash receipt before connecting a sender.
+Require the independently provisioned active installation generation and
+database identity in the owner-only PostgreSQL fixture. Bind acceptance to
+the original operation and exact checkout bytes. Verify wrong and stale
+generations, payload drift and exact replay without a second inventory
+effect. Existing routes remain in service until both legacy write paths
+can be fenced and reconciled in the authoritative transaction.
+
+Five focused LocalDB outbox cases passed. Both disposable PostgreSQL cash
+fixtures passed with the bound receipt, including the exact checkout bytes
+and digest produced by Windows. Missing enrollment, a stale generation,
+the wrong database and altered bytes are refused. A wrong epoch cannot
+record a waiting receipt. Exact replay returns the stored acceptance with
+one stock movement.
+
+Remaining integration needs one verified handoff covering the journal and
+Change Tracking fallback writes, a canonical financial projection that can
+be applied as one group on the receiving till, and authorized setup for two
+distinct terminal enrollments. The current settings reader accepts settings
+groups only. Cash evidence in the same stream would stop that cursor, so
+do not enroll both publishers until the receiver supports the complete
+financial group. Reconcile the pending sale and open shift on both sides
+before allowing handback. The connected Supabase project is production-linked.
+
+## 8 November — financial handoff and Windows approval follow-up
+
+The owner requested finishing the outstanding sync work and updating PR #451.
+Continue from PR head `d841938b` on beta base `a5bf2ebc`. Implement only
+reviewable steps that preserve the existing checkout, journal, branch access
+and SQL Server connection configuration. Verify ordinary cash handoff against
+the actual legacy writers in disposable databases, and prepare a receiving
+projection with exact scoped sale, line, tender and movement facts. A scoped
+Windows approval wake must keep the current authorized local activity read and
+avoid launching a full sync on each broadcast. Keep hosted SQL, live sender
+activation and publication outside this batch pending the isolated target and
+acceptance. Run only focused checks and record remaining gaps in the PR.
+Prepare exact allowlist support for two Windows Operations test registrations
+without accepting any additional tills or changing their branch authority.
+Prepare a private cross-store wake for explicitly named staff on the existing
+approval route. The topic carries an empty hint, checks the verified person's
+identity and current rule, and reuses the authorized queue read. Keep the
+publisher disabled without an exact project opt-in. Verify recipient isolation,
+client publishing denial, and rejection after a rule or account is revoked.
+
+The isolated ordinary cash fence passed concurrent legacy-first and cash-first
+tests using the actual journal aggregate and Change Tracking batch RPCs, with
+their compatible service-role overloads. Mixed overlap fails atomically and
+unrelated writes still work. The prepared lock and reservations cover exact
+ordinary checkout identities. Direct web writes, protected financial routes,
+late corrections and sender handback still need their own verified boundary
+before applying this preparation or switching either installed route.
+
+The cash receiving fixture passed from a saved Windows checkout through the
+canonical PostgreSQL commit to a second disposable LocalDB. Sale, line, tender,
+movement and cursor committed together. Missing dependencies, pending work and
+failed cursor writes retained local state. Replay did not deduct stock or echo
+an upload. The receiving test uses a separate private cash projection; the
+installed scheduler, authorized HTTPS cash transport and a unified snapshot
+remain pending. The existing grouped settings tests passed all eleven cases.
+
+The grouped relay now accepts either one exact legacy pilot terminal or a
+configured pair in `POS_GROUPED_FEED_PILOT_TERMINAL_IDS`, with project,
+registration, binding and branch verification for each. Mixed configuration
+or a larger list is refused. The named staff wake prepares a private recipient
+topic and a service-only hint using the committed route and current rule.
+The Approvals page reuses its authorized queue refresh. The disposable
+PostgreSQL policy fixture and 33 targeted application tests passed, along with
+the three affected actual-Worker suites. The recipient badge, relay-only PIN
+subscription credential and actual hosted Realtime acceptance remain pending.
+
+The Windows PIN badge now uses the verified same-branch wake and a narrow
+Main-process catch-up. It requires an enrolled Windows Operations terminal,
+a PIN session bound to that terminal and branch, and the exact configured
+Supabase project. It reads up to 50 recent authorized approval events and
+commits only missing local rows under the existing sync lease. Fifty-three
+focused application tests and five disposable LocalDB cases passed, covering
+no upload echo, preservation of local clears, rollback, wake coalescing and
+session invalidation. Installed Windows Realtime acceptance remains pending.
+
+The owner clarified that `50C` came from speech recognition. Removed the
+incident investigation from the active sync plan.
+
+The owner confirmed that online sync must reuse the existing Database & Cloud
+Connection fields for the central URL, publishable key and POS backend address.
+The Windows worker reads the saved project from the existing credential store
+and uses the existing backend setting. Use the same fields on the two test
+tills when staging is available. Pilot enrollment remains server-side.
+
+## 8 November — two-way store settings
+
+The owner confirmed that a permitted edit for a particular store must reach
+the cloud and then other eligible tills for that store. This applies to a
+branch-authorized edit from a Management PC or the store's own Operations
+till. Continue on PR #451 at `006a5505`. Reuse the existing authorized
+settings save and pending-edit paths. Preserve Management replica read-only
+behavior, Operations registration scope, settings conflict checks and the
+existing connection fields. Connect the staged store-settings download only
+through a verified pilot path that preserves pending local edits and cannot
+conflict with legacy writers. Verify a same-store round trip, a different-store
+refusal and no duplicate write. Keep hosted configuration and installation
+outside the disposable fixture until the staging target is confirmed.
+Confirm the cloud save response matches the selected store and the next
+revision before replacing the editor's verified settings.
+Show a scoped grouped-settings pilot result in the existing Database
+connection screen when the coordinator reports it. Keep pilot status distinct
+from ordinary sync progress and leave the existing connection controls in place.
+
+The actual online rules handler routes Management and Operations edits through
+the selected store's canonical save, preserving the person, registration,
+permissions and expected revision. The editor accepts only a baseline for the
+selected branch, and confirms the returned branch and next revision before
+replacing its saved view. The disposable PostgreSQL canonical save produced one
+group per accepted edit, and the receiving LocalDB consumed both through the
+grouped relay. The fixture denied a stale retry, an unauthorized editor and a
+foreign-store Operations edit.
+
+The previous offline editor fallback tried to write an unsupported
+`base_version` column and could fall through to a generic write without a
+proven base. The editor now keeps the draft open and asks for a connection.
+Existing pending records are preserved. A new offline edit needs a durable
+original revision and the canonical upload path before enabling offline save.
+
+The grouped settings coordinator pilot now resumes its durable cursor under
+the existing lease, limits work per pass, and checks pause before commit. The
+Database connection screen can display the pilot result for the current store.
+All 119 focused application tests and 12 grouped LocalDB cases passed. The
+installed scheduler and legacy write handoff remain pending.
+
+The private two-field settings edit preparation uses the existing canonical
+save and inbox. It checks the enrolled source and original person, binds the
+operation to its expected revision and settings patch, and seals the committed
+group to that operation. Disposable PostgreSQL passed exact replay, stale
+review, authorization refusal and rollback if publication is missing or
+changes in the same transaction. There is no active caller. Native offline
+capture and authorized delivery still need integration.
+
+## 8 November — beta sync release preparation
+
+The owner asked to finish, test and release this sync beta. Continue at
+`f0137f32` on beta base `a5bf2ebc`. Use only isolated data for financial and
+settings acceptance. Connect the remaining settings path through the existing
+verified coordinator and relay where an exact implementation can be tested.
+Preserve the original revision, scoped installation and person authority,
+durable retry, and the existing store settings and connection controls.
+Complete the independent portions while the separate Supabase staging target
+and HTTPS relay are pending. Before merging and publishing this sync beta,
+verify the integrated application, both isolated tills and safe handback. The
+current production-connected Supabase project retains its database approval
+boundary.
+
+On 9 November the owner confirmed completing the pending sync work, including
+both store-settings directions, with agents and only relevant tests. Update
+PR #451 as changes are verified. Merge and publish the beta after the complete
+sync acceptance passes. Continue isolated verification while the separate
+hosted target is pending.
+
+Complete the installed settings path under one exact pilot enrollment and
+the existing Windows sync lease. Preserve the online save and reuse the
+existing fields. Verify mixed legacy pages, pending settings edits and safe
+handback. For approvals, extend the badge to current named cross-store
+recipients through the existing authorized read. Preserve polling while
+testing a private short-lived wake for a verified relay-only PIN session.
+
+The two-disposable-till settings fixture passed against the actual relay
+handler and native PostgreSQL. A lost response after cloud commit retried the
+same command, received the existing acceptance, and delivered one committed
+group to the receiving LocalDB without disturbing the open shift or pending
+journal. Four focused relay and Worker suites passed 11 tests, including
+default-off authorization and refusal of mixed or inexact uploads.
+
+The owner confirmed that no separate hosted staging project currently exists.
+Keep fixture tests isolated. Add a relation inventory check to the existing
+sync verifier so staging metadata can flag missing mappings and unclassified
+relations before cutover. This check does not qualify a table's write paths.
+The structural check still passes for the 70 existing mappings. The new
+metadata comparison passed against disposable SQL Server and PostgreSQL,
+including a missing mapped column, a new unclassified private relation and
+refusal of incomplete SQL Server catalog permissions.
+
+The first GitHub run found one legacy checkpoint call with an added null
+argument. Restore the original call for every other table and keep the
+transaction argument only on the fenced settings path.
+
+The focused checkpoint suite passed all 30 tests after that correction. The
+separate exact cash proof remains isolated. The signed financial header only
+covers before/after sale facts and currently applies to protected shifts that
+the ordinary cash bridge excludes. The cash outbox has immutable checkout
+bytes but needs a verified original author bound to those bytes. Its group
+also needs the common receiver and recovery snapshot before cash and settings
+can publish into the same scope. Do not start a second financial sender or
+attach a later uploader's identity to an older receipt.
+
+The installed Windows settings path now opts in by exact staging enrollment.
+The existing sync coordinator captures and uploads the two reviewed offline
+fields and downloads canonical settings through its existing lease. Management
+and Operations continue to use their authorized online rules save. The
+settings and sync screens show queued, accepted, retry and review status.
+An authorized settings conflict resolution workflow still needs an audited
+decision before a stale command can be released from review.
+The registration reassignment preflight now checks unresolved settings work
+for the previous store and terminal even after pilot opt-out. A limited
+legacy login can proceed when it proves no durable grouped settings fence.
+Five disposable LocalDB groups and the focused activation checks passed.
+
+The final settings checks covered the focused renderer, IPC, status, relay
+and checkpoint suites, five disposable LocalDB outbox groups, and thirteen
+grouped LocalDB cases. Mixed legacy pages retained unrelated work. Handback
+held for pending settings, missing grouped coverage, or an inexact legacy
+decimal. A safe handback preserved the pending sale, journal and open shift.
+A newer pinned same-epoch settings snapshot recovered an expired feed when
+the local journal and Change Tracking still proved the boundary. Unverified
+Change Tracking and divergent retained rows continued to require review.
+
+The approval bell now reads only current named cross-store assignments from
+the existing authorized relay and shares the private wake with Approvals.
+An enrolled PIN session without a machine bearer can obtain a short-lived
+private Realtime wake tied to the verified person and branch. Existing
+authorized polling remains in service. The disposable PostgreSQL fixture
+passed recipient isolation, rollback, committed activity delivery and client
+publish denial. The focused app suites passed. Hosted activation needs the
+exact staging project, enrolled terminals and a server-side staging signing
+key. The prepared policy is outside deployed migrations.
+
+The required GitHub checks caught a source-level guard for the automatic
+offline retry cadence. Keep the existing queued-core delay expression and
+schedule another grouped settings page explicitly when one remains.
+
+## 9 November — finish sync code while hosted acceptance is paused
+
+The owner requested completing the pending sync code with agents and focused
+tests on PR #451. Continue from `8106b17c`. Keep hosted testing, the beta merge,
+and publication pending while only the production project is available.
+Use disposable databases and existing operator fields. First complete the
+audited stale settings decision, bind financial evidence to the originating
+actor and exact committed checkout, and make the grouped receiver preserve
+settings and financial transactions under a common scoped checkpoint. Verify
+failure, retry, wrong-scope and pending-work boundaries. Review recovery and
+table coverage against both installed schemas before enabling anything.
+
+The original still-authorized settings operator can compare the exact saved
+patch with the current canonical revision and record an immutable keep-central
+decision. The original command and stale receipt survive. The decision allows
+a separate new edit or verified handback and re-pair. Missing audit storage,
+changed comparisons and revoked authorization hold the edit. Seven disposable
+LocalDB checks and 62 focused application tests passed.
+
+An originating cashier attestation binds the exact captured cash receipt bytes
+to the operation, registration, database and epoch. The service-only writer
+rechecks the active cashier and key in the apply transaction. A native
+checkout passed through the actual relay to PostgreSQL, and an altered
+signature was refused. The existing private cash overlap fixture still
+passes. The local acceptance transaction saves the receipt and acknowledges
+only its five frozen journal rows. It rolls both back on extra evidence,
+source change or write failure. The shared settings and cash receiver has one durable mixed cursor.
+It can recover a bounded snapshot of settings and archived ordinary cash
+groups after feed retirement. The receiver verifies the source till's own
+accepted operation without rewriting its business rows. Native rollback,
+restart, wrong proof and refused downgrade were tested in LocalDB.
+
+Installed mixed finance stays gated. The legacy journal and Change Tracking
+paths and the old download must all honor the new route before cutover.
+Existing overlap locks cover the two native upload RPC families, not all
+direct hosted writers or later corrections. Windows and cloud refund paths
+currently derive different stock movement IDs for the same logical return.
+Reconcile those IDs and the exact product, store and delta before replay.
+Tender corrections need a stable receipt, managed shifts need their existing
+signed graph and closure fences, and stock transfers need the complete source
+and destination effects. A drawer wake must never replay its hardware pulse.
+The bounded snapshot covers settings and ordinary cash receipt rows, not
+full stock balances, the remaining financial writers or larger paged recovery.
+
+The owner asked to continue with the installed financial sender, exclusive
+legacy handoff, refunds and remaining financial writers, and full recovery
+including stock. Continue from `938f2b3f` on PR #451. Keep hosted testing,
+the beta merge, and publication pending. Use agents and only focused local
+tests. Verify that one committed financial operation has one sender and one
+accepted result, that legacy fallback cannot repeat or swallow it, and that
+stock recovery preserves current branch and pending local evidence.
+
+The installed Windows sender is wired into the existing upload worker for
+the supported single-item ordinary cash checkout. Its original journal and
+Change Tracking entries stay pending until the exact central receipt is
+verified. Unsupported checkouts and shared shifts use their existing routes.
+The isolated mixed downloader consults archived row ownership before
+skipping the initial receipt in a legacy page. It preserves unrelated rows
+and waits for the grouped receipt before applying a later correction.
+
+The default-off refund relay checks the current operator and the existing
+approval rule against the locked sale basis. The prepared writer reconciles
+historical refund movement identities, checks exact line preconditions and
+returns the original receipt on retry. The Windows refund journal does not
+yet capture enough preconditions to send this command after local commit.
+Prepared tender and stock SQL verify exact operation and movement replays.
+The paged recovery export stages ordinary cash receipts, store settings and
+branch-owned stock under one pin. The local apply verifies product revisions
+and keeps newer stock and pending changes safe.
+
+Focused LocalDB tests passed for exact cash acknowledgement after a restart,
+legacy overlap, refund replay, and rollback when a recovery pin would
+overwrite newer stock. The local PostgreSQL and relay fixtures passed for
+signed cash, paged recovery, refund approval and replay, duplicate movement
+verification, and exact tender correction. The affected sync, receipt, and
+approval Vitest suites also passed.
+
+Before financial cutover, complete live stock delivery and verified
+handback, publish and apply refund and correction groups, and bring managed
+shifts, voids, other tenders, drawer and transfer actions, and direct
+web and admin writers into the grouped protocol. Full financial recovery
+and reconciliation of all installed data still depend on those writers.
+Keep the prepared SQL outside deployed migrations and leave hosted testing,
+the beta merge, and installer publication pending.
+
+The owner requested the remaining sync code on PR #451, starting from
+`03bba8e0`. Work in the beta PR branch. Use agents for live stock, the
+Windows refund journal and sender, and grouped financial publication.
+Verify the installed route switch and recovery against disposable databases.
+Keep hosted testing, the beta merge, and release pending.
+
+The extended pilot uses the same branch cursor for ordinary cash, live
+branch-owned stock, and typed refund and tender correction groups. An
+installed Windows till has to apply its verified extended snapshot before
+the new sender owns a checkout. Handback stops new captures and drains
+owned receipts before the owner seals the cloud branch's financial feed.
+The till verifies that sealed prefix and clears the download fence
+atomically while keeping the legacy cursor. Windows refunds retain the original signed command and exact
+line preconditions in the existing local receipt and journal. Approval
+grants are kept in memory, and a saved command that still needs approval
+stays pending when that grant is unavailable.
+
+The owner also requested repairs for failed PR checks. The local failures
+included an unintended Worker framework import, stale refund/approval
+fixtures, and the development interop allowlist. Android Gradle and iOS
+CocoaPods downloads failed independently upstream, so native CI retries
+those download steps without changing versions or publication settings.
+
+Complete grouped contracts are still required for managed shifts, voids,
+alternate tenders, drawer and transfer activity, product owner changes and
+the remaining direct legacy and web writers. Full recovery of those
+workflows and missing authoritative receipt parents remains pending.
+
+The owner requested continuing those code items on PR #451 from `ee420c73`.
+Use disposable tests. Keep hosted verification, beta merge and publication
+pending. Work on protected shift and drawer groups, product ownership
+transitions and transfer receipts, and authoritative receipt-parent recovery
+alongside the canonical checkout and administrative writer paths.
+
+Disposable PostgreSQL and SQL Server LocalDB checks passed for grouped
+protected closes and recounts, drawer request and result audits, stock
+ownership moves and deletes, refund and tender receipt recovery, and
+restart-safe paged recovery. The old stock owner receives only a retirement
+marker. A retained historical product can still anchor an archived receipt.
+Missing authoritative records or pending local edits hold the affected scope
+without advancing the cursor. Canceling an unfinished register bill continues
+to use the existing cart path.
+
+Prepared SQL keeps the business tables and connection settings in place.
+Before enabling a till, verify restorable backups, reconcile existing rows
+and totals by store, and account for pending uploads and open shifts at the
+same boundary. Older corrections without archived evidence require review.
+No hosted schema or data was changed. Grouped shift opening, alternate
+tender checkout, paired stock transfers, remaining direct writers, and
+recovery for those paths still require work.
+
+The owner authorized setup and two-till testing on 9 November in the new
+Retail POS Beta Supabase project in luckycharms Org. Use a dedicated HTTPS
+relay and separate Windows SQL Server databases, with synthetic branches,
+devices, and users. Verify each target before applying schema or enabling the
+pilot. Test restart and lost-response replay, scope isolation, existing-data
+reconciliation, pending work, recovery and handback through the existing POS
+entry points. Continue remaining code and focused tests on PR #451. Production,
+existing shared deployments, beta merge and installer publication remain
+outside this batch.
+
+Grouped shift openings now use the same scoped shift feed as closings. During
+recovery, the Windows worker merges the staged receipt and financial streams
+in commit order, so a missing opening can be restored before its dependent
+sale. An exact opening already present on a till leaves newer shift state
+in place. A divergent opening holds for review. The focused PostgreSQL and
+SQL Server fixtures passed, including a missing shift before its archived
+cash receipt and a retained product after an ownership move.
+
+Grouped transfer dispatch publishes the verified transfer, request and lines
+to eligible participants. The sender's stock and audit stay in its own
+group. The archive and native cursor preserve atomic apply. The focused
+PostgreSQL and LocalDB tests passed, including cross-branch rejection,
+pending local stock and replay after the live feed expired. Split warehouse
+stock, foreign-owned stock, and receive and verify actions still use their
+existing routes. A newer local document without exact dispatch history
+holds for review. Card and split tenders still need a compatible receipt
+contract that retains their reconciliation metadata.
+
+The owner expanded beta acceptance to a whole-POS smoke run. Verify actual
+product setup and stock, checkout, exchanges, refunds, bookings, shifts,
+approvals and transfer activity alongside the two-till sync, offline recovery
+and handback. Use synthetic records and payment sandbox or manual test
+tenders. A settings-only check is outside the requested acceptance. Record
+hosted beta and disposable fixture results separately.
+
+The isolated catalogue smoke found that a branch-scoped upsert could match
+and modify another branch's product by ID. Repair the existing-row authority
+check in the native write transaction. Verify that a denied write leaves the
+product and pending journal intact, while authorized creation and editing
+still work.
+
+The staging base installer is verified in Retail POS Beta. The hosted
+schema contains 79 public tables with RLS on each and started with no
+business data or terminal records. The isolated HTTPS relay has a verified
+staging service connection. Full grouped pilot installation and the
+whole-POS hosted acceptance are still in progress.
+
+The booking smoke found a cross-branch defect in the web booking balance
+and collection functions. Add existing booking-scope checks to those
+entry points and verify denial without a tender or balance disclosure.
+Keep the separate booking payment, checkout, and link finalization gap
+tracked independently.
+
+The actual beta Worker returned grouped-feed unavailable even with the two
+eligible tills and correct project. The generated Nitro adapter supplies the
+Cloudflare bindings through its runtime environment and delegates only the
+request to the inner entry. Carry that trusted environment into the existing
+server configuration resolver, then verify the real HTTPS Worker responds
+with scoped results and denies the wrong proof.
+
+The full staged pilot schema and exact test cohorts are installed. The
+Worker now rejects upstream redirects using manual mode so Workerd can
+reach the private recovery RPC without forwarding a service credential.
+Hosted recovery begin and stock paging pass over HTTPS. The deferred stock
+guard checks its private archive under its owner with no new public or
+service-role schema grant. The scoped transfer receipt route and the
+existing approval rule were verified in Retail POS Beta.
+
+Hosted POS smoke passed product creation and price edit, stock adjustment
+with audit, independently approved transfer dispatch, receipt and
+verification, checkout and exchange with exact replays, and booking
+collection and scope. Source and destination stock changed once. Native
+fixtures separately passed held-bill sync, signed refund capture and shift
+causal replay. Booking guard fixtures also denied relabeled native
+collection while preserving legitimate creation, deposits and receipt
+links. Full signed financial two-till acceptance, long-offline cutover and
+handback, and grouped support for remaining tenders and writers still
+require verification or implementation.
+
+The first hosted cutover attempt verified terminal claims, scoped catalogue,
+legacy cursors and wrong-proof refusal, then held an earlier stock pin. The
+initial recovery request now pins the current head. A nonzero resume still
+reuses a covering pin, and an unchanged initial retry reuses its pin. The
+focused PostgreSQL gateway fixture passed, and the exact fix was applied to
+Retail POS Beta. Automatic review blocked the hosted two-till rerun, citing
+the earlier hosted testing hold.
+
+The owner explicitly approved resuming the hosted two-till test on Retail
+POS Beta only. Use a separate synthetic cash scope and disposable SQL
+Server databases for the signed sale and receive drill. Retain the existing
+synthetic transfer and its recovery hold as a separate negative case.
+The hosted migration ledger confirms the recovery-pin repair and RLS on all
+79 public POS tables and 18 grouped-feed tables. The separate cash drill
+requires the isolated HTTPS relay to be running with a valid Beta key.
+
+The staged transfer smoke also left a completed transfer at revision 5
+beside its archived dispatch at revision 3. Preserve the current local
+record. A later recovery may advance only with an exact scoped descendant
+proof bound to the recovery pin. The current dispatch envelope carries the
+original receipt, which by itself cannot prove the newer lifecycle state.
+The focused PostgreSQL and LocalDB replay passed. It exercised the review
+hold after a tentative stock write and verified rollback of the entire
+transaction, preserving the completed transfer, stock, audit, pending
+journal and checkpoint.
+
+The follow-up beta batch makes scoped grouped download holds visible in
+Data & Sync and system health even with an empty upload queue. Native
+booking collection and cancellation check the observed booking revision
+inside the SQL Server aggregate. A stale edit rolls back and cannot fall
+back to independent cloud writes. Transfer arrival and
+verification refresh the authorized saved state, which preserves an already
+synced balance and handles destination product mapping centrally.
+
+The signed cash drill passed on Retail POS Beta with two disposable SQL
+Server databases and the native workers. The offline checkout retained
+five pending rows and the legacy cursor. After reconnect and an exact
+retry, both tills reached sequence 1 and confirmed one receipt and stock
+of 19. Both tills completed handback after the fresh test scope sealed.
+The receiving till verified the hosted archive contains the same receipt
+and stock. The demo and older transfer scope were separate.
+
+The hosted PIN refund and expired-cursor drill passed on Retail POS Beta
+with two disposable SQL Server tills and the PR #451 relay build. The relay
+denied the signed refund before approval, accepted one scoped manager PIN
+grant, and returned the original receipt on retry. Stock went from 20 to 19
+to 20. Till B recovered the archived sale, refund and stock after its saved
+sequence 1 expired at replay floor 2. Both tills completed handback after
+the synthetic epoch sealed and preserved their original legacy cursors.
+The existing PIN rule stayed active. Disposable PostgreSQL and SQL Server
+also passed the two-till settings round trip after a lost response.
+
+The opt-in signed checkout path carries ordinary single-product card and
+cash/card split payments with exact payment. Two disposable SQL Server
+tills and PostgreSQL verified tender accounts, references, amounts, exact
+replay, and one stock deduction. The existing cash format still replays.
+
+Booking handover saves the final payment, sale receipt, and booking link
+in one transaction without changing the screens. Disposable database
+checks covered stale edits, rollback, exact retry, and deferral of the
+change-tracking window until the booking group is accepted. Transfer
+arrival and verification now use canonical groups for eligible scopes.
+The fresh Beta cloud installer includes these changes and passed isolated
+install checks. The separate in-place SQL upgrade passed rehearsal on a
+populated PostgreSQL database and was applied to Retail POS Beta as migration
+`20261110031005`. Read-back confirmed the new routines, row-level security
+on all 97 POS and grouped-feed tables, and preservation of the existing eight
+sales and cash archive before the two-till drill.
+
 ## 7 November — first two-way sync implementation batch
 
 The owner approved starting the revised two-way sync plan on beta, using agents
@@ -76,8 +669,7 @@ approval updates within two seconds as proposed pilot targets. Record checkout
 and catch-up budgets before the drill. Keep a retry with `WAITING_DEPENDENCY`
 eligible to apply under its original operation ID and payload after dependencies
 arrive. Define a byte budget for whole feed groups and rehearse both cutover and
-handback with an open shift and a pending sale. The reported `50C` error remains
-unidentified pending exact reproduction evidence. This batch covers the written
+handback with an open shift and a pending sale. This batch covers the written
 rules and backup. Runtime implementation, database changes and rollout follow
 their existing approval and verification gates.
 

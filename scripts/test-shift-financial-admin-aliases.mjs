@@ -1,6 +1,11 @@
 // Owned isolated actual SQL writers. No operator URL/profile or live database.
 import assert from'node:assert/strict';import{readFile}from'node:fs/promises';import{createRequire}from'node:module';import{randomUUID,createHash}from'node:crypto';import Module from'node:module';import{dirname}from'node:path';
-const require=createRequire(import.meta.url),helperPath=require.resolve('./lib/shift-protocol-integration-fixture.cjs');let{createCloud}=require(helperPath),nativeDb;const native=process.argv.slice(2).join(' ')==='--native';assert(process.argv.length===2||native,'Only --native accepted, never connection arguments');
+const require=createRequire(import.meta.url),helperPath=require.resolve('./lib/shift-protocol-integration-fixture.cjs');let{createCloud}=require(helperPath),nativeDb;
+const flags = process.argv.slice(2).join(' ');
+const correctionFeed = flags === '--native --correction-feed';
+const tenderOnly = flags === '--native --tender-sync';
+const native = tenderOnly || correctionFeed || flags === '--native';
+assert(!flags || native, 'Only fixture flags accepted, never connection arguments');
 const read=p=>readFile(new URL('../'+p,import.meta.url),'utf8'),schema=(await read('supabase/schema.sql')).replaceAll('\r\n','\n');
 function fn(name){const start=schema.lastIndexOf('CREATE OR REPLACE FUNCTION public.'+name+'(');assert(start>=0,name);const tail=schema.slice(start),tag=tail.match(/\bAS\s+(\$[\w]*\$)/i)?.[1],first=tail.indexOf(tag),end=tail.indexOf(tag+';',first+tag.length);assert(end>first);return tail.slice(0,end+tag.length+1);}
 function table(name){const start=schema.indexOf('CREATE TABLE IF NOT EXISTS public.'+name+' (');assert(start>=0,name);return schema.slice(start,schema.indexOf('\n);',start)+3);}
@@ -37,9 +42,41 @@ try{
  const correct=(id,version,items,total,key=randomUUID(),who=admin,branch='A')=>scalar('SELECT pos_live_financial_admin_correct_sale($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8,$9)',[who,id,branch,version,JSON.stringify(items),JSON.stringify({subtotal_amount:total,discount_amount:0,tax_amount:0,total_amount:total,coupon_discount:0}),'Reviewed item correction',terminal,key]);
  const tender=(id,method,who=admin)=>scalar('SELECT pos_live_financial_admin_correct_tender($1,$2,$3,$4,$5)',[who,id,'A',method,terminal]);
  const items=id=>scalar('SELECT jsonb_agg(to_jsonb(s) ORDER BY id) FROM sale_items s WHERE sale_id=$1',[id]);
- const liveSale=async()=>{const s={...sale(),total_amount:'10'},item=randomUUID(),payment=randomUUID();await scalar('SELECT pos_live_financial_sale($1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7::jsonb,NULL,NULL)',[author,'A',terminal,JSON.stringify(s),JSON.stringify([{id:item,product_id:product,product_name:'Fixture',quantity:1,unit_price:10,unit_cost:5}]),JSON.stringify([{id:payment,source_type:'sale',amount:10,method:'cash',shift_id:shift}]),JSON.stringify([{id:randomUUID(),product_id:product,activity_type:'sale',quantity_delta:-1}])]);return s;};
+ const liveSale=async(withEmbeddedPayment=false)=>{const s={...sale(),total_amount:'10'},item=randomUUID(),payment=randomUUID();if(withEmbeddedPayment)s.payments=[{id:payment,method:'cash',amount:'10.0000'}];await scalar('SELECT pos_live_financial_sale($1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7::jsonb,NULL,NULL)',[author,'A',terminal,JSON.stringify(s),JSON.stringify([{id:item,product_id:product,product_name:'Fixture',quantity:1,unit_price:10,unit_cost:5}]),JSON.stringify([{id:payment,source_type:'sale',amount:10,method:'cash',shift_id:shift}]),JSON.stringify([{id:randomUUID(),product_id:product,activity_type:'sale',quantity_delta:-1}])]);return s;};
  const oldDevice=randomUUID();await db.query("INSERT INTO terminal_tokens(id,location_id,status) VALUES($1,'A','active')",[oldDevice]);const empty=await scalar('SELECT pos_sync_read_financial_basis($1,$2,$3,$4)',['default','A',oldDevice,shift]);await db.query('SELECT fin62_history_preparation.ensure_stream($1,$2,$3,$4,$5::jsonb)',['default','A',oldDevice,shift,JSON.stringify({serverBasisId:empty.basisId,serverBasisHash:empty.basisHash})]);
  await db.query('INSERT INTO fin62_history_preparation.protected_shifts VALUES($1,$2) ON CONFLICT DO NOTHING',[shift,'A']);
+ if (tenderOnly || correctionFeed) {
+  await db.exec(await read('scripts/preparation/pos-sync-tender-correction-v1.sql'));
+  await db.query("UPDATE app_users SET permissions='{\"can_process_sale\":true}' WHERE id=$1", [manager]);
+  await test('exact tender correction replays without changing stock or writing a second audit', async () => {
+   const receipt = await liveSale();
+   const versions = await scalar(`SELECT jsonb_agg(jsonb_build_object('id',id,'row_version',row_version) ORDER BY id)
+     FROM public.payment_transactions WHERE sale_id=$1`, [receipt.id]);
+   const version = Number((await row(receipt.id)).row_version);
+   const operation = randomUUID();
+   const apply = (key, method = 'card', expected = versions, who = admin) =>
+    scalar('SELECT pos_sync_correct_tender_v1($1,$2,$3,$4,$5,$6,$7,$8::jsonb)',
+      [key, who, receipt.id, 'A', method, terminal, version, JSON.stringify(expected)]);
+   await assert.rejects(apply(operation, 'card', versions, manager), /ADMIN_REQUIRED/);
+   assert.deepEqual(await apply(randomUUID(), 'card', []), { status: 'REVIEW_REQUIRED', code: 'STALE_TENDER' });
+   const applied = await apply(operation);
+   assert.equal(applied.status, 'APPLIED');
+   assert.equal(applied.result.sale_version, version + 1);
+   assert.deepEqual(applied.result.tenders, versions.map(tender => ({
+    ...tender, method: 'card', row_version: tender.row_version + 1,
+   })));
+   assert.deepEqual(await apply(operation), { status: 'ALREADY_APPLIED', result: applied.result });
+   assert.deepEqual(await apply(operation, 'cash'), { status: 'INTEGRITY_CONFLICT' });
+   assert.deepEqual(await apply(randomUUID()), { status: 'REVIEW_REQUIRED', code: 'STALE_TENDER' });
+   assert.equal(await stock(), 9);
+   assert.equal(await scalar(`SELECT count(*)::int FROM fin62_admin_preparation.receipts
+     WHERE action='TENDER_CORRECTION' AND sale_id=$1`, [receipt.id]), 1);
+  });
+  if (correctionFeed) {
+   const { runFinancialCorrectionFeed } = await import('./lib/pos-sync-financial-corrections-fixture.mjs');
+   await runFinancialCorrectionFeed({ db, read, fn, scalar, test, liveSale, author, admin, terminal, product });
+  }
+ } else {
  await test('admin originals and permissions stay byte-identical; partial readiness is failclosed pending final pins',async()=>{assert.deepEqual((await db.query("SELECT oid::regprocedure::text signature,pg_get_functiondef(oid) definition,proacl::text FROM pg_proc WHERE oid IN('public.pos_admin_correct_sale(uuid,text,integer,jsonb,jsonb,text,text,text,text,uuid)'::regprocedure,'public.pos_admin_correct_tender(uuid,text,text)'::regprocedure,'public.pos_admin_add_missed_bill(jsonb,text,text)'::regprocedure) ORDER BY 1")).rows,original);assert.equal((await scalar('SELECT pos_live_financial_ready()')).ready,false);});
  let main,version,changed,key;
  await test('real protected admin price correction keeps audit, exact formulas, paid values and stock',async()=>{main=await liveSale();const before=await row(main.id);version=Number(before.row_version);changed=(await items(main.id)).map(item=>({...item,unit_price:12}));key=randomUUID();await correct(main.id,version,changed,12,key);const after=await row(main.id);assert.equal(Number(after.total_amount),12);assert.equal(after.paid_amount,before.paid_amount);assert.equal(after.created_at,before.created_at);assert.equal(after.shift_id,before.shift_id);assert.equal(await stock(),9);assert.equal(await scalar('SELECT edited_by FROM record_edits WHERE id=$1',[key]),admin);assert.equal(await scalar('SELECT count(*)::int FROM fin62_admin_preparation.context'),0);});
@@ -82,4 +119,5 @@ try{
   assert.equal((await scalar('SELECT pos_live_financial_ready()')).ready,true);
  });
  console.log(`${passed} actual administrator-alias groups passed; source writers unchanged, no live activation.`);
+ }
 }catch(error){console.error(error.message,error.code??'',error.where??'',error.position??'');process.exitCode=1;}finally{await db.close();}

@@ -3,16 +3,20 @@ import { readTerminalConfig, subscribeTerminalConfig } from "@/core/activation/t
 import { APP_RESUME_EVENT } from "@/core/activation/connection-health";
 import { hasStaffSession } from "@/core/api/sync-relay";
 import { externalClientSnapshot, subscribeExternalClientReset } from "@/integrations/supabase/external-client";
+import { platformName } from "@/platform-config/platform";
 import { sameBranchId } from "./branch-id";
 import { supabaseConfig } from "./external-supabase-config";
 import { TERMINAL_EMAIL_DOMAIN } from "./internal-domains";
 import { cashierTokenSync, readCredentials, sessionTokenSync, subscribeCredentialChanges } from "./pos-credentials";
 import { createSerialChannelReplacer } from "./realtime-channel-replacer";
+import { sameRecordId } from "./sale-identity";
+import { posFetch } from "./server-origin";
 import { sessionEpoch } from "./session-epoch";
 import { hasSignedInIdentity, subscribeCentralAuthSession } from "./session-presence";
 import { verifySession } from "./session-verify-client";
 
-const listeners = new Set<{ branchId: string; wake: () => void }>();
+type WakeTable = "authorization_requests" | "activity_events";
+const listeners = new Set<{ branchId: string; table: WakeTable; wake: () => void }>();
 const sockets = createSerialChannelReplacer<RealtimeClient | null>({
   remove: async socket => {
     if (!socket) return;
@@ -74,7 +78,37 @@ async function proveWake(scope: Scope, client: ReturnType<typeof externalClientS
   });
   if (!person.ok || person.kind !== "cashier" || !person.storeId ||
       !sameBranchId(person.storeId, scope.branchId) || !current()) return null;
-  return { bearer, branchId: person.storeId, expiresAt: session.expires_at * 1000 };
+  return { bearer, branchId: person.storeId, expiresAt: session.expires_at * 1000,
+    topic: `pos-sync:default:branch:${person.storeId}`, relayOnly: false };
+}
+
+async function proveRelayWake(scope: Scope, current: () => boolean) {
+  if (!scope.sessionToken) return null;
+  const { cashierToken, sessionToken, terminalToken, deviceBindingProof } = await readCredentials();
+  if (cashierToken !== scope.cashierToken || sessionToken !== scope.sessionToken ||
+      terminalToken !== scope.terminalId || !deviceBindingProof || !current()) return null;
+  const response = await posFetch("/api/v1/pos/activity-preferences", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      action: "pin_approval_wake_grant", projectUrl: scope.url, sessionToken, terminalToken, deviceBindingProof,
+    }),
+    redirect: "error",
+    signal: AbortSignal.timeout(8_000),
+  });
+  if (response.status === 404) return "disabled" as const;
+  if (response.status === 403 && (await response.json().catch(() => null))?.enabled === false) return "disabled" as const;
+  if (!response.ok) return null;
+  const data = await response.json();
+  const now = Date.now();
+  if (!current() || data?.ok !== true || data.protocol !== "pin-approval-wake-v1" || data.projectUrl !== scope.url ||
+      typeof data.terminalId !== "string" || !sameRecordId(data.terminalId, scope.terminalId) ||
+      typeof data.branchId !== "string" || !sameBranchId(data.branchId, scope.branchId) ||
+      typeof data.topic !== "string" || !/^pos-pin-approval-wake:v1:[a-f0-9]{64}$/.test(data.topic) ||
+      typeof data.bearer !== "string" || data.bearer.length > 1024 || !/^[\w-]+\.[\w-]+\.[\w-]+$/.test(data.bearer) ||
+      !Number.isSafeInteger(data.expiresAt) || data.expiresAt <= now + 5_000 || data.expiresAt > now + 125_000) return null;
+  return { bearer: data.bearer as string, branchId: data.branchId as string, expiresAt: data.expiresAt as number,
+    topic: data.topic as string, relayOnly: true };
 }
 
 function createReceiver() {
@@ -85,6 +119,7 @@ function createReceiver() {
   let expiryTimer: ReturnType<typeof setTimeout> | undefined;
   let authClient: ReturnType<typeof externalClientSnapshot> | undefined;
   let offAuth: (() => void) | undefined;
+  let relayDisabledFor: Scope | null = null;
 
   const stopSocket = () => {
     generation += 1;
@@ -125,7 +160,11 @@ function createReceiver() {
             });
             offAuth = () => subscription.unsubscribe();
           }
-          const proof = await proveWake(scope, client, current);
+          const machineProof = await proveWake(scope, client, current).catch(() => null);
+          const relayProof = !machineProof && current() && !(relayDisabledFor && matches(relayDisabledFor, scope))
+            ? await proveRelayWake(scope, current) : null;
+          if (relayProof === "disabled") relayDisabledFor = scope;
+          const proof = machineProof ?? (relayProof === "disabled" ? null : relayProof);
           if (!proof || !current()) return null;
 
           const url = new URL("realtime/v1", `${scope.url.replace(/\/+$/, "")}/`);
@@ -135,25 +174,33 @@ function createReceiver() {
             await socket.setAuth(proof.bearer);
             const remaining = proof.expiresAt - Date.now();
             if (!current() || remaining <= 0) { await socket.disconnect(); return null; }
-            const wake = () => {
+            const wake = (table?: WakeTable) => {
               if (!current() || proof.expiresAt <= Date.now()) return;
               for (const listener of [...listeners]) {
-                if (sameBranchId(listener.branchId, proof.branchId)) listener.wake();
+                if (sameBranchId(listener.branchId, proof.branchId) && (!table || listener.table === table)) listener.wake();
               }
             };
             let joined = false;
-            socket.channel(`pos-sync:default:branch:${proof.branchId}`, { config: { private: true } })
-              .on("broadcast", { event: "sync_changed" }, message => {
-                if (message.payload?.table === "authorization_requests") wake();
-              })
-              .subscribe((status, error) => {
+            const channel = socket.channel(proof.topic, { config: { private: true } });
+            if (proof.relayOnly) {
+              channel.on("broadcast", { event: "approval_changed" }, () => wake("authorization_requests"))
+                .on("broadcast", { event: "approval_activity_changed" }, () => wake("activity_events"));
+            } else {
+              channel.on("broadcast", { event: "sync_changed" }, message => {
+                const table = message.payload?.table;
+                if (table === "authorization_requests" || table === "activity_events") wake(table);
+              });
+            }
+            channel.subscribe((status, error) => {
                 if (!current()) return;
                 const connected = status === "SUBSCRIBED";
                 if (connected && !joined) wake();
                 joined = connected;
                 if (status === "CHANNEL_ERROR" && /unauthorized|permission|forbidden/i.test(error?.message ?? "")) stopSocket();
-              });
-            if (current()) expiryTimer = setTimeout(stopSocket, Math.min(remaining, 2_147_483_647));
+            });
+            if (current()) expiryTimer = proof.relayOnly
+              ? setTimeout(() => refresh(true), Math.max(1_000, remaining - 15_000))
+              : setTimeout(stopSocket, Math.min(remaining, 2_147_483_647));
             opened = true;
             return socket;
           } catch {
@@ -186,10 +233,9 @@ function createReceiver() {
 
 let receiver: ReturnType<typeof createReceiver> | undefined;
 
-/** One receive-only hint channel for open approval views on an enrolled PIN till. */
-export function subscribePinApprovalWake(branchId: string, wake: () => void): () => void {
+function subscribePinWake(branchId: string, table: WakeTable, wake: () => void): () => void {
   if (typeof window === "undefined") return () => {};
-  const listener = { branchId, wake };
+  const listener = { branchId, table, wake };
   listeners.add(listener);
   receiver ??= createReceiver();
   receiver.refresh();
@@ -198,4 +244,22 @@ export function subscribePinApprovalWake(branchId: string, wake: () => void): ()
     if (listeners.size) receiver?.refresh();
     else { receiver?.stop(); receiver = undefined; }
   };
+}
+
+/** Receive request hints for open approval views on an enrolled PIN till. */
+export function subscribePinApprovalWake(branchId: string, wake: () => void): () => void {
+  return subscribePinWake(branchId, "authorization_requests", wake);
+}
+
+/** The mobile bell can reread its existing person-authorized activity feed. */
+export function subscribeMobilePinActivityWake(branchId: string, wake: () => void): () => void {
+  const platform = platformName();
+  if (platform !== "android" && platform !== "ios") return () => {};
+  return subscribePinWake(branchId, "activity_events", wake);
+}
+
+/** Windows waits for the authorized local mirror to commit before reading. */
+export function subscribeDesktopPinActivityWake(branchId: string, wake: () => void): () => void {
+  if (platformName() !== "electron") return () => {};
+  return subscribePinWake(branchId, "activity_events", wake);
 }

@@ -58,6 +58,20 @@ describe("actual IPC adoption verification pipeline", () => {
     expect(response.status).toBe(200);expect(await response.json()).toMatchObject({ ok: true, terminal: null, branchId: "A" });
     expect(h.registry).not.toHaveBeenCalled();
   });
+  it("adopts the exact Auth actor for settings when both verified credentials name the same person", async () => {
+    const id = "10000000-0000-4000-8000-000000000001";
+    const authId = "10000000-0000-4000-8000-000000000002";
+    h.touch.mockResolvedValue({ ok: true, session: { ...session, kind: "staff" } });
+    h.auth.mockImplementation(() => json({ id: authId, email: "cashier@example.test" }));
+    h.authority.mockImplementation(() => json([{ ...account, id }]));
+    const adopted = await post({ accessToken: "auth-proof" });
+    expect(await adopted.json()).toMatchObject({ ok: true, authorId: id, settingsPersonId: authId });
+    const missing = await post({ accessToken: undefined });
+    expect(await missing.json()).not.toHaveProperty("settingsPersonId");
+    h.auth.mockImplementation(() => json({ id: authId, email: "cashier@pos.local" }));
+    const machine = await post({ accessToken: "machine-proof" });
+    expect(await machine.json()).not.toHaveProperty("settingsPersonId");
+  });
   it.each(["revoked", "wrong-proof", "other-request-token"])("keeps %s terminal refusal denied before account access", async kind => {
     if (kind === "revoked") h.registry.mockImplementation(() => json([{ ...terminal, revoked_at: "now" }]));
     await expectFailure(await post(kind === "wrong-proof" ? { deviceBindingProof: "b".repeat(64) } : kind === "other-request-token" ? { terminalToken: "terminal-b" } : {}), 401);

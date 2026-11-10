@@ -131,9 +131,12 @@ import { commitBooking, deleteBookingRow, loadBookings } from "./bookings-db";
 import { trackTransition } from "./status-history";
 import {
   cancelBookingAuthoritative,
+  commitBookingHandover,
   collectBookingPayment,
   refundBookingPayment,
   readBookingBalance,
+  readable as bookingError,
+  type BookingHandoverReceipt,
 } from "./booking-collection";
 import {
   clearSectionOverride,
@@ -2062,6 +2065,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     async (
       input: Omit<Sale, "id" | "receiptNo" | "createdAt"> & { receiptNo?: string },
       memberSnapshot?: Member | null,
+      persistBooking?: (sale: Sale, products: Product[], member: Member | null) => Promise<BookingHandoverReceipt>,
     ) => {
       const snapshot = stateRef.current;
       const policyError = exchangePolicyError(input.lines, input.total, input.exchangeOfReceiptNo ?? null);
@@ -2165,11 +2169,20 @@ export function PosProvider({ children }: { children: ReactNode }) {
       try {
         for (let attempt = 0; ; attempt++) {
           try {
-            await db.commitSale(sale, touchedProducts, updatedMember);
+            if (persistBooking) {
+              const receipt = await persistBooking(sale, touchedProducts, updatedMember);
+              sale = receipt.sale;
+              if (receipt.replayed) {
+                requestBackgroundRefresh();
+                return sale;
+              }
+            } else {
+              await db.commitSale(sale, touchedProducts, updatedMember);
+            }
             break;
           } catch (error) {
             if (attempt >= 2 || !isDuplicateBillNumber(error)) throw error;
-            if (sale.clientTxnId && (await db.saleAttemptExists(sale.clientTxnId)) === "yes") break;
+            if (!persistBooking && sale.clientTxnId && (await db.saleAttemptExists(sale.clientTxnId)) === "yes") break;
             const nextNo = await reserveBillNumber(
               store?.receiptPrefix?.trim() || store?.code || "R",
               [...snapshot.sales.map((s) => s.receiptNo), sale.receiptNo],
@@ -2650,11 +2663,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     return updated;
   }, []);
 
-  /**
-   * Hand a booking over. The server checks the outstanding amount, takes the
-   * final tender and closes the booking in one go; only then is a sale
-   * receipt written, so a booking can never be collected unpaid.
-   */
+  /** Hand over the booking only after its final payment and sale are saved together. */
   const collectBooking = useCallback(
     async (id: string, amount: number, method: PaymentMethod, clientPaymentId?: string) => {
       const current = stateRef.current.bookings.find((b) => b.id === id);
@@ -2666,74 +2675,48 @@ export function PosProvider({ children }: { children: ReactNode }) {
       } catch (error) { toast.error(error instanceof Error ? error.message : "Select the booking's branch first."); return null; }
       const endOperation = beginAutoLockOperation();
       try {
-      const check = await readBookingBalance(id);
-      if (!check.ok) {
-        toast.error("Payment could not be verified", { description: check.error });
-        return null;
-      }
-      const outstanding = check.state.outstanding;
-      const settled = r2(Math.min(Math.max(amount, 0), outstanding));
-      if (outstanding > 0 && settled < outstanding) {
-        toast.error("A balance is still outstanding", {
-          description: `${money(outstanding)} must be collected before handover.`,
-        });
-        return null;
-      }
-
-      const server = await collectBookingPayment({
-        bookingId: id,
-        amount: settled,
-        method,
-        cashier: current.cashier,
-        clientPaymentId: clientPaymentId ?? crypto.randomUUID(),
-        complete: true,
-      });
-      if (!server.ok) {
-        toast.error("Collection refused", { description: server.error });
-        return null;
-      }
-
+      const handover: { receipt?: BookingHandoverReceipt } = {};
       const sale = await recordSale({
         storeId: current.storeId,
-        shiftId: activeShift?.id ?? current.shiftId,
+        shiftId: activeShift.id,
         lines: current.lines,
         subtotal: current.subtotal,
         discount: current.discount,
         tax: current.tax,
         total: current.total,
         paid: current.total,
-        change: r2(Math.max(0, amount - outstanding)),
+        change: 0,
         method,
         memberId: current.memberId,
         pointsEarned: 0,
         cashier: current.cashier,
         bookingRef: current.ref,
+        clientTxnId: clientPaymentId ?? crypto.randomUUID(),
+      }, undefined, async (prepared, products, member) => {
+        handover.receipt = await commitBookingHandover(id, amount, prepared, products, member);
+        return handover.receipt;
       });
-      const finalPayment: BookingPayment = {
-        id: clientPaymentId ?? crypto.randomUUID(),
-        amount: settled,
-        method,
-        at: new Date().toISOString(),
-        cashier: current.cashier,
-      };
+      const receipt = handover.receipt;
+      if (!receipt) throw new Error("The database did not confirm the booking receipt.");
+      const payment = receipt.payment;
+      const settled = payment?.amount ?? 0;
       const updated: Booking = {
         ...current,
-        paid: server.state.settledPaid,
-        payments:
-          settled && !server.state.duplicate
-            ? [...current.payments, finalPayment]
-            : current.payments,
+        paid: receipt.paid,
+        payments: payment && !current.payments.some(saved => saved.id === payment.id)
+          ? [...current.payments, payment]
+          : current.payments,
         status: "collected",
-        closedAt: new Date().toISOString(),
+        closedAt: receipt.closedAt,
         saleReceiptNo: sale.receiptNo,
         jobStatus: current.job ? "collected" : current.jobStatus,
-        jobStatusAt: current.job ? new Date().toISOString() : current.jobStatusAt,
+        jobStatusAt: current.job ? receipt.closedAt : current.jobStatusAt,
       };
-      await commitBooking(updated);
       setState((s) => ({
         ...s,
         bookings: s.bookings.map((b) => (b.id === id ? updated : b)),
       }));
+      if (receipt.replayed) return { booking: updated, sale };
       logger.log("sale_event", "Booking collected", "bookings", {
         ref: updated.ref,
         receiptNo: sale.receiptNo,
@@ -2762,6 +2745,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
         });
       }
       return { booking: updated, sale };
+      } catch (error) {
+        toast.error("Collection refused", { description: bookingError(error instanceof Error ? error.message : "Booking handover failed.") });
+        return null;
       } finally { releaseBranch(); endOperation(); }
     },
     [activeShift, recordSale],
@@ -2808,7 +2794,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       if (!authorization.ok) throw new Error(authorization.error);
       // The stable refund id makes a retry idempotent. Nothing visible changes
       // until the authoritative gateway has accepted the refund.
-      await db.refundSale(saleId, `refund:${saleId}`, undefined, sale.storeId);
+      await db.refundSale(saleId, `refund:${saleId}`, undefined, sale.storeId, grantToken);
       logger.log("sale_event", "Sale refunded", "receipts", {
         saleId,
         receiptNo: sale.receiptNo,
@@ -2872,7 +2858,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
           : stateRef.current.sales.find((x) => x.id === saleId);
       if (!sale || sale.method === method) return false;
       const payments = sale.payments?.map(payment => ({ ...payment, method }));
-      await db.updateSalePayment(saleId, method, sale.storeId, payments);
+      const groupedSaleVersion = await db.updateSalePayment(saleId, method, sale.storeId, sale.rowVersion);
       logger.log("sale_event", "Bill payment method corrected", "receipts", {
         saleId,
         receiptNo: sale.receiptNo,
@@ -2884,7 +2870,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
         ...s,
         // Historical pages are owned by the receipt screen. Do not inject an
         // old bill into this newest-first, bounded live-sales window.
-        sales: s.sales.map((x) => (x.id === saleId ? { ...x, method, payments } : x)),
+        sales: s.sales.map((x) => (x.id === saleId && (!groupedSaleVersion || (x.rowVersion ?? 0) < groupedSaleVersion)
+          ? { ...x, method, payments, rowVersion: groupedSaleVersion ?? x.rowVersion } : x)),
       }));
       return true;
     },
@@ -4232,27 +4219,17 @@ export function PosProvider({ children }: { children: ReactNode }) {
    */
   const receiveTransfer = useCallback(async (id: string): Promise<RpcResult> => {
     const s0 = stateRef.current;
+    const epoch = sessionEpoch();
+    const generation = bootstrapGeneration.current;
     const before = s0.transfers.find((x) => x.id === id);
     if (!before || before.status !== "dispatched")
       return { success: false, error: "Transfer is not dispatched." };
-    const now = new Date().toISOString();
-    const persisted = await receiveTransferInDb(id, actorRef.current);
+    const actor = actorRef.current;
+    const persisted = await receiveTransferInDb(id, actor);
     if (!persisted.success) return persisted;
-
-    setState((s) => ({
-      ...s,
-      transfers: s.transfers.map((x) =>
-        x.id === id
-          ? {
-              ...x,
-              status: "received",
-              receivedBy: actorRef.current,
-              receivedAt: now,
-              updatedAt: now,
-            }
-          : x,
-      ),
-    }));
+    if (sessionEpoch() !== epoch || bootstrapGeneration.current !== generation ||
+        !sameBranchId(stateRef.current.currentStoreId, s0.currentStoreId)) return persisted;
+    requestBackgroundRefresh();
 
     logger.log("inventory", "Stock transfer arrived", "transfers", {
       transferId: id,
@@ -4265,7 +4242,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       entityId: id,
       from: "dispatched",
       to: "received",
-      actorName: actorRef.current,
+      actorName: actor,
       storeId: before.toStoreId,
       metadata: { ref: before.ref, fromStoreId: before.fromStoreId },
     });
@@ -4274,7 +4251,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       type: "transfer_received",
       title: `Transfer ${before.ref} received`,
       message: `${destination || "The receiving branch"} confirmed that the delivery arrived.`,
-      actorName: actorRef.current,
+      actorName: actor,
       storeId: before.fromStoreId,
       entityType: "stock_transfer",
       entityId: before.id,
@@ -4285,18 +4262,19 @@ export function PosProvider({ children }: { children: ReactNode }) {
         receiving_store_id: before.toStoreId,
       },
     });
-    return { success: true };
+    return persisted;
   }, []);
 
   /**
    * Physical verification. The counted quantity — and only that — goes onto
-   * the destination shelf. The cloud call is the authority: if it refuses
-   * (already posted, permission, connection), nothing is left half-moved
-   * because the local mirror is only written once the database agrees.
+   * the destination shelf. Re-read the scoped stock after the cloud commit
+   * so the renderer shows the actual destination product and balance.
    */
   const verifyTransfer = useCallback(
     async (id: string, lines: LineQty[], reason?: string): Promise<RpcResult> => {
       const s0 = stateRef.current;
+      const epoch = sessionEpoch();
+      const generation = bootstrapGeneration.current;
       const before = s0.transfers.find((x) => x.id === id);
       if (!before) return { success: false, error: "That transfer no longer exists." };
       if (before.status !== "received")
@@ -4309,40 +4287,15 @@ export function PosProvider({ children }: { children: ReactNode }) {
       if (short && !reason?.trim())
         return { success: false, error: "A short delivery needs a reason." };
 
-      const res = await verifyTransferInDb(id, actorRef.current, counted, reason);
+      const actor = actorRef.current;
+      const res = await verifyTransferInDb(id, actor, counted, reason);
       if (!res.success) return res;
-
-      const arriving = counted.filter((l) => l.qty > 0);
-      const now = new Date().toISOString();
+      if (sessionEpoch() !== epoch || bootstrapGeneration.current !== generation ||
+          !sameBranchId(stateRef.current.currentStoreId, s0.currentStoreId)) return res;
+      // The backend can match a different destination SKU, and a live read
+      // may already have the posted balance by the time this response arrives.
+      requestBackgroundRefresh();
       const status: TransferStatus = short ? "completed_with_discrepancy" : "completed";
-
-      setState((s) => ({
-        ...s,
-        products: bumpItems(
-          s.products,
-          arriving,
-          before.toStoreId,
-          1,
-          s.settings.integrations.autoArchiveZeroStock !== false,
-        ),
-        transfers: s.transfers.map((x) =>
-          x.id === id
-            ? {
-                ...x,
-                status,
-                verifiedBy: actorRef.current,
-                verifiedAt: now,
-                postedAt: now,
-                discrepancyReason: short ? reason?.trim() : x.discrepancyReason,
-                items: x.items.map((i) => {
-                  const qty = counted.find((l) => l.productId === i.productId)?.qty ?? 0;
-                  return { ...i, receivedQty: qty, verifiedQty: qty };
-                }),
-                updatedAt: now,
-              }
-            : x,
-        ),
-      }));
 
       logger.log("inventory", "Stock transfer verified", "transfers", {
         transferId: id,
@@ -4357,11 +4310,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
         entityId: id,
         from: "received",
         to: status,
-        actorName: actorRef.current,
+        actorName: actor,
         storeId: before.toStoreId,
         metadata: { ref: before.ref, fromStoreId: before.fromStoreId, lines: counted, reason },
       });
-      return { success: true };
+      return res;
     },
     [],
   );

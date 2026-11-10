@@ -7,7 +7,7 @@ vi.mock("@tanstack/react-router", () => ({ createFileRoute: () => (options: unkn
 vi.mock("../external-supabase-config", () => ({ runtimeEnvValue: () => "fixture-service-key", supabaseConfig: () => ({ url: "https://project.fixture", key: "fixture-public" }) }));
 vi.mock("../session-guard.server", () => ({ touchSession: h.touch }));
 import { Route } from "@/routes/api/v1/pos/shift-author-enroll";
-import { verifyFinancialAuthorAttestation, readFinancialAuthorPermission, enrollShiftAuthor, verifyShiftAuthorAttestation, readShiftAuthorAuthority, requireCurrentShiftAuthorPermission, shiftAuthorTerminalEnrolled, verifyShiftClosingStart, readShiftClosingStartAuthority } from "../shift-author-verification.server";
+import { verifyCashCheckoutAttestation, verifyFinancialAuthorAttestation, readFinancialAuthorPermission, enrollShiftAuthor, verifyShiftAuthorAttestation, readShiftAuthorAuthority, requireCurrentShiftAuthorPermission, shiftAuthorTerminalEnrolled, verifyShiftClosingStart, readShiftClosingStartAuthority } from "../shift-author-verification.server";
 import { signCashierSession } from "../pos-session.server";
 
 const authorId = "00000000-0000-4000-8000-000000000001", otherId = "00000000-0000-4000-8000-000000000002";
@@ -223,5 +223,40 @@ describe("financial author foundation",()=>{
     await enrollShiftAuthor(await request());const value=await financialProof();saved!.revoked_at="2026-11-04T00:00:00Z";
     expect(await readFinancialAuthorPermission(value)).toMatchObject({allowed:false});expect(await check(value)).toEqual(value);
     saved!.revoked_at=null;person.store_id="B";expect(await readFinancialAuthorPermission(value)).toMatchObject({allowed:false});
+  });
+});
+
+describe("exact cash checkout author", () => {
+  const scope = { installationGeneration: "20000000-0000-4000-8000-000000000001",
+    databaseGuid: "20000000-0000-4000-8000-000000000002", feedEpoch: "20000000-0000-4000-8000-000000000003" };
+  async function checkoutProof() {
+    const { cashCheckoutMessage } = await import("../../../electron/security/financial-author-protocol.cjs");
+    const unsigned = { version: 1, algorithm: "Ed25519", keyId, projectOrigin: "https://project.fixture",
+      terminalId, authorId, subject: "cashier", branchId: "A", operationId: intentId, ...scope,
+      payloadHash: (await attestation()).payloadHash };
+    return { ...unsigned, signature: await sign(cashCheckoutMessage(unsigned)) };
+  }
+  const check = (value: unknown, extra = {}) => verifyCashCheckoutAttestation({ attestation: value, checkoutJson: payloadJson,
+    terminal: descriptor, branchId: "A", operationId: intentId, ...scope, ...extra });
+  it("binds exact bytes, original author, and all installation and feed identities", async () => {
+    await enrollShiftAuthor(await request());
+    const value = await checkoutProof();
+    expect(await check(value)).toEqual(value);
+    for (const extra of [{ checkoutJson: payloadJson + " " }, { installationGeneration: shiftId }, { databaseGuid: shiftId },
+      { feedEpoch: shiftId }, { branchId: "B" }, { operationId: shiftId }, { terminal: { ...descriptor, id: otherId } }])
+      await expect(check(value, extra)).rejects.toMatchObject({ code: "ECASH_CHECKOUT_AUTHOR_INVALID" });
+    await expect(check({ ...value, signature: (await attestation()).signature })).rejects.toMatchObject({ code: "ECASH_CHECKOUT_AUTHOR_INVALID" });
+  });
+  it("refuses newly forbidden authors even when the cryptographic proof is unchanged", async () => {
+    await enrollShiftAuthor(await request());
+    const value = await checkoutProof();
+    person.permissions.can_process_sale = false;
+    await expect(check(value)).rejects.toMatchObject({ code: "ECASH_CHECKOUT_AUTHOR_FORBIDDEN" });
+    person.permissions.can_process_sale = true;
+    person.store_id = "B";
+    await expect(check(value)).rejects.toMatchObject({ code: "ECASH_CHECKOUT_AUTHOR_FORBIDDEN" });
+    person.store_id = "A";
+    saved!.revoked_at = "2026-11-04T00:00:00Z";
+    await expect(check(value)).rejects.toMatchObject({ code: "ECASH_CHECKOUT_AUTHOR_REVOKED" });
   });
 });

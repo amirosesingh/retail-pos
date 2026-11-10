@@ -13,11 +13,13 @@ function grant(level, subject, permissions = {}, source = "manual", branchId = n
   session = { level, subject: String(subject ?? ""), permissions: { ...permissions }, source, branchId: branchId ? String(branchId) : null, verifiedAt: Date.now(), expiresAt: Date.now() + MAX_IDLE_MS,authorId:null,canonicalSubject:null };
   return status();
 }
-function bindVerifiedAuthor(authorId,canonicalSubject){
+function bindVerifiedAuthor(authorId,canonicalSubject,settingsPersonId){
   const current=active();if(!current||current.source!=="pos")return;
   const id=typeof authorId==="string"&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(authorId)?authorId.toLowerCase():null;
   const subject=typeof canonicalSubject==="string"&&canonicalSubject===canonicalSubject.trim()&&canonicalSubject.length>0&&canonicalSubject.length<=200&&!/[\u0000-\u001f\u007f]/u.test(canonicalSubject)?canonicalSubject:null;
-  current.authorId=id;current.canonicalSubject=subject;sessionEpoch++;
+  current.authorId=id;current.canonicalSubject=subject;
+  current.settingsPersonId=typeof settingsPersonId==="string"&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(settingsPersonId)?settingsPersonId:null;
+  sessionEpoch++;
 }
 function epoch(){return sessionEpoch;}
 function active() {
@@ -67,6 +69,7 @@ function identity() {
     branchId: current.branchId,
     authorId:current.authorId,
     canonicalSubject:current.canonicalSubject,
+    ...(current.settingsPersonId ? { settingsPersonId: current.settingsPersonId } : {}),
   } : null;
 }
 

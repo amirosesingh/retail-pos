@@ -29,8 +29,8 @@ function validatePending(authority,value,kind){
  if(!crypto.verify(null,Buffer.from(message),crypto.createPublicKey({key:Buffer.from(key.publicKey,'base64url'),format:'der',type:'spki'}),Buffer.from(signature,'base64url')))fail('ESYNC_SHIFT_AUTHOR_INVALID');return proof;
 }
 class ShiftFinancialRuntime{
- constructor({manager,cloud,terminal,authority,vault,operationsRepository,registry,checkpoints,legacy}){
-  Object.assign(this,{manager,cloud,terminal,authority,vault,operationsRepository,registry,checkpoints,legacy});this.contexts=new Map();this.pending=new Map();
+ constructor({manager,cloud,terminal,authority,vault,operationsRepository,registry,checkpoints,legacy,uploadCashCheckout=null,uploadGroupedRefund=null}){
+  Object.assign(this,{manager,cloud,terminal,authority,vault,operationsRepository,registry,checkpoints,legacy,uploadCashCheckout,uploadGroupedRefund});this.contexts=new Map();this.pending=new Map();
  }
  isManagement(){const terminal=this.terminal()??{};return terminal.deviceUse==='management'||terminal.deviceType==='management';}
  async footprint(branchId,terminalId){
@@ -85,7 +85,7 @@ class ShiftFinancialRuntime{
   const sql=this.manager.sql(),tx=new sql.Transaction(this.manager.pool);await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);try{await operations.schema(tx);await bases.schema(tx);cap.source.assertSource();await tx.commit();}catch(error){await tx.rollback().catch(()=>{});throw error;}
   const reader=guarded(new ChangeReader(this.manager,this.registry,{financialBases:bases,financialOperations:operations,financialCoverageSource:cap.source}));
   const journal=guarded(new ShiftSyncJournal(this.operationsRepository,{authorRequired:true,financialBases:bases,financialOperations:operations}));
-  const push=guarded(new PushWorker({reader,cloud:this.cloud,checkpoints:this.checkpoints,registry:this.registry,validateAuthor:proof=>this.authority.validatePending(proof),validateClosingStart:proof=>this.authority.validatePendingClosingStart(proof),validateFinancialBasis:proof=>validatePending(this.authority,proof,'basis'),validateFinancialOperation:proof=>validatePending(this.authority,proof,'operation'),financialHistoryEnabled:true}));
+  const push=guarded(new PushWorker({reader,cloud:this.cloud,checkpoints:this.checkpoints,registry:this.registry,validateAuthor:proof=>this.authority.validatePending(proof),validateClosingStart:proof=>this.authority.validatePendingClosingStart(proof),validateFinancialBasis:proof=>validatePending(this.authority,proof,'basis'),validateFinancialOperation:proof=>validatePending(this.authority,proof,'operation'),financialHistoryEnabled:true,uploadCashCheckout:this.uploadCashCheckout,uploadGroupedRefund:this.uploadGroupedRefund}));
   context={source:cap.source,scope:cap.scope,operations,bases,reader,journal,push,assertCurrent,knowledge:new Map(),observer:new ShiftFinancialObservations(operations,{financialBases:bases}),draftProvider:createShiftFinancialDraftProvider(bases,{enabled:true}),aggregate:guarded(new AggregateRepository(this.manager,this.operationsRepository,{financialOperations:operations})),receipts:guarded(new ReceiptRepository(this.manager,this.cloud,{financialOperations:operations}))};
   this.contexts.set(key,context);return{...context,online:cap.online,preparedCapability:cap};
  }

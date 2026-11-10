@@ -23,11 +23,11 @@ describe("administrator corrections and shared table controls", () => {
     const receipts = read("src/routes/receipts.tsx");
     const db = read("src/core/api/pos-db.ts");
     expect(store).toContain("loadedSale?.id === saleId");
-    expect(store).toContain("db.updateSalePayment(saleId, method, sale.storeId, payments)");
+    expect(store).toContain("db.updateSalePayment(saleId, method, sale.storeId, sale.rowVersion)");
     expect(receipts).toContain(
       "changeSalePayment(selected.id, payMethod, reason, selected)",
     );
-    expect(db).toContain("saleId, storeId: branchId, method");
+    expect(db).toContain("saleId, storeId: branchId, method, saleVersion");
     expect(receipts).toContain("rows.map((row) => (row.id === selected.id");
   });
 

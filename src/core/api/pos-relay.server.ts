@@ -399,10 +399,17 @@ export async function serviceRest(
   const keys = candidates.length ? candidates : [serviceKey()];
 
   let last: Response | undefined;
+  const rejectRedirect = init.redirect === "error";
   for (const key of keys) {
     const headers = { ...serviceHeaders(key), ...extra };
     if (init.prefer) headers["Prefer"] = init.prefer;
-    const res = await fetch(url, { ...init, headers });
+    // Workers support manual redirects. Preserve the caller's fail-closed
+    // behavior without forwarding a service credential to another URL.
+    const res = await fetch(url, { ...init, headers, ...(rejectRedirect ? { redirect: "manual" } : {}) });
+    if (rejectRedirect && (res.type === "opaqueredirect" || [301, 302, 303, 307, 308].includes(res.status))) {
+      await res.body?.cancel().catch(() => undefined);
+      throw new TypeError("The configured POS database redirected the request.");
+    }
     if (!(await isInvalidKey(res))) return res;
     rejectedKeys.add(key);
     last = res;
@@ -623,23 +630,6 @@ export async function runRelayRpc(
       error: "You can only do this for your own branch.",
     };
 
-  // Attribution comes from the verified caller, never from editable renderer
-  // text. Quantities and reasons remain the user's requested operation.
-  const actor = String(scope.actorName ?? scope.staffUserId ?? scope.label ?? "Staff").slice(
-    0,
-    160,
-  );
-  const actorField =
-    op.fn === "stock_transfer_approve"
-      ? "p_approved_by"
-      : op.fn === "stock_transfer_dispatch"
-        ? "p_dispatched_by"
-        : op.fn === "stock_transfer_receive"
-          ? "p_received_by"
-          : op.fn === "stock_transfer_verify"
-            ? "p_verified_by"
-            : null;
-  const args = actorField ? { ...op.args, [actorField]: actor } : op.args;
   if(op.fn==='sale_refund'&&scope.appUserId){
     const {financialLiveAdapterReady}=await import('@/lib/financial-live-readiness.server');
     if(await financialLiveAdapterReady()){
@@ -650,16 +640,21 @@ export async function runRelayRpc(
   // Only the account resolved from the verified session may become the native
   // database actor. Renderer attribution/actor parameters are never forwarded.
   const nativeApproval = op.fn === "stock_transfer_approve";
-  if ((nativeApproval || nativeDispatch) && (!scope.staffUserId || scope.stale || scope.kind === "terminal"))
+  const receiptStage = op.fn === "stock_transfer_receive" ? "receive" : op.fn === "stock_transfer_verify" ? "verify" : null;
+  const nativeTransfer = nativeApproval || nativeDispatch || receiptStage !== null;
+  if (nativeTransfer && (!scope.staffUserId || scope.stale || scope.kind === "terminal"))
     return { ok: false, code: "PERMISSION_DENIED", error: "An active staff session is required to act on transfers." };
-  const rpcArgs = nativeApproval || nativeDispatch ? {
+  const rpcArgs = nativeTransfer ? {
     p_transfer_id: id,
     p_staff_user_id: scope.staffUserId,
     p_bound_store_id: canCrossBranches(scope) ? null : scope.storeId,
     p_lines: op.args.p_lines ?? null,
     ...(nativeDispatch ? { p_strict_lines: op.fn === "stock_transfer_dispatch_atomic" } : {}),
-  } : args;
-  const res = await serviceRest(`rpc/${nativeApproval ? "stock_transfer_approve_for_staff" : nativeDispatch ? "stock_transfer_dispatch_atomic_for_staff" : op.fn}`, {
+    ...(receiptStage ? { p_stage: receiptStage, p_reason: receiptStage === "verify" ? op.args.p_reason ?? null : null } : {}),
+  } : op.args;
+  const rpcName = nativeApproval ? "stock_transfer_approve_for_staff" : nativeDispatch
+    ? "stock_transfer_dispatch_atomic_for_staff" : receiptStage ? "stock_transfer_receive_for_staff" : op.fn;
+  const res = await serviceRest(`rpc/${rpcName}`, {
     method: "POST",
     body: JSON.stringify(rpcArgs),
   });
@@ -849,7 +844,7 @@ export async function verifyRelayCaller(input: {
   terminalToken?: string;
   accessToken?: string;
   deviceBindingProof?: string;
-}, options: { strictAvailability?: boolean } = {}): Promise<RelayCaller> {
+}, options: { strictAvailability?: boolean; requireBoundCashier?: boolean; rejectUnboundCashier?: boolean } = {}): Promise<RelayCaller> {
   let identity: RelayCaller | null = null;
   let verifiedRawSession: string | null = null;
   let terminalStore: string | null = null;
@@ -926,6 +921,9 @@ export async function verifyRelayCaller(input: {
         (stable.storeId || null) === (identity.storeId || null) && stableAppUserId(stable.id)) identity.appUserId = stableAppUserId(stable.id);
   }
 
+  if ((options.requireBoundCashier || (options.rejectUnboundCashier && identity?.kind === "cashier")) &&
+      (!verifiedRawSession || identity?.kind !== "cashier" || !storedTerminalId || !storedBranch))
+    throw new RelayAuthenticationError("A PIN session bound to this terminal is required.");
   if(storedTerminalId && input.terminalToken && recordId(storedTerminalId)!==recordId(input.terminalToken))
     throw new RelayAuthenticationError("The request does not match the signed-in terminal.");
   const requestedTerminal=storedTerminalId || input.terminalToken;

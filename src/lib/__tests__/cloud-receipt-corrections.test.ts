@@ -48,8 +48,8 @@ describe("authoritative cloud receipt corrections", () => {
           primaryKey: key === "id",
         })),
       };
-      await client.applyLocalBatch({}, table, { rows: [{ row_data: row }], tombstones: [] });
-      const merge = queries[0];
+      await client.applyLocalBatch({ request: () => new Request() }, table, { rows: [{ row_data: row }], tombstones: [] });
+      const merge = queries.at(-1);
       expect(merge).toContain(
         "source.[corrected_at] IS NOT NULL AND source.[row_version]>target.[row_version]",
       );
@@ -89,7 +89,7 @@ describe("authoritative cloud receipt corrections", () => {
       corrected_at: null,
     };
     await client.applyLocalBatch(
-      {},
+      { request: () => new Request() },
       {
         cloudTable: "sales",
         sqlServerTable: "sales",
@@ -102,6 +102,6 @@ describe("authoritative cloud receipt corrections", () => {
       },
       { rows: [{ row_data: row }], tombstones: [] },
     );
-    expect(queries[0]).not.toContain("target.[total_amount]=");
+    expect(queries.at(-1)).not.toContain("target.[total_amount]=");
   });
 });

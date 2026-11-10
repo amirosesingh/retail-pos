@@ -206,8 +206,13 @@ class LocalDataLifecycle {
     // Change Tracking baseline; never advance the checkpoint first.
     const version=await this.connectionManager.pool.request().query("SELECT CHANGE_TRACKING_CURRENT_VERSION() current_version;");
     const currentVersion=Number(version.recordset?.[0]?.current_version??0);
-    const refreshed=await refreshTable({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName:table.cloudTable,diagnosticOrigin:"gap_recovery",onActivity});
-    await this.checkpoints.save(branchId,table.sqlServerTable,"push",{change_tracking_version:currentVersion});
+    const baseline = { change_tracking_version: currentVersion };
+    const settings = table.cloudTable === "pos_store_settings";
+    const progress = settings ? { save: (transaction, { cursor }) => {
+      if (!cursor) return this.checkpoints.save(branchId, table.sqlServerTable, "push", baseline, transaction);
+    } } : null;
+    const refreshed=await refreshTable({registry:this.registry,reader:this.reader,cloud:this.cloud,connectionManager:this.connectionManager,branchId,historyDays,tableName:table.cloudTable,diagnosticOrigin:"gap_recovery",onActivity,progress});
+    if (!settings) await this.checkpoints.save(branchId, table.sqlServerTable, "push", baseline);
     return{table:table.sqlServerTable,completed:refreshed.completed,currentVersion};
   }
   async pushWithGapRecovery(branchId,historyDays,onActivity=()=>{}){

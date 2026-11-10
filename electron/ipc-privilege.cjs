@@ -17,6 +17,7 @@
  * channel cannot become world-callable by being forgotten.
  */
 const adminSession = require("./admin-session.cjs");
+const { requiresBookingCollection } = require("./db/write-policy.cjs");
 
 const OPEN = "open";
 const SUPERVISOR = "supervisor";
@@ -78,6 +79,8 @@ const CHANNEL_LEVELS = {
   "business:query": OPEN,
   "business:management-report": OPEN, // explicit report permissions below; handler additionally verifies sealed management registration and complete replica
   "business:save-authorization-rule": OPEN,
+  "business:queue-store-settings-edit": OPEN,
+  "business:review-store-settings-edit": OPEN,
   "business:shift-expected": OPEN,
   "business:shift-close-start": OPEN,
   "business:shift-close-count": OPEN,
@@ -129,6 +132,7 @@ const CHANNEL_LEVELS = {
   "staff:verify-pin": OPEN,
   "staff:verify-approval-pin": OPEN, // signed-in operator may present an approver credential
   "approval:authorize-offline-discount": OPEN, // fixed Main-owned audit; current sale authority below
+  "approval:refresh-activity": OPEN, // fixed scoped catch-up; current POS authority and trusted frame checked in Main
   "approval:own-token-vault": OPEN, // POS main-frame only; fixed encrypted token keys, PIN-locked envelope before sign-in
   "approval:enroll-verifier": OPEN, // permission checked in allowed() and again by the backend
   "staff:sign-in": OPEN,
@@ -507,6 +511,8 @@ function allowed(channel, args = []) {
     }
     return false;
   }
+  if (channel === "business:write-batch" && requiresBookingCollection("general", args[1]) &&
+      (!adminSession.hasPosAuthority() || !adminSession.hasPermission("can_collect_booking"))) return false;
   if (channel === "business:commit-aggregate") {
     const kind = String(args[0]?.kind ?? "");
     const permissions = {
@@ -528,6 +534,8 @@ function allowed(channel, args = []) {
       held_order: ["can_hold_cart", "can_process_sale", "can_reopen_held_order", "can_discard_held_order", "can_void_cart"],
     }[kind];
     if (!adminSession.hasPosAuthority()) return false;
+    if (requiresBookingCollection(kind, args[0]?.operations) &&
+        !adminSession.hasPermission("can_collect_booking")) return false;
     if (!permissions) {
       if (!adminSession.hasLevel(SUPERVISOR)) return false;
     } else if (!permissions.some((permission) => adminSession.hasPermission(permission))) {
@@ -618,6 +626,12 @@ function allowed(channel, args = []) {
       return true;
     }
     return false;
+  }
+  if (channel === "business:queue-store-settings-edit" || channel === "business:review-store-settings-edit") {
+    if (!adminSession.hasPosAuthority() ||
+        !(adminSession.hasLevel(ADMIN) || adminSession.hasPermission("can_access_pos_settings"))) return false;
+    adminSession.touch();
+    return true;
   }
   const level = levelFor(channel, args);
   if (level === OPEN) return true;

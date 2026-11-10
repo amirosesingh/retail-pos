@@ -38,6 +38,7 @@ const { PushWorker } = require("./sync/push-worker.cjs");
 const { PullWorker } = require("./sync/pull-worker.cjs");
 const { ConflictRepository } = require("./sync/conflicts.cjs");
 const { SyncCoordinator } = require("./sync/coordinator.cjs");
+const { installedGroupedSettingsPilot } = require("./sync/grouped-store-settings.cjs");
 const { CloudClient } = require("./sync/cloud-client.cjs");
 const { HeldStatusRecovery } = require("./sync/held-status-recovery.cjs");
 const closeWriteBarrier = new (require("./sync/write-barrier.cjs").WriteBarrier)();
@@ -89,7 +90,9 @@ const changeReader = new ChangeReader(databaseManager, syncRegistry, {reviewedSh
   verify:(tx,token,graph,branch)=>legacyShiftRecovery.verifyCoverage(tx,token,graph,branch),
 }});
 const conflictRepository = new ConflictRepository(databaseManager);
-const legacyPushWorker = new PushWorker({ reader:changeReader,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,validateAuthor:proof=>shiftAuthority.validatePending(proof),validateClosingStart:proof=>shiftAuthority.validatePendingClosingStart(proof) });
+const uploadCashCheckout = wire => cashCheckoutRuntime.upload(wire);
+const uploadGroupedRefund = wire => groupedRefundRuntime.upload(wire);
+const legacyPushWorker = new PushWorker({ reader:changeReader,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,validateAuthor:proof=>shiftAuthority.validatePending(proof),validateClosingStart:proof=>shiftAuthority.validatePendingClosingStart(proof),uploadCashCheckout,uploadGroupedRefund });
 let legacyShiftRecovery;
 const legacyRecoveryRuntime = require("./sync/legacy-shift-recovery-runtime.cjs").createLegacyShiftRecoveryRuntime({
   reader:changeReader,recovery:()=>legacyShiftRecovery,enabled:supportsLegacyShiftRecovery,activeBranch:localBranchId,
@@ -100,11 +103,51 @@ const legacyRecoveryRuntime = require("./sync/legacy-shift-recovery-runtime.cjs"
     return ()=>{if(databaseManager.pool!==pool||identity()!==expected)throw Object.assign(new Error("The configured sync source changed. Saved work remains pending."),{code:"SYNC_BRANCH_FORBIDDEN",table:"shifts"});};
   },
 });
+const groupedSettingsPilot = installedGroupedSettingsPilot(process.env);
+const pullWorker = new PullWorker({ connectionManager:databaseManager,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,reader:changeReader,conflicts:conflictRepository,publish:publishBusinessChange });
 const syncCoordinator = new SyncCoordinator({
   pushWorker: {reader:legacyRecoveryRuntime.reader,run:options=>legacyRecoveryRuntime.run(options,value=>shiftFinancialRuntime.runPush(value))},
-  pullWorker: new PullWorker({ connectionManager:databaseManager,cloud:syncCloud,checkpoints:syncCheckpoints,registry:syncRegistry,reader:changeReader,conflicts:conflictRepository,publish:publishBusinessChange }),
+  pullWorker,
   recoverHeldStatuses:recoverLocalHeldStatuses,
+  groupedSettingsPilot: groupedSettingsPilot?.enrollment,
+  groupedSettingsPilotMode: groupedSettingsPilot?.mode,
+  uploadStoreSettingsEdit: () => storeSettingsEdits.upload(),
   publish: (state) => { for (const win of BrowserWindow.getAllWindows()) win.webContents.send("sync:state",legacyRecoveryRuntime.status(state)); },
+});
+const { cashSenderEnrollment, createCashCheckoutRuntime } = require("./sync/cash-checkout-runtime.cjs");
+const configuredCashSender = cashSenderEnrollment(process.env);
+const cashCheckoutRuntime = createCashCheckoutRuntime({
+  configured: configuredCashSender, cloud: syncCloud, connectionManager: databaseManager,
+  registry: syncRegistry, coordinator: syncCoordinator, authority: shiftAuthority,
+  handoff: proof => pullWorker.cashSenderHandoff(proof, groupedSettingsPilot),
+  ready: () => {
+    const state = databaseService.snapshot();
+    return process.platform === "win32" && app.hasSingleInstanceLock() && !safeMode &&
+      (!quitting || closeWriteBarrier.sealed) && !jobManager.running && !localDataPreparePromise &&
+      state.enabled && state.configured && state.connected && state.tradingReady;
+  },
+});
+const storeSettingsEdits = require("./sync/store-settings-edit-runtime.cjs").createStoreSettingsEditRuntime({
+  pilot: groupedSettingsPilot,
+  installationGeneration: process.env.POS_GROUPED_SETTINGS_EDIT_INSTALLATION_GENERATION,
+  coordinator: syncCoordinator, cloud: syncCloud, connectionManager: databaseManager, registry: syncRegistry,
+  ready: () => {
+    const state = databaseService.snapshot();
+    return process.platform === "win32" && app.hasSingleInstanceLock() && !safeMode && !quitting &&
+      !closeWriteBarrier.sealed && !jobManager.running && !localDataPreparePromise &&
+      state.enabled && state.configured && state.connected && state.tradingReady;
+  },
+  actor: () => {
+    const current = adminSession.identity();
+    if (current?.source !== "pos" || !current.settingsPersonId ||
+        !(adminSession.hasLevel("admin") || adminSession.hasPermission("can_access_pos_settings"))) return null;
+    return { personId: current.settingsPersonId, branchId: recordId(current.branchId), epoch: adminSession.epoch() };
+  },
+});
+const refreshPinApprovalActivity = require("./sync/approval-activity-wake.cjs").createApprovalActivityWake({
+  coordinator: syncCoordinator, manager: databaseManager, registry: syncRegistry, reader: changeReader,
+  publish: publishBusinessChange, runApply: work => closeWriteBarrier.run(work),
+  capture: capturePinApprovalActivity,
 });
 // Main-private ownership evidence for retaining, not executing, an interrupted
 // history-only v1 job. No renderer flag or job timestamp can supply this proof.
@@ -132,10 +175,14 @@ const shiftSyncJournal = new ShiftSyncJournal(operationsRepository,{authorRequir
 const shiftFinancialDraftProvider = null;
 const aggregateRepository = new AggregateRepository(databaseManager, operationsRepository);
 const receiptRepository = new ReceiptRepository(databaseManager, syncCloud);
+const groupedRefundRuntime = require("./sync/grouped-refund-runtime.cjs").createGroupedRefundRuntime({
+  configured: configuredCashSender, cash: cashCheckoutRuntime, cloud: syncCloud, coordinator: syncCoordinator, connectionManager: databaseManager,
+  authority: shiftAuthority, legacyRepository: () => receiptRepository,
+});
 const shiftFinancialRuntime = new (require('./db/shift-financial-runtime.cjs').ShiftFinancialRuntime)({
   manager:databaseManager,cloud:syncCloud,terminal:()=>terminalStore.read(),authority:shiftAuthority,
   vault:require('./security/financial-capability-vault.cjs').createFinancialCapabilityVault({safeStorage,directory:()=>app.getPath('userData')}),
-  operationsRepository,registry:syncRegistry,checkpoints:syncCheckpoints,
+  operationsRepository,registry:syncRegistry,checkpoints:syncCheckpoints,uploadCashCheckout,uploadGroupedRefund,
   legacy:{aggregate:aggregateRepository,receipts:receiptRepository,journal:shiftSyncJournal,push:legacyPushWorker},
 });
 const authorizationRulesRepository = new AuthorizationRulesRepository(databaseManager);
@@ -312,12 +359,41 @@ function localBranchId(){
 }
 function rememberVerifiedBranch(){ /* Account scope never assigns a physical terminal. */ }
 function authorizedLocalBranch(){return activationBoundary.authorizedBranch(terminalStore.read(),adminSession.branchId());}
+function capturePinApprovalActivity() {
+  const ready = () => {
+    const state = databaseService.snapshot();
+    return process.platform === "win32" && app.hasSingleInstanceLock() && adminSession.hasPosAuthority() &&
+      !safeMode && !quitting && !closeWriteBarrier.sealed && !syncCoordinator.paused &&
+      state.enabled && state.configured && state.connected && state.tradingReady;
+  };
+  try {
+    if (!ready()) return null;
+    const source = syncCloud.requestContext(true);
+    const registration = activationBoundary.binding(source.terminal);
+    const branchId = registration?.branchId;
+    const projectUrl = source.project?.projectOrigin?.replace(/\/+$/, "");
+    const { sessionToken, accessToken } = source.personProof;
+    const deviceBindingProof = source.terminal.deviceBindingProof;
+    if (registration?.platform !== "pc" || registration.mode !== "operations" || !branchId ||
+        recordId(adminSession.branchId()) !== branchId || recordId(source.project?.branchId) !== branchId ||
+        !source.pool || !source.profile || !/^https:\/\//i.test(source.base) || !/^https:\/\//i.test(projectUrl ?? "") ||
+        !sessionToken || accessToken || !/^[a-f0-9]{64}$/i.test(deviceBindingProof ?? "")) return null;
+    const epoch = adminSession.epoch();
+    return { key: `${epoch}:${source.fingerprint}`, pool: source.pool, branchId, projectUrl, sessionToken,
+      backendUrl: source.base, terminalToken: registration.id, deviceBindingProof,
+      assertCurrent() {
+        if (!ready() || adminSession.epoch() !== epoch) throw new Error("The signed-in approval reader changed.");
+        syncCloud.assertRequestContext(source, true);
+      },
+    };
+  } catch { return null; }
+}
 async function assertSafeRegistrationChange(config){
-  const previous=terminalStore.lastBinding();
-  if(!previous||activationBoundary.sameBinding(activationBoundary.binding(previous),activationBoundary.binding(config)))return;
+  const previous=activationBoundary.binding(terminalStore.lastBinding());
+  if(!previous||activationBoundary.sameBinding(previous,activationBoundary.binding(config)))return;
   if(!adminSession.hasLevel("admin")&&!adminSession.recoveryActive())throw new Error("An administrator must authorize terminal reassignment.");
   if(!databaseManager.isConnected())throw new Error("Connect the local database before changing terminal registration so pending transactions can be checked.");
-  const branch=activationBoundary.binding(previous)?.branchId;
+  const branch=previous.branchId;
   // Management can have pending work from several branches in the same SQL
   // store. Inspect all unacknowledged work rather than treating null as a
   // branch or preventing a legitimate replacement activation forever.
@@ -326,6 +402,18 @@ async function assertSafeRegistrationChange(config){
   };
   const conflicts=await conflictRepository.unresolved();
   if(summary.pending||summary.failed||conflicts?.length)throw new Error("Synchronize or review pending transactions before changing terminal registration.");
+  if(branch && previous.id) await syncCoordinator.withExclusive(async () => {
+    const pool = databaseManager.pool;
+    const { assertStoreSettingsEditReassignmentClear } = require("./db/store-settings-edit-outbox.cjs");
+    try {
+      await assertStoreSettingsEditReassignmentClear(pool, { branchId: branch, terminalId: previous.id });
+      if (pool !== databaseManager.pool) throw new Error("The local database changed.");
+    } catch (error) {
+      if (error?.code === "ESETTINGS_EDIT_PENDING")
+        throw Object.assign(new Error("Synchronize or review the pending store settings edit before changing terminal registration."), { code: error.code });
+      throw new Error("Store settings upload status could not be verified. Retry with the same local database connected.");
+    }
+  });
 }
 function recordRegistrationChange(previous,config){
   const before=activationBoundary.binding(previous),after=activationBoundary.binding(config);
@@ -583,7 +671,11 @@ async function runAutomaticSync() {
       .then(differences=>{const unresolved=differences.filter(row=>!MEMBERSHIP_TABLES.has(row.table)&&!(row.table==='change_history'&&localDataLifecycle.historyPending(localBranchId())));if(unresolved.length)throw reconciliationError(unresolved);})
       .catch((error) => recordFault("sync.verify-counts", error));
   }
-  scheduleAutomaticSync(automaticSyncQueued ? 250 : historyCadence.nextDelay(),{historyContinuation:true});
+  if (result.groupedSettingsPilot?.status === "MORE") {
+    scheduleAutomaticSync(250);
+  } else {
+    scheduleAutomaticSync(automaticSyncQueued ? 250 : historyCadence.nextDelay(), { historyContinuation: true });
+  }
 }
 function stopAutomaticSync() {
   automaticSyncScheduler.stop();
@@ -2097,10 +2189,12 @@ function registerIpc() {
       recordRegistrationChange(previous,terminal);
     }
     adminSession.grant(result.level,result.subject,result.permissions,"pos",result.branchId);
-    adminSession.bindVerifiedAuthor(result.authorId,result.subject);
+    adminSession.bindVerifiedAuthor(result.authorId,result.subject,result.settingsPersonId);
     syncCloud.setAuthorizationProof(proof);
     enrollCurrentShiftAuthor(proof);
-    rememberVerifiedBranch(result.branchId);return{ok:true,level:result.level};
+    rememberVerifiedBranch(result.branchId);
+    if (result.settingsPersonId && groupedSettingsPilot?.mode === "run") scheduleAutomaticSync(250);
+    return {ok:true,level:result.level};
     }catch(error){
       if(error?.name==="BadArg")throw error;
       if(error?.code==="EBACKEND_UPGRADE_REQUIRED")return failed("EBACKEND_UPGRADE_REQUIRED",426);
@@ -2233,6 +2327,39 @@ function registerIpc() {
       return { ok: false, code: error?.code ?? "ESQLSERVER_WRITE", error: error?.message ?? "The authorization rule could not be saved locally." };
     }
   }));
+  ipcMain.handle("business:queue-store-settings-edit", (event, value) => guard.guarded(async () => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame)
+      return { ok: false, code: "ESETTINGS_EDIT_UNAVAILABLE", error: "Offline save is unavailable on this till." };
+    const input = guard.plainObject(value, { name: "settings edit" });
+    const keys = ["operationId", "branchId", "expectedVersion", "patch"];
+    if (Object.keys(input).length !== keys.length || keys.some(key => !Object.hasOwn(input, key)))
+      throw new guard.BadArg("The settings edit has unsupported fields.");
+    const patch = guard.plainObject(input.patch, { name: "settings changes" });
+    if (Object.keys(patch).some(key => !["block_shift_close_on_hold", "max_drawer_cash_limit"].includes(key)))
+      throw new guard.BadArg("This setting requires the central connection.");
+    const result = await storeSettingsEdits.capture({
+      operationId: guard.uuid(input.operationId, { name: "operation id" }),
+      branchId: guard.text(input.branchId, { name: "store", max: 128 }),
+      expectedVersion: input.expectedVersion,
+      patch,
+    });
+    if (result.ok) scheduleAutomaticSync(250);
+    return result;
+  }));
+  ipcMain.handle("business:review-store-settings-edit", (event, value) => guard.guarded(async () => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame)
+      return { ok: false, code: "ESETTINGS_REVIEW_UNAVAILABLE", error: "Store settings review is unavailable on this till." };
+    const input = guard.plainObject(value, { name: "settings review" });
+    const branchId = guard.text(input.branchId, { name: "store", max: 128 });
+    if (input.action === "preview" && Object.keys(input).length === 2) return storeSettingsEdits.review({ branchId });
+    if (input.action !== "keep-central" || Object.keys(input).length !== 4 ||
+        typeof input.decisionSha256 !== "string" || !/^[a-f0-9]{64}$/.test(input.decisionSha256))
+      throw new guard.BadArg("Confirm the verified store settings comparison.");
+    const result = await storeSettingsEdits.review({ branchId,
+      operationId: guard.uuid(input.operationId, { name: "operation id" }), decisionSha256: input.decisionSha256 });
+    if (result.ok) scheduleAutomaticSync(250);
+    return result;
+  }));
   ipcMain.handle("business:commit-aggregate", (_e, value) => guard.guarded(async() => {
     const aggregate=guard.aggregate(value);
     try {
@@ -2265,7 +2392,9 @@ function registerIpc() {
       const requestCapture=typeof shiftFinancialRuntime!=='undefined'&&operations.some(operation=>['sales','shifts'].includes(operation.table))?captureLocalOperationIdentity():null;
       const repository=typeof shiftFinancialRuntime==='undefined'?aggregateRepository:await shiftFinancialRuntime.forAggregate(trustedAggregate);
       requestCapture?.assertCurrent();
-      const result=await repository.commit(aggregate.kind,trustedAggregate);
+      const result = typeof cashCheckoutRuntime !== "undefined" && repository === aggregateRepository
+        ? await cashCheckoutRuntime.commit(repository, aggregate.kind, trustedAggregate, requestCapture?.assertCurrent)
+        : await repository.commit(aggregate.kind, trustedAggregate);
       publishBusinessChange({kind:aggregate.kind,branchId,operationId:result.operationId??null,tables:[...new Set(operations.map(op=>op.table))],changes:operations.flatMap(op=>(op.rows??[op.match??{}]).map(row=>({table:op.table,entityId:op.table==="product_barcodes"?row.product_id:row.id??null})))});
       scheduleLocalChanges(operations);
       return result;
@@ -2360,7 +2489,14 @@ function registerIpc() {
     const requestCapture=typeof shiftFinancialRuntime!=='undefined'?captureLocalOperationIdentity():null;
     const financial=typeof shiftFinancialRuntime==='undefined'?{repository:receiptRepository,author:null}:await shiftFinancialRuntime.forRefund(branch,saleId,requestCapture);
     requestCapture?.assertCurrent();
-    const result=await financial.repository.refund({saleId,refundId:guard.text(input.refundId,{name:"refund id",max:128}),branchId:guard.text(branch,{name:"branch",max:128}),reason:input.reason?guard.text(input.reason,{name:"reason",max:400}):null},financial.terminalId?{author:financial.author,terminalId:financial.terminalId,expectedShiftId:financial.expectedShiftId}:null);
+    const args = { saleId, refundId: guard.text(input.refundId,{name:"refund id",max:128}),
+      branchId: guard.text(branch,{name:"branch",max:128}), reason: input.reason ? guard.text(input.reason,{name:"reason",max:400}) : null };
+    const context = financial.terminalId ? { author: financial.author, terminalId: financial.terminalId,
+      expectedShiftId: financial.expectedShiftId } : null;
+    const grant = input.grantToken ? guard.text(input.grantToken,{name:"refund authorization",max:4096}) : null;
+    const result = typeof groupedRefundRuntime === "undefined"
+      ? await financial.repository.refund(args, context)
+      : await groupedRefundRuntime.commit(financial.repository, args, context, requestCapture, grant);
     publishBusinessChange({kind:"refund",branchId:branch});scheduleAutomaticSync(250);return result;
   }));
   ipcMain.handle("jobs:get-active", async () => databaseManager.isConnected() ? jobRepository.active() : null);
@@ -2410,6 +2546,11 @@ function registerIpc() {
   ipcMain.handle("sync:auto", async () => {
     if(!databaseManager.isConnected()||!localBranchId())return{ok:false,skipped:true};
     return syncCoordinator.runNow({branchId:localBranchId(),batchSize:500,includeActivity:false});
+  });
+  ipcMain.handle("approval:refresh-activity", event => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame)
+      return { ok: false, skipped: true };
+    return refreshPinApprovalActivity();
   });
   ipcMain.handle("sync:pause", () => syncCoordinator.pause());
   ipcMain.handle("sync:resume", () => syncCoordinator.resume());

@@ -9,6 +9,8 @@ const {
   settingsScopePredicate,
 } = require("../branch-scope.cjs");
 const { toRendererRow, normalizeSettingsScope } = require("../../sync/row-codec.cjs");
+const { assertLegacyApply: assertSettingsHandoff } = require("../../sync/grouped-settings-handoff.cjs");
+const { cashCheckoutForContext } = require("../../sync/cash-checkout-route.cjs");
 
 const MAX_BATCH_ROWS = 2000;
 const MAX_ENCODED_BYTES = 6 * 1024 * 1024;
@@ -408,6 +410,7 @@ class OperationsRepository {
   }
   async applyOperation(transaction, op, scope = {}) {
     scope = normalizeUuidFields(scope);
+    if (op.table === "pos_store_settings") await assertSettingsHandoff(transaction, scope.branchId);
     if (op.table === "products" && scope.enforcePermissions === true && writeRows(op).some(row => Object.hasOwn(row, "catalogue_store_ids")))
       throw Object.assign(new Error("Catalogue transfer provenance is centrally managed."), { code: "PERMISSION_DENIED" });
     const financialStock = isFinancialStockUpdate(op, scope);
@@ -485,6 +488,13 @@ class OperationsRepository {
     const table = this.tables.get(op.table);
     const primary = table.columns.filter((column) => column.primaryKey).map((column) => column.sqlServerColumn);
     const hasRowVersion = table.columns.some((column) => column.sqlServerColumn === "row_version");
+    const cashContext = scope.cashCheckoutContext;
+    if (cashContext && !cashCheckoutForContext(cashContext)) throw new Error("Invalid cash checkout tracking context.");
+    const taggedQuery = (request, statement, declaration = "") => {
+      if (!cashContext) return request.query(declaration + statement);
+      request.input("cashCheckoutContext", this.connectionManager.sql().VarBinary(128), cashContext);
+      return request.query(`${declaration}WITH CHANGE_TRACKING_CONTEXT (@cashCheckoutContext) ${statement}`);
+    };
     if (op.kind === "insert" || op.kind === "upsert") {
       let affected = 0;
       for (const row of op.rows ?? (op.values ? [op.values] : [])) {
@@ -513,7 +523,17 @@ class OperationsRepository {
         const matched = op.kind === "upsert" && update && !["immutable_reversal", "movement_delta"].includes(table.conflictRule) ? `WHEN MATCHED THEN UPDATE SET ${update}` : "";
         const ownership = this.branchPredicate(table, "candidate");
         const scopedSource = ownership ? `(SELECT * FROM (SELECT ${source}) candidate WHERE ${ownership})` : `(SELECT ${source})`;
-        const result = await request.query(`MERGE dbo.[${op.table}] WITH (HOLDLOCK) AS target USING ${scopedSource} AS source ON ${on} ${matched} WHEN NOT MATCHED THEN INSERT (${insertColumns}) VALUES (${insertValues});`);
+        const savedProductScope = op.table === "products" && op.kind === "upsert" ? this.branchPredicate(table, "saved") : null;
+        // The candidate's owner only authorizes an insert. Check the saved
+        // owner before a matching upsert and before the aggregate can journal it.
+        const productScopeGuard = savedProductScope ? `IF EXISTS (
+          SELECT 1 FROM dbo.products saved WITH (UPDLOCK,HOLDLOCK)
+          WHERE ${primary.map(column => `saved.[${column}]=@v${columns.indexOf(column)}`).join(" AND ")}
+            AND NOT (${savedProductScope})
+        ) BEGIN SELECT 1 AS product_scope_denied; RETURN; END;` : "";
+        const result = await taggedQuery(request, `MERGE dbo.[${op.table}] WITH (HOLDLOCK) AS target USING ${scopedSource} AS source ON ${on} ${matched} WHEN NOT MATCHED THEN INSERT (${insertColumns}) VALUES (${insertValues});`, productScopeGuard);
+        if (result.recordset?.[0]?.product_scope_denied === 1)
+          throw Object.assign(new Error("The saved product belongs to another branch."), { code: "SYNC_BRANCH_FORBIDDEN", table: "products" });
         affected += result.rowsAffected?.reduce((sum, count) => sum + count, 0) ?? 0;
       }
       return affected;
@@ -525,7 +545,7 @@ class OperationsRepository {
     request.input("terminal", String(terminalId ?? ""));
     match.forEach(([, value], index) => { if (value !== null) request.input(`m${index}`, valueForSql(value)); });
     const where = match.map(([column, value], index) => value === null ? `[${column}] IS NULL` : `[${column}]=@m${index}`).join(" AND ");
-    let query;
+    let query, declaration;
     const ownership = financialStock ? rendererReadBranchPredicate(this.registry, table, "source") : this.branchPredicate(table, "source");
     const restrictedWhere = `${where}${ownership ? ` AND (${ownership})` : ""}`;
     if (op.kind === "delete" && table.deleteRule === "tombstone" && table.columns.some((column) => column.sqlServerColumn === "deleted_at")) {
@@ -541,10 +561,16 @@ class OperationsRepository {
       if (!values.length && !hasRowVersion) return 0;
       values.forEach(([column, value], index) => request.input(`v${index}`, columnValueForSql(table, column, value)));
       const setters = values.map(([column], index) => `[${column}]=@v${index}`);
+      if (cashContext && financialStock) {
+        const { stockLifecycleDeclaration, stockLifecycleAssignments } = require("../../sync/grouped-live-stock.cjs");
+        const total = values.findIndex(([column]) => column === "stock_quantity");
+        setters.push(stockLifecycleAssignments("source", `@v${total}`));
+        declaration = stockLifecycleDeclaration;
+      }
       if (hasRowVersion) setters.push("[row_version]=COALESCE([row_version],0)+1");
       query = `UPDATE source SET ${setters.join(",")} FROM dbo.[${op.table}] source WHERE ${restrictedWhere};`;
     }
-    const result = await request.query(query);
+    const result = await taggedQuery(request, query, declaration);
     return result.rowsAffected?.reduce((sum, count) => sum + count, 0) ?? 0;
   }
   branchPredicate(table, alias = "source", seen = new Set()) {

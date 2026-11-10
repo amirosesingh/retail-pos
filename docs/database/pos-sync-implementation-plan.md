@@ -37,7 +37,6 @@ Use this as the implementation brief. A read-only query verified `POS_Local` on 
 1. Trace checkout, tenders, refunds, voids, stock movement, cash movements, shift open and close, and all cloud admin/import paths. Locate the current sync worker, retry state, ID mappings, date filters, and the actual code or log entries for history expiration and shift expiration. Check whether multiple tills share a SQL Server instance or a cash drawer.
 2. Start with the 70 registered tables reported to exist on both sides. Inventory the remaining relations in both schemas and classify them explicitly. Include local support, cloud-only, managed, private, and staging relations, along with dependencies and permitted writers. Compare the completed registry with the installed schemas before the rollout.
 3. Confirm the operating rules in section 7 with the store. Record the actual drawer ownership, store time zone and business-day cutoff, offline actions and limits, and cross-store approval rights. Use the proposed defaults to build and test the pilot.
-4. Capture the reported `50C` error as a separate investigation. Obtain the exact text or screenshot, the action and till that triggered it, the time and connectivity state, and the related app or relay log and correlation ID. Classify it only after tracing the failing step. Add a regression test once it can be reproduced.
 
 ### Table types and sync rules
 
@@ -245,6 +244,8 @@ Set recovery point and recovery time targets for both databases. Keep an encrypt
 Use two Windows tills or equivalent staging instances with separate device enrollments and independent SQL Server 2025 Express databases. Suggested database names are `POS_Sync_Staging_A` and `POS_Sync_Staging_B`. Point both at a staging HTTPS relay and a dedicated Supabase staging project with production-equivalent schema, policies, and Realtime configuration. Seed synthetic or approved masked data. Use payment sandbox credentials and representative staff, PIN-only, and named approver accounts. Keep environment identifiers and test credentials in the staging configuration. The production-connected Supabase project can serve as a read-only baseline.
 
 Confirm and record the actual staging project and database identifiers before running the drill. Use two tills in one store for receipt and shift tests. Put the named approver in a second test store or assign one of the tills to that store for the cross-store approval test.
+
+Enter the staging connection on each test till through the existing Settings → Database & Cloud Connection fields. Use **Central database URL**, **API key (publishable)**, and **POS backend / website address**. The sync worker uses those saved settings and the existing local SQL Server profile. Pilot enrollment stays a server-side control. Keep the same connection fields when rolling out to other tills.
 
 ### Delivery phases
 

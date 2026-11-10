@@ -1,6 +1,13 @@
+import { createHash } from "node:crypto";
 import { canCrossBranches } from "@/core/api/relay-policy.server";
+import { runtimeEnvValue, supabaseConfig } from "./external-supabase-config";
+import { DEFAULT_POS_RULES } from "./pos-rules.ts";
+import { applyGroupedSettingsEdit, groupedSettingsEditSchema } from "./grouped-settings-edit.server";
+import { applyGroupedCashUpload, groupedCashUploadSchema } from "./grouped-cash-upload.server";
+import { applyGroupedRefundUpload, groupedRefundUploadSchema } from "./grouped-refund-upload.server";
 import { canRetrieveHistoricalReceipt } from "./receipt-history-permission";
 import { alignVerifiedScopeIds } from "./verified-scope-ids";
+import { extendedPayments, extendedTenderFields } from "../../electron/sync/sale-tender-evidence.mjs";
 /**
  * Shared handler for the POS sync relay.
  *
@@ -75,6 +82,556 @@ export type ScopedHistoryRead = z.infer<typeof scopedHistoryReadSchema>;
 const scopedHistoryRequestKeys = new Set([
   "sqlServerScopedHistory", "sessionToken", "cashierToken", "terminalToken", "accessToken", "deviceClaimProof", "deviceBindingProof",
 ]);
+const groupedFeedRequestKeys = new Set([
+  "sqlServerGroupedFeed", "sessionToken", "cashierToken", "terminalToken", "accessToken", "deviceBindingProof",
+]);
+const groupedSnapshotRequestKeys = new Set([
+  "sqlServerGroupedSnapshot", "sessionToken", "cashierToken", "terminalToken", "accessToken", "deviceBindingProof",
+]);
+const groupedSettingsEditRequestKeys = new Set([
+  "sqlServerSettingsEdit", "terminalToken", "accessToken", "deviceBindingProof",
+]);
+const groupedCashUploadRequestKeys = new Set(["sqlServerCashCheckout", "terminalToken", "deviceBindingProof"]);
+const groupedRefundUploadRequestKeys = new Set([
+  "sqlServerRefund", "terminalToken", "deviceBindingProof", "sessionToken", "cashierToken", "accessToken",
+]);
+const groupedRecoveryRequestKeys = new Set(["sqlServerGroupedRecovery", "terminalToken", "deviceBindingProof"]);
+const groupedCashCoverageRequestKeys = new Set(["sqlServerCashLegacyCoverage", "terminalToken", "deviceBindingProof"]);
+const feedSequence = z.string().regex(/^(0|[1-9][0-9]{0,18})$/)
+  .refine(value => value.length < 19 || value <= "9223372036854775807");
+const groupedSnapshotReadSchema = z.object({
+  organizationId: z.literal("default"), branchId: z.string().min(1).max(128),
+  projection: z.literal("settings_cash_v1").optional(),
+}).strict();
+type GroupedSnapshotRead = z.infer<typeof groupedSnapshotReadSchema>;
+const groupedFeedReadSchema = groupedSnapshotReadSchema.extend({
+  epoch: z.string().uuid(),
+  afterSeq: feedSequence, upperSeq: feedSequence.nullable().optional(), limit: z.number().int().min(1).max(100),
+  extended: z.literal(true).optional(),
+}).strict().refine(read => !read.extended || Boolean(read.projection));
+type GroupedFeedRead = z.infer<typeof groupedFeedReadSchema>;
+const groupedSettingsChangeSchema = z.object({
+  table_name: z.literal("pos_store_settings"), entity_id: z.string().min(1).max(1024),
+  row_data: z.record(z.string(), z.unknown()), row_version: feedSequence, tombstone: z.literal(false),
+}).strict();
+const groupedSettingsGroupSchema = z.object({
+  seq: feedSequence, operation_id: z.string().uuid().nullable(), changes: z.tuple([groupedSettingsChangeSchema]),
+}).strict();
+const groupedCashTables = ["sales", "sale_items", "payment_transactions", "item_activity_logs"] as const;
+const groupedShiftTables = ["shifts", "shift_cash_counts", "shift_reconciliations", "shift_close_events",
+  "shift_notifications", "shift_variance_alerts"] as const;
+const groupedRecoveryScope = z.object({ organizationId: z.literal("default"), branchId: z.string().min(1).max(128),
+  extended: z.literal(true).optional(),
+}).strict();
+const groupedRecoveryReadSchema = z.discriminatedUnion("action", [
+  groupedRecoveryScope.extend({ action: z.literal("begin"), atLeastSeq: feedSequence.optional() }),
+  groupedRecoveryScope.extend({ action: z.literal("page"), pinId: z.string().uuid(), kind: z.enum(["cash", "financial", "stock"]),
+    after: feedSequence, limit: z.number().int().min(1).max(100) }),
+]).refine(read => read.action !== "page" || read.kind !== "financial" || read.extended);
+type GroupedRecoveryRead = z.infer<typeof groupedRecoveryReadSchema>;
+const cashLegacyKeySchema = z.object({ table_name: z.enum(groupedCashTables),
+  id: z.string().uuid().refine(id => id === id.toLowerCase()) }).strict();
+const extendedLegacyKeySchema = cashLegacyKeySchema.extend({
+  table_name: z.enum([...groupedCashTables, "stock_delta_applied", ...groupedShiftTables, "drawer_events",
+    "stock_transfers", "stock_transfer_items"]),
+  version: z.string().regex(/^[1-9]\d{0,9}$/).nullable(),
+});
+const legacyKey = (entry: { table_name: string; id: string; version?: string | null }) =>
+  JSON.stringify([entry.table_name, entry.id, entry.version ?? null]);
+const cashLegacyCoverageSchema = groupedRecoveryScope.extend({
+  epoch: z.string().uuid().nullable(),
+  entries: z.array(z.union([cashLegacyKeySchema, extendedLegacyKeySchema])).min(1).max(100)
+    .refine(entries => new Set(entries.map(legacyKey)).size === entries.length),
+}).refine(read => (read.extended || read.epoch !== null) &&
+  read.entries.every(entry => Boolean(read.extended) === ("version" in entry)));
+type CashLegacyCoverage = z.infer<typeof cashLegacyCoverageSchema>;
+const groupedCashChangeSchema = groupedSettingsChangeSchema.extend({ table_name: z.enum(groupedCashTables) });
+const groupedStockRowSchema = z.object({
+  product_id: z.string().uuid(), branch_balance: z.number().int().min(-2147483648).max(2147483647),
+  row_version: z.number().int().min(1).max(2147483647),
+}).strict();
+const groupedRetiredStockRowSchema = groupedStockRowSchema.omit({ branch_balance: true }).extend({ retired: z.literal(true) });
+const groupedCashGroupSchema = z.object({
+  seq: feedSequence, operation_id: z.string().uuid(), changes: z.array(groupedCashChangeSchema).min(4).max(19),
+  acceptance: z.object({
+    terminal_id: z.string().uuid(), installation_generation: z.string().uuid(), database_guid: z.string().uuid(),
+    checkout_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  }).strict(),
+}).strict();
+const groupedCashStockGroupSchema = groupedCashGroupSchema.extend({ stock: groupedStockRowSchema });
+const groupedStockChangeSchema = groupedSettingsChangeSchema.extend({
+  table_name: z.literal("products_stock"), row_data: groupedStockRowSchema,
+});
+const groupedStockGroupSchema = z.object({
+  seq: feedSequence, operation_id: z.null(), changes: z.tuple([z.discriminatedUnion("tombstone", [
+    groupedStockChangeSchema,
+    groupedStockChangeSchema.extend({ tombstone: z.literal(true), row_data: groupedRetiredStockRowSchema.omit({ retired: true }) }),
+  ])]),
+}).strict();
+const groupedFinancialChangeSchema = groupedSettingsChangeSchema.extend({
+  table_name: z.enum(["sales", "sale_items", "payment_transactions", "stock_delta_applied", "products", "shifts",
+    "drawer_events", "stock_transfers"]),
+});
+const groupedFinancialGroupSchema = z.object({
+  seq: feedSequence, operation_id: z.string().uuid(),
+  financial: z.union([
+    z.object({ kind: z.enum(["refund_v1", "tender_v1"]), sale_id: z.string().uuid() }).strict(),
+    z.object({ kind: z.literal("shift_v1"), shift_id: z.string().uuid() }).strict(),
+    z.object({ kind: z.literal("drawer_v1"), event_id: z.string().uuid() }).strict(),
+    z.object({ kind: z.literal("transfer_v1"), transfer_id: z.string().uuid() }).strict(),
+  ]),
+  changes: z.array(groupedFinancialChangeSchema).min(1).max(301),
+  receipt_graph: z.object({ payload_json: z.string().max(196608), payload_sha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict().optional(),
+}).strict();
+const groupedFeedPageSchema = z.object({
+  status: z.literal("OK"), scope_id: z.string(), epoch: z.string().uuid(), next_seq: feedSequence,
+  upper_seq: feedSequence, has_more: z.boolean(),
+  sealed_seq: feedSequence.optional(),
+  groups: z.array(z.union([groupedSettingsGroupSchema, groupedCashGroupSchema, groupedCashStockGroupSchema,
+    groupedStockGroupSchema, groupedFinancialGroupSchema])).max(100),
+}).strict();
+const groupedFeedRecoverySchema = z.object({
+  status: z.literal("SNAPSHOT_REQUIRED"), reason: z.enum(["EPOCH_MISMATCH", "REPLAY_EXPIRED", "FEED_GAP", "GROUP_TOO_LARGE"]),
+}).strict();
+const groupedFeedStatusSchema = z.object({ status: z.enum(["SCOPE_UNAVAILABLE", "INVALID_CURSOR"]) }).strict();
+const groupedSettingsEntitySchema = z.object({ store_id: z.string() }).strict();
+const offsetTimestamp = z.string().regex(/(?:Z|[+-]\d{2}:\d{2})$/).refine(value => Number.isFinite(Date.parse(value)));
+const groupedSnapshotSchema = z.object({
+  status: z.literal("OK"), scope_id: z.string(), epoch: z.string().uuid(), seq: feedSequence,
+  pin_id: z.string().uuid(), expires_at: offsetTimestamp, manifest_json: z.string(),
+  manifest_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict();
+const groupedSnapshotManifestSchema = z.object({
+  scope_id: z.string(), epoch: z.string().uuid(), seq: feedSequence,
+  changes: z.tuple([groupedSettingsChangeSchema]),
+}).strict();
+const groupedMixedManifestSchema = groupedSnapshotManifestSchema.extend({ cash_groups: z.array(groupedCashGroupSchema).max(100) });
+const groupedRecoveryManifestSchema = groupedSnapshotManifestSchema.extend({ cash_count: feedSequence, stock_count: feedSequence,
+  financial_count: feedSequence.optional(),
+  cash_installation: z.object({ generation: z.string().uuid(), database_guid: z.string().uuid() }).strict().nullable().optional(),
+  sealed_seq: feedSequence.optional(),
+});
+const groupedRecoveryPageEnvelope = groupedSnapshotSchema.omit({ manifest_json: true, manifest_sha256: true })
+  .extend({ payload_json: z.string(), payload_sha256: z.string().regex(/^[a-f0-9]{64}$/) });
+const groupedRecoveryPageBase = groupedSnapshotManifestSchema.omit({ changes: true }).extend({
+  pin_id: z.string().uuid(), after: feedSequence, next: feedSequence, total: feedSequence,
+});
+const groupedRecoveryPageSchema = z.discriminatedUnion("kind", [
+  groupedRecoveryPageBase.extend({ kind: z.literal("cash"), rows: z.array(groupedCashGroupSchema).max(100) }),
+  groupedRecoveryPageBase.extend({ kind: z.literal("financial"), rows: z.array(groupedFinancialGroupSchema).max(100) }),
+  groupedRecoveryPageBase.extend({ kind: z.literal("stock"), rows: z.array(z.union([groupedStockRowSchema, groupedRetiredStockRowSchema])).max(100) }),
+]);
+const groupedRecoveryHoldSchema = z.object({
+  status: z.literal("SNAPSHOT_REQUIRED"),
+  reason: z.enum(["EPOCH_MISMATCH", "REPLAY_EXPIRED", "FEED_GAP", "GROUP_TOO_LARGE", "PIN_UNAVAILABLE"]),
+}).strict();
+const cashLegacyCoverageReplySchema = z.object({
+  status: z.literal("OK"), scope_id: z.string(), epoch: z.string().uuid(),
+  entries: z.array(cashLegacyKeySchema.extend({ seq: feedSequence })).max(100),
+}).strict();
+const extendedLegacyCoverageReplySchema = cashLegacyCoverageReplySchema.extend({
+  entries: z.array(extendedLegacyKeySchema.extend({ seq: feedSequence, owned: z.boolean() })).max(100),
+});
+const groupedSettingsRules = Object.entries(DEFAULT_POS_RULES);
+const groupedSettingsColumnCount = groupedSettingsRules.length + 6;
+const exactSettingDecimal = /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/;
+
+function groupedFeedPilotTerminals(): string[] | undefined {
+  const project = runtimeEnvValue("POS_GROUPED_FEED_PILOT_PROJECT_URL");
+  const single = runtimeEnvValue("POS_GROUPED_FEED_PILOT_TERMINAL_ID");
+  const pair = runtimeEnvValue("POS_GROUPED_FEED_PILOT_TERMINAL_IDS");
+  if (!project || (single && pair)) return undefined;
+  const terminals = pair ? pair.split(",").map(id => id.trim()) : [single ?? ""];
+  const uuid = z.string().uuid();
+  if (terminals.length !== (pair ? 2 : 1) || terminals.some(id => id !== id.toLowerCase() || !uuid.safeParse(id).success) ||
+      new Set(terminals).size !== terminals.length) return undefined;
+  try {
+    const url = new URL(project);
+    return url.protocol === "https:" && url.origin === project && supabaseConfig().url === project ? terminals : undefined;
+  }
+  catch { return undefined; }
+}
+
+const groupedFeedUnavailable = () => Response.json({
+  ok: false, code: "GROUPED_FEED_UNAVAILABLE", error: "The grouped POS feed is unavailable.",
+}, { status: 503, headers: { "cache-control": "no-store" } });
+
+const groupedFeedProtocolError = () => Response.json({
+  ok: false, code: "GROUPED_FEED_PROTOCOL", error: "The grouped POS feed page could not be verified.",
+}, { status: 502, headers: { "cache-control": "no-store" } });
+
+function validGroupedSettings(change: z.infer<typeof groupedSettingsChangeSchema>, branchId: string): boolean {
+  const entity = groupedSettingsEntitySchema.safeParse(JSON.parse(change.entity_id));
+  const row = change.row_data;
+  return entity.success && entity.data.store_id === branchId && row.store_id === branchId &&
+    row.row_version === change.row_version && BigInt(change.row_version) >= 1n && BigInt(change.row_version) <= 2147483647n &&
+    Object.keys(row).length === groupedSettingsColumnCount &&
+    offsetTimestamp.safeParse(row.updated_at).success && (row.created_at === null || offsetTimestamp.safeParse(row.created_at).success) &&
+    (row.updated_by === null || typeof row.updated_by === "string") &&
+    (row.idle_timeout_minutes === null || (typeof row.idle_timeout_minutes === "number" && Number.isSafeInteger(row.idle_timeout_minutes))) &&
+    groupedSettingsRules.every(([key, fallback]) => row[key] === null ||
+      (typeof fallback === "boolean" ? typeof row[key] === "boolean" : typeof row[key] === "string" && exactSettingDecimal.test(row[key])));
+}
+
+const cashProjectionFields = [
+  "id bill_number client_transaction_id store_id branch_id shift_id subtotal_amount total_amount discount_amount tax_amount payment_type payments points_earned points_redeemed is_exchange is_refunded created_at paid_amount change_amount exchange_credit coupon_discount rounding_adjustment row_version",
+  "id sale_id branch_id product_id product_name quantity unit_price discount_percent discount_amount tax_rate is_return is_foc created_at coupon_discount unit_cost row_version refunded_qty",
+  "id source_type sale_id store_id shift_id terminal_id amount method kind note paid_at created_at updated_at row_version status metadata",
+  "id product_id store_id terminal_id activity_type reference quantity_delta unit_cost note created_at row_version",
+].map(fields => fields.split(" "));
+const cashEntity = z.object({ id: z.string().uuid() }).strict();
+const exactCashPayment = z.tuple([z.object({
+  id: z.string().uuid(), method: z.literal("cash"), amount: z.string().regex(/^(?:0|[1-9]\d{0,25})(?:\.\d{1,12})?$/),
+}).strict()]);
+const noCashMetadata = z.object({}).strict();
+
+function validGroupedCash(group: z.infer<typeof groupedCashGroupSchema>, branchId: string, extended = false): boolean {
+  if (group.seq === "0") return false;
+  const extendedTenders = group.changes.length > 4 || group.changes[0].row_data.payment_type !== "cash";
+  if (extendedTenders && !extended) return false;
+  for (const [index, change] of group.changes.entries()) {
+    const row = change.row_data;
+    const entity = cashEntity.safeParse(JSON.parse(change.entity_id));
+    const slot = index > 3 ? 2 : index;
+    const fields = extendedTenders && slot === 2 ? [...cashProjectionFields[slot], ...extendedTenderFields] : cashProjectionFields[slot];
+    if (change.table_name !== groupedCashTables[slot] || change.row_version !== "1" || row.row_version !== "1" ||
+        !entity.success || entity.data.id !== row.id || Object.keys(row).length !== fields.length ||
+        fields.some(field => !Object.hasOwn(row, field)) ||
+        row[index === 1 ? "branch_id" : "store_id"] !== branchId ||
+        Object.entries(row).some(([key, value]) => key !== "payments" && key !== "metadata" &&
+          !(extendedTenders && slot === 2 && key === "cashier_name" && value === null) &&
+          (value === null || !["string", "boolean", "number"].includes(typeof value)))) return false;
+  }
+  const [sale, item, tender, movement, ...additional] = group.changes.map(change => change.row_data);
+  const tenders = [tender, ...additional];
+  const payment = exactCashPayment.safeParse(sale.payments);
+  return sale.branch_id === branchId && item.sale_id === sale.id &&
+    tenders.every(row => row.sale_id === sale.id && row.shift_id === sale.shift_id &&
+      row.terminal_id === group.acceptance.terminal_id && row.kind === "payment" && row.status === "completed") &&
+    movement.terminal_id === group.acceptance.terminal_id &&
+    movement.product_id === item.product_id && movement.reference === sale.bill_number &&
+    (extendedTenders ? extendedPayments(sale, tenders) !== null :
+      tender.method === "cash" && payment.success && payment.data[0].id === tender.id && noCashMetadata.safeParse(tender.metadata).success);
+}
+
+function mixedGroupedEnabled() {
+  return runtimeEnvValue("POS_GROUPED_CASH_SETTINGS_PILOT_ENABLED") === "true";
+}
+
+function extendedGroupedEnabled() {
+  return mixedGroupedEnabled() && runtimeEnvValue("POS_GROUPED_EXTENDED_PILOT_ENABLED") === "true";
+}
+
+function validGroupedStock(change: z.infer<typeof groupedStockGroupSchema>["changes"][0]) {
+  const entity = cashEntity.safeParse(JSON.parse(change.entity_id));
+  return entity.success && entity.data.id === change.row_data.product_id &&
+    String(change.row_data.row_version) === change.row_version;
+}
+
+function validGroupedFinancial(group: z.infer<typeof groupedFinancialGroupSchema>, branch: string, epoch: string) {
+  const [sale, ...children] = group.changes;
+  const entity = cashEntity.safeParse(JSON.parse(sale.entity_id));
+  if (group.financial.kind === "drawer_v1") {
+    const event = group.financial.event_id;
+    const note = sale.row_data.note;
+    const fields = ["id", "store_id", "terminal_id", "shift_id", "staff_id", "staff_name", "role", "reason", "note", "approved_by", "created_at"];
+    return !group.receipt_graph && !children.length && sale.table_name === "drawer_events" &&
+      entity.success && entity.data.id === event && sale.row_data.id === event && sale.row_data.store_id === branch &&
+      Object.keys(sale.row_data).length === fields.length && fields.every(field => Object.hasOwn(sale.row_data, field)) &&
+      (sale.row_version === "1" ? note === "OPEN_REQUESTED" :
+        sale.row_version === "2" && (note === "OPENED" || (typeof note === "string" && note.startsWith("FAILED: "))));
+  }
+  if (group.financial.kind === "shift_v1") {
+    const { graph_json: graph, graph_sha256: digest } = sale.row_data;
+    const shift = group.financial.shift_id;
+    if (group.receipt_graph || children.length || sale.table_name !== "shifts" ||
+      !entity.success || entity.data.id !== shift || sale.row_data.id !== shift || sale.row_data.store_id !== branch ||
+      String(sale.row_data.row_version) !== sale.row_version || typeof graph !== "string" || typeof digest !== "string" ||
+      new TextEncoder().encode(graph).byteLength > 196608 || createHash("sha256").update(graph, "utf8").digest("hex") !== digest)
+      return false;
+    const evidence = JSON.parse(graph);
+    return evidence?.branchId === branch && evidence.shiftId === shift && Array.isArray(evidence.tables) &&
+      evidence.tables.length === groupedShiftTables.length && new Set(evidence.tables.map((part: { table?: string }) => part?.table)).size === groupedShiftTables.length &&
+      evidence.tables.every((part: { table: typeof groupedShiftTables[number]; rows?: Record<string, unknown>[] }) =>
+        groupedShiftTables.includes(part?.table) && Array.isArray(part.rows) &&
+        part.rows.every(row => row?.store_id === branch && (part.table === "shifts" ? row.id === shift : row.shift_id === shift)));
+  }
+  if (group.financial.kind === "transfer_v1") {
+    const { graph_json: graph, graph_sha256: digest } = sale.row_data;
+    const transferId = group.financial.transfer_id;
+    if (group.receipt_graph || children.length || sale.table_name !== "stock_transfers" || !entity.success ||
+      entity.data.id !== transferId || sale.row_data.id !== transferId || sale.row_data.store_id !== branch ||
+      String(sale.row_data.row_version) !== sale.row_version || typeof graph !== "string" || typeof digest !== "string" ||
+      new TextEncoder().encode(graph).byteLength > 196608 || createHash("sha256").update(graph, "utf8").digest("hex") !== digest)
+      return false;
+    const evidence = JSON.parse(graph);
+    const transfer = evidence?.transfer;
+    const request = evidence?.request;
+    const receipt = Object.hasOwn(evidence ?? {}, "movements");
+    if (evidence?.branch_id !== branch || transfer?.id !== transferId || transfer.kind !== "transfer" ||
+      String(transfer.row_version) !== sale.row_version ||
+      transfer.from_store_id === transfer.to_store_id || ![transfer.from_store_id, transfer.to_store_id].includes(branch) ||
+      !Array.isArray(evidence.lines) || evidence.lines.length < 1 || evidence.lines.length > 100 ||
+      !Array.isArray(evidence.stock) || evidence.stock.length > 100 ||
+      !Array.isArray(evidence.logs) || evidence.logs.length > 100) return false;
+    if (receipt) {
+      if (request !== null || !["received", "completed", "completed_with_discrepancy"].includes(transfer.status) ||
+        !Array.isArray(evidence.movements) || evidence.movements.length !== evidence.logs.length ||
+        evidence.lines.some((line: Record<string, unknown>) => line?.transfer_id !== transferId)) return false;
+      if (transfer.status === "received" || branch !== transfer.to_store_id)
+        return evidence.stock.length === 0 && evidence.logs.length === 0;
+      const lines = new Set(evidence.lines.map((line: Record<string, unknown>) => line.id));
+      const products = new Set<unknown>();
+      const auditIds = new Set<unknown>();
+      for (const [index, row] of evidence.logs.entries()) {
+        const movement = evidence.movements[index];
+        if (row?.store_id !== branch || row.activity_type !== "transfer_in" || row.reference !== transfer.ref ||
+          !movement || movement.log_id !== row.id || auditIds.has(row.id) || !lines.delete(movement.line_id)) return false;
+        auditIds.add(row.id);
+        products.add(row.product_id);
+      }
+      return evidence.stock.every((row: unknown) => {
+        const parsed = groupedStockRowSchema.safeParse(row);
+        return parsed.success && products.delete(parsed.data.product_id);
+      });
+    }
+    if (transfer.status !== "dispatched" ||
+      (request === null ? transfer.source_request_id !== null : request?.id !== transfer.source_request_id ||
+        request?.kind !== "request" || request?.status !== "completed" || request.from_store_id !== transfer.from_store_id ||
+        request.to_store_id !== transfer.to_store_id) || evidence.logs.length !== evidence.stock.length ||
+      evidence.lines.some((line: Record<string, unknown>) =>
+        line?.transfer_id !== transferId && line?.transfer_id !== request?.id)) return false;
+    if (branch !== transfer.from_store_id) return evidence.stock.length === 0;
+    const sentProducts = new Set(evidence.lines.filter((line: Record<string, unknown>) =>
+      line.transfer_id === transferId && typeof line.quantity_dispatched === "number" && line.quantity_dispatched > 0)
+      .map((line: Record<string, unknown>) => line.product_id));
+    if (evidence.stock.length !== sentProducts.size || evidence.logs.some((row: Record<string, unknown>) =>
+      row?.store_id !== branch || row.activity_type !== "transfer_out" || row.reference !== transfer.ref ||
+      !sentProducts.has(row.product_id))) return false;
+    return evidence.stock.every((row: unknown) => {
+      const parsed = groupedStockRowSchema.safeParse(row);
+      return parsed.success && sentProducts.delete(parsed.data.product_id);
+    });
+  }
+  const graph = group.receipt_graph;
+  if (graph && (new TextEncoder().encode(graph.payload_json).byteLength > 196608 ||
+      createHash("sha256").update(graph.payload_json, "utf8").digest("hex") !== graph.payload_sha256)) return false;
+  const { sale_id: saleId, kind } = group.financial;
+  if (sale.table_name !== "sales" || !entity.success || entity.data.id !== saleId ||
+      sale.row_data.id !== saleId || sale.row_data.store_id !== branch) return false;
+  if (graph) {
+    const evidence = JSON.parse(graph.payload_json);
+    if (evidence?.scope_id !== branch || evidence.epoch !== epoch || evidence.seq !== group.seq ||
+        evidence.operation_id !== group.operation_id || evidence.sale?.id !== saleId || evidence.sale.store_id !== branch ||
+        !Array.isArray(evidence.items) || !Array.isArray(evidence.tenders) ||
+        evidence.items.some((row: Record<string, unknown>) => row?.sale_id !== saleId || (row.branch_id !== null && row.branch_id !== branch)) ||
+        evidence.tenders.some((row: Record<string, unknown>) => row?.sale_id !== saleId || row.store_id !== branch)) return false;
+  }
+  return children.every(change => {
+    const row = change.row_data;
+    if (kind === "tender_v1") return change.table_name === "payment_transactions" && row.sale_id === saleId && row.store_id === branch;
+    if (change.table_name === "sale_items") return row.sale_id === saleId && row.branch_id === branch;
+    if (change.table_name === "stock_delta_applied") return row.store_id === branch;
+    return change.table_name === "products" && groupedStockRowSchema.safeParse(row).success;
+  });
+}
+
+type GroupedRpc = "pos_sync_pull_grouped_v1" | "pos_sync_snapshot_grouped_v1" |
+  "pos_sync_pull_cash_settings_v1" | "pos_sync_snapshot_cash_settings_v1" | "pos_sync_pull_cash_settings_extended_v1" |
+  "pos_sync_begin_cash_settings_recovery_v1" | "pos_sync_page_cash_settings_recovery_v1" |
+  "pos_sync_cash_legacy_coverage_v1" | "pos_sync_extended_legacy_coverage_v1";
+async function groupedFeedRpc(name: GroupedRpc, read: GroupedSnapshotRead & { extended?: true },
+  terminalId: string, binding: string, signal: AbortSignal, args: Record<string, unknown> = {}) {
+  const { serviceRest } = await import("@/core/api/pos-relay.server");
+  const { boundedText } = await import("../../electron/sync/shift-recovery-exact.mjs");
+  if (!groupedFeedPilotTerminals()?.includes(terminalId) || (read.projection && !mixedGroupedEnabled()) ||
+      (read.extended && !extendedGroupedEnabled()))
+    return groupedFeedUnavailable();
+  let response: Response;
+  try {
+    response = await serviceRest(`rpc/${name}`, {
+      method: "POST", signal, redirect: "error", headers: { "Accept-Encoding": "identity" },
+      body: JSON.stringify({
+        p_organization_id: read.organizationId, p_branch_id: read.branchId, p_terminal_id: terminalId,
+        p_binding_proof: binding, ...args,
+      }),
+    });
+  } catch { return groupedFeedUnavailable(); }
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => undefined);
+    return groupedFeedUnavailable();
+  }
+  if (response.status !== 200 || !/^application\/json(?:\s*;|$)/i.test(response.headers.get("content-type") ?? "") ||
+      ![null, "identity"].includes(response.headers.get("content-encoding"))) {
+    await response.body?.cancel().catch(() => undefined);
+    return groupedFeedProtocolError();
+  }
+
+  try {
+    const raw = await boundedText(response, 2 * 1024 * 1024);
+    return { raw, data: JSON.parse(raw) as unknown };
+  } catch { return groupedFeedProtocolError(); }
+}
+
+async function readGroupedFeed(read: GroupedFeedRead, terminalId: string, binding: string, signal: AbortSignal) {
+  const rpc = read.extended ? "pos_sync_pull_cash_settings_extended_v1" :
+    read.projection ? "pos_sync_pull_cash_settings_v1" : "pos_sync_pull_grouped_v1";
+  const result = await groupedFeedRpc(rpc, read, terminalId, binding, signal, {
+    p_epoch: read.epoch, p_after_seq: read.afterSeq, p_upper_seq: read.upperSeq ?? null, p_limit: read.limit,
+  });
+  if (result instanceof Response) return result;
+  try {
+    const { data, raw } = result;
+    const recovery = groupedFeedRecoverySchema.safeParse(data);
+    if (recovery.success) return Response.json(recovery.data, { status: 409, headers: { "cache-control": "no-store" } });
+    const failure = groupedFeedStatusSchema.safeParse(data);
+    if (failure.success) return failure.data.status === "SCOPE_UNAVAILABLE" ? groupedFeedUnavailable() :
+      Response.json(failure.data, { status: 400, headers: { "cache-control": "no-store" } });
+    const parsed = groupedFeedPageSchema.safeParse(data);
+    if (!parsed.success) return groupedFeedProtocolError();
+    const page = parsed.data;
+    const upper = BigInt(page.upper_seq);
+    let position = BigInt(read.afterSeq);
+    if (page.scope_id !== read.branchId || page.epoch !== read.epoch || page.groups.length > read.limit ||
+        (page.sealed_seq !== undefined && !read.extended) ||
+        (read.upperSeq != null && page.upper_seq !== read.upperSeq)) return groupedFeedProtocolError();
+    for (const group of page.groups) {
+      position += 1n;
+      let valid;
+      if ("acceptance" in group) {
+        const stock = "stock" in group ? group.stock : null;
+        valid = read.projection && validGroupedCash(group, read.branchId, read.extended) &&
+          (read.extended ? stock?.product_id === group.changes[1].row_data.product_id : stock === null);
+      } else if ("financial" in group) valid = read.extended && validGroupedFinancial(group, read.branchId, read.epoch);
+      else {
+        const change = group.changes[0];
+        valid = change.table_name === "products_stock" ? read.extended && validGroupedStock(change) :
+          validGroupedSettings(change, read.branchId);
+      }
+      if (BigInt(group.seq) !== position || !valid)
+        return groupedFeedProtocolError();
+    }
+    if (position !== BigInt(page.next_seq) || position > upper || page.has_more !== (position < upper) ||
+        (page.has_more && page.groups.length === 0)) return groupedFeedProtocolError();
+    return new Response(raw, { headers: { "content-type": "application/json", "cache-control": "no-store" } });
+  } catch { return groupedFeedProtocolError(); }
+}
+
+async function readGroupedSnapshot(read: GroupedSnapshotRead, terminalId: string, binding: string, signal: AbortSignal) {
+  const rpc = read.projection ? "pos_sync_snapshot_cash_settings_v1" : "pos_sync_snapshot_grouped_v1";
+  const result = await groupedFeedRpc(rpc, read, terminalId, binding, signal);
+  if (result instanceof Response) return result;
+  if (read.projection) {
+    const recovery = groupedFeedRecoverySchema.safeParse(result.data);
+    if (recovery.success) return Response.json(recovery.data, { status: 409, headers: { "cache-control": "no-store" } });
+  }
+  const parsed = groupedSnapshotSchema.safeParse(result.data);
+  if (!parsed.success) return groupedFeedUnavailable();
+  const snapshot = parsed.data;
+  if (snapshot.scope_id !== read.branchId || Date.parse(snapshot.expires_at) <= Date.now() ||
+      new TextEncoder().encode(snapshot.manifest_json).byteLength > (read.projection ? 1835008 : 65536) ||
+      createHash("sha256").update(snapshot.manifest_json, "utf8").digest("hex") !== snapshot.manifest_sha256)
+    return groupedFeedProtocolError();
+  try {
+    const manifest = (read.projection ? groupedMixedManifestSchema : groupedSnapshotManifestSchema)
+      .parse(JSON.parse(snapshot.manifest_json));
+    if (manifest.scope_id !== snapshot.scope_id || manifest.epoch !== snapshot.epoch || manifest.seq !== snapshot.seq ||
+        !validGroupedSettings(manifest.changes[0], read.branchId)) return groupedFeedProtocolError();
+    if ("cash_groups" in manifest) {
+      let previous = 0n;
+      const operations = new Set<string>();
+      for (const group of manifest.cash_groups as z.infer<typeof groupedCashGroupSchema>[]) {
+        const seq = BigInt(group.seq);
+        if (seq <= previous || seq > BigInt(snapshot.seq) || operations.has(group.operation_id) ||
+            !validGroupedCash(group, read.branchId)) return groupedFeedProtocolError();
+        previous = seq;
+        operations.add(group.operation_id);
+      }
+    }
+    return new Response(result.raw, { headers: { "content-type": "application/json", "cache-control": "no-store" } });
+  } catch { return groupedFeedProtocolError(); }
+}
+
+async function readGroupedRecovery(read: GroupedRecoveryRead, terminalId: string, binding: string, signal: AbortSignal) {
+  const page = read.action === "page";
+  const result = await groupedFeedRpc(page ? "pos_sync_page_cash_settings_recovery_v1" : "pos_sync_begin_cash_settings_recovery_v1",
+    { ...read, projection: "settings_cash_v1" }, terminalId, binding, signal,
+    { ...(read.extended ? { p_extended: true } : {}), ...(page ?
+      { p_pin_id: read.pinId, p_kind: read.kind, p_after: read.after, p_limit: read.limit } :
+      read.atLeastSeq === undefined ? {} : { p_at_least_seq: read.atLeastSeq }) });
+  if (result instanceof Response) return result;
+  const hold = groupedRecoveryHoldSchema.safeParse(result.data);
+  if (hold.success) return Response.json(hold.data, { status: 409, headers: { "cache-control": "no-store" } });
+  const failure = groupedFeedStatusSchema.safeParse(result.data);
+  if (failure.success) return failure.data.status === "SCOPE_UNAVAILABLE" ? groupedFeedUnavailable() :
+    Response.json(failure.data, { status: 400, headers: { "cache-control": "no-store" } });
+  try {
+    if (page) {
+      const envelope = groupedRecoveryPageEnvelope.parse(result.data);
+      if (envelope.scope_id !== read.branchId || envelope.pin_id !== read.pinId || Date.parse(envelope.expires_at) <= Date.now() ||
+          createHash("sha256").update(envelope.payload_json, "utf8").digest("hex") !== envelope.payload_sha256)
+        return groupedFeedProtocolError();
+      const payload = groupedRecoveryPageSchema.parse(JSON.parse(envelope.payload_json));
+      const start = BigInt(payload.after);
+      const next = BigInt(payload.next);
+      const total = BigInt(payload.total);
+      if (payload.scope_id !== read.branchId || payload.epoch !== envelope.epoch || payload.seq !== envelope.seq ||
+          payload.pin_id !== read.pinId || payload.kind !== read.kind || payload.after !== read.after ||
+          payload.rows.length > read.limit || next !== start + BigInt(payload.rows.length) || next > total ||
+          (next < total && !payload.rows.length)) return groupedFeedProtocolError();
+      if (payload.kind === "cash") {
+        let prior = 0n;
+        for (const group of payload.rows) {
+          const seq = BigInt(group.seq);
+          if (seq <= prior || seq > BigInt(payload.seq) || !validGroupedCash(group, read.branchId, read.extended))
+            return groupedFeedProtocolError();
+          prior = seq;
+        }
+      } else if (payload.kind === "financial") {
+        let prior = 0n;
+        for (const group of payload.rows) {
+          const seq = BigInt(group.seq);
+          if (!read.extended || seq <= prior || seq > BigInt(payload.seq) || !validGroupedFinancial(group, read.branchId, envelope.epoch))
+            return groupedFeedProtocolError();
+          prior = seq;
+        }
+      } else if (payload.rows.some((row, index, rows) => row.product_id !== row.product_id.toLowerCase() ||
+        (index > 0 && rows[index - 1].product_id >= row.product_id))) return groupedFeedProtocolError();
+    } else {
+      const envelope = groupedSnapshotSchema.parse(result.data);
+      if (envelope.scope_id !== read.branchId || Date.parse(envelope.expires_at) <= Date.now() ||
+          new TextEncoder().encode(envelope.manifest_json).byteLength > 65536 ||
+          createHash("sha256").update(envelope.manifest_json, "utf8").digest("hex") !== envelope.manifest_sha256)
+        return groupedFeedProtocolError();
+      const manifest = groupedRecoveryManifestSchema.parse(JSON.parse(envelope.manifest_json));
+      if (manifest.scope_id !== read.branchId || manifest.epoch !== envelope.epoch || manifest.seq !== envelope.seq ||
+          Boolean(read.extended) !== (manifest.financial_count !== undefined) ||
+          Boolean(read.extended) !== (manifest.cash_installation !== undefined) ||
+          (manifest.sealed_seq !== undefined && (!read.extended || BigInt(manifest.sealed_seq) > BigInt(manifest.seq))) ||
+          BigInt(manifest.cash_count) + BigInt(manifest.financial_count ?? 0) > BigInt(manifest.seq) ||
+          (read.atLeastSeq !== undefined && BigInt(manifest.seq) < BigInt(read.atLeastSeq)) ||
+          !validGroupedSettings(manifest.changes[0], read.branchId))
+        return groupedFeedProtocolError();
+    }
+    return new Response(result.raw, { headers: { "content-type": "application/json", "cache-control": "no-store" } });
+  } catch { return groupedFeedProtocolError(); }
+}
+
+async function readCashLegacyCoverage(read: CashLegacyCoverage, terminalId: string, binding: string, signal: AbortSignal) {
+  const result = await groupedFeedRpc(read.extended ? "pos_sync_extended_legacy_coverage_v1" : "pos_sync_cash_legacy_coverage_v1",
+    { ...read, projection: "settings_cash_v1" },
+    terminalId, binding, signal, { p_epoch: read.epoch, p_entries: read.entries });
+  if (result instanceof Response) return result;
+  const failure = groupedFeedStatusSchema.safeParse(result.data);
+  if (failure.success && failure.data.status === "SCOPE_UNAVAILABLE") return groupedFeedUnavailable();
+  const parsed = (read.extended ? extendedLegacyCoverageReplySchema : cashLegacyCoverageReplySchema).safeParse(result.data);
+  if (!parsed.success || parsed.data.scope_id !== read.branchId || (read.epoch !== null && parsed.data.epoch !== read.epoch))
+    return groupedFeedProtocolError();
+  const keys = new Set(read.entries.map(legacyKey));
+  if (parsed.data.entries.some(entry => entry.seq === "0" || !keys.delete(legacyKey(entry))))
+    return groupedFeedProtocolError();
+  return new Response(result.raw, { headers: { "content-type": "application/json", "cache-control": "no-store" } });
+}
 
 const bodySchema = z.object({
   sessionToken: z.string().max(400).optional(),
@@ -99,6 +656,13 @@ const bodySchema = z.object({
     })
     .optional(),
   sqlServerAggregate: syncAggregateSchema.optional(),
+  sqlServerGroupedFeed: groupedFeedReadSchema.optional(),
+  sqlServerGroupedSnapshot: groupedSnapshotReadSchema.optional(),
+  sqlServerGroupedRecovery: groupedRecoveryReadSchema.optional(),
+  sqlServerCashLegacyCoverage: cashLegacyCoverageSchema.optional(),
+  sqlServerSettingsEdit: groupedSettingsEditSchema.optional(),
+  sqlServerCashCheckout: groupedCashUploadSchema.optional(),
+  sqlServerRefund: groupedRefundUploadSchema.optional(),
   sqlServerLegacyRecovery: z.object({
     organizationId: z.string().min(1).max(128),
     branchId: z.string().min(1).max(128),
@@ -232,6 +796,20 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     const parsed = JSON.parse(raw);
     if (Object.hasOwn(parsed ?? {}, "sqlServerScopedHistory") && Object.keys(parsed).some(key => !scopedHistoryRequestKeys.has(key)))
       throw new Error("Scoped history requests are exclusive");
+    if (Object.hasOwn(parsed ?? {}, "sqlServerGroupedFeed") && Object.keys(parsed).some(key => !groupedFeedRequestKeys.has(key)))
+      throw new Error("Grouped feed requests are exclusive");
+    if (Object.hasOwn(parsed ?? {}, "sqlServerGroupedSnapshot") && Object.keys(parsed).some(key => !groupedSnapshotRequestKeys.has(key)))
+      throw new Error("Grouped snapshot requests are exclusive");
+    if (Object.hasOwn(parsed ?? {}, "sqlServerSettingsEdit") && Object.keys(parsed).some(key => !groupedSettingsEditRequestKeys.has(key)))
+      throw new Error("Grouped settings edits are exclusive");
+    if (Object.hasOwn(parsed ?? {}, "sqlServerCashCheckout") && Object.keys(parsed).some(key => !groupedCashUploadRequestKeys.has(key)))
+      throw new Error("Cash checkout uploads are exclusive");
+    if (Object.hasOwn(parsed ?? {}, "sqlServerRefund") && Object.keys(parsed).some(key => !groupedRefundUploadRequestKeys.has(key)))
+      throw new Error("Refund uploads are exclusive");
+    if (Object.hasOwn(parsed ?? {}, "sqlServerGroupedRecovery") && Object.keys(parsed).some(key => !groupedRecoveryRequestKeys.has(key)))
+      throw new Error("Grouped recovery requests are exclusive");
+    if (Object.hasOwn(parsed ?? {}, "sqlServerCashLegacyCoverage") && Object.keys(parsed).some(key => !groupedCashCoverageRequestKeys.has(key)))
+      throw new Error("Cash legacy coverage requests are exclusive");
     body = bodySchema.parse(parsed);
     if (body.sqlServerLegacyRecovery && request.headers.get("x-pos-legacy-recovery") !== "1")
       throw new Error("Missing bounded recovery transport");
@@ -283,6 +861,27 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     return Response.json({ ok: false, error: "Malformed request" }, { status: 400 });
   }
 
+  if (body.sqlServerSettingsEdit)
+    return applyGroupedSettingsEdit(body.sqlServerSettingsEdit, body, groupedFeedPilotTerminals, request.signal);
+  if (body.sqlServerCashCheckout)
+    return applyGroupedCashUpload(body.sqlServerCashCheckout, body, groupedFeedPilotTerminals, request.signal);
+  if (body.sqlServerRefund)
+    return applyGroupedRefundUpload(body.sqlServerRefund, body, groupedFeedPilotTerminals, request.signal);
+
+  const groupedRead = body.sqlServerGroupedFeed;
+  const groupedRecovery = body.sqlServerGroupedRecovery;
+  const cashLegacyCoverage = body.sqlServerCashLegacyCoverage;
+  const groupedMixedRead = groupedRecovery ?? cashLegacyCoverage;
+  const groupedRequest = groupedMixedRead ? { ...groupedMixedRead, projection: "settings_cash_v1" as const } :
+    groupedRead ?? body.sqlServerGroupedSnapshot;
+  const groupedPilotTerminals = groupedRequest ? groupedFeedPilotTerminals() : undefined;
+  const groupedTerminalToken = body.terminalToken;
+  if (groupedRequest && (!groupedPilotTerminals || (groupedRequest.projection && !mixedGroupedEnabled()) ||
+      ("extended" in groupedRequest && groupedRequest.extended && !extendedGroupedEnabled())))
+    return groupedFeedUnavailable();
+  if (groupedRequest && (!groupedTerminalToken || !groupedPilotTerminals?.includes(groupedTerminalToken) || !body.deviceBindingProof))
+    return Response.json({ ok: false, code: "TERMINAL_REQUIRED", error: "A verified pilot Operations terminal is required." }, { status: 403 });
+
   // Every till attaches its raw session token as a bearer. Use it when the
   // body did not carry one, so the header is a first-class proof.
   const bearer = (request.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
@@ -309,6 +908,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     !body.sqlServerCounts &&
     !body.sqlServerHistoryReconcile &&
     !body.sqlServerScopedHistory &&
+    !groupedRequest &&
     !body.sqlServerHeldStatus &&
     !body.sqlServerHeldSaleReview &&
     !body.sqlServerTelemetry &&
@@ -341,7 +941,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
   try {
     const { managementReplicaScope } = await import("./management-replica.server");
     const replicaScope = await managementReplicaScope(body);
-    const caller = replicaScope ? null : await verifyRelayCaller(body);
+    const caller = replicaScope ? null : groupedRequest ? await verifyRelayCaller(body, { strictAvailability: true }) : await verifyRelayCaller(body);
     verifiedTerminal = caller?.terminal;
     if (caller?.storeId) {
       const { branchExists } = await import("./session-verify.server");
@@ -356,7 +956,7 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
         );
       }
     }
-    scope = replicaScope ?? await resolveRelayScope(caller!);
+    scope = replicaScope ?? (groupedRequest ? await resolveRelayScope(caller!, { strictAvailability: true }) : await resolveRelayScope(caller!));
     // Signed fields retain their exact spelling. Only the existing transport and
     // derived operations may resolve SQL-equivalent scope aliases.
     const signedAuthor = body.sqlServerAggregate?.shiftAuthor;
@@ -377,10 +977,25 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
   } catch (e) {
     if ((e as { status?: number }).status === 503)
       return Response.json({ ok: false, code: "SERVICE_UNAVAILABLE", error: "Registration verification is temporarily unavailable." }, { status: 503 });
+    if (groupedRequest)
+      return Response.json({ ok: false, code: "SESSION_INVALID", error: "The pilot terminal could not be verified." }, { status: 401 });
     return Response.json(
       { ok: false, code: "SESSION_INVALID", error: (e as Error).message },
       { status: 401 },
     );
+  }
+
+  if (groupedRequest) {
+    if (!verifiedTerminal || verifiedTerminal.platform !== "pc" || verifiedTerminal.mode !== "operations" ||
+        verifiedTerminal.id !== groupedTerminalToken || verifiedTerminal.id !== scope.terminalId ||
+        verifiedTerminal.branchId !== scope.storeId || scope.managementDevice || scope.managementReplica || scope.stale || !body.deviceBindingProof)
+      return Response.json({ ok: false, code: "TERMINAL_REQUIRED", error: "A verified pilot Operations terminal is required." }, { status: 403 });
+    if (groupedRequest.branchId !== verifiedTerminal.branchId)
+      return Response.json({ ok: false, code: "STORE_FORBIDDEN", error: "You can only synchronize your own branch." }, { status: 403 });
+    if (groupedRecovery) return readGroupedRecovery(groupedRecovery, verifiedTerminal.id, body.deviceBindingProof, request.signal);
+    if (cashLegacyCoverage) return readCashLegacyCoverage(cashLegacyCoverage, verifiedTerminal.id, body.deviceBindingProof, request.signal);
+    return groupedRead ? readGroupedFeed(groupedRead, verifiedTerminal.id, body.deviceBindingProof, request.signal) :
+      readGroupedSnapshot(groupedRequest, verifiedTerminal.id, body.deviceBindingProof, request.signal);
   }
 
   if (body.sqlServerScopedHistory) {

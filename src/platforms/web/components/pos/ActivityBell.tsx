@@ -33,6 +33,8 @@ import { createTextHumanizer } from "@/lib/human-readable";
 import { hasStaffSession } from "@/core/api/sync-relay";
 import { localDb } from "@/core/local-db/local-db";
 import { APP_RESUME_EVENT } from "@/core/activation/connection-health";
+import { subscribeDesktopPinActivityWake, subscribeMobilePinActivityWake } from "@/lib/pin-approval-wake";
+import { subscribeNamedApprovalBadge } from "@/lib/named-approval-badge";
 
 const PIN_POLL_MS = 15_000;
 const AUTHENTICATED_POLL_MS = 60_000;
@@ -75,6 +77,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
   const [cleared, setCleared] = useState<string[]>(() => clearedIds(meKey));
   const [rows, setRows] = useState<ActivityEvent[]>([]);
   const [rowsScope, setRowsScope] = useState<string | null>(null);
+  const [namedApprovals, setNamedApprovals] = useState<{ scope: string; ids: string[] }>();
   const [displayLimit, setDisplayLimit] = useState(30);
   const [, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
@@ -94,10 +97,10 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
   const announcedIdsRef = useRef(new Set<string>());
   const activityInitializedRef = useRef(false);
   const refreshInFlight = useRef<Promise<void> | null>(null);
-  const refreshPending = useRef(false);
+  const refreshPending = useRef<boolean | null>(null);
   const refreshGeneration = useRef(0);
   const mounted = useRef(false);
-  const refreshLatest = useRef<() => Promise<void>>(async () => undefined);
+  const refreshLatest = useRef<(drainQueue?: boolean) => Promise<void>>(async () => undefined);
 
   const updatePreference = useCallback(
     async (ids: string[], action: () => Promise<boolean>, failure: string) => {
@@ -161,17 +164,17 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
     [meKey, navigate, updatePreference, preferenceScope],
   );
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (drainQueue = true) => {
     if (!showActivity || !meKey || !mounted.current) return;
     if (refreshInFlight.current) {
-      refreshPending.current = true;
+      refreshPending.current = drainQueue || refreshPending.current === true;
       return refreshInFlight.current;
     }
     const generation = refreshGeneration.current;
     setRefreshing(true);
     setLoadError("");
     const run = (async () => {
-      void flushActivityQueue().catch(() => undefined);
+      if (drainQueue) void flushActivityQueue().catch(() => undefined);
       const retentionFrom = new Date(Date.now() - NOTIFICATION_RETENTION_MS).toISOString();
       const reconcile = !activityInitializedRef.current || Date.now() - lastReconciled.current >= 300_000;
       const previous = rowsRef.current;
@@ -252,15 +255,21 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
     } finally {
       if (mounted.current && generation === refreshGeneration.current) setRefreshing(false);
       refreshInFlight.current = null;
-      if (refreshPending.current && mounted.current) {
-        refreshPending.current = false;
+      const pending = refreshPending.current;
+      refreshPending.current = null;
+      if (pending !== null && mounted.current) {
         queueMicrotask(() => {
-          void refreshLatest.current().catch(() => undefined);
+          void refreshLatest.current(pending).catch(() => undefined);
         });
       }
     }
   }, [branchId, eventText, meKey, showActivity, updatePreference, preferenceScope]);
   refreshLatest.current = refresh;
+
+  useEffect(() => {
+    if (!meKey) return;
+    return subscribeNamedApprovalBadge(ids => setNamedApprovals({ scope: preferenceScope, ids }));
+  }, [meKey, preferenceScope]);
 
   useEffect(() => {
     if (!showActivity || !meKey) return;
@@ -281,16 +290,30 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
         return JSON.stringify(current) === JSON.stringify(next) ? current : next;
       });
     onCleared();
-    const tick = () => {
-      if (document.visibilityState !== "hidden") void refresh().catch(() => undefined);
+    const tick = (drainQueue = true) => {
+      if (document.visibilityState !== "hidden") void refresh(drainQueue).catch(() => undefined);
     };
     let eventTimer: ReturnType<typeof setTimeout> | undefined;
-    const schedule = () => {
+    let scheduledDrain = false;
+    const scheduleRead = (drainQueue: boolean) => {
+      scheduledDrain ||= drainQueue;
       if (eventTimer !== undefined) return;
-      eventTimer = setTimeout(() => { eventTimer = undefined; tick(); }, 150);
+      eventTimer = setTimeout(() => {
+        eventTimer = undefined;
+        const drain = scheduledDrain;
+        scheduledDrain = false;
+        tick(drain);
+      }, 150);
     };
+    const schedule = () => scheduleRead(true);
     tick();
     const off = subscribeActivityEvents(schedule, branchId);
+    const nativeWake = localDb()?.sync?.refreshApprovalActivity;
+    const offPin = branchId
+      ? (nativeWake
+          ? subscribeDesktopPinActivityWake(branchId, () => { void nativeWake().catch(() => undefined); })
+          : subscribeMobilePinActivityWake(branchId, () => scheduleRead(false)))
+      : undefined;
     const t = setInterval(() => {
       // Stop polling a database that has no activity log.
       if (isActivityLogMissing()) {
@@ -309,6 +332,7 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
       mounted.current = false;
       if (eventTimer !== undefined) clearTimeout(eventTimer);
       off();
+      offPin?.();
       clearInterval(t);
       document.removeEventListener("visibilitychange", schedule);
       for (const event of resumeEvents) window.removeEventListener(event, schedule);
@@ -329,7 +353,11 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
   })), [visibleRows, humanizer, pos?.stores]);
   const matchingRows = useMemo(() => searchIndex.filter(item => !searchQuery || item.text.includes(searchQuery)).map(item => item.row), [searchIndex, searchQuery]);
   const displayedRows = useMemo(() => matchingRows.slice(0, displayLimit), [matchingRows, displayLimit]);
-  const badge = unseenEvents(visibleRows, meKey).length;
+  const unseen = unseenEvents(visibleRows, meKey);
+  const unseenApprovalIds = new Set(unseen.filter(row => row.type === "approval_requested" &&
+    row.entityType === "authorization_request").map(row => row.entityId));
+  const assignedApprovals = namedApprovals?.scope === preferenceScope ? namedApprovals.ids : [];
+  const badge = unseen.length + assignedApprovals.filter(id => !unseenApprovalIds.has(id)).length;
   const saving = [...preferenceBusy].some(key => key.startsWith(`${preferenceScope}:`));
 
   if (!allowed) return null;
@@ -368,6 +396,14 @@ export function ActivityBell({ compact: _compact }: { compact?: boolean }) {
         <div className="border-b border-border/60 px-4 py-4 pr-12">
           <DialogTitle className="flex items-center gap-2 text-base"><Bell className="size-4 text-primary" /> Notifications</DialogTitle>
         </div>
+        {assignedApprovals.length > 0 && (
+          <Button type="button" variant="ghost" className="mx-3 mt-2 justify-start text-sm" onClick={() => {
+            setOpen(false);
+            void navigate({ to: "/approvals" });
+          }}>
+            Cross-store approvals awaiting your decision ({assignedApprovals.length === 10 ? "9+" : assignedApprovals.length})
+          </Button>
+        )}
         <div className="relative mx-3 mt-3">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
           <Input aria-label="Search notifications" placeholder="Search message, person, branch or bill…" value={search}

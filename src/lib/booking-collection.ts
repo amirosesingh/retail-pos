@@ -6,11 +6,13 @@
  * itself and refuses to hand a booking over while anything is still owed.
  */
 import { supabaseExternal as supabase } from "@/integrations/supabase/external-client";
-import { MONEY_TOLERANCE, type PaymentMethod } from "@/core/types/pos-types";
-import { commitOps } from "@/core/api/pos-db";
-import { routedQuery } from "@/core/api/db-query";
+import { MONEY_TOLERANCE, type BookingPayment, type Member, type PaymentMethod, type Product, type Sale } from "@/core/types/pos-types";
+import { commitOps, db, noteCommitTarget, rowToSale, saleCommitRpcArgs } from "@/core/api/pos-db";
+import { routedQuery, routedQueryWithSource } from "@/core/api/db-query";
+import { effectiveDatabaseMode } from "@/core/local-db/db-mode";
 import { localDb } from "@/core/local-db/local-db";
 import { CUSTOMER_REFUNDS_ALLOWED, NO_REFUND_MESSAGE } from "./returns-policy";
+import type { SyncOp } from "./sync-outbox";
 
 export type BookingBalanceState = {
   total: number;
@@ -46,14 +48,32 @@ const toState = (row: Record<string, unknown>): BookingBalanceState => ({
 
 const roundMoney = (value: number) => Number(value.toFixed(2));
 
-async function localBalance(bookingId: string): Promise<{
+function bookingUpdate(
+  id: string,
+  booking: Record<string, unknown>,
+  values: Record<string, unknown>,
+): Extract<SyncOp, { kind: "update" }> {
+  const version = booking.row_version;
+  if (typeof version !== "number" || !Number.isSafeInteger(version) || version < 0) {
+    throw new Error("BOOKING_CHANGED");
+  }
+  return { kind: "update", table: "bookings", match: { id, row_version: version }, requireMatch: true, values };
+}
+
+const localHandoverRead: typeof routedQuery = async (table, options) => {
+  const result = await routedQueryWithSource(table, options);
+  if (result.source !== "local") throw new Error("The local SQL Server connection changed. Reopen the booking.");
+  return result.rows;
+};
+
+async function localBalance(bookingId: string, query = routedQuery): Promise<{
   booking: Record<string, unknown>;
   state: BookingBalanceState;
 }> {
-  const bookings = await routedQuery("bookings", { match: { id: bookingId }, limit: 1 });
+  const bookings = await query("bookings", { match: { id: bookingId }, limit: 1 });
   const booking = bookings[0];
   if (!booking) throw new Error("BOOKING_NOT_FOUND");
-  const payments = await routedQuery("booking_payments", {
+  const payments = await query("booking_payments", {
     match: { booking_id: bookingId, status: "settled" },
     orderBy: { column: "created_at", ascending: true },
     limit: 2000,
@@ -74,6 +94,108 @@ async function localBalance(bookingId: string): Promise<{
       jobStatus: (booking.job_status as string | null | undefined) ?? null,
     },
   };
+}
+
+export type BookingHandoverReceipt = {
+  sale: Sale;
+  payment?: BookingPayment;
+  paid: number;
+  closedAt: string;
+  replayed: boolean;
+};
+
+function handoverReceipt(sale: Sale, row: Record<string, unknown>): BookingHandoverReceipt {
+  const payment = row.payment as Record<string, unknown> | null | undefined;
+  const savedSale = row.sale as Record<string, unknown> | null | undefined;
+  if (!row.sale_id || !row.sale_receipt_no || !row.closed_at || !row.sale_created_at ||
+      !Number.isFinite(Number(row.paid)) || !Number.isFinite(Number(row.change)) ||
+      (row.replayed === true && !savedSale)) {
+    throw new Error("The database did not confirm the booking receipt. Reopen the booking before trying again.");
+  }
+  return {
+    sale: savedSale
+      ? { ...rowToSale(savedSale), bookingRef: sale.bookingRef }
+      : { ...sale, id: String(row.sale_id), receiptNo: String(row.sale_receipt_no),
+        createdAt: String(row.sale_created_at), change: Number(row.change) },
+    paid: Number(row.paid),
+    closedAt: String(row.closed_at),
+    replayed: row.replayed === true,
+    ...(payment?.id ? { payment: {
+      id: String(payment.id), amount: Number(payment.amount), method: String(payment.method) as PaymentMethod,
+      at: String(payment.paid_at), cashier: String(payment.cashier ?? sale.cashier),
+      clientPaymentId: String(payment.client_payment_id), changeGiven: Number(payment.change_given ?? 0),
+    } } : {}),
+  };
+}
+
+/** Complete the tender, sale and booking link together, using one database. */
+export async function commitBookingHandover(
+  bookingId: string, amount: number, sale: Sale, products: Product[], member: Member | null,
+): Promise<BookingHandoverReceipt> {
+  if (!Number.isFinite(amount) || amount < 0 || !sale.clientTxnId) throw new Error("BOOKING_HANDOVER_INVALID");
+  if (effectiveDatabaseMode() === "online") {
+    const { _exchange_bill, ...saleArgs } = saleCommitRpcArgs(sale, member);
+    if (_exchange_bill) throw new Error("BOOKING_HANDOVER_INVALID");
+    const result = await supabase.rpc("booking_handover" as never, {
+      _booking_id: bookingId, _amount: amount, ...saleArgs,
+    } as never);
+    if (result.error) throw Object.assign(new Error(message(result.error, "Booking handover failed.")), {
+      code: result.error.code,
+    });
+    const receipt = handoverReceipt(sale, (result.data ?? {}) as Record<string, unknown>);
+    noteCommitTarget("cloud");
+    return receipt;
+  }
+
+  const before = await localBalance(bookingId, localHandoverRead);
+  if (before.booking.store_id !== sale.storeId) throw new Error("BOOKING_NOT_FOUND");
+  if (before.state.status === "cancelled") throw new Error("BOOKING_CANCELLED");
+  const paymentQuery = { match: { booking_id: bookingId, client_payment_id: sale.clientTxnId }, limit: 1 };
+  if (before.state.status === "collected") {
+    const [saved] = await localHandoverRead("sales", {
+      match: { client_transaction_id: sale.clientTxnId, store_id: sale.storeId, bill_number: before.booking.sale_receipt_no },
+      limit: 1,
+    });
+    if (!saved) throw new Error("BOOKING_ALREADY_COLLECTED");
+    const [[payment], items] = await Promise.all([
+      localHandoverRead("booking_payments", paymentQuery),
+      localHandoverRead("sale_items", { match: { sale_id: saved.id }, orderBy: { column: "id", ascending: true }, limit: 2000 }),
+    ]);
+    return handoverReceipt(sale, {
+      sale_id: saved.id, sale_receipt_no: saved.bill_number, sale_created_at: saved.created_at,
+      closed_at: before.booking.closed_at, paid: before.state.settledPaid, change: saved.change_amount,
+      payment, replayed: true, sale: { ...saved, sale_items: items },
+    });
+  }
+  if (before.state.status !== "active" || before.state.total !== roundMoney(sale.total))
+    throw new Error("BOOKING_CHANGED");
+  const taken = before.state.outstanding;
+  if (roundMoney(amount) < taken) throw new Error("BOOKING_BALANCE_DUE");
+  const change = roundMoney(Math.max(0, amount - taken));
+  if (change > 0 && String(sale.method).toLowerCase() !== "cash") throw new Error("BOOKING_OVERPAYMENT");
+  if ((await localHandoverRead("booking_payments", paymentQuery)).length) throw new Error("BOOKING_CHANGED");
+  const now = new Date().toISOString();
+  const paid = roundMoney(before.state.settledPaid + taken);
+  const payment = taken > 0 ? {
+    id: crypto.randomUUID(), booking_id: bookingId, amount: taken, method: sale.method, cashier: sale.cashier,
+    paid_at: now, created_at: now, status: "settled", client_payment_id: sale.clientTxnId, kind: "payment",
+    change_given: change,
+  } : null;
+  const update = bookingUpdate(bookingId, before.booking, {
+    store_id: sale.storeId, paid, status: "collected", sale_receipt_no: sale.receiptNo, closed_at: now,
+    ...(before.state.jobStatus ? { job_status: "collected", job_status_at: now, job_status_by: sale.cashier } : {}),
+    updated_at: now,
+  });
+  update.match.status = "active";
+  const bookingOperations: SyncOp[] = payment
+    ? [{ kind: "insert", table: "booking_payments", rows: [payment] }, update]
+    : [update];
+  const completedSale = { ...sale, change };
+  await db.commitSale(completedSale, products, member, bookingOperations);
+  return handoverReceipt(completedSale, {
+    sale_id: sale.id, sale_receipt_no: sale.receiptNo, sale_created_at: sale.createdAt, closed_at: now, paid,
+    change, payment,
+  });
 }
 
 async function duplicatePayment(bookingId: string, clientPaymentId: string) {
@@ -147,19 +269,16 @@ export async function collectBookingPayment(input: {
           }],
         });
       }
-      ops.push({
-        kind: "update", table: "bookings", match: { id: input.bookingId },
-        values: {
-          store_id: before.booking.store_id, paid: settledPaid, status: nextStatus,
-          job_status: nextJob,
-          ...(input.complete && fullyPaid ? {
-            closed_at: now,
-            ...(before.state.jobStatus ? { job_status_at: now, job_status_by: input.cashier ?? before.booking.job_status_by ?? null } : {}),
-          } : {}),
-          updated_at: now,
-        },
-      });
-      await commitOps("Booking payment", ops);
+      ops.push(bookingUpdate(input.bookingId, before.booking, {
+        store_id: before.booking.store_id, paid: settledPaid, status: nextStatus,
+        job_status: nextJob,
+        ...(input.complete && fullyPaid ? {
+          closed_at: now,
+          ...(before.state.jobStatus ? { job_status_at: now, job_status_by: input.cashier ?? before.booking.job_status_by ?? null } : {}),
+        } : {}),
+        updated_at: now,
+      }));
+      await commitOps("Booking payment", ops, undefined, { requireLocalAggregate: true });
       return { ok: true, state: { total: before.state.total, settledPaid, outstanding, fullyPaid, status: nextStatus, jobStatus: nextJob, duplicate, changeDue } };
     }
     const res = await supabase.rpc("booking_collect" as never, {
@@ -216,10 +335,10 @@ export async function refundBookingPayment(input: {
           kind: "refund", refund_reason: clean, change_given: 0,
         }],
       });
-      ops.push({ kind: "update", table: "bookings", match: { id: input.bookingId }, values: {
+      ops.push(bookingUpdate(input.bookingId, before.booking, {
         store_id: before.booking.store_id, paid: settledPaid, updated_at: now,
-      } });
-      await commitOps("Booking refund", ops);
+      }));
+      await commitOps("Booking refund", ops, undefined, { requireLocalAggregate: true });
       return { ok: true, state: { ...before.state, settledPaid, outstanding, fullyPaid: outstanding <= MONEY_TOLERANCE, duplicate, changeDue: 0 } };
     }
     const res = await supabase.rpc("booking_refund" as never, {
@@ -284,8 +403,8 @@ export async function cancelBookingAuthoritative(input: {
         cancel_money_action: before.booking.cancel_money_action ?? action,
         updated_at: now,
       };
-      ops.push({ kind: "update", table: "bookings", match: { id: input.bookingId }, values });
-      await commitOps("Booking cancellation", ops);
+      ops.push(bookingUpdate(input.bookingId, before.booking, values));
+      await commitOps("Booking cancellation", ops, undefined, { requireLocalAggregate: true });
       return { ok: true, row: { ...before.booking, ...values } };
     }
     const res = await supabase.rpc("booking_cancel" as never, {
@@ -310,6 +429,8 @@ export async function cancelBookingAuthoritative(input: {
 
 /** Turn the server's coded refusals into counter English. */
 export function readable(raw: string): string {
+  if (raw.includes("PERMISSION_DENIED_SALE"))
+    return "You do not have permission to process sales.";
   if (raw.includes("PERMISSION_DENIED_COLLECT_BOOKING"))
     return "You do not have permission to collect booking payments.";
   if (raw.includes("PERMISSION_DENIED_CANCEL_BOOKING"))
@@ -317,6 +438,7 @@ export function readable(raw: string): string {
   if (raw.includes("CANCEL_REASON_REQUIRED")) return "A cancellation reason is required.";
   if (raw.includes("BOOKING_ALREADY_COLLECTED")) return "This booking has already been collected.";
   if (raw.includes("BOOKING_CANCELLED")) return "This booking was cancelled.";
+  if (raw.includes("BOOKING_CHANGED")) return "The booking changed while it was being saved. Reopen it and check the current balance before trying again.";
   if (raw.includes("BOOKING_OVERPAYMENT"))
     return "That is more than the amount still outstanding — refresh and try again.";
   if (raw.includes("BOOKING_BALANCE_DUE"))

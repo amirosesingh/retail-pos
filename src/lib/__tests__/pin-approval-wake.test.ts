@@ -22,10 +22,12 @@ const fixture = vi.hoisted(() => {
     }>,
     construct: vi.fn(),
     readCredentials: vi.fn(),
+    posFetch: vi.fn(),
     verify: vi.fn(),
     epoch: 1,
     signedIn: true,
     staff: false,
+    platform: "android" as "android" | "ios" | "electron" | "web",
     pin: "person-pin-proof" as string | null,
     raw: "raw-person-proof" as string | null,
     terminal: { tokenId: "terminal-1", locationId: "branch-a", deviceUse: "operations" },
@@ -57,6 +59,7 @@ vi.mock("@/core/activation/terminal-tokens", () => ({
 }));
 vi.mock("@/core/activation/connection-health", () => ({ APP_RESUME_EVENT: "pos:app-resume" }));
 vi.mock("@/core/api/sync-relay", () => ({ hasStaffSession: () => fixture.staff }));
+vi.mock("@/platform-config/platform", () => ({ platformName: () => fixture.platform }));
 vi.mock("@/integrations/supabase/external-client", () => ({
   externalClientSnapshot: () => fixture.client,
   subscribeExternalClientReset: (callback: () => void) => { fixture.reset = callback; return () => {}; },
@@ -74,8 +77,9 @@ vi.mock("../session-presence", () => ({
   subscribeCentralAuthSession: (callback: () => void) => { fixture.central = callback; return () => {}; },
 }));
 vi.mock("../session-verify-client", () => ({ verifySession: fixture.verify }));
+vi.mock("../server-origin", () => ({ posFetch: fixture.posFetch }));
 
-import { subscribePinApprovalWake } from "../pin-approval-wake";
+import { subscribeDesktopPinActivityWake, subscribeMobilePinActivityWake, subscribePinApprovalWake } from "../pin-approval-wake";
 
 const email = "terminal.terminal-1@pos.local";
 const user = { id: "machine-user", email };
@@ -83,8 +87,8 @@ const session = (bearer = "machine-jwt") => ({ access_token: bearer, user, expir
 const profile = { auth_user_id: user.id, email, role: "staff", store_id: "branch-a", is_active: true };
 const proofs = { cashierToken: "person-pin-proof", sessionToken: "raw-person-proof", terminalToken: "terminal-1", deviceBindingProof: "a".repeat(64) };
 const stops: Array<() => void> = [];
-const watch = (branch = "branch-a", wake = vi.fn()) => {
-  const stop = subscribePinApprovalWake(branch, wake);
+const watch = (branch = "branch-a", wake = vi.fn(), subscribe = subscribePinApprovalWake) => {
+  const stop = subscribe(branch, wake);
   stops.push(stop);
   return { stop, wake };
 };
@@ -96,6 +100,7 @@ beforeEach(() => {
   fixture.epoch = 1;
   fixture.signedIn = true;
   fixture.staff = false;
+  fixture.platform = "android";
   fixture.pin = proofs.cashierToken;
   fixture.raw = proofs.sessionToken;
   fixture.terminal = { tokenId: proofs.terminalToken, locationId: "branch-a", deviceUse: "operations" };
@@ -105,6 +110,7 @@ beforeEach(() => {
   fixture.profile.mockReset().mockResolvedValue({ data: [profile], error: null });
   fixture.readCredentials.mockReset().mockResolvedValue({ ...proofs, accessToken: "ignore-other-bearer" });
   fixture.verify.mockReset().mockResolvedValue({ ok: true, kind: "cashier", storeId: "branch-a" });
+  fixture.posFetch.mockReset().mockImplementation(async () => new Response(null, { status: 404 }));
   fixture.query.select.mockReturnValue(fixture.query);
   fixture.query.eq.mockReturnValue(fixture.query);
   fixture.query.limit.mockReturnValue(fixture.query);
@@ -124,6 +130,54 @@ afterEach(async () => {
 });
 
 describe("enrolled PIN approval wake", () => {
+  it("uses only the bound relay session for a person topic when there is no machine token", async () => {
+    fixture.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    const topic = `pos-pin-approval-wake:v1:${"a".repeat(64)}`;
+    fixture.posFetch.mockImplementation(async () => Response.json({
+      ok: true, protocol: "pin-approval-wake-v1", projectUrl: fixture.project.url,
+      terminalId: proofs.terminalToken, branchId: "branch-a", topic,
+      bearer: "pin.wake.grant", expiresAt: Date.now() + 120_000,
+    }));
+    const approval = watch();
+    const badge = watch("branch-a", vi.fn(), subscribeMobilePinActivityWake);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fixture.posFetch).toHaveBeenCalledExactlyOnceWith("/api/v1/pos/activity-preferences", expect.objectContaining({
+      redirect: "error",
+      body: JSON.stringify({ action: "pin_approval_wake_grant", projectUrl: fixture.project.url,
+        sessionToken: proofs.sessionToken, terminalToken: proofs.terminalToken, deviceBindingProof: proofs.deviceBindingProof }),
+    }));
+    expect(fixture.verify).not.toHaveBeenCalled();
+    const first = fixture.sockets[0];
+    expect(first.setAuth).toHaveBeenCalledExactlyOnceWith("pin.wake.grant");
+    expect(first.channel).toHaveBeenCalledExactlyOnceWith(topic, { config: { private: true } });
+    expect(first.on.mock.calls.map(call => call[1].event)).toEqual(["approval_changed", "approval_activity_changed"]);
+    first.on.mock.calls[0][2]();
+    first.on.mock.calls[1][2]();
+    expect(approval.wake).toHaveBeenCalledOnce();
+    expect(badge.wake).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(105_005);
+    expect(first.disconnect).toHaveBeenCalledOnce();
+    expect(fixture.posFetch).toHaveBeenCalledTimes(2);
+    first.on.mock.calls[0][2]();
+    expect(approval.wake).toHaveBeenCalledOnce();
+    fixture.sockets[1].on.mock.calls[0][2]();
+    expect(approval.wake).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry a disabled relay on each focus event for the same PIN session", async () => {
+    fixture.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    watch();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fixture.posFetch).toHaveBeenCalledOnce();
+    window.dispatchEvent(new Event("focus"));
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fixture.posFetch).toHaveBeenCalledOnce();
+    fixture.epoch++;
+    fixture.credentials();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fixture.posFetch).toHaveBeenCalledTimes(2);
+  });
+
   it("shares one private branch socket after verifying the exact machine and PIN session", async () => {
     const first = watch();
     const second = watch();
@@ -152,6 +206,58 @@ describe("enrolled PIN approval wake", () => {
     second.stop();
     await vi.advanceTimersByTimeAsync(1);
     expect(socket.removeAllChannels).toHaveBeenCalledOnce();
+  });
+
+  it.each(["android", "ios"] as const)("wakes the %s bell from the committed activity row on the same socket", async platform => {
+    fixture.platform = platform;
+    const approval = watch();
+    const badge = watch("branch-a", vi.fn(), subscribeMobilePinActivityWake);
+    const otherBadge = watch("branch-b", vi.fn(), subscribeMobilePinActivityWake);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fixture.construct).toHaveBeenCalledOnce();
+    const socket = fixture.sockets[0];
+    const notify = socket.on.mock.calls[0][2];
+    const status = socket.subscribe.mock.calls[0][0];
+    status("SUBSCRIBED");
+    expect(badge.wake).toHaveBeenCalledOnce();
+    notify({ payload: { table: "authorization_requests" } });
+    expect(badge.wake).toHaveBeenCalledOnce();
+    expect(approval.wake).toHaveBeenCalledTimes(2);
+    notify({ payload: { table: "activity_events" } });
+    expect(badge.wake).toHaveBeenCalledTimes(2);
+    expect(approval.wake).toHaveBeenCalledTimes(2);
+    expect(otherBadge.wake).not.toHaveBeenCalled();
+    badge.stop();
+    notify({ payload: { table: "activity_events" } });
+    expect(badge.wake).toHaveBeenCalledTimes(2);
+    expect(socket.disconnect).not.toHaveBeenCalled();
+  });
+
+  it.each(["electron", "web"] as const)("leaves the %s badge on its current delivery path", async platform => {
+    fixture.platform = platform;
+    const badge = watch("branch-a", vi.fn(), subscribeMobilePinActivityWake);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fixture.construct).not.toHaveBeenCalled();
+    expect(badge.wake).not.toHaveBeenCalled();
+  });
+
+  it("shares the Windows approval socket and stops issuing native wakes when the PIN signs out", async () => {
+    fixture.platform = "electron";
+    const approval = watch();
+    const badge = watch("branch-a", vi.fn(), subscribeDesktopPinActivityWake);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fixture.construct).toHaveBeenCalledOnce();
+    const socket = fixture.sockets[0];
+    const notify = socket.on.mock.calls[0][2];
+    notify({ payload: { table: "activity_events" } });
+    expect(badge.wake).toHaveBeenCalledOnce();
+    expect(approval.wake).not.toHaveBeenCalled();
+    fixture.pin = null;
+    fixture.credentials();
+    notify({ payload: { table: "activity_events" } });
+    expect(badge.wake).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(socket.disconnect).toHaveBeenCalledOnce();
   });
 
   it.each([

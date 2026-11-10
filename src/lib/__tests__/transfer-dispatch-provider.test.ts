@@ -3,16 +3,20 @@ import { runInNewContext } from "node:vm";
 import { ModuleKind, ScriptTarget, transpileModule } from "typescript";
 import { describe, expect, it, vi } from "vitest";
 import type { Product, Transfer } from "@/core/types/pos-types";
-import type { RpcResult } from "../stock-transfers";
+import type { RpcResult, StoredTransfer } from "../stock-transfers";
 import { sameBranchId } from "../branch-id";
 import { sameRecordId } from "../sale-identity";
 import { reconcileDispatchProducts, type DispatchProof } from "../transfer-dispatch-result";
 
 const source = readFileSync(new URL("../pos-store.tsx", import.meta.url), "utf8").replaceAll("\r\n", "\n");
 const callback = source.slice(source.indexOf("  const dispatchTransfer = useCallback("), source.indexOf("  /**\n   * Arrival.", source.indexOf("  const dispatchTransfer = useCallback(")));
+const receiptStart = source.indexOf("  const receiveTransfer = useCallback(");
+const receiptCallbacks = source.slice(receiptStart, source.indexOf("  /**\n   * Turn the note down", receiptStart));
 const linesStart = source.indexOf("  const linesFor = (");
 const linesFor = source.slice(linesStart, source.indexOf("\n\n  /**", linesStart));
-const compiled = transpileModule(`${linesFor}\n${callback}\nglobalThis.dispatch = dispatchTransfer;`, { compilerOptions: { module: ModuleKind.None, target: ScriptTarget.ES2022 } }).outputText;
+const compiled = transpileModule(`${linesFor}\n${callback}\n${receiptCallbacks}\n
+  Object.assign(globalThis, { dispatch: dispatchTransfer, receive: receiveTransfer, verify: verifyTransfer });`,
+{ compilerOptions: { module: ModuleKind.None, target: ScriptTarget.ES2022 } }).outputText;
 const date = "2026-10-31T03:00:00Z";
 const transfer = (patch: Partial<Transfer> = {}): Transfer => ({ id: "transfer", ref: "ST-test", kind: "transfer", fromStoreId: "source", toStoreId: "destination", sourceRequestId: "request", status: "approved", note: "", items: [{ productId: "product", qty: 2, approvedQty: 2 }], createdBy: "Staff", createdAt: date, updatedAt: date, ...patch });
 const proof = (patch: Partial<DispatchProof> = {}): DispatchProof => ({ version: 1, transfer_id: "transfer", from_store_id: "source", to_store_id: "destination", source_request_id: "request", status: "dispatched", dispatched_at: date, dispatched_by: "Verified dispatcher", request_closed: true, request_closed_at: date, fulfilment: "partial", request_fulfilment: "partial", lines: [{ product_id: "product", qty: 1, source_stock: 1 }], replayed: false, ...patch });
@@ -25,13 +29,18 @@ function harness() {
     stores: [{ id: "source", name: "Sending shop" }], settings: { integrations: { autoArchiveZeroStock: false } } };
   const stateRef = { current: state };
   const database = vi.fn<(...args: unknown[]) => Promise<RpcResult>>();
+  const receipt = vi.fn<(...args: unknown[]) => Promise<RpcResult>>();
+  const refresh = vi.fn();
   const activity = vi.fn().mockResolvedValue(undefined), history = vi.fn().mockResolvedValue(undefined), log = vi.fn();
   const context: Record<string, unknown> = { useCallback: (work: unknown) => work, sessionEpoch: () => epoch, bootstrapGeneration: generation,
     stateRef, actorRef: { current: "Current display name" }, dispatchTransferInDb: database, reconcileDispatchProducts, sameRecordId, sameBranchId,
+    receiveTransferInDb: receipt, verifyTransferInDb: receipt, requestBackgroundRefresh: refresh,
     setState: (update: (before: State) => State) => { state = update(state); stateRef.current = state; }, logger: { log }, trackTransition: history, recordActivity: activity };
   runInNewContext(compiled, context);
   return { dispatch: context.dispatch as (id: string, lines?: { productId: string; qty: number }[]) => Promise<RpcResult>,
-    database, activity, history, log, generation, state: () => state,
+    receive: context.receive as (id: string) => Promise<RpcResult>,
+    verify: context.verify as (id: string, lines: { productId: string; qty: number }[]) => Promise<RpcResult>,
+    database, receipt, refresh, activity, history, log, generation, state: () => state,
     replace: (next: State) => { state = next; stateRef.current = next; }, nextEpoch: () => { epoch++; } };
 }
 function deferred() { let finish!: (value: RpcResult) => void; const promise = new Promise<RpcResult>(resolve => { finish = resolve; }); return { promise, finish }; }
@@ -88,5 +97,64 @@ describe("actual provider dispatch callback", () => {
     app.log.mockImplementation(() => { throw new Error("Logging unavailable"); }); app.history.mockRejectedValue(new Error("History unavailable")); app.activity.mockRejectedValue(new Error("Notification unavailable"));
     await expect(app.dispatch("transfer")).resolves.toMatchObject({ success: true });
     await Promise.resolve(); expect(app.state().transfers[0].status).toBe("dispatched"); expect(app.activity).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("actual provider receipt callbacks", () => {
+  it("preserves an already-synced completed transfer and stock after the verify response", async () => {
+    const app = harness(), pending = deferred();
+    app.replace({ ...app.state(), currentStoreId: "destination", transfers: [transfer({ status: "received" })] });
+    app.receipt.mockReturnValueOnce(pending.promise);
+    const action = app.verify("transfer", [{ productId: "product", qty: 2 }]);
+    const canonical: State = { ...app.state(),
+      products: [{ ...app.state().products[0], stockByStore: { source: 2, destination: 9 } }],
+      transfers: [transfer({ status: "completed", verifiedBy: "Canonical verifier", verifiedAt: date })] };
+    app.replace(canonical);
+    pending.finish({ success: true });
+    await expect(action).resolves.toEqual({ success: true });
+    expect(app.state()).toBe(canonical);
+    expect(app.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the scoped refresh for a different destination product with the same barcode", async () => {
+    const app = harness();
+    const sourceProduct = app.state().products[0];
+    const destinationProduct = { ...sourceProduct, id: "destination-product", stockByStore: { destination: 7 } };
+    const interGroupTransfer: StoredTransfer = { ...transfer({ status: "received" }), scope: "INTER_GROUP",
+      fromGroupId: "source-catalogue", toGroupId: "destination-catalogue" };
+    const before: State = { ...app.state(), currentStoreId: "destination", products: [sourceProduct, destinationProduct],
+      transfers: [interGroupTransfer] };
+    app.replace(before);
+    app.receipt.mockResolvedValueOnce({ success: true });
+    await expect(app.verify("transfer", [{ productId: "product", qty: 2 }])).resolves.toEqual({ success: true });
+    expect(app.state()).toBe(before);
+    expect(app.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a completed transfer while an older arrival response is in flight", async () => {
+    const app = harness(), pending = deferred();
+    app.replace({ ...app.state(), currentStoreId: "destination", transfers: [transfer({ status: "dispatched" })] });
+    app.receipt.mockReturnValueOnce(pending.promise);
+    const action = app.receive("transfer");
+    const canonical: State = { ...app.state(), transfers: [transfer({ status: "completed", receivedBy: "Canonical receiver" })] };
+    app.replace(canonical);
+    pending.finish({ success: true });
+    await expect(action).resolves.toEqual({ success: true });
+    expect(app.state()).toBe(canonical);
+    expect(app.refresh).toHaveBeenCalledTimes(1);
+    expect(app.activity).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not request a refresh or emit activity in a new session after receipt", async () => {
+    const app = harness(), pending = deferred();
+    app.replace({ ...app.state(), currentStoreId: "destination", transfers: [transfer({ status: "dispatched" })] });
+    app.receipt.mockReturnValueOnce(pending.promise);
+    const action = app.receive("transfer");
+    app.nextEpoch();
+    pending.finish({ success: true });
+    await expect(action).resolves.toEqual({ success: true });
+    expect(app.refresh).not.toHaveBeenCalled();
+    expect(app.activity).not.toHaveBeenCalled();
+    expect(app.history).not.toHaveBeenCalled();
   });
 });

@@ -291,6 +291,22 @@ export type DirectConnectionParams = {
   timeout?: number;
 };
 
+export type StoreSettingsEditUpload = {
+  branchId: string;
+  status: "EMPTY" | "PENDING" | "APPLIED" | "AWAITING_DOWNLOAD" | "RETRY" | "REVIEW_REQUIRED" |
+    "AWAITING_OPERATOR" | "PAUSED" | "UNAVAILABLE";
+  reason?: string | null;
+};
+type StoreSettingsReviewValues = { block_shift_close_on_hold?: boolean | null; max_drawer_cash_limit?: string | null };
+export type StoreSettingsEditReview = {
+  operationId: string;
+  expectedVersion: number;
+  currentVersion: number;
+  proposedValues: StoreSettingsReviewValues;
+  currentValues: StoreSettingsReviewValues;
+  decisionSha256: string;
+};
+
 export type LocalSyncStatus = {
   connected: boolean;
   tradingReady?: boolean;
@@ -317,6 +333,8 @@ export type LocalSyncStatus = {
   failed?: number;
   conflicts?: number;
   lastError?: string | null;
+  storeSettingsEditUpload?: StoreSettingsEditUpload;
+  groupedSettingsPilot?: { branchId: string | null; status: string; reason?: string | null };
   running?: boolean;
   paused?: boolean;
   enabled?: boolean;
@@ -407,6 +425,16 @@ export type PosBridge = {
     error?: string;
     code?: string;
   }>;
+  queueStoreSettingsEdit?: (value: {
+    branchId: string;
+    expectedVersion: number;
+    operationId: string;
+    patch: { block_shift_close_on_hold?: boolean; max_drawer_cash_limit?: string };
+  }) => Promise<{ ok: boolean; operationId?: string; error?: string; code?: string }>;
+  reviewStoreSettingsEdit?: (value:
+    { action: "preview"; branchId: string } |
+    { action: "keep-central"; branchId: string; operationId: string; decisionSha256: string }
+  ) => Promise<{ ok: boolean; review?: StoreSettingsEditReview | null; operationId?: string; error?: string; code?: string }>;
   openDrawer?: (value: {
     reason: string;
     shiftId?: string | null;
@@ -437,6 +465,7 @@ export type PosBridge = {
     auto?: () => Promise<
       LocalSyncStatus & { ok?: boolean; busy?: boolean; skipped?: boolean; pushed?: number; merged?: number }
     >;
+    refreshApprovalActivity?: () => Promise<{ ok: boolean; inserted?: number; skipped?: boolean }>;
     pause?: () => Promise<LocalSyncStatus>;
     resume?: () => Promise<LocalSyncStatus>;
     getFailures?: () => Promise<Record<string, unknown>>;
@@ -680,7 +709,7 @@ export type PosBridge = {
     }) => void,
   ) => () => void;
   findReceipt?: (value: string, branchId: string, proof?: { sessionToken?: string; cashierToken?: string; accessToken?: string; refresh?: boolean }) => Promise<{ source: "local" | "cloud"; sale: LocalSaleRow; items?: LocalSaleRow[]; payments?: LocalSaleRow[] } | null>;
-  refundReceipt?: (value: { saleId: string; refundId: string; branchId: string; reason?: string | null }) => Promise<{ ok: boolean; replayed?: boolean; error?: string; code?: string; stage?: string | null; table?: string | null; sqlNumber?: number | null; sqlDetail?: string | null }>;
+  refundReceipt?: (value: { saleId: string; refundId: string; branchId: string; reason?: string | null; grantToken?: string }) => Promise<{ ok: boolean; replayed?: boolean; error?: string; code?: string; stage?: string | null; table?: string | null; sqlNumber?: number | null; sqlDetail?: string | null }>;
   /** Device settings stored in the branch SQL database. */
   getSetting?: (key: string) => Promise<{ ok: boolean; value?: string | null; error?: string }>;
   reserveStockCounter?: (prefix: string, minimum: number) => Promise<{ ok: boolean; sequence?: number; code?: string; error?: string }>;

@@ -1,7 +1,9 @@
 // Runs only against a new, disposable PostgreSQL cluster bound to localhost.
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { access, mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -244,9 +246,81 @@ try {
   sql("CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;");
   const preparation = await readFile(new URL("./preparation/pos-sync-feed-v1.sql", import.meta.url), "utf8");
   sql(`BEGIN;\n${preparation}\nCOMMIT;`);
-  if (process.argv.includes("--cash-bridge")) {
+  if (process.argv.includes("--installed-registry")) {
+    const require = createRequire(import.meta.url);
+    const { compareInstalledRegistry } = require("./lib/pos-sync-installed-registry.cjs");
+    const { createLocal } = require("./lib/shift-protocol-integration-fixture.cjs");
+    const { tables } = require("../database/sqlserver/schema-registry.json");
+    const local = await createLocal(randomUUID());
+    try {
+      const sqlRead = await readFile(join(root, "docs/database/pos-sync-sqlserver-inventory.readonly.sql"), "utf8");
+      const pgRead = await readFile(join(root, "docs/database/pos-sync-postgres-inventory.readonly.sql"), "utf8");
+      const results = await local.manager.pool.request().batch(sqlRead);
+      const inventory = JSON.parse(results.recordsets.at(-1)[0].pos_sync_sqlserver_inventory);
+      for (const field of ["relations", "columns"])
+        inventory[field] = inventory[field].filter(row => row.relation_name === "pos_store_settings");
+      const settings = tables.find(table => table.cloudTable === "pos_store_settings");
+      const registry = { tables: [{ ...settings, columns: settings.columns.filter(column => column.cloudColumn === "store_id") }] };
+      sql("CREATE TABLE public.pos_store_settings (store_id text); CREATE TABLE public.schema_migrations (version text);");
+      assert.deepEqual(compareInstalledRegistry(registry, inventory, JSON.parse(sql(pgRead))), []);
+      sql("ALTER TABLE public.pos_store_settings RENAME COLUMN store_id TO wrong; CREATE TABLE pos_sync_feed_v1.unreviewed_scope (id text);");
+      assert.deepEqual(compareInstalledRegistry(registry, inventory, JSON.parse(sql(pgRead))), [
+        "Postgres mapped column unavailable: public.pos_store_settings.store_id",
+        "Postgres unclassified relation: pos_sync_feed_v1.unreviewed_scope (r)",
+      ]);
+      assert.throws(() => compareInstalledRegistry(registry, { ...inventory, can_view_database_definition: 0 }, {}), /VIEW DEFINITION/);
+      console.log("PASS disposable SQL Server and PostgreSQL relation inventory and mapped-column drift check");
+    } finally { await local.close(); }
+  } else if (process.argv.includes("--named-approval-wake")) {
+    const { verifyNamedApprovalWake } = await import("./lib/pos-named-approval-wake-fixture.mjs");
+    await verifyNamedApprovalWake({ sql, denySql });
+  } else if (process.argv.includes("--cash-bridge") || process.argv.includes("--cash-wire") || process.argv.includes("--cash-receiving") ||
+      process.argv.includes("--cash-attested") || process.argv.includes("--cash-attested-relay") ||
+      process.argv.includes("--card-receiving") || process.argv.includes("--split-receiving")) {
     const { verifyCashBridge } = await import("./lib/pos-sync-cash-bridge-fixture.mjs");
-    await verifyCashBridge({ sql, denySql });
+    const useCashRelay = process.argv.includes("--cash-attested-relay");
+    const extended = process.argv.includes("--card-receiving") ? "card" :
+      process.argv.includes("--split-receiving") ? "split" : null;
+    const attested = useCashRelay || process.argv.includes("--cash-attested") || Boolean(extended);
+    let wire;
+    if (process.argv.includes("--cash-wire") || process.argv.includes("--cash-receiving") || attested) {
+      const wireMode = extended ? `--${extended}-wire` : attested ? "--attested-wire" : "--wire";
+      const source = execFileSync(process.execPath, [join(root, "scripts/test-pos-sale-outbox-sqlserver.cjs"), wireMode],
+        { cwd: root, windowsHide: true, encoding: "utf8", timeout: 120_000 });
+      const line = source.split(/\r?\n/).find(value => value.startsWith("POS_CASH_WIRE "));
+      assert(line, "The disposable SQL Server fixture must produce its saved cash wire evidence");
+      wire = JSON.parse(line.slice("POS_CASH_WIRE ".length));
+    }
+    const receiving = process.argv.includes("--cash-receiving")
+      ? await (await import("./lib/pos-sync-cash-receive-fixture.mjs")).cashReceivingFixture(root) : undefined;
+    const receiveExtended = extended ? evidence => {
+      const output = execFileSync(process.execPath, [join(root, "scripts/test-pos-sync-cash-receive-sqlserver.cjs"), "--tender"], {
+        cwd: root, windowsHide: true, encoding: "utf8", input: JSON.stringify(evidence), timeout: 120_000,
+      });
+      console.log(output.trim());
+    } : undefined;
+    const relay = useCashRelay ? (await import("./lib/pos-sync-cash-relay-fixture.mjs")).verifyAttestedCashRelay : undefined;
+    await verifyCashBridge({ sql, denySql, wire, receiving, receiveExtended, session, waitFor, attested, extended, relay });
+  } else if (process.argv.includes("--store-settings") || process.argv.includes("--store-settings-native")) {
+    const { verifyStoreSettingsPilot } = await import("./lib/pos-sync-store-settings-fixture.mjs");
+    const applyNative = process.argv.includes("--store-settings-native") ? evidence => {
+      const output = execFileSync(process.execPath, [join(root, "scripts/test-pos-sync-grouped-sqlserver.cjs"), "--postgres-wire"], {
+        cwd: root, windowsHide: true, encoding: "utf8", input: JSON.stringify(evidence), timeout: 120_000,
+      });
+      console.log(output.trim());
+    } : undefined;
+    await verifyStoreSettingsPilot({ sql, denySql, session, waitFor, applyNative });
+  } else if (process.argv.includes("--grouped-gateway") || process.argv.includes("--grouped-gateway-native") ||
+      process.argv.includes("--mixed-grouped-gateway") || process.argv.includes("--paged-mixed-gateway") ||
+      process.argv.includes("--live-stock-gateway") ||
+      process.argv.includes("--settings-edit") || process.argv.includes("--settings-edit-gateway") || process.argv.includes("--settings-edit-relay")) {
+    const { verifyGroupedGateway } = await import("./lib/pos-sync-grouped-gateway-fixture.mjs");
+    const editRelay = process.argv.includes("--settings-edit-relay");
+    const liveStock = process.argv.includes("--live-stock-gateway");
+    await verifyGroupedGateway({ sql, denySql, session, waitFor, native: process.argv.includes("--grouped-gateway-native"),
+      mixedGateway: process.argv.includes("--mixed-grouped-gateway") || process.argv.includes("--paged-mixed-gateway") || liveStock,
+      pagedRecovery: process.argv.includes("--paged-mixed-gateway") || liveStock, liveStock,
+      settingsEdit: process.argv.includes("--settings-edit"), editGateway: editRelay || process.argv.includes("--settings-edit-gateway"), editRelay });
   } else {
     await verifyFeedFixture();
   }

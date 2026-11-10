@@ -68,10 +68,11 @@ function isH3SwallowedErrorBody(body: string): boolean {
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
-      // Cloudflare passes variables and secrets per request, so hand them to
-      // the configuration module before anything tries to reach the database.
-      setRuntimeEnv(env);
-      const association = appleAppAssociation(request, env);
+      // Nitro's Cloudflare adapter saves the Worker bindings before delegating
+      // the Request to the SSR entry without its second argument.
+      const bindings = env ?? (globalThis as typeof globalThis & { __env__?: unknown }).__env__;
+      setRuntimeEnv(bindings);
+      const association = appleAppAssociation(request, bindings);
       if (association) return secure(association);
       // This credential-verified endpoint does not need the application's UI
       // router. Keep its exact methods/path and the same response protections.
@@ -111,7 +112,7 @@ export default {
         }
       }
       const handler = await getServerEntry();
-      const response = await handler.fetch(request, env, ctx);
+      const response = await handler.fetch(request, bindings, ctx);
       return secure(await normalizeCatastrophicSsrResponse(response));
     } catch (error) {
       console.error(error);

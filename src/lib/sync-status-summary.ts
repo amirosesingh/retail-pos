@@ -1,5 +1,7 @@
 /** Presentation only. Queue counts describe their own transport; they do not
  * prove that historical Change Tracking rows reached the central database. */
+import { sameBranchId } from "./branch-id";
+
 export type NativeSyncSnapshot = {
   pending?: unknown;
   failed?: unknown;
@@ -11,6 +13,8 @@ export type NativeSyncSnapshot = {
   running?: boolean;
   paused?: boolean;
   historyRecovery?: unknown;
+  groupedSettingsPilot?: { branchId: string; status: string } | null;
+  storeSettingsEditUpload?: { branchId: string; status: string } | null;
 };
 
 export type NativeDatabaseSnapshot = {
@@ -29,6 +33,21 @@ export type SyncStatusSummary = {
 };
 
 export type BrowserQueueSnapshot = import("./browser-sync-outbox").BrowserOutboxStatus;
+
+const groupedDownloadStatuses: Readonly<Partial<Record<string, Omit<SyncStatusSummary, "pending">>>> = {
+  REVIEW_REQUIRED: { state: "degraded", label: "Sync needs review",
+    detail: "Grouped downloads are held for review at the last verified checkpoint." },
+  REFUSED: { state: "degraded", label: "Sync scope could not be verified",
+    detail: "Grouped downloads are paused until the till and its database scope can be verified." },
+  UNAVAILABLE: { state: "degraded", label: "Grouped downloads unavailable",
+    detail: "The till could not confirm access to the grouped download feed." },
+  RETRY: { state: "degraded", label: "Grouped downloads will retry",
+    detail: "The last grouped download could not be confirmed." },
+  DEFERRED: { state: "degraded", label: "Grouped downloads waiting",
+    detail: "Grouped downloads are waiting for required local work or related records." },
+  MORE: { state: "checking", label: "Catching up on downloads",
+    detail: "The grouped feed has more changes to receive." },
+};
 
 export function isNativeDatabaseSnapshot(value: unknown): value is NativeDatabaseSnapshot {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -83,6 +102,12 @@ export function nativeSyncSummary(
     state: "checking", label: snapshot.phase === "pulling" ? "Receiving updates" : snapshot.phase === "pushing" ? "Sending updates" : "Synchronizing",
     detail: "Native synchronization is running. Its final result is not yet confirmed.", pending,
   };
+  const groupedDownload = snapshot.groupedSettingsPilot;
+  if (groupedDownload && typeof groupedDownload.branchId === "string" && groupedDownload.branchId &&
+      (!database.detail?.branchId || sameBranchId(groupedDownload.branchId, database.detail.branchId)) &&
+      Object.hasOwn(groupedDownloadStatuses, groupedDownload.status)) {
+    return { ...groupedDownloadStatuses[groupedDownload.status]!, pending };
+  }
   const history=snapshot.historyRecovery&&typeof snapshot.historyRecovery==='object'&&!Array.isArray(snapshot.historyRecovery)
     ?snapshot.historyRecovery as Record<string,unknown>:null;
   const policyHistoryPending = history?.pending === true && history.status === "retrying" &&
@@ -118,6 +143,16 @@ export function nativeSyncSummary(
     detail: [`${pending} journal change${pending === 1 ? " is" : "s are"} waiting for central acknowledgement.`,
       policyHistoryPending ? "History also remains pending and will retry automatically." : ""].filter(Boolean).join(" "),
   };
+  const settingsUpload = snapshot.storeSettingsEditUpload;
+  if (settingsUpload && typeof settingsUpload.branchId === "string" && settingsUpload.branchId &&
+      (!database.detail?.branchId || sameBranchId(settingsUpload.branchId, database.detail.branchId))) {
+    if (["PENDING", "RETRY", "REVIEW_REQUIRED", "AWAITING_OPERATOR", "UNAVAILABLE"].includes(settingsUpload.status))
+      return { state: "degraded", label: "Store settings upload needs attention", pending,
+        detail: "Check the store settings upload status. Journal totals are tracked separately." };
+    if (["APPLIED", "AWAITING_DOWNLOAD"].includes(settingsUpload.status))
+      return { state: "checking", label: "Waiting for store settings download", pending,
+        detail: "The central database accepted the edit. The till is waiting for the confirmed revision." };
+  }
   if (typeof snapshot.lastPushAt !== "string" || !Number.isFinite(Date.parse(snapshot.lastPushAt))) return {
     state: "checking", label: "Upload not confirmed", pending,
     detail: "No pending journal uploads reported. A successful native upload pass has not been reported.",

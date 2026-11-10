@@ -189,8 +189,46 @@ export async function verifyFinancialAuthorAttestation(input: {
   if(!await validSignature(key.public_key,signature,financialOperationMessage(fields)))return denied("EFINANCIAL_AUTHOR_INVALID");
   return proof;
 }
+
+/** The checkout signature covers the exact sale, line, tender and stock evidence
+ * plus the installation and feed boundary. The present uploader is irrelevant. */
+export async function verifyCashCheckoutAttestation(input: {
+  attestation: unknown; checkoutJson: string; terminal: VerifiedTerminalDescriptor;
+  branchId: string; operationId: string; installationGeneration: string; databaseGuid: string; feedEpoch: string;
+}) {
+  const { normalizeCashCheckoutAttestation, cashCheckoutMessage } =
+    await import("../../electron/security/financial-author-protocol.cjs");
+  let proof: ReturnType<typeof normalizeCashCheckoutAttestation>;
+  try { proof = normalizeCashCheckoutAttestation(input.attestation); }
+  catch { return denied("ECASH_CHECKOUT_AUTHOR_INVALID"); }
+  if (typeof input.checkoutJson !== "string" || !input.checkoutJson ||
+      input.checkoutJson.length > 524288 || input.terminal.platform !== "pc" || input.terminal.mode !== "operations" ||
+      proof.projectOrigin !== projectOrigin() || proof.terminalId !== input.terminal.id ||
+      proof.branchId !== input.branchId || proof.branchId !== input.terminal.branchId ||
+      proof.operationId !== input.operationId || proof.installationGeneration !== input.installationGeneration ||
+      proof.databaseGuid !== input.databaseGuid || proof.feedEpoch !== input.feedEpoch)
+    return denied("ECASH_CHECKOUT_AUTHOR_INVALID");
+  const raw = encoder.encode(input.checkoutJson);
+  if (raw.byteLength > 524288) return denied("ECASH_CHECKOUT_AUTHOR_INVALID");
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", raw));
+  if (proof.payloadHash !== Array.from(digest, byte => byte.toString(16).padStart(2, "0")).join(""))
+    return denied("ECASH_CHECKOUT_AUTHOR_INVALID");
+  const key = (await registry(proof)).key;
+  if (!key || !matchingKey(key, proof)) return denied("ECASH_CHECKOUT_AUTHOR_INVALID");
+  const { signature, ...fields } = proof;
+  if (!await validSignature(key.public_key, signature, cashCheckoutMessage(fields)))
+    return denied("ECASH_CHECKOUT_AUTHOR_INVALID");
+  if (key.revoked_at !== null) return denied("ECASH_CHECKOUT_AUTHOR_REVOKED");
+  const authority = await databaseAuthority({ appUserId: proof.authorId }, { strictAvailability: true });
+  if (!authority?.authorId || !sameId(authority.authorId, proof.authorId) ||
+      authority.subject !== proof.subject || (authority.branchId && authority.branchId !== proof.branchId) ||
+      authority.permissions.can_process_sale !== true)
+    return denied("ECASH_CHECKOUT_AUTHOR_FORBIDDEN");
+  return proof;
+}
+
 /** Necessary current action flag, not a replacement for row/field authorization. */
-export async function readFinancialAuthorPermission(value: unknown): Promise<ShiftAuthorAuthority> {
+export async function readFinancialAuthorPermission(value: unknown, options: { allowAdminRefund?: boolean } = {}): Promise<ShiftAuthorAuthority> {
   const {normalizeFinancialAttestation}=await import("../../electron/security/financial-author-protocol.cjs");
   let proof: ReturnType<typeof normalizeFinancialAttestation>;
   try { proof=normalizeFinancialAttestation(value); } catch { return {allowed:false,code:"EFINANCIAL_AUTHOR_INVALID"}; }
@@ -202,7 +240,9 @@ export async function readFinancialAuthorPermission(value: unknown): Promise<Shi
   const flags: Record<string,string>={OPEN:"can_open_shift",SALE:"can_process_sale",REFUND:"can_process_refund",TENDER:"can_edit_tenders",VOID:"can_void_item"};
   const flag=flags[String(proof.action)];
   if(!flag)return {allowed:false,code:"EFINANCIAL_AUTHOR_INVALID"};
-  return authority.permissions[flag]===true?{allowed:true,authority}:{allowed:false,code:"EFINANCIAL_AUTHOR_PERMISSION_REVOKED"};
+  const allowed = authority.permissions[flag] === true ||
+    (options.allowAdminRefund === true && proof.action === "REFUND" && authority.level === "admin");
+  return allowed ? {allowed:true,authority} : {allowed:false,code:"EFINANCIAL_AUTHOR_PERMISSION_REVOKED"};
 }
 /** Companion proof uses the same already-verified graph author, with no second
  * registry request and no change to frozen v1 graph bytes. Not admission alone. */

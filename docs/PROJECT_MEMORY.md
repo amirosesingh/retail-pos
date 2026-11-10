@@ -53,6 +53,26 @@ isolated two-till cutover and handback drill. The plan records proposed pilot
 settings. Store policies, staging targets and production actions retain their
 existing approval boundaries.
 
+Store rules synchronize in both directions. An authorized Management account
+can save for a permitted selected store through the cloud. An Operations till
+is restricted to its registered store. Use the existing verified settings save
+and preserve the original expected revision on any deferred native edit.
+Distribute the committed result to the eligible tills for that store. Keep
+Management replicas read-only and preserve the operator's existing connection
+fields.
+
+On 9 November the owner requested completing sync code on PR #451 with
+agents and focused tests. Only the production project is available. Keep
+hosted acceptance, the beta merge and installer publication pending. Run
+database checks against disposable instances and keep prepared SQL outside
+the deployed migrations.
+
+The owner subsequently created a separate Retail POS Beta project in
+luckycharms Org and authorized its POS schema, isolated test relay and
+two-till acceptance on PR #451. Use synthetic data and independent test SQL
+Server databases. This supersedes the hosted test hold for that isolated
+project only. Production and shared deployments remain outside the work.
+
 ## 7 November — branch history isolation and affected-PC follow-up approved
 
 Owner approves agents to fix history synchronization so Operations terminals
