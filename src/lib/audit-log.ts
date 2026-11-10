@@ -392,6 +392,7 @@ function flushBatch(waitForLock = false): Promise<void> {
 export async function flushPendingAuditLogs(): Promise<void> {
   if (flushTimer) { clearTimeout(flushTimer); flushTimer=null; }
   load();
+  if (!flushInFlight && !logs.some(row => !row.synced_to_cloud)) return;
   const desktop = localDb();
   if (desktop?.database?.getState) {
     const state = await desktop.database.getState();

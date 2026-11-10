@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  stored: "", push: vi.fn(), request: vi.fn(), nativeLog: undefined as undefined | ReturnType<typeof vi.fn>,
+  stored: "", push: vi.fn(), request: vi.fn(), databaseState: vi.fn(), nativeLog: undefined as undefined | ReturnType<typeof vi.fn>,
 }));
 vi.mock("../business-storage", () => ({
   readBusinessValue: () => mocks.stored,
@@ -9,12 +9,13 @@ vi.mock("../business-storage", () => ({
 }));
 vi.mock("@/core/api/pos-db", () => ({ db: { pushAuditLogs: mocks.push } }));
 vi.mock("../session-presence", () => ({ hasSignedInIdentity: () => false }));
-vi.mock("@/core/local-db/local-db", () => ({ localDb: () => ({ database: {getState: async () => ({configured:true})}, logConnection: mocks.nativeLog }) }));
+vi.mock("@/core/local-db/local-db", () => ({ localDb: () => ({ database: {getState: mocks.databaseState}, logConnection: mocks.nativeLog }) }));
 vi.mock("@/platform-config/platform", () => ({isTerminalApp: () => true}));
 vi.mock("../activity-journal", () => ({ replayOrder: (rows: unknown[]) => rows, stamp: () => ({deviceTime:new Date().toISOString(),seq:2}) }));
 
 beforeEach(() => {
   vi.resetModules();vi.useFakeTimers();mocks.push.mockReset();mocks.request.mockReset();
+  mocks.databaseState.mockReset().mockResolvedValue({ configured: true });
   mocks.nativeLog = undefined;
   mocks.stored = JSON.stringify([{id:"pending",at:new Date().toISOString(),category:"other",action:"Opened app",module:"app",details:{},synced_to_cloud:false}]);
   vi.stubGlobal("window",{location:{pathname:"/"}});
@@ -23,6 +24,15 @@ beforeEach(() => {
   mocks.request.mockImplementation(async (_name, options, callback) => callback(options.ifAvailable ? null : {}));
 });
 afterEach(() => {vi.clearAllTimers();vi.useRealTimers();vi.unstubAllGlobals();});
+
+it("closes with an empty activity queue without waiting for database status", async () => {
+  mocks.stored = "[]";
+  mocks.databaseState.mockRejectedValue(new Error("SQL not ready"));
+  const { flushPendingAuditLogs } = await import("../audit-log");
+  await expect(flushPendingAuditLogs()).resolves.toBeUndefined();
+  expect(mocks.databaseState).not.toHaveBeenCalled();
+  expect(mocks.push).not.toHaveBeenCalled();
+});
 
 it("restart waits for the audit lock and saves locally even offline and signed out", async () => {
   const {flushPendingAuditLogs} = await import("../audit-log");
