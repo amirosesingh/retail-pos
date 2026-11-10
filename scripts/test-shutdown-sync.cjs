@@ -1,5 +1,8 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
+const { readFileSync } = require('node:fs');
+const { join } = require('node:path');
+const { runInNewContext } = require('node:vm');
 const {finishShutdownSync}=require('../electron/sync/shutdown-sync.cjs');
 test('closing retries a transient failure then completes only after ACK',async()=>{
   let calls=0;const states=[];
@@ -57,4 +60,66 @@ test('signed-out exit refuses an unreadable journal and does not bypass installe
     health:async()=>({online:true,ready:false,code:'HTTP_403'}),
     pendingSummary:async()=>assert.fail('mandatory close cannot defer'),run:async()=>assert.fail('no authorization')});
   assert.equal(result.ok,false);assert.equal(result.code,'HTTP_403');
+});
+
+// Exercise the actual Main close preparation with disposable collaborators.
+function mainClose({ signedIn = false, drain = async () => {}, sync = async () => ({ ok: true }) } = {}) {
+  const source = readFileSync(join(__dirname, '../electron/main.cjs'), 'utf8');
+  const declarations = source.slice(source.indexOf('function shouldInstallUpdateOnClose('), source.indexOf('\napp.on("second-instance"'));
+  const calls = [], pendingShiftCloseSync = new Set(['saved-shift']);
+  const closeWriteBarrier = {
+    active: new Set(),
+    sealAndDrain: async () => { calls.push('drain'); await drain(); },
+    reopen: () => calls.push('reopen'),
+  };
+  const handlers = runInNewContext(declarations + '\n({ prepareApplicationClose, shouldInstallUpdateOnClose })', {
+    adminSession: { hasPosAuthority: () => signedIn },
+    closePreparation: null, closeWriteBarrier, pendingShiftCloseSync,
+    mainWindow: null, reportCloseProgress() {},
+    installUpdateAfterSync() {}, updater: { status: () => ({ status: 'ready' }) },
+    isManagementDevice: () => false,
+    databaseService: { snapshot: () => { calls.push('sql-state'); return { configured: true }; } },
+    flushSyncBeforeShutdown: async () => { calls.push('sync'); return sync(); },
+    SHUTDOWN_SYNC_TIMEOUT_MS: 1_000,
+    settleWithin: async work => { try { return { ok: true, value: await work() }; } catch { return { ok: false }; } },
+    diagnostics: { logConnection() {} },
+  });
+  return { ...handlers, calls, pendingShiftCloseSync };
+}
+
+test('login screen waits for accepted local writes then exits without requiring SQL, sync or a ready installer', async () => {
+  let finishWrite, done = false;
+  const f = mainClose({ drain: () => new Promise(resolve => { finishWrite = resolve; }) });
+  assert.equal(f.shouldInstallUpdateOnClose(), false);
+  const closing = f.prepareApplicationClose().then(result => { done = true; return result; });
+  await Promise.resolve();
+  assert.deepEqual(f.calls, ['drain']);
+  assert.equal(done, false);
+  finishWrite();
+  const result = await closing;
+  assert.equal(result.ok, true);
+  assert.equal(result.synchronized, false);
+  assert.deepEqual(f.calls, ['drain']);
+  assert.deepEqual([...f.pendingShiftCloseSync], ['saved-shift']);
+});
+
+test('an unfinished local write still prevents quitting from login', async () => {
+  const f = mainClose({ drain: async () => { throw new Error('unfinished'); } });
+  const result = await f.prepareApplicationClose();
+  assert.equal(result.ok, false);
+  assert.equal(result.stage, 'local-writes');
+  assert.deepEqual(f.calls, ['drain', 'reopen']);
+});
+
+test('signed-in quit and explicit update still require the final upload path', async () => {
+  const signedIn = mainClose({ signedIn: true });
+  assert.equal(signedIn.shouldInstallUpdateOnClose(), true);
+  assert.equal((await signedIn.prepareApplicationClose()).ok, true);
+  assert.deepEqual(signedIn.calls, ['drain', 'sql-state', 'sync']);
+  assert.equal(signedIn.pendingShiftCloseSync.size, 0);
+
+  const updating = mainClose({ sync: async () => ({ ok: false, error: 'Still pending' }) });
+  assert.equal((await updating.prepareApplicationClose(true)).ok, false);
+  assert.deepEqual(updating.calls, ['drain', 'sql-state', 'sync', 'reopen']);
+  assert.equal(updating.pendingShiftCloseSync.size, 1);
 });

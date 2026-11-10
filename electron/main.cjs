@@ -791,12 +791,13 @@ async function restoreShiftCloseGuard() {
 
 async function showMandatorySyncFailure(result) {
   const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+  const savingLocally = result?.stage === "renderer" || result?.stage === "local-writes";
   const response = await dialog.showMessageBox(win, {
     type: "error",
-    title: "Synchronization incomplete",
-    message: "Synchronization must finish before the application can close.",
+    title: savingLocally ? "Local changes still need saving" : "Synchronization incomplete",
+    message: savingLocally ? "Retail could not finish saving local changes before closing." : "Synchronization must finish before the application can close.",
     detail: String(result?.error ?? "Retry after checking the synchronization status."),
-    buttons: win ? ["Retry sync and close", "Keep application open"] : ["Keep application open"],
+    buttons: win ? [savingLocally ? "Retry closing" : "Retry sync and close", "Keep application open"] : ["Keep application open"],
     defaultId: 0,
     cancelId: win ? 1 : 0,
     noLink: true,
@@ -916,6 +917,12 @@ let allowMainWindowClose = false;
 let closePreparation = null;
 let installUpdateAfterSync = null;
 
+function shouldInstallUpdateOnClose() {
+  // Closing the login or recovery screen must not enter the installer's
+  // signed-in transaction checks merely because a download is ready.
+  return Boolean(!closePreparation && installUpdateAfterSync && adminSession.hasPosAuthority() && updater.status().status === "ready");
+}
+
 function flushRendererBeforeClose(forUpdate = false) {
   const win=mainWindow;
   if(!win || win.isDestroyed()) return Promise.resolve();
@@ -941,11 +948,15 @@ function prepareApplicationClose(forUpdate = false) {
     try {
       if (forUpdate && closeWriteBarrier.active.size) throw new Error("Please finish the current transaction before updating.");
       await flushRendererBeforeClose(forUpdate);
-      // Even an unregistered window must pass the renderer safety check.
-      if(isManagementDevice() || (!databaseService.snapshot().configured && !pendingShiftCloseSync.size))return {ok:true,skipped:true};
       closeStage="local-writes";
       const drained=await settleWithin(() => closeWriteBarrier.sealAndDrain(), SHUTDOWN_SYNC_TIMEOUT_MS);
       if(!drained.ok)throw new Error("Local writes are still finishing. Keep the application open and retry closing.");
+      // Once accepted writes are durable, a signed-out quit needs neither a
+      // working database connection nor an upload. Leave the saved journal
+      // and any unconfirmed shift close for the next authorized sync.
+      if (!forUpdate && !adminSession.hasPosAuthority())
+        return { ok: true, synchronized: false, authenticationRequired: true };
+      if(isManagementDevice() || (!databaseService.snapshot().configured && !pendingShiftCloseSync.size))return {ok:true,skipped:true};
       closeStage="synchronization";
       const result=await flushSyncBeforeShutdown({ allowSignedOutExit: !forUpdate && !pendingShiftCloseSync.size });
       if(!result?.ok)throw new Error(result?.error??"Pending data has not been acknowledged by the cloud.");
@@ -954,7 +965,7 @@ function prepareApplicationClose(forUpdate = false) {
     } catch(error) {
       diagnostics.logConnection("shutdown.prepare.failed",{category:"application",stage:closeStage,code:error?.code??"ECLOSE",message:String(error?.message??error)});
       closeWriteBarrier.reopen();
-      return {ok:false,error:String(error?.message??error)};
+      return {ok:false,stage:closeStage,error:String(error?.message??error)};
     } finally { reportCloseProgress({ active: false }); if(mainWindow&&!mainWindow.isDestroyed())mainWindow.setEnabled(true); }
   })();
   closePreparation.then(result=>{if(!result.ok)closePreparation=null;},()=>{closePreparation=null;});
@@ -1276,7 +1287,7 @@ function createWindows(initialRoute = "/") {
     if (allowMainWindowClose || shutdownFlushComplete) return;
     event.preventDefault();
     const closingWindow = mainWindow;
-    if (updater.status().status === "ready") {
+    if (shouldInstallUpdateOnClose()) {
       void installUpdateAfterSync(false).then(result => { if (!result.ok) return showMandatorySyncFailure(result); });
       return;
     }
@@ -2856,7 +2867,7 @@ function registerIpc() {
   ipcMain.handle("update:download", () => updater.downloadUpdate());
   installUpdateAfterSync = require("./update-install.cjs").createUpdateInstall({
     updater,
-    isBusy: () => closeWriteBarrier.active.size > 0 || Boolean(jobManager.running || localDataPreparePromise) || ["enabled_connecting", "enabled_validating", "enabled_bootstrapping"].includes(databaseService.snapshot().state),
+    isBusy: () => closeWriteBarrier.active.size > 0 || Boolean(closePreparation || jobManager.running || localDataPreparePromise) || ["enabled_connecting", "enabled_validating", "enabled_bootstrapping"].includes(databaseService.snapshot().state),
     prepare: prepareApplicationClose,
     allowQuit: () => {
       // Sync has completed. Do not intercept electron-updater's quit and
@@ -3048,7 +3059,7 @@ app.on("before-quit", (event) => {
   if (shutdownFlushComplete) return;
   event.preventDefault();
   if (shutdownFlushStarted) return;
-  if (updater.status().status === "ready" && installUpdateAfterSync) {
+  if (shouldInstallUpdateOnClose()) {
     shutdownFlushStarted = true;
     void installUpdateAfterSync(false).then(async result => {
       if (!result.ok) { shutdownFlushStarted = false; await showMandatorySyncFailure(result); }

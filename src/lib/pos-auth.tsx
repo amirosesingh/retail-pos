@@ -1104,6 +1104,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const staffId = terminalUser?.userCode ?? appUser?.user_id;
       if (staffId) await endShiftSessions({staffId, awaitWrites: true, persist: reason !== "expired"});
       if (!isCurrentEpoch(startedAt)) return;
+      // Clear Electron's person proof before showing login. Remote session
+      // revocation can take longer, and Exit must see a signed-out terminal.
+      try {
+        await window.sqlAdmin?.lockAdmin?.();
+      } catch {
+        /* web/Android, or a desktop bridge that is already closing */
+      }
+      if (!isCurrentEpoch(startedAt)) return;
       operatorAuthId.current = null;
       clearOperatorIdentity();
       setSessionState(reason === "locked" ? "locked" : reason);
@@ -1135,14 +1143,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } else {
         const result = await supabase.auth.signOut({ scope: "local" });
         if (result.error && isCurrentEpoch(startedAt)) await discardRejectedExternalAuthSession();
-      }
-      // Signing out fires an auth change; anything newer than this teardown
-      // wins and the rest is skipped.
-      if (!isCurrentEpoch(startedAt)) return;
-      try {
-        await window.sqlAdmin?.lockAdmin?.();
-      } catch {
-        /* web/Android, or a desktop bridge that is already closing */
       }
     },
     [setCentralSessionVerified, terminalUser?.userCode, appUser?.user_id],
