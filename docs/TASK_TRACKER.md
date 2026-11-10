@@ -587,11 +587,15 @@ of 19. Both tills completed handback after the fresh test scope sealed.
 The receiving till verified the hosted archive contains the same receipt
 and stock. The demo and older transfer scope were separate.
 
-The hosted refund under the existing PIN rule and expired-cursor replay
-remain pending. The isolated relay for that test requires its Beta server
-key. The PIN rule remains active. Disposable PostgreSQL and SQL Server
-passed paged recovery and the two-till settings round trip after a lost
-response.
+The hosted PIN refund and expired-cursor drill passed on Retail POS Beta
+with two disposable SQL Server tills and the PR #451 relay build. The relay
+denied the signed refund before approval, accepted one scoped manager PIN
+grant, and returned the original receipt on retry. Stock went from 20 to 19
+to 20. Till B recovered the archived sale, refund and stock after its saved
+sequence 1 expired at replay floor 2. Both tills completed handback after
+the synthetic epoch sealed and preserved their original legacy cursors.
+The existing PIN rule stayed active. Disposable PostgreSQL and SQL Server
+also passed the two-till settings round trip after a lost response.
 
 The opt-in signed checkout path carries ordinary single-product card and
 cash/card split payments with exact payment. Two disposable SQL Server
@@ -604,8 +608,11 @@ checks covered stale edits, rollback, exact retry, and deferral of the
 change-tracking window until the booking group is accepted. Transfer
 arrival and verification now use canonical groups for eligible scopes.
 The fresh Beta cloud installer includes these changes and passed isolated
-install checks. The populated Beta project still needs a separate upgrade
-before these new paths can be enabled there.
+install checks. The separate in-place SQL upgrade passed rehearsal on a
+populated PostgreSQL database and was applied to Retail POS Beta as migration
+`20261110031005`. Read-back confirmed the new routines, row-level security
+on all 97 POS and grouped-feed tables, and preservation of the existing eight
+sales and cash archive before the two-till drill.
 
 ## 7 November — first two-way sync implementation batch
 
