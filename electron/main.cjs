@@ -1125,40 +1125,82 @@ async function startAppServer(preferredPort = null) {
 }
 
 let cloudServerRestartTimer = null;
+let cloudServerRestarting = false;
+let cloudServerRestartPending = false;
+
+function canReloadCloudWindow(win) {
+  return !quitting && !safeMode && !win.isDestroyed() && !win.webContents.isDestroyed();
+}
+
+async function reloadCloudWindow(win, route) {
+  if (!canReloadCloudWindow(win)) return;
+  try {
+    await load(win, route);
+  } catch {
+    if (!canReloadCloudWindow(win)) return;
+    // Saving can move the renderer from setup to activation while the local
+    // server is being replaced. If the old route fails, let the normal entry
+    // screen choose where to resume using the newly saved profile.
+    let entry = route;
+    if (win === mainWindow) {
+      const database = databaseService.snapshot();
+      entry = database.enabled && database.configured && !database.tradingReady
+        ? "/database-startup"
+        : "/";
+    }
+    await new Promise(resolve => setTimeout(resolve, 250));
+    if (!canReloadCloudWindow(win)) return;
+    try {
+      await load(win, entry);
+    } catch (retryError) {
+      if (!canReloadCloudWindow(win)) return;
+      if (win === mainWindow) throw retryError;
+      recordFault("app-server.cloud-config-companion-reload", retryError);
+    }
+  }
+}
+
 function scheduleCloudServerRestart() {
   // Vite is owned by the developer, not by this Electron process. Native
   // requests read the vault directly and the renderer applies its saved
   // override; only our packaged server needs a new environment after a save.
-  if (DEV_URL) return;
+  if (DEV_URL || quitting || safeMode) return;
+  if (cloudServerRestarting) {
+    cloudServerRestartPending = true;
+    return;
+  }
   if (cloudServerRestartTimer) clearTimeout(cloudServerRestartTimer);
   cloudServerRestartTimer = setTimeout(async () => {
     cloudServerRestartTimer = null;
     if (quitting || safeMode) return;
-    const currentOrigin = baseUrl ? new URL(baseUrl).origin : "";
-    const windows = BrowserWindow.getAllWindows().filter((win) => {
-      if (win.isDestroyed() || win.webContents.isDestroyed()) return false;
-      try {
-        return new URL(win.webContents.getURL()).origin === currentOrigin;
-      } catch {
-        return false;
-      }
-    });
-    const routes = windows.map((win) => {
-      try {
-        const current = new URL(win.webContents.getURL());
-        return `${current.pathname}${current.search}${current.hash}`;
-      } catch {
-        return "/";
-      }
-    });
+    cloudServerRestarting = true;
     try {
+      const currentOrigin = baseUrl ? new URL(baseUrl).origin : "";
+      const targets = [];
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!canReloadCloudWindow(win)) continue;
+        let current;
+        try { current = new URL(win.webContents.getURL()); }
+        catch { continue; }
+        if (current.origin === currentOrigin)
+          targets.push({ win, route: `${current.pathname}${current.search}${current.hash}` });
+      }
       const previousPort = baseUrl ? Number(new URL(baseUrl).port) : null;
       await stopAppServer();
+      if (quitting || safeMode) return;
       baseUrl = await startAppServer(previousPort);
-      await Promise.all(windows.map((win, index) => load(win, routes[index])));
+      await Promise.all(targets.map(({ win, route }) => reloadCloudWindow(win, route)));
     } catch (error) {
-      recordFault("app-server.cloud-config-restart", error);
-      enterSafeMode("The local app server could not apply the saved cloud connection");
+      if (!quitting && !safeMode) {
+        recordFault("app-server.cloud-config-restart", error);
+        enterSafeMode("The local app server could not apply the saved cloud connection");
+      }
+    } finally {
+      cloudServerRestarting = false;
+      if (cloudServerRestartPending) {
+        cloudServerRestartPending = false;
+        scheduleCloudServerRestart();
+      }
     }
   }, 1_000);
 }

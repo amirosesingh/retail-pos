@@ -21,8 +21,11 @@ function fixture(devUrl: string | undefined = undefined) {
   const ctx = {
     DEV_URL: devUrl, setTimeout, clearTimeout, URL, quitting: false, safeMode: false,
     baseUrl: "http://127.0.0.1:8080", BrowserWindow: { getAllWindows: () => views },
+    mainWindow: views[0],
+    databaseService: { snapshot: vi.fn(() => ({ enabled: false, configured: false, tradingReady: false })) },
     stopAppServer: vi.fn(async () => {}), startAppServer: vi.fn(async () => "http://127.0.0.1:8080"),
-    load: vi.fn(async () => {}), recordFault: vi.fn(), enterSafeMode: vi.fn(), cloudCredentials,
+    load: vi.fn<(win: (typeof views)[number], route: string) => Promise<void>>().mockResolvedValue(undefined),
+    recordFault: vi.fn(), enterSafeMode: vi.fn(), cloudCredentials,
     guard: { guarded: (fn: () => unknown) => fn() },
     ipcMain: { handle: (name: string, fn: (...args: unknown[]) => unknown) => handlers.set(name, fn) },
   };
@@ -82,6 +85,64 @@ describe("Electron cloud configuration server ownership", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(ctx.startAppServer).toHaveBeenCalledOnce();
     expect(call("cloud:bootstrap")).toMatchObject({ url: "https://last.example", key: "last-public-key" });
+  });
+
+  it.each(["/", "/database-startup"])("recovers a rejected main-window reload at %s with the saved credentials", async entry => {
+    const { ctx, call, views } = fixture();
+    ctx.databaseService.snapshot.mockReturnValue({ enabled: entry !== "/", configured: entry !== "/", tradingReady: false });
+    ctx.load.mockRejectedValueOnce(new Error("ERR_FAILED (-2)"));
+    const next = { url: "https://next.example", key: "next-public-key" };
+    call("cloud:set", next);
+    await vi.advanceTimersByTimeAsync(1250);
+    expect(ctx.load).toHaveBeenCalledWith(views[0], entry);
+    expect(ctx.startAppServer).toHaveBeenCalledOnce();
+    expect(ctx.enterSafeMode).not.toHaveBeenCalled();
+    expect(call("cloud:bootstrap")).toEqual({ ok: true, ...next });
+  });
+
+  it("keeps the main window usable if the customer display cannot reload", async () => {
+    const { ctx, call, views } = fixture();
+    const failure = new Error("display navigation failed");
+    ctx.load.mockImplementation(async win => { if (win === views[1]) throw failure; });
+    call("cloud:set", { url: "https://next.example", key: "next-public-key" });
+    await vi.advanceTimersByTimeAsync(1250);
+    expect(ctx.load.mock.calls.filter(([win]) => win === views[1])).toHaveLength(2);
+    expect(ctx.recordFault).toHaveBeenCalledWith("app-server.cloud-config-companion-reload", failure);
+    expect(ctx.enterSafeMode).not.toHaveBeenCalled();
+  });
+
+  it("opens Recovery after the main window also fails to load the startup screen", async () => {
+    const { ctx, call } = fixture();
+    const failure = new Error("startup route did not load");
+    ctx.load.mockImplementation(async win => { if (win === ctx.mainWindow) throw failure; });
+    call("cloud:set", { url: "https://next.example", key: "next-public-key" });
+    await vi.advanceTimersByTimeAsync(1250);
+    expect(ctx.recordFault).toHaveBeenCalledWith("app-server.cloud-config-restart", failure);
+    expect(ctx.enterSafeMode).toHaveBeenCalledOnce();
+  });
+
+  it("runs a later save after the active restart finishes", async () => {
+    const { ctx, call } = fixture();
+    let started!: (origin: string) => void;
+    ctx.startAppServer.mockImplementationOnce(() => new Promise(resolve => { started = resolve; }));
+    call("cloud:set", { url: "https://first.example", key: "first-public-key" });
+    await vi.advanceTimersByTimeAsync(1000);
+    call("cloud:set", { url: "https://last.example", key: "last-public-key" });
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(ctx.stopAppServer).toHaveBeenCalledOnce();
+    started(ctx.baseUrl);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(ctx.startAppServer).toHaveBeenCalledTimes(2);
+    expect(call("cloud:bootstrap")).toMatchObject({ url: "https://last.example" });
+  });
+
+  it("does not start another server if the app quits while the old server is stopping", async () => {
+    const { ctx, call } = fixture();
+    ctx.stopAppServer.mockImplementation(async () => { ctx.quitting = true; });
+    call("cloud:set", { url: "https://next.example", key: "next-public-key" });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(ctx.startAppServer).not.toHaveBeenCalled();
+    expect(ctx.enterSafeMode).not.toHaveBeenCalled();
   });
 
   it.each(["quitting", "safeMode"] as const)("does not restart while %s", async (flag) => {
