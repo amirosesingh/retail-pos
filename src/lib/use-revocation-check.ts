@@ -43,6 +43,9 @@ const savedBlock = typeof window !== "undefined" ? window.localStorage.getItem(B
 let blocked = savedBlock === "1" || savedBlock === "missing";
 let blockReason: BlockReason = savedBlock === "missing" ? "missing" : "revoked";
 let blockRevision = 0;
+// The shell and Settings can both mount this hook. One owner must manage the
+// temporary lock/rollback while native storage decides whether clearing is safe.
+let clearingRegistration = false;
 const listeners = new Set<() => void>();
 
 /** True once a revocation (or deletion) has been confirmed by the server. */
@@ -286,13 +289,16 @@ export function useRevocationCheck(): RevocationState {
         if (verdict.outcome === "unknown") return;
         setLastCheckedAt(new Date().toISOString());
         if (verdict.outcome === "revoked" || verdict.outcome === "missing") {
+          if (clearingRegistration) return;
+          clearingRegistration = true;
           // Persist the lock before clearing identity so the shell never falls
           // through to sign-in or activation during the state transition.
           const previousBlock = { blocked, reason: blockReason };
-          setBlocked(true, verdict.outcome);
-          const ownedBlockRevision = blockRevision;
+          let ownedBlockRevision = blockRevision;
           const expected = { config: capturedConfig, reason: verdict.outcome, verificationProjectUrl: projectUrl };
           try {
+            setBlocked(true, verdict.outcome);
+            ownedBlockRevision = blockRevision;
             if (isMobileShell()) await unpairTerminal(expected);
             else await clearTerminalConfig(expected);
           } catch (error) {
@@ -300,6 +306,8 @@ export function useRevocationCheck(): RevocationState {
               setBlocked(previousBlock.blocked, previousBlock.reason);
             }
             throw error;
+          } finally {
+            clearingRegistration = false;
           }
           return;
         }

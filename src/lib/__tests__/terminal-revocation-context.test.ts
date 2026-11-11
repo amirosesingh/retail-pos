@@ -115,11 +115,11 @@ function fixture() {
       state.source = source; state.client = client;
       for (const listener of resetListeners) listener();
     },
-    render() {
+    render(instances = 1) {
       cursor = 0; effectCursor = 0;
-      const value = module.exports.useRevocationCheck();
+      const values = Array.from({ length: instances }, () => module.exports.useRevocationCheck());
       pending.splice(0).forEach(effect => effect());
-      return value;
+      return values[0];
     },
     cleanup() { effects.forEach(effect => effect.cleanup?.()); },
   };
@@ -257,6 +257,34 @@ describe("terminal revocation connection ownership", () => {
     expect(f.heartbeat).toHaveBeenCalledWith(f.original.tokenId, { synced: false }, f.state.client);
     f.changeTerminal(terminal("terminal-b")); heartbeat.resolve(); await settle();
     expect(f.writeRecord).not.toHaveBeenCalled();
+    f.cleanup();
+  });
+
+  it("shares a refused clear across shell and Settings without leaving a false revocation lock", async () => {
+    const f = fixture(), clearing = deferred<void>();
+    f.state.lookup = async () => ({ ...used, status: "revoked" });
+    f.clear.mockImplementation(() => clearing.promise);
+    f.render(2); await settle();
+    expect(f.isTerminalRevoked()).toBe(true);
+    expect(f.clear).toHaveBeenCalledOnce();
+    clearing.reject(Object.assign(new Error("Database changed"), { code: "EACTIVATION_CONTEXT_CHANGED" }));
+    await settle();
+    expect(f.isTerminalRevoked()).toBe(false);
+    expect(f.state.config).toBe(f.original);
+    expect(f.render(2).revoked).toBe(false);
+    f.cleanup();
+  });
+
+  it("keeps the revocation lock after both screens share a genuine native clear", async () => {
+    const f = fixture(), clearing = deferred<void>();
+    f.state.lookup = async () => ({ ...used, status: "revoked" });
+    f.clear.mockImplementation(async () => { await clearing.promise; f.changeTerminal(null); });
+    f.render(2); await settle();
+    expect(f.fetchStatus).toHaveBeenCalledTimes(2);
+    expect(f.clear).toHaveBeenCalledOnce();
+    clearing.resolve(); await settle();
+    expect(f.isTerminalRevoked()).toBe(true);
+    expect(f.state.config).toBeNull();
     f.cleanup();
   });
 });
