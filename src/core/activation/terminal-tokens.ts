@@ -499,7 +499,7 @@ async function restoreSavedTerminalConfig(): Promise<TerminalConfig | null> {
     // An older renderer could publish a registration before Windows accepted
     // it. Recover that copy only after Main verifies it and reads it back.
     const candidate = legacy ?? await getDeviceSecret<TerminalConfig>(SEALED_NAME, true);
-    const restored = candidate?.tokenId ? await persistDesktopTerminalConfig(candidate) : null;
+    const restored = candidate?.tokenId ? await persistDesktopTerminalConfig(candidate, true) : null;
     if (restored) publishTerminalConfig(restored);
     else hydrated = true;
     return restored;
@@ -626,6 +626,7 @@ export async function clearTerminalConfig(expected?: TerminalClearContext) {
 type TerminalBridge = {
   readTerminalConfig: () => Promise<{ ok: boolean; config?: TerminalConfig | null }>;
   writeTerminalConfig: (config: TerminalConfig | null) => Promise<{ ok: boolean; code?: string; error?: string }>;
+  restoreTerminalConfig?: (config: TerminalConfig) => Promise<{ ok: boolean; config?: TerminalConfig | null; code?: string; error?: string }>;
   clearTerminalConfig?: (expected: {
     tokenId?: string; projectUrl?: string; reason: "revoked" | "missing" | "unpair"; verificationProjectUrl?: string;
   }) => Promise<{ ok: boolean; code?: string; error?: string }>;
@@ -653,11 +654,16 @@ export async function mirrorTerminalConfigToDesktop(): Promise<void> {
   await persistDesktopTerminalConfig(config);
 }
 
-async function persistDesktopTerminalConfig(config: TerminalConfig): Promise<TerminalConfig> {
+async function persistDesktopTerminalConfig(config: TerminalConfig, restoring = false): Promise<TerminalConfig> {
   const bridge = desktopBridge();
   if (!bridge) throw new ActivationError("Windows secure storage is unavailable. Reopen Retail and retry.");
   const proof = config.deviceBindingProof || await deviceProofHash();
-  const result = await bridge.writeTerminalConfig({ ...config, deviceBindingProof: proof }).catch(() => {
+  if (restoring && !bridge.restoreTerminalConfig) {
+    throw new ActivationError("This Windows app cannot restore the retained registration. Update the beta app and retry; the saved registration has not been removed.", true);
+  }
+  const savedConfig = { ...config, deviceBindingProof: proof };
+  const request = restoring ? bridge.restoreTerminalConfig!(savedConfig) : bridge.writeTerminalConfig(savedConfig);
+  const result = await request.catch(() => {
     throw new ActivationError("Could not reach Windows secure storage. Retry on this device with the same activation.", true);
   });
   if (!result?.ok) {

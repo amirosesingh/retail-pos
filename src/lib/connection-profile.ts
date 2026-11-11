@@ -25,6 +25,18 @@ export type ProfileHydration = "idle" | "hydrating" | "hydrated";
 let state: ProfileHydration = "idle";
 let inFlight: Promise<void> | null = null;
 
+/** Connection values were read; registration remains unverified, not absent. */
+export class RegistrationRestoreError extends Error {
+  readonly code = "EREGISTRATION_RESTORE";
+  constructor() {
+    super("The saved terminal registration could not be restored. Your saved connection settings are available for recovery.");
+    this.name = "RegistrationRestoreError";
+  }
+}
+
+export const isRegistrationRestoreError = (error: unknown): error is RegistrationRestoreError =>
+  error instanceof RegistrationRestoreError;
+
 /** Where the restore has got to. Synchronous, for gates that cannot await. */
 export function connectionProfileState(): ProfileHydration {
   // The website's configuration comes from its hosting environment and is
@@ -55,7 +67,9 @@ export function hydrateConnectionProfile(): Promise<void> {
     // cloud pair that was current when the till was registered, and applying
     // it after the vault pair would silently point the till at the previous
     // project. Restoring it first lets the device's own saved connection win.
-    await hydrateTerminalConfig();
+    let registrationFailed = false;
+    try { await hydrateTerminalConfig(); }
+    catch { registrationFailed = true; }
     // Missing values resolve normally. Unreadable storage must keep the boot
     // gate closed. Settle both reads before allowing another restore attempt.
     for (let attempt = 0; ; attempt++) {
@@ -68,6 +82,10 @@ export function hydrateConnectionProfile(): Promise<void> {
       if (attempt === 2) throw failed.reason;
       await new Promise(resolve => setTimeout(resolve, 200 * (attempt + 1)));
     }
+    // Recovery must be able to show/fix a readable connection even when an old
+    // registration needs online proof verification. Ordinary startup still
+    // rejects, so a failed identity read never permits sign-in or trading.
+    if (registrationFailed) throw new RegistrationRestoreError();
   })()
 
     .catch((error) => {

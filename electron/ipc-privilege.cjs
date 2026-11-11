@@ -147,6 +147,9 @@ const CHANNEL_LEVELS = {
   "config:read": OPEN,
   "config:get": OPEN,
   "terminal:read": OPEN,
+  // Main permits only a missing mirror of this device's retained binding,
+  // after checking its original proof against the configured POS backend.
+  "terminal:restore": OPEN,
   // A terminal whose registration was revoked or deleted erases its own saved
   // activation. That is the machine cleaning up after itself, so it must work
   // with a cashier signed in, or nobody at all.

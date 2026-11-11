@@ -11,6 +11,7 @@ import { isManagementDevice } from "@/lib/management-device";
 import { desktopBridge } from "@/lib/desktop-bridge-registry";
 import type { SyncOp } from "@/lib/sync-outbox";
 import type { ShiftState } from "@/core/types/pos-types";
+import type { TerminalConfig } from "@/core/activation/terminal-tokens";
 
 export type LocalDbConfig = {
   server: string;
@@ -402,6 +403,7 @@ export type TerminalClearContext = {
 };
 
 export type PosBridge = {
+  restoreTerminalConfig?: (config: TerminalConfig) => Promise<{ ok: boolean; config?: TerminalConfig | null; code?: string; error?: string }>;
   clearTerminalConfig?: (context: TerminalClearContext) => Promise<{ ok: boolean; code?: string; error?: string }>;
   authorizeOfflineDiscount?: (value: {
     requestId: string; actionKey: "discount_over_limit"; registeredTerminalId: string; branchId: string;
