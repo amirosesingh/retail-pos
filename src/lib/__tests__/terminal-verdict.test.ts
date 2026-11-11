@@ -95,4 +95,37 @@ describe("terminalVerdict", () => {
     expect(r.outcome).toBe("unknown");
     expect(lookup).toHaveBeenCalledTimes(1);
   });
+
+  it("ignores a revoked response from a replaced registration context", async () => {
+    let current = true;
+    const lookup = vi.fn(async () => {
+      current = false;
+      return row("revoked");
+    });
+    const result = await terminalVerdict("t1", { ...deps(lookup), isCurrent: () => current });
+    expect(result.outcome).toBe("unknown");
+    expect(lookup).toHaveBeenCalledOnce();
+  });
+
+  it("does not confirm deletion after the connection context changes", async () => {
+    let current = true;
+    const lookup = vi.fn(async () => {
+      current = false;
+      return null as Status;
+    });
+    const result = await terminalVerdict("t1", { ...deps(lookup), isCurrent: () => current });
+    expect(result.outcome).toBe("unknown");
+    expect(lookup).toHaveBeenCalledOnce();
+  });
+
+  it("ignores a second empty response from a replaced connection context", async () => {
+    let current = true;
+    const lookup = vi.fn(async () => {
+      if (lookup.mock.calls.length === 2) current = false;
+      return null as Status;
+    });
+    const result = await terminalVerdict("t1", { ...deps(lookup), isCurrent: () => current });
+    expect(result.outcome).toBe("unknown");
+    expect(lookup).toHaveBeenCalledTimes(2);
+  });
 });

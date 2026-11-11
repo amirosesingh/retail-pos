@@ -1,5 +1,10 @@
 import { isMobileShell } from "@/platform-config/features";
 import { syncState } from "@/lib/sync-status";
+import { supabaseConfig } from "@/lib/external-supabase-config";
+import {
+  externalClientSnapshot,
+  subscribeExternalClientReset,
+} from "@/integrations/supabase/external-client";
 /**
  * Online kill-switch.
  *
@@ -19,12 +24,11 @@ import {
   hydrateTerminalConfig,
   isTerminalConfigHydrated,
   readTerminalConfig,
-  restoreTerminalConfigFromDisk,
   stampHeartbeat,
   subscribeTerminalConfig,
   type TerminalConfig,
 } from "@/core/activation/terminal-tokens";
-import { clearActivationRecord, writeActivationRecord } from "@/core/activation/activation-record";
+import { writeActivationRecord } from "@/core/activation/activation-record";
 
 /** A revoked till stays usable for at most this long while it remains online. */
 export const REVOCATION_CHECK_MS = 10 * 1000;
@@ -38,6 +42,10 @@ export type BlockReason = "revoked" | "missing";
 const savedBlock = typeof window !== "undefined" ? window.localStorage.getItem(BLOCK_KEY) : null;
 let blocked = savedBlock === "1" || savedBlock === "missing";
 let blockReason: BlockReason = savedBlock === "missing" ? "missing" : "revoked";
+let blockRevision = 0;
+// The shell and Settings can both mount this hook. One owner must manage the
+// temporary lock/rollback while native storage decides whether clearing is safe.
+let clearingRegistration = false;
 const listeners = new Set<() => void>();
 
 /** True once a revocation (or deletion) has been confirmed by the server. */
@@ -47,6 +55,9 @@ export const isTerminalRevoked = () => blocked;
 export const terminalBlockReason = (): BlockReason => blockReason;
 
 function setBlocked(next: boolean, reason: BlockReason = "revoked") {
+  // Even a repeated clear belongs to a newer activation/check. An older
+  // asynchronous native clear must not overwrite that decision when it ends.
+  blockRevision += 1;
   if (blocked === next && blockReason === reason) return;
   blocked = next;
   blockReason = reason;
@@ -89,10 +100,13 @@ export async function terminalVerdict(
     isOnline?: () => boolean;
     confirmDelayMs?: number;
     timeoutMs?: number;
+    /** A result belongs only to the registration and connection that asked. */
+    isCurrent?: () => boolean;
   } = {},
 ): Promise<TerminalVerdict> {
   const lookup = deps.lookup ?? fetchTokenStatus;
   const isOnline = deps.isOnline ?? (() => typeof navigator === "undefined" || navigator.onLine);
+  const isCurrent = deps.isCurrent ?? (() => true);
   const boundedLookup = async () => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -105,7 +119,7 @@ export async function terminalVerdict(
     } finally { clearTimeout(timer); }
   };
   // No link, no verdict: the till keeps selling exactly as it was.
-  if (!isOnline()) return { outcome: "unknown" };
+  if (!isOnline() || !isCurrent()) return { outcome: "unknown" };
 
   let remote: Awaited<ReturnType<typeof fetchTokenStatus>>;
   try {
@@ -113,13 +127,15 @@ export async function terminalVerdict(
   } catch {
     return { outcome: "unknown" }; // transient error — try again on the next tick
   }
+  if (!isCurrent()) return { outcome: "unknown" };
 
   if (!remote) {
     // Second opinion before locking a working shop floor.
     await wait(deps.confirmDelayMs ?? MISSING_CONFIRM_MS);
-    if (!isOnline()) return { outcome: "unknown" };
+    if (!isOnline() || !isCurrent()) return { outcome: "unknown" };
     try {
       const again = await boundedLookup();
+      if (!isCurrent()) return { outcome: "unknown" };
       if (!again) return { outcome: "missing" };
       remote = again;
     } catch {
@@ -160,15 +176,45 @@ export function useRevocationCheck(): RevocationState {
 
   useEffect(() => subscribeTerminalConfig(() => setConfig(readTerminalConfig())), []);
   useEffect(() => {
-    void hydrateTerminalConfig().finally(() => {
-      setConfig(readTerminalConfig());
-      setHydrating(false);
-    });
-  }, []);
-  // After an in-place desktop update the renderer storage can come back empty;
-  // the shell keeps a copy of the activation on disk.
-  useEffect(() => {
-    void restoreTerminalConfigFromDisk();
+    let cancelled = false;
+    let restoring = false;
+    let restored = false;
+    const restore = async () => {
+      if (cancelled || restoring || restored) return;
+      restoring = true;
+      try {
+        // This one restore includes the native disk copy. Do not race it with
+        // a separate disk restore that hides a native read failure.
+        await hydrateTerminalConfig();
+        if (cancelled) return;
+        restored = true;
+        window.clearInterval(timer);
+        setConfig(readTerminalConfig());
+        setHydrating(false);
+      } catch {
+        // Unreadable secure storage is not an unregistered terminal. The root
+        // connection recovery displays the error; retain this gate until a
+        // retry really finishes rather than exposing activation again.
+        if (!cancelled) setHydrating(true);
+      } finally {
+        restoring = false;
+      }
+    };
+    const retry = () => void restore();
+    const timer = window.setInterval(retry, REVOCATION_CHECK_MS);
+    window.addEventListener("online", retry);
+    window.addEventListener("focus", retry);
+    window.addEventListener("pageshow", retry);
+    window.addEventListener("pos:app-resume", retry);
+    void restore();
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener("online", retry);
+      window.removeEventListener("focus", retry);
+      window.removeEventListener("pageshow", retry);
+      window.removeEventListener("pos:app-resume", retry);
+    };
   }, []);
   useEffect(() => {
     const off = subscribeRevocation(() => {
@@ -195,6 +241,12 @@ export function useRevocationCheck(): RevocationState {
     if (!config) return;
     let cancelled = false;
     let checking = false;
+    let contextRevision = 0;
+    // A profile may change away and back while a request is pending. Comparing
+    // only its final URL would accept a response from that retired context.
+    const invalidate = () => { contextRevision += 1; };
+    const offTerminal = subscribeTerminalConfig(invalidate);
+    const offClient = subscribeExternalClientReset(invalidate);
     let reportedSync = syncState().lastSyncAt;
     const watchingSince = Date.now();
 
@@ -202,25 +254,73 @@ export function useRevocationCheck(): RevocationState {
       if (checking) return;
       checking = true;
       try {
-        const verdict = await terminalVerdict(config.tokenId);
-        if (cancelled) return;
+        const capturedRevision = contextRevision;
+        const capturedBlockRevision = blockRevision;
+        const capturedConfig = { ...config };
+        const configIdentity = JSON.stringify(capturedConfig);
+        const projectUrl = typeof capturedConfig.supabaseUrl === "string" ? capturedConfig.supabaseUrl.trim().replace(/\/+$/, "") : "";
+        let source: { url: string; key: string };
+        try {
+          const { url, key } = supabaseConfig();
+          source = { url, key };
+        } catch {
+          setVerified(true);
+          return;
+        }
+        // Settings may intentionally point at a new project. Its empty token
+        // table says nothing about the registration held by the original one.
+        if (!projectUrl || source.url.trim().replace(/\/+$/, "") !== projectUrl) {
+          setVerified(true);
+          return;
+        }
+        const client = externalClientSnapshot();
+        const isCurrent = () => {
+          if (cancelled || capturedRevision !== contextRevision || readTerminalConfig() !== config || JSON.stringify(config) !== configIdentity) return false;
+          try {
+            const current = supabaseConfig();
+            return current.url === source.url && current.key === source.key && externalClientSnapshot() === client;
+          } catch { return false; }
+        };
+        const verdict = await terminalVerdict(capturedConfig.tokenId, {
+          lookup: tokenId => fetchTokenStatus(tokenId, client),
+          isCurrent,
+        });
+        if (!isCurrent()) return;
         setVerified(true);
         if (verdict.outcome === "unknown") return;
         setLastCheckedAt(new Date().toISOString());
         if (verdict.outcome === "revoked" || verdict.outcome === "missing") {
+          if (clearingRegistration) return;
+          clearingRegistration = true;
           // Persist the lock before clearing identity so the shell never falls
           // through to sign-in or activation during the state transition.
-          setBlocked(true, verdict.outcome);
-          if (isMobileShell()) await unpairTerminal();
-          else await clearTerminalConfig();
-          clearActivationRecord();
+          const previousBlock = { blocked, reason: blockReason };
+          let ownedBlockRevision = blockRevision;
+          const expected = { config: capturedConfig, reason: verdict.outcome, verificationProjectUrl: projectUrl, isCurrent };
+          try {
+            setBlocked(true, verdict.outcome);
+            ownedBlockRevision = blockRevision;
+            if (isMobileShell()) await unpairTerminal(expected);
+            else await clearTerminalConfig(expected);
+          } catch (error) {
+            if ((error as { code?: string })?.code === "EACTIVATION_CONTEXT_CHANGED" && blockRevision === ownedBlockRevision) {
+              setBlocked(previousBlock.blocked, previousBlock.reason);
+            }
+            throw error;
+          } finally {
+            clearingRegistration = false;
+          }
           return;
         }
+        // Another mounted checker may have confirmed revocation while this
+        // healthy response was pending. It cannot release that newer lock.
+        if (clearingRegistration || blockRevision !== capturedBlockRevision) return;
         setBlocked(false);
         const completedSync = syncState().lastSyncAt;
-        await stampHeartbeat(config.tokenId, { synced: Boolean(completedSync && Date.parse(completedSync) >= watchingSince && completedSync !== reportedSync) });
+        await stampHeartbeat(capturedConfig.tokenId, { synced: Boolean(completedSync && Date.parse(completedSync) >= watchingSince && completedSync !== reportedSync) }, client);
+        if (!isCurrent()) return;
         reportedSync = completedSync;
-        void writeActivationRecord({ tokenId: config.tokenId, stamp: verdict.stamp ?? null }).catch(
+        void writeActivationRecord({ tokenId: capturedConfig.tokenId, stamp: verdict.stamp ?? null, isCurrent }).catch(
           () => {},
         );
       } catch {
@@ -244,6 +344,8 @@ export function useRevocationCheck(): RevocationState {
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
+      offTerminal();
+      offClient();
       window.clearInterval(timer);
       window.removeEventListener("online", checkNow);
       window.removeEventListener("focus", checkNow);

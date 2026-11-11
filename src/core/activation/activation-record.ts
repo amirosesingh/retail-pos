@@ -36,6 +36,8 @@ export async function writeActivationRecord(input: {
   tokenId: string;
   stamp?: string | null;
   verifiedAt?: Date;
+  /** Do not publish a response from a retired registration or connection. */
+  isCurrent?: () => boolean;
 }): Promise<ActivationRecord> {
   const at = input.verifiedAt ?? new Date();
   const fields: Omit<ActivationRecord, "mac"> = {
@@ -45,6 +47,7 @@ export async function writeActivationRecord(input: {
     stamp: input.stamp ?? null,
   };
   const record: ActivationRecord = { ...fields, mac: await deviceHmac(body(fields)) };
+  if (input.isCurrent && !input.isCurrent()) throw new Error("The terminal registration changed before verification was saved.");
   await setDeviceSecret(RECORD, record);
   return record;
 }

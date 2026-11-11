@@ -3003,13 +3003,54 @@ function registerIpc() {
     }
     catch (err) { return guard.refuse(err.message); }
   });
-  ipcMain.handle("terminal:clear", () => {
-    // Revocation and explicit unpairing stop cloud movement before erasing the
-    // identity, even when an old administrator session still caches a branch.
-    terminalIdentityPausedSync=true;
-    stopAutomaticSync();
-    syncCoordinator.pause();
-    return terminalStore.write(null);
+  ipcMain.handle("terminal:clear", (_e, raw) => {
+    const reason = ["revoked", "missing", "unpair"].includes(raw?.reason) ? raw.reason : null;
+    const log = (outcome, code) => diagnostics.logConnection(`activation.clear.${outcome}`, {
+      category: "activation", stage: "clear", ...(reason ? { reason } : {}), ...(code ? { code } : {}),
+    });
+    const changed = () => {
+      log("refused", "EACTIVATION_CONTEXT_CHANGED");
+      return { ok: false, code: "EACTIVATION_CONTEXT_CHANGED", error: "The terminal registration or database connection changed. Retry with the current registration." };
+    };
+    const project = value => {
+      if (typeof value !== "string" || value.length > 2048) return "";
+      try {
+        const url = new URL(value.trim());
+        if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) return "";
+        return url.href.replace(/\/+$/, "");
+      } catch { return ""; }
+    };
+    try {
+      const active = terminalStore.read({ strict: true });
+      if (!active) {
+        log("skipped");
+        return { ok: true };
+      }
+      const registeredProject = project(active.supabaseUrl);
+      if (!raw || Array.isArray(raw) || typeof raw !== "object" || !reason ||
+          typeof raw.tokenId !== "string" || !raw.tokenId.trim() ||
+          recordId(raw.tokenId.trim()) !== recordId(String(active.tokenId ?? "").trim()) ||
+          !registeredProject || project(raw.projectUrl) !== registeredProject) return changed();
+      if (reason !== "unpair" &&
+          (project(raw.verificationProjectUrl) !== registeredProject ||
+           project(cloudCredentials.read({ strict: true })?.url) !== registeredProject)) return changed();
+      // A delayed revocation must never erase a replacement registration or
+      // stop its sync. Check the native identity and connection synchronously,
+      // then pause cloud movement only after the matching store was cleared.
+      const saved = terminalStore.write(null);
+      if (!saved?.ok) {
+        log("failed", "EACTIVATION_STORE");
+        return { ok: false, code: "EACTIVATION_STORE", error: "Could not clear the saved terminal registration. Retry with the current registration." };
+      }
+      terminalIdentityPausedSync=true;
+      stopAutomaticSync();
+      syncCoordinator.pause();
+      log("succeeded");
+      return saved;
+    } catch {
+      log("failed", "EACTIVATION_STORE");
+      return { ok: false, code: "EACTIVATION_STORE", error: "Could not restore the saved terminal registration or database connection. Your registration has not been removed. Retry opening the app." };
+    }
   });
 
   ipcMain.handle("config:read", () => ({ ok: true, config: configStore.readAll(), path: configStore.filePath(), sealed: configStore.encryptionAvailable() }));

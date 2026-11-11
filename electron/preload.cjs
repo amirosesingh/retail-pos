@@ -168,7 +168,7 @@ contextBridge.exposeInMainWorld("pos", {
   },
   readTerminalConfig: () => invoke("terminal:read"),
   writeTerminalConfig: (config) => invoke("terminal:write", config),
-  clearTerminalConfig: () => invoke("terminal:clear"),
+  clearTerminalConfig: (context) => invoke("terminal:clear", context),
   reserveStockCounter: (prefix, minimum) => invoke("business:reserve-stock", prefix, minimum),
   reserveBillCounter: (prefix, minimum) => invoke("business:reserve-bill", prefix, minimum),
   getSetting: (key) => invoke("settings:get", key),

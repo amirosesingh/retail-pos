@@ -499,7 +499,7 @@ async function restoreSavedTerminalConfig(): Promise<TerminalConfig | null> {
     // An older renderer could publish a registration before Windows accepted
     // it. Recover that copy only after Main verifies it and reads it back.
     const candidate = legacy ?? await getDeviceSecret<TerminalConfig>(SEALED_NAME, true);
-    const restored = candidate?.tokenId ? await persistDesktopTerminalConfig(candidate).catch(() => null) : null;
+    const restored = candidate?.tokenId ? await persistDesktopTerminalConfig(candidate) : null;
     if (restored) publishTerminalConfig(restored);
     else hydrated = true;
     return restored;
@@ -563,24 +563,61 @@ function publishTerminalConfig(config: TerminalConfig) {
   window.dispatchEvent(new CustomEvent(EVENT));
 }
 
-/** Called when a token is revoked — the till loses its credentials entirely. */
-export async function clearTerminalConfig() {
+export type TerminalClearContext = {
+  config: TerminalConfig | null;
+  reason: "revoked" | "missing" | "unpair";
+  verificationProjectUrl?: string;
+  /** Renderer-only guard across async sign-out, restore and native IPC. */
+  isCurrent?: () => boolean;
+};
+
+const registrationIdentity = (config: TerminalConfig | null) => JSON.stringify([
+  config?.tokenId, config?.supabaseUrl?.replace(/\/+$/, ""), config?.locationId,
+  config?.deviceUse, config?.deviceBindingProof,
+]);
+
+function registrationChanged() {
+  return Object.assign(new Error("The terminal registration changed. Its saved credentials were kept. Retry with the current registration."),
+    { code: "EACTIVATION_CONTEXT_CHANGED" });
+}
+
+/** Clear only the captured registration after native storage confirms it. */
+export async function clearTerminalConfig(expected?: TerminalClearContext) {
   if (typeof window === "undefined") return;
   // Finish an already-started restore before deleting its result.
   if (hydration) await hydration.catch(() => undefined);
+  const bridge = desktopBridge();
+  let current = readTerminalConfig();
+  if (!expected && !current && bridge) {
+    const saved = await bridge.readTerminalConfig();
+    if (!saved?.ok) throw new Error("Could not read the saved terminal registration before clearing it.");
+    current = saved.config ?? null;
+  }
+  const context = expected ?? { config: current, reason: "unpair" as const };
+  const identity = registrationIdentity(context.config);
+  const rendererIdentity = registrationIdentity(readTerminalConfig());
+  if (expected && (identity !== rendererIdentity || expected.isCurrent?.() === false)) throw registrationChanged();
+  const request = {
+    tokenId: context.config?.tokenId,
+    projectUrl: context.config?.supabaseUrl,
+    reason: context.reason,
+    verificationProjectUrl: context.verificationProjectUrl,
+  };
+  const cleared = bridge?.clearTerminalConfig ? await bridge.clearTerminalConfig(request) : await bridge?.writeTerminalConfig(null);
+  if (bridge && !cleared?.ok) {
+    if (cleared?.code === "EACTIVATION_CONTEXT_CHANGED") throw registrationChanged();
+    throw new Error(cleared?.error || "Could not clear the saved terminal registration.");
+  }
+  // The IPC reply may arrive after a fresh activation. Keep that new identity.
+  if (registrationIdentity(readTerminalConfig()) !== rendererIdentity || context.isCurrent?.() === false) throw registrationChanged();
   cachedConfig = null;
   hydrated = true;
   const mobile = ["android", "ios"].includes(terminalRuntimePlatform());
   if (mobile) setManagementDevice(null);
   else applyTenantOverride(null);
   clearDeviceSecret(SEALED_NAME);
+  clearDeviceSecret("activation.record.v1");
   window.localStorage.removeItem(CONFIG_KEY);
-  // Clearing goes through its own channel: saving an activation is an
-  // administrator action, but erasing a dead one is housekeeping the machine
-  // must be able to do with a cashier — or nobody — signed in.
-  const bridge = desktopBridge();
-  const cleared = bridge?.clearTerminalConfig ? await bridge.clearTerminalConfig() : await bridge?.writeTerminalConfig(null);
-  if (cleared && !cleared.ok) throw new Error("Could not clear the saved terminal registration.");
   window.dispatchEvent(new CustomEvent(EVENT));
 }
 
@@ -589,7 +626,9 @@ export async function clearTerminalConfig() {
 type TerminalBridge = {
   readTerminalConfig: () => Promise<{ ok: boolean; config?: TerminalConfig | null }>;
   writeTerminalConfig: (config: TerminalConfig | null) => Promise<{ ok: boolean; code?: string; error?: string }>;
-  clearTerminalConfig?: () => Promise<{ ok: boolean }>;
+  clearTerminalConfig?: (expected: {
+    tokenId?: string; projectUrl?: string; reason: "revoked" | "missing" | "unpair"; verificationProjectUrl?: string;
+  }) => Promise<{ ok: boolean; code?: string; error?: string }>;
 };
 
 const desktopBridge = (): TerminalBridge | null => {
@@ -696,27 +735,37 @@ export const TERMINAL_CONFIG_EVENT = EVENT;
  * tenant connection details and the machine account session all go, so the app
  * comes back on the activation screen.
  */
-export async function unpairTerminal(): Promise<void> {
+export async function unpairTerminal(expected?: TerminalClearContext): Promise<void> {
+  // Capture before sign-out and connection cleanup can await another session.
+  if (hydration) await hydration;
+  const context = expected ?? { config: readTerminalConfig() ?? await hydrateTerminalConfig(), reason: "unpair" as const };
+  if (registrationIdentity(context.config) !== registrationIdentity(readTerminalConfig())) throw registrationChanged();
   // End Auth while its client still has the configured URL. Clearing first
   // used to throw during sign-out and strand the root in connection recovery.
   try { await supabaseExternal.auth.signOut({ scope: "local" }); } catch { /* revoke already confirmed */ }
+  await clearTerminalConfig(context);
+  const ensureUnpaired = () => { if (readTerminalConfig()) throw registrationChanged(); };
+  ensureUnpaired();
   const { clearApprovalToken } = await import("@/platform-config/approval-token-client");
+  ensureUnpaired();
   await clearApprovalToken(true);
+  ensureUnpaired();
   const mobile = ["android", "ios"].includes(terminalRuntimePlatform());
   if (mobile) {
     const { resetMobileRegistrationIdentity } = await import("./mobile-registration-identity");
+    ensureUnpaired();
     await resetMobileRegistrationIdentity(false);
   } else {
-  const { removeCloudCredentials } = await import("@/lib/secure-cloud-config");
-  const removed = await removeCloudCredentials();
-  if (!removed.ok) throw new Error(removed.error || "Could not clear the saved connection.");
-  const backend = await saveBackendUrl("");
-  if (!backend.ok) throw new Error(backend.error || "Could not clear the backend address.");
+    const { removeCloudCredentials } = await import("@/lib/secure-cloud-config");
+    ensureUnpaired();
+    const removed = await removeCloudCredentials();
+    if (!removed.ok) throw new Error(removed.error || "Could not clear the saved connection.");
+    ensureUnpaired();
+    const backend = await saveBackendUrl("");
+    if (!backend.ok) throw new Error(backend.error || "Could not clear the backend address.");
   }
-  await clearTerminalConfig();
+  ensureUnpaired();
   clearPairingRequest();
-  const { clearActivationRecord } = await import("./activation-record");
-  clearActivationRecord();
   clearDeviceSecret("terminal-account");
   resetHealthCache();
   const { flushConnectionProfile } = await import("@/lib/connection-profile");
@@ -726,6 +775,7 @@ export async function unpairTerminal(): Promise<void> {
 /** Look the token up by id. `null` means the network answered "no such token". */
 export async function fetchTokenStatus(
   tokenId: string,
+  client?: unknown,
 ): Promise<{
   status: TokenStatus;
   locationName: string;
@@ -733,7 +783,8 @@ export async function fetchTokenStatus(
   isClaimed: boolean;
   expiresAt: string | null;
 } | null> {
-  const { data, error } = await rpc("terminal_token_status", { p_token_id: tokenId });
+  const args = { p_token_id: tokenId };
+  const { data, error } = await (client ? rpcOn(client, "terminal_token_status", args) : rpc("terminal_token_status", args));
   if (error) throw error;
   const row = Array.isArray(data) ? data[0] : data;
   if (!row) return null;
@@ -749,6 +800,7 @@ export async function fetchTokenStatus(
 export async function stampHeartbeat(
   tokenId: string,
   opts: { version?: string; synced?: boolean } = {},
+  client?: unknown,
 ): Promise<void> {
   // Current heartbeat functions accept UUIDs. Old desktop profiles can carry
   // an opaque pre-v1 token; sending it to PostgREST produces a noisy 400 on
@@ -758,13 +810,14 @@ export async function stampHeartbeat(
   // routine also verifies the durable proof before changing telemetry.
   const proofHash = await deviceProofHash();
   if (!proofHash) return;
-  const { error } = await rpc("terminal_token_heartbeat", {
+  const args = {
     p_token_id: tokenId,
     p_activate: false,
     p_version: opts.version || APP_VERSION,
     p_synced: opts.synced === true,
     p_proof_hash: proofHash,
-  });
+  };
+  const { error } = await (client ? rpcOn(client, "terminal_token_heartbeat", args) : rpc("terminal_token_heartbeat", args));
   if (error) throw error;
 }
 
