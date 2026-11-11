@@ -791,7 +791,7 @@ async function restoreShiftCloseGuard() {
 
 async function showMandatorySyncFailure(result) {
   const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-  const savingLocally = result?.stage === "renderer" || result?.stage === "local-writes";
+  const savingLocally = ["renderer", "local-writes", "local-storage"].includes(result?.stage);
   const response = await dialog.showMessageBox(win, {
     type: "error",
     title: savingLocally ? "Local changes still need saving" : "Synchronization incomplete",
@@ -939,6 +939,28 @@ function flushRendererBeforeClose(forUpdate = false) {
   });
 }
 
+async function verifyLocalStorageForUpdate() {
+  const state = databaseService.snapshot();
+  if (!state.enabled || !state.configured) return;
+  const pool = databaseManager.pool;
+  const profile = JSON.stringify(databaseConfig.profile());
+  const assertCurrent = () => {
+    if (!pool || !databaseManager.isConnected() || databaseManager.pool !== pool ||
+        JSON.stringify(databaseConfig.profile()) !== profile)
+      throw new Error("Reconnect the saved local database before installing so local work can be verified.");
+  };
+  await syncCoordinator.withExclusive(async () => {
+    assertCurrent();
+    const result = await pool.request().input("database", databaseManager.profile.database).query(`
+      SELECT CASE WHEN DB_ID()=DB_ID(@database) THEN 1 ELSE 0 END AS matches_profile;
+      SELECT TOP (1) 1 AS journal_readable FROM dbo.sync_change_journal;
+    `);
+    assertCurrent();
+    if (result.recordset?.[0]?.matches_profile !== 1)
+      throw new Error("The connected local database changed. Reopen Retail before installing.");
+  });
+}
+
 function prepareApplicationClose(forUpdate = false) {
   if(closePreparation)return closePreparation;
   closePreparation=(async()=>{
@@ -951,6 +973,16 @@ function prepareApplicationClose(forUpdate = false) {
       closeStage="local-writes";
       const drained=await settleWithin(() => closeWriteBarrier.sealAndDrain(), SHUTDOWN_SYNC_TIMEOUT_MS);
       if(!drained.ok)throw new Error("Local writes are still finishing. Keep the application open and retry closing.");
+      if (forUpdate) {
+        closeStage = "local-storage";
+        reportCloseProgress({ active: true, message: "Checking saved local data before installing…" });
+        const checked = await settleWithin(verifyLocalStorageForUpdate, SHUTDOWN_SYNC_TIMEOUT_MS);
+        if (checked.timedOut) throw new Error("Local database work is still finishing. Retry installation when it finishes.");
+        if (!checked.ok) throw new Error(checked.error?.message ?? "The saved local database could not be read. Retry installation after checking the local connection.");
+        // Every accepted write is committed. Replacing app files neither
+        // acknowledges uploads nor finalizes a pending shift close.
+        return { ok: true, locallySaved: true, synchronized: false, syncDeferred: true };
+      }
       // Once accepted writes are durable, a signed-out quit needs neither a
       // working database connection nor an upload. Leave the saved journal
       // and any unconfirmed shift close for the next authorized sync.
@@ -2912,7 +2944,7 @@ function registerIpc() {
     isBusy: () => closeWriteBarrier.active.size > 0 || Boolean(closePreparation || jobManager.running || localDataPreparePromise) || ["enabled_connecting", "enabled_validating", "enabled_bootstrapping"].includes(databaseService.snapshot().state),
     prepare: prepareApplicationClose,
     allowQuit: () => {
-      // Sync has completed. Do not intercept electron-updater's quit and
+      // Local saves have completed. Do not intercept electron-updater's quit and
       // replace its installation handoff with the ordinary app.exit path.
       shutdownFlushComplete = true;
       allowMainWindowClose = true;

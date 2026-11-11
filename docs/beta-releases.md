@@ -4,6 +4,15 @@ Merge development changes into `beta` to accumulate fixes. Pushes continue to
 run regression checks and update the live Cloudflare beta websites. They do not
 build or publish Android/Windows beta installers.
 
+The Windows update controls separate download from installation. Anyone using
+the app may download and verify an update without waiting for POS synchronization.
+Installation first saves current work locally and verifies the local database.
+An unavailable cloud connection or a committed upload backlog can defer sync
+while installation proceeds. Pending records and shift closes keep their
+original evidence and are retried through the normal coordinator after restart.
+Unfinished transactions, failed local saves, unreadable local SQL storage and
+active database preparation require attention before installation.
+
 Only when the owner explicitly says **“Publish beta now”**, publish one combined
 Android/Windows beta from the selected, checked beta commit. The beta workflow
 builds both in parallel, validates that both belong to that same commit, and

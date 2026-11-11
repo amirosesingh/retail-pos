@@ -158,9 +158,17 @@ export function useAppUpdates() {
   const install = useCallback(() => runInstall(false), [runInstall]);
 
   const download = useCallback(async () => {
-    const next = await updateBridge()?.downloadUpdate();
-    if (next) setState(next);
-    return next;
+    setInstallError(null);
+    try {
+      const bridge = updateBridge();
+      if (!bridge) throw new Error("Update downloads are available in the Windows application.");
+      const next = await bridge.downloadUpdate();
+      if (next) setState(next);
+      return next;
+    } catch (error) {
+      setState(current => ({ ...current, status: "error", stage: "download", error: error instanceof Error ? error.message : String(error) }));
+      return undefined;
+    }
   }, []);
 
   const downloadAndInstall = useCallback(() => runInstall(true), [runInstall]);
