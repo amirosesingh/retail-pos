@@ -255,6 +255,7 @@ export function useRevocationCheck(): RevocationState {
       checking = true;
       try {
         const capturedRevision = contextRevision;
+        const capturedBlockRevision = blockRevision;
         const capturedConfig = { ...config };
         const configIdentity = JSON.stringify(capturedConfig);
         const projectUrl = typeof capturedConfig.supabaseUrl === "string" ? capturedConfig.supabaseUrl.trim().replace(/\/+$/, "") : "";
@@ -311,6 +312,9 @@ export function useRevocationCheck(): RevocationState {
           }
           return;
         }
+        // Another mounted checker may have confirmed revocation while this
+        // healthy response was pending. It cannot release that newer lock.
+        if (clearingRegistration || blockRevision !== capturedBlockRevision) return;
         setBlocked(false);
         const completedSync = syncState().lastSyncAt;
         await stampHeartbeat(capturedConfig.tokenId, { synced: Boolean(completedSync && Date.parse(completedSync) >= watchingSince && completedSync !== reportedSync) }, client);

@@ -287,4 +287,39 @@ describe("terminal revocation connection ownership", () => {
     expect(f.state.config).toBeNull();
     f.cleanup();
   });
+
+  it("ignores another screen's older healthy response while native revocation clearing is pending", async () => {
+    const f = fixture(), clearing = deferred<void>(), healthy = deferred<typeof used>();
+    let lookups = 0;
+    f.state.lookup = async () => ++lookups === 1 ? { ...used, status: "revoked" } : healthy.promise;
+    f.clear.mockImplementation(async () => { await clearing.promise; f.changeTerminal(null); });
+    f.render(2); await settle();
+    expect(f.isTerminalRevoked()).toBe(true);
+    expect(f.clear).toHaveBeenCalledOnce();
+    healthy.resolve(used); await settle();
+    expect(f.isTerminalRevoked()).toBe(true);
+    expect(f.heartbeat).not.toHaveBeenCalled();
+    expect(f.writeRecord).not.toHaveBeenCalled();
+    clearing.resolve(); await settle();
+    expect(f.isTerminalRevoked()).toBe(true);
+    expect(f.state.config).toBeNull();
+    f.cleanup();
+  });
+
+  it("ignores another screen's older healthy response after native revocation clearing fails", async () => {
+    const f = fixture(), clearing = deferred<void>(), healthy = deferred<typeof used>();
+    let lookups = 0;
+    f.state.lookup = async () => ++lookups === 1 ? { ...used, status: "revoked" } : healthy.promise;
+    f.clear.mockImplementation(() => clearing.promise);
+    f.render(2); await settle();
+    expect(f.isTerminalRevoked()).toBe(true);
+    expect(f.clear).toHaveBeenCalledOnce();
+    clearing.reject(new Error("Vault unavailable")); await settle();
+    expect(f.state.config).toBe(f.original);
+    healthy.resolve(used); await settle();
+    expect(f.isTerminalRevoked()).toBe(true);
+    expect(f.heartbeat).not.toHaveBeenCalled();
+    expect(f.writeRecord).not.toHaveBeenCalled();
+    f.cleanup();
+  });
 });
