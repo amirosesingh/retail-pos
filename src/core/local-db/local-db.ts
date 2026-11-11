@@ -394,7 +394,15 @@ export type LocalSyncStatus = {
   database?: string | null;
 };
 
+export type TerminalClearContext = {
+  tokenId: string;
+  projectUrl: string;
+  reason: "revoked" | "missing" | "unpair";
+  verificationProjectUrl?: string;
+};
+
 export type PosBridge = {
+  clearTerminalConfig?: (context: TerminalClearContext) => Promise<{ ok: boolean; code?: string; error?: string }>;
   authorizeOfflineDiscount?: (value: {
     requestId: string; actionKey: "discount_over_limit"; registeredTerminalId: string; branchId: string;
     username: string; credential: string; selfAuthorization?: boolean; reason: string; snapshot: unknown; payload: Record<string, string | number | boolean | null>; requestedAmount: number;

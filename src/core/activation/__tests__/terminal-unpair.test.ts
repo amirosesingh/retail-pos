@@ -28,12 +28,13 @@ beforeEach(() => {
   f.clear.mockReset().mockImplementation(async () => { f.calls.push("mirror"); return { ok: true }; });
   f.remove.mockReset().mockImplementation(async () => { f.calls.push("cloud"); return { ok: true }; });
   f.flush.mockReset().mockImplementation(async () => { f.calls.push("flush"); });
-  vi.stubGlobal("window", { pos: { clearTerminalConfig: f.clear, writeTerminalConfig: vi.fn() }, localStorage: { removeItem: vi.fn() }, dispatchEvent: vi.fn() });
+  vi.stubGlobal("window", { pos: { clearTerminalConfig: f.clear, writeTerminalConfig: vi.fn(), readTerminalConfig: async () => ({ ok: true, config: null }) }, localStorage: { getItem: () => null, removeItem: vi.fn() }, dispatchEvent: vi.fn() });
 });
 afterEach(() => vi.unstubAllGlobals());
 it("ends Auth before removing connection settings and waits for durable native cleanup", async () => {
   await unpairTerminal();
   expect(f.calls.indexOf("signout")).toBeLessThan(f.calls.indexOf("cloud"));
+  expect(f.calls.indexOf("mirror")).toBeLessThan(f.calls.indexOf("cloud"));
   expect(f.calls.indexOf("mirror")).toBeLessThan(f.calls.indexOf("flush"));
   expect(f.calls.at(-1)).toBe("flush");
   expect(f.calls).toContain("terminal-account");
@@ -46,6 +47,8 @@ it("reports an unsuccessful credential removal rather than claiming a complete r
 it("waits for Electron's identity deletion and reports its failure", async () => {
   f.clear.mockResolvedValue({ ok: false });
   await expect(unpairTerminal()).rejects.toThrow("Could not clear the saved terminal registration");
+  expect(f.remove).not.toHaveBeenCalled();
+  expect(f.calls).not.toContain("activation.record.v1");
   expect(f.flush).not.toHaveBeenCalled();
 });
 

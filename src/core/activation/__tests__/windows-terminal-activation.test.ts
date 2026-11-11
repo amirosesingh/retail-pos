@@ -4,6 +4,8 @@ import type { TerminalConfig } from "../terminal-tokens";
 const f = vi.hoisted(() => ({
   read: vi.fn(),
   write: vi.fn(),
+  clear: vi.fn(),
+  clearSeal: vi.fn(),
   seal: vi.fn(),
   readSeal: vi.fn(),
   rpc: vi.fn(),
@@ -29,7 +31,7 @@ vi.mock("@/lib/terminal-crypto", () => ({
     pairToken: tokenId, supabaseUrl: project, supabaseAnonKey: "token-public-key", backendUrl: "https://issuer.example", platform: "pc",
   }),
 }));
-vi.mock("@/lib/device-secrets", () => ({ clearDeviceSecret: vi.fn(), getDeviceSecret: f.readSeal, setDeviceSecret: f.seal }));
+vi.mock("@/lib/device-secrets", () => ({ clearDeviceSecret: f.clearSeal, getDeviceSecret: f.readSeal, setDeviceSecret: f.seal }));
 vi.mock("@/core/activation/device-proof", () => ({
   deviceProofHash: async () => proofHash, restoreVerifiedDesktopDeviceProof: f.restoreProof,
 }));
@@ -56,11 +58,13 @@ beforeEach(() => {
   vi.stubGlobal("window", {
     dispatchEvent: f.event,
     localStorage: { getItem: () => null, setItem: vi.fn(), removeItem: vi.fn() },
-    pos: { readTerminalConfig: f.read, writeTerminalConfig: f.write, bootstrapCloudCredentials: f.bootstrap },
+    pos: { readTerminalConfig: f.read, writeTerminalConfig: f.write, clearTerminalConfig: f.clear, bootstrapCloudCredentials: f.bootstrap },
   });
   f.bootstrap.mockResolvedValue({ ok: true, url: project, key: localKey });
   f.read.mockResolvedValue({ ok: true, config });
   f.write.mockResolvedValue({ ok: true });
+  f.clear.mockResolvedValue({ ok: true });
+  f.seal.mockResolvedValue(undefined);
   f.missingWebsite.mockReturnValue(false);
   f.rpc.mockImplementation(async (name: string) => name === "terminal_token_status"
     ? { data: [{ status: "used", location_id: config.locationId, location_name: config.locationName }], error: null }
@@ -142,11 +146,54 @@ it("restores the verified Windows identity and claim proof ahead of an old rende
 });
 
 it("does not trust a renderer copy if Windows refuses to recover it", async () => {
-  const { hydrateTerminalConfig, readTerminalConfig } = await import("../terminal-tokens");
+  const { hydrateTerminalConfig, readTerminalConfig, isTerminalConfigHydrated } = await import("../terminal-tokens");
   f.read.mockResolvedValue({ ok: true, config: null });
   f.readSeal.mockResolvedValue(config);
   f.write.mockResolvedValue({ ok: false });
-  await expect(hydrateTerminalConfig()).resolves.toBeNull();
+  await expect(hydrateTerminalConfig()).rejects.toThrow("could not save the existing terminal activation");
+  expect(isTerminalConfigHydrated()).toBe(false);
   expect(readTerminalConfig()).toBeNull();
   expect(f.event).not.toHaveBeenCalled();
+  expect(window.localStorage.removeItem).not.toHaveBeenCalled();
+  // A transient refusal must retry recovery with the same saved credentials.
+  f.write.mockResolvedValue({ ok: true });
+  f.read.mockResolvedValueOnce({ ok: true, config: null }).mockResolvedValueOnce({ ok: true, config });
+  await expect(hydrateTerminalConfig()).resolves.toEqual(config);
+  expect(isTerminalConfigHydrated()).toBe(true);
+});
+
+it("keeps the renderer identity and sealed copies when native clearing refuses stale context", async () => {
+  const { hydrateTerminalConfig, clearTerminalConfig, readTerminalConfig } = await import("../terminal-tokens");
+  await hydrateTerminalConfig();
+  f.clear.mockResolvedValue({ ok: false, code: "EACTIVATION_CONTEXT_CHANGED" });
+  await expect(clearTerminalConfig({ config, reason: "missing", verificationProjectUrl: project }))
+    .rejects.toMatchObject({ code: "EACTIVATION_CONTEXT_CHANGED" });
+  expect(readTerminalConfig()).toEqual(config);
+  expect(f.clearSeal).not.toHaveBeenCalled();
+  expect(window.localStorage.removeItem).not.toHaveBeenCalled();
+});
+
+it("does not erase a fresh activation when an earlier clear reply arrives late", async () => {
+  const { hydrateTerminalConfig, clearTerminalConfig, readTerminalConfig, writeTerminalConfig } = await import("../terminal-tokens");
+  await hydrateTerminalConfig();
+  let finish!: (result: { ok: true }) => void;
+  f.clear.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const clearing = clearTerminalConfig({ config, reason: "revoked", verificationProjectUrl: project });
+  const replacement = { ...config, tokenId: "replacement-token", locationId: "store-b" };
+  writeTerminalConfig(replacement);
+  finish({ ok: true });
+  await expect(clearing).rejects.toMatchObject({ code: "EACTIVATION_CONTEXT_CHANGED" });
+  expect(readTerminalConfig()).toEqual(replacement);
+  expect(f.clearSeal).not.toHaveBeenCalled();
+  expect(window.localStorage.removeItem).not.toHaveBeenCalled();
+});
+
+it("clears both sealed registration copies only after the matching native clear succeeds", async () => {
+  const { hydrateTerminalConfig, clearTerminalConfig, readTerminalConfig } = await import("../terminal-tokens");
+  await hydrateTerminalConfig();
+  await clearTerminalConfig({ config, reason: "revoked", verificationProjectUrl: project });
+  expect(f.clear).toHaveBeenCalledExactlyOnceWith({ tokenId, projectUrl: project, reason: "revoked", verificationProjectUrl: project });
+  expect(readTerminalConfig()).toBeNull();
+  expect(f.clearSeal).toHaveBeenCalledWith("terminal.config");
+  expect(f.clearSeal).toHaveBeenCalledWith("activation.record.v1");
 });
