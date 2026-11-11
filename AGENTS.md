@@ -56,6 +56,21 @@
 
 ## Durable synchronization and long-offline integrity
 
+- Downloading an application update is independent of POS sign-in and sync
+  status. Stage and verify downloads while normal work continues. Offer
+  installation as a separate action.
+- Before installation, finish renderer saves, drain accepted local writes and
+  verify the configured local SQL database under the existing sync lease.
+  Committed pending uploads, failed uploads and pending shift closes may remain
+  queued while the cloud is unavailable. Preserve their payloads, IDs, proofs,
+  receipts and checkpoints across the update.
+- Permitting an installer after local saves is not cloud acceptance. Never mark
+  queues synchronized, advance upload checkpoints or finalize a shift because an
+  update starts. Resume eligible uploads through the existing coordinator after
+  restart and reconnect. Keep actual local save failures, unreadable local
+  storage, active transactions and database migration/bootstrap as installation
+  blockers.
+
 - Follow the [POS sync implementation plan](docs/database/pos-sync-implementation-plan.md)
   for future sync work. The [previous rules](docs/database/archive/pos-sync-rules-before-2026-11-07.md)
   and [previous plan](docs/database/archive/pos-sync-plan-before-2026-11-07.md)

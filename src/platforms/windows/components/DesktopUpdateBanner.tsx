@@ -13,7 +13,7 @@ export function DesktopUpdateBanner() {
   const downloading = state.status === "downloading";
   const checking = state.status === "checking";
   const available = state.status === "available";
-  const detail = installError || (installing ? "Saving and synchronizing before restart" :
+  const detail = installError || (installing ? "Saving local changes before restart" :
     ready ? "Downloaded. Tap to install and restart." : failed ? (state.error ?? "Download failed. Tap to retry.") :
       downloading ? "Downloading update" : checking ? "Checking for updates" :
         available ? "Update available. Tap to download." :
@@ -30,9 +30,9 @@ export function DesktopCloseSyncStatus() {
   if (!closing.active) return null;
   return <div role="status" aria-live="polite" className="fixed inset-0 z-[100] flex items-center justify-center bg-background/80 p-6">
     <div className="max-w-md rounded-xl border bg-card p-6 shadow-lg">
-      <p className="font-semibold">Finishing synchronization</p>
+      <p className="font-semibold">Preparing to close</p>
       <p className="mt-2 text-sm text-muted-foreground">{closing.message}</p>
-      <p className="mt-2 text-xs text-muted-foreground">Please keep this computer connected. The application will close when synchronization finishes.</p>
+      <p className="mt-2 text-xs text-muted-foreground">The application will close after its required saving checks finish.</p>
     </div>
   </div>;
 }

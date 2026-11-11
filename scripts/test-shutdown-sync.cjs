@@ -63,10 +63,23 @@ test('signed-out exit refuses an unreadable journal and does not bypass installe
 });
 
 // Exercise the actual Main close preparation with disposable collaborators.
-function mainClose({ signedIn = false, drain = async () => {}, sync = async () => ({ ok: true }) } = {}) {
+function mainClose({
+  signedIn = false,
+  drain = async () => {},
+  sync = async () => ({ ok: true }),
+  localRead = async () => ({ recordset: [{ matches_profile: 1 }] }),
+  lease = async work => work(),
+  connectedDatabase = 'isolated_update_fixture',
+} = {}) {
   const source = readFileSync(join(__dirname, '../electron/main.cjs'), 'utf8');
   const declarations = source.slice(source.indexOf('function shouldInstallUpdateOnClose('), source.indexOf('\napp.on("second-instance"'));
   const calls = [], pendingShiftCloseSync = new Set(['saved-shift']);
+  const profile = { database: 'isolated_update_fixture' };
+  const queries = [];
+  const pool = { request: () => ({
+    input() { return this; },
+    async query(sql) { calls.push('local-read'); queries.push(sql); return localRead(); },
+  }) };
   const closeWriteBarrier = {
     active: new Set(),
     sealAndDrain: async () => { calls.push('drain'); await drain(); },
@@ -78,13 +91,16 @@ function mainClose({ signedIn = false, drain = async () => {}, sync = async () =
     mainWindow: null, reportCloseProgress() {},
     installUpdateAfterSync() {}, updater: { status: () => ({ status: 'ready' }) },
     isManagementDevice: () => false,
-    databaseService: { snapshot: () => { calls.push('sql-state'); return { configured: true }; } },
+    databaseService: { snapshot: () => { calls.push('sql-state'); return { enabled: true, configured: true }; } },
+    databaseManager: { pool, profile: { ...profile, database: connectedDatabase }, isConnected: () => true },
+    databaseConfig: { profile: () => profile },
+    syncCoordinator: { withExclusive: lease },
     flushSyncBeforeShutdown: async () => { calls.push('sync'); return sync(); },
     SHUTDOWN_SYNC_TIMEOUT_MS: 1_000,
     settleWithin: async work => { try { return { ok: true, value: await work() }; } catch { return { ok: false }; } },
     diagnostics: { logConnection() {} },
   });
-  return { ...handlers, calls, pendingShiftCloseSync };
+  return { ...handlers, calls, pendingShiftCloseSync, queries };
 }
 
 test('login screen waits for accepted local writes then exits without requiring SQL, sync or a ready installer', async () => {
@@ -111,15 +127,58 @@ test('an unfinished local write still prevents quitting from login', async () =>
   assert.deepEqual(f.calls, ['drain', 'reopen']);
 });
 
-test('signed-in quit and explicit update still require the final upload path', async () => {
+test('signed-in quit keeps its final upload policy', async () => {
   const signedIn = mainClose({ signedIn: true });
   assert.equal(signedIn.shouldInstallUpdateOnClose(), true);
   assert.equal((await signedIn.prepareApplicationClose()).ok, true);
   assert.deepEqual(signedIn.calls, ['drain', 'sql-state', 'sync']);
   assert.equal(signedIn.pendingShiftCloseSync.size, 0);
 
-  const updating = mainClose({ sync: async () => ({ ok: false, error: 'Still pending' }) });
-  assert.equal((await updating.prepareApplicationClose(true)).ok, false);
-  assert.deepEqual(updating.calls, ['drain', 'sql-state', 'sync', 'reopen']);
+});
+
+test('install accepts durable offline data without an upload or a false ACK', async () => {
+  const updating = mainClose({ sync: async () => assert.fail('Installer requested cloud sync') });
+  const result = await updating.prepareApplicationClose(true);
+  assert.equal(result.ok, true);
+  assert.equal(result.locallySaved, true);
+  assert.equal(result.synchronized, false);
+  assert.equal(result.syncDeferred, true);
+  assert.deepEqual(updating.calls, ['drain', 'sql-state', 'local-read']);
+  assert.equal(updating.pendingShiftCloseSync.size, 1);
+  assert.equal(updating.queries.length, 1);
+  assert.ok(!/\b(?:UPDATE|DELETE|INSERT|TRUNCATE)\b/i.test(updating.queries[0]));
+});
+
+test('install waits for the active sync lease before verifying local storage', async () => {
+  let finish;
+  const held = new Promise(resolve => { finish = resolve; });
+  const updating = mainClose({ lease: async work => { await held; return work(); } });
+  let installed = false;
+  const result = updating.prepareApplicationClose(true).then(value => { installed = true; return value; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(installed, false);
+  assert.deepEqual(updating.calls, ['drain', 'sql-state']);
+  finish();
+  assert.equal((await result).ok, true);
+});
+
+test('install refuses unreadable or changed local databases and keeps the closing queued', async () => {
+  for (const localRead of [async () => { throw new Error('Local storage unavailable'); },
+    async () => ({ recordset: [{ matches_profile: 0 }] })]) {
+    const updating = mainClose({ localRead });
+    const result = await updating.prepareApplicationClose(true);
+    assert.equal(result.ok, false);
+    assert.equal(result.stage, 'local-storage');
+    assert.equal(updating.pendingShiftCloseSync.size, 1);
+    assert.ok(updating.calls.includes('reopen'));
+  }
+});
+
+test('install refuses a pool for a different database from the saved profile', async () => {
+  const updating = mainClose({ connectedDatabase: 'different_update_fixture' });
+  const result = await updating.prepareApplicationClose(true);
+  assert.equal(result.ok, false);
+  assert.equal(result.stage, 'local-storage');
+  assert.equal(updating.queries.length, 0);
   assert.equal(updating.pendingShiftCloseSync.size, 1);
 });
