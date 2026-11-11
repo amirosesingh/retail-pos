@@ -296,7 +296,7 @@ export function useRevocationCheck(): RevocationState {
           // through to sign-in or activation during the state transition.
           const previousBlock = { blocked, reason: blockReason };
           let ownedBlockRevision = blockRevision;
-          const expected = { config: capturedConfig, reason: verdict.outcome, verificationProjectUrl: projectUrl };
+          const expected = { config: capturedConfig, reason: verdict.outcome, verificationProjectUrl: projectUrl, isCurrent };
           try {
             setBlocked(true, verdict.outcome);
             ownedBlockRevision = blockRevision;

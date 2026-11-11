@@ -215,7 +215,7 @@ describe("terminal revocation connection ownership", () => {
     const f = fixture(); f.state.lookup = async () => ({ ...used, status: "revoked" });
     f.render(); await settle();
     expect(f.isTerminalRevoked()).toBe(true);
-    expect(f.clear).toHaveBeenCalledExactlyOnceWith({ config: f.original, reason: "revoked", verificationProjectUrl: f.original.supabaseUrl });
+    expect(f.clear).toHaveBeenCalledExactlyOnceWith({ config: f.original, reason: "revoked", verificationProjectUrl: f.original.supabaseUrl, isCurrent: expect.any(Function) });
     expect(f.state.config).toBeNull();
     // Shared contextual clear owns receipt removal; a hook continuation must
     // never erase a receipt created during the native clear await.
@@ -230,7 +230,7 @@ describe("terminal revocation connection ownership", () => {
     f.render(); await settle(); await vi.advanceTimersByTimeAsync(8000); await settle();
     expect(f.fetchStatus).toHaveBeenCalledTimes(2);
     expect(f.fetchStatus.mock.calls.every(([, calledClient]) => calledClient === client)).toBe(true);
-    expect(f.clear).toHaveBeenCalledExactlyOnceWith({ config: f.original, reason: "missing", verificationProjectUrl: f.original.supabaseUrl });
+    expect(f.clear).toHaveBeenCalledExactlyOnceWith({ config: f.original, reason: "missing", verificationProjectUrl: f.original.supabaseUrl, isCurrent: expect.any(Function) });
     expect(f.isTerminalRevoked()).toBe(true);
     f.cleanup();
   });

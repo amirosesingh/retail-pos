@@ -567,6 +567,8 @@ export type TerminalClearContext = {
   config: TerminalConfig | null;
   reason: "revoked" | "missing" | "unpair";
   verificationProjectUrl?: string;
+  /** Renderer-only guard across async sign-out, restore and native IPC. */
+  isCurrent?: () => boolean;
 };
 
 const registrationIdentity = (config: TerminalConfig | null) => JSON.stringify([
@@ -594,7 +596,7 @@ export async function clearTerminalConfig(expected?: TerminalClearContext) {
   const context = expected ?? { config: current, reason: "unpair" as const };
   const identity = registrationIdentity(context.config);
   const rendererIdentity = registrationIdentity(readTerminalConfig());
-  if (expected && identity !== rendererIdentity) throw registrationChanged();
+  if (expected && (identity !== rendererIdentity || expected.isCurrent?.() === false)) throw registrationChanged();
   const request = {
     tokenId: context.config?.tokenId,
     projectUrl: context.config?.supabaseUrl,
@@ -607,7 +609,7 @@ export async function clearTerminalConfig(expected?: TerminalClearContext) {
     throw new Error(cleared?.error || "Could not clear the saved terminal registration.");
   }
   // The IPC reply may arrive after a fresh activation. Keep that new identity.
-  if (registrationIdentity(readTerminalConfig()) !== rendererIdentity) throw registrationChanged();
+  if (registrationIdentity(readTerminalConfig()) !== rendererIdentity || context.isCurrent?.() === false) throw registrationChanged();
   cachedConfig = null;
   hydrated = true;
   const mobile = ["android", "ios"].includes(terminalRuntimePlatform());
