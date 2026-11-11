@@ -21,7 +21,7 @@ vi.mock("@/lib/external-supabase-config", () => ({
 }));
 vi.mock("@/core/activation/terminal-platform", () => ({ terminalRuntimePlatform: () => f.platform }));
 vi.mock("../mobile-registration-identity", () => ({ resetMobileRegistrationIdentity: f.reset }));
-import { clearTerminalConfig, readTerminalConfig, unpairTerminal, stampHeartbeat, writeTerminalConfig } from "../terminal-tokens";
+import { clearTerminalConfig, readTerminalConfig, unpairTerminal, stampHeartbeat, writeTerminalConfig, type TerminalConfig } from "../terminal-tokens";
 beforeEach(() => {
   f.calls.length = 0; f.platform = "windows"; f.reset.mockReset().mockResolvedValue(undefined);
   f.rpc.mockReset().mockResolvedValue({ error: null });
@@ -76,7 +76,7 @@ it.each(["android", "ios"])("retains the saved connection on %s but removes devi
 it("preserves mobile activation when the verification connection changes during sign-out", async () => {
   f.platform = "android";
   Reflect.deleteProperty(window, "pos");
-  const config = { tokenId: "terminal-a", supabaseUrl: "https://registered.example", locationId: "store-a", locationName: "Store A", activatedAt: "2026-11-01T00:00:00Z" };
+  const config: TerminalConfig = { tokenId: "terminal-a", supabaseUrl: "https://registered.example", supabaseKey: "test-publishable-key", locationId: "store-a", locationName: "Store A", activatedAt: "2026-11-01T00:00:00Z" };
   writeTerminalConfig(config);
   let finish!: () => void;
   let current = true;
