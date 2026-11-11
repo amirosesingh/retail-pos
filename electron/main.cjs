@@ -943,15 +943,21 @@ async function verifyLocalStorageForUpdate() {
   const state = databaseService.snapshot();
   if (!state.enabled || !state.configured) return;
   const pool = databaseManager.pool;
-  const profile = JSON.stringify(databaseConfig.profile());
+  const savedProfile = databaseConfig.profile();
+  const profile = JSON.stringify(savedProfile);
+  const target = value => JSON.stringify([
+    value?.host, value?.instanceName, value?.port, value?.database, value?.authMode,
+    value?.authMode === "sql" ? value.username : "",
+  ]);
+  const expectedTarget = target(savedProfile);
   const assertCurrent = () => {
     if (!pool || !databaseManager.isConnected() || databaseManager.pool !== pool ||
-        JSON.stringify(databaseConfig.profile()) !== profile)
+        JSON.stringify(databaseConfig.profile()) !== profile || target(databaseManager.profile) !== expectedTarget)
       throw new Error("Reconnect the saved local database before installing so local work can be verified.");
   };
   await syncCoordinator.withExclusive(async () => {
     assertCurrent();
-    const result = await pool.request().input("database", databaseManager.profile.database).query(`
+    const result = await pool.request().input("database", savedProfile.database).query(`
       SELECT CASE WHEN DB_ID()=DB_ID(@database) THEN 1 ELSE 0 END AS matches_profile;
       SELECT TOP (1) 1 AS journal_readable FROM dbo.sync_change_journal;
     `);

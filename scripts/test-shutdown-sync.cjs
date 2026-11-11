@@ -69,6 +69,7 @@ function mainClose({
   sync = async () => ({ ok: true }),
   localRead = async () => ({ recordset: [{ matches_profile: 1 }] }),
   lease = async work => work(),
+  connectedDatabase = 'isolated_update_fixture',
 } = {}) {
   const source = readFileSync(join(__dirname, '../electron/main.cjs'), 'utf8');
   const declarations = source.slice(source.indexOf('function shouldInstallUpdateOnClose('), source.indexOf('\napp.on("second-instance"'));
@@ -91,7 +92,7 @@ function mainClose({
     installUpdateAfterSync() {}, updater: { status: () => ({ status: 'ready' }) },
     isManagementDevice: () => false,
     databaseService: { snapshot: () => { calls.push('sql-state'); return { enabled: true, configured: true }; } },
-    databaseManager: { pool, profile, isConnected: () => true },
+    databaseManager: { pool, profile: { ...profile, database: connectedDatabase }, isConnected: () => true },
     databaseConfig: { profile: () => profile },
     syncCoordinator: { withExclusive: lease },
     flushSyncBeforeShutdown: async () => { calls.push('sync'); return sync(); },
@@ -171,4 +172,13 @@ test('install refuses unreadable or changed local databases and keeps the closin
     assert.equal(updating.pendingShiftCloseSync.size, 1);
     assert.ok(updating.calls.includes('reopen'));
   }
+});
+
+test('install refuses a pool for a different database from the saved profile', async () => {
+  const updating = mainClose({ connectedDatabase: 'different_update_fixture' });
+  const result = await updating.prepareApplicationClose(true);
+  assert.equal(result.ok, false);
+  assert.equal(result.stage, 'local-storage');
+  assert.equal(updating.queries.length, 0);
+  assert.equal(updating.pendingShiftCloseSync.size, 1);
 });
