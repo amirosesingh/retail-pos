@@ -40,6 +40,18 @@ Owner requires all proposed cloud/local database upgrades collected for exact fi
 The exact owner-approved service-only bounded feed RPC and PR384 are applied/deployed on beta. Existing selector/privacy grants and businessrecords are preserved; native continuation is bound to authenticated response metadata. Live147request sample all200/ok with no CPU-exceeded; CPU2–114ms/mean9.469 means NO guarantee allrequestsbelow10ms. Electronfeed131613→133184, all6shiftCTvalid; largebacklog stilldraining. Keep implemented/sample-verified status distinct from fullsync completion, production promotion or installerpublication. Supabase migrationtool ledger20261104042158 corresponds to approvedfile20261104040251, SHA83495D696622241ECA2A8D396234E2FD65EE7C7A3050E93E4280638D6530D59B; do not replay based solely on differing timestamps.
 # POS project memory
 
+## 11 November — Electron saved settings must restore before sign-in
+
+The owner authorized agents to fix beta.4's saved-settings restore failure on
+Electron. Read the device's encrypted database/backend settings independently
+of retained-registration verification in recovery. A failed registration read
+must remain unknown and must not open new activation/trading access. Recover
+only the original proof-verified registration through a bounded native restore
+operation; ordinary activation writes keep their existing permissions. Preserve
+operator settings, stored evidence and pending work. Use focused isolated tests
+and beta PRs; production, installed-data repairs and another installer release
+retain separate approval boundaries. Baseline: `5011a42b`.
+
 ## 7 November — two-way POS synchronization plan
 
 The owner requested permanent rules for the revised two-way sync plan and a

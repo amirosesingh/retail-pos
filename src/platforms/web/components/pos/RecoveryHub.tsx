@@ -161,7 +161,9 @@ export function RecoveryHub({ section }: { section?: RecoverySection } = {}) {
   const terminalApp = isTerminalApp();
   const profile = useRecoveryProfile();
   const { config, cloud } = profile;
-  const ready = !profile.loading && !profile.error;
+  const connectionReady = !profile.loading && profile.connectionReady;
+  const registrationReady = !profile.loading && profile.registrationReady;
+  const ready = connectionReady && registrationReady;
   const management = config?.deviceUse === "management" && !config.locationId;
   const branch = management ? "Management" : config?.locationName || config?.locationId || null;
   const unread = profile.loading ? "Checking saved settings…" : "Could not read saved settings";
@@ -176,8 +178,10 @@ export function RecoveryHub({ section }: { section?: RecoverySection } = {}) {
     <div className="space-y-3">
       {ready && <ModeBanner />}
       {!ready && <div role="status" className="space-y-2 rounded-lg border border-border p-3 text-sm">
-        <p>{profile.loading ? "Restoring this device's saved registration and connection settings…" : "Saved settings could not be read. They have not been removed. Retry before changing this device's setup."}</p>
-        {profile.error && <Button variant="outline" size="sm" onClick={profile.retry}>Retry saved settings</Button>}
+        <p>{profile.loading ? "Restoring this device's saved registration and connection settings…" : connectionReady
+          ? "Your saved connection settings are available below. The saved terminal registration still needs recovery; it has not been removed."
+          : "Saved settings could not be read. They have not been removed. Retry before changing this device's setup."}</p>
+        {profile.error && <Button variant="outline" size="sm" onClick={profile.retry}>{connectionReady ? "Retry saved registration" : "Retry saved settings"}</Button>}
       </div>}
 
       {terminalApp && (
@@ -185,11 +189,11 @@ export function RecoveryHub({ section }: { section?: RecoverySection } = {}) {
           icon={ShieldCheck}
           title="Terminal activation"
           blurb="Link this machine to a location with an activation code or phone pairing."
-          health={!ready ? "info" : config ? "ok" : "todo"}
-          status={!ready ? unread : config ? "Saved registration" : "Not activated"}
-          defaultOpen={section === "activation" || (ready && !config)}
+          health={!registrationReady ? "info" : config ? "ok" : "todo"}
+          status={!registrationReady ? "Registration recovery pending" : config ? "Saved registration" : "Not activated"}
+          defaultOpen={section === "activation" || (registrationReady && !config)}
         >
-          {ready ? <ActivationSettings config={config} /> : <p className="text-sm text-muted-foreground">{unread}</p>}
+          {registrationReady ? <ActivationSettings config={config} /> : <p className="text-sm text-muted-foreground">Saved registration has not been verified yet. Retry its recovery before changing activation.</p>}
         </Card>
       )}
 
@@ -197,22 +201,22 @@ export function RecoveryHub({ section }: { section?: RecoverySection } = {}) {
         icon={KeyRound}
         title="Database & cloud connection"
         blurb="Database URL, publishable key and POS backend address for this device."
-        health={!ready ? "info" : cloud ? "ok" : "todo"}
-        status={!ready ? unread : cloud ? "Configured" : "Missing"}
-        defaultOpen={section === "connection" || (ready && cloud === false)}
+        health={!connectionReady ? "info" : cloud ? "ok" : "todo"}
+        status={!connectionReady ? unread : cloud ? "Configured" : "Missing"}
+        defaultOpen={section === "connection" || (connectionReady && cloud === false)}
       >
-        {ready ? <CloudConnectionPanel recoveryUnlocked /> : <p className="text-sm text-muted-foreground">{unread}</p>}
+        {connectionReady ? <CloudConnectionPanel recoveryUnlocked /> : <p className="text-sm text-muted-foreground">{unread}</p>}
       </Card>
 
       <Card
         icon={Building2}
         title="Branch binding"
         blurb="Which store or warehouse this terminal books its sales and stock to."
-        health={!ready ? "info" : branch ? "ok" : "todo"}
-        status={!ready ? unread : branch ?? "Not bound"}
+        health={!registrationReady ? "info" : branch ? "ok" : "todo"}
+        status={!registrationReady ? "Registration recovery pending" : branch ?? "Not bound"}
       >
         <p className="text-sm text-muted-foreground">
-          {!ready ? unread : management
+          {!registrationReady ? "The saved registration must be restored before its branch binding can be shown." : management
             ? "This is a Management terminal. Each user's permissions determine which branches they can access."
             : branch
             ? `This device is bound to ${branch}. Changing its branch requires authorized reassignment and checks for pending transactions.`

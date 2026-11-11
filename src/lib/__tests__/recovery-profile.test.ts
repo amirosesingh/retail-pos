@@ -20,7 +20,10 @@ vi.mock("react", () => ({
     f.pending.push(() => { old?.cleanup?.(); f.effects[index] = { deps, cleanup: fn() || undefined }; });
   },
 }));
-vi.mock("../connection-profile", () => ({ hydrateConnectionProfile: () => f.hydrate() }));
+vi.mock("../connection-profile", () => ({
+  hydrateConnectionProfile: () => f.hydrate(),
+  isRegistrationRestoreError: (error: unknown) => (error as { code?: string })?.code === "EREGISTRATION_RESTORE",
+}));
 vi.mock("@/core/activation/terminal-tokens", () => ({
   readTerminalConfig: () => f.config,
   subscribeTerminalConfig: (callback: () => void) => { f.terminalChanged = callback; return () => { f.terminalChanged = null; }; },
@@ -74,6 +77,14 @@ describe("recovery reads saved native configuration before deciding setup status
     expect(f.cloud).not.toHaveBeenCalled();
     render().retry(); render();
     await vi.waitFor(() => expect(render()).toMatchObject({ loading: false, error: false, config: saved, cloud: true }));
+  });
+  it("shows readable connection settings while registration remains failed and retries on a saved settings hint", async () => {
+    f.hydrate.mockRejectedValueOnce(Object.assign(new Error("Registration recovery pending"), { code: "EREGISTRATION_RESTORE" }));
+    render();
+    await vi.waitFor(() => expect(render()).toMatchObject({ loading: false, error: true, connectionReady: true, registrationReady: false, config: null, cloud: true }));
+    f.cloudChanged?.();
+    await vi.waitFor(() => expect(render()).toMatchObject({ loading: false, error: false, connectionReady: true, registrationReady: true, config: saved }));
+    expect(f.hydrate).toHaveBeenCalledTimes(2);
   });
   it("does not translate unreadable cloud settings into missing credentials", async () => {
     f.cloud.mockRejectedValueOnce(new Error("Vault unavailable"));

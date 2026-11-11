@@ -3003,6 +3003,16 @@ function registerIpc() {
     }
     catch (err) { return guard.refuse(err.message); }
   });
+  ipcMain.handle("terminal:restore", (event, raw) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame) {
+      diagnostics.logConnection("activation.restore.refused", { category: "activation", stage: "authorize", code: "EPRIVILEGE" });
+      return { ok: false, code: "EPRIVILEGE", error: "Saved terminal registration can be restored only from the POS window." };
+    }
+    return require("./terminal-restore.cjs").restoreTerminalConfig(raw, {
+      terminalStore, cloudCredentials, configStore, fetchImpl: fetch,
+      log: (event, detail) => diagnostics.logConnection(event, detail),
+    });
+  });
   ipcMain.handle("terminal:clear", (_e, raw) => {
     const reason = ["revoked", "missing", "unpair"].includes(raw?.reason) ? raw.reason : null;
     const log = (outcome, code) => diagnostics.logConnection(`activation.clear.${outcome}`, {

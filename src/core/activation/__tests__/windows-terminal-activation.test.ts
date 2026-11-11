@@ -4,6 +4,7 @@ import type { TerminalConfig } from "../terminal-tokens";
 const f = vi.hoisted(() => ({
   read: vi.fn(),
   write: vi.fn(),
+  restore: vi.fn(),
   clear: vi.fn(),
   clearSeal: vi.fn(),
   seal: vi.fn(),
@@ -58,11 +59,12 @@ beforeEach(() => {
   vi.stubGlobal("window", {
     dispatchEvent: f.event,
     localStorage: { getItem: () => null, setItem: vi.fn(), removeItem: vi.fn() },
-    pos: { readTerminalConfig: f.read, writeTerminalConfig: f.write, clearTerminalConfig: f.clear, bootstrapCloudCredentials: f.bootstrap },
+    pos: { readTerminalConfig: f.read, writeTerminalConfig: f.write, restoreTerminalConfig: f.restore, clearTerminalConfig: f.clear, bootstrapCloudCredentials: f.bootstrap },
   });
   f.bootstrap.mockResolvedValue({ ok: true, url: project, key: localKey });
   f.read.mockResolvedValue({ ok: true, config });
   f.write.mockResolvedValue({ ok: true });
+  f.restore.mockResolvedValue({ ok: true, config });
   f.clear.mockResolvedValue({ ok: true });
   f.seal.mockResolvedValue(undefined);
   f.missingWebsite.mockReturnValue(false);
@@ -83,6 +85,7 @@ it("publishes a manual claim only after Windows confirms its secure write and pr
   expect(f.write).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
     tokenId, deviceBindingProof: proofHash, backendUrl: backend, supabaseKey: localKey,
   }));
+  expect(f.restore).not.toHaveBeenCalled();
   expect(f.saveBackend).not.toHaveBeenCalled();
   confirm({ ok: true, config });
   await expect(activation).resolves.toEqual(config);
@@ -149,17 +152,51 @@ it("does not trust a renderer copy if Windows refuses to recover it", async () =
   const { hydrateTerminalConfig, readTerminalConfig, isTerminalConfigHydrated } = await import("../terminal-tokens");
   f.read.mockResolvedValue({ ok: true, config: null });
   f.readSeal.mockResolvedValue(config);
-  f.write.mockResolvedValue({ ok: false });
+  f.restore.mockResolvedValue({ ok: false });
   await expect(hydrateTerminalConfig()).rejects.toThrow("could not save the existing terminal activation");
   expect(isTerminalConfigHydrated()).toBe(false);
   expect(readTerminalConfig()).toBeNull();
   expect(f.event).not.toHaveBeenCalled();
   expect(window.localStorage.removeItem).not.toHaveBeenCalled();
   // A transient refusal must retry recovery with the same saved credentials.
-  f.write.mockResolvedValue({ ok: true });
+  f.restore.mockResolvedValue({ ok: true, config });
   f.read.mockResolvedValueOnce({ ok: true, config: null }).mockResolvedValueOnce({ ok: true, config });
   await expect(hydrateTerminalConfig()).resolves.toEqual(config);
   expect(isTerminalConfigHydrated()).toBe(true);
+  expect(f.write).not.toHaveBeenCalled();
+  expect(f.restore).toHaveBeenCalledTimes(2);
+});
+
+it("uses only the narrow restore channel for signed-out retained registration recovery", async () => {
+  const { hydrateTerminalConfig, readTerminalConfig } = await import("../terminal-tokens");
+  f.read.mockResolvedValueOnce({ ok: true, config: null });
+  f.readSeal.mockResolvedValue(config);
+  f.write.mockResolvedValue({ ok: false, code: "PRIVILEGE_REQUIRED" });
+  await expect(hydrateTerminalConfig()).resolves.toEqual(config);
+  expect(readTerminalConfig()).toEqual(config);
+  expect(f.restore).toHaveBeenCalledExactlyOnceWith(config);
+  expect(f.read).toHaveBeenCalledTimes(2);
+  expect(f.write).not.toHaveBeenCalled();
+});
+
+it("does not trust a successful restore reply without matching native read-back", async () => {
+  const { hydrateTerminalConfig, readTerminalConfig, isTerminalConfigHydrated } = await import("../terminal-tokens");
+  f.read.mockResolvedValueOnce({ ok: true, config: null }).mockResolvedValueOnce({ ok: true, config: { ...config, tokenId: "other-terminal" } });
+  f.readSeal.mockResolvedValue(config);
+  await expect(hydrateTerminalConfig()).rejects.toThrow("could not confirm");
+  expect(isTerminalConfigHydrated()).toBe(false);
+  expect(readTerminalConfig()).toBeNull();
+  expect(f.clearSeal).not.toHaveBeenCalled();
+});
+
+it("retains evidence when an older native shell lacks the verified restore channel", async () => {
+  const { hydrateTerminalConfig, isTerminalConfigHydrated } = await import("../terminal-tokens");
+  Reflect.deleteProperty(window.pos!, "restoreTerminalConfig");
+  f.read.mockResolvedValue({ ok: true, config: null });
+  f.readSeal.mockResolvedValue(config);
+  await expect(hydrateTerminalConfig()).rejects.toThrow("saved registration has not been removed");
+  expect(isTerminalConfigHydrated()).toBe(false);
+  expect(f.write).not.toHaveBeenCalled(); expect(f.clearSeal).not.toHaveBeenCalled();
 });
 
 it("keeps the renderer identity and sealed copies when native clearing refuses stale context", async () => {

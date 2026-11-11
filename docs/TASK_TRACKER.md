@@ -8486,3 +8486,44 @@ primary key and append-only trigger. SHA256
 The previously prepared shift review metadata is independent. Keep cloud and
 local application disabled until exact-target review and backup verification.
 Actual affected-PC recovery and installed-platform acceptance remain pending.
+
+## 11 November — Electron saved-settings restore correction
+
+Owner requested agents to fix the beta.4 Electron recovery message saying saved
+settings could not be read. Baseline is beta `5011a42b`. Scope is local startup,
+original registration restoration, independently readable connection settings,
+safe diagnostics and focused isolated tests. Production, installed profiles,
+direct credential repairs, schema/data changes and another installer publication
+are excluded.
+
+Confirmed source defects: failed retained-registration recovery stops the cloud
+and backend readers before they run; its ordinary native write channel requires
+administrator authority after provisioning, while sign-in waits for restore.
+Recovery currently hides each cause behind one unreadable-settings message.
+The affected PC retains connection/config files but lacks its full native
+registration; file presence does not prove DPAPI readability or the exact error.
+
+Restore only the original verified registration through a dedicated bounded
+native recovery operation. Preserve normal activation permissions, strict vault
+reads, last binding, current operator project/backend and pending local work.
+Read connection settings independently for recovery, retain unknown registration
+when verification fails, and never expose new activation or trading privileges
+from an unreadable or unverified registration. Check real pre-login IPC gating,
+same/foreign binding and project, failed/changed context, offline/retry and the
+actual renderer/native restore path. Revert this scoped source change to roll
+back; no database or profile rollback is required.
+
+Implemented the bounded native restore with strict proof/project/binding and
+read-back checks, pre-login main-frame permission, and existing close/metadata
+barriers. Ordinary registration writes retain administrator requirements.
+The single profile coordinator now reads saved cloud/backend values after a
+registration failure and reports typed partial recovery without opening normal
+startup. Recovery shows readable connection fields and keeps unknown activation
+and branch binding protected. Changed settings can retry the same recovery.
+
+Verification: 219 focused Vitest cases across 16 suites and 18 startup/updater
+Node cases passed (237 total), along with native syntax and scoped lint/diff
+checks. Changed files have no TypeScript diagnostics; the local full dependency
+tree is incomplete, so exact-head clean-install CI remains required. Independent
+review found no remaining scoped blocker. Installed-device recovery has not been
+performed; production and installed profiles remain unchanged.
