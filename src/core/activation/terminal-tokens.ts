@@ -487,22 +487,57 @@ export async function hydrateTerminalConfig(): Promise<TerminalConfig | null> {
 async function restoreSavedTerminalConfig(): Promise<TerminalConfig | null> {
   const bridge = desktopBridge();
   if (bridge) {
-    const native = await bridge.readTerminalConfig();
-    if (!native?.ok) throw new Error("Could not restore the saved terminal registration. Retry opening the app.");
+    let native: Awaited<ReturnType<TerminalBridge["readTerminalConfig"]>>;
+    try { native = await bridge.readTerminalConfig(); }
+    catch { throw new ActivationError("Could not restore the saved terminal registration. Retry opening the app.", true, "EACTIVATION_STORE"); }
+    if (!native?.ok) throw new ActivationError("Could not restore the saved terminal registration. Retry opening the app.", true, "EACTIVATION_STORE");
     if (native.config?.tokenId) {
       publishTerminalConfig(native.config);
       return native.config;
     }
   }
-  const legacy = parseConfig(window.localStorage.getItem(CONFIG_KEY));
+  const legacyRaw = window.localStorage.getItem(CONFIG_KEY);
+  const legacy = parseConfig(legacyRaw);
   if (bridge) {
     // An older renderer could publish a registration before Windows accepted
-    // it. Recover that copy only after Main verifies it and reads it back.
-    const candidate = legacy ?? await getDeviceSecret<TerminalConfig>(SEALED_NAME, true);
-    const restored = candidate?.tokenId ? await persistDesktopTerminalConfig(candidate, true) : null;
-    if (restored) publishTerminalConfig(restored);
-    else hydrated = true;
-    return restored;
+    // it. Either retained format may be stale: sealing can leave an older
+    // plaintext fallback, and a failed seal can leave a newer fallback. Main
+    // must choose the original binding/proof; storage format is not authority.
+    let sealed: TerminalConfig | null = null;
+    let sealedUnreadable = false;
+    try { sealed = await getDeviceSecret<TerminalConfig>(SEALED_NAME, true); }
+    catch { sealedUnreadable = true; }
+    const usable = (value: TerminalConfig | null | undefined): value is TerminalConfig => typeof value?.tokenId === "string" && Boolean(value.tokenId.trim());
+    const malformed = (legacyRaw != null && !usable(legacy)) || (sealed != null && !usable(sealed));
+    const candidates = [sealed, legacy].filter(usable);
+    const attempted = new Set<string>();
+    let refusal: ActivationError | null = null;
+    for (const candidate of candidates) {
+      // The two saved objects can have different property order. Distinct
+      // candidates are bounded by the two retained formats, not a retry loop.
+      const identity = JSON.stringify(Object.entries(candidate).filter(([, value]) => value !== undefined).sort(([a], [b]) => a.localeCompare(b)));
+      if (attempted.has(identity)) continue;
+      attempted.add(identity);
+      try {
+        const restored = await persistDesktopTerminalConfig(candidate, true);
+        publishTerminalConfig(restored);
+        return restored;
+      } catch (error) {
+        const candidateFailure = error instanceof ActivationError && error.code && Object.hasOwn(RESTORE_CANDIDATE_FAILURES, error.code);
+        // Changed native context, failed vault/read-back, close refusal and
+        // transport failures stop recovery. Another copy cannot bypass them.
+        if (!candidateFailure) throw error;
+        const next = error as ActivationError & { code: keyof typeof RESTORE_CANDIDATE_FAILURES };
+        if (!refusal || RESTORE_CANDIDATE_FAILURES[next.code] > RESTORE_CANDIDATE_FAILURES[refusal.code as keyof typeof RESTORE_CANDIDATE_FAILURES]) refusal = next;
+      }
+    }
+    // An unreadable retained copy may be the only current registration. Keep
+    // it intact and unknown when no available copy passed native verification.
+    if (sealedUnreadable) throw new ActivationError("The encrypted retained registration could not be read. Your saved registration has not been removed. Retry recovery.", true, "EACTIVATION_STORE");
+    if (refusal) throw refusal;
+    if (malformed) throw new ActivationError("A retained terminal registration is incomplete. Your saved registration has not been removed. Retry recovery.", false, "EBADARG");
+    hydrated = true;
+    return null;
   }
   if (legacy) {
     cachedConfig = legacy;
@@ -662,19 +697,22 @@ async function persistDesktopTerminalConfig(config: TerminalConfig, restoring = 
     throw new ActivationError("This Windows app cannot restore the retained registration. Update the beta app and retry; the saved registration has not been removed.", true);
   }
   const savedConfig = { ...config, deviceBindingProof: proof };
-  const request = restoring ? bridge.restoreTerminalConfig!(savedConfig) : bridge.writeTerminalConfig(savedConfig);
-  const result = await request.catch(() => {
-    throw new ActivationError("Could not reach Windows secure storage. Retry on this device with the same activation.", true);
-  });
+  let result: { ok: boolean; code?: string; error?: string } | undefined;
+  try { result = await (restoring ? bridge.restoreTerminalConfig!(savedConfig) : bridge.writeTerminalConfig(savedConfig)); }
+  catch {
+    throw new ActivationError("Could not reach Windows secure storage. Retry on this device with the same activation.", true, restoring ? "EACTIVATION_STORE" : undefined);
+  }
   if (!result?.ok) {
     throw new ActivationError(
       result?.error ??
         "Windows secure storage could not save the existing terminal activation.",
+      false,
+      restoring ? terminalRecoveryCode(result?.code) ?? "EACTIVATION_STORE" : undefined,
     );
   }
   const verified = await bridge.readTerminalConfig().catch(() => null);
   if (!verified?.ok || verified.config?.tokenId !== config.tokenId || verified.config?.deviceBindingProof !== proof) {
-    throw new ActivationError("Windows could not confirm the saved registration. Retry on this device with the same activation.", true);
+    throw new ActivationError("Windows could not confirm the saved registration. Retry on this device with the same activation.", true, restoring ? "EACTIVATION_STORE" : undefined);
   }
   return verified.config;
 }
@@ -827,8 +865,24 @@ export async function stampHeartbeat(
   if (error) throw error;
 }
 
+export type TerminalRecoveryCode = "EBADARG" | "EACTIVATION_RECOVERY_BINDING" | "EACTIVATION_RECOVERY_PROJECT" |
+  "EACTIVATION_RECOVERY_PROOF" | "EACTIVATION_RECOVERY_VERIFY" | "EACTIVATION_CONTEXT_CHANGED" |
+  "EACTIVATION_STORE" | "EPRIVILEGE" | "EAPP_CLOSING" | "ERECOVERY_METADATA_BUSY";
+
+const RESTORE_CANDIDATE_FAILURES = {
+  EBADARG: 0,
+  EACTIVATION_RECOVERY_BINDING: 1,
+  EACTIVATION_RECOVERY_PROJECT: 2,
+  EACTIVATION_RECOVERY_PROOF: 2,
+  EACTIVATION_RECOVERY_VERIFY: 3,
+} as const;
+const RESTORE_FAILURE_CODES = new Set<string>([...Object.keys(RESTORE_CANDIDATE_FAILURES),
+  "EACTIVATION_CONTEXT_CHANGED", "EACTIVATION_STORE", "EPRIVILEGE", "EAPP_CLOSING", "ERECOVERY_METADATA_BUSY"]);
+const terminalRecoveryCode = (value: unknown): TerminalRecoveryCode | undefined =>
+  typeof value === "string" && RESTORE_FAILURE_CODES.has(value) ? value as TerminalRecoveryCode : undefined;
+
 export class ActivationError extends Error {
-  constructor(message: string, readonly retryable = false) { super(message); }
+  constructor(message: string, readonly retryable = false, readonly code?: TerminalRecoveryCode) { super(message); }
 }
 
 const retryDelay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

@@ -167,6 +167,7 @@ export function RecoveryHub({ section }: { section?: RecoverySection } = {}) {
   const management = config?.deviceUse === "management" && !config.locationId;
   const branch = management ? "Management" : config?.locationName || config?.locationId || null;
   const unread = profile.loading ? "Checking saved settings…" : "Could not read saved settings";
+  const registrationFailure = profile.registrationMessage ?? "Saved registration has not been verified yet. Retry its recovery before changing activation.";
 
   // A terminal that cannot sign anybody in cannot be asked for a supervisor
   // sign-in before it is repaired. Passing the recovery code therefore opens
@@ -181,6 +182,7 @@ export function RecoveryHub({ section }: { section?: RecoverySection } = {}) {
         <p>{profile.loading ? "Restoring this device's saved registration and connection settings…" : connectionReady
           ? "Your saved connection settings are available below. The saved terminal registration still needs recovery; it has not been removed."
           : "Saved settings could not be read. They have not been removed. Retry before changing this device's setup."}</p>
+        {!profile.loading && connectionReady && profile.registrationMessage && <p>{profile.registrationMessage}</p>}
         {profile.error && <Button variant="outline" size="sm" onClick={profile.retry}>{connectionReady ? "Retry saved registration" : "Retry saved settings"}</Button>}
       </div>}
 
@@ -193,7 +195,7 @@ export function RecoveryHub({ section }: { section?: RecoverySection } = {}) {
           status={!registrationReady ? "Registration recovery pending" : config ? "Saved registration" : "Not activated"}
           defaultOpen={section === "activation" || (registrationReady && !config)}
         >
-          {registrationReady ? <ActivationSettings config={config} /> : <p className="text-sm text-muted-foreground">Saved registration has not been verified yet. Retry its recovery before changing activation.</p>}
+          {registrationReady ? <ActivationSettings config={config} /> : <p className="text-sm text-muted-foreground">{registrationFailure}</p>}
         </Card>
       )}
 

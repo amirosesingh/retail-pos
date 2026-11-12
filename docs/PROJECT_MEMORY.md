@@ -40,6 +40,22 @@ Owner requires all proposed cloud/local database upgrades collected for exact fi
 The exact owner-approved service-only bounded feed RPC and PR384 are applied/deployed on beta. Existing selector/privacy grants and businessrecords are preserved; native continuation is bound to authenticated response metadata. Live147request sample all200/ok with no CPU-exceeded; CPU2–114ms/mean9.469 means NO guarantee allrequestsbelow10ms. Electronfeed131613→133184, all6shiftCTvalid; largebacklog stilldraining. Keep implemented/sample-verified status distinct from fullsync completion, production promotion or installerpublication. Supabase migrationtool ledger20261104042158 corresponds to approvedfile20261104040251, SHA83495D696622241ECA2A8D396234E2FD65EE7C7A3050E93E4280638D6530D59B; do not replay based solely on differing timestamps.
 # POS project memory
 
+## 12 November — retained registration selection and beta publication
+
+The owner reported beta.5's registration recovery pending and main startup
+failure, and explicitly requested agents to fix and publish the next beta.
+Baseline is `b8a9a781`. Installed diagnostics show an original-binding refusal;
+source reproductions prove an old plaintext fallback can hide a valid encrypted
+registration, and either format may be the newer copy. Consider the bounded
+retained candidates only through the existing strict native original-binding,
+project, proof and canonical verification. Preserve evidence and stop on an
+actually changed native context. Distinguish unreadable marker, binding/project,
+proof and verification failures using credential-free reasons on recovery and
+startup screens. Do not weaken branch/terminal locks or fabricate lost proof.
+After focused checks and exact-head CI, merge beta and publish the owner-requested
+beta installers. Production, schema/data changes and direct installed-profile
+repairs remain excluded.
+
 ## 11 November — Electron saved settings must restore before sign-in
 
 The owner authorized agents to fix beta.4's saved-settings restore failure on

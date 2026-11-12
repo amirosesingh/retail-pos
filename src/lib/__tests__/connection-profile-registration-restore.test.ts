@@ -9,7 +9,7 @@ vi.mock("@/platforms/mobile/mobile-storage", () => ({ hydrateNativeStorage: asyn
 vi.mock("@/core/activation/terminal-tokens", () => ({ hydrateTerminalConfig: f.terminal }));
 vi.mock("../secure-cloud-config", () => ({ initCloudConfigFromShell: f.cloud }));
 vi.mock("../backend-config", () => ({ hydrateBackendUrl: f.backend }));
-import { __resetProfileHydrationForTests, hydrateConnectionProfile, isConnectionProfileHydrated, RegistrationRestoreError } from "../connection-profile";
+import { __resetProfileHydrationForTests, hydrateConnectionProfile, isConnectionProfileHydrated, RegistrationRestoreError, registrationRestoreMessage } from "../connection-profile";
 
 beforeEach(() => {
   __resetProfileHydrationForTests();
@@ -73,5 +73,30 @@ describe("real connection profile coordinator with failed registration recovery"
     expect(f.terminal).toHaveBeenCalledTimes(2);
     expect(f.project).toBe(f.savedProject); expect(f.backendUrl).toBe(f.savedBackend);
     expect(isConnectionProfileHydrated()).toBe(true);
+  });
+
+  it.each([
+    ["EACTIVATION_RECOVERY_BINDING", "previous terminal binding"],
+    ["EACTIVATION_RECOVERY_PROOF", "original saved registration proof"],
+    ["EACTIVATION_RECOVERY_VERIFY", "POS website could not verify"],
+    ["EACTIVATION_RECOVERY_PROJECT", "different database connection"],
+    ["EACTIVATION_CONTEXT_CHANGED", "changed during recovery"],
+    ["EACTIVATION_STORE", "Windows could not read"],
+  ])("preserves safe registration reason %s without forwarding private details", async (code, text) => {
+    f.terminal.mockRejectedValueOnce(Object.assign(new Error("private-proof secret https://private.example"), { code }));
+    const error = await hydrateConnectionProfile().catch(cause => cause);
+    expect(error).toBeInstanceOf(RegistrationRestoreError);
+    expect(error).toMatchObject({ code: "EREGISTRATION_RESTORE", registrationCode: code });
+    expect(error.message).toContain(text);
+    expect(error.message).not.toMatch(/private-proof|secret|https:\/\/private/);
+    expect(f.cloud).toHaveBeenCalledOnce(); expect(f.backend).toHaveBeenCalledOnce();
+    expect(isConnectionProfileHydrated()).toBe(false);
+  });
+
+  it("uses a fixed generic registration reason for unknown native details", () => {
+    const error = new RegistrationRestoreError({ code: "private-secret-value", message: "https://private.example" });
+    expect(error.registrationCode).toBe("EREGISTRATION_UNKNOWN");
+    expect(error.message).toBe(registrationRestoreMessage("EREGISTRATION_UNKNOWN"));
+    expect(error.message).not.toMatch(/private-secret|https:/);
   });
 });

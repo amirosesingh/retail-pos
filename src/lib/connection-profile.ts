@@ -25,12 +25,36 @@ export type ProfileHydration = "idle" | "hydrating" | "hydrated";
 let state: ProfileHydration = "idle";
 let inFlight: Promise<void> | null = null;
 
+const REGISTRATION_RECOVERY_MESSAGES = {
+  EACTIVATION_RECOVERY_BINDING: "The saved registration could not be matched to this device's previous terminal binding. The saved setup has been kept.",
+  EACTIVATION_RECOVERY_PROOF: "The original saved registration proof could not be recovered. The saved setup has been kept.",
+  EACTIVATION_RECOVERY_VERIFY: "The POS website could not verify the saved registration. Check the connection and retry registration recovery.",
+  EACTIVATION_RECOVERY_PROJECT: "The saved registration belongs to a different database connection. Review the saved connection before retrying registration recovery.",
+  EACTIVATION_CONTEXT_CHANGED: "The saved registration or connection changed during recovery. Retry with this device's current settings.",
+  EACTIVATION_STORE: "Windows could not read the saved registration or its previous binding. The saved setup has been kept. Retry registration recovery.",
+  EAPP_CLOSING: "Registration recovery paused while the app closes. Reopen the app and retry.",
+  EREGISTRATION_UNKNOWN: "The saved terminal registration could not be restored. The saved setup has been kept. Retry registration recovery.",
+} as const;
+
+export type RegistrationRecoveryCode = keyof typeof REGISTRATION_RECOVERY_MESSAGES;
+const recoveryCode = (value: unknown): RegistrationRecoveryCode =>
+  typeof value === "string" && Object.prototype.hasOwnProperty.call(REGISTRATION_RECOVERY_MESSAGES, value)
+    ? value as RegistrationRecoveryCode : "EREGISTRATION_UNKNOWN";
+
+/** Only fixed recovery reasons reach startup UI; native diagnostic text stays private. */
+export const registrationRestoreMessage = (code: unknown): string => REGISTRATION_RECOVERY_MESSAGES[recoveryCode(code)];
+
 /** Connection values were read; registration remains unverified, not absent. */
 export class RegistrationRestoreError extends Error {
   readonly code = "EREGISTRATION_RESTORE";
-  constructor() {
-    super("The saved terminal registration could not be restored. Your saved connection settings are available for recovery.");
+  readonly registrationCode: RegistrationRecoveryCode;
+  constructor(cause?: unknown) {
+    let code: unknown;
+    try { code = (cause as { code?: unknown } | null)?.code; } catch { /* Foreign error accessors are not diagnostics. */ }
+    const safeCode = recoveryCode(code);
+    super(registrationRestoreMessage(safeCode));
     this.name = "RegistrationRestoreError";
+    this.registrationCode = safeCode;
   }
 }
 
@@ -68,8 +92,9 @@ export function hydrateConnectionProfile(): Promise<void> {
     // it after the vault pair would silently point the till at the previous
     // project. Restoring it first lets the device's own saved connection win.
     let registrationFailed = false;
+    let registrationError: unknown;
     try { await hydrateTerminalConfig(); }
-    catch { registrationFailed = true; }
+    catch (error) { registrationFailed = true; registrationError = error; }
     // Missing values resolve normally. Unreadable storage must keep the boot
     // gate closed. Settle both reads before allowing another restore attempt.
     for (let attempt = 0; ; attempt++) {
@@ -85,7 +110,7 @@ export function hydrateConnectionProfile(): Promise<void> {
     // Recovery must be able to show/fix a readable connection even when an old
     // registration needs online proof verification. Ordinary startup still
     // rejects, so a failed identity read never permits sign-in or trading.
-    if (registrationFailed) throw new RegistrationRestoreError();
+    if (registrationFailed) throw new RegistrationRestoreError(registrationError);
   })()
 
     .catch((error) => {

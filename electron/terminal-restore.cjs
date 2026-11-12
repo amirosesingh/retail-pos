@@ -16,13 +16,13 @@ function httpsAddress(value) {
 
 function restoreTerminalConfig(raw, dependencies) {
   const { terminalStore, log = () => {} } = dependencies;
-  const record = (outcome, stage, code) => {
-    try { log(`activation.restore.${outcome}`, { category: "activation", stage, ...(code ? { code } : {}) }); }
+  const record = (outcome, stage, code, reason) => {
+    try { log(`activation.restore.${outcome}`, { category: "activation", stage, ...(code ? { code } : {}), ...(reason ? { reason } : {}) }); }
     catch { /* Diagnostic storage must not change the registration result. */ }
   };
-  const fail = (code, stage, error) => {
-    record("refused", stage, code);
-    return { ok: false, code, error };
+  const fail = (code, stage, error, reason) => {
+    record("refused", stage, code, reason);
+    return { ok: false, code, error, ...(reason ? { reason } : {}) };
   };
   let candidate;
   try {
@@ -56,16 +56,26 @@ function restoreTerminalConfig(raw, dependencies) {
         record("retained", stage);
         return { ok: true, config: existing };
       }
-      const previous = terminalStore.lastBinding();
-      if (!terminalStore.wasProvisioned() || !previous || !activation.sameBinding(activation.binding(previous), requested))
-        return fail("EACTIVATION_RECOVERY_BINDING", "validate", "The retained registration does not match this device's previous binding. Your saved settings have not been changed.");
+      const previous = terminalStore.lastBinding({ strict: true });
+      const priorBinding = activation.binding(previous);
+      const provisioned = terminalStore.wasProvisioned();
+      if (!provisioned || !priorBinding || !activation.sameBinding(priorBinding, requested)) {
+        // The verifier decides refusal. Diagnostic classification must never
+        // turn a rejected binding into an accepted one when fields evolve.
+        const reason = !provisioned ? "not_provisioned" : !priorBinding ? "missing_binding" :
+          [["id", "token"], ["platform", "platform"], ["mode", "mode"], ["branchId", "branch"]]
+            .find(([field]) => String(priorBinding[field] ?? "").trim() !== String(requested[field] ?? "").trim())?.[1] ?? "binding";
+        return fail("EACTIVATION_RECOVERY_BINDING", "validate", "The retained registration does not match this device's previous binding. Your saved settings have not been changed.", reason);
+      }
       if (!/^[a-f0-9]{64}$/i.test(candidate.deviceBindingProof ?? ""))
         return fail("EACTIVATION_RECOVERY_PROOF", "validate", "The original terminal proof could not be read. Your saved settings have not been changed.");
       const cloud = cloudCredentials.read({ strict: true });
       const backend = httpsAddress(configStore.getStrict("backendUrl"));
       const project = httpsAddress(cloud?.url);
-      if (!backend || !project || httpsAddress(candidate.supabaseUrl) !== project)
-        return fail("EACTIVATION_CONTEXT_CHANGED", "validate", "The retained registration and saved database connection do not match. Your saved settings have not been changed.");
+      if (!backend || !project)
+        return fail("EACTIVATION_CONTEXT_CHANGED", "validate", "The saved database connection or POS website is unavailable. Your saved settings have not been changed.");
+      if (httpsAddress(candidate.supabaseUrl) !== project)
+        return fail("EACTIVATION_RECOVERY_PROJECT", "validate", "The retained registration belongs to a different saved database connection. Your saved settings have not been changed.");
       const snapshot = JSON.stringify([activation.binding(previous), cloud, backend]);
       stage = "verify";
       const response = await fetchImpl(`${backend}/api/public/terminal-pairing`, {
@@ -83,7 +93,7 @@ function restoreTerminalConfig(raw, dependencies) {
       const canonical = activation.canonicalConfig(candidate, result.terminal);
       stage = "recheck";
       const current = terminalStore.read({ strict: true });
-      const currentPrevious = terminalStore.lastBinding();
+      const currentPrevious = terminalStore.lastBinding({ strict: true });
       const currentCloud = cloudCredentials.read({ strict: true });
       const currentBackend = httpsAddress(configStore.getStrict("backendUrl"));
       if (current || !currentPrevious || !terminalStore.wasProvisioned() ||
