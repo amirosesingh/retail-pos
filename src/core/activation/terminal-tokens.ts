@@ -446,6 +446,22 @@ const EVENT = "pos:terminal-config-changed";
  * which `hydrateTerminalConfig()` fills before the first screen renders.
  */
 const SEALED_NAME = "terminal.config";
+export type TerminalRecoveryEvidence = { sealed: string | null; plain: string | null; key: string | null };
+
+/** Copy retained bytes only for an explicit native-authorized recovery action. */
+export function retainedTerminalRecoveryEvidence(): TerminalRecoveryEvidence {
+  try {
+    if (typeof window === "undefined" || !desktopBridge()) throw new Error("Native recovery unavailable");
+    const read = (name: string) => {
+      const value = window.localStorage.getItem(name);
+      if (value !== null && value.length > 32_768) throw new Error("Retained recovery record exceeds its bound");
+      return value;
+    };
+    return { sealed: read("pos.secure.terminal.config"), plain: read(CONFIG_KEY), key: read("pos.device.key") };
+  } catch {
+    throw new ActivationError("The retained registration could not be preserved. Keep the saved setup and retry recovery.", true, "EACTIVATION_STORE");
+  }
+}
 let cachedConfig: TerminalConfig | null = null;
 let hydrated = false;
 let hydration: Promise<TerminalConfig | null> | null = null;
@@ -486,11 +502,13 @@ export async function hydrateTerminalConfig(): Promise<TerminalConfig | null> {
 
 async function restoreSavedTerminalConfig(): Promise<TerminalConfig | null> {
   const bridge = desktopBridge();
+  let recoveryRequired = false;
   if (bridge) {
     let native: Awaited<ReturnType<TerminalBridge["readTerminalConfig"]>>;
     try { native = await bridge.readTerminalConfig(); }
     catch { throw new ActivationError("Could not restore the saved terminal registration. Retry opening the app.", true, "EACTIVATION_STORE"); }
     if (!native?.ok) throw new ActivationError("Could not restore the saved terminal registration. Retry opening the app.", true, "EACTIVATION_STORE");
+    recoveryRequired = native.recoveryRequired === true;
     if (native.config?.tokenId) {
       publishTerminalConfig(native.config);
       return native.config;
@@ -536,6 +554,7 @@ async function restoreSavedTerminalConfig(): Promise<TerminalConfig | null> {
     if (sealedUnreadable) throw new ActivationError("The encrypted retained registration could not be read. Your saved registration has not been removed. Retry recovery.", true, "EACTIVATION_STORE");
     if (refusal) throw refusal;
     if (malformed) throw new ActivationError("A retained terminal registration is incomplete. Your saved registration has not been removed. Retry recovery.", false, "EBADARG");
+    if (recoveryRequired) throw new ActivationError("This device has a previous terminal binding. Open Emergency Access to restore or replace its registration.", false, "EACTIVATION_RECOVERY_BINDING");
     hydrated = true;
     return null;
   }
@@ -659,7 +678,7 @@ export async function clearTerminalConfig(expected?: TerminalClearContext) {
 /* --------------- desktop mirror (survives app updates) ------------------ */
 
 type TerminalBridge = {
-  readTerminalConfig: () => Promise<{ ok: boolean; config?: TerminalConfig | null }>;
+  readTerminalConfig: () => Promise<{ ok: boolean; config?: TerminalConfig | null; recoveryRequired?: boolean }>;
   writeTerminalConfig: (config: TerminalConfig | null) => Promise<{ ok: boolean; code?: string; error?: string }>;
   restoreTerminalConfig?: (config: TerminalConfig) => Promise<{ ok: boolean; config?: TerminalConfig | null; code?: string; error?: string }>;
   clearTerminalConfig?: (expected: {

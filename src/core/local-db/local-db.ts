@@ -403,8 +403,9 @@ export type TerminalClearContext = {
 };
 
 export type PosBridge = {
-  terminalRepairStatus?: () => Promise<{ ok: boolean; ready?: boolean; code?: string; error?: string; requiresLocalDatabase?: boolean }>;
-  terminalRepairConnectDatabase?: () => Promise<{ ok: boolean; ready?: boolean; code?: string; error?: string; requiresLocalDatabase?: boolean }>;
+  terminalRepairStatus?: () => Promise<{ ok: boolean; ready?: boolean; code?: string; error?: string; requiresLocalDatabase?: boolean; mode?: "online"; localRecoveryPending?: boolean }>;
+  terminalRepairConnectDatabase?: () => Promise<{ ok: boolean; ready?: boolean; code?: string; error?: string; requiresLocalDatabase?: boolean; mode?: "online"; localRecoveryPending?: boolean }>;
+  terminalRepairContinueOnline?: (evidence: {sealed:string|null;plain:string|null;key:string|null}) => Promise<{ok:boolean;ready?:boolean;code?:string;error?:string;requiresLocalDatabase?:boolean;mode?:"online";localRecoveryPending?:boolean}>;
   restoreTerminalConfig?: (config: TerminalConfig) => Promise<{ ok: boolean; config?: TerminalConfig | null; code?: string; error?: string }>;
   clearTerminalConfig?: (context: TerminalClearContext) => Promise<{ ok: boolean; code?: string; error?: string }>;
   authorizeOfflineDiscount?: (value: {
@@ -454,7 +455,7 @@ export type PosBridge = {
     printer?: { deviceName?: string; share?: string };
   }) => Promise<{ ok: boolean; eventId?: string; error?: string; code?: string }>;
   database?: {
-    getState: () => Promise<{ enabled: boolean; configured?: boolean; connected: boolean; tradingReady?: boolean; state: string }>;
+    getState: () => Promise<{ enabled: boolean; configured?: boolean; connected: boolean; tradingReady?: boolean; state: string; localRecoveryPending?: boolean }>;
   };
   telemetry?: {
     presence: (value: { sessionStatus: "signed_in" | "idle"; staffName: string | null; staffRole: string | null }) => Promise<{ ok: boolean }>;

@@ -8633,3 +8633,119 @@ the shared installation require the clean CI environment for full typecheck.
 Independent changed-path review found no remaining blocker after preserving
 first-run and readable-full-native mirroring, joining terminal writes to the
 close barrier, and rejecting changed claim connection snapshots.
+
+## 12 November — lifecycle rules first; beta.7 saved SQL recovery remains open
+
+Owner reports beta.7 still cannot accept a replacement activation because the
+saved local database cannot be verified. The owner then requests a side-by-side
+description of startup, activation, login and related boundaries first, as the
+basis for permanent AGENTS.md rules. Hold dependent runtime changes while the
+required lifecycle is explained and unresolved recovery policy is identified.
+Baseline: beta `ff9f2dd7`; isolated branch
+`codex/registration-local-state-recovery-beta`. Production stays excluded.
+
+Read-only agent audits confirm that genuine first activation has no previous
+SQL prerequisite, while current replacement repair requires a valid retained
+`localDatabaseProfile`. Its absent/invalid/unreadable target is not evidence of
+an empty database. The reported DATABASE_UNKNOWN path remains unresolved; the
+beta.7 source/tests/release did not establish affected-device recovery.
+
+Also track before further activation changes: terminal:read returns config/null
+without the native historical provisioning classification. If every full
+registration copy is missing, the renderer may offer normal activation even
+though Main still has an old provision marker; a hosted claim can precede the
+final native denial. Classify verified-fresh versus recovery-required before
+claiming. Do not fix either case by clearing markers, saved setup, queues or
+checkpoints, accepting different identities without authority, or connecting an
+arbitrary empty SQL database as proof old work is clear.
+
+The rule discussion must preserve existing owner decisions: Operations stays
+branch-locked for all roles; Management scope and device admission are separate;
+approved SQL-unavailable online fallback preserves uncertain/pending work;
+Emergency Access grants only allowlisted repair authority. Current Management
+local IPC restrictions and offline credential freshness limitations are actual
+implementation constraints, not new owner-approved policy or completed work.
+No source, installed profile, schema/data or deployment changes were made in
+this follow-up audit. Proposed next step is owner-facing lifecycle mapping,
+then exact agreed AGENTS rules and a scoped recovery implementation.
+
+### Owner clarification — connect saved SQL during startup
+
+Owner requires the saved local SQL connection to open automatically during
+application startup and reach verified readiness; it must not wait for Settings,
+staff login or the first sale to initiate connection. This clarifies the database
+readiness row and preserves DEC-15's approved unavailable-SQL fallback, existing
+operator enablement and schema/data approval boundaries. Record this requirement
+in AGENTS.md and project memory. It does not resolve the separate missing saved
+profile / replacement-registration policy gap above.
+
+Read-only source verification at `ff9f2dd7`: Electron's normal app.whenReady path
+shows its startup window, calls databaseService.restore(), then schedules the
+required local bootstrap. The service restores vault credentials, validates the
+saved target and opens its native pool; the UI observes canonical connected and
+tradingReady states. Automatic startup connection therefore already has an entry
+point; affected-device success is unverified. Only documentation was changed for
+this clarification. No runtime tests were necessary for this documentation-only
+change; whitespace/diff inspection is the relevant check. Missing profile,
+startup failures and registration recovery remain separately tracked.
+
+### Owner authorization — online operation and replacement recovery without local SQL
+
+Owner now explicitly requests agents to fix re-registration and clarifies that
+an unavailable/unconnected local SQL database must use the configured online
+database. Implement the bounded online recovery route on this beta branch.
+This supersedes the blanket local-SQL prerequisite for explicitly authorized
+online replacement; it does not certify missing local data as empty or erase it.
+
+Provide an explicit Continue online action behind existing native recovery
+authority. Preserve prior binding, saved SQL settings and retained registration
+evidence in a Main-only sealed recovery record before a replacement claim.
+Keep previous local storage held from native reads/writes, reconnect/bootstrap
+and sync under the new identity until separately verified recovery; use the
+existing online adapters and account/branch checks for current operations.
+The hold must survive restart, update and interrupted activation. No generic
+config/renderer flag may create or remove authority. New activation still
+requires hosted proof/canonical validation, native persistence and read-back.
+Ordinary valid-registration SQL startup/reconnect and fallback stay unchanged.
+Classify historical native provisioning before any fresh hosted claim.
+
+Scope: native recovery store/IPC and storage routing, recovery UI, minimal bridge
+types, focused allowed/denied/restart/expiry/context/pending-data tests, and beta
+PR. No production, live data/schema edits or profile resets. Source rollback
+must retain the sealed hold and prevent older source from reopening held data;
+document that limitation rather than claiming a simple binary downgrade is safe.
+Installer publication remains subject to the explicit publication rule.
+
+Implementation: Emergency Access now offers Continue online and re-register
+after an unknown/unavailable SQL check. The native action verifies its POS
+main frame and recovery authority, refuses connected/busy SQL and already
+accepted local control work, then atomically seals prior binding, settings and
+bounded retained evidence. It saves the explicit online choice (SQL enablement
+false), preserves the original value in the archive, and uses the existing
+online adapters. No SQL query, migration, queue acknowledgement or data rewrite
+is needed to permit the online replacement.
+
+Native service/IPC/startup/sync gates hold old SQL across restart and updates;
+the UI reports its work as pending recovery. Hosted canonical project/device/
+proof checks and native persistence still gate replacement success. Repeated
+authorized recovery attempts append prior pins/contexts (bounded16) rather than
+clearing them. Connection corrections before a claim require another explicit
+online choice; status does not silently retarget or advance an attempt. Native
+historical provisioning is now checked before a renderer can offer fresh
+activation when all full saved copies are absent.
+
+Focused verification passed: 527 Vitest cases across23 affected suites,
+including actual IPC wrapper, canonical verifier, startup/bootstrap, vault,
+UI and original-registration paths, plus25 shutdown/updater Node cases. Scoped
+lint/native syntax/diff checks passed. Changed-file TypeScript diagnostics were
+zero; the shared local dependency tree still has67 unrelated diagnostics and
+clean CI remains the full compiler/build gate. Independent review found no
+remaining blocker after the accepted-control race and repeat-attempt fixes.
+
+Current affected-device execution is not verified. No live profile, SQL/cloud
+data/schema or production state was modified. Old local recovery/reconciliation
+remains distinct from online operation; it is not reported as completed. Keep
+the sealed record and saved disabled-SQL choice on rollback; older binaries do
+not enforce the new hold gate if an operator manually re-enables SQL. Prefer a
+reviewed forward correction while prior data remains held. Beta PR/CI/merge and
+any later owner-requested installer publication must be recorded separately.

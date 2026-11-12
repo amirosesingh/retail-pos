@@ -271,6 +271,55 @@
   approval requirements. General instructions to finish quickly do not authorize
   live data repairs, billing changes, security bypasses or unreviewed releases.
 
+## Terminal activation and staff login lifecycle
+
+- Restore saved connection and registration state before selecting setup,
+  activation or login. Determine verified-fresh versus recovery-required from
+  native historical provisioning evidence before any hosted claim. Missing or
+  unreadable renderer/native configuration must not classify a used device as
+  fresh. Genuine first activation has no previous-SQL prerequisite.
+- Manual codes and QR pairing follow the same project, device-family, physical
+  proof and canonical-registration checks. Report success only after native
+  persistence and strict read-back. A hosted claim alone is not confirmation
+  that Windows saved registration, and activation grants no staff-session rights.
+- Normal reopening, application updates, lock and logout preserve terminal
+  registration, operator connection settings and durable pending work. End the
+  person session independently; never require reactivation for a network failure.
+- Verify staff credentials, active status, device eligibility and authorized
+  branch scope through the authoritative login/session path. Use supported
+  offline verification only when the service cannot judge the request; explicit
+  wrong credentials, inactive/locked accounts, revocation and permission denial
+  must not become offline login. Renderer roles/caches grant no native authority.
+- Preserve the existing Operations branch lock and distinct Management scope.
+  Emergency Access grants only its native-verified, allowlisted repair session;
+  it does not grant cashier access, financial approval or cross-branch authority.
+
+## Electron startup and local SQL readiness
+
+- On normal application startup, automatically restore the enabled, saved local
+  SQL Server profile and its vault credentials and open the native connection.
+  Do not wait for Settings, staff login or the first sale to begin connecting.
+  Keep a visible startup/progress window while this work runs.
+- A connected socket is not local trading readiness. Validate the saved target,
+  required schema and essential scoped bootstrap through the existing canonical
+  startup service before declaring SQL ready for business operations. Preserve
+  independent registration, person-session, branch and action-permission checks;
+  database readiness grants no user authority.
+- Coordinate startup and reconnect through the existing native service and pool.
+  Show an actionable failure/retry state and preserve saved settings and pending
+  work. Respect operator-disabled SQL and the approved unavailable-SQL online
+  fallback; return to local operation only after verified local readiness.
+- This rule grants no additional migration, schema/data repair or production
+  approval. Missing/unreadable previous SQL configuration must not be interpreted
+  as a fresh terminal or proof that no pending transactions exist.
+- When local SQL is unavailable, use the configured online database through the
+  approved fallback. Explicit replacement registration may proceed online only
+  through native-authorized recovery that seals and preserves the prior binding,
+  settings and retained evidence, and holds prior local storage from reopening,
+  business writes and synchronization under the replacement identity until its
+  recovery is verified. Never turn that hold into an empty-queue acknowledgement
+  or silently clear it. Ordinary valid-registration SQL reconnect stays automatic.
+
 ## Supabase configuration (do not regress)
 
 `supabaseConfig()` in `src/lib/external-supabase-config.ts` is the single

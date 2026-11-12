@@ -291,7 +291,7 @@ describe("desktop activation store", () => {
     });
     new Function("ipcMain", "terminalStore", source.slice(from, to))(ipcMain, store);
 
-    expect(handler()).toEqual({ ok: true, config: null });
+    expect(handler()).toEqual({ ok: true, config: null, recoveryRequired: false });
     expect(store.write({ tokenId: "t-1", locationId: "branch-a" }).ok).toBe(true);
     decryptFailure = true;
     expect(handler()).toMatchObject({ ok: false, code: "EACTIVATION_STORE" });

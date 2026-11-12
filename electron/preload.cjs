@@ -171,6 +171,7 @@ contextBridge.exposeInMainWorld("pos", {
   restoreTerminalConfig: (config) => invoke("terminal:restore", config),
   terminalRepairStatus: () => invoke("terminal:repair-status"),
   terminalRepairConnectDatabase: () => invoke("terminal:repair-connect-database"),
+  terminalRepairContinueOnline: (evidence) => invoke("terminal:repair-continue-online", evidence),
   clearTerminalConfig: (context) => invoke("terminal:clear", context),
   reserveStockCounter: (prefix, minimum) => invoke("business:reserve-stock", prefix, minimum),
   reserveBillCounter: (prefix, minimum) => invoke("business:reserve-bill", prefix, minimum),

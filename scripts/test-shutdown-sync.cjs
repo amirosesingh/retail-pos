@@ -70,6 +70,7 @@ function mainClose({
   localRead = async () => ({ recordset: [{ matches_profile: 1 }] }),
   lease = async work => work(),
   connectedDatabase = 'isolated_update_fixture',
+  localRecoveryPending = false,
 } = {}) {
   const source = readFileSync(join(__dirname, '../electron/main.cjs'), 'utf8');
   const declarations = source.slice(source.indexOf('function shouldInstallUpdateOnClose('), source.indexOf('\napp.on("second-instance"'));
@@ -91,7 +92,7 @@ function mainClose({
     mainWindow: null, reportCloseProgress() {},
     installUpdateAfterSync() {}, updater: { status: () => ({ status: 'ready' }) },
     isManagementDevice: () => false,
-    databaseService: { snapshot: () => { calls.push('sql-state'); return { enabled: true, configured: true }; } },
+    databaseService: { snapshot: () => { calls.push('sql-state'); return { enabled: !localRecoveryPending, configured: true, localRecoveryPending }; } },
     databaseManager: { pool, profile: { ...profile, database: connectedDatabase }, isConnected: () => true },
     databaseConfig: { profile: () => profile },
     syncCoordinator: { withExclusive: lease },
@@ -134,6 +135,27 @@ test('signed-in quit keeps its final upload policy', async () => {
   assert.deepEqual(signedIn.calls, ['drain', 'sql-state', 'sync']);
   assert.equal(signedIn.pendingShiftCloseSync.size, 0);
 
+});
+
+test('online recovery close keeps previous shift work held without querying or acknowledging old SQL', async () => {
+  const f = mainClose({ signedIn: true, localRecoveryPending: true, sync: async () => assert.fail('Held SQL was synchronized') });
+  const result = await f.prepareApplicationClose();
+  assert.equal(result.ok, true);
+  assert.equal(result.synchronized, false);
+  assert.equal(result.localRecoveryPending, true);
+  assert.deepEqual(f.calls, ['drain', 'sql-state']);
+  assert.deepEqual([...f.pendingShiftCloseSync], ['saved-shift']);
+  assert.equal(f.queries.length, 0);
+});
+
+test('online recovery update preserves the old hold without requiring its unavailable SQL', async () => {
+  const f = mainClose({ localRecoveryPending: true, sync: async () => assert.fail('Held SQL was synchronized') });
+  const result = await f.prepareApplicationClose(true);
+  assert.equal(result.ok, true);
+  assert.equal(result.synchronized, false);
+  assert.equal(result.syncDeferred, true);
+  assert.deepEqual([...f.pendingShiftCloseSync], ['saved-shift']);
+  assert.equal(f.queries.length, 0);
 });
 
 test('install accepts durable offline data without an upload or a false ACK', async () => {

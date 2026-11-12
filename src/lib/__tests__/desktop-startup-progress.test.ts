@@ -235,7 +235,7 @@ describe("actual Main preparation promise boundary", () => {
       () => false,
       {},
       { profile: () => ({ retentionDays: 90 }) },
-      { beginStartupActivity: begin, transition, markReady },
+      { beginStartupActivity: begin, transition, markReady, snapshot: () => ({ localRecoveryPending: false }) },
       { ensure, preserveCachedReady: () => false },
       () => "branch-fixture",
       { logConnection: () => {}, bootstrapDiagnostic: () => ({}) },

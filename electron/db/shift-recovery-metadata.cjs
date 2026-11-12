@@ -29,7 +29,7 @@ function shouldRetryRecoveryMetadata({approvedArtifactHash,snapshot,paused}) {
 const controls = new Set([
   "database:retry-startup", "database:set-enabled", "database:migrate", "database:migrate-saved",
   "database:provision-connect", "database:save-connect", "database:disconnect", "database:remove-configuration",
-  "database:restore", "database:backup", "sync:reconcile", "terminal:write", "terminal:restore", "terminal:repair-status", "terminal:repair-connect-database", "terminal:clear",
+  "database:restore", "database:backup", "sync:reconcile", "terminal:write", "terminal:restore", "terminal:repair-status", "terminal:repair-connect-database", "terminal:repair-continue-online", "terminal:clear",
   "config:write", "config:set", "config:reset", "cloud:set", "cloud:remove",
   "settings:set", "backend:set", "db:set-branch", "pos:connect", "pos:configure-cloud", "pos:remove",
   "pos:forget", "pos:apply-schema", "pos:restore", "pos:set-sync-config", "pos:set-sync-enabled",

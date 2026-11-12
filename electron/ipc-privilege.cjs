@@ -254,6 +254,7 @@ const CHANNEL_LEVELS = {
   "terminal:write": ADMIN,
   "terminal:repair-status": ADMIN,
   "terminal:repair-connect-database": ADMIN,
+  "terminal:repair-continue-online": ADMIN,
   "config:write": ADMIN,
   "config:set": ADMIN,
   "config:reset": ADMIN,
@@ -313,6 +314,7 @@ const FIRST_RUN_CHANNELS = new Set([
 const RECOVERY_CHANNELS = new Set([
   "terminal:repair-status",
   "terminal:repair-connect-database",
+  "terminal:repair-continue-online",
   "pos:connect",
   "pos:configure-cloud",
   "pos:forget-connection",
@@ -678,11 +680,22 @@ function allowed(channel, args = []) {
  * Wraps `ipcMain.handle` so every channel — the ones registered today and any
  * added later — passes the gate before its body runs.
  */
-function install(ipcMain, { isFirstRun, writeBarrier, isManagementDevice } = {}) {
+function localRecoveryAction(channel, args = []) {
+  if (/^(?:business:|db:|local:|staff:|receipts:)/.test(channel)) return true;
+  if (channel.startsWith("database:")) return !["database:get-state", "database:authorize-settings"].includes(channel);
+  if (channel.startsWith("sqladmin:")) return true;
+  if (channel.startsWith("sync:")) return !["sync:get-status", "sync:get-failures", "sync:pause"].includes(channel);
+  if (channel.startsWith("pos:")) return true;
+  if (channel === "config:set") return ["localDatabaseProfile", "localDatabaseEnabled"].includes(String(args[0]).trim());
+  return ["config:write", "config:reset"].includes(channel);
+}
+function install(ipcMain, { isFirstRun, writeBarrier, isManagementDevice, isLocalRecoveryPending } = {}) {
   if (typeof isFirstRun === "function") firstRun = isFirstRun;
   const original = ipcMain.handle.bind(ipcMain);
   ipcMain.handle = (channel, listener) =>
     original(channel, (event, ...args) => {
+      if (isLocalRecoveryPending?.() && localRecoveryAction(channel, args))
+        return { ok: false, code: "ELOCAL_RECOVERY_PENDING", error: "Use the online database while the previous local setup is awaiting verified recovery. Saved local work has been kept." };
       // Management PCs use the hosted database. Do not let a stale local pool
       // or cached branch credentials become an alternate business-data path.
       if (isManagementDevice?.() && /^(?:business:|db:|local:|staff:|receipts:refund$|sync:(?:run-now|reconcile|resume)$|pos:(?:write|write-batch|query|snapshot|compare-summary|compare-rows)$)/.test(channel))
@@ -709,4 +722,5 @@ module.exports = {
   allowed,
   refusal,
   install,
+  localRecoveryAction,
 };

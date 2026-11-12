@@ -334,6 +334,18 @@ function panelHarness(databaseRead: unknown, syncResult: unknown = { ok: true },
 describe("actual local panel database freshness", () => {
   const ready = { enabled: true, connected: true, tradingReady: true, state: "enabled_ready" };
 
+  it("keeps preserved local work visible while online recovery disables the SQL path", async () => {
+    const panel = panelHarness({ state: "disabled", enabled: false, connected: false, tradingReady: false, localRecoveryPending: true });
+    await panel.settle();
+    const tree = panel.render();
+    expect(tree).not.toBeNull();
+    expect(panel.findText(tree, "Previous local work needs recovery")).toBeDefined();
+    expect(panel.status(tree)).toContain("records have not been marked synchronized");
+    expect(panel.status(tree)).toContain("using the saved online database");
+    expect(panel.findText(tree, "Sync now")).toBeUndefined();
+    expect(panel.findText(tree, "Journal queue clear")).toBeUndefined();
+  });
+
   it("shows a grouped settings pilot only for the current branch", async () => {
     const sync = { ...native(), groupedSettingsPilot: { status: "REVIEW_REQUIRED", branchId: "branch-a", position: { seq: "7" } },
       storeSettingsEditUpload: { status: "REVIEW_REQUIRED", branchId: "branch-a" } };
