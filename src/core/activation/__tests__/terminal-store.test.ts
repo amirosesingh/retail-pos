@@ -42,6 +42,7 @@ function loadStore() {
     read: (options?: { strict?: boolean }) => { tokenId?: string } | null;
     wasProvisioned: () => boolean;
     write: (c: unknown) => { ok: boolean; error?: string };
+    lastBinding: (options?: { strict?: boolean }) => Record<string, unknown> | null;
   };
 }
 
@@ -106,6 +107,60 @@ describe("desktop activation store", () => {
   it("returns an absent registration only when neither saved activation exists", () => {
     expect(loadStore().read({ strict: true })).toBeNull();
     expect(existsSync(join(dir, "terminal-provisioned"))).toBe(false);
+  });
+
+  it("reports an absent prior binding only when its marker does not exist", () => {
+    sealAvailable = false;
+    expect(loadStore().lastBinding({ strict: true })).toBeNull();
+    expect(existsSync(join(dir, "terminal-last-binding.bin"))).toBe(false);
+    expect(existsSync(join(dir, "terminal-provisioned"))).toBe(false);
+  });
+
+  it.each([
+    { tokenId: "11111111-1111-4111-8111-111111111111", locationId: "22222222-2222-4222-8222-222222222222", deviceType: "pc", deviceUse: "operations" },
+    { tokenId: "legacy-terminal", branchId: "legacy-branch" },
+    { tokenId: "management-terminal", locationId: "", deviceUse: "management", deviceType: "pc" },
+  ])("preserves the actual minimal previous binding through clear and module reload %#", config => {
+    const boundary = require_("../../../../electron/verified-activation.cjs");
+    const store = loadStore();
+    expect(store.write({ ...config, deviceBindingProof: "private-proof", supabaseKey: "private-key" }).ok).toBe(true);
+    expect(store.write(null).ok).toBe(true);
+    const previous = loadStore().lastBinding({ strict: true });
+    expect(boundary.sameBinding(boundary.binding(previous), boundary.binding(config))).toBe(true);
+    expect(JSON.stringify(previous)).not.toContain("private-");
+    expect(previous).not.toHaveProperty("deviceBindingProof");
+    expect(previous).not.toHaveProperty("supabaseKey");
+  });
+
+  it.each(["vault", "decrypt", "json", "identity", "shape"])("keeps a %s prior binding read failure distinct from absence without rewriting it", failure => {
+    const store = loadStore();
+    store.write({ tokenId: "saved-terminal", locationId: "saved-branch" });
+    const marker = join(dir, "terminal-last-binding.bin");
+    const saved = readFileSync(marker);
+    if (failure === "vault") sealAvailable = false;
+    if (failure === "decrypt") decryptFailure = true;
+    if (failure === "json") writeFileSync(marker, Buffer.from("broken JSON").toString("base64"));
+    if (failure === "identity") writeFileSync(marker, Buffer.from(JSON.stringify({ locationId: "saved-branch" })).toString("base64"));
+    if (failure === "shape") writeFileSync(marker, Buffer.from(JSON.stringify({ tokenId: "saved-terminal", locationId: { secret: "private" } })).toString("base64"));
+    const before = readFileSync(marker);
+    expect(() => store.lastBinding({ strict: true })).toThrow("saved previous terminal binding could not be read");
+    expect(readFileSync(marker)).toEqual(before);
+    sealAvailable = true; decryptFailure = false;
+    if (["json", "identity", "shape"].includes(failure)) writeFileSync(marker, saved);
+    expect(store.lastBinding({ strict: true })).toMatchObject({ tokenId: "saved-terminal", locationId: "saved-branch" });
+  });
+
+  it("keeps existing best-effort prior-binding callers compatible while strict restore reports unreadability", () => {
+    const store = loadStore();
+    store.write({ tokenId: "saved-terminal", locationId: "saved-branch" });
+    decryptFailure = true;
+    expect(store.lastBinding()).toBeNull();
+    expect(() => store.lastBinding({ strict: true })).toThrow("saved previous terminal binding could not be read");
+    decryptFailure = false;
+    sealAvailable = false;
+    // Existing callers still ask the native decryptor directly; only strict
+    // startup adds the explicit vault-readiness prerequisite.
+    expect(store.lastBinding()).toMatchObject({ tokenId: "saved-terminal" });
   });
 
   it.each(["vault", "decrypt", "json", "identity"])("keeps a saved %s failure distinct from absence and retryable", (failure) => {

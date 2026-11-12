@@ -27,14 +27,15 @@ const deferred = <T>() => {
 /** Real installed privilege/control/close wrappers and Main handler; stores and HTTP are isolated fixtures. */
 function fixture() {
   type Registration = typeof config;
+  type BindingMarker = Pick<Registration, "tokenId"> & Partial<Pick<Registration, "deviceType" | "deviceUse" | "locationId">>;
   let active: Registration | null = null;
-  let previous: Registration | null = { ...config };
+  let previous: BindingMarker | null = { ...config };
   let cloud = { url: config.supabaseUrl, key: "current-publishable-key" };
   let backend = "https://saved-pos.example";
   let provisioned = true;
   const terminalStore = {
     read: vi.fn((_options: { strict: boolean }) => active),
-    lastBinding: vi.fn(() => previous), wasProvisioned: () => provisioned,
+    lastBinding: vi.fn((_options?: { strict?: boolean }) => previous), wasProvisioned: () => provisioned,
     write: vi.fn((value: Registration) => { active = value; return { ok: true }; }),
   };
   const cloudCredentials = { read: vi.fn((_options: { strict: boolean }) => cloud), write: vi.fn(), remove: vi.fn() };
@@ -43,7 +44,7 @@ function fixture() {
   const logConnection = vi.fn();
   const barrier = new WriteBarrier();
   const metadata = new RecoveryMetadataGate();
-  const handlers = new Map<string, (event: unknown, raw: unknown) => Promise<{ ok: boolean; config?: Registration; code?: string }>>();
+  const handlers = new Map<string, (event: unknown, raw: unknown) => Promise<{ ok: boolean; config?: Registration; code?: string; reason?: string }>>();
   const ipcMain = { handle: (name: string, handler: typeof handlers extends Map<string, infer T> ? T : never) => handlers.set(name, handler) };
   privilege.install(ipcMain, { isFirstRun: () => !provisioned, isManagementDevice: () => false,
     writeBarrier: { run: (work: () => unknown) => metadata.run(() => barrier.run(work)) } });
@@ -62,7 +63,7 @@ function fixture() {
     normalWrite: () => handlers.get("terminal:write")!(event, config), writeHandler,
     active: () => active,
     setActive(value: Registration | null) { active = value; },
-    setPrevious(value: Registration | null) { previous = value; },
+    setPrevious(value: BindingMarker | null) { previous = value; },
     setCloud(value: typeof cloud) { cloud = value; }, setBackend(value: string) { backend = value; },
     setProvisioned(value: boolean) { provisioned = value; },
   };
@@ -81,6 +82,7 @@ describe("pre-login native restoration of the original retained registration", (
       method: "POST", body: JSON.stringify({ tokenId: config.tokenId, proofHash: config.deviceBindingProof }),
     }));
     expect(f.terminalStore.read).toHaveBeenCalledWith({ strict: true });
+    expect(f.terminalStore.lastBinding).toHaveBeenCalledWith({ strict: true });
     expect(f.cloudCredentials.read).toHaveBeenCalledWith({ strict: true });
     expect(f.configStore.getStrict).toHaveBeenCalledWith("backendUrl");
     expect(f.configStore.set).not.toHaveBeenCalled();
@@ -101,17 +103,39 @@ describe("pre-login native restoration of the original retained registration", (
     await expect(f.run()).resolves.toMatchObject({ ok: true });
   });
 
-  it.each([null, { ...config, tokenId: "another-terminal" }, { ...config, locationId: "other-store" },
-    { ...config, deviceUse: "management", locationId: "" }])("refuses absent or foreign prior binding %#", async previous => {
+  it("restores from the actual minimal previous-binding fields without requiring a full activation copy", async () => {
+    const f = fixture();
+    f.setPrevious({ tokenId: config.tokenId, locationId: config.locationId });
+    await expect(f.run()).resolves.toMatchObject({ ok: true });
+    expect(f.terminalStore.lastBinding).toHaveBeenCalledTimes(2);
+    expect(f.terminalStore.lastBinding.mock.calls.every(([options]) => options?.strict)).toBe(true);
+  });
+
+  it.each([
+    [null, "missing_binding"], [{ ...config, tokenId: "another-terminal" }, "token"],
+    [{ ...config, deviceType: "mobile" }, "platform"], [{ ...config, locationId: "other-store" }, "branch"],
+    [{ ...config, deviceUse: "management", locationId: "" }, "mode"],
+  ] as const)("refuses absent or foreign prior binding %# with a fixed reason", async (previous, reason) => {
     const f = fixture(); f.setPrevious(previous);
-    await expect(f.run()).resolves.toMatchObject({ ok: false, code: "EACTIVATION_RECOVERY_BINDING" });
+    await expect(f.run()).resolves.toMatchObject({ ok: false, code: "EACTIVATION_RECOVERY_BINDING", reason });
+    expect(f.logConnection).toHaveBeenCalledWith("activation.restore.refused", expect.objectContaining({ reason }));
     expect(f.fetch).not.toHaveBeenCalled(); expect(f.terminalStore.write).not.toHaveBeenCalled();
   });
 
   it("does not turn the restore channel into first-time activation", async () => {
     const f = fixture(); f.setProvisioned(false);
-    await expect(f.run()).resolves.toMatchObject({ ok: false, code: "EACTIVATION_RECOVERY_BINDING" });
+    await expect(f.run()).resolves.toMatchObject({ ok: false, code: "EACTIVATION_RECOVERY_BINDING", reason: "not_provisioned" });
     expect(f.fetch).not.toHaveBeenCalled(); expect(f.terminalStore.write).not.toHaveBeenCalled();
+  });
+
+  it("keeps the verifier's rejection independent of diagnostic field classification", async () => {
+    const activation = require("../../../../electron/verified-activation.cjs");
+    const rejected = vi.spyOn(activation, "sameBinding").mockReturnValue(false);
+    try {
+      const f = fixture();
+      await expect(f.run()).resolves.toMatchObject({ ok: false, code: "EACTIVATION_RECOVERY_BINDING", reason: "binding" });
+      expect(f.fetch).not.toHaveBeenCalled(); expect(f.terminalStore.write).not.toHaveBeenCalled();
+    } finally { rejected.mockRestore(); }
   });
 
   it.each(["", "newly-generated-proof"])("requires the original complete device proof %#", async proof => {
@@ -122,6 +146,12 @@ describe("pre-login native restoration of the original retained registration", (
 
   it("refuses a retained registration for a different saved database", async () => {
     const f = fixture(); f.setCloud({ url: "https://other-project.example", key: "another-publishable-key" });
+    await expect(f.run()).resolves.toMatchObject({ ok: false, code: "EACTIVATION_RECOVERY_PROJECT" });
+    expect(f.fetch).not.toHaveBeenCalled(); expect(f.terminalStore.write).not.toHaveBeenCalled();
+  });
+
+  it("treats a missing saved project as global connection context failure", async () => {
+    const f = fixture(); f.setCloud({ url: "", key: "" });
     await expect(f.run()).resolves.toMatchObject({ ok: false, code: "EACTIVATION_CONTEXT_CHANGED" });
     expect(f.fetch).not.toHaveBeenCalled(); expect(f.terminalStore.write).not.toHaveBeenCalled();
   });
@@ -156,15 +186,29 @@ describe("pre-login native restoration of the original retained registration", (
     expect(f.terminalStore.write).not.toHaveBeenCalled();
   });
 
-  it.each(["terminal", "cloud", "backend"])("preserves saved files when the %s vault is unreadable", async store => {
+  it.each(["terminal", "binding", "cloud", "backend"])("preserves saved files when the %s vault is unreadable", async store => {
     const f = fixture(); const unavailable = () => { throw new Error("Private decryption details " + config.deviceBindingProof); };
     if (store === "terminal") f.terminalStore.read.mockImplementation(unavailable);
+    if (store === "binding") f.terminalStore.lastBinding.mockImplementation(unavailable);
     if (store === "cloud") f.cloudCredentials.read.mockImplementation(unavailable);
     if (store === "backend") f.configStore.getStrict.mockImplementation(unavailable);
     const result = await f.run();
     expect(result).toMatchObject({ ok: false, code: "EACTIVATION_STORE" });
     expect(JSON.stringify(result)).not.toContain(config.deviceBindingProof);
     expect(f.terminalStore.write).not.toHaveBeenCalled(); expect(f.fetch).not.toHaveBeenCalled();
+  });
+
+  it("keeps a prior-binding read failure during verification global and leaves the native mirror absent", async () => {
+    const f = fixture(), response = deferred<Response>();
+    f.fetch.mockImplementation(() => response.promise);
+    const restoring = f.run();
+    await vi.waitFor(() => expect(f.fetch).toHaveBeenCalledOnce());
+    f.terminalStore.lastBinding.mockImplementation(() => { throw new Error("Private marker decryption diagnostic"); });
+    response.resolve(Response.json(approval));
+    const result = await restoring;
+    expect(result).toMatchObject({ ok: false, code: "EACTIVATION_STORE" });
+    expect(JSON.stringify(result)).not.toContain("Private marker");
+    expect(f.terminalStore.write).not.toHaveBeenCalled();
   });
 
   it("returns the authoritative existing mirror without replacing its proof or settings", async () => {
@@ -238,6 +282,15 @@ describe("pre-login native restoration of the original retained registration", (
     const logged = JSON.stringify(f.logConnection.mock.calls);
     expect(logged).toContain("activation.restore.failed"); expect(logged).toContain("verify");
     for (const secret of [config.tokenId, config.supabaseUrl, config.supabaseKey, config.deviceBindingProof, "saved-pos.example", "Private response"]) expect(logged).not.toContain(secret);
+  });
+
+  it("reports only the fixed mismatch field rather than the previous or requested identity values", async () => {
+    const f = fixture(); f.setPrevious({ ...config, tokenId: "private-previous-terminal" });
+    const result = await f.run();
+    expect(result).toMatchObject({ code: "EACTIVATION_RECOVERY_BINDING", reason: "token" });
+    const report = JSON.stringify([result, f.logConnection.mock.calls]);
+    for (const value of ["private-previous-terminal", config.tokenId, config.supabaseKey, config.deviceBindingProof])
+      expect(report).not.toContain(value);
   });
 
   it("forwards only the retained registration through the preload bridge", () => {

@@ -67,7 +67,7 @@ import { AppShell } from "@/platforms/web/components/pos/AppShell";
 import { bypassPersistentAppShell, isCustomerPublicRoute } from "@/lib/app-shell-routes";
 import { useNativeBackNavigation } from "@/platforms/mobile/use-native-back";
 import { hasRequiredPlatformConfig, subscribeConfigReady, type ConfigReadiness } from "@/lib/platform-config-ready";
-import { hydrateConnectionProfile, isConnectionProfileHydrated } from "@/lib/connection-profile";
+import { hydrateConnectionProfile, isConnectionProfileHydrated, isRegistrationRestoreError, registrationRestoreMessage } from "@/lib/connection-profile";
 import { EmergencyAccessLink } from "@/components/shared/EmergencyAccessLink";
 import { TillLoader } from "@/components/shared/TillLoader";
 import { staleAssetRecoveryScript } from "@/lib/stale-asset-recovery";
@@ -512,13 +512,19 @@ function ConnectionProfileBoot({ children }: { children: ReactNode }) {
   const recovery = useLocation({ select: location => isRecoveryPath(location.pathname) });
   const [ready, setReady] = useState(false);
   const [restoreFailed, setRestoreFailed] = useState(false);
+  const [registrationIssue, setRegistrationIssue] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let current = true;
     setRestoreFailed(false);
+    setRegistrationIssue(null);
     void hydrateConnectionProfile().catch(cause => {
-      notifyError(cause, "Restoring database connection");
-      if (current) setRestoreFailed(true);
+      const registration = isRegistrationRestoreError(cause);
+      notifyError(cause, registration ? "Restoring terminal registration" : "Restoring database connection");
+      if (current) {
+        setRegistrationIssue(registration ? registrationRestoreMessage(cause.registrationCode) : null);
+        setRestoreFailed(true);
+      }
     }).then(() => {
       if (current && isConnectionProfileHydrated()) setReady(true);
     });
@@ -528,8 +534,8 @@ function ConnectionProfileBoot({ children }: { children: ReactNode }) {
   }, [attempt]);
   if (recovery) return children;
   if (restoreFailed) return <div className="flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center">
-    <p>Could not restore your saved connection. Your settings have not been removed.</p>
-    <button className="rounded-lg bg-primary px-5 py-2 text-primary-foreground" onClick={() => setAttempt(value => value + 1)}>Retry connection</button>
+    <p>{registrationIssue ? `Your saved connection settings are available. ${registrationIssue}` : "Could not restore your saved connection. Your settings have not been removed."}</p>
+    <button className="rounded-lg bg-primary px-5 py-2 text-primary-foreground" onClick={() => setAttempt(value => value + 1)}>{registrationIssue ? "Retry registration" : "Retry connection"}</button>
     <EmergencyAccessLink />
   </div>;
   if (!ready) return <TillLoader message="Restoring secure connection…" />;

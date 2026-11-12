@@ -4,7 +4,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import type { RecoverySection } from "../recovery-section";
 
 const f = vi.hoisted(() => ({
-  profile: { loading: false, error: true, connectionReady: true, registrationReady: false, config: null, cloud: true, retry: vi.fn() },
+  profile: { loading: false, error: true, connectionReady: true, registrationReady: false, registrationCode: null as string | null, registrationMessage: null as string | null, config: null, cloud: true, retry: vi.fn() },
   panel: vi.fn(), activation: vi.fn(), gate: vi.fn(),
 }));
 vi.mock("@/lib/use-recovery-profile", () => ({ useRecoveryProfile: () => f.profile }));
@@ -22,7 +22,7 @@ const renderHub = (section: RecoverySection) => renderToStaticMarkup(createEleme
 
 beforeEach(() => {
   vi.clearAllMocks();
-  Object.assign(f.profile, { loading: false, error: true, connectionReady: true, registrationReady: false, config: null, cloud: true });
+  Object.assign(f.profile, { loading: false, error: true, connectionReady: true, registrationReady: false, registrationCode: null, registrationMessage: null, config: null, cloud: true });
 });
 
 it("renders the existing connection fields when only registration recovery failed", () => {
@@ -42,6 +42,16 @@ it("keeps the activation form closed even when its recovery card is explicitly o
   expect(html).toContain("Retry its recovery before changing activation");
   expect(f.activation).not.toHaveBeenCalled();
   expect(f.gate).not.toHaveBeenCalled();
+});
+
+it("shows the specific safe registration reason while retaining readable connection fields", () => {
+  Object.assign(f.profile, { registrationCode: "EACTIVATION_RECOVERY_BINDING", registrationMessage: "The saved registration could not be matched to this device's previous terminal binding. The saved setup has been kept." });
+  const html = renderHub("connection");
+  expect(html).toContain("previous terminal binding");
+  expect(html).toContain("Retry saved registration");
+  expect(html).toContain('value="https://saved.example"');
+  expect(html).not.toContain("Saved settings could not be read");
+  expect(f.activation).not.toHaveBeenCalled(); expect(f.gate).not.toHaveBeenCalled();
 });
 
 it("keeps connection fields blocked when actual storage remains unreadable", () => {

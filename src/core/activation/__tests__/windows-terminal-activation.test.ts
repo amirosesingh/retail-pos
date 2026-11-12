@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { createRequire } from "node:module";
 import type { TerminalConfig } from "../terminal-tokens";
+
+const require = createRequire(import.meta.url);
+const nativeRestore = require("../../../../electron/terminal-restore.cjs").restoreTerminalConfig;
 
 const f = vi.hoisted(() => ({
   read: vi.fn(),
@@ -52,6 +56,27 @@ const approved = {
   approved: true, locationId: config.locationId, locationName: config.locationName, supabaseUrl: project,
   supabaseKey: "token-public-key", backendUrl: backend, expiresAt: "2000-01-01T00:00:00.000Z",
 };
+
+/** Real native binding/proof verifier, with the on-disk marker's actual subset. */
+function retainedNative(previous: TerminalConfig) {
+  let active: TerminalConfig | null = null;
+  const marker = { tokenId: previous.tokenId, deviceType: previous.deviceType, deviceUse: previous.deviceUse, locationId: previous.locationId };
+  const write = vi.fn((value: TerminalConfig) => { active = value; return { ok: true }; });
+  const fetch = vi.fn(async () => Response.json({ approved: true, status: "used", supabaseUrl: project,
+    terminal: { id: previous.tokenId, platform: "pc", mode: previous.deviceUse, branchId: previous.locationId } }));
+  const terminalStore = { read: () => active, lastBinding: () => marker, wasProvisioned: () => true, write };
+  const dependencies = { terminalStore, cloudCredentials: { read: () => ({ url: project, key: localKey }) },
+    configStore: { getStrict: () => backend }, fetchImpl: fetch };
+  f.read.mockImplementation(async () => ({ ok: true, config: active }));
+  f.restore.mockImplementation((candidate: TerminalConfig) => nativeRestore(candidate, dependencies));
+  return { write, fetch, active: () => active };
+}
+
+function retainedPlaintext(value: TerminalConfig) {
+  vi.spyOn(window.localStorage, "getItem").mockImplementation(key => key === "pos.terminal.config" ? JSON.stringify(value) : null);
+}
+
+const stale = (): TerminalConfig => ({ ...config, tokenId: "71ff814e-8652-45f0-9e67-a0cd62251512", locationId: "store-old", deviceBindingProof: "b".repeat(64) });
 
 beforeEach(() => {
   vi.resetModules();
@@ -197,6 +222,149 @@ it("retains evidence when an older native shell lacks the verified restore chann
   await expect(hydrateTerminalConfig()).rejects.toThrow("saved registration has not been removed");
   expect(isTerminalConfigHydrated()).toBe(false);
   expect(f.write).not.toHaveBeenCalled(); expect(f.clearSeal).not.toHaveBeenCalled();
+});
+
+it.each(["plaintext", "encrypted"] as const)("recovers the matching original registration when the %s retained copy is stale", async staleFormat => {
+  const { hydrateTerminalConfig, readTerminalConfig } = await import("../terminal-tokens");
+  const native = retainedNative(config);
+  retainedPlaintext(staleFormat === "plaintext" ? stale() : config);
+  f.readSeal.mockResolvedValue(staleFormat === "encrypted" ? stale() : config);
+  await expect(hydrateTerminalConfig()).resolves.toEqual(config);
+  expect(readTerminalConfig()).toEqual(config);
+  expect(f.readSeal).toHaveBeenCalledExactlyOnceWith("terminal.config", true);
+  expect(f.restore).toHaveBeenCalledTimes(staleFormat === "encrypted" ? 2 : 1);
+  expect(native.fetch).toHaveBeenCalledOnce(); expect(native.write).toHaveBeenCalledOnce();
+  expect(native.active()).toEqual(config);
+  expect(f.write).not.toHaveBeenCalled(); expect(f.seal).not.toHaveBeenCalled();
+  expect(f.clearSeal).not.toHaveBeenCalled(); expect(window.localStorage.removeItem).not.toHaveBeenCalled();
+});
+
+it("keeps both truly foreign retained bindings blocked by the real native verifier", async () => {
+  const { hydrateTerminalConfig, isTerminalConfigHydrated } = await import("../terminal-tokens");
+  const native = retainedNative(config);
+  retainedPlaintext(stale());
+  f.readSeal.mockResolvedValue({ ...stale(), tokenId: "81ff814e-8652-45f0-9e67-a0cd62251512" });
+  await expect(hydrateTerminalConfig()).rejects.toMatchObject({ code: "EACTIVATION_RECOVERY_BINDING" });
+  expect(f.restore).toHaveBeenCalledTimes(2);
+  expect(native.fetch).not.toHaveBeenCalled(); expect(native.write).not.toHaveBeenCalled();
+  expect(isTerminalConfigHydrated()).toBe(false);
+  expect(f.event).not.toHaveBeenCalled(); expect(f.clearSeal).not.toHaveBeenCalled();
+  expect(window.localStorage.removeItem).not.toHaveBeenCalled();
+});
+
+it("attempts identical retained copies only once even when their property order differs", async () => {
+  const { hydrateTerminalConfig } = await import("../terminal-tokens");
+  f.read.mockResolvedValue({ ok: true, config: null });
+  retainedPlaintext(Object.fromEntries(Object.entries(config).reverse()) as TerminalConfig);
+  f.readSeal.mockResolvedValue(config);
+  f.restore.mockResolvedValue({ ok: false, code: "EACTIVATION_RECOVERY_BINDING", error: "Saved binding mismatch" });
+  await expect(hydrateTerminalConfig()).rejects.toMatchObject({ code: "EACTIVATION_RECOVERY_BINDING" });
+  expect(f.restore).toHaveBeenCalledOnce();
+});
+
+it.each(["EBADARG", "EACTIVATION_RECOVERY_BINDING", "EACTIVATION_RECOVERY_PROJECT", "EACTIVATION_RECOVERY_PROOF", "EACTIVATION_RECOVERY_VERIFY"])("may try one alternate retained copy after candidate-specific %s", async code => {
+  const { hydrateTerminalConfig } = await import("../terminal-tokens");
+  f.read.mockResolvedValueOnce({ ok: true, config: null }).mockResolvedValueOnce({ ok: true, config });
+  retainedPlaintext(config); f.readSeal.mockResolvedValue(stale());
+  f.restore.mockResolvedValueOnce({ ok: false, code, error: "Candidate refused" }).mockResolvedValueOnce({ ok: true, config });
+  await expect(hydrateTerminalConfig()).resolves.toEqual(config);
+  expect(f.restore).toHaveBeenCalledTimes(2);
+  expect(f.write).not.toHaveBeenCalled(); expect(f.clearSeal).not.toHaveBeenCalled();
+});
+
+it.each(["EACTIVATION_CONTEXT_CHANGED", "EACTIVATION_STORE"])("does not try another copy after global %s", async code => {
+  const { hydrateTerminalConfig, isTerminalConfigHydrated } = await import("../terminal-tokens");
+  f.read.mockResolvedValue({ ok: true, config: null });
+  retainedPlaintext(config); f.readSeal.mockResolvedValue(stale());
+  f.restore.mockResolvedValueOnce({ ok: false, code, error: "Native context unavailable" });
+  await expect(hydrateTerminalConfig()).rejects.toMatchObject({ code });
+  expect(f.restore).toHaveBeenCalledOnce(); expect(isTerminalConfigHydrated()).toBe(false);
+  expect(f.clearSeal).not.toHaveBeenCalled(); expect(window.localStorage.removeItem).not.toHaveBeenCalled();
+});
+
+it("stops after strict read-back fails instead of substituting a second retained registration", async () => {
+  const { hydrateTerminalConfig } = await import("../terminal-tokens");
+  f.read.mockResolvedValueOnce({ ok: true, config: null }).mockResolvedValueOnce({ ok: true, config: stale() });
+  retainedPlaintext(stale()); f.readSeal.mockResolvedValue(config);
+  await expect(hydrateTerminalConfig()).rejects.toMatchObject({ code: "EACTIVATION_STORE" });
+  expect(f.restore).toHaveBeenCalledOnce(); expect(f.event).not.toHaveBeenCalled();
+});
+
+it("restores readable plaintext only after native proof verification when the encrypted copy is unreadable", async () => {
+  const { hydrateTerminalConfig } = await import("../terminal-tokens");
+  const native = retainedNative(config); retainedPlaintext(config);
+  f.readSeal.mockRejectedValue(new Error("Private encrypted-copy error"));
+  await expect(hydrateTerminalConfig()).resolves.toEqual(config);
+  expect(native.fetch).toHaveBeenCalledOnce(); expect(native.write).toHaveBeenCalledOnce();
+  expect(f.clearSeal).not.toHaveBeenCalled(); expect(window.localStorage.removeItem).not.toHaveBeenCalled();
+});
+
+it("retains unreadable encrypted evidence when the available plaintext cannot be verified", async () => {
+  const { hydrateTerminalConfig } = await import("../terminal-tokens");
+  const native = retainedNative(config); retainedPlaintext(stale());
+  f.readSeal.mockRejectedValue(new Error("Private encrypted-copy error"));
+  await expect(hydrateTerminalConfig()).rejects.toMatchObject({ code: "EACTIVATION_STORE" });
+  expect(native.write).not.toHaveBeenCalled(); expect(f.clearSeal).not.toHaveBeenCalled();
+  expect(window.localStorage.removeItem).not.toHaveBeenCalled();
+});
+
+it.each(["EACTIVATION_RECOVERY_PROJECT", "EACTIVATION_RECOVERY_PROOF", "EACTIVATION_RECOVERY_VERIFY"])("preserves deeper %s when another stale copy has only a binding mismatch", async code => {
+  const { hydrateTerminalConfig } = await import("../terminal-tokens");
+  f.read.mockResolvedValue({ ok: true, config: null }); retainedPlaintext(stale()); f.readSeal.mockResolvedValue(config);
+  f.restore.mockResolvedValueOnce({ ok: false, code, error: "Matching identity needs recovery" })
+    .mockResolvedValueOnce({ ok: false, code: "EACTIVATION_RECOVERY_BINDING", error: "Stale other identity" });
+  await expect(hydrateTerminalConfig()).rejects.toMatchObject({ code });
+  expect(f.restore).toHaveBeenCalledTimes(2);
+});
+
+it("does not propagate an unknown native diagnostic code or use it to bypass failure", async () => {
+  const { hydrateTerminalConfig } = await import("../terminal-tokens");
+  f.read.mockResolvedValue({ ok: true, config: null }); retainedPlaintext(stale()); f.readSeal.mockResolvedValue(config);
+  f.restore.mockResolvedValue({ ok: false, code: "PRIVATE_UNKNOWN_VALUE", error: "Native refusal" });
+  await expect(hydrateTerminalConfig()).rejects.toMatchObject({ code: "EACTIVATION_STORE" });
+  expect(f.restore).toHaveBeenCalledOnce();
+});
+
+it.each(["refusal", "transport"] as const)("preserves a safe storage reason when the first native read has a %s failure", async failure => {
+  const { hydrateTerminalConfig, isTerminalConfigHydrated } = await import("../terminal-tokens");
+  if (failure === "refusal") f.read.mockResolvedValue({ ok: false, code: "EACTIVATION_STORE" });
+  else f.read.mockRejectedValue(new Error("Private native transport detail"));
+  retainedPlaintext(config); f.readSeal.mockResolvedValue(config);
+  await expect(hydrateTerminalConfig()).rejects.toMatchObject({ code: "EACTIVATION_STORE" });
+  expect(isTerminalConfigHydrated()).toBe(false);
+  expect(f.readSeal).not.toHaveBeenCalled(); expect(f.restore).not.toHaveBeenCalled();
+  expect(f.clearSeal).not.toHaveBeenCalled(); expect(window.localStorage.removeItem).not.toHaveBeenCalled();
+});
+
+it("stops candidate fallback after a native restore transport rejection", async () => {
+  const { hydrateTerminalConfig } = await import("../terminal-tokens");
+  f.read.mockResolvedValue({ ok: true, config: null }); retainedPlaintext(config); f.readSeal.mockResolvedValue(stale());
+  f.restore.mockRejectedValue(new Error("Private native transport detail"));
+  await expect(hydrateTerminalConfig()).rejects.toMatchObject({ code: "EACTIVATION_STORE" });
+  expect(f.restore).toHaveBeenCalledOnce(); expect(f.event).not.toHaveBeenCalled();
+});
+
+it.each(["plaintext", "encrypted"] as const)("does not report fresh absence when the only retained %s artifact is malformed", async format => {
+  const { hydrateTerminalConfig, isTerminalConfigHydrated } = await import("../terminal-tokens");
+  f.read.mockResolvedValue({ ok: true, config: null });
+  if (format === "plaintext") vi.spyOn(window.localStorage, "getItem").mockReturnValue("{broken-json");
+  else f.readSeal.mockResolvedValue({});
+  await expect(hydrateTerminalConfig()).rejects.toMatchObject({ code: "EBADARG" });
+  expect(isTerminalConfigHydrated()).toBe(false); expect(f.restore).not.toHaveBeenCalled();
+  expect(f.clearSeal).not.toHaveBeenCalled(); expect(window.localStorage.removeItem).not.toHaveBeenCalled();
+});
+
+it.each(["plaintext", "encrypted"] as const)("accepts a valid alternate only through native verification when the %s retained artifact is malformed", async format => {
+  const { hydrateTerminalConfig } = await import("../terminal-tokens");
+  const native = retainedNative(config);
+  if (format === "plaintext") {
+    vi.spyOn(window.localStorage, "getItem").mockReturnValue("{broken-json"); f.readSeal.mockResolvedValue(config);
+  } else {
+    retainedPlaintext(config); f.readSeal.mockResolvedValue({});
+  }
+  await expect(hydrateTerminalConfig()).resolves.toEqual(config);
+  expect(native.fetch).toHaveBeenCalledOnce(); expect(native.write).toHaveBeenCalledOnce();
+  expect(f.clearSeal).not.toHaveBeenCalled(); expect(window.localStorage.removeItem).not.toHaveBeenCalled();
 });
 
 it("keeps the renderer identity and sealed copies when native clearing refuses stale context", async () => {

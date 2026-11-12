@@ -8527,3 +8527,47 @@ checks. Changed files have no TypeScript diagnostics; the local full dependency
 tree is incomplete, so exact-head clean-install CI remains required. Independent
 review found no remaining scoped blocker. Installed-device recovery has not been
 performed; production and installed profiles remain unchanged.
+
+## 12 November — beta.5 original-binding recovery failure
+
+Owner requests agents to fix the displayed registration recovery pending and
+main startup error, then publish beta. Baseline: beta `b8a9a781`. Read-only
+installed diagnostics confirm beta.5, readable configured connection status,
+missing complete native registration and repeated
+`EACTIVATION_RECOVERY_BINDING` at validation. No live values were decrypted.
+The exact compared field is not recorded by the old diagnostics.
+
+Independent real-module fixtures confirm that minimal previous-binding markers
+are compatible. The actual source defect is legacy-first candidate selection:
+old plaintext A hides valid sealed B; a later failed sealing can produce the
+reverse. Recover at most the distinct retained candidates through unchanged
+native identity/proof/project checks. Publish only after native read-back,
+preserve retained evidence, and stop on changed native context or unreadable
+authoritative storage. Do not accept different branch/token identities merely
+to remove the error.
+
+Add strict previous-marker reads and fixed diagnostic reasons; separate an
+individual candidate's project mismatch from a changed native context. Carry
+safe whitelisted registration errors to Recovery and main startup so readable
+connection settings are not reported as unreadable. Focus tests on both copy
+orders, true mismatch, missing/corrupt marker, rejected proof, changed context,
+existing permission and close barriers, and actual rendered messages. After
+passing focused checks and exact-head CI, merge beta and publish the next beta
+using the existing isolated workflow. Production, database/schema changes and
+direct installed-profile/credential repairs are excluded. A scoped source
+revert is the rollback; no data rollback is required.
+
+Implementation now checks at most two distinct retained formats through the
+same native verifier and read-back, preserving both saved artifacts. Candidate
+project mismatch is separate from global context changes, strict marker reads
+distinguish unreadable storage, and fixed mismatch reasons cannot affect the
+binding denial. Both startup and Recovery show whitelisted registration causes
+while keeping activation/trading closed on failure. Malformed-present records
+remain unknown rather than being classified as a fresh device.
+
+Focused verification passed: 246 Vitest cases across 16 suites plus 18 Node
+startup/updater cases (264 total). This includes real renderer-to-native tests
+with actual minimal markers in both stale-copy orders, exact identity denials,
+storage/context/read-back failures, safe rendered messages and existing revoke,
+unpair and close/update protections. Scoped lint, native syntax and diff checks
+passed. Installed recovery is still unverified; no live profile was modified.
