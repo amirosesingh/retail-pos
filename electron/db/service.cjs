@@ -16,9 +16,10 @@ const STATES = new Set([
 ]);
 
 class DatabaseService {
-  constructor({ secureConfig, manager, publish = () => {}, log = () => {}, validator = validateDatabase, migrate = null, prepareRecoveryMetadata = null, startupIdentity = () => null, startupPaused = () => false, publishStartupActivity = () => {} }) {
+  constructor({ secureConfig, manager, publish = () => {}, log = () => {}, validator = validateDatabase, migrate = null, prepareRecoveryMetadata = null, startupIdentity = () => null, startupPaused = () => false, publishStartupActivity = () => {}, localRecoveryPending = () => false }) {
     this.secureConfig = secureConfig; this.manager = manager; this.publish = publish;
     this.startupPaused = startupPaused;
+    this.localRecoveryPending = localRecoveryPending;
     this.log = log;
     this.validator = validator; this.migrate = migrate;
     this.prepareRecoveryMetadata = prepareRecoveryMetadata; this.recoveryMetadata = null;
@@ -32,15 +33,25 @@ class DatabaseService {
     });
   }
   snapshot() {
+    const held = this.localRecoveryPending();
     const locallyConnected = this.manager.isConnected?.() ?? Boolean(this.manager.pool);
-    return { state: this.state, enabled: this.secureConfig.enabled(), configured: Boolean(this.secureConfig.profile()),
-      connected: locallyConnected, tradingReady: locallyConnected && this.validated, profile: this.secureConfig.profile(), detail: this.detail,
+    return { state: held ? "disabled" : this.state, enabled: !held && this.secureConfig.enabled(), configured: Boolean(this.secureConfig.profile()),
+      connected: !held && locallyConnected, tradingReady: !held && locallyConnected && this.validated, profile: this.secureConfig.profile(), detail: this.detail,
+      ...(held ? { localRecoveryPending: true } : {}),
       lastCheckedAt: this.lastCheckedAt, startupActivity:this.startupActivity.snapshot(), startupPaused:this.startupPaused(), recoveryMetadata:this.recoveryMetadata };
   }
+  heldFailure() {
+    return { ok: false, code: "ELOCAL_RECOVERY_PENDING", error: "Use the online database while the previous local setup is awaiting verified recovery. Saved local work has been kept." };
+  }
+  holdLocalRecovery() {
+    this.validated = false; this.connectedSchemaKey = null; this.validatedProfileKey = null;
+    return this.transition("disabled", this.heldFailure());
+  }
   async prepareOptionalRecovery(profile) {
+    if (this.localRecoveryPending()) return false;
     if (!this.prepareRecoveryMetadata) return true;
     const pool = this.manager.pool, key = profileValidationKey(profile);
-    const current = () => pool === this.manager.pool && this.secureConfig.enabled() && profileValidationKey(this.secureConfig.credentials()) === key;
+    const current = () => !this.localRecoveryPending() && pool === this.manager.pool && this.secureConfig.enabled() && profileValidationKey(this.secureConfig.credentials()) === key;
     const assertCurrent = () => { if (!current()) throw Object.assign(new Error("The database preparation target changed."), { code:"ERECOVERY_METADATA_CONTEXT" }); };
     let result;
     try { assertCurrent(); result = await this.prepareRecoveryMetadata({profile,pool,assertCurrent}); }
@@ -60,20 +71,22 @@ class DatabaseService {
     this.publish(snapshot); return snapshot;
   }
   async setEnabled(value) {
+    if (this.localRecoveryPending()) return this.holdLocalRecovery();
     this.secureConfig.setEnabled(value === true);
     if (!value) { this.connectedSchemaKey = null; await this.manager.close(); this.validated = false; return this.transition("disabled"); }
     if (!this.secureConfig.profile()) return this.transition("enabled_unconfigured");
     return this.restore();
   }
-  async testServer(profile) { return this.manager.testServer(profile); }
-  async databases(profile) { return listDatabases(this.manager, profile); }
+  async testServer(profile) { return this.localRecoveryPending() ? this.heldFailure() : this.manager.testServer(profile); }
+  async databases(profile) { return this.localRecoveryPending() ? this.heldFailure() : listDatabases(this.manager, profile); }
   async health() {
     if (!(this.manager.isConnected?.() ?? this.manager.pool)) return { ok: false, connected: false, state: this.snapshot() };
     try { const started=Date.now(); const result=await this.manager.pool.request().query("SELECT DB_NAME() database_name, CHANGE_TRACKING_CURRENT_VERSION() change_tracking_version;"); return { ok:true,connected:true,latencyMs:Date.now()-started,...result.recordset?.[0],state:this.snapshot() }; }
     catch(error){const safe=safeError(error);this.manager.markFaulted?.();this.validated=false;this.transition("enabled_degraded",safe);return {...safe,connected:false,state:this.snapshot()};}
   }
-  async schemaStatus() { const profile=this.secureConfig.credentials(); return profile ? validateDatabase(this.manager,profile) : {ok:false,code:"EDATABASE",error:"No database is configured."}; }
+  async schemaStatus() { if(this.localRecoveryPending())return this.heldFailure();const profile=this.secureConfig.credentials(); return profile ? validateDatabase(this.manager,profile) : {ok:false,code:"EDATABASE",error:"No database is configured."}; }
   async validate(profile) {
+    if (this.localRecoveryPending()) return this.heldFailure();
     const validation = await this.validator(this.manager, profile);
     this.validatedProfileKey = validation.ok && validation.ready
       ? profileValidationKey(profile)
@@ -81,6 +94,7 @@ class DatabaseService {
     return validation;
   }
   async revalidateConnected() {
+    if (this.localRecoveryPending()) return this.holdLocalRecovery();
     this.connectedSchemaKey = null;
     const profile = this.secureConfig.credentials();
     if (!profile) return this.transition("enabled_unconfigured");
@@ -98,6 +112,7 @@ class DatabaseService {
     return this.transition("enabled_bootstrapping");
   }
   beginMigration() {
+    if (this.localRecoveryPending()) return this.holdLocalRecovery();
     this.connectedSchemaKey = null;
     this.validated = false;
     return this.transition("enabled_validating", { status: "applying_migration" });
@@ -108,6 +123,7 @@ class DatabaseService {
     return this.transition("enabled_error", { ...detail, status: "migration_required" });
   }
   async saveAndConnect(profile) {
+    if (this.localRecoveryPending()) return this.heldFailure();
     if (this.validatedProfileKey !== profileValidationKey(profile)) {
       return {
         ok: false,
@@ -138,6 +154,7 @@ class DatabaseService {
   async disconnect() { this.connectedSchemaKey = null; await this.manager.close(); this.validated = false; return this.transition(this.secureConfig.enabled() ? "enabled_degraded" : "disabled"); }
   async remove() { this.connectedSchemaKey = null; await this.manager.close(); this.validated = false; this.secureConfig.remove(); return this.transition("disabled"); }
   async restore({ reuseValidation = false } = {}) {
+    if (this.localRecoveryPending()) return this.holdLocalRecovery();
     if (!this.secureConfig.enabled()) return this.transition("disabled");
     const profile = this.secureConfig.credentials();
     if (!profile) return this.transition("enabled_unconfigured");
@@ -187,7 +204,7 @@ class DatabaseService {
       return this.transition("enabled_error", safeError(error));
     }
   }
-  markReady(detail = null) { return this.transition("enabled_ready", detail); }
+  markReady(detail = null) { return this.localRecoveryPending() ? this.holdLocalRecovery() : this.transition("enabled_ready", detail); }
   markDegraded(detail) { return this.transition("enabled_degraded", detail); }
 }
 

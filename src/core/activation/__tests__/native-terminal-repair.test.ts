@@ -65,10 +65,10 @@ function fixture() {
       { reader: { pendingSummary: async () => ({ pending: journal, failed: 0 }) } }, { unresolved: async () => conflicts ? [{}] : [] },
       { withExclusive: async (work: () => Promise<unknown>) => work() }, (name: string) => require(`../../../../electron/${name.slice(2)}`));
   const writeStart = main.indexOf('  ipcMain.handle("terminal:write",'), writeEnd = main.indexOf('  ipcMain.handle("terminal:repair-status",', writeStart);
-  new Function("ipcMain", "terminalStore", "verifiedTerminalMirror", "guard", "activationBoundary", "assertSafeRegistrationChange", "terminalRepair", "configStore", "recordRegistrationChange", "isManagementDevice", "syncCoordinator", "scheduleAutomaticSync",
+  new Function("ipcMain", "terminalStore", "verifiedTerminalMirror", "guard", "activationBoundary", "assertSafeRegistrationChange", "terminalRepair", "configStore", "recordRegistrationChange", "isManagementDevice", "syncCoordinator", "scheduleAutomaticSync", "terminalOnlineRecovery",
     `let terminalIdentityPausedSync=false;${main.slice(writeStart, writeEnd)}`)(ipcMain, terminalStore, async (value: unknown) => value,
       { terminalConfig: (value: unknown) => value, refuse: (error: string) => ({ ok: false, error }) }, activationBoundary, assertSafe, runtime, configStore,
-      vi.fn(), () => false, { resume: vi.fn() }, vi.fn());
+      vi.fn(), () => false, { resume: vi.fn() }, vi.fn(), {pending:()=>false});
   return {
     runtime, terminalStore, configStore, credentials, manager, query, input, pool, schema, pending, barrier, metadata, event,
     status: (source: unknown = event) => handlers.get("terminal:repair-status")!(source),

@@ -60,9 +60,14 @@ const { listSyncedStaff, verifySyncedStaffPin, verifySyncedApprovalPin } = requi
 
 const databaseConfig = createSecureConfig({ app, safeStorage, configStore });
 const databaseManager = new ConnectionManager();
+const terminalOnlineRecovery = require("./terminal-online-recovery.cjs").createTerminalOnlineRecovery({
+  app, safeStorage, configStore, terminalStore, cloudCredentials,
+  activationBoundary: require("./verified-activation.cjs"),
+});
 const databaseService = new DatabaseService({
   secureConfig: databaseConfig,
   manager: databaseManager,
+  localRecoveryPending: () => terminalOnlineRecovery.pending(),
   migrate: (profile) => applyMigrations(databaseManager, profile),
   prepareRecoveryMetadata: prepareShiftRecoveryMetadata,
   log: diagnostics.logConnection,
@@ -354,6 +359,10 @@ const activationBoundary = require("./verified-activation.cjs");
 const terminalRepair = require("./terminal-repair.cjs").createTerminalRepair({
   terminalStore,activationBoundary,adminSession,databaseManager,databaseConfig,cloudCredentials,configStore,
   withExclusive:work=>syncCoordinator.withExclusive(work),canCheck:()=>!quitting&&!closeWriteBarrier.sealed,
+  onlineRecovery:terminalOnlineRecovery,
+  onlineBusy:()=>closeWriteBarrier.active.size>1||recoveryMetadataGate.control.size>1||jobManager.running||Boolean(localDataPreparePromise)||
+    ["enabled_connecting","enabled_validating","enabled_bootstrapping"].includes(databaseService.snapshot().state),
+  onOnlineHold:()=>databaseService.holdLocalRecovery(),
 });
 function localBranchId(){
   if(isManagementDevice())return null;
@@ -426,7 +435,7 @@ function recordRegistrationChange(previous,config){
   if(!before||activationBoundary.sameBinding(before,after))return;
   diagnostics.logConnection("activation.reassignment.succeeded",{category:"activation",stage:"reassignment",actor:adminSession.identity()?.subject??null,previousMode:before.mode,previousBranch:before.branchId,mode:after.mode,branch:after.branchId});
 }
-async function verifiedTerminalMirror(config){
+async function verifiedTerminalMirror(config,{strictProject=false}={}){
   const existing=terminalStore.read();
   activationBoundary.assertUnchanged(existing,config);
   if(existing&&(existing.deviceBindingProof||!config.deviceBindingProof))return {...existing};
@@ -435,6 +444,11 @@ async function verifiedTerminalMirror(config){
   const response=await fetch(`${backend}/api/public/terminal-pairing`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({tokenId:config.tokenId,proofHash:config.deviceBindingProof}),signal:AbortSignal.timeout(8000)});
   const result=await response.json();
   if(!response.ok||!result.approved)throw new Error("The terminal registration could not be verified.");
+  if(strictProject){
+    const project=String(cloudCredentials.read({strict:true})?.url??"").trim().replace(/\/+$/,"");
+    if(!["used","active"].includes(result.status)||String(result.supabaseUrl??"").trim().replace(/\/+$/,"")!==project||String(config?.supabaseUrl??"").trim().replace(/\/+$/,"")!==project)
+      throw new Error("The online database could not verify this replacement registration. Check the saved connection and retry.");
+  }
   return activationBoundary.canonicalConfig(config,result.terminal,existing);
 }
 function stampVerifiedBranchOperations(operations,branchId,aggregateKind=null){
@@ -503,6 +517,7 @@ async function observedDatabaseOperation(category, stage, work) {
 }
 let localDataPreparePromise=null;
 function prepareLocalData({force=false}={}){
+  if(databaseService.snapshot().localRecoveryPending)return Promise.resolve(databaseService.holdLocalRecovery());
   if(isManagementDevice())return managementReplica.run();
   // Startup, the automatic ECHANGEGAP recovery path, and a manual database
   // action can request preparation together. Share one lifecycle run so a
@@ -1000,7 +1015,9 @@ function prepareApplicationClose(forUpdate = false) {
       // and any unconfirmed shift close for the next authorized sync.
       if (!forUpdate && !adminSession.hasPosAuthority())
         return { ok: true, synchronized: false, authenticationRequired: true };
-      if(isManagementDevice() || (!databaseService.snapshot().configured && !pendingShiftCloseSync.size))return {ok:true,skipped:true};
+      const databaseState=databaseService.snapshot();
+      if(databaseState.localRecoveryPending)return {ok:true,synchronized:false,syncDeferred:true,localRecoveryPending:true};
+      if(isManagementDevice() || (!databaseState.configured && !pendingShiftCloseSync.size))return {ok:true,skipped:true};
       closeStage="synchronization";
       const result=await flushSyncBeforeShutdown({ allowSignedOutExit: !forUpdate && !pendingShiftCloseSync.size });
       if(!result?.ok)throw new Error(result?.error??"Pending data has not been acknowledged by the cloud.");
@@ -2117,6 +2134,7 @@ function registerIpc() {
     isFirstRun: () => !terminalStore.wasProvisioned(),
     writeBarrier: {run:work=>recoveryMetadataGate.run(()=>closeWriteBarrier.run(work))},
     isManagementDevice,
+    isLocalRecoveryPending:()=>databaseService.snapshot().localRecoveryPending===true,
   });
   recoveryMetadataGate.install(ipcMain);
   ipcMain.handle("admin:status", () => adminSession.status());
@@ -2983,19 +3001,25 @@ function registerIpc() {
   ipcMain.handle("net:get-binary", (_e, url) => netHttp.getBinary(String(url)));
 
   ipcMain.handle("terminal:read", () => {
-    try { return { ok: true, config: terminalStore.read({ strict: true }) }; }
+    try {
+      const config=terminalStore.read({strict:true});
+      const previous=config?null:terminalStore.lastBinding({strict:true});
+      return {ok:true,config,...(!config?{recoveryRequired:Boolean(terminalStore.wasProvisioned()||previous)}:{})};
+    }
     catch { return { ok: false, code: "EACTIVATION_STORE", error: "Could not restore the saved terminal registration. Your registration has not been removed. Retry opening the app." }; }
   });
   ipcMain.handle("terminal:write", async (_e, raw) => {
     try {
       const before=terminalStore.read({strict:true});
-      const config=await verifiedTerminalMirror(guard.terminalConfig(raw));
+      const config=await verifiedTerminalMirror(guard.terminalConfig(raw),{strictProject:terminalOnlineRecovery.pending()});
       const after=terminalStore.read({strict:true});
       if(Boolean(before)!==Boolean(after)||(before&&!activationBoundary.sameBinding(activationBoundary.binding(before),activationBoundary.binding(after))))throw new Error("The terminal registration changed during verification.");
       if(!before){
-        await assertSafeRegistrationChange(config);
-        const previous=activationBoundary.binding(terminalStore.lastBinding({strict:true}));
-        if(previous&&!activationBoundary.sameBinding(previous,activationBoundary.binding(config)))await terminalRepair.assertReady();
+        if(!terminalRepair.authorizeOnlineReplacement(config)){
+          await assertSafeRegistrationChange(config);
+          const previous=activationBoundary.binding(terminalStore.lastBinding({strict:true}));
+          if(previous&&!activationBoundary.sameBinding(previous,activationBoundary.binding(config)))await terminalRepair.assertReady();
+        }
       }
       const activationBackend=String(config?.backendUrl??"").trim().replace(/\/+$/,"");
       const savedBackend=String(configStore.get("backendUrl")??"").trim().replace(/\/+$/,"");
@@ -3022,6 +3046,11 @@ function registerIpc() {
     if(event.sender!==mainWindow?.webContents||event.senderFrame!==event.sender.mainFrame)
       return {ok:false,ready:false,code:"EPRIVILEGE",error:"Terminal registration repair is available only from the POS window."};
     return terminalRepair.connect();
+  });
+  ipcMain.handle("terminal:repair-continue-online", (event, evidence) => {
+    if(event.sender!==mainWindow?.webContents||event.senderFrame!==event.sender.mainFrame)
+      return {ok:false,ready:false,code:"EPRIVILEGE",error:"Terminal registration repair is available only from the POS window."};
+    return terminalRepair.continueOnline(evidence);
   });
   ipcMain.handle("terminal:restore", (event, raw) => {
     if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame) {

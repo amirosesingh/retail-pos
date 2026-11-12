@@ -15,7 +15,7 @@ import { HeldBillRecoveryReview } from "./HeldBillRecoveryReview";
 import { sameBranchId } from "@/lib/branch-id";
 import type { StoreSettingsEditUpload } from "@/core/local-db/local-db";
 
-type DatabaseState = { state?: string; enabled?: boolean; connected?: boolean; tradingReady?: boolean; profile?: { database?: string } | null };
+type DatabaseState = { state?: string; enabled?: boolean; connected?: boolean; tradingReady?: boolean; localRecoveryPending?: boolean; profile?: { database?: string } | null };
 type TableStatus = { table: string; local: string; cloud: string; status: "SYNCED" | "VERIFIED" | "DIFFERENT"; verified?: boolean; comparedAt?: string | null };
 const groupedSettingsLabels = {
   PAUSED: "Paused",
@@ -162,6 +162,7 @@ export function LocalDatabaseOperations({ branchId }: { branchId?: string } = {}
   const queuedTables = (sync.queuedTables ?? []).filter((row) =>
     (row.pending > 0 || row.failed > 0) && row.table !== activeTable);
   const direction = sync.phase === "pulling" ? "Download" : sync.phase === "pushing" ? "Upload" : "Processing";
+  if (state.localRecoveryPending) return <Card><CardHeader><CardTitle className="text-base">Previous local work needs recovery</CardTitle></CardHeader><CardContent><p role="status" className="text-sm text-muted-foreground">This terminal is using the saved online database. Previous local records and setup are preserved for recovery. Local SQL is held apart from the current registration; those records have not been marked synchronized.</p></CardContent></Card>;
   if (state.state === "disabled" || state.enabled === false) return null;
   return (
     <div className="space-y-3">

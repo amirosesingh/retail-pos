@@ -9,6 +9,11 @@ const messages = Object.freeze({
   EACTIVATION_REPAIR_PENDING: "Synchronize or review pending local transactions and store settings edits before changing terminal registration.",
   EACTIVATION_REPAIR_CONTEXT: "The registration, connection or recovery session changed. Check the current setup and retry.",
   EACTIVATION_REPAIR_CHECK: "Pending local work could not be verified. Keep the saved local database connected and retry.",
+  EACTIVATION_REPAIR_ONLINE_BUSY: "The local database is connected or still finishing work. Wait for it to finish before choosing online recovery.",
+  EACTIVATION_REPAIR_ONLINE_CONFIG: "Save the online database connection and POS website address before continuing online.",
+  EACTIVATION_REPAIR_ONLINE_STORE: "The preserved online recovery setup could not be verified. Your previous setup has been kept. Retry recovery before changing registration.",
+  EACTIVATION_REPAIR_ONLINE_TARGET: "This online recovery already has a replacement registration. Retry the same activation code or retry saved registration.",
+  EACTIVATION_REPAIR_ONLINE_LIMIT: "The preserved recovery history needs review before another registration. All previous setups have been kept.",
 });
 const refusal = code => ({ ok: false, ready: false, code, error: messages[code],
   ...(code === "EACTIVATION_REPAIR_DATABASE" ? { requiresLocalDatabase: true } : {}) });
@@ -24,7 +29,8 @@ const target = profile => {
 // Read-only prerequisites, never an activation grant. Pin the retained target
 // so an empty replacement database cannot stand in for the previous local work.
 function createTerminalRepair({ terminalStore, activationBoundary, adminSession, databaseManager,
-  databaseConfig, cloudCredentials, configStore, withExclusive, canCheck = () => true }) {
+  databaseConfig, cloudCredentials, configStore, withExclusive, canCheck = () => true,
+  onlineRecovery = null, onlineBusy = () => false, onOnlineHold = () => {} }) {
   let pinned = null;
   const authorized = () => adminSession.hasLevel("admin") || adminSession.recoveryActive();
   const capture = () => ({
@@ -32,7 +38,7 @@ function createTerminalRepair({ terminalStore, activationBoundary, adminSession,
     provisioned: terminalStore.wasProvisioned(), cloud: cloudCredentials.read({ strict: true }),
     backend: configStore.getStrict("backendUrl"), profile: configStore.getStrict("localDatabaseProfile"),
   });
-  const check = () => {
+  const check = ({ allowMissingProfile = false } = {}) => {
     if (!authorized()) fail("EPRIVILEGE");
     if (!canCheck()) fail("EACTIVATION_REPAIR_CONTEXT");
     let source;
@@ -43,23 +49,46 @@ function createTerminalRepair({ terminalStore, activationBoundary, adminSession,
     if ((source.provisioned || source.previous) && !previous) fail("EACTIVATION_REPAIR_STORE");
     const identity = JSON.stringify(source);
     const retained = JSON.stringify([previous,source.provisioned,target(source.profile)]);
-    if (pinned !== null && retained !== pinned) fail("EACTIVATION_REPAIR_CONTEXT");
-    pinned = retained;
-    if (previous && !target(source.profile)) fail("EACTIVATION_REPAIR_DATABASE_UNKNOWN");
-    return { source, previous, identity, epoch: adminSession.epoch() };
+    if (!onlineRecovery?.pending()) {
+      if (pinned !== null && retained !== pinned) fail("EACTIVATION_REPAIR_CONTEXT");
+      pinned = retained;
+    }
+    if (!allowMissingProfile && previous && !target(source.profile)) fail("EACTIVATION_REPAIR_DATABASE_UNKNOWN");
+    return { source, previous, identity, epoch: adminSession.epoch(), allowMissingProfile };
   };
   const current = (saved, pool) => {
-    const next = check();
+    const next = check({allowMissingProfile:saved.allowMissingProfile});
     if (next.identity !== saved.identity || next.epoch !== saved.epoch ||
         (pool !== undefined && databaseManager.pool !== pool)) fail("EACTIVATION_REPAIR_CONTEXT");
   };
   const guarded = async work => {
     try { return await work(); }
     catch (error) { return refusal(Object.hasOwn(messages, error?.code) ? error.code :
+      error?.code === "EONLINE_RECOVERY_STORE" ? "EACTIVATION_REPAIR_ONLINE_STORE" :
+      error?.code === "EONLINE_RECOVERY_TARGET" ? "EACTIVATION_REPAIR_ONLINE_TARGET" :
+      error?.code === "EONLINE_RECOVERY_LIMIT" ? "EACTIVATION_REPAIR_ONLINE_LIMIT" :
+      /^(?:EONLINE_RECOVERY_CONTEXT|EONLINE_RECOVERY_NOT_READY)$/.test(error?.code ?? "") ? "EACTIVATION_REPAIR_CONTEXT" :
       error?.code === "ESETTINGS_EDIT_PENDING" ? "EACTIVATION_REPAIR_PENDING" : "EACTIVATION_REPAIR_CHECK"); }
   };
+  const assertNoLocalConnection = () => {
+    if (onlineBusy() || databaseManager.isConnected()) fail("EACTIVATION_REPAIR_ONLINE_BUSY");
+  };
+  const onlineReady = () => {
+    if (!authorized()) fail("EPRIVILEGE");
+    if (!canCheck()) fail("EACTIVATION_REPAIR_CONTEXT");
+    assertNoLocalConnection();
+    if (databaseManager.pool) fail("EACTIVATION_REPAIR_ONLINE_BUSY");
+    onlineRecovery.assertOnlineReady();
+    return { mode: "online", localRecoveryPending: true };
+  };
   async function assertReady() {
-    const saved = check();
+    const online = onlineRecovery?.pending();
+    const saved = check({ allowMissingProfile: Boolean(online) });
+    if (online) {
+      const ready=onlineReady();
+      if(onlineRecovery.status().replacementBound)fail("EACTIVATION_REPAIR_ONLINE_TARGET");
+      return ready;
+    }
     if (!saved.previous) return;
     if (!databaseManager.isConnected() || !databaseManager.pool) fail("EACTIVATION_REPAIR_DATABASE");
     if (target(databaseManager.profile) !== target(saved.source.profile)) fail("EACTIVATION_REPAIR_CONTEXT");
@@ -72,8 +101,9 @@ function createTerminalRepair({ terminalStore, activationBoundary, adminSession,
     current(saved, pool);
   }
   return {
-    status: () => guarded(async () => { await assertReady(); return { ok: true, ready: true }; }),
+    status: () => guarded(async () => ({ ok: true, ready: true, ...await assertReady() })),
     connect: () => guarded(async () => {
+      if (onlineRecovery?.pending()) return {ok:true,ready:true,...await assertReady()};
       const saved = check();
       if (!saved.previous) return { ok: true, ready: true };
       let credentials;
@@ -90,6 +120,32 @@ function createTerminalRepair({ terminalStore, activationBoundary, adminSession,
       await assertReady();
       return { ok: true, ready: true };
     }),
+    continueOnline: evidence => guarded(async () => {
+      if (!onlineRecovery) fail("EACTIVATION_REPAIR_CHECK");
+      const saved = check({ allowMissingProfile: true });
+      if (!saved.previous) fail("EACTIVATION_REPAIR_STORE");
+      assertNoLocalConnection();
+      const address = value => {
+        try { const url=new URL(value);return url.protocol==="https:"&&!url.username&&!url.password&&!url.search&&!url.hash; } catch { return false; }
+      };
+      if (!address(saved.source.cloud?.url) || !saved.source.cloud?.key || !address(saved.source.backend)) fail("EACTIVATION_REPAIR_ONLINE_CONFIG");
+      await withExclusive(async () => {
+        current(saved); assertNoLocalConnection();
+        onlineRecovery.begin({ evidence });
+        const changed=configStore.set("localDatabaseEnabled",false);
+        if(changed?.ok===false||configStore.getStrict("localDatabaseEnabled")!==false)fail("EACTIVATION_REPAIR_ONLINE_STORE");
+        if(databaseManager.pool)await databaseManager.close();
+        await onOnlineHold();
+        current(saved); onlineReady();
+      });
+      return {ok:true,ready:true,mode:"online",localRecoveryPending:true};
+    }),
+    authorizeOnlineReplacement: config => {
+      if (!onlineRecovery?.pending()) return false;
+      onlineReady();
+      onlineRecovery.bindReplacement(config);
+      return true;
+    },
     assertReady,
     complete: () => { pinned = null; },
   };

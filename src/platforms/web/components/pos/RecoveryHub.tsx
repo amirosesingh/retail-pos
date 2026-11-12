@@ -15,7 +15,7 @@ import { CloudConnectionPanel } from "@/platforms/web/components/pos/settings/pa
 import { RecoveryPrinterSettings } from "@/platforms/web/components/pos/ReceiptPrinterSettings";
 import { TerminalActivation } from "@/platforms/web/components/pos/TerminalActivation";
 import { isTerminalApp } from "@/platform-config/platform";
-import { ActivationError, type TerminalConfig } from "@/core/activation/terminal-tokens";
+import { ActivationError, retainedTerminalRecoveryEvidence, type TerminalConfig } from "@/core/activation/terminal-tokens";
 import { useRecoveryProfile } from "@/lib/use-recovery-profile";
 import type { RecoverySection } from "@/lib/recovery-section";
 import { Button } from "@/components/ui/button";
@@ -131,13 +131,18 @@ function ModeBanner() {
 
 const repairMessages: Record<string, string> = {
   EACTIVATION_REPAIR_DATABASE: "Connect this terminal's saved local SQL database so its pending transactions can be checked, then check again.",
-  EACTIVATION_REPAIR_DATABASE_UNKNOWN: "The previously saved local database connection could not be verified. Keep the saved setup and contact support before changing registration.",
+  EACTIVATION_REPAIR_DATABASE_UNKNOWN: "The saved local SQL connection could not be verified. You can continue with the saved online database while previous local work remains preserved for recovery.",
   EACTIVATION_REPAIR_PENDING: "Previous local transactions still need synchronization or review. They must be resolved before changing registration.",
   EACTIVATION_REPAIR_STORE: "Windows could not read this device's previous registration. Keep the saved setup and retry its recovery.",
   EACTIVATION_REPAIR_EXISTING: "This device's saved registration is available again. Retry saved registration before changing it.",
   EACTIVATION_REPAIR_CONTEXT: "The registration or connection changed during the check. Review this device's current settings and check again.",
   EPRIVILEGE: "Emergency Access authorization has expired. Open Emergency Access again and verify the administrator before repairing registration.",
   EAPP_CLOSING: "Registration repair paused while the app closes. Reopen the app and try again.",
+  EACTIVATION_REPAIR_ONLINE_BUSY: "Local work is still running. Let it finish, then retry continuing online.",
+  EACTIVATION_REPAIR_ONLINE_CONFIG: "The saved online connection is not ready. Review Database & cloud connection, then retry continuing online.",
+  EACTIVATION_REPAIR_ONLINE_STORE: "The previous local setup could not be preserved safely. Keep it unchanged and retry continuing online.",
+  EACTIVATION_REPAIR_ONLINE_TARGET: "This online recovery already has a replacement registration. Retry the same activation code or retry saved registration.",
+  EACTIVATION_REPAIR_ONLINE_LIMIT: "The preserved recovery history needs review before another registration. All previous setups have been kept.",
 };
 const repairFailure = (code?: string) => repairMessages[code ?? ""] ?? "The previous local setup could not be checked. Keep it unchanged and retry the check.";
 const repairableRegistration = (code: string | null) => [
@@ -157,6 +162,8 @@ function ActivationSettings({ config, connectionReady = true, registrationReady 
   const [repairBusy, setRepairBusy] = useState(false);
   const [repairMessage, setRepairMessage] = useState("");
   const [needsDatabase, setNeedsDatabase] = useState(false);
+  const [canContinueOnline, setCanContinueOnline] = useState(false);
+  const [localRecoveryPending, setLocalRecoveryPending] = useState(false);
   const repairContext = useRef(0);
   const repairRequest = useRef(0);
   const mounted = useRef(false);
@@ -172,24 +179,29 @@ function ActivationSettings({ config, connectionReady = true, registrationReady 
     }
     return () => { mounted.current = false; repairContext.current = context + 1; };
   }, [connectionReady, registrationCode, registrationReady]);
-  const checkRepair = useCallback(async (connectDatabase = false) => {
+  const checkRepair = useCallback(async (connectDatabase = false, continueOnline = false) => {
     const context = repairContext.current;
     const request = ++repairRequest.current;
     const current = () => mounted.current && context === repairContext.current && request === repairRequest.current;
     setRepairBusy(true);
     try {
-      const result = connectDatabase
+      const result = continueOnline
+        ? await window.pos?.terminalRepairContinueOnline?.(retainedTerminalRecoveryEvidence())
+        : connectDatabase
         ? await window.pos?.terminalRepairConnectDatabase?.()
         : await window.pos?.terminalRepairStatus?.();
       if (!current()) throw new ActivationError(repairFailure("EACTIVATION_REPAIR_CONTEXT"));
       if (result?.ok && result.ready === true) {
         setNeedsDatabase(false);
+        setCanContinueOnline(false);
+        setLocalRecoveryPending(result.localRecoveryPending === true);
         setRepairMessage("");
         setRepairReady(true);
         setMode("activating");
         return;
       }
       setNeedsDatabase(result?.code === "EACTIVATION_REPAIR_DATABASE" && result.requiresLocalDatabase === true);
+      setCanContinueOnline(["EACTIVATION_REPAIR_DATABASE", "EACTIVATION_REPAIR_DATABASE_UNKNOWN", "EACTIVATION_REPAIR_CHECK", "EACTIVATION_REPAIR_CONTEXT", "EACTIVATION_REPAIR_ONLINE_TARGET", "EACTIVATION_REPAIR_ONLINE_BUSY", "EACTIVATION_REPAIR_ONLINE_CONFIG", "EACTIVATION_REPAIR_ONLINE_STORE"].includes(result?.code ?? ""));
       const message = repairFailure(result?.code);
       setRepairMessage(message);
       setRepairReady(false);
@@ -214,14 +226,16 @@ function ActivationSettings({ config, connectionReady = true, registrationReady 
     <p className="text-sm text-muted-foreground">{registrationFailure}</p>
     {canOfferRepair && <>
       {!repairChosen ? <Button variant="outline" size="sm" onClick={() => setRepairChosen(true)}>Repair or re-register terminal</Button> : <>
-        <p className="text-sm text-muted-foreground">If retrying the saved registration cannot restore it, you can use a new activation code. The app must first check the saved local database for pending transactions. Your saved setup is kept until a new registration is verified and saved.</p>
+        <p className="text-sm text-muted-foreground">If retrying the saved registration cannot restore it, you can use a new activation code. Check the saved local database first, or explicitly continue with the saved online database while previous local work is preserved for recovery. Your saved setup is kept until a new registration is verified and saved.</p>
         {repairMessage && <p role="alert" className="text-sm text-destructive">{repairMessage}</p>}
         {needsDatabase && <Button variant="outline" size="sm" disabled={repairBusy} onClick={() => { void checkRepair(true).catch(() => {}); }}>Connect saved local database</Button>}
+        {canContinueOnline && window.pos?.terminalRepairContinueOnline && <Button variant="outline" size="sm" disabled={repairBusy} onClick={() => { void checkRepair(false, true).catch(() => {}); }}>Continue online and re-register</Button>}
         <Button size="sm" disabled={repairBusy} onClick={() => { void checkRepair().catch(() => {}); }}>{repairBusy ? "Checking previous setup…" : "Check before re-registering"}</Button>
       </>}
     </>}
   </div>;
   return <div className="space-y-3">
+    {localRecoveryPending && <p role="status" className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">Using the saved online database. Previous local work is preserved and still needs recovery; it has not been marked synchronized. Local SQL remains held apart from this registration.</p>}
     {config && mode !== "activating" && <>
       <p className="text-xs text-muted-foreground">Saved registration on this device. Online validation is separate.</p>
       <TerminalRegistrationDetails details={{

@@ -19,6 +19,7 @@ const REQUIRED_ENTRIES = [
   "pos_config.json", // backend address, branch binding, general settings
   "terminal-config.json", // legacy plain activation (migrated, then removed)
   "terminal-config.bin", // sealed terminal activation
+  "terminal-online-recovery.bin", // preserved prior binding and local setup during online replacement
   "local-db-config.bin", // sealed SQL Server connection
   "cloud-credentials.bin", // sealed central database URL + key
   "server-keys.bin",

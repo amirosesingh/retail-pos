@@ -6,7 +6,7 @@ const f = vi.hoisted(() => ({
   profile: { loading: false, error: true, connectionReady: true, registrationReady: false, registrationCode: "EACTIVATION_RECOVERY_BINDING" as string | null,
     registrationMessage: "The saved registration could not be matched to the previous terminal binding.", config: null as TerminalConfig | null, cloud: true, retry: vi.fn() },
   cursor: 0, slots: [] as unknown[], deps: new Map<number, readonly unknown[]>(), effects: [] as (() => void)[], cleanups: new Map<number, () => void>(),
-  status: vi.fn(), connect: vi.fn(),
+  status: vi.fn(), connect: vi.fn(), online: vi.fn(), evidence: vi.fn(() => ({ sealed: "sealed-fixture", plain: null, key: "key-fixture" })),
 }));
 vi.mock("react", async original => {
   const actual = await original<typeof import("react")>();
@@ -37,7 +37,7 @@ vi.mock("react", async original => {
 });
 vi.mock("@/lib/use-recovery-profile", () => ({ useRecoveryProfile: () => f.profile }));
 vi.mock("@/platform-config/platform", () => ({ isTerminalApp: () => true }));
-vi.mock("@/core/activation/terminal-tokens", () => ({ ActivationError: class extends Error {} }));
+vi.mock("@/core/activation/terminal-tokens", () => ({ ActivationError: class extends Error {}, retainedTerminalRecoveryEvidence: f.evidence }));
 vi.mock("@/platforms/web/components/pos/settings/panels/CloudConnectionPanel", () => ({ CloudConnectionPanel: () => null }));
 vi.mock("@/platforms/web/components/pos/TerminalActivation", () => ({ TerminalActivation: () => null }));
 vi.mock("@/platforms/web/components/pos/ReceiptPrinterSettings", () => ({ RecoveryPrinterSettings: () => null }));
@@ -75,7 +75,8 @@ const checkRepair = async () => { click(button(draw(), "Check before re-register
 beforeEach(() => {
   vi.resetAllMocks(); f.cursor = 0; f.slots = []; f.deps.clear(); f.effects = []; f.cleanups.clear();
   Object.assign(f.profile, { loading: false, error: true, connectionReady: true, registrationReady: false, registrationCode: "EACTIVATION_RECOVERY_BINDING", config: null });
-  vi.stubGlobal("window", { pos: { terminalRepairStatus: f.status, terminalRepairConnectDatabase: f.connect }, location: { assign: vi.fn() } });
+  f.evidence.mockReturnValue({ sealed: "sealed-fixture", plain: null, key: "key-fixture" });
+  vi.stubGlobal("window", { pos: { terminalRepairStatus: f.status, terminalRepairConnectDatabase: f.connect, terminalRepairContinueOnline: f.online }, location: { assign: vi.fn() } });
 });
 afterEach(() => { f.cleanups.forEach(cleanup => cleanup()); vi.unstubAllGlobals(); });
 
@@ -99,6 +100,56 @@ it("connects only the saved previous database through the dedicated native actio
   expect(editor(blocked)).toBeUndefined(); expect(copy(blocked)).not.toContain("private connection material");
   click(button(blocked, "Connect saved local database")); await settle();
   expect(f.connect).toHaveBeenCalledExactlyOnceWith(); expect(editor(draw())).toBeDefined();
+});
+
+it("requires an explicit online choice and native preservation before opening replacement activation", async () => {
+  f.status.mockResolvedValue({ ok: false, code: "EACTIVATION_REPAIR_DATABASE_UNKNOWN" });
+  let resolve!: (value: unknown) => void;
+  f.online.mockReturnValue(new Promise(done => { resolve = done; }));
+  chooseRepair(); await checkRepair();
+  expect(editor(draw())).toBeUndefined(); expect(f.online).not.toHaveBeenCalled(); expect(f.evidence).not.toHaveBeenCalled();
+  click(button(draw(), "Continue online and re-register"));
+  expect(f.online).toHaveBeenCalledExactlyOnceWith({ sealed: "sealed-fixture", plain: null, key: "key-fixture" });
+  expect(editor(draw())).toBeUndefined();
+  resolve({ ok: true, ready: true, mode: "online", localRecoveryPending: true }); await settle();
+  const tree = draw();
+  expect(editor(tree)).toBeDefined();
+  expect(copy(tree)).toContain("Previous local work is preserved and still needs recovery");
+  expect(copy(tree)).not.toContain("sealed-fixture"); expect(copy(tree)).not.toContain("key-fixture");
+  f.status.mockResolvedValue({ ok: true, ready: true, mode: "online", localRecoveryPending: true });
+  await expect((editor(tree)!.props.beforeActivation as () => Promise<void>)()).resolves.toBeUndefined();
+  expect(f.online).toHaveBeenCalledOnce();
+});
+
+it.each(["EPRIVILEGE", "EACTIVATION_REPAIR_ONLINE_BUSY", "EACTIVATION_REPAIR_ONLINE_CONFIG", "EACTIVATION_REPAIR_ONLINE_STORE"])("keeps activation closed when online continuation refuses %s", async code => {
+  f.status.mockResolvedValue({ ok: false, code: "EACTIVATION_REPAIR_DATABASE_UNKNOWN" });
+  f.online.mockResolvedValue({ ok: false, code, error: "private archived setup" });
+  chooseRepair(); await checkRepair(); click(button(draw(), "Continue online and re-register")); await settle();
+  expect(editor(draw())).toBeUndefined(); expect(copy(draw())).not.toContain("private archived setup");
+});
+
+it("does not offer online replacement for known pending work or unreadable previous identity", async () => {
+  f.status.mockResolvedValue({ ok: false, code: "EACTIVATION_REPAIR_PENDING" });
+  chooseRepair(); await checkRepair();
+  expect(button(draw(), "Continue online and re-register")).toBeUndefined();
+  expect(f.evidence).not.toHaveBeenCalled(); expect(f.online).not.toHaveBeenCalled();
+});
+
+it("requires explicit online continuation before a later replacement can open its activation form",async()=>{
+  f.status.mockResolvedValue({ok:false,code:"EACTIVATION_REPAIR_ONLINE_TARGET"});
+  f.online.mockResolvedValue({ok:true,ready:true,mode:"online",localRecoveryPending:true});
+  chooseRepair();await checkRepair();
+  expect(editor(draw())).toBeUndefined();
+  click(button(draw(),"Continue online and re-register"));await settle();
+  expect(editor(draw())).toBeDefined();expect(f.online).toHaveBeenCalledOnce();
+});
+
+it("does not start online recovery when retained evidence cannot be captured", async () => {
+  f.status.mockResolvedValue({ ok: false, code: "EACTIVATION_REPAIR_DATABASE_UNKNOWN" });
+  f.evidence.mockImplementationOnce(() => { throw new Error("private retained key"); });
+  chooseRepair(); await checkRepair(); click(button(draw(), "Continue online and re-register")); await settle();
+  expect(f.online).not.toHaveBeenCalled(); expect(editor(draw())).toBeUndefined();
+  expect(copy(draw())).not.toContain("private retained key");
 });
 
 it.each([
