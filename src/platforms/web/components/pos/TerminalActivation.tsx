@@ -71,11 +71,14 @@ export function TerminalActivation({
   onActivated,
   embedded = false,
   onActivationStarted,
+  beforeActivation,
 }: {
   onActivated: (c: TerminalConfig) => void;
   /** Render as a plain card (Emergency Access hub) instead of a full screen. */
   embedded?: boolean;
   onActivationStarted?: () => void;
+  /** Recovery rechecks native authorization and pending work before each claim. */
+  beforeActivation?: () => Promise<void>;
 }) {
   const branding = useBranding();
   const mobile = isNative();
@@ -141,8 +144,9 @@ export function TerminalActivation({
       setBusy(true);
       setError("");
       try {
+        if (beforeActivation) await beforeActivation();
         onActivationStarted?.();
-        await finish(await activateTerminal(trimmed));
+        await finish(await (beforeActivation ? activateTerminal(trimmed, beforeActivation) : activateTerminal(trimmed)));
       } catch (e) {
         setError(
           e instanceof ActivationError ? e.message : isRetryableActivationError(e)
@@ -154,7 +158,7 @@ export function TerminalActivation({
         setBusy(false);
       }
     },
-    [onActivationStarted, done, finish],
+    [onActivationStarted, beforeActivation, done, finish],
   );
 
   // The hosted pairing endpoint decides whether the request can proceed.
@@ -174,13 +178,14 @@ export function TerminalActivation({
       setBusy(true);
       let retry = false;
       try {
+        if (beforeActivation) await beforeActivation();
         onActivationStarted?.();
         const config = await activateWithTokenId(pairing, () => {
           if (!stopped) {
             setPairingApproved(true);
             setPairingError("");
           }
-        });
+        }, beforeActivation);
         if (config) {
           // A claim that finishes after the operator collapses the pairing
           // panel still belongs to this terminal.
@@ -214,7 +219,7 @@ export function TerminalActivation({
       stopped = true;
       if (timer) window.clearTimeout(timer);
     };
-  }, [pairing, done, showPairing, pairingStopped, scanning, onActivationStarted, finish]);
+  }, [pairing, done, showPairing, pairingStopped, scanning, onActivationStarted, beforeActivation, finish]);
 
   if (done) {
     return (

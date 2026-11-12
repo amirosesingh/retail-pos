@@ -8,8 +8,8 @@ const f = vi.hoisted(() => ({
   deps: new Map<number, readonly unknown[] | undefined>(),
   cleanups: new Map<number, () => void>(),
   effects: [] as (() => void)[],
-  activate: vi.fn<(code: string) => Promise<TerminalConfig>>(),
-  pair: vi.fn<(request: PairingRequest, onApproved?: () => void) => Promise<TerminalConfig | null>>(),
+  activate: vi.fn<(code: string, beforeClaim?: () => Promise<void>) => Promise<TerminalConfig>>(),
+  pair: vi.fn<(request: PairingRequest, onApproved?: () => void | Promise<void>, beforeClaim?: () => Promise<void>) => Promise<TerminalConfig | null>>(),
   pairingRequest: vi.fn<() => Promise<PairingRequest>>(),
   writeRecord: vi.fn(),
   clearRevocation: vi.fn(),
@@ -100,9 +100,10 @@ function copy(node: unknown): string {
   return isValidElement<Record<string, unknown>>(node) ? copy(node.props.children) : "";
 }
 const onActivated = vi.fn();
+let beforeActivation: (() => Promise<void>) | undefined;
 function draw() {
   f.cursor = 0;
-  const tree = TerminalActivation({ embedded: true, onActivated });
+  const tree = TerminalActivation({ embedded: true, onActivated, beforeActivation });
   f.effects.splice(0).forEach(effect => effect());
   return tree;
 }
@@ -126,6 +127,7 @@ beforeEach(() => {
   f.deps.clear();
   f.cleanups.clear();
   f.effects.length = 0;
+  beforeActivation = undefined;
   f.cloudOnline.mockReturnValue(false);
   f.pairingRequest.mockResolvedValue(request);
   f.writeRecord.mockResolvedValue(undefined);
@@ -138,6 +140,35 @@ afterEach(() => {
 });
 
 describe("terminal activation in Emergency Access", () => {
+  it("keeps a manual token unclaimed when the native repair recheck refuses it", async () => {
+    beforeActivation = vi.fn().mockRejectedValue(new ActivationError("Emergency Access authorization has expired."));
+    enterCode(draw(), "ENC_V1:fixture");
+    click(control(draw(), "Activate terminal")); await settle();
+    expect(f.activate).not.toHaveBeenCalled(); expect(f.writeRecord).not.toHaveBeenCalled();
+    expect(f.clearRevocation).not.toHaveBeenCalled();
+    expect(alert(draw())).toBe("Emergency Access authorization has expired.");
+  });
+
+  it("passes the repair recheck to the manual claim boundary after checking the form", async () => {
+    beforeActivation = vi.fn().mockResolvedValue(undefined);
+    f.activate.mockImplementation(async (_code, beforeClaim) => { await beforeClaim?.(); return config; });
+    enterCode(draw(), "ENC_V1:fixture"); click(control(draw(), "Activate terminal")); await settle();
+    expect(f.activate).toHaveBeenCalledExactlyOnceWith("ENC_V1:fixture", beforeActivation);
+    expect(beforeActivation).toHaveBeenCalledTimes(2); expect(f.writeRecord).toHaveBeenCalledOnce();
+  });
+
+  it("rechecks native repair authorization after hosted pairing approval before claiming", async () => {
+    const claim = vi.fn();
+    beforeActivation = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new ActivationError("Previous transactions need review."));
+    f.pair.mockImplementation(async (_request, approved, beforeClaim) => {
+      await approved?.(); await beforeClaim?.(); claim(); return config;
+    });
+    draw(); await settle(); click(control(draw(), "Pair from the phone app")); draw(); await settle();
+    expect(beforeActivation).toHaveBeenCalledTimes(2); expect(f.pair).toHaveBeenCalledOnce();
+    expect(claim).not.toHaveBeenCalled(); expect(f.writeRecord).not.toHaveBeenCalled(); expect(f.clearRevocation).not.toHaveBeenCalled();
+    expect(alert(draw())).toBe("Previous transactions need review.");
+  });
+
   it.each(["pasted", "scanned"])("checks a %s token despite stale connectivity and displays the actual refusal", async source => {
     f.activate.mockRejectedValueOnce(new ActivationError("This activation code has expired."));
     if (source === "pasted") {

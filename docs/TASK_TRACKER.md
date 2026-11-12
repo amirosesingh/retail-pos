@@ -8571,3 +8571,65 @@ with actual minimal markers in both stale-copy orders, exact identity denials,
 storage/context/read-back failures, safe rendered messages and existing revoke,
 unpair and close/update protections. Scoped lint, native syntax and diff checks
 passed. Installed recovery is still unverified; no live profile was modified.
+
+## 12 November — Emergency Access registration lockout
+
+Owner reports beta.6's original-binding error and inability to register after
+unlocking Emergency Access. Installed diagnostic reasons now confirm token
+mismatch, not a connection-read failure. Baseline: beta `d24b0f0c`.
+
+Provide an explicit repair/re-registration choice after the existing Emergency
+Access credential gate. Use a native preflight to refuse unreadable identity,
+unauthorized sessions and unverified/pending previous local work before any
+new token claim. Keep the final authoritative write checks. Use a dedicated
+native connection action for the previous saved SQL profile; the verified
+recovery session can authorize connecting it without restoring the old terminal
+first. This does not edit the target, save settings or run schema/bootstrap
+changes. Missing/unreadable previous SQL remains unverified, and a different
+empty database cannot certify pending work absent. Do not clear the previous
+binding or saved artifacts. Preserve ordinary
+startup denial and do not grant a fresh-device or trading state from failed
+recovery. Correct retry notifications to show the fixed registration reason.
+
+Test actual repair UI transitions, native allowed/denied cases, pending work,
+closing/context changes, recovery-only saved SQL connection, expired repair session, and
+normal startup/activation compatibility. Production, database/schema execution,
+manual profile/credential changes and bypassing pending-work checks are outside
+scope. A scoped source revert is the rollback; retained data stays untouched.
+
+Implemented the explicit review/check/activation path behind the existing
+Emergency Access gate. Both new native methods require the trusted POS main
+frame and native administrator/recovery authority. The connect action uses
+only the retained vault credentials and saved SQL target, under the sync lease;
+it does not save settings, enable SQL, migrate/bootstrap or grant trading.
+The read-only check covers durable journal/conflicts, intermediate closings,
+shift intents, unaccepted/unadopted legacy events, sale outbox and store edits.
+Unknown optional schema stays blocked; absence requires the existing dbo
+visibility contract. Final reassignment repeats checks, while genuine first
+activation and exact-original mirroring retain their prior behavior. All
+terminal writes now join the close barrier. Retry toasts show fixed safe
+registration reasons. Late UI results and expired claim authorization cannot
+reopen a stale editor or consume a token through the repair path.
+
+Limitations: the previous-binding marker contains no historical SQL database
+GUID. This checks the retained saved target, not every database ever used by
+older versions. Evidence-only legacy previews are not pending-queue flags;
+their historical classification requires the existing graph-review workflow.
+No installed profile was changed or decrypted. Actual affected-device recovery
+is unverified, and missing/unreadable saved SQL configuration remains a real
+prerequisite rather than being treated as zero pending work. The same ongoing
+owner request includes agents and beta publication after checks; exact-head
+CI, beta integration and publication evidence remain to be recorded separately.
+
+Final focused verification: 149 integrated cases across 8 suites (native IPC,
+repair UI, Windows manual/pairing claims, recovery profile/navigation and
+startup rendering), plus 116 existing registration/settings/revocation cases
+across 8 suites passed. All 23 shutdown/updater Node cases passed. Native agent
+also ran 149 adjacent activation-boundary/store/recovery-metadata/legacy-runtime
+cases; these overlap the above and are not an extra unique total. Scoped lint,
+native/preload syntax and whitespace checks passed. Local TypeScript reported
+zero changed-file diagnostics; 67 unrelated missing-dependency diagnostics in
+the shared installation require the clean CI environment for full typecheck.
+Independent changed-path review found no remaining blocker after preserving
+first-run and readable-full-native mirroring, joining terminal writes to the
+close barrier, and rejecting changed claim connection snapshots.

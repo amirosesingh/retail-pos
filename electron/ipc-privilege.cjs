@@ -252,6 +252,8 @@ const CHANNEL_LEVELS = {
   "cloud:set": ADMIN,
   "cloud:remove": ADMIN,
   "terminal:write": ADMIN,
+  "terminal:repair-status": ADMIN,
+  "terminal:repair-connect-database": ADMIN,
   "config:write": ADMIN,
   "config:set": ADMIN,
   "config:reset": ADMIN,
@@ -309,6 +311,8 @@ const FIRST_RUN_CHANNELS = new Set([
  * app — those are not repairs and stay with a real administrator.
  */
 const RECOVERY_CHANNELS = new Set([
+  "terminal:repair-status",
+  "terminal:repair-connect-database",
   "pos:connect",
   "pos:configure-cloud",
   "pos:forget-connection",

@@ -351,6 +351,10 @@ function supportsLegacyShiftRecovery(){
   return Boolean(databaseManager.pool && binding?.mode==="operations" && binding.platform==="pc" && !isManagementDevice());
 }
 const activationBoundary = require("./verified-activation.cjs");
+const terminalRepair = require("./terminal-repair.cjs").createTerminalRepair({
+  terminalStore,activationBoundary,adminSession,databaseManager,databaseConfig,cloudCredentials,configStore,
+  withExclusive:work=>syncCoordinator.withExclusive(work),canCheck:()=>!quitting&&!closeWriteBarrier.sealed,
+});
 function localBranchId(){
   if(isManagementDevice())return null;
   const terminal=terminalStore.read()??{};
@@ -389,10 +393,12 @@ function capturePinApprovalActivity() {
   } catch { return null; }
 }
 async function assertSafeRegistrationChange(config){
-  const previous=activationBoundary.binding(terminalStore.lastBinding());
+  const retained=terminalStore.lastBinding({strict:true});
+  const previous=activationBoundary.binding(retained);
+  if(!previous&&(retained||terminalStore.wasProvisioned?.()))throw Object.assign(new Error("The previous terminal binding could not be read safely. Your saved setup has been kept."),{code:"EACTIVATION_STORE"});
   if(!previous||activationBoundary.sameBinding(previous,activationBoundary.binding(config)))return;
-  if(!adminSession.hasLevel("admin")&&!adminSession.recoveryActive())throw new Error("An administrator must authorize terminal reassignment.");
-  if(!databaseManager.isConnected())throw new Error("Connect the local database before changing terminal registration so pending transactions can be checked.");
+  if(!adminSession.hasLevel("admin")&&!adminSession.recoveryActive())throw Object.assign(new Error("An administrator must authorize terminal reassignment."),{code:"EPRIVILEGE"});
+  if(!databaseManager.isConnected())throw Object.assign(new Error("Connect the local database before changing terminal registration so pending transactions can be checked."),{code:"EACTIVATION_REPAIR_DATABASE"});
   const branch=previous.branchId;
   // Management can have pending work from several branches in the same SQL
   // store. Inspect all unacknowledged work rather than treating null as a
@@ -401,7 +407,7 @@ async function assertSafeRegistrationChange(config){
     pending:Number((await databaseManager.pool.request().query("SELECT COUNT_BIG(*) pending FROM dbo.sync_change_journal WHERE acknowledged_at IS NULL;")).recordset?.[0]?.pending??0),failed:0,
   };
   const conflicts=await conflictRepository.unresolved();
-  if(summary.pending||summary.failed||conflicts?.length)throw new Error("Synchronize or review pending transactions before changing terminal registration.");
+  if(summary.pending||summary.failed||conflicts?.length)throw Object.assign(new Error("Synchronize or review pending transactions before changing terminal registration."),{code:"EACTIVATION_REPAIR_PENDING"});
   if(branch && previous.id) await syncCoordinator.withExclusive(async () => {
     const pool = databaseManager.pool;
     const { assertStoreSettingsEditReassignmentClear } = require("./db/store-settings-edit-outbox.cjs");
@@ -2982,11 +2988,15 @@ function registerIpc() {
   });
   ipcMain.handle("terminal:write", async (_e, raw) => {
     try {
-      const before=terminalStore.read();
+      const before=terminalStore.read({strict:true});
       const config=await verifiedTerminalMirror(guard.terminalConfig(raw));
-      const after=terminalStore.read();
+      const after=terminalStore.read({strict:true});
       if(Boolean(before)!==Boolean(after)||(before&&!activationBoundary.sameBinding(activationBoundary.binding(before),activationBoundary.binding(after))))throw new Error("The terminal registration changed during verification.");
-      if(!before)await assertSafeRegistrationChange(config);
+      if(!before){
+        await assertSafeRegistrationChange(config);
+        const previous=activationBoundary.binding(terminalStore.lastBinding({strict:true}));
+        if(previous&&!activationBoundary.sameBinding(previous,activationBoundary.binding(config)))await terminalRepair.assertReady();
+      }
       const activationBackend=String(config?.backendUrl??"").trim().replace(/\/+$/,"");
       const savedBackend=String(configStore.get("backendUrl")??"").trim().replace(/\/+$/,"");
       // The connection page is authoritative. Older activation payloads may
@@ -2994,14 +3004,24 @@ function registerIpc() {
       // http origin; neither may erase a proven HTTPS deployment address.
       const backend=/^https:\/\/.+/i.test(savedBackend)?savedBackend:/^https:\/\/.+/i.test(activationBackend)?activationBackend:"";
       if(backend)configStore.set("backendUrl",backend);
-      const previous=terminalStore.lastBinding();
+      const previous=before??terminalStore.lastBinding({strict:true});
       const saved=terminalStore.write(config?{...config,...(backend?{backendUrl:backend}:{})}:config);
-      if(saved?.ok)recordRegistrationChange(previous,config);
+      if(saved?.ok){terminalRepair.complete();recordRegistrationChange(previous,config);}
       if(saved?.ok&&isManagementDevice()){managementReplica.resetRetry();terminalIdentityPausedSync=false;syncCoordinator.resume();scheduleAutomaticSync(250);}
       else if(saved?.ok&&config&&terminalIdentityPausedSync){terminalIdentityPausedSync=false;syncCoordinator.resume();scheduleAutomaticSync(250);}
       return saved;
     }
     catch (err) { return guard.refuse(err.message); }
+  });
+  ipcMain.handle("terminal:repair-status", (event) => {
+    if(event.sender!==mainWindow?.webContents||event.senderFrame!==event.sender.mainFrame)
+      return {ok:false,ready:false,code:"EPRIVILEGE",error:"Terminal registration repair is available only from the POS window."};
+    return terminalRepair.status();
+  });
+  ipcMain.handle("terminal:repair-connect-database", (event) => {
+    if(event.sender!==mainWindow?.webContents||event.senderFrame!==event.sender.mainFrame)
+      return {ok:false,ready:false,code:"EPRIVILEGE",error:"Terminal registration repair is available only from the POS window."};
+    return terminalRepair.connect();
   });
   ipcMain.handle("terminal:restore", (event, raw) => {
     if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame) {
