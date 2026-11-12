@@ -8,7 +8,7 @@ import { RELEASE_CHANNEL } from "@/lib/release-channel";
 import { BACKGROUND_REFRESH_EVENT } from "@/lib/background-refresh";
 import { createLiveQueryRefresh } from "@/lib/live-query-refresh";
 import { hasSignedInIdentity } from "@/lib/session-presence";
-import { notifyError } from "@/lib/notify";
+import { notifyError, showNotification } from "@/lib/notify";
 import { subscribeDataChange, subscribeSalesChange } from "@/lib/sync-engine";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -520,8 +520,9 @@ function ConnectionProfileBoot({ children }: { children: ReactNode }) {
     setRegistrationIssue(null);
     void hydrateConnectionProfile().catch(cause => {
       const registration = isRegistrationRestoreError(cause);
-      notifyError(cause, registration ? "Restoring terminal registration" : "Restoring database connection");
       if (current) {
+        if (registration) showNotification(registrationRestoreMessage(cause.registrationCode), "error");
+        else notifyError(cause, "Restoring database connection");
         setRegistrationIssue(registration ? registrationRestoreMessage(cause.registrationCode) : null);
         setRestoreFailed(true);
       }

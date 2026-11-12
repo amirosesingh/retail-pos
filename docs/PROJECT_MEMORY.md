@@ -40,6 +40,24 @@ Owner requires all proposed cloud/local database upgrades collected for exact fi
 The exact owner-approved service-only bounded feed RPC and PR384 are applied/deployed on beta. Existing selector/privacy grants and businessrecords are preserved; native continuation is bound to authenticated response metadata. Live147request sample all200/ok with no CPU-exceeded; CPU2–114ms/mean9.469 means NO guarantee allrequestsbelow10ms. Electronfeed131613→133184, all6shiftCTvalid; largebacklog stilldraining. Keep implemented/sample-verified status distinct from fullsync completion, production promotion or installerpublication. Supabase migrationtool ledger20261104042158 corresponds to approvedfile20261104040251, SHA83495D696622241ECA2A8D396234E2FD65EE7C7A3050E93E4280638D6530D59B; do not replay based solely on differing timestamps.
 # POS project memory
 
+## 12 November — explicit Emergency Access registration repair
+
+The owner reports beta.6 cannot recover the saved registration and cannot open
+registration in Emergency Access. Current credential-free diagnostics identify
+a terminal-token mismatch; ordinary retry cannot reconcile different identities.
+Fix the repair lockout through the existing verified Emergency Access session
+and an explicit operator choice, preserving saved evidence and native pending-
+work, branch and proof checks. This supersedes blanket hiding of the activation
+form in Emergency Access for a readable connection plus known registration
+failure: expose only an explicitly chosen guarded repair flow, never classify
+the failure as a fresh device or grant trading. Keep unreadable native storage
+closed. A dedicated native repair action may connect the saved previous SQL
+profile without requiring old registration restoration, editing its target or
+running schema/bootstrap changes. An absent/unreadable saved profile is not
+proof of no pending local work. Production,
+live schema/data changes, manual profile resets and relaxed identity admission
+remain excluded.
+
 ## 12 November — retained registration selection and beta publication
 
 The owner reported beta.5's registration recovery pending and main startup

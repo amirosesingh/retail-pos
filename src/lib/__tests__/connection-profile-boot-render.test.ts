@@ -29,6 +29,7 @@ function fixture(recovery = false) {
   const state = { hydrated: false };
   const hydrate = vi.fn(async () => {});
   const notify = vi.fn();
+  const show = vi.fn();
   const module = { exports: {} as { Boot: React.ComponentType<{ children: React.ReactNode }> } };
   runInNewContext(compiled, {
     module, exports: module.exports, React,
@@ -48,11 +49,12 @@ function fixture(recovery = false) {
     isConnectionProfileHydrated: () => state.hydrated,
     isRegistrationRestoreError, registrationRestoreMessage,
     notifyError: notify,
+    showNotification: show,
     TillLoader: ({ message }: { message: string }) => React.createElement("p", null, message),
     EmergencyAccessLink: () => React.createElement("a", { href: "/recovery" }, "Emergency access"),
   });
   return {
-    state, hydrate, notify,
+    state, hydrate, notify, show,
     render() {
       cursor = 0;
       const html = renderToStaticMarkup(React.createElement(module.exports.Boot, null, React.createElement("div", null, "Protected POS")));
@@ -77,7 +79,8 @@ it("identifies a registration mismatch on the main screen without claiming saved
   expect(html).toContain("Emergency access");
   expect(html).not.toContain("Could not restore your saved connection");
   expect(html).not.toMatch(/private-proof|https:\/\/private|Protected POS/);
-  expect(f.notify).toHaveBeenCalledWith(expect.any(RegistrationRestoreError), "Restoring terminal registration");
+  expect(f.show).toHaveBeenCalledWith(registrationRestoreMessage("EACTIVATION_RECOVERY_BINDING"), "error");
+  expect(f.notify).not.toHaveBeenCalled();
   f.stop();
 });
 
@@ -90,6 +93,7 @@ it("retains the genuine saved-connection failure and strict startup gate", async
   expect(html).toContain("Emergency access");
   expect(html).not.toMatch(/private vault details|Protected POS|Retry registration/);
   expect(f.notify).toHaveBeenCalledWith(expect.any(Error), "Restoring database connection");
+  expect(f.show).not.toHaveBeenCalled();
   f.stop();
 });
 
@@ -107,4 +111,26 @@ it("opens ordinary startup only after the real hydration readiness contract succ
   expect(f.render()).not.toContain("Protected POS"); await settle();
   expect(f.render()).toContain("Protected POS");
   f.stop();
+});
+
+it("never displays an unknown registration error's private details in the retry notification", async () => {
+  const f = fixture();
+  f.hydrate.mockRejectedValueOnce(new RegistrationRestoreError({ code: "PRIVATE_UNKNOWN", message: "secret-token https://private.example" }));
+  f.render(); await settle();
+  expect(f.show).toHaveBeenCalledWith(registrationRestoreMessage("PRIVATE_UNKNOWN"), "error");
+  expect(JSON.stringify(f.show.mock.calls)).not.toMatch(/secret-token|private\.example|PRIVATE_UNKNOWN/);
+  expect(f.notify).not.toHaveBeenCalled();
+  expect(f.render()).not.toContain("Protected POS");
+  f.stop();
+});
+
+it("does not show a late retry failure after the startup effect is unmounted", async () => {
+  const f = fixture();
+  let reject!: (cause: unknown) => void;
+  f.hydrate.mockImplementationOnce(() => new Promise<void>((_resolve, fail) => { reject = fail; }));
+  f.render(); f.stop();
+  reject(new RegistrationRestoreError({ code: "EACTIVATION_RECOVERY_BINDING" }));
+  await settle();
+  expect(f.show).not.toHaveBeenCalled();
+  expect(f.notify).not.toHaveBeenCalled();
 });

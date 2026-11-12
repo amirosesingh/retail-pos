@@ -14,6 +14,9 @@ class WriteBarrier {
 }
 const BUSINESS_WRITE_CHANNELS = new Set([
   "terminal:restore",
+  "terminal:write",
+  "terminal:repair-status",
+  "terminal:repair-connect-database",
   "print:silent", "print:raw", "drawer:open", "pos:write", "pos:write-batch",
   "business:reserve-bill", "business:write-batch", "business:commit-aggregate", "business:save-authorization-rule",
   "business:queue-store-settings-edit", "business:review-store-settings-edit",

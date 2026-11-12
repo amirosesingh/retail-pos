@@ -20,6 +20,7 @@ const f = vi.hoisted(() => ({
   restoreProof: vi.fn(),
   event: vi.fn(),
   bootstrap: vi.fn(),
+  backendRead: vi.fn(),
 }));
 const tokenId = "61ff814e-8652-45f0-9e67-a0cd62251512";
 const proofHash = "a".repeat(64);
@@ -43,7 +44,7 @@ vi.mock("@/core/activation/device-proof", () => ({
 vi.mock("@/core/activation/terminal-activation-log", () => ({ recordActivationAttempt: vi.fn() }));
 vi.mock("@/core/activation/connection-health", () => ({ resetHealthCache: vi.fn() }));
 vi.mock("@/core/api/sync-relay", () => ({ canRelay: () => false, relayOp: vi.fn() }));
-vi.mock("@/lib/backend-config", () => ({ backendUrl: async () => backend, saveBackendUrl: f.saveBackend }));
+vi.mock("@/lib/backend-config", () => ({ backendUrl: f.backendRead, saveBackendUrl: f.saveBackend }));
 vi.mock("@/lib/server-origin", () => ({ serverOrigin: () => backend, posFetch: f.posFetch, serverUnreachableOnDevice: f.missingWebsite }));
 vi.mock("@/lib/terminal-session", () => ({ provisionTerminalAccount: vi.fn() }));
 
@@ -87,6 +88,7 @@ beforeEach(() => {
     pos: { readTerminalConfig: f.read, writeTerminalConfig: f.write, restoreTerminalConfig: f.restore, clearTerminalConfig: f.clear, bootstrapCloudCredentials: f.bootstrap },
   });
   f.bootstrap.mockResolvedValue({ ok: true, url: project, key: localKey });
+  f.backendRead.mockResolvedValue(backend);
   f.read.mockResolvedValue({ ok: true, config });
   f.write.mockResolvedValue({ ok: true });
   f.restore.mockResolvedValue({ ok: true, config });
@@ -146,6 +148,28 @@ it("leaves a code unclaimed when the Windows connection still needs setup", asyn
   expect(f.write).not.toHaveBeenCalled();
 });
 
+it("leaves a manual token unclaimed when the repair session expires during its status lookup", async () => {
+  const { activateTerminal, ActivationError } = await import("../terminal-tokens");
+  const beforeClaim = vi.fn(async () => { throw new ActivationError("Emergency Access authorization expired."); });
+  await expect(activateTerminal("code", beforeClaim)).rejects.toThrow("Emergency Access authorization expired");
+  expect(beforeClaim).toHaveBeenCalledOnce();
+  expect(f.rpc.mock.calls.map(([name]) => name)).toEqual(["terminal_token_status"]);
+  expect(f.write).not.toHaveBeenCalled(); expect(f.clearSeal).not.toHaveBeenCalled(); expect(f.seal).not.toHaveBeenCalled();
+  expect(window.localStorage.removeItem).not.toHaveBeenCalled();
+});
+
+it.each(["project", "key", "backend"])("does not consume a manual repair token after the saved %s changes during status lookup", async changed => {
+  const { activateTerminal } = await import("../terminal-tokens");
+  const beforeClaim = vi.fn(async () => {
+    if (changed === "backend") f.backendRead.mockResolvedValue("https://other-pos.example");
+    else f.bootstrap.mockResolvedValue({ ok: true, url: changed === "project" ? "https://other-project.example" : project, key: changed === "key" ? "rotated-key" : localKey });
+  });
+  await expect(activateTerminal("code", beforeClaim)).rejects.toThrow(changed === "project" ? "different database" : "connection changed during activation");
+  expect(f.rpc.mock.calls.map(([name]) => name)).toEqual(["terminal_token_status"]);
+  expect(f.write).not.toHaveBeenCalled(); expect(f.seal).not.toHaveBeenCalled(); expect(f.clearSeal).not.toHaveBeenCalled();
+  expect(window.localStorage.removeItem).not.toHaveBeenCalled(); expect(f.saveBackend).not.toHaveBeenCalled();
+});
+
 it("finishes a proof-bound web pairing after the first-claim deadline when this device already claimed it", async () => {
   const { activateWithTokenId } = await import("../terminal-tokens");
   f.posFetch.mockResolvedValueOnce(Response.json({ ...approved, status: "used" }));
@@ -154,6 +178,64 @@ it("finishes a proof-bound web pairing after the first-claim deadline when this 
   expect(onApproved).toHaveBeenCalledOnce();
   expect(f.rpc).toHaveBeenCalledWith("terminal_token_claim", expect.objectContaining({ p_token_id: tokenId, p_proof_hash: proofHash }));
   expect(f.write).toHaveBeenCalledOnce();
+});
+
+it("awaits native repair approval before consuming a hosted pairing claim", async () => {
+  const { activateWithTokenId } = await import("../terminal-tokens");
+  f.posFetch.mockResolvedValueOnce(Response.json({ ...approved, status: "used" }));
+  let approve!: () => void;
+  const onApproved = vi.fn(() => new Promise<void>(resolve => { approve = resolve; }));
+  const pairing = activateWithTokenId(request, undefined, onApproved);
+  await vi.waitFor(() => expect(onApproved).toHaveBeenCalledOnce());
+  expect(f.rpc).not.toHaveBeenCalled(); expect(f.write).not.toHaveBeenCalled();
+  approve();
+  await expect(pairing).resolves.toEqual(config);
+  expect(f.rpc).toHaveBeenCalledWith("terminal_token_claim", expect.objectContaining({ p_token_id: tokenId }));
+});
+
+it("keeps the original setup and proof when the post-approval repair check refuses pairing", async () => {
+  const { activateWithTokenId, ActivationError } = await import("../terminal-tokens");
+  f.posFetch.mockResolvedValueOnce(Response.json({ ...approved, status: "used" }));
+  await expect(activateWithTokenId(request, undefined, async () => { throw new ActivationError("Recovery authorization expired."); })).rejects.toThrow("Recovery authorization expired");
+  expect(f.rpc).not.toHaveBeenCalled(); expect(f.write).not.toHaveBeenCalled(); expect(f.clearSeal).not.toHaveBeenCalled();
+  expect(f.seal).not.toHaveBeenCalled(); expect(f.saveBackend).not.toHaveBeenCalled(); expect(window.localStorage.removeItem).not.toHaveBeenCalled();
+});
+
+it("rechecks native repair authorization before retrying a pairing claim after a network failure", async () => {
+  const { activateWithTokenId, ActivationError } = await import("../terminal-tokens");
+  f.posFetch.mockResolvedValueOnce(Response.json({ ...approved, status: "used" }));
+  f.rpc.mockResolvedValueOnce({ data: null, error: new TypeError("Failed to fetch") });
+  const beforeClaim = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new ActivationError("Emergency Access authorization expired."));
+  await expect(activateWithTokenId(request, undefined, beforeClaim)).rejects.toThrow("Emergency Access authorization expired");
+  expect(beforeClaim).toHaveBeenCalledTimes(2); expect(f.rpc).toHaveBeenCalledOnce();
+  expect(f.write).not.toHaveBeenCalled(); expect(f.clearSeal).not.toHaveBeenCalled(); expect(f.seal).not.toHaveBeenCalled();
+  expect(window.localStorage.removeItem).not.toHaveBeenCalled();
+});
+
+it.each(["project", "key", "backend"])("does not consume a pairing repair token after the saved %s changes before its claim", async changed => {
+  const { activateWithTokenId } = await import("../terminal-tokens");
+  f.posFetch.mockResolvedValueOnce(Response.json({ ...approved, status: "used" }));
+  const beforeClaim = vi.fn(async () => {
+    if (changed === "backend") f.backendRead.mockResolvedValue("https://other-pos.example");
+    else f.bootstrap.mockResolvedValue({ ok: true, url: changed === "project" ? "https://other-project.example" : project, key: changed === "key" ? "rotated-key" : localKey });
+  });
+  await expect(activateWithTokenId(request, undefined, beforeClaim)).rejects.toThrow(changed === "project" ? "different database" : "connection changed during activation");
+  expect(f.rpc).not.toHaveBeenCalled(); expect(f.write).not.toHaveBeenCalled(); expect(f.seal).not.toHaveBeenCalled(); expect(f.clearSeal).not.toHaveBeenCalled();
+  expect(window.localStorage.removeItem).not.toHaveBeenCalled(); expect(f.saveBackend).not.toHaveBeenCalled();
+});
+
+it("refuses a pairing claim retry against a captured backend after the operator changes it", async () => {
+  const { activateWithTokenId } = await import("../terminal-tokens");
+  f.posFetch.mockResolvedValueOnce(Response.json({ ...approved, status: "used" }));
+  f.rpc.mockImplementationOnce(async () => {
+    f.backendRead.mockResolvedValue("https://other-pos.example");
+    return { data: null, error: new TypeError("Failed to fetch") };
+  });
+  const beforeClaim = vi.fn(async () => {});
+  await expect(activateWithTokenId(request, undefined, beforeClaim)).rejects.toThrow("connection changed during activation");
+  expect(beforeClaim).toHaveBeenCalledTimes(2); expect(f.rpc).toHaveBeenCalledOnce();
+  expect(f.write).not.toHaveBeenCalled(); expect(f.clearSeal).not.toHaveBeenCalled(); expect(f.seal).not.toHaveBeenCalled();
+  expect(window.localStorage.removeItem).not.toHaveBeenCalled(); expect(f.saveBackend).not.toHaveBeenCalled();
 });
 
 it("refuses expired unused approvals and shows a connection error when the website returns HTML", async () => {

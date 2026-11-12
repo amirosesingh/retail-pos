@@ -403,6 +403,8 @@ export type TerminalClearContext = {
 };
 
 export type PosBridge = {
+  terminalRepairStatus?: () => Promise<{ ok: boolean; ready?: boolean; code?: string; error?: string; requiresLocalDatabase?: boolean }>;
+  terminalRepairConnectDatabase?: () => Promise<{ ok: boolean; ready?: boolean; code?: string; error?: string; requiresLocalDatabase?: boolean }>;
   restoreTerminalConfig?: (config: TerminalConfig) => Promise<{ ok: boolean; config?: TerminalConfig | null; code?: string; error?: string }>;
   clearTerminalConfig?: (context: TerminalClearContext) => Promise<{ ok: boolean; code?: string; error?: string }>;
   authorizeOfflineDiscount?: (value: {

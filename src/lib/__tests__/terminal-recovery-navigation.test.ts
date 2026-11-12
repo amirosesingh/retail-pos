@@ -20,6 +20,12 @@ vi.mock("react", async original => {
       if (!(index in f.state)) f.state[index] = typeof initial === "function" ? initial() : initial;
       return [f.state[index], (next: unknown) => { f.state[index] = typeof next === "function" ? next(f.state[index]) : next; }];
     },
+    useRef(initial: unknown) {
+      if (!f.shallow) return actual.useRef(initial);
+      const index = f.cursor++;
+      if (!(index in f.state)) f.state[index] = { current: initial };
+      return f.state[index];
+    },
     useEffect(effect: () => void, deps?: readonly unknown[]) {
       if (!f.shallow) return actual.useEffect(effect, deps);
       if (!f.effectDeps || !deps || deps.some((value, index) => !Object.is(value, f.effectDeps?.[index]))) {

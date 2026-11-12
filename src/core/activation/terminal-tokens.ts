@@ -737,6 +737,15 @@ async function desktopActivationConnection(projectUrl: string) {
   return { backend, cloud: { url: saved.url, key: saved.key } };
 }
 
+async function assertDesktopActivationConnectionUnchanged(
+  projectUrl: string,
+  expected: Awaited<ReturnType<typeof desktopActivationConnection>>,
+) {
+  const current = await desktopActivationConnection(projectUrl);
+  if (current?.backend !== expected?.backend || current?.cloud.url !== expected?.cloud.url || current?.cloud.key !== expected?.cloud.key)
+    throw new ActivationError("The saved connection changed during activation. Retry with this device's current settings.", false, "EACTIVATION_CONTEXT_CHANGED");
+}
+
 async function completeDesktopActivation(
   config: TerminalConfig,
   connection: NonNullable<Awaited<ReturnType<typeof desktopActivationConnection>>>,
@@ -977,7 +986,7 @@ function activationFailureMessage(e: unknown): string {
 }
 
 /** Decrypt, verify against the server and register this machine. */
-export async function activateTerminal(code: string): Promise<TerminalConfig> {
+export async function activateTerminal(code: string, beforeClaim?: () => Promise<void>): Promise<TerminalConfig> {
   // Two shapes travel in the wild: the current `ENC_V1:` one-time token and
   // the older self-contained payload still held by tills not yet re-issued.
   let payload: {
@@ -1100,6 +1109,10 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
   let claimResult: { data: unknown; error: unknown };
   try {
     claimResult = await withActivationRetry(async () => {
+      if (beforeClaim) {
+        await beforeClaim();
+        await assertDesktopActivationConnectionUnchanged(payload.supabase_url, desktop);
+      }
       const result = await rpcOn(tenant, "terminal_token_claim", {
         p_token_id: payload.token_id,
         p_device: deviceName,
@@ -1111,6 +1124,7 @@ export async function activateTerminal(code: string): Promise<TerminalConfig> {
       return result;
     });
   } catch (claimError) {
+    if (claimError instanceof ActivationError) throw claimError;
     const message = activationFailureMessage(claimError);
     note("unreachable", message, branch);
     throw new ActivationError(message);
@@ -1356,7 +1370,7 @@ async function fetchPairingApproval(request: PairingRequest): Promise<PairingApp
   return body;
 }
 
-export async function activateWithTokenId(request: PairingRequest, onApproved?: () => void): Promise<TerminalConfig | null> {
+export async function activateWithTokenId(request: PairingRequest, onApproved?: () => void, beforeClaim?: () => Promise<void>): Promise<TerminalConfig | null> {
   const shell = terminalRuntimePlatform();
   const approval = await withActivationRetry(() => fetchPairingApproval(request)).catch((e: unknown) => {
     if (e instanceof ActivationError) throw e;
@@ -1379,13 +1393,19 @@ export async function activateWithTokenId(request: PairingRequest, onApproved?: 
   if (!alreadyClaimed && approval.expiresAt && new Date(approval.expiresAt).getTime() < Date.now()) {
     throw new ActivationError("This pairing request has expired. Ask an administrator to approve it again.");
   }
-  const desktop = await desktopActivationConnection(approval.supabaseUrl);
+  const approvedProject = approval.supabaseUrl;
+  const desktop = await desktopActivationConnection(approvedProject);
   onApproved?.();
   const tenant = createTenantClient(desktop?.cloud.url ?? approval.supabaseUrl, desktop?.cloud.key ?? approval.supabaseKey);
   const deviceName = typeof navigator !== "undefined" ? navigator.userAgent.slice(0, 120) : null;
   let claimed: unknown;
   try {
     const result = await withActivationRetry(async () => {
+      // Repair authorization may expire while waiting for approval or retrying.
+      if (beforeClaim) {
+        await beforeClaim();
+        await assertDesktopActivationConnectionUnchanged(approvedProject, desktop);
+      }
       const response = await rpcOn(tenant, "terminal_token_claim", {
         p_token_id: request.tokenId,
         p_device: deviceName,
@@ -1398,6 +1418,7 @@ export async function activateWithTokenId(request: PairingRequest, onApproved?: 
     });
     claimed = result.data;
   } catch (error) {
+    if (error instanceof ActivationError) throw error;
     throw new ActivationError(activationFailureMessage(error), isRetryableActivationError(error));
   }
   if (claimed !== true) {
