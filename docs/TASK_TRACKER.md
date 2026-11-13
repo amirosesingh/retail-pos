@@ -8749,3 +8749,45 @@ the sealed record and saved disabled-SQL choice on rollback; older binaries do
 not enforce the new hold gate if an operator manually re-enables SQL. Prefer a
 reviewed forward correction while prior data remains held. Beta PR/CI/merge and
 any later owner-requested installer publication must be recorded separately.
+
+## 13 November — approved terminal, staff and Settings workflow rules
+
+The owner approved the proposed T1–T24 terminal/login/permission rules and
+S1–S14 Settings rules, including the complete Settings/subpage responsibilities.
+The later T10 clarification controls: automatically synchronize all eligible
+PIN users and protected sign-in verification data to the terminal's authorized
+local SQL scope, including people who have never signed in on that PC. Provision
+this through registered-device authority, independently of the current person's
+session. A person's granted actions within their authority require no additional
+approval PIN. Separate approval rules still govern actions beyond that authority.
+Remove the manager-not-signed-in example from T10; it is not a login prerequisite.
+
+The owner also requests rules for Home, Selling, Inventory and the remaining
+operational pages. Document these using the existing approved branch, financial,
+stock, booking, reporting and recovery decisions; preserve Membership ON HOLD.
+This batch writes permanent instructions and the linked workflow reference only.
+It does not authorize changing runtime permissions, financial policies, database
+schema/data, production or publishing another installer.
+
+Baseline: refreshed beta `a15b83c7e095c6fcd65d0db3079dd363f921f816`;
+isolated branch `codex/staff-settings-permission-rules-beta`. Affected files:
+AGENTS.md, docs/pos-workflow-rules.md, this tracker and PROJECT_MEMORY.md.
+Acceptance: preserve existing instructions; record the corrected T10/T13/T15;
+cover current Settings cards, tabs/aliases and operational routes; distinguish
+requirements from verified behavior; validate links, coverage and scoped diff.
+Documentation-only verification needs no application regression run. Git history
+at the baseline is the recoverable prior rule set; revert only this scoped patch.
+
+Documentation written and checked: T1–T24 and S1–S14 each appear once; all 102
+current non-API page routes are covered, including dynamic detail routes and
+Settings/report compatibility links. All 4 relative rulebook links resolve and
+the scoped whitespace check passes. Only the four listed documentation files
+changed; no application regression suite ran for this documentation-only patch.
+Beta [PR #467](https://github.com/amirosesingh/retail-pos/pull/467) targets beta
+and is labelled beta. Automatic repository/Worker checks run under the existing
+workflows; their result and merge are separate from the local documentation
+checks. This PR does not dispatch an installer release.
+
+Permission malfunction reproduction, runtime audit against the approved rules
+and any implementation remain pending separate scoped work. Do not mark them
+complete because this rulebook is saved or merged.
