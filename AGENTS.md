@@ -446,7 +446,7 @@ that device builds require. The guard lives in
 
 ### Explicit cluster and branch workflow rules
 
-- Follow the C1–C16 and B1–B18 rules and scope matrix in
+- Follow the C1–C18 and B1–B18 rules and scope matrix in
   [POS workflow rules](docs/pos-workflow-rules.md#cluster-and-branch-rules)
   on every affected page, dialog, direct endpoint, native operation, replica and
   recovery path. Catalogue membership, stock location, user authority, device
@@ -454,8 +454,8 @@ that device builds require. The guard lives in
 - Branches in the same configured cluster share the eligible catalogue; stock,
   sales, tenders and shifts retain their branch/location ownership. Global SKU
   allocation does not merge cluster catalogues. Cross-cluster product visibility
-  requires the approved catalogue/posted-transfer evidence; zero stock-map keys
-  or draft transfers do not establish ownership or receipt.
+  requires approved catalogue membership or verified posted purchase/transfer
+  receipt evidence; zero stock-map keys or draft documents do not prove receipt.
 - All newly created distinct products use one global running SKU allocation
   across every branch/cluster in the same POS database. Use the existing atomic
   allocator and non-overlapping reserved ranges; never restart counters per
@@ -464,13 +464,19 @@ that device builds require. The guard lives in
   SKU. Offline creation uses only valid reserved numbers; no local MAX+1 fallback.
   Reserved ranges can leave gaps or reorder creation-time display; do not claim
   gapless offline numbering or renumber existing products to conceal that.
-- Keep cross-cluster reference visibility separate from destination sellability.
-  Authorized Management explicitly selects permitted product/target scopes; view
-  alone grants no sale, stock or financial rights. Sellability requires allowed
-  visibility, ordinary branch/sale authority and destination stock policy. Keep
-  the canonical product/SKU, original history and actual stock; no implicit stock
-  transfer or branch switch follows. This is required behavior to implement and
-  verify, not a claim the current manual selector already exists or works.
+- A verified posted purchase receipt or completed incoming transfer adopts the
+  same canonical product/SKU into the receiving cluster's normal catalogue.
+  Persist that membership independently of current quantity and recent history
+  windows. At zero stock keep the product available to the receiving catalogue,
+  marked Out of stock; never automatically demote it to reference-only, unshare
+  it or archive it globally. Ordinary explicit product restrictions, staff rights
+  and branch stock policies still apply. Keep origin and branch quantities clear.
+- Optional manual cross-cluster reference viewing remains separate from manual
+  sellability for products not yet adopted there. View alone grants no sale,
+  stock or financial rights. A separate manual reference grant is not required
+  after legitimate receipt. Manual unsharing cannot erase received membership,
+  actual stock or history; explicit archive/restriction is a separate audited
+  action. These are requirements to implement/verify, not current pass results.
 - Preserve the normal-terminal branch lock and the positive, active-location
   same-cluster availability exception. Management may use only its authorized
   branch set. Neither a shared cluster, NULL assignment nor a physical local

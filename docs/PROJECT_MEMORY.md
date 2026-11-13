@@ -44,7 +44,7 @@ The exact owner-approved service-only bounded feed RPC and PR384 are applied/dep
 
 The owner additionally requests cluster-based and branch-based rules. Extend the
 existing [workflow rulebook](pos-workflow-rules.md#cluster-and-branch-rules) with
-C1–C16, B1–B18 and a scope/acceptance matrix; require it from AGENTS.md. Preserve
+C1–C18, B1–B18 and a scope/acceptance matrix; require it from AGENTS.md. Preserve
 all previously approved terminal, PIN, permission, Settings and page workflows.
 
 Same-cluster eligible catalogue sharing, separate branch/location quantities and
@@ -83,6 +83,20 @@ when hiding or disabling future selling. The current manual selector is not
 established as implemented. This is documentation approval only; reconcile
 existing transferred-product visibility during a separately authorized runtime
 change, without disabling legitimate existing trading or widening other access.
+
+The later controlling correction is C17/C18: a verified posted purchase receipt
+or completed incoming transfer adopts the SAME canonical product/SKU into the
+receiving cluster's normal catalogue permanently, with distinct branch quantities
+and retained origin/provenance. Zero stock must not hide/unshare it, downgrade it
+to reference-only or archive it globally. Normal product status, explicit selling
+restrictions, user rights and branch stock policy remain applicable. Further
+receiving reuses the existing record; show origin, catalogue memberships and
+local quantity separately. Persist membership independently of live stock and
+finite transfer/history windows. This supersedes requiring a separate manual
+reference/selling selection after legitimate receipt; optional manual reference
+controls remain for unadopted items. Unrelated clusters gain no automatic view.
+Purchase/zero-stock persistence and cross-platform enforcement are requirements,
+not verified implementation or permission to apply schema/data changes.
 
 ## 13 November — approved workflow rulebook and PIN-user provisioning
 

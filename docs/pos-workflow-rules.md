@@ -169,7 +169,7 @@ Management assignment or automatic rewrite of existing records.
 | C1 | Resolve cluster membership from the verified location directory and stable cluster IDs, not labels or a renderer-supplied group name. Missing/ambiguous membership does not mean every cluster; preserve the explicitly supported legacy unclustered behavior. |
 | C2 | Branches in the same configured cluster share eligible catalogue products. Different known clusters remain separate even if Private catalogue is off. Private catalogue does not create separate catalogues between branches of the same cluster. |
 | C3 | Preserve global SKU allocation/uniqueness and stable product IDs across clusters. A global identifier is not permission to display every product, merge catalogues, combine quantities or change established ownership. |
-| C4 | Cross-cluster catalogue availability needs approved membership/provenance or posted completed incoming-transfer evidence for a positive received quantity. A request, draft, unposted transfer or pre-created zero stock bucket is not receipt/ownership evidence. Expose only the eligible product facts, not the source cluster's unrelated data. |
+| C4 | Cross-cluster catalogue availability needs approved membership/provenance or a verified posted purchase receipt/completed incoming-transfer receipt for a positive received quantity. Persist the resulting destination membership under C17/C18. A request, draft, unposted document or pre-created zero stock bucket is not receipt evidence. Expose only eligible product facts, not the source cluster's unrelated data. |
 | C5 | Same-cluster product sharing does not pool stock. Preserve quantities and movement history per branch/location. Catalogue/detail views do not mutate stock or create implicit opening balances. |
 | C6 | A normal terminal may use the approved read-only Other Sources workflow for positive stock at active, authorized locations in its own cluster. Exclude zero/negative quantities and other clusters, including when a transferred product is visible locally. This grants no operating-branch switch or remote stock edit. |
 | C7 | Preserve ordinary authorized intra-cluster transfer rules; do not invent blanket additional approval. Inter-cluster moves use configured selected-approver rules, eligible endpoints and the existing dispatch/receipt/verification workflow. Neither cluster membership nor approval alone posts stock. |
@@ -181,7 +181,9 @@ Management assignment or automatic rewrite of existing records.
 | C13 | Changing a branch's cluster requires authorized location management, validation, save/read-back and an audit. Re-evaluate catalogue, settings, caches and eligible sync scope without relabeling historical transactions or pending work. Any ownership migration or catalogue merge is separate reviewed work. |
 | C14 | Treat Private stock as its current saved preference, not proof of an independent enforced privacy boundary. Preserve terminal/account stock guards and the approved availability exception. Explain current switch effects accurately; additional privacy behavior needs explicit policy and runtime verification. |
 | C15 | Every distinct new product uses one shared running SKU allocation across all branches/clusters of the same POS database. Reserve numbers atomically through the existing global allocator, never independent branch/cluster/PC counters. Distinct products must not receive the same SKU through forms, imports, manual entry, bulk actions, sync or retry. Preserve canonical product identity and use only valid reserved offline numbers. |
-| C16 | Keep permission to view other-cluster item details separate from permission to make explicitly selected products sellable in a destination cluster. Authorized Management selects permitted product/target scopes; default cross-cluster isolation remains. Viewing alone permits no sale, stock mutation or source cost/financial access. Selling requires allowed product visibility, the ordinary branch/action rights and destination stock policy. Preserve the same canonical product/SKU and existing history. |
+| C16 | For optional manual sharing of products not yet adopted in a destination catalogue, keep reference viewing separate from explicitly selected sellability. Authorized Management selects permitted product/target scopes; viewing alone grants no sale, stock mutation or source cost/financial access. Receipt-based adoption under C17/C18 establishes a normal catalogue product, not a reference-only item requiring another manual sharing grant. Ordinary product/branch/action/stock rules still apply. |
+| C17 | A verified posted purchase receipt or completed incoming-transfer receipt adopts the existing canonical product/SKU into the receiving cluster's normal catalogue, retaining origin and separate branch quantities. Apply membership, receipt and stock effects through the authorized transaction/sync group. Reuse the verified product identity; do not create a second SKU merely because another cluster receives it. |
+| C18 | Keep origin and adopted destination catalogue membership durably, independent of current quantity, stock-value filters or recent receipt/transfer history windows. At zero stock retain the normal product with Out of stock status; never automatically hide/unshare it, demote it to reference-only or change a global archive flag. Preserve explicit authorized product restrictions and show verified origin, catalogue membership and the current branch's quantity separately. |
 
 The global SKU rule means:
 
@@ -211,17 +213,73 @@ The global SKU rule means:
   documentation authorizes no duplicate-data cleanup, counter reset, schema
   change or change to offline allocation. Catalogue visibility stays scoped.
 
-The owner-approved cross-cluster controls have these separate responsibilities:
+### Purchase and transfer catalogue adoption
+
+The owner's controlling correction is receipt-based, lasting catalogue adoption:
+
+1. A product created in cluster X belongs to its eligible home catalogue even
+   when its initial quantity is zero. Unrelated clusters gain no automatic view.
+2. An authorized purchasing/receiving workflow in cluster Y identifies the same
+   existing product, or a completed transfer from X delivers it to Y. A posted
+   receipt of a positive quantity establishes Y's catalogue membership. A draft
+   purchase order or transfer alone does not establish receipt.
+3. Keep the same product ID and global SKU. Preserve verified origin/home cluster
+   and record the additional receiving catalogue; do not move ownership from X
+   to Y or copy source quantities, costs or financial records into Y's access.
+4. Show it as a normal eligible product throughout the receiving cluster under
+   the same-cluster catalogue rules. Each branch/warehouse retains its own actual
+   quantity; a newly eligible branch does not inherit the receiving branch's stock.
+5. When Y's quantity falls to zero, keep its catalogue record and configured
+   normal selling status. Mark it Out of stock; sale availability follows the
+   saved branch stock policy. Receiving more stock updates this existing record
+   without another product, SKU or reference-to-selling conversion.
+6. Record the lasting membership/provenance independently of a positive current
+   stock map or a short read window of past receipts/transfers. Preserve it on
+   sync, restart, update and snapshot recovery, including zero-stock rows. History
+   cleanup, selling/returning all units or moving stock onward must not unshare it.
+
+The receipt supplies catalogue adoption, not staff privileges or permission to
+spend another branch's stock. Ordinary sale, purchase/receive, stock, approval,
+branch and explicit product-status restrictions stay in force. An explicit
+authorized archive/discontinue/restrict decision remains distinct and audited;
+zero quantity is not that decision. A receipt found invalid by an authorized
+correction requires its reviewed reconciliation, not silent deletion of records.
+Do not invent missing origin/provenance for legacy rows: show unknown/review
+where necessary. Any required persistence/schema work remains a separately
+reviewed implementation; this documentation does not apply a migration.
+
+| Stage for the same SKU `1001` | Branch A in cluster X | Branch B in cluster Y | Catalogue result |
+| --- | --- | --- | --- |
+| Created in X | 10 units | No receipt/adoption | Normal in X; no automatic Y visibility. |
+| B posts an independent purchase receipt for 3 | Still 10 units | 3 units | Normal in both catalogues, same product/SKU, separate quantities. |
+| Alternatively, A dispatches 3 to B | 7 units, 3 in transit | Awaiting receipt | Dispatch alone is not completed receiving. |
+| B completes that transfer receipt | 7 units | 3 units | B/Y adopts the normal product with retained receipt evidence. |
+| B sells/returns/transfers its last units | A remains unchanged by B's local sale | 0 units | Y keeps its normal catalogue record, Out of stock, not reference-only. |
+| B later receives more | Separate A balance | New local balance | Reuse the retained product/SKU; no re-registration or manual re-sharing. |
+
+The purchase and transfer rows illustrate alternative receiving paths, not two
+receipts for the same goods. Show product details such as Origin/home cluster:
+X, Catalogue membership: X and Y, Current branch quantity: 0, Stock status: Out
+of stock. Quantity is never combined into the origin label. Active/Archive stock
+filters may narrow a view, but they do not remove membership; authorized catalogue
+and purchasing searches must support finding these zero-stock records explicitly.
+
+### Optional manual reference and selling controls
+
+These controls apply to additional unadopted cross-cluster browsing/publication.
+They are not prerequisites for products already received into the normal
+destination catalogue under C17/C18:
 
 | Reference visibility at the selected destination | Selected product sellable there | Required result |
 | --- | --- | --- |
-| Off | Off | Hide unshared other-cluster items from reference/selling lists. Preserve authorized access to existing local stock and historical/pending records; do not delete or rewrite them. |
-| On | Off | Permit the approved item-detail projection for reference. Block adding/charging that item through UI, barcode shortcuts, imports and direct sale writers. |
+| Off | Off | Hide other-cluster items without home/adopted membership or another approved publication. This does not hide a legitimate adopted destination product, actual local stock or historical/pending records. |
+| On | Off | Permit an unadopted item's approved detail projection for reference, without a new sale right. An independently authorized posted purchase/transfer receipt can subsequently adopt it as a normal catalogue product. |
 | On | On | Permit the selected product in the destination selling catalogue, subject to the signed-in person's normal sale rights, branch binding, product status and saved destination stock/negative-stock policy. |
 | Off | On | Invalid configuration. Explain that sellability requires permitted visibility and require a deliberate correction; do not silently grant broader cross-cluster access. |
 
-Select the product and explicit eligible destination clusters/branches through
-one authorized management home. A reference-view grant does not grant editing,
+For additional manual publication, select the product and explicit eligible
+destination clusters/branches through one authorized management home. A
+reference-view grant does not grant editing,
 global product administration, source quantities, costs, margins, staff, tenders
 or sales history. The sellability selection does not grant the staff member a
 sale permission or allow them to use another branch's stock. Moving goods still
@@ -230,20 +288,21 @@ keeps its global SKU across all selected destinations; do not copy it into a
 different product merely to expose it in another cluster.
 
 Validate saves and conflicts and refresh the appropriate catalogue/selling
-projections, caches and sync scope. Removing a target or disabling future
-sellability preserves actual stock, accepted transactions, receipts and pending
+projections, caches and sync scope. Removing a manual target does not revoke
+receipt-established normal catalogue membership. Explicitly restricting future
+selling preserves actual stock, accepted transactions, receipts and pending
 operation evidence; resolve affected in-progress work through existing policies.
 Apply the effective selection on search, item detail, scan, cart, server/native
 writers and downloads. Never implement this solely as a list filter. Retain the
 approved offline freshness and supported trading rules; do not claim immediate
 revocation on disconnected devices.
 
-This defines required controls, not an existing screen or completed feature.
-The inspected product model exposes catalogue membership and posted transfers,
-but a complete manual product/target selector and its authoritative enforcement
-have not been established. Their implementation must reconcile existing valid
-transferred-product visibility and trading without abruptly disabling it. This
-documentation changes no stored sharing setting, runtime permission or schema.
+These define required behavior, not a completed feature or an existing manual
+screen. The inspected model exposes catalogue membership and posted transfers;
+complete purchase-based persistence, retention at zero and manual-control
+enforcement have not been verified. Implementation must preserve existing valid
+received products and trading, using lasting provenance rather than a transient
+stock test. This documentation changes no stored setting, permission or schema.
 
 ### Branch rules
 
@@ -279,7 +338,7 @@ already represented by the account model.
 | --- | --- | --- |
 | Operations till A, cashier or administrator | Eligible cluster-X catalogue; branch-A transactions/stock and permitted active positive availability from B. | No branch switch, C catalogue by default, other-branch financial history or B stock edits. |
 | Another till registered to A | Eligible shared branch records and its own applicable terminal settings/work. | Preserve action grants, receipt access and configured shift sharing; do not filter all branch records down to the previous PC's user. |
-| Operations till A sees a product received from C | Eligible transferred product can remain in the destination catalogue under posted provenance. | Do not expose C's other catalogue/financial records or C quantities in Other Sources. |
+| Operations till A sees a product received from C | Same product/SKU becomes a normal destination catalogue member through posted receipt provenance and remains at zero stock. | Do not expose C's other catalogue/financial records or C quantities in Other Sources. |
 | Authorized Management view of A and B | Select either permitted branch or the permitted consolidated view; show data coverage. | Exclude C unless independently authorized. Physical replica contents or role names cannot establish this subset. |
 | Management selects cluster X in All Shops | Cards/charts/totals reflect authorized X locations; All clusters can show all authorized locations, including zero-data ones. | No access expansion and no change to Dashboard's selected branch or Business Board's independently authorized directory. |
 | Cluster-X setting with a branch-A override | Display the effective source and locks; branch B retains its own effective inherited/override values. | Saving A does not overwrite X, B, Y or private owner preferences. |
@@ -300,6 +359,9 @@ The current source inspected for this documentation has separate helpers for
 
 - Catalogue visibility uses stable group/location IDs and posted positive
   transfer evidence; zero stock-map membership alone is not transfer evidence.
+  This observation does not establish durable purchase/receipt membership or its
+  retention at zero across every server/native/snapshot path; C17/C18 are the
+  controlling requirements to verify and implement where missing.
 - Private stock is explicitly a saved preference, not an access guard. Its
   explanatory text must not be treated as implementation of a new privacy rule.
 - All Shops filters an already-authorized directory; a missing company group

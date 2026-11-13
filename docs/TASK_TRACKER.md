@@ -8817,9 +8817,10 @@ and clean scoped diff/whitespace checks. Use documentation checks only locally;
 retain automatic repository checks for the beta PR. Git history at the baseline
 preserves the previous rules; rollback only this documentation patch.
 
-Documentation completed locally: added 16 cluster and 18 branch rules plus eight
-scope/acceptance scenarios, the global SKU example and a four-state independent
-viewing/sellability matrix. Validation confirms all 72 T/S/C/B IDs are unique,
+Documentation completed locally: added 18 cluster and 18 branch rules plus eight
+scope/acceptance scenarios, a purchase/transfer/zero-stock lifecycle example,
+the global SKU example and a four-state optional manual viewing/sellability
+matrix. Validation confirms all 74 T/S/C/B IDs are unique,
 the previous rulebook and AGENTS instructions remain intact, all 102 current
 non-API routes and 38 Settings destinations remain covered, relative links and
 anchors resolve, and whitespace checks pass. Only the four listed documentation
@@ -8857,7 +8858,44 @@ This approves the required behavior in the rules, not its implementation or a
 new permission/schema migration. The current selector is not demonstrated as a
 complete feature. Record that gap, retain existing transferred-product behavior
 until an authorized implementation reconciles it, and keep runtime work separate.
-Final documentation validation passed for C1–C16 and B1–B18 (72 total T/S/C/B
+Earlier separate-controls validation passed for C1–C16 and B1–B18 (72 T/S/C/B
 rules), preserved prior rules/instructions, links/anchors, all four visibility
 states and the unchanged route/Settings mappings. Automatic CI must run on the
 updated PR head; earlier-head checks do not substitute for it.
+
+### Controlling owner correction — purchases and transfers establish lasting catalogue membership
+
+The owner rejects treating goods purchased/received or transferred into a
+destination cluster as merely reference-only, or hiding/downgrading them when
+quantity becomes zero. A verified posted purchase receipt or completed transfer
+receipt adopts the SAME canonical product/SKU into the destination cluster's
+normal catalogue. Preserve its origin and add destination membership; quantities
+remain separate per branch/location. Once adopted, retain that membership at zero
+stock and after earlier receipt/transfer history falls outside a normal read
+window. It is not universal reference visibility for every unrelated cluster.
+
+This correction supersedes making a separate manual sharing selection the only
+way a receiving cluster can see/use its legitimate product. Optional reference
+viewing/manual publication remains separate for products not yet adopted there.
+Normal product status, explicit authorized selling restrictions, user/branch
+permissions and negative-stock policy still apply; receipt grants no staff
+privileges. Zero stock is Out of stock, not a new reference-only permission.
+Purchasing/receiving must reuse an identified existing product rather than create
+a duplicate SKU. Show origin/home cluster, receiving catalogue membership and the
+current branch's quantity without exposing unrelated source stock/financial data.
+
+Add C17/C18, reconcile C4/C16, zero-stock examples, manual-control precedence and
+AGENTS/project memory in PR #468. Draft/unposted/zero-received documents alone do
+not prove receipt. Keep prior rules, scope guards and accepted history. Runtime
+implementation, any necessary schema upgrade and installed acceptance remain
+separate; no production, actual purchase/transfer or stock mutation is authorized
+by this documentation correction.
+
+Final receipt-rule documentation checks passed: all 74 T/S/C/B IDs are present
+once; prior baseline instructions and pre-existing page rules remain intact;
+all 102 page routes and 38 Settings destinations remain covered; relative links,
+anchors and whitespace checks pass. Only four documentation files changed.
+PR #468 remains beta-only; require fresh automatic checks on this corrected
+head. No local application regression suite, live database operation or installed
+catalogue test ran. Purchase/receipt-based durable membership and zero-stock
+retention still need their separately scoped runtime implementation/verification.
