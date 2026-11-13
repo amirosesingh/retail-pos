@@ -8791,3 +8791,39 @@ checks. This PR does not dispatch an installer release.
 Permission malfunction reproduction, runtime audit against the approved rules
 and any implementation remain pending separate scoped work. Do not mark them
 complete because this rulebook is saved or merged.
+
+## 13 November — explicit cluster and branch workflow rules
+
+The owner requests permanent cluster-based and branch-based rules alongside the
+approved page workflows. Extend the existing rulebook and AGENTS.md using current
+approved catalogue, location, device/account scope, stock availability, settings,
+reporting and synchronization decisions. Record requirements separately from
+observed helper behavior and unresolved runtime verification. No new entitlement,
+financial policy, private-stock enforcement, warehouse ACL or Membership work is
+authorized by this documentation request.
+
+Baseline: refreshed beta `3df486702a0a3933f78e96625dea0f29dab96a3e`;
+isolated branch `codex/cluster-branch-workflow-rules-beta`. Scope: AGENTS.md,
+docs/pos-workflow-rules.md, PROJECT_MEMORY.md and this tracker only. Preserve the
+existing T/S rules and page mappings. Cover same-cluster catalogue versus branch
+quantities, transferred-product visibility, global SKU identity, Operations versus
+Management, branch staff/PIN scope, inheritance, initial/push/pull/recovery scope,
+report selection and safe reassignment. No runtime/schema/data/deployment changes
+or installer publication are part of this batch; production remains excluded.
+
+Acceptance: unique C/B rule IDs, explicit scope/example matrix, valid relative
+references, preserved previous instructions, unchanged existing rule/page coverage
+and clean scoped diff/whitespace checks. Use documentation checks only locally;
+retain automatic repository checks for the beta PR. Git history at the baseline
+preserves the previous rules; rollback only this documentation patch.
+
+Documentation completed locally: added 14 cluster and 18 branch rules plus eight
+scope/acceptance scenarios. Validation confirms all 70 T/S/C/B IDs are unique,
+the previous rulebook and AGENTS instructions remain intact, all 102 current
+non-API routes and 38 Settings destinations remain covered, relative links and
+anchors resolve, and whitespace checks pass. Only the four listed documentation
+files changed; no local application regression suite was run. Beta PR/automatic
+checks and merge are recorded through the branch's GitHub review separately.
+
+The reported permission malfunction and broader rules-compliance audit remain
+pending; documentation does not close them or certify runtime enforcement.

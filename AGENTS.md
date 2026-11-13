@@ -444,6 +444,32 @@ that device builds require. The guard lives in
 - Preserve cluster catalogue boundaries and approved transfer rules. A broader
   management view does not authorize merging catalogues or stock ownership.
 
+### Explicit cluster and branch workflow rules
+
+- Follow the C1–C14 and B1–B18 rules and scope matrix in
+  [POS workflow rules](docs/pos-workflow-rules.md#cluster-and-branch-rules)
+  on every affected page, dialog, direct endpoint, native operation, replica and
+  recovery path. Catalogue membership, stock location, user authority, device
+  binding and a selected report filter are different scopes.
+- Branches in the same configured cluster share the eligible catalogue; stock,
+  sales, tenders and shifts retain their branch/location ownership. Global SKU
+  allocation does not merge cluster catalogues. Cross-cluster product visibility
+  requires the approved catalogue/posted-transfer evidence; zero stock-map keys
+  or draft transfers do not establish ownership or receipt.
+- Preserve the normal-terminal branch lock and the positive, active-location
+  same-cluster availability exception. Management may use only its authorized
+  branch set. Neither a shared cluster, NULL assignment nor a physical local
+  replica grants additional staff permissions or branch access.
+- Apply the exact declared scope and ownership on initial download, ordinary
+  upload/download, reconnect and expired-history recovery. Pause controls retain
+  pending work; they do not acknowledge it. Never relabel old work after a branch,
+  cluster, registration or connection change.
+- Scope changes need authorized save/read-back, appropriate locks and deliberate
+  recovery of retained work. A report filter or settings selector is not branch
+  reassignment. Preserve separate branch financial history and warehouse ownership.
+  Do not claim a saved private-stock preference, arbitrary Management subset or
+  warehouse ACL is enforced without verifying the actual runtime boundaries.
+
 ## Controlled audit and implementation
 
 - Membership is **ON HOLD**. Do not redesign, activate or modify it. A confirmed

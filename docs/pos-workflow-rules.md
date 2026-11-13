@@ -149,6 +149,108 @@ Retain the supported `/settings/rules` policies-only route rather than forcing
 operators to receive staff-management rights. Audit actual redirect targets and
 tab permission checks when changing them; route existence alone proves no match.
 
+## Cluster and branch rules
+
+A cluster groups catalogue/settings context. A branch/location owns its business
+transactions and stock quantities. Device registration, account-authorized scope,
+action permissions, catalogue visibility, physical replica contents and selected
+report filters are separate. Showing one cluster or downloading its eligible
+products never grants every user access to every branch's records.
+
+These rules apply while loading initial data, working online or locally, retrying,
+synchronizing and recovering history. They extend the existing owner decisions;
+they do not authorize a catalogue merge, data repair, new warehouse ACL, broader
+Management assignment or automatic rewrite of existing records.
+
+### Cluster rules
+
+| ID | Required behavior |
+| --- | --- |
+| C1 | Resolve cluster membership from the verified location directory and stable cluster IDs, not labels or a renderer-supplied group name. Missing/ambiguous membership does not mean every cluster; preserve the explicitly supported legacy unclustered behavior. |
+| C2 | Branches in the same configured cluster share eligible catalogue products. Different known clusters remain separate even if Private catalogue is off. Private catalogue does not create separate catalogues between branches of the same cluster. |
+| C3 | Preserve global SKU allocation/uniqueness and stable product IDs across clusters. A global identifier is not permission to display every product, merge catalogues, combine quantities or change established ownership. |
+| C4 | Cross-cluster catalogue availability needs approved membership/provenance or posted completed incoming-transfer evidence for a positive received quantity. A request, draft, unposted transfer or pre-created zero stock bucket is not receipt/ownership evidence. Expose only the eligible product facts, not the source cluster's unrelated data. |
+| C5 | Same-cluster product sharing does not pool stock. Preserve quantities and movement history per branch/location. Catalogue/detail views do not mutate stock or create implicit opening balances. |
+| C6 | A normal terminal may use the approved read-only Other Sources workflow for positive stock at active, authorized locations in its own cluster. Exclude zero/negative quantities and other clusters, including when a transferred product is visible locally. This grants no operating-branch switch or remote stock edit. |
+| C7 | Preserve ordinary authorized intra-cluster transfer rules; do not invent blanket additional approval. Inter-cluster moves use configured selected-approver rules, eligible endpoints and the existing dispatch/receipt/verification workflow. Neither cluster membership nor approval alone posts stock. |
+| C8 | Shared settings inherit only through approved section ownership: Global → Cluster → Branch or Global → Cluster → Terminal. Show effective source, locks and overrides. Personal/private preferences retain their separate path. A cluster override must not silently edit unrelated clusters or global defaults. |
+| C9 | Apply catalogue scope consistently to search, scan, product detail, import/export, pricing/cost views, checkout, booking and stock workflows. Keep each action's grant and protected-column rights independent. Do not guess ownership of ambiguous legacy products to make them appear. |
+| C10 | Keep Dashboard on the selected registered/authorized branch. All Shops cards/charts follow the explicit selected cluster; All clusters includes every authorized shop, including zero-data shops. Business Board uses its authorized company directory. A filter narrows existing authority and never creates more. |
+| C11 | Cluster/report totals include only authorized contributing branches and the requested period. Preserve existing financial definitions, currency/time semantics and receipt identities; never double-count transfers, deposits or the same sale. Protect costs and expose incomplete coverage. Consolidation does not merge underlying histories. |
+| C12 | Catalogue/settings inheritance does not make branch sales, payments, shifts, staff credentials or private data cluster-wide. Each sync relation keeps its declared direction, field ownership and branch/cluster/global/private projection. Replica contents confer no person-session access. |
+| C13 | Changing a branch's cluster requires authorized location management, validation, save/read-back and an audit. Re-evaluate catalogue, settings, caches and eligible sync scope without relabeling historical transactions or pending work. Any ownership migration or catalogue merge is separate reviewed work. |
+| C14 | Treat Private stock as its current saved preference, not proof of an independent enforced privacy boundary. Preserve terminal/account stock guards and the approved availability exception. Explain current switch effects accurately; additional privacy behavior needs explicit policy and runtime verification. |
+
+### Branch rules
+
+| ID | Required behavior |
+| --- | --- |
+| B1 | Derive an Operations terminal's branch from verified saved registration/session context. Every signed-in role, including administrator, remains bound to that branch. Missing/forged request fields must not remove the binding. |
+| B2 | An authorized Management device or web account may select/consolidate only its verified authorized branches. Device admission, account assignment, role, action and selected view remain separate. NULL assignment or Management type alone never establishes all-branch access. |
+| B3 | Read/write branch facts within their declared scope on server APIs/RPCs, Electron IPC, SQL/offline readers/writers and synchronization. Resolve location/parent relationships before access; a same-cluster label, shared SQL database or hidden selector is insufficient authorization. |
+| B4 | Synchronize the eligible branch records needed by authorized tills, including records from other tills in that branch, not only records created by the current user/PC. Preserve table-specific terminal/private restrictions, receipt access and shift-sharing policy; this is not permission for every person to view every downloaded row. |
+| B5 | Sales, items, payments, refunds, bookings, stock movements and shifts preserve original branch, location, terminal, user, operation and business-time attribution. Bind parent/child scopes and commit protected groups atomically. Never change ownership merely to pass a retry or recovery check. |
+| B6 | Stock is held and valued at the correct location using its actual quantity and applicable cost/price definitions. Warehouse hierarchy does not create an independent ACL or grant another branch's warehouse access. Shared physical storage grants no shared business access. |
+| B7 | A branch/location change to stock uses receiving, transfer or authorized count/adjustment writers. Preserve saved negative-stock policy, movement reasons and stable operation IDs. Price/product edits and report controls must not overwrite quantities. |
+| B8 | Scope caches and pending UI work by connection/database, registration/session, user/permissions, branch/cluster and requested period as applicable. On an authorized view change, discard late old-context responses and hide protected old data; preserve unsaved work and load the new baseline before editing. |
+| B9 | Branch reports, receipts, shift snapshots and history use the saved business timezone/date cutoffs and the requested branch. Preserve distinct sale/payment/shift periods and original accepted closings. A selected branch's incomplete replica must not appear as verified complete totals. |
+| B10 | Automatically synchronize eligible branch/PIN authorization projections as in T10, including users who have never signed in on that PC. Include eligible selected approvers only within approved scope. Downloaded accounts grant no automatic session, all-branch access or extra action rights. |
+| B11 | Effective branch settings follow the section's allowed inheritance/locks and scope-specific save/read-back. Authorized local changes upload and canonical changes download through declared ownership. Failed reads do not replace rules with defaults; supported pending offline changes retain their verified baseline. |
+| B12 | Use verified branch/cluster/registration/database scope on initial bootstrap, push, pull, ordinary reconnect and expired-cursor recovery. Keep progress/checkpoints for the actual scope; one branch/PC's completion does not certify another. Apply complete dependency groups and their checkpoint together. |
+| B13 | Existing branch sync switches hold their mapped outbound changes durably when paused. They do not delete pending work, report cloud acceptance, reset checkpoints or silently stop independent eligible download/control work. Verify actual table/direction mapping when changing the switches; labels alone prove no coverage. |
+| B14 | Receive and dispatch transfers only through the existing authorized source/destination workflow. Validate both endpoints, current document state, configured allow-transfer/approval rules and quantities at the authoritative transition. Preserve in-transit, partial, variance, cancellation and receipt evidence without duplicate movements. |
+| B15 | Replicate branch operational policies and enforce action/approval/financial limits at the authoritative writer, including native/offline paths. A person acts directly within their saved authority without another approval PIN; approval scope never overrides a fixed Operations branch binding. |
+| B16 | Deactivating, reassigning or regrouping a branch/terminal preserves historical identity and pending/failed/conflicted transactions. Reassignment requires its separate authorized audit/recovery process. A report filter, session adoption or renderer activation copy is not reassignment. |
+| B17 | Online fallback preserves the old local branch/database binding, retained work and any explicit recovery hold. Return to local operation only through verified readiness and identity. Never upload old work under a replacement registration or infer an empty queue from unavailable SQL. |
+| B18 | Keep branch identity/numbering, settings, recovery state and durable work across restart/update. Show branch-specific pending/error/last-verified status accurately. Restrict repair/reset/backup/export actions to their own rights and scope; no destructive cleanup or live schema change follows from reading these rules. |
+
+### Scope examples and acceptance requirements
+
+For this matrix, A and B share cluster X; C belongs to cluster Y. Management's
+allowed branch set is assumed to be verified separately. These are required
+results, not current test passes or a promise that every arbitrary subset is
+already represented by the account model.
+
+| Context | Required catalogue/data behavior | Boundary to preserve |
+| --- | --- | --- |
+| Operations till A, cashier or administrator | Eligible cluster-X catalogue; branch-A transactions/stock and permitted active positive availability from B. | No branch switch, C catalogue by default, other-branch financial history or B stock edits. |
+| Another till registered to A | Eligible shared branch records and its own applicable terminal settings/work. | Preserve action grants, receipt access and configured shift sharing; do not filter all branch records down to the previous PC's user. |
+| Operations till A sees a product received from C | Eligible transferred product can remain in the destination catalogue under posted provenance. | Do not expose C's other catalogue/financial records or C quantities in Other Sources. |
+| Authorized Management view of A and B | Select either permitted branch or the permitted consolidated view; show data coverage. | Exclude C unless independently authorized. Physical replica contents or role names cannot establish this subset. |
+| Management selects cluster X in All Shops | Cards/charts/totals reflect authorized X locations; All clusters can show all authorized locations, including zero-data ones. | No access expansion and no change to Dashboard's selected branch or Business Board's independently authorized directory. |
+| Cluster-X setting with a branch-A override | Display the effective source and locks; branch B retains its own effective inherited/override values. | Saving A does not overwrite X, B, Y or private owner preferences. |
+| Till A disconnects/restarts with pending sale/stock work | Retain operation IDs, original ownership, dependencies and truthful sync status; retry/recover within A. | No duplicate posting, pending-data loss or reuse of B's checkpoint/snapshot. |
+| A is reassigned or moved from X to Y | Follow the separately authorized assignment/recovery workflow and re-evaluate new eligible views. | Do not relabel old business history, silently release held storage or merge old/new catalogues. |
+
+### Source observations and remaining verification
+
+The current source inspected for this documentation has separate helpers for
+[catalogue/branch switches](../src/lib/branch-policy.ts),
+[All Shops selection](../src/lib/all-shops-scope.ts),
+[company context](../src/lib/company-store-scope.ts),
+[Dashboard scope](../src/lib/dashboard-scope.ts),
+[branch Inventory classification](../src/lib/inventory-branch-view.ts) and
+[settings inheritance](../src/lib/branch-settings.ts). Source reading shows:
+
+- Catalogue visibility uses stable group/location IDs and posted positive
+  transfer evidence; zero stock-map membership alone is not transfer evidence.
+- Private stock is explicitly a saved preference, not an access guard. Its
+  explanatory text must not be treated as implementation of a new privacy rule.
+- All Shops filters an already-authorized directory; a missing company group
+  narrows company context to the selected branch rather than all companies.
+- Inventory Active/Archive classification is branch-relative (quantity above
+  zero versus zero/below), with negative warnings. It does not rewrite a global
+  product archive flag or other branches' status.
+
+These helper observations do not verify server/native enforcement, actual
+replica coverage or installed-device behavior. The existing
+[Management replication reference](management-terminal-replication.md) records
+unresolved arbitrary-subset and native-report authority integration; do not call
+them fixed or narrow the owner's required authorized scope to match a limitation.
+The current branch/PIN/download path, all direct endpoints, reassignment and
+short/long-offline recovery still require their own focused runtime acceptance.
+Keep their status in the existing tracker; documentation does not close them.
+
 ## Common operational workflow
 
 1. Establish verified connection/storage mode, registration where required,
