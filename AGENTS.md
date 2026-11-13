@@ -271,6 +271,41 @@
   approval requirements. General instructions to finish quickly do not authorize
   live data repairs, billing changes, security bypasses or unreviewed releases.
 
+## Approved page workflows, staff permissions and Settings
+
+- Follow the owner-approved [POS workflow rules](docs/pos-workflow-rules.md)
+  before changing terminal/login behavior, staff permissions, any Settings
+  subpage, Home, Selling, Inventory or related operational workflows. The
+  reference includes T1–T24, S1–S14 and the page/action responsibilities.
+  These are requirements, not evidence that the current implementation passes.
+- Automatically synchronize every eligible PIN user's authorized account,
+  active status, branch scope, effective permissions and protected sign-in
+  verification data to connected local SQL when the online source is reachable.
+  Use verified registered-device authority independently of the current staff
+  session. A prior login on that PC is not required. Preserve scope, offline
+  validity and credential-purpose checks; never copy readable PINs/passwords.
+- Once signed in, a person may perform every granted action within their
+  authority without an additional approval PIN. Sign-in PINs, approval
+  credentials, selected approvers and financial limits remain separate. Existing
+  rules requiring approval beyond direct authority remain in force; no broad
+  permission or administrator label bypasses terminal/branch binding.
+- Preserve explicit user grants/denials on ordinary account edits. Explain the
+  effect of an intentional role change before saving. Show page/action entry
+  dependencies in the editor; never silently widen access or save an unusable
+  grant as fully effective. Delegatable grants must work across navigation,
+  direct routes, server/native writers and offline paths within their scope.
+- Enforce each page's workflow on its subpages, dialogs, imports/exports,
+  shortcuts, direct APIs/RPCs and IPC. Preserve existing financial calculations,
+  durable operation identities, exact-once business effects and audit history.
+  Membership remains ON HOLD. Keep unverified or ambiguous business behavior
+  tracked rather than inventing a policy while implementing a page.
+- When an approved change adds or changes a page/action, update its workflow
+  mapping and shared permission registry as applicable. Keep required scope,
+  prerequisites, save/commit result and recovery behavior explicit.
+- Record rule compliance separately from implementation, focused tests, installed
+  acceptance and release. A documentation approval is not permission for live
+  database changes, production promotion or another installer publication.
+
 ## Terminal activation and staff login lifecycle
 
 - Restore saved connection and registration state before selecting setup,

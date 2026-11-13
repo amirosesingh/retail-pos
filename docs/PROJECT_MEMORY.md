@@ -40,6 +40,34 @@ Owner requires all proposed cloud/local database upgrades collected for exact fi
 The exact owner-approved service-only bounded feed RPC and PR384 are applied/deployed on beta. Existing selector/privacy grants and businessrecords are preserved; native continuation is bound to authenticated response metadata. Live147request sample all200/ok with no CPU-exceeded; CPU2–114ms/mean9.469 means NO guarantee allrequestsbelow10ms. Electronfeed131613→133184, all6shiftCTvalid; largebacklog stilldraining. Keep implemented/sample-verified status distinct from fullsync completion, production promotion or installerpublication. Supabase migrationtool ledger20261104042158 corresponds to approvedfile20261104040251, SHA83495D696622241ECA2A8D396234E2FD65EE7C7A3050E93E4280638D6530D59B; do not replay based solely on differing timestamps.
 # POS project memory
 
+## 13 November — approved workflow rulebook and PIN-user provisioning
+
+The owner approved the terminal/login/permission rules T1–T24 and shared Settings
+rules S1–S14, plus all Settings page/subpage responsibilities, and requested
+equivalent rules for Home, Selling, Inventory and related workflows. The permanent
+reference is [POS workflow rules](pos-workflow-rules.md), required by AGENTS.md.
+Its operational rules preserve existing approved financial, branch, catalogue,
+booking, report and recovery policies; they are requirements, not new pass results.
+
+The final T10 correction supersedes any reading that each user must previously
+sign in on each PC: automatically provision every eligible PIN user's authorized
+account/status/scope/permissions and protected sign-in verifier into connected
+local SQL through registered-device sync authority when online service is
+reachable, independent of the current person session. No readable PIN/password
+copying, universal branch access or automatic person login follows. Sign-in and
+approval credentials stay separate. A signed-in person's granted actions within
+their authority require no additional approval PIN. Existing explicit approval
+policies beyond direct authority remain in force; remove the unrelated manager
+prior-sign-in example from T10. Known revocation/denial cannot become offline
+admission, and disconnected devices retain approved freshness limitations.
+
+Preserve T13 explicit user grants/denials on ordinary account edits; explain an
+intentional role preset change before save. T15 requires visible page/action
+dependencies and a deliberate authorized grant, not silent privilege expansion.
+The current batch is documentation only: runtime compliance/permission defect
+verification, code fixes, database changes and installer publication are distinct.
+Membership remains ON HOLD and production is excluded.
+
 ## 12 November — online fallback includes explicit replacement recovery
 
 The owner clarified that no connected local SQL must use the configured online
