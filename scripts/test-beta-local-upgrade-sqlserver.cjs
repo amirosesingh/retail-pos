@@ -47,8 +47,27 @@ async function seedPending(f, seed) {
       VALUES(NEWID(),N'BETA-UPGRADE-FIXTURE',@terminal,N'{"pending":true}',REPLICATE('b',64));`);
 }
 async function main() {
-  assert(["--run","--foreign-key"].includes(process.argv[2])&&process.argv.length===3,"Use --run or --foreign-key; no connection arguments");
+  assert(["--run","--foreign-key","--fresh"].includes(process.argv[2])&&process.argv.length===3,"Use --run, --foreign-key or --fresh; no connection arguments");
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  if(process.argv[2]==="--fresh"){
+    const {packageFreshLocal}=require("./lib/beta-local-fresh.cjs"),f=await createOwnedUpgradeFixture();
+    try{
+      await check("fresh beta package rejects the wrong database before creating core",async()=>{
+        await assert.rejects(f.pool.request().batch(packageFreshLocal().sql),/exact empty isolated beta database/);
+        assert.equal((await f.pool.request().query("SELECT COUNT(*) n FROM sys.tables WHERE is_ms_shipped=0")).recordset[0].n,0);
+      });
+      await check("fresh core gains every current sync metadata module",async()=>{
+        await f.pool.request().batch(packageFreshLocal(f.database).sql);
+        for(const module of manifest.modules) await f.pool.request().batch(validationSql(module.shape,module.id));
+      });
+      const seeded=await seed(f);await seedPending(f,seeded);const before=await snapshot(f);
+      await check("fresh rerun refuses populated beta without changing saved data or pending work",async()=>{
+        await assert.rejects(f.pool.request().batch(packageFreshLocal(f.database).sql),/Fresh setup requires an empty database/);
+        preserved(await snapshot(f),before);
+      });
+    }finally{await f.close();}
+    console.log(JSON.stringify({passed,productionConnections:0}));return;
+  }
   if(process.argv[2]==="--foreign-key"){
     const f=await createOwnedUpgradeFixture();
     const quote=name=>"["+name.replaceAll("]","]]")+"]";

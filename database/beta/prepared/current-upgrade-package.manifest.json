@@ -112,12 +112,21 @@
       }
     ]
   },
+  "freshLocal": {
+    "file": "database/beta/retail-pos-local-beta-current-fresh.sql",
+    "sha256": "A7138768102AF730EB11975EF144C7DAF917023B45A7B1DCED7B6510BBE67E07",
+    "sourceSha256": "89EE98CDAB9AAF4B19EE53EC6234F5A47EB201AB9B322BB0D996AFA63A728549",
+    "upgradeSha256": "02254C3B750C87003C14B81D8459CB6BA35E71E265B76AB3B9226CC5B2E66899",
+    "database": "POS_Local_Beta",
+    "prerequisite": "Pre-create an empty isolated database; selected target is never created/switched by this file"
+  },
   "readme": {
     "file": "database/beta/README-existing-upgrade.md",
-    "sha256": "1B9D1F87CDA5DF49A9B84D434705C7752F84D0C729441F69CFA86A9E74AA27D4"
+    "sha256": "FC1F50389B7790D92CB4C0AC74B7BDA931CC7FF78FD5EF9CE0FA28CDFB3146FA"
   },
   "notIncluded": [
-    "Fresh installation",
+    "Supabase fresh replay on an existing project",
+    "Database creation",
     "Production delta/application",
     "New documentation-only C17/C18 implementation",
     "Pilot activation",

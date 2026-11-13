@@ -1,18 +1,21 @@
-# Retail POS Beta existing database upgrade
+# Retail POS Beta fresh local setup and existing database upgrade
 
 This package prepares the existing-database storage required by beta source
 `71022a12d677ae3cba61427ea93819e1697e2479` (application source version 1.4.83).
 Installer display versions are assigned separately by the release workflow.
 It includes the event/outbox, grouped stock, refund, settings and recovery storage
 used by the current two-way sync code, alongside legacy Change Tracking mirrors.
-It is not a fresh installer, a beta app installer or a production upgrade.
+An additional fresh local entry file composes the reviewed full core installer
+and the current metadata upgrade. This package is not a beta app installer or
+a production upgrade. The Supabase entry file remains an existing-project update.
 
-## The two SQL files
+## Choose the right SQL file
 
 | File | Exact target | Behavior |
 | --- | --- | --- |
 | `retail-pos-supabase-beta-upgrade.sql` | Retail POS Beta `irjkmhgrjgcaoixcixut`, database `postgres`, system identifier `7703759698107299042`, owner role `postgres` | Verify/no-op on the captured current schema; upgrade only the recognized prior beta through the reviewed tender/transfer/booking payload; refuse unknown targets or baselines. |
 | `retail-pos-local-beta-upgrade.sql` | An existing isolated `POS_Local_Beta` database with the recognized Retail core schema 24 | Add or recognize the complete reviewed metadata set, preserve existing rows and reject partial/unknown shapes. It creates no database and switches no connection. |
+| `retail-pos-local-beta-current-fresh.sql` | A newly created, empty isolated `POS_Local_Beta` database | Install the full reviewed core and all13 current sync metadata modules. Refuse populated/wrong databases. Creates no database and switches no connection. |
 
 The single ZIP also contains this README and the exact SHA-256 package manifest.
 The local module identities are packaging identities, not new core-migration
@@ -30,6 +33,38 @@ business imports, backfill, stock adjustment or checkpoint reset is included.
 Newly documented permanent catalogue membership rules C17/C18 are not reported
 as implemented by this package; their complete runtime/persistence work remains
 separate. Metadata readiness is not proof of a complete live cutover.
+
+## If you need to create the local database first
+
+Msg51031 at the target guard means the SSMS query window is connected to a
+different database. The existing-upgrade file cannot create a missing database.
+It stops before changing anything; do not delete or edit its safety guard.
+
+1. Connect SSMS to the intended isolated local SQL Server instance. On that
+   instance, create a new database named `POS_Local_Beta` using Databases → New
+   Database, or run the following single statement in a new `master` query window:
+
+   ```sql
+   CREATE DATABASE [POS_Local_Beta];
+   ```
+
+   If that name already exists, stop and determine whether it is empty or holds
+   saved data. Do not drop, rename or overwrite an existing database.
+2. Open a query window with `POS_Local_Beta` selected. You can verify it using
+   `SELECT DB_NAME() AS selected_database;`.
+3. Run the whole `retail-pos-local-beta-current-fresh.sql` file. It includes the
+   full core and the newer event/stock/refund/settings/recovery metadata, including
+   retained recovery modules. Do not run the existing-upgrade file on an empty
+   database. After this fresh file succeeds, no second upgrade file is needed.
+4. Configure the beta app's existing local connection fields for this database.
+   Database creation does not configure a terminal, grant a staff login or copy
+   cloud records. Initial authorized bootstrap remains separate.
+
+Fresh core setup and the metadata update commit separately. If a step fails,
+the file throws and does not continue to a later successful result. Preserve the
+new database and the error for review; do not assume the entire fresh setup was
+rolled back, rerun it over populated objects, or delete pending work. The
+existing-data upgrade remains atomic across its own13 metadata modules.
 
 ## Current Supabase Beta state
 
@@ -67,8 +102,9 @@ preparing this package.
    Verify actual schema readiness, scoped reads, pending work and authorized sync.
    Installed-device and two-till acceptance remain separate from SQL generation.
 
-For an empty database, use the separately guarded beta fresh files already in
-`database/beta/`; this existing-database file intentionally refuses that workflow.
+For an empty local database, use the current-fresh entry file above; the existing-
+database file intentionally refuses that workflow. Retail POS Beta Supabase
+already exists and is current: do not replay a cloud fresh schema into it.
 For a core below24, above24 or an unrecognized shape, stop and prepare the exact
 missing incremental path; never replay a fresh schema or fake a migration ledger.
 

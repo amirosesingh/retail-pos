@@ -78,6 +78,16 @@ No live schema application, production action or installer release occurred;
 fixture success is not installed/two-till acceptance. Fresh installations and
 future production deltas stay separate; do not bypass beta guards.
 
+Owner then clarified the local database does not yet exist after the expected
+51031 target refusal. Provide the separate current-fresh local entry, not a
+weakened existing-upgrade guard. It requires a pre-created empty POS_Local_Beta
+and runs the unchanged full beta core plus the current13-module upgrade. Document
+creation/selecting in SSMS. Fresh core/metadata commits remain separate; stop on
+errors and preserve any partial setup. Final checks:37 focused Node tests and19
+owned LocalDB groups, including three fresh/populated-refusal cases, passed.
+No operator database was created/applied. The already-current Supabase Beta
+project still uses its existing-project verifier; never fresh-replay it.
+
 ## 13 November — explicit cluster and branch workflow rules
 
 The owner additionally requests cluster-based and branch-based rules. Extend the

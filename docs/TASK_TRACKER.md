@@ -8976,3 +8976,30 @@ Windows/CI. No actual hosted/installed DB upgrade, data rewrite, credential
 change, rollout activation, production promotion or installer publication was
 performed. Future production baseline/delta, per-PC application/acceptance and
 documentation-only C17/C18 catalogue implementation remain separate pending work.
+
+Fresh-local clarification: the owner reports51031 at line9, then confirms the
+local database still needs creating. This is the expected exact-target refusal,
+not permission to bypass it. Add a separate current-fresh entry file that requires
+a pre-created empty POS_Local_Beta, composes the unchanged reviewed full beta core
+installer and current13-module metadata upgrade, and refuses wrong/populated
+targets before setup. No database is created or selected by this file. Document
+SSMS New Database/CREATE DATABASE and selecting the new beta database first.
+The existing Supabase Beta project remains current; no fresh cloud replay.
+
+`retail-pos-local-beta-current-fresh.sql` SHA-256:
+A7138768102AF730EB11975EF144C7DAF917023B45A7B1DCED7B6510BBE67E07.
+The fresh entry keeps original transaction boundaries: core and metadata commit
+separately, so an error stops later work but does not promise a whole-core
+rollback. Preserve failed setup and pending data for review; no automatic drop.
+The earlier upgrade-only ZIP remains valid for existing databases. The expanded
+Retail-POS-Beta-Database-Setup-20261113.zip contains three SQL files, README and
+manifest (five verified entries), SHA-256:
+6A9FD0DE0DFB150EEE1DCB821DAB7220409C815331F286FFFB87C5F125B530CA.
+
+Final focused Node set now37 passed. Three additional owned LocalDB fresh cases
+passed: wrong target creates no core, complete fresh setup matches all13 metadata
+shapes, populated rerun refuses while preserving saved business/pending evidence.
+Combined actual SQL groups19; all owned fixtures cleaned. Deterministic generation,
+scoped lint and diff checks pass. No operator/production database was connected or
+created, and no schema was applied there. PR469 now includes both fresh-local
+preparation and existing-data upgrade paths; exact new head CI still required.

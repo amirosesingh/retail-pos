@@ -51,6 +51,13 @@ test("cloud adapter removes only the owned outer transaction", () => {
   assert.equal(reviewedBody(s),"-- preserved\nSELECT 'literal';\n");
   assert.throws(()=>reviewedBody("BEGIN;\nBEGIN;\nCOMMIT;"));
 });
+test("fresh local package pins an empty beta target and composes the reviewed full core and current upgrade",()=>{
+  const {packageFreshLocal}=require("./lib/beta-local-fresh.cjs"),fresh=packageFreshLocal();
+  assert.equal(fresh.upgradeSha256,packageLocal().sha256);
+  assert(fresh.sql.includes("Fresh setup requires an empty database"));
+  assert(!/^\s*GO\s*$/im.test(fresh.sql));
+  assert(fresh.sql.indexOf("@@TRANCOUNT<>0")<fresh.sql.indexOf("IF DB_NAME()"));
+});
 test("known prior cloud baseline upgrades atomically and populated rerun is a no-op", async () => {
   const f=await fixture();try{
     await f.db.exec(f.sql);await f.db.exec("INSERT INTO fixture_feature VALUES(7)");
