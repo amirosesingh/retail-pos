@@ -1,5 +1,11 @@
 # Retail POS database setup
 
+For current isolated beta fresh-local setup or an **existing-database** event-sync
+upgrade, use [Retail POS Beta setup and upgrade](../database/beta/README-existing-upgrade.md).
+It distinguishes the cloud's already-installed upgrade from the newer local
+event/stock/refund/settings/recovery metadata. The general fresh-install files
+below are not a universal production or beta upgrade path.
+
 Use these two complete POS setup files:
 
 | Database | File | Where to run |
@@ -23,7 +29,7 @@ Cloud writes from desktop, web or mobile enter the existing durable change feed.
 
 Local business writes wake sync promptly. Pure activity batches wait up to two minutes; mixed sale/activity transactions stay together. A quiet two-minute recovery pass catches missed notifications and reconnects. A new terminal still bootstraps its branch data before continuing from checkpoints.
 
-Closing Electron first saves buffered activity, drains accepted local writes and requests a final sync including activity. The window stays open if offline, paused, timed out, awaiting authorization, or still awaiting cloud acknowledgement. Shift-close synchronization also reports offline work as pending. Reconcile compares counts; it is not a substitute for transaction acknowledgement.
+Closing Electron first saves buffered activity and drains accepted local writes. With ready local SQL and readable durable pending storage, offline close preserves pending work for reconnect without requiring cloud synchronization. Online close uses the existing authorized final sync and bounded retry. Actual local save/storage failures remain blockers; closing offline does not acknowledge cloud acceptance or finalize a pending shift. Reconcile compares counts; it is not a substitute for transaction acknowledgement.
 
 ## Local SQL Server setup or upgrade
 

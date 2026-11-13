@@ -331,6 +331,20 @@
 
 ## Electron startup and local SQL readiness
 
+- Electron must support its approved offline workflows when the configured local
+  SQL database is ready and offline session/policy authority is valid. Loss of
+  internet is not loss of local SQL. Keep explicit online-only operations and
+  unreadable/unavailable local storage accurately distinguished.
+- At normal offline close, finish accepted renderer/native writes and verify
+  readable durable pending storage, then close without attempting cloud sync or
+  presenting a cloud-synchronization-required dialog. Preserve pending work and
+  resume eligible sync on reconnect/restart; do not fabricate cloud acceptance.
+- At online close, use existing authorized final-sync policy and bounded retry.
+  No pending work closes normally; loss of connectivity returns to safe offline
+  closing after local durability checks. Never send anonymous staff operations
+  merely to close a signed-out terminal. Local write/storage failure remains a
+  real blocker. SQL files alone do not establish this application behavior.
+
 - On normal application startup, automatically restore the enabled, saved local
   SQL Server profile and its vault credentials and open the native connection.
   Do not wait for Settings, staff login or the first sale to begin connecting.

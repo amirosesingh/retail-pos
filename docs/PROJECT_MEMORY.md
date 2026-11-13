@@ -40,6 +40,54 @@ Owner requires all proposed cloud/local database upgrades collected for exact fi
 The exact owner-approved service-only bounded feed RPC and PR384 are applied/deployed on beta. Existing selector/privacy grants and businessrecords are preserved; native continuation is bound to authenticated response metadata. Live147request sample all200/ok with no CPU-exceeded; CPU2–114ms/mean9.469 means NO guarantee allrequestsbelow10ms. Electronfeed131613→133184, all6shiftCTvalid; largebacklog stilldraining. Keep implemented/sample-verified status distinct from fullsync completion, production promotion or installerpublication. Supabase migrationtool ledger20261104042158 corresponds to approvedfile20261104040251, SHA83495D696622241ECA2A8D396234E2FD65EE7C7A3050E93E4280638D6530D59B; do not replay based solely on differing timestamps.
 # POS project memory
 
+## 13 November — current beta database package and offline close
+
+The owner clarifies that the requested deliverable is SQL for existing Supabase
+and local SQL Server databases, matching the current event/outbox plus Change
+Tracking beta. Do not supply an old025–030-only file as the complete newer sync
+schema or run a fresh installer against populated data. Prepare guarded files
+and one downloadable bundle; record source/target hashes, recognized baselines,
+transaction ownership, rollback and focused fixture results. Supabase Beta is
+irjkmhgrjgcaoixcixut through lucky, system identifier7703759698107299042, with
+20261110031005 already installed on read-only inspection. Production remains
+excluded; its later upgrade needs its own baseline/delta and execution approval.
+
+Electron must work offline for supported actions when configured local SQL,
+offline authority and scoped baseline are ready. At offline close, finish local
+saves, verify readable durable pending storage, skip cloud sync and its required-
+sync dialog, and retain queues for reconnect/restart. Online close attempts the
+existing authorized final sync with bounded retry. Local save/storage failures
+remain real blockers. No local SQL plus no internet cannot support new business
+writes. Do not confuse network failure with actual permission denial or promise
+offline provider acceptance. Record this rule separately from SQL preparation.
+
+Automatic expired-history/date-window recovery uses committed checkpoints,
+scoped snapshots and verified operation evidence without deleting pending work.
+Date/time alone never establishes a conflict winner. Newly documented permanent
+receipt-based catalogue behavior remains distinct from implemented/tested schema.
+
+Prepared files now live under database/beta with a deterministic generator and
+frozen catalogue/source manifests. The cloud wrapper verifies/no-ops on the
+captured current beta and applies only the recognized prior reviewed delta;
+the local wrapper requires existing POS_Local_Beta/core24 and composes13 reviewed
+metadata modules atomically. The protected1.4.82 file and all source SQL blobs
+remain unchanged.36 focused Node tests and16 owned disposable LocalDB groups
+passed, including populated rerun, pending/checkpoint/grant preservation,
+rollback and portable FK-name checks. Only beta metadata was inspected remotely.
+No live schema application, production action or installer release occurred;
+fixture success is not installed/two-till acceptance. Fresh installations and
+future production deltas stay separate; do not bypass beta guards.
+
+Owner then clarified the local database does not yet exist after the expected
+51031 target refusal. Provide the separate current-fresh local entry, not a
+weakened existing-upgrade guard. It requires a pre-created empty POS_Local_Beta
+and runs the unchanged full beta core plus the current13-module upgrade. Document
+creation/selecting in SSMS. Fresh core/metadata commits remain separate; stop on
+errors and preserve any partial setup. Final checks:37 focused Node tests and19
+owned LocalDB groups, including three fresh/populated-refusal cases, passed.
+No operator database was created/applied. The already-current Supabase Beta
+project still uses its existing-project verifier; never fresh-replay it.
+
 ## 13 November — explicit cluster and branch workflow rules
 
 The owner additionally requests cluster-based and branch-based rules. Extend the

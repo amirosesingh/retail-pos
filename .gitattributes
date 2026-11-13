@@ -22,3 +22,18 @@
 /database/sqlserver/recovery/held-sale-review-metadata.sql text eol=lf
 /database/beta/retail-pos-supabase-beta-fresh.sql text eol=lf
 /database/beta/retail-pos-local-beta-fresh.sql text eol=lf
+# Reviewed inputs/outputs of the current existing-beta upgrade package.
+/database/beta/retail-pos-supabase-beta-sync-upgrade.sql text eol=lf
+/database/beta/retail-pos-supabase-beta-upgrade.sql text eol=lf
+/database/beta/retail-pos-local-beta-upgrade.sql text eol=lf
+/database/beta/retail-pos-local-beta-current-fresh.sql text eol=lf
+/database/beta/README-existing-upgrade.md text eol=lf
+/database/beta/prepared/*.json text eol=lf
+/database/beta/prepared/*.sql text eol=lf
+/scripts/preparation/pos-sale-outbox-v1.sql text eol=lf
+/scripts/preparation/pos-sale-acceptance-v1.sql text eol=lf
+/scripts/preparation/pos-sync-live-stock-native-v1.sql text eol=lf
+/scripts/preparation/pos-sync-refund-native-receipt-v1.sql text eol=lf
+/scripts/preparation/pos-sync-cash-settings-recovery-stage-v1.sql text eol=lf
+/scripts/preparation/pos-store-settings-edit-outbox-v1.sql text eol=lf
+/scripts/preparation/pos-store-settings-edit-review-v1.sql text eol=lf

@@ -50,3 +50,6 @@ capacitor-shell/
 # OTA private signing material and generated artifacts
 .ota-private/
 ota-artifacts/
+
+# Task-local disposable database tests and generated operator downloads.
+/.tmp/
