@@ -1,0 +1,126 @@
+{
+  "format": 1,
+  "preparedOn": "2026-11-13",
+  "sourceRevision": "71022a12d677ae3cba61427ea93819e1697e2479",
+  "scope": "Beta only; no application or production approval",
+  "coreVersion": 24,
+  "cloud": {
+    "file": "database/beta/retail-pos-supabase-beta-upgrade.sql",
+    "sha256": "D89678E5A2C007AB90CDE0ECE5327C95ADBCE518FBA6A1C9A566577EF6381B02",
+    "sourceSha256": "C242277F25C81A3AFE18C770EC8947CD17E7EABF534D342DBCAD5B3470FDB184",
+    "bodySha256": "D8C9A995F765DB5EB8A69E764279FF8C53FEC8FE6D268E7DD5A7FE2499B39541",
+    "project": "irjkmhgrjgcaoixcixut",
+    "systemIdentifier": "7703759698107299042",
+    "behavior": "Verify/no-op if current; exact prior baseline upgrade otherwise; reject unknown"
+  },
+  "local": {
+    "file": "database/beta/retail-pos-local-beta-upgrade.sql",
+    "sha256": "02254C3B750C87003C14B81D8459CB6BA35E71E265B76AB3B9226CC5B2E66899",
+    "database": "POS_Local_Beta",
+    "requiredCore": 24,
+    "modules": [
+      {
+        "id": "025_shift_financial_bases",
+        "source": "database/sqlserver/prepared/025_shift_financial_bases.sql",
+        "originalSha256": "2C6E250D04855B86447603763C1A9304241D99D77814040756AB9AA67CB77897",
+        "adapter": "reviewed-existing-module",
+        "adaptedSha256": "2C6E250D04855B86447603763C1A9304241D99D77814040756AB9AA67CB77897"
+      },
+      {
+        "id": "026_shift_financial_operations",
+        "source": "database/sqlserver/prepared/026_shift_financial_operations.sql",
+        "originalSha256": "26A55BC6FD352083AA388283F093212E9C74081E9C96FE87A79E71288AE235FA",
+        "adapter": "reviewed-existing-module",
+        "adaptedSha256": "26A55BC6FD352083AA388283F093212E9C74081E9C96FE87A79E71288AE235FA"
+      },
+      {
+        "id": "027_shift_branch_sharing",
+        "source": "database/sqlserver/prepared/027_shift_branch_sharing.sql",
+        "originalSha256": "E0E9A77D847A08961BAA1EB7D75C67F971960E086FA286A7891FC424DE93F359",
+        "adapter": "reviewed-existing-module",
+        "adaptedSha256": "E0E9A77D847A08961BAA1EB7D75C67F971960E086FA286A7891FC424DE93F359"
+      },
+      {
+        "id": "028_retained_shift_evidence",
+        "source": "docs/database/retained-shift-recovery-evidence.sql",
+        "originalSha256": "E3727FE62A276C1EAF200F8783B289D5BE745F2E95D563CDA850EEE9F8CAADCD",
+        "adapter": "reviewed-existing-module",
+        "adaptedSha256": "E3727FE62A276C1EAF200F8783B289D5BE745F2E95D563CDA850EEE9F8CAADCD"
+      },
+      {
+        "id": "029_legacy_shift_recovery",
+        "source": "docs/database/legacy-shift-recovery-outbox.sql",
+        "originalSha256": "08917EE9041033A68A81751D6409B0BB60E7E0D1D3878DCF577EA64D0B6C5307",
+        "adapter": "reviewed-existing-module",
+        "adaptedSha256": "08917EE9041033A68A81751D6409B0BB60E7E0D1D3878DCF577EA64D0B6C5307"
+      },
+      {
+        "id": "030_reviewed_shift_adoption",
+        "source": "docs/database/reviewed-shift-adoption.sql",
+        "originalSha256": "5EE385C20BE5C3A79C0F0CBB91D0D4294EF17D0CB8B350201C23B4B65BF4CE92",
+        "adapter": "reviewed-existing-module",
+        "adaptedSha256": "5EE385C20BE5C3A79C0F0CBB91D0D4294EF17D0CB8B350201C23B4B65BF4CE92"
+      },
+      {
+        "id": "040_sale_event_outbox",
+        "source": "scripts/preparation/pos-sale-outbox-v1.sql",
+        "originalSha256": "079D31BC093EE132EE429956711A238B20AE58A8F378A28E0DDF2A10567DB9F7",
+        "adapter": "standalone-sale-guard",
+        "adaptedSha256": "62D81D15CFDEE29F79C10C7FFF4E5DD9ACA20C24C2845ACF0CC5B449317C6905"
+      },
+      {
+        "id": "041_sale_acceptance",
+        "source": "scripts/preparation/pos-sale-acceptance-v1.sql",
+        "originalSha256": "9C52E214170ACF1AECF66076ED6E9C0D67A7BD892D200EA9D1D71DC7C7A674F3",
+        "adapter": "standalone-sale-guard",
+        "adaptedSha256": "26BDF942118A1F10B7A8B8539A3281E715B70AE86A6F1ECFBF503B9773153057"
+      },
+      {
+        "id": "042_grouped_stock",
+        "source": "scripts/preparation/pos-sync-live-stock-native-v1.sql",
+        "originalSha256": "0ACFEB3FCB3D8FBBAE7356D0525458CD0375A41C5F737331298156DD7C15FE26",
+        "adapter": "add-owned-transaction",
+        "adaptedSha256": "7D0925DB3F2563B117E6EE7567ECA7118652FD15872298606C0429D00BE1E781"
+      },
+      {
+        "id": "043_refund_receipt",
+        "source": "scripts/preparation/pos-sync-refund-native-receipt-v1.sql",
+        "originalSha256": "9E31AB9E251EC32188B08A6CAFC01BA091E0F34B5C3FCF9A842CE931D2849230",
+        "adapter": "unchanged",
+        "adaptedSha256": "9E31AB9E251EC32188B08A6CAFC01BA091E0F34B5C3FCF9A842CE931D2849230"
+      },
+      {
+        "id": "044_recovery_pages",
+        "source": "scripts/preparation/pos-sync-cash-settings-recovery-stage-v1.sql",
+        "originalSha256": "7493B702C5B9F198820F87BEE6A77C0A88528C2D32B171795D982397B1117AF7",
+        "adapter": "add-owned-transaction",
+        "adaptedSha256": "A1950FE0BFE149C3A1488EF56F970852F93A5157DBA0468C92567C1D6F3FA9BA"
+      },
+      {
+        "id": "045_settings_commands",
+        "source": "scripts/preparation/pos-store-settings-edit-outbox-v1.sql",
+        "originalSha256": "7FEDDE7385492B8E57372C1313BE62A03A99A1FFD168E801681859699C152577",
+        "adapter": "unchanged",
+        "adaptedSha256": "7FEDDE7385492B8E57372C1313BE62A03A99A1FFD168E801681859699C152577"
+      },
+      {
+        "id": "046_settings_reviews",
+        "source": "scripts/preparation/pos-store-settings-edit-review-v1.sql",
+        "originalSha256": "B585BB494C966C862A306474900D7054833F86903F19BB3ADC8F1614D08461C1",
+        "adapter": "unchanged",
+        "adaptedSha256": "B585BB494C966C862A306474900D7054833F86903F19BB3ADC8F1614D08461C1"
+      }
+    ]
+  },
+  "readme": {
+    "file": "database/beta/README-existing-upgrade.md",
+    "sha256": "1B9D1F87CDA5DF49A9B84D434705C7752F84D0C729441F69CFA86A9E74AA27D4"
+  },
+  "notIncluded": [
+    "Fresh installation",
+    "Production delta/application",
+    "New documentation-only C17/C18 implementation",
+    "Pilot activation",
+    "Operator settings or credential changes"
+  ]
+}

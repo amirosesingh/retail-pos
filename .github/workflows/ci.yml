@@ -30,6 +30,10 @@ jobs:
         run: node scripts/check-permission-migrations.mjs
       - name: Sync, startup and database-upgrade regression tests
         run: node --test scripts/test-sync-pipeline.cjs scripts/test-startup-cloud.cjs scripts/test-event-sync.cjs scripts/test-company-identity.cjs scripts/test-database-upgrade.cjs scripts/test-update-install.cjs scripts/test-existing-local-upgrade.cjs
+      - name: Current beta upgrade artifact and cloud wrapper
+        run: |
+          node scripts/package-beta-database-upgrade.cjs --check
+          node --test scripts/test-beta-cloud-upgrade.cjs
       - name: Atomic shift closure database and retry tests
         run: node scripts/test-shift-closure-sync.mjs
       - name: Trusted Windows closing graph and cloud acknowledgement

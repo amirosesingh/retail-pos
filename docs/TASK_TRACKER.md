@@ -8899,3 +8899,80 @@ PR #468 remains beta-only; require fresh automatic checks on this corrected
 head. No local application regression suite, live database operation or installed
 catalogue test ran. Purchase/receipt-based durable membership and zero-stock
 retention still need their separately scoped runtime implementation/verification.
+
+## 13 November — consolidated beta database upgrade files and offline close rule
+
+The owner clarifies that the requested file is an existing-database SQL upgrade
+package for Supabase and local SQL Server, not an installer or another rules-only
+document. Prepare it against the current beta two-way event/outbox plus Change
+Tracking runtime, including its newer stock, refund, settings and recovery
+storage. The older 1.4.82 standalone025–030 file is not by itself the complete
+current beta sync upgrade. Preserve business rows, SKU/stock, financial history,
+operator configuration, grants and pending work; do not replay a fresh installer.
+
+Baseline: beta71022a12d677ae3cba61427ea93819e1697e2479; isolated branch
+codex/beta-database-upgrade-pack. Read-only inspection selected Retail POS Beta
+irjkmhgrjgcaoixcixut through the lucky connection, system identifier
+7703759698107299042. Its ledger has the 20261110031005 tender/transfer/booking
+upgrade already installed. Production qhrufhtbeguxydenzfey must not be changed or
+used for business tests. A future production package requires its own reviewed
+baseline/delta and exact-target execution approval; beta SQL is not automatically
+portable merely by changing a URL. Preparation does not approve applying any SQL.
+
+The owner also requires Electron to work offline with configured, ready local
+SQL and valid offline authority. At offline close, finish accepted local writes,
+verify durable pending storage, skip cloud sync and any cloud-sync-required
+dialog, and preserve pending uploads for reconnect/restart. Online close attempts
+authorized sync; no pending work closes normally. Local save/storage failures and
+actual authorization/conflict failures remain accurately classified. No local SQL
+plus no internet cannot support new offline business writes. Record the rule;
+SQL files alone do not establish application behavior.
+
+Automatic recovery uses the existing journal, committed scoped checkpoints and
+verified snapshots for expired history. Date/time locates work but is not sole
+conflict authority; retain real conflicting/pending histories and explicit review
+where required. Do not hide errors, fabricate ACKs, reset cursors/registration or
+overwrite existing transactions to force synchronization completion.
+
+Plan: inventory runtime storage, create deterministic guarded existing-database
+SQL entry files with source/target hashes and one downloadable bundle, record
+fresh-versus-upgrade and transaction ownership, verify only relevant packaging,
+isolated upgrade/rerun/rollback and shutdown paths. No live migration, production
+promotion, enrollment/rollout activation, Membership change or beta publication.
+Keep schema readiness, fixture verification, actual per-PC application and future
+release status separate. Source/model gaps remain explicit rather than labelled
+complete because the package was generated.
+
+Prepared deliverables: `database/beta/retail-pos-supabase-beta-upgrade.sql`
+(SHA-256 D89678E5A2C007AB90CDE0ECE5327C95ADBCE518FBA6A1C9A566577EF6381B02)
+and `database/beta/retail-pos-local-beta-upgrade.sql`
+(02254C3B750C87003C14B81D8459CB6BA35E71E265B76AB3B9226CC5B2E66899),
+with the existing-upgrade README, source/baseline manifests and deterministic
+generator. The local file covers all13 reviewed modules025–030 and040–046;
+the latter are package identifiers, not core migration ledger versions. It
+requires an existing isolated POS_Local_Beta/core24. The cloud file pins the
+actual beta cluster/role and exact recognized ledger/catalogue. Rechecking the
+current beta catalogue with the wrapper search_path matched the frozen baseline:
+the already-installed current cloud update is a verified no-op. This is an
+existing-database package, not a combined fresh/upgrade or production installer.
+
+Focused verification passed:36 Node tests covering the package, historical
+artifact compatibility, transaction-wrapper refusal/rollback/no-op and existing
+shutdown/update behavior;14 actual owned disposable LocalDB groups across
+case-insensitive and binary collations covering target/caller guards, atomic
+failure, populated upgrade/rerun, grants/checkpoints/pending preservation and
+unknown stock shape;2 further LocalDB FK groups prove a changed parent is refused
+while a new generated suffix for the correct mapping is recognized. All owned
+fixtures were cleaned. PostgreSQL tests use synthetic PGlite wrapper fixtures,
+not live application of the actual beta payload. Scoped ESLint, deterministic
+artifact verification and whitespace checks passed. No broad unrelated suite ran.
+
+The download ZIP contains exactly the two SQL files, manifest.json and README.md;
+all entry hashes were checked. ZIP SHA-256:
+D224863DE8E750CAEBE4D10428895E4A4C3464715DC8BD1C14D9E3C7CC9D80AF.
+Original source SQL blobs and the protected090F existing1.4.82 artifact remain
+unchanged; reviewed input LF checkout rules make generation reproducible on
+Windows/CI. No actual hosted/installed DB upgrade, data rewrite, credential
+change, rollout activation, production promotion or installer publication was
+performed. Future production baseline/delta, per-PC application/acceptance and
+documentation-only C17/C18 catalogue implementation remain separate pending work.

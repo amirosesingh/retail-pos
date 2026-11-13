@@ -1,0 +1,226 @@
+{
+  "capturedOn": "2026-11-13",
+  "sourceRevision": "71022a12d677ae3cba61427ea93819e1697e2479",
+  "fingerprint": {
+    "functions": [
+      {
+        "md5": "5d3de571c999da2f44b4cec08d0d2e41",
+        "anon": false,
+        "owner": "postgres",
+        "config": [
+          "search_path=pg_catalog"
+        ],
+        "definer": false,
+        "signature": "booking_handover(uuid,numeric,jsonb,jsonb,jsonb,jsonb,jsonb)",
+        "service_role": false,
+        "authenticated": true
+      },
+      {
+        "md5": "1221b923eaac7da2408b967a92dbd536",
+        "anon": false,
+        "owner": "postgres",
+        "config": [
+          "search_path=pg_catalog"
+        ],
+        "definer": false,
+        "signature": "pos_sync_cash_v1.apply_checkout(text,text,uuid,text,uuid,uuid,uuid,uuid,text,text,jsonb)",
+        "service_role": false,
+        "authenticated": false
+      },
+      {
+        "md5": "7c2716d73e4129b1dfc7eb9ddc65a794",
+        "anon": false,
+        "owner": "postgres",
+        "config": [
+          "search_path=pg_catalog"
+        ],
+        "definer": false,
+        "signature": "pos_sync_cash_v1.assert_extended_tenders(sales,jsonb,uuid)",
+        "service_role": false,
+        "authenticated": false
+      },
+      {
+        "md5": "b43a4ebed7d1ba26b1efac43ff4173da",
+        "anon": false,
+        "owner": "postgres",
+        "config": [
+          "search_path=pg_catalog"
+        ],
+        "definer": false,
+        "signature": "pos_sync_cash_v1.project_receipt(text,jsonb)",
+        "service_role": false,
+        "authenticated": false
+      },
+      {
+        "md5": "07da7186057d2cc7cee8979733afc9a3",
+        "anon": false,
+        "owner": "postgres",
+        "config": [
+          "search_path=pg_catalog",
+          "TimeZone=UTC"
+        ],
+        "definer": false,
+        "signature": "pos_sync_feed_v1.publish_transfer_receipt(uuid,jsonb)",
+        "service_role": false,
+        "authenticated": false
+      },
+      {
+        "md5": "ce332bd3a7950fedae2f6afea49772fe",
+        "anon": false,
+        "owner": "postgres",
+        "config": [
+          "search_path=pg_catalog"
+        ],
+        "definer": false,
+        "signature": "pos_sync_feed_v1.record_cash_publication(text,text,uuid,bigint,uuid,uuid,uuid,uuid,text)",
+        "service_role": false,
+        "authenticated": false
+      },
+      {
+        "md5": "f2cafa198ab7f6f8709ffe0caa3c4d46",
+        "anon": false,
+        "owner": "postgres",
+        "config": [
+          "search_path=public, pg_temp"
+        ],
+        "definer": true,
+        "signature": "pos_sync_push_aggregate(uuid,text,text,text,jsonb)",
+        "service_role": true,
+        "authenticated": false
+      },
+      {
+        "md5": "e71200273c8182cad5cff66f4f5fb5fc",
+        "anon": false,
+        "owner": "postgres",
+        "config": [
+          "search_path=pg_catalog"
+        ],
+        "definer": false,
+        "signature": "private.check_booking_handover_upload(text,jsonb,boolean)",
+        "service_role": false,
+        "authenticated": false
+      },
+      {
+        "md5": "f69fd94db446880e3b2fe7eab6d21b85",
+        "anon": false,
+        "owner": "postgres",
+        "config": [
+          "search_path=public, pg_temp"
+        ],
+        "definer": true,
+        "signature": "private.stock_transfer_receive(uuid,text,boolean,jsonb)",
+        "service_role": true,
+        "authenticated": false
+      },
+      {
+        "md5": "fcb1b0af3af9dfd8f60a13ac113fc4c2",
+        "anon": false,
+        "owner": "postgres",
+        "config": [
+          "search_path=public, pg_temp"
+        ],
+        "definer": true,
+        "signature": "private.stock_transfer_verify(uuid,text,jsonb,text)",
+        "service_role": true,
+        "authenticated": false
+      },
+      {
+        "md5": "0a0b2be15b96d195308db70392b0539e",
+        "anon": false,
+        "owner": "postgres",
+        "config": [
+          "search_path=\"\""
+        ],
+        "definer": true,
+        "signature": "received_product_catalogue_stores(uuid)",
+        "service_role": true,
+        "authenticated": false
+      },
+      {
+        "md5": "70d1028d1c25a67bcfd0381decc067fb",
+        "anon": false,
+        "owner": "postgres",
+        "config": [
+          "search_path=\"\""
+        ],
+        "definer": true,
+        "signature": "reserve_product_skus(integer,text,text,text,integer)",
+        "service_role": true,
+        "authenticated": true
+      }
+    ],
+    "migrations": [
+      {
+        "name": "retail_pos_beta_schema_transport",
+        "version": "20261109075631"
+      },
+      {
+        "name": "retail_pos_beta_canonical_schema",
+        "version": "20261109080027"
+      },
+      {
+        "name": "retail_pos_beta_financial_and_grouped_pilot",
+        "version": "20261109080440"
+      },
+      {
+        "name": "retail_pos_beta_guard_booking_scope",
+        "version": "20261109081038"
+      },
+      {
+        "name": "retail_pos_beta_deferred_stock_guard",
+        "version": "20261109081624"
+      },
+      {
+        "name": "retail_pos_beta_native_transfer_receipt",
+        "version": "20261109081629"
+      },
+      {
+        "name": "retail_pos_beta_restore_transfer_approval_helper",
+        "version": "20261109082129"
+      },
+      {
+        "name": "retail_pos_beta_refresh_initial_recovery_pin",
+        "version": "20261109083037"
+      },
+      {
+        "name": "retail_pos_beta_sync_tenders_transfer_booking_upgrade",
+        "version": "20261110031005"
+      }
+    ],
+    "rls_tables": {
+      "public": 79,
+      "pos_sync_feed_v1": 18
+    },
+    "constraints": [
+      {
+        "name": "cash_publications_organization_id_operation_id_key",
+        "validated": true,
+        "definition": "UNIQUE (organization_id, operation_id)"
+      },
+      {
+        "name": "cash_publications_organization_id_scope_id_epoch_fkey",
+        "validated": true,
+        "definition": "FOREIGN KEY (organization_id, scope_id, epoch) REFERENCES pos_sync_feed_v1.cash_settings_pilots(organization_id, scope_id, epoch)"
+      },
+      {
+        "name": "cash_publications_pkey",
+        "validated": true,
+        "definition": "PRIMARY KEY (organization_id, scope_id, epoch, seq)"
+      },
+      {
+        "name": "cash_publications_seq_check",
+        "validated": true,
+        "definition": "CHECK ((seq > 0))"
+      },
+      {
+        "name": "cash_publications_tender_changes_check",
+        "validated": true,
+        "definition": "CHECK (((jsonb_typeof(changes) = 'array'::text) AND ((jsonb_array_length(changes) >= 4) AND (jsonb_array_length(changes) <= 19))))"
+      }
+    ],
+    "project_ref": "irjkmhgrjgcaoixcixut",
+    "database_name": "postgres",
+    "database_role": "postgres",
+    "system_identifier": "7703759698107299042"
+  }
+}

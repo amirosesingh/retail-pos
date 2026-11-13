@@ -38,7 +38,7 @@ policy conflict with the owner rather than silently broadening authority.
 | T19 | Refresh online permission/account changes promptly through the existing refresh mechanism on sign-in, restore and authoritative changes. Reject stale responses after logout/user switch. Offline devices use only their verified synchronized authorization within approved validity rules. |
 | T20 | Separate approval applies to actions beyond the person's configured direct authority, only through a supported approval workflow. Determine that authority using effective grants and the approved action policy/limits; do not request another approval PIN for an action already within it. Verify eligible approver, action/request binding, branch, amount limits, credential purpose/validity and replay rules. Approval authorizes that operation only. |
 | T21 | Audit account/access changes with actor, affected user, scope, previous/new values and outcome. Never log passwords, PINs, private keys or tokens. |
-| T22 | With no actual pending work, close normally even from login. With pending work, attempt sync and preserve durable transactions. Finish renderer saves and accepted local writes before exit; block where active writes or storage cannot finish safely. Committed pending cloud work must remain recoverable, with truthful status and no false acceptance. |
+| T22 | With no actual pending work, close normally even from login. Offline, finish local saves and verify durable pending storage, then close without cloud sync or a cloud-sync-required dialog. Online, attempt the existing authorized final sync with bounded retry; if connectivity is lost, use safe offline close. Block actual local save/storage failures, preserve queued work and never manufacture cloud acceptance. Signed-out close must not upload anonymously. |
 | T23 | Download updates independently of sign-in and sync completion. Install through the safe-update barrier; preserve registration, credentials, pending transactions, receipts and checkpoints. Resume eligible sync after restart. |
 | T24 | Updates preserve device data. An explicit uninstall-cleanup choice explains what it removes and protects unresolved transactions through the approved recovery/backup process. Never treat reinstall or cache deletion as an ordinary repair of unreadable registration. |
 
@@ -74,6 +74,44 @@ The home is `/staff`, with `tab=accounts`, `tab=roles`, `tab=policies` and
 | Operational policies | Configure permitted business limits and workflow requirements without silently granting user permissions. Keep a policies-only entry for authorized operators without staff-management access. |
 | Sign-in/password/approval credential dialogs | Preserve credential purposes and current administrator-only credential-management restrictions unless separately changed by the owner. Never reveal an existing secret. Account edits must not reset unrelated credentials. |
 | Idle/session limits | Preserve branch/global server limits and per-user limits. Explain when a saved limit takes effect; personal limits may be shorter, not longer than the applicable maximum. |
+
+## Electron offline operation and closing
+
+Electron uses its configured Microsoft SQL Server for supported local business
+operations. Internet loss must not force a healthy local database into online
+mode, erase registration or stop an otherwise authorized offline action. Restore
+and validate the saved local connection automatically at startup, without waiting
+for Settings or a sale. Valid offline identity, scope, baseline data and policies
+remain prerequisites; first-time setup and online-only integrations are separate.
+
+| State | Required operation | Normal application close |
+| --- | --- | --- |
+| Local SQL ready; internet unavailable | Use supported offline workflows and save business effects with durable pending evidence. | Finish local saves, verify readable pending storage and close. No cloud upload or synchronization-required dialog. |
+| Local SQL ready; online service ready | Use the configured coordinated storage/sync route, preserving original identities. | Attempt authorized final sync under existing policy; close normally when no pending work remains. Preserve genuine unresolved results accurately. |
+| Local SQL unavailable; online service ready | Use the approved online fallback, preserving old local work and any recovery hold. | Finish accepted work under that route. Do not reopen or acknowledge held old storage merely to close. |
+| Local SQL unavailable; internet unavailable | Preserve setup/work and show local database recovery/retry. New business writes have no ready durable destination. | Close safely after existing saves are verified; unreadable/unfinished accepted local writes require recovery, not a cloud-sync demand. |
+
+- Offline close never labels queued transactions synchronized, clears journals,
+  advances upload checkpoints or finalizes cloud acceptance. Retain stable IDs,
+  receipts, payloads, approval evidence and local shift state through restart.
+- An online close uses bounded connectivity checks and the existing final-sync
+  coordinator. No-pending and signed-out cases must not wait for unrelated cloud
+  work; no anonymous staff upload follows from closing the login screen.
+- Distinguish connection loss from HTTP authorization/permission denial, invalid
+  configuration, local storage failure and a real business conflict. Never turn a
+  known rejection into offline authorization. Preserve actionable diagnostics.
+- Reconnect/restart automatically resumes eligible uploads/downloads using saved
+  committed checkpoints. Expired Change Tracking/feed history triggers scoped,
+  resumable snapshot/reconciliation while preserving pending events and open
+  shifts. Dates locate candidate changes; versions, ownership and acceptance
+  evidence govern safe reconciliation. Conflicts needing a decision stay held.
+- Offline support is not a promise that provider-authorized card payments,
+  WhatsApp delivery, first activation or every configured online-only approval
+  can execute without their service. Show their real prerequisite and retain
+  already accepted work; do not invent an offline payment acceptance.
+- These are requirements to verify at the actual Main/storage boundary. An
+  upgrade SQL file prepares schema; it cannot by itself change Electron routing,
+  connectivity classification or closing dialogs.
 
 ## Settings rules
 

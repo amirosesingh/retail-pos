@@ -1,5 +1,11 @@
 # Retail POS database setup
 
+For the current isolated beta **existing-database** event-sync upgrade package,
+use [Retail POS Beta existing database upgrade](../database/beta/README-existing-upgrade.md).
+It distinguishes the cloud's already-installed upgrade from the newer local
+event/stock/refund/settings/recovery metadata. The general fresh-install files
+below are not a universal production or beta upgrade path.
+
 Use these two complete POS setup files:
 
 | Database | File | Where to run |
