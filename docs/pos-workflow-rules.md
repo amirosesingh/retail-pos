@@ -181,6 +181,7 @@ Management assignment or automatic rewrite of existing records.
 | C13 | Changing a branch's cluster requires authorized location management, validation, save/read-back and an audit. Re-evaluate catalogue, settings, caches and eligible sync scope without relabeling historical transactions or pending work. Any ownership migration or catalogue merge is separate reviewed work. |
 | C14 | Treat Private stock as its current saved preference, not proof of an independent enforced privacy boundary. Preserve terminal/account stock guards and the approved availability exception. Explain current switch effects accurately; additional privacy behavior needs explicit policy and runtime verification. |
 | C15 | Every distinct new product uses one shared running SKU allocation across all branches/clusters of the same POS database. Reserve numbers atomically through the existing global allocator, never independent branch/cluster/PC counters. Distinct products must not receive the same SKU through forms, imports, manual entry, bulk actions, sync or retry. Preserve canonical product identity and use only valid reserved offline numbers. |
+| C16 | Keep permission to view other-cluster item details separate from permission to make explicitly selected products sellable in a destination cluster. Authorized Management selects permitted product/target scopes; default cross-cluster isolation remains. Viewing alone permits no sale, stock mutation or source cost/financial access. Selling requires allowed product visibility, the ordinary branch/action rights and destination stock policy. Preserve the same canonical product/SKU and existing history. |
 
 The global SKU rule means:
 
@@ -209,6 +210,40 @@ The global SKU rule means:
 - Preserve existing product history, numbering mode and format settings. This
   documentation authorizes no duplicate-data cleanup, counter reset, schema
   change or change to offline allocation. Catalogue visibility stays scoped.
+
+The owner-approved cross-cluster controls have these separate responsibilities:
+
+| Reference visibility at the selected destination | Selected product sellable there | Required result |
+| --- | --- | --- |
+| Off | Off | Hide unshared other-cluster items from reference/selling lists. Preserve authorized access to existing local stock and historical/pending records; do not delete or rewrite them. |
+| On | Off | Permit the approved item-detail projection for reference. Block adding/charging that item through UI, barcode shortcuts, imports and direct sale writers. |
+| On | On | Permit the selected product in the destination selling catalogue, subject to the signed-in person's normal sale rights, branch binding, product status and saved destination stock/negative-stock policy. |
+| Off | On | Invalid configuration. Explain that sellability requires permitted visibility and require a deliberate correction; do not silently grant broader cross-cluster access. |
+
+Select the product and explicit eligible destination clusters/branches through
+one authorized management home. A reference-view grant does not grant editing,
+global product administration, source quantities, costs, margins, staff, tenders
+or sales history. The sellability selection does not grant the staff member a
+sale permission or allow them to use another branch's stock. Moving goods still
+uses the authorized transfer/receiving workflow. The same canonical product
+keeps its global SKU across all selected destinations; do not copy it into a
+different product merely to expose it in another cluster.
+
+Validate saves and conflicts and refresh the appropriate catalogue/selling
+projections, caches and sync scope. Removing a target or disabling future
+sellability preserves actual stock, accepted transactions, receipts and pending
+operation evidence; resolve affected in-progress work through existing policies.
+Apply the effective selection on search, item detail, scan, cart, server/native
+writers and downloads. Never implement this solely as a list filter. Retain the
+approved offline freshness and supported trading rules; do not claim immediate
+revocation on disconnected devices.
+
+This defines required controls, not an existing screen or completed feature.
+The inspected product model exposes catalogue membership and posted transfers,
+but a complete manual product/target selector and its authoritative enforcement
+have not been established. Their implementation must reconcile existing valid
+transferred-product visibility and trading without abruptly disabling it. This
+documentation changes no stored sharing setting, runtime permission or schema.
 
 ### Branch rules
 

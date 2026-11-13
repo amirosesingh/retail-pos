@@ -8817,9 +8817,9 @@ and clean scoped diff/whitespace checks. Use documentation checks only locally;
 retain automatic repository checks for the beta PR. Git history at the baseline
 preserves the previous rules; rollback only this documentation patch.
 
-Documentation completed locally: added 15 cluster and 18 branch rules plus eight
-scope/acceptance scenarios and the global SKU example. Validation confirms all
-71 T/S/C/B IDs are unique,
+Documentation completed locally: added 16 cluster and 18 branch rules plus eight
+scope/acceptance scenarios, the global SKU example and a four-state independent
+viewing/sellability matrix. Validation confirms all 72 T/S/C/B IDs are unique,
 the previous rulebook and AGENTS instructions remain intact, all 102 current
 non-API routes and 38 Settings destinations remain covered, relative links and
 anchors resolve, and whitespace checks pass. Only the four listed documentation
@@ -8840,3 +8840,24 @@ allocator settings, schema/data or the previously approved offline behavior.
 
 The reported permission malfunction and broader rules-compliance audit remain
 pending; documentation does not close them or certify runtime enforcement.
+
+### Owner decision — separate cross-cluster viewing and sellability
+
+The owner selected separate controls for viewing other-cluster items and making
+selected items sellable in a destination cluster. Add C16 and a viewing/selling
+matrix to the same documentation PR. Default isolation remains; authorized
+Management explicitly chooses product/target scope. View alone grants no cart,
+checkout, stock, cost or financial access. Sellability needs permitted visibility,
+the ordinary sale/branch authority and destination stock policy; it never switches
+the Operations branch, transfers stock or creates a second product/SKU. Hiding or
+withdrawing sellability preserves actual stock, past transactions and pending
+operation evidence. Any direct writer must enforce the same selection.
+
+This approves the required behavior in the rules, not its implementation or a
+new permission/schema migration. The current selector is not demonstrated as a
+complete feature. Record that gap, retain existing transferred-product behavior
+until an authorized implementation reconciles it, and keep runtime work separate.
+Final documentation validation passed for C1–C16 and B1–B18 (72 total T/S/C/B
+rules), preserved prior rules/instructions, links/anchors, all four visibility
+states and the unchanged route/Settings mappings. Automatic CI must run on the
+updated PR head; earlier-head checks do not substitute for it.

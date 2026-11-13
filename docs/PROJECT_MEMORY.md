@@ -44,7 +44,7 @@ The exact owner-approved service-only bounded feed RPC and PR384 are applied/dep
 
 The owner additionally requests cluster-based and branch-based rules. Extend the
 existing [workflow rulebook](pos-workflow-rules.md#cluster-and-branch-rules) with
-C1–C15, B1–B18 and a scope/acceptance matrix; require it from AGENTS.md. Preserve
+C1–C16, B1–B18 and a scope/acceptance matrix; require it from AGENTS.md. Preserve
 all previously approved terminal, PIN, permission, Settings and page workflows.
 
 Same-cluster eligible catalogue sharing, separate branch/location quantities and
@@ -73,6 +73,16 @@ on retry/replication of the same canonical product. A global sequence does not
 merge catalogue visibility. Offline reservations may create gaps or out-of-order
 creation times; strict gapless offline numbering is not established. Existing
 SKUs, counters, schema and business data are unchanged by this documentation.
+
+The owner selected separate cross-cluster reference-view and selected-product
+sellability controls. C16 records the desired product/target selection: viewing
+alone enables no sale or source stock/cost/financial access; sellability needs
+allowed visibility, ordinary branch/action rights and destination stock policy.
+Keep the same canonical product/SKU and preserve stock/history/pending evidence
+when hiding or disabling future selling. The current manual selector is not
+established as implemented. This is documentation approval only; reconcile
+existing transferred-product visibility during a separately authorized runtime
+change, without disabling legitimate existing trading or widening other access.
 
 ## 13 November — approved workflow rulebook and PIN-user provisioning
 
