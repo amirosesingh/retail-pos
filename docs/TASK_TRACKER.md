@@ -8783,7 +8783,10 @@ current non-API page routes are covered, including dynamic detail routes and
 Settings/report compatibility links. All 4 relative rulebook links resolve and
 the scoped whitespace check passes. Only the four listed documentation files
 changed; no application regression suite ran for this documentation-only patch.
-Beta PR/check/merge status is recorded separately below when available.
+Beta [PR #467](https://github.com/amirosesingh/retail-pos/pull/467) targets beta
+and is labelled beta. Automatic repository/Worker checks run under the existing
+workflows; their result and merge are separate from the local documentation
+checks. This PR does not dispatch an installer release.
 
 Permission malfunction reproduction, runtime audit against the approved rules
 and any implementation remain pending separate scoped work. Do not mark them
