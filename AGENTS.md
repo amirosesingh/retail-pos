@@ -446,7 +446,7 @@ that device builds require. The guard lives in
 
 ### Explicit cluster and branch workflow rules
 
-- Follow the C1–C14 and B1–B18 rules and scope matrix in
+- Follow the C1–C15 and B1–B18 rules and scope matrix in
   [POS workflow rules](docs/pos-workflow-rules.md#cluster-and-branch-rules)
   on every affected page, dialog, direct endpoint, native operation, replica and
   recovery path. Catalogue membership, stock location, user authority, device
@@ -456,6 +456,14 @@ that device builds require. The guard lives in
   allocation does not merge cluster catalogues. Cross-cluster product visibility
   requires the approved catalogue/posted-transfer evidence; zero stock-map keys
   or draft transfers do not establish ownership or receipt.
+- All newly created distinct products use one global running SKU allocation
+  across every branch/cluster in the same POS database. Use the existing atomic
+  allocator and non-overlapping reserved ranges; never restart counters per
+  branch, cluster, PC or display format. Imports/manual codes obey global
+  uniqueness too. Retrying/replicating the same canonical product retains its
+  SKU. Offline creation uses only valid reserved numbers; no local MAX+1 fallback.
+  Reserved ranges can leave gaps or reorder creation-time display; do not claim
+  gapless offline numbering or renumber existing products to conceal that.
 - Preserve the normal-terminal branch lock and the positive, active-location
   same-cluster availability exception. Management may use only its authorized
   branch set. Neither a shared cluster, NULL assignment nor a physical local

@@ -180,6 +180,35 @@ Management assignment or automatic rewrite of existing records.
 | C12 | Catalogue/settings inheritance does not make branch sales, payments, shifts, staff credentials or private data cluster-wide. Each sync relation keeps its declared direction, field ownership and branch/cluster/global/private projection. Replica contents confer no person-session access. |
 | C13 | Changing a branch's cluster requires authorized location management, validation, save/read-back and an audit. Re-evaluate catalogue, settings, caches and eligible sync scope without relabeling historical transactions or pending work. Any ownership migration or catalogue merge is separate reviewed work. |
 | C14 | Treat Private stock as its current saved preference, not proof of an independent enforced privacy boundary. Preserve terminal/account stock guards and the approved availability exception. Explain current switch effects accurately; additional privacy behavior needs explicit policy and runtime verification. |
+| C15 | Every distinct new product uses one shared running SKU allocation across all branches/clusters of the same POS database. Reserve numbers atomically through the existing global allocator, never independent branch/cluster/PC counters. Distinct products must not receive the same SKU through forms, imports, manual entry, bulk actions, sync or retry. Preserve canonical product identity and use only valid reserved offline numbers. |
+
+The global SKU rule means:
+
+- Allocation continues across locations: the next three individual global
+  reservations could assign `1001` to a product created by branch A in cluster X,
+  `1002` to branch B in X, and `1003` to branch C in Y. A branch, cluster, PC,
+  reinstall or prefix/padding change never starts another independent sequence.
+- Concurrent product creation reserves non-overlapping numbers atomically. Do
+  not calculate a new SKU from the maximum visible in a filtered/local catalogue.
+  Keep reservation/cache state bound to the correct database/project identity.
+- All product-creation paths, including manual codes and spreadsheet imports,
+  preserve global uniqueness for distinct products. A collision must be rejected
+  or resolved through the authorized allocator before success, without disclosing
+  hidden other-cluster product details or silently changing the operator's input.
+- The same canonical product copied through synchronization or an authorized
+  transfer keeps its product ID/SKU; it is not a different new product. Retries
+  reuse the saved identity rather than creating another product or reassignment.
+- Offline product creation consumes only a valid non-overlapping range already
+  reserved by the authoritative service. When none is available, preserve the
+  input and explain that reservation/connectivity is needed. Never guess the
+  next number or issue a branch-local substitute that could collide later.
+- Reserved blocks, failed/cancelled creations and offline PCs can cause gaps or
+  creation-time reordering. The global sequence follows reservation order; do not
+  promise gapless creation-time order across disconnected devices. Never recycle
+  consumed/reserved numbers or renumber saved products merely to fill a gap.
+- Preserve existing product history, numbering mode and format settings. This
+  documentation authorizes no duplicate-data cleanup, counter reset, schema
+  change or change to offline allocation. Catalogue visibility stays scoped.
 
 ### Branch rules
 
@@ -230,7 +259,9 @@ The current source inspected for this documentation has separate helpers for
 [company context](../src/lib/company-store-scope.ts),
 [Dashboard scope](../src/lib/dashboard-scope.ts),
 [branch Inventory classification](../src/lib/inventory-branch-view.ts) and
-[settings inheritance](../src/lib/branch-settings.ts). Source reading shows:
+[settings inheritance](../src/lib/branch-settings.ts). The existing
+[SKU allocator](../src/lib/sku.ts) obtains protected number ranges through the
+[authorized reservation handler](../src/lib/sku.functions.ts). Source reading shows:
 
 - Catalogue visibility uses stable group/location IDs and posted positive
   transfer evidence; zero stock-map membership alone is not transfer evidence.
@@ -241,6 +272,9 @@ The current source inspected for this documentation has separate helpers for
 - Inventory Active/Archive classification is branch-relative (quantity above
   zero versus zero/below), with negative warnings. It does not rewrite a global
   product archive flag or other branches' status.
+- SKU creation consumes globally reserved ranges and refuses to invent numbers
+  when no usable range is available offline. Range reservation is not evidence
+  of gapless ordering by the time products are created on different PCs.
 
 These helper observations do not verify server/native enforcement, actual
 replica coverage or installed-device behavior. The existing

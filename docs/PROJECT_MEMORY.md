@@ -44,7 +44,7 @@ The exact owner-approved service-only bounded feed RPC and PR384 are applied/dep
 
 The owner additionally requests cluster-based and branch-based rules. Extend the
 existing [workflow rulebook](pos-workflow-rules.md#cluster-and-branch-rules) with
-C1–C14, B1–B18 and a scope/acceptance matrix; require it from AGENTS.md. Preserve
+C1–C15, B1–B18 and a scope/acceptance matrix; require it from AGENTS.md. Preserve
 all previously approved terminal, PIN, permission, Settings and page workflows.
 
 Same-cluster eligible catalogue sharing, separate branch/location quantities and
@@ -64,6 +64,15 @@ arbitrary Management subset implementation, independent warehouse ACL or blanket
 intra-cluster approval requirement. Existing recorded runtime limitations remain
 unverified/unresolved by this documentation-only change. No live schema/data,
 runtime policy, Membership, production or installer-publication change is made.
+
+The owner further clarifies one shared running SKU sequence across all branches
+and clusters in the same POS database. Every distinct new product has a globally
+unique SKU; per-branch/cluster counters must not collide. Preserve the existing
+atomic allocator/reserved-range model, manual/import uniqueness and stable SKU
+on retry/replication of the same canonical product. A global sequence does not
+merge catalogue visibility. Offline reservations may create gaps or out-of-order
+creation times; strict gapless offline numbering is not established. Existing
+SKUs, counters, schema and business data are unchanged by this documentation.
 
 ## 13 November — approved workflow rulebook and PIN-user provisioning
 

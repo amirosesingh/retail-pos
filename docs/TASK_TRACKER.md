@@ -8817,13 +8817,26 @@ and clean scoped diff/whitespace checks. Use documentation checks only locally;
 retain automatic repository checks for the beta PR. Git history at the baseline
 preserves the previous rules; rollback only this documentation patch.
 
-Documentation completed locally: added 14 cluster and 18 branch rules plus eight
-scope/acceptance scenarios. Validation confirms all 70 T/S/C/B IDs are unique,
+Documentation completed locally: added 15 cluster and 18 branch rules plus eight
+scope/acceptance scenarios and the global SKU example. Validation confirms all
+71 T/S/C/B IDs are unique,
 the previous rulebook and AGENTS instructions remain intact, all 102 current
 non-API routes and 38 Settings destinations remain covered, relative links and
 anchors resolve, and whitespace checks pass. Only the four listed documentation
 files changed; no local application regression suite was run. Beta PR/automatic
 checks and merge are recorded through the branch's GitHub review separately.
+
+### Owner clarification — one global running SKU sequence
+
+The owner explicitly requires every newly created distinct product to receive a
+unique SKU from one shared running sequence across all branches/clusters in the
+same POS database. No branch/cluster-local counter reset or duplicate SKU for a
+different product is allowed. Add explicit C15 allocation/concurrency/import/
+retry/offline rules and a cross-branch example; retain existing product identities
+and catalogue access boundaries. Clarify that pre-reserved offline ranges can
+produce gaps or creation-time reordering; do not promise gapless offline ordering
+or rewrite existing SKUs. This expands documentation only, not runtime code,
+allocator settings, schema/data or the previously approved offline behavior.
 
 The reported permission malfunction and broader rules-compliance audit remain
 pending; documentation does not close them or certify runtime enforcement.
