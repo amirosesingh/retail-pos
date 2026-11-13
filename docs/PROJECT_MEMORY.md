@@ -40,6 +40,64 @@ Owner requires all proposed cloud/local database upgrades collected for exact fi
 The exact owner-approved service-only bounded feed RPC and PR384 are applied/deployed on beta. Existing selector/privacy grants and businessrecords are preserved; native continuation is bound to authenticated response metadata. Live147request sample all200/ok with no CPU-exceeded; CPU2–114ms/mean9.469 means NO guarantee allrequestsbelow10ms. Electronfeed131613→133184, all6shiftCTvalid; largebacklog stilldraining. Keep implemented/sample-verified status distinct from fullsync completion, production promotion or installerpublication. Supabase migrationtool ledger20261104042158 corresponds to approvedfile20261104040251, SHA83495D696622241ECA2A8D396234E2FD65EE7C7A3050E93E4280638D6530D59B; do not replay based solely on differing timestamps.
 # POS project memory
 
+## 13 November — explicit cluster and branch workflow rules
+
+The owner additionally requests cluster-based and branch-based rules. Extend the
+existing [workflow rulebook](pos-workflow-rules.md#cluster-and-branch-rules) with
+C1–C18, B1–B18 and a scope/acceptance matrix; require it from AGENTS.md. Preserve
+all previously approved terminal, PIN, permission, Settings and page workflows.
+
+Same-cluster eligible catalogue sharing, separate branch/location quantities and
+financial history, global SKU identity, posted-transfer provenance and the latest
+positive active same-cluster stock-availability exception remain controlling.
+Cluster membership is not user authority. Operations remains registered-branch
+bound for every role; Management scope must be independently verified. Shared
+SQL/replica contents and NULL assignments grant no extra access. Preserve section
+inheritance/locks, Dashboard selected-branch scope, explicit All Shops cluster
+filters and the Business Board authorized company directory.
+
+Cover initial bootstrap, push/pull, paused outbound work, reconnect and expired
+history recovery using each table's declared scope/ownership. Retain pending
+work and original identities on branch/cluster/connection changes. Private stock
+remains a saved preference, not proof of a new enforced ACL. Do not invent an
+arbitrary Management subset implementation, independent warehouse ACL or blanket
+intra-cluster approval requirement. Existing recorded runtime limitations remain
+unverified/unresolved by this documentation-only change. No live schema/data,
+runtime policy, Membership, production or installer-publication change is made.
+
+The owner further clarifies one shared running SKU sequence across all branches
+and clusters in the same POS database. Every distinct new product has a globally
+unique SKU; per-branch/cluster counters must not collide. Preserve the existing
+atomic allocator/reserved-range model, manual/import uniqueness and stable SKU
+on retry/replication of the same canonical product. A global sequence does not
+merge catalogue visibility. Offline reservations may create gaps or out-of-order
+creation times; strict gapless offline numbering is not established. Existing
+SKUs, counters, schema and business data are unchanged by this documentation.
+
+The owner selected separate cross-cluster reference-view and selected-product
+sellability controls. C16 records the desired product/target selection: viewing
+alone enables no sale or source stock/cost/financial access; sellability needs
+allowed visibility, ordinary branch/action rights and destination stock policy.
+Keep the same canonical product/SKU and preserve stock/history/pending evidence
+when hiding or disabling future selling. The current manual selector is not
+established as implemented. This is documentation approval only; reconcile
+existing transferred-product visibility during a separately authorized runtime
+change, without disabling legitimate existing trading or widening other access.
+
+The later controlling correction is C17/C18: a verified posted purchase receipt
+or completed incoming transfer adopts the SAME canonical product/SKU into the
+receiving cluster's normal catalogue permanently, with distinct branch quantities
+and retained origin/provenance. Zero stock must not hide/unshare it, downgrade it
+to reference-only or archive it globally. Normal product status, explicit selling
+restrictions, user rights and branch stock policy remain applicable. Further
+receiving reuses the existing record; show origin, catalogue memberships and
+local quantity separately. Persist membership independently of live stock and
+finite transfer/history windows. This supersedes requiring a separate manual
+reference/selling selection after legitimate receipt; optional manual reference
+controls remain for unadopted items. Unrelated clusters gain no automatic view.
+Purchase/zero-stock persistence and cross-platform enforcement are requirements,
+not verified implementation or permission to apply schema/data changes.
+
 ## 13 November — approved workflow rulebook and PIN-user provisioning
 
 The owner approved the terminal/login/permission rules T1–T24 and shared Settings

@@ -8791,3 +8791,111 @@ checks. This PR does not dispatch an installer release.
 Permission malfunction reproduction, runtime audit against the approved rules
 and any implementation remain pending separate scoped work. Do not mark them
 complete because this rulebook is saved or merged.
+
+## 13 November — explicit cluster and branch workflow rules
+
+The owner requests permanent cluster-based and branch-based rules alongside the
+approved page workflows. Extend the existing rulebook and AGENTS.md using current
+approved catalogue, location, device/account scope, stock availability, settings,
+reporting and synchronization decisions. Record requirements separately from
+observed helper behavior and unresolved runtime verification. No new entitlement,
+financial policy, private-stock enforcement, warehouse ACL or Membership work is
+authorized by this documentation request.
+
+Baseline: refreshed beta `3df486702a0a3933f78e96625dea0f29dab96a3e`;
+isolated branch `codex/cluster-branch-workflow-rules-beta`. Scope: AGENTS.md,
+docs/pos-workflow-rules.md, PROJECT_MEMORY.md and this tracker only. Preserve the
+existing T/S rules and page mappings. Cover same-cluster catalogue versus branch
+quantities, transferred-product visibility, global SKU identity, Operations versus
+Management, branch staff/PIN scope, inheritance, initial/push/pull/recovery scope,
+report selection and safe reassignment. No runtime/schema/data/deployment changes
+or installer publication are part of this batch; production remains excluded.
+
+Acceptance: unique C/B rule IDs, explicit scope/example matrix, valid relative
+references, preserved previous instructions, unchanged existing rule/page coverage
+and clean scoped diff/whitespace checks. Use documentation checks only locally;
+retain automatic repository checks for the beta PR. Git history at the baseline
+preserves the previous rules; rollback only this documentation patch.
+
+Documentation completed locally: added 18 cluster and 18 branch rules plus eight
+scope/acceptance scenarios, a purchase/transfer/zero-stock lifecycle example,
+the global SKU example and a four-state optional manual viewing/sellability
+matrix. Validation confirms all 74 T/S/C/B IDs are unique,
+the previous rulebook and AGENTS instructions remain intact, all 102 current
+non-API routes and 38 Settings destinations remain covered, relative links and
+anchors resolve, and whitespace checks pass. Only the four listed documentation
+files changed; no local application regression suite was run. Beta PR/automatic
+checks and merge are recorded through the branch's GitHub review separately.
+
+### Owner clarification — one global running SKU sequence
+
+The owner explicitly requires every newly created distinct product to receive a
+unique SKU from one shared running sequence across all branches/clusters in the
+same POS database. No branch/cluster-local counter reset or duplicate SKU for a
+different product is allowed. Add explicit C15 allocation/concurrency/import/
+retry/offline rules and a cross-branch example; retain existing product identities
+and catalogue access boundaries. Clarify that pre-reserved offline ranges can
+produce gaps or creation-time reordering; do not promise gapless offline ordering
+or rewrite existing SKUs. This expands documentation only, not runtime code,
+allocator settings, schema/data or the previously approved offline behavior.
+
+The reported permission malfunction and broader rules-compliance audit remain
+pending; documentation does not close them or certify runtime enforcement.
+
+### Owner decision — separate cross-cluster viewing and sellability
+
+The owner selected separate controls for viewing other-cluster items and making
+selected items sellable in a destination cluster. Add C16 and a viewing/selling
+matrix to the same documentation PR. Default isolation remains; authorized
+Management explicitly chooses product/target scope. View alone grants no cart,
+checkout, stock, cost or financial access. Sellability needs permitted visibility,
+the ordinary sale/branch authority and destination stock policy; it never switches
+the Operations branch, transfers stock or creates a second product/SKU. Hiding or
+withdrawing sellability preserves actual stock, past transactions and pending
+operation evidence. Any direct writer must enforce the same selection.
+
+This approves the required behavior in the rules, not its implementation or a
+new permission/schema migration. The current selector is not demonstrated as a
+complete feature. Record that gap, retain existing transferred-product behavior
+until an authorized implementation reconciles it, and keep runtime work separate.
+Earlier separate-controls validation passed for C1–C16 and B1–B18 (72 T/S/C/B
+rules), preserved prior rules/instructions, links/anchors, all four visibility
+states and the unchanged route/Settings mappings. Automatic CI must run on the
+updated PR head; earlier-head checks do not substitute for it.
+
+### Controlling owner correction — purchases and transfers establish lasting catalogue membership
+
+The owner rejects treating goods purchased/received or transferred into a
+destination cluster as merely reference-only, or hiding/downgrading them when
+quantity becomes zero. A verified posted purchase receipt or completed transfer
+receipt adopts the SAME canonical product/SKU into the destination cluster's
+normal catalogue. Preserve its origin and add destination membership; quantities
+remain separate per branch/location. Once adopted, retain that membership at zero
+stock and after earlier receipt/transfer history falls outside a normal read
+window. It is not universal reference visibility for every unrelated cluster.
+
+This correction supersedes making a separate manual sharing selection the only
+way a receiving cluster can see/use its legitimate product. Optional reference
+viewing/manual publication remains separate for products not yet adopted there.
+Normal product status, explicit authorized selling restrictions, user/branch
+permissions and negative-stock policy still apply; receipt grants no staff
+privileges. Zero stock is Out of stock, not a new reference-only permission.
+Purchasing/receiving must reuse an identified existing product rather than create
+a duplicate SKU. Show origin/home cluster, receiving catalogue membership and the
+current branch's quantity without exposing unrelated source stock/financial data.
+
+Add C17/C18, reconcile C4/C16, zero-stock examples, manual-control precedence and
+AGENTS/project memory in PR #468. Draft/unposted/zero-received documents alone do
+not prove receipt. Keep prior rules, scope guards and accepted history. Runtime
+implementation, any necessary schema upgrade and installed acceptance remain
+separate; no production, actual purchase/transfer or stock mutation is authorized
+by this documentation correction.
+
+Final receipt-rule documentation checks passed: all 74 T/S/C/B IDs are present
+once; prior baseline instructions and pre-existing page rules remain intact;
+all 102 page routes and 38 Settings destinations remain covered; relative links,
+anchors and whitespace checks pass. Only four documentation files changed.
+PR #468 remains beta-only; require fresh automatic checks on this corrected
+head. No local application regression suite, live database operation or installed
+catalogue test ran. Purchase/receipt-based durable membership and zero-stock
+retention still need their separately scoped runtime implementation/verification.
