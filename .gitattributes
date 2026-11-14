@@ -27,6 +27,7 @@
 /database/beta/retail-pos-supabase-beta-upgrade.sql text eol=lf
 /database/beta/retail-pos-local-beta-upgrade.sql text eol=lf
 /database/beta/retail-pos-local-beta-current-fresh.sql text eol=lf
+/database/beta/retail-pos-local-beta-setup.sql text eol=lf
 /database/beta/README-existing-upgrade.md text eol=lf
 /database/beta/prepared/*.json text eol=lf
 /database/beta/prepared/*.sql text eol=lf

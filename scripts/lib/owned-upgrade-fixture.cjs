@@ -21,7 +21,9 @@ async function createOwnedUpgradeFixture({collation='SQL_Latin1_General_CP1_CI_A
   await pool.request().input('owner',sql.NVarChar(128),suffix).query("EXEC sys.sp_addextendedproperty @name=N'CodexUpgradeFixtureOwner',@value=@owner;");ownerAssigned=true;
   const manager={pool,sql:()=>sql};
   const installCore=async()=>{const parts=installerSections();for(const source of [parts.schema,...parts.migrations.map(m=>m.sql),parts.validation])for(const batch of splitBatches(source))await pool.request().batch(SESSION_OPTIONS+'\n'+batch);};
-  return{sql,pool,manager,database,guid,connect,installCore,close,collation};
+  return{sql,pool,manager,database,guid,connect,installCore,close,collation,
+   // Only test helpers may use this fresh UUID-owned instance's master/server.
+   master,server,fixtureOwner:suffix};
  }catch(error){await close().catch(()=>{});throw error;}
 }
 module.exports={createOwnedUpgradeFixture};

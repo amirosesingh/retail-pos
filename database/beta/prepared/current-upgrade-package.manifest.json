@@ -1,7 +1,7 @@
 {
   "format": 1,
-  "preparedOn": "2026-11-13",
-  "sourceRevision": "71022a12d677ae3cba61427ea93819e1697e2479",
+  "preparedOn": "2026-11-14",
+  "sourceRevision": "5d49f01087d1fc3c281819d6a4f936d7a5e3a206",
   "scope": "Beta only; no application or production approval",
   "coreVersion": 24,
   "cloud": {
@@ -120,13 +120,20 @@
     "database": "POS_Local_Beta",
     "prerequisite": "Pre-create an empty isolated database; selected target is never created/switched by this file"
   },
+  "localSetup": {
+    "file": "database/beta/retail-pos-local-beta-setup.sql",
+    "sha256": "926214FAB74B02BB3DBCBBCF90A14958AE758E71B7B93FF224BFC15DCFB7340C",
+    "freshSha256": "A7138768102AF730EB11975EF144C7DAF917023B45A7B1DCED7B6510BBE67E07",
+    "database": "POS_Local_Beta",
+    "behavior": "Create if missing and select internally; install only into empty target; refuse populated targets"
+  },
   "readme": {
     "file": "database/beta/README-existing-upgrade.md",
-    "sha256": "FC1F50389B7790D92CB4C0AC74B7BDA931CC7FF78FD5EF9CE0FA28CDFB3146FA"
+    "sha256": "E0273E37B737943775B0C8545F7EA03320BEA49900B36FEEE925350431E73DDF"
   },
   "notIncluded": [
     "Supabase fresh replay on an existing project",
-    "Database creation",
+    "Supabase project creation",
     "Production delta/application",
     "New documentation-only C17/C18 implementation",
     "Pilot activation",

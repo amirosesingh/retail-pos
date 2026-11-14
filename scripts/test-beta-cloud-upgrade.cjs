@@ -58,6 +58,15 @@ test("fresh local package pins an empty beta target and composes the reviewed fu
   assert(!/^\s*GO\s*$/im.test(fresh.sql));
   assert(fresh.sql.indexOf("@@TRANCOUNT<>0")<fresh.sql.indexOf("IF DB_NAME()"));
 });
+test("one-file setup pins beta creation and runs the unchanged strict fresh payload without GO continuation",()=>{
+  const {packageSetupLocal}=require("./lib/beta-local-setup.cjs"),{packageFreshLocal}=require("./lib/beta-local-fresh.cjs");
+  const setup=packageSetupLocal();
+  assert.equal(setup.freshSha256,packageFreshLocal().sha256);
+  assert(!/^\s*GO\s*$/im.test(setup.sql));
+  assert(setup.sql.indexOf("@@TRANCOUNT<>0")<setup.sql.indexOf("EXEC sys.sp_executesql"));
+  assert(setup.sql.includes("CREATE DATABASE [POS_Local_Beta]"));
+  assert(!setup.sql.includes("DROP DATABASE"));
+});
 test("known prior cloud baseline upgrades atomically and populated rerun is a no-op", async () => {
   const f=await fixture();try{
     await f.db.exec(f.sql);await f.db.exec("INSERT INTO fixture_feature VALUES(7)");
