@@ -4,7 +4,7 @@ const path = require("node:path");
 const PROFILE_KEY = "localDatabaseProfile";
 const ENABLED_KEY = "localDatabaseEnabled";
 
-function createSecureConfig({ app, safeStorage, configStore }) {
+function createSecureConfig({ app, safeStorage, configStore, recoveryLocal = null }) {
   const secretPath = () => path.join(app.getPath("userData"), "local-db-config.bin");
   const canSeal = () => {
     try {
@@ -15,11 +15,12 @@ function createSecureConfig({ app, safeStorage, configStore }) {
   };
 
   const profile = () => {
+    if (recoveryLocal?.pending()) return recoveryLocal.profile();
     const value = configStore.get(PROFILE_KEY);
     return value && typeof value === "object" ? { ...value } : null;
   };
-  const enabled = () => configStore.get(ENABLED_KEY) === true;
-  const setEnabled = (value) => configStore.set(ENABLED_KEY, value === true);
+  const enabled = () => recoveryLocal?.pending() ? recoveryLocal.enabled() : configStore.get(ENABLED_KEY) === true;
+  const setEnabled = (value) => recoveryLocal?.pending() ? recoveryLocal.setEnabled(value === true) : configStore.set(ENABLED_KEY, value === true);
 
   function readSecret() {
     try {
@@ -31,6 +32,7 @@ function createSecureConfig({ app, safeStorage, configStore }) {
   }
 
   function save(value) {
+    if (recoveryLocal?.pending()) return recoveryLocal.save(value);
     const next = value && typeof value === "object" ? value : {};
     const password = String(next.password ?? "");
     if (next.authMode === "sql" && !canSeal()) {
@@ -65,6 +67,7 @@ function createSecureConfig({ app, safeStorage, configStore }) {
   }
 
   function credentials() {
+    if (recoveryLocal?.pending()) return recoveryLocal.credentials();
     const saved = profile();
     if (!saved) return null;
     const secret = saved.authMode === "sql" ? readSecret() : {};
@@ -73,6 +76,7 @@ function createSecureConfig({ app, safeStorage, configStore }) {
   }
 
   function remove() {
+    if (recoveryLocal?.pending()) return recoveryLocal.remove();
     fs.rmSync(secretPath(), { force: true });
     configStore.set(PROFILE_KEY, null);
     configStore.set(ENABLED_KEY, false);

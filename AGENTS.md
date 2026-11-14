@@ -368,6 +368,16 @@
   business writes and synchronization under the replacement identity until its
   recovery is verified. Never turn that hold into an empty-queue acknowledgement
   or silently clear it. Ordinary valid-registration SQL reconnect stays automatic.
+- A retained old-local recovery hold must not block authorized read-only SQL
+  discovery. After verified replacement activation, permit a separate verified
+  fresh current SQL target through the existing Settings authorization. Require
+  schema readiness and locked verification of all user tables: only the exact
+  migration ledger and unchanged built-in default-group seed may contain rows.
+  Pin and recheck physical database identity and current registration/project
+  before migration, bootstrap, trading or sync. Retain old profiles, encrypted
+  credentials and recovery evidence separately; never relabel old transactions.
+  Normal disable keeps current credentials; another registration or arbitrary-
+  profile administrative path must not discard or bypass retained current work.
 
 ## Supabase configuration (do not regress)
 

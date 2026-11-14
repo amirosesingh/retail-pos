@@ -6,6 +6,12 @@ It distinguishes the cloud's already-installed upgrade from the newer local
 event/stock/refund/settings/recovery metadata. The general fresh-install files
 below are not a universal production or beta upgrade path.
 
+For a new isolated local beta database, run the single file
+`database/beta/retail-pos-local-beta-setup.sql` on the intended local SQL instance.
+It creates only missing POS_Local_Beta and selects it internally for setup; no
+separate CREATE/USE commands are needed. It refuses populated targets and does
+not alter Electron's saved connection or any production database.
+
 Use these two complete POS setup files:
 
 | Database | File | Where to run |

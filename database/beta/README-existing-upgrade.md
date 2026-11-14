@@ -13,6 +13,7 @@ a production upgrade. The Supabase entry file remains an existing-project update
 
 | File | Exact target | Behavior |
 | --- | --- | --- |
+| `retail-pos-local-beta-setup.sql` | The intended local SQL Server instance, with `POS_Local_Beta` missing or empty | One file: create only the missing beta database, select it internally and install the full core plus all13 current sync metadata modules. Refuse a populated target unchanged. |
 | `retail-pos-supabase-beta-upgrade.sql` | Retail POS Beta `irjkmhgrjgcaoixcixut`, database `postgres`, system identifier `7703759698107299042`, owner role `postgres` | Verify/no-op on the captured current schema; upgrade only the recognized prior beta through the reviewed tender/transfer/booking payload; refuse unknown targets or baselines. |
 | `retail-pos-local-beta-upgrade.sql` | An existing isolated `POS_Local_Beta` database with the recognized Retail core schema 24 | Add or recognize the complete reviewed metadata set, preserve existing rows and reject partial/unknown shapes. It creates no database and switches no connection. |
 | `retail-pos-local-beta-current-fresh.sql` | A newly created, empty isolated `POS_Local_Beta` database | Install the full reviewed core and all13 current sync metadata modules. Refuse populated/wrong databases. Creates no database and switches no connection. |
@@ -35,6 +36,27 @@ as implemented by this package; their complete runtime/persistence work remains
 separate. Metadata readiness is not proof of a complete live cutover.
 
 ## If you need to create the local database first
+
+**Recommended single-file path:** connect SSMS to the intended local SQL Server
+instance, open `retail-pos-local-beta-setup.sql` and execute the entire file once.
+No separate CREATE DATABASE or USE command is needed. The file creates only
+`POS_Local_Beta` when missing, selects that exact target for installation and
+executes the unchanged strict full-core/current-metadata setup. An existing empty
+beta database is supported; a populated or partial database is refused. Other
+databases are not changed. The executing account needs database-creation rights
+when missing and CONTROL on the target. Run outside a caller transaction with
+implicit transactions off (normal SSMS autocommit mode).
+
+The file selects the target inside its execution scope. SSMS's original query
+database and Electron's saved connection settings are not changed. Configure the
+beta app's existing database fields afterward. Creation, core installation and
+metadata upgrade retain their separate commit boundaries. If setup fails, the
+new database is kept for review; it is never dropped as automatic cleanup.
+New data/log files receive unique names inside SQL Server's configured default
+directories. An existing or unattached MDF/LDF is never reused or overwritten.
+
+The lower-level manual steps below remain available for the strict fresh file;
+they are not required when using the one-file setup above.
 
 Msg51031 at the target guard means the SSMS query window is connected to a
 different database. The existing-upgrade file cannot create a missing database.
@@ -107,6 +129,23 @@ database file intentionally refuses that workflow. Retail POS Beta Supabase
 already exists and is current: do not replay a cloud fresh schema into it.
 For a core below24, above24 or an unrecognized shape, stop and prepare the exact
 missing incremental path; never replay a fresh schema or fake a migration ledger.
+
+## Electron after a replacement registration
+
+An old retained-local recovery record protects previous work; it is not proof
+that the new registration is inactive. Authorized SQL discovery remains separate.
+The beta code permits the verified replacement to validate and save a separate
+fresh managed local target. Its initial locked check accepts only the exact
+migration ledger and unchanged built-in default-group seed; all business,
+history and pending-upload tables must be empty. A populated unknown target must
+be recovered deliberately rather than relabelled under the replacement.
+
+The current profile/credentials use a separate sealed native slot. Previous
+profile, encrypted SQL credentials and quarantine remain intact. Restart and
+reconnect verify the actual admitted database identity before readiness; the
+same admitted database can then contain normal new transactions. Disabling SQL
+retains its connection evidence. This code correction requires a beta app build
+containing it; SQL setup alone cannot change an older Electron executable.
 
 ## Offline operation and recovery
 

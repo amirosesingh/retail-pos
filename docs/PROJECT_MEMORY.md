@@ -40,6 +40,27 @@ Owner requires all proposed cloud/local database upgrades collected for exact fi
 The exact owner-approved service-only bounded feed RPC and PR384 are applied/deployed on beta. Existing selector/privacy grants and businessrecords are preserved; native continuation is bound to authenticated response metadata. Live147request sample all200/ok with no CPU-exceeded; CPU2–114ms/mean9.469 means NO guarantee allrequestsbelow10ms. Electronfeed131613→133184, all6shiftCTvalid; largebacklog stilldraining. Keep implemented/sample-verified status distinct from fullsync completion, production promotion or installerpublication. Supabase migrationtool ledger20261104042158 corresponds to approvedfile20261104040251, SHA83495D696622241ECA2A8D396234E2FD65EE7C7A3050E93E4280638D6530D59B; do not replay based solely on differing timestamps.
 # POS project memory
 
+## 14 November — one-file beta setup and active replacement local SQL
+
+Owner requests one standalone local SQL file that creates only missing
+POS_Local_Beta, selects it internally and installs current full core/sync schema.
+Reuse the reviewed strict fresh payload, reject caller/implicit transactions and
+populated targets, and never drop a database on failure. Exact operator instance
+selection remains necessary; creating/installing the beta database does not
+change Electron connection fields. No production or installed DB application.
+
+Re-registration recovery was incorrectly gating read-only SQL discovery. Permit
+authorized discovery independently of retained recovery. Owner additionally
+confirms the replacement is active and requires new local SQL configuration and
+normal workflows. Admit only a positively verified fresh managed target under
+the exact active replacement/project, preserve previous pending history/profile/
+encrypted credentials separately, and pin/recheck actual database identity before
+readiness/restart. Never treat active registration alone as proof old work was
+recovered. The installer intentionally seeds one exact default store-group row;
+admission may retain that unchanged built-in row and the exact migration ledger,
+but no business/history/pending rows. Implement with focused agents/tests;
+publication remains separate.
+
 ## 13 November — current beta database package and offline close
 
 The owner clarifies that the requested deliverable is SQL for existing Supabase

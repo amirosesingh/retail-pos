@@ -9003,3 +9003,83 @@ Combined actual SQL groups19; all owned fixtures cleaned. Deterministic generati
 scoped lint and diff checks pass. No operator/production database was connected or
 created, and no schema was applied there. PR469 now includes both fresh-local
 preparation and existing-data upgrade paths; exact new head CI still required.
+
+## 13 November — one-file local beta creation and recovery-safe discovery
+
+Owner explicitly requests one SQL file that creates/selects POS_Local_Beta and
+installs the latest implemented core/sync storage, without separate commands,
+plus an explanation of ELOCAL_RECOVERY_PENDING during Electron database discovery.
+Use agents. Baseline beta5d49f010; isolated codex/beta-local-one-file-setup.
+Prepare a fixed-target launcher around the unchanged reviewed strict fresh entry;
+create only the missing beta database, refuse populated targets, preserve caller
+transactions, and keep failures/data. No installed/operator DB execution or
+production change. Verify owned LocalDB creation/routing/refusal and packaging.
+Agent audit confirms the retained online-recovery hold also rejects temporary,
+read-only server/database discovery. Correct only that admission mismatch while
+preserving existing caller/settings authorization, retained evidence and blocks
+on activation/connect/save/business work. Run focused allowed/denied tests.
+No production migration, recovery deletion, credentials/settings change or
+installer publication is authorized. Root owns SQL/docs; agent owns the narrow
+Electron discovery paths and their tests.
+
+14 November steering: the owner confirms re-registration is now active and
+explicitly requires normal local SQL setup/connect afterward, rather than a
+permanent global recovery block. Extend the approved correction to a verified
+fresh current target. Keep the old quarantine, original local profile/disabled
+flag and original encrypted SQL password file unchanged. Add a separate sealed
+current-local profile/admission bound to the active replacement proof, cloud/
+backend scope and actual SQL database identity. First admission requires normal
+schema readiness and a complete locked fresh-database check (only exact migration
+ledger rows and the unchanged built-in default-group seed are allowed); retained
+populated/unknown targets stay held. After
+admission/restart, recheck actual database GUID before bootstrap/readiness while
+allowing normal new data. Corrupt/stale authority fails closed. A later
+registration change must not bypass pending work in the admitted current target.
+Agents split store/secure-config and service/IPC/Main wiring; root owns SQL/docs.
+This authorizes code and isolated focused tests, not installed configuration or
+database execution, production, deleting recovery evidence or publication.
+
+Implemented: standalone `database/beta/retail-pos-local-beta-setup.sql` creates
+only missing POS_Local_Beta, selects it inside its execution scope and runs the
+unchanged full-core/current13-module fresh payload. Master-scoped creation lock,
+caller/implicit-transaction refusal and unique new data/log filenames protect
+concurrent execution and retained unattached files. Populated/partial targets
+refuse; there is no automatic DROP or new app connection setting. SQL SHA-256:
+926214FAB74B02BB3DBCBBCF90A14958AE758E71B7B93FF224BFC15DCFB7340C.
+
+Electron: authorized discovery is independent of retained recovery. An active
+replacement can validate/admit a separate fresh target through existing settings
+permission. The Main-only sealed current slot preserves the original config,
+password file and quarantine. Actual identity is pinned from same-pool schema
+validation/inspection through Save and checked inside admission before writes.
+Restart/reconnect/migration/bootstrap/sync require the admitted pool, profile and
+authority; populated admitted targets work normally. Disabled state/progress,
+saved-migration revalidation and bounded reconnect remain accurate. Arbitrary
+target/admin SQL, broad config overwrite and another registration cannot bypass
+retained old/current work. Cache hygiene retains the new credential slot.
+
+Focused verification:92 service/IPC/startup tests across8 files,33 admission/
+credential-preservation tests,11 storage lifecycle tests,20 packaging/old-artifact
+Node tests, scoped ESLint and deterministic package/whitespace checks passed.
+Nine actual owned-LocalDB groups passed with real app schema readiness, CREATE/
+routing, caller/implicit refusal, all13 metadata shapes, modified seed refusal,
+actual identity/admission locks, same-name recreated GUID refusal, populated
+admitted restart and unknown populated refusal. Successful final owned databases
+and vault fixtures cleaned. During fixture debugging a fixed-name unattached MDF
+was encountered; it was not deleted/attached without reverified ownership. New
+creation uses unique names and preserves such existing files.
+
+Tested native authority/vault contexts are synthetic; no installed OS-vault or
+operator-PC acceptance is claimed. Local full tsc encountered missing dependencies
+in the shared installed node_modules; exact PR CI must install the lockfile and
+pass cleanly before merge. No production/installed database, live credentials or
+app settings were changed. Installer publication remains separately pending.
+
+PR470 head961e7351 automatic CI passed Android/Windows/iPhone/Worker builds but
+found four failures in one older adversarial Main test VM: its extracted
+registerIpc() context did not supply the new currentLocalAdmission dependency.
+Add an explicit non-recovery admission stub to that non-recovery fixture without
+changing its permission/write-barrier assertions. The focused file now passes all
+38 tests and scoped lint; the additional startup-cloud Node suite also passes12.
+No runtime or SQL changes are needed for this fixture correction. Require checks
+again on the corrected exact head before merging beta.

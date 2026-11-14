@@ -65,6 +65,7 @@ function mainFixture() {
     },
     app: { hasSingleInstanceLock: () => singleInstance },
     databaseManager: manager, databaseConfig: { profile: () => profile }, databaseService: service,
+    currentLocalAdmission: { pending: () => false },
     terminalStore: { read: () => registration, wasProvisioned: () => true },
     authorizationServerUrl: () => backend, cloudCredentials: { read: () => ({ url: "https://project.owned-fixture.invalid" }) },
     recoveryMetadataGate: gate, syncCoordinator: coordinator, closeWriteBarrier: shutdown,
