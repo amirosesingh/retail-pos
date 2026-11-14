@@ -9074,3 +9074,12 @@ operator-PC acceptance is claimed. Local full tsc encountered missing dependenci
 in the shared installed node_modules; exact PR CI must install the lockfile and
 pass cleanly before merge. No production/installed database, live credentials or
 app settings were changed. Installer publication remains separately pending.
+
+PR470 head961e7351 automatic CI passed Android/Windows/iPhone/Worker builds but
+found four failures in one older adversarial Main test VM: its extracted
+registerIpc() context did not supply the new currentLocalAdmission dependency.
+Add an explicit non-recovery admission stub to that non-recovery fixture without
+changing its permission/write-barrier assertions. The focused file now passes all
+38 tests and scoped lint; the additional startup-cloud Node suite also passes12.
+No runtime or SQL changes are needed for this fixture correction. Require checks
+again on the corrected exact head before merging beta.
