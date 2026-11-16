@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 const require = createRequire(import.meta.url);
 const { sqlErrorDiagnostic } = require("../../../electron/db/sql-error-diagnostic.cjs");
 const { SyncCoordinator } = require("../../../electron/sync/coordinator.cjs");
+const { bootstrapDiagnostic, tagBootstrapDiagnostic } = require("../../../electron/diagnostics.cjs");
 const RequestError = require("mssql/lib/error/request-error");
 const main = readFileSync("electron/main.cjs", "utf8");
 function native(number: number, message = "Private SQL values must stay private") {
@@ -56,7 +57,7 @@ describe("bounded SQL error-number diagnostics", () => {
   it.each([null, undefined, "termination", { code: "ECONNRESET" }, { code: "ETIMEDOUT", number: 10060 },
     { code: "HTTP_403", status: 403, originalError: { code: 403 } }, { code: "23505" },
     { sqlNumber: -1 }, { sqlNumber: 0 }, { sqlNumber: 1.5 }, { sqlNumber: Infinity },
-    { sqlNumber: "3621 PRIVATE" }, { sqlNumber: { valueOf: () => 547 } }, { sqlNumber: 2147483648 }])(
+    { sqlNumber: "3621 PRIVATE" }, { sqlNumber: { valueOf: (): number => 547 } }, { sqlNumber: 2147483648 }])(
     "does not manufacture SQL diagnostics from transport, HTTP or malformed metadata %j", error => {
       expect(sqlErrorDiagnostic(error)).toEqual({});
     });
@@ -115,9 +116,9 @@ describe("bounded SQL error-number diagnostics", () => {
   });
 
   it("logs automatic coordinator SQL metadata through the actual Main scheduler without changing retry", async () => {
-    const diagnostics = { logConnection: vi.fn(), sqlErrorDiagnostic, bootstrapDiagnostic: () => ({}) }, schedule = vi.fn();
-    const result = { ok: false, code: "EREQUEST", error: "statement terminated", sqlNumber: 547 };
-    const context = { diagnostics, syncRegistry: { tables: [] }, scheduleAutomaticSync: schedule, databaseService: { snapshot: () => ({ enabled: true, configured: true }) },
+    const diagnostics = { logConnection: vi.fn(), sqlErrorDiagnostic, bootstrapDiagnostic }, schedule = vi.fn();
+    const result: { ok: boolean; code: string; error: string; sqlNumber?: number } = { ok: false, code: "EREQUEST", error: "statement terminated", sqlNumber: 547 };
+    const context = { diagnostics, syncRegistry: { tables: [{ cloudTable: "shifts" }] }, scheduleAutomaticSync: schedule, databaseService: { snapshot: () => ({ enabled: true, configured: true }) },
       isManagementDevice: () => false, databaseManager: { isConnected: () => true }, terminalStore: { read: () => ({ tokenId: "fixture" }) },
       localBranchId: () => "fixture-branch", jobManager: { running: false }, localDataPreparePromise: null,
       syncCoordinator: { paused: false, running: false, runNow: vi.fn(async () => result) }, shouldRetryRecoveryMetadata: () => false,
@@ -135,6 +136,28 @@ describe("bounded SQL error-number diagnostics", () => {
     context.syncCoordinator.runNow.mockResolvedValueOnce({ ...result, code: "ECHANGEGAP", sqlNumber: 22117 });
     await run();
     expect(diagnostics.logConnection).toHaveBeenLastCalledWith("synchronization.automatic.failed", expect.objectContaining({ code: "EREQUEST", sqlNumber: 547 }));
+    const gap = () => tagBootstrapDiagnostic({ ...result, code: "ECHANGEGAP", sqlNumber: 22117 },
+      { table: "shifts", phase: "download", origin: "gap_recovery", httpStatus: 503, nonJsonResponse: true });
+    for (const returned of [
+      { ...result, sqlNumber: 3621 },
+      { ok: false, code: "ELOCAL_PENDING_UNVERIFIED", error: "Retained work still needs review." },
+    ]) {
+      context.syncCoordinator.runNow.mockResolvedValueOnce(gap());
+      context.prepareLocalData.mockResolvedValueOnce(returned);
+      await run();
+      const final = diagnostics.logConnection.mock.calls.at(-1)![1];
+      expect(final).toMatchObject({ code: returned.code, message: returned.error });
+      if ("sqlNumber" in returned) expect(final.sqlNumber).toBe(3621);
+      else expect(final).not.toHaveProperty("sqlNumber");
+      expect(final).not.toHaveProperty("bootstrapPhase"); expect(final).not.toHaveProperty("httpStatus");
+      expect(final).not.toHaveProperty("table"); expect(final).not.toHaveProperty("nonJsonResponse");
+      expect(schedule).toHaveBeenLastCalledWith(60000, { historyContinuation: true });
+    }
+    context.syncCoordinator.runNow.mockResolvedValueOnce(gap());
+    context.prepareLocalData.mockRejectedValueOnce(terminated(2601));
+    await run();
+    expect(diagnostics.logConnection).toHaveBeenLastCalledWith("synchronization.automatic.failed", expect.objectContaining({ code: "EREQUEST", sqlNumber: 2601 }));
+    expect(diagnostics.logConnection.mock.calls.at(-1)![1]).not.toHaveProperty("httpStatus");
   });
 
   it("projects only validated numeric SQL diagnostics into durable logs and the failure summary", () => {

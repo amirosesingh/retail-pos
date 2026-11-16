@@ -9134,3 +9134,12 @@ Do not claim that error solved or installed-PC acceptance from these results.
 Next: exact-head beta CI/review, narrow beta integration, then capture any
 remaining native error under the improved diagnostics on an authorized updated
 installation. No new installer publication or operator schema change is applied.
+
+PR471 head4780d74 passed platform/Worker builds, full Vitest/SQL/permission and
+release-boundary suites plus lint; clean CI then found TS7023 in the new nested
+valueOf fixture. Add its explicit numeric return type. Final review also caught
+stale diagnostic attribution after a returned gap-recovery failure: use that
+returned failure rather than the earlier gap for SQL/bootstrap details. New
+tests cover returned3621, returned non-SQL and thrown2601 with no stale cause or
+retry changes; diagnostic/automatic-gap suites pass41. Close/update policy suite
+passes18. Require clean CI again on the corrected exact head before integration.

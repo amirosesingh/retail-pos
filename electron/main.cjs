@@ -676,6 +676,7 @@ async function runAutomaticSync() {
     diagnostics.logConnection("synchronization.automatic.recovering", { category:"synchronization", stage:"automatic", state:"recovering", ...diagnostics.bootstrapDiagnostic(result,syncRegistry.tables.map(table=>table.cloudTable)) });
     try {
       result = await prepareLocalData({ force: true });
+      failure = result;
     } catch (error) {
       failure = error;
       result = { ok: false, code:error?.code??"EBOOTSTRAP", error: String(error?.message ?? error), ...diagnostics.sqlErrorDiagnostic?.(error) };
