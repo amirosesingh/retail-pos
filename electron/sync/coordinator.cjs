@@ -1,5 +1,6 @@
 const { AsyncLocalStorage } = require("node:async_hooks");
 const { bootstrapDiagnostic, tagBootstrapDiagnostic } = require("../diagnostics.cjs");
+const { sqlErrorDiagnostic } = require("../db/sql-error-diagnostic.cjs");
 const { posFeedEvidence } = require("./status-evidence.cjs");
 const { pilotEnrollment, TABLE: GROUPED_SETTINGS } = require("./grouped-store-settings.cjs");
 function retainDiagnostic(target, source) {
@@ -285,7 +286,7 @@ class SyncCoordinator {
       this.status.phase="idle";
       const message=this.rememberFailure(error,options,failedDirection);
       const code=String(error?.code??"ESYNC");
-      result=retainDiagnostic({ ok:false,code,error:message,table:failedTable||null },error);
+      result=retainDiagnostic({ ok:false,code,error:message,table:failedTable||null,...sqlErrorDiagnostic(error) },error);
     } finally {
       this.running=false;
       this.status.currentTable=null;

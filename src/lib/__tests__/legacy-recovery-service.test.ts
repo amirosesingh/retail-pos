@@ -60,6 +60,28 @@ function fixture() {
     setGuid: (value: string) => { guid = value; }, setEpoch: () => { epoch++; }, setAdmin: (value: boolean) => { admin = value; }, setSchema: (value: boolean | "partial") => { schema = value; }, setPending: (value: string) => { pending = value; }, open: () => open };
 }
 describe("native legacy recovery coordinator", () => {
+  it("counts and retries valid text branch/terminal scopes without requiring UUID labels", async () => {
+    const f = fixture(); f.context.branchId = "shop-one"; f.context.terminalId = "till-seven";
+    f.setPending("0");
+    expect(await f.service.pendingSummary()).toEqual({ available: true, pending: 0 });
+    expect(await f.service.pushPending({ branchId: "shop-one" })).toMatchObject({ pending: 0, acknowledged: 0 });
+    f.setPending("1");
+    expect(await f.service.pendingSummary()).toEqual({ available: true, pending: 1 });
+    expect(f.outbox.preflight).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ branchId: "shop-one", terminalId: "till-seven", databaseGuid: DATABASE }));
+    expect(f.cloud.pushLegacyRecovery).not.toHaveBeenCalled(); expect(f.outbox.acknowledge).not.toHaveBeenCalled();
+  });
+  it.each(["branchId", "terminalId"] as const)("rejects malformed %s without losing exact scope boundaries", field => {
+    const f = fixture();
+    for (const value of ["", " padded", "padded ", "a".repeat(129), "shop\u0000", "shop\u007f"]) {
+      f.context[field] = value;
+      expect(() => f.service.context()).toThrow(expect.objectContaining({ code: "ELEGACY_RECOVERY_SCOPE" }));
+    }
+  });
+  it("refuses a different valid text branch instead of widening a registered source", async () => {
+    const f = fixture(); f.context.branchId = "shop-one"; f.context.terminalId = "till-seven";
+    await expect(f.service.pushPending({ branchId: "shop-two" })).rejects.toMatchObject({ code: "SYNC_BRANCH_FORBIDDEN" });
+    expect(f.outbox.pending).not.toHaveBeenCalled(); expect(f.cloud.pushLegacyRecovery).not.toHaveBeenCalled();
+  });
   it("releases SQL locks before network and retains exact financial/time text in minimal preview", async () => {
     const f = fixture(), result = await f.service.preview(SHIFT);
     expect(result.cloud.countedCash).toBe("100.1234567890123456789"); expect(result.local.closedAt).toBe("2026-01-01T08:00:00.1234567Z");

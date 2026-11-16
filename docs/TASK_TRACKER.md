@@ -9083,3 +9083,54 @@ changing its permission/write-barrier assertions. The focused file now passes al
 38 tests and scoped lint; the additional startup-cloud Node suite also passes12.
 No runtime or SQL changes are needed for this fixture correction. Require checks
 again on the corrected exact head before merging beta.
+
+## 16 November — beta.9 saved-closing status failure
+
+The owner explicitly published beta1.4.84-beta.9 from beta5f5dd04; all release
+jobs succeeded and public Windows/Android/iPhone downloads, both update feeds,
+source descriptors and SQL attachment were verified. Stable manifest hash and
+main ref remained unchanged. The owner now reports the installed beta.9 shows
+unconfirmed pending counts, ELEGACY_RECOVERY_SCOPE-style saved-closing recovery
+failure and native ODBC 'statement has been terminated'. Current selected local
+database is confirmed by the owner as POS_Local_Beta. A bounded read-only check
+verified the local LCRPOS instance and exact database: core versions1–24, two
+text-ID store rows and zero shifts/journal/recovery rows. No operator database
+repair, DDL, financial action or configuration change is authorized or applied.
+
+Continue on isolated codex/beta-saved-closing-verification, baseline5f5dd04.
+Credential-free beta failure logs confirm bootstrap ELEGACY_RECOVERY_SCOPE and
+subsequent EREQUEST without sqlNumber, then close preparation failures. Inspect
+LegacyShiftRecoveryService/runtime, native ODBC error propagation and exact
+pending-summary/schema/transaction guards. Use source and isolated fixtures to
+find/reproduce the defect; retain unknown pending state until verification works.
+Do not clear queues, ACKs, cursors, shift rows or approvals, weaken branch/author
+checks, apply DDL/data repairs, or touch production. Agent audit is read-only
+initially; root owns diagnostics/implementation after confirmed findings.
+
+Confirmed source defect: legacy recovery context and pushPending require UUID
+branch/terminal labels, while the reviewed protocol and SQL scope columns allow
+bounded text labels. A focused test reproduces the exact generic scope error for
+valid shop/till labels even with zero pending recovery events. Correct labels to
+the existing128-character contract with control/whitespace rejection and existing
+UUID canonicalization; keep record/database/author IDs strict and scope comparison
+unchanged. Native preceding SQL error numbers also survive in the driver but are
+lost when the coordinator serializes failures; preserve bounded numeric evidence
+without printing query values or credentials. This does not establish the cause
+of the user's separate EREQUEST until reproduced/observed. Use focused protocol,
+runtime and owned SQL tests only; no live data rewrites or publication yet.
+
+Implemented the bounded-label correction and numeric-only SQL error evidence
+through coordinator, Main logging and the existing failure summary. Focused
+service/runtime/diagnostics tests pass89; adjacent automatic/bootstrap/reliability
+tests pass51 and native sync-pipeline tests pass39. Scoped ESLint/whitespace pass.
+An actual disposable UUID-owned LocalDB/ODBC fixture passes real schema
+preflights, zero-count/empty retry, one preserved pending event, case-sensitive
+branch/terminal/backend separation and duplicate-event2627 diagnostic retention.
+It sent no requests, wrote no ACK/adoption, and cleaned its verified owned DB.
+
+The installed database's separate EREQUEST cause is still unconfirmed: the old
+logs discarded its native number, and the isolated pending-summary path passes.
+Do not claim that error solved or installed-PC acceptance from these results.
+Next: exact-head beta CI/review, narrow beta integration, then capture any
+remaining native error under the improved diagnostics on an authorized updated
+installation. No new installer publication or operator schema change is applied.

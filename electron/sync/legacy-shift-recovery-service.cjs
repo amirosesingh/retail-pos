@@ -9,6 +9,13 @@ const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const HASH = /^[a-f0-9]{64}$/;
 const fail = (code = "ELEGACY_RECOVERY_SCOPE") => { throw Object.assign(new Error("Saved closing recovery is not ready or requires administrator review. Existing shift records remain intact."), { code, table: "shifts" }); };
 const id = value => { const text = recordId(value); if (!UUID.test(text)) fail(); return text; };
+// Branch/terminal identities are protocol labels, not record UUIDs. Keep exact
+// text scopes; canonicalize UUID labels without broadening source authority.
+const scopeLabel = value => {
+  const text = recordId(value);
+  if (typeof text !== "string" || !text || text.length > 128 || text !== text.trim() || /[\u0000-\u001f\u007f]/.test(text)) fail();
+  return text;
+};
 const limitOf = value => { if (!Number.isSafeInteger(value) || value < 1 || value > 100) fail(); return value; };
 class LegacyShiftRecoveryService {
   constructor({ connectionManager, registry, cloud, evidenceStore, outbox, authority, readContext, adopter = null }) {
@@ -40,7 +47,7 @@ class LegacyShiftRecoveryService {
   context() {
     const context = this.readContext();
     if (!context || typeof context !== "object" || !HASH.test(context.backendOriginHash) || typeof context.profileKey !== "string" || !context.profileKey || context.profileKey.length > 16384) fail();
-    return { branchId: id(context.branchId), terminalId: id(context.terminalId), backendOriginHash: context.backendOriginHash, profileKey: context.profileKey };
+    return { branchId: scopeLabel(context.branchId), terminalId: scopeLabel(context.terminalId), backendOriginHash: context.backendOriginHash, profileKey: context.profileKey };
   }
   capture(admin = false) {
     const context = this.context(), pool = this.connectionManager.pool, approval = admin ? this.authority.capture() : null;
@@ -318,7 +325,7 @@ class LegacyShiftRecoveryService {
     });
   }
   pushPending({ branchId, limit = 5 }) {
-    branchId = id(branchId); limitOf(limit);
+    branchId = scopeLabel(branchId); limitOf(limit);
     const pool = this.connectionManager.pool;
     if (this.pushing) {
       if (this.pushing.pool !== pool || this.pushing.branchId !== branchId) fail("ELEGACY_RECOVERY_BUSY");

@@ -2034,3 +2034,24 @@ installer publication retain their separate explicit owner approvals. True
 financial conflicts need the existing audited Administrator decision; schema
 installation must never invent proof, choose a timestamp winner, reset a cursor
 or acknowledge retained work.
+
+## 16 November — beta.9 closing-status compatibility correction
+
+Beta1.4.84-beta.9 was published from beta5f5dd04 (PR470 and prior sync/receipt
+fixes); release workflow43589219525 and public paired installers/update feeds
+were verified. Stable manifest and production main remained unchanged.
+
+The owner reports closing recovery/pending-count failures in that version with
+POS_Local_Beta selected. Read-only local evidence confirms text store IDs and no
+saved shifts or recovery rows. The recovery service incorrectly requires UUID
+branch/terminal labels despite the existing128-character text-scope protocol.
+Accept valid exact bounded labels while retaining strict database/record UUIDs,
+same source/profile/branch checks and all receipt/adoption guards. Do not clear
+queues or replace unverified pending counts with zero to suppress the warning.
+
+Focused tests and a real ODBC owned fixture verify the narrow correction and
+no-ACK pending preservation. Preserve numeric primary SQL errors across the
+existing diagnostic chain; the generic3621 termination wrapper is insufficient
+to establish the separate installed EREQUEST cause. This remains unverified;
+new installed acceptance and any new installer publication are distinct steps.
+No production or installed database/schema/vault changes are part of this fix.
