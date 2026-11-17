@@ -18,8 +18,9 @@ hosted database schemas are outside this implementation batch.
 
 The eight routing/settings/status suites passed together: 168 tests. These are
 source and controlled-fixture results, not installed-device acceptance.
-After the financial and CI-contract fixes, all 27 affected suites passed together:
-584 tests. Scoped lint and diff checks also passed. A local full TypeScript run
+After the financial and CI-contract fixes, all 29 affected suites passed together:
+610 tests. The final two fixture corrections preserve awaited refund ordering and
+central request/legacy-child denial checks. Scoped lint and diff checks also passed. A local full TypeScript run
 could not resolve unrelated mobile/PGlite packages in the shared dependency tree;
 new/owned paths have no reported TypeScript errors. Required clean CI remains the
 merge gate.
@@ -74,3 +75,12 @@ At source validation, PR #474 is merged as `656c395a`, and PR #475 is merged as
 `b27e6316`; both passed their required checks. PR #476's corrected head is
 `dc7a8e66`. See the linked PR lifecycle for later CI/merge results rather than
 inferring installed acceptance from this snapshot.
+
+PR #476 at that corrected head passes application, SQL/upgrade/transfer/history,
+lint, TypeScript and build checks. Its dependency-audit stage is blocked by
+[GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf): the
+currently published latest `picomatch` is 4.0.7, and the high advisory lists no
+patched version. The upstream review on 17 November changed the audit result
+without a manifest or lockfile change in these POS fixes. Keep this check and
+the passing-CI merge gate intact. No package changes or forced toolchain
+downgrades were made. PR #477 records the financial slice and its final CI.

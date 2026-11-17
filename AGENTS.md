@@ -111,11 +111,11 @@
   Preserve the explicit commit target and the approved unavailable-SQL fallback;
   an actual local write failure must remain a failure rather than silently
   switching the operation to the cloud.
-- Treat unreadable, malformed, recovering or enabled-but-unready local SQL state
-  as a blocked supported write, never as an empty/unconfigured database. Choose
+- With a native bridge, treat unreadable, malformed, recovering or enabled-but-unready
+  local SQL state as a blocked supported write, never as an empty/unconfigured database. Choose
   the existing central writer only through the verified SQL-disabled state or
-  existing web, Management and approved online-session routes. A missing native
-  writer requires retry/update, not a cloud fallback.
+  existing web, Management and approved online-session routes. A verified local
+  route with a missing native writer requires retry/update, not a cloud fallback.
 - For store-rule changes, the existing native edit queue owns the supported
   `block_shift_close_on_hold` and `max_drawer_cash_limit` patches while online as
   well as offline. Preserve exact decimal values, expected revisions, stable

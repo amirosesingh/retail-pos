@@ -9336,9 +9336,14 @@ do not call the whole POS verified from matching counts or empty tables.
 
 Source validation checkpoint: PR #474 passed CI and merged as 656c395a; PR #475
 passed CI and merged as b27e6316. PR #476's two stale test contracts were corrected
-at dc7a8e66, with 136 affected tests passing and CI rerunning. Refund/transfer
+at dc7a8e66, with 136 affected tests passing. That head passes source, SQL,
+lint, TypeScript and build checks; the high picomatch audit now blocks merge.
+Latest published picomatch is 4.0.7 and GHSA-fc5q-39xc-vjpf has no published fix.
+No audit exclusion, forced downgrade or dependency update was made. Refund/transfer
 admission passed 196 tests and independent review; the combined affected set is
-584 passing tests across 27 suites. Rules and the
+610 passing tests across 29 suites. PR #477's two older financial/request fixtures
+now model the Main refund grant and verified transfer handoff; their existing
+awaited-success and pending-child denial assertions remain. Rules and the
 [evidence report](database/beta-local-first-recovery-2026-11-18.md) now record the
 proved source behavior and separate acceptance boundaries.
 

@@ -12,11 +12,16 @@ It contains verified local write routing, supported native store-rule edits
 while online and accurate count/content/deferred-service wording (168 focused
 tests passed together). PR #476 contains truthful bootstrap and shift-specific
 review presentation with stale-async guards (136 focused tests passed). Its
-initial CI caught two stale test contracts; the corrected head dc7a8e66 is in CI
-at this entry. Do not claim this startup fix is merged or installed yet.
+initial CI caught two stale test contracts. Corrected head dc7a8e66 passes source,
+SQL/upgrade/history, lint, TypeScript and builds, but the high dependency audit
+now blocks merge: picomatch 4.0.7 remains latest with no published fix for
+GHSA-fc5q-39xc-vjpf. The upstream advisory was reviewed on 17 November; these
+POS fixes did not change dependencies. Keep required CI/audit policy intact and
+do not claim the startup fix is merged or installed yet.
 Refund admission and transfer dependency handoff passed 196 focused tests and
-independent review. All affected slices passed together: 584 tests in 27 suites.
-Their final beta PR/CI follows this source-validation entry. The current grouped
+independent review. All affected slices and updated CI fixtures passed together:
+610 tests in 29 suites.
+PR #477 contains that financial slice and the verified rules/evidence. The current grouped
 refund protocol still cannot use offline manager PIN approval as durable hosted
 proof; unsupported PIN refunds stop before local commit, and expired/lost hosted
 approval recovery remains separately tracked. Do not certify unlimited offline
