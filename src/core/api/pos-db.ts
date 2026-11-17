@@ -22,6 +22,7 @@ import {
 import { defaultSettings, sampleState } from "@/lib/pos-seed";
 import { broadcastSettingsChange, runOpLive } from "@/lib/sync-engine";
 import { localDb } from "@/core/local-db/local-db";
+import { resolveLocalWriteRoute } from "@/core/local-db/write-route";
 import { routedQuery } from "@/core/api/db-query";
 import type { SyncOp } from "@/lib/sync-outbox";
 import {
@@ -2326,9 +2327,11 @@ async function commitOpsInternal(context: string, ops: SyncOp[], report?: (compl
   const { ops: cloudOps, deltas } = withRelativeStock(ops);
 
   const local = localDb();
-  if (local?.writeBatch && (!requireLocalAggregate || local.commitAggregate)) {
-    const state = await local.database?.getState?.().catch(() => null);
-    if (state?.enabled && state?.connected && (state.tradingReady ?? state.connected)) {
+  if (await resolveLocalWriteRoute(local) === "local") {
+    if (!local?.writeBatch || (requireLocalAggregate && !local.commitAggregate)) {
+      throw Object.assign(new Error("The local SQL Server transaction writer is unavailable. Restart the updated application before saving."),
+        { code: "ELOCAL_WRITER_UNAVAILABLE" });
+    }
       const refund =
         ops.length === 1 && ops[0].kind === "rpc" && ops[0].fn === "sale_refund" ? ops[0] : null;
       const sharedPosSettings =
@@ -2411,12 +2414,6 @@ async function commitOpsInternal(context: string, ops: SyncOp[], report?: (compl
         });
       }
       return noteCommitTarget("local");
-    }
-    if (state?.enabled && state?.connected && state.tradingReady === false) {
-      throw new Error(
-        "Local SQL Server is connected, but its POS schema is not ready. Open Database & Cloud Connection and apply the current local database update before taking payment.",
-      );
-    }
   }
 
   if (requireLocalAggregate) {

@@ -9304,3 +9304,32 @@ and limits. Network-disconnected/restart acceptance, the new native installer
 and financial installed acceptance were not exercised in this catalogue smoke.
 Keep those pending; do not mark the entire POS verified. Rules/docs-only changes
 start from merged beta in codex/beta-sync-verification-rules.
+
+## 18 November — local-first, recovery presentation and idle sync fixes
+
+The owner approves implementing the read-only audit recommendations with agents,
+preserving functionality, local data and authorization. Start from beta e504bbdb
+in codex/beta-local-first-recovery-idle. Beta.11 was published from that source;
+the previous publication approval is fulfilled and does not authorize another
+installer release. Production databases, main and installed profiles stay outside
+this implementation batch.
+
+Close the configured-but-unreadable local SQL route's unintended cloud fallback;
+complete the existing protected local refund authorization handoff; preserve
+transfer identity and dependencies when a local draft has not reached the central
+writer. Resolve supported Windows settings edits through the local route while
+keeping explicitly central-controlled administration and shared-history corrections
+under their existing authority. Do not invent offline privileges, a second queue
+or a replacement synchronization engine.
+
+Show bootstrapping as progress and financial review only for a specific protected
+shift hold. Keep verified missing-record recovery automatic without selecting
+financial winners from device timestamps. Reduce heartbeat-only full sync wakes
+and repeated empty recovery preflights while retaining immediate security changes
+and fresh checks at protected writes/recovery boundaries. Distinguish count matches,
+content verification and deferred services in status wording.
+
+Run only affected tests/owned fixtures, independently review the shared paths,
+and update beta PRs as reviewable slices pass. Record implemented, tested and
+installed acceptance separately. Update permanent rules with proved behavior;
+do not call the whole POS verified from matching counts or empty tables.
