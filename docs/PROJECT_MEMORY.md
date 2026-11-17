@@ -40,6 +40,22 @@ Owner requires all proposed cloud/local database upgrades collected for exact fi
 The exact owner-approved service-only bounded feed RPC and PR384 are applied/deployed on beta. Existing selector/privacy grants and businessrecords are preserved; native continuation is bound to authenticated response metadata. Live147request sample all200/ok with no CPU-exceeded; CPU2–114ms/mean9.469 means NO guarantee allrequestsbelow10ms. Electronfeed131613→133184, all6shiftCTvalid; largebacklog stilldraining. Keep implemented/sample-verified status distinct from fullsync completion, production promotion or installerpublication. Supabase migrationtool ledger20261104042158 corresponds to approvedfile20261104040251, SHA83495D696622241ECA2A8D396234E2FD65EE7C7A3050E93E4280638D6530D59B; do not replay based solely on differing timestamps.
 # POS project memory
 
+## 17 November — measured beta Electron catalogue acceptance
+
+PR #472 is merged into beta at efe0d948 after exact-head CI passed; the native
+sale-item fix still needs a newly published/installed beta beyond beta.10.
+An actual beta.10 inventory UI save produced one zero-stock SKU-000008 in pinned
+POS_Local_Beta, its durable journal29 and automatic cloud acknowledgement.
+Both databases contain the same identity, branch and values. A guarded brand
+update on the same synthetic Beta row downloaded as version2 with no upload
+echo. Independent read-only local and hosted agent checks confirm that limited
+round trip. Preserve the existing local-first writer and coordinator; keep
+nullable sale-item labels under their verified sales parent and retain safe SQL
+diagnostics. See [the scoped report](database/beta-sync-smoke-2026-11-17.md).
+Do not turn this into whole-POS, disconnected/restart or updated-client financial
+acceptance. No production database change, local reset, registration change or
+additional installer publication was part of this test.
+
 ## 14 November — one-file beta setup and active replacement local SQL
 
 Owner requests one standalone local SQL file that creates only missing
