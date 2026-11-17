@@ -54,6 +54,9 @@ describe("automatic reconciliation uses the existing guarded sync lane",()=>{
     expect(f.local.products).toBe(3);expect(f.push).toHaveBeenCalledTimes(1);expect(f.cloud.bootstrapPage).not.toHaveBeenCalled();
     expect(reconciliationError(differences)).toMatchObject({code:"ERECONCILE",differences});
     expect(reconciliationError(differences).message).toContain("products (local 3, cloud 2)");
+    expect(reconciliationError(differences).message).toContain("Saved local work is retained");
+    expect(reconciliationError(differences).message).toContain("Sync & Data");
+    expect(reconciliationError(differences).message).not.toContain("Administrator review is required");
     await f.lifecycle.reconcileAndRecover("branch",90);expect(f.push).toHaveBeenCalledTimes(1);
   });
   it("does not reuse a recovery cooldown for another history range",async()=>{

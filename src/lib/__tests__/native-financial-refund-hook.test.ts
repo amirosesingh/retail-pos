@@ -29,6 +29,21 @@ function fixture({enabled=false,prior=false,legacy=false,changed=false,parent=tr
  return{repo,run,events,financial,author,poolRead,refunded:()=>refunded};
 }
 describe('optional financial refund event seam',()=>{
+ it('rechecks the Main-only refund admission inside the transaction before money or stock changes',async()=>{
+  const f=fixture(),authorization={verify:vi.fn(async()=>{f.events.push('verified approval');}),assertCurrent:vi.fn()};
+  await f.repo.refund({saleId:sale,refundId:'stable-refund',branchId:'A'},null,null,authorization);
+  expect(authorization.verify).toHaveBeenCalledWith(expect.anything(),false);expect(f.events.indexOf('verified approval')).toBeLessThan(f.events.indexOf('refund write'));expect(authorization.assertCurrent).toHaveBeenCalledOnce();
+ });
+ it('an admission failure rolls the transaction back without a receipt, journal or refund mutation',async()=>{
+  const f=fixture(),authorization={verify:vi.fn(async()=>{throw Error('approval expired');}),assertCurrent:vi.fn()};
+  await expect(f.repo.refund({saleId:sale,refundId:'stable-refund',branchId:'A'},null,null,authorization)).rejects.toThrow('approval expired');
+  expect(f.refunded()).toBe(false);expect(f.events).not.toContain('refund write');expect(f.events).not.toContain('receipt write');expect(f.events.at(-1)).toBe('rollback');
+ });
+ it('checks the existing stable receipt owner before accepting a lost-reply replay',async()=>{
+  const f=fixture({prior:true}),authorization={verify:vi.fn(async()=>{f.events.push('replay admission');}),assertCurrent:vi.fn()};
+  await expect(f.repo.refund({saleId:sale,refundId:'stable-refund',branchId:'A'},null,null,authorization)).resolves.toMatchObject({replayed:true});
+  expect(authorization.verify).toHaveBeenCalledWith(expect.anything(),true);expect(f.events.indexOf('replay branch')).toBeLessThan(f.events.indexOf('replay admission'));expect(f.events).not.toContain('refund write');
+ });
  it('rejects a shiftless lookup that became a shifted receipt before the actual refund starts',async()=>{const f=fixture({enabled:true});await expect(f.repo.refund({saleId:sale,refundId:'stable-refund',branchId:'A'},{terminalId:'terminal',author:null,expectedShiftId:null})).rejects.toMatchObject({code:'EFINANCIAL_CONTEXT_CHANGED'});expect(f.financial.captureMutation).not.toHaveBeenCalled();expect(f.refunded()).toBe(false);});
  it('default-disabled preserves existing refund SQL and skips every protocol hook',async()=>{const f=fixture();await expect(f.run()).resolves.toMatchObject({ok:true,replayed:false});expect(f.poolRead).not.toHaveBeenCalled();expect(f.financial.captureMutation).not.toHaveBeenCalled();expect(f.financial.finalizeMutation).not.toHaveBeenCalled();expect(f.refunded()).toBe(true);});
  it('locks receipt then shift/head/sale and finalizes only after real refund write',async()=>{const f=fixture({enabled:true});await f.run();expect(f.events).toEqual(['scope observation','begin','receipt lock','shift lock','head/capture','sale lock','items','refund write','journal','event finalize','receipt write','commit']);expect(f.author.assertCurrent).toHaveBeenCalledTimes(3);});

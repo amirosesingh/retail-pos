@@ -1,11 +1,13 @@
 import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 const root = new URL('../../', import.meta.url);
+// Match the CI checkout when quoted source guards contain multiline anchors.
+const readSql = async path => (await readFile(new URL(path,root),'utf8')).replaceAll('\r\n','\n');
 export const migrationPath = 'supabase/migrations/20261031042447_atomic_transfer_dispatch_and_verified_native_actor.sql';
-export const migration = await readFile(new URL(migrationPath,root),'utf8');
-const schema = (await readFile(new URL('supabase/schema.sql',root),'utf8')).split('-- TRF15_ATOMIC_DISPATCH_BEGIN')[0];
-const nativeApproval = await readFile(new URL('supabase/migrations/20261026231535_verified_native_transfer_approval.sql',root),'utf8');
-const warehouse = await readFile(new URL('supabase/migrations/20261008133703_complete_settings_preferences_and_warehouse_dispatch.sql',root),'utf8');
+export const migration = await readSql(migrationPath);
+const schema = (await readSql('supabase/schema.sql')).split('-- TRF15_ATOMIC_DISPATCH_BEGIN')[0];
+const nativeApproval = await readSql('supabase/migrations/20261026231535_verified_native_transfer_approval.sql');
+const warehouse = await readSql('supabase/migrations/20261008133703_complete_settings_preferences_and_warehouse_dispatch.sql');
 export function sourceFunction(name, source=schema) {
  const start=source.lastIndexOf(`CREATE OR REPLACE FUNCTION ${name}(`);
  if(start<0)return null;
@@ -33,7 +35,7 @@ const tableSql=tables.map(name=>{
  return schema.slice(start,schema.indexOf(';',start)+1);
 }).join('\n');
 const columns=[...schema.matchAll(/ALTER TABLE public\.(\w+)\s+ADD COLUMN IF NOT EXISTS\s+[^;]+;/g)].filter(m=>tables.includes(m[1])).map(m=>m[0]).join('\n');
-const quantityConstraints=await readFile(new URL('supabase/migrations/20261007111500_harden_warehouse_transfer_lifecycle.sql',root),'utf8');
+const quantityConstraints=await readSql('supabase/migrations/20261007111500_harden_warehouse_transfer_lifecycle.sql');
 export const fixtureSql=`SET check_function_bodies=off;
  CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
  CREATE SCHEMA auth; CREATE SCHEMA private;

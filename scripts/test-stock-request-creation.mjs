@@ -28,6 +28,7 @@ const identity=moduleFrom(helperCode);
 const saleIdentity=moduleFrom(await read('src/lib/sale-identity.ts'));
 const branchIdentity=moduleFrom(await read('src/lib/branch-id.ts'),()=>saleIdentity);
 const contract=moduleFrom(await read('src/lib/stock-request-contract.ts'),name=>name==='./sale-identity'?saleIdentity:branchIdentity);
+const writeRoute=moduleFrom(await read('src/core/local-db/write-route.ts'));
 const literal=value=>value===null?'NULL':typeof value==='number'?String(value):quote(value);
 async function harness({guard=true,native=false,legacy=false}={}){
  const db=new PGlite();await db.exec(fixtureSql);
@@ -88,6 +89,7 @@ async function harness({guard=true,native=false,legacy=false}={}){
   '@/integrations/supabase/external-client':{supabaseExternal:{rpc},authenticatedExternalClientSnapshot:async()=>central},'@/platform-config/platform':{isTerminalApp:()=>native},
   '@/core/api/sync-relay':{relayOp:relay,relayTransferRequestApprovalState:centralState},'./session-epoch':{sessionEpoch:()=>control.epoch},'./sale-identity':saleIdentity,'./transfer-dispatch-result':{},'./stock-request-contract':contract,
   '@/core/local-db/db-mode':{effectiveDatabaseMode:()=> 'cloud'},'@/core/local-db/local-db':{localDb:()=>null},'./branch-id':branchIdentity,
+  '@/core/local-db/write-route':writeRoute,
  };
  const storage=moduleFrom(persistence,name=>{assert(name in dependencies,name);return dependencies[name];});
  let sequence=0;

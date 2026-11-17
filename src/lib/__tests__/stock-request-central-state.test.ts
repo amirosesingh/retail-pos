@@ -1,12 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "@/lib/csp-zod";
 import { stockRequestFulfilmentId } from "../stock-request-identity";
-const mocks = vi.hoisted(() => ({ native: false, relay: vi.fn(), local: vi.fn(), auth: true, from: vi.fn(), pageCount: 205, malformed: false, mode: "cloud", bridge: true }));
+const mocks = vi.hoisted(() => ({ native: false, relay: vi.fn(), local: vi.fn(), prepare: vi.fn(), auth: true, from: vi.fn(), pageCount: 205, malformed: false, mode: "cloud", bridge: true, queryBridge: true }));
 vi.mock("@/core/api/pos-db", () => ({ commitOps: vi.fn(), stableChildId: vi.fn() }));
 vi.mock("@/core/api/db-query", () => ({ routedQuery: mocks.local }));
 vi.mock("@/platform-config/platform", () => ({ isTerminalApp: () => mocks.native }));
 vi.mock("@/core/local-db/db-mode", () => ({ effectiveDatabaseMode: () => mocks.mode }));
-vi.mock("@/core/local-db/local-db", () => ({ localDb: () => mocks.bridge ? { query: vi.fn() } : null }));
+vi.mock("@/core/local-db/local-db", () => ({ localDb: () => mocks.bridge ? {
+  database: { getState: async () => mocks.mode === "local"
+    ? { enabled: true, configured: true, connected: true, tradingReady: true, state: "ready" }
+    : { enabled: false, connected: false, state: "disabled" } },
+  prepareCentralTransfer: mocks.prepare,
+  ...(mocks.queryBridge ? { query: vi.fn() } : {}),
+} : null }));
 vi.mock("@/core/api/sync-relay", () => ({ relayOp: vi.fn(), relayTransferRequestApprovalState: mocks.relay }));
 vi.mock("@/integrations/supabase/external-client", () => ({ supabaseExternal: {}, authenticatedExternalClientSnapshot: async () => mocks.auth ? { from: mocks.from } : null }));
 import { loadRequestApprovalState } from "../stock-transfers";
@@ -16,7 +22,8 @@ const child = { ...request, id: childId, kind: "transfer", source_request_id: re
 const uuid = (prefix: string, index: number) => `${prefix}-0000-4000-8000-${index.toString(16).padStart(12, "0")}`;
 const line = (id: string, index: number) => ({ id: uuid(id === requestId ? "10000000" : "30000000", index), transfer_id: id, product_id: uuid("20000000", index), quantity: 1, quantity_approved: 1, quantity_dispatched: null, quantity_received: null, quantity_verified: null });
 beforeEach(() => {
-  vi.clearAllMocks(); mocks.native = false; mocks.auth = true; mocks.pageCount = 205; mocks.malformed = false; mocks.mode = "cloud"; mocks.bridge = true;
+  vi.clearAllMocks(); mocks.native = false; mocks.auth = true; mocks.pageCount = 205; mocks.malformed = false; mocks.mode = "cloud"; mocks.bridge = true; mocks.queryBridge = true;
+  mocks.prepare.mockImplementation(async ({ transferId, stage }: { transferId: string; stage: string }) => ({ ok: true, transferId, stage }));
   mocks.local.mockImplementation(() => { throw new Error("Local SQL must not prove central approval state"); });
   mocks.from.mockImplementation((table: string) => {
     let key = "", value = "", start = 0, end = 199, limit = 1000;
@@ -63,13 +70,14 @@ describe("authoritative central approval state", () => {
     mocks.native = true; mocks.mode = "local"; mocks.relay.mockResolvedValue({ ok: true, row: { request, fulfilment: null, requestItems: [line(requestId, 0)], fulfilmentItems: [] } });
     mocks.local.mockResolvedValue([{ ...child, id: pendingId }]);
     await expect(loadRequestApprovalState(requestId)).rejects.toThrow("pending central synchronization");
+    expect(mocks.prepare).toHaveBeenCalledExactlyOnceWith({ transferId: requestId, stage: "approve" });
     expect(mocks.local).toHaveBeenCalledExactlyOnceWith("stock_transfers", expect.objectContaining({ match: { source_request_id: requestId }, limit: 2 }));
     expect(mocks.from).not.toHaveBeenCalled();
   });
   it("does not treat a failed local presence check as absence", async () => {
     mocks.native = true; mocks.mode = "local"; mocks.relay.mockResolvedValue({ ok: true, row: { request, fulfilment: null, requestItems: [line(requestId, 0)], fulfilmentItems: [] } });
     await expect(loadRequestApprovalState(requestId)).rejects.toThrow("Local SQL");
-    mocks.bridge = false; await expect(loadRequestApprovalState(requestId)).rejects.toThrow("could not be checked");
+    mocks.queryBridge = false; await expect(loadRequestApprovalState(requestId)).rejects.toThrow("could not be checked");
   });
   it("accepts the new header UUID in the existing CSP/Zod validator without changing validators", async () => {
     expect(z.string().uuid().safeParse(await stockRequestFulfilmentId(requestId)).success).toBe(true);

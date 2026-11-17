@@ -155,7 +155,7 @@ class OfflineApprovalService {
 class OfflineApprovalStore {
   constructor(manager, operations) { this.manager = manager; this.operations = operations; }
   request(tx) { return tx ? new (this.manager.sql().Request)(tx) : this.manager.pool.request(); }
-  async readPolicy(scope, authorizerId, tx) {
+  async readPolicy(scope, authorizerId, tx, actionKey = "discount_over_limit") {
     const lock = tx ? " WITH(UPDLOCK,HOLDLOCK)" : "";
     // UUID case is representational; other branch codes retain exact identity.
     // Apply this in SQL as well as JS, including binary-default databases.
@@ -164,9 +164,10 @@ class OfflineApprovalStore {
       : `${column} COLLATE Latin1_General_100_BIN2=@branch COLLATE Latin1_General_100_BIN2`;
     const ids = [...new Set([authorizerId, scope.requesterId].map(id => String(id).toLowerCase()))].sort();
     if (ids.some(id => !UUID.test(id))) refuse("The verified account identity is unavailable.", "EAPPROVAL_CONTEXT");
-    const query = this.request(tx).input("branch", scope.branchId); ids.forEach((id, index) => query.input(`user${index}`, id));
+    if (!["discount_over_limit", "refund"].includes(actionKey)) refuse("Unsupported native approval action.");
+    const query = this.request(tx).input("branch", scope.branchId).input("action", actionKey); ids.forEach((id, index) => query.input(`user${index}`, id));
     const result = await query.query(`
-      SELECT * FROM dbo.authorization_actions${lock} WHERE action_key=N'discount_over_limit'
+      SELECT * FROM dbo.authorization_actions${lock} WHERE action_key=@action
       AND (scope_id=N'' OR ${branchMatch("scope_id")}) ORDER BY id;
       SELECT * FROM dbo.pos_store_settings${lock} WHERE store_id=N'' OR ${branchMatch("store_id")} ORDER BY store_id COLLATE Latin1_General_100_BIN2;
       ${ids.map((_, index) => `SELECT id,user_id,full_name,role,role_slug,permissions,is_active,store_id,updated_at FROM dbo.app_users${lock} WHERE id=TRY_CONVERT(uniqueidentifier,@user${index}) AND (store_id IS NULL OR ${branchMatch("store_id")});`).join("\n")}`);
@@ -183,7 +184,7 @@ class OfflineApprovalStore {
   }
   async persist(scope, request, saved, verifyPolicy) {
     const row = saved.row, receiptHash = hash(row);
-    return this.operations.apply("Recording verified offline discount approval", [{ kind: "insert", table: "authorization_log", rows: [row] }],
+    return this.operations.apply(request.actionKey === "refund" ? "Recording verified local refund approval" : "Recording verified offline discount approval", [{ kind: "insert", table: "authorization_log", rows: [row] }],
       { branchId: scope.branchId, terminalId: scope.terminalId, enforcePermissions: true },
       async tx => {
         scope.assertCurrent(); await this.request(tx).input("id", row.id).input("entity", JSON.stringify({ id: row.id })).input("branch", scope.branchId).input("note", receiptHash).query(`
@@ -193,7 +194,7 @@ class OfflineApprovalStore {
           VALUES(TRY_CONVERT(uniqueidentifier,@id),N'offline_approval_v1',@id,@note);`); scope.assertCurrent();
       },
       async tx => {
-        scope.assertCurrent(); await verifyPolicy(await this.readPolicy(scope, saved.verified.id, tx)); scope.assertCurrent();
+        scope.assertCurrent(); await verifyPolicy(await this.readPolicy(scope, saved.verified.id, tx, request.actionKey)); scope.assertCurrent();
         const prior = await this.request(tx).input("id", row.id).query("SELECT note,operation_type FROM dbo.local_operation_receipts WITH(UPDLOCK,HOLDLOCK) WHERE operation_id=TRY_CONVERT(uniqueidentifier,@id);"); scope.assertCurrent();
         if (!prior.recordset?.length) return true;
         if (prior.recordset[0].operation_type !== "offline_approval_v1" || prior.recordset[0].note !== receiptHash) refuse("This approval identity has different saved data.", "EIDEMPOTENCY");

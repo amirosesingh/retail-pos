@@ -132,6 +132,8 @@ const CHANNEL_LEVELS = {
   "staff:verify-pin": OPEN,
   "staff:verify-approval-pin": OPEN, // signed-in operator may present an approver credential
   "approval:authorize-offline-discount": OPEN, // fixed Main-owned audit; current sale authority below
+  "approval:authorize-refund": OPEN, // Main binds current refund authority to one saved receipt
+  "transfers:prepare-central": OPEN, // stage-specific current permission is checked in Main
   "approval:refresh-activity": OPEN, // fixed scoped catch-up; current POS authority and trusted frame checked in Main
   "approval:own-token-vault": OPEN, // POS main-frame only; fixed encrypted token keys, PIN-locked envelope before sign-in
   "approval:enroll-verifier": OPEN, // permission checked in allowed() and again by the backend
@@ -459,6 +461,7 @@ function refusal(level, channel, args = []) {
 
 /** True when the caller may run this channel with these arguments right now. */
 function allowed(channel, args = []) {
+  if (channel === "approval:authorize-refund") return adminSession.hasPosAuthority() && adminSession.hasPermission("can_process_refund");
   if (channel === "approval:authorize-offline-discount") {
     if (!adminSession.hasPosAuthority() || !adminSession.hasPermission("can_process_sale")) return false;
     // Sender admission belongs to the fixed handler; another window must not
