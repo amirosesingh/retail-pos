@@ -15,8 +15,8 @@ import { authenticatedExternalClientSnapshot, supabaseExternal } from "@/integra
 import { isTerminalApp } from "@/platform-config/platform";
 import { relayOp, relayTransferRequestApprovalState } from "@/core/api/sync-relay";
 import { sessionEpoch } from "./session-epoch";
-import { effectiveDatabaseMode } from "@/core/local-db/db-mode";
 import { localDb } from "@/core/local-db/local-db";
+import { resolveLocalWriteRoute } from "@/core/local-db/write-route";
 import { recordId, sameRecordId } from "./sale-identity";
 import { sameBranchId } from "./branch-id";
 import { dispatchFailure, mayReconcileDispatch, readDispatchProof, type DispatchExpected, type DispatchProof } from "./transfer-dispatch-result";
@@ -192,12 +192,13 @@ export async function loadTransfer(id: string, options: { throwOnError?: boolean
 export async function loadRequestApprovalState(requestId: string): Promise<{ request: StoredTransfer; fulfilment: StoredTransfer | null }> {
   let state: StockRequestApprovalState;
   if (isTerminalApp()) {
+    const localRoute = await prepareCentralTransfer(requestId, "approve");
     const result = await relayTransferRequestApprovalState(recordId(requestId));
     if (!result.ok) throw new Error("The central stock request could not be verified.");
     state = checkedStockRequestApprovalState(result.row);
     // A queued local child is denial evidence, never authority to declare a
     // remote child absent. Keep it intact until its upload is reconciled.
-    if (effectiveDatabaseMode() === "local") {
+    if (localRoute === "local") {
       if (!localDb()?.query) throw new Error("Local fulfilment synchronization could not be checked.");
       const pending = await routedQuery("stock_transfers", {
         columns: "id,kind,source_request_id,from_store_id,to_store_id",
@@ -354,6 +355,28 @@ const toLines = (lines: LineQty[] | undefined) =>
 
 export type RpcResult = { success: boolean; error?: string; code?: string; dispatch?: DispatchProof };
 
+function transferRpcFailure(error: unknown, context: string): RpcResult {
+  const code = String((error as { code?: string })?.code ?? "");
+  if (code === "EONLINE_REQUIRED") return { success: false, code, error: "This transfer stage requires a connection to head office. The saved local draft remains intact." };
+  if (["TRANSFER_UPLOAD_PENDING", "TRANSFER_HANDOFF_UPGRADE_REQUIRED"].includes(code)) return { success: false, code, error: "Synchronize this terminal's saved transfer and its dependencies before continuing. No central transfer action was submitted." };
+  return { success: false, error: describeError(error, context) };
+}
+
+async function prepareCentralTransfer(id: string, stage: "approve" | "dispatch" | "receive" | "verify") {
+  const bridge = localDb();
+  if (await resolveLocalWriteRoute(bridge) === "cloud") return "cloud" as const;
+  if (typeof navigator !== "undefined" && navigator.onLine === false)
+    throw Object.assign(new Error("This transfer stage needs a connection to head office. Its saved local draft remains intact."), { code: "EONLINE_REQUIRED" });
+  if (!bridge?.prepareCentralTransfer)
+    throw Object.assign(new Error("Update the desktop app to verify the saved transfer before this central action."), { code: "TRANSFER_HANDOFF_UPGRADE_REQUIRED" });
+  const epoch = sessionEpoch();
+  const result = await bridge.prepareCentralTransfer({ transferId: recordId(id), stage });
+  if (sessionEpoch() !== epoch) throw Object.assign(new Error("The signed-in operator changed. Reopen the transfer."), { code: "SESSION_CHANGED" });
+  if (!result.ok || result.transferId !== recordId(id) || result.stage !== stage)
+    throw Object.assign(new Error(result.error ?? "The transfer upload was not confirmed. Keep the saved draft and synchronize before continuing."), { code: result.code ?? "TRANSFER_UPLOAD_PENDING" });
+  return "local" as const;
+}
+
 async function runTransferRpc(
   fn:
     | "stock_transfer_approve"
@@ -364,6 +387,8 @@ async function runTransferRpc(
   args: Record<string, unknown>,
 ): Promise<RpcResult & { data?: unknown; status?: number }> {
   if (isTerminalApp()) {
+    const stage = fn === "stock_transfer_approve" ? "approve" : fn.startsWith("stock_transfer_dispatch") ? "dispatch" : fn === "stock_transfer_receive" ? "receive" : "verify";
+    await prepareCentralTransfer(String(args.p_transfer_id ?? ""), stage);
     const result = await relayOp({ kind: "rpc", table: "stock_transfers", fn, args });
     return result.ok ? { success: true, data: result.data } : { success: false, error: result.error, code: result.code, status: result.status };
   }
@@ -388,7 +413,7 @@ export async function approveTransferInDb(
       p_lines: toLines(lines),
     });
   } catch (e) {
-    return { success: false, error: describeError(e, "Approving the transfer") };
+    return transferRpcFailure(e, "Approving the transfer");
   }
 }
 
@@ -449,7 +474,7 @@ export async function receiveTransferInDb(
       p_lines: toLines(lines),
     });
   } catch (e) {
-    return { success: false, error: describeError(e, "Receiving the transfer") };
+    return transferRpcFailure(e, "Receiving the transfer");
   }
 }
 
@@ -473,6 +498,6 @@ export async function verifyTransferInDb(
       p_reason: reason?.trim() || null,
     });
   } catch (e) {
-    return { success: false, error: describeError(e, "Verifying the delivery") };
+    return transferRpcFailure(e, "Verifying the delivery");
   }
 }

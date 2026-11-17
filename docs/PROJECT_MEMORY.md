@@ -1,3 +1,30 @@
+## 18 November — beta local writes, startup and idle sync
+
+The owner approved implementing the read-only audit recommendations with agents,
+preserving production and saved local work. PR #474, reviewed head 59514e5c,
+passed required CI and merged into beta 656c395a. It coalesces heartbeat writes
+to 60 seconds without delaying 10 second revocation checks or security notifications,
+and reuses empty legacy recovery ranges only inside one serializable transaction.
+Its 84 focused tests and independent review passed.
+
+PR #475, reviewed head e4cea65b, passed CI and merged into beta b27e6316.
+It contains verified local write routing, supported native store-rule edits
+while online and accurate count/content/deferred-service wording (168 focused
+tests passed together). PR #476 contains truthful bootstrap and shift-specific
+review presentation with stale-async guards (136 focused tests passed). Its
+initial CI caught two stale test contracts; the corrected head dc7a8e66 is in CI
+at this entry. Do not claim this startup fix is merged or installed yet.
+Refund admission and transfer dependency handoff passed 196 focused tests and
+independent review. All affected slices passed together: 584 tests in 27 suites.
+Their final beta PR/CI follows this source-validation entry. The current grouped
+refund protocol still cannot use offline manager PIN approval as durable hosted
+proof; unsupported PIN refunds stop before local commit, and expired/lost hosted
+approval recovery remains separately tracked. Do not certify unlimited offline
+refund approval or complete installed acceptance from these tests.
+The [evidence](database/beta-local-first-recovery-2026-11-18.md) keeps source
+checks separate from full installed/restart/offline acceptance and publication.
+No hosted schema change, production write or another installer is approved here.
+
 ## 7 November — mixed-client scoped history transport
 
 Use an explicit scoped download request and server-verified scope on every

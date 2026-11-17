@@ -111,6 +111,49 @@
   Preserve the explicit commit target and the approved unavailable-SQL fallback;
   an actual local write failure must remain a failure rather than silently
   switching the operation to the cloud.
+- Treat unreadable, malformed, recovering or enabled-but-unready local SQL state
+  as a blocked supported write, never as an empty/unconfigured database. Choose
+  the existing central writer only through the verified SQL-disabled state or
+  existing web, Management and approved online-session routes. A missing native
+  writer requires retry/update, not a cloud fallback.
+- For store-rule changes, the existing native edit queue owns the supported
+  `block_shift_close_on_hold` and `max_drawer_cash_limit` patches while online as
+  well as offline. Preserve exact decimal values, expected revisions, stable
+  operation IDs and uncertain-response/context fences. Other or mixed rule
+  edits retain the authorized central workflow and explain that target before
+  save. Do not add unsupported native policy or cluster authority implicitly.
+- Display bootstrap as preparation. Show protected shift review only for an
+  explicit registered shift-domain hold; generic item, stock or count failures
+  are not grounds for a financial comparison login. Older async snapshots and
+  retries must not overwrite newer readiness or connection state.
+- Keep online terminal revocation reads at ten seconds and security wake signals
+  immediate. Coalesce successful presence writes to sixty seconds per current
+  registration/client, retry failed writes and retain unreported sync progress.
+  Never discard all terminal-table signals to reduce idle work. Reuse verified
+  empty recovery ranges only within the same serializable transaction; do not
+  cache empty/proven state across cycles, identities, pools or protected writes.
+- Label equal table counts as counts only. Reserve content verification for the
+  actual signature comparison; a zero journal or deferred Membership service
+  does not certify every workflow. The [18 November evidence](docs/database/beta-local-first-recovery-2026-11-18.md)
+  separates source/fixture checks from installed offline, restart and hosted
+  acceptance. Keep that distinction when updating these rules after a release.
+- Require Main-owned, purpose-bound admission for every native refund, including
+  direct IPC calls. Recheck the current actor, local receipt, exact amount,
+  branch, policy and context inside the refund transaction. Direct authorized
+  users do not need an additional approval PIN or override reason. Hosted
+  approvals must be verified by Main against the existing authenticated service;
+  never extend their expiry or fabricate a local approver audit. Keep credentials
+  out of persisted records and retain stable receipt-proven replay after a lost
+  reply. Until the grouped protocol accepts durable local approver proof, refuse
+  unsupported offline PIN refunds before committing money. Expired/lost hosted
+  upload approval remains a held review boundary, not permission to acknowledge
+  or discard a saved refund.
+- Transfer drafts use the existing local transaction/journal. Before centrally
+  coordinated approval, dispatch, receipt or verification, require Main's current
+  stage permission, correct source/destination branch and the existing verified
+  final-upload barrier. Recheck the local transfer identity/version after the
+  barrier. Retain the draft and give a clear online/pending-upload result when
+  the handoff fails; do not submit an action against an unacknowledged dependency.
 - Pending offline work must survive restart, slow connectivity and long offline
   periods. Change Tracking expiry and history-retention policies must not erase,
   acknowledge or overwrite unsynchronized work. Test expired-history recovery

@@ -43,6 +43,8 @@ contextBridge.exposeInMainWorld("pos", {
   writeBatch: (context, ops) => invoke("business:write-batch", context, ops),
   commitAggregate: (aggregate) => invoke("business:commit-aggregate", aggregate),
   authorizeOfflineDiscount: (value) => invoke("approval:authorize-offline-discount", value),
+  authorizeRefund: (value) => invoke("approval:authorize-refund", value),
+  prepareCentralTransfer: (value) => invoke("transfers:prepare-central", value),
   snapshot: (options) => invoke("business:snapshot", options),
   analytics: (from, to, timeZone) => invoke("business:analytics", from, to, timeZone),
   managementReport: (options) => invoke("business:management-report", options),

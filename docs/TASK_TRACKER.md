@@ -9333,3 +9333,19 @@ Run only affected tests/owned fixtures, independently review the shared paths,
 and update beta PRs as reviewable slices pass. Record implemented, tested and
 installed acceptance separately. Update permanent rules with proved behavior;
 do not call the whole POS verified from matching counts or empty tables.
+
+Source validation checkpoint: PR #474 passed CI and merged as 656c395a; PR #475
+passed CI and merged as b27e6316. PR #476's two stale test contracts were corrected
+at dc7a8e66, with 136 affected tests passing and CI rerunning. Refund/transfer
+admission passed 196 tests and independent review; the combined affected set is
+584 passing tests across 27 suites. Rules and the
+[evidence report](database/beta-local-first-recovery-2026-11-18.md) now record the
+proved source behavior and separate acceptance boundaries.
+
+Remaining protocol code: durable manager approval for grouped offline refunds,
+including approval renewal/recovery after the temporary hosted proof expires or
+is lost on restart. Unsupported PIN-required grouped refunds stop before commit;
+existing saved work is not acknowledged or cleared. This is not complete offline
+financial acceptance. Installed/restart/two-till smoke testing and another paired
+installer release remain separate from the source fixes; no publication requested
+in this implementation turn. Production and installed databases remain unchanged.

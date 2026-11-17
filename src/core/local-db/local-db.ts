@@ -408,6 +408,13 @@ export type PosBridge = {
   terminalRepairContinueOnline?: (evidence: {sealed:string|null;plain:string|null;key:string|null}) => Promise<{ok:boolean;ready?:boolean;code?:string;error?:string;requiresLocalDatabase?:boolean;mode?:"online";localRecoveryPending?:boolean}>;
   restoreTerminalConfig?: (config: TerminalConfig) => Promise<{ ok: boolean; config?: TerminalConfig | null; code?: string; error?: string }>;
   clearTerminalConfig?: (context: TerminalClearContext) => Promise<{ ok: boolean; code?: string; error?: string }>;
+  prepareCentralTransfer?: (value: { transferId: string; stage: "approve" | "dispatch" | "receive" | "verify" }) => Promise<{ ok: boolean; transferId?: string; stage?: string; error?: string; code?: string }>;
+  authorizeRefund?: (value: {
+    saleId: string; branchId: string; registeredTerminalId: string; requestedAmount: number;
+    grantToken?: string | null; requestId?: string; username?: string; credential?: string;
+    selfAuthorization?: boolean; reason?: string;
+    proof?: { accessToken?: string; cashierToken?: string; sessionToken?: string };
+  }) => Promise<{ ok: boolean; grantToken?: string; authorizer?: { id: string; name: string; role: string }; code?: string; error?: string }>;
   authorizeOfflineDiscount?: (value: {
     requestId: string; actionKey: "discount_over_limit"; registeredTerminalId: string; branchId: string;
     username: string; credential: string; selfAuthorization?: boolean; reason: string; snapshot: unknown; payload: Record<string, string | number | boolean | null>; requestedAmount: number;

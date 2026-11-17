@@ -5,9 +5,10 @@
  */
 import { isTerminalApp } from "@/platform-config/platform";
 import { localDb } from "@/core/local-db/local-db";
-import { localStaffRoster } from "@/core/local-db/local-staff";
+import { authorizeNativeRefund, isNativeRefundGrant, localStaffRoster } from "@/core/local-db/local-staff";
 import { normalizeRule } from "./authorization";
 import { posFetch } from "./server-origin";
+import { resolveLocalWriteRoute } from "@/core/local-db/write-route";
 import {
   authorizeWithPin as authorizeWithPinFn,
   cancelAuthorizationRequest as cancelAuthorizationRequestFn,
@@ -153,9 +154,20 @@ export const listAuthorizationPeople = async (
 
 export const verifyBusinessAuthorization = (
   input: NonNullable<Parameters<typeof verifyBusinessAuthorizationFn>[0]>,
-) =>
-  callHosted<Awaited<ReturnType<typeof verifyBusinessAuthorizationFn>>>(
-    "verify_mutation",
-    input.data,
-    verifyBusinessAuthorizationFn as DirectCall,
-  );
+) => callHosted<Awaited<ReturnType<typeof verifyBusinessAuthorizationFn>>>("verify_mutation", input.data, verifyBusinessAuthorizationFn as DirectCall);
+
+/** Refund-only narrowing leaves every other action's signed-grant contract intact. */
+export const verifyRefundAuthorization = async (input: NonNullable<Parameters<typeof verifyBusinessAuthorizationFn>[0]>) => {
+  const data = input.data as { actionKey: string; payload: Record<string, unknown>; storeId: string; requestedAmount?: number | null; grantToken?: string | null; accessToken?: string; cashierToken?: string; sessionToken?: string };
+  if (data.actionKey !== "refund") return { ok: false as const, error: "A refund authorization is required." };
+  const local = localDb();
+  if (await resolveLocalWriteRoute(local) === "local") {
+    if (!local?.authorizeRefund) return { ok: false as const, error: "Update the desktop app before refunding a saved local receipt." };
+    const native = await authorizeNativeRefund({ saleId: String(data.payload.sale_id ?? ""), branchId: data.storeId ?? "",
+      requestedAmount: data.requestedAmount ?? Number.NaN, grantToken: data.grantToken,
+      proof: { accessToken: data.accessToken, cashierToken: data.cashierToken, sessionToken: data.sessionToken } });
+    if (native.ok && isNativeRefundGrant(native.grantToken)) return { ok: true as const, required: true as const, nativeRefundGrant: native.grantToken };
+    return { ok: false as const, error: native.error ?? "The local refund authorization was not confirmed." };
+  }
+  return verifyBusinessAuthorization(input);
+};

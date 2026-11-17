@@ -2777,11 +2777,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
         receipt_no: sale.receiptNo,
         total: Math.abs(sale.total),
       };
-      const [{ verifyBusinessAuthorization }, { getPosCallerAuth }] = await Promise.all([
+      const [{ verifyRefundAuthorization }, { getPosCallerAuth }] = await Promise.all([
         import("./authorization-client"),
         import("./pos-caller-auth"),
       ]);
-      const authorization = await verifyBusinessAuthorization({
+      const authorization = await verifyRefundAuthorization({
         data: {
           ...(await getPosCallerAuth()),
           actionKey: "refund",
@@ -2794,7 +2794,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
       if (!authorization.ok) throw new Error(authorization.error);
       // The stable refund id makes a retry idempotent. Nothing visible changes
       // until the authoritative gateway has accepted the refund.
-      await db.refundSale(saleId, `refund:${saleId}`, undefined, sale.storeId, grantToken);
+      const refundGrant = "nativeRefundGrant" in authorization ? authorization.nativeRefundGrant : grantToken;
+      await db.refundSale(saleId, `refund:${saleId}`, undefined, sale.storeId, refundGrant);
       logger.log("sale_event", "Sale refunded", "receipts", {
         saleId,
         receiptNo: sale.receiptNo,
