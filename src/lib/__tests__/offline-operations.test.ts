@@ -1,6 +1,9 @@
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { observeDesktopStartup } from "../desktop-startup-progress";
+import { desktopStorageRoute } from "../desktop-storage-route";
+import type { LocalStartupState } from "../local-startup";
 
 const require = createRequire(import.meta.url);
 const { listSyncedStaff, verifySyncedStaffPin, verifySyncedApprovalPin } = require("../../../electron/synced-staff-login.cjs");
@@ -16,11 +19,6 @@ describe("offline terminal operations", () => {
     expect(startup).toContain('initialDatabase.enabled && initialDatabase.configured');
     expect(startup).toContain('const initialRoute = initialDatabase.enabled && initialDatabase.configured');
     expect(main).toContain('function createWindows(initialRoute = "/")');
-    const recovery = readFileSync("src/routes/database-startup.tsx", "utf8");
-    expect(recovery).toContain("api?.subscribe(applyState)");
-    expect(recovery).toContain('import { desktopStorageRoute } from "@/lib/desktop-storage-route";');
-    expect(recovery.match(/if \(desktopStorageRoute\(next\) === "local"\)/g)).toHaveLength(2);
-    expect(recovery).not.toContain("if (next.tradingReady)");
     expect(main).toContain("scheduleAutomaticSync(5_000)");
     expect(main).toContain("AUTO_SYNC_OK_MS = ACTIVITY_INTERVAL_MS");
     expect(main).toContain("scheduleAutomaticSync(250)");
@@ -28,6 +26,35 @@ describe("offline terminal operations", () => {
     expect(main).toContain("prepareLocalData({ force: true })");
     const health = readFileSync("src/core/activation/connection-health.ts", "utf8");
     expect(health).toContain("bridge.database?.getState");
+  });
+
+  it("releases observed startup only after local readiness, preserving newer events and cleanup", async () => {
+    let resolve!: (state: LocalStartupState) => void;
+    let event!: (state: LocalStartupState) => void;
+    const release = vi.fn(), update = vi.fn(), unsubscribe = vi.fn();
+    // The actual route binding is exercised by startup-shift-recovery.test.ts.
+    // Exercise its observer/admission contract here without requiring duplicated
+    // source-level subscriptions or a particular count of readiness checks.
+    const stop = observeDesktopStartup({
+      getState: () => new Promise(accept => { resolve = accept; }),
+      subscribe: listener => { event = listener; return unsubscribe; },
+    }, state => {
+      update(state);
+      if (desktopStorageRoute(state) === "local") release();
+    }, () => {});
+    const preparing = { enabled: true, configured: true, connected: true, tradingReady: true, state: "enabled_bootstrapping" };
+    event(preparing);
+    expect(release).not.toHaveBeenCalled();
+    const ready = { ...preparing, state: "enabled_ready" };
+    event(ready);
+    expect(release).toHaveBeenCalledOnce();
+    resolve(preparing); await Promise.resolve();
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(update).toHaveBeenLastCalledWith(ready);
+    stop(); event(ready);
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(release).toHaveBeenCalledOnce();
+    expect(unsubscribe).toHaveBeenCalledOnce();
   });
 
   it("accepts the same PIN for a user synchronized into local SQL", async () => {
