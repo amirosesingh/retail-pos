@@ -2077,4 +2077,8 @@ Separate beta logs prove42P10 from terminal-account app_users on_conflict=email;
 email is intentionally nonunique. Use its existing unique stable machine identity,
 verify ownership/read-back, and preserve valid legacy profiles and inactive denials.
 Preserve lifecycle SQL/HTTP/table evidence instead of replacing it with ESYNC.
-No actual hosted/local repair application is certified until separately verified.
+The guarded metadata-only patch was applied and verified on Retail POS Beta:
+scoped legacy item count0→6 and foreign feed items3→0. Its migration ledger version
+is20261117052540. Preserve original NULL fields; no financial backfill or cursor
+reset occurred. Native comparison/guard code still requires a new approved beta
+installer before installed-client acceptance; publication is a separate action.

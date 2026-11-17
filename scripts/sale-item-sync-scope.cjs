@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { createHash } = require("node:crypto");
 const root = path.resolve(__dirname,"..");
-const MIGRATION = "20261117045120_sale_item_parent_sync_scope.sql";
+const MIGRATION = "20261117052540_sale_item_parent_sync_scope.sql";
 const BEGIN = "-- SALE_ITEM_PARENT_SYNC_SCOPE_V1_BEGIN", END = "-- SALE_ITEM_PARENT_SYNC_SCOPE_V1_END";
 const md5 = text => createHash("md5").update(text).digest("hex");
 const quote = value => "'" + value.replaceAll("'","''") + "'";

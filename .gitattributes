@@ -40,5 +40,5 @@
 /scripts/preparation/pos-store-settings-edit-review-v1.sql text eol=lf
 # Sale-item scope repair contains exact PostgreSQL body fingerprints.
 /supabase/schema.sql text eol=lf
-/supabase/migrations/20261117045120_sale_item_parent_sync_scope.sql text eol=lf
+/supabase/migrations/20261117052540_sale_item_parent_sync_scope.sql text eol=lf
 /database/beta/retail-pos-supabase-beta-sale-item-scope.sql text eol=lf

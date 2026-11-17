@@ -2,7 +2,7 @@
 -- Exact target: irjkmhgrjgcaoixcixut; database postgres; system identifier 7703759698107299042.
 -- No business rows, saved setup, pending work or cursors are rewritten.
 -- The single DO statement is atomic even when the caller has no outer transaction.
--- Reviewed migration: 20261117045120_sale_item_parent_sync_scope.sql
+-- Reviewed migration: 20261117052540_sale_item_parent_sync_scope.sql
 -- Migration SHA256: 43ffbca7619ddf1fa9827d3b8322bfacf60db3f477c024f3fce03f0fa0dda052
 DO $retail_beta_sale_item_scope$
 BEGIN

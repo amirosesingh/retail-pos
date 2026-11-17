@@ -9227,3 +9227,23 @@ Lifecycle diagnostic tests pass49 and terminal-account/registration/session test
 pass41; scoped lint is passing. Canonical SQL component/pagination/tombstone/replay
 verification remains in progress. Old beta.10 must not be certified after only the
 hosted patch: its direct child-label comparison also needs the new native code.
+
+Reviewed application completed on Retail POS Beta only through apply_migration,
+using commit814ff194's exact guarded wrapper SHA256
+71d6fb41589f465462e723507a9c400abe89a1fac0ec13726e3810d07850f66a and body
+43ffbca7619ddf1fa9827d3b8322bfacf60db3f477c024f3fce03f0fa0dda052.
+The target guard verified postgres/postgres and system identifier7703759698107299042;
+independent review found no remaining blockers. Postflight read-only RPCs report
+one verified branch binding, own count6, six retained NULL-label own items,
+zero explicit mismatches and zero foreign sale-item rows (previously3).
+No original financial rows, local settings or saved credentials were rewritten.
+
+Hosted migration history assigned20261117052540. Rename the CLI-created local
+migration to that recorded version and update the deterministic renderer/header;
+the SQL body stays byte-identical. Repackage/comment hash and current source
+verification are recorded separately from the exact applied artifact above.
+129 integrated focused tests and5 atomic/target wrapper tests pass; scoped lint
+and frozen prior-package checks pass. All actual native tests use owned LocalDB.
+Next: exact-head PR checks/beta integration, then explicit installer publication
+approval and updated-client acceptance. Old beta.10 native comparisons remain
+uncertified even though hosted scope is now corrected. Production stays excluded.

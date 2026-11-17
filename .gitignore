@@ -53,3 +53,5 @@ ota-artifacts/
 
 # Task-local disposable database tests and generated operator downloads.
 /.tmp/
+# Supabase CLI project-local cache; not application settings or migrations.
+/supabase/.temp/
