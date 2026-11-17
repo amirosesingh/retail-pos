@@ -547,10 +547,15 @@ function prepareLocalData({force=false}={}){
       // A healthy SQL connection is not proof of a complete local snapshot.
       // Preserve offline access only if this run already qualified that cache;
       // first/incomplete bootstrap failures keep the gate without disconnecting SQL.
-      const detail={phase:"sync_pending",syncReady:false,code:error?.code??"EBOOTSTRAP",error:String(error?.message??error),differences:error?.differences};
+      const registeredTables=syncRegistry.tables.map(table=>table.cloudTable);
+      const failureDiagnostic=diagnostics.bootstrapDiagnostic(error,registeredTables);
+      let sourceTable;
+      try{sourceTable=Object.getOwnPropertyDescriptor(error,"table")?.value;}catch{/* Diagnostic fields do not replace the failure. */}
+      const table=registeredTables.includes(sourceTable)?sourceTable:failureDiagnostic.table;
+      const detail={phase:"sync_pending",syncReady:false,code:error?.code??"EBOOTSTRAP",error:String(error?.message??error),differences:error?.differences,...(table?{table}:{})};
       if(localDataLifecycle.preserveCachedReady?.())databaseService.markReady(detail);
       else databaseService.transition("enabled_bootstrapping",detail);
-      diagnostics.logConnection("synchronization.bootstrap.failed", { category:"synchronization", stage:"bootstrap", code:error?.code??"EBOOTSTRAP", message:String(error?.message??error), ...diagnostics.sqlErrorDiagnostic?.(error), ...diagnostics.bootstrapDiagnostic(error,syncRegistry.tables.map(table=>table.cloudTable)) });
+      diagnostics.logConnection("synchronization.bootstrap.failed", { category:"synchronization", stage:"bootstrap", code:error?.code??"EBOOTSTRAP", message:String(error?.message??error), ...diagnostics.sqlErrorDiagnostic?.(error), ...failureDiagnostic });
       throw error;
     }finally{activity.finish(preparationError);}
   })().finally(()=>{localDataPreparePromise=null;});

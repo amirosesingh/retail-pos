@@ -44,6 +44,6 @@ function validatedCloudCounts(registry, rows, source="central") {
 }
 function reconciliationError(differences) {
   const details = differences.map(row => `${row.table} (local ${row.local}, cloud ${row.cloud})`).join(", ");
-  return Object.assign(new Error(`Automatic synchronization could not safely reconcile ${details}. Saved local work is retained; Administrator review is required.`), {code:"ERECONCILE",differences});
+  return Object.assign(new Error(`Automatic synchronization has not yet confirmed ${details}. Saved local work is retained. Check Sync & Data for details and retry synchronization.`), {code:"ERECONCILE",differences});
 }
 module.exports = { reconcile, localTableCounts, exactCount, validatedCloudCounts, reconciliationError, MEMBERSHIP_TABLES };
