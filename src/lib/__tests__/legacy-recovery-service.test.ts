@@ -48,9 +48,9 @@ function fixture() {
     prepare: vi.fn(async (capture: { assertCurrent: () => void }) => { capture.assertCurrent(); return Object.freeze({}); }),
   };
   const event = Object.freeze({ recoveryId: RECOVERY, shiftId: SHIFT });
-  const evidenceStore = { preflight: vi.fn(async () => undefined), load: vi.fn(async () => ({ shiftId: SHIFT, localGraphText: JSON.stringify(tables), cloudGraphText: stringifyExactJson(parseExactJson(raw).tables) })), capture: vi.fn(async (tx: object, input: { scope: object; cloudGraphText: string }) => { expect(service.assertScope(tx, input.scope)).toBe(true); expect(input.cloudGraphText).toContain("100.1234567890123456789"); return { captureKey: "c".repeat(64), classification: "legacy-local-closing-needs-review" }; }) };
-  const outbox = { preflight: vi.fn(async () => undefined), localGraph: vi.fn<() => Promise<unknown[]>>(async () => tables), assertOwnedGraphs: vi.fn(),
-    create: vi.fn(async () => event), load: vi.fn(async () => event), pending: vi.fn(async () => pending === "1" ? [event] : []),
+  const evidenceStore = { preflight: vi.fn(async (_tx: object, _scope: object) => undefined), load: vi.fn(async () => ({ shiftId: SHIFT, localGraphText: JSON.stringify(tables), cloudGraphText: stringifyExactJson(parseExactJson(raw).tables) })), capture: vi.fn(async (tx: object, input: { scope: object; cloudGraphText: string }) => { expect(service.assertScope(tx, input.scope)).toBe(true); expect(input.cloudGraphText).toContain("100.1234567890123456789"); return { captureKey: "c".repeat(64), classification: "legacy-local-closing-needs-review" }; }) };
+  const outbox = { preflight: vi.fn(async (_tx: object, _scope: object) => undefined), localGraph: vi.fn<() => Promise<unknown[]>>(async () => tables), assertOwnedGraphs: vi.fn(),
+    create: vi.fn(async () => event), load: vi.fn(async () => event), pending: vi.fn(async (_tx: object, _scope: object) => pending === "1" ? [event] : []),
     acknowledge: vi.fn(async (tx: object, input: { scope: object }) => { expect(service.assertScope(tx, input.scope)).toBe(true); pending = "0"; if (service.adopter) convergence = "1"; return { acknowledged: true }; }) };
   const service = new LegacyShiftRecoveryService({ connectionManager: cm, registry: {}, cloud, evidenceStore, outbox, authority, readContext: () => context });
   const adopter = { schema: vi.fn(async () => undefined), prepareAdmin: vi.fn(() => ({})), prepareReceipt: vi.fn(() => ({})), apply: vi.fn(async (_tx: object, value: { decisionId: string }) => { convergence = "0"; return { decisionId: value.decisionId }; }) };
@@ -60,6 +60,37 @@ function fixture() {
     setGuid: (value: string) => { guid = value; }, setEpoch: () => { epoch++; }, setAdmin: (value: boolean) => { admin = value; }, setSchema: (value: boolean | "partial") => { schema = value; }, setPending: (value: string) => { pending = value; }, open: () => open };
 }
 describe("native legacy recovery coordinator", () => {
+  it.each([false, true])("uses the same-transaction empty range proof without repeating full recovery preflights (adopter=%s)", async adopter => {
+    const f = fixture(); f.setPending("0"); if (adopter) f.enableAdopter();
+    f.outbox.pending.mockImplementation(async (tx: object, scope: object) => {
+      await f.outbox.preflight(tx, scope); return [];
+    });
+    expect(await f.service.pushPending({ branchId: BRANCH })).toMatchObject({ skipped: false, pushed: 0, pending: 0, downloadRecoveryComplete: false });
+    expect(f.transactions).toHaveLength(1); expect(f.open()).toBe(0);
+    expect(f.outbox.preflight).toHaveBeenCalledOnce(); expect(f.evidenceStore.preflight).toHaveBeenCalledOnce();
+    expect(f.adopter.schema).toHaveBeenCalledTimes(adopter ? 1 : 0);
+    expect(f.statements.some(sql => sql.includes("COUNT_BIG"))).toBe(false);
+    expect(f.cloud.pushLegacyRecovery).not.toHaveBeenCalled(); expect(f.outbox.acknowledge).not.toHaveBeenCalled();
+  });
+  it("does not reuse an empty result across cycles, status reads or a changed source/database", async () => {
+    const f = fixture(); f.setPending("0"); f.enableAdopter();
+    await f.service.pushPending({ branchId: BRANCH });
+    f.setPending("1");
+    expect(await f.service.pendingSummary()).toMatchObject({ pending: 1 });
+    f.context.profileKey = "replacement-profile"; f.cm.pool = {}; f.setGuid(uuid(99));
+    await f.service.pushPending({ branchId: BRANCH });
+    expect(f.cloud.pushLegacyRecovery).toHaveBeenCalledOnce();
+    expect(f.outbox.preflight).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ databaseGuid: uuid(99) }));
+    expect(f.evidenceStore.preflight.mock.calls.length).toBeGreaterThan(1);
+  });
+  it("keeps schema/source failures from becoming a false empty queue", async () => {
+    const f = fixture(); f.setPending("0");
+    f.evidenceStore.preflight.mockRejectedValueOnce(Object.assign(Error("Changed metadata"), { code: "ESHIFT_RECOVERY_SCHEMA" }));
+    await expect(f.service.pushPending({ branchId: BRANCH })).rejects.toMatchObject({ code: "ESHIFT_RECOVERY_SCHEMA" });
+    f.evidenceStore.preflight.mockImplementationOnce(async () => { f.context.profileKey = "changed-during-read"; });
+    await expect(f.service.pushPending({ branchId: BRANCH })).rejects.toMatchObject({ code: "SYNC_BRANCH_FORBIDDEN" });
+    expect(f.outbox.acknowledge).not.toHaveBeenCalled(); expect(f.open()).toBe(0);
+  });
   it("counts and retries valid text branch/terminal scopes without requiring UUID labels", async () => {
     const f = fixture(); f.context.branchId = "shop-one"; f.context.terminalId = "till-seven";
     f.setPending("0");

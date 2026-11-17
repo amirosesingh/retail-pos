@@ -337,18 +337,29 @@ class LegacyShiftRecoveryService {
       if (!await this.capability()) return Object.freeze({ skipped: true, reason: "UPGRADE_REQUIRED", acknowledged: 0, pushed: 0, pending: 0 });
       const capture = this.capture(); run.capture = capture;
       if (capture.pool !== pool || branchId !== capture.context.branchId) fail("SYNC_BRANCH_FORBIDDEN");
-      const events = await this.atomic(capture, async (tx, scope) => {
+      const selection = await this.atomic(capture, async (tx, scope) => {
         if (!await this.hasSchema(tx)) return null;
         const pending = [...await this.outbox.pending(tx, scope, { limit })];
+        let adoptionAvailable = false;
         if (this.adopter && pending.length < limit) {
-          const available = await this.adoptionAvailable(tx);
-          for (const recoveryId of await this.convergence(tx, scope, { limit: limit - pending.length, available })) {
+          adoptionAvailable = await this.adoptionAvailable(tx);
+          for (const recoveryId of await this.convergence(tx, scope, { limit: limit - pending.length, available: adoptionAvailable })) {
             const event = await this.outbox.load(tx, scope, recoveryId); if (!event) fail("ELEGACY_RECOVERY_PENDING_STATE"); pending.push(event);
           }
         }
-        return pending;
+        if (pending.length) return { events: pending };
+        // Both scoped ranges were just read empty under this serializable
+        // transaction. Keep the remaining schema verification, then reuse that
+        // empty proof instead of starting another transaction to repeat every
+        // catalog preflight and count. Never cache it across cycles or writes.
+        await this.evidenceStore.preflight(tx, scope);
+        return { events: pending, emptySummary: Object.freeze(this.adopter
+          ? { available: true, adoptionAvailable, uploadPending: 0, convergencePending: 0, pending: 0 }
+          : { available: true, pending: 0 }) };
       });
-      if (events === null) return Object.freeze({ skipped: true, reason: "UPGRADE_REQUIRED", acknowledged: 0, pushed: 0, pending: 0 });
+      if (selection === null) return Object.freeze({ skipped: true, reason: "UPGRADE_REQUIRED", acknowledged: 0, pushed: 0, pending: 0 });
+      const { events, emptySummary } = selection;
+      if (emptySummary) return Object.freeze({ skipped: false, acknowledged: 0, pushed: 0, ...emptySummary, downloadRecoveryComplete: false });
       let acknowledged = 0;
       for (const event of events) {
         this.assertCurrent(capture);
