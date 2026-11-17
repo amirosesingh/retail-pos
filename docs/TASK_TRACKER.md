@@ -9264,3 +9264,10 @@ scoped lint and whitespace checks pass. The applied migration remains unchanged.
 Independent native integration review confirms no remaining source blocker and
 that this client fix needs a new installer; it requires no SQL Server DDL,
 registration change or local data reset. Repeat exact-head CI before merge.
+
+The next run passes the full application suite, then exposes one isolated
+notification-generator fixture missing the new helper and matching migration.
+Copy both into that disposable fixture, preserving all ownership/parity checks.
+All23 notification upgrade scenarios and scoped lint now pass. Other executing
+generator fixtures resolve helpers through the original scripts directory;
+no additional missing-copy sites were found. Runtime and applied SQL unchanged.
