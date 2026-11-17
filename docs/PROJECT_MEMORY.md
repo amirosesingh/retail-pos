@@ -2055,3 +2055,26 @@ existing diagnostic chain; the generic3621 termination wrapper is insufficient
 to establish the separate installed EREQUEST cause. This remains unverified;
 new installed acceptance and any new installer publication are distinct steps.
 No production or installed database/schema/vault changes are part of this fix.
+
+## 17 November — beta.10 native and hosted sync repair
+
+Owner requests agents to inspect the Electron window, fix its current SQL errors
+and resolve Supabase errors in beta, preserving production and saved local work.
+Beta.10 is published from ce602c2f; no new installer publication is implied.
+
+Read-only installed Query Store identifies repeated sale_items MERGE exceptions.
+Legacy NULL child branch labels are excluded by bootstrap/counts but their feed
+events were incorrectly global, exposing foreign sale items whose parent sales
+correctly are absent from this branch. Derive sale-item scope from the verified
+sales parent, retain NULL financial facts, reject explicit mismatches, and filter
+historical global events before paging/materialization. Never fetch foreign
+parents, disable constraints, rewrite historical financial rows or clear cursors.
+New metadata-only feed provenance must distinguish verified deletion ownership;
+unprovable historical tombstones require a hold rather than a fabricated ACK.
+Current isolated beta has no such old tombstones or missing-child feed entries.
+
+Separate beta logs prove42P10 from terminal-account app_users on_conflict=email;
+email is intentionally nonunique. Use its existing unique stable machine identity,
+verify ownership/read-back, and preserve valid legacy profiles and inactive denials.
+Preserve lifecycle SQL/HTTP/table evidence instead of replacing it with ESYNC.
+No actual hosted/local repair application is certified until separately verified.
