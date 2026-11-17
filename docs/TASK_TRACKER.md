@@ -9247,3 +9247,20 @@ and frozen prior-package checks pass. All actual native tests use owned LocalDB.
 Next: exact-head PR checks/beta integration, then explicit installer publication
 approval and updated-client acceptance. Old beta.10 native comparisons remain
 uncertified even though hosted scope is now corrected. Production stays excluded.
+
+The first exact-head CI run caught three schema-composition assertions across
+two test files: replaying older history helpers moved their blocks past the new
+sale-item component, and the deliberate migration inventory omitted its new
+CLI file. Correct only composition boundaries and inventory coverage; retain
+the reviewed/applied SQL bytes and every baseline/privilege guard. Android,
+Windows renderer, iOS and beta Worker checks passed on that head.
+Read-only installed postflight at05:42UTC has six sale items and cursor2301,
+with the last SQL exception still05:25:39 before the hosted patch. Ongoing
+ordinary application writes remain outside the repair; no local DML was run.
+
+Composition replay now retains history, held status and transport before the
+sale-item component. All31 affected tests, their48 PostgreSQL subprocess groups,
+scoped lint and whitespace checks pass. The applied migration remains unchanged.
+Independent native integration review confirms no remaining source blocker and
+that this client fix needs a new installer; it requires no SQL Server DDL,
+registration change or local data reset. Repeat exact-head CI before merge.
