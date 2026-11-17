@@ -9279,3 +9279,28 @@ exact branch assertion, and clone/assert the persisted mock profile snapshot.
 All65 tests in those three files and scoped lint pass. Runtime SQL and native
 code remain unchanged. PR #472 records final exact-head CI and integration;
 installer publication and installed-client acceptance remain separate steps.
+
+## 17 November — beta integration and actual Electron catalogue smoke
+
+PR #472 passed every required check at ddff344f and merged into beta as
+efe0d948. The merged tree equals the tested source; main remains a9fe3b59.
+The beta Worker build passed and its public page resolves the isolated Beta
+project. No new installer was published; the installed binary is beta.10.
+
+The owner requested actual Electron actions, independent agent verification of
+local/online records, and permanent rules reflecting the verified flow. In the
+existing Beta Demo Shop session, create one named synthetic zero-stock product
+through the inventory UI. Direct reads verify local product/SKU-000008 plus
+journal29, automatic acknowledgement, and the same cloud identity/scope/values.
+A guarded text-only cloud update on that same dummy record reaches local SQL
+as version2 with no upload echo. Two agents independently verify both databases;
+existing 5 sales, 6 sale items and 1 shift remain unchanged. Two other waiting
+records drain to zero. Retain the dummy product for owner inspection.
+
+Add only missing local-first ordering, parent-derived sale-item scope, safe
+diagnostic preservation and evidence-boundary rules to AGENTS.md. Detailed
+[smoke evidence](database/beta-sync-smoke-2026-11-17.md) records the observations
+and limits. Network-disconnected/restart acceptance, the new native installer
+and financial installed acceptance were not exercised in this catalogue smoke.
+Keep those pending; do not mark the entire POS verified. Rules/docs-only changes
+start from merged beta in codex/beta-sync-verification-rules.

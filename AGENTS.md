@@ -105,6 +105,12 @@
   the same transaction. Keep pending operations until verified server acceptance;
   retries and lost acknowledgements must not duplicate sales, payments, stock
   movements or closing actions. A network success alone is not acceptance.
+- When enabled local SQL is ready, supported Electron writes must await that
+  local transaction before reporting success or uploading the business record.
+  The uploader reads committed pending evidence through the existing coordinator.
+  Preserve the explicit commit target and the approved unavailable-SQL fallback;
+  an actual local write failure must remain a failure rather than silently
+  switching the operation to the cloud.
 - Pending offline work must survive restart, slow connectivity and long offline
   periods. Change Tracking expiry and history-retention policies must not erase,
   acknowledge or overwrite unsynchronized work. Test expired-history recovery
@@ -149,6 +155,15 @@
   scope or defer the dependent work. Never disable constraints, invent parents or
   acknowledge an incomplete group to make sync advance. Test missing and
   out-of-order dependencies on both push and pull, including restart and retry.
+- For `sale_items`, derive branch scope from the verified `sale_id` to
+  `sales.id` to `sales.store_id` relationship. A nullable or blank child
+  `branch_id` never makes the item global. Native and hosted bootstrap, feed,
+  recovery, detail reads, counts and tombstones must follow that same parent
+  scope. At native apply, verify incoming and retained parent bindings inside
+  the existing page transaction; a missing or foreign parent keeps the page and
+  cursor pending. Hosted readers filter unauthorized candidates before limits.
+  Preserve historical child labels instead of rewriting business rows to pass
+  a scope check. Other catalogue tables retain their own declared scope rules.
 - Use stable row IDs, operation IDs and the table's declared unique keys to
   prevent duplicates in the authoritative transaction. A repeated operation
   for the same confirmed sale bill number reuses that sale and fills only
@@ -243,6 +258,12 @@
   Upgrades must not silently replace previously matched offline operating rules
   with defaults. Preserve a safe read-only legacy transition until connection
   binding is verified; never use it to enable new privileges or unsupported rules.
+- Preserve the original failure code, available primary SQL error number,
+  registered table and safe operation phase through driver, coordinator and
+  lifecycle wrappers. A generic `3621` or `ESYNC` must not replace an available
+  cause. Keep SQL Server and hosted Data API failures distinguishable. Forward
+  only allowlisted diagnostic fields; keep credentials, requests and row payloads
+  out of diagnostics.
 - Spreadsheet imports must preserve valid numeric amounts, decimals and identifier
   text; workbook styling alone must not change their meaning. Do not silently
   strip arbitrary characters into valid numbers, round/truncate amounts, shift
@@ -428,6 +449,16 @@ that device builds require. The guard lives in
   checkbox, source assertion, build, merged PR or published installer alone is
   not end-to-end verification. Track database application, merge, deployment
   and publication separately.
+- Record the hosted project/patch, installed version and tested source SHA
+  independently. A hosted repair does not certify an older installed client.
+  Trace installed sync acceptance through the requested UI action, local SQL
+  commit and durable pending evidence, then authorized cloud acceptance and
+  read-back of the same operation/record and branch. Check a cloud-origin change
+  reaching local SQL without an upload echo when verifying two-way behavior.
+  Distinguish local-database checks from an actual network-disconnected or
+  restart test. Preserve unobserved steps as pending and keep each result scoped
+  to its tested workflow. See the [17 November beta smoke evidence](docs/database/beta-sync-smoke-2026-11-17.md);
+  that report is revision-specific evidence, not blanket POS certification.
 
 ## Controlling POS architecture: branch-locked normal terminals
 
