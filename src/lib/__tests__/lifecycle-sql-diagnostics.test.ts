@@ -87,7 +87,7 @@ describe("lifecycle coordinator failure diagnostics", () => {
   it.each([
     { sqlNumber: -1, table: "private_unknown_table" },
     { sqlNumber: "PRIVATE", table: "https://private.invalid?password=PRIVATE" },
-    { sqlNumber: { valueOf: (): number => 547 }, table: { toString: () => "products" } },
+    { sqlNumber: { valueOf: (): number => 547 }, table: { toString: (): string => "products" } },
   ])("does not copy unverified SQL/table metadata or raw payloads into a lifecycle error", async metadata => {
     const source = { ok: false, error: "Unchanged public error", ...metadata, query: "PRIVATE SQL", parameters: { password: "PRIVATE" }, pending: 99, credentialsInvalid: true };
     const { f } = fixture(source);

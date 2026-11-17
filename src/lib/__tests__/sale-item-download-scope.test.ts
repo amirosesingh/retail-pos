@@ -66,7 +66,7 @@ describe("ordinary native sale-item download scope", () => {
     await f.worker.applyTable(f.transaction, table, [change({ row_data: { id: ITEM, sale_id: SALE, branch_id: branch } })], "shop-a");
     await f.worker.applyTable(f.transaction, table, [change({ tombstone: true, row_data: null })], "shop-a");
     expect(f.cloud.applyLocalBatch).toHaveBeenCalledTimes(2);
-    expect(f.cloud.applyLocalBatch.mock.calls[0][2].rows[0].row_data.branch_id).toBe(branch);
+    expect(f.cloud.applyLocalBatch.mock.calls[0][2].rows[0].row_data?.branch_id).toBe(branch);
   });
 
   it.each([

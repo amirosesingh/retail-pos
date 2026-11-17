@@ -9271,3 +9271,11 @@ Copy both into that disposable fixture, preserving all ownership/parity checks.
 All23 notification upgrade scenarios and scoped lint now pass. Other executing
 generator fixtures resolve helpers through the original scripts directory;
 no additional missing-copy sites were found. Runtime and applied SQL unchanged.
+
+That run passes application, database, notification, packaging and lint stages;
+its final typecheck identifies three fixture-only typing issues. Add an explicit
+string return annotation, safely read a nullable fixture row while retaining the
+exact branch assertion, and clone/assert the persisted mock profile snapshot.
+All65 tests in those three files and scoped lint pass. Runtime SQL and native
+code remain unchanged. PR #472 records final exact-head CI and integration;
+installer publication and installed-client acceptance remain separate steps.

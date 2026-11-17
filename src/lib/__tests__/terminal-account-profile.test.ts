@@ -136,7 +136,8 @@ it("requires persisted read-back rather than trusting an insert response", async
 it("retries the same machine without creating a second public profile or changing its username", async () => {
   mocks.profile = null;
   await ensureTerminalAccount(token, proof);
-  const saved = { ...mocks.profile };
+  const saved = structuredClone(mocks.profile);
+  expect(saved).not.toBeNull();
   mocks.fetch.mockImplementation(async (url: string, init?: RequestInit) => init?.method === "POST"
     ? new Response("exists", { status: 422 }) : Response.json(url.includes("page=")
       ? { users: [{ id: "auth-id", email: profile.email }] } : { id: "auth-id" }));
