@@ -9143,3 +9143,139 @@ returned failure rather than the earlier gap for SQL/bootstrap details. New
 tests cover returned3621, returned non-SQL and thrown2601 with no stale cause or
 retry changes; diagnostic/automatic-gap suites pass41. Close/update policy suite
 passes18. Require clean CI again on the corrected exact head before integration.
+
+## 17 November — installed beta.10 SQL startup failure
+
+The owner reports unavailable local SQL / enabled_bootstrapping and ODBC18
+'statement has been terminated' after beta.10, requests inspection of the open
+Electron window, agents, and correction of all confirmed current failures.
+PR471 merged as ce602c2f; beta.10 publication44013126654 and public artifacts/feeds
+passed, with production main/manifest unchanged and no installed data changes.
+
+Start isolated codex/beta-bootstrap-sql-termination from ce602c2f. Root owns
+Electron observation and sanitized installed diagnostic reads; agents audit
+native error propagation and startup/download SQL read-only initially. Current
+logs show bootstrap ESYNC with no table/native number, while automatic sync
+preserves EREQUEST/3621. The primary SQL cause is not yet known. The observed
+window is now the dashboard after the user's sign-in; do not infer local recovery
+completed from that screen. Inspect actual sync/readiness state without changing
+saved setup or issuing financial/recovery approvals.
+
+Acceptance: reproduce each confirmed cause in isolated fixtures, preserve exact
+branch/author checks, original financial work, queues/proofs/cursors and vault
+settings, then run only focused local tests and required PR checks. Use beta PRs;
+no production/hosted changes, operator SQL DDL/DML, resets, data deletion, forced
+ACKs or installer publication are authorized by this repair request. Read-only
+inspection of the previously owner-confirmed local POS_Local_Beta may establish
+current target/schema evidence before any proposed repair. Reverting scoped code
+must not require data/schema rollback. Record remaining unverified issues honestly.
+
+Owner also explicitly requests resolving Supabase errors in beta. Limit hosted
+investigation and any proposed fix to Retail POS Beta irjkmhgrjgcaoixcixut; never
+query or modify production qhrufhtbeguxydenzfey for this work. Verify account/project
+identity, current logs and advisories before attributing errors to Supabase.
+Separate hosted findings from native Microsoft SQL/ODBC failures. Existing exact
+migration/schema review boundaries remain; do not issue speculative hosted DDL.
+
+Confirmed separate hosted cause: Retail POS Beta logs04:00–04:35UTC contain nine
+app_users HTTP400 / PostgreSQL42P10 failures, each using on_conflict=email.
+terminal-account.server.ts uses that exact invalid REST conflict target; Beta's
+reviewed app_users schema has PK(id), unique user_id and partial unique auth_user_id,
+but its email index is deliberately nonunique. Correct the terminal-account writer
+to use verified stable identity without widening grants or replacing human accounts.
+Do not add an email uniqueness constraint or mutate hosted identities to mask it.
+Agent owns this source/test correction; root retains UI/native investigation.
+Health advisors return no findings. Other informational/performance/security
+advisories are not proof of this runtime cause and must not prompt broad access
+or schema changes. Native ARITHABORT0 was tested with matching ANSI_WARNINGS1 in
+an owned fixture and passed; do not change operator SET options on that hypothesis.
+
+Confirmed native/hosted scope cause: existing local Query Store records repeated
+MERGE sale_items exceptions, with download cursor51, five scoped sales/two products
+and zero sale items. Read-only hashed-parent comparison proves the pending global
+feed includes three legacy NULL-branch sale items from two other branches, whose
+parents correctly are absent locally. Six own-branch legacy NULL items are also
+excluded from bootstrap/counts by the direct branch_id predicate. Native owned
+fixtures confirm valid item replay/refund succeeds and missing parents refuse547;
+no constraint or session-option change is needed.
+
+Fix sale-item scope from its verified sales parent for capture, feed materializing,
+bootstrap, counts and native read scopes; retain explicit mismatches as excluded/
+review-required rather than relabeling facts. Filter historical wrongly-global
+entries before exposing rows, preserve cursor/continuation completeness, and keep
+branch-safe tombstone proof for deletes. Do not fetch another branch's parents,
+invent parents, disable FKs, backfill financial rows or clear the feed/cursors.
+Agent owns generator/native branch-predicate and focused canonical SQL tests after
+reviewed strategy; root owns native apply/error annotation and documentation.
+Prepare an exact isolated-beta patch and verification evidence before any hosted
+schema application under the existing approval boundary.
+
+Bounded live before-check through reviewed read-only beta RPCs confirms one
+verified branch binding, reported sale-item count0 versus six retained own legacy
+items, and three foreign-sale items in the next100-row page (cursor497). No row
+payload, financial amount, credential or terminal ID was exported. Health advisors
+are clear; actual runtime PostgreSQL42P10 is distinct from existing informational
+or advisory warnings. Broad hosted source/ACL export was automatically rejected;
+work continued safely with reviewed repository definitions plus bounded hashes,
+which match the relevant live wrappers. No forbidden export was retried.
+
+Native implementation tests pass29 guard cases plus adjacent diagnostics and39
+sync-pipeline cases. Actual owned SQL confirms same-transaction parent ownership,
+foreign/missing-parent rollback without cursor/progress, absence-lock protection,
+legacy NULL/blank replay and preservation of an unrelated unacknowledged journal.
+Lifecycle diagnostic tests pass49 and terminal-account/registration/session tests
+pass41; scoped lint is passing. Canonical SQL component/pagination/tombstone/replay
+verification remains in progress. Old beta.10 must not be certified after only the
+hosted patch: its direct child-label comparison also needs the new native code.
+
+Reviewed application completed on Retail POS Beta only through apply_migration,
+using commit814ff194's exact guarded wrapper SHA256
+71d6fb41589f465462e723507a9c400abe89a1fac0ec13726e3810d07850f66a and body
+43ffbca7619ddf1fa9827d3b8322bfacf60db3f477c024f3fce03f0fa0dda052.
+The target guard verified postgres/postgres and system identifier7703759698107299042;
+independent review found no remaining blockers. Postflight read-only RPCs report
+one verified branch binding, own count6, six retained NULL-label own items,
+zero explicit mismatches and zero foreign sale-item rows (previously3).
+No original financial rows, local settings or saved credentials were rewritten.
+
+Hosted migration history assigned20261117052540. Rename the CLI-created local
+migration to that recorded version and update the deterministic renderer/header;
+the SQL body stays byte-identical. Repackage/comment hash and current source
+verification are recorded separately from the exact applied artifact above.
+129 integrated focused tests and5 atomic/target wrapper tests pass; scoped lint
+and frozen prior-package checks pass. All actual native tests use owned LocalDB.
+Next: exact-head PR checks/beta integration, then explicit installer publication
+approval and updated-client acceptance. Old beta.10 native comparisons remain
+uncertified even though hosted scope is now corrected. Production stays excluded.
+
+The first exact-head CI run caught three schema-composition assertions across
+two test files: replaying older history helpers moved their blocks past the new
+sale-item component, and the deliberate migration inventory omitted its new
+CLI file. Correct only composition boundaries and inventory coverage; retain
+the reviewed/applied SQL bytes and every baseline/privilege guard. Android,
+Windows renderer, iOS and beta Worker checks passed on that head.
+Read-only installed postflight at05:42UTC has six sale items and cursor2301,
+with the last SQL exception still05:25:39 before the hosted patch. Ongoing
+ordinary application writes remain outside the repair; no local DML was run.
+
+Composition replay now retains history, held status and transport before the
+sale-item component. All31 affected tests, their48 PostgreSQL subprocess groups,
+scoped lint and whitespace checks pass. The applied migration remains unchanged.
+Independent native integration review confirms no remaining source blocker and
+that this client fix needs a new installer; it requires no SQL Server DDL,
+registration change or local data reset. Repeat exact-head CI before merge.
+
+The next run passes the full application suite, then exposes one isolated
+notification-generator fixture missing the new helper and matching migration.
+Copy both into that disposable fixture, preserving all ownership/parity checks.
+All23 notification upgrade scenarios and scoped lint now pass. Other executing
+generator fixtures resolve helpers through the original scripts directory;
+no additional missing-copy sites were found. Runtime and applied SQL unchanged.
+
+That run passes application, database, notification, packaging and lint stages;
+its final typecheck identifies three fixture-only typing issues. Add an explicit
+string return annotation, safely read a nullable fixture row while retaining the
+exact branch assertion, and clone/assert the persisted mock profile snapshot.
+All65 tests in those three files and scoped lint pass. Runtime SQL and native
+code remain unchanged. PR #472 records final exact-head CI and integration;
+installer publication and installed-client acceptance remain separate steps.

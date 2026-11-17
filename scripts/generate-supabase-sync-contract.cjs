@@ -689,6 +689,9 @@ schema = schema.replace(reviewedHeldAnchor, reviewedHeldBegin + reviewedHeldMigr
   reviewedHeldEnd + "\n\n" + reviewedHeldAnchor);
 schema = require("./history-scope-canonical.cjs").withScopedHistoryTransportContract(schema,
   fs.readFileSync(path.join(root, "supabase", "migrations", "20261107094311_add_scoped_history_transport.sql"), "utf8"));
+// Preserve historical source guards above; the final additive component owns
+// sale-line parent scope after the reviewed history/transport replay.
+schema = require("./sale-item-sync-scope.cjs").withSaleItemScope(schema);
 fs.writeFileSync(schemaPath, schema);
 console.log(`Supabase sync contract generated for ${tables.length} keyed tables`);
 

@@ -33,7 +33,8 @@ jobs:
       - name: Current beta upgrade artifact and cloud wrapper
         run: |
           node scripts/package-beta-database-upgrade.cjs --check
-          node --test scripts/test-beta-cloud-upgrade.cjs
+          node scripts/package-sale-item-beta-repair.cjs --check
+          node --test scripts/test-beta-cloud-upgrade.cjs scripts/test-sale-item-beta-repair.cjs
       - name: Atomic shift closure database and retry tests
         run: node scripts/test-shift-closure-sync.mjs
       - name: Trusted Windows closing graph and cloud acknowledgement
