@@ -64,6 +64,16 @@ chains retain review rather than being guessed. The automatic `afc37261`
 typecheck found only test-fixture inference errors; their minimal typing fixes
 pass 21 tests and await the next clean CI result.
 
+The grouped offline PIN/lost-ACK/expired-cursor/native handback test now passes,
+with both tills at sequence five and stock 20. Exact-head `24bde46d` CI passes
+7,723 tests and every stage except the unchanged dependency audit. A separate
+CARD hosted-approval test identified and corrected a PIN-only admission option
+that rejected verified human Auth sessions. Existing bound-device, witness,
+scope, manager, exact basis and expiry checks remain; machine and unbound or
+revoked PIN callers stay denied (70 focused tests pass). Rebuild and verify this
+latest server change before the original saved CARD refund is committed; hosted
+certificate expiry and central functional smoke remain pending.
+
 ## 18 November — earlier beta local writes, startup and idle sync checkpoint
 
 The owner approved implementing the read-only audit recommendations with agents,

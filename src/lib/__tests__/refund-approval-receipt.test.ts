@@ -7,12 +7,14 @@ const { stableRefundUuid } = createRequire(import.meta.url)("../../../electron/s
   stableRefundUuid(input: Record<string, string>): string;
 };
 
-const f = vi.hoisted(() => ({ rest: vi.fn(), caller: vi.fn(), scope: vi.fn(), signature: vi.fn(), permission: vi.fn(), request: vi.fn() }));
+const f = vi.hoisted(() => ({ rest: vi.fn(), caller: vi.fn(), scope: vi.fn(), signature: vi.fn(), permission: vi.fn(), request: vi.fn(), cashier: vi.fn(), session: vi.fn() }));
 vi.mock("@/core/api/pos-relay.server", () => ({ serviceRest: f.rest, verifyRelayCaller: f.caller }));
 vi.mock("@/core/api/relay-policy.server", () => ({ resolveRelayScope: f.scope }));
 vi.mock("../external-supabase-config", () => ({ supabaseConfig: () => ({ url: "https://refund.example.test" }), runtimeEnvValue: () => "isolated-refund-signing-fixture-key" }));
 vi.mock("../shift-author-verification.server", () => ({ verifyFinancialAuthorAttestation: f.signature, readFinancialAuthorPermission: f.permission }));
 vi.mock("../authorization.server", () => ({ getRequest: f.request }));
+vi.mock("@/lib/pos-session.server", () => ({ verifyCashierSession: f.cashier }));
+vi.mock("@/lib/session-guard.server", () => ({ touchSession: f.session }));
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const requester = { authorId: id(1), subject: "cashier" };
 const manager = { authorId: id(2), subject: "manager" };
@@ -71,6 +73,7 @@ beforeEach(() => {
   f.signature.mockImplementation(async ({ attestation: value }) => value);
   f.permission.mockResolvedValue({ allowed: true });
   f.request.mockResolvedValue(null);
+  f.cashier.mockResolvedValue(null); f.session.mockResolvedValue({ ok: false, reason: "revoked" });
   f.rest.mockImplementation(async (path: string) => {
     const url = new URL(path, "https://fixture.test");
     if (url.pathname === "/app_users") {
@@ -83,9 +86,54 @@ beforeEach(() => {
     throw Error("Unexpected synthetic read");
   });
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+
+async function realCallerFixture(email: string | null = "cashier@example.test") {
+  const actual = await vi.importActual<typeof import("@/core/api/pos-relay.server")>("@/core/api/pos-relay.server");
+  f.caller.mockImplementation(actual.verifyRelayCaller);
+  const read = f.rest.getMockImplementation();
+  f.rest.mockImplementation(async (path: string) => path.startsWith("terminal_tokens?") ? Response.json([{
+    id: terminal.id, platform: "pc", status: "active", location_id: "A", revoked_at: null,
+    is_claimed: true, claimed_at: "2026-11-17T01:00:00Z", claim_proof: "a".repeat(64), claimed_platform: "electron",
+  }]) : read!(path));
+  return vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ id: id(50), email }));
+}
 
 describe("durable exact-operation hosted refund approval", () => {
+  it("accepts the current named Auth person on a verified operations PC without requiring another PIN login", async () => {
+    const auth = await realCallerFixture();
+    const receipt = await issueRefundApprovalReceipt({ basis: basis(), witness: requester,
+      proof: { terminalToken: terminal.id, deviceBindingProof: "a".repeat(64), accessToken: "current-human-auth-proof" }, authorization: hostedGrant() });
+    expect(receipt).toEqual(expect.any(String)); expect(auth).toHaveBeenCalledOnce();
+    expect(f.caller).toHaveBeenCalledWith(expect.objectContaining({ accessToken: "current-human-auth-proof" }),
+      { strictAvailability: true, rejectUnboundCashier: true });
+    expect(f.rest.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
+  });
+  it("retains verified revocable PIN sessions bound to this same terminal", async () => {
+    const auth = await realCallerFixture();
+    f.session.mockResolvedValue({ ok: true, session: { kind: "cashier", staff_user_id: requester.subject,
+      branch_id: "A", terminal_id: terminal.id } });
+    f.cashier.mockResolvedValue({ id: requester.authorId, username: requester.subject, storeId: "A", terminalId: terminal.id,
+      sessionToken: proof.sessionToken });
+    await expect(issueRefundApprovalReceipt({ basis: basis(), witness: requester, proof: { ...proof, cashierToken: "bound-cashier-envelope" },
+      authorization: hostedGrant() })).resolves.toEqual(expect.any(String));
+    expect(auth).not.toHaveBeenCalled();
+  });
+  it.each(["unbound-cashier", "revoked-session", "wrong-device", "machine-account", "missing-email"])("keeps real caller denial for %s", async kind => {
+    const auth = await realCallerFixture(kind === "machine-account" ? "terminal@pos.local" : kind === "missing-email" ? null : "cashier@example.test");
+    const supplied: Parameters<typeof issueRefundApprovalReceipt>[0]["proof"] = {
+      terminalToken: terminal.id, deviceBindingProof: "a".repeat(64), accessToken: "current-human-auth-proof",
+    };
+    if (kind === "unbound-cashier") {
+      supplied.cashierToken = "unbound-cashier-envelope"; delete supplied.accessToken;
+      f.cashier.mockResolvedValue({ id: requester.authorId, username: requester.subject, storeId: "A", terminalId: terminal.id,
+        sessionToken: "unverified-raw-session" });
+    }
+    if (kind === "revoked-session") supplied.sessionToken = "revoked-person-session";
+    if (kind === "wrong-device") supplied.deviceBindingProof = "b".repeat(64);
+    await expect(issueRefundApprovalReceipt({ basis: basis(), witness: requester, proof: supplied, authorization: hostedGrant() })).rejects.toThrow();
+    if (["unbound-cashier", "revoked-session", "wrong-device"].includes(kind)) expect(auth).not.toHaveBeenCalled();
+  });
   it("survives source bearer expiry/restart while retaining original+witness signatures and fresh current approval", async () => {
     const receipt = await issueRefundApprovalReceipt({ basis: basis(), witness: requester, proof, authorization: hostedGrant() });
     expect(receipt).not.toContain("fixture-person-proof"); expect(receipt).not.toContain("verified-original-binding");

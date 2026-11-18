@@ -155,6 +155,11 @@
   approver and rule authority before first cloud acceptance. An exact previously
   accepted receipt is replayed without another financial effect. Metadata ACKs
   never prove business acceptance. Missing or revoked authority keeps work held.
+  Hosted verification supports both a named human Auth session and a valid
+  revocable terminal-bound PIN session, through the existing admission policy.
+  Keep the verified operations-PC, witness, branch and approval checks; do not
+  require password users to establish another PIN session. Reject machine
+  identities and unbound or revoked PIN proofs.
   A never-uploaded FIN62 sale/refund uses Main's separately signed creation-date
   witness for refund-age eligibility, with current policy and exact original
   financial facts. Match an existing central date or the new projected row;
@@ -547,6 +552,11 @@ that device builds require. The guard lives in
   restart test. Preserve unobserved steps as pending and keep each result scoped
   to its tested workflow. See the [17 November beta smoke evidence](docs/database/beta-sync-smoke-2026-11-17.md);
   that report is revision-specific evidence, not blanket POS certification.
+- Build financial smoke fixtures through the actual domain builder/API and
+  validate their required evidence before saving test money. Preserve the exact
+  owned database, operation and sealed keys on unexpected failure so a fresh
+  process can resume them. Never rewrite saved financial facts, clear pending
+  work or relax production validation to repair an incomplete test fixture.
 
 ## Controlling POS architecture: branch-locked normal terminals
 

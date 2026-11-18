@@ -240,9 +240,10 @@ export async function issueRefundApprovalReceipt(input: { basis: unknown; witnes
   let basis: RefundApprovalBasis, witness: RefundApprovalPerson;
   try { basis = normalizeRefundApprovalBasis(input.basis); witness = personIdentity.parse(input.witness); } catch { return deny(); }
   if (!input.authorization.ok || basis.scope.projectOrigin !== origin()) return deny();
-  const caller = await verifyRelayCaller(input.proof, { strictAvailability: true, requireBoundCashier: true });
+  const caller = await verifyRelayCaller(input.proof, { strictAvailability: true, rejectUnboundCashier: true });
   const terminal = caller.terminal;
-  if (caller.kind === "terminal" || !terminal || terminal.platform !== "pc" || terminal.mode !== "operations" ||
+  if (caller.kind === "terminal" || (caller.kind === "staff" && (!caller.email || caller.email.trim().toLowerCase().endsWith("@pos.local"))) ||
+      !terminal || terminal.platform !== "pc" || terminal.mode !== "operations" ||
       terminal.id !== basis.scope.terminalId || !sameBranchId(terminal.branchId, basis.scope.branchId)) return deny();
   const current = await resolveRelayScope(caller, { strictAvailability: true });
   if (current.stale || current.managementDevice || current.managementReplica || current.appUserId !== witness.authorId ||

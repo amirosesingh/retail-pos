@@ -307,3 +307,73 @@ slice passed 30 SQL/refund tests, 31 canonical/generator tests and 23 isolated
 notification upgrade scenarios. These checks and this hosted native-class drill
 do not replace installed Electron UI acceptance, other POS workflow acceptance,
 or the exact-head CI, merge and beta publication gates.
+
+## Hosted grouped CASH, expired PIN proof and archived recovery acceptance
+
+The grouped two-till drill passed on 18 November against Retail POS Beta
+`irjkmhgrjgcaoixcixut`, using only marked branch
+`codex-beta477-bc4887dc-grouped`, the isolated loopback relay and two disposable
+ODBC LocalDBs. The successful native runtime was commit
+`24bde46d1ec66f5344cfc39c469f8af369301b28`. The compiled Worker entry SHA-256 was
+`d5b21a30f216625b9a3f897739a55ad840657b4c42f85f00dd138380b3ecfae5`;
+the ignored build proof records its original relay base, reviewed source-file
+hashes and the later native runtime hashes separately. This local relay rebuild
+retained existing output directories to preserve its running credential-owning
+process; released artifacts still require the ordinary clean build.
+
+The first synthetic sale and refund remained accepted at sequences 1 and 2.
+Their data and immutable archives were preserved when a fixture-only outage
+window allowed an internal acknowledgement retry. The follow-up used two new
+synthetic terminal registrations and a new ordinary OPEN shift in the same
+branch. The normal shift publisher appended sequence 3. Its existing
+SHA-derived PostgreSQL UUID exposed an overly strict Worker publication-ID
+validator; the transport correction preserved that original identifier. Native
+handoff then exposed an already-bootstrapped refunded receipt being compared
+with its original cash birth. The reviewed recovery correction requires the
+same pinned, hash-verified later receipt graph, exact current registered rows,
+unchanged birth facts and the existing pending-work guards. The original rows
+and cursor were not reset to pass the drill. Mixed correction kinds on one
+receipt remain a conservative review boundary.
+
+The successful new sale was `81ac2570-f634-4389-bc20-6d944d336246`, cash operation
+`f9e34f43-192c-4bed-94f4-5d1d63f98e9c`, accepted at sequence 4. Its 7.50 CASH
+tender, item, sale movement and five original journal rows survived an offline
+commit and SQL connection/native-service reconstruction before upload. Both
+tills and the independent hosted read-back then agreed on stock 19.
+
+The cashier approved refund `6cbe8cfc-71a6-492a-8003-c8a11111a8d9` with the
+separately synced manager PIN while the relay was unavailable. The manager
+never signed in or acquired a financial author key. The original immutable
+refund and signed durable approval survived SQL connection reopen, discarded
+approval-service memory and the real two-minute admission expiry. Omitting its
+companion was denied before the financial writer. The fixture then consumed
+and deliberately discarded one real APPLIED response. The original four local
+refund journal rows and absent local acceptance were retained, while the cloud
+already held the refund exactly once.
+
+A genuinely fresh Node process reopened the same physical database GUIDs,
+`ae1099a6-c2a2-4cbe-b945-11863236a4ae` and
+`7b1ca085-38e1-45d2-a3a1-f12516fb229c`, with the same DPAPI key files. It uploaded
+only that original pending refund and obtained the identical sequence-5 receipt;
+it did not create another sale, refund or approval. Raw signed bytes remained
+unchanged, the four journals were acknowledged, and no bearer approval grant
+was uploaded. Current refund movement
+`8206c64b-86f4-4e4f-167c-caaf726ce3d2` had one +1 effect. Both tills and hosted
+stock converged to 20; the older fixture's separate refund remained intact.
+
+Till B retained its real sequence-4 cursor. After both new recovery pins proved
+sequence 5, the guarded Beta-only retirement advanced the replay floor to 5 and
+removed only replay groups, retaining two cash and three financial archives,
+including the OPEN shift. The actual retained cursor received
+`SNAPSHOT_REQUIRED / REPLAY_EXPIRED`. Existing HTTPS cash, financial and stock
+pages recovered B to 5; another replay preserved the same stock and ledger.
+After the owner sealed that exact epoch at 5, both actual native handbacks
+returned at 5 with their grouped write fences removed and the original
+cash/refund queues drained. Successful cleanup removed only the two owned
+local fixtures and their temporary keys. Hosted dummy transactions remain.
+
+This is hosted native-class/ODBC acceptance with fresh-process proof replay and
+SQL connection reconstruction. Installed Electron UI acceptance, the separate
+CARD/hosted-certificate and remaining POS workflow drills, clean CI, dependency
+audit and publication are separate gates; this result does not assert that they
+have completed.

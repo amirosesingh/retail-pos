@@ -9499,6 +9499,22 @@ Both affected suites pass (21 tests) with no remaining diagnostics in those
 files. The next exact head must pass clean CI, and the dependency audit remains
 an independent external release gate.
 
+The actual grouped offline PIN/lost-ACK/two-till expired-cursor test now passes,
+including both verified handbacks at sequence five and one current refund
+movement with stock 20. At exact head `24bde46d`, 7,723 tests and all other
+SQL/permissions/lint/typecheck/build/platform checks pass; only the unchanged
+unpatched picomatch high audit fails. See the evidence report for the original
+operation and source/runtime boundaries.
+
+The CARD fixture was corrected using the actual POS payment mapper, preserving
+the earlier incomplete local-only test. Its accepted sale then exposed a real
+hosted-approval issuer error: a verified named Auth user was incorrectly forced
+to supply a PIN session. Aligning with existing grouped admission keeps all
+device/witness/scope/manager/expiry checks and explicitly denies machine and
+unbound/revoked PIN callers. Seventy focused tests pass with no changed-file
+TypeScript diagnostics. Same-operation hosted refund acceptance is in progress;
+no publication or production change is authorized by a test result alone.
+
 The grouped cash scenario committed locally, restarted, uploaded and converged
 on both tills. Its real offline manager PIN refund retained signed approval
 across SQL/runtime restart and expiry and reached Beta exactly once (stock 20).
