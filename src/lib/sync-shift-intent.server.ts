@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { normalizeFinancialBasisAttestation,normalizeOpeningFinancialBasisAttestation } from "../../electron/security/shift-financial-protocol.cjs";
 import { normalizeAttestation, normalizeClosingStart } from "../../electron/security/shift-author-protocol.cjs";
-import { financialRefundApprovalSchema } from "./sync-financial-operation.server";
+import { financialRefundApprovalSchema } from "./sync-refund-approval-schema";
 
 export const syncOperationSchema = z.object({
   deletePhase: z.boolean().optional(),

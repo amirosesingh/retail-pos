@@ -18,7 +18,7 @@ import { extendedPayments, extendedTenderFields } from "../../electron/sync/sale
  */
 import { z } from "zod";
 import { syncAggregateSchema } from "./sync-shift-intent.server";
-import { refundApprovalEvidenceSchema } from "./sync-financial-operation.server";
+import { refundApprovalEvidenceSchema } from "./sync-refund-approval-schema";
 
 const opSchema = z.discriminatedUnion("kind", [
   z.object({

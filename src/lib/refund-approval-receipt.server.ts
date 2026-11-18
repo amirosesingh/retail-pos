@@ -4,7 +4,7 @@ import { serviceRest, verifyRelayCaller } from "@/core/api/pos-relay.server";
 import { resolveRelayScope } from "@/core/api/relay-policy.server";
 import { runtimeEnvValue, supabaseConfig } from "./external-supabase-config";
 import { normalizeRule, defaultRule, canAuthorizeAmount, canBypassAuthorization, canDecideRequestAmount, isRoutedApprover, type AuthorizationRule } from "./authorization";
-import { normalizeRules } from "./pos-rules";
+import { normalizeRules } from "./pos-rules.ts";
 import { approverActionAllowed } from "./approval-action-permissions";
 import { approvalPersonBranchAllowed, approvalScopeConfigured } from "./approval-branch-scope";
 import { sameBranchId } from "./branch-id";

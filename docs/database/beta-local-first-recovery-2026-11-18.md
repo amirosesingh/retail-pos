@@ -114,7 +114,7 @@ refund storage keep ordinary financial history working; protected refund writes
 must not bypass missing storage. Database/package consistency checks remain in
 place; applying a migration is separate from generating its source file.
 
-Follow-up verification: **418 tests across 23 affected suites passed together**,
+Follow-up verification: **431 tests across 28 affected suites passed together**,
 including approval admission/evidence/recovery, the actual recovery component,
 IPC close/drain behavior, hosted issuance and current policy, grouped replay,
 financial metadata/projection, schema parity and existing write routing. The
@@ -141,6 +141,16 @@ database, live Supabase project or saved device setup was used. A local full
 TypeScript run still lacks unrelated shared mobile/PGlite dependencies; no
 changed runtime/client path reported a TypeScript diagnostic. Clean CI remains
 the merge gate.
+
+The first full CI run at `84e4a388` exposed four compatibility failures outside
+the initial refund slice. Corrected an extension-ambiguous rules import, separated
+pure transport schemas and exact financial comparison from native persistence,
+and taught the schema generator to assemble the new probe deterministically.
+The comparison implementation is unchanged and shared by native and hosted
+callers. All four failed fixtures now pass in the 431-test combined run, including
+actual Workerd execution; the generator fixture also verifies 19 isolated
+PostgreSQL graph/authority scenarios. No test, audit or authorization guard was
+waived. The compatibility commit still needs its own clean CI result.
 
 ## Acceptance and release boundary
 

@@ -9389,7 +9389,7 @@ monetary re-signing, stock rerun or credential persistence. Found and fixed the
 offline new-sale/refund first-upload dependency with a signed eligibility date;
 metadata remains separate from business acceptance.
 
-Verification: 418 affected tests in 23 suites passed together; 11 existing
+Verification: 431 affected tests in 28 suites passed together; 11 existing
 event/close lifecycle checks and eight disposable LocalDB groups passed. Includes
 real manager PIN without manager sign-in, transaction rollback, expiry/restart,
 single stock effect, source/person changes, exact receipt replay, current
@@ -9399,3 +9399,11 @@ diff checks passed. See the [evidence report](database/beta-local-first-recovery
 for fixture boundaries. Source migration adds only the service-only read receipt
 RPC and remains unapplied. Hosted/installed two-till acceptance, exact-head CI,
 merge and a fresh explicitly requested installer publication are separate gates.
+
+The first source CI head `84e4a388` passed native/Worker builds but exposed four
+import/generator compatibility fixtures. Corrected pure rules resolution, the
+native/Worker module boundary (one unchanged shared financial comparator), and
+deterministic receipt-probe generation. All four now pass within the final
+431-test combined run; 19 isolated PostgreSQL generator/graph scenarios also
+pass. No test exclusion or dependency-audit waiver. Await the corrected exact
+head's automatic checks before any merge.

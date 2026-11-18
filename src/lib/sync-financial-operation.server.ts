@@ -1,6 +1,8 @@
 import {z} from 'zod';
 import {parseExactJson} from '../../electron/sync/shift-recovery-exact.mjs';
 import {sameBranchId} from './branch-id';
+import {refundApprovalEvidenceSchema,financialRefundApprovalSchema} from './sync-refund-approval-schema';
+export {refundApprovalEvidenceSchema,financialRefundApprovalSchema} from './sync-refund-approval-schema';
 
 // An authenticated event is still subject to cloud lineage/write admission.
 // Parsing never issues a financial receipt or claims that its facts were saved.
@@ -34,8 +36,6 @@ export function parseFinancialObservation(raw:string){
  parseExactJson(raw,{maxBytes:16384,maxDepth:8});
  return observation.parse(JSON.parse(raw));
 }
-export const refundApprovalEvidenceSchema=z.object({approvalJson:z.string().min(2).max(48*1024),approvalAttestation:z.unknown()}).strict();
-export const financialRefundApprovalSchema=z.object({operationJson:z.string().min(2).max(6*1024*1024),attestation:z.unknown(),refundApproval:refundApprovalEvidenceSchema}).strict();
 export const financialOperationEnvelopeSchema=z.object({organizationId:text,operationJson:z.string().min(2).max(6*1024*1024),proof:z.unknown(),refundApproval:refundApprovalEvidenceSchema.optional()}).strict();
 const opening=z.object({version:z.literal(1),localAggregateId:uuid,branchId:text,terminalId:uuid,shiftId:uuid,rowHash:hash,rowJson:z.string().min(2).max(6*1024*1024)}).strict();
 export function parseFinancialOpening(raw:string){
@@ -130,7 +130,7 @@ export async function verifyFinancialRefundProjection(input:{items?:z.infer<type
   const ids=targets.map(row=>uuid.parse(String(row.id).toLowerCase()));
   const {serviceRest}=await import('@/core/api/pos-relay.server');
   const {boundedText,isExactNumber}=await import('../../electron/sync/shift-recovery-exact.mjs');
-  const {financialFact}=await import('../../electron/db/shift-financial-operations.cjs');
+  const {financialFact}=await import('../../electron/sync/financial-fact.cjs');
   let response:Response,rows:unknown;
   try{response=await serviceRest(`sales?id=in.(${ids.join(',')})&store_id=eq.${encodeURIComponent(input.branchId)}&select=id,store_id,shift_id,total_amount,discount_amount,is_refunded,row_version&limit=2000`,{signal:input.signal});
     if(!response.ok)return approvalFailure(503);

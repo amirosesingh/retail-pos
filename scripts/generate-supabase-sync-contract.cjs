@@ -650,7 +650,8 @@ const startBegin = "-- SHIFT_CLOSING_START_CONTRACT_BEGIN", startEnd = "-- SHIFT
 const graphReadBegin = "-- SHIFT_GRAPH_READ_SCOPE_BEGIN", graphReadEnd = "-- SHIFT_GRAPH_READ_SCOPE_END";
 const historyPageBegin = "-- PROTECTED_HISTORY_PAGE_BEGIN", historyPageEnd = "-- PROTECTED_HISTORY_PAGE_END";
 const historyProjectionBegin = "-- PROTECTED_HISTORY_PROJECTION_PERFORMANCE_BEGIN", historyProjectionEnd = "-- PROTECTED_HISTORY_PROJECTION_PERFORMANCE_END";
-for (const [blockBegin, blockEnd] of [[authorBegin, authorEnd], [correctionBegin, correctionEnd], [startBegin, startEnd], [graphReadBegin, graphReadEnd], [historyPageBegin, historyPageEnd], [historyProjectionBegin, historyProjectionEnd]]) {
+const refundReceiptBegin = "-- NATIVE_REFUND_FINANCIAL_RECEIPT_BEGIN", refundReceiptEnd = "-- NATIVE_REFUND_FINANCIAL_RECEIPT_END";
+for (const [blockBegin, blockEnd] of [[authorBegin, authorEnd], [correctionBegin, correctionEnd], [startBegin, startEnd], [graphReadBegin, graphReadEnd], [historyPageBegin, historyPageEnd], [historyProjectionBegin, historyProjectionEnd], [refundReceiptBegin, refundReceiptEnd]]) {
   const blockStart = schema.indexOf(blockBegin), blockFinish = schema.indexOf(blockEnd);
   if (blockStart >= 0) {
     if (blockFinish < blockStart) throw new Error("Incomplete final shift authority contract");
@@ -692,6 +693,13 @@ schema = require("./history-scope-canonical.cjs").withScopedHistoryTransportCont
 // Preserve historical source guards above; the final additive component owns
 // sale-line parent scope after the reviewed history/transport replay.
 schema = require("./sale-item-sync-scope.cjs").withSaleItemScope(schema);
+// Assemble the exact additive receipt probe after the historical contracts.
+// Removing/reinserting its marked block above also prevents whitespace drift
+// when older generators move their own final authority components.
+const refundReceiptMigration = fs.readFileSync(path.join(root, "supabase", "migrations", "20261117233612_native_refund_exact_financial_receipt_probe.sql"), "utf8").replaceAll("\r\n", "\n").trim();
+const refundHardening = schema.lastIndexOf("-- Final public-schema privilege hardening after notification rule definitions.");
+if (refundHardening < 0) throw new Error("Missing refund receipt hardening boundary");
+schema = `${schema.slice(0, refundHardening).trimEnd()}\n\n${refundReceiptBegin}\n${refundReceiptMigration}\n${refundReceiptEnd}\n\n${schema.slice(refundHardening).trimStart()}`;
 fs.writeFileSync(schemaPath, schema);
 console.log(`Supabase sync contract generated for ${tables.length} keyed tables`);
 

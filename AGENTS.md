@@ -160,6 +160,10 @@
   financial facts. Match an existing central date or the new projected row;
   never fabricate a central sale or wait on that row before registering its
   required financial metadata. Grouped/hosted issuance keeps canonical checks.
+  Share pure protocol, transport-schema and exact comparison helpers between
+  native and hosted verification. Keep Electron persistence/drivers and React
+  initialization outside Worker imports; verify the actual Worker boundary
+  when changing these shared modules.
 - Recover approval for a saved refund by attaching fresh verified evidence to
   its original operation through the existing write/recovery barrier and sync
   coordinator. Never refund again, repeat stock, change signed monetary bytes,
