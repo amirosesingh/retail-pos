@@ -1,11 +1,36 @@
 ## 18 November — current beta acceptance and conditional release authorization
 
+Latest source checkpoint: `9e458546` passes 7,730 application tests and every
+required database, lint, TypeScript, build and platform stage except dependency
+audit. The actual FIN62 SPLIT/offline PIN, grouped CASH/offline PIN and grouped
+CARD/hosted-certificate two-till slices all pass on the isolated Beta target.
+The grouped slices include real approval expiry, a discarded accepted response,
+fresh-process original-operation replay, expired-cursor archive recovery and
+both verified native handbacks; each finishes with stock 20 and one refund
+movement. The central catalogue/stock/transfer and booking RPC smoke also passes:
+global SKU allocation, branch permissions, dispatch replay, verified receipt,
+permanent zero-stock catalogue membership, booking partials/overpayment denial
+and exact handover/change/replay. Independent final Beta queries confirm all
+20 original sale/item hashes unchanged, with no missing or changed row. These
+central calls do not certify the native transfer upload barrier, installed UI
+or offline booking; grouped native booking retains its explicit safe hold.
+The official picomatch release remains 4.0.7 with
+no published patched version for GHSA-fc5q-39xc-vjpf; merge and publication stay
+blocked without weakening the audit gate. The chronology below records earlier
+intermediate findings, not additional current failures of these passed slices.
+
 The owner now authorizes agents to resolve PR #477's dependency-audit blocker,
 apply the reviewed migration and run two-till acceptance on Retail POS Beta
 only, then merge into beta and publish after all gates pass. Production and
 saved operator local data remain excluded. The explicit current publication
 request is conditional on passing checks; implementation or merge alone is
 not acceptance.
+
+PR #477 adds two hosted migrations but no local schema DDL. Future production
+rollout must compare that target's migration ledger and each older local SQL
+schema, then apply only reviewed missing upgrades with backups and pending-work
+preservation. Never reuse Beta identity guards or run fresh-setup scripts over
+existing production records.
 
 Reviewed source head `9a7e36d0` completes durable grouped/FIN62 refund approval
 and original-operation recovery, including offline first-sale/refund ordering.

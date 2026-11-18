@@ -9515,10 +9515,40 @@ unbound/revoked PIN callers. Seventy focused tests pass with no changed-file
 TypeScript diagnostics. Same-operation hosted refund acceptance is in progress;
 no publication or production change is authorized by a test result alone.
 
-The grouped cash scenario committed locally, restarted, uploaded and converged
+An earlier grouped cash attempt committed locally, restarted, uploaded and converged
 on both tills. Its real offline manager PIN refund retained signed approval
 across SQL/runtime restart and expiry and reached Beta exactly once (stock 20).
 The lost-ACK harness allowed an internal retry and then rejected its legitimate
 audit aggregate; this is not a completed restart/replay/cursor scenario. Fix
 only that test adapter, retain failed evidence, and use new marked test identities
 without resetting the old accepted operations.
+
+The fresh grouped CASH retry and separate CARD/hosted-certificate scenario now
+both pass, including real two/five-minute approval expiry, a lost business
+reply, actual fresh-process replay of the original signed operation, real
+expired cursors, existing HTTPS archive recovery and both verified handbacks.
+The FIN62 split-sale/offline-PIN slice also passes. Each of the three current
+owned slices converges to stock 20 with its refund applied once; earlier failed
+synthetic fixtures remain retained. See the dated evidence report for exact
+IDs, runtime fingerprints and the separate installed-UI/booking boundaries.
+
+At reviewed runtime head `9e458546`, automatic CI passes 7,730 tests (11 existing
+skips), all database/upgrade/permissions stages, lint, TypeScript/build, Android
+compile and the unpublished iPhone build. Only dependency audit fails. A fresh
+18 November 08:48 UTC primary-source check still finds official picomatch 4.0.7,
+no published patched version, and upstream PR 269 open/unmerged. No waiver,
+forced downgrade or replacement fork was introduced.
+
+Central catalogue/stock/transfer and booking RPC acceptance now passes on the
+same owned Beta run. SKU allocation, independent approval, branch restrictions,
+dispatch replay, receipt/verification and zero-stock catalogue membership pass.
+Booking cash/card partials, overpayment/foreign-branch denials, unpaid handover
+rollback, final settlement/change and original-receipt replay pass. The adapter
+initially misread the existing P0001/domain-message error contract; a verified
+same-fixture continuation preserved the accepted cash 10 and all stock/transfer
+records. No product guard or saved transaction was changed to make it pass.
+Independent final read-back confirms the expected sale/payment/stock aggregates
+and all 20 original Beta sale/item hashes unchanged (zero missing/changed).
+Installed UI, native transfer-barrier acceptance and disconnected native booking
+remain separate coverage boundaries; grouped booking still holds before writes.
+Keep PR merge and installer publication blocked by the required audit gate.

@@ -1,8 +1,25 @@
 # Beta local writes, startup recovery and idle synchronization
 
-This source change follows the 18 November read-only audit of installed
-1.4.84-beta.11. Production, installed profiles, existing local transactions and
-hosted database schemas are outside this implementation batch.
+This change follows the 18 November read-only audit of installed
+1.4.84-beta.11. The initial source batch excluded hosted writes; the separately
+authorized Beta migration and acceptance follow-up is recorded below.
+Production, installed profiles and saved operator local transactions remain
+outside the test targets.
+
+Latest reviewed runtime head `9e458546` passes 7,730 automatic application tests
+(11 existing skips), all required SQL/upgrade/permission stages, lint,
+TypeScript/build, Android compilation and the unpublished iPhone build. The
+FIN62 SPLIT/offline-PIN, grouped CASH/offline-PIN and grouped CARD/hosted-approval
+two-till slices pass. Their exact expiry, replay, recovery and handback evidence
+is recorded separately below. This is not an installed-UI or all-workflow
+certificate.
+
+Only the required dependency audit remains red at that head. At 08:48 UTC on
+18 November the [official registry](https://registry.npmjs.org/picomatch) still
+reports 4.0.7, the [advisory](https://github.com/advisories/GHSA-fc5q-39xc-vjpf)
+lists no patched release, and [upstream PR 269](https://github.com/micromatch/picomatch/pull/269)
+is open/unmerged. No audit waiver, forced downgrade or behavior-changing fork
+was introduced. Keep merge and publication blocked until required checks pass.
 
 ## Behavior and evidence
 
@@ -377,3 +394,152 @@ SQL connection reconstruction. Installed Electron UI acceptance, the separate
 CARD/hosted-certificate and remaining POS workflow drills, clean CI, dependency
 audit and publication are separate gates; this result does not assert that they
 have completed.
+
+## Hosted CARD and five-minute certificate recovery acceptance
+
+The separate CARD two-till drill passed on Retail POS Beta on 18 November,
+using branch `codex-beta477-bc4887dc-destination`, two uniquely owned ODBC
+LocalDBs and the same isolated relay. Runtime source was
+`9e4585462c5f3991258e5460c616e72b05d8525f`; the rebuilt Worker entry SHA-256 was
+`553083fa6fa747908b39c35cfe690938a75379c4b48be127071bc8e655e1b319`.
+The build proof retains the earlier compiled entry and source-base fingerprints.
+Production and installed operator databases were excluded.
+
+An initial test input copied the CASH tender shape without the installed POS's
+per-tender attempt key, reference, cashier name and bill/capture metadata. The
+existing native converter correctly selected its legacy path. That synthetic
+local transaction, its database and DPAPI files were retained without editing
+the saved tender or forcing a financial acknowledgement. The corrected test
+derives its tender rows from the actual private `salePaymentRows` and
+`stableChildId` functions in `src/core/api/pos-db.ts`. Independent request-free
+checks exercised the actual native converter and rejected missing attempt keys
+or bill metadata before the fresh capture.
+
+The fresh test used a new terminal pair and ordinary OPEN shift in the same
+branch. Its real CARD sale `d1ed6fe3-9ccc-4ae6-8733-3601941a37bf`, operation
+`d6fb8483-d65b-473c-afa4-9ac6e58b66bb`, saved one 7.50 card tender and five signed
+journal rows offline. The saved capture survived SQL connection/native-service
+reconstruction, uploaded at sequence 2, replayed the same receipt and reached
+both tills with stock 19. No original failed-fixture financial rows were reset.
+
+Real Main authorization then exposed a caller-policy mismatch: adoption accepted
+the authorized staff Auth session, but the durable receipt issuer unnecessarily
+required a cashier PIN session. The reviewed correction uses the same
+unbound-cashier rejection policy as the existing grouped uploader, retaining
+terminal binding, current staff permissions and machine-account denials. Seventy
+focused checks included the real caller implementation and negative cases.
+Actual post-build Main responses were HTTP 200 with `ok=true`,
+`required=true`, a live verified grant and the operation-bound receipt present.
+Only then did the normal Main admission commit the original unsaved refund
+`a0e2bffb-f3aa-4a3b-890b-106c50183ad0`.
+
+The durable companion survived reconstruction of the SQL connection and native
+services. Omitting it was denied before the writer. The test waited more than
+310 real seconds, with no process-clock override, until the original five-minute
+bearer grant had expired. It then discarded one actual APPLIED response and
+verified that local acceptance was still absent and all four original refund
+journals remained pending while the hosted refund was already applied once.
+
+A genuinely fresh Node process reopened the same database GUIDs
+`65d9fde7-c15b-4d20-96d8-ea83ab2b09cc` and
+`e60a5d2a-d614-4baa-aa80-fdb7b1c7699d` and the same DPAPI files. It verified the
+original signed-evidence hash and replayed only that pending refund, without
+renewing its approval or saving another refund. The exact sequence-3 receipt
+acknowledged the four journals. No bearer approval grant was uploaded, the
+manager never signed in or acquired an author key, and refund movement
+`527a4bbf-7a9b-ddb9-9667-35ff5c1e7141` had one +1 effect. Both tills and the
+independent hosted read-back agreed on stock 20.
+
+Till B retained its actual sequence-2 cursor. After both new recovery pins
+protected 3, guarded retirement moved the replay floor to 3 and retained one
+cash and two financial archives, including the OPEN shift. The real cursor
+received `SNAPSHOT_REQUIRED / REPLAY_EXPIRED`; existing HTTPS cash, financial and
+stock pages recovered it to 3. Another replay preserved stock and the ledger.
+After the owner sealed that exact epoch at 3, both native handbacks returned at
+3, their grouped fences were removed, and the original cash/refund queues were
+drained. Cleanup removed only the two successful owned local fixtures and their
+temporary keys. The earlier malformed test fixture and hosted dummy transactions
+remain preserved.
+
+This verifies the hosted native-class CARD/certificate, expiry, fresh-process
+replay and cursor-recovery paths. Installed Electron UI, remaining POS workflow
+acceptance, clean CI, dependency audit, merge and beta publication remain separate
+gates.
+
+## Hosted stock, transfer and central booking smoke — 18 November
+
+This separate functional run finished on Retail POS Beta only, project
+`irjkmhgrjgcaoixcixut`, system identifier `7703759698107299042`, with the reviewed
+`beta477-bc4887dc` manifest and source
+`9e4585462c5f3991258e5460c616e72b05d8525f`. The isolated HTTPS relay used the
+verified Worker entry
+`553083fa6fa747908b39c35cfe690938a75379c4b48be127071bc8e655e1b319`.
+The adapter used the current synthetic named staff and terminal proofs after
+both grouped two-till tests had completed their seals and handbacks. It accessed
+the normal authenticated terminal relay and booking RPCs; it used no server key,
+operator local database, production target or fixture reset.
+
+The stock/transfer phase passed. Two new products received consecutive global
+SKUs, `SKU-000265` and `SKU-000266`, in different private clusters. A source price
+edit preserved quantity. Recorded adjustments changed source stock from 4 to 6
+and, after transfer, destination stock from 2 to 0. A cashier could not approve
+their transfer; the independent manager could. Wrong-branch dispatch and receipt
+were refused. Dispatch and its exact replay deducted source stock once. Arrival
+did not post destination stock before physical verification. Verification posted
+two units, and another verification received the explicit already-posted refusal.
+The destination retained the received product and its original SKU at zero stock.
+Final product stock was source 4, destination 0; the transfer remained completed
+and posted with one quantity-2 line.
+
+The first booking run stopped at an incorrect test assertion after saving the
+two new bookings and the source's cash-10 partial payment. The product correctly
+refused a card-16 overpayment against outstanding 15. Its existing RPC error is
+HTTP 400, SQLSTATE `P0001`, with the message prefix `BOOKING_OVERPAYMENT:`. The
+adapter had expected the domain label in the SQLSTATE field and rejected the
+colon-bearing message. Read-only inspection confirmed one settled payment of
+10, no negative-test payment and no handover sale. Only the test adapter changed:
+it now requires that exact status, SQLSTATE and known outstanding-15 error, then
+checks the unchanged ledger. No application or booking function was changed.
+
+The explicit `--resume-booking` continuation verified the accepted product,
+adjustment and posted-transfer identities before proceeding. It also verified
+source cash 10/outstanding 15, destination paid 0, and no handover sale. It did
+not recreate the earlier records or repeat their accepted writes. Card
+overpayment again failed with the exact expected error and retained the cash-10
+ledger. A destination card-7 partial succeeded; source access to that foreign
+booking's balance/payment was refused. An unpaid handover of 14 rolled back
+without a sale, sale item, sale tender or extra booking payment.
+
+The final cash handover tendered 20 against the remaining 15. It saved booking
+paid 25, a final booking payment of 15 and change 5, together with one service
+sale, one product-less item and one sale tender. The sale total/paid and its
+receipt tender are 25, matching the existing `collectBooking` and
+`saleCommitRpcArgs` full-receipt contract; the separate booking ledger contains
+the cash-10 deposit and cash-15 settlement. Exact replay returned the original
+receipt, and a different second sale was refused. No stock movement was needed
+for the service item.
+
+| Accepted synthetic record | ID |
+| --- | --- |
+| Source product / destination product | `5bd5f2f6-bfe7-4086-965e-5736c51cb3a1` / `5de8352b-74a0-4b22-8c5f-78bdbe364e01` |
+| Source adjustment / destination adjustment | `a5918ea9-fbcd-456f-bc6d-4c0b87a56455` / `dd1d588d-9a53-4aea-968f-0d9901545650` |
+| Transfer / line | `a064d5f0-6969-4266-b6dc-b013e82503ea` / `0fa75c3d-b825-481e-ac80-6c3cfbf0717a` |
+| Source booking / destination booking | `68253b86-e9e5-4a68-a664-81770d047cd5` / `6ef8cb38-beb8-4ae1-8b8e-d6a5c31c2dc9` |
+| Booking cash-10 payment / cash-15 settlement | `f2af7392-ea09-4d42-8f83-e09e47d27674` / `b2d82930-a7f5-4b30-bc85-f473bce20462` |
+| Destination booking card-7 payment | `2177453b-1de4-4b7b-8343-5f9c54eff03e` |
+| Handover sale / item / sale tender | `2f9c9d4b-790e-40f4-8502-6d8c752ae312` / `98cb4320-1dba-4405-b9d0-10ce85dfd593` / `ac3ad691-37ab-4c77-86df-2fbbf4fa894f` |
+
+Independent bounded hosted read-back at 09:00 UTC confirmed source booking
+collected at 25/25, destination booking active at 7/40, source booking payments
+exactly 10 and 15 with change 0 and 5, destination card payment 7, and exactly one
+handover item and sale tender. The refused payment key and second-sale ID have
+zero rows. The root coordinator's separate snapshot comparison found zero
+missing or changed rows among the 20 retained original Beta sale/item records;
+the three two-till fixture products remained at stock 20. Accepted dummy records
+remain available for review.
+
+This certifies the exercised hosted stock/transfer and central booking RPC
+paths. This adapter did not exercise the installed Electron/Android UI, native
+transfer draft upload barrier, disconnected booking handover or FIN62 native
+booking handover. Grouped native booking retains its existing precommit hold;
+central RPC success does not certify that native path or every POS workflow.
