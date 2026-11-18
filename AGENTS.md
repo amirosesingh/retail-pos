@@ -180,6 +180,12 @@
   signed payloads. Historical SHA-derived publication IDs use canonical
   PostgreSQL UUID syntax; their read-only transport field must preserve those
   IDs. Keep command, author, entity and authorization UUID checks unchanged.
+- During atomic extended snapshot recovery, preserve an already corrected cash
+  receipt only when a later accepted correction in that same hash-verified pin
+  proves the exact current full receipt graph, complete item/tender sets and
+  immutable cash-birth fields. Retain the existing journal and Change Tracking
+  holds; commit correction, stock proof and cursor together. A newer timestamp
+  or revision alone never authorizes skipping or replacing a receipt.
 - Recover approval for a saved refund by attaching fresh verified evidence to
   its original operation through the existing write/recovery barrier and sync
   coordinator. Never refund again, repeat stock, change signed monetary bytes,

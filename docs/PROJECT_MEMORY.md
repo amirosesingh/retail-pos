@@ -54,6 +54,16 @@ stay strict (34 focused tests pass). Rebuild the isolated relay before resuming
 the same retained grouped databases. Grouped cursor/hosted certificate acceptance,
 the remaining functional smoke and exact-head CI are still pending.
 
+The Worker rebuild fixed actual shift-page recovery. A subsequent native
+cash-birth comparison against an already bootstrapped canonical refund is now
+handled only with an exact later full graph from the same verified pin. Complete
+child sets, immutable amounts, pending journal/CT and atomic stock/cursor guards
+remain enforced; independent review and 78 focused/eight actual ODBC groups
+pass. Same-GUID hosted continuation remains the next gate. Mixed correction
+chains retain review rather than being guessed. The automatic `afc37261`
+typecheck found only test-fixture inference errors; their minimal typing fixes
+pass 21 tests and await the next clean CI result.
+
 ## 18 November — earlier beta local writes, startup and idle sync checkpoint
 
 The owner approved implementing the read-only audit recommendations with agents,

@@ -164,13 +164,17 @@ async function applyGroupedCashInTransaction(worker, transaction, context, facts
 
   await assertDependencies(transaction, branch, facts, context.retiredStockEpoch);
   const missing = [];
+  let preservesLater;
   for (const { table, change } of facts.rows) {
     const id = change.row_data.id;
     const local = await grouped.readLocalRow(transaction, table, change, "id", id);
     const pending = await reader.unacknowledged(table, [change.entity_id], transaction, { branchId: branch });
     if (pending.size) throw fail("A local receipt change is pending upload.", "ELOCAL_UPLOAD_PENDING");
     await assertTracking(transaction, branch, table, id);
-    if (local && local.matching !== 1) throw fail("The local receipt differs from the canonical group.", "ESYNC_CASH_RECEIPT_REVIEW");
+    if (local && local.matching !== 1) {
+      preservesLater ??= await require("./grouped-cash-successor.cjs").preservesCashBirth(worker, transaction, context, facts);
+      if (!preservesLater) throw fail("The local receipt differs from the canonical group.", "ESYNC_CASH_RECEIPT_REVIEW");
+    }
     if (!local) missing.push({ table, change, id });
   }
   require("./grouped-cash-legacy.cjs").allowCashApply(transaction, missing.map(({ change }) => change));

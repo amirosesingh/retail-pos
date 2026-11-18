@@ -45,7 +45,7 @@ function workerFixture(mode: "metadata-error" | "approval-hold" | "history-pendi
     }),
   };
   const ack = async ({ batchId }: { batchId: string }) => ({ ok: true, batch_id: batchId });
-  const cloud = { terminalId: () => terminal, pushBatch: vi.fn(ack), pushAggregate: vi.fn(async (batch: Row) => {
+  const cloud = { terminalId: () => terminal, pushBatch: vi.fn(async (batch: { batchId: string; table: string }) => ack(batch)), pushAggregate: vi.fn(async (batch: Row) => {
     if (mode === "approval-hold") throw Object.assign(new Error("Fresh refund approval is required"), { code: "ESYNC_REFUND_APPROVAL_REQUIRED" });
     if (loseBusinessResponse) { loseBusinessResponse = false;throw new TypeError("Lost business reply after server commit"); }
     return ack(batch as { batchId: string });

@@ -17,7 +17,7 @@ const fact={branchId:'A',discountAmount:'0.000000000000',id:'11111111-1111-4111-
 let db:PGliteDatabase,directory:string;
 const base=resolve('.tmp/financial-fact-collation-tests');
 const call=(value:unknown=fact)=>db.query<{value:Record<string,unknown>}>('SELECT fin62_history_preparation.fact($1::jsonb) value',[JSON.stringify(value)]);
-const metadata=async()=>(await db.query(`SELECT oid,proowner,proacl::text,prosecdef,proisstrict,provolatile,proconfig,proargnames,
+const metadata=async()=>(await db.query<Record<string,unknown>>(`SELECT oid,proowner,proacl::text,prosecdef,proisstrict,provolatile,proconfig,proargnames,
  md5(replace(prosrc,E'\r\n',E'\n')) source_hash FROM pg_proc WHERE oid='fin62_history_preparation.fact(jsonb)'::regprocedure`)).rows[0];
 beforeAll(async()=>{
  mkdirSync(base,{recursive:true});directory=mkdtempSync(join(base,'owned-'));
@@ -56,7 +56,7 @@ describe('locale-independent strict financial fact keys',()=>{
   expect((await db.query('SELECT * FROM retained_events')).rows).toEqual(rows);
   const grants=(await db.query("SELECT has_function_privilege('anon','fin62_history_preparation.fact(jsonb)','EXECUTE') anonymous,has_function_privilege('authenticated','fin62_history_preparation.fact(jsonb)','EXECUTE') authenticated,has_function_privilege('service_role','fin62_history_preparation.fact(jsonb)','EXECUTE') service")).rows[0];
   expect(grants).toEqual({anonymous:false,authenticated:false,service:false});
-  expect((await db.query('SELECT fin62_history_preparation.fact(NULL::jsonb) value')).rows[0].value).toBeNull();
+  expect((await db.query<{value:null}>('SELECT fin62_history_preparation.fact(NULL::jsonb) value')).rows[0].value).toBeNull();
  });
  it.each(['extra','missing','number','boolean','tender-type'])('continues to reject malformed %s facts',async kind=>{
   await db.exec(migration);const value:Record<string,unknown>={...fact};

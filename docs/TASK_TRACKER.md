@@ -9482,6 +9482,23 @@ passes 34 focused feed/recovery/Worker tests; entity, command, author, graph and
 branch checks are unchanged. Local relay rebuild and same-database continuation
 are in progress; no full grouped/cursor/hosted-certificate pass is claimed yet.
 
+The new relay admits the historical shift publication unchanged. Retained-till
+handoff then exposed a cash-birth comparison against an already bootstrapped,
+canonically refunded receipt. The native correction consults only a later
+accepted full receipt graph in the same pinned archive, preserves immutable
+birth fields and complete child sets, and retains journal/CT refusal and atomic
+stock/cursor rollback. Independent review found and verified fixes for extra
+children and tender JSON amount invariants. 78 focused checks and eight actual
+owned ODBC recovery groups pass; same-GUID hosted continuation is in progress.
+Multiple correction kinds on one receipt still conservatively require review.
+
+At `afc37261`, automatic permission/application, database and lint checks passed.
+Typecheck found seven errors in the two new test fixtures' inferred types; three
+typing-only lines correct them without changing assertions or runtime behavior.
+Both affected suites pass (21 tests) with no remaining diagnostics in those
+files. The next exact head must pass clean CI, and the dependency audit remains
+an independent external release gate.
+
 The grouped cash scenario committed locally, restarted, uploaded and converged
 on both tills. Its real offline manager PIN refund retained signed approval
 across SQL/runtime restart and expiry and reached Beta exactly once (stock 20).
