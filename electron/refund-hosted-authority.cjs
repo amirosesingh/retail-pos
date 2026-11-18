@@ -1,7 +1,7 @@
 const fail = (code, message) => { throw Object.assign(new Error(message), { code }); };
 /** Reuses existing authenticated Main HTTPS endpoints. No service key or saved credential. */
 function createHostedRefundVerifier({ backend, terminal, fetch: send = globalThis.fetch, now = Date.now }) {
-  return async ({ input, sale, scope }) => {
+  return async ({ input, sale, scope, basis = null }) => {
     const base = backend(), device = terminal(), supplied = input.proof;
     if (!base || !device?.tokenId || !device.deviceBindingProof || !supplied || typeof supplied !== "object" || Array.isArray(supplied)) fail("EONLINE_REQUIRED", "Connect and sign in to verify this central refund approval.");
     const proof = {};
@@ -25,7 +25,8 @@ function createHostedRefundVerifier({ backend, terminal, fetch: send = globalThi
     const identity = await post("/api/v1/pos/ipc-adopt", proof);
     if (identity?.ok !== true || typeof identity.subject !== "string" || identity.subject.toLowerCase() !== scope.requester.toLowerCase() || typeof identity.authorId !== "string" || identity.authorId.toLowerCase() !== scope.requesterId || identity.permissions?.can_process_refund !== true || (identity.branchId && identity.branchId !== scope.branchId)) fail("EAPPROVAL_DENIED", "The verified central operator does not match this refund session.");
     const result = await post("/api/v1/pos/sync?operation=authorization", { action: "verify_mutation", data: { ...proof, actionKey: "refund", storeId: scope.branchId, requestedAmount: scope.amount / 100, grantToken: input.grantToken ?? null,
-      payload: { sale_id: input.saleId, receipt_no: sale.bill_number || input.saleId, total: scope.amount / 100 } } });
+      payload: { sale_id: input.saleId, receipt_no: sale.bill_number ?? input.saleId, total: scope.amount / 100 },
+      ...(basis ? { refundApprovalBasis: basis, refundApprovalWitness: { authorId: scope.requesterId, subject: scope.requester } } : {}) } });
     if (result?.ok !== true) fail("EAPPROVAL_DENIED", "The central approval does not authorize this exact refund.");
     if (typeof result.required !== "boolean") fail("EAPPROVAL_DENIED", "The central refund approval response is incomplete.");
     let expiresAt = now() + 120000;
@@ -34,7 +35,8 @@ function createHostedRefundVerifier({ backend, terminal, fetch: send = globalThi
       expiresAt = Math.min(expiresAt, result.grant.exp);
     }
     scope.assertCurrent();
-    return { expiresAt };
+    if (basis && (typeof result.refundApprovalReceipt !== "string" || !result.refundApprovalReceipt || result.refundApprovalReceipt.length > 32768)) fail("EAPPROVAL_DENIED", "The central refund receipt is missing. Nothing was refunded.");
+    return { expiresAt, ...(basis ? { refundApprovalReceipt: result.refundApprovalReceipt } : {}) };
   };
 }
 module.exports = { createHostedRefundVerifier };

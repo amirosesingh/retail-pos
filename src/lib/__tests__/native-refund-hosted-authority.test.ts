@@ -10,7 +10,7 @@ function fixture(){
  send.mockResolvedValueOnce(json(identity)).mockResolvedValueOnce(json(approval));
  const verify=createHostedRefundVerifier({backend:()=>"https://owned-beta.example",terminal:()=>({tokenId:"sealed-terminal",deviceBindingProof:"sealed-binding"}),fetch:send,now:()=>now});
  const input={saleId:"saved-sale",grantToken:"signed-grant",proof:{sessionToken:"current-person",terminalToken:"forged"}};
- return{send,scope,identity,approval,json,run:()=>verify({scope,input,sale:{bill_number:"A-123"}})};
+ return{send,scope,identity,approval,json,run:(basis:unknown=null,bill="A-123")=>verify({scope,input,sale:{bill_number:bill},basis})};
 }
 describe("Main verifies hosted refund authority",()=>{
  it("binds the current Main actor then verifies the exact saved receipt with sealed activation proof",async()=>{
@@ -32,5 +32,15 @@ describe("Main verifies hosted refund authority",()=>{
  });
  it("does not turn a transport failure into PIN permission",async()=>{
   const f=fixture();f.send.mockReset().mockRejectedValueOnce(Error("offline"));await expect(f.run()).rejects.toMatchObject({code:"EONLINE_REQUIRED"});expect(f.send).toHaveBeenCalledOnce();
+ });
+ it("requests a durable exact-basis receipt and preserves an empty legacy bill number",async()=>{
+  const f=fixture(),basis={operationId:"exact-saved-operation",amountMinor:"1230"};
+  f.send.mockReset().mockResolvedValueOnce(f.json(f.identity)).mockResolvedValueOnce(f.json({...f.approval,refundApprovalReceipt:"purpose-bound-certificate"}));
+  expect(await f.run(basis,"")).toEqual({expiresAt:now+1000,refundApprovalReceipt:"purpose-bound-certificate"});
+  const body=JSON.parse(f.send.mock.calls[1][1].body);
+  expect(body.data.refundApprovalBasis).toEqual(basis);expect(body.data.refundApprovalWitness).toEqual({authorId:author,subject:"cashier"});expect(body.data.payload.receipt_no).toBe("");
+ });
+ it("requires the durable receipt when Main requested one",async()=>{
+  const f=fixture();await expect(f.run({operationId:"exact-saved-operation"})).rejects.toMatchObject({code:"EAPPROVAL_DENIED"});
  });
 });

@@ -9,7 +9,7 @@ const {ReceiptRepository}=require('../electron/db/repositories/receipts.cjs');
 async function main(){
  const args = process.argv.slice(2), grouped = args[1] === '--grouped';
  assert.deepEqual(args, grouped ? ['--run','--grouped'] : ['--run']);
-   const branch='refund-fixture',local=await createLocal(branch, grouped ? {extraTables:['products','stock_delta_applied','pos_settings']} : undefined),vault=createAuthorKeys();let passed=0,epoch=1;
+   const branch='refund-fixture',local=await createLocal(branch, grouped ? {extraTables:['products','stock_delta_applied','pos_settings','app_users','cashiers','pin_attempts','authorization_actions','authorization_log']} : undefined),vault=createAuthorKeys();let passed=0,epoch=1;
  const {manager,repository}=local,sql=manager.sql(),terminal=randomUUID(),authorId=randomUUID(),writer=new ShiftSyncJournal(repository);
  const authority=new ShiftAuthorAuthority({keys:vault.keys,connectionManager:manager,session:{identity:()=>({source:'pos',authorId,canonicalSubject:'cashier',branchId:branch}),epoch:()=>epoch,hasPermission:()=>true},terminal:()=>({tokenId:terminal,deviceUse:'operations',branchId:branch}),project:()=> 'https://fixture.supabase.co',branch:()=>branch});
  const operationStore=new ShiftFinancialOperations(manager,{enabled:true});
@@ -132,6 +132,48 @@ async function main(){
    await assert.rejects(transaction(tx=>native.assertRefundHandbackClear(tx,branch,source.feedEpoch,'1')));
    await transaction(tx=>native.assertRefundHandbackClear(tx,branch,source.feedEpoch,'2'));
    console.log('PASS signed grouped refund exact local capture, journal/CT fences, accepted retry and canonical movement convergence');
+   const {RefundApprovalService}=require('../electron/refund-approval-service.cjs');
+   const {OfflineApprovalStore}=require('../electron/offline-approval-service.cjs');
+   const {verifySyncedApprovalPin}=require('../electron/synced-staff-login.cjs');
+   const approvalProtocol=require('../electron/sync/refund-approval-evidence.cjs');
+   const managerId=randomUUID(),pin='837461',pinHash=await require('bcryptjs').hash(pin,4);
+   await local.insert('app_users',{id:authorId,user_id:'cashier',full_name:'Synthetic cashier',role:'staff',role_slug:'staff',store_id:branch,is_active:true,permissions:{can_process_refund:true}});
+   await local.insert('app_users',{id:managerId,user_id:'manager',full_name:'Synthetic manager',role:'manager',role_slug:'manager',store_id:branch,is_active:true,permissions:{can_process_refund:true,approval_pin_enabled:true},pin_hash:pinHash});
+   await local.insert('authorization_actions',{id:randomUUID(),action_key:'refund',scope_type:'branch',scope_id:branch,mode:'pin',is_enabled:true,require_reason:true,
+    allowed_roles:['manager'],allowed_user_ids:[],authority_limits:{},extra_authority:{},absolute_ceilings:{}});
+   await local.insert('pos_store_settings',{store_id:'',allow_offline_approvals:true,online_only_refund:false});
+   const offline=await seed({legacy:true});
+   await manager.pool.request().input('p',offline.product).input('i',offline.item).input('sale',offline.sale).input('b',branch).query(`
+    UPDATE dbo.products SET owner_store_id=@b WHERE id=@p;UPDATE dbo.sale_items SET branch_id=@b WHERE id=@i;
+    UPDATE dbo.sales SET created_at=SYSDATETIMEOFFSET() WHERE id=@sale;
+    UPDATE dbo.sync_checkpoints SET change_tracking_version=CHANGE_TRACKING_CURRENT_VERSION() WHERE branch_id=@b AND entity_type=N'products' AND direction=N'push';`);
+   const scope={branchId:branch,terminalId:terminal,requesterId:authorId,requester:'cashier',assertCurrent:()=>{}};
+   let clock=Date.now();
+   const approvals=new RefundApprovalService({captureScope:()=>scope,store:new OfflineApprovalStore(manager,repository),now:()=>clock,
+    verify:(username,credential)=>verifySyncedApprovalPin(manager.pool,username,credential,branch),
+    captureSource:async()=>({scope:{projectOrigin:'https://fixture.supabase.co',...source},anchorKind:'grouped',assertCurrent:()=>{}})});
+   const request={saleId:offline.sale,refundId:'refund:'+offline.sale,branchId:branch,reason:'Reviewed offline'},op=stableUuid({refundId:request.refundId});
+   const granted=await approvals.authorize({saleId:offline.sale,branchId:branch,registeredTerminalId:terminal,requestedAmount:10,username:'manager',credential:pin,reason:request.reason});
+   const approved=approvals.admission(granted.grantToken,request);
+   await runtime.commit(repo,request,null,{assertCurrent:()=>{},financialCapture:action=>authority.captureFinancial(action)},null,approved);approved.complete();
+   const durable=await native.readRefundRoute(manager,branch,op),raw=JSON.stringify(durable.refundApproval);
+   assert.equal(approvalProtocol.decodeRefundApprovalEvidence(durable.refundApproval,{anchorKind:'grouped',payloadJson:durable.refundJson,attestation:durable.attestation}).approval.approver.authorId,managerId);
+   assert.equal(durable.author.authorId,authorId);assert.doesNotMatch(raw,/"credential"|pin_hash|grantToken|sessionToken/);
+   assert.equal(authority.session.identity().authorId,authorId); // manager never signs in/enrolls
+   assert.equal((await manager.pool.request().input('sale',offline.sale).query('SELECT row_version,is_refunded FROM dbo.sales WHERE id=@sale;')).recordset[0].row_version,2);
+   clock+=600000;approvals.grants.clear();await local.restart();runtime=createRuntime();
+   const restarted=await native.readRefundRoute(manager,branch,op);
+   assert.equal(JSON.stringify(restarted.refundApproval),raw);assert.equal(restarted.acceptance,null);assert.equal(restarted.journal.length,4);
+   response={status:'APPLIED',operation_id:op,sale_id:offline.sale,sale_row_version:2,fully_refunded:true,feed_epoch:source.feedEpoch,feed_seq:'3',
+    effects:[{item_id:offline.item,product_id:offline.product,movement_id:randomUUID(),branch_id:branch,delta:2,refunded_qty:2,row_version:2}],stock:[{product_id:offline.product,branch_id:branch,balance:7}]};
+   await coordinator.withExclusive(()=>runtime.upload(restarted));
+   assert.deepEqual((await native.readRefundRoute(manager,branch,op)).acceptance,response);
+   const facts=(await manager.pool.request().input('sale',offline.sale).input('p',offline.product).input('op',op).query(`
+    SELECT (SELECT stock_quantity FROM dbo.products WHERE id=@p) stock,(SELECT row_version FROM dbo.sales WHERE id=@sale) sale_version,
+      (SELECT COUNT(*) FROM dbo.stock_delta_applied WHERE product_id=@p) movements,
+      (SELECT COUNT(*) FROM dbo.sync_change_journal WHERE aggregate_id=@op AND acknowledged_at IS NOT NULL) ack;`)).recordset[0];
+   assert.deepEqual(facts,{stock:7,sale_version:2,movements:1,ack:4});
+   console.log('PASS actual SQL manager PIN (manager not signed in), atomic durable companion, expiry/restart upload and single stock return');
    return;
   }
   await manager.pool.request().batch('CREATE TABLE dbo.products(id uniqueidentifier PRIMARY KEY,stock_quantity int,stock_by_store nvarchar(max),row_version bigint);CREATE TABLE dbo.stock_delta_applied(movement_id uniqueidentifier PRIMARY KEY,product_id uniqueidentifier,store_id nvarchar(128),delta int,applied_at datetimeoffset);');

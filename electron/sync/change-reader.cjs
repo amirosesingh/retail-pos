@@ -10,6 +10,7 @@ const {stableUuid}=require("../db/repositories/aggregates.cjs");
 const {prepareFinancialOpening,prepareFinancialHistory,assertFinancialHistoryAcknowledgement}=require("./financial-history-ack.cjs");
 const { cashCheckoutForContext } = require("./cash-checkout-route.cjs");
 const refundRoute = require("./grouped-refund-native.cjs");
+const financialRefund = require("./financial-refund-approval.cjs");
 const { readCashRoute, cashTrackingCoverage, assertLegacyCashWrites } = require("../db/sale-event-outbox.cjs");
 const SHIFT_GRAPH_TABLES = ["shifts", "shift_cash_counts", "shift_reconciliations", "shift_close_events",
   "shift_notifications", "shift_variance_alerts"];
@@ -281,10 +282,42 @@ class ChangeReader {
       ORDER BY e.shift_id,e.sequence;`,{branch:branchId,terminal:terminalId,limit:Math.max(1,Math.min(100,Number(limit)||100))})).recordset??[]);
     const items=[];
     for(const row of rows){const item={kind:row.event_kind,branchId:row.branch_id,terminalId:row.terminal_id,shiftId:String(row.shift_id).toLowerCase(),operationId:String(row.operation_id).toLowerCase(),sequence:row.sequence_text,payloadJson:row.payload_json,payloadHash:row.payload_hash,proof:JSON.parse(row.proof_json)};
+      if(row.action==='REFUND'){
+        const payload=JSON.parse(item.payloadJson);
+        const saved=(await this.financialRefundApprovals(branchId,terminalId,payload.changes.map(change=>change.saleId))).find(value=>JSON.parse(value.operationJson).operationId===item.operationId);
+        if(saved){
+        if(saved.operationJson!==item.payloadJson||JSON.stringify(saved.attestation)!==JSON.stringify(item.proof))throw refundRoute.refundHeld();
+        item.refundApproval=saved.refundApproval;
+        }
+      }
       if(item.kind==='OBSERVE'){item.computedMergedHash=row.computed_merged_hash;item.pendingFromHash=row.pending_from_hash;}
       if(item.kind==='CLOSING')item.intent=await this.protectedIntent(item.operationId,branchId);
       items.push(prepareFinancialHistory(item,branchId,terminalId));
     }return items;
+  }
+  async financialRefundApprovals(branchId,terminalId,saleIds){
+    if(this.financialOperations?.enabled!==true||!saleIds.length)return [];
+    if(saleIds.length>2000||saleIds.some(id=>typeof id!=='string'||!UUID.test(id)))throw refundRoute.refundHeld();
+    const rows=await this.financialTransaction(async tx=>{
+      const storage=(await this.financialQuery(tx,"SELECT CASE WHEN COL_LENGTH(N'dbo.local_operation_receipts',N'refund_evidence_json') IS NOT NULL AND COL_LENGTH(N'dbo.local_operation_receipts',N'refund_branch_id') IS NOT NULL THEN 1 ELSE 0 END AS ready;")).recordset?.[0]?.ready;
+      if(storage!==1)return [];
+      return(await this.financialQuery(tx,`SELECT TOP (101) e.operation_id,e.payload_json,e.proof_json,
+      approval.entity_id,approval.refund_branch_id,approval.refund_evidence_json
+      FROM dbo.pos_sync_shift_financial_events e
+      JOIN dbo.local_operation_receipts approval ON approval.operation_id=e.operation_id AND approval.operation_type=N'refund'
+      WHERE e.branch_id=@branch AND e.terminal_id=@terminal AND e.event_kind=N'MUTATION' AND e.action=N'REFUND'
+      AND TRY_CONVERT(uniqueidentifier,approval.entity_id) IN(SELECT TRY_CONVERT(uniqueidentifier,[value]) FROM OPENJSON(@sales))
+      ORDER BY e.operation_id;`,{branch:branchId,terminal:terminalId,sales:JSON.stringify([...new Set(saleIds)])})).recordset??[];
+    });
+    if(rows.length>100)throw refundRoute.refundHeld();
+    const result=[],seen=new Set();
+    for(const row of rows){
+      const saved=financialRefund.readFinancialRefundApproval(row,branchId,terminalId);
+      if(!saved)continue; // Old unproven history is retained; the server owns its admission.
+      if(seen.has(String(row.operation_id).toLowerCase())||saved.operationJson!==row.payload_json||JSON.stringify(saved.attestation)!==JSON.stringify(JSON.parse(row.proof_json)))throw refundRoute.refundHeld();
+      seen.add(String(row.operation_id).toLowerCase());result.push(saved);
+    }
+    return result;
   }
   async financialAggregateRequired(aggregateId,branchId,terminalId){
     if(this.financialOperations?.enabled!==true)return false;

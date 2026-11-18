@@ -1,0 +1,16 @@
+import type { FinancialOperationAttestation } from '../security/financial-author-protocol.cjs';
+export type FinancialRefundApprovalScope = {projectOrigin:string;branchId:string;terminalId:string;databaseGuid:string};
+export type RefundApprovalScope = FinancialRefundApprovalScope|FinancialRefundApprovalScope&{feedEpoch:string;installationGeneration:string};
+export type RefundApprovalPerson = {authorId:string;subject:string};
+export type RefundApprovalBasis = {operationId:string;refundKey:string;saleId:string;expectedSaleVersion:string;amountMinor:string;saleCreatedAt:string;scope:RefundApprovalScope;requester:RefundApprovalPerson};
+export type RefundApproval = {id:string;mode:'direct'|'offline_pin'|'hosted';approver:RefundApprovalPerson|null;credentialMethod:'pin'|'totp'|null;reason:string|null;auditId:string|null;policyHash:string;hostedReceipt:string|null};
+export type RefundApprovalStatement = {domain:'retail-pos.native-refund-approval.v1';version:1;anchorKind:'grouped'|'financial';payloadHash:string;basis:RefundApprovalBasis;witness:RefundApprovalPerson;approval:RefundApproval};
+export type RefundApprovalEvidence = {approvalJson:string;approvalAttestation:FinancialOperationAttestation};
+export type RefundApprovalAnchor = {anchorKind:'grouped'|'financial';payloadJson:string;attestation:unknown;scope?:Omit<RefundApprovalScope,'projectOrigin'>|RefundApprovalScope;operationId?:string;saleId?:string;expectedSaleVersion?:string|number;amountMinor?:string;saleCreatedAt?:string};
+export const DOMAIN:'retail-pos.native-refund-approval.v1';
+export const MAX_BYTES:number;
+export function normalizeRefundApprovalBasis(input:unknown):RefundApprovalBasis;
+export function normalizeRefundSaleCreatedAt(input:unknown):string;
+export function parseRefundApprovalJson(raw:string):RefundApprovalStatement;
+export function decodeRefundApprovalEvidence(input:unknown,anchor:RefundApprovalAnchor):RefundApprovalStatement&{approvalAttestation:FinancialOperationAttestation};
+export function buildRefundApprovalEvidence(input:{anchorKind:'grouped'|'financial';payloadJson:string;attestation:unknown;basis:RefundApprovalBasis;witness:RefundApprovalPerson;approval:RefundApproval;author:{assertCurrent():void;signFinancialOperation(input:{branchId:string;operationId:string;action:'REFUND';payloadJson:string}):FinancialOperationAttestation}}):RefundApprovalEvidence;

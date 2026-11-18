@@ -9347,10 +9347,55 @@ awaited-success and pending-child denial assertions remain. Rules and the
 [evidence report](database/beta-local-first-recovery-2026-11-18.md) now record the
 proved source behavior and separate acceptance boundaries.
 
-Remaining protocol code: durable manager approval for grouped offline refunds,
+Remaining protocol code at that checkpoint: durable manager approval for grouped offline refunds,
 including approval renewal/recovery after the temporary hosted proof expires or
 is lost on restart. Unsupported PIN-required grouped refunds stop before commit;
 existing saved work is not acknowledged or cleared. This is not complete offline
 financial acceptance. Installed/restart/two-till smoke testing and another paired
 installer release remain separate from the source fixes; no publication requested
 in this implementation turn. Production and installed databases remain unchanged.
+
+## 18 November — durable refund approval and restart recovery
+
+After reviewing the two unfinished cases, the owner explicitly requests
+"Complete it": manager approval while offline, and approval expiry or an Electron
+restart before upload. Implement both through the existing settings and grouped
+refund pipeline. Recoverable baseline is beta b27e6316 plus the reviewed pending
+startup/refund dependencies at 6eff912f, combined as 457436c7 on
+codex/beta-durable-refund-approval. Update the existing beta refund PR #477.
+
+Use agents for the native and hosted contract and independent review. Preserve
+v1 queued signed bytes and accepted receipts. Save any new approval evidence with
+the refund's existing local transaction/evidence, never a second queue. Bind it
+to the actual author, verified approver, branch, terminal/source, stable operation,
+sale/version and exact amount. Keep PINs, person sessions and general bearer
+credentials out of the journal. Recheck the applicable settings, permissions and
+scope; a revoked or unprovable approval is retained for review, never bypassed.
+
+Add only the narrow versioned approval contract needed for offline upload and
+restart-safe retries. No additional settings, changed operator configuration,
+invented manager signatures/enrollment or financial timestamp winner selection.
+Run focused native/hosted/SQL fixtures and compatibility/negative/retry tests.
+Document code, fixture results, installed acceptance, CI and release separately.
+This authorizes source and isolated fixtures; no production/live schema write,
+installed business-data manipulation or new installer publication is implied.
+
+Implementation completed in the source follow-up: one separately signed approval
+companion saved atomically with grouped/FIN62 refunds; exact-operation hosted
+certificates through the existing verifier; restart-safe upload and accepted
+receipt replay; fresh approval attachment to original legacy work; existing
+settings, named request routes and current authority preserved. No second queue,
+monetary re-signing, stock rerun or credential persistence. Found and fixed the
+offline new-sale/refund first-upload dependency with a signed eligibility date;
+metadata remains separate from business acceptance.
+
+Verification: 418 affected tests in 23 suites passed together; 11 existing
+event/close lifecycle checks and eight disposable LocalDB groups passed. Includes
+real manager PIN without manager sign-in, transaction rollback, expiry/restart,
+single stock effect, source/person changes, exact receipt replay, current
+revocation, new-sale/refund metadata ordering and date tamper denial. Independent
+agent review, scoped lint, native syntax, schema/package/registry consistency and
+diff checks passed. See the [evidence report](database/beta-local-first-recovery-2026-11-18.md)
+for fixture boundaries. Source migration adds only the service-only read receipt
+RPC and remains unapplied. Hosted/installed two-till acceptance, exact-head CI,
+merge and a fresh explicitly requested installer publication are separate gates.

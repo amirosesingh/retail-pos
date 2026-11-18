@@ -56,6 +56,7 @@ import { AddMissedBillDialog } from "@/platforms/web/components/pos/AddMissedBil
 import { HistoryDateNavigation } from "@/platforms/web/components/pos/HistoryDateNavigation";
 import { rowToSale } from "@/core/api/pos-db";
 import { isMissedBillReference } from "@/lib/missed-bill-reference";
+import { RefundApprovalRecovery } from "@/platforms/windows/components/RefundApprovalRecovery";
 
 export const Route = createFileRoute("/receipts")({
   head: () => ({
@@ -733,6 +734,7 @@ function ReceiptVault() {
                 <Ban className="size-4" />
                 {selected?.refunded ? "Bill already cancelled" : "Cancel this bill"}
               </Button>
+              <RefundApprovalRecovery sale={selected} branchId={currentStore.id} />
             </div>
 
             <div className="overflow-hidden rounded-lg border border-border bg-white">

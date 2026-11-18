@@ -54,10 +54,15 @@ class ReceiptRepository{
    if(saleResult.recordset[0].is_refunded)throw Object.assign(new Error("This receipt has already been refunded."),{code:"EALREADY"});
    const items=await new sql.Request(tx).input("sale",saleId).query(`SELECT id,product_id,quantity,COALESCE(refunded_qty,0) refunded_qty${groupedRefund?",row_version,branch_id":""} FROM dbo.sale_items WITH(UPDLOCK,HOLDLOCK) WHERE sale_id=@sale ORDER BY id;`);
    if(authorization)await authorization.verify(tx,false);
+   if(authorization?.durable)await nativeRefund.assertRefundStorageReady(tx);
    const saved = groupedRefund && !financialToken ? await nativeRefund.captureRefund(tx, groupedRefund, {
     branchId, operationId, refundKey: refundId, saleId: recordId(saleId),
     expectedSaleVersion: Number(saleResult.recordset[0].row_version), reason,
    }, items.recordset ?? []) : null;
+   if(authorization?.durable&&!saved&&!financialToken)throw Object.assign(new Error("The protected refund source changed before it could be saved."),{code:"EAPPROVAL_CONTEXT"});
+   const refundApproval=saved&&authorization?.durable?await authorization.captureEvidence(tx,{anchorKind:"grouped",
+    payloadJson:saved.refundJson,attestation:saved.attestation,source:groupedRefund.source,author:groupedRefund.author,
+    operationId,saleId:recordId(saleId),expectedSaleVersion:saved.command.expectedSaleVersion}):null;
    const write = (request, statement, declaration = "") => {
     if (!saved) return request.query(statement);
     return request.input("refundContext", sql.VarBinary(128), nativeRefund.refundContext(operationId))
@@ -104,9 +109,24 @@ class ReceiptRepository{
    await write(new sql.Request(tx).input("sale",saleId),
     "UPDATE dbo.sales SET is_refunded=1,row_version=COALESCE(row_version,0)+1 WHERE id=@sale;");
    await journal("sales",{id:saleId});
-   if(financialToken){await financial.finalizeMutation(tx,financialToken);financial.assertCurrent(tx,financialToken);}
+   const financialEvent=financialToken?await financial.finalizeMutation(tx,financialToken):null;
+   if(financialToken)financial.assertCurrent(tx,financialToken);
    await new sql.Request(tx).input("refund",operationId).input("sale",saleId).input("reason",reason).query("INSERT dbo.local_operation_receipts(operation_id,operation_type,entity_id,note) VALUES(@refund,'refund',CONVERT(nvarchar(128),@sale),@reason);");
-   if(saved){await nativeRefund.saveRefundEvidence(tx,saved);groupedRefund.assertCurrent();}
+   if(saved){await nativeRefund.saveRefundEvidence(tx,saved,refundApproval);groupedRefund.assertCurrent();}
+   if(financialToken&&authorization?.durable){
+    const event=JSON.parse(financialEvent?.payloadJson??"null"),before=event?.changes?.[0]?.before;
+    if(event?.action!=="REFUND"||event.operationId!==operationId||event.changes.length!==1||event.changes[0].saleId!==recordId(saleId)||!before||!financialContext?.source||!financialContext.author)
+     throw Object.assign(new Error("The exact financial refund approval could not be saved."),{code:"EAPPROVAL_CONTEXT"});
+    const evidence=await authorization.captureEvidence(tx,{anchorKind:"financial",payloadJson:financialEvent.payloadJson,
+     attestation:financialEvent.proof,source:financialContext.source,author:financialContext.author,
+     operationId,saleId:recordId(saleId),expectedSaleVersion:before.rowVersion});
+    const envelope={version:2,route:"financial",operationJson:financialEvent.payloadJson,attestation:financialEvent.proof,refundApproval:evidence};
+    require("../../sync/financial-refund-approval.cjs").decodeFinancialRefundReceipt(envelope,{operationId,saleId:recordId(saleId),branchId});
+    await new sql.Request(tx).input("op",operationId).input("branch",branchId).input("evidence",JSON.stringify(envelope)).query(`
+     UPDATE dbo.local_operation_receipts SET refund_branch_id=@branch,refund_evidence_json=@evidence
+     WHERE operation_id=@op AND operation_type=N'refund' AND refund_evidence_json IS NULL;
+     IF @@ROWCOUNT<>1 THROW 51042,'The original financial refund approval could not be saved.',1;`);
+   }
    if(financialToken)financial.assertCurrent(tx,financialToken);
    authorization?.assertCurrent();await tx.commit();return{ok:true,replayed:false,refundId};
   }catch(error){await Promise.resolve(tx.rollback()).catch(()=>undefined);throw error;}

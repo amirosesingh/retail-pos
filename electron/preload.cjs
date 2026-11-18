@@ -70,6 +70,8 @@ contextBridge.exposeInMainWorld("pos", {
   },
   findReceipt: (value, branchId, proof) => invoke("receipts:find-exact", value, branchId, proof),
   refundReceipt: (value) => invoke("receipts:refund", value),
+  getRefundApprovalStatus: (value) => invoke("receipts:refund-approval-status", value),
+  recoverRefundApproval: (value) => invoke("receipts:recover-refund-approval", value),
   database: {
     getState: () => invoke("database:get-state"),
     retryStartup: () => invoke("database:retry-startup"),

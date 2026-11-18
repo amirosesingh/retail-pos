@@ -301,7 +301,7 @@ class PushWorker {
         let ack;
         if(item.kind==='MUTATION'){
           const proof=this.validateFinancialOperation?this.validateFinancialOperation(item.proof):item.proof;
-          ack=await this.retry(()=>this.cloud.pushFinancialEvent({branchId,operationJson:item.payloadJson,proof}));
+          ack=await this.retry(()=>this.cloud.pushFinancialEvent({branchId,operationJson:item.payloadJson,proof,...(item.refundApproval?{refundApproval:item.refundApproval}:{})}));
         }else if(item.kind==='OBSERVE'){
           ack=await this.retry(()=>this.cloud.pushFinancialObservation({branchId,operationJson:item.payloadJson}));
         }else{
@@ -499,9 +499,11 @@ class PushWorker {
           openingSidecar={openingJson:verified.openingJson,proof:verified.proof};
         }
         const batchId = stableUuid({ branchId, aggregateId: aggregate.aggregateId, operations });
+        const refundSales=financialRequired?operations.filter(op=>op.table==='sales'&&!op.deletePhase).flatMap(op=>op.rows).filter(row=>row.is_refunded===true).map(row=>recordId(row.id)):[];
+        const financialRefundApprovals=refundSales.length?await this.reader.financialRefundApprovals?.(branchId,terminalId,refundSales)??[]:[];
         const financialCoverageToken=financialRequired?this.reader.prepareFinancialBusinessCoverage?.({operations,batchId,branchId,terminalId}):null;
         const acknowledged = await this.retry(() =>
-          this.cloud.pushAggregate({ batchId, branchId, operations,...(openingSidecar?{shiftFinancialOpening:openingSidecar}:{}),...(financialRequired?{financialLedgerProjection:true}:{}) }),
+          this.cloud.pushAggregate({ batchId, branchId, operations,...(openingSidecar?{shiftFinancialOpening:openingSidecar}:{}),...(financialRequired?{financialLedgerProjection:true}:{}),...(financialRefundApprovals.length?{financialRefundApprovals}:{}) }),
         );
         assertBatchAcknowledgement(acknowledged, batchId);
         assertShiftClosureAcknowledgement(acknowledged, operations, branchId);

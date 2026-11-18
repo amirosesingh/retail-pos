@@ -142,12 +142,31 @@
   branch, policy and context inside the refund transaction. Direct authorized
   users do not need an additional approval PIN or override reason. Hosted
   approvals must be verified by Main against the existing authenticated service;
-  never extend their expiry or fabricate a local approver audit. Keep credentials
+  never extend their precommit expiry or fabricate a local approver audit. Keep credentials
   out of persisted records and retain stable receipt-proven replay after a lost
-  reply. Until the grouped protocol accepts durable local approver proof, refuse
-  unsupported offline PIN refunds before committing money. Expired/lost hosted
-  upload approval remains a held review boundary, not permission to acknowledge
-  or discard a saved refund.
+  reply. New grouped and FIN62 refunds save a separately signed, exact-operation
+  approval companion with their original transaction and existing journal.
+  Main's current operator key witnesses a verified synced manager PIN; it does
+  not impersonate the manager or require that manager to sign in on this PC.
+  Follow branch/global Refund approver rules and their existing fallback,
+  offline-approval and online-only settings. Direct authority adds no extra PIN.
+  Admission handles still expire before commit. A committed companion survives
+  normal handle expiry and restart; verify current original-author, reviewer,
+  approver and rule authority before first cloud acceptance. An exact previously
+  accepted receipt is replayed without another financial effect. Metadata ACKs
+  never prove business acceptance. Missing or revoked authority keeps work held.
+  A never-uploaded FIN62 sale/refund uses Main's separately signed creation-date
+  witness for refund-age eligibility, with current policy and exact original
+  financial facts. Match an existing central date or the new projected row;
+  never fabricate a central sale or wait on that row before registering its
+  required financial metadata. Grouped/hosted issuance keeps canonical checks.
+- Recover approval for a saved refund by attaching fresh verified evidence to
+  its original operation through the existing write/recovery barrier and sync
+  coordinator. Never refund again, repeat stock, change signed monetary bytes,
+  replace chain history or fabricate an old manager/source signature. Legacy
+  FIN62 evidence may use a clearly identified review reference for the exact
+  original operation, bound to the source verified now; it is not an invented
+  historical refund key. Missing or ambiguous original evidence remains held.
 - Transfer drafts use the existing local transaction/journal. Before centrally
   coordinated approval, dispatch, receipt or verification, require Main's current
   stage permission, correct source/destination branch and the existing verified

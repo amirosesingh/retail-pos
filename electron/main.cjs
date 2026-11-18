@@ -216,7 +216,9 @@ const offlineApprovalService = new OfflineApprovalService({
 });
 const refundApprovalService = new (require("./refund-approval-service.cjs").RefundApprovalService)({
   captureScope: () => captureOfflineApprovalScope("can_process_refund"),
-  allowPin: () => !configuredCashSender,
+  allowPin: () => true,
+  captureSource: captureRefundApprovalSource,
+  readPending: (scope, saleId, operationId, tx) => require("./sync/refund-recovery-native.cjs").readPendingOriginal(databaseManager, scope, saleId, operationId, tx),
   verifyHosted: require("./refund-hosted-authority.cjs").createHostedRefundVerifier({ backend: () => authorizationServerUrl(), terminal: () => terminalStore.read() }),
   verify: (username, pin, scope) => verifySyncedApprovalPin(databaseManager.pool, username, pin, scope.branchId,
     { verifyTotp: approvalTokenVerifier.verify, identifyTotp: approvalTokenVerifier.identify, prepareTotp: approvalTokenVerifier.prepare }),
@@ -2151,6 +2153,34 @@ function captureLocalOperationIdentity(){
   return Object.freeze({assertCurrent,financialCapture(action){assertCurrent();return shiftAuthority.captureFinancial(action);}});
 }
 
+async function captureRefundApprovalSource({input,scope,recovery}) {
+  return syncCoordinator.withExclusive(async () => {
+    const capture=captureLocalOperationIdentity();capture.assertCurrent();scope.assertCurrent();
+    const financial=await shiftFinancialRuntime.forRefund(scope.branchId,input.saleId,capture);
+    capture.assertCurrent();scope.assertCurrent();
+    let source,anchorKind,check;
+    if(financial.source&&financial.author&&financial.expectedShiftId){
+      financial.assertCurrent();source=financial.source;anchorKind="financial";check=financial.assertCurrent;
+    }else if(financial.repository===receiptRepository){
+      const active=await cashCheckoutRuntime.admit(!recovery);
+      if(!active)return null;
+      const authorCapture=capture.financialCapture("REFUND");
+      source={projectOrigin:authorCapture.binding.projectOrigin,...active.scope};anchorKind="grouped";
+      // The lease ends before HTTPS. Keep identity/profile checks, then the
+      // real transaction admits and compares this exact source again.
+      check=()=>{authorCapture.assertCurrent();syncCloud.assertRequestContext(active.source,false);};
+    }else return null;
+    await require("./sync/grouped-refund-native.cjs").assertRefundStorageReady(databaseManager.pool);
+    if(recovery){
+      const original={projectOrigin:recovery.attestation.projectOrigin,...recovery.source};
+      if(recovery.route!==anchorKind||Object.keys(source).length!==Object.keys(original).length||
+        Object.entries(source).some(([key,value])=>original[key]!==value))throw Object.assign(new Error("The original refund belongs to a different local source. Keep it pending for review."),{code:"EAPPROVAL_CONTEXT"});
+    }
+    const assertCurrent=()=>{capture.assertCurrent();scope.assertCurrent();check();};assertCurrent();
+    return {scope:source,anchorKind,assertCurrent};
+  });
+}
+
 function enrollCurrentShiftAuthor(proof) {
   // Enrollment grants no POS authority. Its unavailability cannot fail login.
   void shiftAuthority.enrollOnline(proof).catch(()=>undefined);
@@ -2638,7 +2668,7 @@ function registerIpc() {
     const args = { saleId, refundId: guard.text(input.refundId,{name:"refund id",max:128}),
       branchId: guard.text(branch,{name:"branch",max:128}), reason: input.reason ? guard.text(input.reason,{name:"reason",max:400}) : null };
     const context = financial.terminalId ? { author: financial.author, terminalId: financial.terminalId,
-      expectedShiftId: financial.expectedShiftId } : null;
+      expectedShiftId: financial.expectedShiftId, source: financial.source } : null;
     const grant = input.grantToken ? guard.text(input.grantToken,{name:"refund authorization",max:4096}) : null;
     const admission = refundApprovalService.admission(grant, args);
     const result = typeof groupedRefundRuntime === "undefined"
@@ -2646,6 +2676,33 @@ function registerIpc() {
       : await groupedRefundRuntime.commit(financial.repository, args, context, requestCapture, admission.hostedGrantToken, admission);
     if (result?.ok) admission?.complete();
     publishBusinessChange({kind:"refund",branchId:branch});scheduleAutomaticSync(250);return result;
+  }));
+  ipcMain.handle("receipts:refund-approval-status",(event,value)=>guard.guarded(async()=>{
+    if(event.sender!==mainWindow?.webContents||event.senderFrame!==event.sender.mainFrame)return{ok:false,code:"EPRIVILEGE",error:"Saved refund status is limited to this POS window."};
+    const input=guard.options(value,{name:"saved refund status",max:2});
+    const scope=captureOfflineApprovalScope("can_process_refund");
+    if(input.branchId&&recordId(String(input.branchId))!==recordId(scope.branchId))return{ok:false,code:"SYNC_BRANCH_FORBIDDEN",error:"The saved refund must belong to this branch."};
+    const saleId=guard.uuid(input.saleId,{name:"sale id"});
+    const recovery=require("./sync/refund-recovery-native.cjs");
+    return recovery.publicPendingStatus(await recovery.readPendingOriginal(databaseManager,scope,saleId));
+  }));
+  ipcMain.handle("receipts:recover-refund-approval",(event,value)=>guard.guarded(async()=>{
+    if(event.sender!==mainWindow?.webContents||event.senderFrame!==event.sender.mainFrame)return{ok:false,code:"EPRIVILEGE",error:"Saved refund approval is limited to this POS window."};
+    const input=guard.options(value,{name:"saved refund approval",max:4});
+    const scope=captureOfflineApprovalScope("can_process_refund");
+    if(input.branchId&&recordId(String(input.branchId))!==recordId(scope.branchId))return{ok:false,code:"SYNC_BRANCH_FORBIDDEN",error:"The saved refund must belong to this branch."};
+    const saleId=guard.uuid(input.saleId,{name:"sale id"}),operationId=guard.uuid(input.operationId,{name:"refund operation"});
+    const grantToken=guard.text(input.grantToken,{name:"refund authorization",max:4096});
+    return syncCoordinator.withExclusive(async()=>{
+      const recovery=require("./sync/refund-recovery-native.cjs");
+      const pending=await recovery.readPendingOriginal(databaseManager,scope,saleId,operationId);
+      if(!pending)throw require("./sync/refund-command.cjs").refundHeld();
+      const admission=refundApprovalService.admission(grantToken,{saleId,refundId:pending.refundId,branchId:scope.branchId});
+      const author=await shiftAuthority.prepare(shiftAuthority.captureFinancial("REFUND"));
+      scope.assertCurrent();author.assertCurrent();
+      const result=await recovery.attachPendingApproval(databaseManager,{scope,saleId,operationId,admission,author});
+      scheduleAutomaticSync(250);return result;
+    });
   }));
   const transferCentralHandoff = require("./transfer-central-handoff.cjs").createTransferCentralHandoff({
     captureScope: permission => captureOfflineApprovalScope(permission),

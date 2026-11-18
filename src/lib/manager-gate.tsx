@@ -64,6 +64,8 @@ export type GateRequest = {
   valueUnit?: "percent" | "currency" | "quantity" | "number";
   /** The parked ticket this request belongs to. */
   heldOrderId?: string | null;
+  /** Recover approval for an already committed native refund; never refund again. */
+  refundRecoveryOperationId?: string;
 };
 
 export type GateResult = {
@@ -259,6 +261,8 @@ export function ManagerGateProvider({
             : { requesterDirectLimit: request.requesterDirectLimit }),
           ...(request.valueUnit ? { valueUnit: request.valueUnit } : {}),
           ...(request.heldOrderId ? { heldOrderId: request.heldOrderId } : {}),
+          ...(request.action === "refund" && request.refundRecoveryOperationId
+            ? { refundRecoveryOperationId: request.refundRecoveryOperationId } : {}),
           allowedRoles: rule?.allowedRoles ?? ["admin", "manager"],
           allowedUserIds: rule?.allowedUserIds ?? [],
           authorityLimits: rule?.authorityLimits ?? {},

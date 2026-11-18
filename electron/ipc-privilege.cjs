@@ -96,6 +96,8 @@ const CHANNEL_LEVELS = {
   "sync:held-sale-review-resolve": ADMIN,
   "receipts:find-exact": OPEN,
   "receipts:refund": OPEN,
+  "receipts:refund-approval-status": OPEN, // Main checks current person, branch and original receipt
+  "receipts:recover-refund-approval": OPEN, // Main attaches verified evidence; never reruns a refund
   "pos:status": OPEN,
   "pos:database-config": OPEN,
   "pos:connection-audit": OPEN,
@@ -461,6 +463,8 @@ function refusal(level, channel, args = []) {
 
 /** True when the caller may run this channel with these arguments right now. */
 function allowed(channel, args = []) {
+  if (["receipts:refund-approval-status", "receipts:recover-refund-approval"].includes(channel))
+    return adminSession.hasPosAuthority() && adminSession.hasPermission("can_process_refund");
   if (channel === "approval:authorize-refund") return adminSession.hasPosAuthority() && adminSession.hasPermission("can_process_refund");
   if (channel === "approval:authorize-offline-discount") {
     if (!adminSession.hasPosAuthority() || !adminSession.hasPermission("can_process_sale")) return false;

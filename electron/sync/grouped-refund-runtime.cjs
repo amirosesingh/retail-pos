@@ -12,7 +12,7 @@ function createGroupedRefundRuntime({ configured, cash, cloud, coordinator, conn
     for (const [id, value] of grants) if (Date.now() >= value.expiresAt) grants.delete(id);
   }
   async function commit(repository, args, financialContext, capture, grantToken, authorization = null) {
-    if (configured && authorization?.requiresPin) throw Object.assign(new Error("This refund requires a fresh central approval before saving."), { code: "EONLINE_REQUIRED" });
+    if (configured && authorization?.requiresPin && !authorization.durable) throw Object.assign(new Error("This refund requires a fresh central approval before saving."), { code: "EONLINE_REQUIRED" });
     const legacy = () => repository.refund(args, financialContext, { legacyFence: true, assertCurrent: capture.assertCurrent }, authorization);
     if (!configured || repository !== legacyRepository()) return legacy();
     return coordinator.withExclusive(async () => {

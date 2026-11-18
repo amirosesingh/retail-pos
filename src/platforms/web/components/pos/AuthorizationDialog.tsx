@@ -63,6 +63,7 @@ export type AuthorizationPrompt = {
   requesterDirectLimit?: number | null;
   valueUnit?: "percent" | "currency" | "quantity" | "number";
   heldOrderId?: string | null;
+  refundRecoveryOperationId?: string;
   allowedRoles?: string[];
   allowedUserIds?: string[];
   authorityLimits?: Record<string, number>;
@@ -112,7 +113,8 @@ export function AuthorizationDialog({
     const identity = approvalIdentity(tokenOnly, authorizerId, prompt.selfAuthorizer?.id);
     const result = await authorizeNativeRefund({ saleId: String(prompt.payload?.sale_id ?? ""), branchId: prompt.storeId ?? "",
       requestedAmount: prompt.requestedAmount ?? Number.NaN, requestId: nativeRequest.current.id, username: identity.authorizerId ?? "",
-      credential: pin, selfAuthorization: identity.selfAuthorization, reason: note.trim() });
+      credential: pin, selfAuthorization: identity.selfAuthorization, reason: note.trim(),
+      ...(prompt.refundRecoveryOperationId ? { recoveryOperationId: prompt.refundRecoveryOperationId } : {}) });
     if (currentPrompt.current !== prompt) return "denied";
     if (result.code === "EONLINE_REQUIRED") return "central";
     if (!result.ok || !isNativeRefundGrant(result.grantToken) || !result.authorizer) { toast.error(result.error ?? "The local refund approval was not confirmed."); return "denied"; }

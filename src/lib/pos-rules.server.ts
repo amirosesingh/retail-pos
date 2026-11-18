@@ -32,6 +32,8 @@ export type OverrideGrant = {
   approvedByName?: string;
   role: string;
   modeUsed?: "pin" | "self_pin" | "request" | "admin_auto" | "offline_pin" | "offline_self_pin";
+  /** Included by new PIN/TOTP grants; never guessed when verifying old grants. */
+  credentialMethod?: "pin" | "totp";
   storeId: string;
   binding: string;
   requestId?: string;

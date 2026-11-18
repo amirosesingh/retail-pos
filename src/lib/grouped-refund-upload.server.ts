@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { runtimeEnvValue } from "./external-supabase-config";
 import { safeReceiptNo } from "./report-data-safety";
+import type { VerifiedTerminalDescriptor } from "./terminal-binding.server";
 
 const uuid = z.string().regex(/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/);
 const version = z.number().int().min(1).max(2147483647);
@@ -25,6 +26,7 @@ const nativeRefundSchema = z.object({
   refundJson: z.string().min(2).max(64 * 1024),
   attestation: z.object({}).passthrough(),
   grantToken: z.string().min(1).max(4096).nullish(),
+  refundApproval: z.unknown().optional(),
 }).strict();
 export const groupedRefundUploadSchema = z.union([refundCommandSchema, nativeRefundSchema]);
 
@@ -111,12 +113,14 @@ export async function applyGroupedRefundUpload(
   const { verifyRelayCaller, serviceRest } = await import("@/core/api/pos-relay.server");
   const { resolveRelayScope } = await import("@/core/api/relay-policy.server");
   let operator: { appUserId: string; id: string; role: string };
+  let verifiedTerminal: VerifiedTerminalDescriptor;
   try {
     const caller = await verifyRelayCaller(proof, { strictAvailability: true, rejectUnboundCashier: true });
     const terminal = caller.terminal;
     if (!terminal || terminal.id !== terminalToken || terminal.platform !== "pc" ||
         terminal.mode !== "operations" || terminal.branchId !== command.branchId)
       return forbidden();
+    verifiedTerminal = terminal;
     const scope = await resolveRelayScope(caller, { strictAvailability: true });
     if (scope.stale || scope.managementDevice || scope.managementReplica || scope.terminalId !== terminal.id ||
         scope.storeId !== terminal.branchId)
@@ -208,13 +212,23 @@ export async function applyGroupedRefundUpload(
   const amount = Number(first.basis.total);
   if (!Number.isFinite(amount)) return protocol();
   try {
+    if (native && saved && native.refundApproval !== undefined) {
+      const { verifyRefundApprovalEvidence, refundApprovalAmountMinor } = await import("./refund-approval-receipt.server");
+      await verifyRefundApprovalEvidence({ evidence: native.refundApproval, terminal: verifiedTerminal,
+        anchor: { anchorKind: "grouped", payloadJson: native.refundJson, attestation: native.attestation,
+        scope: saved.scope, operationId: command.operationId, saleId: command.saleId,
+        expectedSaleVersion: command.expectedSaleVersion, amountMinor: refundApprovalAmountMinor(first.basis.total) }, signal });
+    } else {
     const { checkBusinessAuthorization } = await import("./business-authorization.server");
     const authorization = await checkBusinessAuthorization(operator, {
       actionKey: "refund", storeId: command.branchId, requestedAmount: amount, grantToken: command.grantToken,
       payload: { sale_id: command.saleId, receipt_no: safeReceiptNo(first.basis.bill_number, command.saleId), total: amount },
     });
     if (!authorization.ok) return failure("REFUND_APPROVAL_REQUIRED", 403);
-  } catch { return unavailable(); }
+    }
+  } catch (error) {
+    return (error as { status?: number })?.status === 403 ? failure("REFUND_APPROVAL_REQUIRED", 403) : unavailable();
+  }
 
   const result = await submit(first.basis);
   if (result instanceof Response) return result;
