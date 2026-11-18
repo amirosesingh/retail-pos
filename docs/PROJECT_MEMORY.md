@@ -1,4 +1,60 @@
-## 18 November — beta local writes, startup and idle sync
+## 18 November — current beta acceptance and conditional release authorization
+
+The owner now authorizes agents to resolve PR #477's dependency-audit blocker,
+apply the reviewed migration and run two-till acceptance on Retail POS Beta
+only, then merge into beta and publish after all gates pass. Production and
+saved operator local data remain excluded. The explicit current publication
+request is conditional on passing checks; implementation or merge alone is
+not acceptance.
+
+Reviewed source head `9a7e36d0` completes durable grouped/FIN62 refund approval
+and original-operation recovery, including offline first-sale/refund ordering.
+431 focused tests and eight disposable LocalDB groups pass. Exact-head CI
+passes 7,677 application tests, SQL checks, lint, TypeScript and builds; its
+dependency audit is the remaining source merge gate. Do not infer hosted or
+installed acceptance from that result.
+
+The lucky connector currently verifies project `irjkmhgrjgcaoixcixut` named
+Retail POS Beta, organization `fdcvzkttecaczesclvgd`, as ACTIVE_HEALTHY. Pin
+that exact target before any approved hosted write. Use disposable owned
+two-till SQL databases and marked synthetic Beta records; preserve installed
+profiles, pending work, production, settings secrets and signing credentials.
+
+The approved hosted receipt-probe migration is now applied on that exact Beta
+target: ledger `20261118053019`, source file `20261117233612`, function MD5
+`939a54a94ceb0498f57493574ac903bf`, postgres/definer/pinned search path and
+service-only execution verified independently. Existing counts stayed nine
+sales/eleven items/zero financial nodes. Do not replay based on the differing
+ledger/file timestamps. Current-source hosted smoke and publication remain
+pending. The owner has since started the reviewed current-source loopback relay
+on port 18446 with a masked Beta-only server key. The key is not persisted or
+exposed to clients.
+
+Hosted acceptance exposed two additional defects: the en_US database locale
+sorted strict financial-fact keys differently, and a held financial aggregate
+could let its refund stock movement escape through Change Tracking. The locale
+guard is corrected in source and on Beta only (source `20261118060529`, ledger
+`20261118061241`, fact MD5 `49814368b1669fc9d9943aca23eb5ce1`); valid split
+facts and malformed-field rejection were verified without business writes.
+The native ownership correction passes 76 focused tests and 12 isolated ODBC
+LocalDB groups, including concurrent capture and accepted movement replay.
+The fresh FIN62 hosted slice now passes after normalizing only the SQL UUID
+argument at the refund-route wrapper (52 adjacent tests pass). The exact original
+saved refund survived a separate Node run and owned SQL process restart, then
+replayed its remaining journal without resaving money. Independent cloud
+read-back confirms both tills' sale/refund state, split tenders and stock 20,
+one sale movement and one refund return (net zero), and zero manager signing
+enrollments. Retain the failed earlier marked fixture's OPEN/stock evidence;
+do not reset records to manufacture a pass.
+
+Grouped recovery also exposed strict RFC validation of historical SHA-derived
+publication UUIDs. Correct only that read-only publication field to canonical
+PostgreSQL UUID syntax; command, author, sale, terminal and graph/scope checks
+stay strict (34 focused tests pass). Rebuild the isolated relay before resuming
+the same retained grouped databases. Grouped cursor/hosted certificate acceptance,
+the remaining functional smoke and exact-head CI are still pending.
+
+## 18 November — earlier beta local writes, startup and idle sync checkpoint
 
 The owner approved implementing the read-only audit recommendations with agents,
 preserving production and saved local work. PR #474, reviewed head 59514e5c,

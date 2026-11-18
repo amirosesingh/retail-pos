@@ -9412,3 +9412,80 @@ At `865a1472`, full application and the SQL/upgrade/shift/transfer/history stage
 pass. Added the new migration to the notification fixture's explicit temporary
 project copy list; its 23 isolated upgrade scenarios now pass. No notification
 runtime or permission changes. Keep the final exact-head gate intact.
+
+## 18 November — owner-authorized beta migration, acceptance and publication
+
+Owner explicitly requests: "Kindly use agents to resolve the audit blocker,
+complete the migration and two-till tests on Retail POS Beta only, then merge
+PR #477 and publish beta once everything passes. Don't touch production or
+saved local data." This supersedes the prior source-only scope for the exact
+isolated Beta target and gives conditional beta publication authority after
+the audit, migration, hosted acceptance and required CI gates pass. It does
+not authorize production promotion, operator database writes or deletion of
+retained local work.
+
+Starting reviewed head is `9a7e36d0`; beta remains `b27e6316`. Full CI passes
+7,677 application tests, SQL/upgrade/permissions/history/notification checks,
+lint, TypeScript/build and native/beta Worker builds; only dependency audit is
+red. Agents assess the dependency root and safe upgrade, review hosted schema
+prerequisites and prepare the existing two-till harness independently.
+
+Verified through the lucky Supabase connector: `irjkmhgrjgcaoixcixut` is named
+Retail POS Beta, organization `fdcvzkttecaczesclvgd`, ACTIVE_HEALTHY, PostgreSQL
+17.11.0.018. Pin and recheck that identity for the reviewed additive migration
+and test records. Never query or modify production. Use owned disposable local
+test databases and new clearly marked Beta fixture records, not POS_Local_Beta
+or installed profiles. Keep secrets in existing sealed/server settings and out
+of logs/chat. Preserve the existing audit gate and signing keys; no waiver,
+force downgrade, reset or fake successful acknowledgement.
+
+Hosted migration completed: only the read-only receipt probe was applied using
+an atomic exact-system/prerequisite guard. Supabase ledger `20261118053019`
+maps to source `20261117233612`; independent postflight matches source MD5
+`939a54a94ceb0498f57493574ac903bf`, postgres owner, pinned search path and
+service-only execution. Counts remain nine sales/eleven items/zero financial
+nodes; no existing Beta record, production target or saved local database was
+changed. Security advisors report no mention of the new function.
+
+Fresh acceptance manifest `beta477-bc4887dc` pins the reviewed source, exact Beta
+target and three newly marked test branches. Current-source relay and adapters
+were prepared; old sealed fixtures/epochs were not reused. The owner started
+the reviewed HTTPS loopback relay on port 18446 with a masked Beta-only key.
+The key remains server-side in process memory.
+Dependency assessment confirms no published patched picomatch release and a
+behavior-changing upstream candidate; no dependency edits or audit waiver.
+
+Actual financial offline split-sale/PIN-refund capture and SQL/runtime restart
+passed, with independent cloud absence before reconnect. Hosted upload exposed
+locale-sensitive fact validation and a separate refund stock CT escape. Keep
+the failed marked fixture's stock 22/OPEN/no-sale evidence intact. Corrected
+strict field ordering is applied to Beta (source `20261118060529`, hosted
+ledger `20261118061241`); owner-only privileges, strict/invoker/immutable and
+pinned search path are unchanged. Actual linguistic-collation regressions,
+receipt/first-upload fixtures, canonical/generator and notification checks pass.
+The native stock fix passes 76 focused tests and 12 owned ODBC SQL groups.
+Fresh hosted acceptance and exact reviewed-head CI are still required.
+
+The retained FIN62 retry now passes original-operation recovery after a separate
+Node run and actual owned SQL process restart. A one-line UUID wrapper fix keeps
+SQL Server uppercase operation IDs from being mistaken for missing approval;
+52 adjacent cases pass and signed bytes are unchanged. Independent hosted
+read-back confirms refunded quantity two, cash/card 7.50 each, stock 20 and
+exactly one -2 sale and one +2 refund movement; both local replicas agree.
+Metadata ACKs remain separate from business acceptance and the manager never
+signed in/enrolled. Earlier failed synthetic data is retained explicitly.
+
+The grouped retry retained its own databases on an initial recovery refusal.
+Historical SHA-derived publication UUIDs can be valid PostgreSQL values without
+RFC version/variant bits. Correcting only the read-only publication ID validator
+passes 34 focused feed/recovery/Worker tests; entity, command, author, graph and
+branch checks are unchanged. Local relay rebuild and same-database continuation
+are in progress; no full grouped/cursor/hosted-certificate pass is claimed yet.
+
+The grouped cash scenario committed locally, restarted, uploaded and converged
+on both tills. Its real offline manager PIN refund retained signed approval
+across SQL/runtime restart and expiry and reached Beta exactly once (stock 20).
+The lost-ACK harness allowed an internal retry and then rejected its legitimate
+audit aggregate; this is not a completed restart/replay/cursor scenario. Fix
+only that test adapter, retain failed evidence, and use new marked test identities
+without resetting the old accepted operations.

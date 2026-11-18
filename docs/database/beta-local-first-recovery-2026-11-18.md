@@ -180,3 +180,130 @@ patched version. The upstream review on 17 November changed the audit result
 without a manifest or lockfile change in these POS fixes. Keep this check and
 the passing-CI merge gate intact. No package changes or forced toolchain
 downgrades were made. PR #477 records the financial slice and its final CI.
+
+## Owner-authorized hosted Beta follow-up
+
+The next owner request explicitly authorizes the Beta migration and two-till
+acceptance, with merge/publication conditional on all checks passing. The lucky
+connector and an independent agent verified Retail POS Beta project
+`irjkmhgrjgcaoixcixut`, PostgreSQL system identifier `7703759698107299042`.
+Production and saved operator local data remain excluded.
+
+Applied only the guarded read-receipt migration on that target. Hosted ledger
+`20261118053019 / native_refund_exact_financial_receipt_probe` corresponds to
+source `20261117233612_native_refund_exact_financial_receipt_probe.sql` (normalized
+LF SHA-256 `1d05d5b69057d7a6eba46589787061e377a8b1b16a001a90790403ddb585ad5d`).
+An exact-target/prerequisite guard and the function/grant postflight ran in the
+same atomic DO statement. Independent read-back confirms function source MD5
+`939a54a94ceb0498f57493574ac903bf`, owner postgres, SECURITY DEFINER,
+`search_path=pg_catalog`, service-role EXECUTE only, and no PUBLIC/anon/authenticated
+EXECUTE. Existing business counts remain nine sales, eleven items and zero
+financial-history nodes. No existing record or local database was changed.
+
+The current security advisor output does not mention the new function; existing
+project findings are outside this narrow migration and no grants were widened
+to suppress them. Fresh hosted two-till fixtures are being prepared against the
+reviewed current source using new marked Beta records and disposable LocalDB
+instances. No hosted business smoke result or installer publication is claimed
+at this checkpoint. The dependency audit still has no published picomatch fix;
+the reviewed upstream candidate changes supported matching behavior and is not
+silently substituted into the release toolchain.
+
+## Hosted FIN62 split-sale and offline PIN refund acceptance
+
+The 18 November hosted FIN62 drill passed on Retail POS Beta
+`irjkmhgrjgcaoixcixut`, system identifier `7703759698107299042`. It used two
+disposable Windows LocalDBs through ODBC 18 and the current isolated HTTPS relay.
+Production, installed operator databases and saved application setup were excluded.
+
+This result combines relay build `9a7e36d032c062f7db28bc764b7fd785e117051e`, the
+reviewed native working-tree corrections below and the separately applied Beta
+SQL changes. It does not certify the unmodified relay-base commit as the final
+installer. Native SHA-256 fingerprints at the successful resume were:
+
+| Native source | SHA-256 |
+| --- | --- |
+| `electron/sync/change-reader.cjs` | `4af64c41827d08e56b2bcf67c4d24b1c7f65718699e1518a2080c542822d09fc` |
+| `electron/sync/push-worker.cjs` | `e7c70af0e8214a4d179fed3ac30b2cd0e090b410696500efffec78487fd377e2` |
+| `electron/sync/grouped-refund-native.cjs` | `04d8e1e840ae89977c4b06e83b9f547845667fdc1723acb2df13169b3244d37a` |
+
+The first hosted attempt exposed a valid fact rejected under `en_US.UTF-8`:
+linguistic ordering put `paymentsJson` before `paymentType`, while the strict
+field list used byte order. Source migration
+`20261118060529_deterministic_financial_fact_key_order.sql` was applied as hosted
+ledger `20261118061241 / deterministic_financial_fact_key_order`. The exact-source
+guard changes only this key ordering to `COLLATE "C"`; private execution,
+invoker/strict/immutable behavior, owner and search path remain unchanged.
+Read-back source MD5 is `49814368b1669fc9d9943aca23eb5ce1`. No financial rows or
+immutable contract pins were rewritten. The isolated ICU English database test
+reproduces the original refusal and verifies the correction, malformed-input
+denials, unchanged permissions and idempotent application. PostgreSQL documents
+the distinction between linguistic and [byte-order collations](https://www.postgresql.org/docs/current/collation.html).
+
+That failed attempt also exposed a financial stock movement reaching generic
+upload before its owning financial aggregate was accepted. The corrected native
+barrier keeps dependent journal and Change Tracking effects with their owning
+financial delivery. The earlier synthetic hosted OPEN and its product at stock
+22 remain as diagnostic evidence; they were not reset or repaired to conceal the
+failure. Its first disposable local databases had already been cleaned up.
+Subsequent interrupted fixtures retained their original databases and DPAPI key
+material until verified completion. Original failed-attempt artifacts were archived
+before reusing the same synthetic staff and branch with fresh product/terminal IDs.
+
+The successful retry used branch `codex-beta477-bc4887dc-financial`, sale
+`67010a0b-5ee5-4b03-bd75-8662cc1ab3cb` and product
+`8ea33f97-b4a1-4502-8e9c-9a250c797deb`. The actual named cashier was verified
+through `current_app_user`; the existing author enrollment and financial
+capability admission remained active. A two-unit sale at 7.50 used two real tender
+rows, cash 7.50 and card 7.50, total 15.00. The native runtime saved its OPEN, SALE
+and manager-PIN-approved REFUND while the fixture network was unavailable. The PIN
+was checked against the synced staff roster; the manager never signed in or owned
+the cashier's financial signature. Independent hosted read-back found zero manager
+author keys.
+
+Before upload, till A held one refunded sale, one item with refunded quantity two,
+two tenders, stock 20, one local refund stock movement, two financial events and
+twelve pending journal rows. Till B was empty. The committed companion survived
+the real original two-minute admission window, a connection reopen and subsequent
+fresh Node processes. SALE and REFUND metadata were accepted before business
+projection; each metadata receipt still reported `businessUploaded=false`.
+
+The fixture deliberately discarded the first accepted business response. At that
+interruption, the cloud contained the latest refunded sale and the sale movement,
+with stock 18; the original refund delivery remained pending. No new sale/refund
+was generated to finish it. The next actual restart exposed an uppercase SQL UUID
+in the financial-route wrapper being compared against the original lowercase
+signed operation. The focused regression reproduced this hold. Normalizing only
+the caller's SQL UUID with `recordId()` fixed it without modifying signed JSON,
+proofs, scope or the wrong-operation denial.
+
+The final resume stopped and restarted only the owned `CodexProtocol_*` SQL Server
+process, verified the same physical database GUID
+`4b00a576-a124-4d43-99b7-4a419962cab5`, reopened the same DPAPI signing material and
+uploaded only the original remaining queue. Refund operation
+`793631d7-7969-4f57-8043-a9d35afbffcf` retained raw payload SHA-256
+`cde376a6aeeffdba99d8d96ce7257a3567d9bc81868c76ee6db7f9bc4f8f40d4`.
+Both original local tills then downloaded canonical rows and independently read:
+
+| Final fact | Till A | Till B | Independent hosted read-back |
+| --- | --- | --- | --- |
+| Sale / refunded item quantity | one / two | one / two | one / two |
+| Cash / card tender | 7.50 / 7.50 | 7.50 / 7.50 | 7.50 / 7.50 |
+| Branch stock | 20 | 20 | 20 |
+| Sale / refund stock movements | one -2 / one +2 | one -2 / one +2 | one -2 / one +2 |
+| Stock movement net | zero | zero | zero |
+
+The original queue drained only after actual business receipts. Real hosted probe
+checks returned the exact existing six-field metadata receipt, `null` for a
+structurally scoped absent operation, and denied altered raw bytes, a forged prior
+proof and a non-service claim. The absent probe did not sign or register a new
+event. Raw-byte tampering was also denied through the actual relay verifier.
+The deliberately lost response and intervening hold remain recorded as
+interruptions alongside the final PASS. Successful cleanup removed only the two
+owned local fixtures and their temporary keys; hosted dummy transactions remain.
+
+The UUID correction passed 52 focused native/transport/hosted tests. The locale
+slice passed 30 SQL/refund tests, 31 canonical/generator tests and 23 isolated
+notification upgrade scenarios. These checks and this hosted native-class drill
+do not replace installed Electron UI acceptance, other POS workflow acceptance,
+or the exact-head CI, merge and beta publication gates.

@@ -193,6 +193,61 @@ describe("isolated grouped sync relay", () => {
     expect((await direct(body)).status).toBe(502);
   });
 
+  it.each(["feed", "recovery"] as const)("preserves historical SHA-derived publication UUIDs in the %s while checking the full shift graph", async mode => {
+    runtime.env.POS_GROUPED_CASH_SETTINGS_PILOT_ENABLED = "true";
+    runtime.env.POS_GROUPED_EXTENDED_PILOT_ENABLED = "true";
+    // The actual SQL derivation does not overwrite SHA version/variant bits.
+    const publishedId = "630172a8-c754-4702-61ed-77217e1a27be";
+    const graph_json = JSON.stringify({ ok: true, shiftGraphVersion: 1, branchId: branch, shiftId: secondTerminal,
+      graphToken: null, closedAtRaw: null, tables: ["shifts", "shift_cash_counts", "shift_reconciliations", "shift_close_events",
+        "shift_notifications", "shift_variance_alerts"].map(table => ({ table,
+        rows: table === "shifts" ? [{ id: secondTerminal, store_id: branch, status: "OPEN", state: "ACTIVE", closed_at: null }] : [] })) });
+    const group = { seq: next, operation_id: publishedId, financial: { kind: "shift_v1", shift_id: secondTerminal },
+      changes: [{ table_name: "shifts", entity_id: JSON.stringify({ id: secondTerminal }), row_version: "1", tombstone: false,
+        row_data: { id: secondTerminal, store_id: branch, row_version: 1, graph_json,
+          graph_sha256: createHash("sha256").update(graph_json).digest("hex") } }] };
+    const request = mode === "feed" ? { sqlServerGroupedFeed: { ...read, projection: "settings_cash_v1", extended: true } }
+      : { sqlServerGroupedRecovery: { ...snapshotRead, action: "page", pinId: terminal, kind: "financial", after: "0", limit: 1, extended: true } };
+    const show = (value = group) => {
+      if (mode === "feed") { upstream = () => Response.json({ ...page(), groups: [value] });return; }
+      const payload_json = JSON.stringify({ scope_id: branch, epoch, seq: next, pin_id: terminal, kind: "financial",
+        after: "0", next: "1", total: "1", rows: [value] });
+      upstream = () => Response.json({ status: "OK", scope_id: branch, epoch, seq: next, pin_id: terminal,
+        expires_at: new Date(Date.now() + 60_000).toISOString(), payload_json,
+        payload_sha256: createHash("sha256").update(payload_json).digest("hex") });
+    };
+    show();const reply = await direct(request);expect(reply.status).toBe(200);
+    const response = await reply.json();const returned = mode === "feed" ? response.groups[0] : JSON.parse(response.payload_json).rows[0];
+    expect(returned).toEqual(group);
+    for (const invalid of [publishedId.toUpperCase(), publishedId.replaceAll("-", ""), `{${publishedId}}`, `${publishedId}0`, "arbitrary-operation"]) {
+      show({ ...group, operation_id: invalid });expect((await direct(request)).status).toBe(502);
+    }
+    show({ ...group, financial: { ...group.financial, shift_id: publishedId } });
+    expect((await direct(request)).status).toBe(502); // Entity/authority UUID rules stay strict.
+    show({ ...group, changes: [{ ...group.changes[0], row_data: { ...group.changes[0].row_data, graph_sha256: "0".repeat(64) } }] });
+    expect((await direct(request)).status).toBe(502);
+    const foreignGraph = JSON.stringify({ ...JSON.parse(graph_json), branchId: otherBranch });
+    show({ ...group, changes: [{ ...group.changes[0], row_data: { ...group.changes[0].row_data,
+      graph_json: foreignGraph, graph_sha256: createHash("sha256").update(foreignGraph).digest("hex") } }] });
+    expect((await direct(request)).status).toBe(502);
+    show({ ...group, changes: [{ ...group.changes[0], row_data: { ...group.changes[0].row_data, store_id: otherBranch } }] });
+    expect((await direct(request)).status).toBe(502);
+  });
+
+  it("also preserves server-derived tender publication IDs without relaxing the sale identity", async () => {
+    runtime.env.POS_GROUPED_CASH_SETTINGS_PILOT_ENABLED = "true";
+    runtime.env.POS_GROUPED_EXTENDED_PILOT_ENABLED = "true";
+    const body = { sqlServerGroupedFeed: { ...read, projection: "settings_cash_v1", extended: true } };
+    const correction = { seq: next, operation_id: "630172a8-c754-f702-61ed-77217e1a27be",
+      financial: { kind: "tender_v1", sale_id: secondTerminal },
+      changes: [{ table_name: "sales", entity_id: JSON.stringify({ id: secondTerminal }), row_version: "2", tombstone: false,
+        row_data: { id: secondTerminal, store_id: branch, row_version: 2, payment_type: "cash", payments_count: 0 } }] };
+    upstream = () => Response.json({ ...page(), groups: [correction] });
+    const response = await direct(body);expect(response.status).toBe(200);expect((await response.json()).groups[0]).toEqual(correction);
+    correction.financial.sale_id = correction.operation_id;
+    expect((await direct(body)).status).toBe(502);
+  });
+
   it("keeps a dispatch balance and audit out of the destination feed", async () => {
     runtime.env.POS_GROUPED_CASH_SETTINGS_PILOT_ENABLED = "true";
     runtime.env.POS_GROUPED_EXTENDED_PILOT_ENABLED = "true";

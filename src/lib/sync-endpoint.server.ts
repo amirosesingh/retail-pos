@@ -173,8 +173,12 @@ const groupedFinancialChangeSchema = groupedSettingsChangeSchema.extend({
   table_name: z.enum(["sales", "sale_items", "payment_transactions", "stock_delta_applied", "products", "shifts",
     "drawer_events", "stock_transfers"]),
 });
+// These are immutable publication identities, not native command/author IDs.
+// Existing SQL publishers derive them directly from SHA bytes cast to uuid;
+// PostgreSQL permits those canonical values without RFC version/variant bits.
+const publishedFinancialOperationId = z.string().regex(/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/);
 const groupedFinancialGroupSchema = z.object({
-  seq: feedSequence, operation_id: z.string().uuid(),
+  seq: feedSequence, operation_id: publishedFinancialOperationId,
   financial: z.union([
     z.object({ kind: z.enum(["refund_v1", "tender_v1"]), sale_id: z.string().uuid() }).strict(),
     z.object({ kind: z.literal("shift_v1"), shift_id: z.string().uuid() }).strict(),

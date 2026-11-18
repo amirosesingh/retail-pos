@@ -164,6 +164,22 @@
   native and hosted verification. Keep Electron persistence/drivers and React
   initialization outside Worker imports; verify the actual Worker boundary
   when changing these shared modules.
+- Keep every unaccepted financial transaction's rows under its existing journal
+  ownership, including `stock_delta_applied.movement_id`. A held, failed,
+  paginated or ambiguously acknowledged transaction must not leak its remaining
+  effects through independent Change Tracking uploads. Retain dependent groups
+  together, use the registry's actual primary key, and recheck pending ownership
+  inside the existing serializable row capture. Only exact business acceptance
+  permits the corresponding journal/checkpoint progress.
+- Validate machine-protocol field sets with explicit byte ordering, independent
+  of the hosted database's locale. Preserve strict fields, types, financial
+  bytes and function privileges. Test a real linguistic collation as well as
+  ordinary fixtures; do not change the database locale or weaken validation to
+  admit a valid event.
+  Normalize SQL UUID lookup arguments at the storage boundary without changing
+  signed payloads. Historical SHA-derived publication IDs use canonical
+  PostgreSQL UUID syntax; their read-only transport field must preserve those
+  IDs. Keep command, author, entity and authorization UUID checks unchanged.
 - Recover approval for a saved refund by attaching fresh verified evidence to
   its original operation through the existing write/recovery barrier and sync
   coordinator. Never refund again, repeat stock, change signed monetary bytes,

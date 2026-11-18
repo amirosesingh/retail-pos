@@ -202,7 +202,7 @@ async function readRefundRoute(connectionManager, branchId, operationId) {
       // Financial history has its own sender and original immutable chain.
       // It must never be submitted a second time through the grouped writer.
       require("./financial-refund-approval.cjs").decodeFinancialRefundReceipt(envelope,
-        { operationId, saleId: recordId(rows[0].entity_id), branchId });
+          { operationId: recordId(operationId), saleId: recordId(rows[0].entity_id), branchId });
       return null;
     }
   }

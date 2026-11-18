@@ -18,6 +18,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const BOOKING_HANDOVER_TABLES = new Set(["bookings", "booking_payments", "sales", "sale_items", "payment_transactions",
   "item_activity_logs", "products", "members", "stock_movements", "stock_delta_applied", "held_orders", "audit_logs"]);
 const ctVersion = value => { const text=typeof value==='number'&&Number.isSafeInteger(value)?String(value):value;return typeof text === "string" && /^(0|[1-9]\d*)$/.test(text) && BigInt(text) <= 9223372036854775807n ? text : null; };
+const financialPrimary = table => {
+  const primary=table.columns.filter(column=>column.primaryKey);
+  return primary.length===1 && ['id','movement_id'].includes(primary[0].sqlServerColumn) ? primary[0] : null;
+};
 
 class ChangeReader {
   constructor(connectionManager, registry = null, {financialBases=null,financialOperations=null,financialCoverageSource=null,reviewedShiftRecovery=null}={}) {
@@ -134,18 +138,24 @@ class ChangeReader {
   async rows(value, changes, { branchId = "", exactFinancial = false } = {}) {
     const { table, primary } = this.table(value);
     if (!changes.length) return [];
-    const coverage=this.financialCoverageSource&&this.financialOperations?.enabled===true&&!SHIFT_GRAPH_TABLES.includes(table.cloudTable)&&primary.length===1&&primary[0]==='id';
+    const financialKey=financialPrimary(table);
+    const coverage=this.financialCoverageSource&&this.financialOperations?.enabled===true&&!SHIFT_GRAPH_TABLES.includes(table.cloudTable)&&financialKey;
     if(coverage)return this.financialTransaction(async tx=>{
       const source=this.financialCoverageBinding(branchId,this.financialCoverageSource.identity.terminalId),request=new(this.connectionManager.sql().Request)(tx);
-      const clauses=changes.map((change,index)=>{request.input('coverage'+index,(change.key??change).id);return '@coverage'+index;});
+      const clauses=changes.map((change,index)=>{request.input('coverage'+index,(change.key??change)[financialKey.sqlServerColumn]);return '@coverage'+index;});
       const scope=branchId&&table.scope==='branch'?(table.cloudTable==='products'?branchPredicate(this.registry,table,'source'):rendererReadBranchPredicate(this.registry,table,'source')):null;
       if(scope)request.input('branch',branchId);
-      const result=await request.query(`SELECT source.*,(SELECT ${projection(table)} FOR JSON PATH,INCLUDE_NULL_VALUES,WITHOUT_ARRAY_WRAPPER) __financial_row_json FROM dbo.[${table.sqlServerTable}] source WITH(HOLDLOCK) WHERE source.id IN(${clauses.join(',')})${scope?' AND ('+scope+')':''};`);
+      const result=await request.query(`SELECT source.*,(SELECT ${projection(table)} FOR JSON PATH,INCLUDE_NULL_VALUES,WITHOUT_ARRAY_WRAPPER) __financial_row_json FROM dbo.[${table.sqlServerTable}] source WITH(HOLDLOCK) WHERE source.[${financialKey.sqlServerColumn}] IN(${clauses.join(',')})${scope?' AND ('+scope+')':''};`);
+      // Keep this check in the same serializable capture as the row read. A
+      // refund committed after CT was sampled must not replace an ordinary
+      // row snapshot with its still-unaccepted financial side effects.
+      if(!exactFinancial && await this.financialBusinessPending(table,changes,branchId,source.identity.terminalId,tx))
+        throw Object.assign(new Error('The complete financial transaction is still awaiting acceptance. Saved changes remain pending.'),{code:'EFINANCIAL_BUSINESS_PENDING',table:table.sqlServerTable});
       const rows=(result.recordset??[]).map(value=>{const{__financial_row_json,...physical}=value,exact=JSON.parse(__financial_row_json),wire=this.financialBusinessWire(table,toCloudRow(table,physical),exact,exactFinancial),key=this.financialCoverageKey(table,exact,source);
         // PushWorker canonicalizes SQL-equivalent branch labels at upload.
         const branchColumn=table.scope==='branch'&&table.direction!=='pull'?(table.columns.some(c=>c.cloudColumn==='store_id')?'store_id':table.columns.some(c=>c.cloudColumn==='branch_id')?'branch_id':null):null;
         const sent=branchColumn&&(!String(wire[branchColumn]??'').trim()||recordId(String(wire[branchColumn]).trim())===recordId(branchId))?{...wire,[branchColumn]:recordId(branchId)}:wire;
-        const captureId=table.cloudTable+':'+recordId(wire.id)+':'+createHash('sha256').update(JSON.stringify(sent)).digest('hex'),prior=this.financialCoverageCaptures.get(captureId);
+        const captureId=table.cloudTable+':'+recordId(wire[financialKey.cloudColumn])+':'+createHash('sha256').update(JSON.stringify(sent)).digest('hex'),prior=this.financialCoverageCaptures.get(captureId);
         this.financialCoverageCaptures.set(captureId,prior&&prior.key.rowHash!==key.rowHash?{ambiguous:true,key}:prior?.ambiguous?prior:{key,ambiguous:false});
         return wire;});
       if(this.financialCoverageCaptures.size>10000)this.financialCoverageCaptures.clear();source.assertSource();return rows;
@@ -324,6 +334,26 @@ class ChangeReader {
     return this.financialTransaction(async tx=>Boolean((await this.financialQuery(tx,`SELECT CASE WHEN EXISTS(SELECT 1 FROM dbo.pos_sync_shift_financial_events WHERE operation_id=@aggregate AND branch_id=@branch AND terminal_id=@terminal)
       OR EXISTS(SELECT 1 FROM dbo.sync_change_journal j JOIN dbo.pos_sync_shift_financial_sale_lineage l ON l.sale_id=TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(j.entity_id)=1 THEN j.entity_id ELSE N'{}' END,'$.id')) WHERE j.aggregate_id=@aggregate AND j.entity_type=N'sales' AND l.branch_id=@branch) OR EXISTS(SELECT 1 FROM dbo.sync_change_journal j JOIN dbo.pos_sync_shift_financial_observations o ON o.sale_id=TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(j.entity_id)=1 THEN j.entity_id ELSE N'{}' END,'$.id')) WHERE j.aggregate_id=@aggregate AND j.entity_type=N'sales' AND o.branch_id=@branch AND o.terminal_id=@terminal) THEN 1 ELSE 0 END required;`,{aggregate:aggregateId,branch:branchId,terminal:terminalId})).recordset?.[0]?.required));
   }
+  async financialBusinessPending(value,changes,branchId,terminalId,transaction=null){
+    if(this.financialOperations?.enabled!==true||!changes.length)return false;
+    const {table}=this.table(value),primary=financialPrimary(table);if(!primary)return false;
+    const ids=[...new Set(changes.map(change=>recordId((change.key??change)[primary.sqlServerColumn])).filter(id=>UUID.test(id)))];
+    if(!ids.length)return false;
+    const read=async tx=>Boolean((await this.financialQuery(tx,`SELECT TOP(1) j.change_id
+      FROM dbo.sync_change_journal j WITH(HOLDLOCK)
+      JOIN OPENJSON(@ids) wanted ON TRY_CONVERT(uniqueidentifier,wanted.[value])=TRY_CONVERT(uniqueidentifier,
+        CASE WHEN ISJSON(j.entity_id)=1 THEN JSON_VALUE(CASE WHEN ISJSON(j.entity_id)=1 THEN j.entity_id END,'$.${primary.sqlServerColumn}') ELSE j.entity_id END)
+      WHERE j.branch_id=@branch AND j.entity_type=@table AND j.acknowledged_at IS NULL AND (
+        EXISTS(SELECT 1 FROM dbo.pos_sync_shift_financial_events e WHERE e.operation_id=j.aggregate_id AND e.branch_id=@branch AND e.terminal_id=@terminal)
+        OR EXISTS(SELECT 1 FROM dbo.sync_change_journal owner JOIN dbo.pos_sync_shift_financial_sale_lineage l
+          ON l.sale_id=TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(owner.entity_id)=1 THEN owner.entity_id ELSE N'{}' END,'$.id'))
+          WHERE owner.aggregate_id=j.aggregate_id AND owner.branch_id=@branch AND owner.entity_type=N'sales' AND l.branch_id=@branch)
+        OR EXISTS(SELECT 1 FROM dbo.sync_change_journal owner JOIN dbo.pos_sync_shift_financial_observations o
+          ON o.sale_id=TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(owner.entity_id)=1 THEN owner.entity_id ELSE N'{}' END,'$.id'))
+          WHERE owner.aggregate_id=j.aggregate_id AND owner.branch_id=@branch AND owner.entity_type=N'sales' AND o.branch_id=@branch AND o.terminal_id=@terminal));`,
+      {branch:branchId,terminal:terminalId,table:table.sqlServerTable,ids:JSON.stringify(ids)})).recordset?.length);
+    return transaction?read(transaction):this.financialTransaction(read);
+  }
   async financialHistoryReady(branchId,terminalId,{shiftId=null,aggregateId=null}={}){
     if(this.financialOperations?.enabled!==true)return true;
     return this.financialTransaction(async tx=>!(await this.financialQuery(tx,`SELECT TOP (1) e.operation_id FROM dbo.pos_sync_shift_financial_events e WHERE e.branch_id=@branch AND e.terminal_id=@terminal AND (@shift IS NULL OR e.shift_id=TRY_CONVERT(uniqueidentifier,@shift)) AND (@aggregate IS NULL OR e.shift_id IN(SELECT target.shift_id FROM dbo.pos_sync_shift_financial_events target WHERE target.branch_id=@branch AND target.terminal_id=@terminal AND target.operation_id=TRY_CONVERT(uniqueidentifier,@aggregate)) OR e.shift_id IN(SELECT l.shift_id FROM dbo.sync_change_journal j JOIN dbo.pos_sync_shift_financial_sale_lineage l ON l.sale_id=TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(j.entity_id)=1 THEN j.entity_id ELSE N'{}' END,'$.id')) WHERE j.aggregate_id=TRY_CONVERT(uniqueidentifier,@aggregate) AND j.entity_type=N'sales' AND l.branch_id=@branch) OR e.shift_id IN(SELECT o.shift_id FROM dbo.sync_change_journal j JOIN dbo.pos_sync_shift_financial_observations o ON o.sale_id=TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(j.entity_id)=1 THEN j.entity_id ELSE N'{}' END,'$.id')) WHERE j.aggregate_id=TRY_CONVERT(uniqueidentifier,@aggregate) AND j.entity_type=N'sales' AND o.branch_id=@branch AND o.terminal_id=@terminal)) AND NOT EXISTS(SELECT 1 FROM dbo.local_operation_receipts r WHERE r.operation_type=N'financial_history_registered' AND r.entity_id=CONVERT(nvarchar(36),e.shift_id)+N':'+CONVERT(nvarchar(36),e.operation_id) AND r.note COLLATE Latin1_General_100_BIN2=e.payload_hash COLLATE Latin1_General_100_BIN2+N':'+e.terminal_id);`,{branch:branchId,terminal:terminalId,shift:shiftId,aggregate:aggregateId})).recordset?.length);
@@ -394,9 +424,10 @@ class ChangeReader {
     return source;
   }
   financialCoverageKey(table,row,source){
+    const primary=financialPrimary(table),id=recordId(row[primary.sqlServerColumn]);
     const schemaHash=createHash('sha256').update(JSON.stringify(table.columns.map(c=>[c.sqlServerColumn,c.cloudColumn,c.sqlServerType,c.cloudType]))).digest('hex');
     const rowHash=createHash('sha256').update(JSON.stringify(table.columns.map(c=>[c.sqlServerColumn,String(c.cloudType).toLowerCase()==='uuid'?recordId(row[c.sqlServerColumn]):row[c.sqlServerColumn]]))).digest('hex');
-    return{schemaHash,rowHash,id:stableUuid({domain:'retail-pos.financial-business-row-ack.v1',source:source.identity,table:table.cloudTable,id:recordId(row.id),schemaHash,rowHash}),entity:table.cloudTable+':'+recordId(row.id)};
+    return{schemaHash,rowHash,id:stableUuid({domain:'retail-pos.financial-business-row-ack.v1',source:source.identity,table:table.cloudTable,id,schemaHash,rowHash}),entity:table.cloudTable+':'+id};
   }
   financialBusinessWire(table,ordinary,physical,enabled){
     if(!enabled)return ordinary;
@@ -419,10 +450,11 @@ class ChangeReader {
     return result;
   }
   async financialCoverageRows(tx,table,ids,branchId){
+    const primary=financialPrimary(table);
     const request=new(this.connectionManager.sql().Request)(tx).input('branch',branchId);
     const keys=ids.map((id,index)=>{request.input('coverage'+index,id);return '@coverage'+index;});
     const scope=table.scope==='branch'?rendererReadBranchPredicate(this.registry,table,'source'):null;
-    return(await request.query(`SELECT ${projection(table)} FROM dbo.[${table.sqlServerTable}] source WITH(UPDLOCK,HOLDLOCK) WHERE source.id IN(${keys.join(',')})${scope?' AND ('+scope+')':''};`)).recordset??[];
+    return(await request.query(`SELECT ${projection(table)} FROM dbo.[${table.sqlServerTable}] source WITH(UPDLOCK,HOLDLOCK) WHERE source.[${primary.sqlServerColumn}] IN(${keys.join(',')})${scope?' AND ('+scope+')':''};`)).recordset??[];
   }
   async financialCoverageReceipts(tx,keys,lock=false){
     const request=new(this.connectionManager.sql().Request)(tx),ids=keys.map((key,index)=>{request.input('receipt'+index,key.id);return '@receipt'+index;});
@@ -432,8 +464,10 @@ class ChangeReader {
   prepareFinancialBusinessCoverage({operations,batchId,branchId,terminalId}){
     const source=this.financialCoverageBinding(branchId,terminalId);if(!source)return null;
     const keys=[];
-    for(const operation of operations){if(operation.deletePhase||SHIFT_GRAPH_TABLES.includes(operation.table))continue;for(const row of operation.rows??[]){
-      const captureId=operation.table+':'+recordId(row.id)+':'+createHash('sha256').update(JSON.stringify(row)).digest('hex'),capture=this.financialCoverageCaptures.get(captureId);
+    for(const operation of operations){if(operation.deletePhase||SHIFT_GRAPH_TABLES.includes(operation.table))continue;
+      const table=this.registry.tables.find(table=>table.cloudTable===operation.table),primary=table&&financialPrimary(table);if(!primary)continue;
+      for(const row of operation.rows??[]){
+      const captureId=operation.table+':'+recordId(row[primary.cloudColumn])+':'+createHash('sha256').update(JSON.stringify(row)).digest('hex'),capture=this.financialCoverageCaptures.get(captureId);
       this.financialCoverageCaptures.delete(captureId);if(capture&&!capture.ambiguous)keys.push(capture.key);
     }}
     const token=Object.freeze({});this.financialCoverageTokens.set(token,{source,batchId:recordId(batchId),branchId,terminalId,keys,payloadHash:createHash('sha256').update(JSON.stringify(operations)).digest('hex')});return token;
@@ -458,13 +492,13 @@ class ChangeReader {
   }
   async acceptedFinancialBusinessChanges(value,changes,branchId,terminalId){
     const source=this.financialCoverageBinding(branchId,terminalId),covered=new Set();if(!source||SHIFT_GRAPH_TABLES.includes(value.cloudTable))return covered;
-    const {table,primary}=this.table(value);if(primary.length!==1||primary[0]!=='id')return covered;
-    const ids=changes.filter(change=>change.operation!=='D'&&UUID.test(recordId(change.key?.id))).map(change=>recordId(change.key.id));if(!ids.length)return covered;
+    const {table}=this.table(value),primary=financialPrimary(table);if(!primary)return covered;
+    const ids=changes.filter(change=>change.operation!=='D'&&UUID.test(recordId(change.key?.[primary.sqlServerColumn]))).map(change=>recordId(change.key[primary.sqlServerColumn]));if(!ids.length)return covered;
     await this.financialTransaction(async tx=>{for(let start=0;start<ids.length;start+=100){
       const rows=await this.financialCoverageRows(tx,table,ids.slice(start,start+100),branchId),keys=rows.map(row=>this.financialCoverageKey(table,row,source));if(!keys.length)continue;
       const receipts=await this.financialCoverageReceipts(tx,keys);
       for(let index=0;index<keys.length;index++){const key=keys[index],prior=receipts.get(key.id);
-        if(prior?.operation_type==='financial_business_row_accepted'&&prior.entity_id===key.entity&&String(prior.note).startsWith(key.rowHash+':'+key.schemaHash+':')&&UUID.test(String(prior.note).slice(130)))covered.add(recordId(rows[index].id));
+        if(prior?.operation_type==='financial_business_row_accepted'&&prior.entity_id===key.entity&&String(prior.note).startsWith(key.rowHash+':'+key.schemaHash+':')&&UUID.test(String(prior.note).slice(130)))covered.add(recordId(rows[index][primary.sqlServerColumn]));
       }
     }source.assertSource();});return covered;
   }

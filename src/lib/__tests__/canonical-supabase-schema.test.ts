@@ -18,6 +18,12 @@ function sqlFiles(directory = root): string[] {
 }
 
 describe("canonical Supabase SQL", () => {
+  it("retains the exact locale-independent optional financial fact upgrade", () => {
+    const schema=read("supabase/schema.sql");
+    const block=schema.split("-- FINANCIAL_FACT_KEY_ORDER_BEGIN\n")[1]?.split("\n-- FINANCIAL_FACT_KEY_ORDER_END")[0];
+    expect(block).toBe(read("supabase/migrations/20261118060529_deterministic_financial_fact_key_order.sql").trim());
+    expect(schema.indexOf("-- FINANCIAL_FACT_KEY_ORDER_BEGIN")).toBeGreaterThan(schema.indexOf("-- NATIVE_REFUND_FINANCIAL_RECEIPT_END"));
+  });
   it("installs the exact read-only financial refund receipt probe in fresh and upgraded schemas", () => {
     const block = read("supabase/schema.sql").split("-- NATIVE_REFUND_FINANCIAL_RECEIPT_BEGIN\n")[1]?.split("\n-- NATIVE_REFUND_FINANCIAL_RECEIPT_END")[0];
     expect(block).toBe(read("supabase/migrations/20261117233612_native_refund_exact_financial_receipt_probe.sql").trim());
@@ -274,6 +280,7 @@ describe("canonical Supabase SQL", () => {
       "supabase/migrations/20261107094311_add_scoped_history_transport.sql",
       "supabase/migrations/20261117052540_sale_item_parent_sync_scope.sql",
       "supabase/migrations/20261117233612_native_refund_exact_financial_receipt_probe.sql",
+      "supabase/migrations/20261118060529_deterministic_financial_fact_key_order.sql",
       "supabase/reset.sql",
       "supabase/schema.sql",
       "supabase/sql/payment_commit_upgrade.sql",

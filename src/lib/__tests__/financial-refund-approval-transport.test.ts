@@ -29,6 +29,16 @@ function fixture(){
 }
 afterEach(()=>vi.restoreAllMocks());
 describe("durable FIN62 refund approval transport",()=>{
+  it("hands SQL Server uppercase operation UUIDs to the sole financial sender without changing signed bytes",async()=>{
+    const f=fixture(),saved=f.row.refund_evidence_json;
+    const query=vi.fn(async()=>({recordset:[{...f.row,operation_id:f.operationId.toUpperCase()}]}));
+    const request={input:vi.fn((_name:string,_value:unknown):unknown=>request),query};
+    const reader=new ChangeReader({pool:{request:()=>request}},loadRegistry());
+    expect(f.operationId.toUpperCase()).not.toBe(f.operationId);
+    await expect(reader.readRefundRoute(branch,f.operationId.toUpperCase())).resolves.toBeNull();
+    expect(f.row.refund_evidence_json).toBe(saved);
+    await expect(reader.readRefundRoute(branch,uuid)).rejects.toMatchObject({code:"ESYNC_REFUND_APPROVAL_REQUIRED"});
+  });
   it("decodes the separate evidence without changing original event/proof or assuming a manager signature",()=>{
     const f=fixture();expect(prepareFinancialRefundApproval(f.input,branch,terminal)).toBe(f.input);
     expect(decodeFinancialRefundReceipt(f.envelope,{operationId:f.operationId,saleId:sale,branchId:branch})).toMatchObject({payloadJson:f.input.operationJson,attestation:f.input.attestation,source:f.scope,basis:{requester:{subject:"actual.cashier"}}});

@@ -367,6 +367,10 @@ class PushWorker {
         }
       }
       if (aggregate.changes.some(change => this.blockedTables.has(change.entity_type))) {
+        // A later transaction can share its sale/product with a failed one
+        // while adding another effect (for example a refund stock movement).
+        // Keep the entire dependent group out of the independent CT writer.
+        for (const change of aggregate.changes) this.blockedTables.add(change.entity_type);
         originalIds.forEach(id => deferred.add(id)); continue;
       }
       const financialRequired=await this.reader.financialAggregateRequired?.(aggregate.aggregateId,branchId,terminalId)??false;
@@ -520,6 +524,10 @@ class PushWorker {
         throw error;
       }
       } catch(error) {
+        if (error?.code === 'EFINANCIAL_BUSINESS_PENDING') {
+          originalIds.forEach(id => deferred.add(id));
+          continue;
+        }
         if (["ESYNC_REFUND_REVIEW_REQUIRED", "ESYNC_REFUND_APPROVAL_REQUIRED"].includes(error?.code)) {
           this.refundUploadHeld ??= { code: error.code, table: "sales", message: error.message };
           originalIds.forEach(id => deferred.add(id));
@@ -627,6 +635,13 @@ class PushWorker {
         const bookingTracking = await this.reader.bookingHandoverTracking?.(branchId, table.sqlServerTable, changes);
         if (bookingTracking?.pending) { deferredTables.add(table.cloudTable); break; }
         if (bookingTracking?.covered.size) changes = changes.filter(change => !bookingTracking.covered.has(change));
+        // Financial journal delivery owns every effect until the complete
+        // transaction is accepted, including untagged movement_id CT rows.
+        // This durable check also covers groups outside the current page and
+        // groups held for approval without a transport error.
+        if(await this.reader.financialBusinessPending?.(table,changes,branchId,terminalId)) {
+          deferredTables.add(table.cloudTable);break;
+        }
         // A v3 receipt proves only the exact frozen saved facts. A stale CT
         // copy of those facts must not be enriched/re-uploaded as a new close
         // after a later web correction. Different edits and deletes stay queued.
@@ -634,7 +649,8 @@ class PushWorker {
         changes=changes.filter(change=>!covered.has(recordId(String(change.key?.id??""))));
         const financialCovered=await this.reader.acceptedFinancialBusinessChanges?.(table,changes,branchId,terminalId)??new Set();
         if(financialCovered.size)financialCoverageAdvanced=true;
-        changes=changes.filter(change=>!financialCovered.has(recordId(String(change.key?.id??""))));
+        const financialKey=table.columns.find(column=>column.primaryKey)?.sqlServerColumn;
+        changes=changes.filter(change=>!financialCovered.has(recordId(String(change.key?.[financialKey]??""))));
         if (!changes.length) {
           const version = Math.max(...window.map((row) => Number(row.version)));
           await this.checkpoints.save(branchId, table.sqlServerTable, "push", {
@@ -731,6 +747,9 @@ class PushWorker {
         live = [];
       }
       } catch(error) {
+        if(error?.code==='EFINANCIAL_BUSINESS_PENDING') {
+          deferredTables.add(table.cloudTable);continue;
+        }
         if (["ESYNC_REFUND_REVIEW_REQUIRED", "ESYNC_REFUND_APPROVAL_REQUIRED"].includes(error?.code)) {
           refundUploadHeld ??= { code: error.code, table: "sales", message: error.message };
           deferredTables.add(table.cloudTable);
