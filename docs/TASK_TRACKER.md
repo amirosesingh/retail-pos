@@ -9407,3 +9407,8 @@ deterministic receipt-probe generation. All four now pass within the final
 431-test combined run; 19 isolated PostgreSQL generator/graph scenarios also
 pass. No test exclusion or dependency-audit waiver. Await the corrected exact
 head's automatic checks before any merge.
+
+At `865a1472`, full application and the SQL/upgrade/shift/transfer/history stages
+pass. Added the new migration to the notification fixture's explicit temporary
+project copy list; its 23 isolated upgrade scenarios now pass. No notification
+runtime or permission changes. Keep the final exact-head gate intact.

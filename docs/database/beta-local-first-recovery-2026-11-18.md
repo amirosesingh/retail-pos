@@ -152,6 +152,13 @@ actual Workerd execution; the generator fixture also verifies 19 isolated
 PostgreSQL graph/authority scenarios. No test, audit or authorization guard was
 waived. The compatibility commit still needs its own clean CI result.
 
+At `865a1472`, full application/permission tests and account, database upgrade,
+shift, transfer, stock-request and history checks pass. Its isolated notification
+generator fixture needed the new migration added to its explicit file-copy
+list. After that fixture-only correction, all 23 notification upgrade scenarios
+pass; application notification behavior and permissions are unchanged. Later
+checks still require the corrected exact head's CI result.
+
 ## Acceptance and release boundary
 
 No live business transaction, disconnected/restart acceptance, full two-till
