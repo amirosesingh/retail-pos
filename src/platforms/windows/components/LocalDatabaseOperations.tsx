@@ -194,7 +194,7 @@ export function LocalDatabaseOperations({ branchId }: { branchId?: string } = {}
           {settingsUpload ? <p role="status" className="text-xs text-muted-foreground">
             <span>Store settings upload</span> · {uploadLabels[settingsUpload.status]}
           </p> : null}
-          {sync.membershipDeferred ? <p role="status" className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-300">Membership directory synchronization is waiting for the membership service. Sales and other POS data continue syncing normally.</p> : null}
+          {sync.membershipDeferred ? <p role="status" className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-300">Membership directory synchronization is waiting for the membership service. Check the separate POS upload and download status for other data.</p> : null}
           <p className="text-xs text-muted-foreground">Last upload {when(sync.lastPushAt)} · Last download {when(sync.lastPullAt)} · {activeErrorCount} current errors · {conflictCount} conflicts</p>
           <div className="flex flex-wrap gap-2 [&>button]:h-8 [&>button]:px-3 [&>button]:text-xs">
             {failureCount || activeErrorCount ? <Button type="button" variant={activeErrorCount ? "destructive" : "outline"} onClick={() => setFailureDetailsOpen(true)}>{activeErrorCount ? `Errors (${activeErrorCount})` : "Past errors"}</Button> : null}
@@ -217,7 +217,9 @@ export function LocalDatabaseOperations({ branchId }: { branchId?: string } = {}
                   <span className="font-medium">{table.table}</span>
                   <span title="Local SQL Server rows">Local {table.local}</span>
                   <span title="Supabase rows">Cloud {table.cloud}</span>
-                  <span className={table.status === "DIFFERENT" ? "text-destructive" : "text-emerald-700 dark:text-emerald-400"}>{table.status}</span>
+                  <span className={table.status === "DIFFERENT" ? "text-destructive" : table.status === "VERIFIED" && table.verified ? "text-emerald-700 dark:text-emerald-400" : "text-muted-foreground"}>
+                    {table.status === "DIFFERENT" ? "Differences found" : table.status === "VERIFIED" && table.verified ? "Data verified" : "Counts match · data not verified"}
+                  </span>
                 </div>
               ))}
               {!sync.tables?.length ? <p className="p-3 text-xs text-muted-foreground">Use Compare counts or Verify data to check synchronized tables.</p> : null}

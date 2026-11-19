@@ -334,6 +334,20 @@ function panelHarness(databaseRead: unknown, syncResult: unknown = { ok: true },
 describe("actual local panel database freshness", () => {
   const ready = { enabled: true, connected: true, tradingReady: true, state: "enabled_ready" };
 
+  it("distinguishes count equality from verified contents", async () => {
+    const panel = panelHarness(ready, undefined, { sync: { ...native(), tables: [
+      { table: "products", local: "3", cloud: "3", status: "SYNCED", verified: false },
+      { table: "sales", local: "2", cloud: "2", status: "VERIFIED", verified: true },
+      { table: "sale_items", local: "1", cloud: "2", status: "DIFFERENT", verified: false },
+    ] } });
+    await panel.settle();
+    const tree = panel.render();
+    expect(panel.findText(tree, "Counts match · data not verified")?.props.className).toBe("text-muted-foreground");
+    expect(panel.findText(tree, "Data verified")?.props.className).toContain("text-emerald");
+    expect(panel.findText(tree, "Differences found")?.props.className).toBe("text-destructive");
+    expect(panel.findText(tree, "SYNCED")).toBeUndefined();
+  });
+
   it("keeps preserved local work visible while online recovery disables the SQL path", async () => {
     const panel = panelHarness({ state: "disabled", enabled: false, connected: false, tradingReady: false, localRecoveryPending: true });
     await panel.settle();

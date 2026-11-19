@@ -682,19 +682,37 @@ function allowed(channel, args = []) {
  */
 function localRecoveryAction(channel, args = []) {
   if (/^(?:business:|db:|local:|staff:|receipts:)/.test(channel)) return true;
-  if (channel.startsWith("database:")) return !["database:get-state", "database:authorize-settings"].includes(channel);
+  // Discovery uses Windows instance metadata or a temporary master connection.
+  // It never reopens/saves the held profile or grants local trading readiness.
+  if (channel.startsWith("database:")) return ![
+    "database:get-state", "database:authorize-settings", "database:list-servers",
+    "database:test-server", "database:list-databases",
+  ].includes(channel);
   if (channel.startsWith("sqladmin:")) return true;
   if (channel.startsWith("sync:")) return !["sync:get-status", "sync:get-failures", "sync:pause"].includes(channel);
   if (channel.startsWith("pos:")) return true;
   if (channel === "config:set") return ["localDatabaseProfile", "localDatabaseEnabled"].includes(String(args[0]).trim());
   return ["config:write", "config:reset"].includes(channel);
 }
-function install(ipcMain, { isFirstRun, writeBarrier, isManagementDevice, isLocalRecoveryPending } = {}) {
+function install(ipcMain, { isFirstRun, writeBarrier, isManagementDevice, isLocalRecoveryPending, canConfigureLocalRecovery, isRetainedLocalRecoveryPending } = {}) {
   if (typeof isFirstRun === "function") firstRun = isFirstRun;
   const original = ipcMain.handle.bind(ipcMain);
   ipcMain.handle = (channel, listener) =>
     original(channel, (event, ...args) => {
-      if (isLocalRecoveryPending?.() && localRecoveryAction(channel, args))
+      const retainedConfigWrite = channel === "config:set"
+        ? ["localDatabaseProfile", "localDatabaseEnabled"].includes(String(args[0]).trim())
+        : ["config:write", "config:reset"].includes(channel);
+      const currentLocalControl = ["database:validate", "database:save-connect", "database:set-enabled",
+        "database:retry-startup", "database:disconnect"].includes(channel) && canConfigureLocalRecovery?.() === true;
+      // These older control surfaces accept arbitrary target profiles or SQL.
+      // They cannot prove that they leave the archived source untouched.
+      const unboundLocalControl = channel.startsWith("sqladmin:") || [
+        "database:migrate", "database:provision-connect", "database:restore", "database:remove-configuration",
+        "pos:connect", "pos:reconnect", "pos:retry-connection", "pos:forget-connection", "pos:remove-connection",
+        "pos:apply-schema", "pos:apply-schema-tables", "pos:restore", "pos:restore-verify", "pos:restore-drill",
+      ].includes(channel);
+      if ((isRetainedLocalRecoveryPending?.() && (retainedConfigWrite || unboundLocalControl)) ||
+          (isLocalRecoveryPending?.() && localRecoveryAction(channel, args) && !currentLocalControl))
         return { ok: false, code: "ELOCAL_RECOVERY_PENDING", error: "Use the online database while the previous local setup is awaiting verified recovery. Saved local work has been kept." };
       // Management PCs use the hosted database. Do not let a stale local pool
       // or cached branch credentials become an alternate business-data path.

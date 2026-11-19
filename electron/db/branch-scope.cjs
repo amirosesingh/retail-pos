@@ -9,10 +9,22 @@ function columnNames(table) {
   return new Set((table?.columns ?? []).map((column) => column.sqlServerColumn));
 }
 
+// A legacy sale line may have no denormalized branch_id. Its posted parent
+// owns the line; a forged non-empty child label must never override that owner.
+function saleItemParentPredicate(registry, table, alias) {
+  const names = columnNames(table);
+  const parent = (registry.tables ?? []).find(item => item.cloudTable === "sales");
+  if (!names.has("sale_id") || !parent || !columnNames(parent).has("store_id")) return "1=0";
+  const consistent = names.has("branch_id")
+    ? ` AND (NULLIF(LTRIM(RTRIM(${alias}.[branch_id])),N'') IS NULL OR ${alias}.[branch_id]=sale_parent.[store_id])` : "";
+  return `EXISTS (SELECT 1 FROM dbo.[${parent.sqlServerTable}] sale_parent WHERE sale_parent.[id]=${alias}.[sale_id] AND sale_parent.[store_id]=@branch${consistent})`;
+}
+
 function branchPredicate(registry, table, alias = "source", seen = new Set()) {
   if (!table || seen.has(table.sqlServerTable)) return null;
   const nextSeen = new Set(seen).add(table.sqlServerTable);
   const names = columnNames(table);
+  if (table.cloudTable === "sale_items") return saleItemParentPredicate(registry, table, alias);
   if (names.has("store_id")) return `${alias}.[store_id]=@branch`;
   if (names.has("branch_id")) return `${alias}.[branch_id]=@branch`;
   // Catalogue rows are either shared (no owner) or owned by exactly one
@@ -53,6 +65,7 @@ function rendererReadBranchPredicate(registry, table, alias = "source", seen = n
   if (!table || seen.has(table.sqlServerTable)) return null;
   const nextSeen = new Set(seen).add(table.sqlServerTable);
   const names = columnNames(table);
+  if (table.cloudTable === "sale_items") return saleItemParentPredicate(registry, table, alias);
   if (names.has("store_id")) {
     const owned = `${alias}.[store_id]=@branch`;
     return table.cloudTable === "purchase_orders"

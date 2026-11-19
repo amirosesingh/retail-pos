@@ -73,6 +73,21 @@ function replaceScopeRoutineList(block, { source, prefix, suffix, routines }) {
   const json = JSON.stringify(routines).replaceAll("CREATE OR REPLACE FUNCTION", "\\u0043REATE OR REPLACE FUNCTION");
   return once(block, source, prefix + "$history_scope_data$" + json + "$history_scope_data$" + suffix);
 }
+function insertBeforeLaterContracts(schema, block, begin) {
+  // Rebuilding an earlier component must not move it past later source-guarded
+  // upgrades. This changes assembly order only; each reviewed SQL block keeps
+  // its original body and exact predecessor fingerprints.
+  const order = [START, "-- BOUNDED_HELD_STATUS_BEGIN", "-- SCOPED_HISTORY_TRANSPORT_BEGIN", "-- SALE_ITEM_PARENT_SYNC_SCOPE_V1_BEGIN"];
+  const hardening = schema.lastIndexOf("-- Final public-schema privilege hardening");
+  let at = hardening;
+  for (const successor of order.slice(order.indexOf(begin) + 1)) {
+    const index = schema.indexOf(successor);
+    if (index < 0) continue;
+    if (schema.split(successor).length !== 2 || index >= hardening) throw new Error("The canonical successor contract boundary changed.");
+    at = Math.min(at, index);
+  }
+  return schema.slice(0, at).trimEnd() + "\n\n" + block + "\n\n" + schema.slice(at).trimStart().trimEnd() + "\n";
+}
 function withHistoryScopeContract(schema, migration) {
   if (schema.includes(START)) {
     if (schema.split(START).length !== 2 || schema.split(END).length !== 2 || schema.indexOf(END) < schema.indexOf(START)) throw new Error("The canonical history scope boundary changed.");
@@ -80,7 +95,7 @@ function withHistoryScopeContract(schema, migration) {
   } else if (schema.includes(END)) throw new Error("The canonical history scope boundary changed.");
   const hardening = schema.lastIndexOf("-- Final public-schema privilege hardening");
   if (hardening < 0) throw new Error("Final privilege hardening must follow history scope assembly.");
-  return schema.slice(0, hardening).trimEnd() + "\n\n" + historyScopeCanonicalBlock(migration) + "\n\n" + schema.slice(hardening).trimStart().trimEnd() + "\n";
+  return insertBeforeLaterContracts(schema, historyScopeCanonicalBlock(migration), START);
 }
 function boundedHeldStatusCanonicalBlock(migration) {
   const begin = "-- BOUNDED_HELD_STATUS_BEGIN", end = "-- BOUNDED_HELD_STATUS_END";
@@ -95,7 +110,7 @@ function withBoundedHeldStatusContract(schema, migration) {
   } else if (schema.includes(end)) throw new Error("The canonical held-status boundary changed.");
   const hardening = schema.lastIndexOf("-- Final public-schema privilege hardening");
   if (hardening < 0) throw new Error("Final privilege hardening must follow held-status assembly.");
-  return schema.slice(0, hardening).trimEnd() + "\n\n" + boundedHeldStatusCanonicalBlock(migration) + "\n\n" + schema.slice(hardening).trimStart().trimEnd() + "\n";
+  return insertBeforeLaterContracts(schema, boundedHeldStatusCanonicalBlock(migration), begin);
 }
 const transportBegin = "-- SCOPED_HISTORY_TRANSPORT_BEGIN", transportEnd = "-- SCOPED_HISTORY_TRANSPORT_END";
 function scopedHistoryTransportCanonicalBlock(migration, historyScope) {
@@ -135,7 +150,7 @@ function withScopedHistoryTransportContract(schema, migration) {
   if (hardening < 0 || historyStart < 0 || historyEnd <= historyStart || historyEnd >= hardening)
     throw new Error("The scoped history definitions must precede the new transport and final privilege hardening.");
   const block = scopedHistoryTransportCanonicalBlock(migration, schema.slice(historyStart, historyEnd));
-  return schema.slice(0, hardening).trimEnd() + "\n\n" + block + "\n\n" + schema.slice(hardening).trimStart().trimEnd() + "\n";
+  return insertBeforeLaterContracts(schema, block, transportBegin);
 }
 module.exports = { historyScopeCanonicalBlock, withHistoryScopeContract, boundedHeldStatusCanonicalBlock, withBoundedHeldStatusContract,
   scopedHistoryTransportCanonicalBlock, withScopedHistoryTransportContract };
