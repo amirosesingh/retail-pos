@@ -10,6 +10,8 @@ const { prepareLegacyCashPage, applyLegacyCashCoverage, legacyShiftInputs } = re
 const { applyGroupedCashReceipt, applyGroupedCashInTransaction, parseMixedCashGroup } = require("./grouped-cash-receipt.cjs");
 const { assertStoreSettingsEditHandbackClear } = require("../db/store-settings-edit-outbox.cjs");
 const { recordId } = require("./uuid-fields.cjs");
+const { tagBootstrapDiagnostic } = require("../diagnostics.cjs");
+const { assertSaleItemDownloadScope } = require("./sale-item-download-scope.cjs");
 function assertGroupedPilotRunning(isPaused) {
   if (isPaused?.()) throw grouped.fail("The grouped settings pilot is paused.", "ESYNC_PAUSED");
 }
@@ -28,6 +30,8 @@ class PullWorker {
   }
   async applyTable(transaction, table, changes, branchId, checkedPending) {
     if (!changes.length) return { applied: 0, conflicts: 0 };
+    try {
+    if (table.cloudTable === "sale_items") await assertSaleItemDownloadScope({ transaction, connectionManager: this.connectionManager, changes, branchId });
     const entityIds = changes.map((change) => String(change.entity_id));
     const pending = new Set([...(checkedPending ?? await this.reader.unacknowledged(table, entityIds, transaction, { branchId, changes }))].map(canonicalEntityKey));
     const safe = [];
@@ -48,7 +52,7 @@ class PullWorker {
     const result = safe.length ? await this.cloud.applyLocalBatch(transaction, table, {
       rows: safe.filter((change) => !change.tombstone),
       tombstones: safe.filter((change) => change.tombstone),
-      ...(SHIFT_GRAPH_TABLES.has(table.cloudTable) || table.cloudTable === "products" ? { branchId } : {}),
+      ...(SHIFT_GRAPH_TABLES.has(table.cloudTable) || table.cloudTable === "products" || table.cloudTable === "sale_items" ? { branchId } : {}),
     }) : null;
     if (SHIFT_GRAPH_TABLES.has(table.cloudTable) && (!result || result.deferred || result.conflicts ||
         result.applied + result.alreadyMatching !== safe.length)) {
@@ -58,6 +62,18 @@ class PullWorker {
       });
     }
     return { applied: result?.applied ?? safe.length, alreadyMatching: result?.alreadyMatching ?? 0, conflicts: 0 };
+    } catch (error) {
+      // Attach only the registry-owned operation context. Keep the original
+      // native error/code/SQL number and never copy query values or row data.
+      try {
+        if ((this.registry?.tables ?? []).some(known => known.cloudTable === table.cloudTable && known.sqlServerTable === table.sqlServerTable)) {
+          if (error && typeof error === "object" && !Object.getOwnPropertyDescriptor(error, "table"))
+            Object.defineProperty(error, "table", { value: table.cloudTable, configurable: true, writable: true, enumerable: true });
+          tagBootstrapDiagnostic(error, { table: table.cloudTable, phase: "local_apply" });
+        }
+      } catch { /* Diagnostics cannot replace the original failure. */ }
+      throw error;
+    }
   }
   async groupedSettingsContext(enrollment = null) {
     const source = this.cloud.requestContext(false);

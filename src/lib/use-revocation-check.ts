@@ -32,6 +32,35 @@ import { writeActivationRecord } from "@/core/activation/activation-record";
 
 /** A revoked till stays usable for at most this long while it remains online. */
 export const REVOCATION_CHECK_MS = 10 * 1000;
+// Security reads stay prompt. Writing last_seen_at also publishes a durable
+// terminal change, so idle checkers share a slower presence-write cadence.
+const HEARTBEAT_WRITE_MS = 60 * 1000;
+type HeartbeatWrite = { completedAt: number | null; pending: Promise<boolean> | null };
+const heartbeatWrites = new WeakMap<TerminalConfig, WeakMap<object, HeartbeatWrite>>();
+async function stampHealthyTerminal(config: TerminalConfig, client: object, synced: boolean, isCurrent: () => boolean): Promise<boolean> {
+  if (!isCurrent()) return false;
+  let clients = heartbeatWrites.get(config);
+  if (!clients) { clients = new WeakMap(); heartbeatWrites.set(config, clients); }
+  let state = clients.get(client);
+  if (!state) { state = { completedAt: null, pending: null }; clients.set(client, state); }
+  if (state.pending) {
+    await state.pending;
+    // The other owner stamped its captured sync, not this caller's possibly
+    // newer completion. Leave this caller's report pending for the next write.
+    return false;
+  }
+  const elapsed = state.completedAt === null ? null : Date.now() - state.completedAt;
+  if (elapsed !== null && elapsed >= 0 && elapsed < HEARTBEAT_WRITE_MS) return false;
+  const saved = state;
+  const work = stampHeartbeat(config.tokenId, { synced }, client).then(() => {
+    if (!isCurrent()) return false;
+    saved.completedAt = Date.now();
+    return true;
+  });
+  saved.pending = work;
+  try { return await work; }
+  finally { if (saved.pending === work) saved.pending = null; }
+}
 /** Gap before a single empty lookup is confirmed as a deleted record. */
 export const MISSING_CONFIRM_MS = 8 * 1000;
 const BLOCK_KEY = "pos.terminal.revoked";
@@ -244,7 +273,7 @@ export function useRevocationCheck(): RevocationState {
     let contextRevision = 0;
     // A profile may change away and back while a request is pending. Comparing
     // only its final URL would accept a response from that retired context.
-    const invalidate = () => { contextRevision += 1; };
+    const invalidate = () => { contextRevision += 1; heartbeatWrites.delete(config); };
     const offTerminal = subscribeTerminalConfig(invalidate);
     const offClient = subscribeExternalClientReset(invalidate);
     let reportedSync = syncState().lastSyncAt;
@@ -317,8 +346,9 @@ export function useRevocationCheck(): RevocationState {
         if (clearingRegistration || blockRevision !== capturedBlockRevision) return;
         setBlocked(false);
         const completedSync = syncState().lastSyncAt;
-        await stampHeartbeat(capturedConfig.tokenId, { synced: Boolean(completedSync && Date.parse(completedSync) >= watchingSince && completedSync !== reportedSync) }, client);
-        if (!isCurrent()) return;
+        const stamped = await stampHealthyTerminal(config, client,
+          Boolean(completedSync && Date.parse(completedSync) >= watchingSince && completedSync !== reportedSync), isCurrent);
+        if (!stamped || !isCurrent()) return;
         reportedSync = completedSync;
         void writeActivationRecord({ tokenId: capturedConfig.tokenId, stamp: verdict.stamp ?? null, isCurrent }).catch(
           () => {},

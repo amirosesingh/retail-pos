@@ -105,6 +105,12 @@
   the same transaction. Keep pending operations until verified server acceptance;
   retries and lost acknowledgements must not duplicate sales, payments, stock
   movements or closing actions. A network success alone is not acceptance.
+- When enabled local SQL is ready, supported Electron writes must await that
+  local transaction before reporting success or uploading the business record.
+  The uploader reads committed pending evidence through the existing coordinator.
+  Preserve the explicit commit target and the approved unavailable-SQL fallback;
+  an actual local write failure must remain a failure rather than silently
+  switching the operation to the cloud.
 - Pending offline work must survive restart, slow connectivity and long offline
   periods. Change Tracking expiry and history-retention policies must not erase,
   acknowledge or overwrite unsynchronized work. Test expired-history recovery
@@ -149,6 +155,15 @@
   scope or defer the dependent work. Never disable constraints, invent parents or
   acknowledge an incomplete group to make sync advance. Test missing and
   out-of-order dependencies on both push and pull, including restart and retry.
+- For `sale_items`, derive branch scope from the verified `sale_id` to
+  `sales.id` to `sales.store_id` relationship. A nullable or blank child
+  `branch_id` never makes the item global. Native and hosted bootstrap, feed,
+  recovery, detail reads, counts and tombstones must follow that same parent
+  scope. At native apply, verify incoming and retained parent bindings inside
+  the existing page transaction; a missing or foreign parent keeps the page and
+  cursor pending. Hosted readers filter unauthorized candidates before limits.
+  Preserve historical child labels instead of rewriting business rows to pass
+  a scope check. Other catalogue tables retain their own declared scope rules.
 - Use stable row IDs, operation IDs and the table's declared unique keys to
   prevent duplicates in the authoritative transaction. A repeated operation
   for the same confirmed sale bill number reuses that sale and fills only
@@ -243,6 +258,12 @@
   Upgrades must not silently replace previously matched offline operating rules
   with defaults. Preserve a safe read-only legacy transition until connection
   binding is verified; never use it to enable new privileges or unsupported rules.
+- Preserve the original failure code, available primary SQL error number,
+  registered table and safe operation phase through driver, coordinator and
+  lifecycle wrappers. A generic `3621` or `ESYNC` must not replace an available
+  cause. Keep SQL Server and hosted Data API failures distinguishable. Forward
+  only allowlisted diagnostic fields; keep credentials, requests and row payloads
+  out of diagnostics.
 - Spreadsheet imports must preserve valid numeric amounts, decimals and identifier
   text; workbook styling alone must not change their meaning. Do not silently
   strip arbitrary characters into valid numbers, round/truncate amounts, shift
@@ -271,6 +292,41 @@
   approval requirements. General instructions to finish quickly do not authorize
   live data repairs, billing changes, security bypasses or unreviewed releases.
 
+## Approved page workflows, staff permissions and Settings
+
+- Follow the owner-approved [POS workflow rules](docs/pos-workflow-rules.md)
+  before changing terminal/login behavior, staff permissions, any Settings
+  subpage, Home, Selling, Inventory or related operational workflows. The
+  reference includes T1–T24, S1–S14 and the page/action responsibilities.
+  These are requirements, not evidence that the current implementation passes.
+- Automatically synchronize every eligible PIN user's authorized account,
+  active status, branch scope, effective permissions and protected sign-in
+  verification data to connected local SQL when the online source is reachable.
+  Use verified registered-device authority independently of the current staff
+  session. A prior login on that PC is not required. Preserve scope, offline
+  validity and credential-purpose checks; never copy readable PINs/passwords.
+- Once signed in, a person may perform every granted action within their
+  authority without an additional approval PIN. Sign-in PINs, approval
+  credentials, selected approvers and financial limits remain separate. Existing
+  rules requiring approval beyond direct authority remain in force; no broad
+  permission or administrator label bypasses terminal/branch binding.
+- Preserve explicit user grants/denials on ordinary account edits. Explain the
+  effect of an intentional role change before saving. Show page/action entry
+  dependencies in the editor; never silently widen access or save an unusable
+  grant as fully effective. Delegatable grants must work across navigation,
+  direct routes, server/native writers and offline paths within their scope.
+- Enforce each page's workflow on its subpages, dialogs, imports/exports,
+  shortcuts, direct APIs/RPCs and IPC. Preserve existing financial calculations,
+  durable operation identities, exact-once business effects and audit history.
+  Membership remains ON HOLD. Keep unverified or ambiguous business behavior
+  tracked rather than inventing a policy while implementing a page.
+- When an approved change adds or changes a page/action, update its workflow
+  mapping and shared permission registry as applicable. Keep required scope,
+  prerequisites, save/commit result and recovery behavior explicit.
+- Record rule compliance separately from implementation, focused tests, installed
+  acceptance and release. A documentation approval is not permission for live
+  database changes, production promotion or another installer publication.
+
 ## Terminal activation and staff login lifecycle
 
 - Restore saved connection and registration state before selecting setup,
@@ -296,6 +352,20 @@
 
 ## Electron startup and local SQL readiness
 
+- Electron must support its approved offline workflows when the configured local
+  SQL database is ready and offline session/policy authority is valid. Loss of
+  internet is not loss of local SQL. Keep explicit online-only operations and
+  unreadable/unavailable local storage accurately distinguished.
+- At normal offline close, finish accepted renderer/native writes and verify
+  readable durable pending storage, then close without attempting cloud sync or
+  presenting a cloud-synchronization-required dialog. Preserve pending work and
+  resume eligible sync on reconnect/restart; do not fabricate cloud acceptance.
+- At online close, use existing authorized final-sync policy and bounded retry.
+  No pending work closes normally; loss of connectivity returns to safe offline
+  closing after local durability checks. Never send anonymous staff operations
+  merely to close a signed-out terminal. Local write/storage failure remains a
+  real blocker. SQL files alone do not establish this application behavior.
+
 - On normal application startup, automatically restore the enabled, saved local
   SQL Server profile and its vault credentials and open the native connection.
   Do not wait for Settings, staff login or the first sale to begin connecting.
@@ -319,6 +389,16 @@
   business writes and synchronization under the replacement identity until its
   recovery is verified. Never turn that hold into an empty-queue acknowledgement
   or silently clear it. Ordinary valid-registration SQL reconnect stays automatic.
+- A retained old-local recovery hold must not block authorized read-only SQL
+  discovery. After verified replacement activation, permit a separate verified
+  fresh current SQL target through the existing Settings authorization. Require
+  schema readiness and locked verification of all user tables: only the exact
+  migration ledger and unchanged built-in default-group seed may contain rows.
+  Pin and recheck physical database identity and current registration/project
+  before migration, bootstrap, trading or sync. Retain old profiles, encrypted
+  credentials and recovery evidence separately; never relabel old transactions.
+  Normal disable keeps current credentials; another registration or arbitrary-
+  profile administrative path must not discard or bypass retained current work.
 
 ## Supabase configuration (do not regress)
 
@@ -369,6 +449,16 @@ that device builds require. The guard lives in
   checkbox, source assertion, build, merged PR or published installer alone is
   not end-to-end verification. Track database application, merge, deployment
   and publication separately.
+- Record the hosted project/patch, installed version and tested source SHA
+  independently. A hosted repair does not certify an older installed client.
+  Trace installed sync acceptance through the requested UI action, local SQL
+  commit and durable pending evidence, then authorized cloud acceptance and
+  read-back of the same operation/record and branch. Check a cloud-origin change
+  reaching local SQL without an upload echo when verifying two-way behavior.
+  Distinguish local-database checks from an actual network-disconnected or
+  restart test. Preserve unobserved steps as pending and keep each result scoped
+  to its tested workflow. See the [17 November beta smoke evidence](docs/database/beta-sync-smoke-2026-11-17.md);
+  that report is revision-specific evidence, not blanket POS certification.
 
 ## Controlling POS architecture: branch-locked normal terminals
 
@@ -408,6 +498,53 @@ that device builds require. The guard lives in
   Ordinary session adoption or renderer activation mirroring is not reassignment.
 - Preserve cluster catalogue boundaries and approved transfer rules. A broader
   management view does not authorize merging catalogues or stock ownership.
+
+### Explicit cluster and branch workflow rules
+
+- Follow the C1–C18 and B1–B18 rules and scope matrix in
+  [POS workflow rules](docs/pos-workflow-rules.md#cluster-and-branch-rules)
+  on every affected page, dialog, direct endpoint, native operation, replica and
+  recovery path. Catalogue membership, stock location, user authority, device
+  binding and a selected report filter are different scopes.
+- Branches in the same configured cluster share the eligible catalogue; stock,
+  sales, tenders and shifts retain their branch/location ownership. Global SKU
+  allocation does not merge cluster catalogues. Cross-cluster product visibility
+  requires approved catalogue membership or verified posted purchase/transfer
+  receipt evidence; zero stock-map keys or draft documents do not prove receipt.
+- All newly created distinct products use one global running SKU allocation
+  across every branch/cluster in the same POS database. Use the existing atomic
+  allocator and non-overlapping reserved ranges; never restart counters per
+  branch, cluster, PC or display format. Imports/manual codes obey global
+  uniqueness too. Retrying/replicating the same canonical product retains its
+  SKU. Offline creation uses only valid reserved numbers; no local MAX+1 fallback.
+  Reserved ranges can leave gaps or reorder creation-time display; do not claim
+  gapless offline numbering or renumber existing products to conceal that.
+- A verified posted purchase receipt or completed incoming transfer adopts the
+  same canonical product/SKU into the receiving cluster's normal catalogue.
+  Persist that membership independently of current quantity and recent history
+  windows. At zero stock keep the product available to the receiving catalogue,
+  marked Out of stock; never automatically demote it to reference-only, unshare
+  it or archive it globally. Ordinary explicit product restrictions, staff rights
+  and branch stock policies still apply. Keep origin and branch quantities clear.
+- Optional manual cross-cluster reference viewing remains separate from manual
+  sellability for products not yet adopted there. View alone grants no sale,
+  stock or financial rights. A separate manual reference grant is not required
+  after legitimate receipt. Manual unsharing cannot erase received membership,
+  actual stock or history; explicit archive/restriction is a separate audited
+  action. These are requirements to implement/verify, not current pass results.
+- Preserve the normal-terminal branch lock and the positive, active-location
+  same-cluster availability exception. Management may use only its authorized
+  branch set. Neither a shared cluster, NULL assignment nor a physical local
+  replica grants additional staff permissions or branch access.
+- Apply the exact declared scope and ownership on initial download, ordinary
+  upload/download, reconnect and expired-history recovery. Pause controls retain
+  pending work; they do not acknowledge it. Never relabel old work after a branch,
+  cluster, registration or connection change.
+- Scope changes need authorized save/read-back, appropriate locks and deliberate
+  recovery of retained work. A report filter or settings selector is not branch
+  reassignment. Preserve separate branch financial history and warehouse ownership.
+  Do not claim a saved private-stock preference, arbitrary Management subset or
+  warehouse ACL is enforced without verifying the actual runtime boundaries.
 
 ## Controlled audit and implementation
 
