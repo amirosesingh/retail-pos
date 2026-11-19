@@ -109,12 +109,20 @@ try{
  });
  await check('canonical and repeated generator output retain the exact final read patch after all authority contracts',async()=>{
   const marker='-- SHIFT_GRAPH_READ_SCOPE_BEGIN',end='-- SHIFT_GRAPH_READ_SCOPE_END';
+  const refundMarker='-- NATIVE_REFUND_FINANCIAL_RECEIPT_BEGIN',refundEnd='-- NATIVE_REFUND_FINANCIAL_RECEIPT_END';
+  const refundProbe=(await read('supabase/migrations/20261117233612_native_refund_exact_financial_receipt_probe.sql')).replaceAll('\r\n','\n').trim();
+  const factMarker='-- FINANCIAL_FACT_KEY_ORDER_BEGIN',factEnd='-- FINANCIAL_FACT_KEY_ORDER_END';
+  const factOrder=(await read('supabase/migrations/20261118060529_deterministic_financial_fact_key_order.sql')).replaceAll('\r\n','\n').trim();
   assert.equal(schema.split(marker+'\n')[1]?.split('\n'+end)[0],migration.trim());
   const source=await read('scripts/generate-supabase-sync-contract.cjs');let generated=schema;
   const fs=require('node:fs'),schemaFile=fileURLToPath(new URL('../supabase/schema.sql',import.meta.url));
   for(let run=0;run<2;run++){
    const previous=generated;runInNewContext(source,{require:name=>name==='node:fs'?{...fs,readFileSync:(file,...args)=>file===schemaFile?generated:fs.readFileSync(file,...args),writeFileSync:(file,value)=>{assert.equal(file,schemaFile);generated=value;}}:require(name),__dirname:fileURLToPath(new URL('.',import.meta.url)),process:{argv:['node','generate-supabase-sync-contract.cjs']},console:{log(){}}});
    generated=generated.replaceAll('\r\n','\n');if(run===1)assert.equal(generated,previous);assert.equal(generated.split(marker).length,2);assert(generated.indexOf(marker)>generated.indexOf('-- SHIFT_CLOSING_START_CONTRACT_END'));assert(generated.indexOf(marker)>generated.indexOf('-- SHIFT_AUTHOR_CONTRACT_END'));assert.equal(generated.split(marker+'\n')[1]?.split('\n'+end)[0],migration.trim());
+   assert.equal(generated.split(refundMarker).length,2);assert.equal(generated.split(refundMarker+'\n')[1]?.split('\n'+refundEnd)[0],refundProbe);
+   assert(generated.indexOf(refundEnd)<generated.lastIndexOf('-- Final public-schema privilege hardening'));
+   assert.equal(generated.split(factMarker).length,2);assert.equal(generated.split(factMarker+'\n')[1]?.split('\n'+factEnd)[0],factOrder);
+   assert(generated.indexOf(factMarker)>generated.indexOf(refundEnd));assert(generated.indexOf(factEnd)<generated.lastIndexOf('-- Final public-schema privilege hardening'));
   }
  });
  console.log(`${passed} Management closing-graph SQL scenarios passed (${process.argv.length===4?'actual captured':'pinned captured'} validators).`);

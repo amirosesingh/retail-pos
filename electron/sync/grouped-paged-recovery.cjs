@@ -178,7 +178,7 @@ async function verifyCoverage(transaction, snapshot) {
 async function applyPagedRecovery(worker, transaction, context, snapshot, applyCash, assertCurrent, applyFinancial) {
   await verifyCoverage(transaction, snapshot);
   const previous = { cash: 0n, financial: 0n, stock: "" };
-  async function* stagedRows(kind) {
+  async function* stagedRows(kind, cursor = previous) {
     let after = "0";
     while (after !== snapshot.totals[kind]) {
       assertCurrent();
@@ -188,7 +188,7 @@ async function applyPagedRecovery(worker, transaction, context, snapshot, applyC
           WHERE run_id=@run AND kind=@kind AND after_ordinal=CONVERT(bigint,@after);`);
       const row = result.recordset?.[0];
       const page = pageFor(decode(row?.payload_json, row?.payload_sha256, MAX_PAGE_BYTES), kind, after, snapshot);
-      yield checkRows(page, snapshot, context.parseCash, previous);
+      yield checkRows(page, snapshot, context.parseCash, cursor);
       after = page.next;
     }
   }
@@ -209,6 +209,31 @@ async function applyPagedRecovery(worker, transaction, context, snapshot, applyC
 
   // Stock is the pinned current state. Merge the two event streams by commit
   // sequence so an opening precedes its receipt and a correction follows it.
+  // Index only sale/page identities in one bounded-page pass. Retain no graph
+  // payloads or proof cache across transactions, and avoid rescanning the full
+  // financial archive for each already-bootstrapped receipt.
+  const successors = new Map();
+  let financialAfter = 0n;
+  for await (const rows of stagedRows("financial", { cash: 0n, financial: 0n, stock: "" })) {
+    for (const facts of rows) if (facts.kind === "refund_v1" || facts.kind === "tender_v1")
+      successors.set(facts.sale.id, { after: String(financialAfter), seq: facts.seq, operationId: facts.operationId });
+    financialAfter += BigInt(rows.length);
+  }
+  const cashSuccessor = async cash => {
+    const candidate = successors.get(cash.sale.id);
+    if (!candidate || ordinal(candidate.seq) <= ordinal(cash.seq)) return null;
+    assertCurrent();assertSnapshotLive(snapshot);
+    const result = await transaction.request().input("run", snapshot.runId).input("after", candidate.after).query(`
+      SELECT payload_json,payload_sha256 FROM ${PAGE_TABLE} WITH(HOLDLOCK)
+      WHERE run_id=@run AND kind=N'financial' AND after_ordinal=CONVERT(bigint,@after);`);
+    const saved = result.recordset?.[0];
+    const page = pageFor(decode(saved?.payload_json, saved?.payload_sha256, MAX_PAGE_BYTES), "financial", candidate.after, snapshot);
+    const rows = checkRows(page, snapshot, context.parseCash, { cash: 0n, financial: 0n, stock: "" });
+    const found = rows.find(facts => facts.seq === candidate.seq && facts.operationId === candidate.operationId);
+    if (!found || !["refund_v1", "tender_v1"].includes(found.kind) || found.sale.id !== cash.sale.id)
+      throw fail("The archived correction no longer matches its pinned receipt identity.");
+    return found;
+  };
   await stock();
   async function* individualRows(kind) {
     for await (const rows of stagedRows(kind)) yield* rows;
@@ -223,7 +248,8 @@ async function applyPagedRecovery(worker, transaction, context, snapshot, applyC
     const eventSeq = event.done ? null : ordinal(event.value.seq);
     if (saleSeq === eventSeq) throw fail("The recovery archives repeat a committed sequence.");
     if (eventSeq === null || (saleSeq !== null && saleSeq < eventSeq)) {
-      await applyCash(sale.value.facts, sale.value.seq);
+      const current = sale.value;
+      await applyCash(current.facts, current.seq, () => cashSuccessor(current.facts));
       sale = await cash.next();
     } else {
       await applyFinancial(event.value);

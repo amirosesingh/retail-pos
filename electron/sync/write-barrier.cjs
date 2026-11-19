@@ -22,7 +22,7 @@ const BUSINESS_WRITE_CHANNELS = new Set([
   "business:reserve-bill", "business:write-batch", "business:commit-aggregate", "business:save-authorization-rule",
   "business:queue-store-settings-edit", "business:review-store-settings-edit",
   "business:shift-close-start", "business:shift-close-count", "business:shift-recount",
-  "business:shift-variance-approve", "receipts:refund",
+  "business:shift-variance-approve", "receipts:refund", "receipts:recover-refund-approval",
   "sync:legacy-recovery-preview", "sync:legacy-recovery-approve", "sync:legacy-recovery-accept-cloud",
   "sync:held-sale-review-resolve",
 ]);

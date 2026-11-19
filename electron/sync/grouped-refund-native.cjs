@@ -1,5 +1,7 @@
 const { DOMAIN, decodeRefundCommand, checkRefundAcceptance, refundHeld, stableRefundUuid } = require("./refund-command.cjs");
 const { recordId } = require("./uuid-fields.cjs");
+const { decodeRefundApprovalEvidence } = require("./refund-approval-evidence.cjs");
+const { parseExactJson } = require("./shift-recovery-exact.cjs");
 
 const TABLES = new Set(["sales", "sale_items", "products", "stock_delta_applied"]);
 const PREFIX = Buffer.from("POSREF1", "ascii");
@@ -30,6 +32,15 @@ async function assertRefundCaptureReady(transaction) {
       AND CHANGE_TRACKING_MIN_VALID_VERSION(OBJECT_ID(N'dbo.stock_delta_applied')) IS NOT NULL
       THEN 1 ELSE 0 END AS ready;`);
   if (result.recordset?.[0]?.ready !== 1) throw refundHeld();
+}
+
+async function assertRefundStorageReady(owner) {
+  const result=await owner.request().query(`SELECT CASE WHEN COL_LENGTH(N'dbo.local_operation_receipts',N'refund_evidence_json') IS NOT NULL
+    AND COL_LENGTH(N'dbo.local_operation_receipts',N'refund_acceptance_json') IS NOT NULL
+    AND COL_LENGTH(N'dbo.local_operation_receipts',N'refund_branch_id') IS NOT NULL THEN 1 ELSE 0 END refund_storage_ready;`);
+  if(Number(result.recordset?.[0]?.refund_storage_ready)!==1)throw Object.assign(new Error(
+    "The local refund approval storage needs the database upgrade before this action. Existing saved work has been kept."),
+  {code:"ESYNC_REFUND_STORAGE_REQUIRED",table:"sales"});
 }
 
 function refundContext(operationId) {
@@ -66,9 +77,12 @@ function expectedJournal(saved) {
 
 function savedRefund(row, branchId) {
   let saved, acceptance;
-  try { saved = JSON.parse(row.refund_evidence_json); acceptance = JSON.parse(row.refund_acceptance_json ?? "null"); }
+  try { parseExactJson(row.refund_evidence_json,{maxBytes:512*1024,maxDepth:24});
+    saved = JSON.parse(row.refund_evidence_json); acceptance = JSON.parse(row.refund_acceptance_json ?? "null"); }
   catch { throw refundHeld(); }
-  if (!saved || Object.keys(saved).sort().join(",") !== "attestation,journal,refundJson" ||
+  const version2 = saved?.version === 2 && saved.route === "grouped";
+  if (!saved || Object.keys(saved).sort().join(",") !== (version2
+      ? "attestation,journal,refundApproval,refundJson,route,version" : "attestation,journal,refundJson") ||
       !Array.isArray(saved.journal)) throw refundHeld();
   const facts = decodeRefundCommand(saved.refundJson, saved.attestation);
   if (facts.command.operationId !== recordId(row.operation_id) || facts.command.saleId !== recordId(row.entity_id) ||
@@ -83,6 +97,9 @@ function savedRefund(row, branchId) {
     return keyFor(entry.entity_type, entry.entity_id);
   });
   if (JSON.stringify(keys.sort()) !== JSON.stringify(expectedJournal(facts))) throw refundHeld();
+  if (version2) decodeRefundApprovalEvidence(saved.refundApproval, { anchorKind: "grouped", payloadJson: saved.refundJson,
+    attestation: saved.attestation, scope: facts.scope, operationId: facts.command.operationId, saleId: facts.command.saleId,
+    expectedSaleVersion: facts.command.expectedSaleVersion });
   if (acceptance) checkRefundAcceptance(facts, acceptance);
   return { ...saved, ...facts, acceptance };
 }
@@ -150,14 +167,16 @@ async function captureRefund(transaction, { source, author, assertCurrent, sourc
   return { ...facts, refundJson, attestation };
 }
 
-async function saveRefundEvidence(transaction, saved) {
+async function saveRefundEvidence(transaction, saved, refundApproval = null) {
   const { command, refundJson, attestation } = saved;
   const request = () => transaction.request().input("op", command.operationId).input("branch", command.branchId);
   const journal = (await request().query(`
     SELECT CONVERT(varchar(20),change_id) change_id,entity_type,entity_id,operation
     FROM dbo.sync_change_journal WITH(UPDLOCK,HOLDLOCK)
     WHERE aggregate_id=@op AND branch_id=@branch AND acknowledged_at IS NULL ORDER BY change_id;`)).recordset ?? [];
-  const encoded = JSON.stringify({ refundJson, attestation, journal });
+  const encoded = JSON.stringify(refundApproval
+    ? { version: 2, route: "grouped", refundJson, attestation, journal, refundApproval }
+    : { refundJson, attestation, journal });
   savedRefund({ operation_id: command.operationId, entity_id: command.saleId, note: command.reason,
     refund_branch_id: command.branchId, refund_evidence_json: encoded }, command.branchId);
   await request().input("evidence", encoded).query(`
@@ -175,6 +194,18 @@ async function readRefundRoute(connectionManager, branchId, operationId) {
     .query(`${storage} EXEC sys.sp_executesql N'${readRows}',N'@id uniqueidentifier',@id=@id;`);
   const rows = result.recordset ?? [];
   if (rows.length > 1) throw refundHeld();
+  if (rows.length) {
+    let envelope;
+    try { parseExactJson(rows[0].refund_evidence_json,{maxBytes:6*1024*1024+64*1024,maxDepth:24});
+      envelope = JSON.parse(rows[0].refund_evidence_json); } catch { throw refundHeld(); }
+    if (envelope?.version === 2 && envelope.route === "financial") {
+      // Financial history has its own sender and original immutable chain.
+      // It must never be submitted a second time through the grouped writer.
+      require("./financial-refund-approval.cjs").decodeFinancialRefundReceipt(envelope,
+          { operationId: recordId(operationId), saleId: recordId(rows[0].entity_id), branchId });
+      return null;
+    }
+  }
   return rows.length ? savedRefund(rows[0], branchId) : null;
 }
 
@@ -192,7 +223,8 @@ async function recordRefundAcceptance(connectionManager, saved, response, assert
     if (!row || Object.values(result.recordsets?.[0]?.[0] ?? {})[0] !== saved.scope.databaseGuid) throw refundHeld();
     const current = savedRefund(row, command.branchId);
     if (current.refundJson !== saved.refundJson || current.attestation.signature !== saved.attestation.signature ||
-        JSON.stringify(current.journal) !== JSON.stringify(saved.journal)) throw refundHeld();
+        JSON.stringify(current.journal) !== JSON.stringify(saved.journal) ||
+        JSON.stringify(current.refundApproval ?? null) !== JSON.stringify(saved.refundApproval ?? null)) throw refundHeld();
     if (current.acceptance && JSON.stringify(current.acceptance) !== JSON.stringify(response)) throw refundHeld();
     if (!current.acceptance) {
       await tx.request().input("op", command.operationId).input("branch", command.branchId)
@@ -326,6 +358,6 @@ async function proveNativeRefund(transaction, context, facts) {
   return true;
 }
 
-module.exports = { captureRefund, saveRefundEvidence, readRefundRoute, recordRefundAcceptance, refundTrackingCoverage,
+module.exports = { captureRefund, saveRefundEvidence, savedRefund, readRefundRoute, recordRefundAcceptance, refundTrackingCoverage,
   assertLegacyRefundWrites, assertRefundCaptureReady, assertRefundHandbackClear, refundContext, refundContextOperation,
-  refundForTrackingContext: refundContextOperation, refundKeys, refundHeld, proveNativeRefund };
+  refundForTrackingContext: refundContextOperation, refundKeys, refundHeld, proveNativeRefund, assertRefundStorageReady };

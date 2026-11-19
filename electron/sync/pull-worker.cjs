@@ -228,10 +228,10 @@ class PullWorker {
           this.cloud.assertRequestContext(source, false);
         };
         const { applyPagedRecovery } = require("./grouped-paged-recovery.cjs");
-        const stockChanged = await applyPagedRecovery(this, transaction, context, snapshot, async (facts, seq) => {
+        const stockChanged = await applyPagedRecovery(this, transaction, context, snapshot, async (facts, seq, cashSuccessor) => {
           if (context.extended && current && BigInt(seq) <= BigInt(current.seq)) return;
           const merged = await applyGroupedCashInTransaction(this, transaction,
-            context.extended ? { ...context, retiredStockEpoch: next.epoch } : context, facts);
+            context.extended ? { ...context, retiredStockEpoch: next.epoch, cashSuccessor } : context, facts);
           for (const { table } of merged) recoveredTables.add(table.cloudTable);
           recoveredCount += merged.length;
         }, assertCurrent, async facts => {

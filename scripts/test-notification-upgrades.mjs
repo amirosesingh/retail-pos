@@ -365,7 +365,9 @@ try {
         "supabase/migrations/20261107024729_bounded_held_status_reconciliation.sql",
         "supabase/migrations/20261107060000_reviewed_held_sale_graph.sql",
         "supabase/migrations/20261107094311_add_scoped_history_transport.sql",
-        "supabase/migrations/20261117052540_sale_item_parent_sync_scope.sql"]) {
+        "supabase/migrations/20261117052540_sale_item_parent_sync_scope.sql",
+        "supabase/migrations/20261117233612_native_refund_exact_financial_receipt_probe.sql",
+        "supabase/migrations/20261118060529_deterministic_financial_fact_key_order.sql"]) {
         await mkdir(dirname(join(fixture, path)), { recursive: true });
         await copyFile(join(root, path), join(fixture, path));
       }

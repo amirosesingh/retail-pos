@@ -402,12 +402,39 @@ export type TerminalClearContext = {
   verificationProjectUrl?: string;
 };
 
+export type PendingRefundApproval = {
+  operationId: string;
+  saleId: string;
+  refundId: string;
+  branchId: string;
+  amountMinor: string;
+  expectedSaleVersion: string;
+  route: "grouped" | "financial";
+  requiresApproval: boolean;
+  receiptNo?: string;
+};
+
+export type RefundApprovalStatus =
+  | ({ ok: true; pending: true } & PendingRefundApproval)
+  | { ok: true; pending: false }
+  | { ok: false; error?: string; code?: string };
+
 export type PosBridge = {
   terminalRepairStatus?: () => Promise<{ ok: boolean; ready?: boolean; code?: string; error?: string; requiresLocalDatabase?: boolean; mode?: "online"; localRecoveryPending?: boolean }>;
   terminalRepairConnectDatabase?: () => Promise<{ ok: boolean; ready?: boolean; code?: string; error?: string; requiresLocalDatabase?: boolean; mode?: "online"; localRecoveryPending?: boolean }>;
   terminalRepairContinueOnline?: (evidence: {sealed:string|null;plain:string|null;key:string|null}) => Promise<{ok:boolean;ready?:boolean;code?:string;error?:string;requiresLocalDatabase?:boolean;mode?:"online";localRecoveryPending?:boolean}>;
   restoreTerminalConfig?: (config: TerminalConfig) => Promise<{ ok: boolean; config?: TerminalConfig | null; code?: string; error?: string }>;
   clearTerminalConfig?: (context: TerminalClearContext) => Promise<{ ok: boolean; code?: string; error?: string }>;
+  prepareCentralTransfer?: (value: { transferId: string; stage: "approve" | "dispatch" | "receive" | "verify" }) => Promise<{ ok: boolean; transferId?: string; stage?: string; error?: string; code?: string }>;
+  getRefundApprovalStatus?: (value: { saleId: string; branchId: string }) => Promise<RefundApprovalStatus>;
+  recoverRefundApproval?: (value: { saleId: string; branchId: string; operationId: string; grantToken: string }) => Promise<{ ok: boolean; operationId?: string; error?: string; code?: string }>;
+  authorizeRefund?: (value: {
+    saleId: string; branchId: string; registeredTerminalId: string; requestedAmount: number;
+    grantToken?: string | null; requestId?: string; username?: string; credential?: string;
+    selfAuthorization?: boolean; reason?: string;
+    recoveryOperationId?: string;
+    proof?: { accessToken?: string; cashierToken?: string; sessionToken?: string };
+  }) => Promise<{ ok: boolean; grantToken?: string; authorizer?: { id: string; name: string; role: string }; code?: string; error?: string }>;
   authorizeOfflineDiscount?: (value: {
     requestId: string; actionKey: "discount_over_limit"; registeredTerminalId: string; branchId: string;
     username: string; credential: string; selfAuthorization?: boolean; reason: string; snapshot: unknown; payload: Record<string, string | number | boolean | null>; requestedAmount: number;

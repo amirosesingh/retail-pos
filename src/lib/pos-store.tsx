@@ -2,6 +2,7 @@ import { preserveSessionDrafts } from "./session-draft";
 import { effectiveOperatingShiftSharing, operatingShiftAllowed, readShiftSharing, subscribeShiftSharing } from './shift-sharing-policy';
 import { branchReadApplies, latestOpenShiftForBranch, reconcileActiveShiftRows, shiftIsOpenForBranch } from "./branch-shift-state";
 import { BranchOperationGate } from "./branch-operation-gate";
+import { RefundSaveAttempts, observeRefundDatabaseContext } from "./refund-save-attempt";
 import { formatMoney, setPosCurrency } from "./currency";
 import { subscribeDatabaseMode } from "@/core/local-db/db-mode";
 import { subscribeSettingsRefresh } from "./settings-refresh";
@@ -354,6 +355,7 @@ type Ctx = {
     grantToken?: string | null,
     loadedSale?: Sale,
   ) => Promise<boolean>;
+  hasUncertainRefundSale: (saleId: string, loadedSale?: Sale) => boolean;
   changeSalePayment: (
     saleId: string,
     method: PaymentMethod,
@@ -676,6 +678,13 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // Protect a locally committed receipt until a later local/cloud snapshot has
   // actually observed it. Focus and Realtime refreshes may race the sync push.
   const pendingSalesRef = useRef(new Set<string>());
+  const refundSaveAttempts = useRef(new RefundSaveAttempts());
+  const refundDatabaseEpoch = useRef(0);
+  useEffect(() => {
+    const database = window.pos?.database;
+    if (!database) return;
+    return observeRefundDatabaseContext(database, () => { refundDatabaseEpoch.current++; });
+  }, []);
   // Who is acting right now — stamped on transfer approvals and receipts.
   const actorRef = useRef("Manager");
   actorRef.current = terminalUser?.name || user?.email || "Manager";
@@ -715,6 +724,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const scopeReadKey = scopedSettingsReadKey(readIdentity, scopeIds, scopeReadEpoch);
   const scopeReadKeyRef = useRef(scopeReadKey);
   scopeReadKeyRef.current = scopeReadKey;
+  const refundContext = useCallback(() => JSON.stringify([scopeReadKeyRef.current, sessionEpoch(), bootstrapGeneration.current,
+    refundDatabaseEpoch.current, actorStaffIdRef.current, readTerminalConfig()?.tokenId ?? null, effectiveDatabaseMode()]), []);
   const scopeReadsEnabled = useRef(false);
   scopeReadsEnabled.current = readsReady && storesLoaded;
   const retrySettingsScope = useCallback(() => {
@@ -2764,6 +2775,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
     return saved;
   },[]);
 
+  const hasUncertainRefundSale = useCallback((saleId: string, loadedSale?: Sale) => {
+    const sale = stateRef.current.sales.find(row => row.id === saleId) ?? loadedSale;
+    return Boolean(sale && refundSaveAttempts.current.hasUncertain({ saleId, branchId: sale.storeId,
+      amount: Math.abs(sale.total), context: refundContext }));
+  }, [refundContext]);
   const refundSale = useCallback(
     async (
       saleId: string,
@@ -2771,73 +2787,63 @@ export function PosProvider({ children }: { children: ReactNode }) {
       loadedSale?: Sale,
     ): Promise<boolean> => {
       const sale = stateRef.current.sales.find((x) => x.id === saleId) ?? loadedSale;
-      if (!sale || sale.refunded) return false;
+      if (!sale || (sale.refunded && !hasUncertainRefundSale(saleId, loadedSale))) return false;
       const payload = {
         sale_id: sale.id,
         receipt_no: sale.receiptNo,
         total: Math.abs(sale.total),
       };
-      const [{ verifyBusinessAuthorization }, { getPosCallerAuth }] = await Promise.all([
-        import("./authorization-client"),
-        import("./pos-caller-auth"),
-      ]);
-      const authorization = await verifyBusinessAuthorization({
-        data: {
-          ...(await getPosCallerAuth()),
-          actionKey: "refund",
-          storeId: sale.storeId,
-          payload,
-          requestedAmount: Math.abs(sale.total),
-          grantToken: grantToken ?? null,
+      return refundSaveAttempts.current.run({
+        saleId, branchId: sale.storeId, amount: Math.abs(sale.total), grantToken,
+        context: refundContext,
+        authorize: async (retryGrant, assertCurrent) => {
+          const [{ verifyRefundAuthorization }, { getPosCallerAuth }] = await Promise.all([
+            import("./authorization-client"),
+            import("./pos-caller-auth"),
+          ]);
+          assertCurrent();
+          const caller = await getPosCallerAuth();
+          assertCurrent();
+          return verifyRefundAuthorization({
+            data: {
+              ...caller,
+              actionKey: "refund",
+              storeId: sale.storeId,
+              payload,
+              requestedAmount: Math.abs(sale.total),
+              grantToken: retryGrant,
+            },
+          });
+        },
+        // Retain Main's handle after an uncertain reply; only its proven
+        // original receipt replay can complete the same stable refund.
+        save: refundGrant => db.refundSale(saleId, `refund:${saleId}`, undefined, sale.storeId, refundGrant),
+        accepted: isCurrent => {
+          logger.log("sale_event", "Sale refunded", "receipts", { saleId, receiptNo: sale.receiptNo });
+          recordActivity({
+            type: "sale_refund", severity: "critical", title: "Refund issued",
+            message: `Bill ${sale.receiptNo} was refunded.`, storeId: sale.storeId ?? null,
+            entityType: "sale", entityId: sale.receiptNo, amount: sale.total,
+          });
+          setState((s) => {
+            if (!isCurrent()) return s;
+            const existingSale = s.sales.find((x) => x.id === saleId);
+            const sale = existingSale ?? loadedSale;
+            if (!sale || sale.refunded) return s;
+            const products = s.products.map((p) => {
+              const quantity = sale.lines.reduce((total, line) => total + (line.productId === p.id ? line.qty : 0), 0);
+              return quantity ? bump(p, sale.storeId, quantity, s.settings.integrations.autoArchiveZeroStock !== false) : p;
+            });
+            return {
+              ...s, products,
+              sales: existingSale ? s.sales.map((x) => (x.id === saleId ? { ...x, refunded: true } : x))
+                : [{ ...sale, refunded: true }, ...s.sales],
+            };
+          });
         },
       });
-      if (!authorization.ok) throw new Error(authorization.error);
-      // The stable refund id makes a retry idempotent. Nothing visible changes
-      // until the authoritative gateway has accepted the refund.
-      await db.refundSale(saleId, `refund:${saleId}`, undefined, sale.storeId, grantToken);
-      logger.log("sale_event", "Sale refunded", "receipts", {
-        saleId,
-        receiptNo: sale.receiptNo,
-      });
-      recordActivity({
-        type: "sale_refund",
-        severity: "critical",
-        title: "Refund issued",
-        message: `Bill ${sale.receiptNo} was refunded.`,
-        storeId: sale.storeId ?? null,
-        entityType: "sale",
-        entityId: sale.receiptNo,
-        amount: sale.total,
-      });
-      setState((s) => {
-        const existingSale = s.sales.find((x) => x.id === saleId);
-        const sale = existingSale ?? loadedSale;
-        if (!sale || sale.refunded) return s;
-        const products = s.products.map((p) => {
-          const quantity = sale.lines.reduce(
-            (total, line) => total + (line.productId === p.id ? line.qty : 0),
-            0,
-          );
-          return quantity
-            ? bump(
-                p,
-                sale.storeId,
-                quantity,
-                s.settings.integrations.autoArchiveZeroStock !== false,
-              )
-            : p;
-        });
-        return {
-          ...s,
-          products,
-          sales: existingSale
-            ? s.sales.map((x) => (x.id === saleId ? { ...x, refunded: true } : x))
-            : [{ ...sale, refunded: true }, ...s.sales],
-        };
-      });
-      return true;
     },
-    [],
+    [refundContext, hasUncertainRefundSale],
   );
 
   /** Correct the tender recorded on a completed bill (e.g. rung up as card). */
@@ -4446,6 +4452,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     recordSale,
     correctSale,
     refundSale,
+    hasUncertainRefundSale,
     changeSalePayment,
     createBooking,
     addBookingPayment,

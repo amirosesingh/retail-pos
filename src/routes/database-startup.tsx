@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { AlertTriangle, Cloud, Database, RefreshCw, Settings } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +12,7 @@ import { checkHealth, cloudDiagnosis } from "@/core/activation/connection-health
 import { StartupShiftRecoveryReview } from "@/platforms/windows/components/StartupShiftRecoveryReview";
 import { TerminalLogin } from "@/platforms/web/components/pos/TerminalLogin";
 import { desktopStorageRoute } from "@/lib/desktop-storage-route";
+import { observeDesktopStartup, type StartupActivity } from "@/lib/desktop-startup-progress";
 
 type DatabaseState = {
   enabled?: boolean;
@@ -19,19 +20,26 @@ type DatabaseState = {
   connected?: boolean;
   tradingReady?: boolean;
   state?: string;
-  detail?: { error?: string; hint?: string; status?: string; code?: string } | null;
+  startupActivity?: StartupActivity | null;
+  startupPaused?: boolean;
+  detail?: { error?: string; hint?: string; status?: string; code?: string; table?: string } | null;
 };
 
 type StartupDatabaseApi = {
   getState(): Promise<DatabaseState>;
   retryStartup(): Promise<DatabaseState>;
   subscribe(cb: (state: DatabaseState) => void): () => void;
+  onStartupActivity?: (cb: (activity: StartupActivity | null) => void) => () => void;
 };
 
 const database = () =>
   (window.pos as unknown as { database?: StartupDatabaseApi } | undefined)?.database;
-const needsRecoveryReview = (state: DatabaseState) => state.connected === true && state.tradingReady === true &&
-  state.detail?.code === "ELOCAL_PENDING_UNVERIFIED";
+const SHIFT_TABLES = new Set(["shifts", "shift_cash_counts", "shift_reconciliations", "shift_close_events", "shift_notifications", "shift_variance_alerts"]);
+const SHIFT_REVIEW_CODES = new Set(["ELOCAL_PENDING_UNVERIFIED", "ELOCAL_CT_PENDING", "ESYNC_APPLY_CONFLICT",
+  "SYNC_SHIFT_GRAPH_CONFLICT", "SYNC_SHIFT_GRAPH_MISSING", "SYNC_SHIFT_TARGET_FACTS_INVALID"]);
+const needsRecoveryReview = (state: DatabaseState, activity: StartupActivity | null) => state.state === "enabled_bootstrapping" &&
+  state.connected === true && state.tradingReady === true && activity?.active !== true &&
+  SHIFT_TABLES.has(state.detail?.table ?? "") && SHIFT_REVIEW_CODES.has(state.detail?.code ?? "");
 
 export const Route = createFileRoute("/database-startup")({
   component: DatabaseStartupPage,
@@ -41,6 +49,8 @@ function DatabaseStartupPage() {
   const navigate = useNavigate();
   const [state, setState] = useState<DatabaseState>({});
   const [busy, setBusy] = useState(false);
+  const [activity, setActivity] = useState<StartupActivity | null>(null), [syncPaused, setSyncPaused] = useState(false);
+  const active = useRef(false), revision = useRef(0), pendingAction = useRef(false);
   const [error, setError] = useState("");
   const [online, setOnline] = useState(() => navigator.onLine);
   const [showLocalSettings, setShowLocalSettings] = useState(
@@ -48,60 +58,73 @@ function DatabaseStartupPage() {
   );
   const migrationRequired = state.detail?.status === "migration_required";
   const applyingMigration = state.detail?.status === "applying_migration";
-  const restoring = state.state === "enabled_connecting" || state.state === "enabled_validating";
-  const reviewRequired = needsRecoveryReview(state);
+  const locallyReady = desktopStorageRoute(state) === "local";
+  const initializing = state.state === undefined && state.enabled === undefined && !error;
+  const paused = state.state === "enabled_bootstrapping" && (syncPaused || activity?.paused === true);
+  const bootstrapping = state.state === "enabled_bootstrapping";
+  const restoring = initializing || state.state === "enabled_connecting" || state.state === "enabled_validating" ||
+    bootstrapping && !paused && (activity?.active === true || !state.detail?.code && !state.detail?.error);
+  const reviewRequired = needsRecoveryReview(state, activity);
+  const waitingForData = bootstrapping && state.connected === true && state.tradingReady === true && !restoring && !reviewRequired;
+
+  const applyState = useCallback((next: DatabaseState) => {
+    if (!active.current) return;
+    revision.current++;
+    setState(next);
+    if (desktopStorageRoute(next) === "local") {
+      window.sessionStorage.removeItem(ONLINE_STARTUP_OVERRIDE);
+      void navigate({ to: "/" });
+    }
+  }, [navigate]);
 
   useEffect(() => {
     window.sessionStorage.removeItem(LOCAL_DATABASE_SETTINGS_REQUEST);
-    let live = true;
+    active.current = true;
+    revision.current++;
     const api = database();
-    const applyState = (next: DatabaseState) => {
-      if (!live) return;
-      setState(next);
-      if (desktopStorageRoute(next) === "local") {
-        window.sessionStorage.removeItem(ONLINE_STARTUP_OVERRIDE);
-        void navigate({ to: "/" });
-      }
-    };
-    const unsubscribe = api?.subscribe(applyState);
-    void api?.getState().then(applyState).catch((cause) => {
-      if (live) setError(cause instanceof Error ? cause.message : String(cause));
-    });
+    if (!api) setError("The desktop database bridge is unavailable. Restart the app or open database recovery.");
+    const unsubscribe = api ? observeDesktopStartup(api, next => {
+      if (next) applyState(next);
+      else if (active.current) setError("Could not read the saved local database state. Retry the connection.");
+    }, setActivity, window.pos?.sync, setSyncPaused) : undefined;
     const update = () => setOnline(navigator.onLine);
     window.addEventListener("online", update);
     window.addEventListener("offline", update);
     return () => {
-      live = false;
+      active.current = false;
       unsubscribe?.();
       window.removeEventListener("online", update);
       window.removeEventListener("offline", update);
     };
-  }, [navigate]);
+  }, [applyState]);
 
   const retry = async () => {
+    if (pendingAction.current) return;
+    pendingAction.current = true;
+    const startedAt = revision.current;
     setBusy(true);
     setError("");
     try {
       const next = await database()!.retryStartup();
-      setState(next);
-      if (desktopStorageRoute(next) === "local") {
-        window.sessionStorage.removeItem(ONLINE_STARTUP_OVERRIDE);
-        await navigate({ to: "/" });
-      } else if (!needsRecoveryReview(next)) {
-        setError(next.detail?.error ?? "The local SQL database is still unavailable.");
-      }
+      if (!active.current || revision.current !== startedAt) return;
+      applyState(next);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      if (active.current && revision.current === startedAt) setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setBusy(false);
+      pendingAction.current = false;
+      if (active.current) setBusy(false);
     }
   };
 
   const continueOnline = async () => {
+    if (pendingAction.current) return;
+    pendingAction.current = true;
+    const startedAt = revision.current;
     setBusy(true);
     setError("");
     try {
       const report = await checkHealth(true);
+      if (!active.current || revision.current !== startedAt) return;
       if (!report.cloud) {
         const issue = cloudDiagnosis().issue.replaceAll("-", " ");
         setError(`The configured central POS service is not reachable (${issue}). Retry it or restore the local SQL Server connection.`);
@@ -109,8 +132,11 @@ function DatabaseStartupPage() {
       }
       window.sessionStorage.setItem(ONLINE_STARTUP_OVERRIDE, "1");
       await navigate({ to: "/" });
+    } catch (cause) {
+      if (active.current && revision.current === startedAt) setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setBusy(false);
+      pendingAction.current = false;
+      if (active.current) setBusy(false);
     }
   };
 
@@ -147,7 +173,10 @@ function DatabaseStartupPage() {
                   ? "Preparing local database"
                   : migrationRequired
                     ? "Local database update required"
-                    : reviewRequired ? "Saved local work needs review" : "Local database is unavailable"}
+                    : reviewRequired ? "Saved local work needs review"
+                      : locallyReady ? "Local database is ready"
+                      : paused ? "Local data preparation is paused"
+                        : waitingForData ? "Local store data needs verification" : "Local database is unavailable"}
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
               {applyingMigration
@@ -158,19 +187,27 @@ function DatabaseStartupPage() {
                     ? "SQL Server is connected, but its POS schema must be updated before local trading resumes."
                     : reviewRequired
                       ? "SQL Server is connected. Retail needs to verify saved local work before local trading can resume."
-                      : "Retail tried the saved Microsoft SQL Server connection before opening the terminal."}
+                      : locallyReady
+                        ? "Saved local data is available. Returning to the terminal; synchronization details remain in Sync & Data."
+                        : waitingForData || paused
+                        ? "SQL Server is connected. Saved local work is retained while synchronization verifies store data."
+                        : "Retail tried the saved Microsoft SQL Server connection before opening the terminal."}
             </p>
           </div>
         </div>
 
         <div className="rounded-md border bg-muted/40 p-3 text-sm">
-          <div className="font-medium">{state.state?.replaceAll("_", " ") ?? "Connection failed"}</div>
+          <div className="font-medium">{initializing ? "Checking saved connection" : state.state?.replaceAll("_", " ") ?? "Connection failed"}</div>
           <div className="mt-1 text-muted-foreground">
-            {state.detail?.error ?? "Check that SQL Server is running and the saved server is reachable."}
+            {state.detail?.error ?? (restoring ? "Retail will continue automatically when local preparation finishes."
+              : locallyReady ? "The saved local connection has been verified."
+              : paused ? "Resume synchronization to finish preparing this terminal."
+                : "Check that SQL Server is running and the saved server is reachable.")}
           </div>
         </div>
 
-        <StartupShiftRecoveryReview connected={state.connected === true && state.tradingReady === true && !migrationRequired && !applyingMigration} renderLogin={view => <TerminalLogin view={view} />} />
+        <StartupShiftRecoveryReview connected={state.connected === true && state.tradingReady === true && !migrationRequired && !applyingMigration}
+          reviewRequired={reviewRequired && !busy} renderLogin={view => <TerminalLogin view={view} />} />
 
         <div className="grid gap-3 sm:grid-cols-2">
           <Button disabled={busy || restoring} onClick={() => void retry()}>

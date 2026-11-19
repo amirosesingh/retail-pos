@@ -25562,6 +25562,123 @@ BEGIN
 END $sale_scope_trigger$;
 -- SALE_ITEM_PARENT_SYNC_SCOPE_V1_END
 
+-- NATIVE_REFUND_FINANCIAL_RECEIPT_BEGIN
+-- Read-only history probe. An existing metadata receipt never proves that
+-- refund business rows or stock effects were accepted.
+CREATE OR REPLACE FUNCTION public.pos_sync_read_financial_event_receipt(
+  p_org text,p_branch text,p_terminal text,p_project_origin text,p_raw text,p_proof jsonb
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog
+AS $receipt$
+DECLARE
+  event jsonb;
+  digest text;
+  -- FIN62 is an optional, separately admitted preparation. Install this
+  -- read-only routine without requiring or activating that preparation.
+  prior record;
+BEGIN
+  IF auth.role() IS DISTINCT FROM 'service_role' THEN
+    RAISE EXCEPTION USING ERRCODE='42501',MESSAGE='FIN62_RECEIPT_SERVICE_REQUIRED';
+  END IF;
+  IF p_org IS NULL OR length(p_org) NOT BETWEEN 1 AND 128
+    OR p_branch IS NULL OR length(p_branch) NOT BETWEEN 1 AND 128
+    OR p_terminal IS NULL OR length(p_terminal) NOT BETWEEN 1 AND 128
+    OR p_project_origin IS NULL OR p_project_origin !~ '^https://[^/?#@]+$'
+    OR p_raw IS NULL OR octet_length(p_raw) NOT BETWEEN 2 AND 6291456
+    OR jsonb_typeof(p_proof) IS DISTINCT FROM 'object' THEN
+    RAISE EXCEPTION USING ERRCODE='22023',MESSAGE='FIN62_RECEIPT_INVALID';
+  END IF;
+  PERFORM public.pos_sync_validate_scope(p_org,p_branch,p_terminal);
+  PERFORM fin62_preparation.math_unique_json(p_raw::json,48);
+  event:=p_raw::jsonb;
+  digest:=encode(sha256(convert_to(p_raw,'UTF8')),'hex');
+  IF jsonb_typeof(event) IS DISTINCT FROM 'object'
+    OR event->>'action' IS DISTINCT FROM 'REFUND'
+    OR event->>'branchId' IS DISTINCT FROM p_branch
+    OR event->>'terminalId' IS DISTINCT FROM p_terminal
+    OR coalesce(event->>'operationId','') !~ '^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$'
+    OR coalesce(event->>'shiftId','') !~ '^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$'
+    OR coalesce(event->>'sequence','') !~ '^[1-9][0-9]{0,18}$'
+    OR p_proof->>'projectOrigin' IS DISTINCT FROM p_project_origin
+    OR p_proof->>'terminalId' IS DISTINCT FROM p_terminal
+    OR p_proof->>'branchId' IS DISTINCT FROM p_branch
+    OR p_proof->>'operationId' IS DISTINCT FROM event->>'operationId'
+    OR p_proof->>'action' IS DISTINCT FROM 'REFUND'
+    OR p_proof->>'payloadHash' IS DISTINCT FROM digest THEN
+    RAISE EXCEPTION USING ERRCODE='22023',MESSAGE='FIN62_RECEIPT_INVALID';
+  END IF;
+  SELECT * INTO prior FROM fin62_history_preparation.nodes
+  WHERE operation_id=(event->>'operationId')::uuid FOR SHARE;
+  IF NOT FOUND THEN RETURN NULL; END IF;
+  IF prior.node_kind IS DISTINCT FROM 'MUTATION'
+    OR ROW(prior.organization_id,prior.branch_id,prior.terminal_id,prior.shift_id::text,prior.sequence::text,prior.payload_hash)
+      IS DISTINCT FROM ROW(p_org,p_branch,p_terminal,event->>'shiftId',event->>'sequence',digest)
+    OR convert_to(prior.payload_json,'UTF8') IS DISTINCT FROM convert_to(p_raw,'UTF8')
+    OR prior.proof IS DISTINCT FROM p_proof
+    OR prior.proof->>'projectOrigin' IS DISTINCT FROM p_project_origin
+    OR (SELECT array_agg(key ORDER BY key) FROM jsonb_object_keys(prior.acknowledgement) key)
+      IS DISTINCT FROM ARRAY['businessUploaded','operationId','payloadHash','sequence','shiftClosed','status']::text[]
+    OR prior.acknowledgement IS DISTINCT FROM jsonb_build_object(
+      'status','financial_metadata_recorded','operationId',event->>'operationId',
+      'payloadHash',digest,'sequence',event->>'sequence','businessUploaded',false,'shiftClosed',false) THEN
+    RAISE EXCEPTION USING ERRCODE='22023',MESSAGE='FIN62_RECEIPT_REPLAY_MISMATCH';
+  END IF;
+  RETURN prior.acknowledgement;
+END;
+$receipt$;
+REVOKE ALL ON FUNCTION public.pos_sync_read_financial_event_receipt(text,text,text,text,text,jsonb)
+  FROM PUBLIC,anon,authenticated,service_role;
+GRANT EXECUTE ON FUNCTION public.pos_sync_read_financial_event_receipt(text,text,text,text,text,jsonb)
+  TO service_role;
+-- NATIVE_REFUND_FINANCIAL_RECEIPT_END
+
+-- FINANCIAL_FACT_KEY_ORDER_BEGIN
+-- FIN62 JSON field identity uses byte ordering, independently of database locale.
+-- Preserve the optional cohort, immutable events, financial bytes and all grants.
+-- The migration caller owns the transaction; no business rows are rewritten.
+DO $financial_fact_key_order$
+DECLARE
+  routine oid:=to_regprocedure('fin62_history_preparation.fact(jsonb)');
+  previous record;
+  source_hash text;
+  definition text;
+BEGIN
+  IF routine IS NULL THEN
+    IF to_regclass('fin62_history_preparation.nodes') IS NOT NULL THEN
+      RAISE EXCEPTION 'FIN62_FACT_KEY_ORDER_BASELINE_MISSING';
+    END IF;
+    -- The canonical installer may precede optional FIN62 preparation. Do not
+    -- create a helper, financial tables, activation or authority in that case.
+    RETURN;
+  END IF;
+  SELECT p.*,l.lanname INTO STRICT previous
+  FROM pg_proc p JOIN pg_language l ON l.oid=p.prolang WHERE p.oid=routine;
+  source_hash:=md5(replace(previous.prosrc,E'\r\n',E'\n'));
+  IF current_user<>'postgres' OR previous.proowner<>'postgres'::regrole
+    OR previous.lanname<>'plpgsql' OR previous.prokind<>'f'
+    OR previous.prosecdef OR NOT previous.proisstrict OR previous.provolatile<>'i'
+    OR previous.proretset OR previous.prorettype<>'jsonb'::regtype
+    OR previous.pronargs<>1 OR previous.proargnames IS DISTINCT FROM ARRAY['value']::text[]
+    OR previous.proconfig IS DISTINCT FROM ARRAY['search_path=pg_catalog']::text[]
+    OR source_hash NOT IN('110f0e468314681e878cee9a1bfcd778','49814368b1669fc9d9943aca23eb5ce1')
+    OR EXISTS(SELECT 1 FROM aclexplode(coalesce(previous.proacl,acldefault('f',previous.proowner))) grant_entry
+      WHERE grant_entry.grantee<>previous.proowner) THEN
+    RAISE EXCEPTION 'FIN62_FACT_KEY_ORDER_SOURCE_UNEXPECTED';
+  END IF;
+  IF source_hash='49814368b1669fc9d9943aca23eb5ce1' THEN RETURN; END IF;
+  definition:=pg_get_functiondef(routine);
+  definition:=replace(definition,'array_agg(key ORDER BY key)','array_agg(key ORDER BY key COLLATE "C")');
+  EXECUTE definition;
+  IF NOT EXISTS(SELECT 1 FROM pg_proc p WHERE p.oid=routine
+    AND md5(replace(p.prosrc,E'\r\n',E'\n'))='49814368b1669fc9d9943aca23eb5ce1'
+    AND p.proowner=previous.proowner AND p.proacl IS NOT DISTINCT FROM previous.proacl
+    AND p.prosecdef=previous.prosecdef AND p.proisstrict=previous.proisstrict
+    AND p.provolatile=previous.provolatile AND p.proconfig IS NOT DISTINCT FROM previous.proconfig) THEN
+    RAISE EXCEPTION 'FIN62_FACT_KEY_ORDER_POSTFLIGHT_FAILED';
+  END IF;
+END
+$financial_fact_key_order$;
+-- FINANCIAL_FACT_KEY_ORDER_END
+
 -- Final public-schema privilege hardening after notification rule definitions.
 DO $notification_hardening$
 DECLARE routine record;

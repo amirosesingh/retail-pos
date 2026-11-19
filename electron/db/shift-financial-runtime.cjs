@@ -164,9 +164,11 @@ class ShiftFinancialRuntime{
   const rows=(await this.manager.pool.request().input('sale',saleId).input('branch',branchId).query('SELECT shift_id FROM dbo.sales WHERE id=@sale AND store_id=@branch;')).recordset??[];
   if(rows.length!==1)fail('ERECEIPT');const shiftId=rows[0].shift_id?String(rows[0].shift_id).toLowerCase():null,cap=await this.capability(branchId,shiftId),context=await this.contextForTerminal(branchId,cap);if(shiftId)await this.shiftContext(branchId,shiftId,context,cap);
   if(!context)return{repository:this.legacy.receipts,author:null};
-  if(shiftId===null){context.assertCurrent();return{repository:context.receipts,author:null,terminalId:context.scope.terminalId,expectedShiftId:null};}
+  const source=Object.freeze({projectOrigin:context.scope.projectOrigin,branchId:context.scope.branchId,
+   terminalId:context.scope.terminalId,databaseGuid:context.source.identity.databaseGuid});
+  if(shiftId===null){context.assertCurrent();return{repository:context.receipts,author:null,terminalId:context.scope.terminalId,expectedShiftId:null,source,assertCurrent:context.assertCurrent};}
   requestCapture?.assertCurrent();const capture=typeof requestCapture?.financialCapture==='function'?requestCapture.financialCapture('REFUND'):requestCapture??this.authority.captureFinancial('REFUND');
-  const author=await this.authority.prepare(capture);context.assertCurrent();return{repository:context.receipts,author,terminalId:context.scope.terminalId,expectedShiftId:shiftId};
+  const author=await this.authority.prepare(capture);context.assertCurrent();return{repository:context.receipts,author,terminalId:context.scope.terminalId,expectedShiftId:shiftId,source,assertCurrent:context.assertCurrent};
  }
  async runPush(options){const context=await this.contextForTerminal(options.branchId);return(context?.push??this.legacy.push).run(options);}
 }

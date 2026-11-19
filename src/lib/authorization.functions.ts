@@ -154,6 +154,8 @@ const mutationInput = caller.extend({
   snapshotHash: z.string().max(40).default(""),
   requestedAmount: z.number().finite().nonnegative().nullish(),
   grantToken: z.string().max(4096).nullish(),
+  refundApprovalBasis: z.unknown().optional(),
+  refundApprovalWitness: z.unknown().optional(),
 });
 
 type Caller = {
@@ -220,7 +222,16 @@ export const verifyBusinessAuthorization = createServerFn({ method: "POST" })
       const who = await assertCaller(data);
       const storeId = callerStore(who, data.storeId);
       const { checkBusinessAuthorization } = await import("./business-authorization.server");
-      return await checkBusinessAuthorization(who, { ...data, storeId });
+      const optIn = data.refundApprovalBasis !== undefined || data.refundApprovalWitness !== undefined;
+      if (optIn && (data.actionKey !== "refund" || data.refundApprovalBasis === undefined || data.refundApprovalWitness === undefined))
+        throw new Error("An exact refund operation and current witness are required.");
+      const authorization = await checkBusinessAuthorization(who, { ...data, storeId });
+      if (!authorization.ok || !optIn) return authorization;
+      const { issueRefundApprovalReceipt, verifyRefundApprovalIssueBasis } = await import("./refund-approval-receipt.server");
+      const basis = await verifyRefundApprovalIssueBasis(data.refundApprovalBasis, { ...data, storeId });
+      const refundApprovalReceipt = await issueRefundApprovalReceipt({ basis, witness: data.refundApprovalWitness,
+        proof: data, authorization });
+      return { ...authorization, refundApprovalReceipt };
     } catch (e) {
       return { ok: false as const, error: (e as Error).message.slice(0, 300) };
     }
@@ -543,6 +554,7 @@ export const authorizeWithPin = createServerFn({ method: "POST" })
         storeId,
         binding: data.binding,
         approvedAmount: data.requestedAmount ?? null,
+        credentialMethod,
       }),
     };
   });

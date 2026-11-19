@@ -286,7 +286,7 @@ class CloudClient {
     const outbound=normalizeSyncPayload(payload);
     // UUID cleanup is for ordinary rows, never for already-signed labels.
     // Raw JSON and proof objects remain exactly those captured by Main.
-    if(payload?.sqlServerFinancialEvent)outbound.sqlServerFinancialEvent={...outbound.sqlServerFinancialEvent,operationJson:payload.sqlServerFinancialEvent.operationJson,proof:payload.sqlServerFinancialEvent.proof};
+    if(payload?.sqlServerFinancialEvent)outbound.sqlServerFinancialEvent={...outbound.sqlServerFinancialEvent,operationJson:payload.sqlServerFinancialEvent.operationJson,proof:payload.sqlServerFinancialEvent.proof,...(payload.sqlServerFinancialEvent.refundApproval!==undefined?{refundApproval:payload.sqlServerFinancialEvent.refundApproval}:{})};
     if (payload?.sqlServerCashCheckout) outbound.sqlServerCashCheckout = payload.sqlServerCashCheckout;
     if (payload?.sqlServerRefund) outbound.sqlServerRefund = payload.sqlServerRefund;
     if (payload?.sqlServerLegacyRecovery) outbound.sqlServerLegacyRecovery = {
@@ -295,6 +295,7 @@ class CloudClient {
       attestation: payload.sqlServerLegacyRecovery.attestation,
     };
     const financialAggregate=payload?.sqlServerAggregate;
+    if(financialAggregate?.financialRefundApprovals!==undefined)outbound.sqlServerAggregate.financialRefundApprovals=financialAggregate.financialRefundApprovals;
     if(financialAggregate&&(financialAggregate.shiftFinancialBasis||financialAggregate.shiftFinancialOpening||financialAggregate.registerFinancialBoundary===true)){
       for(const key of['shiftAuthor','shiftClosingStart','shiftFinancialBasis','shiftFinancialOpening'])if(financialAggregate[key]!==undefined)outbound.sqlServerAggregate[key]=financialAggregate[key];
     }
@@ -481,14 +482,15 @@ class CloudClient {
     financialBasisWitnesses.set(token,{assertSource,...source,value:Object.freeze({serverBasisId:result.basisId,serverBasisHash:result.basisHash,basisJson:result.basisJson,parentSnapshot:deepFreezeFinancial(basis.parentSnapshot),branchId,shiftId,terminalId:source.identity.terminalId,projectOrigin:source.identity.projectOrigin,databaseGuid:database[0].database_guid,sourceEvidence,ownPublishedThrough,purpose:'financial_basis_read'})});
     return token;
   }
-  pushFinancialEvent({organizationId="default",branchId,operationJson,proof}) {
-    return this.shiftProtocolRequest({sqlServerFinancialEvent:{organizationId,branchId,operationJson,proof}});
+  pushFinancialEvent({organizationId="default",branchId,operationJson,proof,refundApproval}) {
+    return this.shiftProtocolRequest({sqlServerFinancialEvent:{organizationId,branchId,operationJson,proof,...(refundApproval!==undefined?{refundApproval}:{})}});
   }
   pushFinancialObservation({organizationId="default",branchId,operationJson}) {
     return this.shiftProtocolRequest({sqlServerFinancialObservation:{organizationId,branchId,operationJson}});
   }
   registerFinancialBoundary(batch) { return this.pushAggregate({...batch,registerFinancialBoundary:true}); }
   pushAggregate(batch) {
+    if(batch.financialRefundApprovals!==undefined&&(!batch.financialLedgerProjection||!Array.isArray(batch.financialRefundApprovals)||batch.financialRefundApprovals.length>100))throw Object.assign(new Error("The saved refund approvals do not match this financial upload."),{code:"ESYNC_REFUND_APPROVAL_REQUIRED",table:"sales"});
     if((batch.registerFinancialBoundary!==undefined && (batch.registerFinancialBoundary!==true||!batch.shiftIntent||!batch.shiftFinancialBasis))||
       (batch.financialLedgerProjection!==undefined&&(batch.financialLedgerProjection!==true||batch.shiftIntent))||
       (batch.shiftFinancialOpening!==undefined&&(!batch.shiftFinancialOpening||batch.shiftIntent||typeof batch.shiftFinancialOpening.openingJson!=="string"||!batch.shiftFinancialOpening.proof)))
@@ -507,6 +509,7 @@ class CloudClient {
         ...(batch.shiftFinancialBasis !== undefined ? {shiftFinancialBasis:batch.shiftFinancialBasis} : {}),
         ...(batch.registerFinancialBoundary===true?{registerFinancialBoundary:true}:{}),
         ...(batch.financialLedgerProjection===true?{financialLedgerProjection:true}:{}),
+        ...(batch.financialRefundApprovals!==undefined?{financialRefundApprovals:batch.financialRefundApprovals}:{}),
         ...(batch.shiftFinancialOpening!==undefined?{shiftFinancialOpening:{openingJson:batch.shiftFinancialOpening.openingJson,proof:batch.shiftFinancialOpening.proof}}:{}),
       },
     };
@@ -642,13 +645,16 @@ class CloudClient {
   async submitGroupedRefund(source, saved, grantToken) {
     const { decodeRefundCommand, refundHeld } = require("./refund-command.cjs");
     this.assertRequestContext(source, false);
-    const { scope, author } = decodeRefundCommand(saved?.refundJson, saved?.attestation);
+    const { scope, author, command } = decodeRefundCommand(saved?.refundJson, saved?.attestation);
     if (scope.branchId !== groupedSettings.operationsScope(source) || scope.terminalId !== recordId(source.terminal.tokenId) ||
         source.project.projectOrigin !== author.projectOrigin) throw refundHeld();
+    if(saved.refundApproval!==undefined)require("./refund-approval-evidence.cjs").decodeRefundApprovalEvidence(saved.refundApproval,
+      {anchorKind:"grouped",payloadJson:saved.refundJson,attestation:saved.attestation,scope,
+        operationId:command.operationId,saleId:command.saleId,expectedSaleVersion:command.expectedSaleVersion});
     let result;
     try {
       result = await this.request({ sqlServerRefund: { refundJson: saved.refundJson, attestation: saved.attestation,
-        ...(grantToken ? { grantToken } : {}) } });
+        ...(saved.refundApproval!==undefined?{refundApproval:saved.refundApproval}:{}),...(grantToken ? { grantToken } : {}) } });
     } catch (error) {
       if (error.code === "REFUND_APPROVAL_REQUIRED") throw refundHeld("ESYNC_REFUND_APPROVAL_REQUIRED");
       if (["REFUND_UPLOAD_FORBIDDEN", "REFUND_UPLOAD_INVALID", "REFUND_UPLOAD_REPLAY_MISMATCH",

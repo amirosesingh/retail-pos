@@ -10,6 +10,7 @@ const { stableRefundUuid } = createRequire(import.meta.url)("../../../electron/s
 const mocks = vi.hoisted(() => ({
   env: vi.fn(), verify: vi.fn(), scope: vi.fn(), rest: vi.fn(), approve: vi.fn(),
   verifyAuthor: vi.fn(), currentAuthor: vi.fn(),
+  verifyApproval: vi.fn(),
 }));
 vi.mock("../external-supabase-config", () => ({
   runtimeEnvValue: mocks.env,
@@ -20,6 +21,9 @@ vi.mock("@/core/api/relay-policy.server", () => ({ resolveRelayScope: mocks.scop
 vi.mock("../business-authorization.server", () => ({ checkBusinessAuthorization: mocks.approve }));
 vi.mock("../shift-author-verification.server", () => ({
   verifyFinancialAuthorAttestation: mocks.verifyAuthor, readFinancialAuthorPermission: mocks.currentAuthor,
+}));
+vi.mock("../refund-approval-receipt.server", () => ({
+  verifyRefundApprovalEvidence: mocks.verifyApproval, refundApprovalAmountMinor: () => "1230",
 }));
 
 const terminal = { id: "66666666-6666-4666-8666-666666666666", branchId: "A", platform: "pc", mode: "operations" };
@@ -45,6 +49,29 @@ const receipt = {
   stock: [{ product_id: product, branch_id: "A", balance: 7 }],
 };
 const apply = () => applyGroupedRefundUpload(command, proof, pilot, new AbortController().signal);
+function nativeFixture() {
+  const { grantToken: _grant, ...original } = command;
+  const operationId = stableRefundUuid({ refundId: original.refundKey });
+  const itemId = original.lines[0].item_id;
+  const source = { branchId: "A", terminalId: terminal.id, feedEpoch: original.saleId,
+    databaseGuid: original.operationId, installationGeneration: product };
+  const refundJson = JSON.stringify({ domain: "retail-pos.native-refund.v1", scope: source,
+    command: { ...original, operationId }, items: [{ itemId, nativeItemId: itemId,
+      productId: product, nativeMovementId: stableRefundUuid({ refundId: original.refundKey, itemId }) }] });
+  const attestation = { version: 1, algorithm: "Ed25519", keyId: source.databaseGuid, terminalId: terminal.id,
+    projectOrigin: "https://refund-pilot.test", authorId: operator.appUserId, subject: operator.staffUserId,
+    branchId: "A", action: "REFUND", operationId, payloadHash: createHash("sha256").update(refundJson).digest("hex"),
+    signature: Buffer.alloc(64).toString("base64url") };
+  const refundApproval = { approvalJson: "opaque exact companion fixture", approvalAttestation: attestation };
+  const input = { refundJson, attestation, refundApproval };
+  const accepted = { ...receipt, operation_id: operationId, fully_refunded: true, sale_row_version: 2,
+    feed_epoch: source.feedEpoch, feed_seq: "7" };
+  mocks.verify.mockResolvedValue({ kind: "terminal", terminal });
+  mocks.verifyAuthor.mockResolvedValue(attestation);
+  mocks.currentAuthor.mockResolvedValue({ allowed: true, authority: { subject: operator.staffUserId, level: "staff" } });
+  return { input, source, operationId, accepted, send: () => applyGroupedRefundUpload(input,
+    { terminalToken: terminal.id, deviceBindingProof: "a".repeat(64) }, pilot, new AbortController().signal) };
+}
 const route = (extra = {}) => handleSyncRequest(new Request("https://relay.test/api/v1/pos/sync", {
   method: "POST", headers: { "content-type": "application/json" },
   body: JSON.stringify({ ...proof, sqlServerRefund: command, ...extra }),
@@ -59,6 +86,27 @@ beforeEach(() => {
 });
 
 describe("scoped refund command", () => {
+  it("uses the durable signed companion for first native apply without falling back to a transient grant", async () => {
+    const n = nativeFixture(); mocks.verifyApproval.mockResolvedValue({});
+    mocks.rest.mockResolvedValueOnce(Response.json({ ...preflight, operation_id: n.operationId })).mockResolvedValueOnce(Response.json(n.accepted));
+    expect(await (await n.send()).json()).toEqual(n.accepted);
+    expect(mocks.verifyApproval).toHaveBeenCalledWith(expect.objectContaining({ evidence: n.input.refundApproval, terminal,
+      anchor: { anchorKind: "grouped", payloadJson: n.input.refundJson, attestation: n.input.attestation, scope: n.source,
+        operationId: n.operationId, saleId: command.saleId, expectedSaleVersion: 1, amountMinor: "1230" } }));
+    expect(mocks.approve).not.toHaveBeenCalled(); expect(mocks.rest).toHaveBeenCalledTimes(2);
+  });
+  it.each([403, 503])("preserves the original command when companion verification returns %s", async status => {
+    const n = nativeFixture(); mocks.verifyApproval.mockRejectedValue(Object.assign(Error("Safe approval failure"), { status }));
+    mocks.rest.mockResolvedValueOnce(Response.json({ ...preflight, operation_id: n.operationId }));
+    expect((await n.send()).status).toBe(status);
+    expect(mocks.rest).toHaveBeenCalledOnce(); expect(mocks.approve).not.toHaveBeenCalled();
+  });
+  it("returns an exact accepted native receipt before requiring a renewed manager approval", async () => {
+    const n = nativeFixture(); mocks.verifyApproval.mockRejectedValue(Object.assign(Error("Approver now revoked"), { status: 403 }));
+    mocks.rest.mockResolvedValueOnce(Response.json(n.accepted));
+    expect(await (await n.send()).json()).toEqual(n.accepted);
+    expect(mocks.verifyApproval).not.toHaveBeenCalled(); expect(mocks.approve).not.toHaveBeenCalled();
+  });
   it("requires an exclusive endpoint request and exact pilot configuration before checking identity", async () => {
     const env: Record<string, string> = {
       POS_GROUPED_FEED_PILOT_PROJECT_URL: "https://refund-pilot.test",

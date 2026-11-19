@@ -9333,3 +9333,267 @@ Run only affected tests/owned fixtures, independently review the shared paths,
 and update beta PRs as reviewable slices pass. Record implemented, tested and
 installed acceptance separately. Update permanent rules with proved behavior;
 do not call the whole POS verified from matching counts or empty tables.
+
+Source validation checkpoint: PR #474 passed CI and merged as 656c395a; PR #475
+passed CI and merged as b27e6316. PR #476's two stale test contracts were corrected
+at dc7a8e66, with 136 affected tests passing. That head passes source, SQL,
+lint, TypeScript and build checks; the high picomatch audit now blocks merge.
+Latest published picomatch is 4.0.7 and GHSA-fc5q-39xc-vjpf has no published fix.
+No audit exclusion, forced downgrade or dependency update was made. Refund/transfer
+admission passed 196 tests and independent review; the combined affected set is
+610 passing tests across 29 suites. PR #477's two older financial/request fixtures
+now model the Main refund grant and verified transfer handoff; their existing
+awaited-success and pending-child denial assertions remain. Rules and the
+[evidence report](database/beta-local-first-recovery-2026-11-18.md) now record the
+proved source behavior and separate acceptance boundaries.
+
+Remaining protocol code at that checkpoint: durable manager approval for grouped offline refunds,
+including approval renewal/recovery after the temporary hosted proof expires or
+is lost on restart. Unsupported PIN-required grouped refunds stop before commit;
+existing saved work is not acknowledged or cleared. This is not complete offline
+financial acceptance. Installed/restart/two-till smoke testing and another paired
+installer release remain separate from the source fixes; no publication requested
+in this implementation turn. Production and installed databases remain unchanged.
+
+## 18 November — durable refund approval and restart recovery
+
+After reviewing the two unfinished cases, the owner explicitly requests
+"Complete it": manager approval while offline, and approval expiry or an Electron
+restart before upload. Implement both through the existing settings and grouped
+refund pipeline. Recoverable baseline is beta b27e6316 plus the reviewed pending
+startup/refund dependencies at 6eff912f, combined as 457436c7 on
+codex/beta-durable-refund-approval. Update the existing beta refund PR #477.
+
+Use agents for the native and hosted contract and independent review. Preserve
+v1 queued signed bytes and accepted receipts. Save any new approval evidence with
+the refund's existing local transaction/evidence, never a second queue. Bind it
+to the actual author, verified approver, branch, terminal/source, stable operation,
+sale/version and exact amount. Keep PINs, person sessions and general bearer
+credentials out of the journal. Recheck the applicable settings, permissions and
+scope; a revoked or unprovable approval is retained for review, never bypassed.
+
+Add only the narrow versioned approval contract needed for offline upload and
+restart-safe retries. No additional settings, changed operator configuration,
+invented manager signatures/enrollment or financial timestamp winner selection.
+Run focused native/hosted/SQL fixtures and compatibility/negative/retry tests.
+Document code, fixture results, installed acceptance, CI and release separately.
+This authorizes source and isolated fixtures; no production/live schema write,
+installed business-data manipulation or new installer publication is implied.
+
+Implementation completed in the source follow-up: one separately signed approval
+companion saved atomically with grouped/FIN62 refunds; exact-operation hosted
+certificates through the existing verifier; restart-safe upload and accepted
+receipt replay; fresh approval attachment to original legacy work; existing
+settings, named request routes and current authority preserved. No second queue,
+monetary re-signing, stock rerun or credential persistence. Found and fixed the
+offline new-sale/refund first-upload dependency with a signed eligibility date;
+metadata remains separate from business acceptance.
+
+Verification: 431 affected tests in 28 suites passed together; 11 existing
+event/close lifecycle checks and eight disposable LocalDB groups passed. Includes
+real manager PIN without manager sign-in, transaction rollback, expiry/restart,
+single stock effect, source/person changes, exact receipt replay, current
+revocation, new-sale/refund metadata ordering and date tamper denial. Independent
+agent review, scoped lint, native syntax, schema/package/registry consistency and
+diff checks passed. See the [evidence report](database/beta-local-first-recovery-2026-11-18.md)
+for fixture boundaries. Source migration adds only the service-only read receipt
+RPC and remains unapplied. Hosted/installed two-till acceptance, exact-head CI,
+merge and a fresh explicitly requested installer publication are separate gates.
+
+The first source CI head `84e4a388` passed native/Worker builds but exposed four
+import/generator compatibility fixtures. Corrected pure rules resolution, the
+native/Worker module boundary (one unchanged shared financial comparator), and
+deterministic receipt-probe generation. All four now pass within the final
+431-test combined run; 19 isolated PostgreSQL generator/graph scenarios also
+pass. No test exclusion or dependency-audit waiver. Await the corrected exact
+head's automatic checks before any merge.
+
+At `865a1472`, full application and the SQL/upgrade/shift/transfer/history stages
+pass. Added the new migration to the notification fixture's explicit temporary
+project copy list; its 23 isolated upgrade scenarios now pass. No notification
+runtime or permission changes. Keep the final exact-head gate intact.
+
+## 18 November — owner-authorized beta migration, acceptance and publication
+
+Owner explicitly requests: "Kindly use agents to resolve the audit blocker,
+complete the migration and two-till tests on Retail POS Beta only, then merge
+PR #477 and publish beta once everything passes. Don't touch production or
+saved local data." This supersedes the prior source-only scope for the exact
+isolated Beta target and gives conditional beta publication authority after
+the audit, migration, hosted acceptance and required CI gates pass. It does
+not authorize production promotion, operator database writes or deletion of
+retained local work.
+
+Starting reviewed head is `9a7e36d0`; beta remains `b27e6316`. Full CI passes
+7,677 application tests, SQL/upgrade/permissions/history/notification checks,
+lint, TypeScript/build and native/beta Worker builds; only dependency audit is
+red. Agents assess the dependency root and safe upgrade, review hosted schema
+prerequisites and prepare the existing two-till harness independently.
+
+Verified through the lucky Supabase connector: `irjkmhgrjgcaoixcixut` is named
+Retail POS Beta, organization `fdcvzkttecaczesclvgd`, ACTIVE_HEALTHY, PostgreSQL
+17.11.0.018. Pin and recheck that identity for the reviewed additive migration
+and test records. Never query or modify production. Use owned disposable local
+test databases and new clearly marked Beta fixture records, not POS_Local_Beta
+or installed profiles. Keep secrets in existing sealed/server settings and out
+of logs/chat. Preserve the existing audit gate and signing keys; no waiver,
+force downgrade, reset or fake successful acknowledgement.
+
+Hosted migration completed: only the read-only receipt probe was applied using
+an atomic exact-system/prerequisite guard. Supabase ledger `20261118053019`
+maps to source `20261117233612`; independent postflight matches source MD5
+`939a54a94ceb0498f57493574ac903bf`, postgres owner, pinned search path and
+service-only execution. Counts remain nine sales/eleven items/zero financial
+nodes; no existing Beta record, production target or saved local database was
+changed. Security advisors report no mention of the new function.
+
+Fresh acceptance manifest `beta477-bc4887dc` pins the reviewed source, exact Beta
+target and three newly marked test branches. Current-source relay and adapters
+were prepared; old sealed fixtures/epochs were not reused. The owner started
+the reviewed HTTPS loopback relay on port 18446 with a masked Beta-only key.
+The key remains server-side in process memory.
+Dependency assessment confirms no published patched picomatch release and a
+behavior-changing upstream candidate; no dependency edits or audit waiver.
+
+Actual financial offline split-sale/PIN-refund capture and SQL/runtime restart
+passed, with independent cloud absence before reconnect. Hosted upload exposed
+locale-sensitive fact validation and a separate refund stock CT escape. Keep
+the failed marked fixture's stock 22/OPEN/no-sale evidence intact. Corrected
+strict field ordering is applied to Beta (source `20261118060529`, hosted
+ledger `20261118061241`); owner-only privileges, strict/invoker/immutable and
+pinned search path are unchanged. Actual linguistic-collation regressions,
+receipt/first-upload fixtures, canonical/generator and notification checks pass.
+The native stock fix passes 76 focused tests and 12 owned ODBC SQL groups.
+Fresh hosted acceptance and exact reviewed-head CI are still required.
+
+The retained FIN62 retry now passes original-operation recovery after a separate
+Node run and actual owned SQL process restart. A one-line UUID wrapper fix keeps
+SQL Server uppercase operation IDs from being mistaken for missing approval;
+52 adjacent cases pass and signed bytes are unchanged. Independent hosted
+read-back confirms refunded quantity two, cash/card 7.50 each, stock 20 and
+exactly one -2 sale and one +2 refund movement; both local replicas agree.
+Metadata ACKs remain separate from business acceptance and the manager never
+signed in/enrolled. Earlier failed synthetic data is retained explicitly.
+
+The grouped retry retained its own databases on an initial recovery refusal.
+Historical SHA-derived publication UUIDs can be valid PostgreSQL values without
+RFC version/variant bits. Correcting only the read-only publication ID validator
+passes 34 focused feed/recovery/Worker tests; entity, command, author, graph and
+branch checks are unchanged. Local relay rebuild and same-database continuation
+are in progress; no full grouped/cursor/hosted-certificate pass is claimed yet.
+
+The new relay admits the historical shift publication unchanged. Retained-till
+handoff then exposed a cash-birth comparison against an already bootstrapped,
+canonically refunded receipt. The native correction consults only a later
+accepted full receipt graph in the same pinned archive, preserves immutable
+birth fields and complete child sets, and retains journal/CT refusal and atomic
+stock/cursor rollback. Independent review found and verified fixes for extra
+children and tender JSON amount invariants. 78 focused checks and eight actual
+owned ODBC recovery groups pass; same-GUID hosted continuation is in progress.
+Multiple correction kinds on one receipt still conservatively require review.
+
+At `afc37261`, automatic permission/application, database and lint checks passed.
+Typecheck found seven errors in the two new test fixtures' inferred types; three
+typing-only lines correct them without changing assertions or runtime behavior.
+Both affected suites pass (21 tests) with no remaining diagnostics in those
+files. The next exact head must pass clean CI, and the dependency audit remains
+an independent external release gate.
+
+The actual grouped offline PIN/lost-ACK/two-till expired-cursor test now passes,
+including both verified handbacks at sequence five and one current refund
+movement with stock 20. At exact head `24bde46d`, 7,723 tests and all other
+SQL/permissions/lint/typecheck/build/platform checks pass; only the unchanged
+unpatched picomatch high audit fails. See the evidence report for the original
+operation and source/runtime boundaries.
+
+The CARD fixture was corrected using the actual POS payment mapper, preserving
+the earlier incomplete local-only test. Its accepted sale then exposed a real
+hosted-approval issuer error: a verified named Auth user was incorrectly forced
+to supply a PIN session. Aligning with existing grouped admission keeps all
+device/witness/scope/manager/expiry checks and explicitly denies machine and
+unbound/revoked PIN callers. Seventy focused tests pass with no changed-file
+TypeScript diagnostics. Same-operation hosted refund acceptance is in progress;
+no publication or production change is authorized by a test result alone.
+
+An earlier grouped cash attempt committed locally, restarted, uploaded and converged
+on both tills. Its real offline manager PIN refund retained signed approval
+across SQL/runtime restart and expiry and reached Beta exactly once (stock 20).
+The lost-ACK harness allowed an internal retry and then rejected its legitimate
+audit aggregate; this is not a completed restart/replay/cursor scenario. Fix
+only that test adapter, retain failed evidence, and use new marked test identities
+without resetting the old accepted operations.
+
+The fresh grouped CASH retry and separate CARD/hosted-certificate scenario now
+both pass, including real two/five-minute approval expiry, a lost business
+reply, actual fresh-process replay of the original signed operation, real
+expired cursors, existing HTTPS archive recovery and both verified handbacks.
+The FIN62 split-sale/offline-PIN slice also passes. Each of the three current
+owned slices converges to stock 20 with its refund applied once; earlier failed
+synthetic fixtures remain retained. See the dated evidence report for exact
+IDs, runtime fingerprints and the separate installed-UI/booking boundaries.
+
+At reviewed runtime head `9e458546`, automatic CI passes 7,730 tests (11 existing
+skips), all database/upgrade/permissions stages, lint, TypeScript/build, Android
+compile and the unpublished iPhone build. Only dependency audit fails. A fresh
+18 November 08:48 UTC primary-source check still finds official picomatch 4.0.7,
+no published patched version, and upstream PR 269 open/unmerged. No waiver,
+forced downgrade or replacement fork was introduced.
+
+Central catalogue/stock/transfer and booking RPC acceptance now passes on the
+same owned Beta run. SKU allocation, independent approval, branch restrictions,
+dispatch replay, receipt/verification and zero-stock catalogue membership pass.
+Booking cash/card partials, overpayment/foreign-branch denials, unpaid handover
+rollback, final settlement/change and original-receipt replay pass. The adapter
+initially misread the existing P0001/domain-message error contract; a verified
+same-fixture continuation preserved the accepted cash 10 and all stock/transfer
+records. No product guard or saved transaction was changed to make it pass.
+Independent final read-back confirms the expected sale/payment/stock aggregates
+and all 20 original Beta sale/item hashes unchanged (zero missing/changed).
+Installed UI, native transfer-barrier acceptance and disconnected native booking
+remain separate coverage boundaries; grouped booking still holds before writes.
+Keep PR merge and installer publication blocked by the required audit gate.
+
+## 19 November — refresh withdrawn dependency advisory and release checks
+
+The owner again requests agents to resolve the audit blocker, finish PR #477,
+then merge and publish beta only after passing checks. Official advisory
+GHSA-fc5q-39xc-vjpf was withdrawn on 18 November at 15:38:56 UTC. The unchanged
+lockfile's fresh high-severity audit now passes (exit 0, high/critical zero,
+18 moderate). No forced upgrade, fork, waiver or threshold change is needed.
+The failed exact-head CI job is being refreshed against the corrected feed.
+
+The beta release guide's old production-database paragraph must reflect the
+already isolated Retail POS Beta project. Keep device database settings,
+Cloudflare beta bindings, production and saved local work intact. The existing
+hosted two-till/stock/central-booking evidence remains valid for unchanged
+runtime sources; documentation updates do not certify additional UI/native
+workflows. Await required exact-head checks before merge and publication.
+
+The owner also explicitly requests merging all open Dependabot PRs. The five
+updates (#462 barcode scanning, #463 Vitest, #464 Alert Dialog, #465 Tailwind
+Vite, #466 Capacitor CLI) were refreshed from beta, independently reviewed and
+merged only after their new application/SQL/audit and platform checks passed.
+Combined beta is `b5c5d9eb`; isolated dependency UI smoke and combined final
+checks remain required before publication. No production promotion occurred.
+
+Reviewing #477 also confirmed an outdated but unresolved renderer retry issue:
+after a locally committed refund loses its IPC response, the caller discarded
+Main's native handle and fresh authorization stopped at `EALREADY`. A narrowly
+fenced transient attempt runner is being verified with the actual authorization
+service and receipt repository; preserve exact replay, context/expiry checks
+and one post-ACK reconciliation. No native policy/schema bypass is permitted.
+
+The focused correction now passes 90 tests across six affected suites, including
+the actual receipt confirmation callback, button props and PosProvider callback
+with the real Main authorization service and receipt repository. It confirms
+the original saved receipt after a lost reply without a fresh UI issuer,
+repeated stock, duplicate activity or another hold. Current actor/branch/amount,
+connection replacement, stale completion, revocation, missing receipt and
+expiry/retention boundaries remain guarded. No Main/native SQL changes.
+
+The five-dependency beta combination also passes its automatic CI, 46 focused
+UI unit tests and all 46 isolated cold-browser scenarios. The first browser run
+hit an optimizer-discovery harness defect; explicitly scanning its generated
+node_modules fixture entry fixes that setup with no assertion/error suppression.
+The failed cache/results remain preserved. Await final #477 combined-head CI,
+merge and selected-beta checks before the already authorized publication.

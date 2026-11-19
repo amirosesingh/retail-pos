@@ -11,8 +11,9 @@ function createGroupedRefundRuntime({ configured, cash, cloud, coordinator, conn
   function pruneGrants() {
     for (const [id, value] of grants) if (Date.now() >= value.expiresAt) grants.delete(id);
   }
-  async function commit(repository, args, financialContext, capture, grantToken) {
-    const legacy = () => repository.refund(args, financialContext, { legacyFence: true, assertCurrent: capture.assertCurrent });
+  async function commit(repository, args, financialContext, capture, grantToken, authorization = null) {
+    if (configured && authorization?.requiresPin && !authorization.durable) throw Object.assign(new Error("This refund requires a fresh central approval before saving."), { code: "EONLINE_REQUIRED" });
+    const legacy = () => repository.refund(args, financialContext, { legacyFence: true, assertCurrent: capture.assertCurrent }, authorization);
     if (!configured || repository !== legacyRepository()) return legacy();
     return coordinator.withExclusive(async () => {
       capture.assertCurrent();
@@ -26,8 +27,8 @@ function createGroupedRefundRuntime({ configured, cash, cloud, coordinator, conn
       const assertCurrent = () => { capture.assertCurrent(); active.assertCurrent(); author.assertCurrent(); };
       assertCurrent();
       const result = await repository.refund(args, financialContext, { source: active.scope, author, assertCurrent,
-        sourceFingerprint: active.source.fingerprint });
-      if (grantToken) {
+        sourceFingerprint: active.source.fingerprint }, authorization);
+      if (grantToken && !grantToken.startsWith("native-refund-v1:")) {
         pruneGrants();
         if (grants.size >= 128) grants.delete(grants.keys().next().value);
         grants.set(stableRefundUuid({ refundId: args.refundId }), { token: grantToken, expiresAt: Date.now() + GRANT_CACHE_MS });

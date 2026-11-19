@@ -18,6 +18,7 @@ import { extendedPayments, extendedTenderFields } from "../../electron/sync/sale
  */
 import { z } from "zod";
 import { syncAggregateSchema } from "./sync-shift-intent.server";
+import { refundApprovalEvidenceSchema } from "./sync-refund-approval-schema";
 
 const opSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -172,8 +173,12 @@ const groupedFinancialChangeSchema = groupedSettingsChangeSchema.extend({
   table_name: z.enum(["sales", "sale_items", "payment_transactions", "stock_delta_applied", "products", "shifts",
     "drawer_events", "stock_transfers"]),
 });
+// These are immutable publication identities, not native command/author IDs.
+// Existing SQL publishers derive them directly from SHA bytes cast to uuid;
+// PostgreSQL permits those canonical values without RFC version/variant bits.
+const publishedFinancialOperationId = z.string().regex(/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/);
 const groupedFinancialGroupSchema = z.object({
-  seq: feedSequence, operation_id: z.string().uuid(),
+  seq: feedSequence, operation_id: publishedFinancialOperationId,
   financial: z.union([
     z.object({ kind: z.enum(["refund_v1", "tender_v1"]), sale_id: z.string().uuid() }).strict(),
     z.object({ kind: z.literal("shift_v1"), shift_id: z.string().uuid() }).strict(),
@@ -670,7 +675,7 @@ const bodySchema = z.object({
     attestation: z.unknown(),
   }).strict().optional(),
   sqlServerFinancialCapability:z.object({organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128),shiftId:z.string().uuid().optional()}).strict().optional(),
-  sqlServerFinancialEvent:z.object({organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128),operationJson:z.string().min(2).max(6*1024*1024),proof:z.unknown()}).strict().optional(),
+  sqlServerFinancialEvent:z.object({organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128),operationJson:z.string().min(2).max(6*1024*1024),proof:z.unknown(),refundApproval:refundApprovalEvidenceSchema.optional()}).strict().optional(),
   sqlServerFinancialBasis:z.object({organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128),shiftId:z.string().uuid()}).strict().optional(),
   sqlServerFinancialObservation:z.object({organizationId:z.string().min(1).max(128),branchId:z.string().min(1).max(128),operationJson:z.string().min(2).max(16384)}).strict().optional(),
   sqlServerShiftGraph: z.object({
@@ -963,6 +968,8 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     const signedStart = body.sqlServerAggregate?.shiftClosingStart;
     const signedFinancialBasis=body.sqlServerAggregate?.shiftFinancialBasis;
     const signedFinancialEventProof=body.sqlServerFinancialEvent?.proof;
+    const signedRefundApproval=body.sqlServerFinancialEvent?.refundApproval;
+    const signedFinancialRefundApprovals=body.sqlServerAggregate?.financialRefundApprovals;
     const signedFinancialOpening=body.sqlServerAggregate?.shiftFinancialOpening;
     const signedRecovery=body.sqlServerLegacyRecovery;
     body = alignVerifiedScopeIds(body, scope);
@@ -970,6 +977,8 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     if (signedStart && body.sqlServerAggregate) body.sqlServerAggregate.shiftClosingStart = signedStart;
     if(signedFinancialBasis && body.sqlServerAggregate)body.sqlServerAggregate.shiftFinancialBasis=signedFinancialBasis;
     if(signedFinancialEventProof!==undefined&&body.sqlServerFinancialEvent)body.sqlServerFinancialEvent.proof=signedFinancialEventProof;
+    if(signedRefundApproval!==undefined&&body.sqlServerFinancialEvent)body.sqlServerFinancialEvent.refundApproval=signedRefundApproval;
+    if(signedFinancialRefundApprovals!==undefined&&body.sqlServerAggregate)body.sqlServerAggregate.financialRefundApprovals=signedFinancialRefundApprovals;
     if(signedFinancialOpening&&body.sqlServerAggregate)body.sqlServerAggregate.shiftFinancialOpening=signedFinancialOpening;
     // Recovery labels and raw graph text were signed by Main. Scope alignment
     // must never edit those bytes; the verifier checks them against the binding.
@@ -1381,16 +1390,28 @@ export async function handleSyncRequest(request: Request): Promise<Response> {
     }
     if(body.sqlServerFinancialEvent){
       if(!verifiedTerminal)return Response.json({ok:false,code:'TERMINAL_REQUIRED',error:'A verified terminal is required.'},{status:403});
-      const {verifyFinancialOperationEnvelope}=await import('./sync-financial-operation.server');
-      const {organizationId,operationJson,proof}=body.sqlServerFinancialEvent;
+      const {verifyFinancialOperationEnvelope,verifyFinancialRefundApproval,readFinancialRefundEventReceipt}=await import('./sync-financial-operation.server');
+      const {organizationId,operationJson,proof,refundApproval}=body.sqlServerFinancialEvent;
       try{
         const verified=await verifyFinancialOperationEnvelope({envelope:{organizationId,operationJson,proof},terminal:verifiedTerminal,branchId});
         body.sqlServerFinancialEvent.proof=verified.proof;
+        if(verified.event.action==='REFUND'){
+          const prior=await readFinancialRefundEventReceipt({organizationId,branchId,terminalId:verifiedTerminal.id,operationJson,proof:verified.proof,signal:request.signal});
+          if(prior)return Response.json(prior);
+          await verifyFinancialRefundApproval({operationJson,attestation:verified.proof,refundApproval,terminal:verifiedTerminal,branchId,signal:request.signal});
+        }else if(refundApproval!==undefined)throw new Error('Approval evidence is limited to refund events');
       }catch(error){
         const unavailable=error&&typeof error==='object'&&'status' in error&&error.status===503;
         const invalid=error&&typeof error==='object'&&'status' in error&&error.status===403;
-        return Response.json({ok:false,code:unavailable?'EFINANCIAL_AUTHOR_UNAVAILABLE':invalid?'EFINANCIAL_AUTHOR_INVALID':'EFINANCIAL_OPERATION_INVALID',error:unavailable?'Financial author verification is temporarily unavailable.':'The financial operation could not be verified.'},{status:unavailable?503:invalid?403:400});
+        const approval=error&&typeof error==='object'&&'code' in error&&String(error.code).includes('REFUND');
+        return Response.json({ok:false,code:approval?'ESYNC_REFUND_APPROVAL_REQUIRED':unavailable?'EFINANCIAL_AUTHOR_UNAVAILABLE':invalid?'EFINANCIAL_AUTHOR_INVALID':'EFINANCIAL_OPERATION_INVALID',error:unavailable?'Financial author verification is temporarily unavailable.':approval?'The saved refund is waiting for verified authorization.':'The financial operation could not be verified.'},{status:unavailable?503:invalid?403:400});
       }
+    }
+    if(body.sqlServerAggregate?.financialLedgerProjection){
+      if(!verifiedTerminal||verifiedTerminal.platform!=='pc'||verifiedTerminal.mode!=='operations')return Response.json({ok:false,code:'TERMINAL_REQUIRED',error:'A verified operating till is required.'},{status:403});
+      try{const {verifyFinancialRefundProjection}=await import('./sync-financial-operation.server');
+        await verifyFinancialRefundProjection({items:body.sqlServerAggregate.financialRefundApprovals,operations:body.sqlServerAggregate.operations,terminal:verifiedTerminal,branchId,signal:request.signal});}
+      catch(error){const unavailable=error&&typeof error==='object'&&'status' in error&&error.status===503;return Response.json({ok:false,code:'ESYNC_REFUND_APPROVAL_REQUIRED',error:'The saved refund is waiting for verified authorization.'},{status:unavailable?503:403});}
     }
     if(body.sqlServerFinancialCapability&&(!verifiedTerminal||verifiedTerminal.platform!=='pc'||verifiedTerminal.mode!=='operations'))return Response.json({ok:false,code:'TERMINAL_REQUIRED',error:'A verified operating till is required.'},{status:403});
     if(body.sqlServerFinancialObservation){

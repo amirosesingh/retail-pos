@@ -111,6 +111,109 @@
   Preserve the explicit commit target and the approved unavailable-SQL fallback;
   an actual local write failure must remain a failure rather than silently
   switching the operation to the cloud.
+- With a native bridge, treat unreadable, malformed, recovering or enabled-but-unready
+  local SQL state as a blocked supported write, never as an empty/unconfigured database. Choose
+  the existing central writer only through the verified SQL-disabled state or
+  existing web, Management and approved online-session routes. A verified local
+  route with a missing native writer requires retry/update, not a cloud fallback.
+- For store-rule changes, the existing native edit queue owns the supported
+  `block_shift_close_on_hold` and `max_drawer_cash_limit` patches while online as
+  well as offline. Preserve exact decimal values, expected revisions, stable
+  operation IDs and uncertain-response/context fences. Other or mixed rule
+  edits retain the authorized central workflow and explain that target before
+  save. Do not add unsupported native policy or cluster authority implicitly.
+- Display bootstrap as preparation. Show protected shift review only for an
+  explicit registered shift-domain hold; generic item, stock or count failures
+  are not grounds for a financial comparison login. Older async snapshots and
+  retries must not overwrite newer readiness or connection state.
+- Keep online terminal revocation reads at ten seconds and security wake signals
+  immediate. Coalesce successful presence writes to sixty seconds per current
+  registration/client, retry failed writes and retain unreported sync progress.
+  Never discard all terminal-table signals to reduce idle work. Reuse verified
+  empty recovery ranges only within the same serializable transaction; do not
+  cache empty/proven state across cycles, identities, pools or protected writes.
+- Label equal table counts as counts only. Reserve content verification for the
+  actual signature comparison; a zero journal or deferred Membership service
+  does not certify every workflow. The [18 November evidence](docs/database/beta-local-first-recovery-2026-11-18.md)
+  separates source/fixture checks from installed offline, restart and hosted
+  acceptance. Keep that distinction when updating these rules after a release.
+- Require Main-owned, purpose-bound admission for every native refund, including
+  direct IPC calls. Recheck the current actor, local receipt, exact amount,
+  branch, policy and context inside the refund transaction. Direct authorized
+  users do not need an additional approval PIN or override reason. Hosted
+  approvals must be verified by Main against the existing authenticated service;
+  never extend their precommit expiry or fabricate a local approver audit. Keep credentials
+  out of persisted records and retain stable receipt-proven replay after a lost
+  reply. New grouped and FIN62 refunds save a separately signed, exact-operation
+  approval companion with their original transaction and existing journal.
+  Main's current operator key witnesses a verified synced manager PIN; it does
+  not impersonate the manager or require that manager to sign in on this PC.
+  Follow branch/global Refund approver rules and their existing fallback,
+  offline-approval and online-only settings. Direct authority adds no extra PIN.
+  Admission handles still expire before commit. A committed companion survives
+  normal handle expiry and restart; verify current original-author, reviewer,
+  approver and rule authority before first cloud acceptance. An exact previously
+  accepted receipt is replayed without another financial effect. Metadata ACKs
+  never prove business acceptance. Missing or revoked authority keeps work held.
+  Hosted verification supports both a named human Auth session and a valid
+  revocable terminal-bound PIN session, through the existing admission policy.
+  Keep the verified operations-PC, witness, branch and approval checks; do not
+  require password users to establish another PIN session. Reject machine
+  identities and unbound or revoked PIN proofs.
+  Retain Main's native handle for the same uncertain renderer refund attempt;
+  coalesce authorization, save and post-ACK reconciliation. Retry through Main
+  and the existing receipt-proven repository path instead of authorizing a new
+  refund or bypassing `EALREADY`. Fence transient attempts to the current actor,
+  session, branch, receipt amount and database context. Clear them on context
+  change; unused expired admission needs fresh explicit approval. This does not
+  extend admission expiry or Main's existing replay-retention deadline.
+  Receipt confirmation must consult that same bound uncertain attempt before
+  requesting fresh UI approval; a background `refunded` flag alone cannot
+  confirm it. Keep Main's receipt proof and ordinary first-attempt policy.
+  A never-uploaded FIN62 sale/refund uses Main's separately signed creation-date
+  witness for refund-age eligibility, with current policy and exact original
+  financial facts. Match an existing central date or the new projected row;
+  never fabricate a central sale or wait on that row before registering its
+  required financial metadata. Grouped/hosted issuance keeps canonical checks.
+  Share pure protocol, transport-schema and exact comparison helpers between
+  native and hosted verification. Keep Electron persistence/drivers and React
+  initialization outside Worker imports; verify the actual Worker boundary
+  when changing these shared modules.
+- Keep every unaccepted financial transaction's rows under its existing journal
+  ownership, including `stock_delta_applied.movement_id`. A held, failed,
+  paginated or ambiguously acknowledged transaction must not leak its remaining
+  effects through independent Change Tracking uploads. Retain dependent groups
+  together, use the registry's actual primary key, and recheck pending ownership
+  inside the existing serializable row capture. Only exact business acceptance
+  permits the corresponding journal/checkpoint progress.
+- Validate machine-protocol field sets with explicit byte ordering, independent
+  of the hosted database's locale. Preserve strict fields, types, financial
+  bytes and function privileges. Test a real linguistic collation as well as
+  ordinary fixtures; do not change the database locale or weaken validation to
+  admit a valid event.
+  Normalize SQL UUID lookup arguments at the storage boundary without changing
+  signed payloads. Historical SHA-derived publication IDs use canonical
+  PostgreSQL UUID syntax; their read-only transport field must preserve those
+  IDs. Keep command, author, entity and authorization UUID checks unchanged.
+- During atomic extended snapshot recovery, preserve an already corrected cash
+  receipt only when a later accepted correction in that same hash-verified pin
+  proves the exact current full receipt graph, complete item/tender sets and
+  immutable cash-birth fields. Retain the existing journal and Change Tracking
+  holds; commit correction, stock proof and cursor together. A newer timestamp
+  or revision alone never authorizes skipping or replacing a receipt.
+- Recover approval for a saved refund by attaching fresh verified evidence to
+  its original operation through the existing write/recovery barrier and sync
+  coordinator. Never refund again, repeat stock, change signed monetary bytes,
+  replace chain history or fabricate an old manager/source signature. Legacy
+  FIN62 evidence may use a clearly identified review reference for the exact
+  original operation, bound to the source verified now; it is not an invented
+  historical refund key. Missing or ambiguous original evidence remains held.
+- Transfer drafts use the existing local transaction/journal. Before centrally
+  coordinated approval, dispatch, receipt or verification, require Main's current
+  stage permission, correct source/destination branch and the existing verified
+  final-upload barrier. Recheck the local transfer identity/version after the
+  barrier. Retain the draft and give a clear online/pending-upload result when
+  the handoff fails; do not submit an action against an unacknowledged dependency.
 - Pending offline work must survive restart, slow connectivity and long offline
   periods. Change Tracking expiry and history-retention policies must not erase,
   acknowledge or overwrite unsynchronized work. Test expired-history recovery
@@ -459,6 +562,11 @@ that device builds require. The guard lives in
   restart test. Preserve unobserved steps as pending and keep each result scoped
   to its tested workflow. See the [17 November beta smoke evidence](docs/database/beta-sync-smoke-2026-11-17.md);
   that report is revision-specific evidence, not blanket POS certification.
+- Build financial smoke fixtures through the actual domain builder/API and
+  validate their required evidence before saving test money. Preserve the exact
+  owned database, operation and sealed keys on unexpected failure so a fresh
+  process can resume them. Never rewrite saved financial facts, clear pending
+  work or relax production validation to repair an incomplete test fixture.
 
 ## Controlling POS architecture: branch-locked normal terminals
 

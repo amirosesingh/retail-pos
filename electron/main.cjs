@@ -197,10 +197,9 @@ const shiftFinancialRuntime = new (require('./db/shift-financial-runtime.cjs').S
 });
 const authorizationRulesRepository = new AuthorizationRulesRepository(databaseManager);
 const { OfflineApprovalService, OfflineApprovalStore } = require("./offline-approval-service.cjs");
-const offlineApprovalService = new OfflineApprovalService({
-  captureScope: () => {
+function captureOfflineApprovalScope(permission = "can_process_sale") {
     const identity = adminSession.identity(), terminal = terminalStore.read();
-    if (!adminSession.hasPosAuthority() || !adminSession.hasPermission("can_process_sale") || !identity?.authorId || isManagementDevice() || !databaseManager.pool || !databaseService.snapshot().tradingReady || !terminal?.tokenId || !localBranchId())
+    if (!adminSession.hasPosAuthority() || !adminSession.hasPermission(permission) || !identity?.authorId || isManagementDevice() || !databaseManager.pool || !databaseService.snapshot().tradingReady || !terminal?.tokenId || !localBranchId())
       throw Object.assign(new Error("Sign in on the registered branch terminal before approving a bill."), { code: "EPRIVILEGE" });
     adminSession.touch();
     const pool = databaseManager.pool, epoch = adminSession.epoch();
@@ -208,7 +207,19 @@ const offlineApprovalService = new OfflineApprovalService({
     const expected = stamp();
     const assertCurrent = () => { if (databaseManager.pool !== pool || stamp() !== expected) throw Object.assign(new Error("The signed-in operator or terminal changed. Request approval again."), { code: "EAPPROVAL_CONTEXT" }); };
     return { branchId: localBranchId(), terminalId: recordId(terminal.tokenId), requester: identity.canonicalSubject ?? identity.subject, requesterId: recordId(identity.authorId), epoch, assertCurrent };
-  },
+}
+const offlineApprovalService = new OfflineApprovalService({
+  captureScope: () => captureOfflineApprovalScope(),
+  verify: (username, pin, scope) => verifySyncedApprovalPin(databaseManager.pool, username, pin, scope.branchId,
+    { verifyTotp: approvalTokenVerifier.verify, identifyTotp: approvalTokenVerifier.identify, prepareTotp: approvalTokenVerifier.prepare }),
+  store: new OfflineApprovalStore(databaseManager, operationsRepository),
+});
+const refundApprovalService = new (require("./refund-approval-service.cjs").RefundApprovalService)({
+  captureScope: () => captureOfflineApprovalScope("can_process_refund"),
+  allowPin: () => true,
+  captureSource: captureRefundApprovalSource,
+  readPending: (scope, saleId, operationId, tx) => require("./sync/refund-recovery-native.cjs").readPendingOriginal(databaseManager, scope, saleId, operationId, tx),
+  verifyHosted: require("./refund-hosted-authority.cjs").createHostedRefundVerifier({ backend: () => authorizationServerUrl(), terminal: () => terminalStore.read() }),
   verify: (username, pin, scope) => verifySyncedApprovalPin(databaseManager.pool, username, pin, scope.branchId,
     { verifyTotp: approvalTokenVerifier.verify, identifyTotp: approvalTokenVerifier.identify, prepareTotp: approvalTokenVerifier.prepare }),
   store: new OfflineApprovalStore(databaseManager, operationsRepository),
@@ -547,10 +558,15 @@ function prepareLocalData({force=false}={}){
       // A healthy SQL connection is not proof of a complete local snapshot.
       // Preserve offline access only if this run already qualified that cache;
       // first/incomplete bootstrap failures keep the gate without disconnecting SQL.
-      const detail={phase:"sync_pending",syncReady:false,code:error?.code??"EBOOTSTRAP",error:String(error?.message??error),differences:error?.differences};
+      const registeredTables=syncRegistry.tables.map(table=>table.cloudTable);
+      const failureDiagnostic=diagnostics.bootstrapDiagnostic(error,registeredTables);
+      let sourceTable;
+      try{sourceTable=Object.getOwnPropertyDescriptor(error,"table")?.value;}catch{/* Diagnostic fields do not replace the failure. */}
+      const table=registeredTables.includes(sourceTable)?sourceTable:failureDiagnostic.table;
+      const detail={phase:"sync_pending",syncReady:false,code:error?.code??"EBOOTSTRAP",error:String(error?.message??error),differences:error?.differences,...(table?{table}:{})};
       if(localDataLifecycle.preserveCachedReady?.())databaseService.markReady(detail);
       else databaseService.transition("enabled_bootstrapping",detail);
-      diagnostics.logConnection("synchronization.bootstrap.failed", { category:"synchronization", stage:"bootstrap", code:error?.code??"EBOOTSTRAP", message:String(error?.message??error), ...diagnostics.sqlErrorDiagnostic?.(error), ...diagnostics.bootstrapDiagnostic(error,syncRegistry.tables.map(table=>table.cloudTable)) });
+      diagnostics.logConnection("synchronization.bootstrap.failed", { category:"synchronization", stage:"bootstrap", code:error?.code??"EBOOTSTRAP", message:String(error?.message??error), ...diagnostics.sqlErrorDiagnostic?.(error), ...failureDiagnostic });
       throw error;
     }finally{activity.finish(preparationError);}
   })().finally(()=>{localDataPreparePromise=null;});
@@ -2137,6 +2153,34 @@ function captureLocalOperationIdentity(){
   return Object.freeze({assertCurrent,financialCapture(action){assertCurrent();return shiftAuthority.captureFinancial(action);}});
 }
 
+async function captureRefundApprovalSource({input,scope,recovery}) {
+  return syncCoordinator.withExclusive(async () => {
+    const capture=captureLocalOperationIdentity();capture.assertCurrent();scope.assertCurrent();
+    const financial=await shiftFinancialRuntime.forRefund(scope.branchId,input.saleId,capture);
+    capture.assertCurrent();scope.assertCurrent();
+    let source,anchorKind,check;
+    if(financial.source&&financial.author&&financial.expectedShiftId){
+      financial.assertCurrent();source=financial.source;anchorKind="financial";check=financial.assertCurrent;
+    }else if(financial.repository===receiptRepository){
+      const active=await cashCheckoutRuntime.admit(!recovery);
+      if(!active)return null;
+      const authorCapture=capture.financialCapture("REFUND");
+      source={projectOrigin:authorCapture.binding.projectOrigin,...active.scope};anchorKind="grouped";
+      // The lease ends before HTTPS. Keep identity/profile checks, then the
+      // real transaction admits and compares this exact source again.
+      check=()=>{authorCapture.assertCurrent();syncCloud.assertRequestContext(active.source,false);};
+    }else return null;
+    await require("./sync/grouped-refund-native.cjs").assertRefundStorageReady(databaseManager.pool);
+    if(recovery){
+      const original={projectOrigin:recovery.attestation.projectOrigin,...recovery.source};
+      if(recovery.route!==anchorKind||Object.keys(source).length!==Object.keys(original).length||
+        Object.entries(source).some(([key,value])=>original[key]!==value))throw Object.assign(new Error("The original refund belongs to a different local source. Keep it pending for review."),{code:"EAPPROVAL_CONTEXT"});
+    }
+    const assertCurrent=()=>{capture.assertCurrent();scope.assertCurrent();check();};assertCurrent();
+    return {scope:source,anchorKind,assertCurrent};
+  });
+}
+
 function enrollCurrentShiftAuthor(proof) {
   // Enrollment grants no POS authority. Its unavailability cannot fail login.
   void shiftAuthority.enrollOnline(proof).catch(()=>undefined);
@@ -2624,13 +2668,53 @@ function registerIpc() {
     const args = { saleId, refundId: guard.text(input.refundId,{name:"refund id",max:128}),
       branchId: guard.text(branch,{name:"branch",max:128}), reason: input.reason ? guard.text(input.reason,{name:"reason",max:400}) : null };
     const context = financial.terminalId ? { author: financial.author, terminalId: financial.terminalId,
-      expectedShiftId: financial.expectedShiftId } : null;
+      expectedShiftId: financial.expectedShiftId, source: financial.source } : null;
     const grant = input.grantToken ? guard.text(input.grantToken,{name:"refund authorization",max:4096}) : null;
+    const admission = refundApprovalService.admission(grant, args);
     const result = typeof groupedRefundRuntime === "undefined"
-      ? await financial.repository.refund(args, context)
-      : await groupedRefundRuntime.commit(financial.repository, args, context, requestCapture, grant);
+      ? await financial.repository.refund(args, context, null, admission)
+      : await groupedRefundRuntime.commit(financial.repository, args, context, requestCapture, admission.hostedGrantToken, admission);
+    if (result?.ok) admission?.complete();
     publishBusinessChange({kind:"refund",branchId:branch});scheduleAutomaticSync(250);return result;
   }));
+  ipcMain.handle("receipts:refund-approval-status",(event,value)=>guard.guarded(async()=>{
+    if(event.sender!==mainWindow?.webContents||event.senderFrame!==event.sender.mainFrame)return{ok:false,code:"EPRIVILEGE",error:"Saved refund status is limited to this POS window."};
+    const input=guard.options(value,{name:"saved refund status",max:2});
+    const scope=captureOfflineApprovalScope("can_process_refund");
+    if(input.branchId&&recordId(String(input.branchId))!==recordId(scope.branchId))return{ok:false,code:"SYNC_BRANCH_FORBIDDEN",error:"The saved refund must belong to this branch."};
+    const saleId=guard.uuid(input.saleId,{name:"sale id"});
+    const recovery=require("./sync/refund-recovery-native.cjs");
+    return recovery.publicPendingStatus(await recovery.readPendingOriginal(databaseManager,scope,saleId));
+  }));
+  ipcMain.handle("receipts:recover-refund-approval",(event,value)=>guard.guarded(async()=>{
+    if(event.sender!==mainWindow?.webContents||event.senderFrame!==event.sender.mainFrame)return{ok:false,code:"EPRIVILEGE",error:"Saved refund approval is limited to this POS window."};
+    const input=guard.options(value,{name:"saved refund approval",max:4});
+    const scope=captureOfflineApprovalScope("can_process_refund");
+    if(input.branchId&&recordId(String(input.branchId))!==recordId(scope.branchId))return{ok:false,code:"SYNC_BRANCH_FORBIDDEN",error:"The saved refund must belong to this branch."};
+    const saleId=guard.uuid(input.saleId,{name:"sale id"}),operationId=guard.uuid(input.operationId,{name:"refund operation"});
+    const grantToken=guard.text(input.grantToken,{name:"refund authorization",max:4096});
+    return syncCoordinator.withExclusive(async()=>{
+      const recovery=require("./sync/refund-recovery-native.cjs");
+      const pending=await recovery.readPendingOriginal(databaseManager,scope,saleId,operationId);
+      if(!pending)throw require("./sync/refund-command.cjs").refundHeld();
+      const admission=refundApprovalService.admission(grantToken,{saleId,refundId:pending.refundId,branchId:scope.branchId});
+      const author=await shiftAuthority.prepare(shiftAuthority.captureFinancial("REFUND"));
+      scope.assertCurrent();author.assertCurrent();
+      const result=await recovery.attachPendingApproval(databaseManager,{scope,saleId,operationId,admission,author});
+      scheduleAutomaticSync(250);return result;
+    });
+  }));
+  const transferCentralHandoff = require("./transfer-central-handoff.cjs").createTransferCentralHandoff({
+    captureScope: permission => captureOfflineApprovalScope(permission),
+    readTransfer: async id => (await databaseManager.pool.request().input("id", id).query("SELECT id,from_store_id,to_store_id,row_version FROM dbo.stock_transfers WHERE id=TRY_CONVERT(uniqueidentifier,@id);")).recordset?.[0],
+    uploadPending: branchId => syncCoordinator.runFinal({ branchId, batchSize: 500 }),
+  });
+  ipcMain.handle("transfers:prepare-central", (event, value) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame) return { ok: false, code: "EPRIVILEGE", error: "Transfer handoff is limited to this POS window." };
+    return closeWriteBarrier.run(() => transferCentralHandoff(value)).catch(error => ({ ok: false,
+      code: ["TRANSFER_UPLOAD_PENDING", "STORE_FORBIDDEN", "TRANSFER_REQUEST_INVALID", "EPRIVILEGE"].includes(error?.code) ? error.code : "TRANSFER_UPLOAD_PENDING",
+      error: "The saved transfer and its dependencies could not be confirmed centrally. Keep the draft and synchronize before continuing." }));
+  });
   ipcMain.handle("jobs:get-active", async () => databaseManager.isConnected() ? jobRepository.active() : null);
   ipcMain.handle("jobs:get-history", async (_e, limit) => databaseManager.isConnected() ? jobRepository.history(Number(limit)||50) : []);
   ipcMain.handle("sync:get-status", async () => legacyRecoveryRuntime.status(await syncCoordinator.refresh(localBranchId())));
@@ -2771,6 +2855,16 @@ function registerIpc() {
       return {ok:false,reason:"unavailable",error:String(error?.message??error)};
     }
   });
+  ipcMain.handle("approval:authorize-refund", require("./offline-approval-service.cjs").createOfflineApprovalHandler({
+    isPosSender: event => event.sender === mainWindow?.webContents && event.senderFrame === event.sender.mainFrame,
+    authorize: async value => {
+      try { const result = await closeWriteBarrier.run(() => refundApprovalService.authorize(value)); scheduleLocalChanges([{ table: "authorization_log" }]); return result; }
+      catch (error) {
+        const known = new Set(["EONLINE_REQUIRED", "EAPPROVAL_REQUIRED", "EAPPROVAL_EXPIRED", "EAPPROVAL_CONTEXT", "EAPPROVAL_POLICY", "EAPPROVAL_DENIED", "EAPPROVAL_CREDENTIAL", "EPRIVILEGE", "SYNC_BRANCH_FORBIDDEN", "EREFUND_AMOUNT", "EALREADY", "EIDEMPOTENCY"]);
+        return { ok: false, code: known.has(error?.code) ? error.code : "EAPPROVAL_UNAVAILABLE", error: known.has(error?.code) ? error.message : "The local refund authorization could not be verified. No refund was saved." };
+      }
+    },
+  }));
   ipcMain.handle("approval:authorize-offline-discount", require("./offline-approval-service.cjs").createOfflineApprovalHandler({
     isPosSender: event => event.sender === mainWindow?.webContents && event.senderFrame === event.sender.mainFrame,
     authorize: value => guard.guarded(async () => {
